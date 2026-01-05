@@ -28,7 +28,7 @@
               <th>角色</th>
               <th>状态</th>
               <th>创建时间</th>
-              <th style="width: 220px">操作</th>
+              <th style="width: 320px">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -67,6 +67,14 @@
                     @click="toggleDisabled(u)"
                   >
                     {{ u.disabled ? '启用' : '禁用' }}
+                  </button>
+
+                  <button
+                    class="button is-warning is-light"
+                    :disabled="loading"
+                    @click="revokeSessions(u)"
+                  >
+                    强制下线
                   </button>
                 </div>
               </td>
@@ -138,6 +146,23 @@ async function toggleDisabled(u: AdminUser) {
     await reload();
   } catch (e) {
     app.error(e instanceof Error ? e.message : "更新状态失败");
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function revokeSessions(u: AdminUser) {
+  const ok = window.confirm(`确定要强制下线用户 ${u.username} 吗？\n（将使其现有登录立即失效）`);
+  if (!ok) return;
+
+  loading.value = true;
+  try {
+    const res = await authService.revokeUserSessions(u.id);
+    if (!res.success) throw new Error(res.error || "强制下线失败");
+    app.success("已强制下线");
+    await reload();
+  } catch (e) {
+    app.error(e instanceof Error ? e.message : "强制下线失败");
   } finally {
     loading.value = false;
   }

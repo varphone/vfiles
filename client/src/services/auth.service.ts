@@ -66,6 +66,12 @@ class AuthService {
       },
     );
   }
+
+  revokeUserSessions(userId: string): Promise<ApiResponse<void>> {
+    return apiService.post(
+      `/auth/users/${encodeURIComponent(userId)}/revoke-sessions`,
+    );
+  }
 }
 
 export const authService = new AuthService();
