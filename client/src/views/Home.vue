@@ -511,8 +511,17 @@ async function renameCurrentDir() {
 
 async function deleteCurrentDir() {
   if (!currentPath.value) return;
-  const ok = confirm(`确定要删除目录 /${currentPath.value} 吗？此操作会删除其下全部内容，并生成提交。`);
-  if (!ok) return;
+
+  const expected = currentDirName.value;
+  const typed = prompt(
+    `危险操作：删除目录 /${currentPath.value}\n\n此操作会删除其下全部内容，并生成提交。\n请输入目录名“${expected}”以确认：`,
+    ''
+  );
+  if (typed == null) return;
+  if (typed.trim() !== expected) {
+    appStore.error('确认失败：目录名不匹配');
+    return;
+  }
 
   const parts = currentPath.value.split('/').filter(Boolean);
   parts.pop();
