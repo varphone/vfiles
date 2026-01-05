@@ -71,7 +71,8 @@ function onSelect(event: Event) {
 }
 
 .drop-zone-content {
-  pointer-events: none;
+  /* 允许按钮点击触发文件选择 */
+  pointer-events: auto;
 }
 
 @media screen and (max-width: 768px) {
