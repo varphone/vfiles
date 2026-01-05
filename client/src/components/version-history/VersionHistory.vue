@@ -142,7 +142,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
+import { ref, onBeforeUnmount, computed, watch } from 'vue';
 import {
   IconHistory,
 } from '@tabler/icons-vue';
@@ -167,8 +167,11 @@ const history = ref<FileHistory>({
 });
 const loading = ref(false);
 const error = ref<string | null>(null);
-const limit = ref(20);
+const DEFAULT_LIMIT = 20;
+const limit = ref(DEFAULT_LIMIT);
 const restoringHash = ref<string | null>(null);
+
+let historyRequestId = 0;
 
 const diff = ref({
   open: false,
@@ -203,19 +206,37 @@ const previewView = computed(() => {
   };
 });
 
-onMounted(() => {
-  loadHistory();
-});
+watch(
+  () => props.filePath,
+  () => {
+    // filePath 变化时重置所有本地状态，避免复用组件导致历史/预览/对比残留
+    historyRequestId++;
+    limit.value = DEFAULT_LIMIT;
+    history.value = { commits: [], currentVersion: '', totalCommits: 0 };
+    loading.value = false;
+    error.value = null;
+    restoringHash.value = null;
+    closePreview();
+    closeDiff();
+    void loadHistory();
+  },
+  { immediate: true }
+);
 
 async function loadHistory() {
+  const reqId = ++historyRequestId;
   loading.value = true;
   error.value = null;
 
   try {
-    history.value = await filesService.getFileHistory(props.filePath, limit.value);
+    const data = await filesService.getFileHistory(props.filePath, limit.value);
+    if (reqId !== historyRequestId) return;
+    history.value = data;
   } catch (err) {
+    if (reqId !== historyRequestId) return;
     error.value = err instanceof Error ? err.message : '加载失败';
   } finally {
+    if (reqId !== historyRequestId) return;
     loading.value = false;
   }
 }
