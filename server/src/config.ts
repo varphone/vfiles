@@ -9,7 +9,7 @@ export const config = {
   repoPath: process.env.REPO_PATH || path.resolve(process.cwd(), 'data'),
   
   // 上传限制
-  maxFileSize: 100 * 1024 * 1024, // 100MB
+  maxFileSize: 1024 * 1024 * 1024, // 1GB
 
   // 分块上传（用于绕过单次请求体大小限制）
   // 单块大小（默认 5MB，可通过 CDN 限制调整）
