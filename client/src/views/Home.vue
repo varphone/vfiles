@@ -444,11 +444,13 @@ function toggleBatchAndClose() {
     min-width: 0;
     display: flex;
     align-items: center;
+    justify-content: flex-end;
   }
 
   .mobile-search-field {
     width: 100%;
     min-width: 0;
+    margin-left: auto;
   }
 
   .mobile-batch-panel {
@@ -456,6 +458,7 @@ function toggleBatchAndClose() {
     min-width: 0;
     display: flex;
     align-items: center;
+    justify-content: flex-end;
   }
 
   .mobile-batch-actions {
@@ -463,6 +466,8 @@ function toggleBatchAndClose() {
     min-width: 0;
     display: flex;
     align-items: center;
+    justify-content: flex-end;
+    margin-left: auto;
     gap: 0.25rem;
     overflow: visible;
   }
@@ -487,6 +492,8 @@ function toggleBatchAndClose() {
     overflow-x: auto;
     flex-wrap: nowrap;
     white-space: nowrap;
+    justify-content: flex-end;
+    margin-left: auto;
   }
 
   .dropdown-item.is-disabled {
