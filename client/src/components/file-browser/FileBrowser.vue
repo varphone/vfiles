@@ -624,6 +624,14 @@ function refresh() {
   filesStore.loadFiles(filesStore.currentPath);
 }
 
+function goBack() {
+  filesStore.goBack();
+}
+
+function goRoot() {
+  navigateTo('');
+}
+
 function enqueueDownload(kind: DownloadQueueKind, path: string) {
   const wasEmpty = downloadQueue.value.length === 0;
   const filename =
@@ -817,6 +825,16 @@ function toggleBatchMode() {
     clearSelection();
   }
 }
+
+defineExpose({
+  openUploader: () => {
+    showUploader.value = true;
+  },
+  refresh,
+  goBack,
+  goRoot,
+  toggleBatchMode,
+});
 
 function toggleSelect(file: FileInfo) {
   const next = new Set(selectedPaths.value);
