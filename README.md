@@ -93,6 +93,10 @@ bun run start
 - [贡献指南](./CONTRIBUTING.md) - 开发与提交规范
 - [用户手册](./USER_GUIDE.md) - 常用功能使用说明
 
+## 🔧 配置
+
+- 环境变量示例：`.env.example`
+
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request！
