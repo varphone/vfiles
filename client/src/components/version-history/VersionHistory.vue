@@ -104,6 +104,14 @@
                       <IconEye :size="18" />
                     </button>
                     <button
+                      class="button is-small is-warning is-light"
+                      @click="restoreVersion(commit.hash)"
+                      :disabled="commit.hash === history.currentVersion || restoringHash === commit.hash"
+                      title="恢复到此版本（会生成新提交）"
+                    >
+                      <IconRestore :size="18" />
+                    </button>
+                    <button
                       class="button is-small is-success is-light"
                       @click="downloadVersion(commit.hash)"
                       title="下载此版本"
@@ -136,6 +144,7 @@ import {
   IconHistory,
   IconEye,
   IconDownload,
+  IconRestore,
 } from '@tabler/icons-vue';
 import { filesService } from '../../services/files.service';
 import { useAppStore } from '../../stores/app.store';
@@ -155,6 +164,7 @@ const history = ref<FileHistory>({
 const loading = ref(false);
 const error = ref<string | null>(null);
 const limit = ref(20);
+const restoringHash = ref<string | null>(null);
 
 type PreviewKind = 'text' | 'image' | 'unsupported';
 const preview = ref({
@@ -203,6 +213,12 @@ function formatDate(date: string): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function getParentDir(filePath: string): string {
+  const idx = filePath.lastIndexOf('/');
+  if (idx <= 0) return '';
+  return filePath.slice(0, idx);
 }
 
 function getExtension(p: string): string {
@@ -282,6 +298,31 @@ async function viewVersion(hash: string) {
     preview.value.error = err instanceof Error ? err.message : '预览失败';
   } finally {
     preview.value.loading = false;
+  }
+}
+
+async function restoreVersion(hash: string) {
+  if (hash === history.value.currentVersion) return;
+  if (restoringHash.value) return;
+
+  const short = hash.substring(0, 8);
+  const ok = window.confirm(`确定要恢复到版本 ${short} 吗？这会生成一个新的提交。`);
+  if (!ok) return;
+
+  restoringHash.value = hash;
+  try {
+    const blob = await filesService.getFileContent(props.filePath, hash);
+    const filename = props.filePath.split('/').pop() || 'file';
+    const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+    const dir = getParentDir(props.filePath);
+
+    await filesService.uploadFile(file, dir, `恢复到版本 ${short}`);
+    appStore.success('已恢复并生成新版本');
+    await loadHistory();
+  } catch (err) {
+    appStore.error(err instanceof Error ? err.message : '恢复失败');
+  } finally {
+    restoringHash.value = null;
   }
 }
 
