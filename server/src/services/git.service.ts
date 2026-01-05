@@ -178,6 +178,41 @@ export class GitService {
   }
 
   /**
+   * 移动/重命名文件或目录（git mv）
+   */
+  async movePath(
+    fromPath: string,
+    toPath: string,
+    message: string,
+    author?: { name: string; email: string }
+  ): Promise<string> {
+    try {
+      const fromFull = path.join(this.dir, fromPath);
+      const toFull = path.join(this.dir, toPath);
+
+      // 确保源存在
+      await fs.stat(fromFull);
+
+      // 确保目标父目录存在
+      const toDir = path.dirname(toFull);
+      await fs.mkdir(toDir, { recursive: true });
+
+      await $`git mv ${normalizePathForGit(fromPath)} ${normalizePathForGit(toPath)}`.cwd(this.dir);
+
+      const authorName = author?.name || 'VFiles User';
+      const authorEmail = author?.email || 'user@vfiles.local';
+      await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(
+        this.dir
+      );
+
+      const result = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
+      return result.stdout.toString().trim();
+    } catch (error) {
+      throw new Error(`移动/重命名失败: ${error}`);
+    }
+  }
+
+  /**
    * 获取文件的提交历史
    */
   async getFileHistory(filePath: string, limit: number = 50): Promise<FileHistory> {

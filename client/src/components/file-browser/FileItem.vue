@@ -1,5 +1,5 @@
 <template>
-  <div class="file-item box" @click="handleClick">
+  <div class="file-item box" :class="{ 'has-background-light': selected }" @click="handleClick">
     <div class="media">
       <div class="media-left">
         <figure class="image is-48x48">
@@ -44,6 +44,16 @@
         </div>
       </div>
       <div class="media-right">
+        <div v-if="selectMode" class="mr-2 is-flex is-align-items-center">
+          <input
+            type="checkbox"
+            class="mr-1"
+            :checked="selected"
+            @click.stop
+            @change="toggleSelected"
+            aria-label="选择"
+          />
+        </div>
         <div class="buttons is-right">
           <button
             v-if="file.type === 'file'"
@@ -92,6 +102,8 @@ import type { FileInfo } from '../../types';
 const props = defineProps<{
   file: FileInfo;
   highlight?: string;
+  selectMode?: boolean;
+  selected?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -99,6 +111,7 @@ const emit = defineEmits<{
   download: [file: FileInfo];
   delete: [file: FileInfo];
   viewHistory: [file: FileInfo];
+  toggleSelect: [file: FileInfo];
 }>();
 
 const icon = computed(() => {
@@ -177,7 +190,15 @@ function formatDate(date: string): string {
 }
 
 function handleClick() {
+  if (props.selectMode) {
+    emit('toggleSelect', props.file);
+    return;
+  }
   emit('click', props.file);
+}
+
+function toggleSelected() {
+  emit('toggleSelect', props.file);
 }
 
 function download() {
@@ -201,6 +222,7 @@ function viewHistory() {
   transition: all 0.2s;
   margin-bottom: 0.75rem;
 }
+
 
 .file-item:hover {
   transform: translateY(-2px);

@@ -10,6 +10,14 @@ export const filesService = {
     return response.data || [];
   },
 
+
+  /**
+   * 移动/重命名文件或目录
+   */
+  async movePath(from: string, to: string, message: string = '移动/重命名'): Promise<any> {
+    return await apiService.post('/files/move', { from, to, message });
+  },
+
   /**
    * 获取文件内容
    */

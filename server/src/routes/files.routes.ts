@@ -6,6 +6,7 @@ import { validatePath } from '../utils/path-validator.js';
 import {
   isAllowedPathByPrefixes,
   normalizeRequestPath,
+  validateRequiredString,
   validateOptionalCommitHash,
   validateOptionalString,
 } from '../utils/validation.js';
@@ -250,6 +251,65 @@ export function createFilesRoutes(gitService: GitService) {
           success: false,
           error: error instanceof Error ? error.message : '删除失败',
         },
+        500
+      );
+    }
+  });
+
+  /**
+   * POST /api/files/move - 移动/重命名文件或目录
+   */
+  app.post('/move', async (c) => {
+    let body: any;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ success: false, error: '请求体必须是 JSON' }, 400);
+    }
+
+    const fromResult = validateRequiredString(body?.from, 'from', { minLength: 1, maxLength: 500 });
+    if (!fromResult.ok) return c.json({ success: false, error: fromResult.message }, fromResult.status);
+
+    const toResult = validateRequiredString(body?.to, 'to', { minLength: 1, maxLength: 500 });
+    if (!toResult.ok) return c.json({ success: false, error: toResult.message }, toResult.status);
+
+    const messageResult = validateOptionalString(body?.message, 'message', { maxLength: 200 });
+    if (!messageResult.ok) return c.json({ success: false, error: messageResult.message }, messageResult.status);
+
+    const fromPath = normalizeRequestPath(fromResult.value);
+    const toPath = normalizeRequestPath(toResult.value);
+    const message = messageResult.value || '移动/重命名';
+
+    if (!fromPath || !toPath) {
+      return c.json({ success: false, error: 'from/to 不能为空' }, 400);
+    }
+    if (fromPath === toPath) {
+      return c.json({ success: false, error: 'from 和 to 不能相同' }, 400);
+    }
+
+    // 路径遍历防护（from/to 都必须在 repo 内）
+    if (!validatePath(fromPath, config.repoPath) || !validatePath(toPath, config.repoPath)) {
+      return c.json({ success: false, error: '无效的文件路径' }, 400);
+    }
+
+    // 文件访问白名单（from/to 都需满足）
+    if (
+      !isAllowedPathByPrefixes(fromPath, config.allowedPathPrefixes) ||
+      !isAllowedPathByPrefixes(toPath, config.allowedPathPrefixes)
+    ) {
+      return c.json({ success: false, error: '不允许访问该路径' }, 403);
+    }
+
+    try {
+      const commit = await gitService.movePath(fromPath, toPath, message);
+      return c.json({
+        success: true,
+        data: { from: fromPath, to: toPath, commit },
+        message: '移动成功',
+      });
+    } catch (error) {
+      return c.json(
+        { success: false, error: error instanceof Error ? error.message : '移动失败' },
         500
       );
     }
