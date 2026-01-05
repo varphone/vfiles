@@ -24,9 +24,9 @@
 
       <div class="navbar-menu" :class="{ 'is-active': mobileMenuOpen }">
         <div class="navbar-start">
+          <a class="navbar-item" href="#" @click.prevent="refreshAndClose">刷新</a>
           <a class="navbar-item" href="#" @click.prevent="goRootAndClose">根目录</a>
           <a class="navbar-item" href="#" @click.prevent="goBackAndClose">上一级</a>
-          <a class="navbar-item" href="#" @click.prevent="refreshAndClose">刷新</a>
           <a class="navbar-item" href="#" @click.prevent="openUploaderAndClose">上传文件</a>
           <a class="navbar-item" href="#" @click.prevent="toggleBatchAndClose">批量模式</a>
         </div>
