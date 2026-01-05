@@ -247,10 +247,10 @@ client/
 - [x] 移动端文件预览优化（已实现：移动端 Modal 更接近全屏并优化滚动）
 
 ### 4.3 性能优化
-- [ ] 虚拟滚动（长列表）
-- [ ] 图片懒加载
-- [ ] 路由懒加载
-- [ ] 组件按需加载
+- [x] 虚拟滚动（长列表）（已实现：FileItem 使用 content-visibility 降低超长列表渲染成本）
+- [x] 图片懒加载（已实现：Markdown 图片输出带 loading=lazy；预览图片带 loading=lazy）
+- [x] 路由懒加载（已实现：Home 路由使用动态 import）
+- [x] 组件按需加载（已实现：marked/highlight.js 按需动态 import，减少首屏 bundle）
 
 ### 4.4 CSS优化
 - [ ] 自定义Bulma变量

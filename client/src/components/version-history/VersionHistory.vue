@@ -76,7 +76,7 @@
 
       <div v-else>
         <figure v-if="preview.kind === 'image'" class="image">
-          <img :src="preview.objectUrl" :alt="previewView.filename" />
+          <img :src="preview.objectUrl" :alt="previewView.filename" loading="lazy" decoding="async" />
         </figure>
 
         <div v-else-if="preview.kind === 'pdf'" class="preview-frame">
@@ -149,9 +149,10 @@ import {
 import { filesService } from '../../services/files.service';
 import { useAppStore } from '../../stores/app.store';
 import type { FileHistory } from '../../types';
-import { marked } from 'marked';
-import hljs from 'highlight.js';
 import CommitList from './CommitList.vue';
+
+let cachedMarked: any | null = null;
+let cachedHljs: any | null = null;
 
 const props = defineProps<{
   filePath: string;
@@ -262,30 +263,65 @@ function safeLinkHref(href: string | null | undefined): string {
   return '#';
 }
 
-const mdRenderer: any = {
-  // 防止 Markdown 原始 HTML 直接注入（marked 新版会传 token 对象）
-  html(token: any) {
-    const html = typeof token === 'string' ? token : token?.text ?? token?.raw ?? '';
-    return escapeHtml(String(html));
-  },
-  link(tokenOrHref: any, title?: any, text?: any) {
-    // 兼容：新版传 token 对象；旧版传 (href, title, text)
-    const href = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.href : tokenOrHref;
-    const linkTitle = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.title : title;
-    const linkText = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.text : text;
+function safeImageSrc(src: string | null | undefined): string {
+  const raw = (src || '').trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^data:image\//i.test(raw)) return raw;
+  if (raw.startsWith('/')) return raw;
+  return '';
+}
 
-    const safeHref = safeLinkHref(href);
-    const t = linkTitle ? ` title="${escapeHtml(String(linkTitle))}"` : '';
-    const inner = typeof linkText === 'string' ? (marked.parseInline(linkText) as string) : '';
-    return `<a href="${escapeHtml(safeHref)}"${t} target="_blank" rel="noopener noreferrer">${inner}</a>`;
-  },
-};
+async function getMarked() {
+  if (cachedMarked) return cachedMarked;
+  const mod: any = await import('marked');
+  const markedApi = mod?.marked ?? mod;
 
-marked.use({
-  renderer: mdRenderer,
-  gfm: true,
-  breaks: true,
-});
+  const mdRenderer: any = {
+    html(token: any) {
+      const html = typeof token === 'string' ? token : token?.text ?? token?.raw ?? '';
+      return escapeHtml(String(html));
+    },
+    link(tokenOrHref: any, title?: any, text?: any) {
+      const href = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.href : tokenOrHref;
+      const linkTitle = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.title : title;
+      const linkText = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.text : text;
+
+      const safeHref = safeLinkHref(href);
+      const t = linkTitle ? ` title="${escapeHtml(String(linkTitle))}"` : '';
+      const inner = typeof linkText === 'string' ? (markedApi.parseInline(linkText) as string) : '';
+      return `<a href="${escapeHtml(safeHref)}"${t} target="_blank" rel="noopener noreferrer">${inner}</a>`;
+    },
+    image(tokenOrHref: any, title?: any, text?: any) {
+      const href = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.href : tokenOrHref;
+      const imgTitle = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.title : title;
+      const altText = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.text : text;
+
+      const safeSrc = safeImageSrc(href);
+      if (!safeSrc) return '';
+
+      const t = imgTitle ? ` title="${escapeHtml(String(imgTitle))}"` : '';
+      const alt = altText ? escapeHtml(String(altText)) : '';
+      return `<img src="${escapeHtml(safeSrc)}" alt="${alt}" loading="lazy" decoding="async"${t} />`;
+    },
+  };
+
+  markedApi.use({
+    renderer: mdRenderer,
+    gfm: true,
+    breaks: true,
+  });
+
+  cachedMarked = markedApi;
+  return markedApi;
+}
+
+async function getHljs() {
+  if (cachedHljs) return cachedHljs;
+  const mod: any = await import('highlight.js');
+  cachedHljs = mod?.default ?? mod;
+  return cachedHljs;
+}
 
 function detectPreviewKind(filePath: string): PreviewKind {
   const ext = getExtension(filePath);
@@ -417,9 +453,11 @@ async function viewVersion(hash: string) {
     } else {
       const text = await blob.text();
       if (preview.value.kind === 'markdown') {
-        preview.value.html = marked.parse(text) as string;
+        const markedApi = await getMarked();
+        preview.value.html = markedApi.parse(text) as string;
       } else if (preview.value.kind === 'code') {
-        const highlighted = hljs.highlightAuto(text);
+        const hljsApi = await getHljs();
+        const highlighted = hljsApi.highlightAuto(text);
         preview.value.html = highlighted.value;
       } else {
         preview.value.text = text;

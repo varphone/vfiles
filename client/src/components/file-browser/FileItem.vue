@@ -221,6 +221,8 @@ function viewHistory() {
   cursor: pointer;
   transition: all 0.2s;
   margin-bottom: 0.75rem;
+  content-visibility: auto;
+  contain-intrinsic-size: 96px;
 }
 
 
