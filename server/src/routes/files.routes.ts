@@ -198,12 +198,54 @@ export function createFilesRoutes(gitService: GitService) {
     }
 
     try {
-      const content = await gitService.getFileContent(path, commitResult.value);
-      
       // 设置响应头
       c.header('Content-Type', 'application/octet-stream');
       c.header('Content-Disposition', `inline; filename="${path.split('/').pop()}"`);
-      
+
+      // 当前版本：流式输出，避免把整个文件读入内存
+      if (!commitResult.value) {
+        const fullPath = nodePath.join(config.repoPath, path);
+        const stat = await fs.stat(fullPath);
+        if (!stat.isFile()) {
+          return c.json({ success: false, error: '目标不是文件' }, 400);
+        }
+
+        c.header('Content-Length', stat.size.toString());
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            (async () => {
+              let file: fs.FileHandle | null = null;
+              try {
+                file = await fs.open(fullPath, 'r');
+                const buf = new Uint8Array(1024 * 1024);
+                let offset = 0;
+                while (offset < stat.size) {
+                  const toRead = Math.min(buf.length, stat.size - offset);
+                  const { bytesRead } = await file.read(buf, 0, toRead, offset);
+                  if (bytesRead <= 0) break;
+                  controller.enqueue(buf.slice(0, bytesRead));
+                  offset += bytesRead;
+                }
+                controller.close();
+              } catch (e) {
+                controller.error(e);
+              } finally {
+                try {
+                  await file?.close();
+                } catch {
+                  // ignore
+                }
+              }
+            })();
+          },
+        });
+
+        return c.body(stream);
+      }
+
+      // 历史版本（commit）：沿用原逻辑（git show 会缓冲 stdout）
+      const content = await gitService.getFileContent(path, commitResult.value);
+      c.header('Content-Length', content.length.toString());
       const body = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer;
       return c.body(body);
     } catch (error) {
@@ -275,10 +317,6 @@ export function createFilesRoutes(gitService: GitService) {
         );
       }
 
-      // 读取文件内容
-      const arrayBuffer = await file.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-
       // 构建完整路径
       const filePath = requestedPath ? `${requestedPath}/${file.name}` : file.name;
 
@@ -304,8 +342,8 @@ export function createFilesRoutes(gitService: GitService) {
         );
       }
 
-      // 保存文件
-      const commitHash = await gitService.saveFile(filePath, buffer, message);
+      // 保存文件（流式写入，避免把整个文件读入内存）
+      const commitHash = await gitService.saveFile(filePath, file, message);
 
       return c.json({
         success: true,

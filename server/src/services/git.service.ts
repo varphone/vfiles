@@ -119,7 +119,7 @@ export class GitService {
    */
   async saveFile(
     filePath: string,
-    content: Buffer,
+    content: Uint8Array | ArrayBuffer | Blob | ReadableStream<Uint8Array>,
     message: string,
     author?: { name: string; email: string }
   ): Promise<string> {
@@ -130,8 +130,8 @@ export class GitService {
       // 确保目录存在
       await fs.mkdir(dirPath, { recursive: true });
 
-      // 写入文件
-      await fs.writeFile(fullPath, content);
+      // 写入文件（用 Bun.write 支持流式写入，避免把大文件整体读入内存）
+      await Bun.write(fullPath, content as any);
 
       // 添加到Git
       await $`git add ${normalizePathForGit(filePath)}`.cwd(this.dir);

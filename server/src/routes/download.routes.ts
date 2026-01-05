@@ -216,13 +216,41 @@ export function createDownloadRoutes(gitService: GitService) {
               if (final) controller.close();
             });
 
+            // 逐文件、逐块读取并写入 zip，避免将整个文件读入内存
             for (const rel of relFiles) {
-              const buf = await fs.readFile(path.join(fullDir, rel));
-              // zip 内路径统一使用 '/'
+              const full = path.join(fullDir, rel);
               const zipPath = `${prefix}/${rel}`.replaceAll('\\', '/');
-              const file = new ZipDeflate(zipPath);
-              zip.add(file);
-              file.push(new Uint8Array(buf), true);
+              const entry = new ZipDeflate(zipPath);
+              zip.add(entry);
+
+              let handle: fs.FileHandle | null = null;
+              try {
+                const st = await fs.stat(full);
+                if (!st.isFile()) {
+                  // 跳过非文件
+                  entry.push(new Uint8Array(0), true);
+                  continue;
+                }
+
+                handle = await fs.open(full, 'r');
+                const buf = new Uint8Array(256 * 1024);
+                let offset = 0;
+                while (offset < st.size) {
+                  const toRead = Math.min(buf.length, st.size - offset);
+                  const { bytesRead } = await handle.read(buf, 0, toRead, offset);
+                  if (bytesRead <= 0) break;
+                  // 必须复制（避免复用同一 buffer 导致数据被覆盖）
+                  entry.push(buf.slice(0, bytesRead), false);
+                  offset += bytesRead;
+                }
+                entry.push(new Uint8Array(0), true);
+              } finally {
+                try {
+                  await handle?.close();
+                } catch {
+                  // ignore
+                }
+              }
             }
 
             zip.end();
