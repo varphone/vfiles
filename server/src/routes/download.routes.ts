@@ -163,10 +163,15 @@ export function createDownloadRoutes(gitService: GitService) {
       }
 
       // 历史版本（commit）：沿用原逻辑
-      const content = await gitService.getFileContent(path, commitResult.value);
-      c.header('Content-Length', content.length.toString());
-      const body = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer;
-      return c.body(body);
+      const commit = commitResult.value;
+      const exists = await gitService.fileExistsAtCommit(path, commit);
+      if (!exists) {
+        return c.json({ success: false, error: '下载失败' }, 404);
+      }
+
+      // git show stdout -> ReadableStream，真正流式
+      const stream = gitService.getFileContentStreamAtCommit(path, commit);
+      return c.body(stream);
     } catch (error) {
       return c.json(
         {

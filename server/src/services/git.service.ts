@@ -115,6 +115,33 @@ export class GitService {
   }
 
   /**
+   * 轻量校验：某个 commit 下是否存在该文件（不读取内容）
+   */
+  async fileExistsAtCommit(filePath: string, commitHash: string): Promise<boolean> {
+    const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
+    const proc = Bun.spawn(['git', 'cat-file', '-e', spec], {
+      cwd: this.dir,
+      stdout: 'ignore',
+      stderr: 'ignore',
+    });
+    const code = await proc.exited;
+    return code === 0;
+  }
+
+  /**
+   * 获取历史版本文件内容的流（真正流式，不会把整个文件读入内存）
+   */
+  getFileContentStreamAtCommit(filePath: string, commitHash: string): ReadableStream<Uint8Array> {
+    const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
+    const proc = Bun.spawn(['git', 'show', spec], {
+      cwd: this.dir,
+      stdout: 'pipe',
+      stderr: 'ignore',
+    });
+    return proc.stdout;
+  }
+
+  /**
    * 保存文件并提交到Git
    */
   async saveFile(
