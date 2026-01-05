@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Build outputs
+dist/
+client/dist/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Data (runtime)
+data/
+
+# Test
+coverage/
+.nyc_output/
+
+# Temporary files
+*.tmp
+.cache/
