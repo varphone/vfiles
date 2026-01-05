@@ -188,11 +188,16 @@ export class GitService {
     try {
       const fullPath = path.join(this.dir, filePath);
 
-      // 删除文件
-      await fs.unlink(fullPath);
-
-      // 从Git中移除
-      await $`git rm ${normalizePathForGit(filePath)}`.cwd(this.dir);
+      const st = await fs.stat(fullPath);
+      if (st.isDirectory()) {
+        // 删除目录（递归）
+        await fs.rm(fullPath, { recursive: true, force: false });
+        await $`git rm -r -- ${normalizePathForGit(filePath)}`.cwd(this.dir);
+      } else {
+        // 删除文件
+        await fs.unlink(fullPath);
+        await $`git rm -- ${normalizePathForGit(filePath)}`.cwd(this.dir);
+      }
 
       // 提交
       const authorName = author?.name || 'VFiles User';
@@ -201,6 +206,48 @@ export class GitService {
       await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(this.dir);
     } catch (error) {
       throw new Error(`删除文件失败: ${error}`);
+    }
+  }
+
+  /**
+   * 创建目录并提交到 Git（通过 .gitkeep 让目录可跟踪）
+   */
+  async createDirectory(
+    dirPath: string,
+    message: string,
+    author?: { name: string; email: string }
+  ): Promise<string> {
+    try {
+      const fullDir = path.join(this.dir, dirPath);
+
+      // 若已存在则报错，避免误提交
+      try {
+        await fs.stat(fullDir);
+        throw new Error('目录已存在');
+      } catch (err: any) {
+        if (err?.code !== 'ENOENT') {
+          throw err;
+        }
+      }
+
+      await fs.mkdir(fullDir, { recursive: true });
+
+      const keepRel = path.join(dirPath, '.gitkeep');
+      const keepFull = path.join(this.dir, keepRel);
+      await fs.writeFile(keepFull, '', 'utf-8');
+
+      await $`git add -- ${normalizePathForGit(keepRel)}`.cwd(this.dir);
+
+      const authorName = author?.name || 'VFiles User';
+      const authorEmail = author?.email || 'user@vfiles.local';
+      await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(
+        this.dir
+      );
+
+      const result = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
+      return result.stdout.toString().trim();
+    } catch (error) {
+      throw new Error(`创建目录失败: ${error}`);
     }
   }
 

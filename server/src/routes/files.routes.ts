@@ -657,5 +657,51 @@ export function createFilesRoutes(gitService: GitService) {
     }
   });
 
+  /**
+   * POST /api/files/dir - 创建目录
+   */
+  app.post('/dir', pathSecurityMiddleware, async (c) => {
+    let body: any;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ success: false, error: '请求体必须是 JSON' }, 400);
+    }
+
+    const pathResult = validateRequiredString(body?.path, 'path', { minLength: 1, maxLength: 500 });
+    if (!pathResult.ok) return c.json({ success: false, error: pathResult.message }, pathResult.status);
+
+    const messageResult = validateOptionalString(body?.message, 'message', { maxLength: 200 });
+    if (!messageResult.ok) return c.json({ success: false, error: messageResult.message }, messageResult.status);
+
+    const dirPath = normalizeRequestPath(pathResult.value);
+    const message = messageResult.value || `创建目录: ${dirPath}`;
+
+    if (!dirPath) {
+      return c.json({ success: false, error: 'path 不能为空' }, 400);
+    }
+
+    if (!validatePath(dirPath, config.repoPath)) {
+      return c.json({ success: false, error: '无效的文件路径' }, 400);
+    }
+
+    if (!isAllowedPathByPrefixes(dirPath, config.allowedPathPrefixes)) {
+      return c.json({ success: false, error: '不允许访问该路径' }, 403);
+    }
+
+    try {
+      const commit = await gitService.createDirectory(dirPath, message);
+      return c.json({
+        success: true,
+        data: { path: dirPath, commit },
+        message: '目录创建成功',
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : '创建失败';
+      const status = /已存在/.test(msg) ? 409 : 500;
+      return c.json({ success: false, error: msg }, status);
+    }
+  });
+
   return app;
 }

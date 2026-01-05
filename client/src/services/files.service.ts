@@ -69,6 +69,13 @@ export const filesService = {
   },
 
   /**
+   * 创建目录
+   */
+  async createDirectory(path: string, message: string = '创建目录'): Promise<any> {
+    return await apiService.post('/files/dir', { path, message });
+  },
+
+  /**
    * 获取文件内容
    */
   async getFileContent(path: string, commit?: string): Promise<Blob> {
