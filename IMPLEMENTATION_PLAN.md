@@ -189,11 +189,11 @@ client/
 
 ### 3.5 版本历史组件
 **组件列表:**
-- [ ] `VersionHistory.vue` - 主容器
-- [ ] `CommitList.vue` - 提交列表
-- [ ] `CommitItem.vue` - 单个提交
-- [ ] `CommitDetails.vue` - 提交详情
-- [ ] `Timeline.vue` - 时间轴视图
+- [x] `VersionHistory.vue` - 主容器
+- [x] `CommitList.vue` - 提交列表
+- [x] `CommitItem.vue` - 单个提交
+- [x] `CommitDetails.vue` - 提交详情
+- [x] `Timeline.vue` - 时间轴视图
 
 **功能:**
 - [x] 显示提交历史

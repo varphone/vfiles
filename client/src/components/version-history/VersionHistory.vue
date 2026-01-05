@@ -121,73 +121,17 @@
       <p class="has-text-grey">暂无历史记录</p>
     </div>
 
-    <div v-else class="timeline">
-      <div
-        v-for="(commit, index) in history.commits"
-        :key="commit.hash"
-        class="timeline-item"
-      >
-        <div class="timeline-marker" :class="{ 'is-primary': index === 0 }"></div>
-        <div class="timeline-content">
-          <div class="box">
-            <div class="level is-mobile">
-              <div class="level-left">
-                <div class="level-item">
-                  <div>
-                    <p class="heading">{{ formatDate(commit.date) }}</p>
-                    <p class="title is-6">{{ commit.message }}</p>
-                    <p class="subtitle is-7 has-text-grey">
-                      {{ commit.author.name }}
-                      <span v-if="index === 0" class="tag is-primary is-light ml-2">
-                        最新版本
-                      </span>
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div class="level-right">
-                <div class="level-item">
-                  <div class="buttons">
-                    <button
-                      class="button is-small is-info is-light"
-                      @click="viewVersion(commit.hash)"
-                      title="查看此版本"
-                    >
-                      <IconEye :size="18" />
-                    </button>
-                    <button
-                      class="button is-small is-link is-light"
-                      @click="viewDiff(commit.hash, commit.parent?.[0])"
-                      title="对比此版本（文本）"
-                    >
-                      <IconArrowsDiff :size="18" />
-                    </button>
-                    <button
-                      class="button is-small is-warning is-light"
-                      @click="restoreVersion(commit.hash)"
-                      :disabled="commit.hash === history.currentVersion || restoringHash === commit.hash"
-                      title="恢复到此版本（会生成新提交）"
-                    >
-                      <IconRestore :size="18" />
-                    </button>
-                    <button
-                      class="button is-small is-success is-light"
-                      @click="downloadVersion(commit.hash)"
-                      title="下载此版本"
-                    >
-                      <IconDownload :size="18" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="commit-hash">
-              <code class="is-size-7">{{ commit.hash.substring(0, 8) }}</code>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <CommitList
+      v-else
+      :commits="history.commits"
+      :currentVersion="history.currentVersion"
+      :restoringHash="restoringHash"
+      :formatDate="formatDate"
+      @view-version="viewVersion"
+      @view-diff="viewDiff"
+      @restore-version="restoreVersion"
+      @download-version="downloadVersion"
+    />
 
     <div v-if="history.totalCommits > history.commits.length" class="has-text-centered mt-4">
       <button class="button is-light" @click="loadMore">
@@ -201,16 +145,13 @@
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
 import {
   IconHistory,
-  IconEye,
-  IconDownload,
-  IconRestore,
-  IconArrowsDiff,
 } from '@tabler/icons-vue';
 import { filesService } from '../../services/files.service';
 import { useAppStore } from '../../stores/app.store';
 import type { FileHistory } from '../../types';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
+import CommitList from './CommitList.vue';
 
 const props = defineProps<{
   filePath: string;
@@ -581,13 +522,13 @@ function loadMore() {
   padding: 1rem 0;
 }
 
-.timeline-item {
+:deep(.timeline-item) {
   position: relative;
   padding-left: 2rem;
   padding-bottom: 2rem;
 }
 
-.timeline-item::before {
+:deep(.timeline-item)::before {
   content: '';
   position: absolute;
   left: 0.5rem;
@@ -597,11 +538,11 @@ function loadMore() {
   background: #dbdbdb;
 }
 
-.timeline-item:last-child::before {
+:deep(.timeline-item:last-child)::before {
   display: none;
 }
 
-.timeline-marker {
+:deep(.timeline-marker) {
   position: absolute;
   left: 0;
   top: 0.5rem;
@@ -613,20 +554,20 @@ function loadMore() {
   z-index: 1;
 }
 
-.timeline-marker.is-primary {
+:deep(.timeline-marker.is-primary) {
   border-color: #3273dc;
   background: #3273dc;
 }
 
-.timeline-content {
+:deep(.timeline-content) {
   margin-left: 1rem;
 }
 
-.commit-hash {
+:deep(.commit-hash) {
   margin-top: 0.5rem;
 }
 
-.buttons {
+:deep(.buttons) {
   display: flex;
   gap: 0.25rem;
 }
@@ -695,20 +636,20 @@ function loadMore() {
 }
 
 @media screen and (max-width: 768px) {
-  .timeline-item {
+  :deep(.timeline-item) {
     padding-left: 1.5rem;
   }
 
-  .level {
+  :deep(.level) {
     flex-direction: column;
     align-items: flex-start !important;
   }
 
-  .level-right {
+  :deep(.level-right) {
     margin-top: 0.5rem;
   }
 
-  .buttons {
+  :deep(.buttons) {
     flex-direction: row;
   }
 }
