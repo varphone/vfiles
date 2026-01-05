@@ -43,13 +43,12 @@ function close() {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0;
 }
 
 .modal-card-title {
   min-width: 0;
   flex: 1 1 auto;
-  max-width: calc(100% - 3rem);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -57,7 +56,7 @@ function close() {
 
 .modal-card-head .delete {
   flex: 0 0 auto;
-  margin-left: 0;
+  margin-left: auto;
 }
 
 .modal-card-body {
