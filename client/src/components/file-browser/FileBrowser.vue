@@ -78,12 +78,6 @@
         </div>
       </div>
 
-      <Breadcrumb
-        class="is-hidden-mobile"
-        :breadcrumbs="breadcrumbs"
-        @navigate="navigateTo"
-      />
-
       <div class="file-browser-toolbar">
         <div
           v-if="isMobile && pullIndicatorVisible"
@@ -175,85 +169,6 @@
             {{ searchError }}
           </div>
         </template>
-
-        <div class="level is-mobile mb-4">
-          <div class="level-left">
-            <div class="level-item">
-              <button class="button is-primary" @click="showUploader = true">
-                <IconUpload :size="20" class="mr-2" />
-                <span>上传文件</span>
-              </button>
-            </div>
-
-            <div class="level-item">
-              <button
-                class="button is-light"
-                @click="toggleBatchMode"
-                :disabled="loading || searchLoading"
-              >
-                {{ batchMode ? "退出批量" : "批量" }}
-              </button>
-            </div>
-
-            <div v-if="batchMode" class="level-item">
-              <div class="buttons">
-                <button
-                  class="button is-light"
-                  @click="selectAllVisible"
-                  :disabled="loading || searchLoading"
-                >
-                  全选
-                </button>
-                <button
-                  class="button is-light"
-                  @click="clearSelection"
-                  :disabled="loading || searchLoading"
-                >
-                  取消选择
-                </button>
-                <button
-                  class="button is-info"
-                  @click="batchDownload"
-                  :disabled="selectedCount === 0 || searchLoading"
-                >
-                  批量下载（{{ selectedCount }}）
-                </button>
-                <button
-                  class="button is-danger"
-                  @click="batchDelete"
-                  :disabled="selectedCount === 0 || searchLoading"
-                >
-                  批量删除（{{ selectedCount }}）
-                </button>
-                <button
-                  class="button is-link"
-                  @click="batchMove"
-                  :disabled="selectedCount === 0 || searchLoading"
-                >
-                  移动
-                </button>
-                <button
-                  class="button is-warning"
-                  @click="renameSelected"
-                  :disabled="selectedCount !== 1 || searchLoading"
-                >
-                  重命名
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="level-right">
-            <div class="level-item">
-              <button
-                class="button is-light"
-                @click="refresh"
-                :disabled="loading"
-              >
-                <IconRefresh :size="20" />
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
 
       <div v-if="downloadQueue.length" class="box mb-4">
