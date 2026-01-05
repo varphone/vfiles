@@ -346,4 +346,43 @@ export class GitService {
     await scanDirectory();
     return allFiles;
   }
+
+  /**
+   * 全文搜索（最小实现）：使用 git grep 找到包含关键词的文件，返回 FileInfo 列表。
+   * 注意：使用 --fixed-strings 防止把用户输入当作正则。
+   */
+  async searchFileContents(query: string): Promise<FileInfo[]> {
+    // git grep 输出使用 / 作为分隔符
+    const result = await $`git grep -I -l --fixed-strings --ignore-case ${query} --`
+      .cwd(this.dir)
+      .quiet();
+
+    const files = result.stdout
+      .toString()
+      .split(/\r?\n/)
+      .map((s: string) => s.trim())
+      .filter(Boolean);
+
+    const infos: FileInfo[] = [];
+    for (const filePath of files) {
+      try {
+        const fullPath = path.join(this.dir, filePath);
+        const stats = await fs.stat(fullPath);
+        const lastCommit = await this.getLastCommit(filePath);
+
+        infos.push({
+          name: path.basename(filePath),
+          path: filePath,
+          type: 'file',
+          size: stats.size,
+          mtime: stats.mtime.toISOString(),
+          lastCommit,
+        });
+      } catch {
+        // ignore missing/racing files
+      }
+    }
+
+    return infos;
+  }
 }

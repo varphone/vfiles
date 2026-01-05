@@ -9,7 +9,7 @@
             v-model="searchQuery"
             class="input"
             type="text"
-            placeholder="搜索文件名..."
+            :placeholder="searchMode === 'content' ? '搜索文件内容...' : '搜索文件名...'"
             list="vfiles-search-history"
             @keyup.enter="runSearch"
           />
@@ -32,6 +32,13 @@
             清空
           </button>
         </div>
+      </div>
+
+      <div class="field mt-2">
+        <label class="checkbox">
+          <input type="checkbox" v-model="searchContent" :disabled="searchLoading" />
+          全文
+        </label>
       </div>
 
       <div v-if="searchError" class="notification is-danger is-light">
@@ -74,7 +81,7 @@
 
       <div v-else-if="searchActive" class="file-list">
         <p class="has-text-grey is-size-7 mb-2">
-          搜索结果：{{ searchResults.length }} 项
+          搜索结果：{{ searchResults.length }} 项（{{ searchMode === 'content' ? '内容' : '文件名' }}）
         </p>
         <div v-if="searchResults.length === 0" class="has-text-centered py-6">
           <p class="has-text-grey">没有找到匹配的文件</p>
@@ -124,7 +131,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import {
   IconUpload,
@@ -156,6 +163,9 @@ const searchResults = ref<FileInfo[]>([]);
 const searchLoading = ref(false);
 const searchError = ref<string | null>(null);
 const searchActive = ref(false);
+const searchContent = ref(false);
+
+const searchMode = computed(() => (searchContent.value ? 'content' : 'name'));
 
 const SEARCH_HISTORY_KEY = 'vfiles.searchHistory';
 const searchHistory = ref<string[]>([]);
@@ -257,7 +267,7 @@ async function runSearch() {
   pushSearchHistory(q);
 
   try {
-    searchResults.value = await filesService.searchFiles(q);
+    searchResults.value = await filesService.searchFiles(q, searchMode.value);
   } catch (err) {
     searchError.value = err instanceof Error ? err.message : '搜索失败';
     searchResults.value = [];

@@ -14,8 +14,13 @@ export function createSearchRoutes(gitService: GitService) {
       return c.json({ success: false, error: queryResult.message }, queryResult.status);
     }
 
+    const mode = (c.req.query('mode') || 'name').toLowerCase();
+
     try {
-      const results = await gitService.searchFiles(queryResult.value);
+      const results =
+        mode === 'content'
+          ? await gitService.searchFileContents(queryResult.value)
+          : await gitService.searchFiles(queryResult.value);
 
       return c.json({
         success: true,

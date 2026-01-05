@@ -80,8 +80,8 @@ export const filesService = {
   /**
    * 搜索文件
    */
-  async searchFiles(query: string): Promise<FileInfo[]> {
-    const response = await apiService.get<FileInfo[]>('/search', { q: query });
+  async searchFiles(query: string, mode: 'name' | 'content' = 'name'): Promise<FileInfo[]> {
+    const response = await apiService.get<FileInfo[]>('/search', { q: query, mode });
     return response.data || [];
   },
 };
