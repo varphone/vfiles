@@ -8,9 +8,45 @@
     <div class="box">
       <div class="breadcrumb-bar">
         <div class="breadcrumb-left">
-          <p class="title is-6 mb-0 breadcrumb-title" :title="currentPathLabel">
-            {{ currentPathLabel }}
-          </p>
+          <div ref="pathMenuRef" class="dropdown breadcrumb-path-dropdown" :class="{ 'is-active': pathMenuOpen }">
+            <div class="dropdown-trigger">
+              <button
+                type="button"
+                class="button is-ghost breadcrumb-path-button"
+                :title="currentPathLabel"
+                @click="togglePathMenu"
+              >
+                <IconFolder :size="18" class="mr-2" />
+                <span class="breadcrumb-title">{{ currentPathLabel }}</span>
+              </button>
+            </div>
+            <div class="dropdown-menu" role="menu">
+              <div class="dropdown-content breadcrumb-path-menu">
+                <a
+                  v-if="parentPath != null"
+                  class="dropdown-item"
+                  href="#"
+                  @click.prevent="navigateToPathAndClose(parentPath)"
+                >
+                  父目录
+                </a>
+                <div v-else class="dropdown-item is-disabled">已是根目录</div>
+
+                <hr class="dropdown-divider" />
+
+                <div v-if="childDirs.length === 0" class="dropdown-item is-disabled">无子目录</div>
+                <a
+                  v-for="dir in childDirs"
+                  :key="dir.path"
+                  class="dropdown-item"
+                  href="#"
+                  @click.prevent="navigateToPathAndClose(dir.path)"
+                >
+                  {{ dir.name }}
+                </a>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="breadcrumb-actions">
           <div class="buttons are-small mb-0">
@@ -433,6 +469,7 @@ import {
   IconUpload,
   IconRefresh,
   IconFolderOpen,
+  IconFolder,
   IconAlertCircle,
   IconSearch,
   IconArrowLeft,
@@ -774,6 +811,28 @@ onMounted(() => {
   filesStore.loadFiles();
   loadSearchHistory();
 
+  const onDocPointer = (e: MouseEvent | TouchEvent) => {
+    if (!pathMenuOpen.value) return;
+    const el = pathMenuRef.value;
+    const target = e.target as Node | null;
+    if (!el || !target) return;
+    if (!el.contains(target)) closePathMenu();
+  };
+
+  const onDocKeydown = (e: KeyboardEvent) => {
+    if (!pathMenuOpen.value) return;
+    if (e.key === 'Escape') closePathMenu();
+  };
+
+  document.addEventListener('click', onDocPointer, true);
+  document.addEventListener('touchstart', onDocPointer, true);
+  document.addEventListener('keydown', onDocKeydown);
+  onBeforeUnmount(() => {
+    document.removeEventListener('click', onDocPointer, true);
+    document.removeEventListener('touchstart', onDocPointer, true);
+    document.removeEventListener('keydown', onDocKeydown);
+  });
+
   updateIsMobile();
   try {
     const mql = window.matchMedia('(max-width: 768px)');
@@ -810,6 +869,37 @@ function goBack() {
 
 function goRoot() {
   navigateTo('');
+}
+
+const pathMenuOpen = ref(false);
+const pathMenuRef = ref<HTMLElement | null>(null);
+
+const parentPath = computed<string | null>(() => {
+  const cur = currentPath.value || '';
+  const parts = cur.split('/').filter(Boolean);
+  if (parts.length === 0) return null;
+  parts.pop();
+  return parts.join('/');
+});
+
+const childDirs = computed(() => {
+  return files.value
+    .filter((f) => f.type === 'directory')
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+});
+
+function closePathMenu() {
+  pathMenuOpen.value = false;
+}
+
+function togglePathMenu() {
+  pathMenuOpen.value = !pathMenuOpen.value;
+}
+
+function navigateToPathAndClose(path: string) {
+  closePathMenu();
+  navigateTo(path);
 }
 
 const dirManagerOpen = ref(false);
@@ -1006,7 +1096,7 @@ const touchStart = ref({ x: 0, y: 0, t: 0 });
 const touchMode = ref<'none' | 'pull' | 'swipe'>('none');
 
 const anyModalOpen = computed(() => {
-  return showUploader.value || showHistory.value || preview.value.open;
+  return showUploader.value || showHistory.value || preview.value.open || pathMenuOpen.value;
 });
 
 function onTouchStart(e: TouchEvent) {
@@ -1457,6 +1547,25 @@ async function renameSelected() {
 
 .breadcrumb-actions {
   flex: 0 0 auto;
+}
+
+.breadcrumb-path-dropdown {
+  min-width: 0;
+}
+
+.breadcrumb-path-button {
+  padding: 0;
+  min-width: 0;
+  height: auto;
+}
+
+.breadcrumb-path-button :deep(.icon) {
+  flex: 0 0 auto;
+}
+
+.breadcrumb-path-menu {
+  max-height: 50vh;
+  overflow: auto;
 }
 
 .breadcrumb-icon-button {
