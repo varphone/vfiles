@@ -181,11 +181,59 @@
     >
       <VersionHistory v-if="selectedFile" :file-path="selectedFile.path" />
     </Modal>
+
+    <!-- 预览对话框（当前版本） -->
+    <Modal
+      :show="preview.open"
+      :title="`预览: ${previewFilename}`"
+      @close="closePreview"
+    >
+      <div v-if="preview.loading" class="has-text-centered py-6">
+        <div class="spinner mb-3"></div>
+        <p class="has-text-grey">加载预览中...</p>
+      </div>
+
+      <div v-else-if="preview.error" class="notification is-danger is-light">
+        {{ preview.error }}
+      </div>
+
+      <div v-else>
+        <figure v-if="preview.kind === 'image'" class="image">
+          <img :src="preview.objectUrl" :alt="previewFilename" />
+        </figure>
+
+        <div v-else-if="preview.kind === 'pdf'" class="preview-frame">
+          <iframe :src="preview.objectUrl" title="PDF 预览" class="preview-iframe" />
+        </div>
+
+        <div v-else-if="preview.kind === 'video'" class="preview-media">
+          <video :src="preview.objectUrl" controls class="preview-video" />
+        </div>
+
+        <div v-else-if="preview.kind === 'audio'" class="preview-media">
+          <audio :src="preview.objectUrl" controls class="preview-audio" />
+        </div>
+
+        <div v-else-if="preview.kind === 'markdown'" class="content markdown-body" v-html="preview.html"></div>
+
+        <div v-else-if="preview.kind === 'code'" class="content">
+          <pre class="preview-code hljs"><code v-html="preview.html"></code></pre>
+        </div>
+
+        <div v-else-if="preview.kind === 'text'" class="content">
+          <pre class="preview-text">{{ preview.text }}</pre>
+        </div>
+
+        <div v-else class="notification is-warning is-light">
+          暂不支持该文件类型的在线预览，请使用下载。
+        </div>
+      </div>
+    </Modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import {
   IconUpload,
@@ -203,6 +251,8 @@ import FileUploader from '../file-uploader/FileUploader.vue';
 import VersionHistory from '../version-history/VersionHistory.vue';
 import Modal from '../common/Modal.vue';
 import type { FileInfo } from '../../types';
+import { marked } from 'marked';
+import hljs from 'highlight.js';
 
 const filesStore = useFilesStore();
 const appStore = useAppStore();
@@ -211,6 +261,182 @@ const { files, breadcrumbs, loading, error } = storeToRefs(filesStore);
 const showUploader = ref(false);
 const showHistory = ref(false);
 const selectedFile = ref<FileInfo | null>(null);
+
+type PreviewKind = 'text' | 'image' | 'markdown' | 'code' | 'pdf' | 'video' | 'audio' | 'unsupported';
+const preview = ref({
+  open: false,
+  loading: false,
+  error: null as string | null,
+  path: '',
+  kind: 'text' as PreviewKind,
+  text: '',
+  html: '',
+  objectUrl: '',
+});
+
+const previewFilename = computed(() => preview.value.path.split('/').pop() || 'file');
+
+function getExtension(p: string): string {
+  const name = p.split('/').pop() || '';
+  const idx = name.lastIndexOf('.');
+  if (idx <= 0 || idx === name.length - 1) return '';
+  return name.slice(idx + 1).toLowerCase();
+}
+
+function detectPreviewKind(filePath: string): PreviewKind {
+  const ext = getExtension(filePath);
+  const imageExts = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
+  if (imageExts.has(ext)) return 'image';
+
+  if (ext === 'pdf') return 'pdf';
+
+  const videoExts = new Set(['mp4', 'webm', 'ogg', 'mov', 'm4v']);
+  if (videoExts.has(ext)) return 'video';
+
+  const audioExts = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac']);
+  if (audioExts.has(ext)) return 'audio';
+
+  const mdExts = new Set(['md', 'markdown']);
+  if (mdExts.has(ext)) return 'markdown';
+
+  const codeExts = new Set([
+    'js',
+    'ts',
+    'jsx',
+    'tsx',
+    'vue',
+    'json',
+    'css',
+    'scss',
+    'html',
+    'xml',
+    'yml',
+    'yaml',
+    'csv',
+    'log',
+    'sh',
+    'py',
+    'java',
+    'c',
+    'cpp',
+    'go',
+    'rs',
+  ]);
+  if (codeExts.has(ext)) return 'code';
+
+  const textExts = new Set(['txt', 'log']);
+  if (textExts.has(ext) || ext === '') return 'text';
+
+  return 'unsupported';
+}
+
+function guessMimeByExt(filePath: string): string {
+  const ext = getExtension(filePath);
+  if (ext === 'pdf') return 'application/pdf';
+  if (ext === 'svg') return 'image/svg+xml';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'gif') return 'image/gif';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'bmp') return 'image/bmp';
+
+  if (ext === 'mp4' || ext === 'm4v') return 'video/mp4';
+  if (ext === 'webm') return 'video/webm';
+  if (ext === 'mov') return 'video/quicktime';
+  if (ext === 'ogg') return 'application/ogg';
+
+  if (ext === 'mp3') return 'audio/mpeg';
+  if (ext === 'wav') return 'audio/wav';
+  if (ext === 'm4a') return 'audio/mp4';
+  if (ext === 'aac') return 'audio/aac';
+  if (ext === 'flac') return 'audio/flac';
+
+  return 'application/octet-stream';
+}
+
+function escapeHtml(input: string): string {
+  return input
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function safeLinkHref(href: string | null | undefined): string {
+  const raw = (href || '').trim();
+  if (!raw) return '#';
+  if (raw.startsWith('#')) return raw;
+  if (raw.startsWith('/')) return raw;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^mailto:/i.test(raw)) return raw;
+  return '#';
+}
+
+marked.use({
+  renderer: {
+    html(html) {
+      return escapeHtml(html);
+    },
+    link(href, title, text) {
+      const safeHref = safeLinkHref(href);
+      const t = title ? ` title="${escapeHtml(title)}"` : '';
+      return `<a href="${escapeHtml(safeHref)}"${t} target="_blank" rel="noopener noreferrer">${text}</a>`;
+    },
+  },
+  gfm: true,
+  breaks: true,
+});
+
+function closePreview() {
+  if (preview.value.objectUrl) URL.revokeObjectURL(preview.value.objectUrl);
+  preview.value = {
+    open: false,
+    loading: false,
+    error: null,
+    path: '',
+    kind: 'text',
+    text: '',
+    html: '',
+    objectUrl: '',
+  };
+}
+
+async function openPreview(filePath: string) {
+  closePreview();
+  preview.value.open = true;
+  preview.value.loading = true;
+  preview.value.path = filePath;
+  preview.value.kind = detectPreviewKind(filePath);
+
+  try {
+    if (preview.value.kind === 'unsupported') {
+      preview.value.loading = false;
+      return;
+    }
+
+    const blob = await filesService.getFileContent(filePath);
+
+    if (preview.value.kind === 'image' || preview.value.kind === 'pdf' || preview.value.kind === 'video' || preview.value.kind === 'audio') {
+      const typed = new Blob([await blob.arrayBuffer()], { type: guessMimeByExt(filePath) });
+      preview.value.objectUrl = URL.createObjectURL(typed);
+    } else {
+      const text = await blob.text();
+      if (preview.value.kind === 'markdown') {
+        preview.value.html = marked.parse(text) as string;
+      } else if (preview.value.kind === 'code') {
+        const highlighted = hljs.highlightAuto(text);
+        preview.value.html = highlighted.value;
+      } else {
+        preview.value.text = text;
+      }
+    }
+  } catch (err) {
+    preview.value.error = err instanceof Error ? err.message : '预览失败';
+  } finally {
+    preview.value.loading = false;
+  }
+}
 
 const searchQuery = ref('');
 const searchResults = ref<FileInfo[]>([]);
@@ -268,6 +494,10 @@ onMounted(() => {
   loadSearchHistory();
 });
 
+onBeforeUnmount(() => {
+  closePreview();
+});
+
 function navigateTo(path: string) {
   filesStore.navigateTo(path);
 }
@@ -279,14 +509,20 @@ function refresh() {
 function handleFileClick(file: FileInfo) {
   if (file.type === 'directory') {
     navigateTo(file.path);
+    return;
   }
+
+  openPreview(file.path);
 }
 
 function handleSearchItemClick(file: FileInfo) {
   if (file.type === 'directory') {
     clearSearch();
     navigateTo(file.path);
+    return;
   }
+
+  openPreview(file.path);
 }
 
 function handleDownload(file: FileInfo) {
@@ -520,6 +756,62 @@ async function renameSelected() {
   to {
     transform: rotate(360deg);
   }
+}
+
+.preview-text {
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.preview-frame {
+  height: 70vh;
+}
+
+.preview-iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.preview-media {
+  max-height: 70vh;
+}
+
+.preview-video {
+  width: 100%;
+  max-height: 70vh;
+}
+
+.preview-audio {
+  width: 100%;
+}
+
+.markdown-body :deep(pre) {
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.preview-code {
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre;
+}
+
+.hljs :deep(.hljs-comment),
+.hljs :deep(.hljs-quote) {
+  opacity: 0.7;
+}
+
+.hljs :deep(.hljs-keyword),
+.hljs :deep(.hljs-selector-tag),
+.hljs :deep(.hljs-title) {
+  font-weight: 600;
+}
+
+.hljs :deep(.hljs-string) {
+  font-style: italic;
 }
 
 @media screen and (max-width: 768px) {

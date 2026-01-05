@@ -177,7 +177,7 @@ client/
 - [ ] `FileList.vue` - 文件列表（当前直接在 FileBrowser 内渲染）
 - [x] `FileItem.vue` - 单个文件项
 - [x] `Breadcrumb.vue` - 面包屑导航
-- [ ] `FilePreview.vue` - 文件预览（未实现）
+- [x] 文件预览（已实现：点击文件弹窗预览当前版本）
 - [ ] `ContextMenu.vue` - 右键菜单（未实现）
 
 **功能:**
