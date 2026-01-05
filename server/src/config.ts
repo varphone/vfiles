@@ -143,6 +143,12 @@ export const config = {
     enabled: (process.env.ENABLE_AUTH || "false").toLowerCase() === "true",
     secret: process.env.AUTH_SECRET || "",
     cookieName: process.env.AUTH_COOKIE_NAME || "vfiles_session",
+    cookieSecure: (() => {
+      const raw = (process.env.AUTH_COOKIE_SECURE || "").toLowerCase();
+      if (raw === "true") return true;
+      if (raw === "false") return false;
+      return undefined;
+    })(),
     tokenTtlSeconds: parseInt(
       process.env.AUTH_TOKEN_TTL_SECONDS || String(7 * 24 * 60 * 60),
     ),
@@ -151,6 +157,16 @@ export const config = {
       path.resolve(process.cwd(), ".vfiles_auth", "users.json"),
     allowRegister:
       (process.env.AUTH_ALLOW_REGISTER || "true").toLowerCase() !== "false",
+    // 登录额外限流：按 IP + username（与全局 /api 限流叠加）
+    loginRateLimit: {
+      enabled:
+        (process.env.AUTH_LOGIN_RATE_LIMIT_ENABLED || "true").toLowerCase() !==
+        "false",
+      windowMs: parseInt(
+        process.env.AUTH_LOGIN_RATE_LIMIT_WINDOW_MS || String(5 * 60 * 1000),
+      ),
+      max: parseInt(process.env.AUTH_LOGIN_RATE_LIMIT_MAX || "10"),
+    },
   },
 
   // 多用户隔离（v1.1.0）：每个用户使用独立仓库路径

@@ -24,9 +24,15 @@ ENABLE_AUTH=false
 # ENABLE_AUTH=true 时必须设置（用于签名登录 cookie）
 AUTH_SECRET=
 AUTH_COOKIE_NAME=vfiles_session
+AUTH_COOKIE_SECURE=
 AUTH_TOKEN_TTL_SECONDS=604800
 AUTH_STORAGE_PATH=./.vfiles_auth/users.json
 AUTH_ALLOW_REGISTER=true
+
+# 登录额外限流（与全局 /api 限流叠加）
+AUTH_LOGIN_RATE_LIMIT_ENABLED=true
+AUTH_LOGIN_RATE_LIMIT_WINDOW_MS=300000
+AUTH_LOGIN_RATE_LIMIT_MAX=10
 
 # 多用户隔离（v1.1.0）
 # 依赖登录用户名映射到独立仓库目录

@@ -9,6 +9,12 @@ export interface AuthConfig {
   cookieName: string;
   tokenTtlSeconds: number;
   allowRegister: boolean;
+  cookieSecure?: boolean;
+  loginRateLimit: {
+    enabled: boolean;
+    windowMs: number;
+    max: number;
+  };
 }
 
 export interface AuthUserCtx {
@@ -17,12 +23,32 @@ export interface AuthUserCtx {
   role: string;
 }
 
+function isSecureRequest(c: Context): boolean {
+  const xfProto = c.req.header("x-forwarded-proto");
+  if (xfProto) {
+    const first = xfProto.split(",")[0]?.trim().toLowerCase();
+    if (first === "https") return true;
+  }
+  try {
+    return new URL(c.req.url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function shouldUseSecureCookie(c: Context, cfg: AuthConfig): boolean {
+  if (typeof cfg.cookieSecure === "boolean") return cfg.cookieSecure;
+  // 生产环境默认要求 HTTPS
+  if (process.env.NODE_ENV === "production") return true;
+  return isSecureRequest(c);
+}
+
 export function setAuthCookie(c: Context, cfg: AuthConfig, token: string) {
   // maxAge seconds
   setCookie(c, cfg.cookieName, token, {
     httpOnly: true,
     sameSite: "Lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookie(c, cfg),
     path: "/",
     maxAge: cfg.tokenTtlSeconds,
   });
@@ -46,11 +72,19 @@ export function authMiddleware(cfg: AuthConfig, userStore: UserStore) {
       if (verified.ok) {
         const user = await userStore.getUserById(verified.payload.sub);
         if (user && !user.disabled) {
-          c.set("authUser", {
-            id: user.id,
-            username: user.username,
-            role: user.role,
-          } satisfies AuthUserCtx);
+          const userSv = user.sessionVersion ?? 0;
+          const tokenSv = verified.payload.sv ?? 0;
+          if (tokenSv !== userSv) {
+            clearAuthCookie(c, cfg);
+            // 不设置 authUser，后续会按未登录处理
+            // 继续执行本中间件剩余逻辑（不要提前 next 以免绕过鉴权）
+          } else {
+            c.set("authUser", {
+              id: user.id,
+              username: user.username,
+              role: user.role,
+            } satisfies AuthUserCtx);
+          }
         } else {
           clearAuthCookie(c, cfg);
         }

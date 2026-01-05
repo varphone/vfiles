@@ -10,6 +10,8 @@ export interface PublicUser {
 
 export interface StoredUser extends PublicUser {
   passwordHash: string;
+  // 用于强制撤销历史会话（token 中携带 sv，需与此值匹配）
+  sessionVersion?: number;
 }
 
 export interface UserStoreData {

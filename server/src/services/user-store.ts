@@ -88,7 +88,7 @@ export class UserStore {
 
   async listUsers(): Promise<Omit<StoredUser, "passwordHash">[]> {
     const data = await this.loadUnsafe();
-    return data.users.map(({ passwordHash: _ph, ...rest }) => rest);
+    return data.users.map(({ passwordHash: _ph, sessionVersion: _sv, ...rest }) => rest);
   }
 
   async getUserById(id: string): Promise<StoredUser | undefined> {
@@ -125,6 +125,7 @@ export class UserStore {
       role,
       createdAt,
       passwordHash: await hashPassword(input.password),
+      sessionVersion: 0,
     };
 
     await (this.writeChain = this.writeChain.then(async () => {
@@ -162,6 +163,18 @@ export class UserStore {
       const user = data.users.find((u) => u.id === userId);
       if (!user) throw new Error("用户不存在");
       user.disabled = disabled;
+      // 变更禁用状态时，顺便撤销历史会话
+      user.sessionVersion = (user.sessionVersion ?? 0) + 1;
+      await this.saveUnsafe(data);
+    }));
+  }
+
+  async bumpSessionVersion(userId: string): Promise<void> {
+    await (this.writeChain = this.writeChain.then(async () => {
+      const data = await this.loadUnsafe();
+      const user = data.users.find((u) => u.id === userId);
+      if (!user) throw new Error("用户不存在");
+      user.sessionVersion = (user.sessionVersion ?? 0) + 1;
       await this.saveUnsafe(data);
     }));
   }

@@ -1,11 +1,12 @@
 import crypto from "node:crypto";
 
 export interface AuthTokenPayload {
-  v: 1;
+  v: 1 | 2;
   sub: string; // user id
   username: string;
   role: string;
   exp: number; // seconds
+  sv?: number; // sessionVersion
 }
 
 function base64UrlEncode(buf: Uint8Array): string {
@@ -65,8 +66,11 @@ export function verifyAuthToken(
     return { ok: false, reason: "bad_payload" };
   }
 
-  if (!payload || payload.v !== 1) return { ok: false, reason: "bad_payload" };
+  if (!payload || (payload.v !== 1 && payload.v !== 2))
+    return { ok: false, reason: "bad_payload" };
   if (typeof payload.exp !== "number")
+    return { ok: false, reason: "bad_payload" };
+  if (payload.v === 2 && typeof payload.sv !== "number")
     return { ok: false, reason: "bad_payload" };
   const nowSec = Math.floor(Date.now() / 1000);
   if (payload.exp <= nowSec) return { ok: false, reason: "expired" };

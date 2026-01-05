@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { UserStore, verifyPassword } from "../services/user-store.js";
 import type { AuthConfig, AuthUserCtx } from "../middleware/auth.js";
+import { loginRateLimit } from "../middleware/login-rate-limit.js";
 import {
   clearAuthCookie,
   requireAdmin,
@@ -27,6 +28,9 @@ function toPublicUser(u: {
 
 export function createAuthRoutes(cfg: AuthConfig, userStore: UserStore) {
   const app = new Hono();
+
+  // 登录防爆破（与全局 /api 限流叠加）
+  app.use("/login", loginRateLimit(cfg.loginRateLimit));
 
   app.get("/me", async (c) => {
     if (!cfg.enabled) {
@@ -81,11 +85,12 @@ export function createAuthRoutes(cfg: AuthConfig, userStore: UserStore) {
       const exp = Math.floor(Date.now() / 1000) + cfg.tokenTtlSeconds;
       const token = signAuthToken(
         {
-          v: 1,
+          v: 2,
           sub: created.id,
           username: created.username,
           role: created.role,
           exp,
+          sv: (created.sessionVersion ?? 0) as number,
         },
         cfg.secret,
       );
@@ -139,11 +144,12 @@ export function createAuthRoutes(cfg: AuthConfig, userStore: UserStore) {
     const exp = Math.floor(Date.now() / 1000) + cfg.tokenTtlSeconds;
     const token = signAuthToken(
       {
-        v: 1,
+        v: 2,
         sub: user.id,
         username: user.username,
         role: user.role,
         exp,
+        sv: (user.sessionVersion ?? 0) as number,
       },
       cfg.secret,
     );
@@ -212,6 +218,24 @@ export function createAuthRoutes(cfg: AuthConfig, userStore: UserStore) {
 
     try {
       await userStore.setUserDisabled(c.req.param("id"), disabled);
+      return c.json({ success: true });
+    } catch (e) {
+      return c.json(
+        { success: false, error: (e as Error).message || "更新失败" },
+        400,
+      );
+    }
+  });
+
+  // 强制撤销该用户的所有历史会话（使旧 cookie 立刻失效）
+  app.post("/users/:id/revoke-sessions", async (c) => {
+    if (!cfg.enabled)
+      return c.json({ success: false, error: "未启用认证" }, 400);
+    const guard = requireAdmin(c);
+    if (!guard.ok) return guard.res;
+
+    try {
+      await userStore.bumpSessionVersion(c.req.param("id"));
       return c.json({ success: true });
     } catch (e) {
       return c.json(
