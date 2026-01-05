@@ -16,6 +16,7 @@ import { createSearchRoutes } from "./routes/search.routes.js";
 import { createAuthRoutes } from "./routes/auth.routes.js";
 import { UserStore } from "./services/user-store.js";
 import { GitServiceManager } from "./services/git-service-manager.js";
+import { EmailService } from "./services/email.service.js";
 
 const app = new Hono();
 
@@ -42,6 +43,20 @@ app.use("/api/*", rateLimit(config.rateLimit));
 const userStore = new UserStore(config.auth.storagePath);
 app.use("/api/*", authMiddleware(config.auth, userStore));
 
+// 邮件服务（v1.1.2）
+const emailService = new EmailService({
+  enabled:
+    config.email.enabled &&
+    Boolean(config.email.host) &&
+    Boolean(config.email.from),
+  host: config.email.host,
+  port: config.email.port,
+  secure: config.email.secure,
+  user: config.email.user || undefined,
+  pass: config.email.pass || undefined,
+  from: config.email.from,
+});
+
 // 仓库上下文（v1.1.0）
 app.use("/api/*", repoContextMiddleware());
 
@@ -53,7 +68,12 @@ app.get("/health", (c) => {
 });
 
 // API路由
-app.route("/api/auth", createAuthRoutes(config.auth, userStore));
+app.route(
+  "/api/auth",
+  createAuthRoutes(config.auth, userStore, emailService, {
+    publicBaseUrl: config.email.publicBaseUrl,
+  }),
+);
 app.route("/api/files", createFilesRoutes(gitManager));
 app.route("/api/history", createHistoryRoutes(gitManager));
 app.route("/api/download", createDownloadRoutes(gitManager));

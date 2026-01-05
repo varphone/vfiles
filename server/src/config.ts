@@ -167,6 +167,27 @@ export const config = {
       ),
       max: parseInt(process.env.AUTH_LOGIN_RATE_LIMIT_MAX || "10"),
     },
+
+    // 忘记密码 / 邮箱验证码登录
+    passwordResetTokenTtlSeconds: parseInt(
+      process.env.AUTH_PASSWORD_RESET_TOKEN_TTL_SECONDS || String(30 * 60),
+    ),
+    emailLoginCodeTtlSeconds: parseInt(
+      process.env.AUTH_EMAIL_LOGIN_CODE_TTL_SECONDS || String(10 * 60),
+    ),
+  },
+
+  // 邮件系统（v1.1.2）
+  email: {
+    enabled:
+      (process.env.EMAIL_ENABLED || "false").toLowerCase() === "true",
+    host: process.env.SMTP_HOST || "",
+    port: parseInt(process.env.SMTP_PORT || "587"),
+    secure: (process.env.SMTP_SECURE || "false").toLowerCase() === "true",
+    user: process.env.SMTP_USER || "",
+    pass: process.env.SMTP_PASS || "",
+    from: process.env.SMTP_FROM || "",
+    publicBaseUrl: process.env.PUBLIC_BASE_URL || "",
   },
 
   // 多用户隔离（v1.1.0）：每个用户使用独立仓库路径
