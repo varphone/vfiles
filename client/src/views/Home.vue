@@ -1,11 +1,11 @@
 <template>
   <div class="home">
     <!-- 移动端导航菜单 -->
-    <nav class="navbar is-primary is-hidden-tablet is-fixed-top mobile-top-bar" role="navigation" aria-label="移动端导航">
+    <nav class="navbar is-hidden-tablet is-fixed-top mobile-top-bar" role="navigation" aria-label="移动端导航">
       <div class="navbar-brand">
         <div class="navbar-item">
           <IconFiles :size="22" class="mr-2" />
-          <span>VFiles</span>
+          <span class="mobile-brand-title">VFiles</span>
         </div>
 
         <a
@@ -567,6 +567,26 @@ function toggleBatchAndClose() {
 
   .mobile-top-bar {
     padding-top: env(safe-area-inset-top);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  }
+
+  .mobile-brand-title {
+    font-weight: 700;
+    background-image: linear-gradient(
+      90deg,
+      hsl(0 90% 60%),
+      hsl(35 90% 55%),
+      hsl(55 95% 50%),
+      hsl(120 65% 45%),
+      hsl(200 85% 55%),
+      hsl(260 85% 65%),
+      hsl(320 85% 60%)
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
   }
 
   .mobile-bottom-bar {
@@ -575,6 +595,7 @@ function toggleBatchAndClose() {
     right: 0;
     bottom: calc(env(safe-area-inset-bottom) + var(--vv-bottom, 0px));
     z-index: 2000;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.18);
   }
 
   .home-content {
