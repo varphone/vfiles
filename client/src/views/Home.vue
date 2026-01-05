@@ -60,11 +60,42 @@
 
     <!-- 移动端底部操作栏：左侧操作菜单 + 右侧动态操作区 -->
     <nav
-      class="navbar is-fixed-bottom is-hidden-tablet has-background-white mobile-bottom-bar"
+      class="navbar is-fixed-bottom is-hidden-tablet has-background-dark mobile-bottom-bar"
       role="navigation"
       aria-label="底部操作栏"
     >
       <div class="mobile-bottom-bar-inner">
+        <div class="mobile-bottom-bar-top">
+          <!-- 搜索栏：始终显示（操作栏上半部分） -->
+          <div class="field has-addons mb-0 mobile-search-field">
+            <div class="control is-expanded">
+              <input
+                v-model="mobileSearchQuery"
+                class="input is-small"
+                type="text"
+                placeholder="搜索..."
+                @keyup.enter="runMobileSearch"
+              />
+            </div>
+            <div class="control">
+              <button
+                class="button is-link is-small"
+                :class="{ 'is-loading': isSearchLoading }"
+                :disabled="isSearchLoading"
+                @click="runMobileSearch"
+              >
+                <IconSearch :size="18" />
+              </button>
+            </div>
+            <div class="control">
+              <button class="button is-light is-small" :disabled="isSearchLoading" @click="clearMobileSearch">
+                清空
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="mobile-bottom-bar-bottom">
         <div class="dropdown is-up" :class="{ 'is-active': actionMenuOpen }">
           <div class="dropdown-trigger">
             <button
@@ -80,7 +111,6 @@
           <div class="dropdown-menu" role="menu">
             <div class="dropdown-content">
               <a class="dropdown-item" href="#" @click.prevent="setActionMode('nav')">导航</a>
-              <a class="dropdown-item" href="#" @click.prevent="setActionMode('search')">搜索</a>
               <a class="dropdown-item" href="#" @click.prevent="setActionMode('batch')">批量</a>
             </div>
           </div>
@@ -101,29 +131,6 @@
             <button class="button is-light" @click="refresh" title="刷新">
               <IconRefresh :size="18" />
             </button>
-          </div>
-
-          <!-- 搜索模式 -->
-          <div v-else-if="actionMode === 'search'" class="field has-addons mb-0 mobile-search-field">
-            <div class="control is-expanded">
-              <input
-                v-model="mobileSearchQuery"
-                class="input is-small"
-                type="text"
-                placeholder="搜索..."
-                @keyup.enter="runMobileSearch"
-              />
-            </div>
-            <div class="control">
-              <button class="button is-link is-small" :class="{ 'is-loading': isSearchLoading }" :disabled="isSearchLoading" @click="runMobileSearch">
-                <IconSearch :size="18" />
-              </button>
-            </div>
-            <div class="control">
-              <button class="button is-light is-small" :disabled="isSearchLoading" @click="clearMobileSearch">
-                清空
-              </button>
-            </div>
           </div>
 
           <!-- 批量模式 -->
@@ -191,6 +198,7 @@
             </div>
           </div>
         </div>
+        </div>
       </div>
     </nav>
   </div>
@@ -237,7 +245,7 @@ const browserRef = ref<FileBrowserHandle | null>(null);
 const mobileMenuOpen = ref(false);
 
 const actionMenuOpen = ref(false);
-const actionMode = ref<'nav' | 'search' | 'batch'>('nav');
+const actionMode = ref<'nav' | 'batch'>('nav');
 const mobileSearchQuery = ref('');
 const batchMenuOpen = ref(false);
 
@@ -298,7 +306,7 @@ const isBatchMode = computed(() => browserRef.value?.batchMode?.value ?? false);
 const selectedCount = computed(() => browserRef.value?.selectedCount?.value ?? 0);
 const isSearchLoading = computed(() => browserRef.value?.searchLoading?.value ?? false);
 
-function setActionMode(mode: 'nav' | 'search' | 'batch') {
+function setActionMode(mode: 'nav' | 'batch') {
   actionMode.value = mode;
   actionMenuOpen.value = false;
   batchMenuOpen.value = false;
@@ -433,10 +441,22 @@ function toggleBatchAndClose() {
   .mobile-bottom-bar-inner {
     width: 100%;
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: stretch;
     gap: 0.5rem;
     padding: 0.5rem;
     padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+  }
+
+  .mobile-bottom-bar-top {
+    padding: 0.25rem;
+    border-radius: 0.25rem;
+  }
+
+  .mobile-bottom-bar-bottom {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   .mobile-action-panel {
@@ -450,7 +470,6 @@ function toggleBatchAndClose() {
   .mobile-search-field {
     width: 100%;
     min-width: 0;
-    margin-left: auto;
   }
 
   .mobile-batch-panel {
