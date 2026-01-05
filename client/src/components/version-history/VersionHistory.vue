@@ -303,11 +303,11 @@ function getExtension(p: string): string {
 
 function escapeHtml(input: string): string {
   return input
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function safeLinkHref(href: string | null | undefined): string {
@@ -321,18 +321,27 @@ function safeLinkHref(href: string | null | undefined): string {
   return '#';
 }
 
-marked.use({
-  // 防止 Markdown 原始 HTML 直接注入
-  renderer: {
-    html(html) {
-      return escapeHtml(html);
-    },
-    link(href, title, text) {
-      const safeHref = safeLinkHref(href);
-      const t = title ? ` title="${escapeHtml(title)}"` : '';
-      return `<a href="${escapeHtml(safeHref)}"${t} target="_blank" rel="noopener noreferrer">${text}</a>`;
-    },
+const mdRenderer: any = {
+  // 防止 Markdown 原始 HTML 直接注入（marked 新版会传 token 对象）
+  html(token: any) {
+    const html = typeof token === 'string' ? token : token?.text ?? token?.raw ?? '';
+    return escapeHtml(String(html));
   },
+  link(tokenOrHref: any, title?: any, text?: any) {
+    // 兼容：新版传 token 对象；旧版传 (href, title, text)
+    const href = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.href : tokenOrHref;
+    const linkTitle = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.title : title;
+    const linkText = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.text : text;
+
+    const safeHref = safeLinkHref(href);
+    const t = linkTitle ? ` title="${escapeHtml(String(linkTitle))}"` : '';
+    const inner = typeof linkText === 'string' ? (marked.parseInline(linkText) as string) : '';
+    return `<a href="${escapeHtml(safeHref)}"${t} target="_blank" rel="noopener noreferrer">${inner}</a>`;
+  },
+};
+
+marked.use({
+  renderer: mdRenderer,
   gfm: true,
   breaks: true,
 });

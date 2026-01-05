@@ -112,6 +112,90 @@
         </div>
       </div>
 
+      <div v-if="downloadQueue.length" class="box mb-4">
+        <div class="level is-mobile">
+          <div class="level-left">
+            <div class="level-item">
+              <div>
+                <p class="heading">下载队列</p>
+                <p class="title is-6">
+                  {{ downloadQueue.length }} 项
+                  <span v-if="downloading" class="tag is-info is-light ml-2">下载中</span>
+                  <span v-if="queueCollapsed && activeDownload" class="tag is-light ml-2 is-size-7">
+                    {{ activeDownload.filename }}
+                    <span v-if="activeDownloadPercent != null"> · {{ activeDownloadPercent }}%</span>
+                  </span>
+                </p>
+              </div>
+            </div>
+          </div>
+          <div class="level-right">
+            <div class="level-item">
+              <div class="buttons">
+                <button class="button is-small is-light" @click="toggleQueuePanel" :disabled="!downloadQueue.length">
+                  {{ queueCollapsed ? '展开' : '最小化' }}
+                </button>
+                <button class="button is-small is-light" @click="clearFinished" :disabled="downloading && downloadQueue.length === 1">
+                  清空已完成
+                </button>
+                <button class="button is-small is-danger is-light" @click="cancelAll" :disabled="!downloadQueue.length">
+                  全部取消
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="!queueCollapsed" class="content">
+          <div v-for="item in downloadQueue" :key="item.id" class="download-item">
+            <div class="is-flex is-justify-content-space-between is-align-items-center">
+              <div class="mr-2" style="min-width: 0">
+                <strong class="is-size-7">{{ item.filename }}</strong>
+                <span class="tag is-light ml-2 is-size-7">{{ item.kind === 'folder' ? 'ZIP' : '文件' }}</span>
+                <span v-if="item.status === 'queued'" class="tag is-light ml-2 is-size-7">排队中</span>
+                <span v-else-if="item.status === 'downloading'" class="tag is-info is-light ml-2 is-size-7">下载中</span>
+                <span v-else-if="item.status === 'done'" class="tag is-success is-light ml-2 is-size-7">完成</span>
+                <span v-else-if="item.status === 'canceled'" class="tag is-warning is-light ml-2 is-size-7">已取消</span>
+                <span v-else-if="item.status === 'error'" class="tag is-danger is-light ml-2 is-size-7">失败</span>
+              </div>
+
+              <div class="buttons is-right">
+                <button
+                  v-if="item.status === 'queued' || item.status === 'downloading'"
+                  class="button is-small is-light"
+                  @click="cancelItem(item.id)"
+                >
+                  取消
+                </button>
+                <button
+                  v-else
+                  class="button is-small is-light"
+                  @click="removeItem(item.id)"
+                >
+                  移除
+                </button>
+              </div>
+            </div>
+
+            <progress
+              v-if="item.status === 'downloading' && item.progress && item.progress.total"
+              class="progress is-small is-info mt-2"
+              :value="item.progress.loaded"
+              :max="item.progress.total"
+            ></progress>
+            <progress
+              v-else-if="item.status === 'downloading'"
+              class="progress is-small is-info mt-2"
+              max="100"
+            ></progress>
+
+            <p v-if="item.error" class="has-text-danger is-size-7 mt-1">
+              {{ item.error }}
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div v-if="loading" class="has-text-centered py-6">
         <div class="spinner mb-3"></div>
         <p class="has-text-grey">加载中...</p>
@@ -356,11 +440,11 @@ function guessMimeByExt(filePath: string): string {
 
 function escapeHtml(input: string): string {
   return input
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function safeLinkHref(href: string | null | undefined): string {
@@ -373,17 +457,27 @@ function safeLinkHref(href: string | null | undefined): string {
   return '#';
 }
 
-marked.use({
-  renderer: {
-    html(html) {
-      return escapeHtml(html);
-    },
-    link(href, title, text) {
-      const safeHref = safeLinkHref(href);
-      const t = title ? ` title="${escapeHtml(title)}"` : '';
-      return `<a href="${escapeHtml(safeHref)}"${t} target="_blank" rel="noopener noreferrer">${text}</a>`;
-    },
+const mdRenderer: any = {
+  // 防止 Markdown 原始 HTML 直接注入（marked 新版会传 token 对象）
+  html(token: any) {
+    const html = typeof token === 'string' ? token : token?.text ?? token?.raw ?? '';
+    return escapeHtml(String(html));
   },
+  link(tokenOrHref: any, title?: any, text?: any) {
+    // 兼容：新版传 token 对象；旧版传 (href, title, text)
+    const href = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.href : tokenOrHref;
+    const linkTitle = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.title : title;
+    const linkText = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.text : text;
+
+    const safeHref = safeLinkHref(href);
+    const t = linkTitle ? ` title="${escapeHtml(String(linkTitle))}"` : '';
+    const inner = typeof linkText === 'string' ? (marked.parseInline(linkText) as string) : '';
+    return `<a href="${escapeHtml(safeHref)}"${t} target="_blank" rel="noopener noreferrer">${inner}</a>`;
+  },
+};
+
+marked.use({
+  renderer: mdRenderer,
   gfm: true,
   breaks: true,
 });
@@ -444,6 +538,32 @@ const searchLoading = ref(false);
 const searchError = ref<string | null>(null);
 const searchActive = ref(false);
 const searchContent = ref(false);
+
+const queueCollapsed = ref(false);
+const activeDownload = computed(() => downloadQueue.value.find((x) => x.status === 'downloading'));
+const activeDownloadPercent = computed(() => {
+  const a = activeDownload.value;
+  if (!a?.progress?.total) return null;
+  if (a.progress.total <= 0) return null;
+  return Math.min(100, Math.floor((a.progress.loaded / a.progress.total) * 100));
+});
+
+type DownloadQueueStatus = 'queued' | 'downloading' | 'done' | 'error' | 'canceled';
+type DownloadQueueKind = 'file' | 'folder';
+type DownloadQueueItem = {
+  id: number;
+  kind: DownloadQueueKind;
+  path: string;
+  filename: string;
+  status: DownloadQueueStatus;
+  progress?: { loaded: number; total?: number };
+  error?: string;
+  abort?: AbortController;
+};
+
+const downloadQueue = ref<DownloadQueueItem[]>([]);
+let nextDownloadId = 1;
+const downloading = computed(() => downloadQueue.value.some((x) => x.status === 'downloading'));
 
 const batchMode = ref(false);
 const selectedPaths = ref<Set<string>>(new Set());
@@ -506,6 +626,108 @@ function refresh() {
   filesStore.loadFiles(filesStore.currentPath);
 }
 
+function enqueueDownload(kind: DownloadQueueKind, path: string) {
+  const wasEmpty = downloadQueue.value.length === 0;
+  const filename =
+    kind === 'folder'
+      ? `${path.split('/').filter(Boolean).pop() || 'root'}.zip`
+      : path.split('/').pop() || 'download';
+
+  downloadQueue.value = [
+    ...downloadQueue.value,
+    {
+      id: nextDownloadId++,
+      kind,
+      path,
+      filename,
+      status: 'queued',
+    },
+  ];
+
+  // 第一次出现队列时默认展开
+  if (wasEmpty) queueCollapsed.value = false;
+
+  // 自动启动队列
+  void processQueue();
+}
+
+function toggleQueuePanel() {
+  queueCollapsed.value = !queueCollapsed.value;
+}
+
+async function processQueue() {
+  if (downloading.value) return;
+
+  const next = downloadQueue.value.find((x) => x.status === 'queued');
+  if (!next) return;
+
+  const abort = new AbortController();
+  downloadQueue.value = downloadQueue.value.map((x) =>
+    x.id === next.id ? { ...x, status: 'downloading', progress: { loaded: 0 }, abort } : x
+  );
+
+  try {
+    const onProgress = (p: { loaded: number; total?: number }) => {
+      downloadQueue.value = downloadQueue.value.map((x) => (x.id === next.id ? { ...x, progress: p } : x));
+    };
+
+    const result =
+      next.kind === 'folder'
+        ? await filesService.fetchFolderDownload(next.path, { signal: abort.signal, onProgress })
+        : await filesService.fetchFileDownload(next.path, undefined, { signal: abort.signal, onProgress });
+
+    filesService.saveDownloadedBlob(result.blob, result.filename);
+    downloadQueue.value = downloadQueue.value.map((x) => (x.id === next.id ? { ...x, status: 'done', abort: undefined } : x));
+  } catch (err: any) {
+    const isAbort = err?.name === 'AbortError';
+    downloadQueue.value = downloadQueue.value.map((x) =>
+      x.id === next.id
+        ? {
+            ...x,
+            status: isAbort ? 'canceled' : 'error',
+            error: isAbort ? undefined : err instanceof Error ? err.message : '下载失败',
+            abort: undefined,
+          }
+        : x
+    );
+  } finally {
+    // 继续下一个
+    void processQueue();
+  }
+}
+
+function cancelItem(id: number) {
+  const item = downloadQueue.value.find((x) => x.id === id);
+  if (!item) return;
+
+  if (item.status === 'queued') {
+    downloadQueue.value = downloadQueue.value.map((x) => (x.id === id ? { ...x, status: 'canceled' } : x));
+    return;
+  }
+
+  if (item.status === 'downloading') {
+    item.abort?.abort();
+  }
+}
+
+function cancelAll() {
+  for (const item of downloadQueue.value) {
+    if (item.status === 'queued') {
+      downloadQueue.value = downloadQueue.value.map((x) => (x.id === item.id ? { ...x, status: 'canceled' } : x));
+    } else if (item.status === 'downloading') {
+      item.abort?.abort();
+    }
+  }
+}
+
+function clearFinished() {
+  downloadQueue.value = downloadQueue.value.filter((x) => x.status === 'queued' || x.status === 'downloading');
+}
+
+function removeItem(id: number) {
+  downloadQueue.value = downloadQueue.value.filter((x) => x.id !== id);
+}
+
 function handleFileClick(file: FileInfo) {
   if (file.type === 'directory') {
     navigateTo(file.path);
@@ -526,14 +748,8 @@ function handleSearchItemClick(file: FileInfo) {
 }
 
 function handleDownload(file: FileInfo) {
-  if (file.type === 'directory') {
-    filesService.downloadFolder(file.path);
-    appStore.success('开始下载文件夹（ZIP）');
-    return;
-  }
-
-  filesService.downloadFile(file.path);
-  appStore.success('开始下载文件');
+  enqueueDownload(file.type === 'directory' ? 'folder' : 'file', file.path);
+  appStore.success('已加入下载队列');
 }
 
 async function handleDelete(file: FileInfo) {
@@ -651,14 +867,15 @@ async function batchDownload() {
     if (!ok) return;
   }
 
-  for (const f of items) {
-    if (f.type === 'directory') {
-      filesService.downloadFolder(f.path);
-    } else {
-      filesService.downloadFile(f.path);
-    }
+  if (items.length > 20) {
+    const ok = confirm(`将加入 ${items.length} 项到下载队列，可能会触发多次保存。继续吗？`);
+    if (!ok) return;
   }
-  appStore.success(`开始下载 ${items.length} 项`);
+
+  for (const f of items) {
+    enqueueDownload(f.type === 'directory' ? 'folder' : 'file', f.path);
+  }
+  appStore.success(`已加入 ${items.length} 项到下载队列`);
 }
 
 async function batchDelete() {
@@ -689,7 +906,7 @@ async function batchMove() {
 
   const raw = prompt('输入目标目录（相对路径，留空表示根目录）', filesStore.currentPath || '');
   if (raw == null) return;
-  const targetDir = raw.trim().replaceAll('\\', '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  const targetDir = raw.trim().replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
 
   try {
     for (const f of items) {
