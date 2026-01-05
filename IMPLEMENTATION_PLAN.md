@@ -406,10 +406,10 @@ client/
 ### 6.3 文档编写
 
 - [x] README.md - 项目说明（已有基础）
-- [ ] API.md - API文档（未编写）
-- [ ] DEPLOYMENT.md - 部署指南（未编写）
-- [ ] CONTRIBUTING.md - 贡献指南
-- [ ] 用户手册
+- [x] API.md - API文档
+- [x] DEPLOYMENT.md - 部署指南
+- [x] CONTRIBUTING.md - 贡献指南
+- [x] USER_GUIDE.md - 用户手册
 
 ### 6.4 生产构建
 

@@ -88,6 +88,10 @@ bun run start
 
 - [架构设计](./ARCHITECTURE.md) - 系统架构和设计文档
 - [实施计划](./IMPLEMENTATION_PLAN.md) - 详细的开发计划
+- [API 文档](./API.md) - 后端 API 说明
+- [部署指南](./DEPLOYMENT.md) - 本地/服务器部署与环境变量
+- [贡献指南](./CONTRIBUTING.md) - 开发与提交规范
+- [用户手册](./USER_GUIDE.md) - 常用功能使用说明
 
 ## 🤝 贡献
 
