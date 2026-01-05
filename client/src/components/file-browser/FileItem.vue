@@ -11,12 +11,7 @@
       <div class="media-content">
         <div class="content">
           <p class="file-name">
-            <strong>
-              <template v-for="(seg, i) in nameSegments" :key="i">
-                <mark v-if="seg.match" class="has-background-warning-light">{{ seg.text }}</mark>
-                <span v-else>{{ seg.text }}</span>
-              </template>
-            </strong>
+            <strong><template v-for="(seg, i) in nameSegments" :key="i"><mark v-if="seg.match" class="has-background-warning-light">{{ seg.text }}</mark><span v-else>{{ seg.text }}</span></template></strong>
           </p>
           <p class="file-info">
             <span v-if="file.type === 'file'" class="tag is-light mr-2">
@@ -223,12 +218,22 @@ function viewHistory() {
   margin-bottom: 0.75rem;
   content-visibility: auto;
   contain-intrinsic-size: 96px;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
 }
 
 
 .file-item:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.file-item :deep(.media-left) {
+  margin-right: 0.5rem;
+}
+
+.file-item :deep(.media-right) {
+  margin-left: 0.5rem;
 }
 
 .file-icon {
@@ -243,11 +248,19 @@ function viewHistory() {
 }
 
 .file-name {
-  margin-bottom: 0.25rem !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  margin-bottom: 0 !important;
   word-break: break-word;
 }
 
 .file-info {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
   margin-bottom: 0.25rem !important;
   display: flex;
   align-items: center;
@@ -255,6 +268,10 @@ function viewHistory() {
 }
 
 .file-commit {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
   margin-top: 0.25rem;
 }
 
@@ -276,6 +293,19 @@ function viewHistory() {
 }
 
 @media screen and (max-width: 768px) {
+  .file-item {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
+  .file-item :deep(.media-left) {
+    margin-right: 0.35rem;
+  }
+
+  .file-item :deep(.media-right) {
+    margin-left: 0.35rem;
+  }
+
   .media-left .image {
     width: 40px;
     height: 40px;
