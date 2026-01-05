@@ -96,7 +96,7 @@
         </div>
 
         <div class="mobile-bottom-bar-bottom">
-        <div class="dropdown is-up" :class="{ 'is-active': actionMenuOpen }">
+        <div ref="actionMenuRef" class="dropdown is-up" :class="{ 'is-active': actionMenuOpen }">
           <div class="dropdown-trigger">
             <button
               class="button is-light is-small"
@@ -171,7 +171,7 @@
                 </button>
               </div>
 
-              <div class="dropdown is-up mobile-batch-more" :class="{ 'is-active': batchMenuOpen }">
+              <div ref="batchMenuRef" class="dropdown is-up mobile-batch-more" :class="{ 'is-active': batchMenuOpen }">
                 <div class="dropdown-trigger">
                   <button
                     class="button is-light is-small"
@@ -263,9 +263,11 @@ const browserRef = ref<FileBrowserHandle | null>(null);
 const mobileMenuOpen = ref(false);
 
 const actionMenuOpen = ref(false);
+const actionMenuRef = ref<HTMLElement | null>(null);
 const actionMode = ref<'nav' | 'history' | 'batch'>('nav');
 const mobileSearchQuery = ref('');
 const batchMenuOpen = ref(false);
+const batchMenuRef = ref<HTMLElement | null>(null);
 const dirHistoryLoading = ref(false);
 const dirHistoryError = ref<string | null>(null);
 const dirHistoryCommits = ref<Array<{ hash: string; date?: string }>>([]);
@@ -297,6 +299,36 @@ onMounted(() => {
   window.addEventListener('resize', updateVisualViewportBottomOffset);
   window.visualViewport?.addEventListener('resize', updateVisualViewportBottomOffset);
   window.visualViewport?.addEventListener('scroll', updateVisualViewportBottomOffset);
+
+  const onDocPointer = (e: MouseEvent | TouchEvent) => {
+    const target = e.target as Node | null;
+    if (!target) return;
+
+    if (actionMenuOpen.value) {
+      const el = actionMenuRef.value;
+      if (el && !el.contains(target)) actionMenuOpen.value = false;
+    }
+    if (batchMenuOpen.value) {
+      const el = batchMenuRef.value;
+      if (el && !el.contains(target)) batchMenuOpen.value = false;
+    }
+  };
+
+  const onDocKeydown = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape') return;
+    actionMenuOpen.value = false;
+    batchMenuOpen.value = false;
+  };
+
+  document.addEventListener('click', onDocPointer, true);
+  document.addEventListener('touchstart', onDocPointer, true);
+  document.addEventListener('keydown', onDocKeydown);
+
+  onBeforeUnmount(() => {
+    document.removeEventListener('click', onDocPointer, true);
+    document.removeEventListener('touchstart', onDocPointer, true);
+    document.removeEventListener('keydown', onDocKeydown);
+  });
 });
 
 onBeforeUnmount(() => {
