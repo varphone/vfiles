@@ -39,6 +39,21 @@ function close() {
   flex-direction: column;
 }
 
+.modal-card-head {
+  min-width: 0;
+}
+
+.modal-card-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-card-head .delete {
+  flex: 0 0 auto;
+}
+
 .modal-card-body {
   overflow: auto;
   -webkit-overflow-scrolling: touch;
