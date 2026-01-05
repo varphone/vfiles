@@ -10,8 +10,12 @@
             class="input"
             type="text"
             placeholder="搜索文件名..."
+            list="vfiles-search-history"
             @keyup.enter="runSearch"
           />
+          <datalist id="vfiles-search-history">
+            <option v-for="item in searchHistory" :key="item" :value="item" />
+          </datalist>
         </div>
         <div class="control">
           <button
@@ -153,8 +157,43 @@ const searchLoading = ref(false);
 const searchError = ref<string | null>(null);
 const searchActive = ref(false);
 
+const SEARCH_HISTORY_KEY = 'vfiles.searchHistory';
+const searchHistory = ref<string[]>([]);
+
+function loadSearchHistory() {
+  try {
+    const raw = localStorage.getItem(SEARCH_HISTORY_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      searchHistory.value = parsed.filter((x) => typeof x === 'string').slice(0, 10);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function saveSearchHistory(next: string[]) {
+  searchHistory.value = next;
+  try {
+    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+
+function pushSearchHistory(term: string) {
+  const value = term.trim();
+  if (!value) return;
+  const normalized = value;
+
+  const withoutDup = searchHistory.value.filter((x) => x.toLowerCase() !== normalized.toLowerCase());
+  saveSearchHistory([normalized, ...withoutDup].slice(0, 10));
+}
+
 onMounted(() => {
   filesStore.loadFiles();
+  loadSearchHistory();
 });
 
 function navigateTo(path: string) {
@@ -214,6 +253,8 @@ async function runSearch() {
 
   searchLoading.value = true;
   searchActive.value = true;
+
+  pushSearchHistory(q);
 
   try {
     searchResults.value = await filesService.searchFiles(q);
