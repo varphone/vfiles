@@ -34,9 +34,13 @@ function close() {
 <style scoped>
 .modal-card {
   max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .modal-card-body {
+  overflow: auto;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -44,8 +48,7 @@ function close() {
   .modal-card {
     width: 100%;
     margin: 0;
-    height: 100%;
-    max-height: 100vh;
+    max-height: 90vh;
   }
 }
 </style>
