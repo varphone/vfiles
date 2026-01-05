@@ -6,49 +6,66 @@
     @touchend="onTouchEnd"
   >
     <div class="box">
-      <Breadcrumb :breadcrumbs="breadcrumbs" @navigate="navigateTo" />
+      <div class="breadcrumb-bar">
+        <div class="breadcrumb-left">
+          <p class="title is-6 mb-0 breadcrumb-title" :title="currentPathLabel">
+            {{ currentPathLabel }}
+          </p>
+        </div>
+        <div class="breadcrumb-actions">
+          <div class="buttons are-small mb-0">
+            <button class="button is-light" :disabled="!currentPath" @click="goBack" title="上一级">
+              <IconArrowLeft :size="18" />
+            </button>
+            <button class="button is-light" @click="openDirManager" title="更多">
+              <IconDotsVertical :size="18" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <Breadcrumb class="is-hidden-mobile" :breadcrumbs="breadcrumbs" @navigate="navigateTo" />
 
       <div class="file-browser-toolbar">
+        <div
+          v-if="isMobile && pullIndicatorVisible"
+          class="has-text-centered is-size-7 has-text-grey mb-2"
+        >
+          <span v-if="pullRefreshing">刷新中...</span>
+          <span v-else-if="pullReady">释放刷新</span>
+          <span v-else>下拉刷新</span>
+        </div>
 
-      <div
-        v-if="isMobile && pullIndicatorVisible"
-        class="has-text-centered is-size-7 has-text-grey mb-2"
-      >
-        <span v-if="pullRefreshing">刷新中...</span>
-        <span v-else-if="pullReady">释放刷新</span>
-        <span v-else>下拉刷新</span>
-      </div>
-
-      <div class="field has-addons mt-3">
-        <div class="control is-expanded">
-          <input
-            v-model="searchQuery"
-            class="input"
-            type="text"
-            :placeholder="searchMode === 'content' ? '搜索文件内容...' : '搜索文件名...'"
-            list="vfiles-search-history"
-            @keyup.enter="runSearch"
-          />
-          <datalist id="vfiles-search-history">
-            <option v-for="item in searchHistory" :key="item" :value="item" />
-          </datalist>
+        <div class="field has-addons mt-3">
+          <div class="control is-expanded">
+            <input
+              v-model="searchQuery"
+              class="input"
+              type="text"
+              :placeholder="searchMode === 'content' ? '搜索文件内容...' : '搜索文件名...'"
+              list="vfiles-search-history"
+              @keyup.enter="runSearch"
+            />
+            <datalist id="vfiles-search-history">
+              <option v-for="item in searchHistory" :key="item" :value="item" />
+            </datalist>
+          </div>
+          <div class="control">
+            <button
+              class="button is-link"
+              :class="{ 'is-loading': searchLoading }"
+              :disabled="searchLoading"
+              @click="runSearch"
+            >
+              <IconSearch :size="20" />
+            </button>
+          </div>
+          <div class="control">
+            <button class="button" :disabled="searchLoading" @click="clearSearch">
+              清空
+            </button>
+          </div>
         </div>
-        <div class="control">
-          <button
-            class="button is-link"
-            :class="{ 'is-loading': searchLoading }"
-            :disabled="searchLoading"
-            @click="runSearch"
-          >
-            <IconSearch :size="20" />
-          </button>
-        </div>
-        <div class="control">
-          <button class="button" :disabled="searchLoading" @click="clearSearch">
-            清空
-          </button>
-        </div>
-      </div>
 
       <div class="field mt-2">
         <label class="checkbox">
@@ -289,6 +306,67 @@
       />
     </Modal>
 
+    <!-- 目录管理对话框 -->
+    <Modal :show="dirManagerOpen" title="目录管理" @close="dirManagerOpen = false">
+      <div class="content">
+        <h3 class="title is-6">添加子目录</h3>
+        <div class="field has-addons">
+          <div class="control is-expanded">
+            <input v-model="newDirName" class="input" type="text" placeholder="目录名" />
+          </div>
+          <div class="control">
+            <button
+              class="button is-primary"
+              :disabled="!newDirName.trim() || dirOpLoading"
+              :class="{ 'is-loading': dirOpLoading }"
+              @click="createSubDir"
+            >
+              添加
+            </button>
+          </div>
+        </div>
+
+        <hr />
+
+        <h3 class="title is-6">重命名当前目录</h3>
+        <p v-if="!currentPath" class="has-text-grey is-size-7">根目录不可重命名</p>
+        <div class="field has-addons">
+          <div class="control is-expanded">
+            <input
+              v-model="renameDirName"
+              class="input"
+              type="text"
+              placeholder="新目录名"
+              :disabled="!currentPath"
+            />
+          </div>
+          <div class="control">
+            <button
+              class="button is-warning"
+              :disabled="!currentPath || !renameDirName.trim() || dirOpLoading"
+              :class="{ 'is-loading': dirOpLoading }"
+              @click="renameCurrentDir"
+            >
+              重命名
+            </button>
+          </div>
+        </div>
+
+        <hr />
+
+        <h3 class="title is-6">删除当前目录</h3>
+        <p v-if="!currentPath" class="has-text-grey is-size-7">根目录不可删除</p>
+        <button
+          class="button is-danger"
+          :disabled="!currentPath || dirOpLoading"
+          :class="{ 'is-loading': dirOpLoading }"
+          @click="deleteCurrentDir"
+        >
+          删除当前目录
+        </button>
+      </div>
+    </Modal>
+
     <!-- 历史记录对话框 -->
     <Modal
       :show="showHistory"
@@ -357,6 +435,8 @@ import {
   IconFolderOpen,
   IconAlertCircle,
   IconSearch,
+  IconArrowLeft,
+  IconDotsVertical,
 } from '@tabler/icons-vue';
 import { useFilesStore } from '../../stores/files.store';
 import { useAppStore } from '../../stores/app.store';
@@ -373,7 +453,11 @@ let cachedHljs: any | null = null;
 
 const filesStore = useFilesStore();
 const appStore = useAppStore();
-const { files, breadcrumbs, loading, error } = storeToRefs(filesStore);
+const { files, breadcrumbs, loading, error, currentPath } = storeToRefs(filesStore);
+
+const currentPathLabel = computed(() => {
+  return currentPath.value ? `/${currentPath.value}` : '根目录';
+});
 
 const isMobile = ref(false);
 
@@ -726,6 +810,121 @@ function goBack() {
 
 function goRoot() {
   navigateTo('');
+}
+
+const dirManagerOpen = ref(false);
+const dirOpLoading = ref(false);
+const newDirName = ref('');
+const renameDirName = ref('');
+
+const currentDirName = computed(() => {
+  if (!currentPath.value) return '';
+  const parts = currentPath.value.split('/').filter(Boolean);
+  return parts[parts.length - 1] || '';
+});
+
+watch(
+  () => currentPath.value,
+  () => {
+    renameDirName.value = currentDirName.value;
+  },
+  { immediate: true }
+);
+
+function openDirManager() {
+  dirManagerOpen.value = true;
+  newDirName.value = '';
+  renameDirName.value = currentDirName.value;
+}
+
+function isSafeDirName(name: string): boolean {
+  const n = name.trim();
+  if (!n) return false;
+  if (n === '.' || n === '..') return false;
+  if (n.includes('/') || n.includes('\\')) return false;
+  return true;
+}
+
+async function createSubDir() {
+  const name = newDirName.value.trim();
+  if (!isSafeDirName(name)) {
+    appStore.error('非法目录名');
+    return;
+  }
+
+  const dirPath = currentPath.value ? `${currentPath.value}/${name}` : name;
+  dirOpLoading.value = true;
+  try {
+    await filesService.createDirectory(dirPath, `创建目录: ${dirPath}`);
+    appStore.success('目录创建成功');
+    newDirName.value = '';
+    refresh();
+  } catch (err) {
+    appStore.error(err instanceof Error ? err.message : '目录创建失败');
+  } finally {
+    dirOpLoading.value = false;
+  }
+}
+
+async function renameCurrentDir() {
+  if (!currentPath.value) return;
+  const name = renameDirName.value.trim();
+  if (!isSafeDirName(name)) {
+    appStore.error('非法目录名');
+    return;
+  }
+  if (name === currentDirName.value) {
+    appStore.error('目录名未变化');
+    return;
+  }
+
+  const parts = currentPath.value.split('/').filter(Boolean);
+  parts.pop();
+  const parent = parts.join('/');
+  const to = parent ? `${parent}/${name}` : name;
+
+  dirOpLoading.value = true;
+  try {
+    await filesService.movePath(currentPath.value, to, `重命名目录: ${currentPath.value} -> ${to}`);
+    appStore.success('重命名成功');
+    dirManagerOpen.value = false;
+    navigateTo(to);
+  } catch (err) {
+    appStore.error(err instanceof Error ? err.message : '重命名失败');
+  } finally {
+    dirOpLoading.value = false;
+  }
+}
+
+async function deleteCurrentDir() {
+  if (!currentPath.value) return;
+
+  const expected = currentDirName.value;
+  const typed = prompt(
+    `危险操作：删除目录 /${currentPath.value}\n\n此操作会删除其下全部内容，并生成提交。\n请输入目录名“${expected}”以确认：`,
+    ''
+  );
+  if (typed == null) return;
+  if (typed.trim() !== expected) {
+    appStore.error('确认失败：目录名不匹配');
+    return;
+  }
+
+  const parts = currentPath.value.split('/').filter(Boolean);
+  parts.pop();
+  const parent = parts.join('/');
+
+  dirOpLoading.value = true;
+  try {
+    await filesService.deleteFile(currentPath.value, `删除目录: ${currentPath.value}`);
+    appStore.success('目录删除成功');
+    dirManagerOpen.value = false;
+    navigateTo(parent);
+  } catch (err) {
+    appStore.error(err instanceof Error ? err.message : '删除失败');
+  } finally {
+    dirOpLoading.value = false;
+  }
 }
 
 // 4.2: 移动端无限滚动（分批渲染）
@@ -1238,6 +1437,28 @@ async function renameSelected() {
   padding: 1rem;
 }
 
+.breadcrumb-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.breadcrumb-left {
+  flex: 1;
+  min-width: 0;
+}
+
+.breadcrumb-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breadcrumb-actions {
+  flex: 0 0 auto;
+}
+
 .spinner {
   width: 40px;
   height: 40px;
@@ -1317,6 +1538,10 @@ async function renameSelected() {
 
   .file-browser-toolbar {
     display: none;
+  }
+
+  .breadcrumb-title {
+    max-width: 70vw;
   }
 
   .level {

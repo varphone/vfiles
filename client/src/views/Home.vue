@@ -54,71 +54,9 @@
 
     <section class="section home-content">
       <div class="container">
-        <div class="level is-mobile mb-3 dir-title-bar">
-          <div class="level-left" style="min-width: 0">
-            <div class="level-item" style="min-width: 0">
-              <p class="title is-6 mb-0 dir-title" :title="currentPathLabel">
-                {{ currentPathLabel }}
-              </p>
-            </div>
-          </div>
-          <div class="level-right">
-            <div class="level-item">
-              <div class="buttons are-small mb-0">
-                <button class="button is-light" :disabled="!currentPath" @click="goBack" title="上一级">
-                  上一级
-                </button>
-                <button class="button is-light" @click="openDirManager" title="更多">
-                  更多
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <FileBrowser ref="browserRef" />
       </div>
     </section>
-
-    <!-- 目录管理对话框 -->
-    <Modal :show="dirManagerOpen" title="目录管理" @close="dirManagerOpen = false">
-      <div class="content">
-        <h3 class="title is-6">添加子目录</h3>
-        <div class="field has-addons">
-          <div class="control is-expanded">
-            <input v-model="newDirName" class="input" type="text" placeholder="目录名" />
-          </div>
-          <div class="control">
-            <button class="button is-primary" :disabled="!newDirName.trim() || dirOpLoading" :class="{ 'is-loading': dirOpLoading }" @click="createSubDir">
-              添加
-            </button>
-          </div>
-        </div>
-
-        <hr />
-
-        <h3 class="title is-6">重命名当前目录</h3>
-        <p v-if="!currentPath" class="has-text-grey is-size-7">根目录不可重命名</p>
-        <div class="field has-addons">
-          <div class="control is-expanded">
-            <input v-model="renameDirName" class="input" type="text" placeholder="新目录名" :disabled="!currentPath" />
-          </div>
-          <div class="control">
-            <button class="button is-warning" :disabled="!currentPath || !renameDirName.trim() || dirOpLoading" :class="{ 'is-loading': dirOpLoading }" @click="renameCurrentDir">
-              重命名
-            </button>
-          </div>
-        </div>
-
-        <hr />
-
-        <h3 class="title is-6">删除当前目录</h3>
-        <p v-if="!currentPath" class="has-text-grey is-size-7">根目录不可删除</p>
-        <button class="button is-danger" :disabled="!currentPath || dirOpLoading" :class="{ 'is-loading': dirOpLoading }" @click="deleteCurrentDir">
-          删除当前目录
-        </button>
-      </div>
-    </Modal>
 
     <!-- 移动端底部操作栏：左侧操作菜单 + 右侧动态操作区 -->
     <nav
@@ -259,7 +197,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import {
   IconFiles,
@@ -273,10 +211,7 @@ import {
   IconRefresh,
 } from '@tabler/icons-vue';
 import FileBrowser from '../components/file-browser/FileBrowser.vue';
-import Modal from '../components/common/Modal.vue';
 import { useFilesStore } from '../stores/files.store';
-import { useAppStore } from '../stores/app.store';
-import { filesService } from '../services/files.service';
 
 type FileBrowserHandle = {
   openUploader: () => void;
@@ -308,30 +243,10 @@ const batchMenuOpen = ref(false);
 
 const filesStore = useFilesStore();
 const { currentPath } = storeToRefs(filesStore);
-const appStore = useAppStore();
 
 const currentPathLabel = computed(() => {
   return currentPath.value ? `/${currentPath.value}` : '根目录';
 });
-
-const dirManagerOpen = ref(false);
-const dirOpLoading = ref(false);
-const newDirName = ref('');
-const renameDirName = ref('');
-
-const currentDirName = computed(() => {
-  if (!currentPath.value) return '';
-  const parts = currentPath.value.split('/').filter(Boolean);
-  return parts[parts.length - 1] || '';
-});
-
-watch(
-  () => currentPath.value,
-  () => {
-    renameDirName.value = currentDirName.value;
-  },
-  { immediate: true }
-);
 
 function openUploader() {
   browserRef.value?.openUploader();
@@ -443,102 +358,6 @@ function toggleBatchAndClose() {
   toggleBatch();
   closeMobileMenu();
 }
-
-function openDirManager() {
-  dirManagerOpen.value = true;
-  newDirName.value = '';
-  renameDirName.value = currentDirName.value;
-}
-
-function isSafeDirName(name: string): boolean {
-  const n = name.trim();
-  if (!n) return false;
-  if (n === '.' || n === '..') return false;
-  if (n.includes('/') || n.includes('\\')) return false;
-  return true;
-}
-
-async function createSubDir() {
-  const name = newDirName.value.trim();
-  if (!isSafeDirName(name)) {
-    appStore.error('非法目录名');
-    return;
-  }
-
-  const dirPath = currentPath.value ? `${currentPath.value}/${name}` : name;
-  dirOpLoading.value = true;
-  try {
-    await filesService.createDirectory(dirPath, `创建目录: ${dirPath}`);
-    appStore.success('目录创建成功');
-    newDirName.value = '';
-    await Promise.resolve(browserRef.value?.refresh());
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : '目录创建失败');
-  } finally {
-    dirOpLoading.value = false;
-  }
-}
-
-async function renameCurrentDir() {
-  if (!currentPath.value) return;
-  const name = renameDirName.value.trim();
-  if (!isSafeDirName(name)) {
-    appStore.error('非法目录名');
-    return;
-  }
-  if (name === currentDirName.value) {
-    appStore.error('目录名未变化');
-    return;
-  }
-
-  const parts = currentPath.value.split('/').filter(Boolean);
-  parts.pop();
-  const parent = parts.join('/');
-  const to = parent ? `${parent}/${name}` : name;
-
-  dirOpLoading.value = true;
-  try {
-    await filesService.movePath(currentPath.value, to, `重命名目录: ${currentPath.value} -> ${to}`);
-    appStore.success('重命名成功');
-    dirManagerOpen.value = false;
-    filesStore.navigateTo(to);
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : '重命名失败');
-  } finally {
-    dirOpLoading.value = false;
-  }
-}
-
-async function deleteCurrentDir() {
-  if (!currentPath.value) return;
-
-  const expected = currentDirName.value;
-  const typed = prompt(
-    `危险操作：删除目录 /${currentPath.value}\n\n此操作会删除其下全部内容，并生成提交。\n请输入目录名“${expected}”以确认：`,
-    ''
-  );
-  if (typed == null) return;
-  if (typed.trim() !== expected) {
-    appStore.error('确认失败：目录名不匹配');
-    return;
-  }
-
-  const parts = currentPath.value.split('/').filter(Boolean);
-  parts.pop();
-  const parent = parts.join('/');
-
-  dirOpLoading.value = true;
-  try {
-    await filesService.deleteFile(currentPath.value, `删除目录: ${currentPath.value}`);
-    appStore.success('目录删除成功');
-    dirManagerOpen.value = false;
-    filesStore.navigateTo(parent);
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : '删除失败');
-  } finally {
-    dirOpLoading.value = false;
-  }
-}
 </script>
 
 <style scoped>
@@ -623,11 +442,5 @@ async function deleteCurrentDir() {
     pointer-events: none;
   }
 
-  .dir-title {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 60vw;
-  }
 }
 </style>
