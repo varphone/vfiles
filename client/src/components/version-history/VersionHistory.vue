@@ -76,8 +76,26 @@
 
       <div v-else>
         <figure v-if="preview.kind === 'image'" class="image">
-          <img :src="preview.imageUrl" :alt="previewView.filename" />
+          <img :src="preview.objectUrl" :alt="previewView.filename" />
         </figure>
+
+        <div v-else-if="preview.kind === 'pdf'" class="preview-frame">
+          <iframe :src="preview.objectUrl" title="PDF 预览" class="preview-iframe" />
+        </div>
+
+        <div v-else-if="preview.kind === 'video'" class="preview-media">
+          <video :src="preview.objectUrl" controls class="preview-video" />
+        </div>
+
+        <div v-else-if="preview.kind === 'audio'" class="preview-media">
+          <audio :src="preview.objectUrl" controls class="preview-audio" />
+        </div>
+
+        <div v-else-if="preview.kind === 'markdown'" class="content markdown-body" v-html="preview.html"></div>
+
+        <div v-else-if="preview.kind === 'code'" class="content">
+          <pre class="preview-code hljs"><code v-html="preview.html"></code></pre>
+        </div>
 
         <div v-else-if="preview.kind === 'text'" class="content">
           <pre class="preview-text">{{ preview.text }}</pre>
@@ -191,6 +209,8 @@ import {
 import { filesService } from '../../services/files.service';
 import { useAppStore } from '../../stores/app.store';
 import type { FileHistory } from '../../types';
+import { marked } from 'marked';
+import hljs from 'highlight.js';
 
 const props = defineProps<{
   filePath: string;
@@ -217,7 +237,7 @@ const diff = ref({
   text: '',
 });
 
-type PreviewKind = 'text' | 'image' | 'unsupported';
+type PreviewKind = 'text' | 'image' | 'markdown' | 'code' | 'pdf' | 'video' | 'audio' | 'unsupported';
 const preview = ref({
   open: false,
   loading: false,
@@ -225,7 +245,9 @@ const preview = ref({
   hash: '',
   kind: 'text' as PreviewKind,
   text: '',
-  imageUrl: '',
+  html: '',
+  objectUrl: '',
+  mime: '',
 });
 
 const previewFilename = computed(() => props.filePath.split('/').pop() || 'file');
@@ -279,18 +301,67 @@ function getExtension(p: string): string {
   return name.slice(idx + 1).toLowerCase();
 }
 
+function escapeHtml(input: string): string {
+  return input
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function safeLinkHref(href: string | null | undefined): string {
+  const raw = (href || '').trim();
+  if (!raw) return '#';
+  // 允许相对路径、锚点、http(s)、mailto
+  if (raw.startsWith('#')) return raw;
+  if (raw.startsWith('/')) return raw;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^mailto:/i.test(raw)) return raw;
+  return '#';
+}
+
+marked.use({
+  // 防止 Markdown 原始 HTML 直接注入
+  renderer: {
+    html(html) {
+      return escapeHtml(html);
+    },
+    link(href, title, text) {
+      const safeHref = safeLinkHref(href);
+      const t = title ? ` title="${escapeHtml(title)}"` : '';
+      return `<a href="${escapeHtml(safeHref)}"${t} target="_blank" rel="noopener noreferrer">${text}</a>`;
+    },
+  },
+  gfm: true,
+  breaks: true,
+});
+
 function detectPreviewKind(filePath: string): PreviewKind {
   const ext = getExtension(filePath);
   const imageExts = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
   if (imageExts.has(ext)) return 'image';
 
-  const textExts = new Set([
-    'txt',
-    'md',
-    'json',
+  if (ext === 'pdf') return 'pdf';
+
+  const videoExts = new Set(['mp4', 'webm', 'ogg', 'mov', 'm4v']);
+  if (videoExts.has(ext)) return 'video';
+
+  const audioExts = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac']);
+  if (audioExts.has(ext)) return 'audio';
+
+  const mdExts = new Set(['md', 'markdown']);
+  if (mdExts.has(ext)) return 'markdown';
+
+  const codeExts = new Set([
     'js',
     'ts',
+    'jsx',
+    'tsx',
+    'vue',
+    'json',
     'css',
+    'scss',
     'html',
     'xml',
     'yml',
@@ -299,16 +370,49 @@ function detectPreviewKind(filePath: string): PreviewKind {
     'log',
     'sh',
     'py',
+    'java',
+    'c',
+    'cpp',
+    'go',
+    'rs',
+  ]);
+  if (codeExts.has(ext)) return 'code';
+
+  const textExts = new Set([
+    'txt',
+    'log',
   ]);
   if (textExts.has(ext) || ext === '') return 'text';
 
   return 'unsupported';
 }
 
+function guessMimeByExt(filePath: string): string {
+  const ext = getExtension(filePath);
+  if (ext === 'pdf') return 'application/pdf';
+  if (ext === 'svg') return 'image/svg+xml';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'gif') return 'image/gif';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'bmp') return 'image/bmp';
+
+  if (ext === 'mp4' || ext === 'm4v') return 'video/mp4';
+  if (ext === 'webm') return 'video/webm';
+  if (ext === 'mov') return 'video/quicktime';
+  if (ext === 'ogg') return 'application/ogg';
+
+  if (ext === 'mp3') return 'audio/mpeg';
+  if (ext === 'wav') return 'audio/wav';
+  if (ext === 'm4a') return 'audio/mp4';
+  if (ext === 'aac') return 'audio/aac';
+  if (ext === 'flac') return 'audio/flac';
+
+  return 'application/octet-stream';
+}
+
 function closePreview() {
-  if (preview.value.imageUrl) {
-    URL.revokeObjectURL(preview.value.imageUrl);
-  }
+  if (preview.value.objectUrl) URL.revokeObjectURL(preview.value.objectUrl);
   preview.value = {
     open: false,
     loading: false,
@@ -316,7 +420,9 @@ function closePreview() {
     hash: '',
     kind: 'text',
     text: '',
-    imageUrl: '',
+    html: '',
+    objectUrl: '',
+    mime: '',
   };
 }
 
@@ -352,10 +458,22 @@ async function viewVersion(hash: string) {
 
     const blob = await filesService.getFileContent(props.filePath, hash);
 
-    if (preview.value.kind === 'image') {
-      preview.value.imageUrl = URL.createObjectURL(blob);
+    if (preview.value.kind === 'image' || preview.value.kind === 'pdf') {
+      const typed = new Blob([await blob.arrayBuffer()], { type: guessMimeByExt(props.filePath) });
+      preview.value.objectUrl = URL.createObjectURL(typed);
+    } else if (preview.value.kind === 'video' || preview.value.kind === 'audio') {
+      const typed = new Blob([await blob.arrayBuffer()], { type: guessMimeByExt(props.filePath) });
+      preview.value.objectUrl = URL.createObjectURL(typed);
     } else {
-      preview.value.text = await blob.text();
+      const text = await blob.text();
+      if (preview.value.kind === 'markdown') {
+        preview.value.html = marked.parse(text) as string;
+      } else if (preview.value.kind === 'code') {
+        const highlighted = hljs.highlightAuto(text);
+        preview.value.html = highlighted.value;
+      } else {
+        preview.value.text = text;
+      }
     }
   } catch (err) {
     preview.value.error = err instanceof Error ? err.message : '预览失败';
@@ -369,7 +487,7 @@ async function viewDiff(hash: string, parent?: string) {
   closeDiff();
 
   const kind = detectPreviewKind(props.filePath);
-  if (kind !== 'text') {
+  if (kind !== 'text' && kind !== 'markdown' && kind !== 'code') {
     diff.value.open = true;
     diff.value.error = '仅支持文本文件的对比视图，请使用下载。';
     return;
@@ -509,6 +627,56 @@ function loadMore() {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.preview-frame {
+  height: 60vh;
+}
+
+.preview-iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.preview-media {
+  max-height: 60vh;
+}
+
+.preview-video {
+  width: 100%;
+  max-height: 60vh;
+}
+
+.preview-audio {
+  width: 100%;
+}
+
+.markdown-body :deep(pre) {
+  max-height: 45vh;
+  overflow: auto;
+}
+
+.preview-code {
+  max-height: 45vh;
+  overflow: auto;
+  white-space: pre;
+}
+
+/* highlight.js：不引入主题色，仅做轻量层次 */
+.hljs :deep(.hljs-comment),
+.hljs :deep(.hljs-quote) {
+  opacity: 0.7;
+}
+
+.hljs :deep(.hljs-keyword),
+.hljs :deep(.hljs-selector-tag),
+.hljs :deep(.hljs-title) {
+  font-weight: 600;
+}
+
+.hljs :deep(.hljs-string) {
+  font-style: italic;
 }
 
 .diff-text {
