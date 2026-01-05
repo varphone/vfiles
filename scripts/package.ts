@@ -38,7 +38,6 @@ async function listFilesRecursively(baseDir: string): Promise<string[]> {
     const entries = await fs.readdir(full, { withFileTypes: true });
     for (const entry of entries) {
       const childRel = rel ? path.join(rel, entry.name) : entry.name;
-      const childFull = path.join(baseDir, childRel);
       if (entry.isDirectory()) {
         await walk(childRel);
       } else if (entry.isFile()) {

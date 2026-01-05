@@ -8,12 +8,21 @@ import { GitService } from "./services/git.service.js";
 import { errorHandler } from "./middleware/error.js";
 import { logger } from "./middleware/logger.js";
 import { rateLimit } from "./middleware/rate-limit.js";
+import { authMiddleware } from "./middleware/auth.js";
 import { createFilesRoutes } from "./routes/files.routes.js";
 import { createHistoryRoutes } from "./routes/history.routes.js";
 import { createDownloadRoutes } from "./routes/download.routes.js";
 import { createSearchRoutes } from "./routes/search.routes.js";
+import { createAuthRoutes } from "./routes/auth.routes.js";
+import { UserStore } from "./services/user-store.js";
 
 const app = new Hono();
+
+if (config.auth.enabled && !config.auth.secret) {
+  throw new Error(
+    "ENABLE_AUTH=true 时必须设置 AUTH_SECRET（用于签名登录 cookie）",
+  );
+}
 
 // 初始化Git服务
 const gitService = new GitService(config.repoPath, config.repoMode);
@@ -31,6 +40,10 @@ if (config.enableLogging) {
 // 请求频率限制（仅对 API 生效）
 app.use("/api/*", rateLimit(config.rateLimit));
 
+// 认证（v1.1.0）
+const userStore = new UserStore(config.auth.storagePath);
+app.use("/api/*", authMiddleware(config.auth, userStore));
+
 app.use("*", errorHandler);
 
 // 健康检查
@@ -39,6 +52,7 @@ app.get("/health", (c) => {
 });
 
 // API路由
+app.route("/api/auth", createAuthRoutes(config.auth, userStore));
 app.route("/api/files", createFilesRoutes(gitService));
 app.route("/api/history", createHistoryRoutes(gitService));
 app.route("/api/download", createDownloadRoutes(gitService));

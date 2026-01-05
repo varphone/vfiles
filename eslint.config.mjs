@@ -10,6 +10,7 @@ const commonIgnores = [
   "node_modules/",
   "dist/",
   "client/dist/",
+  "release/",
   "coverage/",
   "data/",
   "data.git/",

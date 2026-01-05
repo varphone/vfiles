@@ -137,4 +137,19 @@ export const config = {
 
   // 是否启用日志
   enableLogging: process.env.NODE_ENV !== "production",
+
+  // 用户系统（v1.1.0）
+  auth: {
+    enabled: (process.env.ENABLE_AUTH || "false").toLowerCase() === "true",
+    secret: process.env.AUTH_SECRET || "",
+    cookieName: process.env.AUTH_COOKIE_NAME || "vfiles_session",
+    tokenTtlSeconds: parseInt(
+      process.env.AUTH_TOKEN_TTL_SECONDS || String(7 * 24 * 60 * 60),
+    ),
+    storagePath:
+      process.env.AUTH_STORAGE_PATH ||
+      path.resolve(process.cwd(), ".vfiles_auth", "users.json"),
+    allowRegister:
+      (process.env.AUTH_ALLOW_REGISTER || "true").toLowerCase() !== "false",
+  },
 };
