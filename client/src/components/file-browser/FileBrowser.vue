@@ -5,7 +5,7 @@
     @touchmove="onTouchMove"
     @touchend="onTouchEnd"
   >
-    <div class="box">
+    <div class="box file-browser-box">
       <div class="breadcrumb-bar">
         <div class="breadcrumb-left">
           <div ref="pathMenuRef" class="dropdown breadcrumb-path-dropdown" :class="{ 'is-active': pathMenuOpen }">
@@ -334,7 +334,7 @@
     </div>
 
     <!-- 上传对话框 -->
-    <Modal :show="showUploader" title="上传文件" @close="showUploader = false">
+    <Modal :show="showUploader" title="上传文件" :mobile-compact="true" @close="showUploader = false">
       <FileUploader
         :target-path="filesStore.currentPath"
         @upload="handleUpload"
@@ -343,7 +343,7 @@
     </Modal>
 
     <!-- 目录管理对话框 -->
-    <Modal :show="dirManagerOpen" title="目录管理" @close="dirManagerOpen = false">
+    <Modal :show="dirManagerOpen" title="目录管理" :mobile-compact="true" @close="dirManagerOpen = false">
       <div class="content">
         <h3 class="title is-6">添加子目录</h3>
         <div class="field has-addons">
@@ -417,6 +417,7 @@
     <Modal
       :show="preview.open"
       :title="`预览: ${previewFilename}`"
+      :mobile-compact="true"
       @close="closePreview"
     >
       <div v-if="preview.loading" class="has-text-centered py-6">
@@ -1653,6 +1654,10 @@ async function renameSelected() {
 
 @media screen and (max-width: 768px) {
   .file-browser {
+    padding: 0;
+  }
+
+  .file-browser-box {
     padding: 0.5rem;
   }
 

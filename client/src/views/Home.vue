@@ -53,7 +53,7 @@
     </section>
 
     <section class="section home-content">
-      <div class="container">
+      <div class="container home-container">
         <FileBrowser ref="browserRef" />
       </div>
     </section>
@@ -398,7 +398,19 @@ function toggleBatchAndClose() {
 
 @media screen and (max-width: 768px) {
   .section {
-    padding: 1rem 0.5rem;
+    padding: 0;
+  }
+
+  .home-container {
+    max-width: none;
+    width: 100%;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .home-content {
+    padding-left: 0;
+    padding-right: 0;
   }
 
   .mobile-top-bar {
