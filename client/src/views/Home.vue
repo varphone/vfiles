@@ -131,24 +131,26 @@
             <div class="is-size-7 has-text-grey mr-2 mobile-batch-count">
               已选 {{ selectedCount }}
             </div>
-            <div class="buttons are-small mb-0 mobile-action-buttons">
-              <button class="button is-light" @click="toggleBatch" title="进入/退出批量">
-                <IconChecklist :size="18" />
-              </button>
-              <button class="button is-light" :disabled="!isBatchMode" @click="selectAll" title="全选">
-                全选
-              </button>
-              <button class="button is-light" :disabled="!isBatchMode" @click="clearSelection" title="取消选择">
-                取消
-              </button>
-              <button class="button is-info" :disabled="selectedCount === 0" @click="batchDownload" title="批量下载">
-                下载
-              </button>
+            <div class="mobile-batch-actions">
+              <div class="buttons are-small mb-0 mobile-action-buttons">
+                <button class="button is-light" @click="toggleBatch" title="进入/退出批量">
+                  <IconChecklist :size="18" />
+                </button>
+                <button class="button is-light" :disabled="!isBatchMode" @click="selectAll" title="全选">
+                  全选
+                </button>
+                <button class="button is-light" :disabled="!isBatchMode" @click="clearSelection" title="取消选择">
+                  取消
+                </button>
+                <button class="button is-info" :disabled="selectedCount === 0" @click="batchDownload" title="批量下载">
+                  下载
+                </button>
+              </div>
 
-              <div class="dropdown is-up" :class="{ 'is-active': batchMenuOpen }">
+              <div class="dropdown is-up mobile-batch-more" :class="{ 'is-active': batchMenuOpen }">
                 <div class="dropdown-trigger">
                   <button
-                    class="button is-light"
+                    class="button is-light is-small"
                     aria-haspopup="true"
                     :aria-expanded="batchMenuOpen ? 'true' : 'false'"
                     title="更多批量操作"
@@ -402,6 +404,19 @@ function toggleBatchAndClose() {
     min-width: 0;
     display: flex;
     align-items: center;
+  }
+
+  .mobile-batch-actions {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    overflow: visible;
+  }
+
+  .mobile-batch-more {
+    flex: 0 0 auto;
   }
 
   .mobile-batch-count {
