@@ -191,7 +191,10 @@ export class GitService {
         .quiet();
 
       const raw = result.stdout.toString();
-      const records = raw.split(RS).map((r) => r.trim()).filter(Boolean);
+      const records = raw
+        .split(RS)
+        .map((r: string) => r.trim())
+        .filter(Boolean);
 
       const commitInfos: CommitInfo[] = [];
       for (const record of records) {

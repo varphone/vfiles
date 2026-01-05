@@ -31,7 +31,8 @@ export function createDownloadRoutes(gitService: GitService) {
       c.header('Content-Disposition', `attachment; filename="${filename}"`);
       c.header('Content-Length', content.length.toString());
 
-      return c.body(content);
+      const body = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer;
+      return c.body(body);
     } catch (error) {
       return c.json(
         {

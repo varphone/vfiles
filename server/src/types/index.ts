@@ -4,7 +4,7 @@ export interface FileInfo {
   path: string;
   type: 'file' | 'directory';
   size: number;
-  mtime: Date;
+  mtime: string;
   lastCommit?: CommitSummary;
 }
 
@@ -12,7 +12,7 @@ export interface CommitInfo {
   hash: string;
   message: string;
   author: AuthorInfo;
-  date: Date;
+  date: string;
   parent: string[];
 }
 
@@ -20,7 +20,7 @@ export interface CommitSummary {
   hash: string;
   message: string;
   author: string;
-  date: Date;
+  date: string;
 }
 
 export interface AuthorInfo {

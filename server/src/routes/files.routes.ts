@@ -42,7 +42,8 @@ export function createFilesRoutes(gitService: GitService) {
       c.header('Content-Type', 'application/octet-stream');
       c.header('Content-Disposition', `inline; filename="${path.split('/').pop()}"`);
       
-      return c.body(content);
+      const body = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer;
+      return c.body(body);
     } catch (error) {
       return c.json(
         {
