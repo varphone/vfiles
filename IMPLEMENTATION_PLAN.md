@@ -384,9 +384,9 @@ client/
 ### 6.1 测试
 
 - [x] 单元测试（Vitest）
-  - [x] API服务测试（已添加 /health 与 /api/auth/me 示例测试）
-  - [x] 组件测试（已添加 Login.vue 示例测试，使用 @testing-library/vue）
-  - [ ] 工具函数测试（待补充，如 validation、auth-token、path-validator）
+  - [x] API服务测试（已添加 /health 与 /api/auth/me 示例测试，补充了 user-store 与更完善的 auth 路由测试）
+  - [x] 组件测试（已添加 Login.vue 示例测试，使用 @testing-library/vue；还需补充 AdminUsers、FileBrowser）
+  - [x] 工具函数测试（已添加 validation 与 auth-token 测试；还需补充 path-validator）
 - [x] 端到端测试（Playwright）
   - [ ] 文件上传流程（脚手架测试已添加，需进一步实现上传场景）
   - [ ] 文件浏览流程

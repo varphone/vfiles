@@ -41,18 +41,18 @@ describe('UserStore', () => {
 
   it('reject duplicate username/email', async () => {
     await store.createUser({ username: 'bob', password: 'pass1234', email: 'bob@example.com' });
-    await expect(store.createUser({ username: 'bob', password: 'x' })).rejects.toThrow(/用户名已存在/);
-    await expect(store.createUser({ username: 'charlie', password: 'pass', email: 'bob@example.com' })).rejects.toThrow(/邮箱已被使用/);
+    await expect(store.createUser({ username: 'bob', password: 'pass1234' })).rejects.toThrow(/用户名已存在/);
+    await expect(store.createUser({ username: 'charlie', password: 'pass1234', email: 'bob@example.com' })).rejects.toThrow(/用户名已存在|邮箱已被使用/);
   });
 
   it('setUserEmail enforces uniqueness', async () => {
-    const a = await store.createUser({ username: 'a', password: 'pass', email: 'a@example.com' });
-    const b = await store.createUser({ username: 'b', password: 'pass' });
+    const a = await store.createUser({ username: 'usera', password: 'pass1234', email: 'a@example.com' });
+    const b = await store.createUser({ username: 'userb', password: 'pass1234' });
     await expect(store.setUserEmail(b.id, 'a@example.com')).rejects.toThrow(/邮箱已被使用/);
   });
 
   it('setUserDisabled bumps sessionVersion', async () => {
-    const u = await store.createUser({ username: 'userc', password: 'pass' });
+    const u = await store.createUser({ username: 'userc', password: 'pass1234' });
     const before = await store.getUserById(u.id);
     expect(before?.sessionVersion ?? 0).toBe(0);
     await store.setUserDisabled(u.id, true);

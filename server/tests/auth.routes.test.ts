@@ -66,23 +66,24 @@ describe('auth routes', () => {
   });
 
   it('login fails with wrong password', async () => {
-    await store.createUser({ username: 'x', password: 'correct' });
+    await store.createUser({ username: 'userx', password: 'correct' });
     const app = new Hono();
     app.route('/api/auth', createAuthRoutes(makeCfg(), store, emailService, {}));
 
     const req = new Request('http://localhost/api/auth/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'x', password: 'wrong' }),
+      body: JSON.stringify({ username: 'userx', password: 'wrongpw' }),
     });
     const res = await app.fetch(req);
+    const txt = await res.text();
+    const body = JSON.parse(txt);
     expect(res.status).toBe(401);
-    const body = await res.json();
     expect(body.success).toBe(false);
   });
 
   it('password reset request sends email for existing account', async () => {
-    await store.createUser({ username: 'e', password: 'p', email: 'e@example.com' });
+    await store.createUser({ username: 'usere', password: 'pass1234', email: 'e@example.com' });
     const app = new Hono();
     app.route('/api/auth', createAuthRoutes(makeCfg(), store, emailService, { publicBaseUrl: 'http://localhost' }));
 
@@ -99,7 +100,7 @@ describe('auth routes', () => {
   });
 
   it('email login request sends email for existing account', async () => {
-    await store.createUser({ username: 'f', password: 'p', email: 'f@example.com' });
+    await store.createUser({ username: 'userf', password: 'pass1234', email: 'f@example.com' });
     const app = new Hono();
     app.route('/api/auth', createAuthRoutes(makeCfg(), store, emailService, {}));
 
