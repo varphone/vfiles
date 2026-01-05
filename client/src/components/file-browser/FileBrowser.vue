@@ -353,8 +353,8 @@
           <div class="control">
             <button
               class="button is-primary"
-              :disabled="!newDirName.trim() || dirOpLoading"
-              :class="{ 'is-loading': dirOpLoading }"
+              :disabled="!newDirName.trim() || dirOpBusy"
+              :class="{ 'is-loading': dirOpLoading === 'create' }"
               @click="createSubDir"
             >
               添加
@@ -379,8 +379,8 @@
           <div class="control">
             <button
               class="button is-warning"
-              :disabled="!currentPath || !renameDirName.trim() || dirOpLoading"
-              :class="{ 'is-loading': dirOpLoading }"
+              :disabled="!currentPath || !renameDirName.trim() || dirOpBusy"
+              :class="{ 'is-loading': dirOpLoading === 'rename' }"
               @click="renameCurrentDir"
             >
               重命名
@@ -394,8 +394,8 @@
         <p v-if="!currentPath" class="has-text-grey is-size-7">根目录不可删除</p>
         <button
           class="button is-danger"
-          :disabled="!currentPath || dirOpLoading"
-          :class="{ 'is-loading': dirOpLoading }"
+          :disabled="!currentPath || dirOpBusy"
+          :class="{ 'is-loading': dirOpLoading === 'delete' }"
           @click="deleteCurrentDir"
         >
           删除当前目录
@@ -905,7 +905,8 @@ function navigateToPathAndClose(path: string) {
 }
 
 const dirManagerOpen = ref(false);
-const dirOpLoading = ref(false);
+const dirOpLoading = ref<null | 'create' | 'rename' | 'delete'>(null);
+const dirOpBusy = computed(() => dirOpLoading.value !== null);
 const newDirName = ref('');
 const renameDirName = ref('');
 
@@ -945,7 +946,7 @@ async function createSubDir() {
   }
 
   const dirPath = currentPath.value ? `${currentPath.value}/${name}` : name;
-  dirOpLoading.value = true;
+  dirOpLoading.value = 'create';
   try {
     await filesService.createDirectory(dirPath, `创建目录: ${dirPath}`);
     appStore.success('目录创建成功');
@@ -954,7 +955,7 @@ async function createSubDir() {
   } catch (err) {
     appStore.error(err instanceof Error ? err.message : '目录创建失败');
   } finally {
-    dirOpLoading.value = false;
+    if (dirOpLoading.value === 'create') dirOpLoading.value = null;
   }
 }
 
@@ -975,7 +976,7 @@ async function renameCurrentDir() {
   const parent = parts.join('/');
   const to = parent ? `${parent}/${name}` : name;
 
-  dirOpLoading.value = true;
+  dirOpLoading.value = 'rename';
   try {
     await filesService.movePath(currentPath.value, to, `重命名目录: ${currentPath.value} -> ${to}`);
     appStore.success('重命名成功');
@@ -984,7 +985,7 @@ async function renameCurrentDir() {
   } catch (err) {
     appStore.error(err instanceof Error ? err.message : '重命名失败');
   } finally {
-    dirOpLoading.value = false;
+    if (dirOpLoading.value === 'rename') dirOpLoading.value = null;
   }
 }
 
@@ -1006,7 +1007,7 @@ async function deleteCurrentDir() {
   parts.pop();
   const parent = parts.join('/');
 
-  dirOpLoading.value = true;
+  dirOpLoading.value = 'delete';
   try {
     await filesService.deleteFile(currentPath.value, `删除目录: ${currentPath.value}`);
     appStore.success('目录删除成功');
@@ -1015,7 +1016,7 @@ async function deleteCurrentDir() {
   } catch (err) {
     appStore.error(err instanceof Error ? err.message : '删除失败');
   } finally {
-    dirOpLoading.value = false;
+    if (dirOpLoading.value === 'delete') dirOpLoading.value = null;
   }
 }
 
