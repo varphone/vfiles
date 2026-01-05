@@ -86,11 +86,23 @@ export const filesService = {
   /**
    * 上传文件
    */
-  async uploadFile(file: File, path: string = '', message: string = '上传文件'): Promise<any> {
+  async uploadFile(
+    file: File,
+    path: string = '',
+    message: string = '上传文件',
+    opts?: { signal?: AbortSignal; onProgress?: (p: { loaded: number; total?: number }) => void }
+  ): Promise<any> {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('path', path);
     formData.append('message', message);
+
+    if (opts?.signal || opts?.onProgress) {
+      return await apiService.postFormWithProgress('/files/upload', formData, {
+        signal: opts?.signal,
+        onUploadProgress: opts?.onProgress,
+      });
+    }
 
     return await apiService.postForm('/files/upload', formData);
   },

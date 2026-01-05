@@ -1,34 +1,10 @@
 <template>
   <div class="file-uploader">
-    <div
-      class="drop-zone"
-      :class="{ 'is-active': isDragging }"
-      @drop.prevent="handleDrop"
-      @dragover.prevent="isDragging = true"
-      @dragleave.prevent="isDragging = false"
-    >
-      <input
-        type="file"
-        ref="fileInput"
-        @change="handleFileSelect"
-        multiple
-        style="display: none"
-      />
+    <DropZone @files="addFiles" />
 
-      <div class="drop-zone-content">
-        <IconCloudUpload :size="64" class="has-text-grey-light mb-3" />
-        <p class="is-size-5 mb-2">拖拽文件到此处</p>
-        <p class="has-text-grey mb-4">或</p>
-        <button class="button is-primary" @click="selectFiles">
-          <IconFile :size="20" class="mr-2" />
-          选择文件
-        </button>
-      </div>
-    </div>
-
-    <div v-if="selectedFiles.length > 0" class="mt-4">
+    <div v-if="queue.length > 0" class="mt-4">
       <p class="is-size-6 has-text-weight-semibold mb-3">
-        已选择 {{ selectedFiles.length }} 个文件
+        已选择 {{ queue.length }} 个文件
       </p>
 
       <div class="field">
@@ -43,44 +19,13 @@
         </div>
       </div>
 
-      <div class="selected-files">
-        <div
-          v-for="(file, index) in selectedFiles"
-          :key="index"
-          class="selected-file box"
-        >
-          <div class="level is-mobile">
-            <div class="level-left">
-              <div class="level-item">
-                <IconFile :size="20" class="mr-2" />
-                <span>{{ file.name }}</span>
-              </div>
-            </div>
-            <div class="level-right">
-              <div class="level-item">
-                <button
-                  class="delete"
-                  @click="removeFile(index)"
-                ></button>
-              </div>
-            </div>
-          </div>
-          <progress
-            v-if="uploading"
-            class="progress is-primary is-small"
-            :value="progress"
-            max="100"
-          >
-            {{ progress }}%
-          </progress>
-        </div>
-      </div>
+      <UploadQueue :items="queueView" @cancel="cancelItem" @remove="removeItem" />
 
       <div class="buttons mt-4">
         <button
           class="button is-primary"
-          @click="upload"
-          :disabled="uploading"
+          @click="startUpload"
+          :disabled="uploading || !hasQueued"
           :class="{ 'is-loading': uploading }"
         >
           <IconUpload :size="20" class="mr-2" />
@@ -88,10 +33,14 @@
         </button>
         <button
           class="button is-light"
-          @click="cancel"
-          :disabled="uploading"
+          type="button"
+          @click="cancelAll"
+          :disabled="queue.length === 0"
         >
           取消
+        </button>
+        <button class="button is-light" type="button" @click="close" :disabled="uploading">
+          关闭
         </button>
       </div>
     </div>
@@ -99,122 +48,145 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import {
-  IconCloudUpload,
-  IconFile,
   IconUpload,
 } from '@tabler/icons-vue';
-import { useFilesStore } from '../../stores/files.store';
 import { useAppStore } from '../../stores/app.store';
+import { filesService } from '../../services/files.service';
+import DropZone from './DropZone.vue';
+import UploadQueue, { type UploadQueueItemView } from './UploadQueue.vue';
 
 const emit = defineEmits<{
   upload: [];
   close: [];
 }>();
 
-const filesStore = useFilesStore();
 const appStore = useAppStore();
 
-const fileInput = ref<HTMLInputElement>();
-const selectedFiles = ref<File[]>([]);
+const props = defineProps<{
+  targetPath: string;
+}>();
+
+type UploadStatus = 'queued' | 'uploading' | 'done' | 'error' | 'canceled';
+type UploadItem = {
+  id: number;
+  file: File;
+  status: UploadStatus;
+  percent: number | null;
+  error?: string;
+  abort?: AbortController;
+};
+
+const queue = ref<UploadItem[]>([]);
+let nextId = 1;
+const uploading = computed(() => queue.value.some((x) => x.status === 'uploading'));
+const hasQueued = computed(() => queue.value.some((x) => x.status === 'queued'));
 const commitMessage = ref('上传文件');
-const isDragging = ref(false);
-const uploading = ref(false);
-const progress = ref(0);
 
-function selectFiles() {
-  fileInput.value?.click();
+const queueView = computed<UploadQueueItemView[]>(() =>
+  queue.value.map((x) => ({
+    id: x.id,
+    file: x.file,
+    status: x.status,
+    percent: x.percent,
+    error: x.error,
+  }))
+);
+
+function addFiles(files: File[]) {
+  const added: UploadItem[] = files.map((f) => ({
+    id: nextId++,
+    file: f,
+    status: 'queued',
+    percent: null,
+  }));
+  queue.value = [...queue.value, ...added];
 }
 
-function handleFileSelect(event: Event) {
-  const target = event.target as HTMLInputElement;
-  if (target.files) {
-    selectedFiles.value.push(...Array.from(target.files));
+function removeItem(id: number) {
+  const item = queue.value.find((x) => x.id === id);
+  if (!item) return;
+  if (item.status === 'uploading') return;
+  queue.value = queue.value.filter((x) => x.id !== id);
+}
+
+function cancelItem(id: number) {
+  const item = queue.value.find((x) => x.id === id);
+  if (!item) return;
+
+  if (item.status === 'queued') {
+    item.status = 'canceled';
+    return;
+  }
+  if (item.status === 'uploading') {
+    item.abort?.abort();
   }
 }
 
-function handleDrop(event: DragEvent) {
-  isDragging.value = false;
-  if (event.dataTransfer?.files) {
-    selectedFiles.value.push(...Array.from(event.dataTransfer.files));
+function cancelAll() {
+  for (const item of queue.value) {
+    if (item.status === 'queued') item.status = 'canceled';
+    if (item.status === 'uploading') item.abort?.abort();
   }
 }
 
-function removeFile(index: number) {
-  selectedFiles.value.splice(index, 1);
-}
-
-async function upload() {
-  if (selectedFiles.value.length === 0) return;
-
-  uploading.value = true;
-  progress.value = 0;
-
-  try {
-    const total = selectedFiles.value.length;
-    
-    for (let i = 0; i < total; i++) {
-      const file = selectedFiles.value[i];
-      await filesStore.uploadFile(file, commitMessage.value);
-      progress.value = Math.round(((i + 1) / total) * 100);
-    }
-
-    emit('upload');
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : '上传失败');
-  } finally {
-    uploading.value = false;
-    selectedFiles.value = [];
-    commitMessage.value = '上传文件';
-  }
-}
-
-function cancel() {
-  selectedFiles.value = [];
-  commitMessage.value = '上传文件';
+function close() {
   emit('close');
+}
+
+async function startUpload() {
+  if (!hasQueued.value) return;
+  if (uploading.value) return;
+
+  // 顺序上传（保持行为简单可控）
+  while (true) {
+    const next = queue.value.find((x) => x.status === 'queued');
+    if (!next) break;
+
+    const abort = new AbortController();
+    next.abort = abort;
+    next.status = 'uploading';
+    next.percent = 0;
+    next.error = undefined;
+
+    try {
+      await filesService.uploadFile(next.file, props.targetPath, commitMessage.value, {
+        signal: abort.signal,
+        onProgress: ({ loaded, total }) => {
+          if (!total) {
+            next.percent = null;
+            return;
+          }
+          next.percent = Math.min(100, Math.floor((loaded / total) * 100));
+        },
+      });
+      next.status = 'done';
+      next.abort = undefined;
+      next.percent = 100;
+    } catch (err: any) {
+      const isAbort = err?.name === 'CanceledError' || err?.name === 'AbortError';
+      next.status = isAbort ? 'canceled' : 'error';
+      next.error = isAbort ? undefined : err instanceof Error ? err.message : '上传失败';
+      next.abort = undefined;
+    }
+  }
+
+  // 仅在全部成功（无 error）时触发上层刷新并关闭
+  const hasError = queue.value.some((x) => x.status === 'error');
+  const hasSuccess = queue.value.some((x) => x.status === 'done');
+  if (hasSuccess && !hasError) {
+    emit('upload');
+    queue.value = [];
+    commitMessage.value = '上传文件';
+  } else if (hasError) {
+    appStore.error('部分文件上传失败，请检查列表');
+  }
 }
 </script>
 
 <style scoped>
-.drop-zone {
-  border: 2px dashed #dbdbdb;
-  border-radius: 8px;
-  padding: 3rem 2rem;
-  text-align: center;
-  transition: all 0.3s;
-  background: #fafafa;
-}
-
-.drop-zone.is-active {
-  border-color: #3273dc;
-  background: #eff5ff;
-}
-
-.drop-zone-content {
-  pointer-events: none;
-}
-
-.selected-files {
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.selected-file {
-  padding: 0.75rem;
-  margin-bottom: 0.5rem;
-}
-
-.selected-file:last-child {
-  margin-bottom: 0;
-}
-
 @media screen and (max-width: 768px) {
-  .drop-zone {
-    padding: 2rem 1rem;
-  }
-
   .buttons {
     display: flex;
     flex-direction: column;

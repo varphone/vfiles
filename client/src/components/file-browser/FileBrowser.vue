@@ -249,6 +249,7 @@
     <!-- 上传对话框 -->
     <Modal :show="showUploader" title="上传文件" @close="showUploader = false">
       <FileUploader
+        :target-path="filesStore.currentPath"
         @upload="handleUpload"
         @close="showUploader = false"
       />

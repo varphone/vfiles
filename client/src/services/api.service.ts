@@ -69,6 +69,29 @@ class ApiService {
       },
     });
   }
+
+  postFormWithProgress<T = any>(
+    url: string,
+    formData: FormData,
+    opts?: {
+      signal?: AbortSignal;
+      onUploadProgress?: (p: { loaded: number; total?: number }) => void;
+    }
+  ): Promise<ApiResponse<T>> {
+    return this.api.post(url, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      signal: opts?.signal,
+      onUploadProgress: opts?.onUploadProgress
+        ? (evt) => {
+            const loaded = evt.loaded ?? 0;
+            const total = evt.total ?? undefined;
+            opts.onUploadProgress?.({ loaded, total });
+          }
+        : undefined,
+    });
+  }
 }
 
 export const apiService = new ApiService();

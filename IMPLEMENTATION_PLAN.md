@@ -204,17 +204,17 @@ client/
 
 ### 3.6 文件上传组件
 **组件列表:**
-- [ ] `FileUploader.vue` - 主容器
-- [ ] `DropZone.vue` - 拖拽区域
-- [ ] `UploadProgress.vue` - 上传进度
-- [ ] `UploadQueue.vue` - 上传队列
+- [x] `FileUploader.vue` - 主容器
+- [x] `DropZone.vue` - 拖拽区域
+- [x] `UploadProgress.vue` - 上传进度
+- [x] `UploadQueue.vue` - 上传队列
 
 **功能:**
-- 点击选择文件
-- 拖拽上传
-- 多文件上传
-- 进度显示
-- 上传取消
+- [x] 点击选择文件
+- [x] 拖拽上传
+- [x] 多文件上传（队列顺序执行）
+- [x] 进度显示（每个文件；无 total 时显示不确定进度）
+- [x] 上传取消（取消当前/取消排队）
 
 ### 3.7 通用组件
 - [x] `Loading.vue` - 加载指示器
