@@ -1,0 +1,32 @@
+# Enforce LF line endings for all text files in this repository
+* text=auto eol=lf
+
+# Treat lockfiles and common binary formats as binary (no EOL normalization)
+*.lockb -text
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.webp -text
+*.ico -text
+*.pdf -text
+*.zip -text
+*.7z -text
+*.gz -text
+*.tar -text
+*.rar -text
+*.exe -text
+*.dll -text
+*.so -text
+*.dylib -text
+*.mp3 -text
+*.mp4 -text
+*.mov -text
+*.avi -text
+*.mkv -text
+*.xlsx -text
+*.xls -text
+*.doc -text
+*.docx -text
+*.ppt -text
+*.pptx -text
