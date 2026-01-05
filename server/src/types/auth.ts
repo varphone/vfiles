@@ -3,6 +3,7 @@ export type UserRole = "admin" | "user";
 export interface PublicUser {
   id: string;
   username: string;
+  email?: string;
   role: UserRole;
   disabled?: boolean;
   createdAt: string;

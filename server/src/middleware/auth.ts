@@ -15,6 +15,8 @@ export interface AuthConfig {
     windowMs: number;
     max: number;
   };
+  passwordResetTokenTtlSeconds: number;
+  emailLoginCodeTtlSeconds: number;
 }
 
 export interface AuthUserCtx {

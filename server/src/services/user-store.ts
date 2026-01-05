@@ -11,6 +11,15 @@ function isValidUsername(username: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9_-]{2,31}$/.test(username);
 }
 
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function isValidEmail(email: string): boolean {
+  // 简化校验：满足常见 email 形态即可
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 async function pathExists(p: string): Promise<boolean> {
   try {
     await fs.access(p);
@@ -101,9 +110,17 @@ export class UserStore {
     return data.users.find((u) => u.username === username);
   }
 
+  async getUserByEmail(email: string): Promise<StoredUser | undefined> {
+    const e = normalizeEmail(email);
+    if (!e) return undefined;
+    const data = await this.loadUnsafe();
+    return data.users.find((u) => (u.email || "").toLowerCase() === e);
+  }
+
   async createUser(input: {
     username: string;
     password: string;
+    email?: string;
     role?: UserRole;
   }): Promise<Omit<StoredUser, "passwordHash">> {
     const username = input.username.trim();
@@ -118,10 +135,20 @@ export class UserStore {
 
     const role: UserRole = input.role ?? "user";
 
+    let email: string | undefined;
+    if (typeof input.email === "string" && input.email.trim()) {
+      const normalized = normalizeEmail(input.email);
+      if (!isValidEmail(normalized)) {
+        throw new Error("邮箱格式无效");
+      }
+      email = normalized;
+    }
+
     const createdAt = safeNowIso();
     const user: StoredUser = {
       id: crypto.randomUUID(),
       username,
+      email,
       role,
       createdAt,
       passwordHash: await hashPassword(input.password),
@@ -132,6 +159,9 @@ export class UserStore {
       const data = await this.loadUnsafe();
       if (data.users.some((u) => u.username === username)) {
         throw new Error("用户名已存在");
+      }
+      if (email && data.users.some((u) => (u.email || "").toLowerCase() === email)) {
+        throw new Error("邮箱已被使用");
       }
       // 第一个用户自动成为 admin，避免“没有管理员”
       if (data.users.length === 0) {
@@ -174,6 +204,37 @@ export class UserStore {
       const data = await this.loadUnsafe();
       const user = data.users.find((u) => u.id === userId);
       if (!user) throw new Error("用户不存在");
+      user.sessionVersion = (user.sessionVersion ?? 0) + 1;
+      await this.saveUnsafe(data);
+    }));
+  }
+
+  async setUserEmail(userId: string, email: string): Promise<void> {
+    const normalized = normalizeEmail(email);
+    if (!isValidEmail(normalized)) throw new Error("邮箱格式无效");
+
+    await (this.writeChain = this.writeChain.then(async () => {
+      const data = await this.loadUnsafe();
+      if (data.users.some((u) => u.id !== userId && (u.email || "").toLowerCase() === normalized)) {
+        throw new Error("邮箱已被使用");
+      }
+      const user = data.users.find((u) => u.id === userId);
+      if (!user) throw new Error("用户不存在");
+      user.email = normalized;
+      await this.saveUnsafe(data);
+    }));
+  }
+
+  async resetPassword(userId: string, newPassword: string): Promise<void> {
+    if (newPassword.trim().length < 6) {
+      throw new Error("密码长度至少 6 位");
+    }
+
+    await (this.writeChain = this.writeChain.then(async () => {
+      const data = await this.loadUnsafe();
+      const user = data.users.find((u) => u.id === userId);
+      if (!user) throw new Error("用户不存在");
+      user.passwordHash = await hashPassword(newPassword);
       user.sessionVersion = (user.sessionVersion ?? 0) + 1;
       await this.saveUnsafe(data);
     }));
