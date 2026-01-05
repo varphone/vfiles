@@ -197,7 +197,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import {
   IconFiles,
@@ -246,6 +246,32 @@ const { currentPath } = storeToRefs(filesStore);
 
 const currentPathLabel = computed(() => {
   return currentPath.value ? `/${currentPath.value}` : '根目录';
+});
+
+function updateVisualViewportBottomOffset() {
+  const vv = window.visualViewport;
+  if (!vv) {
+    document.documentElement.style.setProperty('--vv-bottom', '0px');
+    return;
+  }
+
+  // iOS Safari 等浏览器的底部工具栏会压住 layout viewport 的 fixed 元素。
+  // 用 visualViewport 的可视高度计算被遮挡的底部偏移，并通过 CSS 变量抬起底部操作栏。
+  const bottom = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
+  document.documentElement.style.setProperty('--vv-bottom', `${bottom}px`);
+}
+
+onMounted(() => {
+  updateVisualViewportBottomOffset();
+  window.addEventListener('resize', updateVisualViewportBottomOffset);
+  window.visualViewport?.addEventListener('resize', updateVisualViewportBottomOffset);
+  window.visualViewport?.addEventListener('scroll', updateVisualViewportBottomOffset);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateVisualViewportBottomOffset);
+  window.visualViewport?.removeEventListener('resize', updateVisualViewportBottomOffset);
+  window.visualViewport?.removeEventListener('scroll', updateVisualViewportBottomOffset);
 });
 
 function openUploader() {
@@ -375,8 +401,16 @@ function toggleBatchAndClose() {
     padding: 1rem 0.5rem;
   }
 
+  .mobile-bottom-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(env(safe-area-inset-bottom) + var(--vv-bottom, 0px));
+    z-index: 2000;
+  }
+
   .home-content {
-    padding-bottom: 4.25rem;
+    padding-bottom: calc(4.25rem + env(safe-area-inset-bottom) + var(--vv-bottom, 0px));
   }
 
   .mobile-bottom-bar-inner {
@@ -385,6 +419,7 @@ function toggleBatchAndClose() {
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem;
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
   }
 
   .mobile-action-panel {
