@@ -110,7 +110,16 @@ async function main() {
   // 2) Compile server
   await fs.mkdir(distDir, { recursive: true });
   await run(
-    ["bun", "build", "--compile", "server/src/index.ts", "--outfile", "dist/vfiles"],
+    [
+      "bun",
+      "build",
+      "--compile",
+      "server/src/index.ts",
+      "--minify",
+      "--sourcemap=none",
+      "--outfile",
+      "dist/vfiles",
+    ],
     root,
   );
 
