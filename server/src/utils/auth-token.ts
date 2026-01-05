@@ -29,7 +29,10 @@ function timingSafeEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(aBuf, bBuf);
 }
 
-export function signAuthToken(payload: AuthTokenPayload, secret: string): string {
+export function signAuthToken(
+  payload: AuthTokenPayload,
+  secret: string,
+): string {
   const payloadJson = JSON.stringify(payload);
   const payloadB64 = base64UrlEncode(Buffer.from(payloadJson, "utf-8"));
   const sig = crypto.createHmac("sha256", secret).update(payloadB64).digest();
@@ -55,13 +58,16 @@ export function verifyAuthToken(
 
   let payload: AuthTokenPayload;
   try {
-    payload = JSON.parse(Buffer.from(base64UrlDecode(payloadB64)).toString("utf-8"));
+    payload = JSON.parse(
+      Buffer.from(base64UrlDecode(payloadB64)).toString("utf-8"),
+    );
   } catch {
     return { ok: false, reason: "bad_payload" };
   }
 
   if (!payload || payload.v !== 1) return { ok: false, reason: "bad_payload" };
-  if (typeof payload.exp !== "number") return { ok: false, reason: "bad_payload" };
+  if (typeof payload.exp !== "number")
+    return { ok: false, reason: "bad_payload" };
   const nowSec = Math.floor(Date.now() / 1000);
   if (payload.exp <= nowSec) return { ok: false, reason: "expired" };
 

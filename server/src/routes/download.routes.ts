@@ -1,28 +1,43 @@
 import { Hono } from "hono";
-import { GitService } from "../services/git.service.js";
+import type { GitService } from "../services/git.service.js";
+import { GitServiceManager } from "../services/git-service-manager.js";
 import { pathSecurityMiddleware } from "../middleware/security.js";
+import { getRepoContext } from "../middleware/repo-context.js";
 import {
   normalizeRequestPath,
   validateOptionalCommitHash,
 } from "../utils/validation.js";
 import fs from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
 import { config } from "../config.js";
 import { Zip, ZipDeflate } from "fflate";
 
-export function createDownloadRoutes(gitService: GitService) {
+export function createDownloadRoutes(gitManager: GitServiceManager) {
   const app = new Hono();
 
   let lastCacheCleanupAt = 0;
   const CACHE_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 
-  function makeDownloadCacheKey(commit: string, filePath: string): string {
+  function makeRepoScope(repoPath: string): string {
+    return crypto
+      .createHash("sha256")
+      .update(repoPath)
+      .digest("hex")
+      .slice(0, 12);
+  }
+
+  function makeDownloadCacheKey(
+    repoScope: string,
+    commit: string,
+    filePath: string,
+  ): string {
     // 文件名中避免出现路径分隔符
     const safePath = filePath
       .replaceAll("..", "")
       .replaceAll("/", "_")
       .replaceAll("\\", "_");
-    return `${commit}_${safePath}`;
+    return `${repoScope}_${commit}_${safePath}`;
   }
 
   async function cleanupDownloadCacheIfNeeded(): Promise<void> {
@@ -53,11 +68,13 @@ export function createDownloadRoutes(gitService: GitService) {
   }
 
   async function ensureMaterializedLfsFile(
+    gitService: GitService,
+    repoScope: string,
     commit: string,
     filePath: string,
   ): Promise<string> {
     await fs.mkdir(config.downloadCacheDir, { recursive: true });
-    const cacheKey = makeDownloadCacheKey(commit, filePath);
+    const cacheKey = makeDownloadCacheKey(repoScope, commit, filePath);
     const outPath = path.join(config.downloadCacheDir, cacheKey);
 
     try {
@@ -104,8 +121,8 @@ export function createDownloadRoutes(gitService: GitService) {
     return outPath;
   }
 
-  function pathModuleJoinRepo(requestedPath: string): string {
-    return path.join(config.repoPath, requestedPath);
+  function pathModuleJoinRepo(repoPath: string, requestedPath: string): string {
+    return path.join(repoPath, requestedPath);
   }
 
   async function listFilesRecursively(
@@ -137,6 +154,10 @@ export function createDownloadRoutes(gitService: GitService) {
    * GET /api/download - 下载文件
    */
   app.get("/", pathSecurityMiddleware, async (c) => {
+    const { repoPath, repoMode } = getRepoContext(c);
+    const repoScope = makeRepoScope(repoPath);
+    const gitService = await gitManager.get(repoPath, repoMode);
+
     const rawPath = c.req.query("path");
     const path = rawPath ? normalizeRequestPath(rawPath) : undefined;
     const commit = c.req.query("commit");
@@ -167,8 +188,8 @@ export function createDownloadRoutes(gitService: GitService) {
 
       // worktree 模式：当前版本直接从磁盘读取并支持 Range。
       // bare 模式：当前版本等同于 HEAD（走 git show / cat-file），同样提供 Range（逻辑 Range 或 LFS 缓存 Range）。
-      if (!commitResult.value && config.repoMode !== "bare") {
-        const fullPath = pathModuleJoinRepo(path);
+      if (!commitResult.value && repoMode !== "bare") {
+        const fullPath = pathModuleJoinRepo(repoPath, path);
         const stat = await fs.stat(fullPath);
         if (!stat.isFile()) {
           return c.json({ success: false, error: "目标不是文件" }, 400);
@@ -286,7 +307,12 @@ export function createDownloadRoutes(gitService: GitService) {
       await cleanupDownloadCacheIfNeeded();
       const isLfsPointer = await gitService.isLfsPointerAtCommit(path, commit);
       if (isLfsPointer) {
-        const fullPath = await ensureMaterializedLfsFile(commit, path);
+        const fullPath = await ensureMaterializedLfsFile(
+          gitService,
+          repoScope,
+          commit,
+          path,
+        );
         const stat = await fs.stat(fullPath);
         if (!stat.isFile()) {
           return c.json({ success: false, error: "下载失败" }, 404);
@@ -458,6 +484,9 @@ export function createDownloadRoutes(gitService: GitService) {
    * GET /api/download/folder - 下载文件夹（ZIP）
    */
   app.get("/folder", pathSecurityMiddleware, async (c) => {
+    const { repoPath, repoMode } = getRepoContext(c);
+    const gitService = await gitManager.get(repoPath, repoMode);
+
     const rawPath = c.req.query("path");
     const requestedPath = rawPath ? normalizeRequestPath(rawPath) : "";
     const commitParam = c.req.query("commit");
@@ -472,7 +501,7 @@ export function createDownloadRoutes(gitService: GitService) {
     const ref = commitResult.value || "HEAD";
 
     // 指定 commit 或 bare 模式：文件不在（或不应读）磁盘工作区，需从对象库读取并打包
-    if (config.repoMode === "bare" || !!commitResult.value) {
+    if (repoMode === "bare" || !!commitResult.value) {
       const zipFilename = folderZipName(requestedPath);
       c.header("Content-Type", "application/zip");
       c.header("Content-Disposition", `attachment; filename="${zipFilename}"`);
@@ -490,7 +519,7 @@ export function createDownloadRoutes(gitService: GitService) {
                 ? ["git", "ls-tree", "-r", "-z", "--name-only", ref, "--", base]
                 : ["git", "ls-tree", "-r", "-z", "--name-only", ref];
               const proc = Bun.spawn(args, {
-                cwd: config.repoPath,
+                cwd: repoPath,
                 stdout: "pipe",
                 stderr: "pipe",
               });
@@ -560,7 +589,7 @@ export function createDownloadRoutes(gitService: GitService) {
       return c.body(stream);
     }
 
-    const fullDir = path.join(config.repoPath, requestedPath);
+    const fullDir = path.join(repoPath, requestedPath);
     try {
       const st = await fs.stat(fullDir);
       if (!st.isDirectory()) {

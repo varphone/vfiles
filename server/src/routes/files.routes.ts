@@ -1,8 +1,9 @@
 import { Hono } from "hono";
-import { GitService } from "../services/git.service.js";
+import { GitServiceManager } from "../services/git-service-manager.js";
 import { pathSecurityMiddleware } from "../middleware/security.js";
 import { config } from "../config.js";
 import { validatePath } from "../utils/path-validator.js";
+import { getRepoContext } from "../middleware/repo-context.js";
 import fs from "node:fs/promises";
 import nodePath from "node:path";
 import crypto from "node:crypto";
@@ -14,8 +15,14 @@ import {
   validateOptionalString,
 } from "../utils/validation.js";
 
-export function createFilesRoutes(gitService: GitService) {
+export function createFilesRoutes(gitManager: GitServiceManager) {
   const app = new Hono();
+
+  async function getGit(c: any) {
+    const { repoPath, repoMode } = getRepoContext(c);
+    const gitService = await gitManager.get(repoPath, repoMode);
+    return { gitService, repoPath, repoMode };
+  }
 
   function getFileExtension(filename: string): string {
     const lastDot = filename.lastIndexOf(".");
@@ -177,6 +184,7 @@ export function createFilesRoutes(gitService: GitService) {
    * GET /api/files - 获取文件列表
    */
   app.get("/", pathSecurityMiddleware, async (c) => {
+    const { gitService } = await getGit(c);
     const requestedPath = normalizeRequestPath(c.req.query("path") || "");
     const commit = c.req.query("commit");
     if (!isAllowedPathByPrefixes(requestedPath, config.allowedPathPrefixes)) {
@@ -203,6 +211,7 @@ export function createFilesRoutes(gitService: GitService) {
    * GET /api/files/content - 获取文件内容
    */
   app.get("/content", pathSecurityMiddleware, async (c) => {
+    const { gitService, repoPath, repoMode } = await getGit(c);
     const rawPath = c.req.query("path");
     const path = rawPath ? normalizeRequestPath(rawPath) : undefined;
     const commit = c.req.query("commit");
@@ -234,8 +243,8 @@ export function createFilesRoutes(gitService: GitService) {
       );
 
       // 当前版本：worktree 模式直接从磁盘流式输出；bare 模式从 HEAD 读取
-      if (!commitResult.value && config.repoMode !== "bare") {
-        const fullPath = nodePath.join(config.repoPath, path);
+      if (!commitResult.value && repoMode !== "bare") {
+        const fullPath = nodePath.join(repoPath, path);
         const stat = await fs.stat(fullPath);
         if (!stat.isFile()) {
           return c.json({ success: false, error: "目标不是文件" }, 400);
@@ -377,7 +386,8 @@ export function createFilesRoutes(gitService: GitService) {
         : file.name;
 
       // 防止 path 穿越（确保最终写入路径在 repo 内）
-      if (!validatePath(filePath, config.repoPath)) {
+      const { gitService, repoPath } = await getGit(c);
+      if (!validatePath(filePath, repoPath)) {
         return c.json(
           {
             success: false,
@@ -475,7 +485,8 @@ export function createFilesRoutes(gitService: GitService) {
         ? `${requestedPath}/${filename}`
         : filename;
 
-      if (!validatePath(filePath, config.repoPath)) {
+      const { repoPath } = getRepoContext(c);
+      if (!validatePath(filePath, repoPath)) {
         return c.json({ success: false, error: "无效的文件路径" }, 400);
       }
       if (!isAllowedPathByPrefixes(filePath, config.allowedPathPrefixes)) {
@@ -625,8 +636,10 @@ export function createFilesRoutes(gitService: GitService) {
         return c.json({ success: false, error: "上传会话不存在或已过期" }, 404);
       }
 
+      const { gitService, repoPath, repoMode } = await getGit(c);
+
       // 再次做路径白名单校验（防止会话文件被篡改）
-      if (!validatePath(session.filePath, config.repoPath)) {
+      if (!validatePath(session.filePath, repoPath)) {
         return c.json({ success: false, error: "无效的文件路径" }, 400);
       }
       if (
@@ -659,7 +672,7 @@ export function createFilesRoutes(gitService: GitService) {
 
       // 合并分块：worktree 模式写入 repo 工作区后 commitFile；bare 模式合并到临时文件后 saveFile 直接写入对象库
       let commitHash = "";
-      if (config.repoMode === "bare") {
+      if (repoMode === "bare") {
         const mergedPath = nodePath.join(
           getUploadSessionDir(uploadId),
           "merged.bin",
@@ -683,7 +696,7 @@ export function createFilesRoutes(gitService: GitService) {
           message,
         );
       } else {
-        const fullPath = nodePath.join(config.repoPath, session.filePath);
+        const fullPath = nodePath.join(repoPath, session.filePath);
         await fs.mkdir(nodePath.dirname(fullPath), { recursive: true });
 
         const handle = await fs.open(fullPath, "w");
@@ -728,6 +741,7 @@ export function createFilesRoutes(gitService: GitService) {
    * DELETE /api/files - 删除文件
    */
   app.delete("/", pathSecurityMiddleware, async (c) => {
+    const { gitService } = await getGit(c);
     const rawPath = c.req.query("path");
     const path = rawPath ? normalizeRequestPath(rawPath) : undefined;
 
@@ -776,6 +790,7 @@ export function createFilesRoutes(gitService: GitService) {
    * POST /api/files/move - 移动/重命名文件或目录
    */
   app.post("/move", async (c) => {
+    const { gitService, repoPath } = await getGit(c);
     let body: any;
     try {
       body = await c.req.json();
@@ -824,10 +839,7 @@ export function createFilesRoutes(gitService: GitService) {
     }
 
     // 路径遍历防护（from/to 都必须在 repo 内）
-    if (
-      !validatePath(fromPath, config.repoPath) ||
-      !validatePath(toPath, config.repoPath)
-    ) {
+    if (!validatePath(fromPath, repoPath) || !validatePath(toPath, repoPath)) {
       return c.json({ success: false, error: "无效的文件路径" }, 400);
     }
 
@@ -861,6 +873,7 @@ export function createFilesRoutes(gitService: GitService) {
    * POST /api/files/dir - 创建目录
    */
   app.post("/dir", pathSecurityMiddleware, async (c) => {
+    const { gitService, repoPath } = await getGit(c);
     let body: any;
     try {
       body = await c.req.json();
@@ -894,7 +907,7 @@ export function createFilesRoutes(gitService: GitService) {
       return c.json({ success: false, error: "path 不能为空" }, 400);
     }
 
-    if (!validatePath(dirPath, config.repoPath)) {
+    if (!validatePath(dirPath, repoPath)) {
       return c.json({ success: false, error: "无效的文件路径" }, 400);
     }
 

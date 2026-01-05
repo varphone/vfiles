@@ -4,17 +4,18 @@ import { serveStatic } from "hono/bun";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
-import { GitService } from "./services/git.service.js";
 import { errorHandler } from "./middleware/error.js";
 import { logger } from "./middleware/logger.js";
 import { rateLimit } from "./middleware/rate-limit.js";
 import { authMiddleware } from "./middleware/auth.js";
+import { repoContextMiddleware } from "./middleware/repo-context.js";
 import { createFilesRoutes } from "./routes/files.routes.js";
 import { createHistoryRoutes } from "./routes/history.routes.js";
 import { createDownloadRoutes } from "./routes/download.routes.js";
 import { createSearchRoutes } from "./routes/search.routes.js";
 import { createAuthRoutes } from "./routes/auth.routes.js";
 import { UserStore } from "./services/user-store.js";
+import { GitServiceManager } from "./services/git-service-manager.js";
 
 const app = new Hono();
 
@@ -24,11 +25,8 @@ if (config.auth.enabled && !config.auth.secret) {
   );
 }
 
-// 初始化Git服务
-const gitService = new GitService(config.repoPath, config.repoMode);
-await gitService.initRepo();
-
-console.log("Git仓库初始化完成，路径:", config.repoPath);
+// Git 服务管理器（多用户/单用户统一走 per-request repoContext）
+const gitManager = new GitServiceManager();
 
 // 全局中间件
 app.use("*", cors(config.cors));
@@ -44,6 +42,9 @@ app.use("/api/*", rateLimit(config.rateLimit));
 const userStore = new UserStore(config.auth.storagePath);
 app.use("/api/*", authMiddleware(config.auth, userStore));
 
+// 仓库上下文（v1.1.0）
+app.use("/api/*", repoContextMiddleware());
+
 app.use("*", errorHandler);
 
 // 健康检查
@@ -53,10 +54,10 @@ app.get("/health", (c) => {
 
 // API路由
 app.route("/api/auth", createAuthRoutes(config.auth, userStore));
-app.route("/api/files", createFilesRoutes(gitService));
-app.route("/api/history", createHistoryRoutes(gitService));
-app.route("/api/download", createDownloadRoutes(gitService));
-app.route("/api/search", createSearchRoutes(gitService));
+app.route("/api/files", createFilesRoutes(gitManager));
+app.route("/api/history", createHistoryRoutes(gitManager));
+app.route("/api/download", createDownloadRoutes(gitManager));
+app.route("/api/search", createSearchRoutes(gitManager));
 
 // 静态文件服务（仅生产环境且 dist 存在时启用；开发模式下由 Vite 提供前端）
 if (process.env.NODE_ENV === "production") {

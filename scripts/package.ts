@@ -21,7 +21,6 @@ async function copyDir(src: string, dest: string): Promise<void> {
   await fs.mkdir(dest, { recursive: true });
   // Node 16+ supports fs.cp; Bun implements it.
   // Fallback logic is not added to keep script minimal.
-  // @ts-expect-error - fs.cp exists in current runtime
   await fs.cp(src, dest, { recursive: true });
 }
 
@@ -81,7 +80,10 @@ async function run(cmd: string[], cwd: string): Promise<void> {
   if (code !== 0) throw new Error(`Command failed (${code}): ${cmd.join(" ")}`);
 }
 
-async function makeTarGzFromDir(inputDir: string, outTarGzPath: string): Promise<void> {
+async function makeTarGzFromDir(
+  inputDir: string,
+  outTarGzPath: string,
+): Promise<void> {
   await fs.mkdir(path.dirname(outTarGzPath), { recursive: true });
   await run(["tar", "-czf", outTarGzPath, "-C", inputDir, "."], process.cwd());
 }
@@ -126,7 +128,9 @@ async function main() {
   const exePosix = path.join(distDir, "vfiles");
   const exePath = (await pathExists(exeWin)) ? exeWin : exePosix;
   if (!(await pathExists(exePath))) {
-    throw new Error("Compiled server binary not found in dist/. Expected dist/vfiles(.exe)");
+    throw new Error(
+      "Compiled server binary not found in dist/. Expected dist/vfiles(.exe)",
+    );
   }
 
   // 3) Assemble release directory
@@ -148,13 +152,18 @@ async function main() {
   await copyDir(clientDistSrc, clientDistDest);
 
   // Optional templates
-  await copyFileIfExists(path.join(root, ".env.example"), path.join(releaseDir, ".env.example"));
+  await copyFileIfExists(
+    path.join(root, ".env.example"),
+    path.join(releaseDir, ".env.example"),
+  );
 
   // 4) Create GitHub-release-style release asset
   const pkgJson = JSON.parse(
     await fs.readFile(path.join(root, "package.json"), "utf-8"),
   ) as { name?: string; version?: string };
-  const baseName = (pkgJson.name || "vfiles").replace(/^@/, "").replaceAll("/", "-");
+  const baseName = (pkgJson.name || "vfiles")
+    .replace(/^@/, "")
+    .replaceAll("/", "-");
   const version = pkgJson.version || "0.0.0";
   const os = normalizeOs(process.platform);
   const arch = normalizeArch(process.arch);

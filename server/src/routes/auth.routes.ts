@@ -1,11 +1,21 @@
 import { Hono } from "hono";
 import { UserStore, verifyPassword } from "../services/user-store.js";
 import type { AuthConfig, AuthUserCtx } from "../middleware/auth.js";
-import { clearAuthCookie, requireAdmin, setAuthCookie } from "../middleware/auth.js";
+import {
+  clearAuthCookie,
+  requireAdmin,
+  setAuthCookie,
+} from "../middleware/auth.js";
 import { signAuthToken } from "../utils/auth-token.js";
 import { validateRequiredString } from "../utils/validation.js";
 
-function toPublicUser(u: { id: string; username: string; role: string; disabled?: boolean; createdAt: string }) {
+function toPublicUser(u: {
+  id: string;
+  username: string;
+  role: string;
+  disabled?: boolean;
+  createdAt: string;
+}) {
   return {
     id: u.id,
     username: u.username,
@@ -42,13 +52,21 @@ export function createAuthRoutes(cfg: AuthConfig, userStore: UserStore) {
       minLength: 3,
       maxLength: 32,
     });
-    if (!usernameR.ok) return c.json({ success: false, error: usernameR.message }, usernameR.status);
+    if (!usernameR.ok)
+      return c.json(
+        { success: false, error: usernameR.message },
+        usernameR.status,
+      );
 
     const passwordR = validateRequiredString(body.password, "password", {
       minLength: 6,
       maxLength: 200,
     });
-    if (!passwordR.ok) return c.json({ success: false, error: passwordR.message }, passwordR.status);
+    if (!passwordR.ok)
+      return c.json(
+        { success: false, error: passwordR.message },
+        passwordR.status,
+      );
 
     try {
       const created = await userStore.createUser({
@@ -71,7 +89,10 @@ export function createAuthRoutes(cfg: AuthConfig, userStore: UserStore) {
       setAuthCookie(c, cfg, token);
       return c.json({ success: true, data: { user: toPublicUser(created) } });
     } catch (e) {
-      return c.json({ success: false, error: (e as Error).message || "注册失败" }, 400);
+      return c.json(
+        { success: false, error: (e as Error).message || "注册失败" },
+        400,
+      );
     }
   });
 
@@ -85,13 +106,21 @@ export function createAuthRoutes(cfg: AuthConfig, userStore: UserStore) {
       minLength: 3,
       maxLength: 32,
     });
-    if (!usernameR.ok) return c.json({ success: false, error: usernameR.message }, usernameR.status);
+    if (!usernameR.ok)
+      return c.json(
+        { success: false, error: usernameR.message },
+        usernameR.status,
+      );
 
     const passwordR = validateRequiredString(body.password, "password", {
       minLength: 6,
       maxLength: 200,
     });
-    if (!passwordR.ok) return c.json({ success: false, error: passwordR.message }, passwordR.status);
+    if (!passwordR.ok)
+      return c.json(
+        { success: false, error: passwordR.message },
+        passwordR.status,
+      );
 
     const user = await userStore.getUserByUsername(usernameR.value);
     if (!user || user.disabled) {
@@ -129,7 +158,8 @@ export function createAuthRoutes(cfg: AuthConfig, userStore: UserStore) {
 
   // --- Admin: user management (权限管理的基础能力) ---
   app.get("/users", async (c) => {
-    if (!cfg.enabled) return c.json({ success: false, error: "未启用认证" }, 400);
+    if (!cfg.enabled)
+      return c.json({ success: false, error: "未启用认证" }, 400);
     const guard = requireAdmin(c);
     if (!guard.ok) return guard.res;
 
@@ -138,13 +168,18 @@ export function createAuthRoutes(cfg: AuthConfig, userStore: UserStore) {
   });
 
   app.post("/users/:id/role", async (c) => {
-    if (!cfg.enabled) return c.json({ success: false, error: "未启用认证" }, 400);
+    if (!cfg.enabled)
+      return c.json({ success: false, error: "未启用认证" }, 400);
     const guard = requireAdmin(c);
     if (!guard.ok) return guard.res;
 
     const body = await c.req.json().catch(() => ({}));
-    const roleR = validateRequiredString(body.role, "role", { minLength: 1, maxLength: 20 });
-    if (!roleR.ok) return c.json({ success: false, error: roleR.message }, roleR.status);
+    const roleR = validateRequiredString(body.role, "role", {
+      minLength: 1,
+      maxLength: 20,
+    });
+    if (!roleR.ok)
+      return c.json({ success: false, error: roleR.message }, roleR.status);
 
     const role = roleR.value;
     if (role !== "admin" && role !== "user") {
@@ -155,12 +190,16 @@ export function createAuthRoutes(cfg: AuthConfig, userStore: UserStore) {
       await userStore.setUserRole(c.req.param("id"), role);
       return c.json({ success: true });
     } catch (e) {
-      return c.json({ success: false, error: (e as Error).message || "更新失败" }, 400);
+      return c.json(
+        { success: false, error: (e as Error).message || "更新失败" },
+        400,
+      );
     }
   });
 
   app.post("/users/:id/disabled", async (c) => {
-    if (!cfg.enabled) return c.json({ success: false, error: "未启用认证" }, 400);
+    if (!cfg.enabled)
+      return c.json({ success: false, error: "未启用认证" }, 400);
     const guard = requireAdmin(c);
     if (!guard.ok) return guard.res;
 
@@ -171,7 +210,10 @@ export function createAuthRoutes(cfg: AuthConfig, userStore: UserStore) {
       await userStore.setUserDisabled(c.req.param("id"), disabled);
       return c.json({ success: true });
     } catch (e) {
-      return c.json({ success: false, error: (e as Error).message || "更新失败" }, 400);
+      return c.json(
+        { success: false, error: (e as Error).message || "更新失败" },
+        400,
+      );
     }
   });
 

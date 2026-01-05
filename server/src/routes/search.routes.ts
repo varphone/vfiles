@@ -1,16 +1,20 @@
 import { Hono } from "hono";
-import { GitService } from "../services/git.service.js";
+import { GitServiceManager } from "../services/git-service-manager.js";
 import { validateRequiredString } from "../utils/validation.js";
 import { pathSecurityMiddleware } from "../middleware/security.js";
 import { normalizeRequestPath } from "../utils/validation.js";
+import { getRepoContext } from "../middleware/repo-context.js";
 
-export function createSearchRoutes(gitService: GitService) {
+export function createSearchRoutes(gitManager: GitServiceManager) {
   const app = new Hono();
 
   /**
    * GET /api/search - 搜索文件
    */
   app.get("/", pathSecurityMiddleware, async (c) => {
+    const { repoPath, repoMode } = getRepoContext(c);
+    const gitService = await gitManager.get(repoPath, repoMode);
+
     const queryResult = validateRequiredString(c.req.query("q"), "q", {
       minLength: 1,
       maxLength: 100,

@@ -47,7 +47,10 @@ export async function hashPassword(password: string): Promise<string> {
   return `scrypt$${salt.toString("base64")}$${dk.toString("base64")}`;
 }
 
-export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+export async function verifyPassword(
+  password: string,
+  stored: string,
+): Promise<boolean> {
   const parts = stored.split("$");
   if (parts.length !== 3) return false;
   const [algo, saltB64, hashB64] = parts;
@@ -105,7 +108,9 @@ export class UserStore {
   }): Promise<Omit<StoredUser, "passwordHash">> {
     const username = input.username.trim();
     if (!isValidUsername(username)) {
-      throw new Error("用户名格式无效（3-32 位，仅字母数字、-、_，且需以字母/数字开头）");
+      throw new Error(
+        "用户名格式无效（3-32 位，仅字母数字、-、_，且需以字母/数字开头）",
+      );
     }
     if (input.password.trim().length < 6) {
       throw new Error("密码长度至少 6 位");

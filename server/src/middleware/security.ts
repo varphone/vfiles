@@ -1,6 +1,7 @@
 import { Context, Next } from "hono";
 import { validatePath } from "../utils/path-validator.js";
 import { config } from "../config.js";
+import { getRepoContext } from "./repo-context.js";
 import {
   isAllowedPathByPrefixes,
   normalizeRequestPath,
@@ -13,7 +14,9 @@ export function pathSecurityMiddleware(c: Context, next: Next) {
   const raw = c.req.query("path") || c.req.param("path") || "";
   const requestedPath = normalizeRequestPath(raw);
 
-  if (!validatePath(requestedPath, config.repoPath)) {
+  const { repoPath } = getRepoContext(c);
+
+  if (!validatePath(requestedPath, repoPath)) {
     return c.json(
       {
         success: false,

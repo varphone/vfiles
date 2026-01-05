@@ -152,4 +152,12 @@ export const config = {
     allowRegister:
       (process.env.AUTH_ALLOW_REGISTER || "true").toLowerCase() !== "false",
   },
+
+  // 多用户隔离（v1.1.0）：每个用户使用独立仓库路径
+  multiUser: {
+    enabled:
+      (process.env.MULTI_USER_ENABLED || "false").toLowerCase() === "true",
+    baseDir:
+      process.env.REPO_BASE_DIR || path.resolve(process.cwd(), ".vfiles_repos"),
+  },
 };

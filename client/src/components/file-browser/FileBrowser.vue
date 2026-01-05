@@ -555,8 +555,6 @@ import {
 } from "vue";
 import { storeToRefs } from "pinia";
 import {
-  IconUpload,
-  IconRefresh,
   IconFolderOpen,
   IconFolder,
   IconAlertCircle,
@@ -567,7 +565,6 @@ import {
 import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
 import { filesService } from "../../services/files.service";
-import Breadcrumb from "./Breadcrumb.vue";
 import FileList from "./FileList.vue";
 import FileUploader from "../file-uploader/FileUploader.vue";
 import VersionHistory from "../version-history/VersionHistory.vue";
@@ -579,7 +576,7 @@ let cachedHljs: any | null = null;
 
 const filesStore = useFilesStore();
 const appStore = useAppStore();
-const { files, breadcrumbs, loading, error, currentPath, browseCommit } =
+const { files, loading, error, currentPath, browseCommit } =
   storeToRefs(filesStore);
 
 const currentPathLabel = computed(() => {

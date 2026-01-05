@@ -68,13 +68,18 @@ export function authMiddleware(cfg: AuthConfig, userStore: UserStore) {
   };
 }
 
-export function requireAdmin(c: Context): { ok: true } | { ok: false; res: Response } {
+export function requireAdmin(
+  c: Context,
+): { ok: true } | { ok: false; res: Response } {
   const user = c.get("authUser") as AuthUserCtx | undefined;
   if (!user) {
     return { ok: false, res: c.json({ success: false, error: "未登录" }, 401) };
   }
   if (user.role !== "admin") {
-    return { ok: false, res: c.json({ success: false, error: "需要管理员权限" }, 403) };
+    return {
+      ok: false,
+      res: c.json({ success: false, error: "需要管理员权限" }, 403),
+    };
   }
   return { ok: true };
 }

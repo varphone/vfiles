@@ -432,9 +432,11 @@ client/
 - Git LFS：`ENABLE_GIT_LFS`、`GIT_LFS_TRACK_PATTERNS`
 
 实现位置：
+
 - `server/src/config.ts` 负责读取并应用上述环境变量。
 
 验收标准：
+
 - 设置 `PORT=4000` 后服务监听在 4000。
 - 设置 `REPO_MODE=bare` + `REPO_PATH=./data.git` 后可正常列目录/下载。
 
@@ -442,14 +444,14 @@ client/
 
 构建方式：
 
-1) 安装依赖
+1. 安装依赖
 
 ```bash
 bun install
 cd client && bun install
 ```
 
-2) 构建前端
+2. 构建前端
 
 ```bash
 bun run build
@@ -457,17 +459,19 @@ bun run build
 
 产物：`client/dist/`
 
-3) 启动服务端并托管前端
+3. 启动服务端并托管前端
 
 ```bash
 NODE_ENV=production bun run start
 ```
 
 实现位置：
+
 - 前端构建：`client/vite.config.ts`（`build.outDir = dist`）
 - 静态托管：`server/src/index.ts`（`NODE_ENV=production` 且 `client/dist/index.html` 存在时启用 `serveStatic`）
 
 验收标准：
+
 - `bun run build` 后生成 `client/dist/index.html` 与静态资源。
 - `NODE_ENV=production bun run start` 后访问 `http://localhost:<PORT>` 可打开前端页面。
 - 前端调用 `/api/*` 在同域下工作（生产环境无需 Vite proxy）。
@@ -475,21 +479,25 @@ NODE_ENV=production bun run start
 #### 6.4.3 Docker（可选，未实现）
 
 规划内容：
+
 - 提供 `Dockerfile`（多阶段：构建前端 + 运行 Bun 服务）
 - 提供 `docker-compose.yml`（挂载 repo 数据目录、传入环境变量）
 
 验收标准：
+
 - `docker build` 成功；`docker run` 能访问首页与 `/health`。
 
 #### 6.4.4 CI/CD（未实现）
 
 规划内容：
+
 - GitHub Actions / GitLab CI：
   - `bun install`、`bun run lint`、`bun run build`
   - 产物缓存（Bun cache）
   - 可选：构建 Docker 镜像并推送
 
 验收标准：
+
 - PR/Push 自动跑通 lint + build；失败能阻止合并。
 
 ### 6.5 部署

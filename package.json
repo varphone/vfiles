@@ -4,12 +4,12 @@
   "description": "基于Web的Git文件管理系统",
   "type": "module",
   "scripts": {
-    "dev": "bun run --watch server/src/index.ts",
+    "dev": "bun --watch server/src/index.ts",
     "dev:client": "cd client && bun run dev",
     "build": "cd client && bun run build",
     "compile": "bun build --compile server/src/index.ts --minify --sourcemap=none --outfile dist/vfiles",
     "package": "bun run scripts/package.ts",
-    "start": "bun run server/src/index.ts",
+    "start": "bun server/src/index.ts",
     "lint": "eslint .",
     "fmt": "prettier --write .",
     "test": "bun test"

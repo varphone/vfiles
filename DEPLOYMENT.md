@@ -18,6 +18,21 @@ REPO_MODE=worktree
 CORS_ORIGIN=*
 NODE_ENV=production
 
+# 用户系统（v1.1.0）
+# 开启后，除 /api/auth 与 /health 外的 API 都需要登录
+ENABLE_AUTH=false
+# ENABLE_AUTH=true 时必须设置（用于签名登录 cookie）
+AUTH_SECRET=
+AUTH_COOKIE_NAME=vfiles_session
+AUTH_TOKEN_TTL_SECONDS=604800
+AUTH_STORAGE_PATH=./.vfiles_auth/users.json
+AUTH_ALLOW_REGISTER=true
+
+# 多用户隔离（v1.1.0）
+# 依赖登录用户名映射到独立仓库目录
+MULTI_USER_ENABLED=false
+REPO_BASE_DIR=./.vfiles_repos
+
 # 上传
 UPLOAD_CHUNK_SIZE=5242880
 UPLOAD_MAX_CHUNK_SIZE=20971520
@@ -47,6 +62,14 @@ RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX=120
 ```
 
+说明：
+
+- 首个注册用户会被自动设为 `admin`（避免没有管理员）。
+- 当 `MULTI_USER_ENABLED=true` 时：
+  - `worktree` 模式仓库路径为 `<REPO_BASE_DIR>/<username>`
+  - `bare` 模式仓库路径为 `<REPO_BASE_DIR>/<username>.git`
+  - 仓库会在首次访问该用户接口时自动初始化（若不存在）。
+
 ## 生产构建与启动
 
 ```bash
@@ -65,6 +88,7 @@ bun run start
 ## 打包发布（运行时不依赖 node_modules）
 
 目标：产出一个“可发布目录”，运行时只需要：
+
 - 服务端可执行文件（由 `bun build --compile` 生成）
 - 前端静态资源目录 `client/dist/`
 - （可选）`.env` 配置文件与数据目录（`data/` 或 `data.git/`）
@@ -80,10 +104,11 @@ bun run package
 ```
 
 产物位置：
+
 - `release/`：组装好的发布目录
 - `dist/`：压缩包产物（GitHub release 风格命名）
-	- Windows：`<name>-v<version>-windows-<arch>.zip`
-	- Linux/macOS：`<name>-v<version>-<os>-<arch>.tar.gz`（用于保留可执行权限）
+  - Windows：`<name>-v<version>-windows-<arch>.zip`
+  - Linux/macOS：`<name>-v<version>-<os>-<arch>.tar.gz`（用于保留可执行权限）
 
 ### 1) 构建前端静态资源
 
@@ -126,6 +151,7 @@ release/
 ```
 
 将以下内容复制到 `release/`：
+
 - `dist/vfiles(.exe)`
 - `client/dist/`
 - （可选）`.env`（可从 `.env.example` 改名生成）
@@ -145,6 +171,7 @@ $env:NODE_ENV="production"; .\vfiles.exe
 ```
 
 验收标准：
+
 - 访问 `/health` 返回 `ok`
 - 访问根路径能加载前端页面（依赖 `client/dist/index.html` 存在）
 - `/api/files?path=` 返回 `success=true`
@@ -172,6 +199,7 @@ REPO_PATH=./data.git
 ## 反向代理（可选）
 
 若通过 Nginx/Caddy 暴露服务，建议：
+
 - 转发 `GET /api/download`、`GET /api/download/folder` 时保留 Range 头
 - 适当提高请求体限制（上传）
 

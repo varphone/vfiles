@@ -1,13 +1,14 @@
 import { Hono } from "hono";
-import { GitService } from "../services/git.service.js";
+import { GitServiceManager } from "../services/git-service-manager.js";
 import { pathSecurityMiddleware } from "../middleware/security.js";
+import { getRepoContext } from "../middleware/repo-context.js";
 import {
   normalizeRequestPath,
   parseLimit,
   validateCommitHash,
 } from "../utils/validation.js";
 
-export function createHistoryRoutes(gitService: GitService) {
+export function createHistoryRoutes(gitManager: GitServiceManager) {
   const app = new Hono();
 
   /**
@@ -15,6 +16,9 @@ export function createHistoryRoutes(gitService: GitService) {
    * 参数：path, commit, parent(可选)
    */
   app.get("/diff", pathSecurityMiddleware, async (c) => {
+    const { repoPath, repoMode } = getRepoContext(c);
+    const gitService = await gitManager.get(repoPath, repoMode);
+
     const rawPath = c.req.query("path");
     const path = rawPath ? normalizeRequestPath(rawPath) : undefined;
     const commit = c.req.query("commit") || "";
@@ -53,6 +57,9 @@ export function createHistoryRoutes(gitService: GitService) {
    * GET /api/history - 获取文件历史
    */
   app.get("/", pathSecurityMiddleware, async (c) => {
+    const { repoPath, repoMode } = getRepoContext(c);
+    const gitService = await gitManager.get(repoPath, repoMode);
+
     const rawPath = c.req.query("path");
     // 允许 path 为空字符串表示仓库根（用于目录版本浏览）
     const path = rawPath != null ? normalizeRequestPath(rawPath) : undefined;
@@ -101,6 +108,9 @@ export function createHistoryRoutes(gitService: GitService) {
    * GET /api/history/commit/:hash - 获取提交详情
    */
   app.get("/commit/:hash", async (c) => {
+    const { repoPath, repoMode } = getRepoContext(c);
+    const gitService = await gitManager.get(repoPath, repoMode);
+
     const hash = c.req.param("hash");
 
     if (!hash) {
