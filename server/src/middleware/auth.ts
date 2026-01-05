@@ -37,32 +37,43 @@ export function authMiddleware(cfg: AuthConfig, userStore: UserStore) {
     if (!cfg.enabled) return next();
 
     const pathname = new URL(c.req.url).pathname;
-    // allow auth endpoints + health
-    if (pathname.startsWith("/api/auth")) return next();
     if (pathname === "/health") return next();
 
+    // 先尝试从 cookie 解析用户（若存在），以支持 /api/auth/me 获取当前用户
     const token = getCookie(c, cfg.cookieName);
-    if (!token) {
+    if (token) {
+      const verified = verifyAuthToken(token, cfg.secret);
+      if (verified.ok) {
+        const user = await userStore.getUserById(verified.payload.sub);
+        if (user && !user.disabled) {
+          c.set("authUser", {
+            id: user.id,
+            username: user.username,
+            role: user.role,
+          } satisfies AuthUserCtx);
+        } else {
+          clearAuthCookie(c, cfg);
+        }
+      } else {
+        clearAuthCookie(c, cfg);
+      }
+    }
+
+    // 认证相关接口：登录/注册/退出不强制已登录
+    if (
+      pathname === "/api/auth/login" ||
+      pathname === "/api/auth/register" ||
+      pathname === "/api/auth/logout" ||
+      pathname === "/api/auth/me"
+    ) {
+      return next();
+    }
+
+    // 其他 API：强制要求已登录
+    const authed = c.get("authUser") as AuthUserCtx | undefined;
+    if (!authed) {
       return c.json({ success: false, error: "未登录" }, 401);
     }
-
-    const verified = verifyAuthToken(token, cfg.secret);
-    if (!verified.ok) {
-      clearAuthCookie(c, cfg);
-      return c.json({ success: false, error: "登录已过期" }, 401);
-    }
-
-    const user = await userStore.getUserById(verified.payload.sub);
-    if (!user || user.disabled) {
-      clearAuthCookie(c, cfg);
-      return c.json({ success: false, error: "用户不可用" }, 401);
-    }
-
-    c.set("authUser", {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-    } satisfies AuthUserCtx);
 
     return next();
   };

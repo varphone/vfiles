@@ -26,7 +26,12 @@ export interface AuthMeResponseEnabledTrue {
 export type AuthMeResponse = AuthMeResponseEnabledFalse | AuthMeResponseEnabledTrue;
 
 class AuthService {
-  me(): Promise<ApiResponse<{ enabled: false } | { user: AuthUser }>> {
+  me(): Promise<
+    ApiResponse<
+      | { enabled: false }
+      | { enabled: true; allowRegister: boolean; user: AuthUser | null }
+    >
+  > {
     return apiService.get("/auth/me");
   }
 

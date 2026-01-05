@@ -5,6 +5,7 @@ import { authService, type AuthUser } from "../services/auth.service";
 export const useAuthStore = defineStore("auth", () => {
   const initialized = ref(false);
   const enabled = ref<boolean>(false);
+  const allowRegister = ref<boolean>(true);
   const user = ref<AuthUser | null>(null);
   const loading = ref(false);
   const error = ref<string | null>(null);
@@ -17,6 +18,7 @@ export const useAuthStore = defineStore("auth", () => {
       if (!res.success) {
         // server explicitly says not success
         enabled.value = true;
+        allowRegister.value = true;
         user.value = null;
         error.value = res.error || "获取登录状态失败";
         return;
@@ -24,16 +26,17 @@ export const useAuthStore = defineStore("auth", () => {
 
       if ((res.data as any)?.enabled === false) {
         enabled.value = false;
+        allowRegister.value = true;
         user.value = null;
         return;
       }
 
       enabled.value = true;
-      const u = (res.data as any)?.user as AuthUser | undefined;
-      user.value = u ?? null;
+      allowRegister.value = Boolean((res.data as any)?.allowRegister);
+      user.value = ((res.data as any)?.user as AuthUser | null) ?? null;
     } catch (e) {
-      // Most commonly: 401 未登录 when ENABLE_AUTH=true
       enabled.value = true;
+      allowRegister.value = true;
       user.value = null;
       error.value = e instanceof Error ? e.message : "获取登录状态失败";
     } finally {
@@ -97,6 +100,7 @@ export const useAuthStore = defineStore("auth", () => {
   return {
     initialized,
     enabled,
+    allowRegister,
     user,
     loading,
     error,

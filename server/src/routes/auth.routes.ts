@@ -33,10 +33,14 @@ export function createAuthRoutes(cfg: AuthConfig, userStore: UserStore) {
       return c.json({ success: true, data: { enabled: false } });
     }
     const user = (c as any).get("authUser") as AuthUserCtx | undefined;
-    if (!user) {
-      return c.json({ success: false, error: "未登录" }, 401);
-    }
-    return c.json({ success: true, data: { user } });
+    return c.json({
+      success: true,
+      data: {
+        enabled: true,
+        allowRegister: cfg.allowRegister,
+        user: user ?? null,
+      },
+    });
   });
 
   app.post("/register", async (c) => {

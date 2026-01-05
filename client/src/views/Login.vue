@@ -12,15 +12,32 @@
         </div>
 
         <template v-else>
+          <div
+            v-if="reasonText"
+            class="notification is-warning is-light"
+          >
+            {{ reasonText }}
+          </div>
+
           <div class="tabs is-toggle is-fullwidth">
             <ul>
               <li :class="{ 'is-active': mode === 'login' }">
                 <a href="#" @click.prevent="mode = 'login'">登录</a>
               </li>
-              <li :class="{ 'is-active': mode === 'register' }">
+              <li
+                v-if="auth.allowRegister"
+                :class="{ 'is-active': mode === 'register' }"
+              >
                 <a href="#" @click.prevent="mode = 'register'">注册</a>
               </li>
             </ul>
+          </div>
+
+          <div
+            v-if="auth.enabled && !auth.allowRegister"
+            class="notification is-info is-light"
+          >
+            管理员已关闭注册（AUTH_ALLOW_REGISTER=false）。
           </div>
 
           <form @submit.prevent="submit">
@@ -77,7 +94,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "../stores/auth.store";
 import { useAppStore } from "../stores/app.store";
@@ -90,6 +107,19 @@ const route = useRoute();
 const mode = ref<"login" | "register">("login");
 const username = ref("");
 const password = ref("");
+
+const reasonText = computed(() => {
+  const reason = typeof route.query.reason === "string" ? route.query.reason : "";
+  if (reason === "expired") return "登录已过期，请重新登录。";
+  return "";
+});
+
+watch(
+  () => auth.allowRegister,
+  (allow) => {
+    if (!allow && mode.value === "register") mode.value = "login";
+  },
+);
 
 function goHome() {
   router.push({ path: "/" });
@@ -120,6 +150,10 @@ async function submit() {
 onMounted(async () => {
   if (!auth.initialized) {
     await auth.fetchMe();
+  }
+
+  if (auth.enabled && !auth.allowRegister && mode.value === "register") {
+    mode.value = "login";
   }
 });
 </script>

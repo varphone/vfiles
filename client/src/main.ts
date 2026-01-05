@@ -3,11 +3,13 @@ import { createPinia } from "pinia";
 import App from "./App.vue";
 import router from "./router";
 import { useAuthStore } from "./stores/auth.store";
+import { useAppStore } from "./stores/app.store";
 
 const app = createApp(App);
 const pinia = createPinia();
 
 const authStore = useAuthStore(pinia);
+const appStore = useAppStore(pinia);
 
 router.beforeEach(async (to) => {
 	if (!authStore.initialized) {
@@ -40,11 +42,17 @@ router.beforeEach(async (to) => {
 });
 
 if (typeof window !== "undefined") {
+	let lastUnauthorizedAt = 0;
 	window.addEventListener("vfiles:unauthorized", () => {
 		if (router.currentRoute.value.name === "login") return;
+		const now = Date.now();
+		if (now - lastUnauthorizedAt > 1500) {
+			appStore.warning("登录已过期，请重新登录");
+			lastUnauthorizedAt = now;
+		}
 		void router.push({
 			name: "login",
-			query: { redirect: router.currentRoute.value.fullPath },
+			query: { redirect: router.currentRoute.value.fullPath, reason: "expired" },
 		});
 	});
 }
