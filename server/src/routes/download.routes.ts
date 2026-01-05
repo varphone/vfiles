@@ -10,6 +10,10 @@ import { Zip, ZipDeflate } from 'fflate';
 export function createDownloadRoutes(gitService: GitService) {
   const app = new Hono();
 
+  function pathModuleJoinRepo(requestedPath: string): string {
+    return path.join(config.repoPath, requestedPath);
+  }
+
   async function listFilesRecursively(baseDirFullPath: string, relDir: string): Promise<string[]> {
     const dirFull = path.join(baseDirFullPath, relDir);
     const entries = await fs.readdir(dirFull, { withFileTypes: true });
@@ -56,14 +60,111 @@ export function createDownloadRoutes(gitService: GitService) {
     }
 
     try {
-      const content = await gitService.getFileContent(path, commitResult.value);
       const filename = path.split('/').pop() || 'download';
-
-      // 设置下载响应头
       c.header('Content-Type', 'application/octet-stream');
       c.header('Content-Disposition', `attachment; filename="${filename}"`);
-      c.header('Content-Length', content.length.toString());
+      c.header('Accept-Ranges', 'bytes');
 
+      // 仅对“当前版本文件”（不带 commit）支持 Range，避免对 git show 输出做随机访问。
+      if (!commitResult.value) {
+        const fullPath = pathModuleJoinRepo(path);
+        const stat = await fs.stat(fullPath);
+        if (!stat.isFile()) {
+          return c.json({ success: false, error: '目标不是文件' }, 400);
+        }
+
+        const total = stat.size;
+        const range = c.req.header('range') || c.req.header('Range');
+        if (range && /^bytes=\d*-\d*$/i.test(range.trim())) {
+          const [, spec] = range.trim().split('=');
+          const [startStr, endStr] = spec.split('-');
+          let start = startStr ? Number.parseInt(startStr, 10) : 0;
+          let end = endStr ? Number.parseInt(endStr, 10) : total - 1;
+
+          if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < 0 || start > end) {
+            c.header('Content-Range', `bytes */${total}`);
+            return c.body(null, 416);
+          }
+
+          // bytes=-N：从末尾取 N 字节
+          if (!startStr && endStr) {
+            const suffixLen = Math.min(end, total);
+            start = Math.max(0, total - suffixLen);
+            end = total - 1;
+          }
+
+          if (start >= total) {
+            c.header('Content-Range', `bytes */${total}`);
+            return c.body(null, 416);
+          }
+          if (end >= total) end = total - 1;
+
+          const chunkSize = end - start + 1;
+          c.header('Content-Range', `bytes ${start}-${end}/${total}`);
+          c.header('Content-Length', chunkSize.toString());
+
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              (async () => {
+                let file: fs.FileHandle | null = null;
+                try {
+                  file = await fs.open(fullPath, 'r');
+                  const buf = new Uint8Array(chunkSize);
+                  const { bytesRead } = await file.read(buf, 0, chunkSize, start);
+                  controller.enqueue(buf.subarray(0, bytesRead));
+                  controller.close();
+                } catch (e) {
+                  controller.error(e);
+                } finally {
+                  try {
+                    await file?.close();
+                  } catch {
+                    // ignore
+                  }
+                }
+              })();
+            },
+          });
+
+          return c.body(stream, 206);
+        }
+
+        // 无 Range：直接返回整文件（仍可续传）
+        c.header('Content-Length', total.toString());
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            (async () => {
+              let file: fs.FileHandle | null = null;
+              try {
+                file = await fs.open(fullPath, 'r');
+                const buf = new Uint8Array(1024 * 1024);
+                let offset = 0;
+                while (offset < total) {
+                  const toRead = Math.min(buf.length, total - offset);
+                  const { bytesRead } = await file.read(buf, 0, toRead, offset);
+                  if (bytesRead <= 0) break;
+                  controller.enqueue(buf.subarray(0, bytesRead));
+                  offset += bytesRead;
+                }
+                controller.close();
+              } catch (e) {
+                controller.error(e);
+              } finally {
+                try {
+                  await file?.close();
+                } catch {
+                  // ignore
+                }
+              }
+            })();
+          },
+        });
+        return c.body(stream);
+      }
+
+      // 历史版本（commit）：沿用原逻辑
+      const content = await gitService.getFileContent(path, commitResult.value);
+      c.header('Content-Length', content.length.toString());
       const body = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength) as ArrayBuffer;
       return c.body(body);
     } catch (error) {
