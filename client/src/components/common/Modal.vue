@@ -1,7 +1,7 @@
 <template>
   <div class="modal" :class="{ 'is-active': show }">
     <div class="modal-background" @click="close"></div>
-    <div class="modal-card">
+    <div class="modal-card" :class="{ 'is-mobile-compact': mobileCompact }">
       <header class="modal-card-head">
         <p class="modal-card-title">{{ title }}</p>
         <button class="delete" aria-label="close" @click="close"></button>
@@ -17,10 +17,16 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
-  show: boolean;
-  title: string;
-}>();
+withDefaults(
+  defineProps<{
+    show: boolean;
+    title: string;
+    mobileCompact?: boolean;
+  }>(),
+  {
+    mobileCompact: false,
+  }
+);
 
 const emit = defineEmits<{
   close: [];
@@ -69,6 +75,25 @@ function close() {
     width: 100%;
     margin: 0;
     max-height: 90vh;
+  }
+
+  /* 仅在需要时收紧移动端边距/内边距（例如“文件历史”） */
+  .modal-card.is-mobile-compact .modal-card-head,
+  .modal-card.is-mobile-compact .modal-card-body,
+  .modal-card.is-mobile-compact .modal-card-foot {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  .modal-card.is-mobile-compact .modal-card-head,
+  .modal-card.is-mobile-compact .modal-card-foot {
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .modal-card.is-mobile-compact .modal-card-body {
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
   }
 }
 </style>
