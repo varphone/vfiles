@@ -353,19 +353,66 @@ export class GitService {
    */
   async searchFileContents(query: string, basePath: string = ''): Promise<FileInfo[]> {
     // git grep 输出使用 / 作为分隔符；若指定 basePath 则限制在该目录范围内
-    const pathSpec = basePath ? normalizePathForGit(basePath) : '';
-    const result = pathSpec
-      ? await $`git grep -I -l --fixed-strings --ignore-case ${query} -- ${pathSpec}`.cwd(this.dir).quiet()
-      : await $`git grep -I -l --fixed-strings --ignore-case ${query} --`.cwd(this.dir).quiet();
+    const MAX_FILES = 50;
+    const MAX_MATCHES_PER_FILE = 5;
+    const MAX_LINE_LENGTH = 240;
 
-    const files = result.stdout
-      .toString()
+    const pathSpec = basePath ? normalizePathForGit(basePath) : '';
+
+    let stdout = '';
+    try {
+      const result = pathSpec
+        ? await $`git grep -n -I -m ${MAX_MATCHES_PER_FILE} --fixed-strings --ignore-case ${query} -- ${pathSpec}`
+            .cwd(this.dir)
+            .quiet()
+        : await $`git grep -n -I -m ${MAX_MATCHES_PER_FILE} --fixed-strings --ignore-case ${query} --`
+            .cwd(this.dir)
+            .quiet();
+      stdout = result.stdout.toString();
+    } catch (error: any) {
+      // git grep：无匹配时 exit code = 1（不是错误）
+      const exitCode = typeof error?.exitCode === 'number' ? error.exitCode : undefined;
+      if (exitCode === 1) {
+        return [];
+      }
+      throw error;
+    }
+
+    type ContentMatch = { line: number; text: string };
+    const matchesByFile = new Map<string, ContentMatch[]>();
+
+    const lines = stdout
       .split(/\r?\n/)
-      .map((s: string) => s.trim())
+      .map((s) => s.trimEnd())
       .filter(Boolean);
 
+    for (const line of lines) {
+      const first = line.indexOf(':');
+      if (first <= 0) continue;
+      const second = line.indexOf(':', first + 1);
+      if (second <= first + 1) continue;
+
+      const filePath = line.slice(0, first);
+      if (!matchesByFile.has(filePath) && matchesByFile.size >= MAX_FILES) {
+        continue;
+      }
+
+      const lineNoStr = line.slice(first + 1, second);
+      const lineNo = Number.parseInt(lineNoStr, 10);
+      if (!Number.isFinite(lineNo)) continue;
+
+      const textRaw = line.slice(second + 1);
+      const text = textRaw.length > MAX_LINE_LENGTH ? `${textRaw.slice(0, MAX_LINE_LENGTH)}…` : textRaw;
+
+      const arr = matchesByFile.get(filePath) ?? [];
+      if (arr.length < MAX_MATCHES_PER_FILE) {
+        arr.push({ line: lineNo, text });
+        matchesByFile.set(filePath, arr);
+      }
+    }
+
     const infos: FileInfo[] = [];
-    for (const filePath of files) {
+    for (const [filePath, matches] of matchesByFile) {
       try {
         const fullPath = path.join(this.dir, filePath);
         const stats = await fs.stat(fullPath);
@@ -378,6 +425,7 @@ export class GitService {
           size: stats.size,
           mtime: stats.mtime.toISOString(),
           lastCommit,
+          matches,
         });
       } catch {
         // ignore missing/racing files

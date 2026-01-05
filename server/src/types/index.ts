@@ -6,6 +6,12 @@ export interface FileInfo {
   size: number;
   mtime: string;
   lastCommit?: CommitSummary;
+  matches?: ContentMatch[];
+}
+
+export interface ContentMatch {
+  line: number;
+  text: string;
 }
 
 export interface CommitInfo {

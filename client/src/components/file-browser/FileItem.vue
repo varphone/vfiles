@@ -31,6 +31,16 @@
               {{ file.lastCommit.message }}
             </span>
           </p>
+
+          <div v-if="file.type === 'file' && file.matches && file.matches.length" class="search-matches">
+            <p v-for="m in file.matches" :key="m.line" class="is-size-7 has-text-grey">
+              <span class="has-text-grey-light mr-2">{{ m.line }}:</span>
+              <template v-for="(seg, i) in splitHighlight(m.text)" :key="i">
+                <mark v-if="seg.match" class="has-background-warning-light">{{ seg.text }}</mark>
+                <span v-else>{{ seg.text }}</span>
+              </template>
+            </p>
+          </div>
         </div>
       </div>
       <div class="media-right">
@@ -114,17 +124,12 @@ const icon = computed(() => {
 
 type NameSegment = { text: string; match: boolean };
 
-const nameSegments = computed<NameSegment[]>(() => {
-  const name = props.file.name ?? '';
-  const needleRaw = (props.highlight ?? '').trim();
-  if (!needleRaw) return [{ text: name, match: false }];
+function splitByNeedle(text: string, needleRaw: string): NameSegment[] {
+  const hay = text ?? '';
+  const needle = (needleRaw ?? '').trim().toLowerCase();
+  if (!needle) return [{ text: hay, match: false }];
 
-  const hay = name;
   const hayLower = hay.toLowerCase();
-  const needle = needleRaw.toLowerCase();
-
-  if (!needle) return [{ text: name, match: false }];
-
   const segments: NameSegment[] = [];
   let start = 0;
 
@@ -142,8 +147,16 @@ const nameSegments = computed<NameSegment[]>(() => {
     start = idx + needle.length;
   }
 
-  return segments.length ? segments : [{ text: name, match: false }];
+  return segments.length ? segments : [{ text: hay, match: false }];
+}
+
+const nameSegments = computed<NameSegment[]>(() => {
+  return splitByNeedle(props.file.name ?? '', props.highlight ?? '');
 });
+
+function splitHighlight(text: string): NameSegment[] {
+  return splitByNeedle(text, props.highlight ?? '');
+}
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -227,6 +240,10 @@ function viewHistory() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.search-matches {
+  margin-top: 0.5rem;
 }
 
 .buttons {
