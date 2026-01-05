@@ -383,17 +383,17 @@ client/
 
 ### 6.1 测试
 
-- [ ] 单元测试（Vitest）
-  - API服务测试
-  - 组件测试
-  - 工具函数测试
-- [ ] 端到端测试（Playwright）
-  - 文件上传流程
-  - 文件浏览流程
-  - 版本历史流程
+- [x] 单元测试（Vitest）
+  - [x] API服务测试（已添加 /health 与 /api/auth/me 示例测试）
+  - [x] 组件测试（已添加 Login.vue 示例测试，使用 @testing-library/vue）
+  - [ ] 工具函数测试（待补充，如 validation、auth-token、path-validator）
+- [x] 端到端测试（Playwright）
+  - [ ] 文件上传流程（脚手架测试已添加，需进一步实现上传场景）
+  - [ ] 文件浏览流程
+  - [ ] 版本历史流程
 - [ ] 移动端测试
-  - 多种设备测试
-  - 触摸交互测试
+  - [ ] 多种设备测试（Playwright 已添加 mobile 项目，可补用例）
+  - [ ] 触摸交互测试
 
 ### 6.2 性能优化
 
