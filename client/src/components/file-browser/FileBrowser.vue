@@ -492,7 +492,7 @@ let cachedHljs: any | null = null;
 
 const filesStore = useFilesStore();
 const appStore = useAppStore();
-const { files, breadcrumbs, loading, error, currentPath } = storeToRefs(filesStore);
+const { files, breadcrumbs, loading, error, currentPath, browseCommit } = storeToRefs(filesStore);
 
 const currentPathLabel = computed(() => {
   return currentPath.value ? `/${currentPath.value}` : '根目录';
@@ -707,7 +707,7 @@ async function openPreview(filePath: string) {
       return;
     }
 
-    const blob = await filesService.getFileContent(filePath);
+    const blob = await filesService.getFileContent(filePath, browseCommit.value);
 
     if (preview.value.kind === 'image' || preview.value.kind === 'pdf' || preview.value.kind === 'video' || preview.value.kind === 'audio') {
       const typed = new Blob([await blob.arrayBuffer()], { type: guessMimeByExt(filePath) });
@@ -1217,10 +1217,11 @@ async function processQueue() {
       downloadQueue.value = downloadQueue.value.map((x) => (x.id === next.id ? { ...x, progress: p } : x));
     };
 
+    const commit = browseCommit.value;
     const result =
       next.kind === 'folder'
-        ? await filesService.fetchFolderDownload(next.path, { signal: abort.signal, onProgress })
-        : await filesService.fetchFileDownload(next.path, undefined, { signal: abort.signal, onProgress });
+        ? await filesService.fetchFolderDownload(next.path, commit, { signal: abort.signal, onProgress })
+        : await filesService.fetchFileDownload(next.path, commit, { signal: abort.signal, onProgress });
 
     filesService.saveDownloadedBlob(result.blob, result.filename);
     downloadQueue.value = downloadQueue.value.map((x) => (x.id === next.id ? { ...x, status: 'done', abort: undefined } : x));

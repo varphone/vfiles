@@ -111,6 +111,7 @@
           <div class="dropdown-menu" role="menu">
             <div class="dropdown-content">
               <a class="dropdown-item" href="#" @click.prevent="setActionMode('nav')">导航</a>
+              <a class="dropdown-item" href="#" @click.prevent="setActionMode('history')">历史</a>
               <a class="dropdown-item" href="#" @click.prevent="setActionMode('batch')">批量</a>
             </div>
           </div>
@@ -131,6 +132,22 @@
             <button class="button is-light" @click="refresh" title="刷新">
               <IconRefresh :size="18" />
             </button>
+          </div>
+
+          <!-- 历史模式 -->
+          <div v-else-if="actionMode === 'history'" class="mobile-history-panel">
+            <div class="mobile-history-hash">
+              <code class="is-size-7">{{ historyHashShort }}</code>
+              <span v-if="historyDateShort" class="is-size-7 has-text-grey-light ml-2">{{ historyDateShort }}</span>
+            </div>
+            <div class="buttons are-small mb-0 mobile-action-buttons">
+              <button class="button is-light" :disabled="dirHistoryLoading || !canPrev" @click="historyPrev" title="向前">
+                向前
+              </button>
+              <button class="button is-light" :disabled="dirHistoryLoading || !canNext" @click="historyNext" title="向后">
+                向后
+              </button>
+            </div>
           </div>
 
           <!-- 批量模式 -->
@@ -220,6 +237,7 @@ import {
 } from '@tabler/icons-vue';
 import FileBrowser from '../components/file-browser/FileBrowser.vue';
 import { useFilesStore } from '../stores/files.store';
+import { filesService } from '../services/files.service';
 
 type FileBrowserHandle = {
   openUploader: () => void;
@@ -245,12 +263,17 @@ const browserRef = ref<FileBrowserHandle | null>(null);
 const mobileMenuOpen = ref(false);
 
 const actionMenuOpen = ref(false);
-const actionMode = ref<'nav' | 'batch'>('nav');
+const actionMode = ref<'nav' | 'history' | 'batch'>('nav');
 const mobileSearchQuery = ref('');
 const batchMenuOpen = ref(false);
+const dirHistoryLoading = ref(false);
+const dirHistoryError = ref<string | null>(null);
+const dirHistoryCommits = ref<Array<{ hash: string; date?: string }>>([]);
+const dirSelectedHash = ref('');
+let dirHistoryReqId = 0;
 
 const filesStore = useFilesStore();
-const { currentPath } = storeToRefs(filesStore);
+const { currentPath, browseCommit } = storeToRefs(filesStore);
 
 const currentPathLabel = computed(() => {
   return currentPath.value ? `/${currentPath.value}` : '根目录';
@@ -306,7 +329,7 @@ const isBatchMode = computed(() => browserRef.value?.batchMode?.value ?? false);
 const selectedCount = computed(() => browserRef.value?.selectedCount?.value ?? 0);
 const isSearchLoading = computed(() => browserRef.value?.searchLoading?.value ?? false);
 
-function setActionMode(mode: 'nav' | 'batch') {
+function setActionMode(mode: 'nav' | 'history' | 'batch') {
   actionMode.value = mode;
   actionMenuOpen.value = false;
   batchMenuOpen.value = false;
@@ -315,6 +338,95 @@ function setActionMode(mode: 'nav' | 'batch') {
   if (mode === 'batch' && !isBatchMode.value) {
     toggleBatch();
   }
+
+  // 离开历史模式时回到当前版本（HEAD/worktree）
+  if (mode !== 'history' && browseCommit.value) {
+    filesStore.setBrowseCommit(undefined);
+  }
+
+  if (mode === 'history') {
+    void loadDirHistory();
+  }
+}
+
+const historyHashShort = computed(() => {
+  const h = dirSelectedHash.value || browseCommit.value || '';
+  return h ? h.substring(0, 8) : '--------';
+});
+
+const historyDateShort = computed(() => {
+  const idx = dirSelectedIndex.value;
+  const iso = idx >= 0 ? dirHistoryCommits.value[idx]?.date : undefined;
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+
+  // 紧凑显示：MM-DD HH:mm（使用本地时区）
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${mm}-${dd} ${hh}:${mi}`;
+});
+
+const dirSelectedIndex = computed(() => {
+  const h = dirSelectedHash.value;
+  if (!h) return -1;
+  return dirHistoryCommits.value.findIndex((c) => c.hash === h);
+});
+
+const canPrev = computed(() => {
+  const idx = dirSelectedIndex.value;
+  return idx >= 0 && idx < dirHistoryCommits.value.length - 1;
+});
+
+const canNext = computed(() => {
+  const idx = dirSelectedIndex.value;
+  return idx > 0;
+});
+
+async function loadDirHistory() {
+  const reqId = ++dirHistoryReqId;
+  dirHistoryLoading.value = true;
+  dirHistoryError.value = null;
+  try {
+    const data = await filesService.getFileHistory(currentPath.value || '', 50);
+    if (reqId !== dirHistoryReqId) return;
+    dirHistoryCommits.value = (data.commits || []).map((c) => ({ hash: c.hash, date: c.date }));
+
+    const preferred = browseCommit.value || dirSelectedHash.value || data.currentVersion || data.commits?.[0]?.hash || '';
+    const exists = preferred && dirHistoryCommits.value.some((c) => c.hash === preferred);
+    dirSelectedHash.value = exists ? preferred : (data.currentVersion || data.commits?.[0]?.hash || '');
+
+    if (dirSelectedHash.value) {
+      filesStore.setBrowseCommit(dirSelectedHash.value);
+    }
+  } catch (err) {
+    if (reqId !== dirHistoryReqId) return;
+    dirHistoryError.value = err instanceof Error ? err.message : '加载历史失败';
+    dirHistoryCommits.value = [];
+    dirSelectedHash.value = '';
+  } finally {
+    if (reqId === dirHistoryReqId) dirHistoryLoading.value = false;
+  }
+}
+
+function historyPrev() {
+  const idx = dirSelectedIndex.value;
+  if (idx < 0) return;
+  const nextHash = dirHistoryCommits.value[idx + 1]?.hash;
+  if (!nextHash) return;
+  dirSelectedHash.value = nextHash;
+  filesStore.setBrowseCommit(nextHash);
+}
+
+function historyNext() {
+  const idx = dirSelectedIndex.value;
+  if (idx <= 0) return;
+  const nextHash = dirHistoryCommits.value[idx - 1]?.hash;
+  if (!nextHash) return;
+  dirSelectedHash.value = nextHash;
+  filesStore.setBrowseCommit(nextHash);
 }
 
 async function runBatchMenuAction(action: 'delete' | 'move' | 'rename') {
@@ -478,6 +590,19 @@ function toggleBatchAndClose() {
     display: flex;
     align-items: center;
     justify-content: flex-end;
+  }
+
+  .mobile-history-panel {
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+
+  .mobile-history-hash {
+    flex: 0 0 auto;
   }
 
   .mobile-batch-actions {

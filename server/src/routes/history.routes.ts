@@ -46,14 +46,15 @@ export function createHistoryRoutes(gitService: GitService) {
    */
   app.get('/', pathSecurityMiddleware, async (c) => {
     const rawPath = c.req.query('path');
-    const path = rawPath ? normalizeRequestPath(rawPath) : undefined;
+    // 允许 path 为空字符串表示仓库根（用于目录版本浏览）
+    const path = rawPath != null ? normalizeRequestPath(rawPath) : undefined;
 
     const limitResult = parseLimit(c.req.query('limit'), { defaultValue: 50, min: 1, max: 200 });
     if (!limitResult.ok) {
       return c.json({ success: false, error: limitResult.message }, limitResult.status);
     }
 
-    if (!path) {
+    if (path == null) {
       return c.json(
         {
           success: false,

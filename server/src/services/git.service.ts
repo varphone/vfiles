@@ -534,7 +534,60 @@ export class GitService {
   /**
    * 列出指定路径下的文件和文件夹
    */
-  async listFiles(dirPath: string = ''): Promise<FileInfo[]> {
+  async listFiles(dirPath: string = '', commitHash?: string): Promise<FileInfo[]> {
+    if (commitHash) {
+      const normalizedDir = dirPath ? normalizePathForGit(dirPath) : '';
+      const treeish = normalizedDir ? `${commitHash}:${normalizedDir}` : commitHash;
+      const args = ['git', 'ls-tree', '-z', '-l', treeish];
+
+      const proc = Bun.spawn(args, { cwd: this.dir, stdout: 'pipe', stderr: 'pipe' });
+      const code = await proc.exited;
+      const outBuf = await new Response(proc.stdout).arrayBuffer();
+
+      if (code !== 0) {
+        return [];
+      }
+
+      const bytes = new Uint8Array(outBuf);
+      const text = new TextDecoder().decode(bytes);
+      const records = text.split('\0').filter(Boolean);
+
+      const files: FileInfo[] = [];
+      for (const rec of records) {
+        // 格式：<mode> <type> <sha> <size>\t<name>
+        const tab = rec.indexOf('\t');
+        if (tab <= 0) continue;
+        const meta = rec.slice(0, tab).trim().split(/\s+/);
+        const name = rec.slice(tab + 1);
+        if (!name) continue;
+        if (name.startsWith('.git')) continue;
+
+        const typeToken = meta[1];
+        const sizeToken = meta[3];
+
+        const relPath = normalizedDir ? `${normalizedDir}/${name}` : name;
+        const filePath = relPath.replaceAll('\\', '/');
+
+        // 目录版本浏览：优先保证能列出内容；lastCommit 可先沿用现有逻辑
+        const lastCommit = await this.getLastCommit(filePath);
+        const mtime = lastCommit?.date || new Date(0).toISOString();
+
+        files.push({
+          name,
+          path: filePath,
+          type: typeToken === 'tree' ? 'directory' : 'file',
+          size: sizeToken && sizeToken !== '-' ? Number.parseInt(sizeToken, 10) : 0,
+          mtime,
+          lastCommit,
+        });
+      }
+
+      return files.sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+    }
+
     if (this.isBare) {
       // 从 HEAD 的 tree 列出目录项
       const normalizedDir = dirPath ? normalizePathForGit(dirPath) : '';
@@ -1227,9 +1280,12 @@ export class GitService {
       const RS = '\x1e'; // record separator
       const US = '\x1f'; // unit separator
 
-      const result = await $`git log --pretty=format:%H${US}%P${US}%an${US}%ae${US}%at${US}%s${RS} -n ${limit} -- ${normalizePathForGit(filePath)}`
-        .cwd(this.dir)
-        .quiet();
+      const normalized = normalizePathForGit(filePath);
+      const cmd = normalized
+        ? $`git log --pretty=format:%H${US}%P${US}%an${US}%ae${US}%at${US}%s${RS} -n ${limit} -- ${normalized}`
+        : $`git log --pretty=format:%H${US}%P${US}%an${US}%ae${US}%at${US}%s${RS} -n ${limit}`;
+
+      const result = await cmd.cwd(this.dir).quiet();
 
       const raw = result.stdout.toString();
       const records = raw

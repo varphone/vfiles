@@ -162,11 +162,17 @@ export function createFilesRoutes(gitService: GitService) {
    */
   app.get('/', pathSecurityMiddleware, async (c) => {
     const requestedPath = normalizeRequestPath(c.req.query('path') || '');
+    const commit = c.req.query('commit');
     if (!isAllowedPathByPrefixes(requestedPath, config.allowedPathPrefixes)) {
       return c.json({ success: false, error: '不允许访问该路径' }, 403);
     }
 
-    const files = await gitService.listFiles(requestedPath);
+    const commitResult = validateOptionalCommitHash(commit);
+    if (!commitResult.ok) {
+      return c.json({ success: false, error: commitResult.message }, commitResult.status);
+    }
+
+    const files = await gitService.listFiles(requestedPath, commitResult.value);
 
     return c.json({
       success: true,

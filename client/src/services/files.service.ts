@@ -55,8 +55,8 @@ export const filesService = {
   /**
    * 获取文件列表
    */
-  async getFiles(path: string = ''): Promise<FileInfo[]> {
-    const response = await apiService.get<FileInfo[]>('/files', { path });
+  async getFiles(path: string = '', commit?: string): Promise<FileInfo[]> {
+    const response = await apiService.get<FileInfo[]>('/files', { path, commit });
     return response.data || [];
   },
 
@@ -252,9 +252,11 @@ export const filesService = {
   /**
    * 下载文件夹（ZIP）
    */
-  downloadFolder(path: string): void {
+  downloadFolder(path: string, commit?: string): void {
     const params = { path };
-    const url = `/api/download/folder?${new URLSearchParams(params)}`;
+    const qs = new URLSearchParams(params);
+    if (commit) qs.set('commit', commit);
+    const url = `/api/download/folder?${qs}`;
     const name = path.split('/').filter(Boolean).pop() || 'root';
     const link = document.createElement('a');
     link.href = url;
@@ -285,9 +287,11 @@ export const filesService = {
    */
   async fetchFolderDownload(
     path: string,
+    commit?: string,
     opts?: { signal?: AbortSignal; onProgress?: (p: DownloadProgress) => void }
   ): Promise<{ blob: Blob; filename: string }> {
     const params = new URLSearchParams({ path });
+    if (commit) params.set('commit', commit);
     const url = `/api/download/folder?${params}`;
     const name = path.split('/').filter(Boolean).pop() || 'root';
     const filename = `${name}.zip`;

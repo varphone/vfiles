@@ -407,9 +407,16 @@ export function createDownloadRoutes(gitService: GitService) {
   app.get('/folder', pathSecurityMiddleware, async (c) => {
     const rawPath = c.req.query('path');
     const requestedPath = rawPath ? normalizeRequestPath(rawPath) : '';
+    const commitParam = c.req.query('commit');
 
-    // bare 模式：文件不在磁盘工作区，需从 HEAD 的对象库读取并打包
-    if (config.repoMode === 'bare') {
+    const commitResult = validateOptionalCommitHash(commitParam);
+    if (!commitResult.ok) {
+      return c.json({ success: false, error: commitResult.message }, commitResult.status);
+    }
+    const ref = commitResult.value || 'HEAD';
+
+    // 指定 commit 或 bare 模式：文件不在（或不应读）磁盘工作区，需从对象库读取并打包
+    if (config.repoMode === 'bare' || !!commitResult.value) {
       const zipFilename = folderZipName(requestedPath);
       c.header('Content-Type', 'application/zip');
       c.header('Content-Disposition', `attachment; filename="${zipFilename}"`);
@@ -423,8 +430,8 @@ export function createDownloadRoutes(gitService: GitService) {
 
               // 递归列出文件（name-only）
               const args = base
-                ? ['git', 'ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', base]
-                : ['git', 'ls-tree', '-r', '-z', '--name-only', 'HEAD'];
+                ? ['git', 'ls-tree', '-r', '-z', '--name-only', ref, '--', base]
+                : ['git', 'ls-tree', '-r', '-z', '--name-only', ref];
               const proc = Bun.spawn(args, { cwd: config.repoPath, stdout: 'pipe', stderr: 'pipe' });
               const code = await proc.exited;
               if (code !== 0) {
@@ -452,10 +459,10 @@ export function createDownloadRoutes(gitService: GitService) {
                 const entry = new ZipDeflate(zipPath);
                 zip.add(entry);
 
-                const isLfsPointer = await gitService.isLfsPointerAtCommit(fullRel, 'HEAD');
+                const isLfsPointer = await gitService.isLfsPointerAtCommit(fullRel, ref);
                 const fileStream = isLfsPointer
-                  ? gitService.getFileContentSmudgedStreamAtCommit(fullRel, 'HEAD')
-                  : gitService.getFileContentStreamAtCommit(fullRel, 'HEAD');
+                  ? gitService.getFileContentSmudgedStreamAtCommit(fullRel, ref)
+                  : gitService.getFileContentStreamAtCommit(fullRel, ref);
 
                 const reader = fileStream.getReader();
                 try {
