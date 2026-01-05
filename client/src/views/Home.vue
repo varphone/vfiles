@@ -1,7 +1,7 @@
 <template>
   <div class="home">
-    <!-- 移动端导航菜单 -->
-    <nav class="navbar is-hidden-tablet is-fixed-top mobile-top-bar" role="navigation" aria-label="移动端导航">
+    <!-- 顶部导航栏（与移动端同款布局，桌面端也显示） -->
+    <nav class="navbar is-fixed-top mobile-top-bar" role="navigation" aria-label="导航">
       <div class="navbar-brand">
         <div class="navbar-item">
           <IconFiles :size="22" class="mr-2" />
@@ -39,19 +39,6 @@
       </div>
     </nav>
 
-    <!-- 桌面端头部 -->
-    <section class="hero is-primary is-small is-hidden-mobile">
-      <div class="hero-body">
-        <div class="container">
-          <h1 class="title">
-            <IconFiles :size="32" class="mr-2" />
-            VFiles
-          </h1>
-          <p class="subtitle">基于Git的文件管理系统</p>
-        </div>
-      </div>
-    </section>
-
     <section class="section home-content">
       <div class="container home-container">
         <FileBrowser ref="browserRef" />
@@ -60,7 +47,7 @@
 
     <!-- 移动端底部操作栏：左侧操作菜单 + 右侧动态操作区 -->
     <nav
-      class="navbar is-fixed-bottom is-hidden-tablet has-background-dark mobile-bottom-bar"
+      class="navbar is-fixed-bottom has-background-dark mobile-bottom-bar"
       role="navigation"
       aria-label="底部操作栏"
     >
@@ -584,6 +571,138 @@ function toggleBatchAndClose() {
   margin-bottom: 0;
 }
 
+.mobile-top-bar {
+  padding-top: env(safe-area-inset-top);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
+.mobile-brand-title {
+  font-weight: 700;
+  background-image: linear-gradient(
+    90deg,
+    hsl(0 90% 60%),
+    hsl(35 90% 55%),
+    hsl(55 95% 50%),
+    hsl(120 65% 45%),
+    hsl(200 85% 55%),
+    hsl(260 85% 65%),
+    hsl(320 85% 60%)
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.mobile-bottom-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2000;
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.18);
+}
+
+.mobile-bottom-bar-inner {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  padding: 0.5rem;
+}
+
+.mobile-bottom-bar-top {
+  padding: 0.25rem;
+  border-radius: 0.25rem;
+}
+
+.mobile-bottom-bar-bottom {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mobile-action-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.mobile-search-field {
+  width: 100%;
+  min-width: 0;
+}
+
+.mobile-batch-panel {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.mobile-history-panel {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.mobile-history-hash {
+  flex: 0 0 auto;
+}
+
+.mobile-batch-actions {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+  gap: 0.25rem;
+  overflow: visible;
+}
+
+.mobile-batch-more {
+  flex: 0 0 auto;
+}
+
+.mobile-batch-more .dropdown-menu {
+  left: auto;
+  right: 0;
+  max-width: calc(100vw - 1rem);
+}
+
+.mobile-batch-count {
+  flex: 0 0 auto;
+}
+
+.mobile-action-buttons {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.dropdown-item.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.home-content {
+  padding-bottom: 6.5rem;
+  padding-top: var(--bulma-navbar-height, 3.25rem);
+}
+
 @media screen and (max-width: 768px) {
   .section {
     padding: 0;
@@ -601,138 +720,14 @@ function toggleBatchAndClose() {
     padding-right: 0;
   }
 
-  .mobile-top-bar {
-    padding-top: env(safe-area-inset-top);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
-  }
-
-  .mobile-brand-title {
-    font-weight: 700;
-    background-image: linear-gradient(
-      90deg,
-      hsl(0 90% 60%),
-      hsl(35 90% 55%),
-      hsl(55 95% 50%),
-      hsl(120 65% 45%),
-      hsl(200 85% 55%),
-      hsl(260 85% 65%),
-      hsl(320 85% 60%)
-    );
-    background-size: 200% 100%;
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-  }
-
   .mobile-bottom-bar {
-    position: fixed;
-    left: 0;
-    right: 0;
     bottom: calc(env(safe-area-inset-bottom) + var(--vv-bottom, 0px));
-    z-index: 2000;
-    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.18);
   }
 
   .home-content {
     padding-top: calc(var(--bulma-navbar-height, 3.25rem) + env(safe-area-inset-top));
-    padding-bottom: calc(4.25rem + env(safe-area-inset-bottom) + var(--vv-bottom, 0px));
-  }
-
-  .mobile-bottom-bar-inner {
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0.5rem;
-    padding: 0.5rem;
     padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(6.5rem + env(safe-area-inset-bottom) + var(--vv-bottom, 0px));
   }
-
-  .mobile-bottom-bar-top {
-    padding: 0.25rem;
-    border-radius: 0.25rem;
-  }
-
-  .mobile-bottom-bar-bottom {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .mobile-action-panel {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-  }
-
-  .mobile-search-field {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .mobile-batch-panel {
-    width: 100%;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-  }
-
-  .mobile-history-panel {
-    width: 100%;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.5rem;
-  }
-
-  .mobile-history-hash {
-    flex: 0 0 auto;
-  }
-
-  .mobile-batch-actions {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    margin-left: auto;
-    gap: 0.25rem;
-    overflow: visible;
-  }
-
-  .mobile-batch-more {
-    flex: 0 0 auto;
-  }
-
-  .mobile-batch-more .dropdown-menu {
-    left: auto;
-    right: 0;
-    max-width: calc(100vw - 1rem);
-  }
-
-  .mobile-batch-count {
-    flex: 0 0 auto;
-  }
-
-  .mobile-action-buttons {
-    flex: 1;
-    min-width: 0;
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    white-space: nowrap;
-    justify-content: flex-end;
-    margin-left: auto;
-  }
-
-  .dropdown-item.is-disabled {
-    opacity: 0.45;
-    pointer-events: none;
-  }
-
 }
 </style>

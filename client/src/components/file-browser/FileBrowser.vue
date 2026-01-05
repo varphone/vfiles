@@ -72,67 +72,69 @@
           <span v-else>下拉刷新</span>
         </div>
 
-        <div class="field has-addons mt-3">
-          <div class="control is-expanded">
-            <input
-              v-model="searchQuery"
-              class="input"
-              type="text"
-              :placeholder="searchMode === 'content' ? '搜索文件内容...' : '搜索文件名...'"
-              list="vfiles-search-history"
-              @keyup.enter="runSearch"
-            />
-            <datalist id="vfiles-search-history">
-              <option v-for="item in searchHistory" :key="item" :value="item" />
-            </datalist>
+        <template v-if="isMobile">
+          <div class="field has-addons mt-3">
+            <div class="control is-expanded">
+              <input
+                v-model="searchQuery"
+                class="input"
+                type="text"
+                :placeholder="searchMode === 'content' ? '搜索文件内容...' : '搜索文件名...'"
+                list="vfiles-search-history"
+                @keyup.enter="runSearch"
+              />
+              <datalist id="vfiles-search-history">
+                <option v-for="item in searchHistory" :key="item" :value="item" />
+              </datalist>
+            </div>
+            <div class="control">
+              <button
+                class="button is-link"
+                :class="{ 'is-loading': searchLoading }"
+                :disabled="searchLoading"
+                @click="runSearch"
+              >
+                <IconSearch :size="20" />
+              </button>
+            </div>
+            <div class="control">
+              <button class="button" :disabled="searchLoading" @click="clearSearch">
+                清空
+              </button>
+            </div>
           </div>
-          <div class="control">
-            <button
-              class="button is-link"
-              :class="{ 'is-loading': searchLoading }"
-              :disabled="searchLoading"
-              @click="runSearch"
-            >
-              <IconSearch :size="20" />
-            </button>
+
+          <div class="field mt-2">
+            <label class="checkbox">
+              <input type="checkbox" v-model="searchContent" :disabled="searchLoading" />
+              全文
+            </label>
           </div>
-          <div class="control">
-            <button class="button" :disabled="searchLoading" @click="clearSearch">
-              清空
-            </button>
+
+          <div class="field is-grouped is-grouped-multiline mt-2">
+            <div class="control">
+              <div class="select is-small">
+                <select v-model="searchType" :disabled="searchLoading">
+                  <option value="all">全部</option>
+                  <option value="file">仅文件</option>
+                  <option value="directory">仅文件夹</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="control">
+              <label class="checkbox">
+                <input type="checkbox" v-model="searchScopeCurrent" :disabled="searchLoading" />
+                仅当前目录
+              </label>
+            </div>
           </div>
-        </div>
 
-      <div class="field mt-2">
-        <label class="checkbox">
-          <input type="checkbox" v-model="searchContent" :disabled="searchLoading" />
-          全文
-        </label>
-      </div>
-
-      <div class="field is-grouped is-grouped-multiline mt-2">
-        <div class="control">
-          <div class="select is-small">
-            <select v-model="searchType" :disabled="searchLoading">
-              <option value="all">全部</option>
-              <option value="file">仅文件</option>
-              <option value="directory">仅文件夹</option>
-            </select>
+          <div v-if="searchError" class="notification is-danger is-light">
+            <IconAlertCircle :size="20" class="mr-2" />
+            {{ searchError }}
           </div>
-        </div>
-
-        <div class="control">
-          <label class="checkbox">
-            <input type="checkbox" v-model="searchScopeCurrent" :disabled="searchLoading" />
-            仅当前目录
-          </label>
-        </div>
-      </div>
-
-      <div v-if="searchError" class="notification is-danger is-light">
-        <IconAlertCircle :size="20" class="mr-2" />
-        {{ searchError }}
-      </div>
+        </template>
       
       <div class="level is-mobile mb-4">
         <div class="level-left">
