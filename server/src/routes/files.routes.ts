@@ -3,6 +3,12 @@ import { GitService } from '../services/git.service.js';
 import { pathSecurityMiddleware } from '../middleware/security.js';
 import { config } from '../config.js';
 import { validatePath } from '../utils/path-validator.js';
+import {
+  isAllowedPathByPrefixes,
+  normalizeRequestPath,
+  validateOptionalCommitHash,
+  validateOptionalString,
+} from '../utils/validation.js';
 
 export function createFilesRoutes(gitService: GitService) {
   const app = new Hono();
@@ -43,8 +49,12 @@ export function createFilesRoutes(gitService: GitService) {
    * GET /api/files - 获取文件列表
    */
   app.get('/', pathSecurityMiddleware, async (c) => {
-    const path = c.req.query('path') || '';
-    const files = await gitService.listFiles(path);
+    const requestedPath = normalizeRequestPath(c.req.query('path') || '');
+    if (!isAllowedPathByPrefixes(requestedPath, config.allowedPathPrefixes)) {
+      return c.json({ success: false, error: '不允许访问该路径' }, 403);
+    }
+
+    const files = await gitService.listFiles(requestedPath);
 
     return c.json({
       success: true,
@@ -56,7 +66,8 @@ export function createFilesRoutes(gitService: GitService) {
    * GET /api/files/content - 获取文件内容
    */
   app.get('/content', pathSecurityMiddleware, async (c) => {
-    const path = c.req.query('path');
+    const rawPath = c.req.query('path');
+    const path = rawPath ? normalizeRequestPath(rawPath) : undefined;
     const commit = c.req.query('commit');
 
     if (!path) {
@@ -69,8 +80,13 @@ export function createFilesRoutes(gitService: GitService) {
       );
     }
 
+    const commitResult = validateOptionalCommitHash(commit);
+    if (!commitResult.ok) {
+      return c.json({ success: false, error: commitResult.message }, commitResult.status);
+    }
+
     try {
-      const content = await gitService.getFileContent(path, commit);
+      const content = await gitService.getFileContent(path, commitResult.value);
       
       // 设置响应头
       c.header('Content-Type', 'application/octet-stream');
@@ -96,8 +112,13 @@ export function createFilesRoutes(gitService: GitService) {
     try {
       const formData = await c.req.formData();
       const file = formData.get('file') as File;
-      const path = formData.get('path') as string || '';
-      const message = formData.get('message') as string || '上传文件';
+      const rawPath = (formData.get('path') as string) || '';
+      const requestedPath = normalizeRequestPath(rawPath);
+      const messageResult = validateOptionalString(formData.get('message'), 'message', { maxLength: 200 });
+      if (!messageResult.ok) {
+        return c.json({ success: false, error: messageResult.message }, messageResult.status);
+      }
+      const message = messageResult.value || '上传文件';
 
       if (!file) {
         return c.json(
@@ -147,7 +168,7 @@ export function createFilesRoutes(gitService: GitService) {
       const buffer = Buffer.from(arrayBuffer);
 
       // 构建完整路径
-      const filePath = path ? `${path}/${file.name}` : file.name;
+      const filePath = requestedPath ? `${requestedPath}/${file.name}` : file.name;
 
       // 防止 path 穿越（确保最终写入路径在 repo 内）
       if (!validatePath(filePath, config.repoPath)) {
@@ -157,6 +178,17 @@ export function createFilesRoutes(gitService: GitService) {
             error: '无效的文件路径',
           },
           400
+        );
+      }
+
+      // 文件访问白名单（按最终文件路径判断）
+      if (!isAllowedPathByPrefixes(filePath, config.allowedPathPrefixes)) {
+        return c.json(
+          {
+            success: false,
+            error: '不允许写入该路径',
+          },
+          403
         );
       }
 
@@ -186,8 +218,14 @@ export function createFilesRoutes(gitService: GitService) {
    * DELETE /api/files - 删除文件
    */
   app.delete('/', pathSecurityMiddleware, async (c) => {
-    const path = c.req.query('path');
-    const message = c.req.query('message') || '删除文件';
+    const rawPath = c.req.query('path');
+    const path = rawPath ? normalizeRequestPath(rawPath) : undefined;
+
+    const messageResult = validateOptionalString(c.req.query('message'), 'message', { maxLength: 200 });
+    if (!messageResult.ok) {
+      return c.json({ success: false, error: messageResult.message }, messageResult.status);
+    }
+    const message = messageResult.value || '删除文件';
 
     if (!path) {
       return c.json(

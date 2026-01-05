@@ -1,15 +1,21 @@
 import path from 'node:path';
-import { normalize } from 'node:path';
 
 /**
  * 验证路径是否安全，防止路径遍历攻击
  */
 export function validatePath(requestedPath: string, basePath: string): boolean {
-  const normalizedBase = normalize(basePath);
-  const normalizedPath = normalize(path.join(basePath, requestedPath));
-  
-  // 确保请求的路径在基础路径内
-  return normalizedPath.startsWith(normalizedBase);
+  if (requestedPath.includes('\0')) return false;
+
+  const normalizedBase = path.resolve(basePath);
+  const normalizedPath = path.resolve(basePath, requestedPath);
+
+  // 使用相对路径判断是否越界，避免 startsWith("/data") 误判 "/data2" 等情况
+  const rel = path.relative(normalizedBase, normalizedPath);
+  if (rel === '') return true;
+  if (rel === '..') return false;
+  if (rel.startsWith(`..${path.sep}`)) return false;
+
+  return !path.isAbsolute(rel);
 }
 
 /**

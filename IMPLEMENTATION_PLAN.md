@@ -114,9 +114,9 @@ class GitService {
 
 ### 2.5 安全性实现
 - [x] 路径遍历防护
-- [ ] 文件访问白名单（未实现）
-- [ ] 请求频率限制（未实现）
-- [ ] 输入验证（仅基础参数校验）
+- [x] 文件访问白名单（已实现：按 config.allowedPathPrefixes 路径前缀 allowlist，可通过环境变量 ALLOWED_PATH_PREFIXES 配置）
+- [x] 请求频率限制（已实现：/api 全局内存限流，可通过 RATE_LIMIT_* 环境变量配置）
+- [x] 输入验证（已增强：统一校验 path/commit/hash/limit/message/q 等参数）
 
 **文件:**
 - `server/middleware/security.ts`

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { GitService } from '../services/git.service.js';
 import { pathSecurityMiddleware } from '../middleware/security.js';
+import { normalizeRequestPath, validateOptionalCommitHash } from '../utils/validation.js';
 
 export function createDownloadRoutes(gitService: GitService) {
   const app = new Hono();
@@ -9,7 +10,8 @@ export function createDownloadRoutes(gitService: GitService) {
    * GET /api/download - 下载文件
    */
   app.get('/', pathSecurityMiddleware, async (c) => {
-    const path = c.req.query('path');
+    const rawPath = c.req.query('path');
+    const path = rawPath ? normalizeRequestPath(rawPath) : undefined;
     const commit = c.req.query('commit');
 
     if (!path) {
@@ -22,8 +24,13 @@ export function createDownloadRoutes(gitService: GitService) {
       );
     }
 
+    const commitResult = validateOptionalCommitHash(commit);
+    if (!commitResult.ok) {
+      return c.json({ success: false, error: commitResult.message }, commitResult.status);
+    }
+
     try {
-      const content = await gitService.getFileContent(path, commit);
+      const content = await gitService.getFileContent(path, commitResult.value);
       const filename = path.split('/').pop() || 'download';
 
       // 设置下载响应头

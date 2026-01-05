@@ -13,6 +13,20 @@ export const config = {
   
   // 允许的文件类型 (留空表示允许所有)
   allowedFileTypes: [] as string[],
+
+  // 文件访问白名单（路径前缀，基于 repo 根目录的相对路径；留空表示允许全部）
+  // 例：['docs', 'images/public'] 只允许访问这些目录及其子路径
+  allowedPathPrefixes: (process.env.ALLOWED_PATH_PREFIXES || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean) as string[],
+
+  // 请求频率限制（内存限流；重启服务后计数重置）
+  rateLimit: {
+    enabled: (process.env.RATE_LIMIT_ENABLED || 'true').toLowerCase() !== 'false',
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000'), // 1分钟
+    max: parseInt(process.env.RATE_LIMIT_MAX || '120'), // 每窗口最大请求数/每 IP
+  },
   
   // CORS设置
   cors: {

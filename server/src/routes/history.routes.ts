@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { GitService } from '../services/git.service.js';
 import { pathSecurityMiddleware } from '../middleware/security.js';
+import { normalizeRequestPath, parseLimit, validateCommitHash } from '../utils/validation.js';
 
 export function createHistoryRoutes(gitService: GitService) {
   const app = new Hono();
@@ -9,8 +10,13 @@ export function createHistoryRoutes(gitService: GitService) {
    * GET /api/history - 获取文件历史
    */
   app.get('/', pathSecurityMiddleware, async (c) => {
-    const path = c.req.query('path');
-    const limit = parseInt(c.req.query('limit') || '50');
+    const rawPath = c.req.query('path');
+    const path = rawPath ? normalizeRequestPath(rawPath) : undefined;
+
+    const limitResult = parseLimit(c.req.query('limit'), { defaultValue: 50, min: 1, max: 200 });
+    if (!limitResult.ok) {
+      return c.json({ success: false, error: limitResult.message }, limitResult.status);
+    }
 
     if (!path) {
       return c.json(
@@ -23,7 +29,7 @@ export function createHistoryRoutes(gitService: GitService) {
     }
 
     try {
-      const history = await gitService.getFileHistory(path, limit);
+      const history = await gitService.getFileHistory(path, limitResult.value);
 
       return c.json({
         success: true,
@@ -51,6 +57,16 @@ export function createHistoryRoutes(gitService: GitService) {
         {
           success: false,
           error: '缺少hash参数',
+        },
+        400
+      );
+    }
+
+    if (!validateCommitHash(hash)) {
+      return c.json(
+        {
+          success: false,
+          error: 'hash 参数无效',
         },
         400
       );

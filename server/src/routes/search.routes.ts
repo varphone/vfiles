@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { GitService } from '../services/git.service.js';
+import { validateRequiredString } from '../utils/validation.js';
 
 export function createSearchRoutes(gitService: GitService) {
   const app = new Hono();
@@ -8,20 +9,13 @@ export function createSearchRoutes(gitService: GitService) {
    * GET /api/search - 搜索文件
    */
   app.get('/', async (c) => {
-    const query = c.req.query('q');
-
-    if (!query) {
-      return c.json(
-        {
-          success: false,
-          error: '缺少搜索关键词',
-        },
-        400
-      );
+    const queryResult = validateRequiredString(c.req.query('q'), 'q', { minLength: 1, maxLength: 100 });
+    if (!queryResult.ok) {
+      return c.json({ success: false, error: queryResult.message }, queryResult.status);
     }
 
     try {
-      const results = await gitService.searchFiles(query);
+      const results = await gitService.searchFiles(queryResult.value);
 
       return c.json({
         success: true,

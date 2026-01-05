@@ -7,6 +7,7 @@ import { config } from './config.js';
 import { GitService } from './services/git.service.js';
 import { errorHandler } from './middleware/error.js';
 import { logger } from './middleware/logger.js';
+import { rateLimit } from './middleware/rate-limit.js';
 import { createFilesRoutes } from './routes/files.routes.js';
 import { createHistoryRoutes } from './routes/history.routes.js';
 import { createDownloadRoutes } from './routes/download.routes.js';
@@ -26,6 +27,9 @@ app.use('*', cors(config.cors));
 if (config.enableLogging) {
   app.use('*', logger);
 }
+
+// 请求频率限制（仅对 API 生效）
+app.use('/api/*', rateLimit(config.rateLimit));
 
 app.use('*', errorHandler);
 
