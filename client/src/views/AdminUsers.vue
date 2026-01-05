@@ -9,7 +9,11 @@
         </div>
         <div class="level-right">
           <div class="level-item">
-            <button class="button is-light" :class="{ 'is-loading': loading }" @click="reload">
+            <button
+              class="button is-light"
+              :class="{ 'is-loading': loading }"
+              @click="reload"
+            >
               刷新
             </button>
           </div>
@@ -64,7 +68,12 @@
                   <select
                     :value="u.role"
                     :disabled="loading"
-                    @change="onChangeRole(u.id, ($event.target as HTMLSelectElement).value)"
+                    @change="
+                      onChangeRole(
+                        u.id,
+                        ($event.target as HTMLSelectElement).value,
+                      )
+                    "
                   >
                     <option value="user">user</option>
                     <option value="admin">admin</option>
@@ -76,7 +85,7 @@
                   class="tag"
                   :class="u.disabled ? 'is-warning' : 'is-success'"
                 >
-                  {{ u.disabled ? '禁用' : '正常' }}
+                  {{ u.disabled ? "禁用" : "正常" }}
                 </span>
               </td>
               <td>
@@ -89,7 +98,7 @@
                     :disabled="loading"
                     @click="toggleDisabled(u)"
                   >
-                    {{ u.disabled ? '启用' : '禁用' }}
+                    {{ u.disabled ? "启用" : "禁用" }}
                   </button>
 
                   <button
@@ -202,7 +211,9 @@ async function toggleDisabled(u: AdminUser) {
 }
 
 async function revokeSessions(u: AdminUser) {
-  const ok = window.confirm(`确定要强制下线用户 ${u.username} 吗？\n（将使其现有登录立即失效）`);
+  const ok = window.confirm(
+    `确定要强制下线用户 ${u.username} 吗？\n（将使其现有登录立即失效）`,
+  );
   if (!ok) return;
 
   loading.value = true;

@@ -179,8 +179,7 @@ export const config = {
 
   // 邮件系统（v1.1.2）
   email: {
-    enabled:
-      (process.env.EMAIL_ENABLED || "false").toLowerCase() === "true",
+    enabled: (process.env.EMAIL_ENABLED || "false").toLowerCase() === "true",
     host: process.env.SMTP_HOST || "",
     port: parseInt(process.env.SMTP_PORT || "587"),
     secure: (process.env.SMTP_SECURE || "false").toLowerCase() === "true",

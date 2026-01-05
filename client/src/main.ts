@@ -12,51 +12,55 @@ const authStore = useAuthStore(pinia);
 const appStore = useAppStore(pinia);
 
 router.beforeEach(async (to) => {
-	if (!authStore.initialized) {
-		await authStore.fetchMe();
-	}
+  if (!authStore.initialized) {
+    await authStore.fetchMe();
+  }
 
-	const publicRoutes = new Set(["login", "forgot-password", "reset-password"]);
+  const publicRoutes = new Set(["login", "forgot-password", "reset-password"]);
 
-	// 未启用认证：不做拦截
-	if (!authStore.enabled) {
-		if (to.name === "login") return { name: "home" };
-		return true;
-	}
+  // 未启用认证：不做拦截
+  if (!authStore.enabled) {
+    if (to.name === "login") return { name: "home" };
+    return true;
+  }
 
-	// 已登录：不允许再进登录页
-	if (publicRoutes.has(String(to.name)) && authStore.user) {
-		const redirect = typeof to.query.redirect === "string" ? to.query.redirect : "/";
-		return redirect;
-	}
+  // 已登录：不允许再进登录页
+  if (publicRoutes.has(String(to.name)) && authStore.user) {
+    const redirect =
+      typeof to.query.redirect === "string" ? to.query.redirect : "/";
+    return redirect;
+  }
 
-	// 需要登录
-	if (!publicRoutes.has(String(to.name)) && !authStore.user) {
-		return { name: "login", query: { redirect: to.fullPath } };
-	}
+  // 需要登录
+  if (!publicRoutes.has(String(to.name)) && !authStore.user) {
+    return { name: "login", query: { redirect: to.fullPath } };
+  }
 
-	// 管理页：仅 admin
-	if (to.name === "admin-users" && authStore.user?.role !== "admin") {
-		return { name: "home" };
-	}
+  // 管理页：仅 admin
+  if (to.name === "admin-users" && authStore.user?.role !== "admin") {
+    return { name: "home" };
+  }
 
-	return true;
+  return true;
 });
 
 if (typeof window !== "undefined") {
-	let lastUnauthorizedAt = 0;
-	window.addEventListener("vfiles:unauthorized", () => {
-		if (router.currentRoute.value.name === "login") return;
-		const now = Date.now();
-		if (now - lastUnauthorizedAt > 1500) {
-			appStore.warning("登录已过期，请重新登录");
-			lastUnauthorizedAt = now;
-		}
-		void router.push({
-			name: "login",
-			query: { redirect: router.currentRoute.value.fullPath, reason: "expired" },
-		});
-	});
+  let lastUnauthorizedAt = 0;
+  window.addEventListener("vfiles:unauthorized", () => {
+    if (router.currentRoute.value.name === "login") return;
+    const now = Date.now();
+    if (now - lastUnauthorizedAt > 1500) {
+      appStore.warning("登录已过期，请重新登录");
+      lastUnauthorizedAt = now;
+    }
+    void router.push({
+      name: "login",
+      query: {
+        redirect: router.currentRoute.value.fullPath,
+        reason: "expired",
+      },
+    });
+  });
 }
 
 app.use(pinia);

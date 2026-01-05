@@ -60,7 +60,12 @@
           </div>
 
           <div class="buttons is-right">
-            <button class="button is-light" type="button" :disabled="loading" @click="goLogin">
+            <button
+              class="button is-light"
+              type="button"
+              :disabled="loading"
+              @click="goLogin"
+            >
               返回登录
             </button>
           </div>
@@ -105,7 +110,10 @@ async function submit() {
 
   loading.value = true;
   try {
-    const res = await authService.confirmPasswordReset(token.value, newPassword.value);
+    const res = await authService.confirmPasswordReset(
+      token.value,
+      newPassword.value,
+    );
     if (!res.success) throw new Error(res.error || "重置失败");
     app.success("密码已重置，请重新登录");
     goLogin();

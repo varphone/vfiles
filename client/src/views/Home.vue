@@ -58,8 +58,12 @@
             v-if="auth.enabled"
             class="navbar-item is-size-7 has-text-white-ter"
           >
-            <span v-if="auth.user">{{ auth.user.username }} ({{ auth.user.role }})</span>
-            <router-link v-else class="has-text-white-ter" to="/login">去登录</router-link>
+            <span v-if="auth.user"
+              >{{ auth.user.username }} ({{ auth.user.role }})</span
+            >
+            <router-link v-else class="has-text-white-ter" to="/login"
+              >去登录</router-link
+            >
           </div>
 
           <a
@@ -67,7 +71,8 @@
             class="navbar-item"
             href="#"
             @click.prevent="doLogout"
-            >退出</a>
+            >退出</a
+          >
 
           <div class="navbar-item is-size-7 has-text-white-ter">
             当前：{{ currentPathLabel }}

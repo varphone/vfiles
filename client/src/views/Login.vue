@@ -4,7 +4,10 @@
       <div class="box">
         <h1 class="title is-4">VFiles 登录</h1>
 
-        <div v-if="auth.initialized && auth.enabled === false" class="notification is-info is-light">
+        <div
+          v-if="auth.initialized && auth.enabled === false"
+          class="notification is-info is-light"
+        >
           当前服务未启用认证（ENABLE_AUTH=false）。
           <div class="mt-3">
             <button class="button is-link" @click="goHome">返回首页</button>
@@ -12,10 +15,7 @@
         </div>
 
         <template v-else>
-          <div
-            v-if="reasonText"
-            class="notification is-warning is-light"
-          >
+          <div v-if="reasonText" class="notification is-warning is-light">
             {{ reasonText }}
           </div>
 
@@ -79,7 +79,9 @@
                   v-model="password"
                   class="input"
                   type="password"
-                  :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
+                  :autocomplete="
+                    mode === 'login' ? 'current-password' : 'new-password'
+                  "
                   placeholder="至少 6 位"
                   :disabled="auth.loading"
                 />
@@ -87,7 +89,9 @@
             </div>
 
             <div v-if="mode === 'login'" class="field">
-              <a href="#" class="is-size-7" @click.prevent="goForgotPassword">忘记密码？</a>
+              <a href="#" class="is-size-7" @click.prevent="goForgotPassword"
+                >忘记密码？</a
+              >
             </div>
 
             <div class="field">
@@ -98,7 +102,7 @@
                   :disabled="auth.loading"
                   type="submit"
                 >
-                  {{ mode === 'login' ? '登录' : '注册' }}
+                  {{ mode === "login" ? "登录" : "注册" }}
                 </button>
               </div>
             </div>
@@ -189,7 +193,8 @@ const emailCode = ref("");
 const emailLoading = ref(false);
 
 const reasonText = computed(() => {
-  const reason = typeof route.query.reason === "string" ? route.query.reason : "";
+  const reason =
+    typeof route.query.reason === "string" ? route.query.reason : "";
   if (reason === "expired") return "登录已过期，请重新登录。";
   return "";
 });
@@ -220,11 +225,16 @@ async function submit() {
       await auth.login(username.value, password.value);
       app.success("登录成功");
     } else {
-      await auth.register(username.value, password.value, email.value || undefined);
+      await auth.register(
+        username.value,
+        password.value,
+        email.value || undefined,
+      );
       app.success("注册成功");
     }
 
-    const redirect = typeof route.query.redirect === "string" ? route.query.redirect : "/";
+    const redirect =
+      typeof route.query.redirect === "string" ? route.query.redirect : "/";
     router.replace(redirect);
   } catch (e) {
     app.error(e instanceof Error ? e.message : "操作失败");

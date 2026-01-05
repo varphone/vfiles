@@ -413,10 +413,7 @@ export function createAuthRoutes(
     );
     if (!rl.ok) {
       c.header("Retry-After", String(rl.retryAfterSec));
-      return c.json(
-        { success: false, error: "请求过于频繁，请稍后再试" },
-        429,
-      );
+      return c.json({ success: false, error: "请求过于频繁，请稍后再试" }, 429);
     }
 
     const user = await userStore.getUserByEmail(email);
@@ -466,7 +463,10 @@ export function createAuthRoutes(
       maxLength: 200,
     });
     if (!passwordR.ok)
-      return c.json({ success: false, error: passwordR.message }, passwordR.status);
+      return c.json(
+        { success: false, error: passwordR.message },
+        passwordR.status,
+      );
 
     const tokenHash = sha256Hex(tokenR.value.trim());
     const rec = passwordResetTokens.get(tokenHash);
@@ -522,10 +522,7 @@ export function createAuthRoutes(
     );
     if (!rl.ok) {
       c.header("Retry-After", String(rl.retryAfterSec));
-      return c.json(
-        { success: false, error: "请求过于频繁，请稍后再试" },
-        429,
-      );
+      return c.json({ success: false, error: "请求过于频繁，请稍后再试" }, 429);
     }
 
     const user = await userStore.getUserByEmail(email);
@@ -585,7 +582,9 @@ export function createAuthRoutes(
     }
 
     const gotHash = hmacHex(cfg.secret, `${email}|${codeR.value.trim()}`);
-    if (!crypto.timingSafeEqual(Buffer.from(gotHash), Buffer.from(rec.codeHash))) {
+    if (
+      !crypto.timingSafeEqual(Buffer.from(gotHash), Buffer.from(rec.codeHash))
+    ) {
       emailLoginCodes.set(email, rec);
       return c.json({ success: false, error: "验证码错误或已过期" }, 401);
     }

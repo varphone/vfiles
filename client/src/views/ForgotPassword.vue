@@ -37,7 +37,12 @@
           </div>
 
           <div class="buttons is-right">
-            <button class="button is-light" type="button" :disabled="loading" @click="goLogin">
+            <button
+              class="button is-light"
+              type="button"
+              :disabled="loading"
+              @click="goLogin"
+            >
               返回登录
             </button>
           </div>

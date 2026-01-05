@@ -36,7 +36,8 @@ export function loginRateLimit(options: LoginRateLimitOptions) {
     Number.isFinite(options.windowMs) && options.windowMs > 0
       ? options.windowMs
       : 5 * 60_000;
-  const max = Number.isFinite(options.max) && options.max > 0 ? options.max : 10;
+  const max =
+    Number.isFinite(options.max) && options.max > 0 ? options.max : 10;
 
   // key: ip|login|<username>
   const counters = new Map<string, Counter>();

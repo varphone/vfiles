@@ -25,7 +25,9 @@ export interface AuthMeResponseEnabledTrue {
   user: AuthUser;
 }
 
-export type AuthMeResponse = AuthMeResponseEnabledFalse | AuthMeResponseEnabledTrue;
+export type AuthMeResponse =
+  | AuthMeResponseEnabledFalse
+  | AuthMeResponseEnabledTrue;
 
 class AuthService {
   me(): Promise<
@@ -37,11 +39,18 @@ class AuthService {
     return apiService.get("/auth/me");
   }
 
-  login(input: { username: string; password: string }): Promise<ApiResponse<{ user: AuthUser }>> {
+  login(input: {
+    username: string;
+    password: string;
+  }): Promise<ApiResponse<{ user: AuthUser }>> {
     return apiService.post("/auth/login", input);
   }
 
-  register(input: { username: string; password: string; email?: string }): Promise<ApiResponse<{ user: AuthUser }>> {
+  register(input: {
+    username: string;
+    password: string;
+    email?: string;
+  }): Promise<ApiResponse<{ user: AuthUser }>> {
     return apiService.post("/auth/register", input);
   }
 
@@ -54,13 +63,19 @@ class AuthService {
     return apiService.get("/auth/users");
   }
 
-  setUserRole(userId: string, role: "admin" | "user"): Promise<ApiResponse<void>> {
+  setUserRole(
+    userId: string,
+    role: "admin" | "user",
+  ): Promise<ApiResponse<void>> {
     return apiService.post(`/auth/users/${encodeURIComponent(userId)}/role`, {
       role,
     });
   }
 
-  setUserDisabled(userId: string, disabled: boolean): Promise<ApiResponse<void>> {
+  setUserDisabled(
+    userId: string,
+    disabled: boolean,
+  ): Promise<ApiResponse<void>> {
     return apiService.post(
       `/auth/users/${encodeURIComponent(userId)}/disabled`,
       {
@@ -86,7 +101,10 @@ class AuthService {
     return apiService.post("/auth/password-reset/request", { email });
   }
 
-  confirmPasswordReset(token: string, newPassword: string): Promise<ApiResponse<void>> {
+  confirmPasswordReset(
+    token: string,
+    newPassword: string,
+  ): Promise<ApiResponse<void>> {
     return apiService.post("/auth/password-reset/confirm", {
       token,
       newPassword,
@@ -98,7 +116,10 @@ class AuthService {
     return apiService.post("/auth/email-login/request", { email });
   }
 
-  verifyEmailLoginCode(email: string, code: string): Promise<ApiResponse<{ user: AuthUser }>> {
+  verifyEmailLoginCode(
+    email: string,
+    code: string,
+  ): Promise<ApiResponse<{ user: AuthUser }>> {
     return apiService.post("/auth/email-login/verify", { email, code });
   }
 }

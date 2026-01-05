@@ -97,7 +97,9 @@ export class UserStore {
 
   async listUsers(): Promise<Omit<StoredUser, "passwordHash">[]> {
     const data = await this.loadUnsafe();
-    return data.users.map(({ passwordHash: _ph, sessionVersion: _sv, ...rest }) => rest);
+    return data.users.map(
+      ({ passwordHash: _ph, sessionVersion: _sv, ...rest }) => rest,
+    );
   }
 
   async getUserById(id: string): Promise<StoredUser | undefined> {
@@ -160,7 +162,10 @@ export class UserStore {
       if (data.users.some((u) => u.username === username)) {
         throw new Error("用户名已存在");
       }
-      if (email && data.users.some((u) => (u.email || "").toLowerCase() === email)) {
+      if (
+        email &&
+        data.users.some((u) => (u.email || "").toLowerCase() === email)
+      ) {
         throw new Error("邮箱已被使用");
       }
       // 第一个用户自动成为 admin，避免“没有管理员”
@@ -215,7 +220,12 @@ export class UserStore {
 
     await (this.writeChain = this.writeChain.then(async () => {
       const data = await this.loadUnsafe();
-      if (data.users.some((u) => u.id !== userId && (u.email || "").toLowerCase() === normalized)) {
+      if (
+        data.users.some(
+          (u) =>
+            u.id !== userId && (u.email || "").toLowerCase() === normalized,
+        )
+      ) {
         throw new Error("邮箱已被使用");
       }
       const user = data.users.find((u) => u.id === userId);
