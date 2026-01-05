@@ -34,6 +34,21 @@ export const config = {
   // 缓存过期时间（默认 6h）
   downloadCacheTtlMs: parseInt(process.env.DOWNLOAD_CACHE_TTL_MS || String(6 * 60 * 60 * 1000)),
 
+  // Git 查询缓存（减少在仓库未变更时重复调用 git 子进程）
+  gitQueryCache: {
+    enabled: (process.env.GIT_QUERY_CACHE_ENABLED || 'true').toLowerCase() !== 'false',
+    // 默认 5 分钟；token 未变且未过期则命中
+    ttlMs: parseInt(process.env.GIT_QUERY_CACHE_TTL_MS || String(5 * 60 * 1000)),
+    // listFiles 结果缓存条目上限
+    listFilesMax: parseInt(process.env.GIT_QUERY_CACHE_LIST_FILES_MAX || '300'),
+    // getFileHistory 结果缓存条目上限
+    fileHistoryMax: parseInt(process.env.GIT_QUERY_CACHE_FILE_HISTORY_MAX || '300'),
+    // getLastCommit 结果缓存条目上限
+    lastCommitMax: parseInt(process.env.GIT_QUERY_CACHE_LAST_COMMIT_MAX || '3000'),
+    // debug=true 时输出 hit/miss 日志（可能比较啰嗦）
+    debug: (process.env.GIT_QUERY_CACHE_DEBUG || 'false').toLowerCase() === 'true',
+  },
+
   // Git LFS
   enableGitLfs: (process.env.ENABLE_GIT_LFS || 'true').toLowerCase() !== 'false',
   // 以逗号分隔的 glob 列表（默认覆盖常见二进制/大文件类型）

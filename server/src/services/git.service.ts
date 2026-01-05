@@ -13,10 +13,12 @@ export class GitService {
   private bareWorkTreeDir: string | null = null;
   private gitDirPath: string | null = null;
 
-  private readonly cacheTtlMs = 5 * 60 * 1000;
-  private readonly listFilesCacheMax = 300;
-  private readonly fileHistoryCacheMax = 300;
-  private readonly lastCommitCacheMax = 3000;
+  private cacheEnabled: boolean;
+  private cacheDebug: boolean;
+  private cacheTtlMs: number;
+  private listFilesCacheMax: number;
+  private fileHistoryCacheMax: number;
+  private lastCommitCacheMax: number;
 
   private readonly listFilesCache = new Map<string, { token: string; at: number; value: FileInfo[] }>();
   private readonly fileHistoryCache = new Map<string, { token: string; at: number; value: FileHistory }>();
@@ -29,6 +31,14 @@ export class GitService {
   constructor(repoPath: string, mode: 'worktree' | 'bare' = 'worktree') {
     this.dir = path.resolve(repoPath);
     this.mode = mode;
+
+    const qc = config.gitQueryCache;
+    this.cacheEnabled = qc?.enabled ?? true;
+    this.cacheDebug = qc?.debug ?? false;
+    this.cacheTtlMs = Number.isFinite(qc?.ttlMs) ? (qc!.ttlMs as number) : 5 * 60 * 1000;
+    this.listFilesCacheMax = Number.isFinite(qc?.listFilesMax) ? (qc!.listFilesMax as number) : 300;
+    this.fileHistoryCacheMax = Number.isFinite(qc?.fileHistoryMax) ? (qc!.fileHistoryMax as number) : 300;
+    this.lastCommitCacheMax = Number.isFinite(qc?.lastCommitMax) ? (qc!.lastCommitMax as number) : 3000;
   }
 
   private isImmutableCommitish(commitish: string): boolean {
@@ -134,13 +144,24 @@ export class GitService {
     maxEntries: number;
     compute: () => Promise<T>;
   }): Promise<T> {
+    if (!this.cacheEnabled) {
+      return await params.compute();
+    }
+
     const now = Date.now();
     const existing = params.cache.get(params.key);
     if (existing && existing.token === params.token && now - existing.at < this.cacheTtlMs) {
       // LRU：touch
       params.cache.delete(params.key);
       params.cache.set(params.key, existing);
+      if (this.cacheDebug) {
+        console.log(`[git-cache] hit ${params.key}`);
+      }
       return existing.value;
+    }
+
+    if (this.cacheDebug) {
+      console.log(`[git-cache] miss ${params.key}`);
     }
 
     const inflightKey = `${params.key}@@${params.token}`;
@@ -186,12 +207,28 @@ export class GitService {
   }
 
   private withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.writeChain.then(fn, fn);
+    const run = async () => {
+      try {
+        return await fn();
+      } finally {
+        // 写操作会改变 repo state token；清空缓存避免旧 token 条目堆积
+        this.clearCaches();
+      }
+    };
+
+    const next = this.writeChain.then(run, run);
     this.writeChain = next.then(
       () => undefined,
       () => undefined
     );
     return next;
+  }
+
+  private clearCaches(): void {
+    this.listFilesCache.clear();
+    this.fileHistoryCache.clear();
+    this.lastCommitCache.clear();
+    this.inflight.clear();
   }
 
   private normalizeRelPath(p: string): string {
