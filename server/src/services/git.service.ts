@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { FileInfo, CommitInfo, FileHistory, CommitSummary } from '../types/index.js';
 import { normalizePathForGit } from '../utils/path-validator.js';
+import { config } from '../config.js';
 
 export class GitService {
   private dir: string;
@@ -32,10 +33,142 @@ export class GitService {
         // 创建初始提交
         await this.createInitialCommit();
       }
+
+      // Git LFS（非必需）：尽量启用并写入 .gitattributes
+      if (config.enableGitLfs) {
+        try {
+          const ok = await this.ensureGitLfsInstalled();
+          if (ok) {
+            await this.ensureGitLfsTrackedPatterns(config.gitLfsTrackPatterns);
+          }
+        } catch (e) {
+          console.warn('Git LFS 初始化失败，将回退为普通 Git：', e);
+        }
+      }
     } catch (error) {
       console.error('初始化Git仓库失败:', error);
       throw error;
     }
+  }
+
+  private async ensureGitLfsInstalled(): Promise<boolean> {
+    const proc = Bun.spawn(['git', 'lfs', 'version'], {
+      cwd: this.dir,
+      stdout: 'ignore',
+      stderr: 'ignore',
+    });
+    const code = await proc.exited;
+    if (code !== 0) {
+      console.warn('未检测到 git-lfs（git lfs version 失败），将不会启用 LFS');
+      return false;
+    }
+
+    // 仅对当前仓库安装 hooks（不污染全局）
+    const install = Bun.spawn(['git', 'lfs', 'install', '--local'], {
+      cwd: this.dir,
+      stdout: 'ignore',
+      stderr: 'ignore',
+    });
+    await install.exited;
+    return true;
+  }
+
+  private async ensureGitLfsTrackedPatterns(patterns: string[]): Promise<void> {
+    if (!patterns.length) return;
+
+    let changed = false;
+    for (const p of patterns) {
+      const proc = Bun.spawn(['git', 'lfs', 'track', p], {
+        cwd: this.dir,
+        stdout: 'ignore',
+        stderr: 'ignore',
+      });
+      const code = await proc.exited;
+      if (code === 0) changed = true;
+    }
+
+    if (!changed) return;
+
+    // 若 .gitattributes 被更新则提交一次
+    const status = await $`git status --porcelain`.cwd(this.dir).quiet();
+    if (status.stdout.toString().includes('.gitattributes')) {
+      await $`git add .gitattributes`.cwd(this.dir);
+      await $`git -c user.name="VFiles System" -c user.email="system@vfiles.local" commit -m "chore: configure git-lfs"`.cwd(this.dir);
+    }
+  }
+
+  async isLfsPointerAtCommit(filePath: string, commitHash: string): Promise<boolean> {
+    const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
+    const proc = Bun.spawn(['git', 'show', spec], {
+      cwd: this.dir,
+      stdout: 'pipe',
+      stderr: 'ignore',
+    });
+
+    const reader = proc.stdout.getReader();
+    try {
+      const { value } = await reader.read();
+      const head = value ? new TextDecoder().decode(value.subarray(0, 200)) : '';
+      return head.startsWith('version https://git-lfs.github.com/spec/v1');
+    } catch {
+      return false;
+    } finally {
+      try {
+        await reader.cancel();
+      } catch {
+        // ignore
+      }
+      try {
+        proc.kill();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  getFileContentSmudgedStreamAtCommit(filePath: string, commitHash: string): ReadableStream<Uint8Array> {
+    const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
+    const show = Bun.spawn(['git', 'show', spec], {
+      cwd: this.dir,
+      stdout: 'pipe',
+      stderr: 'ignore',
+    });
+
+    const smudge = Bun.spawn(['git', 'lfs', 'smudge', '--', filePath], {
+      cwd: this.dir,
+      stdin: 'pipe',
+      stdout: 'pipe',
+      stderr: 'ignore',
+    });
+
+    // pump: show.stdout -> smudge.stdin
+    (async () => {
+      const reader = show.stdout.getReader();
+      const sink = smudge.stdin as unknown as {
+        write: (chunk: Uint8Array) => unknown;
+        end: () => unknown;
+      };
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) await sink.write(value);
+        }
+      } finally {
+        try {
+          await sink.end();
+        } catch {
+          // ignore
+        }
+        try {
+          await reader.cancel();
+        } catch {
+          // ignore
+        }
+      }
+    })();
+
+    return smudge.stdout;
   }
 
   /**

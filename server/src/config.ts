@@ -20,6 +20,53 @@ export const config = {
   uploadTempDir: process.env.UPLOAD_TEMP_DIR || path.resolve(process.cwd(), '.vfiles_uploads'),
   // 上传会话过期时间（默认 24h）
   uploadSessionTtlMs: parseInt(process.env.UPLOAD_SESSION_TTL_MS || String(24 * 60 * 60 * 1000)),
+
+  // 下载缓存（用于历史版本 + Git LFS smudge 后的临时落地，从而支持 Range/断点续传）
+  downloadCacheDir:
+    process.env.DOWNLOAD_CACHE_DIR || path.resolve(process.cwd(), '.vfiles_download_cache'),
+  // 缓存过期时间（默认 6h）
+  downloadCacheTtlMs: parseInt(process.env.DOWNLOAD_CACHE_TTL_MS || String(6 * 60 * 60 * 1000)),
+
+  // Git LFS
+  enableGitLfs: (process.env.ENABLE_GIT_LFS || 'true').toLowerCase() !== 'false',
+  // 以逗号分隔的 glob 列表（默认覆盖常见二进制/大文件类型）
+  gitLfsTrackPatterns: (process.env.GIT_LFS_TRACK_PATTERNS ||
+    [
+      '*.png',
+      '*.jpg',
+      '*.jpeg',
+      '*.gif',
+      '*.webp',
+      '*.bmp',
+      '*.ico',
+      '*.pdf',
+      '*.zip',
+      '*.7z',
+      '*.rar',
+      '*.tar',
+      '*.gz',
+      '*.bz2',
+      '*.xz',
+      '*.mp4',
+      '*.mov',
+      '*.m4v',
+      '*.webm',
+      '*.mp3',
+      '*.wav',
+      '*.flac',
+      '*.aac',
+      '*.m4a',
+      '*.psd',
+      '*.dmg',
+      '*.apk',
+      '*.exe',
+      '*.dll',
+      '*.bin',
+    ].join(',')
+  )
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean) as string[],
   
   // 允许的文件类型 (留空表示允许所有)
   allowedFileTypes: [] as string[],

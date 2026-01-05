@@ -250,7 +250,11 @@ export function createFilesRoutes(gitService: GitService) {
         return c.json({ success: false, error: '读取文件失败' }, 404);
       }
 
-      const stream = gitService.getFileContentStreamAtCommit(path, commit);
+      // Git LFS：若为 pointer，则 smudge 输出真实内容
+      const isLfsPointer = await gitService.isLfsPointerAtCommit(path, commit);
+      const stream = isLfsPointer
+        ? gitService.getFileContentSmudgedStreamAtCommit(path, commit)
+        : gitService.getFileContentStreamAtCommit(path, commit);
       return c.body(stream);
     } catch (error) {
       return c.json(

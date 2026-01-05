@@ -10,6 +10,86 @@ import { Zip, ZipDeflate } from 'fflate';
 export function createDownloadRoutes(gitService: GitService) {
   const app = new Hono();
 
+  let lastCacheCleanupAt = 0;
+  const CACHE_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+
+  function makeDownloadCacheKey(commit: string, filePath: string): string {
+    // 文件名中避免出现路径分隔符
+    const safePath = filePath.replaceAll('..', '').replaceAll('/', '_').replaceAll('\\', '_');
+    return `${commit}_${safePath}`;
+  }
+
+  async function cleanupDownloadCacheIfNeeded(): Promise<void> {
+    const now = Date.now();
+    if (now - lastCacheCleanupAt < CACHE_CLEANUP_INTERVAL_MS) return;
+    lastCacheCleanupAt = now;
+
+    try {
+      await fs.mkdir(config.downloadCacheDir, { recursive: true });
+      const entries = await fs.readdir(config.downloadCacheDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        const p = path.join(config.downloadCacheDir, entry.name);
+        try {
+          const st = await fs.stat(p);
+          if (now - st.mtimeMs > config.downloadCacheTtlMs) {
+            await fs.rm(p, { force: true });
+          }
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async function ensureMaterializedLfsFile(commit: string, filePath: string): Promise<string> {
+    await fs.mkdir(config.downloadCacheDir, { recursive: true });
+    const cacheKey = makeDownloadCacheKey(commit, filePath);
+    const outPath = path.join(config.downloadCacheDir, cacheKey);
+
+    try {
+      const st = await fs.stat(outPath);
+      const now = Date.now();
+      if (now - st.mtimeMs <= config.downloadCacheTtlMs && st.isFile()) {
+        return outPath;
+      }
+    } catch {
+      // cache miss
+    }
+
+    // 重新 materialize（smudge 输出到文件），写入过程保持流式
+    const stream = gitService.getFileContentSmudgedStreamAtCommit(filePath, commit);
+    const tmpPath = `${outPath}.tmp`;
+    let handle: fs.FileHandle | null = null;
+    const reader = stream.getReader();
+    try {
+      handle = await fs.open(tmpPath, 'w');
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value && value.byteLength > 0) {
+          await handle.write(value);
+        }
+      }
+    } finally {
+      try {
+        await reader.cancel();
+      } catch {
+        // ignore
+      }
+      try {
+        await handle?.close();
+      } catch {
+        // ignore
+      }
+    }
+
+    await fs.rename(tmpPath, outPath);
+    return outPath;
+  }
+
   function pathModuleJoinRepo(requestedPath: string): string {
     return path.join(config.repoPath, requestedPath);
   }
@@ -167,6 +247,106 @@ export function createDownloadRoutes(gitService: GitService) {
       const exists = await gitService.fileExistsAtCommit(path, commit);
       if (!exists) {
         return c.json({ success: false, error: '下载失败' }, 404);
+      }
+
+      // Git LFS：如果 blob 是 pointer，需要先 smudge 还原为真实文件。
+      // 为了支持 Range/断点续传，这里把 smudge 结果流式落地到临时文件，再走文件 Range 读取。
+      await cleanupDownloadCacheIfNeeded();
+      const isLfsPointer = await gitService.isLfsPointerAtCommit(path, commit);
+      if (isLfsPointer) {
+        const fullPath = await ensureMaterializedLfsFile(commit, path);
+        const stat = await fs.stat(fullPath);
+        if (!stat.isFile()) {
+          return c.json({ success: false, error: '下载失败' }, 404);
+        }
+
+        const total = stat.size;
+        const range = c.req.header('range') || c.req.header('Range');
+
+        if (range && /^bytes=\d*-\d*$/i.test(range.trim())) {
+          const [, spec] = range.trim().split('=');
+          const [startStr, endStr] = spec.split('-');
+          let start = startStr ? Number.parseInt(startStr, 10) : 0;
+          let end = endStr ? Number.parseInt(endStr, 10) : total - 1;
+
+          if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < 0 || start > end) {
+            c.header('Content-Range', `bytes */${total}`);
+            return c.body(null, 416);
+          }
+
+          // bytes=-N：从末尾取 N 字节
+          if (!startStr && endStr) {
+            const suffixLen = Math.min(end, total);
+            start = Math.max(0, total - suffixLen);
+            end = total - 1;
+          }
+
+          if (start >= total) {
+            c.header('Content-Range', `bytes */${total}`);
+            return c.body(null, 416);
+          }
+          if (end >= total) end = total - 1;
+
+          const chunkSize = end - start + 1;
+          c.header('Content-Range', `bytes ${start}-${end}/${total}`);
+          c.header('Content-Length', chunkSize.toString());
+
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              (async () => {
+                let file: fs.FileHandle | null = null;
+                try {
+                  file = await fs.open(fullPath, 'r');
+                  const buf = new Uint8Array(chunkSize);
+                  const { bytesRead } = await file.read(buf, 0, chunkSize, start);
+                  controller.enqueue(buf.subarray(0, bytesRead));
+                  controller.close();
+                } catch (e) {
+                  controller.error(e);
+                } finally {
+                  try {
+                    await file?.close();
+                  } catch {
+                    // ignore
+                  }
+                }
+              })();
+            },
+          });
+
+          return c.body(stream, 206);
+        }
+
+        c.header('Content-Length', total.toString());
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            (async () => {
+              let file: fs.FileHandle | null = null;
+              try {
+                file = await fs.open(fullPath, 'r');
+                const buf = new Uint8Array(1024 * 1024);
+                let offset = 0;
+                while (offset < total) {
+                  const toRead = Math.min(buf.length, total - offset);
+                  const { bytesRead } = await file.read(buf, 0, toRead, offset);
+                  if (bytesRead <= 0) break;
+                  controller.enqueue(buf.subarray(0, bytesRead));
+                  offset += bytesRead;
+                }
+                controller.close();
+              } catch (e) {
+                controller.error(e);
+              } finally {
+                try {
+                  await file?.close();
+                } catch {
+                  // ignore
+                }
+              }
+            })();
+          },
+        });
+        return c.body(stream);
       }
 
       // 历史版本支持 Range（通过流式丢弃实现逻辑 Range）
