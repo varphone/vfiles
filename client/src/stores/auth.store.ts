@@ -65,11 +65,15 @@ export const useAuthStore = defineStore("auth", () => {
     }
   }
 
-  async function register(username: string, password: string): Promise<void> {
+  async function register(
+    username: string,
+    password: string,
+    email?: string,
+  ): Promise<void> {
     loading.value = true;
     error.value = null;
     try {
-      const res = await authService.register({ username, password });
+      const res = await authService.register({ username, password, email });
       if (!res.success) {
         error.value = res.error || "注册失败";
         throw new Error(error.value);

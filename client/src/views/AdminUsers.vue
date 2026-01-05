@@ -25,6 +25,7 @@
           <thead>
             <tr>
               <th>用户名</th>
+              <th>邮箱</th>
               <th>角色</th>
               <th>状态</th>
               <th>创建时间</th>
@@ -35,6 +36,28 @@
             <tr v-for="u in users" :key="u.id">
               <td>
                 <code>{{ u.username }}</code>
+              </td>
+              <td>
+                <div class="field has-addons">
+                  <div class="control is-expanded">
+                    <input
+                      class="input is-small"
+                      type="email"
+                      placeholder="user@example.com"
+                      :disabled="loading"
+                      v-model.trim="emailDraft[u.id]"
+                    />
+                  </div>
+                  <div class="control">
+                    <button
+                      class="button is-small is-light"
+                      :disabled="loading"
+                      @click="saveEmail(u)"
+                    >
+                      保存
+                    </button>
+                  </div>
+                </div>
               </td>
               <td>
                 <div class="select is-small">
@@ -81,7 +104,7 @@
             </tr>
 
             <tr v-if="!loading && users.length === 0">
-              <td colspan="5" class="has-text-centered has-text-grey">
+              <td colspan="6" class="has-text-centered has-text-grey">
                 暂无用户
               </td>
             </tr>
@@ -104,6 +127,7 @@ const auth = useAuthStore();
 const users = ref<AdminUser[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
+const emailDraft = ref<Record<string, string>>({});
 
 async function reload() {
   loading.value = true;
@@ -116,9 +140,33 @@ async function reload() {
       return;
     }
     users.value = res.data?.users ?? [];
+    emailDraft.value = Object.fromEntries(
+      users.value.map((u) => [u.id, u.email || ""]),
+    );
   } catch (e) {
     error.value = e instanceof Error ? e.message : "加载失败";
     users.value = [];
+    emailDraft.value = {};
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function saveEmail(u: AdminUser) {
+  const nextEmail = (emailDraft.value[u.id] || "").trim();
+  if (!nextEmail) {
+    app.error("请输入邮箱");
+    return;
+  }
+
+  loading.value = true;
+  try {
+    const res = await authService.setUserEmail(u.id, nextEmail);
+    if (!res.success) throw new Error(res.error || "保存邮箱失败");
+    app.success("已保存邮箱");
+    await reload();
+  } catch (e) {
+    app.error(e instanceof Error ? e.message : "保存邮箱失败");
   } finally {
     loading.value = false;
   }

@@ -16,6 +16,8 @@ router.beforeEach(async (to) => {
 		await authStore.fetchMe();
 	}
 
+	const publicRoutes = new Set(["login", "forgot-password", "reset-password"]);
+
 	// 未启用认证：不做拦截
 	if (!authStore.enabled) {
 		if (to.name === "login") return { name: "home" };
@@ -23,13 +25,13 @@ router.beforeEach(async (to) => {
 	}
 
 	// 已登录：不允许再进登录页
-	if (to.name === "login" && authStore.user) {
+	if (publicRoutes.has(String(to.name)) && authStore.user) {
 		const redirect = typeof to.query.redirect === "string" ? to.query.redirect : "/";
 		return redirect;
 	}
 
 	// 需要登录
-	if (to.name !== "login" && !authStore.user) {
+	if (!publicRoutes.has(String(to.name)) && !authStore.user) {
 		return { name: "login", query: { redirect: to.fullPath } };
 	}
 

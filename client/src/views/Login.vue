@@ -24,6 +24,9 @@
               <li :class="{ 'is-active': mode === 'login' }">
                 <a href="#" @click.prevent="mode = 'login'">登录</a>
               </li>
+              <li :class="{ 'is-active': mode === 'email' }">
+                <a href="#" @click.prevent="mode = 'email'">邮箱验证码</a>
+              </li>
               <li
                 v-if="auth.allowRegister"
                 :class="{ 'is-active': mode === 'register' }"
@@ -40,7 +43,7 @@
             管理员已关闭注册（AUTH_ALLOW_REGISTER=false）。
           </div>
 
-          <form @submit.prevent="submit">
+          <form v-if="mode !== 'email'" @submit.prevent="submit">
             <div class="field">
               <label class="label">用户名</label>
               <div class="control">
@@ -55,6 +58,20 @@
               </div>
             </div>
 
+            <div v-if="mode === 'register'" class="field">
+              <label class="label">邮箱（可选）</label>
+              <div class="control">
+                <input
+                  v-model.trim="email"
+                  class="input"
+                  type="email"
+                  autocomplete="email"
+                  placeholder="用于找回密码/验证码登录"
+                  :disabled="auth.loading"
+                />
+              </div>
+            </div>
+
             <div class="field">
               <label class="label">密码</label>
               <div class="control">
@@ -62,11 +79,15 @@
                   v-model="password"
                   class="input"
                   type="password"
-                  autocomplete="current-password"
+                  :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
                   placeholder="至少 6 位"
                   :disabled="auth.loading"
                 />
               </div>
+            </div>
+
+            <div v-if="mode === 'login'" class="field">
+              <a href="#" class="is-size-7" @click.prevent="goForgotPassword">忘记密码？</a>
             </div>
 
             <div class="field">
@@ -87,6 +108,59 @@
               提示：首次注册用户会自动成为 <code>admin</code>。
             </p>
           </form>
+
+          <form v-else @submit.prevent="submitEmailLogin">
+            <div class="field">
+              <label class="label">邮箱</label>
+              <div class="control">
+                <input
+                  v-model.trim="emailLogin"
+                  class="input"
+                  type="email"
+                  autocomplete="email"
+                  placeholder="user@example.com"
+                  :disabled="emailLoading"
+                />
+              </div>
+            </div>
+
+            <div class="field has-addons">
+              <div class="control is-expanded">
+                <input
+                  v-model.trim="emailCode"
+                  class="input"
+                  type="text"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                  placeholder="6 位验证码"
+                  :disabled="emailLoading"
+                />
+              </div>
+              <div class="control">
+                <button
+                  class="button is-light"
+                  type="button"
+                  :disabled="emailLoading"
+                  @click="sendEmailCode"
+                >
+                  发送验证码
+                </button>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="control">
+                <button
+                  class="button is-link is-fullwidth"
+                  :class="{ 'is-loading': emailLoading }"
+                  :disabled="emailLoading"
+                  type="submit"
+                >
+                  验证码登录
+                </button>
+              </div>
+            </div>
+          </form>
         </template>
       </div>
     </div>
@@ -98,15 +172,21 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "../stores/auth.store";
 import { useAppStore } from "../stores/app.store";
+import { authService } from "../services/auth.service";
 
 const auth = useAuthStore();
 const app = useAppStore();
 const router = useRouter();
 const route = useRoute();
 
-const mode = ref<"login" | "register">("login");
+const mode = ref<"login" | "register" | "email">("login");
 const username = ref("");
 const password = ref("");
+const email = ref("");
+
+const emailLogin = ref("");
+const emailCode = ref("");
+const emailLoading = ref(false);
 
 const reasonText = computed(() => {
   const reason = typeof route.query.reason === "string" ? route.query.reason : "";
@@ -125,6 +205,10 @@ function goHome() {
   router.push({ path: "/" });
 }
 
+function goForgotPassword() {
+  router.push({ name: "forgot-password" });
+}
+
 async function submit() {
   if (!username.value || !password.value) {
     app.error("请输入用户名和密码");
@@ -136,7 +220,7 @@ async function submit() {
       await auth.login(username.value, password.value);
       app.success("登录成功");
     } else {
-      await auth.register(username.value, password.value);
+      await auth.register(username.value, password.value, email.value || undefined);
       app.success("注册成功");
     }
 
@@ -144,6 +228,51 @@ async function submit() {
     router.replace(redirect);
   } catch (e) {
     app.error(e instanceof Error ? e.message : "操作失败");
+  }
+}
+
+async function sendEmailCode() {
+  if (!emailLogin.value) {
+    app.error("请输入邮箱");
+    return;
+  }
+
+  emailLoading.value = true;
+  try {
+    const res = await authService.requestEmailLoginCode(emailLogin.value);
+    if (!res.success) throw new Error(res.error || "发送失败");
+    app.success("如果邮箱已绑定账号，将收到验证码邮件");
+  } catch (e) {
+    app.error(e instanceof Error ? e.message : "发送失败");
+  } finally {
+    emailLoading.value = false;
+  }
+}
+
+async function submitEmailLogin() {
+  if (!emailLogin.value || !emailCode.value) {
+    app.error("请输入邮箱和验证码");
+    return;
+  }
+
+  emailLoading.value = true;
+  try {
+    const res = await authService.verifyEmailLoginCode(
+      emailLogin.value,
+      emailCode.value,
+    );
+    if (!res.success) throw new Error(res.error || "登录失败");
+
+    await auth.fetchMe();
+    app.success("登录成功");
+
+    const redirect =
+      typeof route.query.redirect === "string" ? route.query.redirect : "/";
+    router.replace(redirect);
+  } catch (e) {
+    app.error(e instanceof Error ? e.message : "登录失败");
+  } finally {
+    emailLoading.value = false;
   }
 }
 

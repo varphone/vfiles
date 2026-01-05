@@ -4,12 +4,14 @@ import type { ApiResponse } from "../types";
 export interface AuthUser {
   id: string;
   username: string;
+  email?: string;
   role: string;
 }
 
 export interface AdminUser {
   id: string;
   username: string;
+  email?: string;
   role: string;
   disabled?: boolean;
   createdAt: string;
@@ -39,7 +41,7 @@ class AuthService {
     return apiService.post("/auth/login", input);
   }
 
-  register(input: { username: string; password: string }): Promise<ApiResponse<{ user: AuthUser }>> {
+  register(input: { username: string; password: string; email?: string }): Promise<ApiResponse<{ user: AuthUser }>> {
     return apiService.post("/auth/register", input);
   }
 
@@ -67,10 +69,37 @@ class AuthService {
     );
   }
 
+  setUserEmail(userId: string, email: string): Promise<ApiResponse<void>> {
+    return apiService.post(`/auth/users/${encodeURIComponent(userId)}/email`, {
+      email,
+    });
+  }
+
   revokeUserSessions(userId: string): Promise<ApiResponse<void>> {
     return apiService.post(
       `/auth/users/${encodeURIComponent(userId)}/revoke-sessions`,
     );
+  }
+
+  // v1.1.2: forgot password
+  requestPasswordReset(email: string): Promise<ApiResponse<void>> {
+    return apiService.post("/auth/password-reset/request", { email });
+  }
+
+  confirmPasswordReset(token: string, newPassword: string): Promise<ApiResponse<void>> {
+    return apiService.post("/auth/password-reset/confirm", {
+      token,
+      newPassword,
+    });
+  }
+
+  // v1.1.2: email code login
+  requestEmailLoginCode(email: string): Promise<ApiResponse<void>> {
+    return apiService.post("/auth/email-login/request", { email });
+  }
+
+  verifyEmailLoginCode(email: string, code: string): Promise<ApiResponse<{ user: AuthUser }>> {
+    return apiService.post("/auth/email-login/verify", { email, code });
   }
 }
 
