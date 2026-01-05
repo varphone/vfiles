@@ -19,6 +19,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "fflate": "^0.8.2",
     "hono": "^4.11.3"
   },
   "devDependencies": {

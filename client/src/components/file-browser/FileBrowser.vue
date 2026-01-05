@@ -526,6 +526,12 @@ function handleSearchItemClick(file: FileInfo) {
 }
 
 function handleDownload(file: FileInfo) {
+  if (file.type === 'directory') {
+    filesService.downloadFolder(file.path);
+    appStore.success('开始下载文件夹（ZIP）');
+    return;
+  }
+
   filesService.downloadFile(file.path);
   appStore.success('开始下载文件');
 }
@@ -640,21 +646,19 @@ async function batchDownload() {
   const items = getSelectedItems();
   if (items.length === 0) return;
 
-  const dirs = items.filter((x) => x.type === 'directory');
-  if (dirs.length) {
-    appStore.error('批量下载暂不支持文件夹');
-    return;
-  }
-
   if (items.length > 20) {
     const ok = confirm(`将开始下载 ${items.length} 个文件，可能会被浏览器拦截弹窗。继续吗？`);
     if (!ok) return;
   }
 
   for (const f of items) {
-    filesService.downloadFile(f.path);
+    if (f.type === 'directory') {
+      filesService.downloadFolder(f.path);
+    } else {
+      filesService.downloadFile(f.path);
+    }
   }
-  appStore.success(`开始下载 ${items.length} 个文件`);
+  appStore.success(`开始下载 ${items.length} 项`);
 }
 
 async function batchDelete() {

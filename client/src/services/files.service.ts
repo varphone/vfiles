@@ -86,6 +86,21 @@ export const filesService = {
   },
 
   /**
+   * 下载文件夹（ZIP）
+   */
+  downloadFolder(path: string): void {
+    const params = { path };
+    const url = `/api/download/folder?${new URLSearchParams(params)}`;
+    const name = path.split('/').filter(Boolean).pop() || 'root';
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${name}.zip`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  },
+
+  /**
    * 搜索文件
    */
   async searchFiles(

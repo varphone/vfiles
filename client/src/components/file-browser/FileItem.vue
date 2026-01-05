@@ -64,10 +64,10 @@
             <IconHistory :size="20" />
           </button>
           <button
-            v-if="file.type === 'file'"
+            v-if="file.type === 'file' || file.type === 'directory'"
             class="button is-small is-success is-light"
             @click.stop="download"
-            title="下载"
+            :title="file.type === 'directory' ? '下载文件夹（ZIP）' : '下载'"
           >
             <IconDownload :size="20" />
           </button>
