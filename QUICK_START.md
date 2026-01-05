@@ -51,11 +51,32 @@ PORT=3000
 # Git仓库路径
 REPO_PATH=./data
 
+# 仓库模式（默认 worktree）
+# - worktree：工作目录模式（仓库里有真实文件 + .git），可能产生“双份占用”（工作区文件 + git 对象库）
+# - bare：bare 仓库模式（仅 git 对象库，无工作目录文件），用于避免双份占用
+REPO_MODE=worktree
+
 # CORS配置
 CORS_ORIGIN=*
 
 # 环境
 NODE_ENV=development
+```
+
+### bare 模式迁移（可选）
+
+如果你已经在 `data/` 里有工作目录仓库，想迁移到 bare（并删除工作目录释放空间）：
+
+```powershell
+# 1) 停止服务后，在项目根目录执行
+git clone --bare data data.git
+
+# 2) （确认 data.git 可用后）删除或移走 data/（这一步会释放工作区占用）
+# Remove-Item -Recurse -Force .\data
+
+# 3) 启动服务时设置
+# REPO_MODE=bare
+# REPO_PATH=./data.git
 ```
 
 ## 功能测试

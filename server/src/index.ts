@@ -16,7 +16,7 @@ import { createSearchRoutes } from './routes/search.routes.js';
 const app = new Hono();
 
 // 初始化Git服务
-const gitService = new GitService(config.repoPath);
+const gitService = new GitService(config.repoPath, config.repoMode);
 await gitService.initRepo();
 
 console.log('Git仓库初始化完成，路径:', config.repoPath);

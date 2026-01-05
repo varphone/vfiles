@@ -202,8 +202,8 @@ export function createFilesRoutes(gitService: GitService) {
       c.header('Content-Type', 'application/octet-stream');
       c.header('Content-Disposition', `inline; filename="${path.split('/').pop()}"`);
 
-      // 当前版本：流式输出，避免把整个文件读入内存
-      if (!commitResult.value) {
+      // 当前版本：worktree 模式直接从磁盘流式输出；bare 模式从 HEAD 读取
+      if (!commitResult.value && config.repoMode !== 'bare') {
         const fullPath = nodePath.join(config.repoPath, path);
         const stat = await fs.stat(fullPath);
         if (!stat.isFile()) {
@@ -243,8 +243,8 @@ export function createFilesRoutes(gitService: GitService) {
         return c.body(stream);
       }
 
-      // 历史版本（commit）：真正流式输出（git show stdout -> ReadableStream）
-      const commit = commitResult.value;
+      // 历史版本（commit）或 bare 模式当前版本：真正流式输出（git show stdout -> ReadableStream）
+      const commit = commitResult.value || 'HEAD';
       const exists = await gitService.fileExistsAtCommit(path, commit);
       if (!exists) {
         return c.json({ success: false, error: '读取文件失败' }, 404);
@@ -255,6 +255,14 @@ export function createFilesRoutes(gitService: GitService) {
       const stream = isLfsPointer
         ? gitService.getFileContentSmudgedStreamAtCommit(path, commit)
         : gitService.getFileContentStreamAtCommit(path, commit);
+
+      // 仅在可知大小时设置 Content-Length（bare/commit 都可通过 cat-file -s 获取）
+      try {
+        const size = await gitService.getFileSizeAtCommit(path, commit);
+        c.header('Content-Length', size.toString());
+      } catch {
+        // ignore
+      }
       return c.body(stream);
     } catch (error) {
       return c.json(
@@ -567,22 +575,38 @@ export function createFilesRoutes(gitService: GitService) {
         return c.json({ success: false, error: `缺少分块: ${missing.slice(0, 10).join(',')}${missing.length > 10 ? '...' : ''}` }, 409);
       }
 
-      // 合并写入 repo
-      const fullPath = nodePath.join(config.repoPath, session.filePath);
-      await fs.mkdir(nodePath.dirname(fullPath), { recursive: true });
-
-      // 顺序拼接写入
-      const handle = await fs.open(fullPath, 'w');
-      try {
-        for (let i = 0; i < session.totalChunks; i++) {
-          const chunkBuf = await fs.readFile(getChunkPath(uploadId, i));
-          await handle.write(chunkBuf);
+      // 合并分块：worktree 模式写入 repo 工作区后 commitFile；bare 模式合并到临时文件后 saveFile 直接写入对象库
+      let commitHash = '';
+      if (config.repoMode === 'bare') {
+        const mergedPath = nodePath.join(getUploadSessionDir(uploadId), 'merged.bin');
+        const handle = await fs.open(mergedPath, 'w');
+        try {
+          for (let i = 0; i < session.totalChunks; i++) {
+            const chunkBuf = await fs.readFile(getChunkPath(uploadId, i));
+            await handle.write(chunkBuf);
+          }
+        } finally {
+          await handle.close();
         }
-      } finally {
-        await handle.close();
-      }
 
-      const commitHash = await gitService.commitFile(session.filePath, message);
+        const stream = Bun.file(mergedPath).stream() as ReadableStream<Uint8Array>;
+        commitHash = await gitService.saveFile(session.filePath, stream, message);
+      } else {
+        const fullPath = nodePath.join(config.repoPath, session.filePath);
+        await fs.mkdir(nodePath.dirname(fullPath), { recursive: true });
+
+        const handle = await fs.open(fullPath, 'w');
+        try {
+          for (let i = 0; i < session.totalChunks; i++) {
+            const chunkBuf = await fs.readFile(getChunkPath(uploadId, i));
+            await handle.write(chunkBuf);
+          }
+        } finally {
+          await handle.close();
+        }
+
+        commitHash = await gitService.commitFile(session.filePath, message);
+      }
 
       // 清理临时目录
       await fs.rm(getUploadSessionDir(uploadId), { recursive: true, force: true });

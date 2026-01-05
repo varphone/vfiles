@@ -7,6 +7,13 @@ export const config = {
   
   // Git仓库路径
   repoPath: process.env.REPO_PATH || path.resolve(process.cwd(), 'data'),
+
+  // 仓库模式：
+  // - worktree：repoPath 为工作目录（含 .git），文件在磁盘上可见（可能产生“工作区文件 + git 对象库”双份占用）
+  // - bare：repoPath 为 bare gitdir（无工作区文件），文件仅存于 git 对象库，避免双份占用
+  repoMode: ((process.env.REPO_MODE || 'worktree').toLowerCase() === 'bare' ? 'bare' : 'worktree') as
+    | 'worktree'
+    | 'bare',
   
   // 上传限制
   maxFileSize: 1024 * 1024 * 1024, // 1GB

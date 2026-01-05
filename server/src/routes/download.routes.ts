@@ -145,8 +145,9 @@ export function createDownloadRoutes(gitService: GitService) {
       c.header('Content-Disposition', `attachment; filename="${filename}"`);
       c.header('Accept-Ranges', 'bytes');
 
-      // 仅对“当前版本文件”（不带 commit）支持 Range，避免对 git show 输出做随机访问。
-      if (!commitResult.value) {
+      // worktree 模式：当前版本直接从磁盘读取并支持 Range。
+      // bare 模式：当前版本等同于 HEAD（走 git show / cat-file），同样提供 Range（逻辑 Range 或 LFS 缓存 Range）。
+      if (!commitResult.value && config.repoMode !== 'bare') {
         const fullPath = pathModuleJoinRepo(path);
         const stat = await fs.stat(fullPath);
         if (!stat.isFile()) {
@@ -242,8 +243,8 @@ export function createDownloadRoutes(gitService: GitService) {
         return c.body(stream);
       }
 
-      // 历史版本（commit）：沿用原逻辑
-      const commit = commitResult.value;
+      // 历史版本（commit）或 bare 模式当前版本（HEAD）：沿用 git 读取逻辑
+      const commit = commitResult.value || 'HEAD';
       const exists = await gitService.fileExistsAtCommit(path, commit);
       if (!exists) {
         return c.json({ success: false, error: '下载失败' }, 404);
@@ -406,6 +407,85 @@ export function createDownloadRoutes(gitService: GitService) {
   app.get('/folder', pathSecurityMiddleware, async (c) => {
     const rawPath = c.req.query('path');
     const requestedPath = rawPath ? normalizeRequestPath(rawPath) : '';
+
+    // bare 模式：文件不在磁盘工作区，需从 HEAD 的对象库读取并打包
+    if (config.repoMode === 'bare') {
+      const zipFilename = folderZipName(requestedPath);
+      c.header('Content-Type', 'application/zip');
+      c.header('Content-Disposition', `attachment; filename="${zipFilename}"`);
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          (async () => {
+            try {
+              const prefix = requestedPath.split('/').filter(Boolean).pop() || 'root';
+              const base = requestedPath.replace(/^\/+|\/+$/g, '');
+
+              // 递归列出文件（name-only）
+              const args = base
+                ? ['git', 'ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', base]
+                : ['git', 'ls-tree', '-r', '-z', '--name-only', 'HEAD'];
+              const proc = Bun.spawn(args, { cwd: config.repoPath, stdout: 'pipe', stderr: 'pipe' });
+              const code = await proc.exited;
+              if (code !== 0) {
+                const err = await new Response(proc.stderr).text();
+                throw new Error(err || '读取文件夹失败');
+              }
+              const listText = new TextDecoder().decode(
+                new Uint8Array(await new Response(proc.stdout).arrayBuffer())
+              );
+              const filePaths = listText.split('\0').filter(Boolean);
+
+              const zip = new Zip((err, data, final) => {
+                if (err) {
+                  controller.error(err);
+                  return;
+                }
+                if (data) controller.enqueue(data);
+                if (final) controller.close();
+              });
+
+              for (const fullRel of filePaths) {
+                // fullRel 是仓库根相对路径
+                const rel = base ? fullRel.slice(base.length).replace(/^\//, '') : fullRel;
+                const zipPath = `${prefix}/${rel}`.replaceAll('\\', '/');
+                const entry = new ZipDeflate(zipPath);
+                zip.add(entry);
+
+                const isLfsPointer = await gitService.isLfsPointerAtCommit(fullRel, 'HEAD');
+                const fileStream = isLfsPointer
+                  ? gitService.getFileContentSmudgedStreamAtCommit(fullRel, 'HEAD')
+                  : gitService.getFileContentStreamAtCommit(fullRel, 'HEAD');
+
+                const reader = fileStream.getReader();
+                try {
+                  while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    if (value && value.byteLength > 0) {
+                      entry.push(value.slice(0), false);
+                    }
+                  }
+                } finally {
+                  try {
+                    await reader.cancel();
+                  } catch {
+                    // ignore
+                  }
+                  entry.push(new Uint8Array(0), true);
+                }
+              }
+
+              zip.end();
+            } catch (e) {
+              controller.error(e);
+            }
+          })();
+        },
+      });
+
+      return c.body(stream);
+    }
 
     const fullDir = path.join(config.repoPath, requestedPath);
     try {
