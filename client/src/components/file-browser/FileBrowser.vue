@@ -8,6 +8,8 @@
     <div class="box">
       <Breadcrumb :breadcrumbs="breadcrumbs" @navigate="navigateTo" />
 
+      <div class="file-browser-toolbar">
+
       <div
         v-if="isMobile && pullIndicatorVisible"
         class="has-text-centered is-size-7 has-text-grey mb-2"
@@ -124,6 +126,8 @@
             </button>
           </div>
         </div>
+      </div>
+
       </div>
 
       <div v-if="downloadQueue.length" class="box mb-4">
@@ -1079,6 +1083,20 @@ defineExpose({
   goBack,
   goRoot,
   toggleBatchMode,
+  setSearchQuery: (q: string) => {
+    searchQuery.value = q;
+  },
+  runSearch,
+  clearSearch,
+  batchMode,
+  selectedCount,
+  selectAllVisible,
+  clearSelection,
+  batchDownload,
+  batchDelete,
+  batchMove,
+  renameSelected,
+  searchLoading,
 });
 
 function toggleSelect(file: FileInfo) {
@@ -1295,6 +1313,10 @@ async function renameSelected() {
 @media screen and (max-width: 768px) {
   .file-browser {
     padding: 0.5rem;
+  }
+
+  .file-browser-toolbar {
+    display: none;
   }
 
   .level {
