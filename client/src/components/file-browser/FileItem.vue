@@ -238,8 +238,8 @@ function viewHistory() {
   width: 48px;
   height: 48px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: transparent;
+  color: inherit;
 }
 
 .file-name {
