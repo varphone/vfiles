@@ -36,10 +36,16 @@ function close() {
   max-width: 90vw;
 }
 
+.modal-card-body {
+  -webkit-overflow-scrolling: touch;
+}
+
 @media screen and (max-width: 768px) {
   .modal-card {
     width: 100%;
     margin: 0;
+    height: 100%;
+    max-height: 100vh;
   }
 }
 </style>

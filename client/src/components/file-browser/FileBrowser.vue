@@ -1,7 +1,21 @@
 <template>
-  <div class="file-browser">
+  <div
+    class="file-browser"
+    @touchstart="onTouchStart"
+    @touchmove="onTouchMove"
+    @touchend="onTouchEnd"
+  >
     <div class="box">
       <Breadcrumb :breadcrumbs="breadcrumbs" @navigate="navigateTo" />
+
+      <div
+        v-if="isMobile && pullIndicatorVisible"
+        class="has-text-centered is-size-7 has-text-grey mb-2"
+      >
+        <span v-if="pullRefreshing">刷新中...</span>
+        <span v-else-if="pullReady">释放刷新</span>
+        <span v-else>下拉刷新</span>
+      </div>
 
       <div class="field has-addons mt-3">
         <div class="control is-expanded">
@@ -219,8 +233,8 @@
           <p class="has-text-grey">没有找到匹配的文件</p>
         </div>
         <FileList
-          v-if="searchResults.length"
-          :files="searchResults"
+          v-if="visibleSearchResults.length"
+          :files="visibleSearchResults"
           :highlight="searchQuery"
           :select-mode="batchMode"
           :selected-paths="selectedPaths"
@@ -230,11 +244,19 @@
           @view-history="handleViewHistory"
           @toggle-select="toggleSelect"
         />
+
+        <div
+          v-if="isMobile && hasMore"
+          ref="loadMoreSentinel"
+          class="has-text-centered has-text-grey is-size-7 py-2"
+        >
+          继续下滑加载更多...
+        </div>
       </div>
 
       <div v-else class="file-list">
         <FileList
-          :files="files"
+          :files="visibleFiles"
           :select-mode="batchMode"
           :selected-paths="selectedPaths"
           @click="handleFileClick"
@@ -243,6 +265,14 @@
           @view-history="handleViewHistory"
           @toggle-select="toggleSelect"
         />
+
+        <div
+          v-if="isMobile && hasMore"
+          ref="loadMoreSentinel"
+          class="has-text-centered has-text-grey is-size-7 py-2"
+        >
+          继续下滑加载更多...
+        </div>
       </div>
     </div>
 
@@ -315,7 +345,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue';
 import { storeToRefs } from 'pinia';
 import {
   IconUpload,
@@ -339,6 +369,12 @@ import hljs from 'highlight.js';
 const filesStore = useFilesStore();
 const appStore = useAppStore();
 const { files, breadcrumbs, loading, error } = storeToRefs(filesStore);
+
+const isMobile = ref(false);
+
+function updateIsMobile() {
+  isMobile.value = window.matchMedia('(max-width: 768px)').matches;
+}
 
 const showUploader = ref(false);
 const showHistory = ref(false);
@@ -610,6 +646,23 @@ function pushSearchHistory(term: string) {
 onMounted(() => {
   filesStore.loadFiles();
   loadSearchHistory();
+
+  updateIsMobile();
+  try {
+    const mql = window.matchMedia('(max-width: 768px)');
+    const handler = () => updateIsMobile();
+    if ('addEventListener' in mql) {
+      mql.addEventListener('change', handler);
+      onBeforeUnmount(() => mql.removeEventListener('change', handler));
+    } else {
+      // @ts-expect-error older Safari
+      mql.addListener(handler);
+      // @ts-expect-error older Safari
+      onBeforeUnmount(() => mql.removeListener(handler));
+    }
+  } catch {
+    // ignore
+  }
 });
 
 onBeforeUnmount(() => {
@@ -630,6 +683,159 @@ function goBack() {
 
 function goRoot() {
   navigateTo('');
+}
+
+// 4.2: 移动端无限滚动（分批渲染）
+const MOBILE_INITIAL_COUNT = 40;
+const MOBILE_CHUNK_COUNT = 30;
+const mobileVisibleCount = ref(MOBILE_INITIAL_COUNT);
+const loadMoreSentinel = ref<HTMLElement | null>(null);
+let loadMoreObserver: IntersectionObserver | null = null;
+
+const activeList = computed(() => (searchActive.value ? searchResults.value : files.value));
+const hasMore = computed(() => isMobile.value && mobileVisibleCount.value < activeList.value.length);
+const visibleFiles = computed(() => {
+  if (!isMobile.value) return files.value;
+  return files.value.slice(0, mobileVisibleCount.value);
+});
+const visibleSearchResults = computed(() => {
+  if (!isMobile.value) return searchResults.value;
+  return searchResults.value.slice(0, mobileVisibleCount.value);
+});
+
+function bumpVisibleCount() {
+  const total = activeList.value.length;
+  mobileVisibleCount.value = Math.min(total, mobileVisibleCount.value + MOBILE_CHUNK_COUNT);
+}
+
+function resetVisibleCount() {
+  mobileVisibleCount.value = MOBILE_INITIAL_COUNT;
+}
+
+function setupLoadMoreObserver() {
+  if (loadMoreObserver) {
+    loadMoreObserver.disconnect();
+    loadMoreObserver = null;
+  }
+
+  if (!isMobile.value) return;
+  if (!('IntersectionObserver' in window)) return;
+  if (!loadMoreSentinel.value) return;
+
+  loadMoreObserver = new IntersectionObserver(
+    (entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      if (!hasMore.value) return;
+      bumpVisibleCount();
+    },
+    { root: null, threshold: 0.1 }
+  );
+
+  loadMoreObserver.observe(loadMoreSentinel.value);
+}
+
+watch(
+  [() => filesStore.currentPath, searchActive, searchQuery, () => searchResults.value.length],
+  () => {
+    resetVisibleCount();
+    void nextTick().then(() => setupLoadMoreObserver());
+  }
+);
+
+watch([isMobile, loadMoreSentinel], () => {
+  void nextTick().then(() => setupLoadMoreObserver());
+});
+
+onBeforeUnmount(() => {
+  if (loadMoreObserver) {
+    loadMoreObserver.disconnect();
+    loadMoreObserver = null;
+  }
+});
+
+// 4.2: 下拉刷新 + 手势（边缘右滑返回）
+const pullDistance = ref(0);
+const pullReady = ref(false);
+const pullRefreshing = ref(false);
+
+const pullIndicatorVisible = computed(() => pullRefreshing.value || pullDistance.value > 10);
+
+const touchStart = ref({ x: 0, y: 0, t: 0 });
+const touchMode = ref<'none' | 'pull' | 'swipe'>('none');
+
+const anyModalOpen = computed(() => {
+  return showUploader.value || showHistory.value || preview.value.open;
+});
+
+function onTouchStart(e: TouchEvent) {
+  if (!isMobile.value) return;
+  if (anyModalOpen.value) return;
+  const t = e.touches[0];
+  if (!t) return;
+  touchStart.value = { x: t.clientX, y: t.clientY, t: Date.now() };
+  touchMode.value = 'none';
+}
+
+function onTouchMove(e: TouchEvent) {
+  if (!isMobile.value) return;
+  if (anyModalOpen.value) return;
+  const t = e.touches[0];
+  if (!t) return;
+
+  const dx = t.clientX - touchStart.value.x;
+  const dy = t.clientY - touchStart.value.y;
+
+  if (touchMode.value === 'none') {
+    if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) {
+      touchMode.value = 'swipe';
+    } else if (dy > 8 && Math.abs(dy) > Math.abs(dx) && window.scrollY <= 0) {
+      touchMode.value = 'pull';
+    }
+  }
+
+  if (touchMode.value === 'pull' && window.scrollY <= 0 && !pullRefreshing.value) {
+    const next = Math.min(90, Math.max(0, dy));
+    pullDistance.value = next;
+    pullReady.value = next >= 60;
+  }
+}
+
+async function onTouchEnd(e: TouchEvent) {
+  if (!isMobile.value) return;
+  if (anyModalOpen.value) return;
+
+  const changed = e.changedTouches[0];
+  if (!changed) {
+    pullDistance.value = 0;
+    pullReady.value = false;
+    touchMode.value = 'none';
+    return;
+  }
+
+  const dx = changed.clientX - touchStart.value.x;
+  const dy = changed.clientY - touchStart.value.y;
+
+  if (touchMode.value === 'swipe') {
+    const fromEdge = touchStart.value.x <= 24;
+    const horizontal = dx > 80 && Math.abs(dy) < 60;
+    if (fromEdge && horizontal) {
+      goBack();
+    }
+  }
+
+  if (touchMode.value === 'pull' && pullReady.value && !pullRefreshing.value) {
+    pullRefreshing.value = true;
+    try {
+      await Promise.resolve(refresh());
+      appStore.success('已刷新');
+    } finally {
+      pullRefreshing.value = false;
+    }
+  }
+
+  pullDistance.value = 0;
+  pullReady.value = false;
+  touchMode.value = 'none';
 }
 
 function enqueueDownload(kind: DownloadQueueKind, path: string) {
