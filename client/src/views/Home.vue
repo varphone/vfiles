@@ -3,10 +3,10 @@
     <!-- 移动端导航菜单 -->
     <nav class="navbar is-primary is-hidden-tablet is-fixed-top mobile-top-bar" role="navigation" aria-label="移动端导航">
       <div class="navbar-brand">
-        <a class="navbar-item" href="#" @click.prevent="goRootAndClose">
+        <div class="navbar-item">
           <IconFiles :size="22" class="mr-2" />
           <span>VFiles</span>
-        </a>
+        </div>
 
         <a
           role="button"
