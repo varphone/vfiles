@@ -182,29 +182,39 @@ export class GitService {
    */
   async getFileHistory(filePath: string, limit: number = 50): Promise<FileHistory> {
     try {
-      const result = await $`git log --pretty=format:%H||%an||%ae||%at||%s -n ${limit} -- ${normalizePathForGit(filePath)}`.cwd(this.dir).quiet();
-      
-      const lines = result.stdout.toString().trim().split('\n').filter(l => l);
+      // 使用控制字符作为分隔符，避免提交信息里出现 "||" 等导致解析错位
+      const RS = '\x1e'; // record separator
+      const US = '\x1f'; // unit separator
+
+      const result = await $`git log --pretty=format:%H${US}%P${US}%an${US}%ae${US}%at${US}%s${RS} -n ${limit} -- ${normalizePathForGit(filePath)}`
+        .cwd(this.dir)
+        .quiet();
+
+      const raw = result.stdout.toString();
+      const records = raw.split(RS).map((r) => r.trim()).filter(Boolean);
+
       const commitInfos: CommitInfo[] = [];
+      for (const record of records) {
+        const [hash, parentsStr, authorName, authorEmail, timestampStr, message] = record.split(US);
+        if (!hash) continue;
 
-      for (const line of lines) {
-        const [hash, authorName, authorEmail, timestamp, message] = line.split('||');
-        if (hash) {
-          // 获取父提交
-          const parentResult = await $`git log --pretty=%P -n 1 ${hash}`.cwd(this.dir).quiet();
-          const parents = parentResult.stdout.toString().trim().split(' ').filter(p => p);
-
-          commitInfos.push({
-            hash,
-            message,
-            author: {
-              name: authorName,
-              email: authorEmail,
-            },
-            date: new Date(parseInt(timestamp) * 1000).toISOString(),
-            parent: parents,
-          });
+        const timestamp = Number.parseInt(timestampStr, 10);
+        if (!Number.isFinite(timestamp)) {
+          continue;
         }
+
+        const parents = (parentsStr || '').split(' ').filter(Boolean);
+
+        commitInfos.push({
+          hash,
+          message: message ?? '',
+          author: {
+            name: authorName ?? '',
+            email: authorEmail ?? '',
+          },
+          date: new Date(timestamp * 1000).toISOString(),
+          parent: parents,
+        });
       }
 
       return {
@@ -227,18 +237,23 @@ export class GitService {
    */
   async getLastCommit(filePath: string): Promise<CommitSummary | undefined> {
     try {
-      const result = await $`git log --pretty=format:%H||%an||%at||%s -n 1 -- ${normalizePathForGit(filePath)}`.cwd(this.dir).quiet();
-      
+      const US = '\x1f';
+      const result = await $`git log --pretty=format:%H${US}%an${US}%at${US}%s -n 1 -- ${normalizePathForGit(filePath)}`
+        .cwd(this.dir)
+        .quiet();
+
       const line = result.stdout.toString().trim();
       if (!line) return undefined;
 
-      const [hash, author, timestamp, message] = line.split('||');
-      
+      const [hash, author, timestampStr, message] = line.split(US);
+      const timestamp = Number.parseInt(timestampStr, 10);
+      if (!hash || !Number.isFinite(timestamp)) return undefined;
+
       return {
         hash,
-        message,
-        author,
-        date: new Date(parseInt(timestamp) * 1000).toISOString(),
+        message: message ?? '',
+        author: author ?? '',
+        date: new Date(timestamp * 1000).toISOString(),
       };
     } catch (error) {
       return undefined;
@@ -250,20 +265,29 @@ export class GitService {
    */
   async getCommitDetails(hash: string): Promise<CommitInfo> {
     try {
-      const result = await $`git log --pretty=format:%H||%an||%ae||%at||%s||%P -n 1 ${hash}`.cwd(this.dir).quiet();
-      
+      const US = '\x1f';
+      const result = await $`git log --pretty=format:%H${US}%P${US}%an${US}%ae${US}%at${US}%s -n 1 ${hash}`
+        .cwd(this.dir)
+        .quiet();
+
       const line = result.stdout.toString().trim();
-      const [commitHash, authorName, authorEmail, timestamp, message, parentsStr] = line.split('||');
-      const parents = parentsStr?.split(' ').filter(p => p) || [];
+      const [commitHash, parentsStr, authorName, authorEmail, timestampStr, message] = line.split(US);
+
+      const timestamp = Number.parseInt(timestampStr, 10);
+      if (!commitHash || !Number.isFinite(timestamp)) {
+        throw new Error('提交信息解析失败');
+      }
+
+      const parents = (parentsStr || '').split(' ').filter(Boolean);
 
       return {
         hash: commitHash,
-        message,
+        message: message ?? '',
         author: {
-          name: authorName,
-          email: authorEmail,
+          name: authorName ?? '',
+          email: authorEmail ?? '',
         },
-        date: new Date(parseInt(timestamp) * 1000).toISOString(),
+        date: new Date(timestamp * 1000).toISOString(),
         parent: parents,
       };
     } catch (error) {
