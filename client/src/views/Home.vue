@@ -141,11 +141,32 @@
               <span v-if="historyDateShort" class="is-size-7 has-text-grey-light ml-2">{{ historyDateShort }}</span>
             </div>
             <div class="buttons are-small mb-0 mobile-action-buttons">
-              <button class="button is-light" :disabled="dirHistoryLoading || !canPrev" @click="historyPrev" title="向前">
-                向前
+              <button
+                class="button is-light"
+                :disabled="dirHistoryLoading || !canPrev"
+                @click="historyPrev"
+                title="向前"
+                aria-label="向前"
+              >
+                <IconChevronLeft :size="18" />
               </button>
-              <button class="button is-light" :disabled="dirHistoryLoading || !canNext" @click="historyNext" title="向后">
-                向后
+              <button
+                class="button is-light"
+                :disabled="dirHistoryLoading || !canNext"
+                @click="historyNext"
+                title="向后"
+                aria-label="向后"
+              >
+                <IconChevronRight :size="18" />
+              </button>
+              <button
+                class="button is-light"
+                :disabled="dirHistoryLoading || !canLast"
+                @click="historyLast"
+                title="跳到最后"
+                aria-label="跳到最后"
+              >
+                <IconChevronsRight :size="18" />
               </button>
             </div>
           </div>
@@ -231,6 +252,9 @@ import {
   IconChecklist,
   IconDotsVertical,
   IconArrowLeft,
+  IconChevronLeft,
+  IconChevronRight,
+  IconChevronsRight,
   IconHome,
   IconUpload,
   IconRefresh,
@@ -417,6 +441,11 @@ const canNext = computed(() => {
   return idx > 0;
 });
 
+const canLast = computed(() => {
+  const idx = dirSelectedIndex.value;
+  return idx > 0;
+});
+
 async function loadDirHistory() {
   const reqId = ++dirHistoryReqId;
   dirHistoryLoading.value = true;
@@ -459,6 +488,13 @@ function historyNext() {
   if (!nextHash) return;
   dirSelectedHash.value = nextHash;
   filesStore.setBrowseCommit(nextHash);
+}
+
+function historyLast() {
+  const lastHash = dirHistoryCommits.value[0]?.hash;
+  if (!lastHash) return;
+  dirSelectedHash.value = lastHash;
+  filesStore.setBrowseCommit(lastHash);
 }
 
 async function runBatchMenuAction(action: 'delete' | 'move' | 'rename') {
