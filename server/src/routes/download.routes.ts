@@ -169,7 +169,44 @@ export function createDownloadRoutes(gitService: GitService) {
         return c.json({ success: false, error: '下载失败' }, 404);
       }
 
-      // git show stdout -> ReadableStream，真正流式
+      // 历史版本支持 Range（通过流式丢弃实现逻辑 Range）
+      const total = await gitService.getFileSizeAtCommit(path, commit);
+      const range = c.req.header('range') || c.req.header('Range');
+
+      if (range && /^bytes=\d*-\d*$/i.test(range.trim())) {
+        const [, spec] = range.trim().split('=');
+        const [startStr, endStr] = spec.split('-');
+        let start = startStr ? Number.parseInt(startStr, 10) : 0;
+        let end = endStr ? Number.parseInt(endStr, 10) : total - 1;
+
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < 0 || start > end) {
+          c.header('Content-Range', `bytes */${total}`);
+          return c.body(null, 416);
+        }
+
+        // bytes=-N：从末尾取 N 字节
+        if (!startStr && endStr) {
+          const suffixLen = Math.min(end, total);
+          start = Math.max(0, total - suffixLen);
+          end = total - 1;
+        }
+
+        if (start >= total) {
+          c.header('Content-Range', `bytes */${total}`);
+          return c.body(null, 416);
+        }
+        if (end >= total) end = total - 1;
+
+        const chunkSize = end - start + 1;
+        c.header('Content-Range', `bytes ${start}-${end}/${total}`);
+        c.header('Content-Length', chunkSize.toString());
+
+        const stream = gitService.getFileContentRangeStreamAtCommit(path, commit, start, end);
+        return c.body(stream, 206);
+      }
+
+      // 无 Range：也返回可续传
+      c.header('Content-Length', total.toString());
       const stream = gitService.getFileContentStreamAtCommit(path, commit);
       return c.body(stream);
     } catch (error) {

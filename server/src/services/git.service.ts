@@ -142,6 +142,101 @@ export class GitService {
   }
 
   /**
+   * 获取历史版本文件大小（用于 Range/断点续传）
+   */
+  async getFileSizeAtCommit(filePath: string, commitHash: string): Promise<number> {
+    const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
+    const proc = Bun.spawn(['git', 'cat-file', '-s', spec], {
+      cwd: this.dir,
+      stdout: 'pipe',
+      stderr: 'ignore',
+    });
+    const text = await new Response(proc.stdout).text();
+    const size = Number.parseInt(text.trim(), 10);
+    if (!Number.isFinite(size) || size < 0) {
+      throw new Error('无法读取历史版本文件大小');
+    }
+    return size;
+  }
+
+  /**
+   * 获取历史版本文件内容的区间流（Range）。注意：Git 对 blob 不支持随机 seek，
+   * 这里通过流式丢弃前置字节来实现逻辑 Range，以支持断点续传。
+   */
+  getFileContentRangeStreamAtCommit(
+    filePath: string,
+    commitHash: string,
+    start: number,
+    end: number
+  ): ReadableStream<Uint8Array> {
+    const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
+    const proc = Bun.spawn(['git', 'show', spec], {
+      cwd: this.dir,
+      stdout: 'pipe',
+      stderr: 'ignore',
+    });
+
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        (async () => {
+          const reader = proc.stdout.getReader();
+          let toSkip = start;
+          let remaining = end - start + 1;
+
+          try {
+            while (remaining > 0) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (!value || value.byteLength === 0) continue;
+
+              let chunk = value;
+              if (toSkip > 0) {
+                if (chunk.byteLength <= toSkip) {
+                  toSkip -= chunk.byteLength;
+                  continue;
+                }
+                chunk = chunk.subarray(toSkip);
+                toSkip = 0;
+              }
+
+              if (chunk.byteLength > remaining) {
+                controller.enqueue(chunk.subarray(0, remaining));
+                remaining = 0;
+                break;
+              }
+
+              controller.enqueue(chunk);
+              remaining -= chunk.byteLength;
+            }
+
+            controller.close();
+          } catch (e) {
+            controller.error(e);
+          } finally {
+            try {
+              await reader.cancel();
+            } catch {
+              // ignore
+            }
+            try {
+              proc.kill();
+            } catch {
+              // ignore
+            }
+          }
+        })();
+      },
+      cancel() {
+        try {
+          proc.kill();
+        } catch {
+          // ignore
+        }
+      },
+    });
+  }
+
+  /**
    * 保存文件并提交到Git
    */
   async saveFile(
