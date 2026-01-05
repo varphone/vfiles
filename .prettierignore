@@ -1,0 +1,16 @@
+# Avoid formatting generated/binary artifacts
+bun.lockb
+
+# Build outputs
+client/dist
+dist
+
+# Runtime data/cache
+data
+data.git
+.vfiles_uploads
+.vfiles_download_cache
+
+# Dependencies
+node_modules
+.bun
