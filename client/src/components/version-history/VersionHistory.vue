@@ -1,5 +1,60 @@
 <template>
   <div class="version-history">
+    <div v-if="preview.open" class="box mb-4">
+      <div class="level is-mobile">
+        <div class="level-left">
+          <div class="level-item">
+            <div>
+              <p class="heading">预览版本</p>
+              <p class="title is-6">
+                <code class="is-size-7">{{ previewView.hashShort }}</code>
+                <span class="ml-2">{{ previewView.filename }}</span>
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="level-right">
+          <div class="level-item">
+            <div class="buttons">
+              <button
+                class="button is-small is-success is-light"
+                @click="downloadVersion(preview.hash)"
+                title="下载此版本"
+              >
+                <IconDownload :size="18" />
+              </button>
+              <button class="button is-small" @click="closePreview" title="关闭预览">
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="preview.loading" class="has-text-centered py-5">
+        <div class="spinner mb-3"></div>
+        <p class="has-text-grey">加载预览中...</p>
+      </div>
+
+      <div v-else-if="preview.error" class="notification is-danger is-light">
+        {{ preview.error }}
+      </div>
+
+      <div v-else>
+        <figure v-if="preview.kind === 'image'" class="image">
+          <img :src="preview.imageUrl" :alt="previewView.filename" />
+        </figure>
+
+        <div v-else-if="preview.kind === 'text'" class="content">
+          <pre class="preview-text">{{ preview.text }}</pre>
+        </div>
+
+        <div v-else class="notification is-warning is-light">
+          暂不支持该文件类型的在线预览，请使用下载。
+        </div>
+      </div>
+    </div>
+
     <div v-if="loading" class="has-text-centered py-6">
       <div class="spinner mb-3"></div>
       <p class="has-text-grey">加载历史记录中...</p>
@@ -76,7 +131,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
 import {
   IconHistory,
   IconEye,
@@ -100,6 +155,28 @@ const history = ref<FileHistory>({
 const loading = ref(false);
 const error = ref<string | null>(null);
 const limit = ref(20);
+
+type PreviewKind = 'text' | 'image' | 'unsupported';
+const preview = ref({
+  open: false,
+  loading: false,
+  error: null as string | null,
+  hash: '',
+  kind: 'text' as PreviewKind,
+  text: '',
+  imageUrl: '',
+});
+
+const previewFilename = computed(() => props.filePath.split('/').pop() || 'file');
+const previewHashShort = computed(() => (preview.value.hash ? preview.value.hash.substring(0, 8) : ''));
+
+const previewView = computed(() => {
+  return {
+    filename: previewFilename.value,
+    hash: preview.value.hash,
+    hashShort: previewHashShort.value,
+  };
+});
 
 onMounted(() => {
   loadHistory();
@@ -128,9 +205,84 @@ function formatDate(date: string): string {
   });
 }
 
-function viewVersion(hash: string) {
-  // TODO: 实现版本预览功能
-  appStore.info(`查看版本: ${hash.substring(0, 8)}`);
+function getExtension(p: string): string {
+  const name = p.split('/').pop() || '';
+  const idx = name.lastIndexOf('.');
+  if (idx <= 0 || idx === name.length - 1) return '';
+  return name.slice(idx + 1).toLowerCase();
+}
+
+function detectPreviewKind(filePath: string): PreviewKind {
+  const ext = getExtension(filePath);
+  const imageExts = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
+  if (imageExts.has(ext)) return 'image';
+
+  const textExts = new Set([
+    'txt',
+    'md',
+    'json',
+    'js',
+    'ts',
+    'css',
+    'html',
+    'xml',
+    'yml',
+    'yaml',
+    'csv',
+    'log',
+    'sh',
+    'py',
+  ]);
+  if (textExts.has(ext) || ext === '') return 'text';
+
+  return 'unsupported';
+}
+
+function closePreview() {
+  if (preview.value.imageUrl) {
+    URL.revokeObjectURL(preview.value.imageUrl);
+  }
+  preview.value = {
+    open: false,
+    loading: false,
+    error: null,
+    hash: '',
+    kind: 'text',
+    text: '',
+    imageUrl: '',
+  };
+}
+
+onBeforeUnmount(() => {
+  closePreview();
+});
+
+async function viewVersion(hash: string) {
+  // 打开预览并加载内容
+  closePreview();
+  preview.value.open = true;
+  preview.value.loading = true;
+  preview.value.hash = hash;
+  preview.value.kind = detectPreviewKind(props.filePath);
+
+  try {
+    if (preview.value.kind === 'unsupported') {
+      preview.value.loading = false;
+      return;
+    }
+
+    const blob = await filesService.getFileContent(props.filePath, hash);
+
+    if (preview.value.kind === 'image') {
+      preview.value.imageUrl = URL.createObjectURL(blob);
+    } else {
+      preview.value.text = await blob.text();
+    }
+  } catch (err) {
+    preview.value.error = err instanceof Error ? err.message : '预览失败';
+  } finally {
+    preview.value.loading = false;
+  }
 }
 
 function downloadVersion(hash: string) {
@@ -218,6 +370,13 @@ function loadMore() {
 .buttons {
   display: flex;
   gap: 0.25rem;
+}
+
+.preview-text {
+  max-height: 45vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 @media screen and (max-width: 768px) {
