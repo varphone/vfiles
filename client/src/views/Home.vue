@@ -1,7 +1,7 @@
 <template>
   <div class="home">
     <!-- 移动端导航菜单 -->
-    <nav class="navbar is-primary is-hidden-tablet" role="navigation" aria-label="移动端导航">
+    <nav class="navbar is-primary is-hidden-tablet is-fixed-top mobile-top-bar" role="navigation" aria-label="移动端导航">
       <div class="navbar-brand">
         <a class="navbar-item" href="#" @click.prevent="goRootAndClose">
           <IconFiles :size="22" class="mr-2" />
@@ -401,6 +401,10 @@ function toggleBatchAndClose() {
     padding: 1rem 0.5rem;
   }
 
+  .mobile-top-bar {
+    padding-top: env(safe-area-inset-top);
+  }
+
   .mobile-bottom-bar {
     position: fixed;
     left: 0;
@@ -410,6 +414,7 @@ function toggleBatchAndClose() {
   }
 
   .home-content {
+    padding-top: calc(var(--bulma-navbar-height, 3.25rem) + env(safe-area-inset-top));
     padding-bottom: calc(4.25rem + env(safe-area-inset-bottom) + var(--vv-bottom, 0px));
   }
 
