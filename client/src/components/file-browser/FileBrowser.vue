@@ -2,6 +2,38 @@
   <div class="file-browser">
     <div class="box">
       <Breadcrumb :breadcrumbs="breadcrumbs" @navigate="navigateTo" />
+
+      <div class="field has-addons mt-3">
+        <div class="control is-expanded">
+          <input
+            v-model="searchQuery"
+            class="input"
+            type="text"
+            placeholder="搜索文件名..."
+            @keyup.enter="runSearch"
+          />
+        </div>
+        <div class="control">
+          <button
+            class="button is-link"
+            :class="{ 'is-loading': searchLoading }"
+            :disabled="searchLoading"
+            @click="runSearch"
+          >
+            <IconSearch :size="20" />
+          </button>
+        </div>
+        <div class="control">
+          <button class="button" :disabled="searchLoading" @click="clearSearch">
+            清空
+          </button>
+        </div>
+      </div>
+
+      <div v-if="searchError" class="notification is-danger is-light">
+        <IconAlertCircle :size="20" class="mr-2" />
+        {{ searchError }}
+      </div>
       
       <div class="level is-mobile mb-4">
         <div class="level-left">
@@ -31,9 +63,27 @@
         {{ error }}
       </div>
 
-      <div v-else-if="files.length === 0" class="has-text-centered py-6">
+      <div v-else-if="!searchActive && files.length === 0" class="has-text-centered py-6">
         <IconFolderOpen :size="64" class="has-text-grey-light mb-3" />
         <p class="has-text-grey">此文件夹为空</p>
+      </div>
+
+      <div v-else-if="searchActive" class="file-list">
+        <p class="has-text-grey is-size-7 mb-2">
+          搜索结果：{{ searchResults.length }} 项
+        </p>
+        <div v-if="searchResults.length === 0" class="has-text-centered py-6">
+          <p class="has-text-grey">没有找到匹配的文件</p>
+        </div>
+        <FileItem
+          v-for="file in searchResults"
+          :key="file.path"
+          :file="file"
+          @click="handleSearchItemClick"
+          @download="handleDownload"
+          @delete="handleDelete"
+          @view-history="handleViewHistory"
+        />
       </div>
 
       <div v-else class="file-list">
@@ -76,6 +126,7 @@ import {
   IconRefresh,
   IconFolderOpen,
   IconAlertCircle,
+  IconSearch,
 } from '@tabler/icons-vue';
 import { useFilesStore } from '../../stores/files.store';
 import { useAppStore } from '../../stores/app.store';
@@ -95,6 +146,12 @@ const showUploader = ref(false);
 const showHistory = ref(false);
 const selectedFile = ref<FileInfo | null>(null);
 
+const searchQuery = ref('');
+const searchResults = ref<FileInfo[]>([]);
+const searchLoading = ref(false);
+const searchError = ref<string | null>(null);
+const searchActive = ref(false);
+
 onMounted(() => {
   filesStore.loadFiles();
 });
@@ -109,6 +166,13 @@ function refresh() {
 
 function handleFileClick(file: FileInfo) {
   if (file.type === 'directory') {
+    navigateTo(file.path);
+  }
+}
+
+function handleSearchItemClick(file: FileInfo) {
+  if (file.type === 'directory') {
+    clearSearch();
     navigateTo(file.path);
   }
 }
@@ -136,6 +200,35 @@ async function handleUpload() {
   showUploader.value = false;
   appStore.success('文件上传成功');
   await refresh();
+}
+
+async function runSearch() {
+  const q = searchQuery.value.trim();
+  searchError.value = null;
+
+  if (!q) {
+    clearSearch();
+    return;
+  }
+
+  searchLoading.value = true;
+  searchActive.value = true;
+
+  try {
+    searchResults.value = await filesService.searchFiles(q);
+  } catch (err) {
+    searchError.value = err instanceof Error ? err.message : '搜索失败';
+    searchResults.value = [];
+  } finally {
+    searchLoading.value = false;
+  }
+}
+
+function clearSearch() {
+  searchQuery.value = '';
+  searchResults.value = [];
+  searchError.value = null;
+  searchActive.value = false;
 }
 </script>
 
