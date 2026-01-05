@@ -539,6 +539,7 @@ export class GitService {
         const meta = rec.slice(0, tab).trim().split(/\s+/);
         const name = rec.slice(tab + 1);
         if (!name) continue;
+        if (name.startsWith('.git')) continue;
 
         const typeToken = meta[1];
         const sizeToken = meta[3];
@@ -572,8 +573,8 @@ export class GitService {
       const entries = await fs.readdir(fullPath, { withFileTypes: true });
 
       for (const entry of entries) {
-        // 跳过.git目录
-        if (entry.name === '.git') continue;
+        // 跳过 .git* 相关文件/目录（例如 .git, .gitignore, .gitattributes）
+        if (entry.name.startsWith('.git')) continue;
 
         const filePath = path.join(dirPath, entry.name);
         const fullFilePath = path.join(fullPath, entry.name);
