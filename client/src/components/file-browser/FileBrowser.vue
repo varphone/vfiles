@@ -14,10 +14,10 @@
         </div>
         <div class="breadcrumb-actions">
           <div class="buttons are-small mb-0">
-            <button class="button is-light" :disabled="!currentPath" @click="goBack" title="上一级">
+            <button class="button is-light breadcrumb-icon-button" :disabled="!currentPath" @click="goBack" title="上一级">
               <IconArrowLeft :size="18" />
             </button>
-            <button class="button is-light" @click="openDirManager" title="更多">
+            <button class="button is-light breadcrumb-icon-button" @click="openDirManager" title="更多">
               <IconDotsVertical :size="18" />
             </button>
           </div>
@@ -1457,6 +1457,16 @@ async function renameSelected() {
 
 .breadcrumb-actions {
   flex: 0 0 auto;
+}
+
+.breadcrumb-icon-button {
+  width: 2.25rem;
+  min-width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .spinner {
