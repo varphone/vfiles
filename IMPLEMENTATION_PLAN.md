@@ -7,48 +7,47 @@
 ## 阶段 1: 项目初始化和基础设置 (预计时间: 1-2小时)
 
 ### 1.1 创建项目结构
-- [ ] 初始化Bun项目
-- [ ] 配置TypeScript
-- [ ] 创建前后端目录结构
-- [ ] 配置Vite构建工具
+- [x] 初始化Bun项目
+- [x] 配置TypeScript
+- [x] 创建前后端目录结构
+- [x] 配置Vite构建工具
 
 ### 1.2 安装依赖包
 **前端依赖:**
 ```json
 {
-  "vue": "^3.4.0",
-  "vue-router": "^4.2.0",
-  "pinia": "^2.1.0",
-  "bulma": "^1.0.0",
-  "@tabler/icons-vue": "^2.44.0",
-  "axios": "^1.6.0"
+  "vue": "^3.5.26",
+  "vue-router": "^4.6.4",
+  "pinia": "^3.0.4",
+  "bulma": "^1.0.4",
+  "@tabler/icons-vue": "^3.36.1",
+  "axios": "^1.13.2"
 }
 ```
 
 **后端依赖:**
 ```json
 {
-  "hono": "^3.11.0",
-  "isomorphic-git": "^1.25.0",
-  "@hono/node-server": "^1.4.0"
+  "hono": "^4.11.3"
 }
 ```
 
 **开发依赖:**
 ```json
 {
-  "typescript": "^5.3.0",
-  "vite": "^5.0.0",
-  "@vitejs/plugin-vue": "^5.0.0",
-  "@types/node": "^20.10.0"
+  "typescript": "^5.9.3",
+  "vite": "^7.3.0",
+  "@vitejs/plugin-vue": "^6.0.3",
+  "@types/node": "^25.0.3",
+  "bun-types": "^1.3.5"
 }
 ```
 
 ### 1.3 配置文件
-- [ ] `tsconfig.json` - TypeScript配置
-- [ ] `vite.config.ts` - Vite配置
-- [ ] `bun.config.ts` - Bun配置（如需要）
-- [ ] `.gitignore` - Git忽略文件
+- [x] `tsconfig.json` - TypeScript配置
+- [x] `vite.config.ts` - Vite配置
+- [ ] `bun.config.ts` - Bun配置（当前未使用）
+- [x] `.gitignore` - Git忽略文件
 
 ### 交付物
 - ✅ 可运行的基础项目框架
@@ -60,23 +59,23 @@
 ## 阶段 2: 后端API服务实现 (预计时间: 4-6小时)
 
 ### 2.1 服务器基础设置
-- [ ] 创建Hono应用实例
-- [ ] 配置CORS中间件
-- [ ] 配置静态文件服务
-- [ ] 错误处理中间件
-- [ ] 日志中间件
+- [x] 创建Hono应用实例
+- [x] 配置CORS中间件
+- [x] 配置静态文件服务（生产环境）
+- [x] 错误处理中间件
+- [x] 日志中间件
 
 **文件:**
-- `server/index.ts` - 服务器入口
+- `server/src/index.ts` - 服务器入口
 - `server/middleware/` - 中间件目录
 - `server/config.ts` - 服务器配置
 
 ### 2.2 Git服务层实现
-- [ ] Git仓库初始化/检查
-- [ ] 文件读取服务
-- [ ] 文件写入服务
-- [ ] 提交历史查询
-- [ ] 特定版本文件获取
+- [x] Git仓库初始化/检查
+- [x] 文件读取服务
+- [x] 文件写入服务
+- [x] 提交历史查询
+- [x] 特定版本文件获取
 
 **文件:**
 - `server/services/git.service.ts` - Git核心服务
@@ -95,10 +94,10 @@ class GitService {
 ```
 
 ### 2.3 API路由实现
-- [ ] 文件操作路由 (`/api/files/*`)
-- [ ] 版本历史路由 (`/api/history/*`)
-- [ ] 下载路由 (`/api/download/*`)
-- [ ] 搜索路由 (`/api/search`)
+- [x] 文件操作路由 (`/api/files/*`)
+- [x] 版本历史路由 (`/api/history/*`)
+- [x] 下载路由 (`/api/download/*`)
+- [x] 搜索路由 (`/api/search`)
 
 **文件:**
 - `server/routes/files.routes.ts`
@@ -107,17 +106,17 @@ class GitService {
 - `server/routes/search.routes.ts`
 
 ### 2.4 文件上传功能
-- [ ] 实现文件上传处理
-- [ ] 多文件上传支持
-- [ ] 文件大小限制
-- [ ] 文件类型验证
-- [ ] 自动Git提交
+- [x] 实现文件上传处理
+- [x] 多文件上传支持（前端多文件；后端一次上传一个文件）
+- [ ] 文件大小限制（配置已存在，未在路由层强制）
+- [ ] 文件类型验证（配置已存在，未实现白名单校验）
+- [x] 自动Git提交
 
 ### 2.5 安全性实现
-- [ ] 路径遍历防护
-- [ ] 文件访问白名单
-- [ ] 请求频率限制
-- [ ] 输入验证
+- [x] 路径遍历防护
+- [ ] 文件访问白名单（未实现）
+- [ ] 请求频率限制（未实现）
+- [ ] 输入验证（仅基础参数校验）
 
 **文件:**
 - `server/middleware/security.ts`
@@ -126,8 +125,8 @@ class GitService {
 ### 交付物
 - ✅ 完整的REST API服务
 - ✅ Git操作核心功能
-- ✅ API文档（OpenAPI格式）
-- ✅ 基本的单元测试
+- ⛔ API文档（OpenAPI格式，尚未生成）
+- ⛔ 基本的单元测试（尚未添加）
 
 ---
 
@@ -151,37 +150,35 @@ client/
 ```
 
 ### 3.2 状态管理设置
-- [ ] 创建Pinia store
-- [ ] 文件列表状态
-- [ ] 当前路径状态
-- [ ] 历史记录缓存
-- [ ] 用户设置状态
+- [x] 创建Pinia store
+- [x] 文件列表状态
+- [x] 当前路径状态
+- [ ] 历史记录缓存（未做缓存，仅按需加载）
+- [ ] 用户设置状态（未实现）
 
 **文件:**
 - `client/src/stores/files.store.ts`
-- `client/src/stores/history.store.ts`
 - `client/src/stores/app.store.ts`
 
 ### 3.3 API服务层
-- [ ] Axios实例配置
-- [ ] API封装
-- [ ] 错误处理
-- [ ] 请求拦截器
-- [ ] 响应拦截器
+- [x] Axios实例配置
+- [x] API封装
+- [x] 错误处理
+- [x] 请求拦截器（基础）
+- [x] 响应拦截器（基础）
 
 **文件:**
 - `client/src/services/api.service.ts`
 - `client/src/services/files.service.ts`
-- `client/src/services/history.service.ts`
 
 ### 3.4 文件浏览器组件
 **组件列表:**
-- [ ] `FileBrowser.vue` - 主容器
-- [ ] `FileList.vue` - 文件列表
-- [ ] `FileItem.vue` - 单个文件项
-- [ ] `Breadcrumb.vue` - 面包屑导航
-- [ ] `FilePreview.vue` - 文件预览
-- [ ] `ContextMenu.vue` - 右键菜单
+- [x] `FileBrowser.vue` - 主容器
+- [ ] `FileList.vue` - 文件列表（当前直接在 FileBrowser 内渲染）
+- [x] `FileItem.vue` - 单个文件项
+- [x] `Breadcrumb.vue` - 面包屑导航
+- [ ] `FilePreview.vue` - 文件预览（未实现）
+- [ ] `ContextMenu.vue` - 右键菜单（未实现）
 
 **功能:**
 - 文件/文件夹展示
@@ -199,10 +196,11 @@ client/
 - [ ] `Timeline.vue` - 时间轴视图
 
 **功能:**
-- 显示提交历史
-- 分页加载
-- 版本对比
-- 恢复到历史版本
+- [x] 显示提交历史
+- [x] 分页加载（加载更多）
+- [ ] 版本对比（未实现）
+- [ ] 恢复到历史版本（未实现）
+- [ ] 版本内容预览（VersionHistory 中仍为 TODO）
 
 ### 3.6 文件上传组件
 **组件列表:**
@@ -219,12 +217,12 @@ client/
 - 上传取消
 
 ### 3.7 通用组件
-- [ ] `Loading.vue` - 加载指示器
-- [ ] `ErrorMessage.vue` - 错误提示
-- [ ] `Modal.vue` - 模态框
-- [ ] `Notification.vue` - 通知组件
-- [ ] `SearchBar.vue` - 搜索栏
-- [ ] `IconButton.vue` - 图标按钮
+- [x] `Loading.vue` - 加载指示器
+- [ ] `ErrorMessage.vue` - 错误提示（未实现，当前使用 Notification）
+- [x] `Modal.vue` - 模态框
+- [x] `Notification.vue` - 通知组件
+- [ ] `SearchBar.vue` - 搜索栏（未实现）
+- [ ] `IconButton.vue` - 图标按钮（未实现）
 
 ### 交付物
 - ✅ 完整的文件浏览界面
@@ -237,16 +235,16 @@ client/
 ## 阶段 4: 移动端优化和响应式设计 (预计时间: 3-4小时)
 
 ### 4.1 Bulma响应式布局
-- [ ] 移动端布局调整
-- [ ] 触摸友好的交互元素
-- [ ] 移动端导航菜单
-- [ ] 底部操作栏
+- [x] 移动端布局调整（基础）
+- [x] 触摸友好的交互元素（基础）
+- [ ] 移动端导航菜单（未实现）
+- [ ] 底部操作栏（未实现）
 
 ### 4.2 移动端特定功能
-- [ ] 下拉刷新
-- [ ] 无限滚动
-- [ ] 手势操作
-- [ ] 移动端文件预览优化
+- [ ] 下拉刷新（未实现）
+- [ ] 无限滚动（未实现）
+- [ ] 手势操作（未实现）
+- [ ] 移动端文件预览优化（未实现）
 
 ### 4.3 性能优化
 - [ ] 虚拟滚动（长列表）
@@ -266,17 +264,17 @@ client/
 - `client/src/assets/styles/variables.scss`
 
 ### 交付物
-- ✅ 完全响应式的界面
-- ✅ 优秀的移动端体验
-- ✅ 性能优化完成
+- ✅ 完全响应式的界面（基础）
+- ⛔ 优秀的移动端体验（仍有提升空间）
+- ⛔ 性能优化完成（未做专项优化）
 
 ---
 
 ## 阶段 5: 高级功能实现 (预计时间: 4-5小时)
 
 ### 5.1 搜索功能
-- [ ] 文件名搜索
-- [ ] 文件内容搜索（全文）
+- [x] 文件名搜索（后端已实现 /api/search；前端 UI 未实现）
+- [ ] 文件内容搜索（全文，未实现）
 - [ ] 搜索结果高亮
 - [ ] 搜索历史保存
 - [ ] 高级筛选
@@ -315,10 +313,10 @@ client/
 - `marked` - Markdown解析
 
 ### 交付物
-- ✅ 完整的搜索系统
-- ✅ 批量操作功能
-- ✅ 增强的预览能力
-- ✅ 版本对比功能
+- ⛔ 完整的搜索系统（仅后端基础搜索）
+- ⛔ 批量操作功能
+- ⛔ 增强的预览能力
+- ⛔ 版本对比功能
 
 ---
 
@@ -345,9 +343,9 @@ client/
 - [ ] 缓存策略
 
 ### 6.3 文档编写
-- [ ] README.md - 项目说明
-- [ ] API.md - API文档
-- [ ] DEPLOYMENT.md - 部署指南
+- [x] README.md - 项目说明（已有基础）
+- [ ] API.md - API文档（未编写）
+- [ ] DEPLOYMENT.md - 部署指南（未编写）
 - [ ] CONTRIBUTING.md - 贡献指南
 - [ ] 用户手册
 
@@ -365,10 +363,10 @@ client/
 - [ ] 监控和日志
 
 ### 交付物
-- ✅ 完整的测试覆盖
-- ✅ 优化的生产构建
-- ✅ 完善的文档
-- ✅ 可部署的应用
+- ⛔ 完整的测试覆盖（未实现）
+- ✅ 优化的生产构建（已可构建并由服务端在 production 托管 dist）
+- ⛔ 完善的文档（部分完成）
+- ✅ 可部署的应用（基础可部署）
 
 ---
 
@@ -377,93 +375,37 @@ client/
 ```
 vfiles/
 ├── client/                          # 前端代码
-│   ├── public/                      # 静态资源
-│   │   └── favicon.ico
 │   ├── src/
-│   │   ├── assets/                  # 样式和图片
-│   │   │   ├── styles/
-│   │   │   │   ├── main.scss
-│   │   │   │   ├── mobile.scss
-│   │   │   │   └── variables.scss
-│   │   │   └── images/
 │   │   ├── components/
-│   │   │   ├── common/
-│   │   │   │   ├── Loading.vue
-│   │   │   │   ├── ErrorMessage.vue
-│   │   │   │   ├── Modal.vue
-│   │   │   │   └── Notification.vue
-│   │   │   ├── file-browser/
-│   │   │   │   ├── FileBrowser.vue
-│   │   │   │   ├── FileList.vue
-│   │   │   │   ├── FileItem.vue
-│   │   │   │   ├── Breadcrumb.vue
-│   │   │   │   └── FilePreview.vue
-│   │   │   ├── version-history/
-│   │   │   │   ├── VersionHistory.vue
-│   │   │   │   ├── CommitList.vue
-│   │   │   │   ├── CommitItem.vue
-│   │   │   │   └── Timeline.vue
-│   │   │   └── file-uploader/
-│   │   │       ├── FileUploader.vue
-│   │   │       ├── DropZone.vue
-│   │   │       └── UploadProgress.vue
-│   │   ├── views/
-│   │   │   ├── Home.vue
-│   │   │   ├── FileExplorer.vue
-│   │   │   └── History.vue
-│   │   ├── stores/
-│   │   │   ├── files.store.ts
-│   │   │   ├── history.store.ts
-│   │   │   └── app.store.ts
-│   │   ├── services/
-│   │   │   ├── api.service.ts
-│   │   │   ├── files.service.ts
-│   │   │   └── history.service.ts
-│   │   ├── composables/
-│   │   │   ├── useFileOperations.ts
-│   │   │   └── useResponsive.ts
+│   │   │   ├── common/              # Loading/Modal/Notification
+│   │   │   ├── file-browser/        # FileBrowser/FileItem/Breadcrumb
+│   │   │   ├── file-uploader/       # FileUploader
+│   │   │   └── version-history/     # VersionHistory（含 TODO：版本预览）
 │   │   ├── router/
-│   │   │   └── index.ts
+│   │   ├── services/
+│   │   ├── stores/
 │   │   ├── types/
-│   │   │   └── index.ts
+│   │   ├── views/
 │   │   ├── App.vue
 │   │   └── main.ts
 │   ├── index.html
 │   ├── package.json
-│   ├── tsconfig.json
 │   └── vite.config.ts
 ├── server/                          # 后端代码
-│   ├── src/
-│   │   ├── routes/
-│   │   │   ├── files.routes.ts
-│   │   │   ├── history.routes.ts
-│   │   │   ├── download.routes.ts
-│   │   │   └── search.routes.ts
-│   │   ├── services/
-│   │   │   └── git.service.ts
-│   │   ├── middleware/
-│   │   │   ├── cors.ts
-│   │   │   ├── error.ts
-│   │   │   ├── logger.ts
-│   │   │   └── security.ts
-│   │   ├── utils/
-│   │   │   ├── git-helpers.ts
-│   │   │   └── path-validator.ts
-│   │   ├── types/
-│   │   │   └── index.ts
-│   │   ├── config.ts
-│   │   └── index.ts
-│   ├── package.json
-│   └── tsconfig.json
-├── data/                            # Git仓库数据目录
-│   └── .git/
-├── tests/                           # 测试文件
-│   ├── unit/
-│   └── e2e/
-├── docs/                            # 文档
+│   └── src/
+│       ├── middleware/
+│       ├── routes/
+│       ├── services/
+│       ├── types/
+│       ├── utils/
+│       ├── config.ts
+│       └── index.ts
+├── data/                            # 运行时数据目录（已在主仓库中忽略）
+├── .gitattributes
 ├── .gitignore
 ├── ARCHITECTURE.md
 ├── IMPLEMENTATION_PLAN.md
+├── QUICK_START.md
 ├── README.md
 └── package.json
 ```
@@ -506,13 +448,12 @@ chore: 构建工具或辅助工具变动
 
 ## 关键技术决策
 
-### 1. 为什么使用isomorphic-git而不是调用系统git命令？
-- ✅ 跨平台兼容性更好
-- ✅ 不需要系统安装git
-- ✅ 更容易集成到JavaScript/TypeScript项目
-- ✅ 更好的错误处理
-- ❌ 性能可能略低于原生git
-- **决策：** 使用isomorphic-git，必要时可以添加原生git作为备选
+### 1. 为什么调用系统 git 命令而不是 isomorphic-git？
+- ✅ 直接复用系统 git，行为与开发者习惯一致
+- ✅ 对 Git 历史/下载等功能实现更直观（`git show`/`git log`）
+- ✅ 在 Bun 环境下兼容性更稳定
+- ❌ 依赖机器已安装 git（Windows 需安装 Git for Windows）
+- **决策：** 当前实现使用系统 `git`；未来如需“零依赖安装”可再评估引入 isomorphic-git 作为可选后端
 
 ### 2. 单体应用还是前后端分离？
 - **决策：** 前后端分离但部署在一起
