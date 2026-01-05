@@ -1544,6 +1544,10 @@ async function renameSelected() {
     max-width: 70vw;
   }
 
+  .breadcrumb-actions .buttons {
+    flex-wrap: nowrap;
+  }
+
   .level {
     flex-direction: column;
     align-items: stretch !important;
@@ -1558,7 +1562,7 @@ async function renameSelected() {
     margin-bottom: 0.5rem;
   }
 
-  .button {
+  .level .button {
     width: 100%;
     justify-content: center;
   }
