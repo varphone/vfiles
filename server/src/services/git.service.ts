@@ -11,10 +11,160 @@ export class GitService {
   private mode: 'worktree' | 'bare';
   private writeChain: Promise<unknown> = Promise.resolve();
   private bareWorkTreeDir: string | null = null;
+  private gitDirPath: string | null = null;
+
+  private readonly cacheTtlMs = 5 * 60 * 1000;
+  private readonly listFilesCacheMax = 300;
+  private readonly fileHistoryCacheMax = 300;
+  private readonly lastCommitCacheMax = 3000;
+
+  private readonly listFilesCache = new Map<string, { token: string; at: number; value: FileInfo[] }>();
+  private readonly fileHistoryCache = new Map<string, { token: string; at: number; value: FileHistory }>();
+  private readonly lastCommitCache = new Map<
+    string,
+    { token: string; at: number; value: CommitSummary | undefined }
+  >();
+  private readonly inflight = new Map<string, Promise<unknown>>();
 
   constructor(repoPath: string, mode: 'worktree' | 'bare' = 'worktree') {
     this.dir = path.resolve(repoPath);
     this.mode = mode;
+  }
+
+  private isImmutableCommitish(commitish: string): boolean {
+    // 视为不可变：纯十六进制 hash（至少 7 位）。
+    // 分支名/tag 不可判定为不可变，因此不走该分支。
+    return /^[0-9a-f]{7,40}$/i.test((commitish || '').trim());
+  }
+
+  private async resolveGitDirPath(): Promise<string> {
+    if (this.isBare) return this.dir;
+    if (this.gitDirPath) return this.gitDirPath;
+
+    const dotGit = path.join(this.dir, '.git');
+    try {
+      const st = await fs.stat(dotGit);
+      if (st.isDirectory()) {
+        this.gitDirPath = dotGit;
+        return dotGit;
+      }
+
+      if (st.isFile()) {
+        // worktree 的 .git 可能是一个文本文件，内容类似：gitdir: /path/to/actual/gitdir
+        const content = await fs.readFile(dotGit, 'utf-8');
+        const m = content.match(/gitdir:\s*(.+)\s*/i);
+        if (m && m[1]) {
+          this.gitDirPath = path.resolve(this.dir, m[1].trim());
+          return this.gitDirPath;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // 兜底：按标准路径返回
+    this.gitDirPath = dotGit;
+    return dotGit;
+  }
+
+  private async getRepoStateToken(): Promise<string> {
+    // 仅使用文件系统信息生成 token，避免在“无变更”时也触发 git 子进程。
+    // 该 token 用于缓存失效：只要 HEAD/ref/packed-refs（以及 worktree 的 index）没变，就认为仓库状态未变。
+    const gitDir = await this.resolveGitDirPath();
+
+    const parts: string[] = [];
+
+    // HEAD
+    let headText = '';
+    try {
+      headText = (await fs.readFile(path.join(gitDir, 'HEAD'), 'utf-8')).trim();
+      parts.push(`HEAD=${headText}`);
+    } catch {
+      parts.push('HEAD=?');
+    }
+
+    // 当前 ref（若 HEAD 指向 refs/...）
+    if (headText.startsWith('ref:')) {
+      const ref = headText.slice('ref:'.length).trim();
+      const refPath = path.join(gitDir, ref);
+      try {
+        const refText = (await fs.readFile(refPath, 'utf-8')).trim();
+        parts.push(`REF=${ref}:${refText}`);
+      } catch {
+        // ref 可能被 pack 到 packed-refs
+        parts.push(`REF=${ref}:packed`);
+      }
+    }
+
+    // packed-refs
+    try {
+      const st = await fs.stat(path.join(gitDir, 'packed-refs'));
+      parts.push(`PACKED=${st.mtimeMs}:${st.size}`);
+    } catch {
+      parts.push('PACKED=-');
+    }
+
+    // worktree index（bare 没有 index）
+    if (!this.isBare) {
+      try {
+        const st = await fs.stat(path.join(gitDir, 'index'));
+        parts.push(`INDEX=${st.mtimeMs}:${st.size}`);
+      } catch {
+        parts.push('INDEX=-');
+      }
+    }
+
+    return parts.join('|');
+  }
+
+  private async getDirSnapshotToken(dirPath: string): Promise<string> {
+    if (this.isBare) return 'DIR=-';
+    try {
+      const st = await fs.stat(path.join(this.dir, dirPath));
+      return `DIR=${st.mtimeMs}:${st.size}`;
+    } catch {
+      return 'DIR=?';
+    }
+  }
+
+  private async cached<T>(params: {
+    cache: Map<string, { token: string; at: number; value: T }>;
+    key: string;
+    token: string;
+    maxEntries: number;
+    compute: () => Promise<T>;
+  }): Promise<T> {
+    const now = Date.now();
+    const existing = params.cache.get(params.key);
+    if (existing && existing.token === params.token && now - existing.at < this.cacheTtlMs) {
+      // LRU：touch
+      params.cache.delete(params.key);
+      params.cache.set(params.key, existing);
+      return existing.value;
+    }
+
+    const inflightKey = `${params.key}@@${params.token}`;
+    const inflight = this.inflight.get(inflightKey) as Promise<T> | undefined;
+    if (inflight) return inflight;
+
+    const p = (async () => {
+      const value = await params.compute();
+      params.cache.delete(params.key);
+      params.cache.set(params.key, { token: params.token, at: Date.now(), value });
+      while (params.cache.size > params.maxEntries) {
+        const firstKey = params.cache.keys().next().value as string | undefined;
+        if (!firstKey) break;
+        params.cache.delete(firstKey);
+      }
+      return value;
+    })();
+
+    this.inflight.set(inflightKey, p);
+    try {
+      return await p;
+    } finally {
+      this.inflight.delete(inflightKey);
+    }
   }
 
   private get isBare(): boolean {
@@ -535,6 +685,20 @@ export class GitService {
    * 列出指定路径下的文件和文件夹
    */
   async listFiles(dirPath: string = '', commitHash?: string): Promise<FileInfo[]> {
+    const normalizedDir = dirPath ? normalizePathForGit(dirPath) : '';
+    const repoToken = commitHash
+      ? (this.isImmutableCommitish(commitHash) ? `COMMIT=${commitHash}` : await this.getRepoStateToken())
+      : await this.getRepoStateToken();
+    const dirToken = !commitHash && !this.isBare ? await this.getDirSnapshotToken(dirPath) : '';
+    const token = dirToken ? `${repoToken}|${dirToken}` : repoToken;
+    const cacheKey = `listFiles|${commitHash || (this.isBare ? 'HEAD(bare)' : 'worktree')}|${normalizedDir}`;
+
+    return await this.cached({
+      cache: this.listFilesCache,
+      key: cacheKey,
+      token,
+      maxEntries: this.listFilesCacheMax,
+      compute: async () => {
     if (commitHash) {
       const normalizedDir = dirPath ? normalizePathForGit(dirPath) : '';
       const treeish = normalizedDir ? `${commitHash}:${normalizedDir}` : commitHash;
@@ -683,6 +847,8 @@ export class GitService {
       console.error('读取文件列表失败:', error);
       return [];
     }
+      },
+    });
   }
 
   /**
@@ -1275,89 +1441,112 @@ export class GitService {
    * 获取文件的提交历史
    */
   async getFileHistory(filePath: string, limit: number = 50): Promise<FileHistory> {
-    try {
-      // 使用控制字符作为分隔符，避免提交信息里出现 "||" 等导致解析错位
-      const RS = '\x1e'; // record separator
-      const US = '\x1f'; // unit separator
+    const normalized = normalizePathForGit(filePath);
+    const token = await this.getRepoStateToken();
+    const cacheKey = `fileHistory|${normalized}|${limit}`;
 
-      const normalized = normalizePathForGit(filePath);
-      const cmd = normalized
-        ? $`git log --pretty=format:%H${US}%P${US}%an${US}%ae${US}%at${US}%s${RS} -n ${limit} -- ${normalized}`
-        : $`git log --pretty=format:%H${US}%P${US}%an${US}%ae${US}%at${US}%s${RS} -n ${limit}`;
+    return await this.cached({
+      cache: this.fileHistoryCache,
+      key: cacheKey,
+      token,
+      maxEntries: this.fileHistoryCacheMax,
+      compute: async () => {
+        try {
+          // 使用控制字符作为分隔符，避免提交信息里出现 "||" 等导致解析错位
+          const RS = '\x1e'; // record separator
+          const US = '\x1f'; // unit separator
 
-      const result = await cmd.cwd(this.dir).quiet();
+          const cmd = normalized
+            ? $`git log --pretty=format:%H${US}%P${US}%an${US}%ae${US}%at${US}%s${RS} -n ${limit} -- ${normalized}`
+            : $`git log --pretty=format:%H${US}%P${US}%an${US}%ae${US}%at${US}%s${RS} -n ${limit}`;
 
-      const raw = result.stdout.toString();
-      const records = raw
-        .split(RS)
-        .map((r: string) => r.trim())
-        .filter(Boolean);
+          const result = await cmd.cwd(this.dir).quiet();
 
-      const commitInfos: CommitInfo[] = [];
-      for (const record of records) {
-        const [hash, parentsStr, authorName, authorEmail, timestampStr, message] = record.split(US);
-        if (!hash) continue;
+          const raw = result.stdout.toString();
+          const records = raw
+            .split(RS)
+            .map((r: string) => r.trim())
+            .filter(Boolean);
 
-        const timestamp = Number.parseInt(timestampStr, 10);
-        if (!Number.isFinite(timestamp)) {
-          continue;
+          const commitInfos: CommitInfo[] = [];
+          for (const record of records) {
+            const [hash, parentsStr, authorName, authorEmail, timestampStr, message] = record.split(US);
+            if (!hash) continue;
+
+            const timestamp = Number.parseInt(timestampStr, 10);
+            if (!Number.isFinite(timestamp)) {
+              continue;
+            }
+
+            const parents = (parentsStr || '').split(' ').filter(Boolean);
+
+            commitInfos.push({
+              hash,
+              message: message ?? '',
+              author: {
+                name: authorName ?? '',
+                email: authorEmail ?? '',
+              },
+              date: new Date(timestamp * 1000).toISOString(),
+              parent: parents,
+            });
+          }
+
+          return {
+            commits: commitInfos,
+            currentVersion: commitInfos[0]?.hash || '',
+            totalCommits: commitInfos.length,
+          };
+        } catch (error) {
+          console.error('获取文件历史失败:', error);
+          return {
+            commits: [],
+            currentVersion: '',
+            totalCommits: 0,
+          };
         }
-
-        const parents = (parentsStr || '').split(' ').filter(Boolean);
-
-        commitInfos.push({
-          hash,
-          message: message ?? '',
-          author: {
-            name: authorName ?? '',
-            email: authorEmail ?? '',
-          },
-          date: new Date(timestamp * 1000).toISOString(),
-          parent: parents,
-        });
-      }
-
-      return {
-        commits: commitInfos,
-        currentVersion: commitInfos[0]?.hash || '',
-        totalCommits: commitInfos.length,
-      };
-    } catch (error) {
-      console.error('获取文件历史失败:', error);
-      return {
-        commits: [],
-        currentVersion: '',
-        totalCommits: 0,
-      };
-    }
+      },
+    });
   }
 
   /**
    * 获取文件的最后一次提交信息
    */
   async getLastCommit(filePath: string): Promise<CommitSummary | undefined> {
-    try {
-      const US = '\x1f';
-      const result = await $`git log --pretty=format:%H${US}%an${US}%at${US}%s -n 1 -- ${normalizePathForGit(filePath)}`
-        .cwd(this.dir)
-        .quiet();
+    const normalized = normalizePathForGit(filePath);
+    const token = await this.getRepoStateToken();
+    const cacheKey = `lastCommit|${normalized}`;
 
-      const line = result.stdout.toString().trim();
-      if (!line) return undefined;
+    return await this.cached({
+      cache: this.lastCommitCache,
+      key: cacheKey,
+      token,
+      maxEntries: this.lastCommitCacheMax,
+      compute: async () => {
+        try {
+          const US = '\x1f';
+          const result = await $`git log --pretty=format:%H${US}%an${US}%at${US}%s -n 1 -- ${normalized}`
+            .cwd(this.dir)
+            .quiet();
 
-      const [hash, author, timestampStr, message] = line.split(US);
-      const timestamp = Number.parseInt(timestampStr, 10);
-      if (!hash || !Number.isFinite(timestamp)) return undefined;
+          const line = result.stdout.toString().trim();
+          if (!line) return undefined;
 
-      return {
-        hash,
-        message: message ?? '',
-        author: author ?? '',
-        date: new Date(timestamp * 1000).toISOString(),
-      };
-    } catch (error) {
-      return undefined;
-    }
+          const [hash, author, timestampStr, message] = line.split(US);
+          const timestamp = Number.parseInt(timestampStr, 10);
+          if (!hash || !Number.isFinite(timestamp)) return undefined;
+
+          return {
+            hash,
+            message: message ?? '',
+            author: author ?? '',
+            date: new Date(timestamp * 1000).toISOString(),
+          };
+        } catch {
+          return undefined;
+        }
+      },
+    });
   }
 
   /**
