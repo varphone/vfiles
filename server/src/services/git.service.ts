@@ -1,5 +1,6 @@
 import { $} from 'bun';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { FileInfo, CommitInfo, FileHistory, CommitSummary } from '../types/index.js';
 import { normalizePathForGit } from '../utils/path-validator.js';
@@ -9,6 +10,7 @@ export class GitService {
   private dir: string;
   private mode: 'worktree' | 'bare';
   private writeChain: Promise<unknown> = Promise.resolve();
+  private bareWorkTreeDir: string | null = null;
 
   constructor(repoPath: string, mode: 'worktree' | 'bare' = 'worktree') {
     this.dir = path.resolve(repoPath);
@@ -16,7 +18,21 @@ export class GitService {
   }
 
   private get isBare(): boolean {
-    return this.mode === 'bare';
+    // 兼容性：有些部署会只把 REPO_PATH 指向 data.git（bare gitdir），但忘了设置 REPO_MODE=bare。
+    // 在这种情况下，运行依赖 worktree 的命令（如 git rm）会报 "this operation must be run in a work tree"。
+    // 这里用路径后缀做兜底判定，避免误用 worktree 流程。
+    return this.mode === 'bare' || path.extname(this.dir).toLowerCase() === '.git';
+  }
+
+  private async ensureBareWorkTreeDir(): Promise<string | null> {
+    if (!this.isBare) return null;
+    if (this.bareWorkTreeDir) return this.bareWorkTreeDir;
+
+    const id = Buffer.from(this.dir).toString('hex').slice(0, 12) || 'default';
+    const dir = path.join(os.tmpdir(), `vfiles-bare-worktree-${id}`);
+    await fs.mkdir(dir, { recursive: true });
+    this.bareWorkTreeDir = dir;
+    return dir;
   }
 
   private withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -104,11 +120,16 @@ export class GitService {
     indexFile?: string
   ): Promise<void> {
     const rel = this.normalizeRelPath(filePath);
+    const bareWorkTree = await this.ensureBareWorkTreeDir();
     const proc = Bun.spawn(['git', 'update-index', '--add', '--cacheinfo', mode, blobSha, rel], {
       cwd: this.dir,
       stdout: 'ignore',
       stderr: 'pipe',
-      env: indexFile ? { ...process.env, GIT_INDEX_FILE: indexFile } : process.env,
+      env: {
+        ...process.env,
+        ...(indexFile ? { GIT_INDEX_FILE: indexFile } : {}),
+        ...(bareWorkTree ? { GIT_DIR: this.dir, GIT_WORK_TREE: bareWorkTree } : {}),
+      },
     });
     const code = await proc.exited;
     if (code !== 0) {
@@ -119,11 +140,16 @@ export class GitService {
 
   private async updateIndexRemovePath(filePath: string, indexFile?: string): Promise<void> {
     const rel = this.normalizeRelPath(filePath);
+    const bareWorkTree = await this.ensureBareWorkTreeDir();
     const proc = Bun.spawn(['git', 'update-index', '--remove', '--', rel], {
       cwd: this.dir,
       stdout: 'ignore',
       stderr: 'pipe',
-      env: indexFile ? { ...process.env, GIT_INDEX_FILE: indexFile } : process.env,
+      env: {
+        ...process.env,
+        ...(indexFile ? { GIT_INDEX_FILE: indexFile } : {}),
+        ...(bareWorkTree ? { GIT_DIR: this.dir, GIT_WORK_TREE: bareWorkTree } : {}),
+      },
     });
     const code = await proc.exited;
     if (code !== 0) {
@@ -645,6 +671,26 @@ export class GitService {
   }
 
   /**
+   * 获取某个 commit 下指定路径的对象类型（blob/tree）。不存在则返回 null。
+   */
+  private async getObjectTypeAtCommit(
+    filePath: string,
+    commitHash: string
+  ): Promise<'blob' | 'tree' | null> {
+    const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
+    const proc = Bun.spawn(['git', 'cat-file', '-t', spec], {
+      cwd: this.dir,
+      stdout: 'pipe',
+      stderr: 'ignore',
+    });
+    const code = await proc.exited;
+    if (code !== 0) return null;
+    const text = (await new Response(proc.stdout).text()).trim();
+    if (text === 'blob' || text === 'tree') return text;
+    return null;
+  }
+
+  /**
    * 获取历史版本文件内容的流（真正流式，不会把整个文件读入内存）
    */
   getFileContentStreamAtCommit(filePath: string, commitHash: string): ReadableStream<Uint8Array> {
@@ -887,10 +933,10 @@ export class GitService {
               throw new Error(err || 'git read-tree HEAD 失败');
             }
 
-            const existsAsFile = await this.fileExistsAtCommit(rel, 'HEAD');
-            if (existsAsFile) {
+            const objType = await this.getObjectTypeAtCommit(rel, 'HEAD');
+            if (objType === 'blob') {
               await this.updateIndexRemovePath(rel, indexFile);
-            } else {
+            } else if (objType === 'tree') {
               const proc = Bun.spawn(['git', 'ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', rel], {
                 cwd: this.dir,
                 stdout: 'pipe',
@@ -909,6 +955,8 @@ export class GitService {
               for (const f of files) {
                 await this.updateIndexRemovePath(f, indexFile);
               }
+            } else {
+              throw new Error('路径不存在');
             }
 
             const authorName = author?.name || 'VFiles User';
