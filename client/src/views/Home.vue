@@ -43,6 +43,14 @@
           <a class="navbar-item" href="#" @click.prevent="toggleBatchAndClose"
             >批量模式</a
           >
+
+          <router-link
+            v-if="auth.enabled && auth.user?.role === 'admin'"
+            class="navbar-item"
+            to="/admin/users"
+            @click="mobileMenuOpen = false"
+            >用户管理</router-link
+          >
         </div>
 
         <div class="navbar-end">
@@ -50,8 +58,8 @@
             v-if="auth.enabled"
             class="navbar-item is-size-7 has-text-white-ter"
           >
-            <span v-if="auth.user">{{ auth.user.username }}</span>
-            <span v-else>未登录</span>
+            <span v-if="auth.user">{{ auth.user.username }} ({{ auth.user.role }})</span>
+            <router-link v-else class="has-text-white-ter" to="/login">去登录</router-link>
           </div>
 
           <a

@@ -7,6 +7,14 @@ export interface AuthUser {
   role: string;
 }
 
+export interface AdminUser {
+  id: string;
+  username: string;
+  role: string;
+  disabled?: boolean;
+  createdAt: string;
+}
+
 export interface AuthMeResponseEnabledFalse {
   enabled: false;
 }
@@ -32,6 +40,26 @@ class AuthService {
 
   logout(): Promise<ApiResponse<void>> {
     return apiService.post("/auth/logout");
+  }
+
+  // Admin APIs
+  listUsers(): Promise<ApiResponse<{ users: AdminUser[] }>> {
+    return apiService.get("/auth/users");
+  }
+
+  setUserRole(userId: string, role: "admin" | "user"): Promise<ApiResponse<void>> {
+    return apiService.post(`/auth/users/${encodeURIComponent(userId)}/role`, {
+      role,
+    });
+  }
+
+  setUserDisabled(userId: string, disabled: boolean): Promise<ApiResponse<void>> {
+    return apiService.post(
+      `/auth/users/${encodeURIComponent(userId)}/disabled`,
+      {
+        disabled,
+      },
+    );
   }
 }
 

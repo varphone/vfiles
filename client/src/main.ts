@@ -31,6 +31,11 @@ router.beforeEach(async (to) => {
 		return { name: "login", query: { redirect: to.fullPath } };
 	}
 
+	// 管理页：仅 admin
+	if (to.name === "admin-users" && authStore.user?.role !== "admin") {
+		return { name: "home" };
+	}
+
 	return true;
 });
 
