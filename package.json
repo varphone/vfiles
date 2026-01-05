@@ -1,6 +1,6 @@
 {
   "name": "vfiles",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "基于Web的Git文件管理系统",
   "type": "module",
   "scripts": {
