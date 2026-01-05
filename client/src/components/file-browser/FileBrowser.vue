@@ -218,13 +218,12 @@
         <div v-if="searchResults.length === 0" class="has-text-centered py-6">
           <p class="has-text-grey">没有找到匹配的文件</p>
         </div>
-        <FileItem
-          v-for="file in searchResults"
-          :key="file.path"
-          :file="file"
+        <FileList
+          v-if="searchResults.length"
+          :files="searchResults"
           :highlight="searchQuery"
           :select-mode="batchMode"
-          :selected="isSelected(file.path)"
+          :selected-paths="selectedPaths"
           @click="handleSearchItemClick"
           @download="handleDownload"
           @delete="handleDelete"
@@ -234,12 +233,10 @@
       </div>
 
       <div v-else class="file-list">
-        <FileItem
-          v-for="file in files"
-          :key="file.path"
-          :file="file"
+        <FileList
+          :files="files"
           :select-mode="batchMode"
-          :selected="isSelected(file.path)"
+          :selected-paths="selectedPaths"
           @click="handleFileClick"
           @download="handleDownload"
           @delete="handleDelete"
@@ -330,7 +327,7 @@ import { useFilesStore } from '../../stores/files.store';
 import { useAppStore } from '../../stores/app.store';
 import { filesService } from '../../services/files.service';
 import Breadcrumb from './Breadcrumb.vue';
-import FileItem from './FileItem.vue';
+import FileList from './FileList.vue';
 import FileUploader from '../file-uploader/FileUploader.vue';
 import VersionHistory from '../version-history/VersionHistory.vue';
 import Modal from '../common/Modal.vue';
@@ -818,10 +815,6 @@ function toggleBatchMode() {
   if (!batchMode.value) {
     clearSelection();
   }
-}
-
-function isSelected(path: string): boolean {
-  return selectedPaths.value.has(path);
 }
 
 function toggleSelect(file: FileInfo) {

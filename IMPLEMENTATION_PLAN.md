@@ -174,7 +174,7 @@ client/
 ### 3.4 文件浏览器组件
 **组件列表:**
 - [x] `FileBrowser.vue` - 主容器
-- [ ] `FileList.vue` - 文件列表（当前直接在 FileBrowser 内渲染）
+- [x] `FileList.vue` - 文件列表（已实现：从 FileBrowser 抽取列表渲染与事件分发）
 - [x] `FileItem.vue` - 单个文件项
 - [x] `Breadcrumb.vue` - 面包屑导航
 - [x] 文件预览（已实现：点击文件弹窗预览当前版本）
