@@ -144,15 +144,48 @@
               <button class="button is-info" :disabled="selectedCount === 0" @click="batchDownload" title="批量下载">
                 下载
               </button>
-              <button class="button is-danger" :disabled="selectedCount === 0" @click="batchDelete" title="批量删除">
-                删除
-              </button>
-              <button class="button is-link" :disabled="selectedCount === 0" @click="batchMove" title="移动">
-                移动
-              </button>
-              <button class="button is-warning" :disabled="selectedCount !== 1" @click="renameSelected" title="重命名">
-                重命名
-              </button>
+
+              <div class="dropdown is-up" :class="{ 'is-active': batchMenuOpen }">
+                <div class="dropdown-trigger">
+                  <button
+                    class="button is-light"
+                    aria-haspopup="true"
+                    :aria-expanded="batchMenuOpen ? 'true' : 'false'"
+                    title="更多批量操作"
+                    @click="batchMenuOpen = !batchMenuOpen"
+                  >
+                    <IconDotsVertical :size="18" />
+                  </button>
+                </div>
+                <div class="dropdown-menu" role="menu">
+                  <div class="dropdown-content">
+                    <a
+                      class="dropdown-item"
+                      :class="{ 'is-disabled': selectedCount === 0 }"
+                      href="#"
+                      @click.prevent="runBatchMenuAction('delete')"
+                    >
+                      删除
+                    </a>
+                    <a
+                      class="dropdown-item"
+                      :class="{ 'is-disabled': selectedCount === 0 }"
+                      href="#"
+                      @click.prevent="runBatchMenuAction('move')"
+                    >
+                      移动
+                    </a>
+                    <a
+                      class="dropdown-item"
+                      :class="{ 'is-disabled': selectedCount !== 1 }"
+                      href="#"
+                      @click.prevent="runBatchMenuAction('rename')"
+                    >
+                      重命名
+                    </a>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -169,6 +202,7 @@ import {
   IconMenu2,
   IconSearch,
   IconChecklist,
+  IconDotsVertical,
   IconArrowLeft,
   IconHome,
   IconUpload,
@@ -203,6 +237,7 @@ const mobileMenuOpen = ref(false);
 const actionMenuOpen = ref(false);
 const actionMode = ref<'nav' | 'search' | 'batch'>('nav');
 const mobileSearchQuery = ref('');
+const batchMenuOpen = ref(false);
 
 const filesStore = useFilesStore();
 const { currentPath } = storeToRefs(filesStore);
@@ -238,11 +273,24 @@ const isSearchLoading = computed(() => browserRef.value?.searchLoading?.value ??
 function setActionMode(mode: 'nav' | 'search' | 'batch') {
   actionMode.value = mode;
   actionMenuOpen.value = false;
+  batchMenuOpen.value = false;
 
   // 进入批量模式时自动开启批量
   if (mode === 'batch' && !isBatchMode.value) {
     toggleBatch();
   }
+}
+
+async function runBatchMenuAction(action: 'delete' | 'move' | 'rename') {
+  if (action === 'delete' && selectedCount.value === 0) return;
+  if (action === 'move' && selectedCount.value === 0) return;
+  if (action === 'rename' && selectedCount.value !== 1) return;
+
+  batchMenuOpen.value = false;
+
+  if (action === 'delete') await batchDelete();
+  if (action === 'move') await batchMove();
+  if (action === 'rename') await renameSelected();
 }
 
 async function runMobileSearch() {
@@ -366,6 +414,11 @@ function toggleBatchAndClose() {
     overflow-x: auto;
     flex-wrap: nowrap;
     white-space: nowrap;
+  }
+
+  .dropdown-item.is-disabled {
+    opacity: 0.45;
+    pointer-events: none;
   }
 }
 </style>
