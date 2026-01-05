@@ -1,6 +1,18 @@
 import axios, { AxiosInstance, AxiosError } from "axios";
 import type { ApiResponse } from "../types";
 
+export class ApiError extends Error {
+  status?: number;
+  data?: ApiResponse;
+
+  constructor(message: string, status?: number, data?: ApiResponse) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.data = data;
+  }
+}
+
 class ApiService {
   private api: AxiosInstance;
 
@@ -8,6 +20,7 @@ class ApiService {
     this.api = axios.create({
       baseURL: "/api",
       timeout: 30000,
+      withCredentials: true,
       headers: {
         "Content-Type": "application/json",
       },
@@ -29,8 +42,18 @@ class ApiService {
         return response.data;
       },
       (error: AxiosError) => {
+        const status = error.response?.status;
+        if (status === 401 && typeof window !== "undefined") {
+          window.dispatchEvent(new Event("vfiles:unauthorized"));
+        }
         const message = this.handleError(error);
-        return Promise.reject(new Error(message));
+        return Promise.reject(
+          new ApiError(
+            message,
+            status,
+            error.response?.data as ApiResponse | undefined,
+          ),
+        );
       },
     );
   }

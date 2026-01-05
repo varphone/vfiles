@@ -46,6 +46,21 @@
         </div>
 
         <div class="navbar-end">
+          <div
+            v-if="auth.enabled"
+            class="navbar-item is-size-7 has-text-white-ter"
+          >
+            <span v-if="auth.user">{{ auth.user.username }}</span>
+            <span v-else>未登录</span>
+          </div>
+
+          <a
+            v-if="auth.enabled && auth.user"
+            class="navbar-item"
+            href="#"
+            @click.prevent="doLogout"
+            >退出</a>
+
           <div class="navbar-item is-size-7 has-text-white-ter">
             当前：{{ currentPathLabel }}
           </div>
@@ -306,6 +321,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
+import { useRouter } from "vue-router";
 import {
   IconFiles,
   IconMenu2,
@@ -322,7 +338,9 @@ import {
 } from "@tabler/icons-vue";
 import FileBrowser from "../components/file-browser/FileBrowser.vue";
 import { useFilesStore } from "../stores/files.store";
+import { useAuthStore } from "../stores/auth.store";
 import { filesService } from "../services/files.service";
+import { useAppStore } from "../stores/app.store";
 
 type FileBrowserHandle = {
   openUploader: () => void;
@@ -346,6 +364,19 @@ type FileBrowserHandle = {
 
 const browserRef = ref<FileBrowserHandle | null>(null);
 const mobileMenuOpen = ref(false);
+
+const auth = useAuthStore();
+const appStore = useAppStore();
+const router = useRouter();
+
+async function doLogout() {
+  try {
+    await auth.logout();
+  } finally {
+    appStore.info("已退出登录");
+    router.push({ name: "login", query: { redirect: "/" } });
+  }
+}
 
 const actionMenuOpen = ref(false);
 const actionMenuRef = ref<HTMLElement | null>(null);
