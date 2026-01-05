@@ -218,11 +218,11 @@ client/
 
 ### 3.7 通用组件
 - [x] `Loading.vue` - 加载指示器
-- [ ] `ErrorMessage.vue` - 错误提示（未实现，当前使用 Notification）
+- [x] `ErrorMessage.vue` - 错误提示
 - [x] `Modal.vue` - 模态框
 - [x] `Notification.vue` - 通知组件
-- [ ] `SearchBar.vue` - 搜索栏（未实现）
-- [ ] `IconButton.vue` - 图标按钮（未实现）
+- [x] `SearchBar.vue` - 搜索栏
+- [x] `IconButton.vue` - 图标按钮
 
 ### 交付物
 - ✅ 完整的文件浏览界面
