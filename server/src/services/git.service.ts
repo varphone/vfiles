@@ -326,7 +326,7 @@ export class GitService {
   /**
    * 搜索文件
    */
-  async searchFiles(query: string): Promise<FileInfo[]> {
+  async searchFiles(query: string, basePath: string = ''): Promise<FileInfo[]> {
     const allFiles: FileInfo[] = [];
 
     const scanDirectory = async (dirPath: string = ''): Promise<void> => {
@@ -343,7 +343,7 @@ export class GitService {
       }
     };
 
-    await scanDirectory();
+    await scanDirectory(basePath);
     return allFiles;
   }
 
@@ -351,11 +351,12 @@ export class GitService {
    * 全文搜索（最小实现）：使用 git grep 找到包含关键词的文件，返回 FileInfo 列表。
    * 注意：使用 --fixed-strings 防止把用户输入当作正则。
    */
-  async searchFileContents(query: string): Promise<FileInfo[]> {
-    // git grep 输出使用 / 作为分隔符
-    const result = await $`git grep -I -l --fixed-strings --ignore-case ${query} --`
-      .cwd(this.dir)
-      .quiet();
+  async searchFileContents(query: string, basePath: string = ''): Promise<FileInfo[]> {
+    // git grep 输出使用 / 作为分隔符；若指定 basePath 则限制在该目录范围内
+    const pathSpec = basePath ? normalizePathForGit(basePath) : '';
+    const result = pathSpec
+      ? await $`git grep -I -l --fixed-strings --ignore-case ${query} -- ${pathSpec}`.cwd(this.dir).quiet()
+      : await $`git grep -I -l --fixed-strings --ignore-case ${query} --`.cwd(this.dir).quiet();
 
     const files = result.stdout
       .toString()

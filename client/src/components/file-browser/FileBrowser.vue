@@ -41,6 +41,25 @@
         </label>
       </div>
 
+      <div class="field is-grouped is-grouped-multiline mt-2">
+        <div class="control">
+          <div class="select is-small">
+            <select v-model="searchType" :disabled="searchLoading">
+              <option value="all">全部</option>
+              <option value="file">仅文件</option>
+              <option value="directory">仅文件夹</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="checkbox">
+            <input type="checkbox" v-model="searchScopeCurrent" :disabled="searchLoading" />
+            仅当前目录
+          </label>
+        </div>
+      </div>
+
       <div v-if="searchError" class="notification is-danger is-light">
         <IconAlertCircle :size="20" class="mr-2" />
         {{ searchError }}
@@ -165,6 +184,9 @@ const searchError = ref<string | null>(null);
 const searchActive = ref(false);
 const searchContent = ref(false);
 
+const searchType = ref<'all' | 'file' | 'directory'>('all');
+const searchScopeCurrent = ref(false);
+
 const searchMode = computed(() => (searchContent.value ? 'content' : 'name'));
 
 const SEARCH_HISTORY_KEY = 'vfiles.searchHistory';
@@ -267,7 +289,11 @@ async function runSearch() {
   pushSearchHistory(q);
 
   try {
-    searchResults.value = await filesService.searchFiles(q, searchMode.value);
+    const scopePath = searchScopeCurrent.value ? filesStore.currentPath : '';
+    searchResults.value = await filesService.searchFiles(q, searchMode.value, {
+      type: searchType.value,
+      path: scopePath,
+    });
   } catch (err) {
     searchError.value = err instanceof Error ? err.message : '搜索失败';
     searchResults.value = [];
