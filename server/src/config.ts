@@ -10,6 +10,16 @@ export const config = {
   
   // 上传限制
   maxFileSize: 100 * 1024 * 1024, // 100MB
+
+  // 分块上传（用于绕过单次请求体大小限制）
+  // 单块大小（默认 5MB，可通过 CDN 限制调整）
+  uploadChunkSize: parseInt(process.env.UPLOAD_CHUNK_SIZE || String(5 * 1024 * 1024)),
+  // 单块最大允许大小（防止客户端随意放大 chunk）
+  uploadMaxChunkSize: parseInt(process.env.UPLOAD_MAX_CHUNK_SIZE || String(20 * 1024 * 1024)),
+  // 分块上传临时目录（必须在 repoPath 之外，避免被当作文件列表展示/提交）
+  uploadTempDir: process.env.UPLOAD_TEMP_DIR || path.resolve(process.cwd(), '.vfiles_uploads'),
+  // 上传会话过期时间（默认 24h）
+  uploadSessionTtlMs: parseInt(process.env.UPLOAD_SESSION_TTL_MS || String(24 * 60 * 60 * 1000)),
   
   // 允许的文件类型 (留空表示允许所有)
   allowedFileTypes: [] as string[],

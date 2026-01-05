@@ -92,19 +92,111 @@ export const filesService = {
     message: string = '上传文件',
     opts?: { signal?: AbortSignal; onProgress?: (p: { loaded: number; total?: number }) => void }
   ): Promise<any> {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('path', path);
-    formData.append('message', message);
+    async function fallbackSingleUpload() {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('path', path);
+      formData.append('message', message);
 
-    if (opts?.signal || opts?.onProgress) {
-      return await apiService.postFormWithProgress('/files/upload', formData, {
-        signal: opts?.signal,
-        onUploadProgress: opts?.onProgress,
-      });
+      if (opts?.signal || opts?.onProgress) {
+        return await apiService.postFormWithProgress('/files/upload', formData, {
+          signal: opts?.signal,
+          onUploadProgress: opts?.onProgress,
+        });
+      }
+
+      return await apiService.postForm('/files/upload', formData);
     }
 
-    return await apiService.postForm('/files/upload', formData);
+    // 分块上传：默认启用（即使只有 1 块也可走同一流程），若后端不支持则回退
+    try {
+      const initResp = await apiService.post<{
+        uploadId: string;
+        chunkSize: number;
+        totalChunks: number;
+        received: number[];
+        resumable: boolean;
+      }>('/files/upload/init', {
+        path,
+        filename: file.name,
+        size: file.size,
+        lastModified: (file as any).lastModified ?? undefined,
+        mime: file.type || undefined,
+      });
+
+      const initData = initResp.data;
+      if (!initData?.uploadId || !initData.chunkSize || !initData.totalChunks) {
+        // 兜底：若响应异常，回退旧上传
+        return await fallbackSingleUpload();
+      }
+
+      const uploadId = initData.uploadId;
+      const chunkSize = initData.chunkSize;
+      const totalChunks = initData.totalChunks;
+      const receivedSet = new Set<number>((initData.received || []).filter((x) => Number.isFinite(x)));
+
+      const totalBytes = file.size;
+      const bytesForIndex = (index: number) => {
+        const start = index * chunkSize;
+        const end = Math.min(totalBytes, start + chunkSize);
+        return Math.max(0, end - start);
+      };
+
+      let alreadyBytes = 0;
+      for (const idx of receivedSet) {
+        if (idx >= 0 && idx < totalChunks) alreadyBytes += bytesForIndex(idx);
+      }
+
+      let uploadedBytes = alreadyBytes;
+      opts?.onProgress?.({ loaded: uploadedBytes, total: totalBytes });
+
+      for (let index = 0; index < totalChunks; index++) {
+        if (opts?.signal?.aborted) {
+          throw new DOMException('Aborted', 'AbortError');
+        }
+
+        if (receivedSet.has(index)) {
+          continue;
+        }
+
+        const start = index * chunkSize;
+        const end = Math.min(totalBytes, start + chunkSize);
+        const slice = file.slice(start, end);
+        const buf = await slice.arrayBuffer();
+
+        await apiService.postBinaryWithProgress('/files/upload/chunk', buf, {
+          params: { uploadId, index },
+          signal: opts?.signal,
+          onUploadProgress: opts?.onProgress
+            ? (p) => {
+                // 当前块进度 + 已完成总量
+                const base = uploadedBytes;
+                const loaded = Math.min(totalBytes, base + (p.loaded ?? 0));
+                opts.onProgress?.({ loaded, total: totalBytes });
+              }
+            : undefined,
+        });
+
+        uploadedBytes += bytesForIndex(index);
+        opts?.onProgress?.({ loaded: uploadedBytes, total: totalBytes });
+      }
+
+      // 完成合并并提交
+      const completeResp = await apiService.post('/files/upload/complete', {
+        uploadId,
+        message,
+      });
+      return completeResp;
+    } catch (err: any) {
+      // 若后端不支持分块端点（常见是 404）或协议异常，则自动回退旧上传
+      const msg = err instanceof Error ? err.message : String(err ?? '');
+      if (/404|not found/i.test(msg)) {
+        return await fallbackSingleUpload();
+      }
+      // Abort 直接抛出
+      if (err?.name === 'AbortError') throw err;
+      throw err;
+    }
   },
 
   /**

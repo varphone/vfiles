@@ -92,6 +92,39 @@ class ApiService {
         : undefined,
     });
   }
+
+  postBinaryWithProgress<T = any>(
+    url: string,
+    data: ArrayBuffer,
+    opts?: {
+      params?: Record<string, string | number | boolean | undefined>;
+      signal?: AbortSignal;
+      onUploadProgress?: (p: { loaded: number; total?: number }) => void;
+    }
+  ): Promise<ApiResponse<T>> {
+    const params: Record<string, string | number | boolean> | undefined = opts?.params
+      ? Object.fromEntries(
+          Object.entries(opts.params)
+            .filter(([, v]) => v !== undefined)
+            .map(([k, v]) => [k, v as any])
+        )
+      : undefined;
+
+    return this.api.post(url, data, {
+      params,
+      headers: {
+        'Content-Type': 'application/octet-stream',
+      },
+      signal: opts?.signal,
+      onUploadProgress: opts?.onUploadProgress
+        ? (evt) => {
+            const loaded = evt.loaded ?? 0;
+            const total = evt.total ?? undefined;
+            opts.onUploadProgress?.({ loaded, total });
+          }
+        : undefined,
+    });
+  }
 }
 
 export const apiService = new ApiService();

@@ -151,6 +151,33 @@ export class GitService {
   }
 
   /**
+   * 提交一个已存在/已写入磁盘的文件（不会再次写入内容）
+   */
+  async commitFile(
+    filePath: string,
+    message: string,
+    author?: { name: string; email: string }
+  ): Promise<string> {
+    try {
+      // 添加到Git
+      await $`git add ${normalizePathForGit(filePath)}`.cwd(this.dir);
+
+      // 提交
+      const authorName = author?.name || 'VFiles User';
+      const authorEmail = author?.email || 'user@vfiles.local';
+      await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(
+        this.dir
+      );
+
+      // 获取最新提交hash
+      const result = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
+      return result.stdout.toString().trim();
+    } catch (error) {
+      throw new Error(`提交文件失败: ${error}`);
+    }
+  }
+
+  /**
    * 删除文件
    */
   async deleteFile(
