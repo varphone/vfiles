@@ -8,6 +8,7 @@ import { config } from '../config.js';
 export class GitService {
   private dir: string;
   private mode: 'worktree' | 'bare';
+  private writeChain: Promise<unknown> = Promise.resolve();
 
   constructor(repoPath: string, mode: 'worktree' | 'bare' = 'worktree') {
     this.dir = path.resolve(repoPath);
@@ -16,6 +17,15 @@ export class GitService {
 
   private get isBare(): boolean {
     return this.mode === 'bare';
+  }
+
+  private withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.writeChain.then(fn, fn);
+    this.writeChain = next.then(
+      () => undefined,
+      () => undefined
+    );
+    return next;
   }
 
   private normalizeRelPath(p: string): string {
@@ -87,12 +97,18 @@ export class GitService {
     return stdout;
   }
 
-  private async updateIndexAddBlob(filePath: string, blobSha: string, mode: string = '100644'): Promise<void> {
+  private async updateIndexAddBlob(
+    filePath: string,
+    blobSha: string,
+    mode: string = '100644',
+    indexFile?: string
+  ): Promise<void> {
     const rel = this.normalizeRelPath(filePath);
     const proc = Bun.spawn(['git', 'update-index', '--add', '--cacheinfo', mode, blobSha, rel], {
       cwd: this.dir,
       stdout: 'ignore',
       stderr: 'pipe',
+      env: indexFile ? { ...process.env, GIT_INDEX_FILE: indexFile } : process.env,
     });
     const code = await proc.exited;
     if (code !== 0) {
@@ -101,18 +117,84 @@ export class GitService {
     }
   }
 
-  private async updateIndexRemovePath(filePath: string): Promise<void> {
+  private async updateIndexRemovePath(filePath: string, indexFile?: string): Promise<void> {
     const rel = this.normalizeRelPath(filePath);
     const proc = Bun.spawn(['git', 'update-index', '--remove', '--', rel], {
       cwd: this.dir,
       stdout: 'ignore',
       stderr: 'pipe',
+      env: indexFile ? { ...process.env, GIT_INDEX_FILE: indexFile } : process.env,
     });
     const code = await proc.exited;
     if (code !== 0) {
       const err = await new Response(proc.stderr).text();
       throw new Error(`git update-index --remove 失败: ${err || code}`);
     }
+  }
+
+  private async getHeadRef(): Promise<string> {
+    try {
+      const result = await $`git symbolic-ref -q HEAD`.cwd(this.dir).quiet();
+      const ref = result.stdout.toString().trim();
+      return ref || 'refs/heads/master';
+    } catch {
+      return 'refs/heads/master';
+    }
+  }
+
+  private async bareCommitFromIndex(params: {
+    indexFile: string;
+    message: string;
+    authorName: string;
+    authorEmail: string;
+    parent?: string;
+  }): Promise<string> {
+    const env = {
+      ...process.env,
+      GIT_INDEX_FILE: params.indexFile,
+      GIT_AUTHOR_NAME: params.authorName,
+      GIT_AUTHOR_EMAIL: params.authorEmail,
+      GIT_COMMITTER_NAME: params.authorName,
+      GIT_COMMITTER_EMAIL: params.authorEmail,
+    };
+
+    // write-tree
+    const writeTree = Bun.spawn(['git', 'write-tree'], { cwd: this.dir, stdout: 'pipe', stderr: 'pipe', env });
+    const writeCode = await writeTree.exited;
+    const tree = (await new Response(writeTree.stdout).text()).trim();
+    if (writeCode !== 0 || !tree) {
+      const err = await new Response(writeTree.stderr).text();
+      throw new Error(`git write-tree 失败: ${err || writeCode}`);
+    }
+
+    // commit-tree
+    const args = ['git', 'commit-tree', tree];
+    if (params.parent) {
+      args.push('-p', params.parent);
+    }
+    args.push('-m', params.message);
+    const commitTree = Bun.spawn(args, { cwd: this.dir, stdout: 'pipe', stderr: 'pipe', env });
+    const commitCode = await commitTree.exited;
+    const commit = (await new Response(commitTree.stdout).text()).trim();
+    if (commitCode !== 0 || !commit) {
+      const err = await new Response(commitTree.stderr).text();
+      throw new Error(`git commit-tree 失败: ${err || commitCode}`);
+    }
+
+    const headRef = await this.getHeadRef();
+    const updateRef = Bun.spawn(['git', 'update-ref', headRef, commit], {
+      cwd: this.dir,
+      stdout: 'ignore',
+      stderr: 'pipe',
+      env: process.env,
+    });
+    const updateCode = await updateRef.exited;
+    if (updateCode !== 0) {
+      const err = await new Response(updateRef.stderr).text();
+      throw new Error(`git update-ref 失败: ${err || updateCode}`);
+    }
+
+    return commit;
   }
 
   /**
@@ -133,10 +215,35 @@ export class GitService {
           console.log('初始化 Git bare 仓库...');
           await $`git init --bare`.cwd(this.dir);
 
-          // bare 下创建空初始提交，确保 HEAD 可用
-          await $`git -c user.name="VFiles System" -c user.email="system@vfiles.local" commit --allow-empty -m "Initial commit"`
-            .cwd(this.dir)
-            .quiet();
+          // bare 下创建空初始提交（不依赖 worktree）
+          const indexFile = path.join(this.dir, `.vfiles_index_init_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+          try {
+            // empty index
+            const readEmpty = Bun.spawn(['git', 'read-tree', '--empty'], {
+              cwd: this.dir,
+              stdout: 'ignore',
+              stderr: 'pipe',
+              env: { ...process.env, GIT_INDEX_FILE: indexFile },
+            });
+            const readCode = await readEmpty.exited;
+            if (readCode !== 0) {
+              const err = await new Response(readEmpty.stderr).text();
+              throw new Error(err || 'git read-tree --empty 失败');
+            }
+
+            await this.bareCommitFromIndex({
+              indexFile,
+              message: 'Initial commit',
+              authorName: 'VFiles System',
+              authorEmail: 'system@vfiles.local',
+            });
+          } finally {
+            try {
+              await fs.rm(indexFile, { force: true });
+            } catch {
+              // ignore
+            }
+          }
         }
       } else {
         // worktree 仓库：检查 .git
@@ -172,6 +279,21 @@ export class GitService {
   }
 
   private async ensureGitLfsInstalled(): Promise<boolean> {
+    // bare 仓库没有 worktree，不做 install（否则会触发 "must be run in a work tree"）
+    if (this.isBare) {
+      const proc = Bun.spawn(['git', 'lfs', 'version'], {
+        cwd: this.dir,
+        stdout: 'ignore',
+        stderr: 'ignore',
+      });
+      const code = await proc.exited;
+      if (code !== 0) {
+        console.warn('未检测到 git-lfs（git lfs version 失败），将不会启用 LFS');
+        return false;
+      }
+      return true;
+    }
+
     const proc = Bun.spawn(['git', 'lfs', 'version'], {
       cwd: this.dir,
       stdout: 'ignore',
@@ -227,10 +349,47 @@ export class GitService {
 
       const newContent = `${existingLines.join('\n')}\n`;
       const blobSha = await this.writeBlobFromContent(new TextEncoder().encode(newContent));
-      await this.updateIndexAddBlob('.gitattributes', blobSha, '100644');
-      await $`git -c user.name="VFiles System" -c user.email="system@vfiles.local" commit -m "chore: configure git-lfs"`
-        .cwd(this.dir)
-        .quiet();
+      await this.withWriteLock(async () => {
+        const indexFile = path.join(this.dir, `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+        try {
+          // 从 HEAD 载入到临时 index
+          const readTree = Bun.spawn(['git', 'read-tree', 'HEAD'], {
+            cwd: this.dir,
+            stdout: 'ignore',
+            stderr: 'pipe',
+            env: { ...process.env, GIT_INDEX_FILE: indexFile },
+          });
+          const rc = await readTree.exited;
+          if (rc !== 0) {
+            const err = await new Response(readTree.stderr).text();
+            throw new Error(err || 'git read-tree HEAD 失败');
+          }
+
+          await this.updateIndexAddBlob('.gitattributes', blobSha, '100644', indexFile);
+
+          let parent: string | undefined;
+          try {
+            const p = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
+            parent = p.stdout.toString().trim() || undefined;
+          } catch {
+            parent = undefined;
+          }
+
+          await this.bareCommitFromIndex({
+            indexFile,
+            message: 'chore: configure git-lfs',
+            authorName: 'VFiles System',
+            authorEmail: 'system@vfiles.local',
+            parent,
+          });
+        } finally {
+          try {
+            await fs.rm(indexFile, { force: true });
+          } catch {
+            // ignore
+          }
+        }
+      });
       return;
     }
 
@@ -602,8 +761,46 @@ export class GitService {
   ): Promise<string> {
     try {
       if (this.isBare) {
-        const blobSha = await this.writeBlobFromContent(content);
-        await this.updateIndexAddBlob(filePath, blobSha, '100644');
+        return await this.withWriteLock(async () => {
+          const blobSha = await this.writeBlobFromContent(content);
+          const indexFile = path.join(this.dir, `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+          try {
+            // 从 HEAD 载入到临时 index
+            const readTree = Bun.spawn(['git', 'read-tree', 'HEAD'], {
+              cwd: this.dir,
+              stdout: 'ignore',
+              stderr: 'pipe',
+              env: { ...process.env, GIT_INDEX_FILE: indexFile },
+            });
+            const rc = await readTree.exited;
+            if (rc !== 0) {
+              const err = await new Response(readTree.stderr).text();
+              throw new Error(err || 'git read-tree HEAD 失败');
+            }
+
+            await this.updateIndexAddBlob(filePath, blobSha, '100644', indexFile);
+
+            const authorName = author?.name || 'VFiles User';
+            const authorEmail = author?.email || 'user@vfiles.local';
+
+            const parentResult = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
+            const parent = parentResult.stdout.toString().trim();
+            const commit = await this.bareCommitFromIndex({
+              indexFile,
+              message,
+              authorName,
+              authorEmail,
+              parent,
+            });
+            return commit;
+          } finally {
+            try {
+              await fs.rm(indexFile, { force: true });
+            } catch {
+              // ignore
+            }
+          }
+        });
       } else {
         const fullPath = path.join(this.dir, filePath);
         const dirPath = path.dirname(fullPath);
@@ -672,36 +869,65 @@ export class GitService {
   ): Promise<void> {
     try {
       if (this.isBare) {
-        // 文件：直接从 index 移除；目录：移除其下全部文件
-        const rel = this.normalizeRelPath(filePath);
-        const existsAsFile = await this.fileExistsAtCommit(rel, 'HEAD');
-        if (existsAsFile) {
-          await this.updateIndexRemovePath(rel);
-        } else {
-          // 目录：列出其下所有文件
-          const proc = Bun.spawn(['git', 'ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', rel], {
-            cwd: this.dir,
-            stdout: 'pipe',
-            stderr: 'pipe',
-          });
-          const code = await proc.exited;
-          if (code !== 0) {
-            const err = await new Response(proc.stderr).text();
-            throw new Error(err || '路径不存在');
-          }
-          const text = new TextDecoder().decode(new Uint8Array(await new Response(proc.stdout).arrayBuffer()));
-          const files = text.split('\0').filter(Boolean);
-          if (files.length === 0) {
-            throw new Error('路径不存在');
-          }
-          for (const f of files) {
-            await this.updateIndexRemovePath(f);
-          }
-        }
+        await this.withWriteLock(async () => {
+          const rel = this.normalizeRelPath(filePath);
+          const indexFile = path.join(this.dir, `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+          try {
+            const readTree = Bun.spawn(['git', 'read-tree', 'HEAD'], {
+              cwd: this.dir,
+              stdout: 'ignore',
+              stderr: 'pipe',
+              env: { ...process.env, GIT_INDEX_FILE: indexFile },
+            });
+            const rc = await readTree.exited;
+            if (rc !== 0) {
+              const err = await new Response(readTree.stderr).text();
+              throw new Error(err || 'git read-tree HEAD 失败');
+            }
 
-        const authorName = author?.name || 'VFiles User';
-        const authorEmail = author?.email || 'user@vfiles.local';
-        await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(this.dir);
+            const existsAsFile = await this.fileExistsAtCommit(rel, 'HEAD');
+            if (existsAsFile) {
+              await this.updateIndexRemovePath(rel, indexFile);
+            } else {
+              const proc = Bun.spawn(['git', 'ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', rel], {
+                cwd: this.dir,
+                stdout: 'pipe',
+                stderr: 'pipe',
+              });
+              const code = await proc.exited;
+              if (code !== 0) {
+                const err = await new Response(proc.stderr).text();
+                throw new Error(err || '路径不存在');
+              }
+              const text = new TextDecoder().decode(
+                new Uint8Array(await new Response(proc.stdout).arrayBuffer())
+              );
+              const files = text.split('\0').filter(Boolean);
+              if (files.length === 0) throw new Error('路径不存在');
+              for (const f of files) {
+                await this.updateIndexRemovePath(f, indexFile);
+              }
+            }
+
+            const authorName = author?.name || 'VFiles User';
+            const authorEmail = author?.email || 'user@vfiles.local';
+            const parentResult = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
+            const parent = parentResult.stdout.toString().trim();
+            await this.bareCommitFromIndex({
+              indexFile,
+              message,
+              authorName,
+              authorEmail,
+              parent,
+            });
+          } finally {
+            try {
+              await fs.rm(indexFile, { force: true });
+            } catch {
+              // ignore
+            }
+          }
+        });
         return;
       }
 
@@ -738,16 +964,45 @@ export class GitService {
   ): Promise<string> {
     try {
       if (this.isBare) {
-        const keepRel = path.join(dirPath, '.gitkeep').replaceAll('\\', '/');
-        // 空 blob
-        const blobSha = await this.writeBlobFromContent(new Uint8Array(0));
-        await this.updateIndexAddBlob(keepRel, blobSha, '100644');
+        return await this.withWriteLock(async () => {
+          const keepRel = path.join(dirPath, '.gitkeep').replaceAll('\\', '/');
+          const blobSha = await this.writeBlobFromContent(new Uint8Array(0));
+          const indexFile = path.join(this.dir, `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+          try {
+            const readTree = Bun.spawn(['git', 'read-tree', 'HEAD'], {
+              cwd: this.dir,
+              stdout: 'ignore',
+              stderr: 'pipe',
+              env: { ...process.env, GIT_INDEX_FILE: indexFile },
+            });
+            const rc = await readTree.exited;
+            if (rc !== 0) {
+              const err = await new Response(readTree.stderr).text();
+              throw new Error(err || 'git read-tree HEAD 失败');
+            }
 
-        const authorName = author?.name || 'VFiles User';
-        const authorEmail = author?.email || 'user@vfiles.local';
-        await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(this.dir);
-        const result = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
-        return result.stdout.toString().trim();
+            await this.updateIndexAddBlob(keepRel, blobSha, '100644', indexFile);
+
+            const authorName = author?.name || 'VFiles User';
+            const authorEmail = author?.email || 'user@vfiles.local';
+            const parentResult = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
+            const parent = parentResult.stdout.toString().trim();
+            const commit = await this.bareCommitFromIndex({
+              indexFile,
+              message,
+              authorName,
+              authorEmail,
+              parent,
+            });
+            return commit;
+          } finally {
+            try {
+              await fs.rm(indexFile, { force: true });
+            } catch {
+              // ignore
+            }
+          }
+        });
       }
 
       const fullDir = path.join(this.dir, dirPath);
@@ -794,68 +1049,98 @@ export class GitService {
   ): Promise<string> {
     try {
       if (this.isBare) {
-        const fromRel = this.normalizeRelPath(fromPath);
-        const toRel = this.normalizeRelPath(toPath);
+        return await this.withWriteLock(async () => {
+          const fromRel = this.normalizeRelPath(fromPath);
+          const toRel = this.normalizeRelPath(toPath);
+          const indexFile = path.join(this.dir, `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+          try {
+            const readTree = Bun.spawn(['git', 'read-tree', 'HEAD'], {
+              cwd: this.dir,
+              stdout: 'ignore',
+              stderr: 'pipe',
+              env: { ...process.env, GIT_INDEX_FILE: indexFile },
+            });
+            const rc = await readTree.exited;
+            if (rc !== 0) {
+              const err = await new Response(readTree.stderr).text();
+              throw new Error(err || 'git read-tree HEAD 失败');
+            }
 
-        // 先尝试作为文件
-        const lsFile = Bun.spawn(['git', 'ls-tree', '-z', 'HEAD', '--', fromRel], {
-          cwd: this.dir,
-          stdout: 'pipe',
-          stderr: 'pipe',
+            // 先尝试作为文件
+            const lsFile = Bun.spawn(['git', 'ls-tree', '-z', 'HEAD', '--', fromRel], {
+              cwd: this.dir,
+              stdout: 'pipe',
+              stderr: 'pipe',
+            });
+            const out = new TextDecoder().decode(
+              new Uint8Array(await new Response(lsFile.stdout).arrayBuffer())
+            );
+            await lsFile.exited;
+
+            if (out && out.includes('\t')) {
+              const rec = out.split('\0').filter(Boolean)[0];
+              const tab = rec.indexOf('\t');
+              const meta = rec.slice(0, tab).trim().split(/\s+/);
+              const mode = meta[0] || '100644';
+              const sha = meta[2];
+              if (!sha) throw new Error('读取源文件失败');
+
+              await this.updateIndexAddBlob(toRel, sha, mode, indexFile);
+              await this.updateIndexRemovePath(fromRel, indexFile);
+            } else {
+              const proc = Bun.spawn(['git', 'ls-tree', '-r', '-z', 'HEAD', '--', fromRel], {
+                cwd: this.dir,
+                stdout: 'pipe',
+                stderr: 'pipe',
+              });
+              const code = await proc.exited;
+              if (code !== 0) {
+                const err = await new Response(proc.stderr).text();
+                throw new Error(err || '路径不存在');
+              }
+              const text = new TextDecoder().decode(
+                new Uint8Array(await new Response(proc.stdout).arrayBuffer())
+              );
+              const records = text.split('\0').filter(Boolean);
+              if (records.length === 0) throw new Error('路径不存在');
+
+              for (const rec of records) {
+                const tab = rec.indexOf('\t');
+                if (tab <= 0) continue;
+                const meta = rec.slice(0, tab).trim().split(/\s+/);
+                const mode = meta[0] || '100644';
+                const sha = meta[2];
+                const name = rec.slice(tab + 1);
+                if (!sha || !name) continue;
+                const src = name;
+                if (!src.startsWith(fromRel)) continue;
+                const suffix = src.slice(fromRel.length).replace(/^\//, '');
+                const dst = `${toRel}/${suffix}`;
+                await this.updateIndexAddBlob(dst, sha, mode, indexFile);
+                await this.updateIndexRemovePath(src, indexFile);
+              }
+            }
+
+            const authorName = author?.name || 'VFiles User';
+            const authorEmail = author?.email || 'user@vfiles.local';
+            const parentResult = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
+            const parent = parentResult.stdout.toString().trim();
+            const commit = await this.bareCommitFromIndex({
+              indexFile,
+              message,
+              authorName,
+              authorEmail,
+              parent,
+            });
+            return commit;
+          } finally {
+            try {
+              await fs.rm(indexFile, { force: true });
+            } catch {
+              // ignore
+            }
+          }
         });
-        const out = new TextDecoder().decode(new Uint8Array(await new Response(lsFile.stdout).arrayBuffer()));
-        await lsFile.exited;
-
-        if (out && out.includes('\t')) {
-          const rec = out.split('\0').filter(Boolean)[0];
-          const tab = rec.indexOf('\t');
-          const meta = rec.slice(0, tab).trim().split(/\s+/);
-          const mode = meta[0] || '100644';
-          const sha = meta[2];
-          if (!sha) throw new Error('读取源文件失败');
-
-          await this.updateIndexAddBlob(toRel, sha, mode);
-          await this.updateIndexRemovePath(fromRel);
-        } else {
-          // 目录：递归列出其下全部文件（包含 sha）
-          const proc = Bun.spawn(['git', 'ls-tree', '-r', '-z', 'HEAD', '--', fromRel], {
-            cwd: this.dir,
-            stdout: 'pipe',
-            stderr: 'pipe',
-          });
-          const code = await proc.exited;
-          if (code !== 0) {
-            const err = await new Response(proc.stderr).text();
-            throw new Error(err || '路径不存在');
-          }
-          const text = new TextDecoder().decode(new Uint8Array(await new Response(proc.stdout).arrayBuffer()));
-          const records = text.split('\0').filter(Boolean);
-          if (records.length === 0) throw new Error('路径不存在');
-
-          for (const rec of records) {
-            const tab = rec.indexOf('\t');
-            if (tab <= 0) continue;
-            const meta = rec.slice(0, tab).trim().split(/\s+/);
-            const mode = meta[0] || '100644';
-            const sha = meta[2];
-            const name = rec.slice(tab + 1);
-            if (!sha || !name) continue;
-
-            // name 为 fromRel 下的相对路径或完整路径（git 返回的是相对仓库根的路径）
-            const src = name;
-            if (!src.startsWith(fromRel)) continue;
-            const suffix = src.slice(fromRel.length).replace(/^\//, '');
-            const dst = `${toRel}/${suffix}`;
-            await this.updateIndexAddBlob(dst, sha, mode);
-            await this.updateIndexRemovePath(src);
-          }
-        }
-
-        const authorName = author?.name || 'VFiles User';
-        const authorEmail = author?.email || 'user@vfiles.local';
-        await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(this.dir);
-        const result = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
-        return result.stdout.toString().trim();
       }
 
       const fromFull = path.join(this.dir, fromPath);
