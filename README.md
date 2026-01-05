@@ -84,6 +84,10 @@ bun run start
 
 访问 http://localhost:3000
 
+### 打包发布（运行时不依赖 node_modules）
+
+见 [DEPLOYMENT.md](./DEPLOYMENT.md) 的“打包发布（运行时不依赖 node_modules）”。
+
 ## 📖 文档
 
 - [架构设计](./ARCHITECTURE.md) - 系统架构和设计文档

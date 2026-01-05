@@ -62,6 +62,79 @@ bun run start
 
 默认访问：`http://localhost:3000`
 
+## 打包发布（运行时不依赖 node_modules）
+
+目标：产出一个“可发布目录”，运行时只需要：
+- 服务端可执行文件（由 `bun build --compile` 生成）
+- 前端静态资源目录 `client/dist/`
+- （可选）`.env` 配置文件与数据目录（`data/` 或 `data.git/`）
+
+> 说明：此方式不会在目标机器上依赖 `node_modules`。但仍然需要系统安装 `git`（VFiles 通过 git 子进程工作）。
+
+### 1) 构建前端静态资源
+
+在项目根目录执行：
+
+```bash
+bun install
+cd client && bun install
+bun run build
+```
+
+构建产物会生成在：`client/dist/`
+
+### 2) 编译服务端为可执行文件
+
+在项目根目录执行：
+
+```bash
+bun build --compile server/src/index.ts --outfile dist/vfiles
+```
+
+- Windows 上一般会生成 `dist/vfiles.exe`
+- Linux/macOS 上会生成对应平台的可执行文件
+
+> 注意：可执行文件需要在“目标平台”上构建（Windows 构建 Windows 版，Linux 构建 Linux 版）。
+
+### 3) 组装发布目录
+
+推荐目录结构（示例）：
+
+```
+release/
+	vfiles(.exe)
+	.env                # 可选
+	client/dist/         # 必须（生产模式下后端会托管该目录）
+	data/                # 可选（worktree 模式）
+	data.git/            # 可选（bare 模式）
+	.vfiles_uploads/     # 运行时自动创建（可选预建）
+	.vfiles_download_cache/
+```
+
+将以下内容复制到 `release/`：
+- `dist/vfiles(.exe)`
+- `client/dist/`
+- （可选）`.env`（可从 `.env.example` 改名生成）
+
+### 4) 运行
+
+在 `release/` 目录下启动（确保 `NODE_ENV=production`）：
+
+```bash
+NODE_ENV=production ./vfiles
+```
+
+或在 Windows PowerShell：
+
+```powershell
+$env:NODE_ENV="production"; .\vfiles.exe
+```
+
+验收标准：
+- 访问 `/health` 返回 `ok`
+- 访问根路径能加载前端页面（依赖 `client/dist/index.html` 存在）
+- `/api/files?path=` 返回 `success=true`
+
 ## REPO_MODE 建议
 
 - `worktree`：磁盘上能直接看到文件，适合本地/小规模使用。
