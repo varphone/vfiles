@@ -511,11 +511,12 @@ export class GitService {
   async listFiles(dirPath: string = ''): Promise<FileInfo[]> {
     if (this.isBare) {
       // 从 HEAD 的 tree 列出目录项
-      const args = ['git', 'ls-tree', '-z', '-l', 'HEAD'];
       const normalizedDir = dirPath ? normalizePathForGit(dirPath) : '';
-      if (normalizedDir) {
-        args.push('--', normalizedDir);
-      }
+      // 注意：`git ls-tree HEAD -- <dir>` 在 <dir> 是 tree 时会返回“dir 自身”这一条目，
+      // 这会导致空目录被显示为自己的子目录（dir/dir）。
+      // 使用 `HEAD:<dir>` 才能列出目录内容。
+      const treeish = normalizedDir ? `HEAD:${normalizedDir}` : 'HEAD';
+      const args = ['git', 'ls-tree', '-z', '-l', treeish];
 
       const proc = Bun.spawn(args, { cwd: this.dir, stdout: 'pipe', stderr: 'pipe' });
       const code = await proc.exited;
