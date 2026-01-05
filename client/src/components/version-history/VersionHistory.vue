@@ -1,5 +1,39 @@
 <template>
   <div class="version-history">
+    <div v-if="diff.open" class="box mb-4">
+      <div class="level is-mobile">
+        <div class="level-left">
+          <div class="level-item">
+            <div>
+              <p class="heading">对比视图（文本）</p>
+              <p class="title is-6">
+                <code class="is-size-7">{{ diff.hash.substring(0, 8) }}</code>
+                <span class="ml-2">{{ previewView.filename }}</span>
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="level-right">
+          <div class="level-item">
+            <button class="button is-small" @click="closeDiff">关闭</button>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="diff.loading" class="has-text-centered py-5">
+        <div class="spinner mb-3"></div>
+        <p class="has-text-grey">加载 diff 中...</p>
+      </div>
+
+      <div v-else-if="diff.error" class="notification is-warning is-light">
+        {{ diff.error }}
+      </div>
+
+      <div v-else class="content">
+        <pre class="diff-text">{{ diff.text }}</pre>
+      </div>
+    </div>
+
     <div v-if="preview.open" class="box mb-4">
       <div class="level is-mobile">
         <div class="level-left">
@@ -104,6 +138,13 @@
                       <IconEye :size="18" />
                     </button>
                     <button
+                      class="button is-small is-link is-light"
+                      @click="viewDiff(commit.hash, commit.parent?.[0])"
+                      title="对比此版本（文本）"
+                    >
+                      <IconArrowsDiff :size="18" />
+                    </button>
+                    <button
                       class="button is-small is-warning is-light"
                       @click="restoreVersion(commit.hash)"
                       :disabled="commit.hash === history.currentVersion || restoringHash === commit.hash"
@@ -145,6 +186,7 @@ import {
   IconEye,
   IconDownload,
   IconRestore,
+  IconArrowsDiff,
 } from '@tabler/icons-vue';
 import { filesService } from '../../services/files.service';
 import { useAppStore } from '../../stores/app.store';
@@ -165,6 +207,15 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 const limit = ref(20);
 const restoringHash = ref<string | null>(null);
+
+const diff = ref({
+  open: false,
+  loading: false,
+  error: null as string | null,
+  hash: '',
+  parent: '' as string | undefined,
+  text: '',
+});
 
 type PreviewKind = 'text' | 'image' | 'unsupported';
 const preview = ref({
@@ -269,8 +320,20 @@ function closePreview() {
   };
 }
 
+function closeDiff() {
+  diff.value = {
+    open: false,
+    loading: false,
+    error: null,
+    hash: '',
+    parent: undefined,
+    text: '',
+  };
+}
+
 onBeforeUnmount(() => {
   closePreview();
+  closeDiff();
 });
 
 async function viewVersion(hash: string) {
@@ -298,6 +361,34 @@ async function viewVersion(hash: string) {
     preview.value.error = err instanceof Error ? err.message : '预览失败';
   } finally {
     preview.value.loading = false;
+  }
+}
+
+async function viewDiff(hash: string, parent?: string) {
+  closePreview();
+  closeDiff();
+
+  const kind = detectPreviewKind(props.filePath);
+  if (kind !== 'text') {
+    diff.value.open = true;
+    diff.value.error = '仅支持文本文件的对比视图，请使用下载。';
+    return;
+  }
+
+  diff.value.open = true;
+  diff.value.loading = true;
+  diff.value.hash = hash;
+  diff.value.parent = parent;
+
+  try {
+    diff.value.text = await filesService.getFileDiff(props.filePath, hash, parent);
+    if (!diff.value.text.trim()) {
+      diff.value.text = '(无差异输出)';
+    }
+  } catch (err) {
+    diff.value.error = err instanceof Error ? err.message : '获取 diff 失败';
+  } finally {
+    diff.value.loading = false;
   }
 }
 
@@ -418,6 +509,12 @@ function loadMore() {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.diff-text {
+  max-height: 45vh;
+  overflow: auto;
+  white-space: pre;
 }
 
 @media screen and (max-width: 768px) {

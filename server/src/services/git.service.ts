@@ -264,6 +264,31 @@ export class GitService {
   }
 
   /**
+   * 获取某个版本的变更(diff)，用于文本文件最小 diff 视图。
+   * - 若提供 parentHash，则返回 parent..commit 的 unified diff
+   * - 否则返回该 commit 对该文件的 patch（git show）
+   */
+  async getFileDiff(filePath: string, commitHash: string, parentHash?: string): Promise<string> {
+    try {
+      const normalized = normalizePathForGit(filePath);
+
+      if (parentHash) {
+        const result = await $`git diff --unified=3 ${parentHash} ${commitHash} -- ${normalized}`
+          .cwd(this.dir)
+          .quiet();
+        return result.stdout.toString();
+      }
+
+      const result = await $`git show --pretty=format: --unified=3 ${commitHash} -- ${normalized}`
+        .cwd(this.dir)
+        .quiet();
+      return result.stdout.toString();
+    } catch (error) {
+      throw new Error(`获取 diff 失败: ${error}`);
+    }
+  }
+
+  /**
    * 获取提交详情
    */
   async getCommitDetails(hash: string): Promise<CommitInfo> {

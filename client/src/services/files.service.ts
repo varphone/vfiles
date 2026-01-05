@@ -52,6 +52,18 @@ export const filesService = {
   },
 
   /**
+   * 获取某个版本的 diff（unified diff 文本）
+   */
+  async getFileDiff(path: string, commit: string, parent?: string): Promise<string> {
+    const params = parent ? { path, commit, parent } : { path, commit };
+    const response = await fetch(`/api/history/diff?${new URLSearchParams(params)}`);
+    if (!response.ok) {
+      throw new Error('获取 diff 失败');
+    }
+    return response.text();
+  },
+
+  /**
    * 下载文件
    */
   downloadFile(path: string, commit?: string): void {
