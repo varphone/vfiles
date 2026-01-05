@@ -11,7 +11,12 @@
       <div class="media-content">
         <div class="content">
           <p class="file-name">
-            <strong>{{ file.name }}</strong>
+            <strong>
+              <template v-for="(seg, i) in nameSegments" :key="i">
+                <mark v-if="seg.match" class="has-background-warning-light">{{ seg.text }}</mark>
+                <span v-else>{{ seg.text }}</span>
+              </template>
+            </strong>
           </p>
           <p class="file-info">
             <span v-if="file.type === 'file'" class="tag is-light mr-2">
@@ -76,6 +81,7 @@ import type { FileInfo } from '../../types';
 
 const props = defineProps<{
   file: FileInfo;
+  highlight?: string;
 }>();
 
 const emit = defineEmits<{
@@ -104,6 +110,39 @@ const icon = computed(() => {
   }
 
   return IconFile;
+});
+
+type NameSegment = { text: string; match: boolean };
+
+const nameSegments = computed<NameSegment[]>(() => {
+  const name = props.file.name ?? '';
+  const needleRaw = (props.highlight ?? '').trim();
+  if (!needleRaw) return [{ text: name, match: false }];
+
+  const hay = name;
+  const hayLower = hay.toLowerCase();
+  const needle = needleRaw.toLowerCase();
+
+  if (!needle) return [{ text: name, match: false }];
+
+  const segments: NameSegment[] = [];
+  let start = 0;
+
+  while (start < hay.length) {
+    const idx = hayLower.indexOf(needle, start);
+    if (idx === -1) {
+      segments.push({ text: hay.slice(start), match: false });
+      break;
+    }
+
+    if (idx > start) {
+      segments.push({ text: hay.slice(start, idx), match: false });
+    }
+    segments.push({ text: hay.slice(idx, idx + needle.length), match: true });
+    start = idx + needle.length;
+  }
+
+  return segments.length ? segments : [{ text: name, match: false }];
 });
 
 function formatSize(bytes: number): string {

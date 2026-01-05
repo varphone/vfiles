@@ -79,6 +79,7 @@
           v-for="file in searchResults"
           :key="file.path"
           :file="file"
+          :highlight="searchQuery"
           @click="handleSearchItemClick"
           @download="handleDownload"
           @delete="handleDelete"
