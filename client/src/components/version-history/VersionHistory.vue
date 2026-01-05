@@ -57,7 +57,11 @@
               >
                 <IconDownload :size="18" />
               </button>
-              <button class="button is-small" @click="closePreview" title="关闭预览">
+              <button
+                class="button is-small"
+                @click="closePreview"
+                title="关闭预览"
+              >
                 关闭
               </button>
             </div>
@@ -76,11 +80,20 @@
 
       <div v-else>
         <figure v-if="preview.kind === 'image'" class="image">
-          <img :src="preview.objectUrl" :alt="previewView.filename" loading="lazy" decoding="async" />
+          <img
+            :src="preview.objectUrl"
+            :alt="previewView.filename"
+            loading="lazy"
+            decoding="async"
+          />
         </figure>
 
         <div v-else-if="preview.kind === 'pdf'" class="preview-frame">
-          <iframe :src="preview.objectUrl" title="PDF 预览" class="preview-iframe" />
+          <iframe
+            :src="preview.objectUrl"
+            title="PDF 预览"
+            class="preview-iframe"
+          />
         </div>
 
         <div v-else-if="preview.kind === 'video'" class="preview-media">
@@ -91,10 +104,16 @@
           <audio :src="preview.objectUrl" controls class="preview-audio" />
         </div>
 
-        <div v-else-if="preview.kind === 'markdown'" class="content markdown-body" v-html="preview.html"></div>
+        <div
+          v-else-if="preview.kind === 'markdown'"
+          class="content markdown-body"
+          v-html="preview.html"
+        ></div>
 
         <div v-else-if="preview.kind === 'code'" class="content">
-          <pre class="preview-code hljs"><code v-html="preview.html"></code></pre>
+          <pre
+            class="preview-code hljs"
+          ><code v-html="preview.html"></code></pre>
         </div>
 
         <div v-else-if="preview.kind === 'text'" class="content">
@@ -116,7 +135,10 @@
       {{ error }}
     </div>
 
-    <div v-else-if="history.commits.length === 0" class="has-text-centered py-6">
+    <div
+      v-else-if="history.commits.length === 0"
+      class="has-text-centered py-6"
+    >
       <IconHistory :size="64" class="has-text-grey-light mb-3" />
       <p class="has-text-grey">暂无历史记录</p>
     </div>
@@ -133,23 +155,22 @@
       @download-version="downloadVersion"
     />
 
-    <div v-if="history.totalCommits > history.commits.length" class="has-text-centered mt-4">
-      <button class="button is-light" @click="loadMore">
-        加载更多
-      </button>
+    <div
+      v-if="history.totalCommits > history.commits.length"
+      class="has-text-centered mt-4"
+    >
+      <button class="button is-light" @click="loadMore">加载更多</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeUnmount, computed, watch } from 'vue';
-import {
-  IconHistory,
-} from '@tabler/icons-vue';
-import { filesService } from '../../services/files.service';
-import { useAppStore } from '../../stores/app.store';
-import type { FileHistory } from '../../types';
-import CommitList from './CommitList.vue';
+import { ref, onBeforeUnmount, computed, watch } from "vue";
+import { IconHistory } from "@tabler/icons-vue";
+import { filesService } from "../../services/files.service";
+import { useAppStore } from "../../stores/app.store";
+import type { FileHistory } from "../../types";
+import CommitList from "./CommitList.vue";
 
 let cachedMarked: any | null = null;
 let cachedHljs: any | null = null;
@@ -162,7 +183,7 @@ const appStore = useAppStore();
 
 const history = ref<FileHistory>({
   commits: [],
-  currentVersion: '',
+  currentVersion: "",
   totalCommits: 0,
 });
 const loading = ref(false);
@@ -177,26 +198,38 @@ const diff = ref({
   open: false,
   loading: false,
   error: null as string | null,
-  hash: '',
-  parent: '' as string | undefined,
-  text: '',
+  hash: "",
+  parent: "" as string | undefined,
+  text: "",
 });
 
-type PreviewKind = 'text' | 'image' | 'markdown' | 'code' | 'pdf' | 'video' | 'audio' | 'unsupported';
+type PreviewKind =
+  | "text"
+  | "image"
+  | "markdown"
+  | "code"
+  | "pdf"
+  | "video"
+  | "audio"
+  | "unsupported";
 const preview = ref({
   open: false,
   loading: false,
   error: null as string | null,
-  hash: '',
-  kind: 'text' as PreviewKind,
-  text: '',
-  html: '',
-  objectUrl: '',
-  mime: '',
+  hash: "",
+  kind: "text" as PreviewKind,
+  text: "",
+  html: "",
+  objectUrl: "",
+  mime: "",
 });
 
-const previewFilename = computed(() => props.filePath.split('/').pop() || 'file');
-const previewHashShort = computed(() => (preview.value.hash ? preview.value.hash.substring(0, 8) : ''));
+const previewFilename = computed(
+  () => props.filePath.split("/").pop() || "file",
+);
+const previewHashShort = computed(() =>
+  preview.value.hash ? preview.value.hash.substring(0, 8) : "",
+);
 
 const previewView = computed(() => {
   return {
@@ -212,7 +245,7 @@ watch(
     // filePath 变化时重置所有本地状态，避免复用组件导致历史/预览/对比残留
     historyRequestId++;
     limit.value = DEFAULT_LIMIT;
-    history.value = { commits: [], currentVersion: '', totalCommits: 0 };
+    history.value = { commits: [], currentVersion: "", totalCommits: 0 };
     loading.value = false;
     error.value = null;
     restoringHash.value = null;
@@ -220,7 +253,7 @@ watch(
     closeDiff();
     void loadHistory();
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 async function loadHistory() {
@@ -234,7 +267,7 @@ async function loadHistory() {
     history.value = data;
   } catch (err) {
     if (reqId !== historyRequestId) return;
-    error.value = err instanceof Error ? err.message : '加载失败';
+    error.value = err instanceof Error ? err.message : "加载失败";
   } finally {
     if (reqId !== historyRequestId) return;
     loading.value = false;
@@ -242,87 +275,109 @@ async function loadHistory() {
 }
 
 function formatDate(date: string): string {
-  return new Date(date).toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
+  return new Date(date).toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
 function getParentDir(filePath: string): string {
-  const idx = filePath.lastIndexOf('/');
-  if (idx <= 0) return '';
+  const idx = filePath.lastIndexOf("/");
+  if (idx <= 0) return "";
   return filePath.slice(0, idx);
 }
 
 function getExtension(p: string): string {
-  const name = p.split('/').pop() || '';
-  const idx = name.lastIndexOf('.');
-  if (idx <= 0 || idx === name.length - 1) return '';
+  const name = p.split("/").pop() || "";
+  const idx = name.lastIndexOf(".");
+  if (idx <= 0 || idx === name.length - 1) return "";
   return name.slice(idx + 1).toLowerCase();
 }
 
 function escapeHtml(input: string): string {
   return input
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function safeLinkHref(href: string | null | undefined): string {
-  const raw = (href || '').trim();
-  if (!raw) return '#';
+  const raw = (href || "").trim();
+  if (!raw) return "#";
   // 允许相对路径、锚点、http(s)、mailto
-  if (raw.startsWith('#')) return raw;
-  if (raw.startsWith('/')) return raw;
+  if (raw.startsWith("#")) return raw;
+  if (raw.startsWith("/")) return raw;
   if (/^https?:\/\//i.test(raw)) return raw;
   if (/^mailto:/i.test(raw)) return raw;
-  return '#';
+  return "#";
 }
 
 function safeImageSrc(src: string | null | undefined): string {
-  const raw = (src || '').trim();
-  if (!raw) return '';
+  const raw = (src || "").trim();
+  if (!raw) return "";
   if (/^https?:\/\//i.test(raw)) return raw;
   if (/^data:image\//i.test(raw)) return raw;
-  if (raw.startsWith('/')) return raw;
-  return '';
+  if (raw.startsWith("/")) return raw;
+  return "";
 }
 
 async function getMarked() {
   if (cachedMarked) return cachedMarked;
-  const mod: any = await import('marked');
+  const mod: any = await import("marked");
   const markedApi = mod?.marked ?? mod;
 
   const mdRenderer: any = {
     html(token: any) {
-      const html = typeof token === 'string' ? token : token?.text ?? token?.raw ?? '';
+      const html =
+        typeof token === "string" ? token : (token?.text ?? token?.raw ?? "");
       return escapeHtml(String(html));
     },
     link(tokenOrHref: any, title?: any, text?: any) {
-      const href = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.href : tokenOrHref;
-      const linkTitle = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.title : title;
-      const linkText = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.text : text;
+      const href =
+        tokenOrHref && typeof tokenOrHref === "object"
+          ? tokenOrHref.href
+          : tokenOrHref;
+      const linkTitle =
+        tokenOrHref && typeof tokenOrHref === "object"
+          ? tokenOrHref.title
+          : title;
+      const linkText =
+        tokenOrHref && typeof tokenOrHref === "object"
+          ? tokenOrHref.text
+          : text;
 
       const safeHref = safeLinkHref(href);
-      const t = linkTitle ? ` title="${escapeHtml(String(linkTitle))}"` : '';
-      const inner = typeof linkText === 'string' ? (markedApi.parseInline(linkText) as string) : '';
+      const t = linkTitle ? ` title="${escapeHtml(String(linkTitle))}"` : "";
+      const inner =
+        typeof linkText === "string"
+          ? (markedApi.parseInline(linkText) as string)
+          : "";
       return `<a href="${escapeHtml(safeHref)}"${t} target="_blank" rel="noopener noreferrer">${inner}</a>`;
     },
     image(tokenOrHref: any, title?: any, text?: any) {
-      const href = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.href : tokenOrHref;
-      const imgTitle = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.title : title;
-      const altText = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.text : text;
+      const href =
+        tokenOrHref && typeof tokenOrHref === "object"
+          ? tokenOrHref.href
+          : tokenOrHref;
+      const imgTitle =
+        tokenOrHref && typeof tokenOrHref === "object"
+          ? tokenOrHref.title
+          : title;
+      const altText =
+        tokenOrHref && typeof tokenOrHref === "object"
+          ? tokenOrHref.text
+          : text;
 
       const safeSrc = safeImageSrc(href);
-      if (!safeSrc) return '';
+      if (!safeSrc) return "";
 
-      const t = imgTitle ? ` title="${escapeHtml(String(imgTitle))}"` : '';
-      const alt = altText ? escapeHtml(String(altText)) : '';
+      const t = imgTitle ? ` title="${escapeHtml(String(imgTitle))}"` : "";
+      const alt = altText ? escapeHtml(String(altText)) : "";
       return `<img src="${escapeHtml(safeSrc)}" alt="${alt}" loading="lazy" decoding="async"${t} />`;
     },
   };
@@ -339,83 +394,88 @@ async function getMarked() {
 
 async function getHljs() {
   if (cachedHljs) return cachedHljs;
-  const mod: any = await import('highlight.js');
+  const mod: any = await import("highlight.js");
   cachedHljs = mod?.default ?? mod;
   return cachedHljs;
 }
 
 function detectPreviewKind(filePath: string): PreviewKind {
   const ext = getExtension(filePath);
-  const imageExts = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
-  if (imageExts.has(ext)) return 'image';
+  const imageExts = new Set([
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "webp",
+    "bmp",
+    "svg",
+  ]);
+  if (imageExts.has(ext)) return "image";
 
-  if (ext === 'pdf') return 'pdf';
+  if (ext === "pdf") return "pdf";
 
-  const videoExts = new Set(['mp4', 'webm', 'ogg', 'mov', 'm4v']);
-  if (videoExts.has(ext)) return 'video';
+  const videoExts = new Set(["mp4", "webm", "ogg", "mov", "m4v"]);
+  if (videoExts.has(ext)) return "video";
 
-  const audioExts = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac']);
-  if (audioExts.has(ext)) return 'audio';
+  const audioExts = new Set(["mp3", "wav", "ogg", "m4a", "aac", "flac"]);
+  if (audioExts.has(ext)) return "audio";
 
-  const mdExts = new Set(['md', 'markdown']);
-  if (mdExts.has(ext)) return 'markdown';
+  const mdExts = new Set(["md", "markdown"]);
+  if (mdExts.has(ext)) return "markdown";
 
   const codeExts = new Set([
-    'js',
-    'ts',
-    'jsx',
-    'tsx',
-    'vue',
-    'json',
-    'css',
-    'scss',
-    'html',
-    'xml',
-    'yml',
-    'yaml',
-    'csv',
-    'log',
-    'sh',
-    'py',
-    'java',
-    'c',
-    'cpp',
-    'go',
-    'rs',
+    "js",
+    "ts",
+    "jsx",
+    "tsx",
+    "vue",
+    "json",
+    "css",
+    "scss",
+    "html",
+    "xml",
+    "yml",
+    "yaml",
+    "csv",
+    "log",
+    "sh",
+    "py",
+    "java",
+    "c",
+    "cpp",
+    "go",
+    "rs",
   ]);
-  if (codeExts.has(ext)) return 'code';
+  if (codeExts.has(ext)) return "code";
 
-  const textExts = new Set([
-    'txt',
-    'log',
-  ]);
-  if (textExts.has(ext) || ext === '') return 'text';
+  const textExts = new Set(["txt", "log"]);
+  if (textExts.has(ext) || ext === "") return "text";
 
-  return 'unsupported';
+  return "unsupported";
 }
 
 function guessMimeByExt(filePath: string): string {
   const ext = getExtension(filePath);
-  if (ext === 'pdf') return 'application/pdf';
-  if (ext === 'svg') return 'image/svg+xml';
-  if (ext === 'png') return 'image/png';
-  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-  if (ext === 'gif') return 'image/gif';
-  if (ext === 'webp') return 'image/webp';
-  if (ext === 'bmp') return 'image/bmp';
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "svg") return "image/svg+xml";
+  if (ext === "png") return "image/png";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "gif") return "image/gif";
+  if (ext === "webp") return "image/webp";
+  if (ext === "bmp") return "image/bmp";
 
-  if (ext === 'mp4' || ext === 'm4v') return 'video/mp4';
-  if (ext === 'webm') return 'video/webm';
-  if (ext === 'mov') return 'video/quicktime';
-  if (ext === 'ogg') return 'application/ogg';
+  if (ext === "mp4" || ext === "m4v") return "video/mp4";
+  if (ext === "webm") return "video/webm";
+  if (ext === "mov") return "video/quicktime";
+  if (ext === "ogg") return "application/ogg";
 
-  if (ext === 'mp3') return 'audio/mpeg';
-  if (ext === 'wav') return 'audio/wav';
-  if (ext === 'm4a') return 'audio/mp4';
-  if (ext === 'aac') return 'audio/aac';
-  if (ext === 'flac') return 'audio/flac';
+  if (ext === "mp3") return "audio/mpeg";
+  if (ext === "wav") return "audio/wav";
+  if (ext === "m4a") return "audio/mp4";
+  if (ext === "aac") return "audio/aac";
+  if (ext === "flac") return "audio/flac";
 
-  return 'application/octet-stream';
+  return "application/octet-stream";
 }
 
 function closePreview() {
@@ -424,12 +484,12 @@ function closePreview() {
     open: false,
     loading: false,
     error: null,
-    hash: '',
-    kind: 'text',
-    text: '',
-    html: '',
-    objectUrl: '',
-    mime: '',
+    hash: "",
+    kind: "text",
+    text: "",
+    html: "",
+    objectUrl: "",
+    mime: "",
   };
 }
 
@@ -438,9 +498,9 @@ function closeDiff() {
     open: false,
     loading: false,
     error: null,
-    hash: '',
+    hash: "",
     parent: undefined,
-    text: '',
+    text: "",
   };
 }
 
@@ -458,25 +518,32 @@ async function viewVersion(hash: string) {
   preview.value.kind = detectPreviewKind(props.filePath);
 
   try {
-    if (preview.value.kind === 'unsupported') {
+    if (preview.value.kind === "unsupported") {
       preview.value.loading = false;
       return;
     }
 
     const blob = await filesService.getFileContent(props.filePath, hash);
 
-    if (preview.value.kind === 'image' || preview.value.kind === 'pdf') {
-      const typed = new Blob([await blob.arrayBuffer()], { type: guessMimeByExt(props.filePath) });
+    if (preview.value.kind === "image" || preview.value.kind === "pdf") {
+      const typed = new Blob([await blob.arrayBuffer()], {
+        type: guessMimeByExt(props.filePath),
+      });
       preview.value.objectUrl = URL.createObjectURL(typed);
-    } else if (preview.value.kind === 'video' || preview.value.kind === 'audio') {
-      const typed = new Blob([await blob.arrayBuffer()], { type: guessMimeByExt(props.filePath) });
+    } else if (
+      preview.value.kind === "video" ||
+      preview.value.kind === "audio"
+    ) {
+      const typed = new Blob([await blob.arrayBuffer()], {
+        type: guessMimeByExt(props.filePath),
+      });
       preview.value.objectUrl = URL.createObjectURL(typed);
     } else {
       const text = await blob.text();
-      if (preview.value.kind === 'markdown') {
+      if (preview.value.kind === "markdown") {
         const markedApi = await getMarked();
         preview.value.html = markedApi.parse(text) as string;
-      } else if (preview.value.kind === 'code') {
+      } else if (preview.value.kind === "code") {
         const hljsApi = await getHljs();
         const highlighted = hljsApi.highlightAuto(text);
         preview.value.html = highlighted.value;
@@ -485,7 +552,7 @@ async function viewVersion(hash: string) {
       }
     }
   } catch (err) {
-    preview.value.error = err instanceof Error ? err.message : '预览失败';
+    preview.value.error = err instanceof Error ? err.message : "预览失败";
   } finally {
     preview.value.loading = false;
   }
@@ -496,9 +563,9 @@ async function viewDiff(hash: string, parent?: string) {
   closeDiff();
 
   const kind = detectPreviewKind(props.filePath);
-  if (kind !== 'text' && kind !== 'markdown' && kind !== 'code') {
+  if (kind !== "text" && kind !== "markdown" && kind !== "code") {
     diff.value.open = true;
-    diff.value.error = '仅支持文本文件的对比视图，请使用下载。';
+    diff.value.error = "仅支持文本文件的对比视图，请使用下载。";
     return;
   }
 
@@ -508,12 +575,16 @@ async function viewDiff(hash: string, parent?: string) {
   diff.value.parent = parent;
 
   try {
-    diff.value.text = await filesService.getFileDiff(props.filePath, hash, parent);
+    diff.value.text = await filesService.getFileDiff(
+      props.filePath,
+      hash,
+      parent,
+    );
     if (!diff.value.text.trim()) {
-      diff.value.text = '(无差异输出)';
+      diff.value.text = "(无差异输出)";
     }
   } catch (err) {
-    diff.value.error = err instanceof Error ? err.message : '获取 diff 失败';
+    diff.value.error = err instanceof Error ? err.message : "获取 diff 失败";
   } finally {
     diff.value.loading = false;
   }
@@ -524,21 +595,25 @@ async function restoreVersion(hash: string) {
   if (restoringHash.value) return;
 
   const short = hash.substring(0, 8);
-  const ok = window.confirm(`确定要恢复到版本 ${short} 吗？这会生成一个新的提交。`);
+  const ok = window.confirm(
+    `确定要恢复到版本 ${short} 吗？这会生成一个新的提交。`,
+  );
   if (!ok) return;
 
   restoringHash.value = hash;
   try {
     const blob = await filesService.getFileContent(props.filePath, hash);
-    const filename = props.filePath.split('/').pop() || 'file';
-    const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+    const filename = props.filePath.split("/").pop() || "file";
+    const file = new File([blob], filename, {
+      type: blob.type || "application/octet-stream",
+    });
     const dir = getParentDir(props.filePath);
 
     await filesService.uploadFile(file, dir, `恢复到版本 ${short}`);
-    appStore.success('已恢复并生成新版本');
+    appStore.success("已恢复并生成新版本");
     await loadHistory();
   } catch (err) {
-    appStore.error(err instanceof Error ? err.message : '恢复失败');
+    appStore.error(err instanceof Error ? err.message : "恢复失败");
   } finally {
     restoringHash.value = null;
   }
@@ -546,7 +621,7 @@ async function restoreVersion(hash: string) {
 
 function downloadVersion(hash: string) {
   filesService.downloadFile(props.filePath, hash);
-  appStore.success('开始下载历史版本');
+  appStore.success("开始下载历史版本");
 }
 
 function loadMore() {
@@ -588,7 +663,7 @@ function loadMore() {
 }
 
 :deep(.timeline-item)::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 0.5rem;
   top: 1.5rem;

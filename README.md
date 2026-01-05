@@ -26,12 +26,14 @@
 ### 安装步骤
 
 1. 克隆项目
+
 ```bash
 git clone <repository-url>
 cd vfiles
 ```
 
 2. 安装依赖
+
 ```bash
 # 安装根目录依赖
 bun install
@@ -43,6 +45,7 @@ cd ..
 ```
 
 3. 创建数据目录
+
 ```bash
 mkdir -p data
 ```
@@ -52,11 +55,13 @@ mkdir -p data
 ### 开发模式
 
 终端1 - 启动后端服务器:
+
 ```bash
 bun run dev
 ```
 
 终端2 - 启动前端开发服务器:
+
 ```bash
 bun run dev:client
 ```
@@ -66,11 +71,13 @@ bun run dev:client
 ### 生产模式
 
 1. 构建前端
+
 ```bash
 bun run build
 ```
 
 2. 启动服务器
+
 ```bash
 bun run start
 ```

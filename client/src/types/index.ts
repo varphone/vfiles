@@ -2,7 +2,7 @@
 export interface FileInfo {
   name: string;
   path: string;
-  type: 'file' | 'directory';
+  type: "file" | "directory";
   size: number;
   mtime: string;
   lastCommit?: CommitSummary;

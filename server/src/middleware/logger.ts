@@ -1,4 +1,4 @@
-import { Context, Next } from 'hono';
+import { Context, Next } from "hono";
 
 /**
  * 日志中间件

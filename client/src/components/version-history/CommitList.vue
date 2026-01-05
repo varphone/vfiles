@@ -17,9 +17,9 @@
 </template>
 
 <script setup lang="ts">
-import type { CommitInfo } from '../../types';
-import Timeline from './Timeline.vue';
-import CommitItem from './CommitItem.vue';
+import type { CommitInfo } from "../../types";
+import Timeline from "./Timeline.vue";
+import CommitItem from "./CommitItem.vue";
 
 defineProps<{
   commits: CommitInfo[];
@@ -29,9 +29,9 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'view-version', hash: string): void;
-  (e: 'view-diff', hash: string, parent?: string): void;
-  (e: 'restore-version', hash: string): void;
-  (e: 'download-version', hash: string): void;
+  (e: "view-version", hash: string): void;
+  (e: "view-diff", hash: string, parent?: string): void;
+  (e: "restore-version", hash: string): void;
+  (e: "download-version", hash: string): void;
 }>();
 </script>

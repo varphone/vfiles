@@ -19,7 +19,11 @@
         </div>
       </div>
 
-      <UploadQueue :items="queueView" @cancel="cancelItem" @remove="removeItem" />
+      <UploadQueue
+        :items="queueView"
+        @cancel="cancelItem"
+        @remove="removeItem"
+      />
 
       <div class="buttons mt-4">
         <button
@@ -39,7 +43,12 @@
         >
           取消
         </button>
-        <button class="button is-light" type="button" @click="close" :disabled="uploading">
+        <button
+          class="button is-light"
+          type="button"
+          @click="close"
+          :disabled="uploading"
+        >
           关闭
         </button>
       </div>
@@ -48,14 +57,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import {
-  IconUpload,
-} from '@tabler/icons-vue';
-import { useAppStore } from '../../stores/app.store';
-import { filesService } from '../../services/files.service';
-import DropZone from './DropZone.vue';
-import UploadQueue, { type UploadQueueItemView } from './UploadQueue.vue';
+import { ref, computed } from "vue";
+import { IconUpload } from "@tabler/icons-vue";
+import { useAppStore } from "../../stores/app.store";
+import { filesService } from "../../services/files.service";
+import DropZone from "./DropZone.vue";
+import UploadQueue, { type UploadQueueItemView } from "./UploadQueue.vue";
 
 const emit = defineEmits<{
   upload: [];
@@ -68,7 +75,7 @@ const props = defineProps<{
   targetPath: string;
 }>();
 
-type UploadStatus = 'queued' | 'uploading' | 'done' | 'error' | 'canceled';
+type UploadStatus = "queued" | "uploading" | "done" | "error" | "canceled";
 type UploadItem = {
   id: number;
   file: File;
@@ -80,9 +87,13 @@ type UploadItem = {
 
 const queue = ref<UploadItem[]>([]);
 let nextId = 1;
-const uploading = computed(() => queue.value.some((x) => x.status === 'uploading'));
-const hasQueued = computed(() => queue.value.some((x) => x.status === 'queued'));
-const commitMessage = ref('上传文件');
+const uploading = computed(() =>
+  queue.value.some((x) => x.status === "uploading"),
+);
+const hasQueued = computed(() =>
+  queue.value.some((x) => x.status === "queued"),
+);
+const commitMessage = ref("上传文件");
 
 const queueView = computed<UploadQueueItemView[]>(() =>
   queue.value.map((x) => ({
@@ -91,14 +102,14 @@ const queueView = computed<UploadQueueItemView[]>(() =>
     status: x.status,
     percent: x.percent,
     error: x.error,
-  }))
+  })),
 );
 
 function addFiles(files: File[]) {
   const added: UploadItem[] = files.map((f) => ({
     id: nextId++,
     file: f,
-    status: 'queued',
+    status: "queued",
     percent: null,
   }));
   queue.value = [...queue.value, ...added];
@@ -107,7 +118,7 @@ function addFiles(files: File[]) {
 function removeItem(id: number) {
   const item = queue.value.find((x) => x.id === id);
   if (!item) return;
-  if (item.status === 'uploading') return;
+  if (item.status === "uploading") return;
   queue.value = queue.value.filter((x) => x.id !== id);
 }
 
@@ -115,24 +126,24 @@ function cancelItem(id: number) {
   const item = queue.value.find((x) => x.id === id);
   if (!item) return;
 
-  if (item.status === 'queued') {
-    item.status = 'canceled';
+  if (item.status === "queued") {
+    item.status = "canceled";
     return;
   }
-  if (item.status === 'uploading') {
+  if (item.status === "uploading") {
     item.abort?.abort();
   }
 }
 
 function cancelAll() {
   for (const item of queue.value) {
-    if (item.status === 'queued') item.status = 'canceled';
-    if (item.status === 'uploading') item.abort?.abort();
+    if (item.status === "queued") item.status = "canceled";
+    if (item.status === "uploading") item.abort?.abort();
   }
 }
 
 function close() {
-  emit('close');
+  emit("close");
 }
 
 async function startUpload() {
@@ -141,46 +152,56 @@ async function startUpload() {
 
   // 顺序上传（保持行为简单可控）
   while (true) {
-    const next = queue.value.find((x) => x.status === 'queued');
+    const next = queue.value.find((x) => x.status === "queued");
     if (!next) break;
 
     const abort = new AbortController();
     next.abort = abort;
-    next.status = 'uploading';
+    next.status = "uploading";
     next.percent = 0;
     next.error = undefined;
 
     try {
-      await filesService.uploadFile(next.file, props.targetPath, commitMessage.value, {
-        signal: abort.signal,
-        onProgress: ({ loaded, total }) => {
-          if (!total) {
-            next.percent = null;
-            return;
-          }
-          next.percent = Math.min(100, Math.floor((loaded / total) * 100));
+      await filesService.uploadFile(
+        next.file,
+        props.targetPath,
+        commitMessage.value,
+        {
+          signal: abort.signal,
+          onProgress: ({ loaded, total }) => {
+            if (!total) {
+              next.percent = null;
+              return;
+            }
+            next.percent = Math.min(100, Math.floor((loaded / total) * 100));
+          },
         },
-      });
-      next.status = 'done';
+      );
+      next.status = "done";
       next.abort = undefined;
       next.percent = 100;
     } catch (err: any) {
-      const isAbort = err?.name === 'CanceledError' || err?.name === 'AbortError';
-      next.status = isAbort ? 'canceled' : 'error';
-      next.error = isAbort ? undefined : err instanceof Error ? err.message : '上传失败';
+      const isAbort =
+        err?.name === "CanceledError" || err?.name === "AbortError";
+      next.status = isAbort ? "canceled" : "error";
+      next.error = isAbort
+        ? undefined
+        : err instanceof Error
+          ? err.message
+          : "上传失败";
       next.abort = undefined;
     }
   }
 
   // 仅在全部成功（无 error）时触发上层刷新并关闭
-  const hasError = queue.value.some((x) => x.status === 'error');
-  const hasSuccess = queue.value.some((x) => x.status === 'done');
+  const hasError = queue.value.some((x) => x.status === "error");
+  const hasSuccess = queue.value.some((x) => x.status === "done");
   if (hasSuccess && !hasError) {
-    emit('upload');
+    emit("upload");
     queue.value = [];
-    commitMessage.value = '上传文件';
+    commitMessage.value = "上传文件";
   } else if (hasError) {
-    appStore.error('部分文件上传失败，请检查列表');
+    appStore.error("部分文件上传失败，请检查列表");
   }
 }
 </script>

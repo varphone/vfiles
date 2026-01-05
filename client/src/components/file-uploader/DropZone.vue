@@ -6,13 +6,23 @@
     @dragover.prevent="onDragOver"
     @dragleave.prevent="onDragLeave"
   >
-    <input type="file" ref="fileInput" multiple style="display: none" @change="onSelect" />
+    <input
+      type="file"
+      ref="fileInput"
+      multiple
+      style="display: none"
+      @change="onSelect"
+    />
 
     <div class="drop-zone-content">
       <IconCloudUpload :size="64" class="has-text-grey-light mb-3" />
       <p class="is-size-5 mb-2">拖拽文件到此处</p>
       <p class="has-text-grey mb-4">或</p>
-      <button class="button is-primary" type="button" @click="fileInput?.click()">
+      <button
+        class="button is-primary"
+        type="button"
+        @click="fileInput?.click()"
+      >
         <IconFile :size="20" class="mr-2" />
         选择文件
       </button>
@@ -21,11 +31,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-import { IconCloudUpload, IconFile } from '@tabler/icons-vue';
+import { ref } from "vue";
+import { IconCloudUpload, IconFile } from "@tabler/icons-vue";
 
 const emit = defineEmits<{
-  (e: 'files', files: File[]): void;
+  (e: "files", files: File[]): void;
 }>();
 
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -43,15 +53,15 @@ function onDrop(event: DragEvent) {
   isDragging.value = false;
   const list = event.dataTransfer?.files;
   if (!list || list.length === 0) return;
-  emit('files', Array.from(list));
+  emit("files", Array.from(list));
 }
 
 function onSelect(event: Event) {
   const target = event.target as HTMLInputElement;
   const list = target.files;
   if (!list || list.length === 0) return;
-  emit('files', Array.from(list));
-  target.value = '';
+  emit("files", Array.from(list));
+  target.value = "";
 }
 </script>
 

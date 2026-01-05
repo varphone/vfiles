@@ -8,7 +8,11 @@
     <div class="box file-browser-box">
       <div class="breadcrumb-bar">
         <div class="breadcrumb-left">
-          <div ref="pathMenuRef" class="dropdown breadcrumb-path-dropdown" :class="{ 'is-active': pathMenuOpen }">
+          <div
+            ref="pathMenuRef"
+            class="dropdown breadcrumb-path-dropdown"
+            :class="{ 'is-active': pathMenuOpen }"
+          >
             <div class="dropdown-trigger">
               <button
                 type="button"
@@ -34,7 +38,12 @@
 
                 <hr class="dropdown-divider" />
 
-                <div v-if="childDirs.length === 0" class="dropdown-item is-disabled">无子目录</div>
+                <div
+                  v-if="childDirs.length === 0"
+                  class="dropdown-item is-disabled"
+                >
+                  无子目录
+                </div>
                 <a
                   v-for="dir in childDirs"
                   :key="dir.path"
@@ -50,17 +59,30 @@
         </div>
         <div class="breadcrumb-actions">
           <div class="buttons are-small mb-0">
-            <button class="button is-light breadcrumb-icon-button" :disabled="!currentPath" @click="goBack" title="上一级">
+            <button
+              class="button is-light breadcrumb-icon-button"
+              :disabled="!currentPath"
+              @click="goBack"
+              title="上一级"
+            >
               <IconArrowLeft :size="18" />
             </button>
-            <button class="button is-light breadcrumb-icon-button" @click="openDirManager" title="更多">
+            <button
+              class="button is-light breadcrumb-icon-button"
+              @click="openDirManager"
+              title="更多"
+            >
               <IconDotsVertical :size="18" />
             </button>
           </div>
         </div>
       </div>
 
-      <Breadcrumb class="is-hidden-mobile" :breadcrumbs="breadcrumbs" @navigate="navigateTo" />
+      <Breadcrumb
+        class="is-hidden-mobile"
+        :breadcrumbs="breadcrumbs"
+        @navigate="navigateTo"
+      />
 
       <div class="file-browser-toolbar">
         <div
@@ -79,12 +101,18 @@
                 v-model="searchQuery"
                 class="input"
                 type="text"
-                :placeholder="searchMode === 'content' ? '搜索文件内容...' : '搜索文件名...'"
+                :placeholder="
+                  searchMode === 'content' ? '搜索文件内容...' : '搜索文件名...'
+                "
                 list="vfiles-search-history"
                 @keyup.enter="runSearch"
               />
               <datalist id="vfiles-search-history">
-                <option v-for="item in searchHistory" :key="item" :value="item" />
+                <option
+                  v-for="item in searchHistory"
+                  :key="item"
+                  :value="item"
+                />
               </datalist>
             </div>
             <div class="control">
@@ -98,7 +126,11 @@
               </button>
             </div>
             <div class="control">
-              <button class="button" :disabled="searchLoading" @click="clearSearch">
+              <button
+                class="button"
+                :disabled="searchLoading"
+                @click="clearSearch"
+              >
                 清空
               </button>
             </div>
@@ -106,7 +138,11 @@
 
           <div class="field mt-2">
             <label class="checkbox">
-              <input type="checkbox" v-model="searchContent" :disabled="searchLoading" />
+              <input
+                type="checkbox"
+                v-model="searchContent"
+                :disabled="searchLoading"
+              />
               全文
             </label>
           </div>
@@ -124,7 +160,11 @@
 
             <div class="control">
               <label class="checkbox">
-                <input type="checkbox" v-model="searchScopeCurrent" :disabled="searchLoading" />
+                <input
+                  type="checkbox"
+                  v-model="searchScopeCurrent"
+                  :disabled="searchLoading"
+                />
                 仅当前目录
               </label>
             </div>
@@ -135,54 +175,85 @@
             {{ searchError }}
           </div>
         </template>
-      
-      <div class="level is-mobile mb-4">
-        <div class="level-left">
-          <div class="level-item">
-            <button class="button is-primary" @click="showUploader = true">
-              <IconUpload :size="20" class="mr-2" />
-              <span>上传文件</span>
-            </button>
-          </div>
 
-          <div class="level-item">
-            <button class="button is-light" @click="toggleBatchMode" :disabled="loading || searchLoading">
-              {{ batchMode ? '退出批量' : '批量' }}
-            </button>
-          </div>
+        <div class="level is-mobile mb-4">
+          <div class="level-left">
+            <div class="level-item">
+              <button class="button is-primary" @click="showUploader = true">
+                <IconUpload :size="20" class="mr-2" />
+                <span>上传文件</span>
+              </button>
+            </div>
 
-          <div v-if="batchMode" class="level-item">
-            <div class="buttons">
-              <button class="button is-light" @click="selectAllVisible" :disabled="loading || searchLoading">
-                全选
+            <div class="level-item">
+              <button
+                class="button is-light"
+                @click="toggleBatchMode"
+                :disabled="loading || searchLoading"
+              >
+                {{ batchMode ? "退出批量" : "批量" }}
               </button>
-              <button class="button is-light" @click="clearSelection" :disabled="loading || searchLoading">
-                取消选择
-              </button>
-              <button class="button is-info" @click="batchDownload" :disabled="selectedCount === 0 || searchLoading">
-                批量下载（{{ selectedCount }}）
-              </button>
-              <button class="button is-danger" @click="batchDelete" :disabled="selectedCount === 0 || searchLoading">
-                批量删除（{{ selectedCount }}）
-              </button>
-              <button class="button is-link" @click="batchMove" :disabled="selectedCount === 0 || searchLoading">
-                移动
-              </button>
-              <button class="button is-warning" @click="renameSelected" :disabled="selectedCount !== 1 || searchLoading">
-                重命名
+            </div>
+
+            <div v-if="batchMode" class="level-item">
+              <div class="buttons">
+                <button
+                  class="button is-light"
+                  @click="selectAllVisible"
+                  :disabled="loading || searchLoading"
+                >
+                  全选
+                </button>
+                <button
+                  class="button is-light"
+                  @click="clearSelection"
+                  :disabled="loading || searchLoading"
+                >
+                  取消选择
+                </button>
+                <button
+                  class="button is-info"
+                  @click="batchDownload"
+                  :disabled="selectedCount === 0 || searchLoading"
+                >
+                  批量下载（{{ selectedCount }}）
+                </button>
+                <button
+                  class="button is-danger"
+                  @click="batchDelete"
+                  :disabled="selectedCount === 0 || searchLoading"
+                >
+                  批量删除（{{ selectedCount }}）
+                </button>
+                <button
+                  class="button is-link"
+                  @click="batchMove"
+                  :disabled="selectedCount === 0 || searchLoading"
+                >
+                  移动
+                </button>
+                <button
+                  class="button is-warning"
+                  @click="renameSelected"
+                  :disabled="selectedCount !== 1 || searchLoading"
+                >
+                  重命名
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="level-right">
+            <div class="level-item">
+              <button
+                class="button is-light"
+                @click="refresh"
+                :disabled="loading"
+              >
+                <IconRefresh :size="20" />
               </button>
             </div>
           </div>
         </div>
-        <div class="level-right">
-          <div class="level-item">
-            <button class="button is-light" @click="refresh" :disabled="loading">
-              <IconRefresh :size="20" />
-            </button>
-          </div>
-        </div>
-      </div>
-
       </div>
 
       <div v-if="downloadQueue.length" class="box mb-4">
@@ -193,10 +264,17 @@
                 <p class="heading">下载队列</p>
                 <p class="title is-6">
                   {{ downloadQueue.length }} 项
-                  <span v-if="downloading" class="tag is-info is-light ml-2">下载中</span>
-                  <span v-if="queueCollapsed && activeDownload" class="tag is-light ml-2 is-size-7">
+                  <span v-if="downloading" class="tag is-info is-light ml-2"
+                    >下载中</span
+                  >
+                  <span
+                    v-if="queueCollapsed && activeDownload"
+                    class="tag is-light ml-2 is-size-7"
+                  >
                     {{ activeDownload.filename }}
-                    <span v-if="activeDownloadPercent != null"> · {{ activeDownloadPercent }}%</span>
+                    <span v-if="activeDownloadPercent != null">
+                      · {{ activeDownloadPercent }}%</span
+                    >
                   </span>
                 </p>
               </div>
@@ -205,13 +283,25 @@
           <div class="level-right">
             <div class="level-item">
               <div class="buttons">
-                <button class="button is-small is-light" @click="toggleQueuePanel" :disabled="!downloadQueue.length">
-                  {{ queueCollapsed ? '展开' : '最小化' }}
+                <button
+                  class="button is-small is-light"
+                  @click="toggleQueuePanel"
+                  :disabled="!downloadQueue.length"
+                >
+                  {{ queueCollapsed ? "展开" : "最小化" }}
                 </button>
-                <button class="button is-small is-light" @click="clearFinished" :disabled="downloading && downloadQueue.length === 1">
+                <button
+                  class="button is-small is-light"
+                  @click="clearFinished"
+                  :disabled="downloading && downloadQueue.length === 1"
+                >
                   清空已完成
                 </button>
-                <button class="button is-small is-danger is-light" @click="cancelAll" :disabled="!downloadQueue.length">
+                <button
+                  class="button is-small is-danger is-light"
+                  @click="cancelAll"
+                  :disabled="!downloadQueue.length"
+                >
                   全部取消
                 </button>
               </div>
@@ -220,21 +310,51 @@
         </div>
 
         <div v-if="!queueCollapsed" class="content">
-          <div v-for="item in downloadQueue" :key="item.id" class="download-item">
-            <div class="is-flex is-justify-content-space-between is-align-items-center">
+          <div
+            v-for="item in downloadQueue"
+            :key="item.id"
+            class="download-item"
+          >
+            <div
+              class="is-flex is-justify-content-space-between is-align-items-center"
+            >
               <div class="mr-2" style="min-width: 0">
                 <strong class="is-size-7">{{ item.filename }}</strong>
-                <span class="tag is-light ml-2 is-size-7">{{ item.kind === 'folder' ? 'ZIP' : '文件' }}</span>
-                <span v-if="item.status === 'queued'" class="tag is-light ml-2 is-size-7">排队中</span>
-                <span v-else-if="item.status === 'downloading'" class="tag is-info is-light ml-2 is-size-7">下载中</span>
-                <span v-else-if="item.status === 'done'" class="tag is-success is-light ml-2 is-size-7">完成</span>
-                <span v-else-if="item.status === 'canceled'" class="tag is-warning is-light ml-2 is-size-7">已取消</span>
-                <span v-else-if="item.status === 'error'" class="tag is-danger is-light ml-2 is-size-7">失败</span>
+                <span class="tag is-light ml-2 is-size-7">{{
+                  item.kind === "folder" ? "ZIP" : "文件"
+                }}</span>
+                <span
+                  v-if="item.status === 'queued'"
+                  class="tag is-light ml-2 is-size-7"
+                  >排队中</span
+                >
+                <span
+                  v-else-if="item.status === 'downloading'"
+                  class="tag is-info is-light ml-2 is-size-7"
+                  >下载中</span
+                >
+                <span
+                  v-else-if="item.status === 'done'"
+                  class="tag is-success is-light ml-2 is-size-7"
+                  >完成</span
+                >
+                <span
+                  v-else-if="item.status === 'canceled'"
+                  class="tag is-warning is-light ml-2 is-size-7"
+                  >已取消</span
+                >
+                <span
+                  v-else-if="item.status === 'error'"
+                  class="tag is-danger is-light ml-2 is-size-7"
+                  >失败</span
+                >
               </div>
 
               <div class="buttons is-right">
                 <button
-                  v-if="item.status === 'queued' || item.status === 'downloading'"
+                  v-if="
+                    item.status === 'queued' || item.status === 'downloading'
+                  "
                   class="button is-small is-light"
                   @click="cancelItem(item.id)"
                 >
@@ -251,7 +371,11 @@
             </div>
 
             <progress
-              v-if="item.status === 'downloading' && item.progress && item.progress.total"
+              v-if="
+                item.status === 'downloading' &&
+                item.progress &&
+                item.progress.total
+              "
               class="progress is-small is-info mt-2"
               :value="item.progress.loaded"
               :max="item.progress.total"
@@ -279,14 +403,19 @@
         {{ error }}
       </div>
 
-      <div v-else-if="!searchActive && files.length === 0" class="has-text-centered py-6">
+      <div
+        v-else-if="!searchActive && files.length === 0"
+        class="has-text-centered py-6"
+      >
         <IconFolderOpen :size="64" class="has-text-grey-light mb-3" />
         <p class="has-text-grey">此文件夹为空</p>
       </div>
 
       <div v-else-if="searchActive" class="file-list">
         <p class="has-text-grey is-size-7 mb-2">
-          搜索结果：{{ searchResults.length }} 项（{{ searchMode === 'content' ? '内容' : '文件名' }}）
+          搜索结果：{{ searchResults.length }} 项（{{
+            searchMode === "content" ? "内容" : "文件名"
+          }}）
         </p>
         <div v-if="searchResults.length === 0" class="has-text-centered py-6">
           <p class="has-text-grey">没有找到匹配的文件</p>
@@ -336,7 +465,12 @@
     </div>
 
     <!-- 上传对话框 -->
-    <Modal :show="showUploader" title="上传文件" :mobile-compact="true" @close="showUploader = false">
+    <Modal
+      :show="showUploader"
+      title="上传文件"
+      :mobile-compact="true"
+      @close="showUploader = false"
+    >
       <FileUploader
         :target-path="filesStore.currentPath"
         @upload="handleUpload"
@@ -345,12 +479,22 @@
     </Modal>
 
     <!-- 目录管理对话框 -->
-    <Modal :show="dirManagerOpen" title="目录管理" :mobile-compact="true" @close="dirManagerOpen = false">
+    <Modal
+      :show="dirManagerOpen"
+      title="目录管理"
+      :mobile-compact="true"
+      @close="dirManagerOpen = false"
+    >
       <div class="content">
         <h3 class="title is-6">添加子目录</h3>
         <div class="field has-addons">
           <div class="control is-expanded">
-            <input v-model="newDirName" class="input" type="text" placeholder="目录名" />
+            <input
+              v-model="newDirName"
+              class="input"
+              type="text"
+              placeholder="目录名"
+            />
           </div>
           <div class="control">
             <button
@@ -367,7 +511,9 @@
         <hr />
 
         <h3 class="title is-6">重命名当前目录</h3>
-        <p v-if="!currentPath" class="has-text-grey is-size-7">根目录不可重命名</p>
+        <p v-if="!currentPath" class="has-text-grey is-size-7">
+          根目录不可重命名
+        </p>
         <div class="field has-addons">
           <div class="control is-expanded">
             <input
@@ -393,7 +539,9 @@
         <hr />
 
         <h3 class="title is-6">删除当前目录</h3>
-        <p v-if="!currentPath" class="has-text-grey is-size-7">根目录不可删除</p>
+        <p v-if="!currentPath" class="has-text-grey is-size-7">
+          根目录不可删除
+        </p>
         <button
           class="button is-danger"
           :disabled="!currentPath || dirOpBusy"
@@ -433,11 +581,20 @@
 
       <div v-else>
         <figure v-if="preview.kind === 'image'" class="image">
-          <img :src="preview.objectUrl" :alt="previewFilename" loading="lazy" decoding="async" />
+          <img
+            :src="preview.objectUrl"
+            :alt="previewFilename"
+            loading="lazy"
+            decoding="async"
+          />
         </figure>
 
         <div v-else-if="preview.kind === 'pdf'" class="preview-frame">
-          <iframe :src="preview.objectUrl" title="PDF 预览" class="preview-iframe" />
+          <iframe
+            :src="preview.objectUrl"
+            title="PDF 预览"
+            class="preview-iframe"
+          />
         </div>
 
         <div v-else-if="preview.kind === 'video'" class="preview-media">
@@ -448,10 +605,16 @@
           <audio :src="preview.objectUrl" controls class="preview-audio" />
         </div>
 
-        <div v-else-if="preview.kind === 'markdown'" class="content markdown-body" v-html="preview.html"></div>
+        <div
+          v-else-if="preview.kind === 'markdown'"
+          class="content markdown-body"
+          v-html="preview.html"
+        ></div>
 
         <div v-else-if="preview.kind === 'code'" class="content">
-          <pre class="preview-code hljs"><code v-html="preview.html"></code></pre>
+          <pre
+            class="preview-code hljs"
+          ><code v-html="preview.html"></code></pre>
         </div>
 
         <div v-else-if="preview.kind === 'text'" class="content">
@@ -467,8 +630,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue';
-import { storeToRefs } from 'pinia';
+import {
+  ref,
+  onMounted,
+  onBeforeUnmount,
+  computed,
+  watch,
+  nextTick,
+} from "vue";
+import { storeToRefs } from "pinia";
 import {
   IconUpload,
   IconRefresh,
@@ -478,189 +648,230 @@ import {
   IconSearch,
   IconArrowLeft,
   IconDotsVertical,
-} from '@tabler/icons-vue';
-import { useFilesStore } from '../../stores/files.store';
-import { useAppStore } from '../../stores/app.store';
-import { filesService } from '../../services/files.service';
-import Breadcrumb from './Breadcrumb.vue';
-import FileList from './FileList.vue';
-import FileUploader from '../file-uploader/FileUploader.vue';
-import VersionHistory from '../version-history/VersionHistory.vue';
-import Modal from '../common/Modal.vue';
-import type { FileInfo } from '../../types';
+} from "@tabler/icons-vue";
+import { useFilesStore } from "../../stores/files.store";
+import { useAppStore } from "../../stores/app.store";
+import { filesService } from "../../services/files.service";
+import Breadcrumb from "./Breadcrumb.vue";
+import FileList from "./FileList.vue";
+import FileUploader from "../file-uploader/FileUploader.vue";
+import VersionHistory from "../version-history/VersionHistory.vue";
+import Modal from "../common/Modal.vue";
+import type { FileInfo } from "../../types";
 
 let cachedMarked: any | null = null;
 let cachedHljs: any | null = null;
 
 const filesStore = useFilesStore();
 const appStore = useAppStore();
-const { files, breadcrumbs, loading, error, currentPath, browseCommit } = storeToRefs(filesStore);
+const { files, breadcrumbs, loading, error, currentPath, browseCommit } =
+  storeToRefs(filesStore);
 
 const currentPathLabel = computed(() => {
-  return currentPath.value ? `/${currentPath.value}` : '根目录';
+  return currentPath.value ? `/${currentPath.value}` : "根目录";
 });
 
 const isMobile = ref(false);
 
 function updateIsMobile() {
-  isMobile.value = window.matchMedia('(max-width: 768px)').matches;
+  isMobile.value = window.matchMedia("(max-width: 768px)").matches;
 }
 
 const showUploader = ref(false);
 const showHistory = ref(false);
 const selectedFile = ref<FileInfo | null>(null);
 
-type PreviewKind = 'text' | 'image' | 'markdown' | 'code' | 'pdf' | 'video' | 'audio' | 'unsupported';
+type PreviewKind =
+  | "text"
+  | "image"
+  | "markdown"
+  | "code"
+  | "pdf"
+  | "video"
+  | "audio"
+  | "unsupported";
 const preview = ref({
   open: false,
   loading: false,
   error: null as string | null,
-  path: '',
-  kind: 'text' as PreviewKind,
-  text: '',
-  html: '',
-  objectUrl: '',
+  path: "",
+  kind: "text" as PreviewKind,
+  text: "",
+  html: "",
+  objectUrl: "",
 });
 
-const previewFilename = computed(() => preview.value.path.split('/').pop() || 'file');
+const previewFilename = computed(
+  () => preview.value.path.split("/").pop() || "file",
+);
 
 function getExtension(p: string): string {
-  const name = p.split('/').pop() || '';
-  const idx = name.lastIndexOf('.');
-  if (idx <= 0 || idx === name.length - 1) return '';
+  const name = p.split("/").pop() || "";
+  const idx = name.lastIndexOf(".");
+  if (idx <= 0 || idx === name.length - 1) return "";
   return name.slice(idx + 1).toLowerCase();
 }
 
 function detectPreviewKind(filePath: string): PreviewKind {
   const ext = getExtension(filePath);
-  const imageExts = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
-  if (imageExts.has(ext)) return 'image';
+  const imageExts = new Set([
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "webp",
+    "bmp",
+    "svg",
+  ]);
+  if (imageExts.has(ext)) return "image";
 
-  if (ext === 'pdf') return 'pdf';
+  if (ext === "pdf") return "pdf";
 
-  const videoExts = new Set(['mp4', 'webm', 'ogg', 'mov', 'm4v']);
-  if (videoExts.has(ext)) return 'video';
+  const videoExts = new Set(["mp4", "webm", "ogg", "mov", "m4v"]);
+  if (videoExts.has(ext)) return "video";
 
-  const audioExts = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac']);
-  if (audioExts.has(ext)) return 'audio';
+  const audioExts = new Set(["mp3", "wav", "ogg", "m4a", "aac", "flac"]);
+  if (audioExts.has(ext)) return "audio";
 
-  const mdExts = new Set(['md', 'markdown']);
-  if (mdExts.has(ext)) return 'markdown';
+  const mdExts = new Set(["md", "markdown"]);
+  if (mdExts.has(ext)) return "markdown";
 
   const codeExts = new Set([
-    'js',
-    'ts',
-    'jsx',
-    'tsx',
-    'vue',
-    'json',
-    'css',
-    'scss',
-    'html',
-    'xml',
-    'yml',
-    'yaml',
-    'csv',
-    'log',
-    'sh',
-    'py',
-    'java',
-    'c',
-    'cpp',
-    'go',
-    'rs',
+    "js",
+    "ts",
+    "jsx",
+    "tsx",
+    "vue",
+    "json",
+    "css",
+    "scss",
+    "html",
+    "xml",
+    "yml",
+    "yaml",
+    "csv",
+    "log",
+    "sh",
+    "py",
+    "java",
+    "c",
+    "cpp",
+    "go",
+    "rs",
   ]);
-  if (codeExts.has(ext)) return 'code';
+  if (codeExts.has(ext)) return "code";
 
-  const textExts = new Set(['txt', 'log']);
-  if (textExts.has(ext) || ext === '') return 'text';
+  const textExts = new Set(["txt", "log"]);
+  if (textExts.has(ext) || ext === "") return "text";
 
-  return 'unsupported';
+  return "unsupported";
 }
 
 function guessMimeByExt(filePath: string): string {
   const ext = getExtension(filePath);
-  if (ext === 'pdf') return 'application/pdf';
-  if (ext === 'svg') return 'image/svg+xml';
-  if (ext === 'png') return 'image/png';
-  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-  if (ext === 'gif') return 'image/gif';
-  if (ext === 'webp') return 'image/webp';
-  if (ext === 'bmp') return 'image/bmp';
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "svg") return "image/svg+xml";
+  if (ext === "png") return "image/png";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "gif") return "image/gif";
+  if (ext === "webp") return "image/webp";
+  if (ext === "bmp") return "image/bmp";
 
-  if (ext === 'mp4' || ext === 'm4v') return 'video/mp4';
-  if (ext === 'webm') return 'video/webm';
-  if (ext === 'mov') return 'video/quicktime';
-  if (ext === 'ogg') return 'application/ogg';
+  if (ext === "mp4" || ext === "m4v") return "video/mp4";
+  if (ext === "webm") return "video/webm";
+  if (ext === "mov") return "video/quicktime";
+  if (ext === "ogg") return "application/ogg";
 
-  if (ext === 'mp3') return 'audio/mpeg';
-  if (ext === 'wav') return 'audio/wav';
-  if (ext === 'm4a') return 'audio/mp4';
-  if (ext === 'aac') return 'audio/aac';
-  if (ext === 'flac') return 'audio/flac';
+  if (ext === "mp3") return "audio/mpeg";
+  if (ext === "wav") return "audio/wav";
+  if (ext === "m4a") return "audio/mp4";
+  if (ext === "aac") return "audio/aac";
+  if (ext === "flac") return "audio/flac";
 
-  return 'application/octet-stream';
+  return "application/octet-stream";
 }
 
 function escapeHtml(input: string): string {
   return input
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function safeLinkHref(href: string | null | undefined): string {
-  const raw = (href || '').trim();
-  if (!raw) return '#';
-  if (raw.startsWith('#')) return raw;
-  if (raw.startsWith('/')) return raw;
+  const raw = (href || "").trim();
+  if (!raw) return "#";
+  if (raw.startsWith("#")) return raw;
+  if (raw.startsWith("/")) return raw;
   if (/^https?:\/\//i.test(raw)) return raw;
   if (/^mailto:/i.test(raw)) return raw;
-  return '#';
+  return "#";
 }
 
 function safeImageSrc(src: string | null | undefined): string {
-  const raw = (src || '').trim();
-  if (!raw) return '';
+  const raw = (src || "").trim();
+  if (!raw) return "";
   if (/^https?:\/\//i.test(raw)) return raw;
   if (/^data:image\//i.test(raw)) return raw;
-  if (raw.startsWith('/')) return raw;
-  return '';
+  if (raw.startsWith("/")) return raw;
+  return "";
 }
 
 async function getMarked() {
   if (cachedMarked) return cachedMarked;
-  const mod: any = await import('marked');
+  const mod: any = await import("marked");
   const markedApi = mod?.marked ?? mod;
 
   const mdRenderer: any = {
     html(token: any) {
-      const html = typeof token === 'string' ? token : token?.text ?? token?.raw ?? '';
+      const html =
+        typeof token === "string" ? token : (token?.text ?? token?.raw ?? "");
       return escapeHtml(String(html));
     },
     link(tokenOrHref: any, title?: any, text?: any) {
-      const href = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.href : tokenOrHref;
-      const linkTitle = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.title : title;
-      const linkText = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.text : text;
+      const href =
+        tokenOrHref && typeof tokenOrHref === "object"
+          ? tokenOrHref.href
+          : tokenOrHref;
+      const linkTitle =
+        tokenOrHref && typeof tokenOrHref === "object"
+          ? tokenOrHref.title
+          : title;
+      const linkText =
+        tokenOrHref && typeof tokenOrHref === "object"
+          ? tokenOrHref.text
+          : text;
 
       const safeHref = safeLinkHref(href);
-      const t = linkTitle ? ` title="${escapeHtml(String(linkTitle))}"` : '';
-      const inner = typeof linkText === 'string' ? (markedApi.parseInline(linkText) as string) : '';
+      const t = linkTitle ? ` title="${escapeHtml(String(linkTitle))}"` : "";
+      const inner =
+        typeof linkText === "string"
+          ? (markedApi.parseInline(linkText) as string)
+          : "";
       return `<a href="${escapeHtml(safeHref)}"${t} target="_blank" rel="noopener noreferrer">${inner}</a>`;
     },
     image(tokenOrHref: any, title?: any, text?: any) {
       // 兼容：新版传 token 对象；旧版传 (href, title, text)
-      const href = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.href : tokenOrHref;
-      const imgTitle = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.title : title;
-      const altText = tokenOrHref && typeof tokenOrHref === 'object' ? tokenOrHref.text : text;
+      const href =
+        tokenOrHref && typeof tokenOrHref === "object"
+          ? tokenOrHref.href
+          : tokenOrHref;
+      const imgTitle =
+        tokenOrHref && typeof tokenOrHref === "object"
+          ? tokenOrHref.title
+          : title;
+      const altText =
+        tokenOrHref && typeof tokenOrHref === "object"
+          ? tokenOrHref.text
+          : text;
 
       const safeSrc = safeImageSrc(href);
-      if (!safeSrc) return '';
+      if (!safeSrc) return "";
 
-      const t = imgTitle ? ` title="${escapeHtml(String(imgTitle))}"` : '';
-      const alt = altText ? escapeHtml(String(altText)) : '';
+      const t = imgTitle ? ` title="${escapeHtml(String(imgTitle))}"` : "";
+      const alt = altText ? escapeHtml(String(altText)) : "";
       return `<img src="${escapeHtml(safeSrc)}" alt="${alt}" loading="lazy" decoding="async"${t} />`;
     },
   };
@@ -677,7 +888,7 @@ async function getMarked() {
 
 async function getHljs() {
   if (cachedHljs) return cachedHljs;
-  const mod: any = await import('highlight.js');
+  const mod: any = await import("highlight.js");
   cachedHljs = mod?.default ?? mod;
   return cachedHljs;
 }
@@ -688,11 +899,11 @@ function closePreview() {
     open: false,
     loading: false,
     error: null,
-    path: '',
-    kind: 'text',
-    text: '',
-    html: '',
-    objectUrl: '',
+    path: "",
+    kind: "text",
+    text: "",
+    html: "",
+    objectUrl: "",
   };
 }
 
@@ -704,22 +915,32 @@ async function openPreview(filePath: string) {
   preview.value.kind = detectPreviewKind(filePath);
 
   try {
-    if (preview.value.kind === 'unsupported') {
+    if (preview.value.kind === "unsupported") {
       preview.value.loading = false;
       return;
     }
 
-    const blob = await filesService.getFileContent(filePath, browseCommit.value);
+    const blob = await filesService.getFileContent(
+      filePath,
+      browseCommit.value,
+    );
 
-    if (preview.value.kind === 'image' || preview.value.kind === 'pdf' || preview.value.kind === 'video' || preview.value.kind === 'audio') {
-      const typed = new Blob([await blob.arrayBuffer()], { type: guessMimeByExt(filePath) });
+    if (
+      preview.value.kind === "image" ||
+      preview.value.kind === "pdf" ||
+      preview.value.kind === "video" ||
+      preview.value.kind === "audio"
+    ) {
+      const typed = new Blob([await blob.arrayBuffer()], {
+        type: guessMimeByExt(filePath),
+      });
       preview.value.objectUrl = URL.createObjectURL(typed);
     } else {
       const text = await blob.text();
-      if (preview.value.kind === 'markdown') {
+      if (preview.value.kind === "markdown") {
         const markedApi = await getMarked();
         preview.value.html = markedApi.parse(text) as string;
-      } else if (preview.value.kind === 'code') {
+      } else if (preview.value.kind === "code") {
         const hljsApi = await getHljs();
         const highlighted = hljsApi.highlightAuto(text);
         preview.value.html = highlighted.value;
@@ -728,13 +949,13 @@ async function openPreview(filePath: string) {
       }
     }
   } catch (err) {
-    preview.value.error = err instanceof Error ? err.message : '预览失败';
+    preview.value.error = err instanceof Error ? err.message : "预览失败";
   } finally {
     preview.value.loading = false;
   }
 }
 
-const searchQuery = ref('');
+const searchQuery = ref("");
 const searchResults = ref<FileInfo[]>([]);
 const searchLoading = ref(false);
 const searchError = ref<string | null>(null);
@@ -742,16 +963,26 @@ const searchActive = ref(false);
 const searchContent = ref(false);
 
 const queueCollapsed = ref(false);
-const activeDownload = computed(() => downloadQueue.value.find((x) => x.status === 'downloading'));
+const activeDownload = computed(() =>
+  downloadQueue.value.find((x) => x.status === "downloading"),
+);
 const activeDownloadPercent = computed(() => {
   const a = activeDownload.value;
   if (!a?.progress?.total) return null;
   if (a.progress.total <= 0) return null;
-  return Math.min(100, Math.floor((a.progress.loaded / a.progress.total) * 100));
+  return Math.min(
+    100,
+    Math.floor((a.progress.loaded / a.progress.total) * 100),
+  );
 });
 
-type DownloadQueueStatus = 'queued' | 'downloading' | 'done' | 'error' | 'canceled';
-type DownloadQueueKind = 'file' | 'folder';
+type DownloadQueueStatus =
+  | "queued"
+  | "downloading"
+  | "done"
+  | "error"
+  | "canceled";
+type DownloadQueueKind = "file" | "folder";
 type DownloadQueueItem = {
   id: number;
   kind: DownloadQueueKind;
@@ -765,19 +996,21 @@ type DownloadQueueItem = {
 
 const downloadQueue = ref<DownloadQueueItem[]>([]);
 let nextDownloadId = 1;
-const downloading = computed(() => downloadQueue.value.some((x) => x.status === 'downloading'));
+const downloading = computed(() =>
+  downloadQueue.value.some((x) => x.status === "downloading"),
+);
 
 const batchMode = ref(false);
 const selectedPaths = ref<Set<string>>(new Set());
 
 const selectedCount = computed(() => selectedPaths.value.size);
 
-const searchType = ref<'all' | 'file' | 'directory'>('all');
+const searchType = ref<"all" | "file" | "directory">("all");
 const searchScopeCurrent = ref(false);
 
-const searchMode = computed(() => (searchContent.value ? 'content' : 'name'));
+const searchMode = computed(() => (searchContent.value ? "content" : "name"));
 
-const SEARCH_HISTORY_KEY = 'vfiles.searchHistory';
+const SEARCH_HISTORY_KEY = "vfiles.searchHistory";
 const searchHistory = ref<string[]>([]);
 
 function loadSearchHistory() {
@@ -786,7 +1019,9 @@ function loadSearchHistory() {
     if (!raw) return;
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      searchHistory.value = parsed.filter((x) => typeof x === 'string').slice(0, 10);
+      searchHistory.value = parsed
+        .filter((x) => typeof x === "string")
+        .slice(0, 10);
     }
   } catch {
     // ignore
@@ -807,7 +1042,9 @@ function pushSearchHistory(term: string) {
   if (!value) return;
   const normalized = value;
 
-  const withoutDup = searchHistory.value.filter((x) => x.toLowerCase() !== normalized.toLowerCase());
+  const withoutDup = searchHistory.value.filter(
+    (x) => x.toLowerCase() !== normalized.toLowerCase(),
+  );
   saveSearchHistory([normalized, ...withoutDup].slice(0, 10));
 }
 
@@ -825,25 +1062,25 @@ onMounted(() => {
 
   const onDocKeydown = (e: KeyboardEvent) => {
     if (!pathMenuOpen.value) return;
-    if (e.key === 'Escape') closePathMenu();
+    if (e.key === "Escape") closePathMenu();
   };
 
-  document.addEventListener('click', onDocPointer, true);
-  document.addEventListener('touchstart', onDocPointer, true);
-  document.addEventListener('keydown', onDocKeydown);
+  document.addEventListener("click", onDocPointer, true);
+  document.addEventListener("touchstart", onDocPointer, true);
+  document.addEventListener("keydown", onDocKeydown);
   onBeforeUnmount(() => {
-    document.removeEventListener('click', onDocPointer, true);
-    document.removeEventListener('touchstart', onDocPointer, true);
-    document.removeEventListener('keydown', onDocKeydown);
+    document.removeEventListener("click", onDocPointer, true);
+    document.removeEventListener("touchstart", onDocPointer, true);
+    document.removeEventListener("keydown", onDocKeydown);
   });
 
   updateIsMobile();
   try {
-    const mql = window.matchMedia('(max-width: 768px)');
+    const mql = window.matchMedia("(max-width: 768px)");
     const handler = () => updateIsMobile();
-    if ('addEventListener' in mql) {
-      mql.addEventListener('change', handler);
-      onBeforeUnmount(() => mql.removeEventListener('change', handler));
+    if ("addEventListener" in mql) {
+      mql.addEventListener("change", handler);
+      onBeforeUnmount(() => mql.removeEventListener("change", handler));
     } else {
       // @ts-expect-error older Safari
       mql.addListener(handler);
@@ -872,25 +1109,25 @@ function goBack() {
 }
 
 function goRoot() {
-  navigateTo('');
+  navigateTo("");
 }
 
 const pathMenuOpen = ref(false);
 const pathMenuRef = ref<HTMLElement | null>(null);
 
 const parentPath = computed<string | null>(() => {
-  const cur = currentPath.value || '';
-  const parts = cur.split('/').filter(Boolean);
+  const cur = currentPath.value || "";
+  const parts = cur.split("/").filter(Boolean);
   if (parts.length === 0) return null;
   parts.pop();
-  return parts.join('/');
+  return parts.join("/");
 });
 
 const childDirs = computed(() => {
   return files.value
-    .filter((f) => f.type === 'directory')
+    .filter((f) => f.type === "directory")
     .slice()
-    .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+    .sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
 });
 
 function closePathMenu() {
@@ -907,15 +1144,15 @@ function navigateToPathAndClose(path: string) {
 }
 
 const dirManagerOpen = ref(false);
-const dirOpLoading = ref<null | 'create' | 'rename' | 'delete'>(null);
+const dirOpLoading = ref<null | "create" | "rename" | "delete">(null);
 const dirOpBusy = computed(() => dirOpLoading.value !== null);
-const newDirName = ref('');
-const renameDirName = ref('');
+const newDirName = ref("");
+const renameDirName = ref("");
 
 const currentDirName = computed(() => {
-  if (!currentPath.value) return '';
-  const parts = currentPath.value.split('/').filter(Boolean);
-  return parts[parts.length - 1] || '';
+  if (!currentPath.value) return "";
+  const parts = currentPath.value.split("/").filter(Boolean);
+  return parts[parts.length - 1] || "";
 });
 
 watch(
@@ -923,41 +1160,41 @@ watch(
   () => {
     renameDirName.value = currentDirName.value;
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 function openDirManager() {
   dirManagerOpen.value = true;
-  newDirName.value = '';
+  newDirName.value = "";
   renameDirName.value = currentDirName.value;
 }
 
 function isSafeDirName(name: string): boolean {
   const n = name.trim();
   if (!n) return false;
-  if (n === '.' || n === '..') return false;
-  if (n.includes('/') || n.includes('\\')) return false;
+  if (n === "." || n === "..") return false;
+  if (n.includes("/") || n.includes("\\")) return false;
   return true;
 }
 
 async function createSubDir() {
   const name = newDirName.value.trim();
   if (!isSafeDirName(name)) {
-    appStore.error('非法目录名');
+    appStore.error("非法目录名");
     return;
   }
 
   const dirPath = currentPath.value ? `${currentPath.value}/${name}` : name;
-  dirOpLoading.value = 'create';
+  dirOpLoading.value = "create";
   try {
     await filesService.createDirectory(dirPath, `创建目录: ${dirPath}`);
-    appStore.success('目录创建成功');
-    newDirName.value = '';
+    appStore.success("目录创建成功");
+    newDirName.value = "";
     refresh();
   } catch (err) {
-    appStore.error(err instanceof Error ? err.message : '目录创建失败');
+    appStore.error(err instanceof Error ? err.message : "目录创建失败");
   } finally {
-    if (dirOpLoading.value === 'create') dirOpLoading.value = null;
+    if (dirOpLoading.value === "create") dirOpLoading.value = null;
   }
 }
 
@@ -965,29 +1202,33 @@ async function renameCurrentDir() {
   if (!currentPath.value) return;
   const name = renameDirName.value.trim();
   if (!isSafeDirName(name)) {
-    appStore.error('非法目录名');
+    appStore.error("非法目录名");
     return;
   }
   if (name === currentDirName.value) {
-    appStore.error('目录名未变化');
+    appStore.error("目录名未变化");
     return;
   }
 
-  const parts = currentPath.value.split('/').filter(Boolean);
+  const parts = currentPath.value.split("/").filter(Boolean);
   parts.pop();
-  const parent = parts.join('/');
+  const parent = parts.join("/");
   const to = parent ? `${parent}/${name}` : name;
 
-  dirOpLoading.value = 'rename';
+  dirOpLoading.value = "rename";
   try {
-    await filesService.movePath(currentPath.value, to, `重命名目录: ${currentPath.value} -> ${to}`);
-    appStore.success('重命名成功');
+    await filesService.movePath(
+      currentPath.value,
+      to,
+      `重命名目录: ${currentPath.value} -> ${to}`,
+    );
+    appStore.success("重命名成功");
     dirManagerOpen.value = false;
     navigateTo(to);
   } catch (err) {
-    appStore.error(err instanceof Error ? err.message : '重命名失败');
+    appStore.error(err instanceof Error ? err.message : "重命名失败");
   } finally {
-    if (dirOpLoading.value === 'rename') dirOpLoading.value = null;
+    if (dirOpLoading.value === "rename") dirOpLoading.value = null;
   }
 }
 
@@ -997,28 +1238,31 @@ async function deleteCurrentDir() {
   const expected = currentDirName.value;
   const typed = prompt(
     `危险操作：删除目录 /${currentPath.value}\n\n此操作会删除其下全部内容，并生成提交。\n请输入目录名“${expected}”以确认：`,
-    ''
+    "",
   );
   if (typed == null) return;
   if (typed.trim() !== expected) {
-    appStore.error('确认失败：目录名不匹配');
+    appStore.error("确认失败：目录名不匹配");
     return;
   }
 
-  const parts = currentPath.value.split('/').filter(Boolean);
+  const parts = currentPath.value.split("/").filter(Boolean);
   parts.pop();
-  const parent = parts.join('/');
+  const parent = parts.join("/");
 
-  dirOpLoading.value = 'delete';
+  dirOpLoading.value = "delete";
   try {
-    await filesService.deleteFile(currentPath.value, `删除目录: ${currentPath.value}`);
-    appStore.success('目录删除成功');
+    await filesService.deleteFile(
+      currentPath.value,
+      `删除目录: ${currentPath.value}`,
+    );
+    appStore.success("目录删除成功");
     dirManagerOpen.value = false;
     navigateTo(parent);
   } catch (err) {
-    appStore.error(err instanceof Error ? err.message : '删除失败');
+    appStore.error(err instanceof Error ? err.message : "删除失败");
   } finally {
-    if (dirOpLoading.value === 'delete') dirOpLoading.value = null;
+    if (dirOpLoading.value === "delete") dirOpLoading.value = null;
   }
 }
 
@@ -1029,8 +1273,12 @@ const mobileVisibleCount = ref(MOBILE_INITIAL_COUNT);
 const loadMoreSentinel = ref<HTMLElement | null>(null);
 let loadMoreObserver: IntersectionObserver | null = null;
 
-const activeList = computed(() => (searchActive.value ? searchResults.value : files.value));
-const hasMore = computed(() => isMobile.value && mobileVisibleCount.value < activeList.value.length);
+const activeList = computed(() =>
+  searchActive.value ? searchResults.value : files.value,
+);
+const hasMore = computed(
+  () => isMobile.value && mobileVisibleCount.value < activeList.value.length,
+);
 const visibleFiles = computed(() => {
   if (!isMobile.value) return files.value;
   return files.value.slice(0, mobileVisibleCount.value);
@@ -1042,7 +1290,10 @@ const visibleSearchResults = computed(() => {
 
 function bumpVisibleCount() {
   const total = activeList.value.length;
-  mobileVisibleCount.value = Math.min(total, mobileVisibleCount.value + MOBILE_CHUNK_COUNT);
+  mobileVisibleCount.value = Math.min(
+    total,
+    mobileVisibleCount.value + MOBILE_CHUNK_COUNT,
+  );
 }
 
 function resetVisibleCount() {
@@ -1056,7 +1307,7 @@ function setupLoadMoreObserver() {
   }
 
   if (!isMobile.value) return;
-  if (!('IntersectionObserver' in window)) return;
+  if (!("IntersectionObserver" in window)) return;
   if (!loadMoreSentinel.value) return;
 
   loadMoreObserver = new IntersectionObserver(
@@ -1065,18 +1316,23 @@ function setupLoadMoreObserver() {
       if (!hasMore.value) return;
       bumpVisibleCount();
     },
-    { root: null, threshold: 0.1 }
+    { root: null, threshold: 0.1 },
   );
 
   loadMoreObserver.observe(loadMoreSentinel.value);
 }
 
 watch(
-  [() => filesStore.currentPath, searchActive, searchQuery, () => searchResults.value.length],
+  [
+    () => filesStore.currentPath,
+    searchActive,
+    searchQuery,
+    () => searchResults.value.length,
+  ],
   () => {
     resetVisibleCount();
     void nextTick().then(() => setupLoadMoreObserver());
-  }
+  },
 );
 
 watch([isMobile, loadMoreSentinel], () => {
@@ -1095,13 +1351,20 @@ const pullDistance = ref(0);
 const pullReady = ref(false);
 const pullRefreshing = ref(false);
 
-const pullIndicatorVisible = computed(() => pullRefreshing.value || pullDistance.value > 10);
+const pullIndicatorVisible = computed(
+  () => pullRefreshing.value || pullDistance.value > 10,
+);
 
 const touchStart = ref({ x: 0, y: 0, t: 0 });
-const touchMode = ref<'none' | 'pull' | 'swipe'>('none');
+const touchMode = ref<"none" | "pull" | "swipe">("none");
 
 const anyModalOpen = computed(() => {
-  return showUploader.value || showHistory.value || preview.value.open || pathMenuOpen.value;
+  return (
+    showUploader.value ||
+    showHistory.value ||
+    preview.value.open ||
+    pathMenuOpen.value
+  );
 });
 
 function onTouchStart(e: TouchEvent) {
@@ -1110,7 +1373,7 @@ function onTouchStart(e: TouchEvent) {
   const t = e.touches[0];
   if (!t) return;
   touchStart.value = { x: t.clientX, y: t.clientY, t: Date.now() };
-  touchMode.value = 'none';
+  touchMode.value = "none";
 }
 
 function onTouchMove(e: TouchEvent) {
@@ -1122,15 +1385,19 @@ function onTouchMove(e: TouchEvent) {
   const dx = t.clientX - touchStart.value.x;
   const dy = t.clientY - touchStart.value.y;
 
-  if (touchMode.value === 'none') {
+  if (touchMode.value === "none") {
     if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) {
-      touchMode.value = 'swipe';
+      touchMode.value = "swipe";
     } else if (dy > 8 && Math.abs(dy) > Math.abs(dx) && window.scrollY <= 0) {
-      touchMode.value = 'pull';
+      touchMode.value = "pull";
     }
   }
 
-  if (touchMode.value === 'pull' && window.scrollY <= 0 && !pullRefreshing.value) {
+  if (
+    touchMode.value === "pull" &&
+    window.scrollY <= 0 &&
+    !pullRefreshing.value
+  ) {
     const next = Math.min(90, Math.max(0, dy));
     pullDistance.value = next;
     pullReady.value = next >= 60;
@@ -1145,14 +1412,14 @@ async function onTouchEnd(e: TouchEvent) {
   if (!changed) {
     pullDistance.value = 0;
     pullReady.value = false;
-    touchMode.value = 'none';
+    touchMode.value = "none";
     return;
   }
 
   const dx = changed.clientX - touchStart.value.x;
   const dy = changed.clientY - touchStart.value.y;
 
-  if (touchMode.value === 'swipe') {
+  if (touchMode.value === "swipe") {
     const fromEdge = touchStart.value.x <= 24;
     const horizontal = dx > 80 && Math.abs(dy) < 60;
     if (fromEdge && horizontal) {
@@ -1160,11 +1427,11 @@ async function onTouchEnd(e: TouchEvent) {
     }
   }
 
-  if (touchMode.value === 'pull' && pullReady.value && !pullRefreshing.value) {
+  if (touchMode.value === "pull" && pullReady.value && !pullRefreshing.value) {
     pullRefreshing.value = true;
     try {
       await Promise.resolve(refresh());
-      appStore.success('已刷新');
+      appStore.success("已刷新");
     } finally {
       pullRefreshing.value = false;
     }
@@ -1172,15 +1439,15 @@ async function onTouchEnd(e: TouchEvent) {
 
   pullDistance.value = 0;
   pullReady.value = false;
-  touchMode.value = 'none';
+  touchMode.value = "none";
 }
 
 function enqueueDownload(kind: DownloadQueueKind, path: string) {
   const wasEmpty = downloadQueue.value.length === 0;
   const filename =
-    kind === 'folder'
-      ? `${path.split('/').filter(Boolean).pop() || 'root'}.zip`
-      : path.split('/').pop() || 'download';
+    kind === "folder"
+      ? `${path.split("/").filter(Boolean).pop() || "root"}.zip`
+      : path.split("/").pop() || "download";
 
   downloadQueue.value = [
     ...downloadQueue.value,
@@ -1189,7 +1456,7 @@ function enqueueDownload(kind: DownloadQueueKind, path: string) {
       kind,
       path,
       filename,
-      status: 'queued',
+      status: "queued",
     },
   ];
 
@@ -1207,38 +1474,54 @@ function toggleQueuePanel() {
 async function processQueue() {
   if (downloading.value) return;
 
-  const next = downloadQueue.value.find((x) => x.status === 'queued');
+  const next = downloadQueue.value.find((x) => x.status === "queued");
   if (!next) return;
 
   const abort = new AbortController();
   downloadQueue.value = downloadQueue.value.map((x) =>
-    x.id === next.id ? { ...x, status: 'downloading', progress: { loaded: 0 }, abort } : x
+    x.id === next.id
+      ? { ...x, status: "downloading", progress: { loaded: 0 }, abort }
+      : x,
   );
 
   try {
     const onProgress = (p: { loaded: number; total?: number }) => {
-      downloadQueue.value = downloadQueue.value.map((x) => (x.id === next.id ? { ...x, progress: p } : x));
+      downloadQueue.value = downloadQueue.value.map((x) =>
+        x.id === next.id ? { ...x, progress: p } : x,
+      );
     };
 
     const commit = browseCommit.value;
     const result =
-      next.kind === 'folder'
-        ? await filesService.fetchFolderDownload(next.path, commit, { signal: abort.signal, onProgress })
-        : await filesService.fetchFileDownload(next.path, commit, { signal: abort.signal, onProgress });
+      next.kind === "folder"
+        ? await filesService.fetchFolderDownload(next.path, commit, {
+            signal: abort.signal,
+            onProgress,
+          })
+        : await filesService.fetchFileDownload(next.path, commit, {
+            signal: abort.signal,
+            onProgress,
+          });
 
     filesService.saveDownloadedBlob(result.blob, result.filename);
-    downloadQueue.value = downloadQueue.value.map((x) => (x.id === next.id ? { ...x, status: 'done', abort: undefined } : x));
+    downloadQueue.value = downloadQueue.value.map((x) =>
+      x.id === next.id ? { ...x, status: "done", abort: undefined } : x,
+    );
   } catch (err: any) {
-    const isAbort = err?.name === 'AbortError';
+    const isAbort = err?.name === "AbortError";
     downloadQueue.value = downloadQueue.value.map((x) =>
       x.id === next.id
         ? {
             ...x,
-            status: isAbort ? 'canceled' : 'error',
-            error: isAbort ? undefined : err instanceof Error ? err.message : '下载失败',
+            status: isAbort ? "canceled" : "error",
+            error: isAbort
+              ? undefined
+              : err instanceof Error
+                ? err.message
+                : "下载失败",
             abort: undefined,
           }
-        : x
+        : x,
     );
   } finally {
     // 继续下一个
@@ -1250,28 +1533,34 @@ function cancelItem(id: number) {
   const item = downloadQueue.value.find((x) => x.id === id);
   if (!item) return;
 
-  if (item.status === 'queued') {
-    downloadQueue.value = downloadQueue.value.map((x) => (x.id === id ? { ...x, status: 'canceled' } : x));
+  if (item.status === "queued") {
+    downloadQueue.value = downloadQueue.value.map((x) =>
+      x.id === id ? { ...x, status: "canceled" } : x,
+    );
     return;
   }
 
-  if (item.status === 'downloading') {
+  if (item.status === "downloading") {
     item.abort?.abort();
   }
 }
 
 function cancelAll() {
   for (const item of downloadQueue.value) {
-    if (item.status === 'queued') {
-      downloadQueue.value = downloadQueue.value.map((x) => (x.id === item.id ? { ...x, status: 'canceled' } : x));
-    } else if (item.status === 'downloading') {
+    if (item.status === "queued") {
+      downloadQueue.value = downloadQueue.value.map((x) =>
+        x.id === item.id ? { ...x, status: "canceled" } : x,
+      );
+    } else if (item.status === "downloading") {
       item.abort?.abort();
     }
   }
 }
 
 function clearFinished() {
-  downloadQueue.value = downloadQueue.value.filter((x) => x.status === 'queued' || x.status === 'downloading');
+  downloadQueue.value = downloadQueue.value.filter(
+    (x) => x.status === "queued" || x.status === "downloading",
+  );
 }
 
 function removeItem(id: number) {
@@ -1279,7 +1568,7 @@ function removeItem(id: number) {
 }
 
 function handleFileClick(file: FileInfo) {
-  if (file.type === 'directory') {
+  if (file.type === "directory") {
     navigateTo(file.path);
     return;
   }
@@ -1288,7 +1577,7 @@ function handleFileClick(file: FileInfo) {
 }
 
 function handleSearchItemClick(file: FileInfo) {
-  if (file.type === 'directory') {
+  if (file.type === "directory") {
     clearSearch();
     navigateTo(file.path);
     return;
@@ -1298,16 +1587,16 @@ function handleSearchItemClick(file: FileInfo) {
 }
 
 function handleDownload(file: FileInfo) {
-  enqueueDownload(file.type === 'directory' ? 'folder' : 'file', file.path);
-  appStore.success('已加入下载队列');
+  enqueueDownload(file.type === "directory" ? "folder" : "file", file.path);
+  appStore.success("已加入下载队列");
 }
 
 async function handleDelete(file: FileInfo) {
   try {
     await filesStore.deleteFile(file.path);
-    appStore.success('文件删除成功');
+    appStore.success("文件删除成功");
   } catch (err) {
-    appStore.error(err instanceof Error ? err.message : '删除失败');
+    appStore.error(err instanceof Error ? err.message : "删除失败");
   }
 }
 
@@ -1318,7 +1607,7 @@ function handleViewHistory(file: FileInfo) {
 
 async function handleUpload() {
   showUploader.value = false;
-  appStore.success('文件上传成功');
+  appStore.success("文件上传成功");
   await refresh();
 }
 
@@ -1343,13 +1632,13 @@ async function doSearch(pushHistoryEnabled: boolean) {
   }
 
   try {
-    const scopePath = searchScopeCurrent.value ? filesStore.currentPath : '';
+    const scopePath = searchScopeCurrent.value ? filesStore.currentPath : "";
     searchResults.value = await filesService.searchFiles(q, searchMode.value, {
       type: searchType.value,
       path: scopePath,
     });
   } catch (err) {
-    searchError.value = err instanceof Error ? err.message : '搜索失败';
+    searchError.value = err instanceof Error ? err.message : "搜索失败";
     searchResults.value = [];
   } finally {
     searchLoading.value = false;
@@ -1357,7 +1646,7 @@ async function doSearch(pushHistoryEnabled: boolean) {
 }
 
 function clearSearch() {
-  searchQuery.value = '';
+  searchQuery.value = "";
   searchResults.value = [];
   searchError.value = null;
   searchActive.value = false;
@@ -1433,17 +1722,21 @@ async function batchDownload() {
   if (items.length === 0) return;
 
   if (items.length > 20) {
-    const ok = confirm(`将开始下载 ${items.length} 个文件，可能会被浏览器拦截弹窗。继续吗？`);
+    const ok = confirm(
+      `将开始下载 ${items.length} 个文件，可能会被浏览器拦截弹窗。继续吗？`,
+    );
     if (!ok) return;
   }
 
   if (items.length > 20) {
-    const ok = confirm(`将加入 ${items.length} 项到下载队列，可能会触发多次保存。继续吗？`);
+    const ok = confirm(
+      `将加入 ${items.length} 项到下载队列，可能会触发多次保存。继续吗？`,
+    );
     if (!ok) return;
   }
 
   for (const f of items) {
-    enqueueDownload(f.type === 'directory' ? 'folder' : 'file', f.path);
+    enqueueDownload(f.type === "directory" ? "folder" : "file", f.path);
   }
   appStore.success(`已加入 ${items.length} 项到下载队列`);
 }
@@ -1452,21 +1745,23 @@ async function batchDelete() {
   const items = getSelectedItems();
   if (items.length === 0) return;
 
-  const ok = confirm(`确定要删除 ${items.length} 项吗？此操作会生成一次或多次提交。`);
+  const ok = confirm(
+    `确定要删除 ${items.length} 项吗？此操作会生成一次或多次提交。`,
+  );
   if (!ok) return;
 
   try {
     for (const f of items) {
-      await filesService.deleteFile(f.path, '批量删除');
+      await filesService.deleteFile(f.path, "批量删除");
     }
-    appStore.success('批量删除完成');
+    appStore.success("批量删除完成");
     clearSelection();
     await refresh();
     if (searchActive.value) {
       await doSearch(false);
     }
   } catch (err) {
-    appStore.error(err instanceof Error ? err.message : '批量删除失败');
+    appStore.error(err instanceof Error ? err.message : "批量删除失败");
   }
 }
 
@@ -1474,23 +1769,30 @@ async function batchMove() {
   const items = getSelectedItems();
   if (items.length === 0) return;
 
-  const raw = prompt('输入目标目录（相对路径，留空表示根目录）', filesStore.currentPath || '');
+  const raw = prompt(
+    "输入目标目录（相对路径，留空表示根目录）",
+    filesStore.currentPath || "",
+  );
   if (raw == null) return;
-  const targetDir = raw.trim().replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  const targetDir = raw
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
 
   try {
     for (const f of items) {
       const to = targetDir ? `${targetDir}/${f.name}` : f.name;
-      await filesService.movePath(f.path, to, '批量移动');
+      await filesService.movePath(f.path, to, "批量移动");
     }
-    appStore.success('批量移动完成');
+    appStore.success("批量移动完成");
     clearSelection();
     await refresh();
     if (searchActive.value) {
       await doSearch(false);
     }
   } catch (err) {
-    appStore.error(err instanceof Error ? err.message : '批量移动失败');
+    appStore.error(err instanceof Error ? err.message : "批量移动失败");
   }
 }
 
@@ -1499,29 +1801,35 @@ async function renameSelected() {
   if (items.length !== 1) return;
   const f = items[0];
 
-  const raw = prompt('输入新名称（仅名称，不含路径分隔符）', f.name);
+  const raw = prompt("输入新名称（仅名称，不含路径分隔符）", f.name);
   if (raw == null) return;
   const name = raw.trim();
-  if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
-    appStore.error('非法名称');
+  if (
+    !name ||
+    name === "." ||
+    name === ".." ||
+    name.includes("/") ||
+    name.includes("\\")
+  ) {
+    appStore.error("非法名称");
     return;
   }
 
-  const parts = f.path.split('/');
+  const parts = f.path.split("/");
   parts.pop();
-  const dir = parts.join('/');
+  const dir = parts.join("/");
   const to = dir ? `${dir}/${name}` : name;
 
   try {
     await filesService.movePath(f.path, to, `重命名: ${f.name} -> ${name}`);
-    appStore.success('重命名成功');
+    appStore.success("重命名成功");
     clearSelection();
     await refresh();
     if (searchActive.value) {
       await doSearch(false);
     }
   } catch (err) {
-    appStore.error(err instanceof Error ? err.message : '重命名失败');
+    appStore.error(err instanceof Error ? err.message : "重命名失败");
   }
 }
 </script>

@@ -10,7 +10,7 @@
 </template>
 
 <script setup lang="ts">
-import type { CommitInfo } from '../../types';
+import type { CommitInfo } from "../../types";
 
 defineProps<{
   commit: CommitInfo;

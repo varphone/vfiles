@@ -5,12 +5,14 @@
 ### 方式1: 使用两个终端（推荐）
 
 **终端1 - 启动后端服务器:**
+
 ```powershell
 cd d:\Workspace\Projects\vfiles
 bun run dev
 ```
 
 **终端2 - 启动前端开发服务器:**
+
 ```powershell
 cd d:\Workspace\Projects\vfiles
 bun run dev:client
@@ -21,6 +23,7 @@ bun run dev:client
 ### 方式2: 使用脚本同时启动
 
 创建 `dev.ps1` 文件并运行（已创建在项目根目录）:
+
 ```powershell
 .\dev.ps1
 ```
@@ -82,40 +85,50 @@ git clone --bare data data.git
 ## 功能测试
 
 ### 1. 文件上传
+
 - 点击"上传文件"按钮
 - 选择或拖拽文件到上传区域
 - 输入提交信息
 - 点击上传
 
 ### 2. 文件浏览
+
 - 点击文件夹进入
 - 使用面包屑导航返回上级目录
 - 点击刷新按钮重新加载
 
 ### 3. 版本历史
+
 - 点击文件的"历史"按钮
 - 查看所有提交记录
 - 可以下载任意历史版本
 
 ### 4. 文件下载
+
 - 点击文件的"下载"按钮
 - 或在历史记录中下载特定版本
 
 ## 故障排除
 
 ### 端口被占用
+
 如果3000或5173端口被占用，可以修改:
+
 - 后端端口: 修改 `server/src/config.ts` 中的 `port`
 - 前端端口: 修改 `client/vite.config.ts` 中的 `server.port`
 
 ### Git仓库初始化失败
+
 确保 `data` 目录存在且有写权限:
+
 ```powershell
 mkdir -p data
 ```
 
 ### 依赖安装问题
+
 重新安装依赖:
+
 ```powershell
 # 根目录
 bun install
@@ -126,6 +139,7 @@ bun install
 ```
 
 ## 项目结构
+
 ```
 vfiles/
 ├── server/          # 后端代码

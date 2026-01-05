@@ -1,14 +1,19 @@
-import { $} from 'bun';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { FileInfo, CommitInfo, FileHistory, CommitSummary } from '../types/index.js';
-import { normalizePathForGit } from '../utils/path-validator.js';
-import { config } from '../config.js';
+import { $ } from "bun";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import {
+  FileInfo,
+  CommitInfo,
+  FileHistory,
+  CommitSummary,
+} from "../types/index.js";
+import { normalizePathForGit } from "../utils/path-validator.js";
+import { config } from "../config.js";
 
 export class GitService {
   private dir: string;
-  private mode: 'worktree' | 'bare';
+  private mode: "worktree" | "bare";
   private writeChain: Promise<unknown> = Promise.resolve();
   private bareWorkTreeDir: string | null = null;
   private gitDirPath: string | null = null;
@@ -20,38 +25,52 @@ export class GitService {
   private fileHistoryCacheMax: number;
   private lastCommitCacheMax: number;
 
-  private readonly listFilesCache = new Map<string, { token: string; at: number; value: FileInfo[] }>();
-  private readonly fileHistoryCache = new Map<string, { token: string; at: number; value: FileHistory }>();
+  private readonly listFilesCache = new Map<
+    string,
+    { token: string; at: number; value: FileInfo[] }
+  >();
+  private readonly fileHistoryCache = new Map<
+    string,
+    { token: string; at: number; value: FileHistory }
+  >();
   private readonly lastCommitCache = new Map<
     string,
     { token: string; at: number; value: CommitSummary | undefined }
   >();
   private readonly inflight = new Map<string, Promise<unknown>>();
 
-  constructor(repoPath: string, mode: 'worktree' | 'bare' = 'worktree') {
+  constructor(repoPath: string, mode: "worktree" | "bare" = "worktree") {
     this.dir = path.resolve(repoPath);
     this.mode = mode;
 
     const qc = config.gitQueryCache;
     this.cacheEnabled = qc?.enabled ?? true;
     this.cacheDebug = qc?.debug ?? false;
-    this.cacheTtlMs = Number.isFinite(qc?.ttlMs) ? (qc!.ttlMs as number) : 5 * 60 * 1000;
-    this.listFilesCacheMax = Number.isFinite(qc?.listFilesMax) ? (qc!.listFilesMax as number) : 300;
-    this.fileHistoryCacheMax = Number.isFinite(qc?.fileHistoryMax) ? (qc!.fileHistoryMax as number) : 300;
-    this.lastCommitCacheMax = Number.isFinite(qc?.lastCommitMax) ? (qc!.lastCommitMax as number) : 3000;
+    this.cacheTtlMs = Number.isFinite(qc?.ttlMs)
+      ? (qc!.ttlMs as number)
+      : 5 * 60 * 1000;
+    this.listFilesCacheMax = Number.isFinite(qc?.listFilesMax)
+      ? (qc!.listFilesMax as number)
+      : 300;
+    this.fileHistoryCacheMax = Number.isFinite(qc?.fileHistoryMax)
+      ? (qc!.fileHistoryMax as number)
+      : 300;
+    this.lastCommitCacheMax = Number.isFinite(qc?.lastCommitMax)
+      ? (qc!.lastCommitMax as number)
+      : 3000;
   }
 
   private isImmutableCommitish(commitish: string): boolean {
     // 视为不可变：纯十六进制 hash（至少 7 位）。
     // 分支名/tag 不可判定为不可变，因此不走该分支。
-    return /^[0-9a-f]{7,40}$/i.test((commitish || '').trim());
+    return /^[0-9a-f]{7,40}$/i.test((commitish || "").trim());
   }
 
   private async resolveGitDirPath(): Promise<string> {
     if (this.isBare) return this.dir;
     if (this.gitDirPath) return this.gitDirPath;
 
-    const dotGit = path.join(this.dir, '.git');
+    const dotGit = path.join(this.dir, ".git");
     try {
       const st = await fs.stat(dotGit);
       if (st.isDirectory()) {
@@ -61,7 +80,7 @@ export class GitService {
 
       if (st.isFile()) {
         // worktree 的 .git 可能是一个文本文件，内容类似：gitdir: /path/to/actual/gitdir
-        const content = await fs.readFile(dotGit, 'utf-8');
+        const content = await fs.readFile(dotGit, "utf-8");
         const m = content.match(/gitdir:\s*(.+)\s*/i);
         if (m && m[1]) {
           this.gitDirPath = path.resolve(this.dir, m[1].trim());
@@ -85,20 +104,20 @@ export class GitService {
     const parts: string[] = [];
 
     // HEAD
-    let headText = '';
+    let headText = "";
     try {
-      headText = (await fs.readFile(path.join(gitDir, 'HEAD'), 'utf-8')).trim();
+      headText = (await fs.readFile(path.join(gitDir, "HEAD"), "utf-8")).trim();
       parts.push(`HEAD=${headText}`);
     } catch {
-      parts.push('HEAD=?');
+      parts.push("HEAD=?");
     }
 
     // 当前 ref（若 HEAD 指向 refs/...）
-    if (headText.startsWith('ref:')) {
-      const ref = headText.slice('ref:'.length).trim();
+    if (headText.startsWith("ref:")) {
+      const ref = headText.slice("ref:".length).trim();
       const refPath = path.join(gitDir, ref);
       try {
-        const refText = (await fs.readFile(refPath, 'utf-8')).trim();
+        const refText = (await fs.readFile(refPath, "utf-8")).trim();
         parts.push(`REF=${ref}:${refText}`);
       } catch {
         // ref 可能被 pack 到 packed-refs
@@ -108,32 +127,32 @@ export class GitService {
 
     // packed-refs
     try {
-      const st = await fs.stat(path.join(gitDir, 'packed-refs'));
+      const st = await fs.stat(path.join(gitDir, "packed-refs"));
       parts.push(`PACKED=${st.mtimeMs}:${st.size}`);
     } catch {
-      parts.push('PACKED=-');
+      parts.push("PACKED=-");
     }
 
     // worktree index（bare 没有 index）
     if (!this.isBare) {
       try {
-        const st = await fs.stat(path.join(gitDir, 'index'));
+        const st = await fs.stat(path.join(gitDir, "index"));
         parts.push(`INDEX=${st.mtimeMs}:${st.size}`);
       } catch {
-        parts.push('INDEX=-');
+        parts.push("INDEX=-");
       }
     }
 
-    return parts.join('|');
+    return parts.join("|");
   }
 
   private async getDirSnapshotToken(dirPath: string): Promise<string> {
-    if (this.isBare) return 'DIR=-';
+    if (this.isBare) return "DIR=-";
     try {
       const st = await fs.stat(path.join(this.dir, dirPath));
       return `DIR=${st.mtimeMs}:${st.size}`;
     } catch {
-      return 'DIR=?';
+      return "DIR=?";
     }
   }
 
@@ -150,7 +169,11 @@ export class GitService {
 
     const now = Date.now();
     const existing = params.cache.get(params.key);
-    if (existing && existing.token === params.token && now - existing.at < this.cacheTtlMs) {
+    if (
+      existing &&
+      existing.token === params.token &&
+      now - existing.at < this.cacheTtlMs
+    ) {
       // LRU：touch
       params.cache.delete(params.key);
       params.cache.set(params.key, existing);
@@ -171,7 +194,11 @@ export class GitService {
     const p = (async () => {
       const value = await params.compute();
       params.cache.delete(params.key);
-      params.cache.set(params.key, { token: params.token, at: Date.now(), value });
+      params.cache.set(params.key, {
+        token: params.token,
+        at: Date.now(),
+        value,
+      });
       while (params.cache.size > params.maxEntries) {
         const firstKey = params.cache.keys().next().value as string | undefined;
         if (!firstKey) break;
@@ -192,14 +219,16 @@ export class GitService {
     // 兼容性：有些部署会只把 REPO_PATH 指向 data.git（bare gitdir），但忘了设置 REPO_MODE=bare。
     // 在这种情况下，运行依赖 worktree 的命令（如 git rm）会报 "this operation must be run in a work tree"。
     // 这里用路径后缀做兜底判定，避免误用 worktree 流程。
-    return this.mode === 'bare' || path.extname(this.dir).toLowerCase() === '.git';
+    return (
+      this.mode === "bare" || path.extname(this.dir).toLowerCase() === ".git"
+    );
   }
 
   private async ensureBareWorkTreeDir(): Promise<string | null> {
     if (!this.isBare) return null;
     if (this.bareWorkTreeDir) return this.bareWorkTreeDir;
 
-    const id = Buffer.from(this.dir).toString('hex').slice(0, 12) || 'default';
+    const id = Buffer.from(this.dir).toString("hex").slice(0, 12) || "default";
     const dir = path.join(os.tmpdir(), `vfiles-bare-worktree-${id}`);
     await fs.mkdir(dir, { recursive: true });
     this.bareWorkTreeDir = dir;
@@ -219,7 +248,7 @@ export class GitService {
     const next = this.writeChain.then(run, run);
     this.writeChain = next.then(
       () => undefined,
-      () => undefined
+      () => undefined,
     );
     return next;
   }
@@ -232,17 +261,17 @@ export class GitService {
   }
 
   private normalizeRelPath(p: string): string {
-    return normalizePathForGit(p).replaceAll('\\', '/');
+    return normalizePathForGit(p).replaceAll("\\", "/");
   }
 
   private async writeBlobFromContent(
-    content: Uint8Array | ArrayBuffer | Blob | ReadableStream<Uint8Array>
+    content: Uint8Array | ArrayBuffer | Blob | ReadableStream<Uint8Array>,
   ): Promise<string> {
-    const proc = Bun.spawn(['git', 'hash-object', '-w', '--stdin'], {
+    const proc = Bun.spawn(["git", "hash-object", "-w", "--stdin"], {
       cwd: this.dir,
-      stdin: 'pipe',
-      stdout: 'pipe',
-      stderr: 'pipe',
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
     });
 
     const sink = proc.stdin as unknown as {
@@ -303,21 +332,26 @@ export class GitService {
   private async updateIndexAddBlob(
     filePath: string,
     blobSha: string,
-    mode: string = '100644',
-    indexFile?: string
+    mode: string = "100644",
+    indexFile?: string,
   ): Promise<void> {
     const rel = this.normalizeRelPath(filePath);
     const bareWorkTree = await this.ensureBareWorkTreeDir();
-    const proc = Bun.spawn(['git', 'update-index', '--add', '--cacheinfo', mode, blobSha, rel], {
-      cwd: this.dir,
-      stdout: 'ignore',
-      stderr: 'pipe',
-      env: {
-        ...process.env,
-        ...(indexFile ? { GIT_INDEX_FILE: indexFile } : {}),
-        ...(bareWorkTree ? { GIT_DIR: this.dir, GIT_WORK_TREE: bareWorkTree } : {}),
+    const proc = Bun.spawn(
+      ["git", "update-index", "--add", "--cacheinfo", mode, blobSha, rel],
+      {
+        cwd: this.dir,
+        stdout: "ignore",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          ...(indexFile ? { GIT_INDEX_FILE: indexFile } : {}),
+          ...(bareWorkTree
+            ? { GIT_DIR: this.dir, GIT_WORK_TREE: bareWorkTree }
+            : {}),
+        },
       },
-    });
+    );
     const code = await proc.exited;
     if (code !== 0) {
       const err = await new Response(proc.stderr).text();
@@ -325,17 +359,22 @@ export class GitService {
     }
   }
 
-  private async updateIndexRemovePath(filePath: string, indexFile?: string): Promise<void> {
+  private async updateIndexRemovePath(
+    filePath: string,
+    indexFile?: string,
+  ): Promise<void> {
     const rel = this.normalizeRelPath(filePath);
     const bareWorkTree = await this.ensureBareWorkTreeDir();
-    const proc = Bun.spawn(['git', 'update-index', '--remove', '--', rel], {
+    const proc = Bun.spawn(["git", "update-index", "--remove", "--", rel], {
       cwd: this.dir,
-      stdout: 'ignore',
-      stderr: 'pipe',
+      stdout: "ignore",
+      stderr: "pipe",
       env: {
         ...process.env,
         ...(indexFile ? { GIT_INDEX_FILE: indexFile } : {}),
-        ...(bareWorkTree ? { GIT_DIR: this.dir, GIT_WORK_TREE: bareWorkTree } : {}),
+        ...(bareWorkTree
+          ? { GIT_DIR: this.dir, GIT_WORK_TREE: bareWorkTree }
+          : {}),
       },
     });
     const code = await proc.exited;
@@ -349,9 +388,9 @@ export class GitService {
     try {
       const result = await $`git symbolic-ref -q HEAD`.cwd(this.dir).quiet();
       const ref = result.stdout.toString().trim();
-      return ref || 'refs/heads/master';
+      return ref || "refs/heads/master";
     } catch {
-      return 'refs/heads/master';
+      return "refs/heads/master";
     }
   }
 
@@ -372,7 +411,12 @@ export class GitService {
     };
 
     // write-tree
-    const writeTree = Bun.spawn(['git', 'write-tree'], { cwd: this.dir, stdout: 'pipe', stderr: 'pipe', env });
+    const writeTree = Bun.spawn(["git", "write-tree"], {
+      cwd: this.dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
     const writeCode = await writeTree.exited;
     const tree = (await new Response(writeTree.stdout).text()).trim();
     if (writeCode !== 0 || !tree) {
@@ -381,12 +425,17 @@ export class GitService {
     }
 
     // commit-tree
-    const args = ['git', 'commit-tree', tree];
+    const args = ["git", "commit-tree", tree];
     if (params.parent) {
-      args.push('-p', params.parent);
+      args.push("-p", params.parent);
     }
-    args.push('-m', params.message);
-    const commitTree = Bun.spawn(args, { cwd: this.dir, stdout: 'pipe', stderr: 'pipe', env });
+    args.push("-m", params.message);
+    const commitTree = Bun.spawn(args, {
+      cwd: this.dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
     const commitCode = await commitTree.exited;
     const commit = (await new Response(commitTree.stdout).text()).trim();
     if (commitCode !== 0 || !commit) {
@@ -395,10 +444,10 @@ export class GitService {
     }
 
     const headRef = await this.getHeadRef();
-    const updateRef = Bun.spawn(['git', 'update-ref', headRef, commit], {
+    const updateRef = Bun.spawn(["git", "update-ref", headRef, commit], {
       cwd: this.dir,
-      stdout: 'ignore',
-      stderr: 'pipe',
+      stdout: "ignore",
+      stderr: "pipe",
       env: process.env,
     });
     const updateCode = await updateRef.exited;
@@ -420,35 +469,38 @@ export class GitService {
 
       if (this.isBare) {
         // bare 仓库：repo 本身就是 gitdir（无工作区）
-        const headPath = path.join(this.dir, 'HEAD');
+        const headPath = path.join(this.dir, "HEAD");
         try {
           await fs.access(headPath);
-          console.log('Git bare 仓库已存在');
+          console.log("Git bare 仓库已存在");
         } catch {
-          console.log('初始化 Git bare 仓库...');
+          console.log("初始化 Git bare 仓库...");
           await $`git init --bare`.cwd(this.dir);
 
           // bare 下创建空初始提交（不依赖 worktree）
-          const indexFile = path.join(this.dir, `.vfiles_index_init_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+          const indexFile = path.join(
+            this.dir,
+            `.vfiles_index_init_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+          );
           try {
             // empty index
-            const readEmpty = Bun.spawn(['git', 'read-tree', '--empty'], {
+            const readEmpty = Bun.spawn(["git", "read-tree", "--empty"], {
               cwd: this.dir,
-              stdout: 'ignore',
-              stderr: 'pipe',
+              stdout: "ignore",
+              stderr: "pipe",
               env: { ...process.env, GIT_INDEX_FILE: indexFile },
             });
             const readCode = await readEmpty.exited;
             if (readCode !== 0) {
               const err = await new Response(readEmpty.stderr).text();
-              throw new Error(err || 'git read-tree --empty 失败');
+              throw new Error(err || "git read-tree --empty 失败");
             }
 
             await this.bareCommitFromIndex({
               indexFile,
-              message: 'Initial commit',
-              authorName: 'VFiles System',
-              authorEmail: 'system@vfiles.local',
+              message: "Initial commit",
+              authorName: "VFiles System",
+              authorEmail: "system@vfiles.local",
             });
           } finally {
             try {
@@ -460,13 +512,13 @@ export class GitService {
         }
       } else {
         // worktree 仓库：检查 .git
-        const gitDir = path.join(this.dir, '.git');
+        const gitDir = path.join(this.dir, ".git");
         try {
           await fs.access(gitDir);
-          console.log('Git仓库已存在');
+          console.log("Git仓库已存在");
         } catch {
           // 不存在，初始化新仓库
-          console.log('初始化Git仓库...');
+          console.log("初始化Git仓库...");
           await $`git init`.cwd(this.dir);
 
           // 创建初始提交
@@ -482,11 +534,11 @@ export class GitService {
             await this.ensureGitLfsTrackedPatterns(config.gitLfsTrackPatterns);
           }
         } catch (e) {
-          console.warn('Git LFS 初始化失败，将回退为普通 Git：', e);
+          console.warn("Git LFS 初始化失败，将回退为普通 Git：", e);
         }
       }
     } catch (error) {
-      console.error('初始化Git仓库失败:', error);
+      console.error("初始化Git仓库失败:", error);
       throw error;
     }
   }
@@ -494,35 +546,37 @@ export class GitService {
   private async ensureGitLfsInstalled(): Promise<boolean> {
     // bare 仓库没有 worktree，不做 install（否则会触发 "must be run in a work tree"）
     if (this.isBare) {
-      const proc = Bun.spawn(['git', 'lfs', 'version'], {
+      const proc = Bun.spawn(["git", "lfs", "version"], {
         cwd: this.dir,
-        stdout: 'ignore',
-        stderr: 'ignore',
+        stdout: "ignore",
+        stderr: "ignore",
       });
       const code = await proc.exited;
       if (code !== 0) {
-        console.warn('未检测到 git-lfs（git lfs version 失败），将不会启用 LFS');
+        console.warn(
+          "未检测到 git-lfs（git lfs version 失败），将不会启用 LFS",
+        );
         return false;
       }
       return true;
     }
 
-    const proc = Bun.spawn(['git', 'lfs', 'version'], {
+    const proc = Bun.spawn(["git", "lfs", "version"], {
       cwd: this.dir,
-      stdout: 'ignore',
-      stderr: 'ignore',
+      stdout: "ignore",
+      stderr: "ignore",
     });
     const code = await proc.exited;
     if (code !== 0) {
-      console.warn('未检测到 git-lfs（git lfs version 失败），将不会启用 LFS');
+      console.warn("未检测到 git-lfs（git lfs version 失败），将不会启用 LFS");
       return false;
     }
 
     // 仅对当前仓库安装 hooks（不污染全局）
-    const install = Bun.spawn(['git', 'lfs', 'install', '--local'], {
+    const install = Bun.spawn(["git", "lfs", "install", "--local"], {
       cwd: this.dir,
-      stdout: 'ignore',
-      stderr: 'ignore',
+      stdout: "ignore",
+      stderr: "ignore",
     });
     await install.exited;
     return true;
@@ -533,14 +587,18 @@ export class GitService {
 
     // bare 仓库没有工作区文件，无法使用 `git lfs track` 写入 .gitattributes；改为直接更新 index。
     if (this.isBare) {
-      const desiredLines = patterns.map((p) => `${p} filter=lfs diff=lfs merge=lfs -text`);
+      const desiredLines = patterns.map(
+        (p) => `${p} filter=lfs diff=lfs merge=lfs -text`,
+      );
 
-      let existing = '';
+      let existing = "";
       try {
-        const result = await $`git show HEAD:.gitattributes`.cwd(this.dir).quiet();
+        const result = await $`git show HEAD:.gitattributes`
+          .cwd(this.dir)
+          .quiet();
         existing = result.stdout.toString();
       } catch {
-        existing = '';
+        existing = "";
       }
 
       const existingLines = existing
@@ -560,25 +618,35 @@ export class GitService {
 
       if (!changed) return;
 
-      const newContent = `${existingLines.join('\n')}\n`;
-      const blobSha = await this.writeBlobFromContent(new TextEncoder().encode(newContent));
+      const newContent = `${existingLines.join("\n")}\n`;
+      const blobSha = await this.writeBlobFromContent(
+        new TextEncoder().encode(newContent),
+      );
       await this.withWriteLock(async () => {
-        const indexFile = path.join(this.dir, `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+        const indexFile = path.join(
+          this.dir,
+          `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+        );
         try {
           // 从 HEAD 载入到临时 index
-          const readTree = Bun.spawn(['git', 'read-tree', 'HEAD'], {
+          const readTree = Bun.spawn(["git", "read-tree", "HEAD"], {
             cwd: this.dir,
-            stdout: 'ignore',
-            stderr: 'pipe',
+            stdout: "ignore",
+            stderr: "pipe",
             env: { ...process.env, GIT_INDEX_FILE: indexFile },
           });
           const rc = await readTree.exited;
           if (rc !== 0) {
             const err = await new Response(readTree.stderr).text();
-            throw new Error(err || 'git read-tree HEAD 失败');
+            throw new Error(err || "git read-tree HEAD 失败");
           }
 
-          await this.updateIndexAddBlob('.gitattributes', blobSha, '100644', indexFile);
+          await this.updateIndexAddBlob(
+            ".gitattributes",
+            blobSha,
+            "100644",
+            indexFile,
+          );
 
           let parent: string | undefined;
           try {
@@ -590,9 +658,9 @@ export class GitService {
 
           await this.bareCommitFromIndex({
             indexFile,
-            message: 'chore: configure git-lfs',
-            authorName: 'VFiles System',
-            authorEmail: 'system@vfiles.local',
+            message: "chore: configure git-lfs",
+            authorName: "VFiles System",
+            authorEmail: "system@vfiles.local",
             parent,
           });
         } finally {
@@ -608,10 +676,10 @@ export class GitService {
 
     let changed = false;
     for (const p of patterns) {
-      const proc = Bun.spawn(['git', 'lfs', 'track', p], {
+      const proc = Bun.spawn(["git", "lfs", "track", p], {
         cwd: this.dir,
-        stdout: 'ignore',
-        stderr: 'ignore',
+        stdout: "ignore",
+        stderr: "ignore",
       });
       const code = await proc.exited;
       if (code === 0) changed = true;
@@ -621,25 +689,32 @@ export class GitService {
 
     // 若 .gitattributes 被更新则提交一次
     const status = await $`git status --porcelain`.cwd(this.dir).quiet();
-    if (status.stdout.toString().includes('.gitattributes')) {
+    if (status.stdout.toString().includes(".gitattributes")) {
       await $`git add .gitattributes`.cwd(this.dir);
-      await $`git -c user.name="VFiles System" -c user.email="system@vfiles.local" commit -m "chore: configure git-lfs"`.cwd(this.dir);
+      await $`git -c user.name="VFiles System" -c user.email="system@vfiles.local" commit -m "chore: configure git-lfs"`.cwd(
+        this.dir,
+      );
     }
   }
 
-  async isLfsPointerAtCommit(filePath: string, commitHash: string): Promise<boolean> {
+  async isLfsPointerAtCommit(
+    filePath: string,
+    commitHash: string,
+  ): Promise<boolean> {
     const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
-    const proc = Bun.spawn(['git', 'show', spec], {
+    const proc = Bun.spawn(["git", "show", spec], {
       cwd: this.dir,
-      stdout: 'pipe',
-      stderr: 'ignore',
+      stdout: "pipe",
+      stderr: "ignore",
     });
 
     const reader = proc.stdout.getReader();
     try {
       const { value } = await reader.read();
-      const head = value ? new TextDecoder().decode(value.subarray(0, 200)) : '';
-      return head.startsWith('version https://git-lfs.github.com/spec/v1');
+      const head = value
+        ? new TextDecoder().decode(value.subarray(0, 200))
+        : "";
+      return head.startsWith("version https://git-lfs.github.com/spec/v1");
     } catch {
       return false;
     } finally {
@@ -656,19 +731,22 @@ export class GitService {
     }
   }
 
-  getFileContentSmudgedStreamAtCommit(filePath: string, commitHash: string): ReadableStream<Uint8Array> {
+  getFileContentSmudgedStreamAtCommit(
+    filePath: string,
+    commitHash: string,
+  ): ReadableStream<Uint8Array> {
     const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
-    const show = Bun.spawn(['git', 'show', spec], {
+    const show = Bun.spawn(["git", "show", spec], {
       cwd: this.dir,
-      stdout: 'pipe',
-      stderr: 'ignore',
+      stdout: "pipe",
+      stderr: "ignore",
     });
 
-    const smudge = Bun.spawn(['git', 'lfs', 'smudge', '--', filePath], {
+    const smudge = Bun.spawn(["git", "lfs", "smudge", "--", filePath], {
       cwd: this.dir,
-      stdin: 'pipe',
-      stdout: 'pipe',
-      stderr: 'ignore',
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "ignore",
     });
 
     // pump: show.stdout -> smudge.stdin
@@ -709,26 +787,37 @@ export class GitService {
       // bare 模式不创建工作区文件
       return;
     }
-    const readmePath = path.join(this.dir, 'README.md');
-    const readmeContent = '# VFiles 数据目录\n\n此目录用于存储文件管理系统的数据。\n';
-    
-    await fs.writeFile(readmePath, readmeContent, 'utf-8');
-    
+    const readmePath = path.join(this.dir, "README.md");
+    const readmeContent =
+      "# VFiles 数据目录\n\n此目录用于存储文件管理系统的数据。\n";
+
+    await fs.writeFile(readmePath, readmeContent, "utf-8");
+
     await $`git add README.md`.cwd(this.dir);
-    await $`git -c user.name="VFiles System" -c user.email="system@vfiles.local" commit -m "Initial commit"`.cwd(this.dir);
+    await $`git -c user.name="VFiles System" -c user.email="system@vfiles.local" commit -m "Initial commit"`.cwd(
+      this.dir,
+    );
   }
 
   /**
    * 列出指定路径下的文件和文件夹
    */
-  async listFiles(dirPath: string = '', commitHash?: string): Promise<FileInfo[]> {
-    const normalizedDir = dirPath ? normalizePathForGit(dirPath) : '';
+  async listFiles(
+    dirPath: string = "",
+    commitHash?: string,
+  ): Promise<FileInfo[]> {
+    const normalizedDir = dirPath ? normalizePathForGit(dirPath) : "";
     const repoToken = commitHash
-      ? (this.isImmutableCommitish(commitHash) ? `COMMIT=${commitHash}` : await this.getRepoStateToken())
+      ? this.isImmutableCommitish(commitHash)
+        ? `COMMIT=${commitHash}`
+        : await this.getRepoStateToken()
       : await this.getRepoStateToken();
-    const dirToken = !commitHash && !this.isBare ? await this.getDirSnapshotToken(dirPath) : '';
+    const dirToken =
+      !commitHash && !this.isBare
+        ? await this.getDirSnapshotToken(dirPath)
+        : "";
     const token = dirToken ? `${repoToken}|${dirToken}` : repoToken;
-    const cacheKey = `listFiles|${commitHash || (this.isBare ? 'HEAD(bare)' : 'worktree')}|${normalizedDir}`;
+    const cacheKey = `listFiles|${commitHash || (this.isBare ? "HEAD(bare)" : "worktree")}|${normalizedDir}`;
 
     return await this.cached({
       cache: this.listFilesCache,
@@ -736,154 +825,170 @@ export class GitService {
       token,
       maxEntries: this.listFilesCacheMax,
       compute: async () => {
-    if (commitHash) {
-      const normalizedDir = dirPath ? normalizePathForGit(dirPath) : '';
-      const treeish = normalizedDir ? `${commitHash}:${normalizedDir}` : commitHash;
-      const args = ['git', 'ls-tree', '-z', '-l', treeish];
+        if (commitHash) {
+          const normalizedDir = dirPath ? normalizePathForGit(dirPath) : "";
+          const treeish = normalizedDir
+            ? `${commitHash}:${normalizedDir}`
+            : commitHash;
+          const args = ["git", "ls-tree", "-z", "-l", treeish];
 
-      const proc = Bun.spawn(args, { cwd: this.dir, stdout: 'pipe', stderr: 'pipe' });
-      const code = await proc.exited;
-      const outBuf = await new Response(proc.stdout).arrayBuffer();
+          const proc = Bun.spawn(args, {
+            cwd: this.dir,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const code = await proc.exited;
+          const outBuf = await new Response(proc.stdout).arrayBuffer();
 
-      if (code !== 0) {
-        return [];
-      }
+          if (code !== 0) {
+            return [];
+          }
 
-      const bytes = new Uint8Array(outBuf);
-      const text = new TextDecoder().decode(bytes);
-      const records = text.split('\0').filter(Boolean);
+          const bytes = new Uint8Array(outBuf);
+          const text = new TextDecoder().decode(bytes);
+          const records = text.split("\0").filter(Boolean);
 
-      const files: FileInfo[] = [];
-      for (const rec of records) {
-        // 格式：<mode> <type> <sha> <size>\t<name>
-        const tab = rec.indexOf('\t');
-        if (tab <= 0) continue;
-        const meta = rec.slice(0, tab).trim().split(/\s+/);
-        const name = rec.slice(tab + 1);
-        if (!name) continue;
-        if (name.startsWith('.git')) continue;
+          const files: FileInfo[] = [];
+          for (const rec of records) {
+            // 格式：<mode> <type> <sha> <size>\t<name>
+            const tab = rec.indexOf("\t");
+            if (tab <= 0) continue;
+            const meta = rec.slice(0, tab).trim().split(/\s+/);
+            const name = rec.slice(tab + 1);
+            if (!name) continue;
+            if (name.startsWith(".git")) continue;
 
-        const typeToken = meta[1];
-        const sizeToken = meta[3];
+            const typeToken = meta[1];
+            const sizeToken = meta[3];
 
-        const relPath = normalizedDir ? `${normalizedDir}/${name}` : name;
-        const filePath = relPath.replaceAll('\\', '/');
+            const relPath = normalizedDir ? `${normalizedDir}/${name}` : name;
+            const filePath = relPath.replaceAll("\\", "/");
 
-        // 目录版本浏览：优先保证能列出内容；lastCommit 可先沿用现有逻辑
-        const lastCommit = await this.getLastCommit(filePath);
-        const mtime = lastCommit?.date || new Date(0).toISOString();
+            // 目录版本浏览：优先保证能列出内容；lastCommit 可先沿用现有逻辑
+            const lastCommit = await this.getLastCommit(filePath);
+            const mtime = lastCommit?.date || new Date(0).toISOString();
 
-        files.push({
-          name,
-          path: filePath,
-          type: typeToken === 'tree' ? 'directory' : 'file',
-          size: sizeToken && sizeToken !== '-' ? Number.parseInt(sizeToken, 10) : 0,
-          mtime,
-          lastCommit,
-        });
-      }
+            files.push({
+              name,
+              path: filePath,
+              type: typeToken === "tree" ? "directory" : "file",
+              size:
+                sizeToken && sizeToken !== "-"
+                  ? Number.parseInt(sizeToken, 10)
+                  : 0,
+              mtime,
+              lastCommit,
+            });
+          }
 
-      return files.sort((a, b) => {
-        if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-    }
-
-    if (this.isBare) {
-      // 从 HEAD 的 tree 列出目录项
-      const normalizedDir = dirPath ? normalizePathForGit(dirPath) : '';
-      // 注意：`git ls-tree HEAD -- <dir>` 在 <dir> 是 tree 时会返回“dir 自身”这一条目，
-      // 这会导致空目录被显示为自己的子目录（dir/dir）。
-      // 使用 `HEAD:<dir>` 才能列出目录内容。
-      const treeish = normalizedDir ? `HEAD:${normalizedDir}` : 'HEAD';
-      const args = ['git', 'ls-tree', '-z', '-l', treeish];
-
-      const proc = Bun.spawn(args, { cwd: this.dir, stdout: 'pipe', stderr: 'pipe' });
-      const code = await proc.exited;
-      const outBuf = await new Response(proc.stdout).arrayBuffer();
-
-      // 空目录/空仓库：ls-tree 可能为空输出
-      if (code !== 0) {
-        return [];
-      }
-
-      const bytes = new Uint8Array(outBuf);
-      const text = new TextDecoder().decode(bytes);
-      const records = text.split('\0').filter(Boolean);
-
-      const files: FileInfo[] = [];
-      for (const rec of records) {
-        // 格式：<mode> <type> <sha> <size>\t<name>
-        const tab = rec.indexOf('\t');
-        if (tab <= 0) continue;
-        const meta = rec.slice(0, tab).trim().split(/\s+/);
-        const name = rec.slice(tab + 1);
-        if (!name) continue;
-        if (name.startsWith('.git')) continue;
-
-        const typeToken = meta[1];
-        const sizeToken = meta[3];
-
-        const relPath = normalizedDir ? `${normalizedDir}/${name}` : name;
-        const filePath = relPath.replaceAll('\\', '/');
-
-        const lastCommit = await this.getLastCommit(filePath);
-        const mtime = lastCommit?.date || new Date(0).toISOString();
-
-        files.push({
-          name,
-          path: filePath,
-          type: typeToken === 'tree' ? 'directory' : 'file',
-          size: sizeToken && sizeToken !== '-' ? Number.parseInt(sizeToken, 10) : 0,
-          mtime,
-          lastCommit,
-        });
-      }
-
-      return files.sort((a, b) => {
-        if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-    }
-
-    const fullPath = path.join(this.dir, dirPath);
-    const files: FileInfo[] = [];
-
-    try {
-      const entries = await fs.readdir(fullPath, { withFileTypes: true });
-
-      for (const entry of entries) {
-        // 跳过 .git* 相关文件/目录（例如 .git, .gitignore, .gitattributes）
-        if (entry.name.startsWith('.git')) continue;
-
-        const filePath = path.join(dirPath, entry.name);
-        const fullFilePath = path.join(fullPath, entry.name);
-        const stats = await fs.stat(fullFilePath);
-
-        // 获取最后一次提交信息
-        const lastCommit = await this.getLastCommit(filePath);
-
-        files.push({
-          name: entry.name,
-          path: filePath,
-          type: entry.isDirectory() ? 'directory' : 'file',
-          size: stats.size,
-          mtime: stats.mtime.toISOString(),
-          lastCommit,
-        });
-      }
-
-      // 排序：文件夹在前，然后按名称排序
-      return files.sort((a, b) => {
-        if (a.type !== b.type) {
-          return a.type === 'directory' ? -1 : 1;
+          return files.sort((a, b) => {
+            if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+            return a.name.localeCompare(b.name);
+          });
         }
-        return a.name.localeCompare(b.name);
-      });
-    } catch (error) {
-      console.error('读取文件列表失败:', error);
-      return [];
-    }
+
+        if (this.isBare) {
+          // 从 HEAD 的 tree 列出目录项
+          const normalizedDir = dirPath ? normalizePathForGit(dirPath) : "";
+          // 注意：`git ls-tree HEAD -- <dir>` 在 <dir> 是 tree 时会返回“dir 自身”这一条目，
+          // 这会导致空目录被显示为自己的子目录（dir/dir）。
+          // 使用 `HEAD:<dir>` 才能列出目录内容。
+          const treeish = normalizedDir ? `HEAD:${normalizedDir}` : "HEAD";
+          const args = ["git", "ls-tree", "-z", "-l", treeish];
+
+          const proc = Bun.spawn(args, {
+            cwd: this.dir,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const code = await proc.exited;
+          const outBuf = await new Response(proc.stdout).arrayBuffer();
+
+          // 空目录/空仓库：ls-tree 可能为空输出
+          if (code !== 0) {
+            return [];
+          }
+
+          const bytes = new Uint8Array(outBuf);
+          const text = new TextDecoder().decode(bytes);
+          const records = text.split("\0").filter(Boolean);
+
+          const files: FileInfo[] = [];
+          for (const rec of records) {
+            // 格式：<mode> <type> <sha> <size>\t<name>
+            const tab = rec.indexOf("\t");
+            if (tab <= 0) continue;
+            const meta = rec.slice(0, tab).trim().split(/\s+/);
+            const name = rec.slice(tab + 1);
+            if (!name) continue;
+            if (name.startsWith(".git")) continue;
+
+            const typeToken = meta[1];
+            const sizeToken = meta[3];
+
+            const relPath = normalizedDir ? `${normalizedDir}/${name}` : name;
+            const filePath = relPath.replaceAll("\\", "/");
+
+            const lastCommit = await this.getLastCommit(filePath);
+            const mtime = lastCommit?.date || new Date(0).toISOString();
+
+            files.push({
+              name,
+              path: filePath,
+              type: typeToken === "tree" ? "directory" : "file",
+              size:
+                sizeToken && sizeToken !== "-"
+                  ? Number.parseInt(sizeToken, 10)
+                  : 0,
+              mtime,
+              lastCommit,
+            });
+          }
+
+          return files.sort((a, b) => {
+            if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+            return a.name.localeCompare(b.name);
+          });
+        }
+
+        const fullPath = path.join(this.dir, dirPath);
+        const files: FileInfo[] = [];
+
+        try {
+          const entries = await fs.readdir(fullPath, { withFileTypes: true });
+
+          for (const entry of entries) {
+            // 跳过 .git* 相关文件/目录（例如 .git, .gitignore, .gitattributes）
+            if (entry.name.startsWith(".git")) continue;
+
+            const filePath = path.join(dirPath, entry.name);
+            const fullFilePath = path.join(fullPath, entry.name);
+            const stats = await fs.stat(fullFilePath);
+
+            // 获取最后一次提交信息
+            const lastCommit = await this.getLastCommit(filePath);
+
+            files.push({
+              name: entry.name,
+              path: filePath,
+              type: entry.isDirectory() ? "directory" : "file",
+              size: stats.size,
+              mtime: stats.mtime.toISOString(),
+              lastCommit,
+            });
+          }
+
+          // 排序：文件夹在前，然后按名称排序
+          return files.sort((a, b) => {
+            if (a.type !== b.type) {
+              return a.type === "directory" ? -1 : 1;
+            }
+            return a.name.localeCompare(b.name);
+          });
+        } catch (error) {
+          console.error("读取文件列表失败:", error);
+          return [];
+        }
       },
     });
   }
@@ -895,12 +1000,17 @@ export class GitService {
     try {
       if (commitHash) {
         // 获取历史版本
-        const result = await $`git show ${commitHash}:${normalizePathForGit(filePath)}`.cwd(this.dir).quiet();
+        const result =
+          await $`git show ${commitHash}:${normalizePathForGit(filePath)}`
+            .cwd(this.dir)
+            .quiet();
         return Buffer.from(result.stdout);
       } else {
         // 获取当前版本
         if (this.isBare) {
-          const result = await $`git show HEAD:${normalizePathForGit(filePath)}`.cwd(this.dir).quiet();
+          const result = await $`git show HEAD:${normalizePathForGit(filePath)}`
+            .cwd(this.dir)
+            .quiet();
           return Buffer.from(result.stdout);
         }
 
@@ -915,12 +1025,15 @@ export class GitService {
   /**
    * 轻量校验：某个 commit 下是否存在该文件（不读取内容）
    */
-  async fileExistsAtCommit(filePath: string, commitHash: string): Promise<boolean> {
+  async fileExistsAtCommit(
+    filePath: string,
+    commitHash: string,
+  ): Promise<boolean> {
     const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
-    const proc = Bun.spawn(['git', 'cat-file', '-e', spec], {
+    const proc = Bun.spawn(["git", "cat-file", "-e", spec], {
       cwd: this.dir,
-      stdout: 'ignore',
-      stderr: 'ignore',
+      stdout: "ignore",
+      stderr: "ignore",
     });
     const code = await proc.exited;
     return code === 0;
@@ -931,30 +1044,33 @@ export class GitService {
    */
   private async getObjectTypeAtCommit(
     filePath: string,
-    commitHash: string
-  ): Promise<'blob' | 'tree' | null> {
+    commitHash: string,
+  ): Promise<"blob" | "tree" | null> {
     const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
-    const proc = Bun.spawn(['git', 'cat-file', '-t', spec], {
+    const proc = Bun.spawn(["git", "cat-file", "-t", spec], {
       cwd: this.dir,
-      stdout: 'pipe',
-      stderr: 'ignore',
+      stdout: "pipe",
+      stderr: "ignore",
     });
     const code = await proc.exited;
     if (code !== 0) return null;
     const text = (await new Response(proc.stdout).text()).trim();
-    if (text === 'blob' || text === 'tree') return text;
+    if (text === "blob" || text === "tree") return text;
     return null;
   }
 
   /**
    * 获取历史版本文件内容的流（真正流式，不会把整个文件读入内存）
    */
-  getFileContentStreamAtCommit(filePath: string, commitHash: string): ReadableStream<Uint8Array> {
+  getFileContentStreamAtCommit(
+    filePath: string,
+    commitHash: string,
+  ): ReadableStream<Uint8Array> {
     const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
-    const proc = Bun.spawn(['git', 'show', spec], {
+    const proc = Bun.spawn(["git", "show", spec], {
       cwd: this.dir,
-      stdout: 'pipe',
-      stderr: 'ignore',
+      stdout: "pipe",
+      stderr: "ignore",
     });
     return proc.stdout;
   }
@@ -962,17 +1078,20 @@ export class GitService {
   /**
    * 获取历史版本文件大小（用于 Range/断点续传）
    */
-  async getFileSizeAtCommit(filePath: string, commitHash: string): Promise<number> {
+  async getFileSizeAtCommit(
+    filePath: string,
+    commitHash: string,
+  ): Promise<number> {
     const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
-    const proc = Bun.spawn(['git', 'cat-file', '-s', spec], {
+    const proc = Bun.spawn(["git", "cat-file", "-s", spec], {
       cwd: this.dir,
-      stdout: 'pipe',
-      stderr: 'ignore',
+      stdout: "pipe",
+      stderr: "ignore",
     });
     const text = await new Response(proc.stdout).text();
     const size = Number.parseInt(text.trim(), 10);
     if (!Number.isFinite(size) || size < 0) {
-      throw new Error('无法读取历史版本文件大小');
+      throw new Error("无法读取历史版本文件大小");
     }
     return size;
   }
@@ -985,13 +1104,13 @@ export class GitService {
     filePath: string,
     commitHash: string,
     start: number,
-    end: number
+    end: number,
   ): ReadableStream<Uint8Array> {
     const spec = `${commitHash}:${normalizePathForGit(filePath)}`;
-    const proc = Bun.spawn(['git', 'show', spec], {
+    const proc = Bun.spawn(["git", "show", spec], {
       cwd: this.dir,
-      stdout: 'pipe',
-      stderr: 'ignore',
+      stdout: "pipe",
+      stderr: "ignore",
     });
 
     return new ReadableStream<Uint8Array>({
@@ -1061,33 +1180,43 @@ export class GitService {
     filePath: string,
     content: Uint8Array | ArrayBuffer | Blob | ReadableStream<Uint8Array>,
     message: string,
-    author?: { name: string; email: string }
+    author?: { name: string; email: string },
   ): Promise<string> {
     try {
       if (this.isBare) {
         return await this.withWriteLock(async () => {
           const blobSha = await this.writeBlobFromContent(content);
-          const indexFile = path.join(this.dir, `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+          const indexFile = path.join(
+            this.dir,
+            `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+          );
           try {
             // 从 HEAD 载入到临时 index
-            const readTree = Bun.spawn(['git', 'read-tree', 'HEAD'], {
+            const readTree = Bun.spawn(["git", "read-tree", "HEAD"], {
               cwd: this.dir,
-              stdout: 'ignore',
-              stderr: 'pipe',
+              stdout: "ignore",
+              stderr: "pipe",
               env: { ...process.env, GIT_INDEX_FILE: indexFile },
             });
             const rc = await readTree.exited;
             if (rc !== 0) {
               const err = await new Response(readTree.stderr).text();
-              throw new Error(err || 'git read-tree HEAD 失败');
+              throw new Error(err || "git read-tree HEAD 失败");
             }
 
-            await this.updateIndexAddBlob(filePath, blobSha, '100644', indexFile);
+            await this.updateIndexAddBlob(
+              filePath,
+              blobSha,
+              "100644",
+              indexFile,
+            );
 
-            const authorName = author?.name || 'VFiles User';
-            const authorEmail = author?.email || 'user@vfiles.local';
+            const authorName = author?.name || "VFiles User";
+            const authorEmail = author?.email || "user@vfiles.local";
 
-            const parentResult = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
+            const parentResult = await $`git rev-parse HEAD`
+              .cwd(this.dir)
+              .quiet();
             const parent = parentResult.stdout.toString().trim();
             const commit = await this.bareCommitFromIndex({
               indexFile,
@@ -1120,10 +1249,12 @@ export class GitService {
       }
 
       // 提交
-      const authorName = author?.name || 'VFiles User';
-      const authorEmail = author?.email || 'user@vfiles.local';
-      
-      await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(this.dir);
+      const authorName = author?.name || "VFiles User";
+      const authorEmail = author?.email || "user@vfiles.local";
+
+      await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(
+        this.dir,
+      );
 
       // 获取最新提交hash
       const result = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
@@ -1139,20 +1270,22 @@ export class GitService {
   async commitFile(
     filePath: string,
     message: string,
-    author?: { name: string; email: string }
+    author?: { name: string; email: string },
   ): Promise<string> {
     try {
       if (this.isBare) {
-        throw new Error('bare 模式不支持 commitFile（请使用 saveFile 直接写入并提交）');
+        throw new Error(
+          "bare 模式不支持 commitFile（请使用 saveFile 直接写入并提交）",
+        );
       }
       // 添加到Git
       await $`git add ${normalizePathForGit(filePath)}`.cwd(this.dir);
 
       // 提交
-      const authorName = author?.name || 'VFiles User';
-      const authorEmail = author?.email || 'user@vfiles.local';
+      const authorName = author?.name || "VFiles User";
+      const authorEmail = author?.email || "user@vfiles.local";
       await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(
-        this.dir
+        this.dir,
       );
 
       // 获取最新提交hash
@@ -1169,55 +1302,72 @@ export class GitService {
   async deleteFile(
     filePath: string,
     message: string,
-    author?: { name: string; email: string }
+    author?: { name: string; email: string },
   ): Promise<void> {
     try {
       if (this.isBare) {
         await this.withWriteLock(async () => {
           const rel = this.normalizeRelPath(filePath);
-          const indexFile = path.join(this.dir, `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+          const indexFile = path.join(
+            this.dir,
+            `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+          );
           try {
-            const readTree = Bun.spawn(['git', 'read-tree', 'HEAD'], {
+            const readTree = Bun.spawn(["git", "read-tree", "HEAD"], {
               cwd: this.dir,
-              stdout: 'ignore',
-              stderr: 'pipe',
+              stdout: "ignore",
+              stderr: "pipe",
               env: { ...process.env, GIT_INDEX_FILE: indexFile },
             });
             const rc = await readTree.exited;
             if (rc !== 0) {
               const err = await new Response(readTree.stderr).text();
-              throw new Error(err || 'git read-tree HEAD 失败');
+              throw new Error(err || "git read-tree HEAD 失败");
             }
 
-            const objType = await this.getObjectTypeAtCommit(rel, 'HEAD');
-            if (objType === 'blob') {
+            const objType = await this.getObjectTypeAtCommit(rel, "HEAD");
+            if (objType === "blob") {
               await this.updateIndexRemovePath(rel, indexFile);
-            } else if (objType === 'tree') {
-              const proc = Bun.spawn(['git', 'ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', rel], {
-                cwd: this.dir,
-                stdout: 'pipe',
-                stderr: 'pipe',
-              });
+            } else if (objType === "tree") {
+              const proc = Bun.spawn(
+                [
+                  "git",
+                  "ls-tree",
+                  "-r",
+                  "-z",
+                  "--name-only",
+                  "HEAD",
+                  "--",
+                  rel,
+                ],
+                {
+                  cwd: this.dir,
+                  stdout: "pipe",
+                  stderr: "pipe",
+                },
+              );
               const code = await proc.exited;
               if (code !== 0) {
                 const err = await new Response(proc.stderr).text();
-                throw new Error(err || '路径不存在');
+                throw new Error(err || "路径不存在");
               }
               const text = new TextDecoder().decode(
-                new Uint8Array(await new Response(proc.stdout).arrayBuffer())
+                new Uint8Array(await new Response(proc.stdout).arrayBuffer()),
               );
-              const files = text.split('\0').filter(Boolean);
-              if (files.length === 0) throw new Error('路径不存在');
+              const files = text.split("\0").filter(Boolean);
+              if (files.length === 0) throw new Error("路径不存在");
               for (const f of files) {
                 await this.updateIndexRemovePath(f, indexFile);
               }
             } else {
-              throw new Error('路径不存在');
+              throw new Error("路径不存在");
             }
 
-            const authorName = author?.name || 'VFiles User';
-            const authorEmail = author?.email || 'user@vfiles.local';
-            const parentResult = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
+            const authorName = author?.name || "VFiles User";
+            const authorEmail = author?.email || "user@vfiles.local";
+            const parentResult = await $`git rev-parse HEAD`
+              .cwd(this.dir)
+              .quiet();
             const parent = parentResult.stdout.toString().trim();
             await this.bareCommitFromIndex({
               indexFile,
@@ -1251,10 +1401,12 @@ export class GitService {
       }
 
       // 提交
-      const authorName = author?.name || 'VFiles User';
-      const authorEmail = author?.email || 'user@vfiles.local';
-      
-      await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(this.dir);
+      const authorName = author?.name || "VFiles User";
+      const authorEmail = author?.email || "user@vfiles.local";
+
+      await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(
+        this.dir,
+      );
     } catch (error) {
       throw new Error(`删除文件失败: ${error}`);
     }
@@ -1266,32 +1418,42 @@ export class GitService {
   async createDirectory(
     dirPath: string,
     message: string,
-    author?: { name: string; email: string }
+    author?: { name: string; email: string },
   ): Promise<string> {
     try {
       if (this.isBare) {
         return await this.withWriteLock(async () => {
-          const keepRel = path.join(dirPath, '.gitkeep').replaceAll('\\', '/');
+          const keepRel = path.join(dirPath, ".gitkeep").replaceAll("\\", "/");
           const blobSha = await this.writeBlobFromContent(new Uint8Array(0));
-          const indexFile = path.join(this.dir, `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+          const indexFile = path.join(
+            this.dir,
+            `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+          );
           try {
-            const readTree = Bun.spawn(['git', 'read-tree', 'HEAD'], {
+            const readTree = Bun.spawn(["git", "read-tree", "HEAD"], {
               cwd: this.dir,
-              stdout: 'ignore',
-              stderr: 'pipe',
+              stdout: "ignore",
+              stderr: "pipe",
               env: { ...process.env, GIT_INDEX_FILE: indexFile },
             });
             const rc = await readTree.exited;
             if (rc !== 0) {
               const err = await new Response(readTree.stderr).text();
-              throw new Error(err || 'git read-tree HEAD 失败');
+              throw new Error(err || "git read-tree HEAD 失败");
             }
 
-            await this.updateIndexAddBlob(keepRel, blobSha, '100644', indexFile);
+            await this.updateIndexAddBlob(
+              keepRel,
+              blobSha,
+              "100644",
+              indexFile,
+            );
 
-            const authorName = author?.name || 'VFiles User';
-            const authorEmail = author?.email || 'user@vfiles.local';
-            const parentResult = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
+            const authorName = author?.name || "VFiles User";
+            const authorEmail = author?.email || "user@vfiles.local";
+            const parentResult = await $`git rev-parse HEAD`
+              .cwd(this.dir)
+              .quiet();
             const parent = parentResult.stdout.toString().trim();
             const commit = await this.bareCommitFromIndex({
               indexFile,
@@ -1316,25 +1478,25 @@ export class GitService {
       // 若已存在则报错，避免误提交
       try {
         await fs.stat(fullDir);
-        throw new Error('目录已存在');
+        throw new Error("目录已存在");
       } catch (err: any) {
-        if (err?.code !== 'ENOENT') {
+        if (err?.code !== "ENOENT") {
           throw err;
         }
       }
 
       await fs.mkdir(fullDir, { recursive: true });
 
-      const keepRel = path.join(dirPath, '.gitkeep');
+      const keepRel = path.join(dirPath, ".gitkeep");
       const keepFull = path.join(this.dir, keepRel);
-      await fs.writeFile(keepFull, '', 'utf-8');
+      await fs.writeFile(keepFull, "", "utf-8");
 
       await $`git add -- ${normalizePathForGit(keepRel)}`.cwd(this.dir);
 
-      const authorName = author?.name || 'VFiles User';
-      const authorEmail = author?.email || 'user@vfiles.local';
+      const authorName = author?.name || "VFiles User";
+      const authorEmail = author?.email || "user@vfiles.local";
       await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(
-        this.dir
+        this.dir,
       );
 
       const result = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
@@ -1351,85 +1513,96 @@ export class GitService {
     fromPath: string,
     toPath: string,
     message: string,
-    author?: { name: string; email: string }
+    author?: { name: string; email: string },
   ): Promise<string> {
     try {
       if (this.isBare) {
         return await this.withWriteLock(async () => {
           const fromRel = this.normalizeRelPath(fromPath);
           const toRel = this.normalizeRelPath(toPath);
-          const indexFile = path.join(this.dir, `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+          const indexFile = path.join(
+            this.dir,
+            `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+          );
           try {
-            const readTree = Bun.spawn(['git', 'read-tree', 'HEAD'], {
+            const readTree = Bun.spawn(["git", "read-tree", "HEAD"], {
               cwd: this.dir,
-              stdout: 'ignore',
-              stderr: 'pipe',
+              stdout: "ignore",
+              stderr: "pipe",
               env: { ...process.env, GIT_INDEX_FILE: indexFile },
             });
             const rc = await readTree.exited;
             if (rc !== 0) {
               const err = await new Response(readTree.stderr).text();
-              throw new Error(err || 'git read-tree HEAD 失败');
+              throw new Error(err || "git read-tree HEAD 失败");
             }
 
             // 先尝试作为文件
-            const lsFile = Bun.spawn(['git', 'ls-tree', '-z', 'HEAD', '--', fromRel], {
-              cwd: this.dir,
-              stdout: 'pipe',
-              stderr: 'pipe',
-            });
+            const lsFile = Bun.spawn(
+              ["git", "ls-tree", "-z", "HEAD", "--", fromRel],
+              {
+                cwd: this.dir,
+                stdout: "pipe",
+                stderr: "pipe",
+              },
+            );
             const out = new TextDecoder().decode(
-              new Uint8Array(await new Response(lsFile.stdout).arrayBuffer())
+              new Uint8Array(await new Response(lsFile.stdout).arrayBuffer()),
             );
             await lsFile.exited;
 
-            if (out && out.includes('\t')) {
-              const rec = out.split('\0').filter(Boolean)[0];
-              const tab = rec.indexOf('\t');
+            if (out && out.includes("\t")) {
+              const rec = out.split("\0").filter(Boolean)[0];
+              const tab = rec.indexOf("\t");
               const meta = rec.slice(0, tab).trim().split(/\s+/);
-              const mode = meta[0] || '100644';
+              const mode = meta[0] || "100644";
               const sha = meta[2];
-              if (!sha) throw new Error('读取源文件失败');
+              if (!sha) throw new Error("读取源文件失败");
 
               await this.updateIndexAddBlob(toRel, sha, mode, indexFile);
               await this.updateIndexRemovePath(fromRel, indexFile);
             } else {
-              const proc = Bun.spawn(['git', 'ls-tree', '-r', '-z', 'HEAD', '--', fromRel], {
-                cwd: this.dir,
-                stdout: 'pipe',
-                stderr: 'pipe',
-              });
+              const proc = Bun.spawn(
+                ["git", "ls-tree", "-r", "-z", "HEAD", "--", fromRel],
+                {
+                  cwd: this.dir,
+                  stdout: "pipe",
+                  stderr: "pipe",
+                },
+              );
               const code = await proc.exited;
               if (code !== 0) {
                 const err = await new Response(proc.stderr).text();
-                throw new Error(err || '路径不存在');
+                throw new Error(err || "路径不存在");
               }
               const text = new TextDecoder().decode(
-                new Uint8Array(await new Response(proc.stdout).arrayBuffer())
+                new Uint8Array(await new Response(proc.stdout).arrayBuffer()),
               );
-              const records = text.split('\0').filter(Boolean);
-              if (records.length === 0) throw new Error('路径不存在');
+              const records = text.split("\0").filter(Boolean);
+              if (records.length === 0) throw new Error("路径不存在");
 
               for (const rec of records) {
-                const tab = rec.indexOf('\t');
+                const tab = rec.indexOf("\t");
                 if (tab <= 0) continue;
                 const meta = rec.slice(0, tab).trim().split(/\s+/);
-                const mode = meta[0] || '100644';
+                const mode = meta[0] || "100644";
                 const sha = meta[2];
                 const name = rec.slice(tab + 1);
                 if (!sha || !name) continue;
                 const src = name;
                 if (!src.startsWith(fromRel)) continue;
-                const suffix = src.slice(fromRel.length).replace(/^\//, '');
+                const suffix = src.slice(fromRel.length).replace(/^\//, "");
                 const dst = `${toRel}/${suffix}`;
                 await this.updateIndexAddBlob(dst, sha, mode, indexFile);
                 await this.updateIndexRemovePath(src, indexFile);
               }
             }
 
-            const authorName = author?.name || 'VFiles User';
-            const authorEmail = author?.email || 'user@vfiles.local';
-            const parentResult = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
+            const authorName = author?.name || "VFiles User";
+            const authorEmail = author?.email || "user@vfiles.local";
+            const parentResult = await $`git rev-parse HEAD`
+              .cwd(this.dir)
+              .quiet();
             const parent = parentResult.stdout.toString().trim();
             const commit = await this.bareCommitFromIndex({
               indexFile,
@@ -1459,12 +1632,14 @@ export class GitService {
       const toDir = path.dirname(toFull);
       await fs.mkdir(toDir, { recursive: true });
 
-      await $`git mv ${normalizePathForGit(fromPath)} ${normalizePathForGit(toPath)}`.cwd(this.dir);
+      await $`git mv ${normalizePathForGit(fromPath)} ${normalizePathForGit(toPath)}`.cwd(
+        this.dir,
+      );
 
-      const authorName = author?.name || 'VFiles User';
-      const authorEmail = author?.email || 'user@vfiles.local';
+      const authorName = author?.name || "VFiles User";
+      const authorEmail = author?.email || "user@vfiles.local";
       await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(
-        this.dir
+        this.dir,
       );
 
       const result = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
@@ -1477,7 +1652,10 @@ export class GitService {
   /**
    * 获取文件的提交历史
    */
-  async getFileHistory(filePath: string, limit: number = 50): Promise<FileHistory> {
+  async getFileHistory(
+    filePath: string,
+    limit: number = 50,
+  ): Promise<FileHistory> {
     const normalized = normalizePathForGit(filePath);
     const token = await this.getRepoStateToken();
     const cacheKey = `fileHistory|${normalized}|${limit}`;
@@ -1490,8 +1668,8 @@ export class GitService {
       compute: async () => {
         try {
           // 使用控制字符作为分隔符，避免提交信息里出现 "||" 等导致解析错位
-          const RS = '\x1e'; // record separator
-          const US = '\x1f'; // unit separator
+          const RS = "\x1e"; // record separator
+          const US = "\x1f"; // unit separator
 
           const cmd = normalized
             ? $`git log --pretty=format:%H${US}%P${US}%an${US}%ae${US}%at${US}%s${RS} -n ${limit} -- ${normalized}`
@@ -1507,7 +1685,14 @@ export class GitService {
 
           const commitInfos: CommitInfo[] = [];
           for (const record of records) {
-            const [hash, parentsStr, authorName, authorEmail, timestampStr, message] = record.split(US);
+            const [
+              hash,
+              parentsStr,
+              authorName,
+              authorEmail,
+              timestampStr,
+              message,
+            ] = record.split(US);
             if (!hash) continue;
 
             const timestamp = Number.parseInt(timestampStr, 10);
@@ -1515,14 +1700,14 @@ export class GitService {
               continue;
             }
 
-            const parents = (parentsStr || '').split(' ').filter(Boolean);
+            const parents = (parentsStr || "").split(" ").filter(Boolean);
 
             commitInfos.push({
               hash,
-              message: message ?? '',
+              message: message ?? "",
               author: {
-                name: authorName ?? '',
-                email: authorEmail ?? '',
+                name: authorName ?? "",
+                email: authorEmail ?? "",
               },
               date: new Date(timestamp * 1000).toISOString(),
               parent: parents,
@@ -1531,14 +1716,14 @@ export class GitService {
 
           return {
             commits: commitInfos,
-            currentVersion: commitInfos[0]?.hash || '',
+            currentVersion: commitInfos[0]?.hash || "",
             totalCommits: commitInfos.length,
           };
         } catch (error) {
-          console.error('获取文件历史失败:', error);
+          console.error("获取文件历史失败:", error);
           return {
             commits: [],
-            currentVersion: '',
+            currentVersion: "",
             totalCommits: 0,
           };
         }
@@ -1561,10 +1746,11 @@ export class GitService {
       maxEntries: this.lastCommitCacheMax,
       compute: async () => {
         try {
-          const US = '\x1f';
-          const result = await $`git log --pretty=format:%H${US}%an${US}%at${US}%s -n 1 -- ${normalized}`
-            .cwd(this.dir)
-            .quiet();
+          const US = "\x1f";
+          const result =
+            await $`git log --pretty=format:%H${US}%an${US}%at${US}%s -n 1 -- ${normalized}`
+              .cwd(this.dir)
+              .quiet();
 
           const line = result.stdout.toString().trim();
           if (!line) return undefined;
@@ -1575,8 +1761,8 @@ export class GitService {
 
           return {
             hash,
-            message: message ?? '',
-            author: author ?? '',
+            message: message ?? "",
+            author: author ?? "",
             date: new Date(timestamp * 1000).toISOString(),
           };
         } catch {
@@ -1591,20 +1777,26 @@ export class GitService {
    * - 若提供 parentHash，则返回 parent..commit 的 unified diff
    * - 否则返回该 commit 对该文件的 patch（git show）
    */
-  async getFileDiff(filePath: string, commitHash: string, parentHash?: string): Promise<string> {
+  async getFileDiff(
+    filePath: string,
+    commitHash: string,
+    parentHash?: string,
+  ): Promise<string> {
     try {
       const normalized = normalizePathForGit(filePath);
 
       if (parentHash) {
-        const result = await $`git diff --unified=3 ${parentHash} ${commitHash} -- ${normalized}`
-          .cwd(this.dir)
-          .quiet();
+        const result =
+          await $`git diff --unified=3 ${parentHash} ${commitHash} -- ${normalized}`
+            .cwd(this.dir)
+            .quiet();
         return result.stdout.toString();
       }
 
-      const result = await $`git show --pretty=format: --unified=3 ${commitHash} -- ${normalized}`
-        .cwd(this.dir)
-        .quiet();
+      const result =
+        await $`git show --pretty=format: --unified=3 ${commitHash} -- ${normalized}`
+          .cwd(this.dir)
+          .quiet();
       return result.stdout.toString();
     } catch (error) {
       throw new Error(`获取 diff 失败: ${error}`);
@@ -1616,27 +1808,35 @@ export class GitService {
    */
   async getCommitDetails(hash: string): Promise<CommitInfo> {
     try {
-      const US = '\x1f';
-      const result = await $`git log --pretty=format:%H${US}%P${US}%an${US}%ae${US}%at${US}%s -n 1 ${hash}`
-        .cwd(this.dir)
-        .quiet();
+      const US = "\x1f";
+      const result =
+        await $`git log --pretty=format:%H${US}%P${US}%an${US}%ae${US}%at${US}%s -n 1 ${hash}`
+          .cwd(this.dir)
+          .quiet();
 
       const line = result.stdout.toString().trim();
-      const [commitHash, parentsStr, authorName, authorEmail, timestampStr, message] = line.split(US);
+      const [
+        commitHash,
+        parentsStr,
+        authorName,
+        authorEmail,
+        timestampStr,
+        message,
+      ] = line.split(US);
 
       const timestamp = Number.parseInt(timestampStr, 10);
       if (!commitHash || !Number.isFinite(timestamp)) {
-        throw new Error('提交信息解析失败');
+        throw new Error("提交信息解析失败");
       }
 
-      const parents = (parentsStr || '').split(' ').filter(Boolean);
+      const parents = (parentsStr || "").split(" ").filter(Boolean);
 
       return {
         hash: commitHash,
-        message: message ?? '',
+        message: message ?? "",
         author: {
-          name: authorName ?? '',
-          email: authorEmail ?? '',
+          name: authorName ?? "",
+          email: authorEmail ?? "",
         },
         date: new Date(timestamp * 1000).toISOString(),
         parent: parents,
@@ -1649,10 +1849,10 @@ export class GitService {
   /**
    * 搜索文件
    */
-  async searchFiles(query: string, basePath: string = ''): Promise<FileInfo[]> {
+  async searchFiles(query: string, basePath: string = ""): Promise<FileInfo[]> {
     const allFiles: FileInfo[] = [];
 
-    const scanDirectory = async (dirPath: string = ''): Promise<void> => {
+    const scanDirectory = async (dirPath: string = ""): Promise<void> => {
       const files = await this.listFiles(dirPath);
 
       for (const file of files) {
@@ -1660,7 +1860,7 @@ export class GitService {
           allFiles.push(file);
         }
 
-        if (file.type === 'directory') {
+        if (file.type === "directory") {
           await scanDirectory(file.path);
         }
       }
@@ -1674,15 +1874,18 @@ export class GitService {
    * 全文搜索（最小实现）：使用 git grep 找到包含关键词的文件，返回 FileInfo 列表。
    * 注意：使用 --fixed-strings 防止把用户输入当作正则。
    */
-  async searchFileContents(query: string, basePath: string = ''): Promise<FileInfo[]> {
+  async searchFileContents(
+    query: string,
+    basePath: string = "",
+  ): Promise<FileInfo[]> {
     // git grep 输出使用 / 作为分隔符；若指定 basePath 则限制在该目录范围内
     const MAX_FILES = 50;
     const MAX_MATCHES_PER_FILE = 5;
     const MAX_LINE_LENGTH = 240;
 
-    const pathSpec = basePath ? normalizePathForGit(basePath) : '';
+    const pathSpec = basePath ? normalizePathForGit(basePath) : "";
 
-    let stdout = '';
+    let stdout = "";
     try {
       const result = pathSpec
         ? await $`git grep -n -I -m ${MAX_MATCHES_PER_FILE} --fixed-strings --ignore-case ${query} -- ${pathSpec}`
@@ -1694,7 +1897,8 @@ export class GitService {
       stdout = result.stdout.toString();
     } catch (error: any) {
       // git grep：无匹配时 exit code = 1（不是错误）
-      const exitCode = typeof error?.exitCode === 'number' ? error.exitCode : undefined;
+      const exitCode =
+        typeof error?.exitCode === "number" ? error.exitCode : undefined;
       if (exitCode === 1) {
         return [];
       }
@@ -1710,9 +1914,9 @@ export class GitService {
       .filter(Boolean);
 
     for (const line of lines) {
-      const first = line.indexOf(':');
+      const first = line.indexOf(":");
       if (first <= 0) continue;
-      const second = line.indexOf(':', first + 1);
+      const second = line.indexOf(":", first + 1);
       if (second <= first + 1) continue;
 
       const filePath = line.slice(0, first);
@@ -1725,7 +1929,10 @@ export class GitService {
       if (!Number.isFinite(lineNo)) continue;
 
       const textRaw = line.slice(second + 1);
-      const text = textRaw.length > MAX_LINE_LENGTH ? `${textRaw.slice(0, MAX_LINE_LENGTH)}…` : textRaw;
+      const text =
+        textRaw.length > MAX_LINE_LENGTH
+          ? `${textRaw.slice(0, MAX_LINE_LENGTH)}…`
+          : textRaw;
 
       const arr = matchesByFile.get(filePath) ?? [];
       if (arr.length < MAX_MATCHES_PER_FILE) {
@@ -1743,7 +1950,7 @@ export class GitService {
         let mtime = lastCommit?.date || new Date(0).toISOString();
         if (this.isBare) {
           try {
-            size = await this.getFileSizeAtCommit(filePath, 'HEAD');
+            size = await this.getFileSizeAtCommit(filePath, "HEAD");
           } catch {
             // ignore
           }
@@ -1757,7 +1964,7 @@ export class GitService {
         infos.push({
           name: path.basename(filePath),
           path: filePath,
-          type: 'file',
+          type: "file",
           size,
           mtime,
           lastCommit,

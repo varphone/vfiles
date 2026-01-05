@@ -5,14 +5,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed } from "vue";
 
 const props = defineProps<{
   message?: string | null;
 }>();
 
 const visible = computed(() => {
-  const m = (props.message || '').trim();
+  const m = (props.message || "").trim();
   return m.length > 0;
 });
 </script>

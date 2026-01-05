@@ -1,18 +1,18 @@
-import { apiService } from './api.service';
-import type { FileInfo, FileHistory } from '../types';
+import { apiService } from "./api.service";
+import type { FileInfo, FileHistory } from "../types";
 
 type DownloadProgress = { loaded: number; total?: number };
 
 async function fetchToBlob(
   url: string,
-  opts?: { signal?: AbortSignal; onProgress?: (p: DownloadProgress) => void }
+  opts?: { signal?: AbortSignal; onProgress?: (p: DownloadProgress) => void },
 ): Promise<Blob> {
   const response = await fetch(url, { signal: opts?.signal });
   if (!response.ok) {
-    throw new Error('下载失败');
+    throw new Error("下载失败");
   }
 
-  const totalStr = response.headers.get('content-length');
+  const totalStr = response.headers.get("content-length");
   const total = totalStr ? Number.parseInt(totalStr, 10) : undefined;
 
   if (!response.body || !opts?.onProgress) {
@@ -35,13 +35,14 @@ async function fetchToBlob(
     opts.onProgress({ loaded, total });
   }
 
-  const mime = response.headers.get('content-type') || 'application/octet-stream';
+  const mime =
+    response.headers.get("content-type") || "application/octet-stream";
   return new Blob(chunks, { type: mime });
 }
 
 function triggerSaveBlob(blob: Blob, filename: string) {
   const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement('a');
+  const link = document.createElement("a");
   link.href = objectUrl;
   link.download = filename;
   document.body.appendChild(link);
@@ -55,24 +56,33 @@ export const filesService = {
   /**
    * 获取文件列表
    */
-  async getFiles(path: string = '', commit?: string): Promise<FileInfo[]> {
-    const response = await apiService.get<FileInfo[]>('/files', { path, commit });
+  async getFiles(path: string = "", commit?: string): Promise<FileInfo[]> {
+    const response = await apiService.get<FileInfo[]>("/files", {
+      path,
+      commit,
+    });
     return response.data || [];
   },
-
 
   /**
    * 移动/重命名文件或目录
    */
-  async movePath(from: string, to: string, message: string = '移动/重命名'): Promise<any> {
-    return await apiService.post('/files/move', { from, to, message });
+  async movePath(
+    from: string,
+    to: string,
+    message: string = "移动/重命名",
+  ): Promise<any> {
+    return await apiService.post("/files/move", { from, to, message });
   },
 
   /**
    * 创建目录
    */
-  async createDirectory(path: string, message: string = '创建目录'): Promise<any> {
-    return await apiService.post('/files/dir', { path, message });
+  async createDirectory(
+    path: string,
+    message: string = "创建目录",
+  ): Promise<any> {
+    return await apiService.post("/files/dir", { path, message });
   },
 
   /**
@@ -80,13 +90,13 @@ export const filesService = {
    */
   async getFileContent(path: string, commit?: string): Promise<Blob> {
     const params = new URLSearchParams({ path });
-    if (commit) params.set('commit', commit);
+    if (commit) params.set("commit", commit);
     const response = await fetch(`/api/files/content?${params}`);
-    
+
     if (!response.ok) {
-      throw new Error('获取文件内容失败');
+      throw new Error("获取文件内容失败");
     }
-    
+
     return response.blob();
   },
 
@@ -95,24 +105,31 @@ export const filesService = {
    */
   async uploadFile(
     file: File,
-    path: string = '',
-    message: string = '上传文件',
-    opts?: { signal?: AbortSignal; onProgress?: (p: { loaded: number; total?: number }) => void }
+    path: string = "",
+    message: string = "上传文件",
+    opts?: {
+      signal?: AbortSignal;
+      onProgress?: (p: { loaded: number; total?: number }) => void;
+    },
   ): Promise<any> {
     async function fallbackSingleUpload() {
       const formData = new FormData();
-      formData.append('file', file);
-      formData.append('path', path);
-      formData.append('message', message);
+      formData.append("file", file);
+      formData.append("path", path);
+      formData.append("message", message);
 
       if (opts?.signal || opts?.onProgress) {
-        return await apiService.postFormWithProgress('/files/upload', formData, {
-          signal: opts?.signal,
-          onUploadProgress: opts?.onProgress,
-        });
+        return await apiService.postFormWithProgress(
+          "/files/upload",
+          formData,
+          {
+            signal: opts?.signal,
+            onUploadProgress: opts?.onProgress,
+          },
+        );
       }
 
-      return await apiService.postForm('/files/upload', formData);
+      return await apiService.postForm("/files/upload", formData);
     }
 
     // 分块上传：默认启用（即使只有 1 块也可走同一流程），若后端不支持则回退
@@ -123,7 +140,7 @@ export const filesService = {
         totalChunks: number;
         received: number[];
         resumable: boolean;
-      }>('/files/upload/init', {
+      }>("/files/upload/init", {
         path,
         filename: file.name,
         size: file.size,
@@ -140,7 +157,9 @@ export const filesService = {
       const uploadId = initData.uploadId;
       const chunkSize = initData.chunkSize;
       const totalChunks = initData.totalChunks;
-      const receivedSet = new Set<number>((initData.received || []).filter((x) => Number.isFinite(x)));
+      const receivedSet = new Set<number>(
+        (initData.received || []).filter((x) => Number.isFinite(x)),
+      );
 
       const totalBytes = file.size;
       const bytesForIndex = (index: number) => {
@@ -159,7 +178,7 @@ export const filesService = {
 
       for (let index = 0; index < totalChunks; index++) {
         if (opts?.signal?.aborted) {
-          throw new DOMException('Aborted', 'AbortError');
+          throw new DOMException("Aborted", "AbortError");
         }
 
         if (receivedSet.has(index)) {
@@ -171,7 +190,7 @@ export const filesService = {
         const slice = file.slice(start, end);
         const buf = await slice.arrayBuffer();
 
-        await apiService.postBinaryWithProgress('/files/upload/chunk', buf, {
+        await apiService.postBinaryWithProgress("/files/upload/chunk", buf, {
           params: { uploadId, index },
           signal: opts?.signal,
           onUploadProgress: opts?.onProgress
@@ -189,19 +208,19 @@ export const filesService = {
       }
 
       // 完成合并并提交
-      const completeResp = await apiService.post('/files/upload/complete', {
+      const completeResp = await apiService.post("/files/upload/complete", {
         uploadId,
         message,
       });
       return completeResp;
     } catch (err: any) {
       // 若后端不支持分块端点（常见是 404）或协议异常，则自动回退旧上传
-      const msg = err instanceof Error ? err.message : String(err ?? '');
+      const msg = err instanceof Error ? err.message : String(err ?? "");
       if (/404|not found/i.test(msg)) {
         return await fallbackSingleUpload();
       }
       // Abort 直接抛出
-      if (err?.name === 'AbortError') throw err;
+      if (err?.name === "AbortError") throw err;
       throw err;
     }
   },
@@ -209,27 +228,36 @@ export const filesService = {
   /**
    * 删除文件
    */
-  async deleteFile(path: string, message: string = '删除文件'): Promise<any> {
-    return await apiService.delete('/files', { path, message });
+  async deleteFile(path: string, message: string = "删除文件"): Promise<any> {
+    return await apiService.delete("/files", { path, message });
   },
 
   /**
    * 获取文件历史
    */
   async getFileHistory(path: string, limit: number = 50): Promise<FileHistory> {
-    const response = await apiService.get<FileHistory>('/history', { path, limit });
-    return response.data || { commits: [], currentVersion: '', totalCommits: 0 };
+    const response = await apiService.get<FileHistory>("/history", {
+      path,
+      limit,
+    });
+    return (
+      response.data || { commits: [], currentVersion: "", totalCommits: 0 }
+    );
   },
 
   /**
    * 获取某个版本的 diff（unified diff 文本）
    */
-  async getFileDiff(path: string, commit: string, parent?: string): Promise<string> {
+  async getFileDiff(
+    path: string,
+    commit: string,
+    parent?: string,
+  ): Promise<string> {
     const params = new URLSearchParams({ path, commit });
-    if (parent) params.set('parent', parent);
+    if (parent) params.set("parent", parent);
     const response = await fetch(`/api/history/diff?${params}`);
     if (!response.ok) {
-      throw new Error('获取 diff 失败');
+      throw new Error("获取 diff 失败");
     }
     return response.text();
   },
@@ -239,11 +267,11 @@ export const filesService = {
    */
   downloadFile(path: string, commit?: string): void {
     const params = new URLSearchParams({ path });
-    if (commit) params.set('commit', commit);
+    if (commit) params.set("commit", commit);
     const url = `/api/download?${params}`;
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
-    link.download = path.split('/').pop() || 'download';
+    link.download = path.split("/").pop() || "download";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -255,10 +283,10 @@ export const filesService = {
   downloadFolder(path: string, commit?: string): void {
     const params = { path };
     const qs = new URLSearchParams(params);
-    if (commit) qs.set('commit', commit);
+    if (commit) qs.set("commit", commit);
     const url = `/api/download/folder?${qs}`;
-    const name = path.split('/').filter(Boolean).pop() || 'root';
-    const link = document.createElement('a');
+    const name = path.split("/").filter(Boolean).pop() || "root";
+    const link = document.createElement("a");
     link.href = url;
     link.download = `${name}.zip`;
     document.body.appendChild(link);
@@ -272,12 +300,12 @@ export const filesService = {
   async fetchFileDownload(
     path: string,
     commit?: string,
-    opts?: { signal?: AbortSignal; onProgress?: (p: DownloadProgress) => void }
+    opts?: { signal?: AbortSignal; onProgress?: (p: DownloadProgress) => void },
   ): Promise<{ blob: Blob; filename: string }> {
     const params = new URLSearchParams({ path });
-    if (commit) params.set('commit', commit);
+    if (commit) params.set("commit", commit);
     const url = `/api/download?${params}`;
-    const filename = path.split('/').pop() || 'download';
+    const filename = path.split("/").pop() || "download";
     const blob = await fetchToBlob(url, opts);
     return { blob, filename };
   },
@@ -288,12 +316,12 @@ export const filesService = {
   async fetchFolderDownload(
     path: string,
     commit?: string,
-    opts?: { signal?: AbortSignal; onProgress?: (p: DownloadProgress) => void }
+    opts?: { signal?: AbortSignal; onProgress?: (p: DownloadProgress) => void },
   ): Promise<{ blob: Blob; filename: string }> {
     const params = new URLSearchParams({ path });
-    if (commit) params.set('commit', commit);
+    if (commit) params.set("commit", commit);
     const url = `/api/download/folder?${params}`;
-    const name = path.split('/').filter(Boolean).pop() || 'root';
+    const name = path.split("/").filter(Boolean).pop() || "root";
     const filename = `${name}.zip`;
     const blob = await fetchToBlob(url, opts);
     return { blob, filename };
@@ -311,14 +339,14 @@ export const filesService = {
    */
   async searchFiles(
     query: string,
-    mode: 'name' | 'content' = 'name',
-    opts?: { type?: 'all' | 'file' | 'directory'; path?: string }
+    mode: "name" | "content" = "name",
+    opts?: { type?: "all" | "file" | "directory"; path?: string },
   ): Promise<FileInfo[]> {
-    const response = await apiService.get<FileInfo[]>('/search', {
+    const response = await apiService.get<FileInfo[]>("/search", {
       q: query,
       mode,
-      type: opts?.type || 'all',
-      path: opts?.path || '',
+      type: opts?.type || "all",
+      path: opts?.path || "",
     });
     return response.data || [];
   },

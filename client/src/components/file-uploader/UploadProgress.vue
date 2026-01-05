@@ -1,5 +1,10 @@
 <template>
-  <progress v-if="mode === 'determinate'" class="progress is-primary is-small" :value="value" max="100">
+  <progress
+    v-if="mode === 'determinate'"
+    class="progress is-primary is-small"
+    :value="value"
+    max="100"
+  >
     {{ value }}%
   </progress>
   <progress v-else class="progress is-primary is-small" max="100"></progress>
@@ -8,11 +13,11 @@
 <script setup lang="ts">
 withDefaults(
   defineProps<{
-    mode: 'determinate' | 'indeterminate';
+    mode: "determinate" | "indeterminate";
     value?: number;
   }>(),
   {
     value: 0,
-  }
+  },
 );
 </script>

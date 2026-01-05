@@ -1,118 +1,140 @@
-import path from 'node:path';
+import path from "node:path";
 
 // 服务器配置
 export const config = {
   // 服务器端口
-  port: parseInt(process.env.PORT || '3000'),
-  
+  port: parseInt(process.env.PORT || "3000"),
+
   // Git仓库路径
-  repoPath: process.env.REPO_PATH || path.resolve(process.cwd(), 'data'),
+  repoPath: process.env.REPO_PATH || path.resolve(process.cwd(), "data"),
 
   // 仓库模式：
   // - worktree：repoPath 为工作目录（含 .git），文件在磁盘上可见（可能产生“工作区文件 + git 对象库”双份占用）
   // - bare：repoPath 为 bare gitdir（无工作区文件），文件仅存于 git 对象库，避免双份占用
-  repoMode: ((process.env.REPO_MODE || 'worktree').toLowerCase() === 'bare' ? 'bare' : 'worktree') as
-    | 'worktree'
-    | 'bare',
-  
+  repoMode: ((process.env.REPO_MODE || "worktree").toLowerCase() === "bare"
+    ? "bare"
+    : "worktree") as "worktree" | "bare",
+
   // 上传限制
   maxFileSize: 1024 * 1024 * 1024, // 1GB
 
   // 分块上传（用于绕过单次请求体大小限制）
   // 单块大小（默认 5MB，可通过 CDN 限制调整）
-  uploadChunkSize: parseInt(process.env.UPLOAD_CHUNK_SIZE || String(5 * 1024 * 1024)),
+  uploadChunkSize: parseInt(
+    process.env.UPLOAD_CHUNK_SIZE || String(5 * 1024 * 1024),
+  ),
   // 单块最大允许大小（防止客户端随意放大 chunk）
-  uploadMaxChunkSize: parseInt(process.env.UPLOAD_MAX_CHUNK_SIZE || String(20 * 1024 * 1024)),
+  uploadMaxChunkSize: parseInt(
+    process.env.UPLOAD_MAX_CHUNK_SIZE || String(20 * 1024 * 1024),
+  ),
   // 分块上传临时目录（必须在 repoPath 之外，避免被当作文件列表展示/提交）
-  uploadTempDir: process.env.UPLOAD_TEMP_DIR || path.resolve(process.cwd(), '.vfiles_uploads'),
+  uploadTempDir:
+    process.env.UPLOAD_TEMP_DIR ||
+    path.resolve(process.cwd(), ".vfiles_uploads"),
   // 上传会话过期时间（默认 24h）
-  uploadSessionTtlMs: parseInt(process.env.UPLOAD_SESSION_TTL_MS || String(24 * 60 * 60 * 1000)),
+  uploadSessionTtlMs: parseInt(
+    process.env.UPLOAD_SESSION_TTL_MS || String(24 * 60 * 60 * 1000),
+  ),
 
   // 下载缓存（用于历史版本 + Git LFS smudge 后的临时落地，从而支持 Range/断点续传）
   downloadCacheDir:
-    process.env.DOWNLOAD_CACHE_DIR || path.resolve(process.cwd(), '.vfiles_download_cache'),
+    process.env.DOWNLOAD_CACHE_DIR ||
+    path.resolve(process.cwd(), ".vfiles_download_cache"),
   // 缓存过期时间（默认 6h）
-  downloadCacheTtlMs: parseInt(process.env.DOWNLOAD_CACHE_TTL_MS || String(6 * 60 * 60 * 1000)),
+  downloadCacheTtlMs: parseInt(
+    process.env.DOWNLOAD_CACHE_TTL_MS || String(6 * 60 * 60 * 1000),
+  ),
 
   // Git 查询缓存（减少在仓库未变更时重复调用 git 子进程）
   gitQueryCache: {
-    enabled: (process.env.GIT_QUERY_CACHE_ENABLED || 'true').toLowerCase() !== 'false',
+    enabled:
+      (process.env.GIT_QUERY_CACHE_ENABLED || "true").toLowerCase() !== "false",
     // 默认 5 分钟；token 未变且未过期则命中
-    ttlMs: parseInt(process.env.GIT_QUERY_CACHE_TTL_MS || String(5 * 60 * 1000)),
+    ttlMs: parseInt(
+      process.env.GIT_QUERY_CACHE_TTL_MS || String(5 * 60 * 1000),
+    ),
     // listFiles 结果缓存条目上限
-    listFilesMax: parseInt(process.env.GIT_QUERY_CACHE_LIST_FILES_MAX || '300'),
+    listFilesMax: parseInt(process.env.GIT_QUERY_CACHE_LIST_FILES_MAX || "300"),
     // getFileHistory 结果缓存条目上限
-    fileHistoryMax: parseInt(process.env.GIT_QUERY_CACHE_FILE_HISTORY_MAX || '300'),
+    fileHistoryMax: parseInt(
+      process.env.GIT_QUERY_CACHE_FILE_HISTORY_MAX || "300",
+    ),
     // getLastCommit 结果缓存条目上限
-    lastCommitMax: parseInt(process.env.GIT_QUERY_CACHE_LAST_COMMIT_MAX || '3000'),
+    lastCommitMax: parseInt(
+      process.env.GIT_QUERY_CACHE_LAST_COMMIT_MAX || "3000",
+    ),
     // debug=true 时输出 hit/miss 日志（可能比较啰嗦）
-    debug: (process.env.GIT_QUERY_CACHE_DEBUG || 'false').toLowerCase() === 'true',
+    debug:
+      (process.env.GIT_QUERY_CACHE_DEBUG || "false").toLowerCase() === "true",
   },
 
   // Git LFS
-  enableGitLfs: (process.env.ENABLE_GIT_LFS || 'true').toLowerCase() !== 'false',
+  enableGitLfs:
+    (process.env.ENABLE_GIT_LFS || "true").toLowerCase() !== "false",
   // 以逗号分隔的 glob 列表（默认覆盖常见二进制/大文件类型）
-  gitLfsTrackPatterns: (process.env.GIT_LFS_TRACK_PATTERNS ||
+  gitLfsTrackPatterns: (
+    process.env.GIT_LFS_TRACK_PATTERNS ||
     [
-      '*.png',
-      '*.jpg',
-      '*.jpeg',
-      '*.gif',
-      '*.webp',
-      '*.bmp',
-      '*.ico',
-      '*.pdf',
-      '*.zip',
-      '*.7z',
-      '*.rar',
-      '*.tar',
-      '*.gz',
-      '*.bz2',
-      '*.xz',
-      '*.mp4',
-      '*.mov',
-      '*.m4v',
-      '*.webm',
-      '*.mp3',
-      '*.wav',
-      '*.flac',
-      '*.aac',
-      '*.m4a',
-      '*.psd',
-      '*.dmg',
-      '*.apk',
-      '*.exe',
-      '*.dll',
-      '*.bin',
-    ].join(',')
+      "*.png",
+      "*.jpg",
+      "*.jpeg",
+      "*.gif",
+      "*.webp",
+      "*.bmp",
+      "*.ico",
+      "*.pdf",
+      "*.zip",
+      "*.7z",
+      "*.rar",
+      "*.tar",
+      "*.gz",
+      "*.bz2",
+      "*.xz",
+      "*.mp4",
+      "*.mov",
+      "*.m4v",
+      "*.webm",
+      "*.mp3",
+      "*.wav",
+      "*.flac",
+      "*.aac",
+      "*.m4a",
+      "*.psd",
+      "*.dmg",
+      "*.apk",
+      "*.exe",
+      "*.dll",
+      "*.bin",
+    ].join(",")
   )
-    .split(',')
+    .split(",")
     .map((s) => s.trim())
     .filter(Boolean) as string[],
-  
+
   // 允许的文件类型 (留空表示允许所有)
   allowedFileTypes: [] as string[],
 
   // 文件访问白名单（路径前缀，基于 repo 根目录的相对路径；留空表示允许全部）
   // 例：['docs', 'images/public'] 只允许访问这些目录及其子路径
-  allowedPathPrefixes: (process.env.ALLOWED_PATH_PREFIXES || '')
-    .split(',')
+  allowedPathPrefixes: (process.env.ALLOWED_PATH_PREFIXES || "")
+    .split(",")
     .map((s) => s.trim())
     .filter(Boolean) as string[],
 
   // 请求频率限制（内存限流；重启服务后计数重置）
   rateLimit: {
-    enabled: (process.env.RATE_LIMIT_ENABLED || 'true').toLowerCase() !== 'false',
-    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000'), // 1分钟
-    max: parseInt(process.env.RATE_LIMIT_MAX || '120'), // 每窗口最大请求数/每 IP
+    enabled:
+      (process.env.RATE_LIMIT_ENABLED || "true").toLowerCase() !== "false",
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000"), // 1分钟
+    max: parseInt(process.env.RATE_LIMIT_MAX || "120"), // 每窗口最大请求数/每 IP
   },
-  
+
   // CORS设置
   cors: {
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: process.env.CORS_ORIGIN || "*",
     credentials: true,
   },
-  
+
   // 是否启用日志
-  enableLogging: process.env.NODE_ENV !== 'production',
+  enableLogging: process.env.NODE_ENV !== "production",
 };

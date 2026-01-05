@@ -15,8 +15,8 @@
 </template>
 
 <script setup lang="ts">
-import type { FileInfo } from '../../types';
-import FileItem from './FileItem.vue';
+import type { FileInfo } from "../../types";
+import FileItem from "./FileItem.vue";
 
 withDefaults(
   defineProps<{
@@ -26,15 +26,15 @@ withDefaults(
     selectedPaths: Set<string>;
   }>(),
   {
-    highlight: '',
-  }
+    highlight: "",
+  },
 );
 
 const emit = defineEmits<{
-  (e: 'click', file: FileInfo): void;
-  (e: 'download', file: FileInfo): void;
-  (e: 'delete', file: FileInfo): void;
-  (e: 'view-history', file: FileInfo): void;
-  (e: 'toggle-select', file: FileInfo): void;
+  (e: "click", file: FileInfo): void;
+  (e: "download", file: FileInfo): void;
+  (e: "delete", file: FileInfo): void;
+  (e: "view-history", file: FileInfo): void;
+  (e: "toggle-select", file: FileInfo): void;
 }>();
 </script>

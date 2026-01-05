@@ -6,12 +6,12 @@
 </template>
 
 <script setup lang="ts">
-import Notification from './components/common/Notification.vue';
+import Notification from "./components/common/Notification.vue";
 </script>
 
 <style>
 /* 引入Bulma样式 */
-@import 'bulma/css/bulma.min.css';
+@import "bulma/css/bulma.min.css";
 
 /* 自定义全局样式 */
 * {
@@ -24,8 +24,9 @@ html,
 body,
 #app {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu,
-    Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+    Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

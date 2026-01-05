@@ -14,8 +14,8 @@
 </template>
 
 <script setup lang="ts">
-import { storeToRefs } from 'pinia';
-import { useAppStore } from '../../stores/app.store';
+import { storeToRefs } from "pinia";
+import { useAppStore } from "../../stores/app.store";
 
 const appStore = useAppStore();
 const { notifications } = storeToRefs(appStore);

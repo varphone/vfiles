@@ -25,7 +25,7 @@ withDefaults(
   }>(),
   {
     mobileCompact: false,
-  }
+  },
 );
 
 const emit = defineEmits<{
@@ -33,7 +33,7 @@ const emit = defineEmits<{
 }>();
 
 function close() {
-  emit('close');
+  emit("close");
 }
 </script>
 

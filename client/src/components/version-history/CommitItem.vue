@@ -6,7 +6,11 @@
         <div class="level is-mobile">
           <div class="level-left">
             <div class="level-item">
-              <CommitDetails :commit="commit" :isLatest="index === 0" :formatDate="formatDate" />
+              <CommitDetails
+                :commit="commit"
+                :isLatest="index === 0"
+                :formatDate="formatDate"
+              />
             </div>
           </div>
           <div class="level-right">
@@ -29,7 +33,10 @@
                 <button
                   class="button is-small is-warning is-light"
                   @click="emit('restore-version', commit.hash)"
-                  :disabled="commit.hash === currentVersion || restoringHash === commit.hash"
+                  :disabled="
+                    commit.hash === currentVersion ||
+                    restoringHash === commit.hash
+                  "
                   title="恢复到此版本（会生成新提交）"
                 >
                   <IconRestore :size="18" />
@@ -54,9 +61,14 @@
 </template>
 
 <script setup lang="ts">
-import { IconEye, IconDownload, IconRestore, IconArrowsDiff } from '@tabler/icons-vue';
-import type { CommitInfo } from '../../types';
-import CommitDetails from './CommitDetails.vue';
+import {
+  IconEye,
+  IconDownload,
+  IconRestore,
+  IconArrowsDiff,
+} from "@tabler/icons-vue";
+import type { CommitInfo } from "../../types";
+import CommitDetails from "./CommitDetails.vue";
 
 defineProps<{
   commit: CommitInfo;
@@ -67,9 +79,9 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'view-version', hash: string): void;
-  (e: 'view-diff', hash: string, parent?: string): void;
-  (e: 'restore-version', hash: string): void;
-  (e: 'download-version', hash: string): void;
+  (e: "view-version", hash: string): void;
+  (e: "view-diff", hash: string, parent?: string): void;
+  (e: "restore-version", hash: string): void;
+  (e: "download-version", hash: string): void;
 }>();
 </script>

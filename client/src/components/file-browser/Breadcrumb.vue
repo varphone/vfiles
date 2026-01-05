@@ -16,7 +16,7 @@
 </template>
 
 <script setup lang="ts">
-import { IconFolderOpen } from '@tabler/icons-vue';
+import { IconFolderOpen } from "@tabler/icons-vue";
 
 defineProps<{
   breadcrumbs: Array<{ name: string; path: string }>;
@@ -27,7 +27,7 @@ const emit = defineEmits<{
 }>();
 
 function navigate(path: string) {
-  emit('navigate', path);
+  emit("navigate", path);
 }
 </script>
 

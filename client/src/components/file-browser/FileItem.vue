@@ -1,5 +1,9 @@
 <template>
-  <div class="file-item box" :class="{ 'has-background-light': selected }" @click="handleClick">
+  <div
+    class="file-item box"
+    :class="{ 'has-background-light': selected }"
+    @click="handleClick"
+  >
     <div class="media">
       <div class="media-left">
         <figure class="image is-48x48">
@@ -11,7 +15,14 @@
       <div class="media-content">
         <div class="content">
           <p class="file-name">
-            <strong><template v-for="(seg, i) in nameSegments" :key="i"><mark v-if="seg.match" class="has-background-warning-light">{{ seg.text }}</mark><span v-else>{{ seg.text }}</span></template></strong>
+            <strong
+              ><template v-for="(seg, i) in nameSegments" :key="i"
+                ><mark v-if="seg.match" class="has-background-warning-light">{{
+                  seg.text
+                }}</mark
+                ><span v-else>{{ seg.text }}</span></template
+              ></strong
+            >
           </p>
           <p class="file-info">
             <span v-if="file.type === 'file'" class="tag is-light mr-2">
@@ -27,11 +38,20 @@
             </span>
           </p>
 
-          <div v-if="file.type === 'file' && file.matches && file.matches.length" class="search-matches">
-            <p v-for="m in file.matches" :key="m.line" class="is-size-7 has-text-grey">
+          <div
+            v-if="file.type === 'file' && file.matches && file.matches.length"
+            class="search-matches"
+          >
+            <p
+              v-for="m in file.matches"
+              :key="m.line"
+              class="is-size-7 has-text-grey"
+            >
               <span class="has-text-grey-light mr-2">{{ m.line }}:</span>
               <template v-for="(seg, i) in splitHighlight(m.text)" :key="i">
-                <mark v-if="seg.match" class="has-background-warning-light">{{ seg.text }}</mark>
+                <mark v-if="seg.match" class="has-background-warning-light">{{
+                  seg.text
+                }}</mark>
                 <span v-else>{{ seg.text }}</span>
               </template>
             </p>
@@ -80,7 +100,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed } from "vue";
 import {
   IconFolder,
   IconFile,
@@ -91,8 +111,8 @@ import {
   IconHistory,
   IconDownload,
   IconTrash,
-} from '@tabler/icons-vue';
-import type { FileInfo } from '../../types';
+} from "@tabler/icons-vue";
+import type { FileInfo } from "../../types";
 
 const props = defineProps<{
   file: FileInfo;
@@ -110,20 +130,34 @@ const emit = defineEmits<{
 }>();
 
 const icon = computed(() => {
-  if (props.file.type === 'directory') return IconFolder;
+  if (props.file.type === "directory") return IconFolder;
 
-  const ext = props.file.name.split('.').pop()?.toLowerCase();
-  
-  if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(ext || '')) {
+  const ext = props.file.name.split(".").pop()?.toLowerCase();
+
+  if (["jpg", "jpeg", "png", "gif", "svg", "webp"].includes(ext || "")) {
     return IconPhoto;
   }
-  if (['js', 'ts', 'jsx', 'tsx', 'vue', 'py', 'java', 'cpp', 'c', 'go', 'rs'].includes(ext || '')) {
+  if (
+    [
+      "js",
+      "ts",
+      "jsx",
+      "tsx",
+      "vue",
+      "py",
+      "java",
+      "cpp",
+      "c",
+      "go",
+      "rs",
+    ].includes(ext || "")
+  ) {
     return IconFileCode;
   }
-  if (['txt', 'md', 'log'].includes(ext || '')) {
+  if (["txt", "md", "log"].includes(ext || "")) {
     return IconFileText;
   }
-  if (['zip', 'tar', 'gz', 'rar', '7z'].includes(ext || '')) {
+  if (["zip", "tar", "gz", "rar", "7z"].includes(ext || "")) {
     return IconFileZip;
   }
 
@@ -133,8 +167,8 @@ const icon = computed(() => {
 type NameSegment = { text: string; match: boolean };
 
 function splitByNeedle(text: string, needleRaw: string): NameSegment[] {
-  const hay = text ?? '';
-  const needle = (needleRaw ?? '').trim().toLowerCase();
+  const hay = text ?? "";
+  const needle = (needleRaw ?? "").trim().toLowerCase();
   if (!needle) return [{ text: hay, match: false }];
 
   const hayLower = hay.toLowerCase();
@@ -159,55 +193,55 @@ function splitByNeedle(text: string, needleRaw: string): NameSegment[] {
 }
 
 const nameSegments = computed<NameSegment[]>(() => {
-  return splitByNeedle(props.file.name ?? '', props.highlight ?? '');
+  return splitByNeedle(props.file.name ?? "", props.highlight ?? "");
 });
 
 function splitHighlight(text: string): NameSegment[] {
-  return splitByNeedle(text, props.highlight ?? '');
+  return splitByNeedle(text, props.highlight ?? "");
 }
 
 function formatSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
+  if (bytes === 0) return "0 B";
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const sizes = ["B", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
 function formatDate(date: string): string {
-  return new Date(date).toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
+  return new Date(date).toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
 function handleClick() {
   if (props.selectMode) {
-    emit('toggleSelect', props.file);
+    emit("toggleSelect", props.file);
     return;
   }
-  emit('click', props.file);
+  emit("click", props.file);
 }
 
 function toggleSelected() {
-  emit('toggleSelect', props.file);
+  emit("toggleSelect", props.file);
 }
 
 function download() {
-  emit('download', props.file);
+  emit("download", props.file);
 }
 
 function confirmDelete() {
   if (confirm(`确定要删除 ${props.file.name} 吗？`)) {
-    emit('delete', props.file);
+    emit("delete", props.file);
   }
 }
 
 function viewHistory() {
-  emit('viewHistory', props.file);
+  emit("viewHistory", props.file);
 }
 </script>
 
@@ -221,7 +255,6 @@ function viewHistory() {
   padding-left: 0.75rem;
   padding-right: 0.75rem;
 }
-
 
 .file-item:hover {
   transform: translateY(-2px);

@@ -1,4 +1,4 @@
-import type { Context, Next } from 'hono';
+import type { Context, Next } from "hono";
 
 export interface RateLimitOptions {
   enabled: boolean;
@@ -12,23 +12,27 @@ interface Counter {
 }
 
 function getClientIp(c: Context): string {
-  const forwardedFor = c.req.header('x-forwarded-for');
+  const forwardedFor = c.req.header("x-forwarded-for");
   if (forwardedFor) {
-    const first = forwardedFor.split(',')[0]?.trim();
+    const first = forwardedFor.split(",")[0]?.trim();
     if (first) return first;
   }
   return (
-    c.req.header('cf-connecting-ip') ||
-    c.req.header('x-real-ip') ||
-    c.req.header('x-client-ip') ||
-    'unknown'
+    c.req.header("cf-connecting-ip") ||
+    c.req.header("x-real-ip") ||
+    c.req.header("x-client-ip") ||
+    "unknown"
   );
 }
 
 export function rateLimit(options: RateLimitOptions) {
   const enabled = options.enabled;
-  const windowMs = Number.isFinite(options.windowMs) && options.windowMs > 0 ? options.windowMs : 60_000;
-  const max = Number.isFinite(options.max) && options.max > 0 ? options.max : 120;
+  const windowMs =
+    Number.isFinite(options.windowMs) && options.windowMs > 0
+      ? options.windowMs
+      : 60_000;
+  const max =
+    Number.isFinite(options.max) && options.max > 0 ? options.max : 120;
 
   const counters = new Map<string, Counter>();
 
@@ -49,18 +53,18 @@ export function rateLimit(options: RateLimitOptions) {
     const remaining = Math.max(0, max - counter.count);
     const retryAfterMs = Math.max(0, counter.resetAt - now);
 
-    c.header('X-RateLimit-Limit', String(max));
-    c.header('X-RateLimit-Remaining', String(remaining));
-    c.header('X-RateLimit-Reset', String(Math.ceil(counter.resetAt / 1000)));
+    c.header("X-RateLimit-Limit", String(max));
+    c.header("X-RateLimit-Remaining", String(remaining));
+    c.header("X-RateLimit-Reset", String(Math.ceil(counter.resetAt / 1000)));
 
     if (counter.count > max) {
-      c.header('Retry-After', String(Math.ceil(retryAfterMs / 1000)));
+      c.header("Retry-After", String(Math.ceil(retryAfterMs / 1000)));
       return c.json(
         {
           success: false,
-          error: '请求过于频繁，请稍后再试',
+          error: "请求过于频繁，请稍后再试",
         },
-        429
+        429,
       );
     }
 
