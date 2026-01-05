@@ -71,7 +71,7 @@
 
                   <button
                     class="button is-warning is-light"
-                    :disabled="loading"
+                    :disabled="loading || auth.user?.id === u.id"
                     @click="revokeSessions(u)"
                   >
                     强制下线
@@ -96,8 +96,10 @@
 import { onMounted, ref } from "vue";
 import { authService, type AdminUser } from "../services/auth.service";
 import { useAppStore } from "../stores/app.store";
+import { useAuthStore } from "../stores/auth.store";
 
 const app = useAppStore();
+const auth = useAuthStore();
 
 const users = ref<AdminUser[]>([]);
 const loading = ref(false);
