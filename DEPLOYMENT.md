@@ -71,6 +71,20 @@ bun run start
 
 > 说明：此方式不会在目标机器上依赖 `node_modules`。但仍然需要系统安装 `git`（VFiles 通过 git 子进程工作）。
 
+如果希望“一键产出发布包”（包含前端静态资源 + 服务端可执行文件 + 压缩包），可直接在项目根目录执行：
+
+```bash
+bun install
+cd client && bun install
+bun run package
+```
+
+产物位置：
+- `release/`：组装好的发布目录
+- `dist/`：压缩包产物（GitHub release 风格命名）
+	- Windows：`<name>-v<version>-windows-<arch>.zip`
+	- Linux/macOS：`<name>-v<version>-<os>-<arch>.tar.gz`（用于保留可执行权限）
+
 ### 1) 构建前端静态资源
 
 在项目根目录执行：
