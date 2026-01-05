@@ -419,6 +419,12 @@ function toggleBatchAndClose() {
     flex: 0 0 auto;
   }
 
+  .mobile-batch-more .dropdown-menu {
+    left: auto;
+    right: 0;
+    max-width: calc(100vw - 1rem);
+  }
+
   .mobile-batch-count {
     flex: 0 0 auto;
   }
