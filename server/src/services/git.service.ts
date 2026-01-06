@@ -1178,6 +1178,36 @@ export class GitService {
     }
   }
 
+  /**
+   * 从 Git blob SHA 解析 LFS 指针，返回实际文件大小
+   * 如果不是 LFS 指针，返回 null
+   */
+  private async parseLfsPointerSizeFromBlob(
+    blobSha: string,
+  ): Promise<number | null> {
+    const proc = Bun.spawn(["git", "cat-file", "blob", blobSha], {
+      cwd: this.dir,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+
+    try {
+      // LFS 指针很小（约 130 字节），直接读取全部
+      const output = await new Response(proc.stdout).text();
+      if (!output.startsWith("version https://git-lfs.github.com/spec/v1")) {
+        return null;
+      }
+      // 解析 size 行
+      const sizeMatch = output.match(/^size\s+(\d+)/m);
+      if (sizeMatch) {
+        return parseInt(sizeMatch[1], 10);
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   getFileContentSmudgedStreamAtCommit(
     filePath: string,
     commitHash: string,
@@ -1315,6 +1345,7 @@ export class GitService {
             if (name.startsWith(".git")) continue;
 
             const typeToken = meta[1];
+            const blobSha = meta[2];
             const sizeToken = meta[3];
 
             const relPath = normalizedDir ? `${normalizedDir}/${name}` : name;
@@ -1324,14 +1355,25 @@ export class GitService {
             const lastCommit = await this.getLastCommit(filePath);
             const mtime = lastCommit?.date || new Date(0).toISOString();
 
+            // 解析文件大小，如果是 LFS 指针则获取实际大小
+            let size =
+              sizeToken && sizeToken !== "-"
+                ? Number.parseInt(sizeToken, 10)
+                : 0;
+
+            // LFS 指针大小通常在 120-150 字节之间，检测并解析
+            if (typeToken === "blob" && size > 0 && size < 200 && blobSha) {
+              const lfsSize = await this.parseLfsPointerSizeFromBlob(blobSha);
+              if (lfsSize !== null) {
+                size = lfsSize;
+              }
+            }
+
             files.push({
               name,
               path: filePath,
               type: typeToken === "tree" ? "directory" : "file",
-              size:
-                sizeToken && sizeToken !== "-"
-                  ? Number.parseInt(sizeToken, 10)
-                  : 0,
+              size,
               mtime,
               lastCommit,
             });
@@ -1380,6 +1422,7 @@ export class GitService {
             if (name.startsWith(".git")) continue;
 
             const typeToken = meta[1];
+            const blobSha = meta[2];
             const sizeToken = meta[3];
 
             const relPath = normalizedDir ? `${normalizedDir}/${name}` : name;
@@ -1388,14 +1431,25 @@ export class GitService {
             const lastCommit = await this.getLastCommit(filePath);
             const mtime = lastCommit?.date || new Date(0).toISOString();
 
+            // 解析文件大小，如果是 LFS 指针则获取实际大小
+            let size =
+              sizeToken && sizeToken !== "-"
+                ? Number.parseInt(sizeToken, 10)
+                : 0;
+
+            // LFS 指针大小通常在 120-150 字节之间，检测并解析
+            if (typeToken === "blob" && size > 0 && size < 200 && blobSha) {
+              const lfsSize = await this.parseLfsPointerSizeFromBlob(blobSha);
+              if (lfsSize !== null) {
+                size = lfsSize;
+              }
+            }
+
             files.push({
               name,
               path: filePath,
               type: typeToken === "tree" ? "directory" : "file",
-              size:
-                sizeToken && sizeToken !== "-"
-                  ? Number.parseInt(sizeToken, 10)
-                  : 0,
+              size,
               mtime,
               lastCommit,
             });
@@ -1424,11 +1478,33 @@ export class GitService {
             // 获取最后一次提交信息
             const lastCommit = await this.getLastCommit(filePath);
 
+            let size = stats.size;
+
+            // 对于小文件（可能是 LFS 指针），检查是否是 LFS 指针
+            // LFS 指针大小通常在 120-150 字节之间
+            if (!entry.isDirectory() && size > 0 && size < 200) {
+              try {
+                const content = await fs.readFile(fullFilePath, "utf-8");
+                if (
+                  content.startsWith(
+                    "version https://git-lfs.github.com/spec/v1",
+                  )
+                ) {
+                  const sizeMatch = content.match(/^size\s+(\d+)/m);
+                  if (sizeMatch) {
+                    size = parseInt(sizeMatch[1], 10);
+                  }
+                }
+              } catch {
+                // 读取失败（如二进制文件），保持原大小
+              }
+            }
+
             files.push({
               name: entry.name,
               path: filePath,
               type: entry.isDirectory() ? "directory" : "file",
-              size: stats.size,
+              size,
               mtime: stats.mtime.toISOString(),
               lastCommit,
             });
