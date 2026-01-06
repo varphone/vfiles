@@ -44,6 +44,8 @@ export class GitService {
   private writeChain: Promise<unknown> = Promise.resolve();
   private bareWorkTreeDir: string | null = null;
   private gitDirPath: string | null = null;
+  // Bare 仓库复用的临时 index 文件路径（由全局写锁保护，无需每次生成随机名）
+  private bareIndexFile: string | null = null;
 
   private cacheEnabled: boolean;
   private cacheDebug: boolean;
@@ -353,6 +355,17 @@ export class GitService {
   }
 
   /**
+   * 获取 bare 仓库复用的临时 index 文件路径
+   * 由全局写锁保护，同一时刻只有一个写操作，无需每次生成随机名
+   */
+  private getBareIndexFile(): string {
+    if (!this.bareIndexFile) {
+      this.bareIndexFile = path.join(this.dir, ".vfiles_index");
+    }
+    return this.bareIndexFile;
+  }
+
+  /**
    * Execute a function while holding both the global and instance-level write locks.
    * This ensures:
    * 1. No concurrent Git writes across different GitService instances (global lock)
@@ -478,48 +491,60 @@ export class GitService {
   }
 
   /**
-   * 获取 LFS 对象存储路径
-   * 格式: .git/lfs/objects/{oid[0:2]}/{oid[2:4]}/{oid}
+   * 流式写入 LFS 对象：边读流边计算 SHA256 并写入临时文件，避免全部加载到内存
+   * 返回 { oid, size }
    */
-  private async getLfsObjectPath(oid: string): Promise<string> {
-    const gitDir = await this.resolveGitDirPath();
-    return path.join(
-      gitDir,
-      "lfs",
-      "objects",
-      oid.slice(0, 2),
-      oid.slice(2, 4),
-      oid,
-    );
-  }
-
-  /**
-   * 将内容存储为 LFS 对象并返回 pointer blob SHA
-   * 1. 计算内容的 SHA256 作为 LFS OID
-   * 2. 将内容存到 .git/lfs/objects/
-   * 3. 生成 LFS pointer 文本
-   * 4. 将 pointer 存为 Git blob 并返回 SHA
-   */
-  private async writeBlobWithLfs(
+  private async streamToLfsObject(
     content: Uint8Array | ArrayBuffer | Blob | ReadableStream<Uint8Array>,
-  ): Promise<string> {
-    // 先将内容转为 Uint8Array 以便计算 SHA256
-    let data: Uint8Array;
-    if (content instanceof Uint8Array) {
-      data = content;
-    } else if (content instanceof ArrayBuffer) {
-      data = new Uint8Array(content);
-    } else if (content instanceof Blob) {
-      data = new Uint8Array(await content.arrayBuffer());
-    } else {
-      // ReadableStream - 读取全部内容
-      const chunks: Uint8Array[] = [];
-      const reader = content.getReader();
+  ): Promise<{ oid: string; size: number }> {
+    const gitDir = await this.resolveGitDirPath();
+    const lfsDir = path.join(gitDir, "lfs", "objects");
+    await fs.mkdir(lfsDir, { recursive: true });
+
+    // 创建临时文件用于写入（避免写入一半 OID 还未知时就落地到最终位置）
+    const tempFile = path.join(
+      lfsDir,
+      `.lfs_temp_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+    );
+
+    const hasher = new Bun.CryptoHasher("sha256");
+    let size = 0;
+
+    try {
+      // 打开临时文件进行写入
+      const bunFile = Bun.file(tempFile);
+      const writer = bunFile.writer();
+
+      // 将输入转为流
+      const stream: ReadableStream<Uint8Array> =
+        content instanceof Uint8Array
+          ? new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(content);
+                controller.close();
+              },
+            })
+          : content instanceof ArrayBuffer
+            ? new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new Uint8Array(content));
+                  controller.close();
+                },
+              })
+            : content instanceof Blob
+              ? (content.stream() as ReadableStream<Uint8Array>)
+              : (content as ReadableStream<Uint8Array>);
+
+      const reader = stream.getReader();
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          if (value) chunks.push(value);
+          if (value && value.byteLength > 0) {
+            hasher.update(value);
+            size += value.byteLength;
+            await writer.write(value);
+          }
         }
       } finally {
         try {
@@ -528,36 +553,49 @@ export class GitService {
           // ignore
         }
       }
-      // 合并 chunks
-      const totalLen = chunks.reduce((sum, c) => sum + c.byteLength, 0);
-      data = new Uint8Array(totalLen);
-      let offset = 0;
-      for (const chunk of chunks) {
-        data.set(chunk, offset);
-        offset += chunk.byteLength;
+
+      await writer.end();
+      const oid = hasher.digest("hex");
+
+      // 计算最终路径并移动文件
+      const finalDir = path.join(lfsDir, oid.slice(0, 2), oid.slice(2, 4));
+      const finalPath = path.join(finalDir, oid);
+
+      // 检查是否已存在（相同内容的重复上传）
+      try {
+        await fs.access(finalPath);
+        // 已存在，删除临时文件
+        await fs.rm(tempFile, { force: true });
+      } catch {
+        // 不存在，移动临时文件到最终位置
+        await fs.mkdir(finalDir, { recursive: true });
+        await fs.rename(tempFile, finalPath);
       }
+
+      return { oid, size };
+    } catch (e) {
+      // 清理临时文件
+      try {
+        await fs.rm(tempFile, { force: true });
+      } catch {
+        // ignore
+      }
+      throw e;
     }
+  }
 
-    // 计算 SHA256 作为 LFS OID
-    // 使用 Bun 的 SHA256 hasher（更快且类型正确）
-    const hasher = new Bun.CryptoHasher("sha256");
-    hasher.update(data);
-    const oid = hasher.digest("hex");
-
-    // 存储 LFS 对象
-    const lfsPath = await this.getLfsObjectPath(oid);
-    const lfsDir = path.dirname(lfsPath);
-    await fs.mkdir(lfsDir, { recursive: true });
-
-    // 只有不存在时才写入（避免重复写入相同内容）
-    try {
-      await fs.access(lfsPath);
-    } catch {
-      await fs.writeFile(lfsPath, data);
-    }
+  /**
+   * 将内容存储为 LFS 对象并返回 pointer blob SHA
+   * 流式处理：边读流边计算 SHA256 并写入文件，避免全部加载到内存
+   */
+  private async writeBlobWithLfs(
+    content: Uint8Array | ArrayBuffer | Blob | ReadableStream<Uint8Array>,
+  ): Promise<string> {
+    // 流式写入 LFS 对象
+    const { oid, size } = await this.streamToLfsObject(content);
 
     // 生成 LFS pointer 文本
-    const pointer = `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize ${data.byteLength}\n`;
+    const pointer = `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize ${size}\n`;
 
     // 将 pointer 存为 Git blob
     return await this.writeBlobFromContent(new TextEncoder().encode(pointer));
@@ -727,10 +765,7 @@ export class GitService {
           await $`git init --bare`.cwd(this.dir);
 
           // bare 下创建空初始提交（不依赖 worktree）
-          const indexFile = path.join(
-            this.dir,
-            `.vfiles_index_init_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-          );
+          const indexFile = this.getBareIndexFile();
           try {
             // empty index
             const readEmpty = Bun.spawn(["git", "read-tree", "--empty"], {
@@ -751,12 +786,10 @@ export class GitService {
               authorName: "VFiles System",
               authorEmail: "system@vfiles.local",
             });
-          } finally {
-            try {
-              await fs.rm(indexFile, { force: true });
-            } catch {
-              // ignore
-            }
+          } catch (e) {
+            // 如果初始化失败，招录错误但不阻止启动
+            console.error("创建初始提交失败:", e);
+            throw e;
           }
         }
       } else {
@@ -884,10 +917,7 @@ export class GitService {
         new TextEncoder().encode(newContent),
       );
       await this.withWriteLock(async () => {
-        const indexFile = path.join(
-          this.dir,
-          `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-        );
+        const indexFile = this.getBareIndexFile();
         try {
           // 从 HEAD 载入到临时 index
           const readTree = Bun.spawn(["git", "read-tree", "HEAD"], {
@@ -923,12 +953,9 @@ export class GitService {
             authorEmail: "system@vfiles.local",
             parent,
           });
-        } finally {
-          try {
-            await fs.rm(indexFile, { force: true });
-          } catch {
-            // ignore
-          }
+        } catch (e) {
+          console.error("配置 git-lfs 失败:", e);
+          throw e;
         }
       });
       return;
@@ -1008,10 +1035,7 @@ export class GitService {
         new TextEncoder().encode(newContent),
       );
       await this.withWriteLock(async () => {
-        const indexFile = path.join(
-          this.dir,
-          `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-        );
+        const indexFile = this.getBareIndexFile();
         try {
           const readTree = Bun.spawn(["git", "read-tree", "HEAD"], {
             cwd: this.dir,
@@ -1046,12 +1070,9 @@ export class GitService {
             authorEmail: "system@vfiles.local",
             parent,
           });
-        } finally {
-          try {
-            await fs.rm(indexFile, { force: true });
-          } catch {
-            // ignore
-          }
+        } catch (e) {
+          console.error("配置二进制文件属性失败:", e);
+          throw e;
         }
       });
       return;
@@ -1622,10 +1643,7 @@ export class GitService {
         return await this.withWriteLock(async () => {
           // 使用 writeBlobSmart 以支持 LFS
           const blobSha = await this.writeBlobSmart(filePath, content);
-          const indexFile = path.join(
-            this.dir,
-            `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-          );
+          const indexFile = this.getBareIndexFile();
           try {
             // 从 HEAD 载入到临时 index
             const readTree = Bun.spawn(["git", "read-tree", "HEAD"], {
@@ -1662,12 +1680,9 @@ export class GitService {
               parent,
             });
             return commit;
-          } finally {
-            try {
-              await fs.rm(indexFile, { force: true });
-            } catch {
-              // ignore
-            }
+          } catch (e) {
+            console.error("保存文件失败:", e);
+            throw e;
           }
         });
       } else {
@@ -1783,10 +1798,7 @@ export class GitService {
       if (this.isBare) {
         await this.withWriteLock(async () => {
           const rel = this.normalizeRelPath(filePath);
-          const indexFile = path.join(
-            this.dir,
-            `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-          );
+          const indexFile = this.getBareIndexFile();
           try {
             const readTree = Bun.spawn(["git", "read-tree", "HEAD"], {
               cwd: this.dir,
@@ -1851,12 +1863,9 @@ export class GitService {
               authorEmail,
               parent,
             });
-          } finally {
-            try {
-              await fs.rm(indexFile, { force: true });
-            } catch {
-              // ignore
-            }
+          } catch (e) {
+            console.error("删除文件失败:", e);
+            throw e;
           }
         });
         return;
@@ -1916,10 +1925,7 @@ export class GitService {
         return await this.withWriteLock(async () => {
           const keepRel = path.join(dirPath, ".gitkeep").replaceAll("\\", "/");
           const blobSha = await this.writeBlobFromContent(new Uint8Array(0));
-          const indexFile = path.join(
-            this.dir,
-            `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-          );
+          const indexFile = this.getBareIndexFile();
           try {
             const readTree = Bun.spawn(["git", "read-tree", "HEAD"], {
               cwd: this.dir,
@@ -1954,12 +1960,9 @@ export class GitService {
               parent,
             });
             return commit;
-          } finally {
-            try {
-              await fs.rm(indexFile, { force: true });
-            } catch {
-              // ignore
-            }
+          } catch (e) {
+            console.error("创建目录失败:", e);
+            throw e;
           }
         });
       }
@@ -2023,10 +2026,7 @@ export class GitService {
         return await this.withWriteLock(async () => {
           const fromRel = this.normalizeRelPath(fromPath);
           const toRel = this.normalizeRelPath(toPath);
-          const indexFile = path.join(
-            this.dir,
-            `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-          );
+          const indexFile = this.getBareIndexFile();
           try {
             const readTree = Bun.spawn(["git", "read-tree", "HEAD"], {
               cwd: this.dir,
@@ -2115,12 +2115,9 @@ export class GitService {
               parent,
             });
             return commit;
-          } finally {
-            try {
-              await fs.rm(indexFile, { force: true });
-            } catch {
-              // ignore
-            }
+          } catch (e) {
+            console.error("移动文件失败:", e);
+            throw e;
           }
         });
       }
