@@ -38,6 +38,10 @@ function close() {
 </script>
 
 <style scoped>
+.modal {
+  z-index: 100;
+}
+
 .modal-card {
   max-width: 90vw;
   max-height: 90vh;
