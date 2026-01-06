@@ -15,6 +15,26 @@ import {
   validateOptionalString,
 } from "../utils/validation.js";
 
+/**
+ * 生成符合 RFC 5987 的 Content-Disposition 头值
+ */
+function makeContentDisposition(
+  type: "attachment" | "inline",
+  filename: string,
+): string {
+  const hasNonAscii = /[^\x00-\x7F]/.test(filename);
+  const needsQuotes = /["\\\s]/.test(filename);
+
+  if (!hasNonAscii && !needsQuotes) {
+    return `${type}; filename="${filename}"`;
+  }
+
+  const encoded = encodeURIComponent(filename).replace(/'/g, "%27");
+  const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_");
+
+  return `${type}; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
+}
+
 export function createFilesRoutes(gitManager: GitServiceManager) {
   const app = new Hono();
 
@@ -265,10 +285,11 @@ export function createFilesRoutes(gitManager: GitServiceManager) {
 
     try {
       // 设置响应头
+      const filename = path.split("/").pop() || "file";
       c.header("Content-Type", "application/octet-stream");
       c.header(
         "Content-Disposition",
-        `inline; filename="${path.split("/").pop()}"`,
+        makeContentDisposition("inline", filename),
       );
 
       // 当前版本：worktree 模式直接从磁盘流式输出；bare 模式从 HEAD 读取

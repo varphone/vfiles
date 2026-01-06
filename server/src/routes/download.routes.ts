@@ -13,6 +13,33 @@ import crypto from "node:crypto";
 import { config } from "../config.js";
 import { Zip, ZipDeflate } from "fflate";
 
+/**
+ * 生成符合 RFC 5987 的 Content-Disposition 头值
+ * 对于非 ASCII 文件名，使用 filename*=UTF-8'' 编码
+ */
+function makeContentDisposition(
+  type: "attachment" | "inline",
+  filename: string,
+): string {
+  // 检查是否包含非 ASCII 字符
+  const hasNonAscii = /[^\x00-\x7F]/.test(filename);
+  // 检查是否包含需要转义的字符
+  const needsQuotes = /["\\\s]/.test(filename);
+
+  if (!hasNonAscii && !needsQuotes) {
+    // 纯 ASCII 且无特殊字符，直接使用
+    return `${type}; filename="${filename}"`;
+  }
+
+  // RFC 5987: filename*=UTF-8''<percent-encoded>
+  // 同时提供 filename 作为后备（用于老旧客户端）
+  const encoded = encodeURIComponent(filename).replace(/'/g, "%27");
+  // ASCII 后备：替换非 ASCII 为下划线
+  const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_");
+
+  return `${type}; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
+}
+
 export function createDownloadRoutes(gitManager: GitServiceManager) {
   const app = new Hono();
 
@@ -183,7 +210,10 @@ export function createDownloadRoutes(gitManager: GitServiceManager) {
     try {
       const filename = path.split("/").pop() || "download";
       c.header("Content-Type", "application/octet-stream");
-      c.header("Content-Disposition", `attachment; filename="${filename}"`);
+      c.header(
+        "Content-Disposition",
+        makeContentDisposition("attachment", filename),
+      );
       c.header("Accept-Ranges", "bytes");
 
       // worktree 模式：当前版本直接从磁盘读取并支持 Range。
@@ -504,7 +534,10 @@ export function createDownloadRoutes(gitManager: GitServiceManager) {
     if (repoMode === "bare" || !!commitResult.value) {
       const zipFilename = folderZipName(requestedPath);
       c.header("Content-Type", "application/zip");
-      c.header("Content-Disposition", `attachment; filename="${zipFilename}"`);
+      c.header(
+        "Content-Disposition",
+        makeContentDisposition("attachment", zipFilename),
+      );
 
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -607,7 +640,10 @@ export function createDownloadRoutes(gitManager: GitServiceManager) {
 
     const zipFilename = folderZipName(requestedPath);
     c.header("Content-Type", "application/zip");
-    c.header("Content-Disposition", `attachment; filename="${zipFilename}"`);
+    c.header(
+      "Content-Disposition",
+      makeContentDisposition("attachment", zipFilename),
+    );
 
     // 使用 ReadableStream 流式输出 zip
     const stream = new ReadableStream<Uint8Array>({
