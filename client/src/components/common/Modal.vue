@@ -72,6 +72,8 @@ function close() {
 .modal-card-body {
   overflow: auto;
   -webkit-overflow-scrolling: touch;
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 .modal-card-foot {
