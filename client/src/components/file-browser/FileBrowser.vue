@@ -246,8 +246,11 @@
                 <span
                   v-else-if="item.status === 'downloading'"
                   class="tag is-info is-light ml-2 is-size-7"
-                  >下载中</span
-                >
+                  >下载中
+                  <template v-if="item.progress?.total">
+                    {{ formatProgress(item.progress.loaded, item.progress.total) }}
+                  </template>
+                </span>
                 <span
                   v-else-if="item.status === 'done'"
                   class="tag is-success is-light ml-2 is-size-7"
@@ -1439,6 +1442,18 @@ async function processQueue() {
     // 继续下一个
     void processQueue();
   }
+}
+
+function formatProgress(loaded: number, total: number): string {
+  const percent = Math.floor((loaded / total) * 100);
+  const formatSize = (bytes: number): string => {
+    if (bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+  };
+  return ` ${percent}% (${formatSize(loaded)}/${formatSize(total)})`;
 }
 
 function cancelItem(id: number) {
