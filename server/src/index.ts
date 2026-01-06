@@ -14,6 +14,7 @@ import { createHistoryRoutes } from "./routes/history.routes.js";
 import { createDownloadRoutes } from "./routes/download.routes.js";
 import { createSearchRoutes } from "./routes/search.routes.js";
 import { createAuthRoutes } from "./routes/auth.routes.js";
+import { createShareRoutes } from "./routes/share.routes.js";
 import { UserStore } from "./services/user-store.js";
 import { GitServiceManager } from "./services/git-service-manager.js";
 import { EmailService } from "./services/email.service.js";
@@ -78,6 +79,7 @@ app.route("/api/files", createFilesRoutes(gitManager));
 app.route("/api/history", createHistoryRoutes(gitManager));
 app.route("/api/download", createDownloadRoutes(gitManager));
 app.route("/api/search", createSearchRoutes(gitManager));
+app.route("/api/share", createShareRoutes());
 
 // 静态文件服务（仅生产环境且 dist 存在时启用；开发模式下由 Vite 提供前端）
 if (process.env.NODE_ENV === "production") {

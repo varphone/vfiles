@@ -87,6 +87,14 @@
             <IconDownload :size="20" />
           </button>
           <button
+            v-if="file.type === 'file' || file.type === 'directory'"
+            class="button is-small is-link is-light"
+            @click.stop="share"
+            title="分享"
+          >
+            <IconShare :size="20" />
+          </button>
+          <button
             class="button is-small is-danger is-light"
             @click.stop="confirmDelete"
             title="删除"
@@ -111,6 +119,7 @@ import {
   IconHistory,
   IconDownload,
   IconTrash,
+  IconShare,
 } from "@tabler/icons-vue";
 import type { FileInfo } from "../../types";
 
@@ -127,6 +136,7 @@ const emit = defineEmits<{
   delete: [file: FileInfo];
   viewHistory: [file: FileInfo];
   toggleSelect: [file: FileInfo];
+  share: [file: FileInfo];
 }>();
 
 const icon = computed(() => {
@@ -242,6 +252,10 @@ function confirmDelete() {
 
 function viewHistory() {
   emit("viewHistory", props.file);
+}
+
+function share() {
+  emit("share", props.file);
 }
 </script>
 

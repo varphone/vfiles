@@ -350,4 +350,17 @@ export const config = {
     baseDir:
       process.env.REPO_BASE_DIR || path.resolve(process.cwd(), ".vfiles_repos"),
   },
+
+  // 临时分享链接（v1.2.0）
+  share: {
+    enabled: (process.env.SHARE_ENABLED || "true").toLowerCase() !== "false",
+    // 默认有效期（秒），默认 7 天
+    defaultTtlSeconds: parseInt(
+      process.env.SHARE_DEFAULT_TTL_SECONDS || String(7 * 24 * 60 * 60),
+    ),
+    // 最大有效期（秒），默认 30 天
+    maxTtlSeconds: parseInt(
+      process.env.SHARE_MAX_TTL_SECONDS || String(30 * 24 * 60 * 60),
+    ),
+  },
 };

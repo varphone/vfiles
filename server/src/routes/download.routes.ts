@@ -12,6 +12,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { config } from "../config.js";
 import { Zip, ZipDeflate } from "fflate";
+import { parseShareToken } from "./share.routes.js";
 
 /**
  * 生成符合 RFC 5987 的 Content-Disposition 头值
@@ -179,15 +180,45 @@ export function createDownloadRoutes(gitManager: GitServiceManager) {
 
   /**
    * GET /api/download - 下载文件
+   *
+   * 支持两种访问方式：
+   * 1. 已登录用户：使用 session cookie 访问自己仓库的文件
+   * 2. 分享链接：通过 share_token 参数访问（无需登录）
    */
   app.get("/", pathSecurityMiddleware, async (c) => {
-    const { repoPath, repoMode } = getRepoContext(c);
+    let repoPath: string;
+    let repoMode: "worktree" | "bare";
+    let filePath: string | undefined;
+    let commitFromShare: string | undefined;
+
+    // 检查是否有分享 token
+    const shareToken = c.req.query("share_token");
+    if (shareToken) {
+      const sharePayload = parseShareToken(shareToken);
+      if (!sharePayload) {
+        return c.json({ success: false, error: "无效或已过期的分享链接" }, 403);
+      }
+      // 使用分享 token 中的仓库路径和文件路径
+      repoPath = sharePayload.repoPath;
+      repoMode = repoPath.endsWith(".git") ? "bare" : config.repoMode;
+      filePath = sharePayload.filePath;
+      commitFromShare = sharePayload.commit;
+    } else {
+      // 常规访问：从 context 获取仓库信息
+      const ctx = getRepoContext(c);
+      repoPath = ctx.repoPath;
+      repoMode = ctx.repoMode;
+    }
+
     const repoScope = makeRepoScope(repoPath);
     const gitService = await gitManager.get(repoPath, repoMode);
 
+    // 如果不是分享链接访问，从 query 获取 path
     const rawPath = c.req.query("path");
-    const path = rawPath ? normalizeRequestPath(rawPath) : undefined;
-    const commit = c.req.query("commit");
+    const path =
+      filePath || (rawPath ? normalizeRequestPath(rawPath) : undefined);
+    // 分享链接可能固定了 commit
+    const commit = commitFromShare || c.req.query("commit");
 
     if (!path) {
       return c.json(
@@ -512,14 +543,36 @@ export function createDownloadRoutes(gitManager: GitServiceManager) {
 
   /**
    * GET /api/download/folder - 下载文件夹（ZIP）
+   *
+   * 支持分享链接访问
    */
   app.get("/folder", pathSecurityMiddleware, async (c) => {
-    const { repoPath, repoMode } = getRepoContext(c);
-    const gitService = await gitManager.get(repoPath, repoMode);
+    let repoPath: string;
+    let repoMode: "worktree" | "bare";
+    let requestedPath: string;
+    let commitFromShare: string | undefined;
 
-    const rawPath = c.req.query("path");
-    const requestedPath = rawPath ? normalizeRequestPath(rawPath) : "";
-    const commitParam = c.req.query("commit");
+    // 检查是否有分享 token
+    const shareToken = c.req.query("share_token");
+    if (shareToken) {
+      const sharePayload = parseShareToken(shareToken);
+      if (!sharePayload) {
+        return c.json({ success: false, error: "无效或已过期的分享链接" }, 403);
+      }
+      repoPath = sharePayload.repoPath;
+      repoMode = repoPath.endsWith(".git") ? "bare" : config.repoMode;
+      requestedPath = sharePayload.filePath;
+      commitFromShare = sharePayload.commit;
+    } else {
+      const ctx = getRepoContext(c);
+      repoPath = ctx.repoPath;
+      repoMode = ctx.repoMode;
+      const rawPath = c.req.query("path");
+      requestedPath = rawPath ? normalizeRequestPath(rawPath) : "";
+    }
+
+    const gitService = await gitManager.get(repoPath, repoMode);
+    const commitParam = commitFromShare || c.req.query("commit");
 
     const commitResult = validateOptionalCommitHash(commitParam);
     if (!commitResult.ok) {

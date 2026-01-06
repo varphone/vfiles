@@ -11,6 +11,7 @@
     @delete="emit('delete', file)"
     @view-history="emit('view-history', file)"
     @toggle-select="emit('toggle-select', file)"
+    @share="emit('share', file)"
   />
 </template>
 
@@ -36,5 +37,6 @@ const emit = defineEmits<{
   (e: "delete", file: FileInfo): void;
   (e: "view-history", file: FileInfo): void;
   (e: "toggle-select", file: FileInfo): void;
+  (e: "share", file: FileInfo): void;
 }>();
 </script>

@@ -31,13 +31,16 @@ data/
 data.git/
 
 # Runtime temp dirs
-.vfiles_uploads/
+.vfiles_auth/
 .vfiles_download_cache/
+.vfiles_repos/
+.vfiles_uploads/
 
 # Test
 coverage/
 list/
 test-results/
+verbose/
 .nyc_output/
 
 # Temporary files

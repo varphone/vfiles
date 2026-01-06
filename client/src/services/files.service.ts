@@ -350,4 +350,43 @@ export const filesService = {
     });
     return response.data || [];
   },
+
+  /**
+   * 创建分享链接
+   */
+  async createShareLink(
+    path: string,
+    opts?: { commit?: string; ttl?: number },
+  ): Promise<{
+    token: string;
+    url: string;
+    expiresIn: number;
+    expiresAt: string;
+  }> {
+    const response = await apiService.post<{
+      token: string;
+      url: string;
+      expiresIn: number;
+      expiresAt: string;
+    }>("/share", {
+      path,
+      commit: opts?.commit,
+      ttl: opts?.ttl,
+    });
+    return response.data!;
+  },
+
+  /**
+   * 获取分享链接信息
+   */
+  async getShareInfo(
+    token: string,
+  ): Promise<{ filePath: string; commit?: string; sharedBy?: string }> {
+    const response = await apiService.get<{
+      filePath: string;
+      commit?: string;
+      sharedBy?: string;
+    }>("/share/info", { token });
+    return response.data!;
+  },
 };

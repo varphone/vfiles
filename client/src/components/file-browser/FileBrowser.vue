@@ -351,6 +351,7 @@
           @delete="handleDelete"
           @view-history="handleViewHistory"
           @toggle-select="toggleSelect"
+          @share="handleShare"
         />
 
         <div
@@ -372,6 +373,7 @@
           @delete="handleDelete"
           @view-history="handleViewHistory"
           @toggle-select="toggleSelect"
+          @share="handleShare"
         />
 
         <div
@@ -515,6 +517,13 @@
       <VersionHistory v-if="selectedFile" :file-path="selectedFile.path" />
     </Modal>
 
+    <!-- 分享对话框 -->
+    <ShareDialog
+      :is-active="showShareDialog"
+      :file-path="selectedFile?.path || ''"
+      @close="showShareDialog = false"
+    />
+
     <!-- 预览对话框（当前版本） -->
     <Modal
       :show="preview.open"
@@ -607,6 +616,7 @@ import FileList from "./FileList.vue";
 import FileUploader from "../file-uploader/FileUploader.vue";
 import VersionHistory from "../version-history/VersionHistory.vue";
 import Modal from "../common/Modal.vue";
+import ShareDialog from "../common/ShareDialog.vue";
 import type { FileInfo } from "../../types";
 
 let cachedMarked: any | null = null;
@@ -629,6 +639,7 @@ function updateIsMobile() {
 
 const showUploader = ref(false);
 const showHistory = ref(false);
+const showShareDialog = ref(false);
 const selectedFile = ref<FileInfo | null>(null);
 const fileUploaderRef = ref<InstanceType<typeof FileUploader> | null>(null);
 
@@ -1571,6 +1582,11 @@ async function handleDelete(file: FileInfo) {
 function handleViewHistory(file: FileInfo) {
   selectedFile.value = file;
   showHistory.value = true;
+}
+
+function handleShare(file: FileInfo) {
+  selectedFile.value = file;
+  showShareDialog.value = true;
 }
 
 async function handleUpload() {
