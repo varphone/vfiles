@@ -1,5 +1,5 @@
 <template>
-  <Modal :show="isActive" title="分享文件" @close="$emit('close')">
+  <Modal :show="isActive" title="分享文件" mobile-compact @close="$emit('close')">
     <div class="share-dialog">
       <div class="field">
         <label class="label">文件路径</label>
