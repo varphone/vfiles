@@ -1,3 +1,4 @@
+import { describe, it, expect } from "vitest";
 import Login from "../src/views/Login.vue";
 import { renderWithProviders } from "./renderWithProviders";
 

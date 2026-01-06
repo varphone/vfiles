@@ -1,6 +1,6 @@
+import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders } from "./renderWithProviders";
 import FileBrowser from "../src/components/file-browser/FileBrowser.vue";
-import { vi } from "vitest";
 
 vi.mock("../src/services/files.service", () => ({
   filesService: {

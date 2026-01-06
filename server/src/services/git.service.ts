@@ -1692,8 +1692,24 @@ export class GitService {
         // 确保目录存在
         await fs.mkdir(dirPath, { recursive: true });
 
-        // 写入文件（用 Bun.write 支持流式写入，避免把大文件整体读入内存）
-        await Bun.write(fullPath, content as any);
+        // 写入文件
+        // 注意：Bun.write(path, new Response(stream)) 在 Windows 上会卡住
+        // 使用 FileSink 流式写入，边读边写避免大文件占用过多内存
+        if (content instanceof ReadableStream) {
+          const writer = Bun.file(fullPath).writer();
+          const reader = content.getReader();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (value) writer.write(value);
+            }
+          } finally {
+            await writer.end();
+          }
+        } else {
+          await Bun.write(fullPath, content as any);
+        }
 
         // Use withWriteLock to serialize git operations and avoid index lock races
         const commitHash = await this.withWriteLock(async () => {

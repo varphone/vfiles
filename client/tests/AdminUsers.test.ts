@@ -1,6 +1,6 @@
+import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders } from "./renderWithProviders";
 import AdminUsers from "../src/views/AdminUsers.vue";
-import { vi, expect } from "vitest";
 
 const mockUsers = [
   {

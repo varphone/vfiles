@@ -10,6 +10,107 @@ import os from "node:os";
 
 const tmpBase = path.join(os.tmpdir(), "vfiles-git-test-");
 
+/**
+ * 测试 Bun.write 对各种输入类型的支持
+ * 注意：Bun.write(path, new Response(ReadableStream)) 在 Windows 上会卡住
+ * 这是 Bun 的已知问题，所以 GitService 使用手动消费流的方式作为 workaround
+ */
+describe("Bun.write input type support", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(tmpBase);
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test("Bun.write should support string", async () => {
+    const filePath = path.join(tmpDir, "string.txt");
+    const content = "hello world";
+    await Bun.write(filePath, content);
+    const result = await fs.readFile(filePath, "utf-8");
+    expect(result).toBe(content);
+  });
+
+  test("Bun.write should support Buffer", async () => {
+    const filePath = path.join(tmpDir, "buffer.txt");
+    const content = Buffer.from("buffer content");
+    await Bun.write(filePath, content);
+    const result = await fs.readFile(filePath);
+    expect(result.equals(content)).toBe(true);
+  });
+
+  test("Bun.write should support Uint8Array", async () => {
+    const filePath = path.join(tmpDir, "uint8.txt");
+    const content = new TextEncoder().encode("uint8 content");
+    await Bun.write(filePath, content);
+    const result = await fs.readFile(filePath);
+    expect(Buffer.from(result).equals(Buffer.from(content))).toBe(true);
+  });
+
+  test("Bun.write should support Response with string body", async () => {
+    const filePath = path.join(tmpDir, "response-string.txt");
+    const content = "response string content";
+    const response = new Response(content);
+    await Bun.write(filePath, response);
+    const result = await fs.readFile(filePath, "utf-8");
+    expect(result).toBe(content);
+  });
+
+  // 以下测试在 Windows 上会卡住，标记为 skip
+  // Bun issue: Bun.write(path, new Response(ReadableStream)) hangs on Windows
+  test.skip("Bun.write should support Response with ReadableStream body (HANGS ON WINDOWS)", async () => {
+    const filePath = path.join(tmpDir, "response-stream.txt");
+    const content = "response stream content";
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(content));
+        controller.close();
+      },
+    });
+    const response = new Response(stream);
+    await Bun.write(filePath, response);
+    const result = await fs.readFile(filePath, "utf-8");
+    expect(result).toBe(content);
+  }, 3000);
+
+  // Workaround: 手动消费 ReadableStream 再写入
+  test("Workaround: manually consume ReadableStream then write", async () => {
+    const filePath = path.join(tmpDir, "manual-stream.txt");
+    const content = "manual stream content";
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(content));
+        controller.close();
+      },
+    });
+
+    // 手动消费流
+    const chunks: Uint8Array[] = [];
+    const reader = stream.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+    const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    await Bun.write(filePath, result);
+    const fileContent = await fs.readFile(filePath, "utf-8");
+    expect(fileContent).toBe(content);
+  });
+});
+
 // Helper to create a temporary git repo (worktree mode)
 async function createTempWorktreeRepo(): Promise<string> {
   const dir = await fs.mkdtemp(tmpBase);
@@ -972,6 +1073,791 @@ describe("GitService LFS support (bare mode)", () => {
           expect(isLfsPointer(text)).toBe(false);
           expect(text).toBe(f.content.toString());
         }
+      }
+    }, 30000);
+  });
+});
+
+/**
+ * GitService API 在 bare 与 worktree 模式下的一致性测试
+ * 确保两种模式下 API 行为保持一致
+ */
+describe("GitService bare vs worktree mode consistency", () => {
+  let bareRepoDir: string;
+  let worktreeRepoDir: string;
+  let bareService: GitService;
+  let worktreeService: GitService;
+
+  beforeEach(async () => {
+    bareRepoDir = await createTempBareRepo();
+    worktreeRepoDir = await createTempWorktreeRepo();
+    bareService = new GitService(bareRepoDir, "bare");
+    worktreeService = new GitService(worktreeRepoDir, "worktree");
+  });
+
+  afterEach(async () => {
+    await fs.rm(bareRepoDir, { recursive: true, force: true });
+    await fs.rm(worktreeRepoDir, { recursive: true, force: true });
+  });
+
+  describe("saveFile API consistency", () => {
+    test("saveFile should return valid commit hash in both modes", async () => {
+      const content = Buffer.from("test content for consistency");
+
+      const bareCommit = await bareService.saveFile(
+        "test.txt",
+        content,
+        "add test file",
+      );
+      const worktreeCommit = await worktreeService.saveFile(
+        "test.txt",
+        content,
+        "add test file",
+      );
+
+      // 两种模式都应返回有效的 SHA-1 哈希
+      expect(bareCommit).toMatch(/^[0-9a-f]{40}$/i);
+      expect(worktreeCommit).toMatch(/^[0-9a-f]{40}$/i);
+    }, 15000);
+
+    test("saveFile should handle Buffer content consistently", async () => {
+      const content = Buffer.from("buffer content test");
+
+      await bareService.saveFile("buffer.txt", content, "add buffer");
+      await worktreeService.saveFile("buffer.txt", content, "add buffer");
+
+      const bareContent = await bareService.getFileContent("buffer.txt");
+      const worktreeContent =
+        await worktreeService.getFileContent("buffer.txt");
+
+      expect(toStr(bareContent as Buffer)).toBe(content.toString());
+      expect(toStr(worktreeContent as Buffer)).toBe(content.toString());
+    }, 15000);
+
+    test("saveFile should handle Uint8Array content consistently", async () => {
+      const text = "uint8array content test";
+      const content = new TextEncoder().encode(text);
+
+      await bareService.saveFile("uint8.txt", content, "add uint8");
+      await worktreeService.saveFile("uint8.txt", content, "add uint8");
+
+      const bareContent = await bareService.getFileContent("uint8.txt");
+      const worktreeContent = await worktreeService.getFileContent("uint8.txt");
+
+      expect(toStr(bareContent as Buffer)).toBe(text);
+      expect(toStr(worktreeContent as Buffer)).toBe(text);
+    }, 15000);
+
+    test("saveFile should handle ReadableStream consistently", async () => {
+      const content = "stream content for both modes";
+      const encoder = new TextEncoder();
+
+      const createStream = () =>
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(content));
+            controller.close();
+          },
+        });
+
+      await bareService.saveFile("stream.txt", createStream(), "add stream");
+      await worktreeService.saveFile(
+        "stream.txt",
+        createStream(),
+        "add stream",
+      );
+
+      const bareContent = await bareService.getFileContent("stream.txt");
+      const worktreeContent =
+        await worktreeService.getFileContent("stream.txt");
+
+      expect(toStr(bareContent as Buffer)).toBe(content);
+      expect(toStr(worktreeContent as Buffer)).toBe(content);
+    }, 15000);
+
+    test("saveFile should update existing files consistently", async () => {
+      const initialContent = Buffer.from("initial content");
+      const updatedContent = Buffer.from("updated content");
+
+      // 创建初始文件
+      await bareService.saveFile("update.txt", initialContent, "initial");
+      await worktreeService.saveFile("update.txt", initialContent, "initial");
+
+      // 更新文件
+      await bareService.saveFile("update.txt", updatedContent, "update");
+      await worktreeService.saveFile("update.txt", updatedContent, "update");
+
+      const bareContent = await bareService.getFileContent("update.txt");
+      const worktreeContent =
+        await worktreeService.getFileContent("update.txt");
+
+      expect(toStr(bareContent as Buffer)).toBe(updatedContent.toString());
+      expect(toStr(worktreeContent as Buffer)).toBe(updatedContent.toString());
+    }, 15000);
+
+    test("saveFile should handle nested paths consistently", async () => {
+      const content = Buffer.from("nested file content");
+
+      await bareService.saveFile(
+        "dir/subdir/nested.txt",
+        content,
+        "add nested",
+      );
+      await worktreeService.saveFile(
+        "dir/subdir/nested.txt",
+        content,
+        "add nested",
+      );
+
+      const bareContent = await bareService.getFileContent(
+        "dir/subdir/nested.txt",
+      );
+      const worktreeContent = await worktreeService.getFileContent(
+        "dir/subdir/nested.txt",
+      );
+
+      expect(toStr(bareContent as Buffer)).toBe(content.toString());
+      expect(toStr(worktreeContent as Buffer)).toBe(content.toString());
+    }, 15000);
+  });
+
+  describe("getFileContent API consistency", () => {
+    test("getFileContent should return same content in both modes", async () => {
+      const content = Buffer.from("content to read");
+
+      await bareService.saveFile("read.txt", content, "add");
+      await worktreeService.saveFile("read.txt", content, "add");
+
+      const bareContent = await bareService.getFileContent("read.txt");
+      const worktreeContent = await worktreeService.getFileContent("read.txt");
+
+      expect(toStr(bareContent as Buffer)).toBe(
+        toStr(worktreeContent as Buffer),
+      );
+    }, 15000);
+
+    test("getFileContent should handle binary content consistently", async () => {
+      // 使用 .dat 后缀避免 LFS 追踪，测试纯 Git 二进制文件处理
+      // .bin 文件会被 LFS 追踪，导致 bare/worktree 行为不同
+      const binaryContent = Buffer.alloc(128);
+      for (let i = 0; i < 128; i++) {
+        binaryContent[i] = i + 32; // 从 0x20 开始，避免控制字符
+      }
+
+      await bareService.saveFile("binary.dat", binaryContent, "add binary");
+      await worktreeService.saveFile("binary.dat", binaryContent, "add binary");
+
+      const bareContent = (await bareService.getFileContent(
+        "binary.dat",
+      )) as Buffer;
+      const worktreeContent = (await worktreeService.getFileContent(
+        "binary.dat",
+      )) as Buffer;
+
+      // 两种模式应该返回相同的内容
+      expect(bareContent.equals(worktreeContent)).toBe(true);
+      // 内容应该与原始数据一致
+      expect(bareContent.length).toBe(binaryContent.length);
+    }, 15000);
+
+    test("getFileContent should throw for non-existent files in both modes", async () => {
+      await expect(
+        bareService.getFileContent("nonexistent.txt"),
+      ).rejects.toThrow();
+      await expect(
+        worktreeService.getFileContent("nonexistent.txt"),
+      ).rejects.toThrow();
+    }, 15000);
+  });
+
+  describe("deleteFile API consistency", () => {
+    test("deleteFile should remove files in both modes", async () => {
+      const content = Buffer.from("to be deleted");
+
+      // 创建文件
+      await bareService.saveFile("delete.txt", content, "add");
+      await worktreeService.saveFile("delete.txt", content, "add");
+
+      // 删除文件
+      await bareService.deleteFile("delete.txt", "delete");
+      await worktreeService.deleteFile("delete.txt", "delete");
+
+      // 验证已删除
+      await expect(bareService.getFileContent("delete.txt")).rejects.toThrow();
+      await expect(
+        worktreeService.getFileContent("delete.txt"),
+      ).rejects.toThrow();
+    }, 15000);
+
+    test("deleteFile should handle nested files consistently", async () => {
+      const content = Buffer.from("nested to delete");
+
+      await bareService.saveFile("a/b/c/delete.txt", content, "add");
+      await worktreeService.saveFile("a/b/c/delete.txt", content, "add");
+
+      await bareService.deleteFile("a/b/c/delete.txt", "delete");
+      await worktreeService.deleteFile("a/b/c/delete.txt", "delete");
+
+      await expect(
+        bareService.getFileContent("a/b/c/delete.txt"),
+      ).rejects.toThrow();
+      await expect(
+        worktreeService.getFileContent("a/b/c/delete.txt"),
+      ).rejects.toThrow();
+    }, 15000);
+  });
+
+  describe("listFiles API consistency", () => {
+    test("listFiles should return same files in both modes", async () => {
+      // 创建相同的文件结构
+      const files = ["file1.txt", "file2.txt", "file3.txt"];
+      for (const f of files) {
+        await bareService.saveFile(
+          f,
+          Buffer.from(`content of ${f}`),
+          `add ${f}`,
+        );
+        await worktreeService.saveFile(
+          f,
+          Buffer.from(`content of ${f}`),
+          `add ${f}`,
+        );
+      }
+
+      const bareFiles = await bareService.listFiles("");
+      const worktreeFiles = await worktreeService.listFiles("");
+
+      const bareNames = bareFiles.map((f) => f.name).sort();
+      const worktreeNames = worktreeFiles.map((f) => f.name).sort();
+
+      // 两种模式应该列出相同的文件
+      for (const name of files) {
+        expect(bareNames).toContain(name);
+        expect(worktreeNames).toContain(name);
+      }
+    }, 20000);
+
+    test("listFiles should handle nested directories consistently", async () => {
+      // 创建嵌套目录结构
+      await bareService.saveFile("root.txt", Buffer.from("root"), "add root");
+      await bareService.saveFile(
+        "dir1/file1.txt",
+        Buffer.from("file1"),
+        "add file1",
+      );
+      await bareService.saveFile(
+        "dir1/subdir/file2.txt",
+        Buffer.from("file2"),
+        "add file2",
+      );
+
+      await worktreeService.saveFile(
+        "root.txt",
+        Buffer.from("root"),
+        "add root",
+      );
+      await worktreeService.saveFile(
+        "dir1/file1.txt",
+        Buffer.from("file1"),
+        "add file1",
+      );
+      await worktreeService.saveFile(
+        "dir1/subdir/file2.txt",
+        Buffer.from("file2"),
+        "add file2",
+      );
+
+      // 检查根目录
+      const bareRoot = await bareService.listFiles("");
+      const worktreeRoot = await worktreeService.listFiles("");
+
+      const bareRootNames = bareRoot.map((f) => f.name).sort();
+      const worktreeRootNames = worktreeRoot.map((f) => f.name).sort();
+
+      expect(bareRootNames).toContain("root.txt");
+      expect(bareRootNames).toContain("dir1");
+      expect(worktreeRootNames).toContain("root.txt");
+      expect(worktreeRootNames).toContain("dir1");
+
+      // 检查子目录
+      const bareDir1 = await bareService.listFiles("dir1");
+      const worktreeDir1 = await worktreeService.listFiles("dir1");
+
+      const bareDir1Names = bareDir1.map((f) => f.name).sort();
+      const worktreeDir1Names = worktreeDir1.map((f) => f.name).sort();
+
+      expect(bareDir1Names).toContain("file1.txt");
+      expect(bareDir1Names).toContain("subdir");
+      expect(worktreeDir1Names).toContain("file1.txt");
+      expect(worktreeDir1Names).toContain("subdir");
+    }, 30000);
+
+    test("listFiles should return empty for empty directories", async () => {
+      // 注意：Git 不跟踪空目录，所以只能测试根目录（初始提交后）
+      const bareFiles = await bareService.listFiles("");
+      const worktreeFiles = await worktreeService.listFiles("");
+
+      // 两者都应该能返回（可能有初始文件或为空）
+      expect(Array.isArray(bareFiles)).toBe(true);
+      expect(Array.isArray(worktreeFiles)).toBe(true);
+    }, 15000);
+  });
+
+  describe("getFileHistory API consistency", () => {
+    test("getFileHistory should return commit history in both modes", async () => {
+      // 创建多个版本
+      await bareService.saveFile("history.txt", Buffer.from("v1"), "version 1");
+      await bareService.saveFile("history.txt", Buffer.from("v2"), "version 2");
+      await bareService.saveFile("history.txt", Buffer.from("v3"), "version 3");
+
+      await worktreeService.saveFile(
+        "history.txt",
+        Buffer.from("v1"),
+        "version 1",
+      );
+      await worktreeService.saveFile(
+        "history.txt",
+        Buffer.from("v2"),
+        "version 2",
+      );
+      await worktreeService.saveFile(
+        "history.txt",
+        Buffer.from("v3"),
+        "version 3",
+      );
+
+      const bareHistory = await bareService.getFileHistory("history.txt");
+      const worktreeHistory =
+        await worktreeService.getFileHistory("history.txt");
+
+      // 两种模式应该有相同数量的历史记录
+      expect(bareHistory.commits.length).toBe(3);
+      expect(worktreeHistory.commits.length).toBe(3);
+
+      // 验证提交消息
+      const bareMessages = bareHistory.commits.map((h) => h.message);
+      const worktreeMessages = worktreeHistory.commits.map((h) => h.message);
+
+      expect(bareMessages).toContain("version 3");
+      expect(bareMessages).toContain("version 2");
+      expect(bareMessages).toContain("version 1");
+      expect(worktreeMessages).toContain("version 3");
+      expect(worktreeMessages).toContain("version 2");
+      expect(worktreeMessages).toContain("version 1");
+    }, 20000);
+
+    test("getFileHistory should return valid commit hashes", async () => {
+      await bareService.saveFile("hash.txt", Buffer.from("content"), "commit");
+      await worktreeService.saveFile(
+        "hash.txt",
+        Buffer.from("content"),
+        "commit",
+      );
+
+      const bareHistory = await bareService.getFileHistory("hash.txt");
+      const worktreeHistory = await worktreeService.getFileHistory("hash.txt");
+
+      expect(bareHistory.commits.length).toBeGreaterThan(0);
+      expect(worktreeHistory.commits.length).toBeGreaterThan(0);
+
+      // 验证哈希格式
+      expect(bareHistory.commits[0].hash).toMatch(/^[0-9a-f]{40}$/i);
+      expect(worktreeHistory.commits[0].hash).toMatch(/^[0-9a-f]{40}$/i);
+    }, 15000);
+  });
+
+  describe("getFileContent with commitHash consistency", () => {
+    test("getFileContent should retrieve historical versions in both modes", async () => {
+      // 创建多个版本
+      const commit1Bare = await bareService.saveFile(
+        "versioned.txt",
+        Buffer.from("v1"),
+        "v1",
+      );
+      const commit2Bare = await bareService.saveFile(
+        "versioned.txt",
+        Buffer.from("v2"),
+        "v2",
+      );
+
+      const commit1Worktree = await worktreeService.saveFile(
+        "versioned.txt",
+        Buffer.from("v1"),
+        "v1",
+      );
+      const commit2Worktree = await worktreeService.saveFile(
+        "versioned.txt",
+        Buffer.from("v2"),
+        "v2",
+      );
+
+      // 读取历史版本
+      const bareV1 = await bareService.getFileContent(
+        "versioned.txt",
+        commit1Bare,
+      );
+      const bareV2 = await bareService.getFileContent(
+        "versioned.txt",
+        commit2Bare,
+      );
+
+      const worktreeV1 = await worktreeService.getFileContent(
+        "versioned.txt",
+        commit1Worktree,
+      );
+      const worktreeV2 = await worktreeService.getFileContent(
+        "versioned.txt",
+        commit2Worktree,
+      );
+
+      expect(toStr(bareV1 as Buffer)).toBe("v1");
+      expect(toStr(bareV2 as Buffer)).toBe("v2");
+      expect(toStr(worktreeV1 as Buffer)).toBe("v1");
+      expect(toStr(worktreeV2 as Buffer)).toBe("v2");
+    }, 20000);
+  });
+
+  describe("createDirectory API consistency", () => {
+    test("createDirectory should create directories in both modes", async () => {
+      await bareService.createDirectory("newdir", "create dir");
+      await worktreeService.createDirectory("newdir", "create dir");
+
+      // 验证目录存在（通过列出文件）
+      const bareFiles = await bareService.listFiles("");
+      const worktreeFiles = await worktreeService.listFiles("");
+
+      const bareNames = bareFiles.map((f) => f.name);
+      const worktreeNames = worktreeFiles.map((f) => f.name);
+
+      expect(bareNames).toContain("newdir");
+      expect(worktreeNames).toContain("newdir");
+    }, 15000);
+
+    test("createDirectory should handle nested paths consistently", async () => {
+      await bareService.createDirectory("a/b/c", "create nested");
+      await worktreeService.createDirectory("a/b/c", "create nested");
+
+      // 验证嵌套目录结构
+      const bareA = await bareService.listFiles("a");
+      const worktreeA = await worktreeService.listFiles("a");
+
+      expect(bareA.map((f) => f.name)).toContain("b");
+      expect(worktreeA.map((f) => f.name)).toContain("b");
+    }, 15000);
+  });
+
+  describe("movePath API consistency", () => {
+    test("movePath should rename files in both modes", async () => {
+      await bareService.saveFile("original.txt", Buffer.from("content"), "add");
+      await worktreeService.saveFile(
+        "original.txt",
+        Buffer.from("content"),
+        "add",
+      );
+
+      await bareService.movePath("original.txt", "renamed.txt", "rename");
+      await worktreeService.movePath("original.txt", "renamed.txt", "rename");
+
+      // 旧文件不存在
+      await expect(
+        bareService.getFileContent("original.txt"),
+      ).rejects.toThrow();
+      await expect(
+        worktreeService.getFileContent("original.txt"),
+      ).rejects.toThrow();
+
+      // 新文件存在且内容正确
+      const bareContent = await bareService.getFileContent("renamed.txt");
+      const worktreeContent =
+        await worktreeService.getFileContent("renamed.txt");
+
+      expect(toStr(bareContent as Buffer)).toBe("content");
+      expect(toStr(worktreeContent as Buffer)).toBe("content");
+    }, 15000);
+
+    test("movePath should move files to different directories", async () => {
+      await bareService.saveFile("src/file.txt", Buffer.from("content"), "add");
+      await worktreeService.saveFile(
+        "src/file.txt",
+        Buffer.from("content"),
+        "add",
+      );
+
+      await bareService.movePath("src/file.txt", "dest/file.txt", "move");
+      await worktreeService.movePath("src/file.txt", "dest/file.txt", "move");
+
+      // 验证移动结果
+      await expect(
+        bareService.getFileContent("src/file.txt"),
+      ).rejects.toThrow();
+      await expect(
+        worktreeService.getFileContent("src/file.txt"),
+      ).rejects.toThrow();
+
+      const bareContent = await bareService.getFileContent("dest/file.txt");
+      const worktreeContent =
+        await worktreeService.getFileContent("dest/file.txt");
+
+      expect(toStr(bareContent as Buffer)).toBe("content");
+      expect(toStr(worktreeContent as Buffer)).toBe("content");
+    }, 15000);
+  });
+
+  describe("searchFiles API consistency", () => {
+    test("searchFiles should find files by name in both modes", async () => {
+      await bareService.saveFile(
+        "search-test.txt",
+        Buffer.from("content"),
+        "add",
+      );
+      await bareService.saveFile("other.txt", Buffer.from("other"), "add");
+      await worktreeService.saveFile(
+        "search-test.txt",
+        Buffer.from("content"),
+        "add",
+      );
+      await worktreeService.saveFile("other.txt", Buffer.from("other"), "add");
+
+      const bareResults = await bareService.searchFiles("search");
+      const worktreeResults = await worktreeService.searchFiles("search");
+
+      const bareNames = bareResults.map((f) => f.name);
+      const worktreeNames = worktreeResults.map((f) => f.name);
+
+      expect(bareNames).toContain("search-test.txt");
+      expect(worktreeNames).toContain("search-test.txt");
+    }, 15000);
+
+    test("searchFiles should handle nested file search consistently", async () => {
+      await bareService.saveFile(
+        "dir1/findme.txt",
+        Buffer.from("content"),
+        "add",
+      );
+      await bareService.saveFile(
+        "dir2/findme.txt",
+        Buffer.from("content2"),
+        "add",
+      );
+      await worktreeService.saveFile(
+        "dir1/findme.txt",
+        Buffer.from("content"),
+        "add",
+      );
+      await worktreeService.saveFile(
+        "dir2/findme.txt",
+        Buffer.from("content2"),
+        "add",
+      );
+
+      const bareResults = await bareService.searchFiles("findme");
+      const worktreeResults = await worktreeService.searchFiles("findme");
+
+      // 两种模式应该找到相同数量的文件
+      expect(bareResults.length).toBe(2);
+      expect(worktreeResults.length).toBe(2);
+    }, 20000);
+  });
+
+  describe("getLastCommit API consistency", () => {
+    test("getLastCommit should return commit info in both modes", async () => {
+      await bareService.saveFile(
+        "last.txt",
+        Buffer.from("content"),
+        "last commit message",
+      );
+      await worktreeService.saveFile(
+        "last.txt",
+        Buffer.from("content"),
+        "last commit message",
+      );
+
+      const bareLastCommit = await bareService.getLastCommit("last.txt");
+      const worktreeLastCommit =
+        await worktreeService.getLastCommit("last.txt");
+
+      expect(bareLastCommit).toBeDefined();
+      expect(worktreeLastCommit).toBeDefined();
+
+      expect(bareLastCommit!.message).toBe("last commit message");
+      expect(worktreeLastCommit!.message).toBe("last commit message");
+
+      expect(bareLastCommit!.hash).toMatch(/^[0-9a-f]{40}$/i);
+      expect(worktreeLastCommit!.hash).toMatch(/^[0-9a-f]{40}$/i);
+    }, 15000);
+  });
+
+  describe("fileExistsAtCommit API consistency", () => {
+    test("fileExistsAtCommit should return correct result in both modes", async () => {
+      const bareCommit = await bareService.saveFile(
+        "exists.txt",
+        Buffer.from("content"),
+        "add",
+      );
+      const worktreeCommit = await worktreeService.saveFile(
+        "exists.txt",
+        Buffer.from("content"),
+        "add",
+      );
+
+      const bareExists = await bareService.fileExistsAtCommit(
+        "exists.txt",
+        bareCommit,
+      );
+      const worktreeExists = await worktreeService.fileExistsAtCommit(
+        "exists.txt",
+        worktreeCommit,
+      );
+
+      expect(bareExists).toBe(true);
+      expect(worktreeExists).toBe(true);
+
+      // 不存在的文件
+      const bareNotExists = await bareService.fileExistsAtCommit(
+        "nonexistent.txt",
+        bareCommit,
+      );
+      const worktreeNotExists = await worktreeService.fileExistsAtCommit(
+        "nonexistent.txt",
+        worktreeCommit,
+      );
+
+      expect(bareNotExists).toBe(false);
+      expect(worktreeNotExists).toBe(false);
+    }, 15000);
+  });
+
+  describe("getFileSizeAtCommit API consistency", () => {
+    test("getFileSizeAtCommit should return same size in both modes", async () => {
+      const contentStr = "test content with specific size";
+      const content = Buffer.from(contentStr);
+      const bareCommit = await bareService.saveFile("size.txt", content, "add");
+      const worktreeCommit = await worktreeService.saveFile(
+        "size.txt",
+        content,
+        "add",
+      );
+
+      const bareSize = await bareService.getFileSizeAtCommit(
+        "size.txt",
+        bareCommit,
+      );
+      const worktreeSize = await worktreeService.getFileSizeAtCommit(
+        "size.txt",
+        worktreeCommit,
+      );
+
+      expect(bareSize).toBe(content.length);
+      expect(worktreeSize).toBe(content.length);
+    }, 15000);
+  });
+
+  describe("edge cases consistency", () => {
+    test("should handle empty files consistently", async () => {
+      const emptyContent = Buffer.from("");
+
+      await bareService.saveFile("empty.txt", emptyContent, "add empty");
+      await worktreeService.saveFile("empty.txt", emptyContent, "add empty");
+
+      const bareContent = await bareService.getFileContent("empty.txt");
+      const worktreeContent = await worktreeService.getFileContent("empty.txt");
+
+      expect(toStr(bareContent as Buffer)).toBe("");
+      expect(toStr(worktreeContent as Buffer)).toBe("");
+    }, 15000);
+
+    test("should handle special characters in filenames consistently", async () => {
+      const filename = "file with spaces.txt";
+      const content = Buffer.from("content");
+
+      await bareService.saveFile(filename, content, "add");
+      await worktreeService.saveFile(filename, content, "add");
+
+      const bareContent = await bareService.getFileContent(filename);
+      const worktreeContent = await worktreeService.getFileContent(filename);
+
+      expect(toStr(bareContent as Buffer)).toBe(content.toString());
+      expect(toStr(worktreeContent as Buffer)).toBe(content.toString());
+    }, 15000);
+
+    test("should handle unicode content consistently", async () => {
+      const unicodeStr = "中文内容 日本語 한국어 🎉🚀";
+      const unicodeContent = Buffer.from(unicodeStr);
+
+      await bareService.saveFile("unicode.txt", unicodeContent, "add unicode");
+      await worktreeService.saveFile(
+        "unicode.txt",
+        unicodeContent,
+        "add unicode",
+      );
+
+      const bareContent = await bareService.getFileContent("unicode.txt");
+      const worktreeContent =
+        await worktreeService.getFileContent("unicode.txt");
+
+      expect(toStr(bareContent as Buffer)).toBe(unicodeStr);
+      expect(toStr(worktreeContent as Buffer)).toBe(unicodeStr);
+    }, 15000);
+
+    test("should handle large files consistently", async () => {
+      const largeStr = "X".repeat(100 * 1024); // 100KB
+      const largeContent = Buffer.from(largeStr);
+
+      await bareService.saveFile("large.txt", largeContent, "add large");
+      await worktreeService.saveFile("large.txt", largeContent, "add large");
+
+      const bareContent = await bareService.getFileContent("large.txt");
+      const worktreeContent = await worktreeService.getFileContent("large.txt");
+
+      expect(toStr(bareContent as Buffer).length).toBe(largeStr.length);
+      expect(toStr(worktreeContent as Buffer).length).toBe(largeStr.length);
+    }, 30000);
+  });
+
+  describe("concurrent operations consistency", () => {
+    test("concurrent saveFile should work in both modes", async () => {
+      const numFiles = 5;
+
+      // 并发在 bare 模式下保存
+      const barePromises = Array.from({ length: numFiles }, (_, i) =>
+        bareService.saveFile(
+          `concurrent-${i}.txt`,
+          Buffer.from(`content-${i}`),
+          `add ${i}`,
+        ),
+      );
+
+      // 并发在 worktree 模式下保存
+      const worktreePromises = Array.from({ length: numFiles }, (_, i) =>
+        worktreeService.saveFile(
+          `concurrent-${i}.txt`,
+          Buffer.from(`content-${i}`),
+          `add ${i}`,
+        ),
+      );
+
+      const bareCommits = await Promise.all(barePromises);
+      const worktreeCommits = await Promise.all(worktreePromises);
+
+      // 所有提交应该成功
+      for (const commit of bareCommits) {
+        expect(commit).toMatch(/^[0-9a-f]{40}$/i);
+      }
+      for (const commit of worktreeCommits) {
+        expect(commit).toMatch(/^[0-9a-f]{40}$/i);
+      }
+
+      // 验证文件内容
+      for (let i = 0; i < numFiles; i++) {
+        const bareContent = await bareService.getFileContent(
+          `concurrent-${i}.txt`,
+        );
+        const worktreeContent = await worktreeService.getFileContent(
+          `concurrent-${i}.txt`,
+        );
+
+        expect(toStr(bareContent as Buffer)).toBe(`content-${i}`);
+        expect(toStr(worktreeContent as Buffer)).toBe(`content-${i}`);
       }
     }, 30000);
   });
