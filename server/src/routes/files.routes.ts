@@ -587,7 +587,7 @@ export function createFilesRoutes(gitManager: GitServiceManager) {
   /**
    * POST /api/files/upload/chunk?uploadId=...&index=...
    * Content-Type: application/octet-stream
-   * 
+   *
    * 使用流式写入，避免将整个分块加载到内存
    */
   app.post("/upload/chunk", async (c) => {

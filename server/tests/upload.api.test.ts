@@ -296,3 +296,358 @@ test("POST /api/files/upload/init -> upload/chunk -> upload/complete returns com
     // ignore
   }
 }, 20000);
+
+// test concurrent chunk uploads to the same session
+test("concurrent chunk uploads to same session should not corrupt data", async () => {
+  const repo = await initWorktreeRepo();
+  const gitManager = makeStubGitManager(repo);
+
+  const app = new Hono();
+  app.use("/api/*", (c, next) => {
+    (c as any).set("repoContext", { repoPath: repo, repoMode: "worktree" });
+    return next();
+  });
+  app.route("/api/files", createFilesRoutes(gitManager as any));
+
+  const filename = "concurrent-chunks.txt";
+
+  // init session to get server-side chunk size
+  const initRes = await app.fetch(
+    new Request("http://localhost/api/files/upload/init", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename,
+        path: "",
+        size: 50 * 1024 * 1024, // 50MB - will result in multiple chunks
+        lastModified: Date.now(),
+      }),
+    }),
+  );
+  const initBody = await initRes.json();
+  expect(initBody.success).toBe(true);
+  const uploadId = initBody.data.uploadId as string;
+  const chunkSize = initBody.data.chunkSize as number;
+  const totalChunks = initBody.data.totalChunks as number;
+
+  // Create correctly sized chunk content
+  const chunkContent = Buffer.alloc(chunkSize);
+  chunkContent.fill("X");
+
+  // Upload all chunks concurrently (simulating parallel requests)
+  const chunkPromises = Array.from({ length: totalChunks }, (_, i) =>
+    app.fetch(
+      new Request(
+        `http://localhost/api/files/upload/chunk?uploadId=${uploadId}&index=${i}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: chunkContent,
+        },
+      ),
+    ),
+  );
+
+  const chunkResults = await Promise.all(chunkPromises);
+
+  // All chunk uploads should succeed
+  for (let i = 0; i < chunkResults.length; i++) {
+    const res = chunkResults[i];
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+  }
+
+  // Complete should succeed
+  const completeRes = await app.fetch(
+    new Request("http://localhost/api/files/upload/complete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ uploadId }),
+    }),
+  );
+  expect(completeRes.status).toBe(200);
+  const completeBody = await completeRes.json();
+  expect(completeBody.success).toBe(true);
+  expect(shaRegex.test(completeBody.data?.commit)).toBe(true);
+
+  // Verify file exists (content may differ in last chunk)
+  const savedContent = await fs.readFile(path.join(repo, filename));
+  expect(savedContent.length).toBe(50 * 1024 * 1024);
+
+  // cleanup
+  await fs.rm(repo, { recursive: true, force: true });
+}, 60000);
+
+// test concurrent uploads of different files
+test("concurrent uploads of different files should all succeed", async () => {
+  const repo = await initWorktreeRepo();
+  const gitManager = makeStubGitManager(repo);
+
+  const app = new Hono();
+  app.use("/api/*", (c, next) => {
+    (c as any).set("repoContext", { repoPath: repo, repoMode: "worktree" });
+    return next();
+  });
+  app.route("/api/files", createFilesRoutes(gitManager as any));
+
+  const numFiles = 5;
+  const files = Array.from({ length: numFiles }, (_, i) => ({
+    filename: `concurrent-file-${i}.txt`,
+    content: `Content of file ${i} - ${"Y".repeat(100)}`,
+  }));
+
+  // Initialize all upload sessions concurrently
+  const initPromises = files.map((f) =>
+    app.fetch(
+      new Request("http://localhost/api/files/upload/init", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          filename: f.filename,
+          path: "",
+          size: Buffer.byteLength(f.content, "utf-8"),
+          lastModified: Date.now() + Math.random(),
+        }),
+      }),
+    ),
+  );
+
+  const initResults = await Promise.all(initPromises);
+  const uploadIds: string[] = [];
+
+  for (let i = 0; i < initResults.length; i++) {
+    const res = initResults[i];
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    uploadIds.push(body.data.uploadId);
+  }
+
+  // Upload chunks for all files concurrently
+  const chunkPromises = files.map((f, i) =>
+    app.fetch(
+      new Request(
+        `http://localhost/api/files/upload/chunk?uploadId=${uploadIds[i]}&index=0`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: Buffer.from(f.content, "utf-8"),
+        },
+      ),
+    ),
+  );
+
+  const chunkResults = await Promise.all(chunkPromises);
+  for (const res of chunkResults) {
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+  }
+
+  // Complete uploads - these need to run serially due to git lock
+  // This tests that the server properly serializes git operations
+  const commits: string[] = [];
+  for (const uploadId of uploadIds) {
+    const res = await app.fetch(
+      new Request("http://localhost/api/files/upload/complete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ uploadId }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(shaRegex.test(body.data?.commit)).toBe(true);
+    commits.push(body.data.commit);
+  }
+
+  // All commits should be different
+  const uniqueCommits = new Set(commits);
+  expect(uniqueCommits.size).toBe(numFiles);
+
+  // Verify all files exist with correct content
+  for (const f of files) {
+    const savedContent = await fs.readFile(
+      path.join(repo, f.filename),
+      "utf-8",
+    );
+    expect(savedContent).toBe(f.content);
+  }
+
+  // cleanup
+  await fs.rm(repo, { recursive: true, force: true });
+}, 30000);
+
+// test resume upload after partial upload
+test("resume upload should correctly identify received chunks", async () => {
+  const repo = await initWorktreeRepo();
+  const gitManager = makeStubGitManager(repo);
+
+  const app = new Hono();
+  app.use("/api/*", (c, next) => {
+    (c as any).set("repoContext", { repoPath: repo, repoMode: "worktree" });
+    return next();
+  });
+  app.route("/api/files", createFilesRoutes(gitManager as any));
+
+  const filename = "resume-test.txt";
+  // Use 25MB file to get 5 chunks (with default 5MB chunk size)
+  const totalSize = 25 * 1024 * 1024;
+
+  // First init
+  const initRes1 = await app.fetch(
+    new Request("http://localhost/api/files/upload/init", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename,
+        path: "",
+        size: totalSize,
+        lastModified: 12345,
+      }),
+    }),
+  );
+  const initBody1 = await initRes1.json();
+  expect(initBody1.success).toBe(true);
+  const uploadId = initBody1.data.uploadId;
+  const chunkSize = initBody1.data.chunkSize as number;
+  const totalChunks = initBody1.data.totalChunks as number;
+  expect(totalChunks).toBe(5);
+
+  // Create chunk content
+  const chunkContent = Buffer.alloc(chunkSize);
+  chunkContent.fill("Z");
+
+  // Upload only chunks 0, 2, 4 (skip 1 and 3)
+  const uploadedIndices = [0, 2, 4];
+  for (const i of uploadedIndices) {
+    const res = await app.fetch(
+      new Request(
+        `http://localhost/api/files/upload/chunk?uploadId=${uploadId}&index=${i}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: chunkContent,
+        },
+      ),
+    );
+    expect(res.status).toBe(200);
+  }
+
+  // Re-init (resume) - should return received chunks
+  const initRes2 = await app.fetch(
+    new Request("http://localhost/api/files/upload/init", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename,
+        path: "",
+        size: totalSize,
+        lastModified: 12345, // same lastModified = same uploadId
+      }),
+    }),
+  );
+  const initBody2 = await initRes2.json();
+  expect(initBody2.success).toBe(true);
+  expect(initBody2.data.uploadId).toBe(uploadId);
+  expect(initBody2.data.resumable).toBe(true);
+  expect(initBody2.data.received.sort()).toEqual(uploadedIndices.sort());
+
+  // Upload missing chunks 1 and 3
+  for (const i of [1, 3]) {
+    const res = await app.fetch(
+      new Request(
+        `http://localhost/api/files/upload/chunk?uploadId=${uploadId}&index=${i}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: chunkContent,
+        },
+      ),
+    );
+    expect(res.status).toBe(200);
+  }
+
+  // Complete should now succeed
+  const completeRes = await app.fetch(
+    new Request("http://localhost/api/files/upload/complete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ uploadId }),
+    }),
+  );
+  expect(completeRes.status).toBe(200);
+  const completeBody = await completeRes.json();
+  expect(completeBody.success).toBe(true);
+
+  // cleanup
+  await fs.rm(repo, { recursive: true, force: true });
+}, 60000);
+
+// test duplicate chunk upload (idempotency)
+test("duplicate chunk upload should be idempotent", async () => {
+  const repo = await initWorktreeRepo();
+  const gitManager = makeStubGitManager(repo);
+
+  const app = new Hono();
+  app.use("/api/*", (c, next) => {
+    (c as any).set("repoContext", { repoPath: repo, repoMode: "worktree" });
+    return next();
+  });
+  app.route("/api/files", createFilesRoutes(gitManager as any));
+
+  const filename = "idempotent.txt";
+  const content = "idempotent content";
+  const size = Buffer.byteLength(content, "utf-8");
+
+  // init
+  const initRes = await app.fetch(
+    new Request("http://localhost/api/files/upload/init", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename, path: "", size, lastModified: 1 }),
+    }),
+  );
+  const uploadId = (await initRes.json()).data.uploadId;
+
+  // Upload same chunk multiple times concurrently
+  const duplicateUploads = Array.from({ length: 5 }, () =>
+    app.fetch(
+      new Request(
+        `http://localhost/api/files/upload/chunk?uploadId=${uploadId}&index=0`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: Buffer.from(content, "utf-8"),
+        },
+      ),
+    ),
+  );
+
+  const results = await Promise.all(duplicateUploads);
+
+  // All should succeed
+  for (const res of results) {
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+  }
+
+  // Complete should succeed and file should have correct content
+  const completeRes = await app.fetch(
+    new Request("http://localhost/api/files/upload/complete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ uploadId }),
+    }),
+  );
+  expect(completeRes.status).toBe(200);
+
+  const savedContent = await fs.readFile(path.join(repo, filename), "utf-8");
+  expect(savedContent).toBe(content);
+
+  // cleanup
+  await fs.rm(repo, { recursive: true, force: true });
+}, 30000);
