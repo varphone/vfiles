@@ -54,14 +54,11 @@
         </div>
 
         <div class="navbar-end">
-          <div
-            v-if="auth.enabled"
-            class="navbar-item is-size-7 has-text-white-ter"
-          >
+          <div v-if="auth.enabled" class="navbar-item is-size-7 has-text-grey">
             <span v-if="auth.user"
               >{{ auth.user.username }} ({{ auth.user.role }})</span
             >
-            <router-link v-else class="has-text-white-ter" to="/login"
+            <router-link v-else class="has-text-grey" to="/login"
               >去登录</router-link
             >
           </div>
@@ -74,7 +71,7 @@
             >退出</a
           >
 
-          <div class="navbar-item is-size-7 has-text-white-ter">
+          <div class="navbar-item is-size-7 has-text-grey">
             当前：{{ currentPathLabel }}
           </div>
         </div>

@@ -81,6 +81,12 @@ app.route("/api/download", createDownloadRoutes(gitManager));
 app.route("/api/search", createSearchRoutes(gitManager));
 app.route("/api/share", createShareRoutes());
 
+// 短链接重定向 /s/:code -> /api/share/:code
+app.get("/s/:code", (c) => {
+  const code = c.req.param("code");
+  return c.redirect(`/api/share/${code}`);
+});
+
 // 静态文件服务（仅生产环境且 dist 存在时启用；开发模式下由 Vite 提供前端）
 if (process.env.NODE_ENV === "production") {
   const distIndex = path.resolve(process.cwd(), "client", "dist", "index.html");

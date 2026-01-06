@@ -358,13 +358,13 @@ export const filesService = {
     path: string,
     opts?: { commit?: string; ttl?: number },
   ): Promise<{
-    token: string;
+    code: string;
     url: string;
     expiresIn: number;
     expiresAt: string;
   }> {
     const response = await apiService.post<{
-      token: string;
+      code: string;
       url: string;
       expiresIn: number;
       expiresAt: string;
@@ -379,14 +379,18 @@ export const filesService = {
   /**
    * 获取分享链接信息
    */
-  async getShareInfo(
-    token: string,
-  ): Promise<{ filePath: string; commit?: string; sharedBy?: string }> {
+  async getShareInfo(code: string): Promise<{
+    filePath: string;
+    commit?: string;
+    sharedBy?: string;
+    expiresAt: string;
+  }> {
     const response = await apiService.get<{
       filePath: string;
       commit?: string;
       sharedBy?: string;
-    }>("/share/info", { token });
+      expiresAt: string;
+    }>("/share/info", { code });
     return response.data!;
   },
 };

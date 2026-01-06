@@ -5,11 +5,11 @@ import { normalizeRequestPath } from "../utils/validation.js";
 import crypto from "node:crypto";
 
 /**
- * 分享 token 的 payload 结构
+ * 分享信息结构
  */
-export interface ShareTokenPayload {
-  /** 分享类型标识 */
-  type: "share";
+export interface ShareInfo {
+  /** 短码 */
+  code: string;
   /** 仓库路径（用于多用户模式） */
   repoPath: string;
   /** 文件路径 */
@@ -18,84 +18,105 @@ export interface ShareTokenPayload {
   commit?: string;
   /** 分享者用户名（可选，用于审计） */
   sharedBy?: string;
-  /** 过期时间（秒） */
+  /** 过期时间（毫秒时间戳） */
+  expireAt: number;
+  /** 创建时间（毫秒时间戳） */
+  createdAt: number;
+}
+
+/**
+ * 短码存储（内存）
+ * key: 短码, value: 分享信息
+ */
+const shareStore = new Map<string, ShareInfo>();
+
+/**
+ * 短码字符集（URL 安全，避免混淆字符）
+ */
+const SHORT_CODE_CHARS =
+  "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
+const SHORT_CODE_LENGTH = 8;
+
+/**
+ * 生成短码
+ */
+function generateShortCode(): string {
+  const bytes = crypto.randomBytes(SHORT_CODE_LENGTH);
+  let code = "";
+  for (let i = 0; i < SHORT_CODE_LENGTH; i++) {
+    code += SHORT_CODE_CHARS[bytes[i] % SHORT_CODE_CHARS.length];
+  }
+  return code;
+}
+
+/**
+ * 生成唯一短码（避免冲突）
+ */
+function generateUniqueShortCode(): string {
+  let code: string;
+  let attempts = 0;
+  do {
+    code = generateShortCode();
+    attempts++;
+    if (attempts > 100) {
+      throw new Error("无法生成唯一短码");
+    }
+  } while (shareStore.has(code));
+  return code;
+}
+
+/**
+ * 清理过期的分享
+ */
+function cleanupExpiredShares(): void {
+  const now = Date.now();
+  for (const [code, info] of shareStore) {
+    if (info.expireAt <= now) {
+      shareStore.delete(code);
+    }
+  }
+}
+
+// 每 10 分钟清理一次过期分享
+setInterval(cleanupExpiredShares, 10 * 60 * 1000);
+
+/**
+ * 通过短码获取分享信息（导出给 download.routes 使用）
+ */
+export function getShareByCode(code: string): ShareInfo | null {
+  const info = shareStore.get(code);
+  if (!info) return null;
+
+  // 检查是否过期
+  if (info.expireAt <= Date.now()) {
+    shareStore.delete(code);
+    return null;
+  }
+
+  return info;
+}
+
+/**
+ * 兼容旧的 parseShareToken 接口（用于 download.routes）
+ * 现在 token 就是短码
+ */
+export function parseShareToken(token: string): {
+  repoPath: string;
+  filePath: string;
+  commit?: string;
+  sharedBy?: string;
   exp: number;
-}
+} | null {
+  const info = getShareByCode(token);
+  if (!info) return null;
 
-function base64UrlEncode(buf: Uint8Array): string {
-  return Buffer.from(buf)
-    .toString("base64")
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
-}
-
-function base64UrlDecode(s: string): Uint8Array {
-  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
-  const b64 = s.replaceAll("-", "+").replaceAll("_", "/") + pad;
-  return new Uint8Array(Buffer.from(b64, "base64"));
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  const aBuf = Buffer.from(a);
-  const bBuf = Buffer.from(b);
-  if (aBuf.length !== bBuf.length) return false;
-  return crypto.timingSafeEqual(aBuf, bBuf);
-}
-
-/**
- * 签名分享 token
- */
-function signShareToken(payload: ShareTokenPayload, secret: string): string {
-  const payloadJson = JSON.stringify(payload);
-  const payloadB64 = base64UrlEncode(Buffer.from(payloadJson, "utf-8"));
-  const sig = crypto.createHmac("sha256", secret).update(payloadB64).digest();
-  const sigB64 = base64UrlEncode(sig);
-  return `${payloadB64}.${sigB64}`;
-}
-
-/**
- * 验证分享 token
- */
-function verifyShareToken(
-  token: string,
-  secret: string,
-): ShareTokenPayload | null {
-  const parts = (token || "").split(".");
-  if (parts.length !== 2) return null;
-  const [payloadB64, sigB64] = parts;
-  if (!payloadB64 || !sigB64) return null;
-
-  const expected = base64UrlEncode(
-    crypto.createHmac("sha256", secret).update(payloadB64).digest(),
-  );
-  if (!timingSafeEqual(expected, sigB64)) {
-    return null;
-  }
-
-  let payload: ShareTokenPayload;
-  try {
-    payload = JSON.parse(
-      Buffer.from(base64UrlDecode(payloadB64)).toString("utf-8"),
-    );
-  } catch {
-    return null;
-  }
-
-  if (!payload || payload.type !== "share") return null;
-  if (typeof payload.exp !== "number") return null;
-
-  const nowSec = Math.floor(Date.now() / 1000);
-  if (payload.exp <= nowSec) return null;
-
-  return payload;
-}
-
-/**
- * 解析分享 token（导出给 download.routes 使用）
- */
-export function parseShareToken(token: string): ShareTokenPayload | null {
-  return verifyShareToken(token, config.auth.secret);
+  return {
+    repoPath: info.repoPath,
+    filePath: info.filePath,
+    commit: info.commit,
+    sharedBy: info.sharedBy,
+    exp: Math.floor(info.expireAt / 1000),
+  };
 }
 
 export function createShareRoutes() {
@@ -150,33 +171,38 @@ export function createShareRoutes() {
     // 获取当前用户的仓库路径
     const { repoPath } = getRepoContext(c);
 
-    // 计算过期时间
-    const exp = Math.floor(Date.now() / 1000) + ttl;
+    // 清理过期分享
+    cleanupExpiredShares();
 
-    // 创建分享 token
-    const payload: ShareTokenPayload = {
-      type: "share",
+    // 生成短码
+    const code = generateUniqueShortCode();
+    const now = Date.now();
+    const expireAt = now + ttl * 1000;
+
+    // 存储分享信息
+    const shareInfo: ShareInfo = {
+      code,
       repoPath,
       filePath,
       commit,
       sharedBy: user?.username,
-      exp,
+      expireAt,
+      createdAt: now,
     };
+    shareStore.set(code, shareInfo);
 
-    const token = signShareToken(payload, config.auth.secret);
-
-    // 构建分享链接
+    // 构建分享链接（使用简洁的短链接格式）
     const baseUrl =
       config.email.publicBaseUrl || `http://localhost:${config.port}`;
-    const shareUrl = `${baseUrl}/api/download?path=${encodeURIComponent(filePath)}&share_token=${encodeURIComponent(token)}`;
+    const shareUrl = `${baseUrl}/s/${code}`;
 
     return c.json({
       success: true,
       data: {
-        token,
+        code,
         url: shareUrl,
         expiresIn: ttl,
-        expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
+        expiresAt: new Date(expireAt).toISOString(),
       },
     });
   });
@@ -184,27 +210,44 @@ export function createShareRoutes() {
   /**
    * GET /api/share/info - 获取分享链接信息（不需要登录）
    *
-   * Query: token - 分享 token
+   * Query: code - 分享短码
    */
   app.get("/info", async (c) => {
-    const token = c.req.query("token");
-    if (!token) {
-      return c.json({ success: false, error: "缺少 token 参数" }, 400);
+    const code = c.req.query("code") || c.req.query("token");
+    if (!code) {
+      return c.json({ success: false, error: "缺少 code 参数" }, 400);
     }
 
-    const payload = parseShareToken(token);
-    if (!payload) {
+    const info = getShareByCode(code);
+    if (!info) {
       return c.json({ success: false, error: "无效或已过期的分享链接" }, 400);
     }
 
     return c.json({
       success: true,
       data: {
-        filePath: payload.filePath,
-        commit: payload.commit,
-        sharedBy: payload.sharedBy,
+        filePath: info.filePath,
+        commit: info.commit,
+        sharedBy: info.sharedBy,
+        expiresAt: new Date(info.expireAt).toISOString(),
       },
     });
+  });
+
+  /**
+   * GET /api/share/:code - 重定向到下载（短链接入口）
+   */
+  app.get("/:code", async (c) => {
+    const code = c.req.param("code");
+    const info = getShareByCode(code);
+
+    if (!info) {
+      return c.json({ success: false, error: "无效或已过期的分享链接" }, 404);
+    }
+
+    // 重定向到下载接口
+    const downloadUrl = `/api/download?path=${encodeURIComponent(info.filePath)}&share_token=${encodeURIComponent(code)}`;
+    return c.redirect(downloadUrl);
   });
 
   return app;
