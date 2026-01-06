@@ -263,26 +263,12 @@ export const filesService = {
   },
 
   /**
-   * 获取下载 URL 的完整地址
-   * 开发环境下直接访问后端端口以绕过 Vite 代理，避免 Content-Length 丢失
-   */
-  getDownloadBaseUrl(): string {
-    // 开发环境：Vite 代理会将响应转为 chunked encoding，导致 Content-Length 丢失
-    // 直接访问后端地址以保留 Content-Length，让浏览器显示下载进度
-    if (import.meta.env.DEV) {
-      return "http://localhost:3000";
-    }
-    return "";
-  },
-
-  /**
    * 下载文件
    */
   downloadFile(path: string, commit?: string): void {
     const params = new URLSearchParams({ path });
     if (commit) params.set("commit", commit);
-    const baseUrl = this.getDownloadBaseUrl();
-    const url = `${baseUrl}/api/download?${params}`;
+    const url = `/api/download?${params}`;
     const link = document.createElement("a");
     link.href = url;
     link.download = path.split("/").pop() || "download";
@@ -298,8 +284,7 @@ export const filesService = {
     const params = { path };
     const qs = new URLSearchParams(params);
     if (commit) qs.set("commit", commit);
-    const baseUrl = this.getDownloadBaseUrl();
-    const url = `${baseUrl}/api/download/folder?${qs}`;
+    const url = `/api/download/folder?${qs}`;
     const name = path.split("/").filter(Boolean).pop() || "root";
     const link = document.createElement("a");
     link.href = url;
