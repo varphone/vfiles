@@ -662,6 +662,18 @@ export class GitService {
           console.warn("Git LFS 初始化失败，将回退为普通 Git：", e);
         }
       }
+
+      // 优化二进制文件：禁用 delta 压缩（对已压缩文件，delta 毫无意义且浪费 CPU）
+      if (config.binaryFilePatterns?.length) {
+        try {
+          await this.ensureBinaryFileAttributes(config.binaryFilePatterns);
+        } catch (e) {
+          console.warn("设置二进制文件属性失败：", e);
+        }
+      }
+
+      // 配置 Git 本地设置优化大文件存储
+      await this.configureGitForLargeFiles();
     } catch (error) {
       console.error("初始化Git仓库失败:", error);
       throw error;
@@ -818,6 +830,173 @@ export class GitService {
       await $`git -c user.name=VFiles\ System -c user.email=system@vfiles.local commit -m chore:\ configure\ git-lfs`.cwd(
         this.dir,
       );
+    }
+  }
+
+  /**
+   * 为二进制/已压缩文件设置 .gitattributes 属性
+   * - binary: 标记为二进制，不进行文本 diff
+   * - -delta: 禁用 delta 压缩（对已压缩文件无效且浪费 CPU）
+   */
+  private async ensureBinaryFileAttributes(patterns: string[]): Promise<void> {
+    if (!patterns.length) return;
+
+    // 生成属性行：binary -delta（禁用 diff 和 delta 压缩）
+    // 注意：如果文件已被 LFS 追踪，LFS 属性优先级更高，这里的设置会被忽略
+    const desiredLines = patterns.map((p) => `${p} binary -delta`);
+
+    if (this.isBare) {
+      // bare 仓库：直接操作 index
+      let existing = "";
+      try {
+        const result = await $`git show HEAD:.gitattributes`
+          .cwd(this.dir)
+          .quiet();
+        existing = result.stdout.toString();
+      } catch {
+        existing = "";
+      }
+
+      const existingLines = existing
+        .split(/\r?\n/)
+        .map((l) => l.trimEnd())
+        .filter(Boolean);
+      const set = new Set(existingLines);
+
+      let changed = false;
+      for (const line of desiredLines) {
+        // 检查是否已存在同样的 pattern 设置（可能由 LFS 设置）
+        const pattern = line.split(/\s+/)[0];
+        const hasPattern = existingLines.some((l) => l.startsWith(pattern + " "));
+        if (!hasPattern) {
+          existingLines.push(line);
+          set.add(line);
+          changed = true;
+        }
+      }
+
+      if (!changed) return;
+
+      const newContent = `${existingLines.join("\n")}\n`;
+      const blobSha = await this.writeBlobFromContent(
+        new TextEncoder().encode(newContent),
+      );
+      await this.withWriteLock(async () => {
+        const indexFile = path.join(
+          this.dir,
+          `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+        );
+        try {
+          const readTree = Bun.spawn(["git", "read-tree", "HEAD"], {
+            cwd: this.dir,
+            stdout: "ignore",
+            stderr: "pipe",
+            env: { ...process.env, GIT_INDEX_FILE: indexFile },
+          });
+          const rc = await readTree.exited;
+          if (rc !== 0) {
+            const err = await new Response(readTree.stderr).text();
+            throw new Error(err || "git read-tree HEAD 失败");
+          }
+
+          await this.updateIndexAddBlob(
+            ".gitattributes",
+            blobSha,
+            "100644",
+            indexFile,
+          );
+
+          let parent: string | undefined;
+          try {
+            parent = await this.runGitAsync(["rev-parse", "HEAD"], this.dir);
+          } catch {
+            parent = undefined;
+          }
+
+          await this.bareCommitFromIndex({
+            indexFile,
+            message: "chore: configure binary file attributes",
+            authorName: "VFiles System",
+            authorEmail: "system@vfiles.local",
+            parent,
+          });
+        } finally {
+          try {
+            await fs.rm(indexFile, { force: true });
+          } catch {
+            // ignore
+          }
+        }
+      });
+      return;
+    }
+
+    // worktree 仓库：直接写 .gitattributes 文件
+    const attrPath = path.join(this.dir, ".gitattributes");
+    let existing = "";
+    try {
+      existing = await fs.readFile(attrPath, "utf-8");
+    } catch {
+      existing = "";
+    }
+
+    const existingLines = existing
+      .split(/\r?\n/)
+      .map((l) => l.trimEnd())
+      .filter(Boolean);
+
+    let changed = false;
+    for (const line of desiredLines) {
+      const pattern = line.split(/\s+/)[0];
+      const hasPattern = existingLines.some((l) => l.startsWith(pattern + " "));
+      if (!hasPattern) {
+        existingLines.push(line);
+        changed = true;
+      }
+    }
+
+    if (!changed) return;
+
+    await fs.writeFile(attrPath, existingLines.join("\n") + "\n", "utf-8");
+
+    // 检查是否有变更需要提交
+    const status = await $`git status --porcelain`.cwd(this.dir).quiet();
+    if (status.stdout.toString().includes(".gitattributes")) {
+      await $`git add .gitattributes`.cwd(this.dir);
+      await $`git -c user.name=VFiles\ System -c user.email=system@vfiles.local commit -m chore:\ configure\ binary\ file\ attributes`.cwd(
+        this.dir,
+      );
+    }
+  }
+
+  /**
+   * 配置 Git 本地设置以优化大文件存储
+   */
+  private async configureGitForLargeFiles(): Promise<void> {
+    try {
+      // 对于大于 512KB 的文件，直接存储不做 delta 压缩
+      // 这避免了 Git 尝试对大文件计算 delta（非常耗 CPU）
+      await this.runGitAsync(
+        ["config", "--local", "core.bigFileThreshold", "512k"],
+        this.dir,
+      );
+
+      // pack.window=0 禁用 pack 时的 delta 搜索窗口（减少 GC 时的 CPU 占用）
+      // 只在本地设置，不影响 clone 后的行为
+      await this.runGitAsync(
+        ["config", "--local", "pack.window", "0"],
+        this.dir,
+      );
+
+      // 禁用自动 GC（避免上传大文件时触发耗时的 gc）
+      // 可以通过定期任务手动运行 git gc
+      await this.runGitAsync(
+        ["config", "--local", "gc.auto", "0"],
+        this.dir,
+      );
+    } catch (e) {
+      // 配置失败不影响主流程
+      console.warn("配置 Git 大文件优化设置失败：", e);
     }
   }
 

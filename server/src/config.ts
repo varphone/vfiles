@@ -111,6 +111,85 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean) as string[],
 
+  // 已压缩/二进制文件类型（Git 不进行 delta 压缩，节省 CPU）
+  // 这些文件本身已经是压缩的（视频、图片、压缩包等），再压缩没有意义
+  binaryFilePatterns: (
+    process.env.BINARY_FILE_PATTERNS ||
+    [
+      // 图像
+      "*.png",
+      "*.jpg",
+      "*.jpeg",
+      "*.gif",
+      "*.webp",
+      "*.bmp",
+      "*.ico",
+      "*.heic",
+      "*.heif",
+      "*.avif",
+      "*.tiff",
+      "*.tif",
+      // 视频
+      "*.mp4",
+      "*.mov",
+      "*.m4v",
+      "*.webm",
+      "*.avi",
+      "*.mkv",
+      "*.wmv",
+      "*.flv",
+      "*.3gp",
+      // 音频
+      "*.mp3",
+      "*.wav",
+      "*.flac",
+      "*.aac",
+      "*.m4a",
+      "*.ogg",
+      "*.opus",
+      "*.wma",
+      // 压缩包
+      "*.zip",
+      "*.7z",
+      "*.rar",
+      "*.tar",
+      "*.gz",
+      "*.bz2",
+      "*.xz",
+      "*.zst",
+      "*.lz4",
+      "*.br",
+      // 文档
+      "*.pdf",
+      "*.docx",
+      "*.xlsx",
+      "*.pptx",
+      "*.epub",
+      // 设计文件
+      "*.psd",
+      "*.ai",
+      "*.sketch",
+      "*.fig",
+      // 可执行文件
+      "*.exe",
+      "*.dll",
+      "*.so",
+      "*.dylib",
+      "*.bin",
+      "*.apk",
+      "*.dmg",
+      "*.iso",
+      "*.msi",
+      // 其他二进制
+      "*.wasm",
+      "*.pyc",
+      "*.class",
+    ].join(",")
+  )
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean) as string[],
+
   // 允许的文件类型 (留空表示允许所有)
   allowedFileTypes: [] as string[],
 
