@@ -1514,8 +1514,14 @@ function handleSearchItemClick(file: FileInfo) {
 }
 
 function handleDownload(file: FileInfo) {
-  enqueueDownload(file.type === "directory" ? "folder" : "file", file.path);
-  appStore.success("已加入下载队列");
+  if (file.type === "directory") {
+    // 文件夹下载：使用队列方式（ZIP 流式生成，无法预知大小）
+    enqueueDownload("folder", file.path);
+    appStore.success("已加入下载队列");
+  } else {
+    // 单文件下载：使用浏览器原生下载（支持原生进度显示）
+    filesService.downloadFile(file.path, browseCommit.value);
+  }
 }
 
 async function handleDelete(file: FileInfo) {
@@ -1648,24 +1654,36 @@ async function batchDownload() {
   const items = getSelectedItems();
   if (items.length === 0) return;
 
-  if (items.length > 20) {
+  // 分离文件和文件夹
+  const files = items.filter((f) => f.type !== "directory");
+  const folders = items.filter((f) => f.type === "directory");
+
+  if (files.length > 10) {
     const ok = confirm(
-      `将开始下载 ${items.length} 个文件，可能会被浏览器拦截弹窗。继续吗？`,
+      `将开始下载 ${files.length} 个文件，可能会被浏览器拦截弹窗。继续吗？`,
     );
     if (!ok) return;
   }
 
-  if (items.length > 20) {
-    const ok = confirm(
-      `将加入 ${items.length} 项到下载队列，可能会触发多次保存。继续吗？`,
-    );
-    if (!ok) return;
+  // 单文件使用浏览器原生下载
+  for (const f of files) {
+    filesService.downloadFile(f.path, browseCommit.value);
   }
 
-  for (const f of items) {
-    enqueueDownload(f.type === "directory" ? "folder" : "file", f.path);
+  // 文件夹使用队列下载
+  for (const f of folders) {
+    enqueueDownload("folder", f.path);
   }
-  appStore.success(`已加入 ${items.length} 项到下载队列`);
+
+  if (files.length > 0 && folders.length > 0) {
+    appStore.success(
+      `已开始下载 ${files.length} 个文件，${folders.length} 个文件夹已加入队列`,
+    );
+  } else if (files.length > 0) {
+    appStore.success(`已开始下载 ${files.length} 个文件`);
+  } else if (folders.length > 0) {
+    appStore.success(`已加入 ${folders.length} 个文件夹到下载队列`);
+  }
 }
 
 async function batchDelete() {
