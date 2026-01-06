@@ -1,7 +1,7 @@
 <template>
   <div
     class="file-item box"
-    :class="{ 'has-background-light': selected }"
+    :class="{ 'has-background-light': selected, 'is-expanded': showActions }"
     @click="handleClick"
   >
     <div class="media">
@@ -58,52 +58,69 @@
           </div>
         </div>
       </div>
-      <div class="media-right">
-        <div v-if="selectMode" class="mr-2 is-flex is-align-items-center">
+      <div v-if="selectMode" class="media-right">
+        <div class="is-flex is-align-items-center">
           <input
             type="checkbox"
-            class="mr-1"
             :checked="selected"
             @click.stop
             @change="toggleSelected"
             aria-label="选择"
           />
         </div>
-        <div class="buttons is-right">
+      </div>
+    </div>
+
+    <!-- 浮动操作栏 -->
+    <Transition name="slide-up">
+      <div v-if="showActions && !selectMode" class="file-actions" @click.stop>
+        <div class="actions-bar">
+          <button
+            v-if="file.type === 'directory'"
+            class="action-btn"
+            @click="openFolder"
+            title="打开"
+          >
+            <IconFolderOpen :size="20" />
+            <span>打开</span>
+          </button>
           <button
             v-if="file.type === 'file'"
-            class="button is-small is-info is-light"
-            @click.stop="viewHistory"
-            title="查看历史"
+            class="action-btn"
+            @click="preview"
+            title="预览"
+          >
+            <IconEye :size="20" />
+            <span>预览</span>
+          </button>
+          <button
+            v-if="file.type === 'file'"
+            class="action-btn"
+            @click="viewHistory"
+            title="历史"
           >
             <IconHistory :size="20" />
+            <span>历史</span>
           </button>
-          <button
-            v-if="file.type === 'file' || file.type === 'directory'"
-            class="button is-small is-success is-light"
-            @click.stop="download"
-            :title="file.type === 'directory' ? '下载文件夹（ZIP）' : '下载'"
-          >
+          <button class="action-btn" @click="download" title="下载">
             <IconDownload :size="20" />
+            <span>下载</span>
           </button>
-          <button
-            v-if="file.type === 'file' || file.type === 'directory'"
-            class="button is-small is-link is-light"
-            @click.stop="share"
-            title="分享"
-          >
+          <button class="action-btn" @click="share" title="分享">
             <IconShare :size="20" />
+            <span>分享</span>
           </button>
           <button
-            class="button is-small is-danger is-light"
-            @click.stop="confirmDelete"
+            class="action-btn is-danger"
+            @click="confirmDelete"
             title="删除"
           >
             <IconTrash :size="20" />
+            <span>删除</span>
           </button>
         </div>
       </div>
-    </div>
+    </Transition>
   </div>
 </template>
 
@@ -111,6 +128,7 @@
 import { computed } from "vue";
 import {
   IconFolder,
+  IconFolderOpen,
   IconFile,
   IconFileText,
   IconFileCode,
@@ -120,6 +138,7 @@ import {
   IconDownload,
   IconTrash,
   IconShare,
+  IconEye,
 } from "@tabler/icons-vue";
 import type { FileInfo } from "../../types";
 
@@ -128,6 +147,7 @@ const props = defineProps<{
   highlight?: string;
   selectMode?: boolean;
   selected?: boolean;
+  expanded?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -137,7 +157,12 @@ const emit = defineEmits<{
   viewHistory: [file: FileInfo];
   toggleSelect: [file: FileInfo];
   share: [file: FileInfo];
+  preview: [file: FileInfo];
+  openFolder: [file: FileInfo];
+  collapse: [];
 }>();
+
+const showActions = computed(() => props.expanded);
 
 const icon = computed(() => {
   if (props.file.type === "directory") return IconFolder;
@@ -233,11 +258,20 @@ function handleClick() {
     emit("toggleSelect", props.file);
     return;
   }
+  // 点击切换展开/收起操作栏
   emit("click", props.file);
 }
 
 function toggleSelected() {
   emit("toggleSelect", props.file);
+}
+
+function openFolder() {
+  emit("openFolder", props.file);
+}
+
+function preview() {
+  emit("preview", props.file);
 }
 
 function download() {
@@ -268,11 +302,17 @@ function share() {
   contain-intrinsic-size: 96px;
   padding-left: 0.75rem;
   padding-right: 0.75rem;
+  position: relative;
+  overflow: hidden;
 }
 
 .file-item:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.file-item.is-expanded {
+  padding-bottom: 3.5rem;
 }
 
 .file-item :deep(.media-left) {
@@ -334,9 +374,70 @@ function share() {
   margin-top: 0.5rem;
 }
 
-.buttons {
+/* 浮动操作栏 */
+.file-actions {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  padding: 0.5rem 0.75rem;
+}
+
+.actions-bar {
   display: flex;
+  justify-content: space-around;
+  align-items: center;
   gap: 0.25rem;
+}
+
+.action-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.125rem;
+  padding: 0.25rem 0.5rem;
+  border: none;
+  background: transparent;
+  color: #4a4a4a;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.15s;
+  font-size: 0.7rem;
+  min-width: 3rem;
+}
+
+.action-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: #3273dc;
+}
+
+.action-btn:active {
+  transform: scale(0.95);
+}
+
+.action-btn.is-danger:hover {
+  background: rgba(255, 56, 96, 0.1);
+  color: #ff3860;
+}
+
+.action-btn span {
+  line-height: 1;
+}
+
+/* 动画 */
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition: all 0.2s ease;
+}
+
+.slide-up-enter-from,
+.slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(100%);
 }
 
 @media screen and (max-width: 768px) {
@@ -363,12 +464,25 @@ function share() {
     height: 40px;
   }
 
-  .buttons {
-    flex-direction: column;
+  .action-btn {
+    min-width: 2.5rem;
+    padding: 0.25rem 0.25rem;
+  }
+}
+
+/* 深色模式 */
+@media (prefers-color-scheme: dark) {
+  .file-actions {
+    background: rgba(30, 30, 30, 0.95);
+    border-top-color: rgba(255, 255, 255, 0.1);
   }
 
-  .button.is-small {
-    padding: 0.375rem;
+  .action-btn {
+    color: #f5f5f5;
+  }
+
+  .action-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
   }
 }
 </style>

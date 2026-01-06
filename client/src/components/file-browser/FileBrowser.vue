@@ -346,12 +346,15 @@
           :highlight="searchQuery"
           :select-mode="batchMode"
           :selected-paths="selectedPaths"
-          @click="handleSearchItemClick"
+          :expanded-path="expandedFilePath"
+          @click="handleItemClick"
           @download="handleDownload"
           @delete="handleDelete"
           @view-history="handleViewHistory"
           @toggle-select="toggleSelect"
           @share="handleShare"
+          @preview="handlePreview"
+          @open-folder="handleOpenFolder"
         />
 
         <div
@@ -368,12 +371,15 @@
           :files="visibleFiles"
           :select-mode="batchMode"
           :selected-paths="selectedPaths"
-          @click="handleFileClick"
+          :expanded-path="expandedFilePath"
+          @click="handleItemClick"
           @download="handleDownload"
           @delete="handleDelete"
           @view-history="handleViewHistory"
           @toggle-select="toggleSelect"
           @share="handleShare"
+          @preview="handlePreview"
+          @open-folder="handleOpenFolder"
         />
 
         <div
@@ -642,6 +648,7 @@ const showHistory = ref(false);
 const showShareDialog = ref(false);
 const selectedFile = ref<FileInfo | null>(null);
 const fileUploaderRef = ref<InstanceType<typeof FileUploader> | null>(null);
+const expandedFilePath = ref<string>("");
 
 type PreviewKind =
   | "text"
@@ -1059,14 +1066,17 @@ onBeforeUnmount(() => {
 });
 
 function navigateTo(path: string) {
+  expandedFilePath.value = "";
   filesStore.navigateTo(path);
 }
 
 function refresh() {
+  expandedFilePath.value = "";
   filesStore.loadFiles(filesStore.currentPath);
 }
 
 function goBack() {
+  expandedFilePath.value = "";
   filesStore.goBack();
 }
 
@@ -1541,23 +1551,26 @@ function removeItem(id: number) {
   downloadQueue.value = downloadQueue.value.filter((x) => x.id !== id);
 }
 
-function handleFileClick(file: FileInfo) {
-  if (file.type === "directory") {
-    navigateTo(file.path);
-    return;
+function handleItemClick(file: FileInfo) {
+  // 点击时切换展开状态
+  if (expandedFilePath.value === file.path) {
+    expandedFilePath.value = "";
+  } else {
+    expandedFilePath.value = file.path;
   }
+}
 
+function handlePreview(file: FileInfo) {
   openPreview(file.path);
 }
 
-function handleSearchItemClick(file: FileInfo) {
+function handleOpenFolder(file: FileInfo) {
   if (file.type === "directory") {
-    clearSearch();
+    if (searchActive.value) {
+      clearSearch();
+    }
     navigateTo(file.path);
-    return;
   }
-
-  openPreview(file.path);
 }
 
 function handleDownload(file: FileInfo) {

@@ -1,5 +1,5 @@
 <template>
-  <Modal :is-active="isActive" title="分享文件" @close="$emit('close')">
+  <Modal :show="isActive" title="分享文件" @close="$emit('close')">
     <div class="share-dialog">
       <div class="field">
         <label class="label">文件路径</label>
@@ -45,22 +45,24 @@
     </div>
 
     <template #footer>
-      <button
-        v-if="!shareUrl"
-        class="button is-primary"
-        :class="{ 'is-loading': loading }"
-        :disabled="loading"
-        @click="createShare"
-      >
-        生成链接
-      </button>
-      <button v-else class="button is-success" @click="copyToClipboard">
-        <span class="icon">
-          <i class="fas fa-copy"></i>
-        </span>
-        <span>{{ copied ? "已复制" : "复制链接" }}</span>
-      </button>
-      <button class="button" @click="$emit('close')">关闭</button>
+      <div class="buttons is-right">
+        <button class="button" @click="$emit('close')">关闭</button>
+        <button
+          v-if="!shareUrl"
+          class="button is-primary"
+          :class="{ 'is-loading': loading }"
+          :disabled="loading"
+          @click="createShare"
+        >
+          生成链接
+        </button>
+        <button v-else class="button is-success" @click="copyToClipboard">
+          <span class="icon">
+            <i class="fas fa-copy"></i>
+          </span>
+          <span>{{ copied ? "已复制" : "复制链接" }}</span>
+        </button>
+      </div>
     </template>
   </Modal>
 </template>
