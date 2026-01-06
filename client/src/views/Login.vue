@@ -233,6 +233,9 @@ async function submit() {
       app.success("注册成功");
     }
 
+    // 等待 cookie 在浏览器中完全同步（移动端需要）
+    await new Promise((r) => setTimeout(r, 100));
+
     const redirect =
       typeof route.query.redirect === "string" ? route.query.redirect : "/";
     router.replace(redirect);
@@ -274,7 +277,17 @@ async function submitEmailLogin() {
     if (!res.success) throw new Error(res.error || "登录失败");
 
     await auth.fetchMe();
+    // 标记登录成功时间，用于免疫期
+    if (
+      typeof window !== "undefined" &&
+      (window as any).__vfiles_setLoginSuccess
+    ) {
+      (window as any).__vfiles_setLoginSuccess();
+    }
     app.success("登录成功");
+
+    // 等待 cookie 在浏览器中完全同步（移动端需要）
+    await new Promise((r) => setTimeout(r, 100));
 
     const redirect =
       typeof route.query.redirect === "string" ? route.query.redirect : "/";

@@ -11,6 +11,15 @@ const pinia = createPinia();
 const authStore = useAuthStore(pinia);
 const appStore = useAppStore(pinia);
 
+// 登录成功后的免疫期（忽略401），解决移动端 cookie 同步延迟问题
+let loginSuccessAt = 0;
+const LOGIN_IMMUNITY_MS = 3000;
+
+// 暴露给 auth store 使用
+(window as any).__vfiles_setLoginSuccess = () => {
+  loginSuccessAt = Date.now();
+};
+
 router.beforeEach(async (to) => {
   if (!authStore.initialized) {
     await authStore.fetchMe();
@@ -48,11 +57,19 @@ if (typeof window !== "undefined") {
   let lastUnauthorizedAt = 0;
   window.addEventListener("vfiles:unauthorized", () => {
     if (router.currentRoute.value.name === "login") return;
+
+    // 在登录免疫期内，忽略 401（移动端 cookie 同步可能有延迟）
     const now = Date.now();
+    if (now - loginSuccessAt < LOGIN_IMMUNITY_MS) {
+      console.debug("[vfiles] Ignoring 401 during login immunity period");
+      return;
+    }
+
     if (now - lastUnauthorizedAt > 1500) {
       appStore.warning("登录已过期，请重新登录");
       lastUnauthorizedAt = now;
     }
+    authStore.clearUser();
     void router.push({
       name: "login",
       query: {
