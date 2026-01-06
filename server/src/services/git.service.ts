@@ -454,6 +454,130 @@ export class GitService {
     return stdout;
   }
 
+  /**
+   * 检查文件是否应该使用 LFS 存储
+   * 根据 config.gitLfsTrackPatterns 判断
+   */
+  private shouldUseLfs(filePath: string): boolean {
+    if (!config.enableGitLfs) return false;
+    const patterns = config.gitLfsTrackPatterns;
+    if (!patterns.length) return false;
+
+    const filename = path.basename(filePath).toLowerCase();
+    for (const pattern of patterns) {
+      // 支持 *.ext 格式的 glob
+      if (pattern.startsWith("*.")) {
+        const ext = pattern.slice(1).toLowerCase(); // ".ext"
+        if (filename.endsWith(ext)) return true;
+      } else if (pattern.toLowerCase() === filename) {
+        // 精确匹配
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 获取 LFS 对象存储路径
+   * 格式: .git/lfs/objects/{oid[0:2]}/{oid[2:4]}/{oid}
+   */
+  private async getLfsObjectPath(oid: string): Promise<string> {
+    const gitDir = await this.resolveGitDirPath();
+    return path.join(
+      gitDir,
+      "lfs",
+      "objects",
+      oid.slice(0, 2),
+      oid.slice(2, 4),
+      oid,
+    );
+  }
+
+  /**
+   * 将内容存储为 LFS 对象并返回 pointer blob SHA
+   * 1. 计算内容的 SHA256 作为 LFS OID
+   * 2. 将内容存到 .git/lfs/objects/
+   * 3. 生成 LFS pointer 文本
+   * 4. 将 pointer 存为 Git blob 并返回 SHA
+   */
+  private async writeBlobWithLfs(
+    content: Uint8Array | ArrayBuffer | Blob | ReadableStream<Uint8Array>,
+  ): Promise<string> {
+    // 先将内容转为 Uint8Array 以便计算 SHA256
+    let data: Uint8Array;
+    if (content instanceof Uint8Array) {
+      data = content;
+    } else if (content instanceof ArrayBuffer) {
+      data = new Uint8Array(content);
+    } else if (content instanceof Blob) {
+      data = new Uint8Array(await content.arrayBuffer());
+    } else {
+      // ReadableStream - 读取全部内容
+      const chunks: Uint8Array[] = [];
+      const reader = content.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) chunks.push(value);
+        }
+      } finally {
+        try {
+          await reader.cancel();
+        } catch {
+          // ignore
+        }
+      }
+      // 合并 chunks
+      const totalLen = chunks.reduce((sum, c) => sum + c.byteLength, 0);
+      data = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const chunk of chunks) {
+        data.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+    }
+
+    // 计算 SHA256 作为 LFS OID
+    // 使用 Bun 的 SHA256 hasher（更快且类型正确）
+    const hasher = new Bun.CryptoHasher("sha256");
+    hasher.update(data);
+    const oid = hasher.digest("hex");
+
+    // 存储 LFS 对象
+    const lfsPath = await this.getLfsObjectPath(oid);
+    const lfsDir = path.dirname(lfsPath);
+    await fs.mkdir(lfsDir, { recursive: true });
+
+    // 只有不存在时才写入（避免重复写入相同内容）
+    try {
+      await fs.access(lfsPath);
+    } catch {
+      await fs.writeFile(lfsPath, data);
+    }
+
+    // 生成 LFS pointer 文本
+    const pointer = `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize ${data.byteLength}\n`;
+
+    // 将 pointer 存为 Git blob
+    return await this.writeBlobFromContent(new TextEncoder().encode(pointer));
+  }
+
+  /**
+   * 智能写入 blob：根据文件路径判断是否使用 LFS
+   * - 如果启用 LFS 且文件匹配 LFS 模式，使用 LFS 存储
+   * - 否则直接写入 Git 对象库
+   */
+  private async writeBlobSmart(
+    filePath: string,
+    content: Uint8Array | ArrayBuffer | Blob | ReadableStream<Uint8Array>,
+  ): Promise<string> {
+    if (this.isBare && this.shouldUseLfs(filePath)) {
+      return await this.writeBlobWithLfs(content);
+    }
+    return await this.writeBlobFromContent(content);
+  }
+
   private async updateIndexAddBlob(
     filePath: string,
     blobSha: string,
@@ -867,7 +991,9 @@ export class GitService {
       for (const line of desiredLines) {
         // 检查是否已存在同样的 pattern 设置（可能由 LFS 设置）
         const pattern = line.split(/\s+/)[0];
-        const hasPattern = existingLines.some((l) => l.startsWith(pattern + " "));
+        const hasPattern = existingLines.some((l) =>
+          l.startsWith(pattern + " "),
+        );
         if (!hasPattern) {
           existingLines.push(line);
           set.add(line);
@@ -990,10 +1116,7 @@ export class GitService {
 
       // 禁用自动 GC（避免上传大文件时触发耗时的 gc）
       // 可以通过定期任务手动运行 git gc
-      await this.runGitAsync(
-        ["config", "--local", "gc.auto", "0"],
-        this.dir,
-      );
+      await this.runGitAsync(["config", "--local", "gc.auto", "0"], this.dir);
     } catch (e) {
       // 配置失败不影响主流程
       console.warn("配置 Git 大文件优化设置失败：", e);
@@ -1497,7 +1620,8 @@ export class GitService {
     try {
       if (this.isBare) {
         return await this.withWriteLock(async () => {
-          const blobSha = await this.writeBlobFromContent(content);
+          // 使用 writeBlobSmart 以支持 LFS
+          const blobSha = await this.writeBlobSmart(filePath, content);
           const indexFile = path.join(
             this.dir,
             `.vfiles_index_${Date.now()}_${Math.random().toString(16).slice(2)}`,
