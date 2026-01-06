@@ -285,6 +285,8 @@ export const config = {
   cors: {
     origin: process.env.CORS_ORIGIN || "*",
     credentials: true,
+    // 暴露 Content-Length 和 Content-Range 头，让前端能读取下载进度
+    exposeHeaders: ["Content-Length", "Content-Range"],
   },
 
   // 是否启用日志
