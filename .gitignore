@@ -36,6 +36,8 @@ data.git/
 
 # Test
 coverage/
+list/
+test-results/
 .nyc_output/
 
 # Temporary files

@@ -2,6 +2,10 @@ import { $ } from "bun";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 import {
   FileInfo,
   CommitInfo,
@@ -94,6 +98,59 @@ export class GitService {
     // 兜底：按标准路径返回
     this.gitDirPath = dotGit;
     return dotGit;
+  }
+
+  // Run a git command with retries for transient lock errors
+  private runGitWithRetries(args: string[], cwd?: string, retries = 5): string {
+    const dir = cwd || this.dir;
+    for (let i = 0; i < retries; i++) {
+      try {
+        const out = execFileSync("git", args, { cwd: dir, encoding: "utf-8" });
+        return String(out || "").trim();
+      } catch (err: any) {
+        const msg = String(err?.message || err || "");
+        if (
+          /index\.lock|cannot lock ref|Another git process seems to be running/i.test(
+            msg,
+          )
+        ) {
+          const wait = 100 * (i + 1);
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error(
+      `git command failed after ${retries} retries: git ${args.join(" ")}`,
+    );
+  }
+
+  private runGitCapture(args: string[], cwd?: string): string {
+    return this.runGitWithRetries(args, cwd, 5);
+  }
+
+  private isNothingToCommitError(error: unknown): boolean {
+    const stringify = (value: unknown): string => {
+      if (value == null) return "";
+      if (typeof value === "string") return value;
+      try {
+        return String(value);
+      } catch {
+        return "";
+      }
+    };
+    const err = error as Record<string, unknown> | undefined;
+    const text = [
+      stringify(error),
+      stringify(err?.message),
+      stringify(err?.stdout),
+      stringify(err?.stderr),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return text.includes("nothing to commit");
   }
 
   private async getRepoStateToken(): Promise<string> {
@@ -650,7 +707,7 @@ export class GitService {
 
           let parent: string | undefined;
           try {
-            const p = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
+            const p = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
             parent = p.stdout.toString().trim() || undefined;
           } catch {
             parent = undefined;
@@ -691,7 +748,7 @@ export class GitService {
     const status = await $`git status --porcelain`.cwd(this.dir).quiet();
     if (status.stdout.toString().includes(".gitattributes")) {
       await $`git add .gitattributes`.cwd(this.dir);
-      await $`git -c user.name="VFiles System" -c user.email="system@vfiles.local" commit -m "chore: configure git-lfs"`.cwd(
+      await $`git -c user.name=VFiles\ System -c user.email=system@vfiles.local commit -m chore:\ configure\ git-lfs`.cwd(
         this.dir,
       );
     }
@@ -793,8 +850,17 @@ export class GitService {
 
     await fs.writeFile(readmePath, readmeContent, "utf-8");
 
-    await $`git add README.md`.cwd(this.dir);
-    await $`git -c user.name="VFiles System" -c user.email="system@vfiles.local" commit -m "Initial commit"`.cwd(
+    this.runGitWithRetries(["add", "README.md"], this.dir);
+    this.runGitWithRetries(
+      [
+        "-c",
+        "user.name=VFiles System",
+        "-c",
+        "user.email=system@vfiles.local",
+        "commit",
+        "-m",
+        "Initial commit",
+      ],
       this.dir,
     );
   }
@@ -1214,10 +1280,7 @@ export class GitService {
             const authorName = author?.name || "VFiles User";
             const authorEmail = author?.email || "user@vfiles.local";
 
-            const parentResult = await $`git rev-parse HEAD`
-              .cwd(this.dir)
-              .quiet();
-            const parent = parentResult.stdout.toString().trim();
+            const parent = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
             const commit = await this.bareCommitFromIndex({
               indexFile,
               message,
@@ -1244,21 +1307,46 @@ export class GitService {
         // 写入文件（用 Bun.write 支持流式写入，避免把大文件整体读入内存）
         await Bun.write(fullPath, content as any);
 
-        // 添加到Git
-        await $`git add ${normalizePathForGit(filePath)}`.cwd(this.dir);
+        // Use withWriteLock to serialize git operations and avoid index lock races
+        const commitHash = await this.withWriteLock(async () => {
+          console.log(
+            `[git] saveFile commit start: path=${filePath} message=${message}`,
+          );
+          // 添加到Git (retry on lock errors)
+          this.runGitWithRetries(
+            ["add", normalizePathForGit(filePath)],
+            this.dir,
+          );
+
+          // 提交
+          const authorName = author?.name || "VFiles User";
+          const authorEmail = author?.email || "user@vfiles.local";
+          try {
+            this.runGitWithRetries(
+              [
+                "-c",
+                `user.name=${authorName}`,
+                "-c",
+                `user.email=${authorEmail}`,
+                "commit",
+                "-m",
+                message,
+              ],
+              this.dir,
+            );
+          } catch (error) {
+            if (!this.isNothingToCommitError(error)) {
+              throw error;
+            }
+          }
+
+          // 获取最新提交hash
+          const head = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
+          return head;
+        });
+
+        return commitHash;
       }
-
-      // 提交
-      const authorName = author?.name || "VFiles User";
-      const authorEmail = author?.email || "user@vfiles.local";
-
-      await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(
-        this.dir,
-      );
-
-      // 获取最新提交hash
-      const result = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
-      return result.stdout.toString().trim();
     } catch (error) {
       throw new Error(`保存文件失败: ${error}`);
     }
@@ -1281,16 +1369,33 @@ export class GitService {
       // 添加到Git
       await $`git add ${normalizePathForGit(filePath)}`.cwd(this.dir);
 
-      // 提交
-      const authorName = author?.name || "VFiles User";
-      const authorEmail = author?.email || "user@vfiles.local";
-      await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(
-        this.dir,
-      );
+      // 提交（序列化以避免 index.lock 冲突）
+      const commitHash = await this.withWriteLock(async () => {
+        const authorName = author?.name || "VFiles User";
+        const authorEmail = author?.email || "user@vfiles.local";
+        try {
+          this.runGitWithRetries(
+            [
+              "-c",
+              `user.name=${authorName}`,
+              "-c",
+              `user.email=${authorEmail}`,
+              "commit",
+              "-m",
+              message,
+            ],
+            this.dir,
+          );
+        } catch (error) {
+          if (!this.isNothingToCommitError(error)) {
+            throw error;
+          }
+        }
+        const head = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
+        return head;
+      });
 
-      // 获取最新提交hash
-      const result = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
-      return result.stdout.toString().trim();
+      return commitHash;
     } catch (error) {
       throw new Error(`提交文件失败: ${error}`);
     }
@@ -1365,10 +1470,7 @@ export class GitService {
 
             const authorName = author?.name || "VFiles User";
             const authorEmail = author?.email || "user@vfiles.local";
-            const parentResult = await $`git rev-parse HEAD`
-              .cwd(this.dir)
-              .quiet();
-            const parent = parentResult.stdout.toString().trim();
+            const parent = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
             await this.bareCommitFromIndex({
               indexFile,
               message,
@@ -1393,20 +1495,36 @@ export class GitService {
       if (st.isDirectory()) {
         // 删除目录（递归）
         await fs.rm(fullPath, { recursive: true, force: false });
-        await $`git rm -r -- ${normalizePathForGit(filePath)}`.cwd(this.dir);
+        this.runGitWithRetries(
+          ["rm", "-r", "--", normalizePathForGit(filePath)],
+          this.dir,
+        );
       } else {
         // 删除文件
         await fs.unlink(fullPath);
-        await $`git rm -- ${normalizePathForGit(filePath)}`.cwd(this.dir);
+        this.runGitWithRetries(
+          ["rm", "--", normalizePathForGit(filePath)],
+          this.dir,
+        );
       }
 
-      // 提交
-      const authorName = author?.name || "VFiles User";
-      const authorEmail = author?.email || "user@vfiles.local";
-
-      await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(
-        this.dir,
-      );
+      // 提交（序列化以避免 index.lock 冲突）
+      await this.withWriteLock(async () => {
+        const authorName = author?.name || "VFiles User";
+        const authorEmail = author?.email || "user@vfiles.local";
+        this.runGitWithRetries(
+          [
+            "-c",
+            `user.name=${authorName}`,
+            "-c",
+            `user.email=${authorEmail}`,
+            "commit",
+            "-m",
+            message,
+          ],
+          this.dir,
+        );
+      });
     } catch (error) {
       throw new Error(`删除文件失败: ${error}`);
     }
@@ -1491,16 +1609,28 @@ export class GitService {
       const keepFull = path.join(this.dir, keepRel);
       await fs.writeFile(keepFull, "", "utf-8");
 
-      await $`git add -- ${normalizePathForGit(keepRel)}`.cwd(this.dir);
-
-      const authorName = author?.name || "VFiles User";
-      const authorEmail = author?.email || "user@vfiles.local";
-      await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(
+      this.runGitWithRetries(
+        ["add", "--", normalizePathForGit(keepRel)],
         this.dir,
       );
 
-      const result = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
-      return result.stdout.toString().trim();
+      const authorName = author?.name || "VFiles User";
+      const authorEmail = author?.email || "user@vfiles.local";
+      this.runGitWithRetries(
+        [
+          "-c",
+          `user.name=${authorName}`,
+          "-c",
+          `user.email=${authorEmail}`,
+          "commit",
+          "-m",
+          message,
+        ],
+        this.dir,
+      );
+
+      const result = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
+      return result;
     } catch (error) {
       throw new Error(`创建目录失败: ${error}`);
     }
@@ -1632,18 +1762,28 @@ export class GitService {
       const toDir = path.dirname(toFull);
       await fs.mkdir(toDir, { recursive: true });
 
-      await $`git mv ${normalizePathForGit(fromPath)} ${normalizePathForGit(toPath)}`.cwd(
+      this.runGitWithRetries(
+        ["mv", normalizePathForGit(fromPath), normalizePathForGit(toPath)],
         this.dir,
       );
 
       const authorName = author?.name || "VFiles User";
       const authorEmail = author?.email || "user@vfiles.local";
-      await $`git -c user.name="${authorName}" -c user.email="${authorEmail}" commit -m "${message}"`.cwd(
+      this.runGitWithRetries(
+        [
+          "-c",
+          `user.name=${authorName}`,
+          "-c",
+          `user.email=${authorEmail}`,
+          "commit",
+          "-m",
+          message,
+        ],
         this.dir,
       );
 
-      const result = await $`git rev-parse HEAD`.cwd(this.dir).quiet();
-      return result.stdout.toString().trim();
+      const result = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
+      return result;
     } catch (error) {
       throw new Error(`移动/重命名失败: ${error}`);
     }

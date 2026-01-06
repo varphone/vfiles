@@ -1,13 +1,13 @@
 /// @vitest-environment node
-import { Hono } from 'hono';
-import { createAuthRoutes } from '../src/routes/auth.routes.js';
-import { UserStore } from '../src/services/user-store.js';
+import { Hono } from "hono";
+import { createAuthRoutes } from "../src/routes/auth.routes.js";
+import { UserStore } from "../src/services/user-store.js";
 
 function makeCfg() {
   return {
     enabled: true,
-    secret: 'test-secret',
-    cookieName: 'vfiles_session',
+    secret: "test-secret",
+    cookieName: "vfiles_session",
     tokenTtlSeconds: 60,
     allowRegister: true,
     cookieSecure: false,
@@ -31,7 +31,7 @@ function makeEmailService() {
   };
 }
 
-describe('auth routes (edge cases)', () => {
+describe("auth routes (edge cases)", () => {
   let store: UserStore;
   let tmpFile: string;
   let emailService: any;
@@ -43,16 +43,30 @@ describe('auth routes (edge cases)', () => {
   });
 
   afterEach(async () => {
-    try { await import('node:fs/promises').then((fs) => fs.unlink(tmpFile).catch(() => {})); } catch {}
+    try {
+      await import("node:fs/promises").then((fs) =>
+        fs.unlink(tmpFile).catch(() => {}),
+      );
+    } catch {}
   });
 
-  it('does not leak existence for password reset request', async () => {
+  it("does not leak existence for password reset request", async () => {
     const app = new Hono();
-    app.route('/api/auth', createAuthRoutes(makeCfg(), store, emailService, { publicBaseUrl: 'http://localhost' }));
+    app.route(
+      "/api/auth",
+      createAuthRoutes(makeCfg(), store, emailService, {
+        publicBaseUrl: "http://localhost",
+      }),
+    );
 
-    const req = new Request('http://localhost/api/auth/password-reset/request', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'nope@example.com' })
-    });
+    const req = new Request(
+      "http://localhost/api/auth/password-reset/request",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "nope@example.com" }),
+      },
+    );
     const res = await app.fetch(req);
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -60,22 +74,43 @@ describe('auth routes (edge cases)', () => {
     expect(emailService._calls.length).toBe(0);
   });
 
-  it('revoke sessions bumps version and prevents old token usage', async () => {
+  it("revoke sessions bumps version and prevents old token usage", async () => {
     // create an admin and a user
-    const admin = await store.createUser({ username: 'adminuser', password: 'adminpass', email: 'admin@example.com' });
-    const user = await store.createUser({ username: 'revoker', password: 'pass1234', email: 'rev@example.com' });
+    const admin = await store.createUser({
+      username: "adminuser",
+      password: "adminpass",
+      email: "admin@example.com",
+    });
+    const user = await store.createUser({
+      username: "revoker",
+      password: "pass1234",
+      email: "rev@example.com",
+    });
     const app = new Hono();
     const cfg = makeCfg();
     // apply auth middleware as in production to enable admin-protected endpoints
-    const { authMiddleware } = await import('../src/middleware/auth.js');
-    app.use('/api/*', authMiddleware(cfg as any, store));
-    app.route('/api/auth', createAuthRoutes(cfg, store, emailService, {}));
+    const { authMiddleware } = await import("../src/middleware/auth.js");
+    app.use("/api/*", authMiddleware(cfg as any, store));
+    app.route("/api/auth", createAuthRoutes(cfg, store, emailService, {}));
 
     // sign token for admin
-    const { signAuthToken } = await import('../src/utils/auth-token.js');
-    const token = signAuthToken({ v: 2, sub: admin.id, username: admin.username, role: 'admin', exp: Math.floor(Date.now()/1000)+60, sv: admin.sessionVersion ?? 0 } as any, cfg.secret);
+    const { signAuthToken } = await import("../src/utils/auth-token.js");
+    const token = signAuthToken(
+      {
+        v: 2,
+        sub: admin.id,
+        username: admin.username,
+        role: "admin",
+        exp: Math.floor(Date.now() / 1000) + 60,
+        sv: admin.sessionVersion ?? 0,
+      } as any,
+      cfg.secret,
+    );
 
-    const req = new Request(`http://localhost/api/auth/users/${encodeURIComponent(user.id)}/revoke-sessions`, { method: 'POST', headers: { Cookie: `${cfg.cookieName}=${token}` } });
+    const req = new Request(
+      `http://localhost/api/auth/users/${encodeURIComponent(user.id)}/revoke-sessions`,
+      { method: "POST", headers: { Cookie: `${cfg.cookieName}=${token}` } },
+    );
     const res = await app.fetch(req);
     expect(res.status).toBe(200);
 
