@@ -1,9 +1,11 @@
 <template>
   <section class="section">
     <div class="container" style="max-width: 420px">
+      <section class="section has-text-centered">
+        <h1 class="title is-size-1 mb-4">V-Files</h1>
+        <h2 class="subtitle has-text-grey">基于版本控制的文件管理系统</h2>
+      </section>
       <div class="box">
-        <h1 class="title is-4">VFiles 登录</h1>
-
         <div
           v-if="auth.initialized && auth.enabled === false"
           class="notification is-info is-light"
@@ -88,12 +90,6 @@
               </div>
             </div>
 
-            <div v-if="mode === 'login'" class="field">
-              <a href="#" class="is-size-7" @click.prevent="goForgotPassword"
-                >忘记密码？</a
-              >
-            </div>
-
             <div class="field">
               <div class="control">
                 <button
@@ -107,8 +103,16 @@
               </div>
             </div>
 
+            <div v-if="mode === 'login'" class="field">
+              <div class="control has-text-right mt-2">
+                <a href="#" class="is-size-7" @click.prevent="goForgotPassword"
+                  >忘记密码？</a
+                >
+              </div>
+            </div>
+
             <p v-if="auth.error" class="help is-danger">{{ auth.error }}</p>
-            <p class="help">
+            <p v-if="mode === 'register'" class="help">
               提示：首次注册用户会自动成为 <code>admin</code>。
             </p>
           </form>
