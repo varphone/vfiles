@@ -104,20 +104,49 @@ export function createFilesRoutes(gitManager: GitServiceManager) {
     return nodePath.join(getUploadSessionDir(uploadId), `chunk_${index}.part`);
   }
 
+  // 用于保护同一 uploadId 的并发操作
+  const sessionLocks = new Map<string, Promise<unknown>>();
+
+  function withSessionLock<T>(
+    uploadId: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const prev = sessionLocks.get(uploadId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    sessionLocks.set(
+      uploadId,
+      next.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    // 清理已完成的锁（避免内存泄漏）
+    next.finally(() => {
+      if (sessionLocks.get(uploadId) === next) {
+        // 如果还是当前的，延迟清理
+        setTimeout(() => {
+          if (sessionLocks.get(uploadId) === next) {
+            sessionLocks.delete(uploadId);
+          }
+        }, 5000);
+      }
+    });
+    return next;
+  }
+
   async function listReceivedChunks(
     uploadId: string,
     totalChunks: number,
   ): Promise<number[]> {
-    const received: number[] = [];
-    for (let i = 0; i < totalChunks; i++) {
-      try {
-        await fs.access(getChunkPath(uploadId, i));
-        received.push(i);
-      } catch {
-        // not received
-      }
-    }
-    return received;
+    // 并行检查所有分块是否存在
+    const checks = Array.from({ length: totalChunks }, (_, i) =>
+      fs
+        .access(getChunkPath(uploadId, i))
+        .then(() => i)
+        .catch(() => -1),
+    );
+    const results = await Promise.all(checks);
+    return results.filter((i) => i >= 0);
   }
 
   async function loadSession(uploadId: string): Promise<UploadSession | null> {
@@ -558,54 +587,95 @@ export function createFilesRoutes(gitManager: GitServiceManager) {
   /**
    * POST /api/files/upload/chunk?uploadId=...&index=...
    * Content-Type: application/octet-stream
+   * 
+   * 使用流式写入，避免将整个分块加载到内存
    */
   app.post("/upload/chunk", async (c) => {
-    try {
-      const uploadId = c.req.query("uploadId") || "";
-      const indexRaw = c.req.query("index");
+    const uploadId = c.req.query("uploadId") || "";
+    const indexRaw = c.req.query("index");
 
-      if (!uploadId || !/^[a-f0-9]{64}$/i.test(uploadId)) {
-        return c.json({ success: false, error: "无效的 uploadId" }, 400);
-      }
-
-      const index = indexRaw != null ? Number.parseInt(indexRaw, 10) : NaN;
-      if (!Number.isFinite(index) || index < 0) {
-        return c.json({ success: false, error: "无效的 index" }, 400);
-      }
-
-      const session = await loadSession(uploadId);
-      if (!session) {
-        return c.json({ success: false, error: "上传会话不存在或已过期" }, 404);
-      }
-
-      if (index >= session.totalChunks) {
-        return c.json({ success: false, error: "index 超出范围" }, 400);
-      }
-
-      const buf = Buffer.from(await c.req.arrayBuffer());
-      if (buf.length <= 0) {
-        return c.json({ success: false, error: "空分块" }, 400);
-      }
-      if (buf.length > config.uploadMaxChunkSize) {
-        return c.json({ success: false, error: "分块过大" }, 413);
-      }
-
-      await fs.mkdir(getUploadSessionDir(uploadId), { recursive: true });
-      await fs.writeFile(getChunkPath(uploadId, index), buf);
-
-      session.updatedAt = Date.now();
-      await saveSession(session);
-
-      return c.json({ success: true, data: { uploadId, index } });
-    } catch (err) {
-      return c.json(
-        {
-          success: false,
-          error: err instanceof Error ? err.message : "上传分块失败",
-        },
-        500,
-      );
+    if (!uploadId || !/^[a-f0-9]{64}$/i.test(uploadId)) {
+      return c.json({ success: false, error: "无效的 uploadId" }, 400);
     }
+
+    const index = indexRaw != null ? Number.parseInt(indexRaw, 10) : NaN;
+    if (!Number.isFinite(index) || index < 0) {
+      return c.json({ success: false, error: "无效的 index" }, 400);
+    }
+
+    // 使用 session 锁保护并发操作
+    return withSessionLock(uploadId, async () => {
+      try {
+        const session = await loadSession(uploadId);
+        if (!session) {
+          return c.json(
+            { success: false, error: "上传会话不存在或已过期" },
+            404,
+          );
+        }
+
+        if (index >= session.totalChunks) {
+          return c.json({ success: false, error: "index 超出范围" }, 400);
+        }
+
+        await fs.mkdir(getUploadSessionDir(uploadId), { recursive: true });
+
+        // 流式写入分块文件，避免将整个分块加载到内存
+        const chunkPath = getChunkPath(uploadId, index);
+        const requestBody = c.req.raw.body;
+
+        if (!requestBody) {
+          return c.json({ success: false, error: "空分块" }, 400);
+        }
+
+        // 使用 Bun 的流式写入
+        const bunFile = Bun.file(chunkPath);
+        const writer = bunFile.writer();
+
+        let size = 0;
+        const reader = requestBody.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value && value.byteLength > 0) {
+              size += value.byteLength;
+              if (size > config.uploadMaxChunkSize) {
+                await writer.end();
+                await fs.rm(chunkPath, { force: true });
+                return c.json({ success: false, error: "分块过大" }, 413);
+              }
+              await writer.write(value);
+            }
+          }
+        } finally {
+          try {
+            await reader.cancel();
+          } catch {
+            // ignore
+          }
+          await writer.end();
+        }
+
+        if (size === 0) {
+          await fs.rm(chunkPath, { force: true });
+          return c.json({ success: false, error: "空分块" }, 400);
+        }
+
+        session.updatedAt = Date.now();
+        await saveSession(session);
+
+        return c.json({ success: true, data: { uploadId, index } });
+      } catch (err) {
+        return c.json(
+          {
+            success: false,
+            error: err instanceof Error ? err.message : "上传分块失败",
+          },
+          500,
+        );
+      }
+    });
   });
 
   /**
@@ -651,14 +721,17 @@ export function createFilesRoutes(gitManager: GitServiceManager) {
         return c.json({ success: false, error: "不允许的文件类型" }, 415);
       }
 
-      const missing: number[] = [];
-      for (let i = 0; i < session.totalChunks; i++) {
-        try {
-          await fs.access(getChunkPath(uploadId, i));
-        } catch {
-          missing.push(i);
-        }
-      }
+      // 使用并行检查缺失分块
+      const missing = (
+        await Promise.all(
+          Array.from({ length: session.totalChunks }, (_, i) =>
+            fs
+              .access(getChunkPath(uploadId, i))
+              .then(() => -1)
+              .catch(() => i),
+          ),
+        )
+      ).filter((i) => i >= 0);
 
       if (missing.length) {
         return c.json(
@@ -670,43 +743,89 @@ export function createFilesRoutes(gitManager: GitServiceManager) {
         );
       }
 
-      // 合并分块：worktree 模式写入 repo 工作区后 commitFile；bare 模式合并到临时文件后 saveFile 直接写入对象库
+      // 合并分块：使用流式读写，避免将分块全部加载到内存
+      // 创建一个 ReadableStream 来流式读取所有分块
+      const createChunksStream = (): ReadableStream<Uint8Array> => {
+        let currentChunk = 0;
+        let currentReader: ReadableStreamDefaultReader<Uint8Array> | null =
+          null;
+
+        return new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            // 如果当前有正在读取的分块流
+            if (currentReader) {
+              const { done, value } = await currentReader.read();
+              if (!done && value) {
+                controller.enqueue(value);
+                return;
+              }
+              // 当前分块读完了
+              currentReader = null;
+              currentChunk++;
+            }
+
+            // 检查是否还有更多分块
+            if (currentChunk >= session.totalChunks) {
+              controller.close();
+              return;
+            }
+
+            // 打开下一个分块
+            const chunkPath = getChunkPath(uploadId, currentChunk);
+            const bunFile = Bun.file(chunkPath);
+            const stream = bunFile.stream() as ReadableStream<Uint8Array>;
+            currentReader = stream.getReader();
+
+            // 读取第一块数据
+            const { done, value } = await currentReader.read();
+            if (!done && value) {
+              controller.enqueue(value);
+            } else {
+              // 空分块，继续下一个
+              currentReader = null;
+              currentChunk++;
+              // 递归调用 pull
+              await this.pull!(controller);
+            }
+          },
+          cancel() {
+            if (currentReader) {
+              currentReader.cancel().catch(() => {});
+            }
+          },
+        });
+      };
+
       let commitHash = "";
       if (repoMode === "bare") {
-        const mergedPath = nodePath.join(
-          getUploadSessionDir(uploadId),
-          "merged.bin",
-        );
-        const handle = await fs.open(mergedPath, "w");
-        try {
-          for (let i = 0; i < session.totalChunks; i++) {
-            const chunkBuf = await fs.readFile(getChunkPath(uploadId, i));
-            await handle.write(chunkBuf);
-          }
-        } finally {
-          await handle.close();
-        }
-
-        const stream = Bun.file(
-          mergedPath,
-        ).stream() as ReadableStream<Uint8Array>;
+        // bare 模式：直接将流传给 saveFile
+        const stream = createChunksStream();
         commitHash = await gitService.saveFile(
           session.filePath,
           stream,
           message,
         );
       } else {
+        // worktree 模式：流式写入文件
         const fullPath = nodePath.join(repoPath, session.filePath);
         await fs.mkdir(nodePath.dirname(fullPath), { recursive: true });
 
-        const handle = await fs.open(fullPath, "w");
+        const bunFile = Bun.file(fullPath);
+        const writer = bunFile.writer();
+        const stream = createChunksStream();
+        const reader = stream.getReader();
+
         try {
-          for (let i = 0; i < session.totalChunks; i++) {
-            const chunkBuf = await fs.readFile(getChunkPath(uploadId, i));
-            await handle.write(chunkBuf);
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              await writer.write(value);
+            }
           }
         } finally {
-          await handle.close();
+          await reader.cancel().catch(() => {});
+          await writer.end();
         }
 
         commitHash = await gitService.commitFile(session.filePath, message);
