@@ -15,9 +15,10 @@
     />
 
     <div class="drop-zone-content">
-      <IconCloudUpload :size="64" class="has-text-grey-light mb-3" />
-      <p class="is-size-5 mb-2">拖拽文件到此处</p>
-      <p class="has-text-grey mb-4">或</p>
+      <div class="drop-zone-left">
+        <IconCloudUpload :size="24" class="icon-upload" />
+        <span class="drop-zone-text">拖拽文件到此处</span>
+      </div>
       <button
         class="button is-primary"
         type="button"
@@ -69,8 +70,7 @@ function onSelect(event: Event) {
 .drop-zone {
   border: 2px dashed #dbdbdb;
   border-radius: 8px;
-  padding: 3rem 2rem;
-  text-align: center;
+  padding: 0.75rem 1rem;
   transition: all 0.3s;
   background: #fafafa;
 }
@@ -81,13 +81,30 @@ function onSelect(event: Event) {
 }
 
 .drop-zone-content {
-  /* 允许按钮点击触发文件选择 */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   pointer-events: auto;
+}
+
+.drop-zone-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #7a7a7a;
+}
+
+.icon-upload {
+  color: #b5b5b5;
+}
+
+.drop-zone-text {
+  font-size: 0.9rem;
 }
 
 @media screen and (max-width: 768px) {
   .drop-zone {
-    padding: 2rem 1rem;
+    padding: 0.75rem;
   }
 }
 </style>

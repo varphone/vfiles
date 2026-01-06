@@ -248,7 +248,9 @@
                   class="tag is-info is-light ml-2 is-size-7"
                   >下载中
                   <template v-if="item.progress?.total">
-                    {{ formatProgress(item.progress.loaded, item.progress.total) }}
+                    {{
+                      formatProgress(item.progress.loaded, item.progress.total)
+                    }}
                   </template>
                 </span>
                 <span
