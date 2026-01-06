@@ -2,7 +2,6 @@ import { $ } from "bun";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -14,6 +13,30 @@ import {
 } from "../types/index.js";
 import { normalizePathForGit } from "../utils/path-validator.js";
 import { config } from "../config.js";
+
+/**
+ * Global write lock to serialize all Git write operations across all GitService instances.
+ * This prevents concurrent git processes from conflicting (index.lock, etc.)
+ */
+class GitGlobalLock {
+  private writeChain: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Execute a function while holding the global write lock.
+   * All Git write operations should go through this to avoid concurrent conflicts.
+   */
+  withLock<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.writeChain.then(fn, fn);
+    this.writeChain = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+}
+
+// Single global lock instance shared by all GitService instances
+const globalGitLock = new GitGlobalLock();
 
 export class GitService {
   private dir: string;
@@ -100,22 +123,63 @@ export class GitService {
     return dotGit;
   }
 
-  // Run a git command with retries for transient lock errors
-  private runGitWithRetries(args: string[], cwd?: string, retries = 5): string {
+  /**
+   * Run a git command asynchronously with retries for transient lock errors.
+   * Uses Bun's shell ($) for non-blocking execution.
+   */
+  private async runGitAsync(
+    args: string[],
+    cwd?: string,
+    retries = 5,
+  ): Promise<string> {
     const dir = cwd || this.dir;
     for (let i = 0; i < retries; i++) {
       try {
-        const out = execFileSync("git", args, { cwd: dir, encoding: "utf-8" });
-        return String(out || "").trim();
+        const proc = Bun.spawn(["git", ...args], {
+          cwd: dir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [exitCode, stdout, stderr] = await Promise.all([
+          proc.exited,
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+        ]);
+
+        if (exitCode !== 0) {
+          const errMsg = stderr || stdout || `git exited with code ${exitCode}`;
+          // Check for lock errors
+          if (
+            /index\.lock|cannot lock ref|Another git process seems to be running/i.test(
+              errMsg,
+            )
+          ) {
+            const wait = 100 * (i + 1);
+            await sleep(wait);
+            continue;
+          }
+          const err = new Error(errMsg) as Error & {
+            exitCode: number;
+            stdout: string;
+            stderr: string;
+          };
+          err.exitCode = exitCode;
+          err.stdout = stdout;
+          err.stderr = stderr;
+          throw err;
+        }
+
+        return stdout.trim();
       } catch (err: any) {
-        const msg = String(err?.message || err || "");
+        const msg = String(err?.message || err?.stderr || err || "");
         if (
           /index\.lock|cannot lock ref|Another git process seems to be running/i.test(
             msg,
           )
         ) {
           const wait = 100 * (i + 1);
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
+          await sleep(wait);
           continue;
         }
         throw err;
@@ -124,10 +188,6 @@ export class GitService {
     throw new Error(
       `git command failed after ${retries} retries: git ${args.join(" ")}`,
     );
-  }
-
-  private runGitCapture(args: string[], cwd?: string): string {
-    return this.runGitWithRetries(args, cwd, 5);
   }
 
   private isNothingToCommitError(error: unknown): boolean {
@@ -292,22 +352,30 @@ export class GitService {
     return dir;
   }
 
+  /**
+   * Execute a function while holding both the global and instance-level write locks.
+   * This ensures:
+   * 1. No concurrent Git writes across different GitService instances (global lock)
+   * 2. Proper cache invalidation after write operations (instance lock)
+   */
   private withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
-    const run = async () => {
-      try {
-        return await fn();
-      } finally {
-        // 写操作会改变 repo state token；清空缓存避免旧 token 条目堆积
-        this.clearCaches();
-      }
-    };
+    return globalGitLock.withLock(async () => {
+      const run = async () => {
+        try {
+          return await fn();
+        } finally {
+          // 写操作会改变 repo state token；清空缓存避免旧 token 条目堆积
+          this.clearCaches();
+        }
+      };
 
-    const next = this.writeChain.then(run, run);
-    this.writeChain = next.then(
-      () => undefined,
-      () => undefined,
-    );
-    return next;
+      const next = this.writeChain.then(run, run);
+      this.writeChain = next.then(
+        () => undefined,
+        () => undefined,
+      );
+      return next;
+    });
   }
 
   private clearCaches(): void {
@@ -707,8 +775,7 @@ export class GitService {
 
           let parent: string | undefined;
           try {
-            const p = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
-            parent = p.stdout.toString().trim() || undefined;
+            parent = await this.runGitAsync(["rev-parse", "HEAD"], this.dir);
           } catch {
             parent = undefined;
           }
@@ -850,8 +917,8 @@ export class GitService {
 
     await fs.writeFile(readmePath, readmeContent, "utf-8");
 
-    this.runGitWithRetries(["add", "README.md"], this.dir);
-    this.runGitWithRetries(
+    await this.runGitAsync(["add", "README.md"], this.dir);
+    await this.runGitAsync(
       [
         "-c",
         "user.name=VFiles System",
@@ -1280,7 +1347,10 @@ export class GitService {
             const authorName = author?.name || "VFiles User";
             const authorEmail = author?.email || "user@vfiles.local";
 
-            const parent = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
+            const parent = await this.runGitAsync(
+              ["rev-parse", "HEAD"],
+              this.dir,
+            );
             const commit = await this.bareCommitFromIndex({
               indexFile,
               message,
@@ -1309,11 +1379,8 @@ export class GitService {
 
         // Use withWriteLock to serialize git operations and avoid index lock races
         const commitHash = await this.withWriteLock(async () => {
-          console.log(
-            `[git] saveFile commit start: path=${filePath} message=${message}`,
-          );
           // 添加到Git (retry on lock errors)
-          this.runGitWithRetries(
+          await this.runGitAsync(
             ["add", normalizePathForGit(filePath)],
             this.dir,
           );
@@ -1322,7 +1389,7 @@ export class GitService {
           const authorName = author?.name || "VFiles User";
           const authorEmail = author?.email || "user@vfiles.local";
           try {
-            this.runGitWithRetries(
+            await this.runGitAsync(
               [
                 "-c",
                 `user.name=${authorName}`,
@@ -1341,7 +1408,7 @@ export class GitService {
           }
 
           // 获取最新提交hash
-          const head = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
+          const head = await this.runGitAsync(["rev-parse", "HEAD"], this.dir);
           return head;
         });
 
@@ -1374,7 +1441,7 @@ export class GitService {
         const authorName = author?.name || "VFiles User";
         const authorEmail = author?.email || "user@vfiles.local";
         try {
-          this.runGitWithRetries(
+          await this.runGitAsync(
             [
               "-c",
               `user.name=${authorName}`,
@@ -1391,7 +1458,7 @@ export class GitService {
             throw error;
           }
         }
-        const head = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
+        const head = await this.runGitAsync(["rev-parse", "HEAD"], this.dir);
         return head;
       });
 
@@ -1470,7 +1537,10 @@ export class GitService {
 
             const authorName = author?.name || "VFiles User";
             const authorEmail = author?.email || "user@vfiles.local";
-            const parent = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
+            const parent = await this.runGitAsync(
+              ["rev-parse", "HEAD"],
+              this.dir,
+            );
             await this.bareCommitFromIndex({
               indexFile,
               message,
@@ -1495,14 +1565,14 @@ export class GitService {
       if (st.isDirectory()) {
         // 删除目录（递归）
         await fs.rm(fullPath, { recursive: true, force: false });
-        this.runGitWithRetries(
+        await this.runGitAsync(
           ["rm", "-r", "--", normalizePathForGit(filePath)],
           this.dir,
         );
       } else {
         // 删除文件
         await fs.unlink(fullPath);
-        this.runGitWithRetries(
+        await this.runGitAsync(
           ["rm", "--", normalizePathForGit(filePath)],
           this.dir,
         );
@@ -1512,7 +1582,7 @@ export class GitService {
       await this.withWriteLock(async () => {
         const authorName = author?.name || "VFiles User";
         const authorEmail = author?.email || "user@vfiles.local";
-        this.runGitWithRetries(
+        await this.runGitAsync(
           [
             "-c",
             `user.name=${authorName}`,
@@ -1609,14 +1679,14 @@ export class GitService {
       const keepFull = path.join(this.dir, keepRel);
       await fs.writeFile(keepFull, "", "utf-8");
 
-      this.runGitWithRetries(
+      await this.runGitAsync(
         ["add", "--", normalizePathForGit(keepRel)],
         this.dir,
       );
 
       const authorName = author?.name || "VFiles User";
       const authorEmail = author?.email || "user@vfiles.local";
-      this.runGitWithRetries(
+      await this.runGitAsync(
         [
           "-c",
           `user.name=${authorName}`,
@@ -1629,7 +1699,7 @@ export class GitService {
         this.dir,
       );
 
-      const result = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
+      const result = await this.runGitAsync(["rev-parse", "HEAD"], this.dir);
       return result;
     } catch (error) {
       throw new Error(`创建目录失败: ${error}`);
@@ -1762,14 +1832,14 @@ export class GitService {
       const toDir = path.dirname(toFull);
       await fs.mkdir(toDir, { recursive: true });
 
-      this.runGitWithRetries(
+      await this.runGitAsync(
         ["mv", normalizePathForGit(fromPath), normalizePathForGit(toPath)],
         this.dir,
       );
 
       const authorName = author?.name || "VFiles User";
       const authorEmail = author?.email || "user@vfiles.local";
-      this.runGitWithRetries(
+      await this.runGitAsync(
         [
           "-c",
           `user.name=${authorName}`,
@@ -1782,7 +1852,7 @@ export class GitService {
         this.dir,
       );
 
-      const result = this.runGitCapture(["rev-parse", "HEAD"], this.dir);
+      const result = await this.runGitAsync(["rev-parse", "HEAD"], this.dir);
       return result;
     } catch (error) {
       throw new Error(`移动/重命名失败: ${error}`);
