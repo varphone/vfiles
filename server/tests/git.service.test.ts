@@ -1601,6 +1601,68 @@ describe("GitService bare vs worktree mode consistency", () => {
       expect(toStr(bareContent as Buffer)).toBe("content");
       expect(toStr(worktreeContent as Buffer)).toBe("content");
     }, 15000);
+
+    test("movePath should correctly rename directory without affecting similar prefixes", async () => {
+      const repoDir = (bareService as any).dir;
+
+      // 创建 aka/bar/.gitkeep 和 aka/.gitkeep
+      await bareService.saveFile("aka/.gitkeep", Buffer.from(""), "add aka");
+      await bareService.saveFile(
+        "aka/bar/.gitkeep",
+        Buffer.from(""),
+        "add aka/bar",
+      );
+      // 创建一个名字以 aka 开头但不是 aka 子目录的文件
+      await bareService.saveFile(
+        "akaother/.gitkeep",
+        Buffer.from(""),
+        "add akaother",
+      );
+
+      // 将 aka 重命名为 aka3
+      await bareService.movePath("aka", "aka3", "rename aka to aka3");
+
+      // 用 git ls-tree 查看结果
+      const lsTreeProc = Bun.spawn(
+        ["git", "--git-dir", repoDir, "ls-tree", "-r", "HEAD"],
+        {
+          cwd: repoDir,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      await lsTreeProc.exited;
+      const lsTreeOut = await new Response(lsTreeProc.stdout).text();
+
+      // 通过 git ls-tree 验证文件被正确重命名
+      expect(lsTreeOut).toContain("aka3/.gitkeep");
+      expect(lsTreeOut).toContain("aka3/bar/.gitkeep");
+      expect(lsTreeOut).toContain("akaother/.gitkeep");
+      expect(lsTreeOut).not.toContain("aka/.gitkeep");
+      expect(lsTreeOut).not.toContain("aka/bar/.gitkeep");
+
+      // 列出所有文件查看实际结果
+      const files = await bareService.listFiles("");
+      const fileNames = files.map((f) => f.name);
+
+      // 验证：aka3/ 下应有文件
+      expect(fileNames).toContain("aka3");
+
+      const aka3Files = await bareService.listFiles("aka3");
+      const aka3FileNames = aka3Files.map((f) => f.name);
+      // .gitkeep 被 listFiles 过滤掉（不显示给用户），但通过 git ls-tree 验证已正确移动
+      expect(aka3FileNames).toContain("bar");
+
+      // 验证：aka/ 不应存在
+      expect(fileNames).not.toContain("aka");
+
+      // 验证：akaother/ 不应受影响
+      expect(fileNames).toContain("akaother");
+
+      // 验证：不应存在 aka3bar 或 aka3other（这是旧 bug 会产生的错误目录名）
+      expect(fileNames).not.toContain("aka3bar");
+      expect(fileNames).not.toContain("aka3other");
+    }, 30000);
   });
 
   describe("searchFiles API consistency", () => {

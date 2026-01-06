@@ -2146,7 +2146,8 @@ export class GitService {
             );
             await lsFile.exited;
 
-            if (out && out.includes("\t")) {
+            // 检查是否是单个文件（blob），而不是目录（tree）
+            if (out && out.includes("\t") && out.includes(" blob ")) {
               const rec = out.split("\0").filter(Boolean)[0];
               const tab = rec.indexOf("\t");
               const meta = rec.slice(0, tab).trim().split(/\s+/);
@@ -2185,9 +2186,12 @@ export class GitService {
                 const name = rec.slice(tab + 1);
                 if (!sha || !name) continue;
                 const src = name;
-                if (!src.startsWith(fromRel)) continue;
+                // 确保完整匹配目录前缀（fromRel/ 或精确匹配 fromRel）
+                if (src !== fromRel && !src.startsWith(fromRel + "/")) {
+                  continue;
+                }
                 const suffix = src.slice(fromRel.length).replace(/^\//, "");
-                const dst = `${toRel}/${suffix}`;
+                const dst = suffix ? `${toRel}/${suffix}` : toRel;
                 await this.updateIndexAddBlob(dst, sha, mode, indexFile);
                 await this.updateIndexRemovePath(src, indexFile);
               }
