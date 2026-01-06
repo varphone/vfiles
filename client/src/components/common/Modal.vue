@@ -70,6 +70,10 @@ function close() {
   -webkit-overflow-scrolling: touch;
 }
 
+.modal-card-foot {
+  justify-content: flex-end;
+}
+
 @media screen and (max-width: 768px) {
   .modal-card {
     width: 100%;

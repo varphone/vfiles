@@ -392,10 +392,42 @@
       @close="showUploader = false"
     >
       <FileUploader
+        ref="fileUploaderRef"
         :target-path="filesStore.currentPath"
         @upload="handleUpload"
         @close="showUploader = false"
       />
+      <template #footer>
+        <div class="buttons is-right">
+          <button
+            class="button"
+            type="button"
+            @click="fileUploaderRef?.cancelAll()"
+            :disabled="!fileUploaderRef?.hasFiles"
+          >
+            取消全部
+          </button>
+          <button
+            class="button"
+            type="button"
+            @click="showUploader = false"
+            :disabled="fileUploaderRef?.uploading"
+          >
+            关闭
+          </button>
+          <button
+            class="button is-primary"
+            @click="fileUploaderRef?.startUpload()"
+            :disabled="
+              fileUploaderRef?.uploading || !fileUploaderRef?.hasQueued
+            "
+            :class="{ 'is-loading': fileUploaderRef?.uploading }"
+          >
+            <IconUpload :size="20" class="mr-2" />
+            上传
+          </button>
+        </div>
+      </template>
     </Modal>
 
     <!-- 目录管理对话框 -->
@@ -566,6 +598,7 @@ import {
   IconSearch,
   IconArrowLeft,
   IconDotsVertical,
+  IconUpload,
 } from "@tabler/icons-vue";
 import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
@@ -597,6 +630,7 @@ function updateIsMobile() {
 const showUploader = ref(false);
 const showHistory = ref(false);
 const selectedFile = ref<FileInfo | null>(null);
+const fileUploaderRef = ref<InstanceType<typeof FileUploader> | null>(null);
 
 type PreviewKind =
   | "text"

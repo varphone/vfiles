@@ -24,34 +24,6 @@
         @cancel="cancelItem"
         @remove="removeItem"
       />
-
-      <div class="buttons mt-4">
-        <button
-          class="button is-primary"
-          @click="startUpload"
-          :disabled="uploading || !hasQueued"
-          :class="{ 'is-loading': uploading }"
-        >
-          <IconUpload :size="20" class="mr-2" />
-          上传
-        </button>
-        <button
-          class="button is-light"
-          type="button"
-          @click="cancelAll"
-          :disabled="queue.length === 0"
-        >
-          取消
-        </button>
-        <button
-          class="button is-light"
-          type="button"
-          @click="close"
-          :disabled="uploading"
-        >
-          关闭
-        </button>
-      </div>
     </div>
   </div>
 </template>
@@ -204,18 +176,15 @@ async function startUpload() {
     appStore.error("部分文件上传失败，请检查列表");
   }
 }
+
+// 暴露给父组件使用
+defineExpose({
+  uploading,
+  hasQueued,
+  hasFiles: computed(() => queue.value.length > 0),
+  startUpload,
+  cancelAll,
+});
 </script>
 
-<style scoped>
-@media screen and (max-width: 768px) {
-  .buttons {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .button {
-    width: 100%;
-    margin-bottom: 0.5rem;
-  }
-}
-</style>
+<style scoped></style>
