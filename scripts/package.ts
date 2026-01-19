@@ -114,6 +114,7 @@ async function main() {
     [
       "bun",
       "build",
+      "--production",
       "--compile",
       "server/src/index.ts",
       "--minify",

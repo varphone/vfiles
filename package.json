@@ -7,7 +7,7 @@
     "dev": "bun --watch server/src/index.ts",
     "dev:client": "cd client && bun run dev",
     "build": "cd client && bun run build",
-    "compile": "bun build --compile server/src/index.ts --minify --sourcemap=none --outfile dist/vfiles",
+    "compile": "bun build --production --compile server/src/index.ts --minify --sourcemap=none --outfile dist/vfiles",
     "package": "bun run scripts/package.ts",
     "start": "bun server/src/index.ts",
     "lint": "eslint .",
