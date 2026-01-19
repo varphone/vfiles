@@ -19,6 +19,106 @@ import { UserStore } from "./services/user-store.js";
 import { GitServiceManager } from "./services/git-service-manager.js";
 import { EmailService } from "./services/email.service.js";
 
+function toAbs(p: string) {
+  return path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
+}
+
+async function exists(p: string) {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getRuntimeLabel() {
+  const bunVersion =
+    typeof (globalThis as unknown as { Bun?: { version?: string } }).Bun !==
+    "undefined"
+      ? (globalThis as unknown as { Bun?: { version?: string } }).Bun?.version
+      : undefined;
+
+  return bunVersion ? `Bun ${bunVersion}` : `Node ${process.version}`;
+}
+
+async function detectClientDist() {
+  const envPath =
+    process.env.VFILES_CLIENT_DIST || process.env.CLIENT_DIST || "";
+
+  const candidates: string[] = [];
+  if (envPath.trim()) {
+    candidates.push(toAbs(envPath.trim()));
+  }
+
+  // 约定：从启动目录（cwd）寻找前端构建产物。
+  candidates.push(path.resolve(process.cwd(), "client", "dist"));
+  // 兼容：部分发布结构可能是 dist/client/dist
+  candidates.push(path.resolve(process.cwd(), "dist", "client", "dist"));
+
+  for (const distRoot of candidates) {
+    const distIndex = path.resolve(distRoot, "index.html");
+    if (await exists(distIndex)) {
+      return { enabled: true as const, distRoot, distIndex, candidates };
+    }
+  }
+
+  return { enabled: false as const, candidates };
+}
+
+function printStartupInfo(params: {
+  staticEnabled: boolean;
+  staticDistRoot?: string;
+  staticCandidates: string[];
+}) {
+  const listen = `0.0.0.0:${config.port}`;
+  const localUrl = `http://localhost:${config.port}`;
+  const publicBaseUrl = config.email.publicBaseUrl || "";
+
+  console.log("\n=== VFiles 启动信息 ===");
+  console.log(
+    `Runtime: ${getRuntimeLabel()} / ${process.platform} ${process.arch} / pid=${process.pid}`,
+  );
+  console.log(`NODE_ENV=${process.env.NODE_ENV || ""}  PORT=${process.env.PORT || ""}`);
+  console.log(`Listen: ${listen}  (本机: ${localUrl})`);
+  console.log(`CWD: ${process.cwd()}`);
+  console.log(`Repo: mode=${config.repoMode}  path=${config.repoPath}`);
+  console.log(
+    `MultiUser: ${config.multiUser.enabled ? "on" : "off"}${config.multiUser.enabled ? `  baseDir=${config.multiUser.baseDir}` : ""}`,
+  );
+  console.log(
+    `Auth: ${config.auth.enabled ? "on" : "off"}  cookie=${config.auth.cookieName}  secure=${config.auth.cookieSecure ?? "(auto)"}`,
+  );
+  console.log(
+    `CORS: origin=${config.cors.origin}  credentials=${config.cors.credentials ? "true" : "false"}`,
+  );
+  console.log(
+    `Static: ${params.staticEnabled ? "on" : "off"}${params.staticEnabled ? `  dist=${params.staticDistRoot}` : ""}`,
+  );
+  if (!params.staticEnabled) {
+    console.log("Static 未启用：将不会托管前端页面（建议访问 /health 或 /api/* 进行反代验证）。");
+    console.log(
+      `静态资源候选路径（任一包含 index.html 即可）：\n- ${params.staticCandidates.join("\n- ")}`,
+    );
+    console.log(
+      "可通过环境变量 VFILES_CLIENT_DIST 或 CLIENT_DIST 指定前端 dist 目录（相对路径基于 CWD）。",
+    );
+  }
+
+  if (publicBaseUrl) {
+    console.log(`PUBLIC_BASE_URL: ${publicBaseUrl}`);
+  }
+
+  console.log("Endpoints:");
+  console.log("- GET  /health");
+  console.log("- GET  /api/*");
+  console.log("- GET  /s/:code  (重定向到 /api/share/:code)");
+  console.log("\n反向代理排查提示：");
+  console.log("- 优先用域名访问 /health，若仍 404 多半是 nginx 未命中 server_name/location");
+  console.log("- 确保转发 Host 与 X-Forwarded-Proto/For（否则外链/回调可能异常）");
+  console.log("======================\n");
+}
+
 const app = new Hono();
 
 if (config.auth.enabled && !config.auth.secret) {
@@ -88,20 +188,42 @@ app.get("/s/:code", (c) => {
 });
 
 // 静态文件服务（仅生产环境且 dist 存在时启用；开发模式下由 Vite 提供前端）
+let staticEnabled = false;
+let staticDistRoot: string | undefined;
+let staticCandidates: string[] = [];
 if (process.env.NODE_ENV === "production") {
-  const distIndex = path.resolve(process.cwd(), "client", "dist", "index.html");
-  try {
-    await fs.access(distIndex);
-    app.use("/*", serveStatic({ root: "./client/dist" }));
-    app.use("/*", serveStatic({ path: "./client/dist/index.html" }));
-  } catch {
+  const detected = await detectClientDist();
+  staticCandidates = detected.candidates;
+
+  if (detected.enabled) {
+    staticEnabled = true;
+    staticDistRoot = detected.distRoot;
+    app.use("/*", serveStatic({ root: detected.distRoot }));
+    app.use("/*", serveStatic({ path: detected.distIndex }));
+  } else {
     console.warn(
-      "未发现 client/dist，将不会提供静态前端资源。请先构建前端：bun run build",
+      "未发现前端构建产物（index.html），将不会提供静态前端资源。",
     );
   }
 }
 
-console.log(`准备启动 VFiles 服务： http://localhost:${config.port}`);
+app.notFound((c) => {
+  if (config.enableLogging) {
+    const host = c.req.header("host") || "";
+    const xfp = c.req.header("x-forwarded-proto") || "";
+    const xff = c.req.header("x-forwarded-for") || "";
+    console.warn(
+      `[notFound] ${c.req.method} ${c.req.path} host=${host} xfp=${xfp} xff=${xff}`,
+    );
+  }
+  return c.text("Not Found", 404);
+});
+
+printStartupInfo({
+  staticEnabled,
+  staticDistRoot,
+  staticCandidates,
+});
 
 // 交给 Bun（尤其是 --watch / bun run --watch）来创建/热重载服务器，避免重复 listen
 export default {
