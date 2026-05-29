@@ -1,0 +1,44 @@
+[package]
+name = "vfiles-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[dependencies]
+vfiles-app = { path = "../vfiles-app" }
+vfiles-config = { path = "../vfiles-config" }
+vfiles-domain = { path = "../vfiles-domain" }
+vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }
+
+axum-extra.workspace = true
+axum.workspace = true
+bytes.workspace = true
+hex.workspace = true
+include_dir = { workspace = true, optional = true }
+mime_guess.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+sha2.workspace = true
+similar.workspace = true
+sqlx.workspace = true
+time.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tower-http.workspace = true
+tower.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+zip.workspace = true
+
+[features]
+embed = ["dep:include_dir"]
+
+[dev-dependencies]
+camino.workspace = true
+http-body-util.workspace = true
+tempfile.workspace = true
+tower = { workspace = true, features = ["util"] }
+vfiles-infra-fs = { path = "../vfiles-infra-fs" }

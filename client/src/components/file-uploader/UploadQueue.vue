@@ -67,6 +67,21 @@
         :value="item.percent ?? 0"
       />
 
+      <div class="field mt-3 mb-1">
+        <label class="label is-size-7 mb-1">备注 / 更新消息</label>
+        <div class="control">
+          <input
+            :value="item.message"
+            class="input is-small"
+            type="text"
+            maxlength="200"
+            :readonly="!item.editable"
+            :placeholder="item.editable ? '这条消息会显示在版本历史里' : ''"
+            @input="onMessageInput(item.id, $event)"
+          />
+        </div>
+      </div>
+
       <p v-if="item.error" class="has-text-danger is-size-7 mt-1">
         {{ item.error }}
       </p>
@@ -81,6 +96,8 @@ import UploadProgress from "./UploadProgress.vue";
 export type UploadQueueItemView = {
   id: number;
   file: File;
+  message: string;
+  editable: boolean;
   status: "queued" | "uploading" | "done" | "error" | "canceled";
   percent?: number | null;
   error?: string;
@@ -93,7 +110,17 @@ defineProps<{
 const emit = defineEmits<{
   (e: "cancel", id: number): void;
   (e: "remove", id: number): void;
+  (e: "update-message", id: number, message: string): void;
 }>();
+
+function onMessageInput(id: number, event: Event) {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) {
+    return;
+  }
+
+  emit("update-message", id, target.value);
+}
 </script>
 
 <style scoped>

@@ -7,22 +7,13 @@
         已选择 {{ queue.length }} 个文件
       </p>
 
-      <div class="field">
-        <label class="label">提交信息</label>
-        <div class="control">
-          <input
-            v-model="commitMessage"
-            class="input"
-            type="text"
-            placeholder="输入提交信息..."
-          />
-        </div>
-      </div>
+      <p class="help mb-3">每个文件的备注都会作为版本历史里的更新消息保存。</p>
 
       <UploadQueue
         :items="queueView"
         @cancel="cancelItem"
         @remove="removeItem"
+        @update-message="updateItemMessage"
       />
     </div>
   </div>
@@ -30,7 +21,6 @@
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
-import { IconUpload } from "@tabler/icons-vue";
 import { useAppStore } from "../../stores/app.store";
 import { filesService } from "../../services/files.service";
 import DropZone from "./DropZone.vue";
@@ -51,6 +41,7 @@ type UploadStatus = "queued" | "uploading" | "done" | "error" | "canceled";
 type UploadItem = {
   id: number;
   file: File;
+  message: string;
   status: UploadStatus;
   percent: number | null;
   error?: string;
@@ -65,26 +56,38 @@ const uploading = computed(() =>
 const hasQueued = computed(() =>
   queue.value.some((x) => x.status === "queued"),
 );
-const commitMessage = ref("上传文件");
 
 const queueView = computed<UploadQueueItemView[]>(() =>
   queue.value.map((x) => ({
     id: x.id,
     file: x.file,
+    message: x.message,
+    editable: x.status === "queued",
     status: x.status,
     percent: x.percent,
     error: x.error,
   })),
 );
 
+function defaultUploadMessage(file: File): string {
+  return `上传 ${file.name}`;
+}
+
 function addFiles(files: File[]) {
   const added: UploadItem[] = files.map((f) => ({
     id: nextId++,
     file: f,
+    message: defaultUploadMessage(f),
     status: "queued",
     percent: null,
   }));
   queue.value = [...queue.value, ...added];
+}
+
+function updateItemMessage(id: number, message: string) {
+  const item = queue.value.find((x) => x.id === id);
+  if (!item || item.status !== "queued") return;
+  item.message = message;
 }
 
 function removeItem(id: number) {
@@ -134,10 +137,11 @@ async function startUpload() {
     next.error = undefined;
 
     try {
+      const message = next.message.trim() || defaultUploadMessage(next.file);
       await filesService.uploadFile(
         next.file,
         props.targetPath,
-        commitMessage.value,
+        message,
         {
           signal: abort.signal,
           onProgress: ({ loaded, total }) => {
@@ -153,8 +157,7 @@ async function startUpload() {
       next.abort = undefined;
       next.percent = 100;
     } catch (err: any) {
-      const isAbort =
-        err?.name === "CanceledError" || err?.name === "AbortError";
+      const isAbort = abort.signal.aborted || err?.name === "CanceledError";
       next.status = isAbort ? "canceled" : "error";
       next.error = isAbort
         ? undefined
@@ -171,7 +174,6 @@ async function startUpload() {
   if (hasSuccess && !hasError) {
     emit("upload");
     queue.value = [];
-    commitMessage.value = "上传文件";
   } else if (hasError) {
     appStore.error("部分文件上传失败，请检查列表");
   }

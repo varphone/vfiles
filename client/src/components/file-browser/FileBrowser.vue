@@ -7,88 +7,22 @@
   >
     <div class="box file-browser-box">
       <div class="breadcrumb-bar">
-        <div class="breadcrumb-left">
-          <div
-            ref="pathMenuRef"
-            class="dropdown breadcrumb-path-dropdown"
-            :class="{ 'is-active': pathMenuOpen }"
-          >
-            <div class="dropdown-trigger">
-              <button
-                type="button"
-                class="button is-ghost breadcrumb-path-button"
-                :title="currentPathLabel"
-                @click="togglePathMenu"
-              >
-                <IconFolder :size="18" class="mr-2" />
-                <span class="breadcrumb-title">{{ currentPathLabel }}</span>
-              </button>
-            </div>
-            <div class="dropdown-menu" role="menu">
-              <div class="dropdown-content breadcrumb-path-menu">
-                <a
-                  v-if="parentPath != null"
-                  class="dropdown-item"
-                  href="#"
-                  @click.prevent="navigateToPathAndClose(parentPath)"
-                >
-                  父目录
-                </a>
-                <div v-else class="dropdown-item is-disabled">已是根目录</div>
-
-                <hr class="dropdown-divider" />
-
-                <div
-                  v-if="childDirs.length === 0"
-                  class="dropdown-item is-disabled"
-                >
-                  无子目录
-                </div>
-                <a
-                  v-for="dir in childDirs"
-                  :key="dir.path"
-                  class="dropdown-item"
-                  href="#"
-                  @click.prevent="navigateToPathAndClose(dir.path)"
-                >
-                  {{ dir.name }}
-                </a>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="breadcrumb-actions">
-          <div class="buttons are-small mb-0">
-            <button
-              class="button is-light breadcrumb-icon-button"
-              :disabled="!currentPath"
-              @click="goBack"
-              title="上一级"
-            >
-              <IconArrowLeft :size="18" />
-            </button>
-            <button
-              class="button is-light breadcrumb-icon-button"
-              @click="openDirManager"
-              title="更多"
-            >
-              <IconDotsVertical :size="18" />
-            </button>
-          </div>
+        <div class="breadcrumb-current-path" :title="currentPathLabel">
+          {{ currentPathLabel }}
         </div>
       </div>
 
       <div class="file-browser-toolbar">
-        <div
-          v-if="isMobile && pullIndicatorVisible"
-          class="has-text-centered is-size-7 has-text-grey mb-2"
-        >
-          <span v-if="pullRefreshing">刷新中...</span>
-          <span v-else-if="pullReady">释放刷新</span>
-          <span v-else>下拉刷新</span>
-        </div>
-
         <template v-if="isMobile">
+          <div
+            v-if="pullIndicatorVisible"
+            class="has-text-centered is-size-7 has-text-grey mb-2"
+          >
+            <span v-if="pullRefreshing">刷新中...</span>
+            <span v-else-if="pullReady">释放刷新</span>
+            <span v-else>下拉刷新</span>
+          </div>
+
           <div class="field has-addons mt-3">
             <div class="control is-expanded">
               <input
@@ -165,6 +99,194 @@
           </div>
 
           <div v-if="searchError" class="notification is-danger is-light">
+            <IconAlertCircle :size="20" class="mr-2" />
+            {{ searchError }}
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="desktop-command-bar">
+            <div class="desktop-command-group">
+              <button
+                class="button is-small is-light desktop-command-button"
+                :disabled="!currentPath"
+                @click="goBack"
+              >
+                <IconArrowLeft :size="16" />
+                <span>上一级</span>
+              </button>
+              <button
+                class="button is-small is-light desktop-command-button"
+                @click="refresh"
+              >
+                <IconRefresh :size="16" />
+                <span>刷新</span>
+              </button>
+              <button
+                class="button is-small is-primary desktop-command-button"
+                @click="showUploader = true"
+              >
+                <IconUpload :size="16" />
+                <span>上传文件</span>
+              </button>
+              <button
+                class="button is-small desktop-command-button"
+                :class="batchMode ? 'is-link is-light' : 'is-light'"
+                @click="toggleBatchMode"
+              >
+                <IconChecklist :size="16" />
+                <span>{{ batchMode ? "退出批量" : "批量选择" }}</span>
+              </button>
+              <div ref="desktopSearchBoxRef" class="desktop-search-box">
+                <div class="desktop-search-inline">
+                  <div class="control desktop-search-field">
+                    <input
+                      ref="desktopSearchInputRef"
+                      v-model="searchQuery"
+                      class="input is-small desktop-search-control"
+                      type="text"
+                      :placeholder="
+                        searchMode === 'content'
+                          ? '搜索当前工作区中的文本内容'
+                          : '搜索名称、扩展名或路径'
+                      "
+                      list="vfiles-search-history-desktop"
+                      @keyup.enter="runDesktopSearch"
+                    />
+                    <datalist id="vfiles-search-history-desktop">
+                      <option
+                        v-for="item in searchHistory"
+                        :key="item"
+                        :value="item"
+                      />
+                    </datalist>
+                  </div>
+
+                  <div class="desktop-search-action-group">
+                    <button
+                      class="button is-small desktop-command-button desktop-search-button"
+                      :class="[
+                        searchActive ? 'is-link is-light' : 'is-light',
+                        { 'is-loading': searchLoading },
+                      ]"
+                      :disabled="searchLoading"
+                      @click="runDesktopSearch"
+                    >
+                      <IconSearch :size="16" />
+                      <span>搜索</span>
+                    </button>
+                    <button
+                      class="button is-small desktop-command-button desktop-search-toggle"
+                      :class="[
+                        desktopSearchOpen || desktopSearchFiltersActive
+                          ? 'is-link is-light'
+                          : 'is-light',
+                        { 'is-open': desktopSearchOpen },
+                      ]"
+                      title="高级搜索"
+                      aria-label="高级搜索"
+                      :aria-expanded="desktopSearchOpen"
+                      @click="toggleDesktopSearch"
+                    >
+                      <IconChevronDown :size="16" />
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  v-if="desktopSearchOpen"
+                  class="desktop-search-panel desktop-search-panel--dropdown"
+                >
+                  <div class="desktop-search-panel-heading">高级搜索</div>
+
+                  <div class="desktop-search-filters">
+                    <label class="checkbox desktop-filter-pill">
+                      <input
+                        type="checkbox"
+                        v-model="searchContent"
+                        :disabled="searchLoading"
+                      />
+                      全文搜索
+                    </label>
+
+                    <div class="select is-small desktop-filter-select">
+                      <select v-model="searchType" :disabled="searchLoading">
+                        <option value="all">全部</option>
+                        <option value="file">仅文件</option>
+                        <option value="directory">仅文件夹</option>
+                      </select>
+                    </div>
+
+                    <label class="checkbox desktop-filter-pill">
+                      <input
+                        type="checkbox"
+                        v-model="searchScopeCurrent"
+                        :disabled="searchLoading"
+                      />
+                      仅当前目录
+                    </label>
+                  </div>
+
+                  <div class="desktop-search-dropdown-actions">
+                    <button
+                      class="button is-small is-light desktop-command-button desktop-search-clear"
+                      :disabled="searchLoading"
+                      @click="clearDesktopSearch"
+                    >
+                      清空搜索
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="searchError" class="notification is-danger is-light">
+              <IconAlertCircle :size="18" class="mr-2" />
+              {{ searchError }}
+            </div>
+          </div>
+
+          <div v-if="batchMode" class="desktop-batch-strip">
+            <div class="desktop-batch-meta">已选 {{ selectedCount }} 项</div>
+            <div class="desktop-batch-actions">
+              <button class="button is-small is-light" @click="selectAllVisible">
+                全选当前视图
+              </button>
+              <button class="button is-small is-light" @click="clearSelection">
+                清空选择
+              </button>
+              <button
+                class="button is-small is-info"
+                :disabled="selectedCount === 0"
+                @click="batchDownload"
+              >
+                批量下载
+              </button>
+              <button
+                class="button is-small is-danger is-light"
+                :disabled="selectedCount === 0"
+                @click="batchDelete"
+              >
+                删除
+              </button>
+              <button
+                class="button is-small is-light"
+                :disabled="selectedCount === 0"
+                @click="batchMove"
+              >
+                移动
+              </button>
+              <button
+                class="button is-small is-light"
+                :disabled="selectedCount !== 1"
+                @click="renameSelected"
+              >
+                重命名
+              </button>
+            </div>
+          </div>
+
+          <div v-if="searchError" class="notification is-danger is-light mb-3">
             <IconAlertCircle :size="20" class="mr-2" />
             {{ searchError }}
           </div>
@@ -313,83 +435,159 @@
         </div>
       </div>
 
-      <div v-if="loading" class="has-text-centered py-6">
-        <div class="spinner mb-3"></div>
-        <p class="has-text-grey">加载中...</p>
-      </div>
+      <template v-if="!isMobile">
+        <div class="desktop-list-primary-shell">
+          <div class="desktop-list-shell">
+            <div v-if="loading" class="has-text-centered py-6">
+              <div class="spinner mb-3"></div>
+              <p class="has-text-grey">加载中...</p>
+            </div>
 
-      <div v-else-if="error" class="notification is-danger is-light">
-        <IconAlertCircle :size="20" class="mr-2" />
-        {{ error }}
-      </div>
+            <div v-else-if="error" class="notification is-danger is-light">
+              <IconAlertCircle :size="20" class="mr-2" />
+              {{ error }}
+            </div>
 
-      <div
-        v-else-if="!searchActive && files.length === 0"
-        class="has-text-centered py-6"
-      >
-        <IconFolderOpen :size="64" class="has-text-grey-light mb-3" />
-        <p class="has-text-grey">此文件夹为空</p>
-      </div>
+            <div
+              v-else-if="!searchActive && navigationListItems.length === 0"
+              class="has-text-centered py-6"
+            >
+              <IconFolderOpen :size="64" class="has-text-grey-light mb-3" />
+              <p class="has-text-grey">此文件夹为空</p>
+            </div>
 
-      <div v-else-if="searchActive" class="file-list">
-        <p class="has-text-grey is-size-7 mb-2">
-          搜索结果：{{ searchResults.length }} 项（{{
-            searchMode === "content" ? "内容" : "文件名"
-          }}）
-        </p>
-        <div v-if="searchResults.length === 0" class="has-text-centered py-6">
-          <p class="has-text-grey">没有找到匹配的文件</p>
+            <div
+              v-else-if="searchActive && searchResults.length === 0"
+              class="has-text-centered py-6"
+            >
+              <p class="has-text-grey">没有找到匹配的文件</p>
+            </div>
+
+            <template v-else>
+              <div v-if="searchActive" class="desktop-list-meta">
+                搜索结果：{{ searchResults.length }} 项（{{
+                  searchMode === "content" ? "内容" : "文件名"
+                }}）
+              </div>
+
+              <FileList
+                :files="desktopItems"
+                :highlight="searchActive ? searchQuery : ''"
+                :select-mode="batchMode"
+                :selected-paths="selectedPaths"
+                :expanded-path="expandedFilePath"
+                :active-path="desktopActivePath"
+                :desktop="true"
+                @click="handleItemClick"
+                @download="handleDownload"
+                @rename="handleRenameEntry"
+                @move="handleMoveEntry"
+                @delete="handleDelete"
+                @view-history="handleViewHistory"
+                @toggle-select="toggleSelect"
+                @share="handleShare"
+                @preview="handlePreview"
+                @open-folder="handleOpenFolder"
+                @create-directory="handleCreateDirectory"
+              />
+            </template>
+          </div>
+
+          <div class="desktop-status-bar">
+            <span>{{ searchActive ? `搜索结果 ${searchResults.length} 项` : `当前目录 ${files.length} 项` }}</span>
+            <span>
+              {{ parentPath != null ? "单击文件夹进入，点“返回上一级”回退" : "单击文件夹进入子目录" }}
+            </span>
+            <span v-if="selectedCount > 0">已选 {{ selectedCount }} 项</span>
+          </div>
         </div>
-        <FileList
-          v-if="visibleSearchResults.length"
-          :files="visibleSearchResults"
-          :highlight="searchQuery"
-          :select-mode="batchMode"
-          :selected-paths="selectedPaths"
-          :expanded-path="expandedFilePath"
-          @click="handleItemClick"
-          @download="handleDownload"
-          @delete="handleDelete"
-          @view-history="handleViewHistory"
-          @toggle-select="toggleSelect"
-          @share="handleShare"
-          @preview="handlePreview"
-          @open-folder="handleOpenFolder"
-        />
+      </template>
+
+      <template v-else>
+        <div v-if="loading" class="has-text-centered py-6">
+          <div class="spinner mb-3"></div>
+          <p class="has-text-grey">加载中...</p>
+        </div>
+
+        <div v-else-if="error" class="notification is-danger is-light">
+          <IconAlertCircle :size="20" class="mr-2" />
+          {{ error }}
+        </div>
 
         <div
-          v-if="isMobile && hasMore"
-          ref="loadMoreSentinel"
-          class="has-text-centered has-text-grey is-size-7 py-2"
+          v-else-if="!searchActive && files.length === 0"
+          class="has-text-centered py-6"
         >
-          继续下滑加载更多...
+          <IconFolderOpen :size="64" class="has-text-grey-light mb-3" />
+          <p class="has-text-grey">此文件夹为空</p>
         </div>
-      </div>
 
-      <div v-else class="file-list">
-        <FileList
-          :files="visibleFiles"
-          :select-mode="batchMode"
-          :selected-paths="selectedPaths"
-          :expanded-path="expandedFilePath"
-          @click="handleItemClick"
-          @download="handleDownload"
-          @delete="handleDelete"
-          @view-history="handleViewHistory"
-          @toggle-select="toggleSelect"
-          @share="handleShare"
-          @preview="handlePreview"
-          @open-folder="handleOpenFolder"
-        />
+        <div v-else-if="searchActive" class="file-list">
+          <p class="has-text-grey is-size-7 mb-2">
+            搜索结果：{{ searchResults.length }} 项（{{
+              searchMode === "content" ? "内容" : "文件名"
+            }}）
+          </p>
+          <div v-if="searchResults.length === 0" class="has-text-centered py-6">
+            <p class="has-text-grey">没有找到匹配的文件</p>
+          </div>
+          <FileList
+            v-if="visibleSearchResults.length"
+            :files="visibleSearchResults"
+            :highlight="searchQuery"
+            :select-mode="batchMode"
+            :selected-paths="selectedPaths"
+            :expanded-path="expandedFilePath"
+            @click="handleItemClick"
+            @download="handleDownload"
+            @rename="handleRenameEntry"
+            @move="handleMoveEntry"
+            @delete="handleDelete"
+            @view-history="handleViewHistory"
+            @toggle-select="toggleSelect"
+            @share="handleShare"
+            @preview="handlePreview"
+            @open-folder="handleOpenFolder"
+            @create-directory="handleCreateDirectory"
+          />
 
-        <div
-          v-if="isMobile && hasMore"
-          ref="loadMoreSentinel"
-          class="has-text-centered has-text-grey is-size-7 py-2"
-        >
-          继续下滑加载更多...
+          <div
+            v-if="isMobile && hasMore"
+            ref="loadMoreSentinel"
+            class="has-text-centered has-text-grey is-size-7 py-2"
+          >
+            继续下滑加载更多...
+          </div>
         </div>
-      </div>
+
+        <div v-else class="file-list">
+          <FileList
+            :files="visibleFiles"
+            :select-mode="batchMode"
+            :selected-paths="selectedPaths"
+            :expanded-path="expandedFilePath"
+            @click="handleItemClick"
+            @download="handleDownload"
+            @rename="handleRenameEntry"
+            @move="handleMoveEntry"
+            @delete="handleDelete"
+            @view-history="handleViewHistory"
+            @toggle-select="toggleSelect"
+            @share="handleShare"
+            @preview="handlePreview"
+            @open-folder="handleOpenFolder"
+            @create-directory="handleCreateDirectory"
+          />
+
+          <div
+            v-if="isMobile && hasMore"
+            ref="loadMoreSentinel"
+            class="has-text-centered has-text-grey is-size-7 py-2"
+          >
+            继续下滑加载更多...
+          </div>
+        </div>
+      </template>
     </div>
 
     <!-- 上传对话框 -->
@@ -530,6 +728,15 @@
       @close="showShareDialog = false"
     />
 
+    <MoveDialog
+      :is-active="showMoveDialog"
+      :items="moveDialogItems"
+      :initial-path="moveDialogInitialPath"
+      :confirm-loading="moveDialogSubmitting"
+      @close="closeMoveDialog"
+      @confirm="submitMoveDialog"
+    />
+
     <!-- 预览对话框（当前版本） -->
     <Modal
       :show="preview.open"
@@ -608,17 +815,19 @@ import {
 import { storeToRefs } from "pinia";
 import {
   IconFolderOpen,
-  IconFolder,
   IconAlertCircle,
   IconSearch,
+  IconChevronDown,
   IconArrowLeft,
-  IconDotsVertical,
+  IconChecklist,
+  IconRefresh,
   IconUpload,
 } from "@tabler/icons-vue";
 import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
 import { filesService } from "../../services/files.service";
 import FileList from "./FileList.vue";
+import MoveDialog from "./MoveDialog.vue";
 import FileUploader from "../file-uploader/FileUploader.vue";
 import VersionHistory from "../version-history/VersionHistory.vue";
 import Modal from "../common/Modal.vue";
@@ -639,14 +848,20 @@ const currentPathLabel = computed(() => {
 
 const isMobile = ref(false);
 
+const MOBILE_LAYOUT_MEDIA_QUERY = "(max-width: 1023px)";
+
 function updateIsMobile() {
-  isMobile.value = window.matchMedia("(max-width: 768px)").matches;
+  isMobile.value = window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches;
 }
 
 const showUploader = ref(false);
 const showHistory = ref(false);
 const showShareDialog = ref(false);
+const showMoveDialog = ref(false);
 const selectedFile = ref<FileInfo | null>(null);
+const moveDialogItems = ref<FileInfo[]>([]);
+const moveDialogInitialPath = ref("");
+const moveDialogSubmitting = ref(false);
 const fileUploaderRef = ref<InstanceType<typeof FileUploader> | null>(null);
 const expandedFilePath = ref<string>("");
 
@@ -822,7 +1037,6 @@ async function getMarked() {
       return `<a href="${escapeHtml(safeHref)}"${t} target="_blank" rel="noopener noreferrer">${inner}</a>`;
     },
     image(tokenOrHref: any, title?: any, text?: any) {
-      // 兼容：新版传 token 对象；旧版传 (href, title, text)
       const href =
         tokenOrHref && typeof tokenOrHref === "object"
           ? tokenOrHref.href
@@ -930,6 +1144,9 @@ const searchLoading = ref(false);
 const searchError = ref<string | null>(null);
 const searchActive = ref(false);
 const searchContent = ref(false);
+const desktopSearchOpen = ref(false);
+const desktopSearchBoxRef = ref<HTMLElement | null>(null);
+const desktopSearchInputRef = ref<HTMLInputElement | null>(null);
 
 const queueCollapsed = ref(false);
 const activeDownload = computed(() =>
@@ -978,6 +1195,12 @@ const searchType = ref<"all" | "file" | "directory">("all");
 const searchScopeCurrent = ref(false);
 
 const searchMode = computed(() => (searchContent.value ? "content" : "name"));
+const desktopSearchFiltersActive = computed(
+  () =>
+    searchContent.value ||
+    searchType.value !== "all" ||
+    searchScopeCurrent.value,
+);
 
 const SEARCH_HISTORY_KEY = "vfiles.searchHistory";
 const searchHistory = ref<string[]>([]);
@@ -1006,6 +1229,33 @@ function saveSearchHistory(next: string[]) {
   }
 }
 
+function closeDesktopSearch() {
+  desktopSearchOpen.value = false;
+}
+
+function toggleDesktopSearch() {
+  desktopSearchOpen.value = !desktopSearchOpen.value;
+}
+
+async function runDesktopSearch() {
+  const q = searchQuery.value.trim();
+  if (!q) {
+    clearSearch();
+    closeDesktopSearch();
+    void nextTick().then(() => desktopSearchInputRef.value?.focus());
+    return;
+  }
+
+  await runSearch();
+  if (!searchError.value) closeDesktopSearch();
+}
+
+function clearDesktopSearch() {
+  clearSearch();
+  closeDesktopSearch();
+  void nextTick().then(() => desktopSearchInputRef.value?.focus());
+}
+
 function pushSearchHistory(term: string) {
   const value = term.trim();
   if (!value) return;
@@ -1022,16 +1272,18 @@ onMounted(() => {
   loadSearchHistory();
 
   const onDocPointer = (e: MouseEvent | TouchEvent) => {
-    if (!pathMenuOpen.value) return;
-    const el = pathMenuRef.value;
     const target = e.target as Node | null;
-    if (!el || !target) return;
-    if (!el.contains(target)) closePathMenu();
+    if (!target) return;
+
+    if (desktopSearchOpen.value) {
+      const searchBox = desktopSearchBoxRef.value;
+      if (searchBox && !searchBox.contains(target)) closeDesktopSearch();
+    }
   };
 
   const onDocKeydown = (e: KeyboardEvent) => {
-    if (!pathMenuOpen.value) return;
-    if (e.key === "Escape") closePathMenu();
+    if (e.key !== "Escape") return;
+    if (desktopSearchOpen.value) closeDesktopSearch();
   };
 
   document.addEventListener("click", onDocPointer, true);
@@ -1045,7 +1297,7 @@ onMounted(() => {
 
   updateIsMobile();
   try {
-    const mql = window.matchMedia("(max-width: 768px)");
+    const mql = window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY);
     const handler = () => updateIsMobile();
     if ("addEventListener" in mql) {
       mql.addEventListener("change", handler);
@@ -1072,7 +1324,7 @@ function navigateTo(path: string) {
 
 function refresh() {
   expandedFilePath.value = "";
-  filesStore.loadFiles(filesStore.currentPath);
+  return filesStore.loadFiles(filesStore.currentPath);
 }
 
 function goBack() {
@@ -1084,9 +1336,6 @@ function goRoot() {
   navigateTo("");
 }
 
-const pathMenuOpen = ref(false);
-const pathMenuRef = ref<HTMLElement | null>(null);
-
 const parentPath = computed<string | null>(() => {
   const cur = currentPath.value || "";
   const parts = cur.split("/").filter(Boolean);
@@ -1094,26 +1343,6 @@ const parentPath = computed<string | null>(() => {
   parts.pop();
   return parts.join("/");
 });
-
-const childDirs = computed(() => {
-  return files.value
-    .filter((f) => f.type === "directory")
-    .slice()
-    .sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
-});
-
-function closePathMenu() {
-  pathMenuOpen.value = false;
-}
-
-function togglePathMenu() {
-  pathMenuOpen.value = !pathMenuOpen.value;
-}
-
-function navigateToPathAndClose(path: string) {
-  closePathMenu();
-  navigateTo(path);
-}
 
 const dirManagerOpen = ref(false);
 const dirOpLoading = ref<null | "create" | "rename" | "delete">(null);
@@ -1135,12 +1364,6 @@ watch(
   { immediate: true },
 );
 
-function openDirManager() {
-  dirManagerOpen.value = true;
-  newDirName.value = "";
-  renameDirName.value = currentDirName.value;
-}
-
 function isSafeDirName(name: string): boolean {
   const n = name.trim();
   if (!n) return false;
@@ -1149,20 +1372,171 @@ function isSafeDirName(name: string): boolean {
   return true;
 }
 
-async function createSubDir() {
-  const name = newDirName.value.trim();
+function normalizeEntryName(rawName: string, invalidMessage: string): string | null {
+  const name = rawName.trim();
   if (!isSafeDirName(name)) {
-    appStore.error("非法目录名");
-    return;
+    appStore.error(invalidMessage);
+    return null;
+  }
+  return name;
+}
+
+function buildChildPath(parentPath: string, name: string): string {
+  return parentPath ? `${parentPath}/${name}` : name;
+}
+
+function buildSiblingPath(path: string, name: string): string {
+  const parent = parentDirectoryPath(path);
+  return parent ? `${parent}/${name}` : name;
+}
+
+function parentDirectoryPath(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+
+function normalizeTargetDirectory(rawPath: string): string {
+  return rawPath
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+}
+
+async function moveEntryToDirectory(
+  file: FileInfo,
+  targetDir: string,
+  message: string,
+): Promise<string> {
+  const to = resolveMoveTargetPath(file, targetDir);
+  await filesService.movePath(file.path, to, message);
+  return to;
+}
+
+function resolveMoveTargetPath(file: FileInfo, targetDir: string): string {
+  if (
+    file.kind === "directory" &&
+    (targetDir === file.path || targetDir.startsWith(`${file.path}/`))
+  ) {
+    throw new Error("不能将目录移动到自身或其子目录");
   }
 
-  const dirPath = currentPath.value ? `${currentPath.value}/${name}` : name;
+  const to = buildChildPath(targetDir, file.name);
+  if (to === file.path) {
+    throw new Error("目标目录未变化");
+  }
+
+  return to;
+}
+
+function planMoveOperations(
+  items: FileInfo[],
+  targetDir: string,
+  targetEntries: Pick<FileInfo, "path">[] = [],
+) {
+  const usedTargets = new Set<string>();
+  const existingPaths = new Set(targetEntries.map((entry) => entry.path));
+
+  return items.map((file) => {
+    const to = resolveMoveTargetPath(file, targetDir);
+    if (usedTargets.has(to)) {
+      throw new Error(`目标目录中会产生重名项：${file.name}`);
+    }
+    if (existingPaths.has(to)) {
+      throw new Error(`目标目录已存在同名项目：${file.name}`);
+    }
+    usedTargets.add(to);
+    return { file, to };
+  });
+}
+
+function resetMoveDialogState() {
+  showMoveDialog.value = false;
+  moveDialogItems.value = [];
+  moveDialogInitialPath.value = "";
+  moveDialogSubmitting.value = false;
+}
+
+function openMoveDialog(items: FileInfo[], initialPath: string) {
+  if (items.length === 0) return;
+  moveDialogItems.value = items;
+  moveDialogInitialPath.value = normalizeTargetDirectory(initialPath);
+  showMoveDialog.value = true;
+}
+
+function closeMoveDialog() {
+  if (moveDialogSubmitting.value) return;
+  resetMoveDialogState();
+}
+
+function replaceSelectedPath(oldPath: string, newPath: string) {
+  if (!selectedPaths.value.has(oldPath)) return;
+  const next = new Set(selectedPaths.value);
+  next.delete(oldPath);
+  next.add(newPath);
+  selectedPaths.value = next;
+}
+
+async function refreshAfterMutation() {
+  await refresh();
+  if (searchActive.value) {
+    await doSearch(false);
+  }
+}
+
+async function createDirectoryAt(parentPath: string, name: string): Promise<string> {
+  const dirPath = buildChildPath(parentPath, name);
+  await filesService.createDirectory(dirPath, `创建目录: ${dirPath}`);
+  return dirPath;
+}
+
+async function renameEntryPath(
+  path: string,
+  name: string,
+  message: string,
+): Promise<string> {
+  const targetPath = buildSiblingPath(path, name);
+  await filesService.movePath(path, targetPath, message);
+  return targetPath;
+}
+
+async function promptCreateDirectory(parentPath: string = currentPath.value) {
+  const raw = prompt("输入目录名（仅名称，不含路径分隔符）", "");
+  if (raw == null) return;
+
+  const name = normalizeEntryName(raw, "非法目录名");
+  if (!name) return;
+
+  try {
+    const dirPath = await createDirectoryAt(parentPath, name);
+    appStore.success("目录创建成功");
+    if (parentPath === currentPath.value) {
+      desktopActivePath.value = dirPath;
+    } else {
+      if (searchActive.value) {
+        clearSearch();
+      }
+      navigateTo(parentPath);
+      return;
+    }
+    await refreshAfterMutation();
+  } catch (err) {
+    appStore.error(err instanceof Error ? err.message : "目录创建失败");
+  }
+}
+
+async function createSubDir() {
+  const name = normalizeEntryName(newDirName.value, "非法目录名");
+  if (!name) return;
+
   dirOpLoading.value = "create";
   try {
-    await filesService.createDirectory(dirPath, `创建目录: ${dirPath}`);
+    const dirPath = await createDirectoryAt(currentPath.value, name);
     appStore.success("目录创建成功");
     newDirName.value = "";
-    refresh();
+    desktopActivePath.value = dirPath;
+    await refreshAfterMutation();
   } catch (err) {
     appStore.error(err instanceof Error ? err.message : "目录创建失败");
   } finally {
@@ -1172,26 +1546,18 @@ async function createSubDir() {
 
 async function renameCurrentDir() {
   if (!currentPath.value) return;
-  const name = renameDirName.value.trim();
-  if (!isSafeDirName(name)) {
-    appStore.error("非法目录名");
-    return;
-  }
+  const name = normalizeEntryName(renameDirName.value, "非法目录名");
+  if (!name) return;
   if (name === currentDirName.value) {
     appStore.error("目录名未变化");
     return;
   }
 
-  const parts = currentPath.value.split("/").filter(Boolean);
-  parts.pop();
-  const parent = parts.join("/");
-  const to = parent ? `${parent}/${name}` : name;
-
   dirOpLoading.value = "rename";
   try {
-    await filesService.movePath(
+    const to = await renameEntryPath(
       currentPath.value,
-      to,
+      name,
       `重命名目录: ${currentPath.value} -> ${to}`,
     );
     appStore.success("重命名成功");
@@ -1245,20 +1611,86 @@ const mobileVisibleCount = ref(MOBILE_INITIAL_COUNT);
 const loadMoreSentinel = ref<HTMLElement | null>(null);
 let loadMoreObserver: IntersectionObserver | null = null;
 
+type BrowserListItem = FileInfo & {
+  uiRole?: "self" | "parent";
+  uiTargetPath?: string;
+};
+
+const currentListItem = computed<BrowserListItem>(() => ({
+  id: `self:${currentPath.value || "root"}`,
+  name: ".",
+  path: `__vfiles_shortcut_self__:${currentPath.value || "root"}`,
+  kind: "directory",
+  created_at: "",
+  updated_at: "",
+  mime_type: undefined,
+  size_bytes: undefined,
+  is_text: false,
+  uiRole: "self",
+  uiTargetPath: currentPath.value || "",
+}));
+
+const parentListItem = computed<BrowserListItem>(() => {
+  return {
+    id: `parent:${currentPath.value || "root"}`,
+    name: "..",
+    path: `__vfiles_shortcut_parent__:${(parentPath.value ?? currentPath.value) || "root"}`,
+    kind: "directory",
+    created_at: "",
+    updated_at: "",
+    mime_type: undefined,
+    size_bytes: undefined,
+    is_text: false,
+    uiRole: "parent",
+    uiTargetPath: parentPath.value ?? "",
+  };
+});
+
+const navigationListItems = computed<BrowserListItem[]>(() => {
+  return [currentListItem.value, parentListItem.value, ...files.value];
+});
+
 const activeList = computed(() =>
-  searchActive.value ? searchResults.value : files.value,
+  searchActive.value ? searchResults.value : navigationListItems.value,
 );
 const hasMore = computed(
   () => isMobile.value && mobileVisibleCount.value < activeList.value.length,
 );
 const visibleFiles = computed(() => {
-  if (!isMobile.value) return files.value;
-  return files.value.slice(0, mobileVisibleCount.value);
+  if (!isMobile.value) return navigationListItems.value;
+  return navigationListItems.value.slice(0, mobileVisibleCount.value);
 });
 const visibleSearchResults = computed(() => {
   if (!isMobile.value) return searchResults.value;
   return searchResults.value.slice(0, mobileVisibleCount.value);
 });
+const desktopItems = computed(() => {
+  return searchActive.value ? searchResults.value : navigationListItems.value;
+});
+const desktopActivePath = ref("");
+
+watch(
+  [isMobile, desktopItems, currentPath],
+  () => {
+    if (isMobile.value) {
+      desktopActivePath.value = "";
+      return;
+    }
+
+    if (desktopItems.value.length === 0) {
+      desktopActivePath.value = "";
+      return;
+    }
+
+    if (!desktopItems.value.some((file) => file.path === desktopActivePath.value)) {
+      const firstRealItem = desktopItems.value.find(
+        (file) => !(file as BrowserListItem).uiRole,
+      );
+      desktopActivePath.value = firstRealItem?.path || desktopItems.value[0].path;
+    }
+  },
+  { immediate: true },
+);
 
 function bumpVisibleCount() {
   const total = activeList.value.length;
@@ -1334,8 +1766,9 @@ const anyModalOpen = computed(() => {
   return (
     showUploader.value ||
     showHistory.value ||
-    preview.value.open ||
-    pathMenuOpen.value
+    showShareDialog.value ||
+    showMoveDialog.value ||
+    preview.value.open
   );
 });
 
@@ -1551,8 +1984,17 @@ function removeItem(id: number) {
   downloadQueue.value = downloadQueue.value.filter((x) => x.id !== id);
 }
 
-function handleItemClick(file: FileInfo) {
-  // 点击时切换展开状态
+function handleItemClick(file: BrowserListItem) {
+  if (file.kind === "directory") {
+    handleOpenFolder(file);
+    return;
+  }
+
+  if (!isMobile.value && !batchMode.value) {
+    desktopActivePath.value = file.path;
+    return;
+  }
+
   if (expandedFilePath.value === file.path) {
     expandedFilePath.value = "";
   } else {
@@ -1565,16 +2007,16 @@ function handlePreview(file: FileInfo) {
 }
 
 function handleOpenFolder(file: FileInfo) {
-  if (file.type === "directory") {
+  if (file.kind === "directory") {
     if (searchActive.value) {
       clearSearch();
     }
-    navigateTo(file.path);
+    navigateTo((file as BrowserListItem).uiTargetPath ?? file.path);
   }
 }
 
 function handleDownload(file: FileInfo) {
-  if (file.type === "directory") {
+  if (file.kind === "directory") {
     // 文件夹下载：使用浏览器原生下载
     filesService.downloadFolder(file.path, browseCommit.value);
   } else {
@@ -1585,10 +2027,100 @@ function handleDownload(file: FileInfo) {
 
 async function handleDelete(file: FileInfo) {
   try {
-    await filesStore.deleteFile(file.path);
-    appStore.success("文件删除成功");
+    await filesStore.deleteFile(
+      file.path,
+      `${file.kind === "directory" ? "删除目录" : "删除文件"}: ${file.path}`,
+    );
+    if (desktopActivePath.value === file.path) {
+      desktopActivePath.value = "";
+    }
+    if (searchActive.value) {
+      await doSearch(false);
+    }
+    appStore.success(file.kind === "directory" ? "目录删除成功" : "文件删除成功");
   } catch (err) {
     appStore.error(err instanceof Error ? err.message : "删除失败");
+  }
+}
+
+async function handleCreateDirectory(file: FileInfo) {
+  if (file.kind !== "directory") return;
+  await promptCreateDirectory((file as BrowserListItem).uiTargetPath ?? file.path);
+}
+
+async function handleRenameEntry(file: FileInfo) {
+  const raw = prompt("输入新名称（仅名称，不含路径分隔符）", file.name);
+  if (raw == null) return;
+
+  const name = normalizeEntryName(raw, "非法名称");
+  if (!name) return;
+  if (name === file.name) {
+    appStore.error("名称未变化");
+    return;
+  }
+
+  try {
+    const to = await renameEntryPath(
+      file.path,
+      name,
+      `重命名${file.kind === "directory" ? "目录" : "项目"}: ${file.path} -> ${buildSiblingPath(file.path, name)}`,
+    );
+    replaceSelectedPath(file.path, to);
+    if (desktopActivePath.value === file.path) {
+      desktopActivePath.value = to;
+    }
+    appStore.success(file.kind === "directory" ? "目录重命名成功" : "重命名成功");
+    await refreshAfterMutation();
+  } catch (err) {
+    appStore.error(err instanceof Error ? err.message : "重命名失败");
+  }
+}
+
+async function handleMoveEntry(file: FileInfo) {
+  openMoveDialog([file], parentDirectoryPath(file.path));
+}
+
+async function submitMoveDialog(targetDir: string) {
+  const items = moveDialogItems.value.slice();
+  if (items.length === 0) return;
+
+  const normalizedTargetDir = normalizeTargetDirectory(targetDir);
+  moveDialogSubmitting.value = true;
+
+  try {
+    const targetEntries = await filesService.getFiles(normalizedTargetDir);
+    const operations = planMoveOperations(items, normalizedTargetDir, targetEntries);
+
+    for (const { file, to } of operations) {
+      await filesService.movePath(
+        file.path,
+        to,
+        `移动${file.kind === "directory" ? "目录" : "文件"}: ${file.path} -> ${to}`,
+      );
+      replaceSelectedPath(file.path, to);
+      if (desktopActivePath.value === file.path) {
+        desktopActivePath.value =
+          parentDirectoryPath(to) === currentPath.value ? to : "";
+      }
+    }
+
+    const successMessage =
+      items.length === 1
+        ? items[0]?.kind === "directory"
+          ? "目录移动成功"
+          : "文件移动成功"
+        : `已移动 ${items.length} 个项目`;
+
+    if (items.length > 1) {
+      clearSelection();
+    }
+
+    appStore.success(successMessage);
+    resetMoveDialogState();
+    await refreshAfterMutation();
+  } catch (err) {
+    appStore.error(err instanceof Error ? err.message : "移动失败");
+    moveDialogSubmitting.value = false;
   }
 }
 
@@ -1681,6 +2213,7 @@ defineExpose({
 });
 
 function toggleSelect(file: FileInfo) {
+  desktopActivePath.value = file.path;
   const next = new Set(selectedPaths.value);
   if (next.has(file.path)) {
     next.delete(file.path);
@@ -1695,7 +2228,11 @@ function clearSelection() {
 }
 
 function selectAllVisible() {
-  const list = searchActive.value ? searchResults.value : files.value;
+  const list = searchActive.value
+    ? searchResults.value
+    : navigationListItems.value.filter(
+        (file) => !(file as BrowserListItem).uiRole,
+      );
   const next = new Set(selectedPaths.value);
   for (const f of list) {
     next.add(f.path);
@@ -1719,8 +2256,8 @@ async function batchDownload() {
   if (items.length === 0) return;
 
   // 分离文件和文件夹
-  const files = items.filter((f) => f.type !== "directory");
-  const folders = items.filter((f) => f.type === "directory");
+  const files = items.filter((f) => f.kind !== "directory");
+  const folders = items.filter((f) => f.kind === "directory");
 
   const totalCount = files.length + folders.length;
   if (totalCount > 10) {
@@ -1771,127 +2308,404 @@ async function batchMove() {
   const items = getSelectedItems();
   if (items.length === 0) return;
 
-  const raw = prompt(
-    "输入目标目录（相对路径，留空表示根目录）",
-    filesStore.currentPath || "",
-  );
-  if (raw == null) return;
-  const targetDir = raw
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
-
-  try {
-    for (const f of items) {
-      const to = targetDir ? `${targetDir}/${f.name}` : f.name;
-      await filesService.movePath(f.path, to, "批量移动");
-    }
-    appStore.success("批量移动完成");
-    clearSelection();
-    await refresh();
-    if (searchActive.value) {
-      await doSearch(false);
-    }
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : "批量移动失败");
-  }
+  openMoveDialog(items, filesStore.currentPath || parentDirectoryPath(items[0]?.path || ""));
 }
 
 async function renameSelected() {
   const items = getSelectedItems();
   if (items.length !== 1) return;
-  const f = items[0];
-
-  const raw = prompt("输入新名称（仅名称，不含路径分隔符）", f.name);
-  if (raw == null) return;
-  const name = raw.trim();
-  if (
-    !name ||
-    name === "." ||
-    name === ".." ||
-    name.includes("/") ||
-    name.includes("\\")
-  ) {
-    appStore.error("非法名称");
-    return;
-  }
-
-  const parts = f.path.split("/");
-  parts.pop();
-  const dir = parts.join("/");
-  const to = dir ? `${dir}/${name}` : name;
-
-  try {
-    await filesService.movePath(f.path, to, `重命名: ${f.name} -> ${name}`);
-    appStore.success("重命名成功");
-    clearSelection();
-    await refresh();
-    if (searchActive.value) {
-      await doSearch(false);
-    }
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : "重命名失败");
-  }
+  await handleRenameEntry(items[0]);
 }
 </script>
 
 <style scoped>
 .file-browser {
-  max-width: 1200px;
+  --explorer-accent: #2f6db6;
+  --explorer-accent-soft: rgba(47, 109, 182, 0.1);
+  --explorer-panel-bg: rgba(255, 255, 255, 0.92);
+  --explorer-panel-border: #d6dfeb;
+  --explorer-shell-bg: linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
+  --explorer-list-bg: rgba(255, 255, 255, 0.9);
   margin: 0 auto;
+  padding: 0;
+}
+
+.file-browser-box {
+  display: flex;
+  flex-direction: column;
+  border-radius: 22px;
+  border: 1px solid var(--explorer-panel-border);
+  background: var(--explorer-shell-bg);
+  box-shadow: 0 20px 48px rgba(32, 52, 88, 0.12);
   padding: 1rem;
 }
 
 .breadcrumb-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(214, 223, 235, 0.9);
 }
 
-.breadcrumb-left {
-  flex: 1;
+.breadcrumb-current-path {
   min-width: 0;
-}
-
-.breadcrumb-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #24384d;
 }
 
-.breadcrumb-actions {
-  flex: 0 0 auto;
+.file-browser-toolbar {
+  position: relative;
+  z-index: 2;
+  margin-bottom: 0.85rem;
 }
 
-.breadcrumb-path-dropdown {
+.desktop-command-bar {
+  display: block;
+  margin-bottom: 0.65rem;
+}
+
+.desktop-command-group {
+  min-width: 0;
+  display: flex;
+  gap: 0.55rem;
+  padding: 0.72rem;
+  border-radius: 14px;
+  border: 1px solid var(--explorer-panel-border);
+  background: var(--explorer-panel-bg);
+}
+
+.desktop-command-group {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.desktop-search-box {
+  position: relative;
+  z-index: 3;
+  margin-left: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+}
+
+.desktop-search-inline {
+  display: flex;
+  align-items: stretch;
+  gap: 0.45rem;
+}
+
+.desktop-search-field {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
-.breadcrumb-path-button {
-  padding: 0;
-  min-width: 0;
-  height: auto;
-}
-
-.breadcrumb-path-button :deep(.icon) {
-  flex: 0 0 auto;
-}
-
-.breadcrumb-path-menu {
-  max-height: 50vh;
-  overflow: auto;
-}
-
-.breadcrumb-icon-button {
-  width: 2.25rem;
-  min-width: 2.25rem;
-  height: 2.25rem;
-  padding: 0;
+.desktop-command-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 0.38rem;
+  min-height: 2rem;
+  border-radius: 999px;
+  padding-inline: 0.82rem;
+  font-weight: 600;
+}
+
+.desktop-search-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.72rem;
+  border-radius: 14px;
+  border: 1px solid var(--explorer-panel-border);
+  background: var(--explorer-panel-bg);
+}
+
+.desktop-search-panel--dropdown {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  left: auto;
+  right: 0;
+  width: max-content;
+  max-width: min(calc(100vw - 2rem), 28rem);
+  z-index: 25;
+  background: #ffffff;
+  opacity: 1;
+  isolation: isolate;
+  box-shadow: 0 22px 42px rgba(24, 38, 60, 0.18);
+}
+
+.desktop-search-panel--dropdown::after {
+  content: "";
+  position: absolute;
+  right: 1.25rem;
+  top: -0.42rem;
+  width: 0.82rem;
+  height: 0.82rem;
+  background: #ffffff;
+  border-left: 1px solid var(--explorer-panel-border);
+  border-top: 1px solid var(--explorer-panel-border);
+  transform: rotate(45deg);
+}
+
+.desktop-search-panel-heading {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6f8299;
+}
+
+.desktop-search-control {
+  min-height: 2rem;
+  border-radius: 999px;
+}
+
+.desktop-search-action-group {
+  display: inline-flex;
+  align-items: stretch;
+  flex-shrink: 0;
+}
+
+.desktop-search-button {
+  justify-content: center;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.desktop-search-toggle {
+  padding-inline: 0.68rem;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.desktop-search-toggle svg {
+  transition: transform 0.18s ease;
+}
+
+.desktop-search-toggle.is-open svg {
+  transform: rotate(180deg);
+}
+
+.desktop-search-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  color: #5d6d81;
+  font-size: 0.8rem;
+}
+
+.desktop-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  padding: 0.38rem 0.72rem;
+  border-radius: 999px;
+  border: 1px solid #d6dfeb;
+  background: #f5f8fc;
+  line-height: 1;
+}
+
+.desktop-filter-pill input {
+  margin: 0;
+}
+
+.desktop-filter-select select {
+  border-radius: 999px;
+  background-color: #ffffff;
+}
+
+.desktop-search-dropdown-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.desktop-search-clear {
+  min-width: 0;
+}
+
+.desktop-batch-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.58rem 0.8rem;
+  border-radius: 12px;
+  background: rgba(47, 109, 182, 0.08);
+  border: 1px solid rgba(47, 109, 182, 0.16);
+  margin-bottom: 0.65rem;
+}
+
+.desktop-list-primary-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  position: relative;
+  z-index: 0;
+}
+
+.desktop-batch-meta {
+  color: #2b4d75;
+  font-weight: 700;
+}
+
+.desktop-batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.desktop-batch-actions .button {
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.desktop-list-shell {
+  min-width: 0;
+  border-radius: 18px;
+  border: 1px solid var(--explorer-panel-border);
+  background: var(--explorer-panel-bg);
+}
+
+.desktop-content-pane {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.desktop-list-shell {
+  display: flex;
+  flex-direction: column;
+  padding: 0.8rem;
+}
+
+.desktop-pane-section + .desktop-pane-section {
+  margin-top: 1rem;
+}
+
+.desktop-pane-heading {
+  margin: 0 0 0.65rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #607287;
+}
+
+.desktop-nav-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0.7rem 0.8rem;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: #314255;
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease;
+  text-align: left;
+}
+
+.desktop-nav-item:hover:not(:disabled),
+.desktop-nav-item.is-active {
+  background: var(--explorer-accent-soft);
+  color: #184d9b;
+}
+
+.desktop-nav-item.is-empty,
+.desktop-nav-item:disabled {
+  color: #98a5b5;
+  cursor: default;
+}
+
+.desktop-list-meta {
+  margin-bottom: 0.7rem;
+  color: #607287;
+  font-size: 0.78rem;
+}
+
+.desktop-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.65rem 0.85rem;
+  border-radius: 14px;
+  border: 1px solid var(--explorer-panel-border);
+  background: rgba(248, 250, 253, 0.92);
+  color: #627386;
+  font-size: 0.78rem;
+}
+
+.desktop-detail-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.desktop-detail-card.is-empty {
+  min-height: 220px;
+  justify-content: center;
+}
+
+.desktop-detail-name {
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.35;
+  color: #223448;
+  word-break: break-word;
+}
+
+.desktop-detail-path {
+  margin: -0.2rem 0 0;
+  color: #7a8a9e;
+  font-size: 0.82rem;
+  word-break: break-all;
+}
+
+.desktop-detail-tags {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.desktop-detail-grid {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.desktop-detail-grid dt {
+  margin: 0 0 0.2rem;
+  font-size: 0.74rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #75859a;
+}
+
+.desktop-detail-grid dd {
+  margin: 0;
+  color: #314255;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+.desktop-detail-actions {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.desktop-detail-actions .button {
+  justify-content: flex-start;
 }
 
 .spinner {
@@ -1966,21 +2780,21 @@ async function renameSelected() {
   font-style: italic;
 }
 
-@media screen and (max-width: 768px) {
+@media screen and (max-width: 1023px) {
   .file-browser {
     padding: 0;
   }
 
   .file-browser-box {
     padding: 0.5rem;
+    border-radius: 0;
+    box-shadow: none;
+    border-left: none;
+    border-right: none;
   }
 
   .file-browser-toolbar {
     display: none;
-  }
-
-  .breadcrumb-title {
-    max-width: 70vw;
   }
 
   .breadcrumb-actions .buttons {
@@ -2004,6 +2818,12 @@ async function renameSelected() {
   .level .button {
     width: 100%;
     justify-content: center;
+  }
+}
+
+@media screen and (max-width: 1023px) {
+  .desktop-command-bar {
+    grid-template-columns: 1fr;
   }
 }
 </style>

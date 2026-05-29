@@ -1,0 +1,18 @@
+[package]
+name = "vfiles-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vfiles-domain = { path = "../vfiles-domain" }
+
+camino.workspace = true
+config.workspace = true
+secrecy.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+url.workspace = true

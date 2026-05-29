@@ -7,6 +7,10 @@ dist/
 client/dist/
 release/
 
+# Rust
+target/
+Cargo.lock
+
 # Environment
 .env
 .env.local

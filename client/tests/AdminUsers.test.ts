@@ -61,6 +61,7 @@ describe("AdminUsers.vue", () => {
     const [calledId, calledEmail] = (authService.setUserEmail as any).mock
       .calls[0];
     expect(calledId).toBe("u1");
+    expect(calledEmail).toBe("new@example.com");
     // revoke sessions
     vi.stubGlobal("confirm", () => true);
     const revokeButtons = getAllByText("强制下线");

@@ -1,0 +1,27 @@
+[package]
+name = "vfiles-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vfiles-domain = { path = "../vfiles-domain" }
+vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }
+
+async-trait.workspace = true
+futures.workspace = true
+hex.workspace = true
+mime_guess.workspace = true
+sha2.workspace = true
+similar.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+camino.workspace = true
+tempfile.workspace = true

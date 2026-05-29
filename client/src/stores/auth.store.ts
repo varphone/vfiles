@@ -1,14 +1,41 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { authService, type AuthUser } from "../services/auth.service";
+import {
+  authService,
+  type AuthUser,
+  type SessionBootstrapPayload,
+  type SessionFeatures,
+} from "../services/auth.service";
 
 export const useAuthStore = defineStore("auth", () => {
   const initialized = ref(false);
   const enabled = ref<boolean>(false);
   const allowRegister = ref<boolean>(true);
   const user = ref<AuthUser | null>(null);
+  const capabilities = ref<string[]>([]);
+  const activeWorkspace = ref<string | null>(null);
+  const features = ref<SessionFeatures | null>(null);
   const loading = ref(false);
   const error = ref<string | null>(null);
+
+  function applySessionBootstrap(bootstrap: SessionBootstrapPayload | null): void {
+    capabilities.value = bootstrap?.capabilities ?? [];
+    activeWorkspace.value = bootstrap?.activeWorkspace ?? null;
+    features.value = bootstrap?.features ?? null;
+  }
+
+  function clearSessionContext(): void {
+    applySessionBootstrap(null);
+  }
+
+  async function syncSessionContext(): Promise<void> {
+    try {
+      const bootstrap = await authService.getSessionBootstrap();
+      applySessionBootstrap(bootstrap);
+    } catch {
+      clearSessionContext();
+    }
+  }
 
   async function fetchMe(): Promise<void> {
     loading.value = true;
@@ -20,6 +47,7 @@ export const useAuthStore = defineStore("auth", () => {
         enabled.value = true;
         allowRegister.value = true;
         user.value = null;
+        clearSessionContext();
         error.value = res.error || "获取登录状态失败";
         return;
       }
@@ -28,16 +56,19 @@ export const useAuthStore = defineStore("auth", () => {
         enabled.value = false;
         allowRegister.value = true;
         user.value = null;
+        await syncSessionContext();
         return;
       }
 
       enabled.value = true;
       allowRegister.value = Boolean((res.data as any)?.allowRegister);
       user.value = ((res.data as any)?.user as AuthUser | null) ?? null;
+      await syncSessionContext();
     } catch (e) {
       enabled.value = true;
       allowRegister.value = true;
       user.value = null;
+      clearSessionContext();
       error.value = e instanceof Error ? e.message : "获取登录状态失败";
     } finally {
       initialized.value = true;
@@ -49,13 +80,10 @@ export const useAuthStore = defineStore("auth", () => {
     loading.value = true;
     error.value = null;
     try {
-      const res = await authService.login({ username, password });
-      if (!res.success) {
-        error.value = res.error || "登录失败";
-        throw new Error(error.value);
-      }
+      const loginData = await authService.login({ username, password });
+      // New Rust API returns login data directly
       enabled.value = true;
-      user.value = (res.data as any)?.user ?? null;
+      user.value = (loginData as any)?.user ?? null;
       // 标记登录成功时间，用于免疫期
       if (
         typeof window !== "undefined" &&
@@ -80,13 +108,10 @@ export const useAuthStore = defineStore("auth", () => {
     loading.value = true;
     error.value = null;
     try {
-      const res = await authService.register({ username, password, email });
-      if (!res.success) {
-        error.value = res.error || "注册失败";
-        throw new Error(error.value);
-      }
+      const userData = await authService.register({ username, password, email });
+      // New Rust API returns user data directly on success
       enabled.value = true;
-      user.value = (res.data as any)?.user ?? null;
+      user.value = userData as any;
       // 标记登录成功时间，用于免疫期
       if (
         typeof window !== "undefined" &&
@@ -110,6 +135,7 @@ export const useAuthStore = defineStore("auth", () => {
       await authService.logout();
     } finally {
       user.value = null;
+      clearSessionContext();
       loading.value = false;
       initialized.value = true;
     }
@@ -117,6 +143,7 @@ export const useAuthStore = defineStore("auth", () => {
 
   function clearUser(): void {
     user.value = null;
+    clearSessionContext();
   }
 
   return {
@@ -124,9 +151,13 @@ export const useAuthStore = defineStore("auth", () => {
     enabled,
     allowRegister,
     user,
+    capabilities,
+    activeWorkspace,
+    features,
     loading,
     error,
     fetchMe,
+    syncSessionContext,
     login,
     register,
     logout,

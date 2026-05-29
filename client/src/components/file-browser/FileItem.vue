@@ -1,82 +1,217 @@
 <template>
+  <!-- Desktop: <tr> root so table layout enforces column alignment natively -->
+  <tr v-if="desktop" class="desktop-file-row" @click="handleClick" @dblclick="handleActivate">
+    <td class="is-narrow">
+      <div class="is-flex is-align-items-center">
+        <label v-if="selectMode && !isNavigationShortcut" class="mr-2" @click.stop>
+          <input
+            type="checkbox"
+            :checked="selected"
+            @change="toggleSelected"
+            aria-label="选择"
+          />
+        </label>
+
+        <span class="icon mr-2">
+          <component :is="icon" :size="18" :stroke-width="1.7" />
+        </span>
+      </div>
+    </td>
+
+    <td>
+      <a
+        v-if="isNameLink"
+        href="#"
+        class="desktop-name-text desktop-name-link has-text-link"
+        :class="nameTextClass"
+        :title="file.name"
+        @click.stop.prevent="activateNameLink"
+      >
+        <template v-for="(seg, i) in nameSegments" :key="i">
+          <mark v-if="seg.match" class="has-background-warning-light">{{ seg.text }}</mark>
+          <span v-else>{{ seg.text }}</span>
+        </template>
+      </a>
+      <span
+        v-else
+        class="desktop-name-text"
+        :class="nameTextClass"
+        :title="file.name"
+      >
+        <template v-for="(seg, i) in nameSegments" :key="i">
+          <mark v-if="seg.match" class="has-background-warning-light">{{ seg.text }}</mark>
+          <span v-else>{{ seg.text }}</span>
+        </template>
+      </span>
+    </td>
+
+    <td class="is-narrow">{{ desktopFileDateLabel }}</td>
+
+    <td class="is-narrow">{{ desktopFileKindLabel }}</td>
+
+    <td class="is-narrow has-text-right">{{ desktopFileSizeLabel }}</td>
+
+    <td class="is-narrow has-text-right" @click.stop>
+      <div v-if="!isParentShortcut" class="buttons has-addons are-small is-right mb-0 desktop-action-buttons">
+        <template v-if="isSelfShortcut">
+          <button class="button is-ghost" @click="createDirectory" title="在当前目录下新建子目录" aria-label="在当前目录下新建子目录">
+            <span class="icon is-small"><IconFolderPlus :size="16" /></span>
+          </button>
+        </template>
+        <template v-else-if="file.kind === 'directory'">
+          <button class="button is-ghost" @click="createDirectory" title="在此目录下新建子目录" aria-label="在此目录下新建子目录">
+            <span class="icon is-small"><IconFolderPlus :size="16" /></span>
+          </button>
+          <button class="button is-ghost" @click="renameEntry" title="重命名目录" aria-label="重命名目录">
+            <span class="icon is-small"><IconPencil :size="16" /></span>
+          </button>
+          <button class="button is-ghost" @click="moveEntry" title="移动目录" aria-label="移动目录">
+            <span class="icon is-small"><IconArrowsDiff :size="16" /></span>
+          </button>
+          <button class="button is-ghost" @click="download" title="下载目录" aria-label="下载目录">
+            <span class="icon is-small"><IconDownload :size="16" /></span>
+          </button>
+          <button class="button is-ghost" @click="share" title="分享目录" aria-label="分享目录">
+            <span class="icon is-small"><IconShare :size="16" /></span>
+          </button>
+          <button class="button is-ghost is-danger" @click="confirmDelete" title="删除目录" aria-label="删除目录">
+            <span class="icon is-small"><IconTrash :size="16" /></span>
+          </button>
+        </template>
+        <template v-else>
+          <button class="button is-ghost" @click="preview" title="预览文件" aria-label="预览文件">
+            <span class="icon is-small"><IconEye :size="16" /></span>
+          </button>
+          <button class="button is-ghost" @click="viewHistory" title="查看历史" aria-label="查看历史">
+            <span class="icon is-small"><IconHistory :size="16" /></span>
+          </button>
+          <button class="button is-ghost" @click="renameEntry" title="重命名文件" aria-label="重命名文件">
+            <span class="icon is-small"><IconPencil :size="16" /></span>
+          </button>
+          <button class="button is-ghost" @click="moveEntry" title="移动文件" aria-label="移动文件">
+            <span class="icon is-small"><IconArrowsDiff :size="16" /></span>
+          </button>
+          <button class="button is-ghost" @click="download" title="下载文件" aria-label="下载文件">
+            <span class="icon is-small"><IconDownload :size="16" /></span>
+          </button>
+          <button class="button is-ghost" @click="share" title="分享文件" aria-label="分享文件">
+            <span class="icon is-small"><IconShare :size="16" /></span>
+          </button>
+          <button class="button is-ghost is-danger" @click="confirmDelete" title="删除文件" aria-label="删除文件">
+            <span class="icon is-small"><IconTrash :size="16" /></span>
+          </button>
+        </template>
+      </div>
+    </td>
+  </tr>
+
+  <!-- Mobile: <div> card, unchanged -->
   <div
+    v-else
     class="file-item box"
-    :class="{ 'has-background-light': selected, 'is-expanded': showActions }"
+    :class="{
+      'has-background-light': selected,
+      'is-expanded': showActions,
+      'file-item--shortcut-parent': isParentShortcut,
+      'file-item--shortcut-self': isSelfShortcut,
+    }"
     @click="handleClick"
+    @dblclick="handleActivate"
   >
     <div class="media">
       <div class="media-left">
-        <figure class="image is-48x48">
-          <div class="file-icon">
-            <component :is="icon" :size="32" :stroke-width="1.5" />
-          </div>
-        </figure>
-      </div>
-      <div class="media-content">
-        <div class="content">
-          <p class="file-name">
-            <strong
-              ><template v-for="(seg, i) in nameSegments" :key="i"
+          <figure class="image is-48x48">
+            <div class="file-icon">
+              <component :is="icon" :size="32" :stroke-width="1.5" />
+            </div>
+          </figure>
+        </div>
+        <div class="media-content">
+          <div class="content">
+            <p class="file-name" :class="nameTextClass" :title="file.name">
+              <template v-for="(seg, i) in nameSegments" :key="i"
                 ><mark v-if="seg.match" class="has-background-warning-light">{{
                   seg.text
                 }}</mark
                 ><span v-else>{{ seg.text }}</span></template
-              ></strong
-            >
-          </p>
-          <p class="file-info">
-            <span v-if="file.type === 'file'" class="tag is-light mr-2">
-              {{ formatSize(file.size) }}
-            </span>
-            <span class="has-text-grey-light is-size-7">
-              {{ formatDate(file.mtime) }}
-            </span>
-          </p>
-          <p v-if="file.lastCommit" class="file-commit">
-            <span class="tag is-info is-light">
-              {{ file.lastCommit.message }}
-            </span>
-          </p>
-
-          <div
-            v-if="file.type === 'file' && file.matches && file.matches.length"
-            class="search-matches"
-          >
-            <p
-              v-for="m in file.matches"
-              :key="m.line"
-              class="is-size-7 has-text-grey"
-            >
-              <span class="has-text-grey-light mr-2">{{ m.line }}:</span>
-              <template v-for="(seg, i) in splitHighlight(m.text)" :key="i">
-                <mark v-if="seg.match" class="has-background-warning-light">{{
-                  seg.text
-                }}</mark>
-                <span v-else>{{ seg.text }}</span>
+              >
+            </p>
+            <p class="file-info">
+              <template v-if="isNavigationShortcut">
+                <span class="tag is-light mr-2">
+                  {{ desktopFileKindLabel }}
+                </span>
+                <span class="has-text-grey-light is-size-7">
+                  {{ desktopSubtitle }}
+                </span>
+              </template>
+              <template v-else>
+                <span v-if="file.kind === 'file'" class="tag is-light mr-2">
+                  {{ formatSize(file.size_bytes || 0) }}
+                </span>
+                <span class="has-text-grey-light is-size-7">
+                  {{ formatDate(file.created_at) }}
+                </span>
               </template>
             </p>
+            <p v-if="file.lastCommit" class="file-commit">
+              <span class="tag is-info is-light">
+                {{ file.lastCommit.message }}
+              </span>
+            </p>
+
+            <div
+              v-if="file.kind === 'file' && file.matches && file.matches.length"
+              class="search-matches"
+            >
+              <p
+                v-for="m in file.matches"
+                :key="m.line"
+                class="is-size-7 has-text-grey"
+              >
+                <span class="has-text-grey-light mr-2">{{ m.line }}:</span>
+                <template v-for="(seg, i) in splitHighlight(m.text)" :key="i">
+                  <mark v-if="seg.match" class="has-background-warning-light">{{
+                    seg.text
+                  }}</mark>
+                  <span v-else>{{ seg.text }}</span>
+                </template>
+              </p>
+            </div>
+          </div>
+        </div>
+        <div v-if="selectMode && !isNavigationShortcut" class="media-right">
+          <div class="is-flex is-align-items-center">
+            <input
+              type="checkbox"
+              :checked="selected"
+              @click.stop
+              @change="toggleSelected"
+              aria-label="选择"
+            />
           </div>
         </div>
       </div>
-      <div v-if="selectMode" class="media-right">
-        <div class="is-flex is-align-items-center">
-          <input
-            type="checkbox"
-            :checked="selected"
-            @click.stop
-            @change="toggleSelected"
-            aria-label="选择"
-          />
-        </div>
-      </div>
-    </div>
 
     <!-- 浮动操作栏 -->
     <Transition name="slide-up">
-      <div v-if="showActions && !selectMode" class="file-actions" @click.stop>
+      <div
+        v-if="showActions && !selectMode && !isParentShortcut"
+        class="file-actions"
+        @click.stop
+      >
         <div class="actions-bar">
           <button
-            v-if="file.type === 'directory'"
+            v-if="isSelfShortcut"
+            class="action-btn"
+            @click="createDirectory"
+            title="新建目录"
+          >
+            <IconFolderPlus :size="20" />
+            <span>新建目录</span>
+          </button>
+          <button
+            v-else-if="file.kind === 'directory'"
             class="action-btn"
             @click="openFolder"
             title="打开"
@@ -85,7 +220,7 @@
             <span>打开</span>
           </button>
           <button
-            v-if="file.type === 'file'"
+            v-if="file.kind === 'file'"
             class="action-btn"
             @click="preview"
             title="预览"
@@ -94,13 +229,22 @@
             <span>预览</span>
           </button>
           <button
-            v-if="file.type === 'file'"
+            v-if="file.kind === 'file'"
             class="action-btn"
             @click="viewHistory"
             title="历史"
           >
             <IconHistory :size="20" />
             <span>历史</span>
+          </button>
+          <button
+            v-if="!isSelfShortcut"
+            class="action-btn"
+            @click="moveEntry"
+            title="移动"
+          >
+            <IconArrowsDiff :size="20" />
+            <span>移动</span>
           </button>
           <button class="action-btn" @click="download" title="下载">
             <IconDownload :size="20" />
@@ -127,7 +271,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import {
+  IconArrowLeft,
+  IconArrowsDiff,
   IconFolder,
+  IconFolderPlus,
   IconFolderOpen,
   IconFile,
   IconFileText,
@@ -135,6 +282,7 @@ import {
   IconPhoto,
   IconFileZip,
   IconHistory,
+  IconPencil,
   IconDownload,
   IconTrash,
   IconShare,
@@ -148,24 +296,96 @@ const props = defineProps<{
   selectMode?: boolean;
   selected?: boolean;
   expanded?: boolean;
+  desktop?: boolean;
 }>();
 
 const emit = defineEmits<{
   click: [file: FileInfo];
   download: [file: FileInfo];
   delete: [file: FileInfo];
+  rename: [file: FileInfo];
+  move: [file: FileInfo];
   viewHistory: [file: FileInfo];
   toggleSelect: [file: FileInfo];
   share: [file: FileInfo];
   preview: [file: FileInfo];
   openFolder: [file: FileInfo];
+  createDirectory: [file: FileInfo];
   collapse: [];
 }>();
 
 const showActions = computed(() => props.expanded);
+const uiRole = computed(
+  () => (props.file as FileInfo & { uiRole?: "self" | "parent" }).uiRole,
+);
+const isNavigationShortcut = computed(
+  () => uiRole.value === "self" || uiRole.value === "parent",
+);
+const isDirectoryEntry = computed(() => props.file.kind === "directory");
+const isNameLink = computed(
+  () => isNavigationShortcut.value || isDirectoryEntry.value,
+);
+const isSelfShortcut = computed(() => uiRole.value === "self");
+const isParentShortcut = computed(
+  () => uiRole.value === "parent",
+);
+const nameTextClass = computed(() => ({
+  "has-text-weight-bold": isDirectoryEntry.value,
+}));
+
+const desktopFileDateLabel = computed(() => {
+  if (isNavigationShortcut.value) return "--";
+  return formatDate(props.file.updated_at || props.file.created_at);
+});
+
+const desktopFileSizeLabel = computed(() => {
+  if (isNavigationShortcut.value) return "--";
+  if (props.file.kind === "directory") return "--";
+  return formatSize(props.file.size_bytes || 0);
+});
+
+const desktopFileKindLabel = computed(() => {
+  if (isParentShortcut.value) return "父目录";
+  if (isSelfShortcut.value) return "当前目录";
+  if (props.file.kind === "directory") return "文件夹";
+
+  const ext = getExtension(props.file.name);
+  if (props.file.mime_type?.startsWith("image/")) return "图像文件";
+  if (props.file.mime_type?.startsWith("video/")) return "视频文件";
+  if (props.file.mime_type?.startsWith("audio/")) return "音频文件";
+  if (ext === "pdf") return "PDF 文档";
+  if (["txt", "md", "log"].includes(ext)) return "文本文档";
+  if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "压缩文件";
+  if (ext) return `${ext.toUpperCase()} 文件`;
+  return "文件";
+});
+
+const desktopSubtitle = computed(() => {
+  if (isParentShortcut.value) {
+    return "进入上一层目录";
+  }
+
+  if (isSelfShortcut.value) {
+    return "当前目录快捷入口，可直接新建子目录";
+  }
+
+  const extendedFile = props.file as FileInfo & {
+    lastCommit?: { message?: string };
+  };
+  if (extendedFile.lastCommit?.message) {
+    return extendedFile.lastCommit.message;
+  }
+
+  if (props.file.kind === "directory") {
+    return props.file.path || "根目录";
+  }
+
+  return props.file.mime_type || "双击打开预览";
+});
 
 const icon = computed(() => {
-  if (props.file.type === "directory") return IconFolder;
+  if (isParentShortcut.value) return IconArrowLeft;
+  if (props.file.kind === "directory") return IconFolder;
 
   const ext = props.file.name.split(".").pop()?.toLowerCase();
 
@@ -235,6 +455,11 @@ function splitHighlight(text: string): NameSegment[] {
   return splitByNeedle(text, props.highlight ?? "");
 }
 
+function getExtension(name: string): string {
+  const ext = name.split(".").pop()?.toLowerCase();
+  return ext || "";
+}
+
 function formatSize(bytes: number): string {
   if (bytes === 0) return "0 B";
   const k = 1024;
@@ -244,7 +469,12 @@ function formatSize(bytes: number): string {
 }
 
 function formatDate(date: string): string {
-  return new Date(date).toLocaleString("zh-CN", {
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) {
+    return date || "--";
+  }
+
+  return parsed.toLocaleString("zh-CN", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -254,12 +484,34 @@ function formatDate(date: string): string {
 }
 
 function handleClick() {
+  if (isNavigationShortcut.value) {
+    emit("openFolder", props.file);
+    return;
+  }
+
   if (props.selectMode) {
     emit("toggleSelect", props.file);
     return;
   }
-  // 点击切换展开/收起操作栏
   emit("click", props.file);
+}
+
+function handleActivate() {
+  if (isNavigationShortcut.value) {
+    emit("openFolder", props.file);
+    return;
+  }
+  if (props.selectMode) return;
+  if (props.file.kind === "directory") {
+    emit("openFolder", props.file);
+    return;
+  }
+  emit("preview", props.file);
+}
+
+function activateNameLink() {
+  if (!isNameLink.value) return;
+  emit("openFolder", props.file);
 }
 
 function toggleSelected() {
@@ -268,6 +520,10 @@ function toggleSelected() {
 
 function openFolder() {
   emit("openFolder", props.file);
+}
+
+function createDirectory() {
+  emit("createDirectory", props.file);
 }
 
 function preview() {
@@ -282,6 +538,14 @@ function confirmDelete() {
   if (confirm(`确定要删除 ${props.file.name} 吗？`)) {
     emit("delete", props.file);
   }
+}
+
+function renameEntry() {
+  emit("rename", props.file);
+}
+
+function moveEntry() {
+  emit("move", props.file);
 }
 
 function viewHistory() {
@@ -309,6 +573,52 @@ function share() {
 .file-item:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.desktop-name-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-name-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.desktop-name-link:hover,
+.desktop-name-link:focus-visible {
+  text-decoration-thickness: 2px;
+}
+
+.desktop-file-row > td {
+  vertical-align: middle;
+}
+
+.desktop-action-buttons {
+  flex-wrap: nowrap;
+}
+
+.file-item--shortcut-self {
+  background: rgba(38, 132, 101, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(38, 132, 101, 0.12);
+}
+
+.file-item--shortcut-parent {
+  background: rgba(186, 120, 18, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(186, 120, 18, 0.12);
+}
+
+.file-item--shortcut-self .file-icon {
+  color: #1d7d62;
+  background: transparent;
+}
+
+.file-item--shortcut-parent .file-icon {
+  color: #9a650b;
+  background: transparent;
 }
 
 .file-item.is-expanded {
@@ -440,7 +750,7 @@ function share() {
   transform: translateY(100%);
 }
 
-@media screen and (max-width: 768px) {
+@media screen and (max-width: 1023px) {
   .file-item {
     padding-left: 0.5rem;
     padding-right: 0.5rem;
@@ -469,6 +779,8 @@ function share() {
     padding: 0.25rem 0.25rem;
   }
 }
+
+
 
 /* 深色模式 */
 @media (prefers-color-scheme: dark) {

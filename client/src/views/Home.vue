@@ -1,131 +1,218 @@
 <template>
   <div class="home">
-    <!-- 顶部导航栏（与移动端同款布局，桌面端也显示） -->
-    <nav
-      class="navbar is-fixed-top mobile-top-bar"
-      role="navigation"
-      aria-label="导航"
-    >
-      <div class="navbar-brand">
-        <div class="navbar-item">
-          <IconFiles :size="22" class="mr-2" />
-          <span class="mobile-brand-title">VFiles</span>
+    <nav class="navbar is-fixed-top app-top-bar" role="navigation" aria-label="主页导航">
+      <div class="container is-fluid">
+        <div class="navbar-brand">
+          <router-link class="navbar-item" to="/">
+            <figure class="image is-32x32 mr-2">
+              <img src="/vfiles-icon.svg" alt="VFiles" />
+            </figure>
+            <span class="has-text-weight-semibold">VFiles</span>
+          </router-link>
+
+          <a
+            role="button"
+            class="navbar-burger"
+            :class="{ 'is-active': mobileMenuOpen }"
+            aria-label="menu"
+            :aria-expanded="mobileMenuOpen ? 'true' : 'false'"
+            @click="mobileMenuOpen = !mobileMenuOpen"
+          >
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+          </a>
         </div>
 
-        <a
-          role="button"
-          class="navbar-burger"
-          :class="{ 'is-active': mobileMenuOpen }"
-          aria-label="menu"
-          :aria-expanded="mobileMenuOpen ? 'true' : 'false'"
-          @click="mobileMenuOpen = !mobileMenuOpen"
-        >
-          <span aria-hidden="true"></span>
-          <span aria-hidden="true"></span>
-          <span aria-hidden="true"></span>
-        </a>
-      </div>
+        <div class="navbar-menu" :class="{ 'is-active': mobileMenuOpen }">
+          <div class="navbar-start">
+            <div class="navbar-item is-hidden-touch">
+              <div class="buttons has-addons are-small mb-0">
+                <button
+                  class="button is-light"
+                  :disabled="dirHistoryLoading"
+                  title="快退到最早快照"
+                  @click="desktopHistoryFastBack"
+                >
+                  <IconChevronsLeft :size="16" />
+                </button>
+                <button
+                  class="button is-light"
+                  :disabled="dirHistoryLoading"
+                  title="后退到更早快照"
+                  @click="desktopHistoryStepBack"
+                >
+                  <IconChevronLeft :size="16" />
+                </button>
+                <button
+                  class="button is-light"
+                  :disabled="dirHistoryLoading || !browseCommit"
+                  title="前进到较新快照"
+                  @click="desktopHistoryStepForward"
+                >
+                  <IconChevronRight :size="16" />
+                </button>
+                <button
+                  class="button is-light"
+                  :disabled="dirHistoryLoading || !browseCommit"
+                  title="回到当前版本"
+                  @click="desktopHistoryFastForward"
+                >
+                  <IconChevronsRight :size="16" />
+                </button>
+              </div>
+            </div>
 
-      <div class="navbar-menu" :class="{ 'is-active': mobileMenuOpen }">
-        <div class="navbar-start">
-          <a class="navbar-item" href="#" @click.prevent="refreshAndClose"
-            >刷新</a
-          >
-          <a class="navbar-item" href="#" @click.prevent="goRootAndClose"
-            >根目录</a
-          >
-          <a class="navbar-item" href="#" @click.prevent="goBackAndClose"
-            >上一级</a
-          >
-          <a class="navbar-item" href="#" @click.prevent="openUploaderAndClose"
-            >上传文件</a
-          >
-          <a class="navbar-item" href="#" @click.prevent="toggleBatchAndClose"
-            >批量模式</a
-          >
+            <div class="navbar-item is-hidden-touch">
+              <span
+                class="tag ml-2"
+                :class="dirHistoryError ? 'is-danger is-light' : 'is-light'"
+              >
+                {{ desktopHistoryStateLabel }}
+              </span>
+            </div>
 
-          <router-link
-            v-if="auth.enabled && auth.user?.role === 'admin'"
-            class="navbar-item"
-            to="/admin/users"
-            @click="mobileMenuOpen = false"
-            >用户管理</router-link
-          >
-        </div>
-
-        <div class="navbar-end">
-          <div v-if="auth.enabled" class="navbar-item is-size-7 has-text-grey">
-            <span v-if="auth.user"
-              >{{ auth.user.username }} ({{ auth.user.role }})</span
+            <a class="navbar-item is-hidden-desktop" href="#" @click.prevent="refreshAndClose"
+              >刷新</a
             >
-            <router-link v-else class="has-text-grey" to="/login"
-              >去登录</router-link
+            <a class="navbar-item is-hidden-desktop" href="#" @click.prevent="goRootAndClose"
+              >根目录</a
+            >
+            <a class="navbar-item is-hidden-desktop" href="#" @click.prevent="goBackAndClose"
+              >上一级</a
+            >
+            <a class="navbar-item is-hidden-desktop" href="#" @click.prevent="openUploaderAndClose"
+              >上传文件</a
+            >
+            <a class="navbar-item is-hidden-desktop" href="#" @click.prevent="toggleBatchAndClose"
+              >批量模式</a
             >
           </div>
 
-          <a
-            v-if="auth.enabled && auth.user"
-            class="navbar-item"
-            href="#"
-            @click.prevent="doLogout"
-            >退出</a
-          >
+          <div class="navbar-end">
+            <div class="navbar-item">
+              <div
+                ref="accountMenuRef"
+                class="dropdown is-right"
+                :class="{ 'is-active': accountMenuOpen }"
+              >
+                <div class="dropdown-trigger">
+                  <button
+                    class="button is-light is-small"
+                    aria-haspopup="true"
+                    :aria-expanded="accountMenuOpen ? 'true' : 'false'"
+                    @click="accountMenuOpen = !accountMenuOpen"
+                  >
+                    <span>{{ auth.user?.username || '账号' }}</span>
+                    <span class="icon is-small">
+                      <IconChevronDown :size="16" />
+                    </span>
+                  </button>
+                </div>
 
-          <div class="navbar-item is-size-7 has-text-grey">
-            当前：{{ currentPathLabel }}
+                <div class="dropdown-menu" role="menu">
+                  <div class="dropdown-content">
+                    <div class="dropdown-item">
+                      <p class="has-text-grey is-size-7 mb-1">账号</p>
+                      <p class="is-size-7 mb-0">{{ desktopProfileLabel }}</p>
+                    </div>
+
+                    <hr class="dropdown-divider" />
+
+                    <router-link
+                      v-if="auth.enabled && ['admin', 'manager'].includes(auth.user?.role || '')"
+                      class="dropdown-item"
+                      to="/admin/users"
+                      @click="closeAccountMenus"
+                    >
+                      用户管理
+                    </router-link>
+
+                    <router-link
+                      v-if="auth.enabled && !auth.user"
+                      class="dropdown-item"
+                      to="/login"
+                      @click="closeAccountMenus"
+                    >
+                      去登录
+                    </router-link>
+
+                    <a
+                      v-else-if="auth.enabled && auth.user"
+                      class="dropdown-item"
+                      href="#"
+                      @click.prevent="logoutFromMenu"
+                    >
+                      退出登录
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </nav>
 
     <section class="section home-content">
-      <div class="container home-container">
-        <FileBrowser ref="browserRef" />
+      <div class="container is-fluid home-main-container">
+        <div class="home-browser-shell">
+          <FileBrowser
+            :key="auth.activeWorkspace || 'default-workspace'"
+            ref="browserRef"
+          />
+        </div>
+
+        <footer class="site-record-footer has-text-centered" aria-label="备案信息">
+          <a
+            class="site-record-link"
+            href="https://beian.miit.gov.cn/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            苏ICP备2026014694号-1
+          </a>
+        </footer>
       </div>
     </section>
 
-    <!-- 移动端底部操作栏：左侧操作菜单 + 右侧动态操作区 -->
-    <nav
-      class="navbar is-fixed-bottom has-background-dark mobile-bottom-bar"
-      role="navigation"
-      aria-label="底部操作栏"
-    >
-      <div class="mobile-bottom-bar-inner">
-        <div class="mobile-bottom-bar-top">
-          <!-- 搜索栏：始终显示（操作栏上半部分） -->
-          <div class="field has-addons mb-0 mobile-search-field">
-            <div class="control is-expanded">
-              <input
-                v-model="mobileSearchQuery"
-                class="input is-small"
-                type="text"
-                placeholder="搜索..."
-                @keyup.enter="runMobileSearch"
-              />
-            </div>
-            <div class="control">
-              <button
-                class="button is-link is-small"
-                :class="{ 'is-loading': isSearchLoading }"
-                :disabled="isSearchLoading"
-                @click="runMobileSearch"
-              >
-                <IconSearch :size="18" />
-              </button>
-            </div>
-            <div class="control">
-              <button
-                class="button is-light is-small"
-                :disabled="isSearchLoading"
-                @click="clearMobileSearch"
-              >
-                清空
-              </button>
+    <div class="mobile-bottom-bar is-hidden-desktop">
+      <div class="container is-fluid">
+        <div class="mobile-bottom-bar-inner">
+          <div class="mobile-bottom-bar-top">
+            <div class="field has-addons mobile-search-field mb-0">
+              <div class="control is-expanded">
+                <input
+                  v-model="mobileSearchQuery"
+                  class="input is-small"
+                  type="search"
+                  placeholder="搜索当前目录"
+                  @keydown.enter.prevent="runMobileSearch"
+                />
+              </div>
+              <div class="control">
+                <button
+                  class="button is-link is-small"
+                  :class="{ 'is-loading': isSearchLoading }"
+                  :disabled="isSearchLoading"
+                  @click="runMobileSearch"
+                >
+                  <IconSearch :size="18" />
+                </button>
+              </div>
+              <div class="control">
+                <button
+                  class="button is-light is-small"
+                  :disabled="isSearchLoading"
+                  @click="clearMobileSearch"
+                >
+                  清空
+                </button>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="mobile-bottom-bar-bottom">
+          <div class="mobile-bottom-bar-bottom">
           <div
             ref="actionMenuRef"
             class="dropdown is-up"
@@ -324,22 +411,24 @@
           </div>
         </div>
       </div>
-    </nav>
+    </div>
+  </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import {
-  IconFiles,
   IconMenu2,
   IconSearch,
   IconChecklist,
   IconDotsVertical,
   IconArrowLeft,
+  IconChevronsLeft,
   IconChevronLeft,
+  IconChevronDown,
   IconChevronRight,
   IconChevronsRight,
   IconHome,
@@ -374,6 +463,8 @@ type FileBrowserHandle = {
 
 const browserRef = ref<FileBrowserHandle | null>(null);
 const mobileMenuOpen = ref(false);
+const accountMenuOpen = ref(false);
+const accountMenuRef = ref<HTMLElement | null>(null);
 
 const auth = useAuthStore();
 const appStore = useAppStore();
@@ -388,6 +479,16 @@ async function doLogout() {
   }
 }
 
+function closeAccountMenus() {
+  accountMenuOpen.value = false;
+  mobileMenuOpen.value = false;
+}
+
+async function logoutFromMenu() {
+  closeAccountMenus();
+  await doLogout();
+}
+
 const actionMenuOpen = ref(false);
 const actionMenuRef = ref<HTMLElement | null>(null);
 const actionMode = ref<"nav" | "history" | "batch">("nav");
@@ -397,14 +498,17 @@ const batchMenuRef = ref<HTMLElement | null>(null);
 const dirHistoryLoading = ref(false);
 const dirHistoryError = ref<string | null>(null);
 const dirHistoryCommits = ref<Array<{ hash: string; date?: string }>>([]);
+const dirHistoryPath = ref("");
 const dirSelectedHash = ref("");
 let dirHistoryReqId = 0;
 
 const filesStore = useFilesStore();
 const { currentPath, browseCommit } = storeToRefs(filesStore);
 
-const currentPathLabel = computed(() => {
-  return currentPath.value ? `/${currentPath.value}` : "根目录";
+const desktopProfileLabel = computed(() => {
+  if (!auth.enabled) return "本地模式";
+  if (!auth.user) return "认证已启用";
+  return `${auth.user.username} · ${auth.user.role}`;
 });
 
 function updateVisualViewportBottomOffset() {
@@ -444,12 +548,17 @@ onMounted(() => {
       const el = batchMenuRef.value;
       if (el && !el.contains(target)) batchMenuOpen.value = false;
     }
+    if (accountMenuOpen.value) {
+      const el = accountMenuRef.value;
+      if (el && !el.contains(target)) accountMenuOpen.value = false;
+    }
   };
 
   const onDocKeydown = (e: KeyboardEvent) => {
     if (e.key !== "Escape") return;
     actionMenuOpen.value = false;
     batchMenuOpen.value = false;
+    accountMenuOpen.value = false;
   };
 
   document.addEventListener("click", onDocPointer, true);
@@ -564,13 +673,106 @@ const canLast = computed(() => {
   return idx > 0;
 });
 
+const desktopHistoryStateLabel = computed(() => {
+  if (dirHistoryLoading.value) return "加载历史...";
+  if (browseCommit.value) return historyHashShort.value;
+  return "当前版本";
+});
+
+watch(
+  () => currentPath.value,
+  () => {
+    dirHistoryReqId += 1;
+    dirHistoryPath.value = "";
+    dirHistoryError.value = null;
+    dirHistoryCommits.value = [];
+    dirSelectedHash.value = browseCommit.value || "";
+
+    if (browseCommit.value) {
+      void loadDirHistory();
+    }
+  },
+);
+
+watch(
+  () => browseCommit.value,
+  (nextCommit) => {
+    dirSelectedHash.value = nextCommit || "";
+
+    if (nextCommit && dirHistoryPath.value !== (currentPath.value || "")) {
+      void loadDirHistory();
+    }
+  },
+);
+
+function applyHistoryHash(hash: string | undefined) {
+  if (!hash) return;
+  dirSelectedHash.value = hash;
+  filesStore.setBrowseCommit(hash);
+}
+
+function exitBrowseHistory() {
+  dirSelectedHash.value = "";
+  filesStore.setBrowseCommit(undefined);
+}
+
+async function ensureDirHistoryLoaded() {
+  if (dirHistoryLoading.value) return false;
+
+  if (
+    dirHistoryPath.value !== (currentPath.value || "") ||
+    dirHistoryCommits.value.length === 0
+  ) {
+    await loadDirHistory();
+  }
+
+  return dirHistoryCommits.value.length > 0;
+}
+
+async function desktopHistoryFastBack() {
+  if (!(await ensureDirHistoryLoaded())) return;
+  applyHistoryHash(dirHistoryCommits.value[dirHistoryCommits.value.length - 1]?.hash);
+}
+
+async function desktopHistoryStepBack() {
+  if (!(await ensureDirHistoryLoaded())) return;
+
+  if (!browseCommit.value) {
+    applyHistoryHash(dirHistoryCommits.value[0]?.hash);
+    return;
+  }
+
+  const idx = dirSelectedIndex.value;
+  const nextHash = idx >= 0 ? dirHistoryCommits.value[idx + 1]?.hash : undefined;
+  applyHistoryHash(nextHash);
+}
+
+function desktopHistoryStepForward() {
+  if (!browseCommit.value) return;
+
+  const idx = dirSelectedIndex.value;
+  if (idx > 0) {
+    applyHistoryHash(dirHistoryCommits.value[idx - 1]?.hash);
+    return;
+  }
+
+  exitBrowseHistory();
+}
+
+function desktopHistoryFastForward() {
+  if (!browseCommit.value) return;
+  exitBrowseHistory();
+}
+
 async function loadDirHistory() {
+  const requestPath = currentPath.value || "";
   const reqId = ++dirHistoryReqId;
   dirHistoryLoading.value = true;
   dirHistoryError.value = null;
   try {
-    const data = await filesService.getFileHistory(currentPath.value || "", 50);
+    const data = await filesService.getFileHistory(requestPath, 50);
     if (reqId !== dirHistoryReqId) return;
+    dirHistoryPath.value = requestPath;
     dirHistoryCommits.value = (data.commits || []).map((c) => ({
       hash: c.hash,
       date: c.date,
@@ -593,6 +795,7 @@ async function loadDirHistory() {
     }
   } catch (err) {
     if (reqId !== dirHistoryReqId) return;
+    dirHistoryPath.value = requestPath;
     dirHistoryError.value = err instanceof Error ? err.message : "加载历史失败";
     dirHistoryCommits.value = [];
     dirSelectedHash.value = "";
@@ -705,36 +908,49 @@ function toggleBatchAndClose() {
 
 <style scoped>
 .home {
+  position: relative;
   min-height: 100vh;
-  background: #f5f5f5;
+  overflow-x: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at top left, rgba(153, 182, 214, 0.26), transparent 28%),
+    radial-gradient(circle at top right, rgba(216, 225, 235, 0.7), transparent 32%),
+    linear-gradient(180deg, #f6f8fb 0%, #eef3f7 46%, #e7edf4 100%);
+}
+
+.home::before,
+.home::after {
+  content: "";
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(8px);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.home::before {
+  top: 5rem;
+  right: -10rem;
+  width: 24rem;
+  height: 24rem;
+  background: rgba(196, 210, 226, 0.44);
+}
+
+.home::after {
+  top: 18rem;
+  left: -8rem;
+  width: 18rem;
+  height: 18rem;
+  background: rgba(226, 233, 241, 0.78);
 }
 
 .hero {
   margin-bottom: 0;
 }
 
-.mobile-top-bar {
+.app-top-bar {
   padding-top: env(safe-area-inset-top);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
-}
-
-.mobile-brand-title {
-  font-weight: 700;
-  background-image: linear-gradient(
-    90deg,
-    hsl(0 90% 60%),
-    hsl(35 90% 55%),
-    hsl(55 95% 50%),
-    hsl(120 65% 45%),
-    hsl(200 85% 55%),
-    hsl(260 85% 65%),
-    hsl(320 85% 60%)
-  );
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  -webkit-text-fill-color: transparent;
 }
 
 .mobile-bottom-bar {
@@ -841,20 +1057,124 @@ function toggleBatchAndClose() {
 }
 
 .home-content {
+  position: relative;
+  z-index: 1;
+  padding-top: 1.25rem;
   padding-bottom: 6.5rem;
-  padding-top: var(--bulma-navbar-height, 3.25rem);
 }
 
-@media screen and (max-width: 768px) {
-  .section {
-    padding: 0;
+.home-main-container {
+  min-height: 0;
+}
+
+.home-browser-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.site-record-footer {
+  padding: 1rem 0 0;
+}
+
+.site-record-link {
+  font-size: 0.75rem;
+  color: rgba(73, 89, 107, 0.88);
+}
+
+.site-record-link:hover,
+.site-record-link:focus-visible {
+  color: #3273dc;
+  text-decoration: underline;
+}
+
+@media screen and (min-width: 1024px) {
+  .home {
+    min-height: 100dvh;
   }
 
-  .home-container {
-    max-width: none;
-    width: 100%;
-    padding-left: 0;
-    padding-right: 0;
+  .mobile-bottom-bar {
+    display: none;
+  }
+
+  .home-content {
+    box-sizing: border-box;
+    padding-top: calc(var(--bulma-navbar-height, 3.25rem) + 1.25rem);
+    padding-bottom: 2rem;
+  }
+
+  .site-record-footer {
+    padding-top: 1.25rem;
+  }
+
+  :deep(.file-browser-box) {
+    border-radius: 30px;
+    border-color: rgba(214, 223, 235, 0.92);
+    background: linear-gradient(
+      180deg,
+      rgba(251, 253, 255, 0.96) 0%,
+      rgba(243, 247, 252, 0.96) 100%
+    );
+    box-shadow: 0 28px 56px rgba(33, 49, 76, 0.11);
+    padding: 0.95rem;
+  }
+
+  .home-browser-shell {
+    display: block;
+  }
+
+  :deep(.file-browser-box) {
+    display: flex;
+    flex-direction: column;
+  }
+
+  :deep(.breadcrumb-bar),
+  :deep(.desktop-command-group),
+  :deep(.desktop-search-panel),
+  :deep(.desktop-batch-strip),
+  :deep(.desktop-list-shell) {
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+  }
+
+  :deep(.breadcrumb-bar) {
+    margin-bottom: 0.85rem;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.76);
+  }
+
+  :deep(.desktop-command-bar) {
+    margin-bottom: 0.65rem;
+  }
+
+  :deep(.desktop-command-group),
+  :deep(.desktop-search-panel) {
+    padding: 0.72rem;
+    border-radius: 18px;
+    border-color: rgba(214, 223, 235, 0.92);
+    background: rgba(255, 255, 255, 0.82);
+  }
+
+  :deep(.desktop-batch-strip) {
+    margin-bottom: 0.65rem;
+    border-radius: 18px;
+    background: rgba(47, 109, 182, 0.07);
+  }
+
+  :deep(.desktop-list-shell) {
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.84);
+    padding: 0.7rem;
+  }
+}
+
+@media screen and (max-width: 1023px) {
+  .home::before,
+  .home::after {
+    opacity: 0.55;
+  }
+
+  .section {
+    padding: 0;
   }
 
   .home-content {
@@ -874,6 +1194,10 @@ function toggleBatchAndClose() {
     padding-bottom: calc(
       6.5rem + env(safe-area-inset-bottom) + var(--vv-bottom, 0px)
     );
+  }
+
+  .site-record-footer {
+    padding: 0.75rem 0 0.5rem;
   }
 }
 </style>

@@ -1,0 +1,34 @@
+[package]
+name = "vfiles-bin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "vfiles"
+path = "src/main.rs"
+
+[dependencies]
+vfiles-app = { path = "../vfiles-app" }
+vfiles-config = { path = "../vfiles-config" }
+vfiles-domain = { path = "../vfiles-domain" }
+vfiles-http = { path = "../vfiles-http" }
+vfiles-infra-fs = { path = "../vfiles-infra-fs" }
+vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }
+
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+env_logger.workspace = true
+log.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing-log.workspace = true
+tracing-subscriber.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[features]
+embed = ["vfiles-http/embed"]

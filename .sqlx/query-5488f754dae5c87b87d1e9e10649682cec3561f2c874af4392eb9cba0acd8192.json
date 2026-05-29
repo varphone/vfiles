@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                e.id as entry_id,\n                e.namespace_id,\n                e.path,\n                e.path as path_norm,\n                e.kind as entry_type,\n                e.created_at as entry_created_at,\n                ev.id as version_id,\n                ev.version as version_no,\n                ev.blob_id,\n                ev.size as size_bytes,\n                ev.content_type as mime_type,\n                ev.created_at as version_created_at,\n                ev.created_by,\n                ev.message as change_message\n            FROM entries e\n            LEFT JOIN entry_versions ev ON e.id = ev.entry_id\n            WHERE e.namespace_id = ?\n              AND (LOWER(e.path) LIKE ?)\n            ORDER BY e.created_at DESC\n            LIMIT ? OFFSET ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "entry_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "namespace_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "path",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "path_norm",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "entry_type",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "entry_created_at",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "version_id",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "version_no",
+        "ordinal": 7,
+        "type_info": "Int64"
+      },
+      {
+        "name": "blob_id",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "size_bytes",
+        "ordinal": 9,
+        "type_info": "Int64"
+      },
+      {
+        "name": "mime_type",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "version_created_at",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_by",
+        "ordinal": 12,
+        "type_info": "Text"
+      },
+      {
+        "name": "change_message",
+        "ordinal": 13,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "5488f754dae5c87b87d1e9e10649682cec3561f2c874af4392eb9cba0acd8192"
+}

@@ -42,6 +42,12 @@
           </span>
         </div>
         <p class="help is-success">链接有效期至 {{ expiresAtFormatted }}</p>
+        <div v-if="copied" class="share-copy-feedback">
+          <span class="icon">
+            <IconCheck :size="16" />
+          </span>
+          <span>链接已复制到剪贴板，可以直接发送给对方</span>
+        </div>
       </div>
 
       <div v-if="error" class="notification is-danger is-light">
@@ -61,12 +67,17 @@
         >
           生成链接
         </button>
-        <button v-else class="button is-success" @click="copyToClipboard">
+        <button
+          v-else
+          class="button"
+          :class="copied ? 'is-success' : 'is-primary'"
+          @click="copyToClipboard"
+        >
           <span class="icon">
             <IconCheck v-if="copied" :size="16" />
             <IconCopy v-else :size="16" />
           </span>
-          <span>{{ copied ? "已复制" : "复制链接" }}</span>
+          <span>{{ copied ? "已复制到剪贴板" : "复制链接" }}</span>
         </button>
       </div>
     </template>
@@ -160,6 +171,19 @@ async function copyToClipboard() {
 
 .share-dialog .field:not(:last-child) {
   margin-bottom: 1rem;
+}
+
+.share-copy-feedback {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 12px;
+  background: rgba(34, 197, 94, 0.12);
+  color: #166534;
+  font-size: 0.88rem;
+  font-weight: 600;
 }
 
 /* 手机端允许输入框内容换行/截断，避免横向滚动 */

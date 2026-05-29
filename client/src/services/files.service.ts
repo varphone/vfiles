@@ -1,5 +1,5 @@
 import { apiService } from "./api.service";
-import type { FileInfo, FileHistory } from "../types";
+import type { ContentMatch, FileInfo, FileHistory } from "../types";
 
 type DownloadProgress = { loaded: number; total?: number };
 
@@ -52,16 +52,198 @@ function triggerSaveBlob(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
 }
 
+function toIsoExpiry(ttlSeconds?: number): string | undefined {
+  if (!ttlSeconds || ttlSeconds <= 0) return undefined;
+  return new Date(Date.now() + ttlSeconds * 1000).toISOString();
+}
+
+function firefoxFileReadError(): Error {
+  const error = new Error(
+    "浏览器无法读取所选文件。Firefox 在某些目录或挂载点上可能会拒绝读取大文件，请将文件复制到本地临时目录后重试。",
+  );
+  error.name = "FirefoxFileReadError";
+  return error;
+}
+
+function isFirefoxFileReadError(error: unknown): error is Error {
+  return error instanceof Error && error.name === "FirefoxFileReadError";
+}
+
+async function readUploadChunk(
+  blob: Blob,
+  signal?: AbortSignal,
+): Promise<ArrayBuffer> {
+  if (typeof FileReader === "undefined") {
+    return blob.arrayBuffer();
+  }
+
+  return await new Promise<ArrayBuffer>((resolve, reject) => {
+    const reader = new FileReader();
+
+    const cleanup = () => {
+      signal?.removeEventListener("abort", handleAbort);
+    };
+
+    const failAsAbort = () => {
+      cleanup();
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+
+    const handleAbort = () => {
+      try {
+        reader.abort();
+      } catch {
+        failAsAbort();
+      }
+    };
+
+    if (signal?.aborted) {
+      failAsAbort();
+      return;
+    }
+
+    signal?.addEventListener("abort", handleAbort, { once: true });
+
+    reader.onload = () => {
+      cleanup();
+      if (reader.result instanceof ArrayBuffer) {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("读取上传文件失败"));
+    };
+
+    reader.onerror = () => {
+      cleanup();
+      if (signal?.aborted) {
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
+
+      const name = reader.error?.name;
+      if (
+        name === "AbortError" ||
+        name === "NotReadableError" ||
+        name === "SecurityError"
+      ) {
+        reject(firefoxFileReadError());
+        return;
+      }
+
+      reject(new Error(reader.error?.message || "读取上传文件失败"));
+    };
+
+    reader.onabort = () => {
+      cleanup();
+      if (signal?.aborted) {
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      reject(firefoxFileReadError());
+    };
+
+    reader.readAsArrayBuffer(blob);
+  });
+}
+
+type UploadInitResponse = {
+  uploadId?: string;
+  upload_id?: string;
+  chunkSize?: number;
+  chunk_size?: number;
+  totalChunks?: number;
+  total_chunks?: number;
+  received?: number[];
+  resumable?: boolean;
+};
+
+type SearchMatchDto = {
+  match_type?: string;
+  context?: string | null;
+  line_number?: number | null;
+};
+
+type SearchVersionDto = {
+  size_bytes?: number;
+  mime_type?: string | null;
+  is_text?: boolean;
+  created_at?: string;
+};
+
+type SearchResultDto = {
+  entry: FileInfo;
+  version?: SearchVersionDto | null;
+  matches?: SearchMatchDto[];
+  score?: number;
+};
+
+function normalizeSearchScope(path?: string): string {
+  return (path || "").trim().replace(/^\/+|\/+$/g, "");
+}
+
+function mergeSearchResults(results: SearchResultDto[]): SearchResultDto[] {
+  const merged = new Map<string, SearchResultDto>();
+
+  for (const result of results) {
+    const key = result.entry.path;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, {
+        ...result,
+        matches: [...(result.matches || [])],
+      });
+      continue;
+    }
+
+    existing.version = existing.version || result.version;
+    existing.score = Math.max(existing.score || 0, result.score || 0);
+    existing.matches = [...(existing.matches || []), ...(result.matches || [])];
+  }
+
+  return [...merged.values()];
+}
+
+function toContentMatches(matches?: SearchMatchDto[]): ContentMatch[] {
+  const deduped = new Map<string, ContentMatch>();
+
+  for (const match of matches || []) {
+    if (match.match_type !== "content") continue;
+    if (!match.context || !match.line_number || match.line_number <= 0) continue;
+
+    const key = `${match.line_number}:${match.context}`;
+    deduped.set(key, {
+      line: match.line_number,
+      text: match.context,
+    });
+  }
+
+  return [...deduped.values()];
+}
+
+function mapSearchResultToFileInfo(result: SearchResultDto): FileInfo {
+  const version = result.version || undefined;
+
+  return {
+    ...result.entry,
+    size_bytes: version?.size_bytes ?? result.entry.size_bytes,
+    mime_type: version?.mime_type ?? result.entry.mime_type,
+    is_text: version?.is_text ?? result.entry.is_text,
+    updated_at: version?.created_at ?? result.entry.updated_at,
+    matches: toContentMatches(result.matches),
+  };
+}
+
 export const filesService = {
   /**
    * 获取文件列表
    */
   async getFiles(path: string = "", commit?: string): Promise<FileInfo[]> {
-    const response = await apiService.get<FileInfo[]>("/files", {
-      path,
-      commit,
-    });
-    return response.data || [];
+    const endpoint = path ? `/files/tree/${encodeURIComponent(path)}` : "/files/tree";
+    const search = new URLSearchParams();
+    if (commit) search.set("commit", commit);
+    const url = search.size > 0 ? `${endpoint}?${search.toString()}` : endpoint;
+    const response = await apiService.get<FileInfo[]>(url);
+    return Array.isArray(response) ? response : ((response as any)?.data ?? []);
   },
 
   /**
@@ -80,9 +262,9 @@ export const filesService = {
    */
   async createDirectory(
     path: string,
-    message: string = "创建目录",
+    _message: string = "创建目录",
   ): Promise<any> {
-    return await apiService.post("/files/dir", { path, message });
+    return await apiService.post("/files/directories", { path });
   },
 
   /**
@@ -112,11 +294,18 @@ export const filesService = {
       onProgress?: (p: { loaded: number; total?: number }) => void;
     },
   ): Promise<any> {
-    async function fallbackSingleUpload() {
+    async function fallbackSingleUpload(mode: "xhr" | "native" = "xhr") {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("path", path);
       formData.append("message", message);
+
+      if (mode === "native") {
+        opts?.onProgress?.({ loaded: 0 });
+        return await apiService.postFormNative("/files/upload", formData, {
+          signal: opts?.signal,
+        });
+      }
 
       if (opts?.signal || opts?.onProgress) {
         return await apiService.postFormWithProgress(
@@ -124,41 +313,47 @@ export const filesService = {
           formData,
           {
             signal: opts?.signal,
+            timeoutMs: 0,
             onUploadProgress: opts?.onProgress,
           },
         );
       }
 
-      return await apiService.postForm("/files/upload", formData);
+      return await apiService.postForm("/files/upload", formData, {
+        signal: opts?.signal,
+        timeoutMs: 0,
+      });
     }
 
     // 分块上传：默认启用（即使只有 1 块也可走同一流程），若后端不支持则回退
     try {
-      const initResp = await apiService.post<{
-        uploadId: string;
-        chunkSize: number;
-        totalChunks: number;
-        received: number[];
-        resumable: boolean;
-      }>("/files/upload/init", {
-        path,
-        filename: file.name,
-        size: file.size,
-        lastModified: (file as any).lastModified ?? undefined,
-        mime: file.type || undefined,
-      });
+      const initResp = await apiService.post<UploadInitResponse>(
+        "/files/upload/init",
+        {
+          path,
+          filename: file.name,
+          size: file.size,
+          lastModified: (file as any).lastModified ?? undefined,
+          mime: file.type || undefined,
+        },
+        {
+          signal: opts?.signal,
+          timeoutMs: 0,
+        },
+      );
 
-      const initData = initResp.data;
-      if (!initData?.uploadId || !initData.chunkSize || !initData.totalChunks) {
+      const initData = ((initResp as any)?.data ?? initResp) as UploadInitResponse | undefined;
+      const uploadId = initData?.uploadId ?? initData?.upload_id;
+      const chunkSize = initData?.chunkSize ?? initData?.chunk_size;
+      const totalChunks = initData?.totalChunks ?? initData?.total_chunks;
+
+      if (!uploadId || !chunkSize || !totalChunks) {
         // 兜底：若响应异常，回退旧上传
         return await fallbackSingleUpload();
       }
 
-      const uploadId = initData.uploadId;
-      const chunkSize = initData.chunkSize;
-      const totalChunks = initData.totalChunks;
       const receivedSet = new Set<number>(
-        (initData.received || []).filter((x) => Number.isFinite(x)),
+        (initData?.received ?? []).filter((x) => Number.isFinite(x)),
       );
 
       const totalBytes = file.size;
@@ -188,36 +383,59 @@ export const filesService = {
         const start = index * chunkSize;
         const end = Math.min(totalBytes, start + chunkSize);
         const slice = file.slice(start, end);
-        const buf = await slice.arrayBuffer();
+        const buf = await readUploadChunk(slice, opts?.signal);
 
-        await apiService.postBinaryWithProgress("/files/upload/chunk", buf, {
-          params: { uploadId, index },
-          signal: opts?.signal,
-          onUploadProgress: opts?.onProgress
-            ? (p) => {
-                // 当前块进度 + 已完成总量
-                const base = uploadedBytes;
-                const loaded = Math.min(totalBytes, base + (p.loaded ?? 0));
-                opts.onProgress?.({ loaded, total: totalBytes });
-              }
-            : undefined,
-        });
+        await apiService.putBinaryWithProgress(
+          `/files/upload/chunks/${encodeURIComponent(uploadId)}/${index}`,
+          buf,
+          {
+            signal: opts?.signal,
+            timeoutMs: 0,
+            onUploadProgress: opts?.onProgress
+              ? (p) => {
+                  const base = uploadedBytes;
+                  const loaded = Math.min(totalBytes, base + (p.loaded ?? 0));
+                  opts.onProgress?.({ loaded, total: totalBytes });
+                }
+              : undefined,
+          },
+        );
 
         uploadedBytes += bytesForIndex(index);
         opts?.onProgress?.({ loaded: uploadedBytes, total: totalBytes });
       }
 
       // 完成合并并提交
-      const completeResp = await apiService.post("/files/upload/complete", {
-        uploadId,
-        message,
-      });
+      const completeResp = await apiService.post(
+        `/files/upload/complete/${encodeURIComponent(uploadId)}`,
+        {
+          message,
+        },
+        {
+          signal: opts?.signal,
+          timeoutMs: 0,
+        },
+      );
       return completeResp;
     } catch (err: any) {
       // 若后端不支持分块端点（常见是 404）或协议异常，则自动回退旧上传
       const msg = err instanceof Error ? err.message : String(err ?? "");
       if (/404|not found/i.test(msg)) {
         return await fallbackSingleUpload();
+      }
+      if (isFirefoxFileReadError(err)) {
+        try {
+          return await fallbackSingleUpload("native");
+        } catch (fallbackErr: any) {
+          if (fallbackErr?.name === "AbortError") throw fallbackErr;
+          if (
+            fallbackErr instanceof Error &&
+            /^(网络错误，请检查连接|请求失败)$/.test(fallbackErr.message)
+          ) {
+            throw err;
+          }
+          throw fallbackErr;
+        }
       }
       // Abort 直接抛出
       if (err?.name === "AbortError") throw err;
@@ -243,6 +461,21 @@ export const filesService = {
     return (
       response.data || { commits: [], currentVersion: "", totalCommits: 0 }
     );
+  },
+
+  /**
+   * 还原某个历史版本为最新版本
+   */
+  async restoreFileVersion(
+    path: string,
+    commit: string,
+    message?: string,
+  ): Promise<any> {
+    return await apiService.post("/history/restore", {
+      path,
+      commit,
+      message,
+    });
   },
 
   /**
@@ -342,13 +575,29 @@ export const filesService = {
     mode: "name" | "content" = "name",
     opts?: { type?: "all" | "file" | "directory"; path?: string },
   ): Promise<FileInfo[]> {
-    const response = await apiService.get<FileInfo[]>("/search", {
+    const scope = normalizeSearchScope(opts?.path);
+    const params: Record<string, string | number | boolean> = {
       q: query,
-      mode,
-      type: opts?.type || "all",
-      path: opts?.path || "",
-    });
-    return response.data || [];
+      search_files: true,
+      search_content: mode === "content",
+      limit: 500,
+      offset: 0,
+    };
+    if (scope) {
+      params.path = scope;
+    }
+    if (opts?.type && opts.type !== "all") {
+      params.type = opts.type;
+    }
+
+    const response = await apiService.get<SearchResultDto[]>("/files/search", params);
+
+    const payload = Array.isArray(response)
+      ? response
+      : (((response as any)?.data as SearchResultDto[] | undefined) ?? []);
+
+    return mergeSearchResults(payload)
+      .map(mapSearchResultToFileInfo);
   },
 
   /**
@@ -363,17 +612,25 @@ export const filesService = {
     expiresIn: number;
     expiresAt: string;
   }> {
-    const response = await apiService.post<{
+    const expiresAt = toIsoExpiry(opts?.ttl);
+    const response = (await apiService.post<{
       code: string;
-      url: string;
-      expiresIn: number;
-      expiresAt: string;
-    }>("/share", {
+      share_url: string;
+    }>("/share/shares", {
       path,
-      commit: opts?.commit,
-      ttl: opts?.ttl,
-    });
-    return response.data!;
+      expires_at: expiresAt,
+    })) as { code?: string; share_url?: string };
+
+    if (!response?.code || !response?.share_url) {
+      throw new Error("创建分享链接失败");
+    }
+
+    return {
+      code: response.code,
+      url: response.share_url,
+      expiresIn: opts?.ttl ?? 0,
+      expiresAt: expiresAt ?? "",
+    };
   },
 
   /**

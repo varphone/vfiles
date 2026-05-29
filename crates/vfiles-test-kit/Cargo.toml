@@ -1,0 +1,21 @@
+[package]
+name = "vfiles-test-kit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vfiles-config = { path = "../vfiles-config" }
+vfiles-domain = { path = "../vfiles-domain" }
+vfiles-app = { path = "../vfiles-app" }
+vfiles-http = { path = "../vfiles-http" }
+vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }
+vfiles-infra-fs = { path = "../vfiles-infra-fs" }
+
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tracing.workspace = true

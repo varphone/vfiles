@@ -6,7 +6,8 @@ describe("Login.vue", () => {
   it("renders login form by default", async () => {
     const { getByPlaceholderText, getByText } = renderWithProviders(Login);
 
-    expect(getByText("VFiles 登录")).toBeTruthy();
+    expect(getByText("V-Files")).toBeTruthy();
+    expect(getByText("基于版本控制的文件管理系统")).toBeTruthy();
     // username input exists
     expect(getByPlaceholderText("3-32 位，字母数字-_")).toBeTruthy();
     // password input exists

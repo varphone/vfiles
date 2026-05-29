@@ -13,18 +13,26 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-      - name: Install dependencies
-        run: bun install
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install client dependencies
+        run: cd client && bun install
+
       - name: Run lint
-        run: bun run lint
+        run: cd client && bun run lint
+
       - name: Run unit tests
-        run: bun run test:unit:coverage
-      - name: Run e2e tests (optional)
-        if: always()
-        run: |
-          npx playwright install --with-deps
-          bun run test:e2e
+        run: cd client && bun run test:coverage
+
+      - name: Rust fmt check
+        run: cargo fmt --check
+
+      - name: Rust check
+        run: cargo check --workspace
+
+      - name: Rust clippy
+        run: cargo clippy --workspace --all-targets
+
+      - name: Rust test
+        run: cargo test --workspace

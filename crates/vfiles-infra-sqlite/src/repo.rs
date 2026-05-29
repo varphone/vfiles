@@ -1,0 +1,3453 @@
+use sqlx::{Pool, Sqlite};
+use vfiles_domain::*;
+
+pub type SqlitePool = Pool<Sqlite>;
+
+fn role_as_str(role: Role) -> &'static str {
+    match role {
+        Role::Admin => "admin",
+        Role::Manager => "manager",
+        Role::User => "user",
+    }
+}
+
+fn parse_role(value: &str) -> DomainResult<Role> {
+    match value {
+        "admin" => Ok(Role::Admin),
+        "manager" => Ok(Role::Manager),
+        "user" => Ok(Role::User),
+        _ => Err(DomainError::Internal {
+            message: "Invalid role".to_string(),
+        }),
+    }
+}
+
+type UserRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    bool,
+    String,
+    String,
+    Option<String>,
+);
+
+fn parse_optional_email(value: Option<String>) -> DomainResult<Option<EmailAddress>> {
+    value
+        .map(|email| {
+            EmailAddress::new(&email).map_err(|_| DomainError::Internal {
+                message: "Invalid email".to_string(),
+            })
+        })
+        .transpose()
+}
+
+fn user_from_row(row: UserRow) -> DomainResult<User> {
+    let (
+        id,
+        username,
+        email,
+        password_hash,
+        role,
+        disabled,
+        created_at,
+        updated_at,
+        password_changed_at,
+    ) = row;
+    let role = parse_role(&role)?;
+
+    Ok(User {
+        id: UserId::from_uuid(
+            uuid::Uuid::parse_str(&id).map_err(|_| DomainError::Internal {
+                message: "Invalid UUID".to_string(),
+            })?,
+        ),
+        username: Username::new(&username).map_err(|_| DomainError::Internal {
+            message: "Invalid username".to_string(),
+        })?,
+        email: parse_optional_email(email)?,
+        password_hash,
+        role,
+        disabled,
+        created_at: parse_timestamp(&created_at)?,
+        updated_at: parse_timestamp(&updated_at)?,
+        password_changed_at: parse_timestamp_opt(password_changed_at.as_deref())?,
+    })
+}
+
+// Minimal repos for bootstrap
+#[derive(Debug)]
+pub struct SqliteUserRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteUserRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+impl Clone for SqliteUserRepo {
+    fn clone(&self) -> Self {
+        // For HTTP layer, we need Clone. Use Arc<SqlitePool> in production
+        Self {
+            pool: self.pool.clone(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl UserRepo for SqliteUserRepo {
+    async fn create_admin(
+        &self,
+        username: &str,
+        email: &str,
+        password_hash: &str,
+    ) -> DomainResult<UserId> {
+        let id = UserId::new();
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query(
+            "INSERT INTO users (id, username, email, password_hash, role, disabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(id.to_string())
+        .bind(username)
+        .bind(email)
+        .bind(password_hash)
+        .bind("admin")
+        .bind(false)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to create admin: {}", e),
+        })?;
+        Ok(id)
+    }
+
+    async fn count_admins(&self) -> DomainResult<i64> {
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to count admins: {}", e),
+            })?;
+        Ok(count)
+    }
+
+    async fn create_user(
+        &self,
+        username: &Username,
+        email: Option<&EmailAddress>,
+        password_hash: &str,
+        role: Role,
+    ) -> DomainResult<UserId> {
+        let id = UserId::new();
+        let now = time::OffsetDateTime::now_utc();
+        let role_str = role_as_str(role);
+
+        sqlx::query(
+            "INSERT INTO users (id, username, email, password_hash, role, disabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(id.to_string())
+        .bind(username.as_str())
+        .bind(email.map(|value| value.as_str()))
+        .bind(password_hash)
+        .bind(role_str)
+        .bind(false)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to create user: {}", e),
+        })?;
+        Ok(id)
+    }
+
+    async fn find_by_username(&self, username: &Username) -> DomainResult<User> {
+        let row: UserRow = sqlx::query_as(
+            "SELECT id, username, email, password_hash, role, disabled, created_at, updated_at, password_changed_at FROM users WHERE username = ?"
+        )
+        .bind(username.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => DomainError::NotFound { resource: "user".to_string() },
+            _ => DomainError::Internal { message: format!("Failed to find user: {}", e) },
+        })?;
+
+        user_from_row(row)
+    }
+
+    async fn find_by_email(&self, email: &EmailAddress) -> DomainResult<User> {
+        let row: UserRow = sqlx::query_as(
+            "SELECT id, username, email, password_hash, role, disabled, created_at, updated_at, password_changed_at FROM users WHERE email = ?"
+        )
+        .bind(email.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => DomainError::NotFound { resource: "user".to_string() },
+            _ => DomainError::Internal { message: format!("Failed to find user: {}", e) },
+        })?;
+
+        user_from_row(row)
+    }
+
+    async fn find_by_id(&self, id: &UserId) -> DomainResult<User> {
+        let row: UserRow = sqlx::query_as(
+            "SELECT id, username, email, password_hash, role, disabled, created_at, updated_at, password_changed_at FROM users WHERE id = ?"
+        )
+        .bind(id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => DomainError::NotFound { resource: "user".to_string() },
+            _ => DomainError::Internal { message: format!("Failed to find user: {}", e) },
+        })?;
+
+        user_from_row(row)
+    }
+
+    async fn update_email(&self, id: &UserId, email: &EmailAddress) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query("UPDATE users SET email = ?, updated_at = ? WHERE id = ?")
+            .bind(email.as_str())
+            .bind(now)
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to update email: {}", e),
+            })?;
+        Ok(())
+    }
+
+    async fn update_password(&self, id: &UserId, password_hash: &str) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query(
+            "UPDATE users SET password_hash = ?, password_changed_at = ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(password_hash)
+        .bind(now)
+        .bind(now)
+        .bind(id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to update password: {}", e),
+        })?;
+        Ok(())
+    }
+
+    async fn disable_user(&self, id: &UserId) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query("UPDATE users SET disabled = ?, updated_at = ? WHERE id = ?")
+            .bind(true)
+            .bind(now)
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to disable user: {}", e),
+            })?;
+        Ok(())
+    }
+
+    async fn list_users(&self, limit: i64, offset: i64) -> DomainResult<Vec<User>> {
+        let rows: Vec<UserRow> = sqlx::query_as(
+            "SELECT id, username, email, password_hash, role, disabled, created_at, updated_at, password_changed_at FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list users: {}", e),
+        })?;
+
+        let mut users = Vec::new();
+        for row in rows {
+            users.push(user_from_row(row)?);
+        }
+
+        Ok(users)
+    }
+}
+
+#[derive(Debug)]
+pub struct SqliteNamespaceRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteNamespaceRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait::async_trait]
+impl NamespaceRepo for SqliteNamespaceRepo {
+    async fn create_default(&self, owner_id: &UserId, slug: &str) -> DomainResult<NamespaceId> {
+        let id = NamespaceId::new();
+        sqlx::query("INSERT INTO namespaces (id, slug, owner_user_id) VALUES (?, ?, ?)")
+            .bind(id.to_string())
+            .bind(slug)
+            .bind(owner_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
+                    DomainError::Conflict {
+                        message: format!("Namespace '{}' already exists for owner", slug),
+                    }
+                }
+                _ => DomainError::Internal {
+                    message: format!("Failed to create namespace: {}", e),
+                },
+            })?;
+        Ok(id)
+    }
+
+    async fn find_default(&self) -> DomainResult<NamespaceId> {
+        let row: (String,) = sqlx::query_as(
+            "SELECT id FROM namespaces WHERE slug = ? ORDER BY created_at ASC, id ASC LIMIT 1",
+        )
+        .bind("default")
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => DomainError::NotFound {
+                resource: "namespace".to_string(),
+            },
+            _ => DomainError::Internal {
+                message: format!("Failed to find default namespace: {}", e),
+            },
+        })?;
+
+        let uuid = uuid::Uuid::parse_str(&row.0).map_err(|_| DomainError::Internal {
+            message: "Invalid UUID".to_string(),
+        })?;
+
+        Ok(NamespaceId::from_uuid(uuid))
+    }
+
+    async fn find_default_for_owner(&self, owner_id: &UserId) -> DomainResult<NamespaceId> {
+        let row: (String,) = sqlx::query_as(
+            "SELECT id FROM namespaces WHERE owner_user_id = ? AND slug = ? LIMIT 1",
+        )
+        .bind(owner_id.to_string())
+        .bind("default")
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => DomainError::NotFound {
+                resource: "namespace".to_string(),
+            },
+            _ => DomainError::Internal {
+                message: format!("Failed to find default namespace for owner: {}", e),
+            },
+        })?;
+
+        let uuid = uuid::Uuid::parse_str(&row.0).map_err(|_| DomainError::Internal {
+            message: "Invalid UUID".to_string(),
+        })?;
+
+        Ok(NamespaceId::from_uuid(uuid))
+    }
+}
+
+#[derive(Debug)]
+pub struct SqliteSystemSettingsRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteSystemSettingsRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait::async_trait]
+impl SystemSettingsRepo for SqliteSystemSettingsRepo {
+    async fn set_bootstrapped(&self) -> DomainResult<()> {
+        sqlx::query("INSERT OR REPLACE INTO system_settings (key, value_json) VALUES (?, ?)")
+            .bind("bootstrapped")
+            .bind("true")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to set bootstrapped: {}", e),
+            })?;
+        Ok(())
+    }
+
+    async fn is_bootstrapped(&self) -> DomainResult<bool> {
+        let result: Option<(String,)> =
+            sqlx::query_as("SELECT value_json FROM system_settings WHERE key = ?")
+                .bind("bootstrapped")
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to check bootstrapped: {}", e),
+                })?;
+        Ok(result.map(|(v,)| v == "true").unwrap_or(false))
+    }
+}
+
+#[derive(Debug)]
+pub struct SqliteSessionRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteSessionRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+impl Clone for SqliteSessionRepo {
+    fn clone(&self) -> Self {
+        // For HTTP layer, we need Clone. Use Arc<SqlitePool> in production
+        Self {
+            pool: self.pool.clone(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl SessionRepo for SqliteSessionRepo {
+    async fn create_session(
+        &self,
+        user_id: &UserId,
+        session_token_hash: &str,
+        expires_at: time::OffsetDateTime,
+        user_agent: Option<&str>,
+        ip_addr: Option<&str>,
+    ) -> DomainResult<SessionId> {
+        let id = SessionId::new();
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query(
+            "INSERT INTO user_sessions (id, user_id, session_token_hash, issued_at, expires_at, user_agent, ip_addr, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(id.to_string())
+        .bind(user_id.to_string())
+        .bind(session_token_hash)
+        .bind(now)
+        .bind(expires_at)
+        .bind(user_agent)
+        .bind(ip_addr)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to create session: {}", e),
+        })?;
+        Ok(id)
+    }
+
+    async fn find_session_by_token_hash(&self, token_hash: &str) -> DomainResult<UserSession> {
+        let row: (String, String, String, String, String, Option<String>, Option<String>, String, Option<String>) = sqlx::query_as(
+            "SELECT id, user_id, session_token_hash, issued_at, expires_at, revoked_at, user_agent, ip_addr, last_seen_at FROM user_sessions WHERE session_token_hash = ?"
+        )
+        .bind(token_hash)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => DomainError::NotFound { resource: "session".to_string() },
+            _ => DomainError::Internal { message: format!("Failed to find session: {}", e) },
+        })?;
+
+        Ok(UserSession {
+            id: SessionId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
+                DomainError::Internal {
+                    message: "Invalid UUID".to_string(),
+                }
+            })?),
+            user_id: UserId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(|_| {
+                DomainError::Internal {
+                    message: "Invalid UUID".to_string(),
+                }
+            })?),
+            session_token_hash: row.2,
+            issued_at: time::OffsetDateTime::parse(
+                &row.3,
+                &time::format_description::well_known::Rfc3339,
+            )
+            .map_err(|_| DomainError::Internal {
+                message: "Invalid timestamp".to_string(),
+            })?,
+            expires_at: time::OffsetDateTime::parse(
+                &row.4,
+                &time::format_description::well_known::Rfc3339,
+            )
+            .map_err(|_| DomainError::Internal {
+                message: "Invalid timestamp".to_string(),
+            })?,
+            revoked_at: row
+                .5
+                .as_ref()
+                .map(|s| {
+                    time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+                })
+                .transpose()
+                .map_err(|_| DomainError::Internal {
+                    message: "Invalid timestamp".to_string(),
+                })?,
+            user_agent: row.6,
+            ip_addr: Some(row.7),
+            last_seen_at: time::OffsetDateTime::parse(
+                row.8.as_ref().unwrap_or(&"".to_string()),
+                &time::format_description::well_known::Rfc3339,
+            )
+            .map_err(|_| DomainError::Internal {
+                message: "Invalid timestamp".to_string(),
+            })?,
+        })
+    }
+
+    async fn update_last_seen(&self, id: &SessionId) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query("UPDATE user_sessions SET last_seen_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to update last seen: {}", e),
+            })?;
+        Ok(())
+    }
+
+    async fn revoke_session(&self, id: &SessionId) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query("UPDATE user_sessions SET revoked_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to revoke session: {}", e),
+            })?;
+        Ok(())
+    }
+
+    async fn revoke_user_sessions(&self, user_id: &UserId) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query(
+            "UPDATE user_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+        )
+        .bind(now)
+        .bind(user_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to revoke user sessions: {}", e),
+        })?;
+        Ok(())
+    }
+
+    async fn cleanup_expired_sessions(&self) -> DomainResult<i64> {
+        let now = time::OffsetDateTime::now_utc();
+        let result = sqlx::query(
+            "DELETE FROM user_sessions WHERE expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)"
+        )
+        .bind(now)
+        .bind(now - time::Duration::days(30)) // Keep revoked sessions for 30 days
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to cleanup sessions: {}", e),
+        })?;
+        Ok(result.rows_affected() as i64)
+    }
+}
+
+// File system repositories
+
+#[derive(Debug, Clone)]
+pub struct SqliteEntryRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteEntryRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+type EntryRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+);
+
+fn parse_version_id_opt(value: Option<&str>) -> DomainResult<Option<VersionId>> {
+    value
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| {
+            uuid::Uuid::parse_str(raw)
+                .map(VersionId::from_uuid)
+                .map_err(|_| DomainError::Internal {
+                    message: "Invalid UUID".to_string(),
+                })
+        })
+        .transpose()
+}
+
+fn parse_blob_id_opt(value: Option<&str>) -> DomainResult<Option<BlobId>> {
+    value
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| {
+            uuid::Uuid::parse_str(raw)
+                .map(BlobId::from_uuid)
+                .map_err(|_| DomainError::Internal {
+                    message: "Invalid UUID".to_string(),
+                })
+        })
+        .transpose()
+}
+
+fn parse_user_id_opt(value: Option<&str>) -> DomainResult<Option<UserId>> {
+    value
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| {
+            uuid::Uuid::parse_str(raw)
+                .map(UserId::from_uuid)
+                .map_err(|_| DomainError::Internal {
+                    message: "Invalid UUID".to_string(),
+                })
+        })
+        .transpose()
+}
+
+fn parse_timestamp(value: &str) -> DomainResult<time::OffsetDateTime> {
+    time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).map_err(
+        |_| DomainError::Internal {
+            message: "Invalid timestamp".to_string(),
+        },
+    )
+}
+
+fn parse_timestamp_opt(value: Option<&str>) -> DomainResult<Option<time::OffsetDateTime>> {
+    value.map(parse_timestamp).transpose()
+}
+
+fn parse_entry_kind(value: &str) -> DomainResult<EntryKind> {
+    match value {
+        "file" => Ok(EntryKind::File),
+        "directory" => Ok(EntryKind::Directory),
+        _ => Err(DomainError::Internal {
+            message: "Invalid entry kind".to_string(),
+        }),
+    }
+}
+
+fn entry_kind_as_str(kind: EntryKind) -> &'static str {
+    match kind {
+        EntryKind::File => "file",
+        EntryKind::Directory => "directory",
+    }
+}
+
+fn parse_change_type(value: &str) -> DomainResult<ChangeType> {
+    match value {
+        "added" => Ok(ChangeType::Added),
+        "modified" => Ok(ChangeType::Modified),
+        "deleted" => Ok(ChangeType::Deleted),
+        "renamed" => Ok(ChangeType::Renamed),
+        _ => Err(DomainError::Internal {
+            message: "Invalid change type".to_string(),
+        }),
+    }
+}
+
+fn change_type_as_str(change_type: ChangeType) -> &'static str {
+    match change_type {
+        ChangeType::Added => "added",
+        ChangeType::Modified => "modified",
+        ChangeType::Deleted => "deleted",
+        ChangeType::Renamed => "renamed",
+    }
+}
+
+fn entry_name(path: &str) -> String {
+    path.split('/').last().unwrap_or("").to_string()
+}
+
+fn parse_entry_row(row: EntryRow) -> DomainResult<Entry> {
+    let current_version_id = parse_version_id_opt(row.6.as_deref())?;
+
+    Ok(Entry {
+        id: EntryId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
+            DomainError::Internal {
+                message: "Invalid UUID".to_string(),
+            }
+        })?),
+        namespace_id: NamespaceId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(|_| {
+            DomainError::Internal {
+                message: "Invalid UUID".to_string(),
+            }
+        })?),
+        parent_entry_id: None,
+        path_norm: NormalizedPath::new(&row.2).map_err(|_| DomainError::Internal {
+            message: "Invalid path".to_string(),
+        })?,
+        name: entry_name(&row.2),
+        entry_type: parse_entry_kind(&row.3)?,
+        current_version_id,
+        created_at: parse_timestamp(&row.4)?,
+        deleted_at: None,
+    })
+}
+
+fn default_content_hash() -> ContentHash {
+    ContentHash::new(&"0".repeat(64)).expect("64 zeros should be a valid sha256 string")
+}
+
+fn blob_storage_key(blob_id: &BlobId) -> String {
+    let hash = blob_id.to_string();
+    let dir = &hash[0..2];
+    let filename = &hash[2..];
+    format!("blobs/{}/{}", dir, filename)
+}
+
+fn is_text_content_type(mime_type: Option<&str>) -> bool {
+    match mime_type {
+        Some(value) if value.starts_with("text/") => true,
+        Some(value)
+            if value == "application/json"
+                || value == "application/xml"
+                || value.ends_with("+json")
+                || value.ends_with("+xml") =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+type EntryVersionRow = (
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    String,
+    String,
+    Option<String>,
+);
+
+fn parse_entry_version_row(
+    (
+        id,
+        entry_id,
+        version,
+        blob_id,
+        size,
+        content_type,
+        content_hash,
+        created_at,
+        created_by,
+        message,
+    ): EntryVersionRow,
+) -> DomainResult<EntryVersion> {
+    Ok(EntryVersion {
+        id: VersionId::from_uuid(uuid::Uuid::parse_str(&id).map_err(|_| {
+            DomainError::Internal {
+                message: "Invalid UUID".to_string(),
+            }
+        })?),
+        entry_id: EntryId::from_uuid(uuid::Uuid::parse_str(&entry_id).map_err(|_| {
+            DomainError::Internal {
+                message: "Invalid UUID".to_string(),
+            }
+        })?),
+        version_no: version as u32,
+        blob_id: parse_blob_id_opt(blob_id.as_deref())?,
+        size_bytes: ByteSize::new(size.unwrap_or_default() as u64),
+        mime_type: content_type.clone(),
+        is_text: is_text_content_type(content_type.as_deref()),
+        content_hash: content_hash
+            .as_deref()
+            .map(ContentHash::new)
+            .transpose()
+            .map_err(|_| DomainError::Internal {
+                message: "Invalid content hash".to_string(),
+            })?
+            .unwrap_or_else(default_content_hash),
+        created_by: UserId::from_uuid(uuid::Uuid::parse_str(&created_by).map_err(|_| {
+            DomainError::Internal {
+                message: "Invalid UUID".to_string(),
+            }
+        })?),
+        created_at: parse_timestamp(&created_at)?,
+        change_type: if version <= 1 {
+            ChangeType::Added
+        } else {
+            ChangeType::Modified
+        },
+        change_message: message
+            .as_deref()
+            .and_then(|value| NonEmptyMessage::new(value).ok()),
+        source_upload_id: None,
+    })
+}
+
+#[async_trait::async_trait]
+impl EntryRepo for SqliteEntryRepo {
+    async fn find_by_id(&self, entry_id: &EntryId) -> DomainResult<Entry> {
+        let row: EntryRow = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id
+            FROM entries e
+            WHERE e.id = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(entry_id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => DomainError::EntryNotFound,
+            _ => DomainError::Internal {
+                message: format!("Failed to find entry by id: {}", e),
+            },
+        })?;
+
+        parse_entry_row(row)
+    }
+
+    async fn find_by_path(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+    ) -> DomainResult<Option<Entry>> {
+        let row: Option<EntryRow> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id
+            FROM entries e
+            WHERE e.namespace_id = ? AND e.path = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(path.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to find entry: {}", e),
+        })?;
+
+        row.map(parse_entry_row).transpose()
+    }
+
+    async fn find_children(
+        &self,
+        namespace_id: &NamespaceId,
+        parent_path: &NormalizedPath,
+    ) -> DomainResult<Vec<Entry>> {
+        let rows: Vec<EntryRow> = if parent_path.as_str().is_empty() {
+            sqlx::query_as(
+                r#"
+                SELECT
+                    e.id,
+                    e.namespace_id,
+                    e.path,
+                    e.kind,
+                    e.created_at,
+                    e.updated_at,
+                    (
+                        SELECT ev.id
+                        FROM entry_versions ev
+                        WHERE ev.entry_id = e.id
+                        ORDER BY ev.version DESC
+                        LIMIT 1
+                    ) AS current_version_id
+                FROM entries e
+                WHERE e.namespace_id = ?
+                  AND instr(e.path, '/') = 0
+                ORDER BY e.path
+                "#,
+            )
+            .bind(namespace_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to find children: {}", e),
+            })?
+        } else {
+            let direct_prefix = format!("{}/", parent_path.as_str().trim_end_matches('/'));
+            sqlx::query_as(
+                r#"
+                SELECT
+                    e.id,
+                    e.namespace_id,
+                    e.path,
+                    e.kind,
+                    e.created_at,
+                    e.updated_at,
+                    (
+                        SELECT ev.id
+                        FROM entry_versions ev
+                        WHERE ev.entry_id = e.id
+                        ORDER BY ev.version DESC
+                        LIMIT 1
+                    ) AS current_version_id
+                FROM entries e
+                WHERE e.namespace_id = ?
+                  AND e.path LIKE ?
+                                    AND instr(substr(e.path, length(?) + 1), '/') = 0
+                ORDER BY e.path
+                "#,
+            )
+            .bind(namespace_id.to_string())
+            .bind(format!("{}%", direct_prefix))
+            .bind(direct_prefix)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to find children: {}", e),
+            })?
+        };
+
+        rows.into_iter().map(parse_entry_row).collect()
+    }
+
+    async fn create_entry(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        kind: EntryKind,
+        _user_id: &UserId,
+    ) -> DomainResult<EntryId> {
+        let id = EntryId::new();
+        let now = time::OffsetDateTime::now_utc();
+        let kind_str = match kind {
+            EntryKind::File => "file",
+            EntryKind::Directory => "directory",
+        };
+
+        sqlx::query(
+            "INSERT INTO entries (id, namespace_id, path, kind, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(namespace_id.to_string())
+        .bind(path.as_str())
+        .bind(kind_str)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
+                DomainError::PathConflict {
+                    message: format!("Path already exists: {}", path.as_str()),
+                }
+            }
+            _ => DomainError::Internal {
+                message: format!("Failed to create entry: {}", e),
+            },
+        })?;
+        Ok(id)
+    }
+
+    async fn update_current_version(
+        &self,
+        entry_id: &EntryId,
+        version_id: &VersionId,
+    ) -> DomainResult<()> {
+        let version_exists: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM entry_versions WHERE id = ? AND entry_id = ?")
+                .bind(version_id.to_string())
+                .bind(entry_id.to_string())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to validate version ownership: {}", e),
+                })?;
+
+        if version_exists == 0 {
+            return Err(DomainError::VersionNotFound);
+        }
+
+        let now = time::OffsetDateTime::now_utc();
+        let result = sqlx::query("UPDATE entries SET updated_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(entry_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to update current version: {}", e),
+            })?;
+
+        if result.rows_affected() == 0 {
+            return Err(DomainError::EntryNotFound);
+        }
+
+        Ok(())
+    }
+
+    async fn delete_entry(&self, entry_id: &EntryId) -> DomainResult<()> {
+        sqlx::query("DELETE FROM entries WHERE id = ?")
+            .bind(entry_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to delete entry: {}", e),
+            })?;
+        Ok(())
+    }
+
+    async fn release_blob_references(
+        &self,
+        references: &[(BlobId, u32)],
+    ) -> DomainResult<Vec<BlobId>> {
+        if references.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to begin blob release transaction: {}", e),
+        })?;
+        let mut removable = Vec::new();
+
+        for (blob_id, ref_count) in references {
+            if *ref_count == 0 {
+                continue;
+            }
+
+            sqlx::query("UPDATE blobs SET ref_count = MAX(ref_count - ?, 0) WHERE id = ?")
+                .bind(i64::from(*ref_count))
+                .bind(blob_id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to decrement blob reference count: {}", e),
+                })?;
+
+            let remaining: Option<i64> =
+                sqlx::query_scalar("SELECT ref_count FROM blobs WHERE id = ? LIMIT 1")
+                    .bind(blob_id.to_string())
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to fetch blob reference count: {}", e),
+                    })?;
+
+            if remaining == Some(0) {
+                sqlx::query("DELETE FROM blobs WHERE id = ?")
+                    .bind(blob_id.to_string())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to delete blob metadata: {}", e),
+                    })?;
+                removable.push(*blob_id);
+            }
+        }
+
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to commit blob release transaction: {}", e),
+        })?;
+
+        Ok(removable)
+    }
+
+    async fn move_entry(&self, entry_id: &EntryId, new_path: &NormalizedPath) -> DomainResult<()> {
+        sqlx::query("UPDATE entries SET path = ? WHERE id = ?")
+            .bind(new_path.as_str())
+            .bind(entry_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
+                    DomainError::PathConflict {
+                        message: format!("Path already exists: {}", new_path.as_str()),
+                    }
+                }
+                _ => DomainError::Internal {
+                    message: format!("Failed to move entry: {}", e),
+                },
+            })?;
+        Ok(())
+    }
+
+    async fn get_entry_history(
+        &self,
+        entry_id: &EntryId,
+        limit: u32,
+        _cursor: Option<&str>,
+    ) -> DomainResult<Vec<EntryVersion>> {
+        let rows: Vec<EntryVersionRow> = sqlx::query_as(
+            r#"
+            SELECT
+                ev.id,
+                ev.entry_id,
+                ev.version,
+                ev.blob_id,
+                ev.size,
+                ev.content_type,
+                b.content_hash,
+                ev.created_at,
+                ev.created_by,
+                ev.message
+            FROM entry_versions ev
+            LEFT JOIN blobs b ON b.id = ev.blob_id
+            WHERE ev.entry_id = ?
+            ORDER BY version DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(entry_id.to_string())
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to get entry history: {}", e),
+        })?;
+
+        rows.into_iter().map(parse_entry_version_row).collect()
+    }
+
+    async fn find_version(&self, version_id: &VersionId) -> DomainResult<EntryVersion> {
+        let row: EntryVersionRow = sqlx::query_as(
+            r#"
+            SELECT
+                ev.id,
+                ev.entry_id,
+                ev.version,
+                ev.blob_id,
+                ev.size,
+                ev.content_type,
+                b.content_hash,
+                ev.created_at,
+                ev.created_by,
+                ev.message
+            FROM entry_versions ev
+            LEFT JOIN blobs b ON b.id = ev.blob_id
+            WHERE ev.id = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(version_id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => DomainError::VersionNotFound,
+            _ => DomainError::Internal {
+                message: format!("Failed to find entry version: {}", e),
+            },
+        })?;
+
+        parse_entry_version_row(row)
+    }
+
+    async fn create_version(
+        &self,
+        entry_id: &EntryId,
+        blob_id: Option<&BlobId>,
+        content_hash: Option<&ContentHash>,
+        size_bytes: u64,
+        mime_type: Option<&str>,
+        created_by: &UserId,
+        message: Option<&str>,
+    ) -> DomainResult<EntryVersion> {
+        let version_id = VersionId::new();
+        let now = time::OffsetDateTime::now_utc();
+        let next_version: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM entry_versions WHERE entry_id = ?",
+        )
+        .bind(entry_id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to calculate next entry version: {}", e),
+        })?;
+
+        let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to begin entry version transaction: {}", e),
+        })?;
+
+        if let Some(blob_id) = blob_id {
+            let content_hash = content_hash.ok_or_else(|| DomainError::Internal {
+                message: "Blob content hash is required".to_string(),
+            })?;
+            sqlx::query(
+                r#"
+                INSERT INTO blobs (
+                    id,
+                    content_hash,
+                    storage_key,
+                    size,
+                    content_type,
+                    ref_count,
+                    created_at,
+                    uploaded_by,
+                    verified_at
+                ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    ref_count = blobs.ref_count + 1,
+                    verified_at = excluded.verified_at,
+                    content_type = COALESCE(blobs.content_type, excluded.content_type)
+                "#,
+            )
+            .bind(blob_id.to_string())
+            .bind(content_hash.as_str())
+            .bind(blob_storage_key(blob_id))
+            .bind(size_bytes as i64)
+            .bind(mime_type)
+            .bind(now)
+            .bind(created_by.to_string())
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to register blob metadata: {}", e),
+            })?;
+        }
+
+        sqlx::query(
+            "INSERT INTO entry_versions (id, entry_id, version, blob_id, size, content_type, created_at, created_by, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(version_id.to_string())
+        .bind(entry_id.to_string())
+        .bind(next_version)
+        .bind(blob_id.map(ToString::to_string))
+        .bind(size_bytes as i64)
+        .bind(mime_type)
+        .bind(now)
+        .bind(created_by.to_string())
+        .bind(message)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to create entry version: {}", e),
+        })?;
+
+        sqlx::query("UPDATE entries SET updated_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(entry_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to update entry timestamp: {}", e),
+            })?;
+
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to commit entry version transaction: {}", e),
+        })?;
+
+        self.find_version(&version_id).await
+    }
+}
+
+#[derive(Debug)]
+pub struct SqliteSnapshotRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteSnapshotRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    async fn next_snapshot_no(&self, namespace_id: &NamespaceId) -> DomainResult<u32> {
+        let snapshot_no: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COALESCE(
+                MAX(
+                    CASE
+                        WHEN instr(name, '-') > 0 THEN CAST(substr(name, instr(name, '-') + 1) AS INTEGER)
+                        ELSE 0
+                    END
+                ),
+                0
+            ) + 1
+            FROM snapshots
+            WHERE namespace_id = ?
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to calculate next snapshot number: {}", e),
+        })?;
+
+        u32::try_from(snapshot_no).map_err(|_| DomainError::Internal {
+            message: format!("Invalid snapshot number: {}", snapshot_no),
+        })
+    }
+}
+
+impl Clone for SqliteSnapshotRepo {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+        }
+    }
+}
+
+fn snapshot_name(kind: SnapshotKind, snapshot_no: u32) -> String {
+    match kind {
+        SnapshotKind::UserCreated => format!("snapshot-{:06}", snapshot_no),
+        SnapshotKind::AutoCommit => format!("auto-{:06}", snapshot_no),
+    }
+}
+
+const SNAPSHOT_NAME_RETRY_LIMIT: usize = 8;
+
+fn parse_snapshot_name(name: &str) -> (SnapshotKind, u32) {
+    if let Some(number) = name.strip_prefix("auto-") {
+        let snapshot_no = number.parse::<u32>().unwrap_or(1);
+        return (SnapshotKind::AutoCommit, snapshot_no);
+    }
+
+    if let Some(number) = name.strip_prefix("snapshot-") {
+        let snapshot_no = number.parse::<u32>().unwrap_or(1);
+        return (SnapshotKind::UserCreated, snapshot_no);
+    }
+
+    (SnapshotKind::UserCreated, 1)
+}
+
+#[cfg(test)]
+mod snapshot_helper_tests {
+    use super::{parse_snapshot_name, snapshot_name};
+    use vfiles_domain::SnapshotKind;
+
+    #[test]
+    fn snapshot_name_round_trip_preserves_kind_and_number() {
+        let name = snapshot_name(SnapshotKind::UserCreated, 42);
+        let (kind, snapshot_no) = parse_snapshot_name(&name);
+
+        assert_eq!(kind, SnapshotKind::UserCreated);
+        assert_eq!(snapshot_no, 42);
+    }
+
+    #[test]
+    fn auto_snapshot_name_round_trip_preserves_kind_and_number() {
+        let name = snapshot_name(SnapshotKind::AutoCommit, 7);
+        let (kind, snapshot_no) = parse_snapshot_name(&name);
+
+        assert_eq!(kind, SnapshotKind::AutoCommit);
+        assert_eq!(snapshot_no, 7);
+    }
+}
+
+#[async_trait::async_trait]
+impl SnapshotRepo for SqliteSnapshotRepo {
+    async fn create_snapshot(
+        &self,
+        namespace_id: &NamespaceId,
+        message: Option<&str>,
+        kind: SnapshotKind,
+        user_id: &UserId,
+    ) -> DomainResult<SnapshotId> {
+        let now = time::OffsetDateTime::now_utc();
+        let namespace_id_str = namespace_id.to_string();
+        let user_id_str = user_id.to_string();
+
+        for _ in 0..SNAPSHOT_NAME_RETRY_LIMIT {
+            let id = SnapshotId::new();
+            let snapshot_no = self.next_snapshot_no(namespace_id).await?;
+            let name = snapshot_name(kind, snapshot_no);
+
+            match sqlx::query(
+                "INSERT INTO snapshots (id, namespace_id, name, description, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)"
+            )
+            .bind(id.to_string())
+            .bind(&namespace_id_str)
+            .bind(name)
+            .bind(message)
+            .bind(now)
+            .bind(&user_id_str)
+            .execute(&self.pool)
+            .await
+            {
+                Ok(_) => return Ok(id),
+                Err(sqlx::Error::Database(ref db_err)) if db_err.is_unique_violation() => {
+                    continue;
+                }
+                Err(e) => {
+                    return Err(DomainError::Internal {
+                        message: format!("Failed to create snapshot: {}", e),
+                    });
+                }
+            }
+        }
+
+        Err(DomainError::Internal {
+            message: "Failed to allocate a unique snapshot name after multiple retries".to_string(),
+        })
+    }
+
+    async fn find_snapshot(&self, snapshot_id: &SnapshotId) -> DomainResult<Snapshot> {
+        let row: (String, String, String, Option<String>, String, String) = sqlx::query_as(
+            "SELECT id, namespace_id, name, description, created_at, created_by FROM snapshots WHERE id = ?"
+        )
+        .bind(snapshot_id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => DomainError::SnapshotNotFound,
+            _ => DomainError::Internal { message: format!("Failed to find snapshot: {}", e) },
+        })?;
+        let (kind, snapshot_no) = parse_snapshot_name(&row.2);
+
+        Ok(Snapshot {
+            id: SnapshotId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
+                DomainError::Internal {
+                    message: "Invalid UUID".to_string(),
+                }
+            })?),
+            namespace_id: NamespaceId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(|_| {
+                DomainError::Internal {
+                    message: "Invalid UUID".to_string(),
+                }
+            })?),
+            snapshot_no,
+            created_by: UserId::from_uuid(uuid::Uuid::parse_str(&row.5).map_err(|_| {
+                DomainError::Internal {
+                    message: "Invalid UUID".to_string(),
+                }
+            })?),
+            created_at: time::OffsetDateTime::parse(
+                &row.4,
+                &time::format_description::well_known::Rfc3339,
+            )
+            .map_err(|_| DomainError::Internal {
+                message: "Invalid timestamp".to_string(),
+            })?,
+            message: row
+                .3
+                .as_deref()
+                .and_then(|value| NonEmptyMessage::new(value).ok()),
+            kind,
+        })
+    }
+
+    async fn list_snapshots(
+        &self,
+        namespace_id: &NamespaceId,
+        limit: u32,
+        _cursor: Option<&str>,
+    ) -> DomainResult<Vec<Snapshot>> {
+        let rows: Vec<(String, String, String, Option<String>, String, String)> = sqlx::query_as(
+            "SELECT id, namespace_id, name, description, created_at, created_by FROM snapshots WHERE namespace_id = ? ORDER BY created_at DESC LIMIT ?"
+        )
+        .bind(namespace_id.to_string())
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list snapshots: {}", e),
+        })?;
+
+        let mut snapshots = Vec::new();
+        for row in rows {
+            let (kind, snapshot_no) = parse_snapshot_name(&row.2);
+
+            snapshots.push(Snapshot {
+                id: SnapshotId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
+                    DomainError::Internal {
+                        message: "Invalid UUID".to_string(),
+                    }
+                })?),
+                namespace_id: NamespaceId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(
+                    |_| DomainError::Internal {
+                        message: "Invalid UUID".to_string(),
+                    },
+                )?),
+                snapshot_no,
+                created_by: UserId::from_uuid(uuid::Uuid::parse_str(&row.5).map_err(|_| {
+                    DomainError::Internal {
+                        message: "Invalid UUID".to_string(),
+                    }
+                })?),
+                created_at: time::OffsetDateTime::parse(
+                    &row.4,
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .map_err(|_| DomainError::Internal {
+                    message: "Invalid timestamp".to_string(),
+                })?,
+                message: row
+                    .3
+                    .as_deref()
+                    .and_then(|value| NonEmptyMessage::new(value).ok()),
+                kind,
+            });
+        }
+
+        Ok(snapshots)
+    }
+
+    async fn add_snapshot_entries(
+        &self,
+        snapshot_id: &SnapshotId,
+        entries: &[SnapshotEntry],
+    ) -> DomainResult<()> {
+        let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to begin snapshot entry transaction: {}", e),
+        })?;
+
+        for entry in entries {
+            sqlx::query(
+                r#"
+                INSERT INTO snapshot_entries (
+                    snapshot_id,
+                    entry_id,
+                    entry_version_id,
+                    entry_path,
+                    entry_kind,
+                    blob_id,
+                    size,
+                    content_type,
+                    version_no,
+                    change_type,
+                    created_by,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(snapshot_id.to_string())
+            .bind(entry.entry_id.to_string())
+            .bind(entry.entry_version_id.map(|value| value.to_string()))
+            .bind(entry.entry_path.as_str())
+            .bind(entry_kind_as_str(entry.entry_kind))
+            .bind(entry.blob_id.map(|value| value.to_string()))
+            .bind(entry.size_bytes.map(|value| value.as_u64() as i64))
+            .bind(entry.mime_type.as_deref())
+            .bind(entry.version_no.map(i64::from))
+            .bind(change_type_as_str(entry.change_type))
+            .bind(entry.created_by.map(|value| value.to_string()))
+            .bind(entry.created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to add snapshot entry: {}", e),
+            })?;
+
+            if let Some(blob_id) = entry.blob_id {
+                sqlx::query("UPDATE blobs SET ref_count = ref_count + 1 WHERE id = ?")
+                    .bind(blob_id.to_string())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to update blob reference count: {}", e),
+                    })?;
+            }
+        }
+
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to commit snapshot entry transaction: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    async fn get_snapshot_entries(
+        &self,
+        snapshot_id: &SnapshotId,
+    ) -> DomainResult<Vec<SnapshotEntry>> {
+        let rows: Vec<(
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+            Option<i64>,
+            String,
+            Option<String>,
+            Option<String>,
+        )> = sqlx::query_as(
+            r#"
+            SELECT
+                snapshot_id,
+                entry_id,
+                entry_version_id,
+                entry_path,
+                entry_kind,
+                blob_id,
+                size,
+                content_type,
+                version_no,
+                change_type,
+                created_by,
+                created_at
+            FROM snapshot_entries
+            WHERE snapshot_id = ?
+            ORDER BY entry_path ASC
+            "#,
+        )
+        .bind(snapshot_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to get snapshot entries: {}", e),
+        })?;
+
+        let mut entries = Vec::new();
+        for row in rows {
+            entries.push(SnapshotEntry {
+                snapshot_id: SnapshotId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(
+                    |_| DomainError::Internal {
+                        message: "Invalid UUID".to_string(),
+                    },
+                )?),
+                entry_id: EntryId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(|_| {
+                    DomainError::Internal {
+                        message: "Invalid UUID".to_string(),
+                    }
+                })?),
+                entry_path: NormalizedPath::new(&row.3).map_err(|_| DomainError::Internal {
+                    message: "Invalid path".to_string(),
+                })?,
+                entry_kind: parse_entry_kind(&row.4)?,
+                entry_version_id: parse_version_id_opt(row.2.as_deref())?,
+                blob_id: parse_blob_id_opt(row.5.as_deref())?,
+                size_bytes: row.6.map(|value| ByteSize::new(value as u64)),
+                mime_type: row.7,
+                version_no: row.8.map(|value| value as u32),
+                change_type: parse_change_type(&row.9)?,
+                created_by: parse_user_id_opt(row.10.as_deref())?,
+                created_at: parse_timestamp_opt(row.11.as_deref())?,
+            });
+        }
+
+        Ok(entries)
+    }
+}
+
+use camino::Utf8PathBuf;
+use sha2::{Digest, Sha256};
+use tokio::fs;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+#[derive(Debug, Clone)]
+pub struct FsBlobStore {
+    pool: SqlitePool,
+    base_path: Utf8PathBuf,
+}
+
+impl FsBlobStore {
+    pub fn new(pool: SqlitePool, base_path: Utf8PathBuf) -> Self {
+        Self { pool, base_path }
+    }
+
+    fn blob_id_for_hash(hash_hex: &str) -> BlobId {
+        let hash_bytes = hex::decode(hash_hex).expect("content hash should decode");
+        let mut uuid_bytes = [0_u8; 16];
+        uuid_bytes.copy_from_slice(&hash_bytes[..16]);
+        uuid_bytes[6] = (uuid_bytes[6] & 0x0f) | 0x50;
+        uuid_bytes[8] = (uuid_bytes[8] & 0x3f) | 0x80;
+        BlobId::from_uuid(uuid::Uuid::from_bytes(uuid_bytes))
+    }
+
+    fn get_blob_path(&self, blob_id: &BlobId) -> Utf8PathBuf {
+        let hash = blob_id.to_string();
+        // Use first 2 chars as directory, rest as filename
+        let dir = &hash[0..2];
+        let filename = &hash[2..];
+        self.base_path.join(dir).join(filename)
+    }
+}
+
+#[async_trait::async_trait]
+impl BlobStore for FsBlobStore {
+    async fn store_blob(
+        &self,
+        data: &[u8],
+        expected_sha256: Option<&str>,
+    ) -> DomainResult<(BlobId, ContentHash, bool)> {
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        let hash_bytes = hasher.finalize();
+        let hash_hex = hex::encode(hash_bytes);
+        let content_hash = ContentHash::new(&hash_hex).map_err(|_| DomainError::Internal {
+            message: "Invalid hash format".to_string(),
+        })?;
+
+        if let Some(expected) = expected_sha256 {
+            if expected != hash_hex {
+                return Err(DomainError::Internal {
+                    message: format!(
+                        "Blob integrity check failed: expected {}, got {}",
+                        expected, hash_hex
+                    ),
+                });
+            }
+        }
+
+        let blob_id = Self::blob_id_for_hash(&hash_hex);
+        let blob_path = self.get_blob_path(&blob_id);
+
+        if fs::try_exists(&blob_path)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to inspect blob path: {}", e),
+            })?
+        {
+            return Ok((blob_id, content_hash, false));
+        }
+
+        // Create directory if it doesn't exist
+        if let Some(parent) = blob_path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to create blob directory: {}", e),
+                })?;
+        }
+
+        // Write blob data
+        let mut file = fs::File::create(&blob_path)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to create blob file: {}", e),
+            })?;
+        file.write_all(data)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to write blob data: {}", e),
+            })?;
+        file.flush().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to flush blob file: {}", e),
+        })?;
+
+        Ok((blob_id, content_hash, true))
+    }
+
+    async fn store_blob_stream(
+        &self,
+        mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        expected_sha256: Option<&str>,
+    ) -> DomainResult<(BlobId, ContentHash, bool, u64)> {
+        let temp_dir = self.base_path.join("tmp");
+        fs::create_dir_all(&temp_dir)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to create blob temp directory: {}", e),
+            })?;
+        let temp_path = temp_dir.join(format!("blob-upload-{}.tmp", uuid::Uuid::new_v4()));
+        let mut temp_file =
+            fs::File::create(&temp_path)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to create blob temp file: {}", e),
+                })?;
+        let mut hasher = Sha256::new();
+        let mut total_size = 0_u64;
+        let mut buffer = [0_u8; 64 * 1024];
+
+        loop {
+            let read = reader
+                .read(&mut buffer)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to read blob stream: {}", e),
+                })?;
+            if read == 0 {
+                break;
+            }
+
+            hasher.update(&buffer[..read]);
+            total_size += read as u64;
+            temp_file
+                .write_all(&buffer[..read])
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to write blob temp file: {}", e),
+                })?;
+        }
+
+        temp_file.flush().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to flush blob temp file: {}", e),
+        })?;
+        drop(temp_file);
+
+        let hash_hex = hex::encode(hasher.finalize());
+        let content_hash = ContentHash::new(&hash_hex).map_err(|_| DomainError::Internal {
+            message: "Invalid hash format".to_string(),
+        })?;
+
+        if let Some(expected) = expected_sha256 {
+            if expected != hash_hex {
+                let _ = fs::remove_file(&temp_path).await;
+                return Err(DomainError::Internal {
+                    message: format!(
+                        "Blob integrity check failed: expected {}, got {}",
+                        expected, hash_hex
+                    ),
+                });
+            }
+        }
+
+        let blob_id = Self::blob_id_for_hash(&hash_hex);
+        let blob_path = self.get_blob_path(&blob_id);
+
+        if fs::try_exists(&blob_path)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to inspect blob path: {}", e),
+            })?
+        {
+            let _ = fs::remove_file(&temp_path).await;
+            return Ok((blob_id, content_hash, false, total_size));
+        }
+
+        if let Some(parent) = blob_path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to create blob directory: {}", e),
+                })?;
+        }
+
+        match fs::rename(&temp_path, &blob_path).await {
+            Ok(()) => Ok((blob_id, content_hash, true, total_size)),
+            Err(e) => {
+                if fs::try_exists(&blob_path).await.map_err(|inspect_err| {
+                    DomainError::Internal {
+                        message: format!(
+                            "Failed to inspect blob path after rename failure: {}",
+                            inspect_err
+                        ),
+                    }
+                })? {
+                    let _ = fs::remove_file(&temp_path).await;
+                    Ok((blob_id, content_hash, false, total_size))
+                } else {
+                    Err(DomainError::Internal {
+                        message: format!("Failed to move blob temp file into place: {}", e),
+                    })
+                }
+            }
+        }
+    }
+
+    async fn get_blob(&self, blob_id: &BlobId) -> DomainResult<Option<Vec<u8>>> {
+        let blob_path = self.get_blob_path(blob_id);
+        match fs::read(&blob_path).await {
+            Ok(data) => Ok(Some(data)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(DomainError::Internal {
+                message: format!("Failed to read blob: {}", e),
+            }),
+        }
+    }
+
+    async fn get_blob_stream(
+        &self,
+        blob_id: &BlobId,
+    ) -> DomainResult<Option<Box<dyn tokio::io::AsyncRead + Send + Unpin>>> {
+        let blob_path = self.get_blob_path(blob_id);
+        match fs::File::open(&blob_path).await {
+            Ok(file) => Ok(Some(Box::new(file))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(DomainError::Internal {
+                message: format!("Failed to open blob stream: {}", e),
+            }),
+        }
+    }
+
+    async fn delete_blob(&self, blob_id: &BlobId) -> DomainResult<()> {
+        let blob_path = self.get_blob_path(blob_id);
+        match fs::remove_file(&blob_path).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()), // Already deleted
+            Err(e) => Err(DomainError::Internal {
+                message: format!("Failed to delete blob: {}", e),
+            }),
+        }
+    }
+
+    async fn blob_exists(&self, sha256: &ContentHash) -> DomainResult<bool> {
+        let blob_id = Self::blob_id_for_hash(sha256.as_str());
+        fs::try_exists(self.get_blob_path(&blob_id))
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to inspect blob path: {}", e),
+            })
+    }
+
+    async fn get_blob_metadata(&self, blob_id: &BlobId) -> DomainResult<Option<Blob>> {
+        let row: Option<(String, String, i64, Option<String>, i64, String, Option<String>)> =
+            sqlx::query_as(
+                r#"
+                SELECT content_hash, storage_key, size, content_type, ref_count, created_at, verified_at
+                FROM blobs
+                WHERE id = ?
+                LIMIT 1
+                "#,
+            )
+            .bind(blob_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to get blob metadata: {}", e),
+            })?;
+
+        row.map(
+            |(
+                content_hash,
+                storage_key,
+                size,
+                content_type,
+                ref_count,
+                created_at,
+                verified_at,
+            )| {
+                Ok(Blob {
+                    id: *blob_id,
+                    sha256_hex: content_hash,
+                    storage_key,
+                    size_bytes: ByteSize::new(size as u64),
+                    mime_type_detected: content_type,
+                    ref_count: ref_count.max(0) as u32,
+                    created_at: parse_timestamp(&created_at)?,
+                    verified_at: verified_at.as_deref().map(parse_timestamp).transpose()?,
+                })
+            },
+        )
+        .transpose()
+    }
+}
+
+#[derive(Debug)]
+pub struct FsUploadStore {
+    base_path: Utf8PathBuf,
+}
+
+impl FsUploadStore {
+    pub fn new(base_path: Utf8PathBuf) -> Self {
+        Self { base_path }
+    }
+
+    fn assembled_upload_path(&self, upload_id: &UploadId) -> Utf8PathBuf {
+        self.base_path
+            .join(upload_id.to_string())
+            .join("assembled.bin")
+    }
+
+    fn get_upload_path(&self, upload_id: &UploadId, part_index: Option<u32>) -> Utf8PathBuf {
+        let upload_dir = self.base_path.join(upload_id.to_string());
+        match part_index {
+            Some(index) => upload_dir.join(format!("part_{}", index)),
+            None => upload_dir.join("metadata.json"),
+        }
+    }
+
+    async fn read_metadata(&self, upload_id: &UploadId) -> DomainResult<serde_json::Value> {
+        let metadata_path = self.get_upload_path(upload_id, None);
+        let metadata_json = fs::read_to_string(&metadata_path).await.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                DomainError::NotFound {
+                    resource: "upload session".to_string(),
+                }
+            } else {
+                DomainError::Internal {
+                    message: format!("Failed to read metadata: {}", e),
+                }
+            }
+        })?;
+
+        serde_json::from_str(&metadata_json).map_err(|e| DomainError::Internal {
+            message: format!("Failed to parse metadata: {}", e),
+        })
+    }
+
+    async fn write_metadata(
+        &self,
+        upload_id: &UploadId,
+        metadata: &serde_json::Value,
+    ) -> DomainResult<()> {
+        let metadata_path = self.get_upload_path(upload_id, None);
+        let metadata_json =
+            serde_json::to_string_pretty(metadata).map_err(|e| DomainError::Internal {
+                message: format!("Failed to serialize metadata: {}", e),
+            })?;
+
+        fs::write(&metadata_path, metadata_json)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to write metadata: {}", e),
+            })
+    }
+
+    fn parse_timestamp(
+        value: &serde_json::Value,
+        field: &str,
+    ) -> DomainResult<time::OffsetDateTime> {
+        let raw = value.as_str().ok_or_else(|| DomainError::Internal {
+            message: format!("Missing upload metadata field: {}", field),
+        })?;
+
+        time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339).map_err(
+            |e| DomainError::Internal {
+                message: format!("Invalid upload metadata timestamp {}: {}", field, e),
+            },
+        )
+    }
+
+    fn parse_state(value: Option<&str>) -> UploadState {
+        match value.unwrap_or("receiving") {
+            "assembling" => UploadState::Assembling,
+            "completed" => UploadState::Completed,
+            "failed" => UploadState::Failed,
+            _ => UploadState::Receiving,
+        }
+    }
+}
+
+impl Clone for FsUploadStore {
+    fn clone(&self) -> Self {
+        Self {
+            base_path: self.base_path.clone(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl UploadStore for FsUploadStore {
+    async fn create_upload_session(
+        &self,
+        namespace_id: &NamespaceId,
+        target_path: &NormalizedPath,
+        filename: &str,
+        size_bytes: u64,
+        chunk_size: u64,
+        user_id: &UserId,
+    ) -> DomainResult<UploadId> {
+        let upload_id = UploadId::new();
+        let upload_dir = self.base_path.join(upload_id.to_string());
+        let now = time::OffsetDateTime::now_utc();
+        let expires_at = now + time::Duration::hours(24);
+        let total_chunks = if chunk_size == 0 {
+            0
+        } else {
+            size_bytes.div_ceil(chunk_size) as u32
+        };
+
+        // Create upload directory
+        fs::create_dir_all(&upload_dir)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to create upload directory: {}", e),
+            })?;
+
+        // Store metadata
+        let metadata = serde_json::json!({
+            "upload_id": upload_id.to_string(),
+            "namespace_id": namespace_id.to_string(),
+            "target_path": target_path.as_str(),
+            "filename": filename,
+            "size_bytes": size_bytes,
+            "chunk_size": chunk_size,
+            "total_chunks": total_chunks,
+            "user_id": user_id.to_string(),
+            "created_at": now.format(&time::format_description::well_known::Rfc3339).map_err(|e| DomainError::Internal {
+                message: format!("Failed to format upload creation timestamp: {}", e),
+            })?,
+            "updated_at": now.format(&time::format_description::well_known::Rfc3339).map_err(|e| DomainError::Internal {
+                message: format!("Failed to format upload update timestamp: {}", e),
+            })?,
+            "expires_at": expires_at.format(&time::format_description::well_known::Rfc3339).map_err(|e| DomainError::Internal {
+                message: format!("Failed to format upload expiry timestamp: {}", e),
+            })?,
+            "status": "receiving"
+        });
+
+        let metadata_path = self.get_upload_path(&upload_id, None);
+        let metadata_json =
+            serde_json::to_string_pretty(&metadata).map_err(|e| DomainError::Internal {
+                message: format!("Failed to serialize metadata: {}", e),
+            })?;
+
+        fs::write(&metadata_path, metadata_json)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to write metadata: {}", e),
+            })?;
+
+        Ok(upload_id)
+    }
+
+    async fn get_upload_session(&self, upload_id: &UploadId) -> DomainResult<UploadSession> {
+        let metadata = self.read_metadata(upload_id).await?;
+        let created_at = Self::parse_timestamp(&metadata["created_at"], "created_at")?;
+        let updated_at = Self::parse_timestamp(&metadata["updated_at"], "updated_at")?;
+        let expires_at = Self::parse_timestamp(&metadata["expires_at"], "expires_at")?;
+        let completed_at = metadata
+            .get("completed_at")
+            .filter(|value| !value.is_null())
+            .map(|value| Self::parse_timestamp(value, "completed_at"))
+            .transpose()?;
+
+        Ok(UploadSession {
+            id: *upload_id,
+            namespace_id: NamespaceId::from_uuid(
+                uuid::Uuid::parse_str(metadata["namespace_id"].as_str().unwrap_or("")).map_err(
+                    |_| DomainError::Internal {
+                        message: "Invalid namespace ID".to_string(),
+                    },
+                )?,
+            ),
+            target_path_norm: NormalizedPath::new(metadata["target_path"].as_str().unwrap_or(""))
+                .map_err(|_| DomainError::Internal {
+                message: "Invalid path".to_string(),
+            })?,
+            filename: metadata["filename"].as_str().unwrap_or("").to_string(),
+            declared_size: ByteSize::new(metadata["size_bytes"].as_u64().unwrap_or(0)),
+            chunk_size: metadata["chunk_size"].as_u64().unwrap_or(0),
+            total_chunks: metadata["total_chunks"].as_u64().unwrap_or(0) as u32,
+            state: Self::parse_state(metadata["status"].as_str()),
+            owner_user_id: UserId::from_uuid(
+                uuid::Uuid::parse_str(metadata["user_id"].as_str().unwrap_or("")).map_err(
+                    |_| DomainError::Internal {
+                        message: "Invalid user ID".to_string(),
+                    },
+                )?,
+            ),
+            expires_at,
+            created_at,
+            updated_at,
+            completed_at,
+        })
+    }
+
+    async fn store_upload_part(
+        &self,
+        upload_id: &UploadId,
+        part_index: u32,
+        data: &[u8],
+        sha256: &str,
+    ) -> DomainResult<()> {
+        let part_path = self.get_upload_path(upload_id, Some(part_index));
+        let now = time::OffsetDateTime::now_utc();
+
+        // Verify hash
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        let actual_hash = hex::encode(hasher.finalize());
+        if actual_hash != sha256 {
+            return Err(DomainError::UploadPartInvalid);
+        }
+
+        fs::write(&part_path, data)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to write upload part: {}", e),
+            })?;
+
+        let mut metadata = self.read_metadata(upload_id).await?;
+        metadata["updated_at"] = now
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to format upload update timestamp: {}", e),
+            })?
+            .into();
+        self.write_metadata(upload_id, &metadata).await?;
+
+        Ok(())
+    }
+
+    async fn get_upload_parts(&self, upload_id: &UploadId) -> DomainResult<Vec<UploadPart>> {
+        let upload_dir = self.base_path.join(upload_id.to_string());
+        let mut parts = Vec::new();
+
+        // Read all part files
+        let mut entries = fs::read_dir(&upload_dir)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to read upload directory: {}", e),
+            })?;
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to read directory entry: {}", e),
+            })?
+        {
+            let path = entry.path();
+            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                if filename.starts_with("part_") {
+                    if let Ok(part_index) = filename.trim_start_matches("part_").parse::<u32>() {
+                        let metadata =
+                            entry.metadata().await.map_err(|e| DomainError::Internal {
+                                message: format!("Failed to get part metadata: {}", e),
+                            })?;
+                        let size_bytes = ByteSize::new(metadata.len());
+
+                        parts.push(UploadPart {
+                            upload_session_id: *upload_id,
+                            part_index,
+                            temp_rel_path: format!("part_{}", part_index),
+                            size_bytes,
+                            sha256_hex: String::new(), // Would need to be stored
+                            received_at: time::OffsetDateTime::now_utc(),
+                        });
+                    }
+                }
+            }
+        }
+
+        parts.sort_by_key(|p| p.part_index);
+        Ok(parts)
+    }
+
+    async fn assemble_upload_stream(
+        &self,
+        upload_id: &UploadId,
+    ) -> DomainResult<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
+        let session = self.get_upload_session(upload_id).await?;
+        let parts = self.get_upload_parts(upload_id).await?;
+
+        if session.total_chunks > 0 && parts.len() != session.total_chunks as usize {
+            return Err(DomainError::UploadConflict);
+        }
+
+        let assembled_path = self.assembled_upload_path(upload_id);
+        if let Some(parent) = assembled_path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to create assembled upload directory: {}", e),
+                })?;
+        }
+
+        let _ = fs::remove_file(&assembled_path).await;
+        let mut assembled_file =
+            fs::File::create(&assembled_path)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to create assembled upload file: {}", e),
+                })?;
+
+        for expected_index in 0..parts.len() {
+            let part = parts
+                .get(expected_index)
+                .ok_or(DomainError::UploadConflict)?;
+            if part.part_index as usize != expected_index {
+                return Err(DomainError::UploadConflict);
+            }
+
+            let part_path = self.get_upload_path(upload_id, Some(part.part_index));
+            let mut part_file =
+                fs::File::open(&part_path)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to open upload part {}: {}", part.part_index, e),
+                    })?;
+            tokio::io::copy(&mut part_file, &mut assembled_file)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to append upload part {}: {}", part.part_index, e),
+                })?;
+        }
+
+        assembled_file
+            .flush()
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to flush assembled upload file: {}", e),
+            })?;
+        drop(assembled_file);
+
+        let assembled_reader =
+            fs::File::open(&assembled_path)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to reopen assembled upload file: {}", e),
+                })?;
+        Ok(Box::new(assembled_reader))
+    }
+
+    async fn assemble_upload(&self, upload_id: &UploadId) -> DomainResult<Vec<u8>> {
+        let session = self.get_upload_session(upload_id).await?;
+        let mut reader = self.assemble_upload_stream(upload_id).await?;
+        let mut assembled = Vec::with_capacity(session.declared_size.as_u64() as usize);
+        reader
+            .read_to_end(&mut assembled)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to read assembled upload stream: {}", e),
+            })?;
+        Ok(assembled)
+    }
+
+    async fn complete_upload_session(&self, upload_id: &UploadId) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+        let mut metadata = self.read_metadata(upload_id).await?;
+        metadata["status"] = "completed".into();
+        metadata["updated_at"] = now
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to format upload update timestamp: {}", e),
+            })?
+            .into();
+        metadata["completed_at"] = now
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to format upload completion timestamp: {}", e),
+            })?
+            .into();
+
+        self.write_metadata(upload_id, &metadata).await?;
+
+        let upload_dir = self.base_path.join(upload_id.to_string());
+        let mut entries = fs::read_dir(&upload_dir)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to inspect upload directory for cleanup: {}", e),
+            })?;
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to read upload cleanup entry: {}", e),
+            })?
+        {
+            let Some(file_name) = entry.file_name().to_str().map(|value| value.to_string()) else {
+                continue;
+            };
+
+            if file_name.starts_with("part_") || file_name == "assembled.bin" {
+                let _ = fs::remove_file(entry.path()).await;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn cancel_upload_session(&self, upload_id: &UploadId) -> DomainResult<()> {
+        let upload_dir = self.base_path.join(upload_id.to_string());
+
+        // Remove entire upload directory
+        match fs::remove_dir_all(&upload_dir).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(DomainError::Internal {
+                message: format!("Failed to cancel upload: {}", e),
+            }),
+        }
+    }
+
+    async fn cleanup_expired_sessions(&self) -> DomainResult<i64> {
+        // Simplified implementation - would need to check metadata timestamps
+        Ok(0)
+    }
+}
+
+// Search repository implementation
+#[derive(Debug)]
+pub struct SqliteSearchRepo<B> {
+    pool: SqlitePool,
+    blob_store: B,
+}
+
+impl<B> SqliteSearchRepo<B> {
+    pub fn new(pool: SqlitePool, blob_store: B) -> Self {
+        Self { pool, blob_store }
+    }
+}
+
+impl<B> Clone for SqliteSearchRepo<B>
+where
+    B: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            blob_store: self.blob_store.clone(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl<B> SearchRepo for SqliteSearchRepo<B>
+where
+    B: BlobStore + Send + Sync,
+{
+    async fn search_entries(&self, query: &SearchQuery) -> DomainResult<Vec<SearchResult>> {
+        if !query.search_files {
+            return Ok(vec![]);
+        }
+
+        let search_pattern = format!("%{}%", query.query.to_lowercase());
+        let namespace_id = query.namespace_id.to_string();
+        let entry_kind = query.entry_kind.map(|kind| match kind {
+            EntryKind::File => "file".to_string(),
+            EntryKind::Directory => "directory".to_string(),
+        });
+        let path_exact = query
+            .path_prefix
+            .as_ref()
+            .map(|path| path.as_str().to_string());
+        let path_like = path_exact.as_ref().map(|path| format!("{path}/%"));
+        let limit = query.limit as i64;
+        let offset = query.offset as i64;
+
+        #[derive(sqlx::FromRow)]
+        struct EntrySearchRow {
+            entry_id: String,
+            namespace_id: String,
+            path: String,
+            entry_type: String,
+            entry_created_at: String,
+            version_id: Option<String>,
+            version_no: Option<i64>,
+            blob_id: Option<String>,
+            size_bytes: Option<i64>,
+            mime_type: Option<String>,
+            content_hash: Option<String>,
+            version_created_at: Option<String>,
+            created_by: Option<String>,
+            change_message: Option<String>,
+        }
+
+        let rows: Vec<EntrySearchRow> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id as entry_id,
+                e.namespace_id,
+                e.path,
+                e.kind as entry_type,
+                e.created_at as entry_created_at,
+                ev.id as version_id,
+                ev.version as version_no,
+                ev.blob_id,
+                ev.size as size_bytes,
+                ev.content_type as mime_type,
+                                b.content_hash,
+                ev.created_at as version_created_at,
+                ev.created_by,
+                ev.message as change_message
+            FROM entries e
+            LEFT JOIN entry_versions ev ON e.id = ev.entry_id
+                        LEFT JOIN blobs b ON b.id = ev.blob_id
+            WHERE e.namespace_id = ?
+              AND (LOWER(e.path) LIKE ?)
+                            AND (? IS NULL OR e.kind = ?)
+                            AND (? IS NULL OR e.path = ? OR e.path LIKE ?)
+            ORDER BY e.created_at DESC
+            LIMIT ? OFFSET ?
+            "#,
+        )
+        .bind(namespace_id)
+        .bind(search_pattern)
+        .bind(entry_kind.clone())
+        .bind(entry_kind)
+        .bind(path_exact.clone())
+        .bind(path_exact)
+        .bind(path_like)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to search entries: {}", e),
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            // Extract filename from path
+            let path = &row.path;
+            let name = path.split('/').last().unwrap_or(path).to_string();
+
+            let entry = Entry {
+                id: EntryId::from_uuid(uuid::Uuid::parse_str(&row.entry_id).map_err(|e| {
+                    DomainError::Internal {
+                        message: format!("Invalid entry ID: {}", e),
+                    }
+                })?),
+                namespace_id: NamespaceId::from_uuid(
+                    uuid::Uuid::parse_str(&row.namespace_id).map_err(|e| {
+                        DomainError::Internal {
+                            message: format!("Invalid namespace ID: {}", e),
+                        }
+                    })?,
+                ),
+                parent_entry_id: None, // TODO: populate from path
+                path_norm: NormalizedPath::new(path).map_err(|e| DomainError::Internal {
+                    message: format!("Invalid path: {}", e),
+                })?,
+                name,
+                entry_type: match row.entry_type.as_str() {
+                    "file" => EntryKind::File,
+                    "directory" => EntryKind::Directory,
+                    _ => {
+                        return Err(DomainError::Internal {
+                            message: format!("Invalid entry type: {}", row.entry_type),
+                        });
+                    }
+                },
+                current_version_id: row.version_id.as_ref().map(|id| {
+                    VersionId::from_uuid(
+                        uuid::Uuid::parse_str(id)
+                            .map_err(|e| DomainError::Internal {
+                                message: format!("Invalid version ID: {}", e),
+                            })
+                            .unwrap(), // Safe because we checked
+                    )
+                }),
+                created_at: time::OffsetDateTime::parse(
+                    &row.entry_created_at,
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
+                deleted_at: None,
+            };
+
+            let version = if let Some(version_id) = &row.version_id {
+                Some(EntryVersion {
+                    id: VersionId::from_uuid(uuid::Uuid::parse_str(version_id).map_err(|e| {
+                        DomainError::Internal {
+                            message: format!("Invalid version ID: {}", e),
+                        }
+                    })?),
+                    entry_id: entry.id,
+                    version_no: row.version_no.unwrap_or(1) as u32,
+                    blob_id: row.blob_id.as_ref().map(|id| {
+                        BlobId::from_uuid(
+                            uuid::Uuid::parse_str(id)
+                                .map_err(|e| DomainError::Internal {
+                                    message: format!("Invalid blob ID: {}", e),
+                                })
+                                .unwrap(), // Safe because we checked
+                        )
+                    }),
+                    size_bytes: ByteSize::new(row.size_bytes.unwrap_or(0) as u64),
+                    mime_type: row.mime_type,
+                    is_text: true, // TODO: determine from mime type
+                    content_hash: row
+                        .content_hash
+                        .as_deref()
+                        .map(ContentHash::new)
+                        .transpose()
+                        .map_err(|_| DomainError::Internal {
+                            message: "Invalid content hash".to_string(),
+                        })?
+                        .unwrap_or_else(default_content_hash),
+                    created_by: UserId::from_uuid(
+                        uuid::Uuid::parse_str(row.created_by.as_ref().unwrap_or(&"".to_string()))
+                            .map_err(|e| DomainError::Internal {
+                            message: format!("Invalid user ID: {}", e),
+                        })?,
+                    ),
+                    created_at: row
+                        .version_created_at
+                        .as_ref()
+                        .map(|dt| {
+                            time::OffsetDateTime::parse(
+                                dt,
+                                &time::format_description::well_known::Rfc3339,
+                            )
+                            .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+                        })
+                        .unwrap_or_else(|| time::OffsetDateTime::now_utc()),
+                    change_type: ChangeType::Modified, // Default
+                    change_message: row.change_message.as_ref().map(|msg| {
+                        NonEmptyMessage::new(msg)
+                            .unwrap_or_else(|_| NonEmptyMessage::new("Updated").unwrap())
+                    }),
+                    source_upload_id: None, // TODO: populate if needed
+                })
+            } else {
+                None
+            };
+
+            let matches = vec![SearchMatch {
+                match_type: SearchMatchType::Path, // Since we're searching paths
+                context: None,
+                line_number: None,
+            }];
+
+            results.push(SearchResult {
+                entry,
+                version,
+                matches,
+                score: 1.0, // Simple scoring for now
+            });
+        }
+
+        Ok(results)
+    }
+
+    async fn search_content(&self, query: &SearchQuery) -> DomainResult<Vec<SearchResult>> {
+        if !query.search_content {
+            return Ok(vec![]);
+        }
+        if matches!(query.entry_kind, Some(EntryKind::Directory)) {
+            return Ok(vec![]);
+        }
+
+        let search_term = query.query.to_lowercase();
+        let namespace_id = query.namespace_id.to_string();
+        let entry_kind = query.entry_kind.map(|kind| match kind {
+            EntryKind::File => "file".to_string(),
+            EntryKind::Directory => "directory".to_string(),
+        });
+        let path_exact = query
+            .path_prefix
+            .as_ref()
+            .map(|path| path.as_str().to_string());
+        let path_like = path_exact.as_ref().map(|path| format!("{path}/%"));
+        let limit = query.limit as i64;
+        let offset = query.offset as i64;
+
+        // Define a struct for the query result
+        #[derive(sqlx::FromRow)]
+        struct ContentSearchRow {
+            entry_id: String,
+            namespace_id: String,
+            path: String,
+            entry_type: String,
+            entry_created_at: String,
+            version_id: Option<String>,
+            version_no: Option<i64>,
+            blob_id: Option<String>,
+            size_bytes: Option<i64>,
+            mime_type: Option<String>,
+            content_hash: Option<String>,
+            version_created_at: Option<String>,
+            created_by: Option<String>,
+            change_message: Option<String>,
+        }
+
+        // Find text files in the namespace
+        let candidate_limit = limit * 2; // Get more candidates since we'll filter by content
+        let rows: Vec<ContentSearchRow> = sqlx::query_as::<_, ContentSearchRow>(
+            r#"
+            SELECT
+                e.id as entry_id,
+                e.namespace_id,
+                e.path,
+                e.kind as entry_type,
+                e.created_at as entry_created_at,
+                ev.id as version_id,
+                ev.version as version_no,
+                ev.blob_id,
+                ev.size as size_bytes,
+                ev.content_type as mime_type,
+                b.content_hash,
+                ev.created_at as version_created_at,
+                ev.created_by,
+                ev.message as change_message
+            FROM entries e
+            JOIN entry_versions ev ON e.id = ev.entry_id
+            LEFT JOIN blobs b ON b.id = ev.blob_id
+            WHERE e.namespace_id = ?
+              AND ev.blob_id IS NOT NULL
+              AND (ev.content_type LIKE 'text/%' OR ev.content_type LIKE 'application/json%')
+                            AND (? IS NULL OR e.kind = ?)
+                            AND (? IS NULL OR e.path = ? OR e.path LIKE ?)
+            ORDER BY e.created_at DESC
+            LIMIT ? OFFSET ?
+            "#,
+        )
+        .bind(namespace_id)
+        .bind(entry_kind.clone())
+        .bind(entry_kind)
+        .bind(path_exact.clone())
+        .bind(path_exact)
+        .bind(path_like)
+        .bind(candidate_limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to search content candidates: {}", e),
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            // Skip if we already have enough results
+            if results.len() >= query.limit as usize {
+                break;
+            }
+
+            // Try to get blob content
+            if let Some(blob_id_str) = &row.blob_id {
+                if let Ok(blob_id) = uuid::Uuid::parse_str(blob_id_str) {
+                    let blob_id = BlobId::from_uuid(blob_id);
+                    if let Ok(Some(blob_stream)) = self.blob_store.get_blob_stream(&blob_id).await {
+                        let mut lines = BufReader::new(blob_stream).lines();
+                        let mut line_number = 0_u32;
+                        let mut matches = Vec::new();
+                        let mut read_failed = false;
+
+                        loop {
+                            match lines.next_line().await {
+                                Ok(Some(line)) => {
+                                    line_number += 1;
+                                    if line.to_lowercase().contains(&search_term) {
+                                        matches.push(SearchMatch {
+                                            match_type: SearchMatchType::Content,
+                                            context: Some(line.trim().to_string()),
+                                            line_number: Some(line_number),
+                                        });
+                                    }
+                                }
+                                Ok(None) => break,
+                                Err(_) => {
+                                    read_failed = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if read_failed || matches.is_empty() {
+                            continue;
+                        }
+
+                        // Extract filename from path
+                        let path = &row.path;
+                        let name = path.split('/').last().unwrap_or(path).to_string();
+
+                        let entry = Entry {
+                            id: EntryId::from_uuid(uuid::Uuid::parse_str(&row.entry_id).map_err(
+                                |e| DomainError::Internal {
+                                    message: format!("Invalid entry ID: {}", e),
+                                },
+                            )?),
+                            namespace_id: NamespaceId::from_uuid(
+                                uuid::Uuid::parse_str(&row.namespace_id).map_err(|e| {
+                                    DomainError::Internal {
+                                        message: format!("Invalid namespace ID: {}", e),
+                                    }
+                                })?,
+                            ),
+                            parent_entry_id: None, // TODO: populate from path
+                            path_norm: NormalizedPath::new(path).map_err(|e| {
+                                DomainError::Internal {
+                                    message: format!("Invalid path: {}", e),
+                                }
+                            })?,
+                            name,
+                            entry_type: match row.entry_type.as_str() {
+                                "file" => EntryKind::File,
+                                "directory" => EntryKind::Directory,
+                                _ => continue, // Skip invalid entries
+                            },
+                            current_version_id: row.version_id.as_ref().map(|id| {
+                                VersionId::from_uuid(
+                                    uuid::Uuid::parse_str(id)
+                                        .map_err(|e| DomainError::Internal {
+                                            message: format!("Invalid version ID: {}", e),
+                                        })
+                                        .unwrap(), // Safe because we checked
+                                )
+                            }),
+                            created_at: time::OffsetDateTime::parse(
+                                &row.entry_created_at,
+                                &time::format_description::well_known::Rfc3339,
+                            )
+                            .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
+                            deleted_at: None,
+                        };
+
+                        let version = if let Some(version_id) = &row.version_id {
+                            Some(EntryVersion {
+                                id: VersionId::from_uuid(
+                                    uuid::Uuid::parse_str(version_id).map_err(|e| {
+                                        DomainError::Internal {
+                                            message: format!("Invalid version ID: {}", e),
+                                        }
+                                    })?,
+                                ),
+                                entry_id: entry.id,
+                                version_no: row.version_no.unwrap_or(1) as u32,
+                                blob_id: Some(blob_id),
+                                size_bytes: ByteSize::new(row.size_bytes.unwrap_or(0) as u64),
+                                mime_type: row.mime_type,
+                                is_text: true,
+                                content_hash: row
+                                    .content_hash
+                                    .as_deref()
+                                    .map(ContentHash::new)
+                                    .transpose()
+                                    .map_err(|_| DomainError::Internal {
+                                        message: "Invalid content hash".to_string(),
+                                    })?
+                                    .unwrap_or_else(default_content_hash),
+                                created_by: UserId::from_uuid(
+                                    uuid::Uuid::parse_str(
+                                        row.created_by.as_ref().unwrap_or(&"".to_string()),
+                                    )
+                                    .map_err(|e| {
+                                        DomainError::Internal {
+                                            message: format!("Invalid user ID: {}", e),
+                                        }
+                                    })?,
+                                ),
+                                created_at: row
+                                    .version_created_at
+                                    .as_ref()
+                                    .map(|dt| {
+                                        time::OffsetDateTime::parse(
+                                            dt,
+                                            &time::format_description::well_known::Rfc3339,
+                                        )
+                                        .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+                                    })
+                                    .unwrap_or_else(|| time::OffsetDateTime::now_utc()),
+                                change_type: ChangeType::Modified,
+                                change_message: row.change_message.as_ref().map(|msg| {
+                                    NonEmptyMessage::new(msg).unwrap_or_else(|_| {
+                                        NonEmptyMessage::new("Updated").unwrap()
+                                    })
+                                }),
+                                source_upload_id: None,
+                            })
+                        } else {
+                            None
+                        };
+
+                        results.push(SearchResult {
+                            entry,
+                            version,
+                            matches,
+                            score: 0.8, // Content matches get slightly lower score than filename matches
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+}
+
+#[derive(Debug)]
+pub struct SqliteShareRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteShareRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+impl Clone for SqliteShareRepo {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+        }
+    }
+}
+
+type ShareRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<String>,
+);
+
+fn parse_share_row(
+    (
+        id,
+        namespace_id,
+        entry_id,
+        entry_version_id,
+        code,
+        expires_at,
+        created_by,
+        created_at,
+        access_count,
+        last_accessed_at,
+        disabled_at,
+    ): ShareRow,
+) -> DomainResult<Share> {
+    Ok(Share {
+        id: ShareId::from_uuid(
+            uuid::Uuid::parse_str(&id).map_err(|e| DomainError::Internal {
+                message: format!("Invalid share ID: {}", e),
+            })?,
+        ),
+        namespace_id: NamespaceId::from_uuid(uuid::Uuid::parse_str(&namespace_id).map_err(
+            |e| DomainError::Internal {
+                message: format!("Invalid namespace ID: {}", e),
+            },
+        )?),
+        entry_id: EntryId::from_uuid(uuid::Uuid::parse_str(&entry_id).map_err(|e| {
+            DomainError::Internal {
+                message: format!("Invalid entry ID: {}", e),
+            }
+        })?),
+        entry_version_id: parse_version_id_opt(entry_version_id.as_deref())?,
+        code,
+        expires_at: parse_timestamp_opt(expires_at.as_deref())?,
+        created_by: UserId::from_uuid(uuid::Uuid::parse_str(&created_by).map_err(|e| {
+            DomainError::Internal {
+                message: format!("Invalid user ID: {}", e),
+            }
+        })?),
+        created_at: parse_timestamp(&created_at)?,
+        access_count: access_count as u32,
+        last_accessed_at: parse_timestamp_opt(last_accessed_at.as_deref())?,
+        disabled_at: parse_timestamp_opt(disabled_at.as_deref())?,
+    })
+}
+
+#[async_trait::async_trait]
+impl ShareRepo for SqliteShareRepo {
+    async fn create_share(
+        &self,
+        namespace_id: &NamespaceId,
+        entry_id: &EntryId,
+        entry_version_id: Option<&VersionId>,
+        code: &str,
+        expires_at: Option<time::OffsetDateTime>,
+        created_by: &UserId,
+    ) -> DomainResult<ShareId> {
+        let id = ShareId::new();
+        let now = time::OffsetDateTime::now_utc();
+
+        sqlx::query(
+            r#"
+            INSERT INTO shares (id, namespace_id, entry_id, entry_version_id, code, expires_at, created_by, created_at, access_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+            "#,
+        )
+        .bind(id.to_string())
+        .bind(namespace_id.to_string())
+        .bind(entry_id.to_string())
+        .bind(entry_version_id.map(|id| id.to_string()))
+        .bind(code)
+        .bind(expires_at)
+        .bind(created_by.to_string())
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to create share: {}", e),
+        })?;
+
+        Ok(id)
+    }
+
+    async fn find_share_by_code(&self, code: &str) -> DomainResult<Share> {
+        let now = time::OffsetDateTime::now_utc();
+        let row: ShareRow = sqlx::query_as(
+            r#"
+            SELECT
+                id, namespace_id, entry_id, entry_version_id, code, expires_at,
+                created_by, created_at, access_count, last_accessed_at, disabled_at
+            FROM shares
+            WHERE code = ? AND (expires_at IS NULL OR expires_at > ?) AND disabled_at IS NULL
+            "#,
+        )
+        .bind(code)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to find share: {}", e),
+        })?
+        .ok_or_else(|| DomainError::NotFound {
+            resource: "share".to_string(),
+        })?;
+
+        parse_share_row(row)
+    }
+
+    async fn find_shares_by_entry(&self, entry_id: &EntryId) -> DomainResult<Vec<Share>> {
+        let entry_id_str = entry_id.to_string();
+        let rows: Vec<ShareRow> = sqlx::query_as(
+            r#"
+            SELECT
+                id, namespace_id, entry_id, entry_version_id, code, expires_at,
+                created_by, created_at, access_count, last_accessed_at, disabled_at
+            FROM shares
+            WHERE entry_id = ? AND disabled_at IS NULL
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(entry_id_str)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to find shares by entry: {}", e),
+        })?;
+
+        let mut shares = Vec::new();
+        for row in rows {
+            shares.push(parse_share_row(row)?);
+        }
+
+        Ok(shares)
+    }
+
+    async fn find_shares_by_user(&self, user_id: &UserId) -> DomainResult<Vec<Share>> {
+        let user_id_str = user_id.to_string();
+        let rows: Vec<ShareRow> = sqlx::query_as(
+            r#"
+            SELECT
+                id, namespace_id, entry_id, entry_version_id, code, expires_at,
+                created_by, created_at, access_count, last_accessed_at, disabled_at
+            FROM shares
+            WHERE created_by = ? AND disabled_at IS NULL
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(user_id_str)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to find shares by user: {}", e),
+        })?;
+
+        let mut shares = Vec::new();
+        for row in rows {
+            shares.push(parse_share_row(row)?);
+        }
+
+        Ok(shares)
+    }
+
+    async fn record_share_access(&self, share_id: &ShareId) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+
+        sqlx::query(
+            r#"
+            UPDATE shares
+            SET access_count = access_count + 1, last_accessed_at = ?
+            WHERE id = ? AND disabled_at IS NULL
+            "#,
+        )
+        .bind(now)
+        .bind(share_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to record share access: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    async fn disable_share(&self, share_id: &ShareId) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+
+        sqlx::query(
+            r#"
+            UPDATE shares
+            SET disabled_at = ?
+            WHERE id = ? AND disabled_at IS NULL
+            "#,
+        )
+        .bind(now)
+        .bind(share_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to disable share: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    async fn cleanup_expired_shares(&self) -> DomainResult<i64> {
+        let now = time::OffsetDateTime::now_utc();
+
+        let result = sqlx::query(
+            r#"
+            UPDATE shares
+            SET disabled_at = ?
+            WHERE expires_at IS NOT NULL AND expires_at <= ? AND disabled_at IS NULL
+            "#,
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to cleanup expired shares: {}", e),
+        })?;
+
+        Ok(result.rows_affected() as i64)
+    }
+}
+
+#[derive(Debug)]
+pub struct SqliteAdminRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteAdminRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+impl Clone for SqliteAdminRepo {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AdminRepo for SqliteAdminRepo {
+    async fn list_users(&self, limit: i64, offset: i64) -> DomainResult<Vec<User>> {
+        let rows: Vec<UserRow> = sqlx::query_as(
+            "SELECT id, username, email, password_hash, role, disabled, created_at, updated_at, password_changed_at FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list users: {}", e),
+        })?;
+
+        let mut users = Vec::new();
+        for row in rows {
+            users.push(user_from_row(row)?);
+        }
+
+        Ok(users)
+    }
+
+    async fn count_users(&self) -> DomainResult<i64> {
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to count users: {}", e),
+            })?;
+        Ok(count)
+    }
+
+    async fn create_user(
+        &self,
+        username: &Username,
+        email: &EmailAddress,
+        password_hash: &str,
+        role: Role,
+    ) -> DomainResult<UserId> {
+        let id = UserId::new();
+        let now = time::OffsetDateTime::now_utc();
+        let role_str = role_as_str(role);
+
+        sqlx::query(
+            "INSERT INTO users (id, username, email, password_hash, role, disabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(id.to_string())
+        .bind(username.as_str())
+        .bind(email.as_str())
+        .bind(password_hash)
+        .bind(role_str)
+        .bind(false)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to create user: {}", e),
+        })?;
+
+        Ok(id)
+    }
+
+    async fn update_user_role(&self, user_id: &UserId, role: Role) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+        let role_str = role_as_str(role);
+
+        sqlx::query("UPDATE users SET role = ?, updated_at = ? WHERE id = ?")
+            .bind(role_str)
+            .bind(now)
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to update user role: {}", e),
+            })?;
+        Ok(())
+    }
+
+    async fn disable_user(&self, user_id: &UserId) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query("UPDATE users SET disabled = ?, updated_at = ? WHERE id = ?")
+            .bind(true)
+            .bind(now)
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to disable user: {}", e),
+            })?;
+        Ok(())
+    }
+
+    async fn enable_user(&self, user_id: &UserId) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query("UPDATE users SET disabled = ?, updated_at = ? WHERE id = ?")
+            .bind(false)
+            .bind(now)
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to enable user: {}", e),
+            })?;
+        Ok(())
+    }
+
+    async fn delete_user(&self, user_id: &UserId) -> DomainResult<()> {
+        // First check if user exists
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE id = ?")
+            .bind(user_id.to_string())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to check user existence: {}", e),
+            })?;
+
+        if count == 0 {
+            return Err(DomainError::NotFound {
+                resource: "user".to_string(),
+            });
+        }
+
+        // Delete user (cascade will handle related records)
+        sqlx::query("DELETE FROM users WHERE id = ?")
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to delete user: {}", e),
+            })?;
+        Ok(())
+    }
+
+    async fn reset_user_password(
+        &self,
+        user_id: &UserId,
+        new_password_hash: &str,
+    ) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query("UPDATE users SET password_hash = ?, password_changed_at = ?, updated_at = ? WHERE id = ?")
+            .bind(new_password_hash)
+            .bind(now)
+            .bind(now)
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to reset user password: {}", e),
+            })?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod snapshot_repo_tests {
+    use super::*;
+    use crate::{SqliteMigrations, SqlitePoolFactory};
+    use camino::Utf8PathBuf;
+    use std::sync::Arc;
+    use tokio::sync::Barrier;
+
+    async fn setup_snapshot_repo() -> (
+        Utf8PathBuf,
+        SqlitePool,
+        SqliteSnapshotRepo,
+        NamespaceId,
+        UserId,
+    ) {
+        let db_path = Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("vfiles-snapshot-test-{}.db", uuid::Uuid::new_v4())),
+        )
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
+        let snapshot_repo = SqliteSnapshotRepo::new(pool.clone());
+
+        let user_id = user_repo
+            .create_admin("admin", "admin@example.com", "hashed-password")
+            .await
+            .expect("admin user should be created");
+        let namespace_id = namespace_repo
+            .create_default(&user_id, "default")
+            .await
+            .expect("default namespace should be created");
+
+        (db_path, pool, snapshot_repo, namespace_id, user_id)
+    }
+
+    async fn cleanup_db(pool: SqlitePool, db_path: Utf8PathBuf) {
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn create_snapshot_uses_next_available_suffix_after_gap() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup_snapshot_repo().await;
+
+        let first = repo
+            .create_snapshot(
+                &namespace_id,
+                Some("one"),
+                SnapshotKind::AutoCommit,
+                &user_id,
+            )
+            .await
+            .expect("first snapshot should be created");
+        let second = repo
+            .create_snapshot(
+                &namespace_id,
+                Some("two"),
+                SnapshotKind::AutoCommit,
+                &user_id,
+            )
+            .await
+            .expect("second snapshot should be created");
+        let third = repo
+            .create_snapshot(
+                &namespace_id,
+                Some("three"),
+                SnapshotKind::AutoCommit,
+                &user_id,
+            )
+            .await
+            .expect("third snapshot should be created");
+
+        let _ = first;
+
+        sqlx::query("DELETE FROM snapshots WHERE id = ?")
+            .bind(second.to_string())
+            .execute(&pool)
+            .await
+            .expect("snapshot gap should be created");
+
+        let fourth = repo
+            .create_snapshot(
+                &namespace_id,
+                Some("four"),
+                SnapshotKind::AutoCommit,
+                &user_id,
+            )
+            .await
+            .expect("snapshot creation should skip over existing suffixes");
+
+        let third_snapshot = repo
+            .find_snapshot(&third)
+            .await
+            .expect("third snapshot should still exist");
+        let fourth_snapshot = repo
+            .find_snapshot(&fourth)
+            .await
+            .expect("fourth snapshot should exist");
+
+        assert_eq!(third_snapshot.snapshot_no, 3);
+        assert_eq!(fourth_snapshot.snapshot_no, 4);
+
+        cleanup_db(pool, db_path).await;
+    }
+
+    #[tokio::test]
+    async fn create_snapshot_allows_parallel_creates() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup_snapshot_repo().await;
+        let repo = Arc::new(repo);
+        let task_count = 8;
+        let barrier = Arc::new(Barrier::new(task_count + 1));
+        let mut handles = Vec::new();
+
+        for _ in 0..task_count {
+            let repo = Arc::clone(&repo);
+            let barrier = Arc::clone(&barrier);
+            let namespace_id = namespace_id;
+            let user_id = user_id;
+
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                repo.create_snapshot(
+                    &namespace_id,
+                    Some("parallel create"),
+                    SnapshotKind::AutoCommit,
+                    &user_id,
+                )
+                .await
+            }));
+        }
+
+        barrier.wait().await;
+
+        let mut snapshot_nos = Vec::new();
+        for handle in handles {
+            let snapshot_id = handle
+                .await
+                .expect("snapshot task should join")
+                .expect("parallel snapshot creation should succeed");
+            let snapshot = repo
+                .find_snapshot(&snapshot_id)
+                .await
+                .expect("created snapshot should be readable");
+            snapshot_nos.push(snapshot.snapshot_no);
+        }
+
+        snapshot_nos.sort_unstable();
+        assert_eq!(snapshot_nos, (1..=task_count as u32).collect::<Vec<_>>());
+
+        cleanup_db(pool, db_path).await;
+    }
+}

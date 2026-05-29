@@ -1,0 +1,150 @@
+# VFiles 部署指南
+
+本指南以当前 Rust 后端为准。旧 TypeScript/Bun 后端的运行方式和环境变量已不再作为部署基线。
+
+## 部署模式
+
+VFiles 目前有两种推荐部署方式：
+
+- 外部静态资源模式：Rust 服务启动时自动探测 `client/dist`，或通过 `VFILES_FRONTEND_DIST` 指向前端产物目录。
+- 单文件模式：构建时启用 `embed` feature，把 `client/dist` 直接嵌入 `vfiles` 可执行文件。
+
+仓库内已经移除了旧的 Docker / Docker Compose / Nginx 配置；当前文档只覆盖原生二进制部署方式。
+
+## 前置要求
+
+- Rust 工具链
+- 系统已安装 `git`（服务端通过 git 子进程完成版本、历史和工作区操作）
+- Bun：仅在本机重新构建前端时需要；如果直接使用现成的 `client/dist`，运行时不需要 Bun
+
+## 环境变量
+
+Rust 后端当前真实读取的核心配置如下：
+
+```env
+VFILES_HTTP_HOST=0.0.0.0
+VFILES_HTTP_PORT=3000
+VFILES_HTTP_PUBLIC_BASE_URL=https://files.example.com
+VFILES_HTTP_CORS_ALLOWED_ORIGINS=https://files.example.com
+# VFILES_HTTP_COOKIE_SECURE=true
+
+VFILES_STORAGE_ROOT=./data
+VFILES_DATABASE_PATH=./data/vfiles.db
+
+VFILES_AUTH_ENABLED=true
+VFILES_AUTH_ALLOW_REGISTER=true
+VFILES_AUTH_COOKIE_SECRET=replace-with-a-random-secret-at-least-32-chars
+
+VFILES_FRONTEND_DIST=./client/dist
+RUST_LOG=info
+```
+
+说明：
+
+- `VFILES_HTTP_PUBLIC_BASE_URL` 决定对外可见的服务地址；默认情况下，登录/退出 cookie 是否带 `Secure` 也会跟随它的 scheme。
+- `VFILES_HTTP_COOKIE_SECURE` 可显式覆盖 cookie 的 `Secure` 标记；如果公网仍走 `https://` 域名，但本地想直接用 `http://局域网IP:端口` 访问并登录，可临时设为 `false`。
+- `VFILES_HTTP_CORS_ALLOWED_ORIGINS` 留空时，会默认回落到 `VFILES_HTTP_PUBLIC_BASE_URL` 的 origin；如果前端和 API 不同源，请显式写成逗号分隔列表。
+- `VFILES_STORAGE_ROOT` 下会自动创建 `blobs`、`uploads`、`tmp`、`export`、`logs`、`backups` 等目录。
+- `VFILES_FRONTEND_DIST` 在运行时用于外部静态资源托管；启用 `embed` feature 时，也可在编译期指定待嵌入目录。
+- 仍兼容读取旧别名 `PUBLIC_BASE_URL`、`CORS_ORIGIN`、`HTTP_COOKIE_SECURE`、`AUTH_SECRET`、`ENABLE_AUTH`、`AUTH_ALLOW_REGISTER`，但新部署不建议继续使用旧名字。
+- 上传限额、分块大小、会话 TTL 等参数当前仍使用程序内建默认值，尚未开放成环境变量。
+
+## 构建与启动
+
+### 外部静态资源模式
+
+先构建前端，再编译 Rust 服务：
+
+```bash
+cd client && bun install && bun run build
+cd ..
+
+cargo build -p vfiles-bin --release
+./target/release/vfiles serve
+```
+
+默认会自动探测项目内的 `client/dist`。如果前端产物放在其他位置，可在启动前设置：
+
+```bash
+VFILES_FRONTEND_DIST=/path/to/dist ./target/release/vfiles serve
+```
+
+### 单文件模式
+
+如果希望部署时只分发一个可执行文件，可以把前端嵌进二进制：
+
+```bash
+cd client && bun install && bun run build
+cd ..
+
+cargo build -p vfiles-bin --release --features embed
+./target/release/vfiles serve
+```
+
+如果前端产物不在默认位置，可以在编译时指定：
+
+```bash
+VFILES_FRONTEND_DIST=/path/to/dist cargo build -p vfiles-bin --release --features embed
+```
+
+## 交付产物
+
+当前仓库不再提供根目录的一键打包脚本。部署时请按实际模式自行组织交付物：
+
+- 外部静态资源模式：发布 `target/release/vfiles` 与 `client/dist/`
+- 单文件模式：发布启用 `embed` feature 构建出的 `target/release/vfiles`
+- `.env` 可选，但生产环境通常建议保留一份显式配置
+- `data/` 会在首次运行时自动初始化数据库和存储目录，也可以预先准备
+
+运行方式：
+
+```bash
+./vfiles serve
+```
+
+Windows PowerShell：
+
+```powershell
+.\vfiles.exe serve
+```
+
+如果需要提前初始化数据库和目录，也可以先执行：
+
+```bash
+./vfiles init
+```
+
+## 注册为 systemd 服务
+
+在 Linux 主机上，可以直接用内置 CLI 生成并注册 systemd unit：
+
+```bash
+sudo ./vfiles register -t systemd \
+	--working-directory /srv/vfiles \
+	--data-directory /var/lib/vfiles \
+	--start
+```
+
+说明：
+
+- `--working-directory` 会写入 unit 的 `WorkingDirectory=`，建议指向你的部署目录
+- `--data-directory` 会写入 `VFILES_STORAGE_ROOT` 环境变量，用于显式指定数据根目录
+- 如果只想注册服务但暂不启动，省略 `--start` 即可；命令会完成 `daemon-reload` 和 `enable`
+
+## 反向代理
+
+如果通过 Nginx 或 Caddy 暴露服务，建议：
+
+- 外网 HTTPS 终止后，把公开访问地址写入 `VFILES_HTTP_PUBLIC_BASE_URL`
+- 如果浏览器端与 API 不同源，显式设置 `VFILES_HTTP_CORS_ALLOWED_ORIGINS`
+- 下载接口转发时保留 Range 相关头
+- 上传场景适当提高反向代理的请求体限制
+
+## 运行验收
+
+最小验收建议：
+
+- `GET /api/health` 返回成功
+- `./vfiles check` 可以完成健康检查
+- 如果提供前端静态资源，访问根路径可以加载页面
+- 上传、删除、移动等写操作可正常产生历史版本

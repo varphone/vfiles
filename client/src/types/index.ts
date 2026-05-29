@@ -1,11 +1,14 @@
 // 类型定义
 export interface FileInfo {
+  id: string;
   name: string;
   path: string;
-  type: "file" | "directory";
-  size: number;
-  mtime: string;
-  lastCommit?: CommitSummary;
+  kind: "file" | "directory";
+  size_bytes?: number;
+  mime_type?: string;
+  is_text?: boolean;
+  created_at: string;
+  updated_at?: string;
   matches?: ContentMatch[];
 }
 
@@ -17,6 +20,8 @@ export interface ContentMatch {
 export interface CommitInfo {
   hash: string;
   message: string;
+  changeType?: "added" | "modified" | "deleted" | "renamed";
+  hasCustomMessage?: boolean;
   author: AuthorInfo;
   date: string;
   parent: string[];

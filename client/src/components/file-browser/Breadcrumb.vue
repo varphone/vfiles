@@ -59,7 +59,7 @@ function navigate(path: string) {
   background-color: transparent;
 }
 
-@media screen and (max-width: 768px) {
+@media screen and (max-width: 1023px) {
   .breadcrumb ul {
     flex-wrap: nowrap;
     overflow-x: auto;

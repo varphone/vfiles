@@ -1,0 +1,19 @@
+[package]
+name = "vfiles-infra-fs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vfiles-app = { path = "../vfiles-app" }
+vfiles-domain = { path = "../vfiles-domain" }
+
+bytes.workspace = true
+camino.workspace = true
+hex.workspace = true
+mime_guess.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tracing.workspace = true

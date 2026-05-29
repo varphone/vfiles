@@ -275,19 +275,18 @@ async function loadHistory() {
 }
 
 function formatDate(date: string): string {
-  return new Date(date).toLocaleString("zh-CN", {
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) {
+    return date || "--";
+  }
+
+  return parsed.toLocaleString("zh-CN", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function getParentDir(filePath: string): string {
-  const idx = filePath.lastIndexOf("/");
-  if (idx <= 0) return "";
-  return filePath.slice(0, idx);
 }
 
 function getExtension(p: string): string {
@@ -602,14 +601,11 @@ async function restoreVersion(hash: string) {
 
   restoringHash.value = hash;
   try {
-    const blob = await filesService.getFileContent(props.filePath, hash);
-    const filename = props.filePath.split("/").pop() || "file";
-    const file = new File([blob], filename, {
-      type: blob.type || "application/octet-stream",
-    });
-    const dir = getParentDir(props.filePath);
-
-    await filesService.uploadFile(file, dir, `恢复到版本 ${short}`);
+    await filesService.restoreFileVersion(
+      props.filePath,
+      hash,
+      "恢复历史版本",
+    );
     appStore.success("已恢复并生成新版本");
     await loadHistory();
   } catch (err) {

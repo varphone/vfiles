@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none" role="img" aria-labelledby="vfiles-icon-title vfiles-icon-desc">
+  <title id="vfiles-icon-title">VFiles icon</title>
+  <desc id="vfiles-icon-desc">A rounded square icon with a white V-shaped merge mark over a rainbow gradient, suggesting multiple versions converging into a trusted file.</desc>
+  <defs>
+    <linearGradient id="iconSurface" x1="18" y1="14" x2="103" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff6b6b" />
+      <stop offset="0.18" stop-color="#ff8a3d" />
+      <stop offset="0.36" stop-color="#ffd43b" />
+      <stop offset="0.58" stop-color="#34d399" />
+      <stop offset="0.78" stop-color="#38bdf8" />
+      <stop offset="1" stop-color="#8b5cf6" />
+    </linearGradient>
+    <radialGradient id="iconSoftTint" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(34 22) rotate(38) scale(78 66)">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.42" />
+      <stop offset="0.48" stop-color="#ffffff" stop-opacity="0.12" />
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="iconHighlight" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(42 28) rotate(35) scale(52 36)">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.55" />
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="iconDepth" x1="38" y1="18" x2="88" y2="104" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0" />
+      <stop offset="1" stop-color="#1e1b4b" stop-opacity="0.22" />
+    </linearGradient>
+    <linearGradient id="iconVShadow" x1="39" y1="37" x2="78" y2="81" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0f172a" stop-opacity="0.22" />
+      <stop offset="1" stop-color="#0f172a" stop-opacity="0" />
+    </linearGradient>
+    <filter id="iconShadow" x="0" y="0" width="120" height="120" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#312e81" flood-opacity="0.18" />
+    </filter>
+  </defs>
+  <g filter="url(#iconShadow)">
+    <rect x="12" y="12" width="96" height="96" rx="28" fill="url(#iconSurface)" />
+    <rect x="12" y="12" width="96" height="96" rx="28" fill="url(#iconSoftTint)" />
+    <rect x="12" y="12" width="96" height="96" rx="28" fill="url(#iconHighlight)" />
+    <rect x="12" y="12" width="96" height="96" rx="28" fill="url(#iconDepth)" />
+  </g>
+  <path d="M35 37 60 84 85 37" stroke="url(#iconVShadow)" stroke-width="15" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M34 35 60 84 86 35" stroke="#ffffff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M41 35 60 71 79 35" stroke="#ffffff" stroke-opacity="0.58" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="34" cy="35" r="4.5" fill="#ffffff" />
+  <circle cx="86" cy="35" r="4.5" fill="#ffffff" />
+  <circle cx="60" cy="84" r="10" fill="#ffffff" fill-opacity="0.18" />
+  <circle cx="60" cy="84" r="6" fill="#ffffff" />
+</svg>

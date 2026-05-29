@@ -1,9 +1,12 @@
 <template>
-  <section class="section">
+  <section class="section auth-page">
     <div class="container" style="max-width: 420px">
-      <section class="section has-text-centered">
-        <h1 class="title is-size-1 mb-4">V-Files</h1>
-        <h2 class="subtitle has-text-grey">基于版本控制的文件管理系统</h2>
+      <section class="section has-text-centered auth-brand">
+        <img class="auth-brand-logo" src="/vfiles-icon.svg" alt="VFiles" />
+        <h1 class="title is-size-1 mb-0 auth-brand-title">VFiles</h1>
+        <h2 class="subtitle has-text-grey auth-brand-subtitle">
+          基于版本控制的文件管理系统
+        </h2>
       </section>
       <div class="box">
         <div
@@ -171,6 +174,17 @@
           </form>
         </template>
       </div>
+
+      <footer class="site-record-footer has-text-centered" aria-label="备案信息">
+        <a
+          class="site-record-link"
+          href="https://beian.miit.gov.cn/"
+          target="_blank"
+          rel="noreferrer"
+        >
+          苏ICP备2026014694号-1
+        </a>
+      </footer>
     </div>
   </section>
 </template>
@@ -239,6 +253,7 @@ async function submit() {
 
     // 等待 cookie 在浏览器中完全同步（移动端需要）
     await new Promise((r) => setTimeout(r, 100));
+    await auth.fetchMe();
 
     const redirect =
       typeof route.query.redirect === "string" ? route.query.redirect : "/";
@@ -280,7 +295,6 @@ async function submitEmailLogin() {
     );
     if (!res.success) throw new Error(res.error || "登录失败");
 
-    await auth.fetchMe();
     // 标记登录成功时间，用于免疫期
     if (
       typeof window !== "undefined" &&
@@ -292,6 +306,7 @@ async function submitEmailLogin() {
 
     // 等待 cookie 在浏览器中完全同步（移动端需要）
     await new Promise((r) => setTimeout(r, 100));
+    await auth.fetchMe();
 
     const redirect =
       typeof route.query.redirect === "string" ? route.query.redirect : "/";
@@ -313,3 +328,48 @@ onMounted(async () => {
   }
 });
 </script>
+
+<style scoped>
+.auth-page {
+  min-height: 100vh;
+}
+
+.auth-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.auth-brand-logo {
+  display: block;
+  width: min(42vw, 140px);
+  height: auto;
+  filter: drop-shadow(0 14px 24px rgba(15, 23, 42, 0.12));
+}
+
+.auth-brand-title {
+  letter-spacing: -0.04em;
+  color: #0f172a;
+}
+
+.auth-brand-subtitle {
+  max-width: 22rem;
+  margin-inline: auto;
+}
+
+.site-record-footer {
+  padding: 1rem 0 0;
+}
+
+.site-record-link {
+  font-size: 0.75rem;
+  color: rgba(74, 85, 104, 0.86);
+}
+
+.site-record-link:hover,
+.site-record-link:focus-visible {
+  color: #3273dc;
+  text-decoration: underline;
+}
+</style>
