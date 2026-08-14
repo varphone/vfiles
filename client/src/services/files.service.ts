@@ -295,9 +295,16 @@ export const filesService = {
       relativePath?: string;
     },
   ): Promise<any> {
-    // 计算目标路径：如果提供了 relativePath（来自目录选择），则使用它
+    // 计算目标路径：如果提供了 relativePath（来自目录选择），
+    // 只取目录部分（不含文件名），因为后端会自动将文件名追加到路径
     const targetPath = opts?.relativePath
-      ? `${path}/${opts.relativePath}`.replace(/\/+/g, "/").replace(/^\//, "")
+      ? (() => {
+          const dirPath = opts.relativePath.substring(
+            0,
+            opts.relativePath.lastIndexOf("/"),
+          );
+          return `${path}/${dirPath}`.replace(/\/+/g, "/").replace(/^\//, "");
+        })()
       : path;
 
     async function fallbackSingleUpload(mode: "xhr" | "native" = "xhr") {
