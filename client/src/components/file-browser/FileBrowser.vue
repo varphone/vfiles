@@ -69,10 +69,13 @@
               <input
                 type="checkbox"
                 v-model="searchContent"
-                :disabled="searchLoading"
+                :disabled="searchLoading || !searchContentEnabled"
               />
               全文
             </label>
+            <p v-if="!searchContentEnabled" class="help is-warning">
+              内容搜索功能未启用
+            </p>
           </div>
 
           <div class="field is-grouped is-grouped-multiline mt-2">
@@ -204,10 +207,16 @@
                       <input
                         type="checkbox"
                         v-model="searchContent"
-                        :disabled="searchLoading"
+                        :disabled="searchLoading || !searchContentEnabled"
                       />
                       全文搜索
                     </label>
+                    <p
+                      v-if="!searchContentEnabled"
+                      class="is-size-7 has-text-warning ml-2"
+                    >
+                      (未启用)
+                    </p>
 
                     <div class="select is-small desktop-filter-select">
                       <select v-model="searchType" :disabled="searchLoading">
@@ -825,6 +834,7 @@ import {
 } from "@tabler/icons-vue";
 import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
+import { useAuthStore } from "../../stores/auth.store";
 import { filesService } from "../../services/files.service";
 import FileList from "./FileList.vue";
 import MoveDialog from "./MoveDialog.vue";
@@ -839,8 +849,13 @@ let cachedHljs: any | null = null;
 
 const filesStore = useFilesStore();
 const appStore = useAppStore();
+const authStore = useAuthStore();
 const { files, loading, error, currentPath, browseCommit } =
   storeToRefs(filesStore);
+
+const searchContentEnabled = computed(
+  () => authStore.features?.searchContent ?? false,
+);
 
 const currentPathLabel = computed(() => {
   return currentPath.value ? `/${currentPath.value}` : "根目录";
