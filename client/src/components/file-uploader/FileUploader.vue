@@ -46,6 +46,7 @@ type UploadItem = {
   percent: number | null;
   error?: string;
   abort?: AbortController;
+  relativePath: string;
 };
 
 const queue = ref<UploadItem[]>([]);
@@ -66,6 +67,7 @@ const queueView = computed<UploadQueueItemView[]>(() =>
     status: x.status,
     percent: x.percent,
     error: x.error,
+    relativePath: x.relativePath,
   })),
 );
 
@@ -80,6 +82,7 @@ function addFiles(files: File[]) {
     message: defaultUploadMessage(f),
     status: "queued",
     percent: null,
+    relativePath: (f as any).webkitRelativePath || "",
   }));
   queue.value = [...queue.value, ...added];
 }
@@ -151,6 +154,7 @@ async function startUpload() {
             }
             next.percent = Math.min(100, Math.floor((loaded / total) * 100));
           },
+          relativePath: next.relativePath,
         },
       );
       next.status = "done";

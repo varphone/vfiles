@@ -13,33 +13,52 @@
       style="display: none"
       @change="onSelect"
     />
+    <input
+      type="file"
+      ref="directoryInput"
+      webkitdirectory
+      multiple
+      style="display: none"
+      @change="onDirectorySelect"
+    />
 
     <div class="drop-zone-content">
       <div class="drop-zone-left">
         <IconCloudUpload :size="24" class="icon-upload" />
-        <span class="drop-zone-text">拖拽文件到此处</span>
+        <span class="drop-zone-text">拖拽文件或目录到此处</span>
       </div>
-      <button
-        class="button is-primary"
-        type="button"
-        @click="fileInput?.click()"
-      >
-        <IconFile :size="20" class="mr-2" />
-        选择文件
-      </button>
+      <div class="drop-zone-buttons">
+        <button
+          class="button is-primary"
+          type="button"
+          @click="fileInput?.click()"
+        >
+          <IconFile :size="20" class="mr-2" />
+          选择文件
+        </button>
+        <button
+          class="button is-light"
+          type="button"
+          @click="directoryInput?.click()"
+        >
+          <IconFolder :size="20" class="mr-2" />
+          选择目录
+        </button>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from "vue";
-import { IconCloudUpload, IconFile } from "@tabler/icons-vue";
+import { IconCloudUpload, IconFile, IconFolder } from "@tabler/icons-vue";
 
 const emit = defineEmits<{
   (e: "files", files: File[]): void;
 }>();
 
 const fileInput = ref<HTMLInputElement | null>(null);
+const directoryInput = ref<HTMLInputElement | null>(null);
 const isDragging = ref(false);
 
 function onDragOver() {
@@ -58,6 +77,14 @@ function onDrop(event: DragEvent) {
 }
 
 function onSelect(event: Event) {
+  const target = event.target as HTMLInputElement;
+  const list = target.files;
+  if (!list || list.length === 0) return;
+  emit("files", Array.from(list));
+  target.value = "";
+}
+
+function onDirectorySelect(event: Event) {
   const target = event.target as HTMLInputElement;
   const list = target.files;
   if (!list || list.length === 0) return;
@@ -94,6 +121,11 @@ function onSelect(event: Event) {
   color: #7a7a7a;
 }
 
+.drop-zone-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .icon-upload {
   color: #b5b5b5;
 }
@@ -105,6 +137,11 @@ function onSelect(event: Event) {
 @media screen and (max-width: 768px) {
   .drop-zone {
     padding: 0.75rem;
+  }
+
+  .drop-zone-content {
+    flex-direction: column;
+    gap: 0.75rem;
   }
 }
 </style>

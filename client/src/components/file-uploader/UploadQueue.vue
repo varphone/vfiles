@@ -6,6 +6,11 @@
           <div class="level-item" style="min-width: 0">
             <IconFile :size="20" class="mr-2" />
             <span
+              v-if="item.relativePath"
+              class="tag is-info is-light mr-2 is-size-7"
+              >{{ getDirectoryFromPath(item.relativePath) }}</span
+            >
+            <span
               class="is-size-7"
               style="
                 overflow: hidden;
@@ -101,6 +106,7 @@ export type UploadQueueItemView = {
   status: "queued" | "uploading" | "done" | "error" | "canceled";
   percent?: number | null;
   error?: string;
+  relativePath?: string;
 };
 
 defineProps<{
@@ -120,6 +126,13 @@ function onMessageInput(id: number, event: Event) {
   }
 
   emit("update-message", id, target.value);
+}
+
+function getDirectoryFromPath(relativePath: string): string {
+  const parts = relativePath.split("/");
+  // Remove the last part (filename) and return the directory path
+  parts.pop();
+  return parts.join("/") || "";
 }
 </script>
 

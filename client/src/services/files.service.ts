@@ -292,12 +292,18 @@ export const filesService = {
     opts?: {
       signal?: AbortSignal;
       onProgress?: (p: { loaded: number; total?: number }) => void;
+      relativePath?: string;
     },
   ): Promise<any> {
+    // 计算目标路径：如果提供了 relativePath（来自目录选择），则使用它
+    const targetPath = opts?.relativePath
+      ? `${path}/${opts.relativePath}`.replace(/\/+/g, "/").replace(/^\//, "")
+      : path;
+
     async function fallbackSingleUpload(mode: "xhr" | "native" = "xhr") {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("path", path);
+      formData.append("path", targetPath);
       formData.append("message", message);
 
       if (mode === "native") {
@@ -330,7 +336,7 @@ export const filesService = {
       const initResp = await apiService.post<UploadInitResponse>(
         "/files/upload/init",
         {
-          path,
+          path: targetPath,
           filename: file.name,
           size: file.size,
           lastModified: (file as any).lastModified ?? undefined,
