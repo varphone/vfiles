@@ -14,7 +14,7 @@
         @click="toggle"
       >
         <IconAdjustmentsHorizontal :size="16" />
-        <span>视图</span>
+        <span class="is-hidden-touch">视图</span>
       </button>
     </div>
 
@@ -22,59 +22,29 @@
       <div class="dropdown-content view-options-panel">
         <div class="view-options-section">
           <p class="view-options-label">显示方式</p>
-          <div class="buttons has-addons are-small mb-0">
+          <div class="view-options-segment" role="group" aria-label="显示方式">
             <button
-              class="button"
-              :class="{ 'is-link is-light': view.mode === 'list' }"
+              class="vf-ghost-button view-options-segment-button"
+              :class="{ 'is-active': view.mode === 'list' }"
               type="button"
               title="列表视图"
+              :aria-pressed="view.mode === 'list' ? 'true' : 'false'"
               @click="view.setMode('list')"
             >
               <IconList :size="16" />
               <span>列表</span>
             </button>
             <button
-              class="button"
-              :class="{ 'is-link is-light': view.mode === 'grid' }"
+              class="vf-ghost-button view-options-segment-button"
+              :class="{ 'is-active': view.mode === 'grid' }"
               type="button"
               title="网格视图"
+              :aria-pressed="view.mode === 'grid' ? 'true' : 'false'"
               @click="view.setMode('grid')"
             >
               <IconLayoutGrid :size="16" />
               <span>网格</span>
             </button>
-          </div>
-        </div>
-
-        <hr class="dropdown-divider" />
-
-        <div class="view-options-section">
-          <p class="view-options-label">排序方式</p>
-          <div class="field has-addons mb-0">
-            <div class="control is-expanded">
-              <div class="select is-small is-fullwidth">
-                <select
-                  :value="view.sortField"
-                  aria-label="排序字段"
-                  @change="onFieldChange"
-                >
-                  <option v-for="field in fields" :key="field" :value="field">
-                    {{ fieldLabels[field] }}
-                  </option>
-                </select>
-              </div>
-            </div>
-            <div class="control">
-              <button
-                class="button is-small is-light"
-                type="button"
-                :title="view.sortDirection === 'asc' ? '升序' : '降序'"
-                @click="view.toggleSortDirection()"
-              >
-                <IconArrowUp v-if="view.sortDirection === 'asc'" :size="16" />
-                <IconArrowDown v-else :size="16" />
-              </button>
-            </div>
           </div>
         </div>
 
@@ -109,36 +79,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import {
   IconAdjustmentsHorizontal,
-  IconArrowDown,
-  IconArrowUp,
   IconLayoutGrid,
   IconList,
 } from "@tabler/icons-vue";
 import { useFileViewStore } from "../../stores/fileView.store";
-import { SORT_FIELD_LABELS, type SortField } from "../../utils/fileSort";
 
 const view = useFileViewStore();
 const open = ref(false);
 const rootRef = ref<HTMLElement | null>(null);
 
-const fields = computed<SortField[]>(() => [
-  "name",
-  "modified",
-  "size",
-  "type",
-]);
-const fieldLabels = SORT_FIELD_LABELS;
-
 function toggle() {
   open.value = !open.value;
-}
-
-function onFieldChange(event: Event) {
-  const target = event.target as HTMLSelectElement;
-  view.setSortField(target.value as SortField);
 }
 
 function onThumbnailSizeInput(event: Event) {
@@ -182,6 +136,21 @@ onBeforeUnmount(() => {
 .view-options.dropdown.is-active .vf-ghost-button {
   background: var(--vf-accent-soft);
   color: var(--vf-accent-strong);
+}
+
+/* 显示方式：分段控件，激活项用强调色浅底 */
+.view-options-segment {
+  display: inline-flex;
+  gap: 0.15rem;
+  padding: 0.15rem;
+  border-radius: var(--vf-radius);
+  background: var(--vf-surface-sunken);
+}
+
+.view-options-segment-button {
+  min-height: 1.75rem;
+  padding: 0 0.6rem;
+  font-size: 0.78rem;
 }
 
 .view-options-label {

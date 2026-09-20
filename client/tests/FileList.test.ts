@@ -77,7 +77,7 @@ describe("FileList.vue", () => {
       },
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: /修改日期/ }));
+    await fireEvent.click(screen.getByRole("button", { name: /修改时间/ }));
     expect(emitted()["sort-change"]?.[0]).toEqual(["modified"]);
 
     const nameHeader = screen.getByRole("columnheader", { name: /名称/ });

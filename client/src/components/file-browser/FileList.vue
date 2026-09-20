@@ -106,7 +106,11 @@
 <script setup lang="ts">
 import { computed, toRefs } from "vue";
 import type { FileInfo } from "../../types";
-import type { SortDirection, SortField } from "../../utils/fileSort";
+import {
+  SORT_FIELD_LABELS,
+  type SortDirection,
+  type SortField,
+} from "../../utils/fileSort";
 import FileItem from "./FileItem.vue";
 
 const emit = defineEmits<{
@@ -173,11 +177,17 @@ interface SortColumn {
   align?: string;
 }
 
+// 列头文案复用共享的排序字段标签，避免同一字段在表头与排序菜单里叫法不同
 const columns: SortColumn[] = [
-  { field: "name", label: "名称" },
-  { field: "modified", label: "修改日期", narrow: true },
-  { field: "type", label: "类型", narrow: true },
-  { field: "size", label: "大小", narrow: true, align: "has-text-right" },
+  { field: "name", label: SORT_FIELD_LABELS.name },
+  { field: "modified", label: SORT_FIELD_LABELS.modified, narrow: true },
+  { field: "type", label: SORT_FIELD_LABELS.type, narrow: true },
+  {
+    field: "size",
+    label: SORT_FIELD_LABELS.size,
+    narrow: true,
+    align: "has-text-right",
+  },
 ];
 
 /** 快捷项（`.`/`..`）不参与“全选”，与批量操作的范围保持一致。 */

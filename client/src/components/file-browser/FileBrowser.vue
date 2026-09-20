@@ -46,6 +46,8 @@
                 />
               </datalist>
             </div>
+            <ViewOptions />
+            <SortMenu />
             <button
               class="vf-icon-button"
               :class="{ 'is-active': mobileSearchFiltersOpen }"
@@ -139,6 +141,7 @@
                 <IconRefresh :size="18" />
               </button>
               <ViewOptions />
+              <SortMenu />
               <button
                 class="vf-icon-button"
                 :class="{ 'is-active': fileView.detailsVisible }"
@@ -827,6 +830,7 @@ import BrowserSearchBox from "./BrowserSearchBox.vue";
 import UploadDropOverlay from "./UploadDropOverlay.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
+import SortMenu from "./SortMenu.vue";
 import Breadcrumb from "./Breadcrumb.vue";
 import FileSkeleton from "./FileSkeleton.vue";
 import DownloadQueuePanel from "./DownloadQueuePanel.vue";
@@ -1853,6 +1857,15 @@ function handleSortChange(field: SortField) {
   display: flex;
   align-items: center;
   gap: 0.3rem;
+}
+
+/* 移动端搜索行里的视图/排序下拉需要浮在列表之上 */
+.mobile-search-row .dropdown-menu {
+  z-index: 30;
+}
+
+.mobile-search-row .dropdown-menu .vf-ghost-button {
+  min-height: 1.75rem;
 }
 
 .mobile-search-input {
