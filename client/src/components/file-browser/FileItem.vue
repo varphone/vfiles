@@ -93,7 +93,11 @@
 
     <td class="is-narrow has-text-right">{{ desktopFileSizeLabel }}</td>
 
-    <td class="is-narrow has-text-right" @click.stop>
+    <td
+      v-if="showActionColumn !== false"
+      class="is-narrow has-text-right"
+      @click.stop
+    >
       <div
         v-if="!isParentShortcut"
         class="buttons has-addons are-small is-right mb-0 desktop-action-buttons"
@@ -444,6 +448,8 @@ const props = defineProps<{
   desktop?: boolean;
   /** 是否处于内联重命名状态 */
   renaming?: boolean;
+  /** 是否显示「操作」列（详情面板可见时由父组件关闭） */
+  showActionColumn?: boolean;
 }>();
 
 const emit = defineEmits<{

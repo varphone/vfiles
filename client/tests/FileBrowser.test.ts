@@ -645,6 +645,51 @@ describe("FileBrowser.vue loading state", () => {
     await findByText("此文件夹为空");
   });
 });
+describe("FileBrowser.vue action column", () => {
+  function files() {
+    return [
+      {
+        id: "a",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file",
+        size_bytes: 10,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ];
+  }
+
+  it("hides the action column while the details panel is visible", async () => {
+    // 桌面端默认显示详情面板（localStorage 里 detailsVisible: true）
+    setDetailsVisible(true);
+    getFilesMock.mockResolvedValue(files());
+
+    const { container } = renderWithProviders(FileBrowser as any);
+    // 详情面板里也会出现文件名，这里等列表行渲染出来即可
+    await waitFor(() =>
+      expect(container.querySelector("tr.desktop-file-row")).not.toBeNull(),
+    );
+
+    expect(container.querySelector(".file-list-actions-header")).toBeNull();
+    // 表格列数：名称/修改时间/类型/大小（不含操作）
+    const row = container.querySelector("tr.desktop-file-row")!;
+    expect(row.querySelectorAll("td").length).toBe(5);
+  });
+
+  it("shows the action column when the details panel is hidden", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(files());
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("a.txt");
+
+    expect(container.querySelector(".file-list-actions-header")).not.toBeNull();
+    const row = container.querySelector("tr.desktop-file-row")!;
+    expect(row.querySelectorAll("td").length).toBe(6);
+  });
+});
+
 describe("FileBrowser.vue inline rename", () => {
   function files() {
     return [

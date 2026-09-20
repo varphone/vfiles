@@ -35,7 +35,10 @@
               >
             </button>
           </th>
-          <th class="is-narrow has-text-right file-list-actions-header">
+          <th
+            v-if="showActionColumn"
+            class="is-narrow has-text-right file-list-actions-header"
+          >
             操作
           </th>
         </tr>
@@ -57,6 +60,7 @@
           @download="emit('download', file)"
           @rename="emit('rename', file)"
           :renaming="renamingPath === file.path"
+          :show-action-column="showActionColumn"
           @rename-commit="(target, name) => emit('rename-commit', target, name)"
           @rename-cancel="(target) => emit('rename-cancel', target)"
           @move="emit('move', file)"
@@ -149,6 +153,8 @@ const props = withDefaults(
   defineProps<{
     files: FileInfo[];
     renamingPath?: string;
+    /** 是否显示「操作」列；详情面板可见时可关掉，避免与面板里的操作重复。 */
+    showActionColumn?: boolean;
     highlight?: string;
     selectMode: boolean;
     selectedPaths: Set<string>;
@@ -159,6 +165,7 @@ const props = withDefaults(
     sortDirection?: SortDirection;
   }>(),
   {
+    showActionColumn: true,
     renamingPath: "",
     highlight: "",
     expandedPath: "",
