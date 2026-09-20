@@ -5,13 +5,19 @@
         v-for="(crumb, index) in breadcrumbs"
         :key="crumb.path"
         class="path-bar-item"
-        :class="{ 'is-active': index === breadcrumbs.length - 1 }"
+        :class="{
+          'is-active': index === breadcrumbs.length - 1,
+          'drop-target': dropTarget === crumb.path,
+        }"
       >
         <a
           class="path-bar-segment"
           href="#"
           :title="crumb.path ? `/${crumb.path}` : '根目录'"
           @click.prevent="go(crumb.path)"
+          @dragover.prevent="onDragOver(crumb.path)"
+          @dragleave="onDragLeave(crumb.path)"
+          @drop.prevent="onDrop(crumb.path)"
         >
           <IconHome v-if="index === 0" :size="15" class="path-bar-icon" />
           <span>{{ crumb.name }}</span>
@@ -69,9 +75,11 @@ withDefaults(
 
 const emit = defineEmits<{
   (e: "navigate", path: string): void;
+  (e: "drop", path: string): void;
 }>();
 
 const open = ref(false);
+const dropTarget = ref("");
 
 function toggle() {
   open.value = !open.value;
@@ -80,6 +88,20 @@ function toggle() {
 function go(path: string) {
   open.value = false;
   emit("navigate", path);
+}
+
+/** 拖放：路径段可作为放置目标，把条目移动到该目录。 */
+function onDragOver(path: string) {
+  dropTarget.value = path;
+}
+
+function onDragLeave(path: string) {
+  if (dropTarget.value === path) dropTarget.value = "";
+}
+
+function onDrop(path: string) {
+  dropTarget.value = "";
+  emit("drop", path);
 }
 
 function onDocumentClick(event: MouseEvent) {

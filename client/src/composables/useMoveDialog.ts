@@ -56,12 +56,17 @@ export function useMoveDialog(deps: MoveDialogDeps) {
     openMoveDialog([file], parentDirectoryPath(file.path));
   }
 
-  async function submitMoveDialog(targetDir: string) {
-    const items = moveDialogItems.value.slice();
-    if (items.length === 0) return;
+  /**
+   * 执行一次（批量）移动：校验目标重名、逐项移动并同步选择/高亮，最后刷新。
+   * 返回是否成功；失败时已通过通知提示。
+   */
+  async function performMove(
+    items: FileInfo[],
+    targetDir: string,
+  ): Promise<boolean> {
+    if (items.length === 0) return false;
 
     const normalizedTargetDir = normalizeTargetDirectory(targetDir);
-    moveDialogSubmitting.value = true;
 
     try {
       const targetEntries = await filesService.getFiles(normalizedTargetDir);
@@ -97,12 +102,33 @@ export function useMoveDialog(deps: MoveDialogDeps) {
       }
 
       appStore.success(successMessage);
-      resetMoveDialogState();
       await deps.refreshAfterMutation();
+      return true;
     } catch (err) {
       appStore.error(err instanceof Error ? err.message : "移动失败");
+      return false;
+    }
+  }
+
+  async function submitMoveDialog(targetDir: string) {
+    const items = moveDialogItems.value.slice();
+    if (items.length === 0) return;
+
+    moveDialogSubmitting.value = true;
+    const ok = await performMove(items, targetDir);
+    if (ok) {
+      resetMoveDialogState();
+    } else {
       moveDialogSubmitting.value = false;
     }
+  }
+
+  /** 拖放移动单个条目到目标目录（不打开对话框）。 */
+  async function moveEntryToDirectory(
+    file: FileInfo,
+    targetDir: string,
+  ): Promise<boolean> {
+    return await performMove([file], targetDir);
   }
 
   return {
@@ -115,5 +141,6 @@ export function useMoveDialog(deps: MoveDialogDeps) {
     closeMoveDialog,
     openMoveForEntry,
     submitMoveDialog,
+    moveEntryToDirectory,
   };
 }

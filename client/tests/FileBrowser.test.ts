@@ -3,13 +3,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "./renderWithProviders";
 import FileBrowser from "../src/components/file-browser/FileBrowser.vue";
 
-const { getFilesMock, searchFilesMock, deleteFileMock, getFileContentMock } =
-  vi.hoisted(() => ({
-    getFilesMock: vi.fn(async (): Promise<unknown[]> => []),
-    searchFilesMock: vi.fn(async (): Promise<unknown[]> => []),
-    deleteFileMock: vi.fn(async () => ({ success: true })),
-    getFileContentMock: vi.fn(async () => new Blob(["hello preview"])),
-  }));
+const {
+  getFilesMock,
+  searchFilesMock,
+  deleteFileMock,
+  getFileContentMock,
+  movePathMock,
+} = vi.hoisted(() => ({
+  getFilesMock: vi.fn(async (): Promise<unknown[]> => []),
+  searchFilesMock: vi.fn(async (): Promise<unknown[]> => []),
+  deleteFileMock: vi.fn(async () => ({ success: true })),
+  getFileContentMock: vi.fn(async () => new Blob(["hello preview"])),
+  movePathMock: vi.fn(async () => ({ success: true })),
+}));
 
 vi.mock("../src/composables/dialog", () => ({
   confirmDialog: vi.fn(async () => true),
@@ -22,6 +28,7 @@ vi.mock("../src/services/files.service", () => ({
     searchFiles: searchFilesMock,
     deleteFile: deleteFileMock,
     getFileContent: getFileContentMock,
+    movePath: movePathMock,
   },
 }));
 
@@ -48,6 +55,8 @@ describe("FileBrowser.vue", () => {
     searchFilesMock.mockReset();
     deleteFileMock.mockReset();
     getFileContentMock.mockReset();
+    movePathMock.mockReset();
+    movePathMock.mockResolvedValue({ success: true });
     getFilesMock.mockResolvedValue([]);
     searchFilesMock.mockResolvedValue([]);
     deleteFileMock.mockResolvedValue({ success: true });
@@ -462,5 +471,47 @@ describe("FileBrowser.vue large directories", () => {
     expect(container.textContent).toContain("继续下滑加载更多");
     expect(container.textContent).toContain("已显示 40 / 47");
     expect(container.textContent).not.toContain("f44.txt");
+  });
+});
+describe("FileBrowser.vue drag and drop", () => {
+  it("moves a dragged file into a dropped-on folder", async () => {
+    getFilesMock.mockResolvedValue([
+      {
+        id: "d",
+        name: "docs",
+        path: "docs",
+        kind: "directory",
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+      {
+        id: "a",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file",
+        size_bytes: 1,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+
+    const { findAllByText, findByText } = renderWithProviders(
+      FileBrowser as any,
+    );
+    await findByText("docs");
+
+    const fileRow = (await findAllByText("a.txt"))[0].closest("tr")!;
+    const dirRow = (await findAllByText("docs"))[0].closest("tr")!;
+
+    await fireEvent.dragStart(fileRow);
+    await fireEvent.drop(dirRow);
+
+    await waitFor(() => {
+      expect(movePathMock).toHaveBeenCalledWith(
+        "a.txt",
+        "docs/a.txt",
+        expect.stringContaining("移动文件"),
+      );
+    });
   });
 });

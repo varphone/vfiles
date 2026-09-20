@@ -138,4 +138,35 @@ describe("useMoveDialog", () => {
 
     expect(harness.setActivePath).toHaveBeenCalledWith("");
   });
+
+  it("moves a dragged entry into a directory without opening the dialog", async () => {
+    const harness = setup();
+
+    const ok = await harness.dialog.moveEntryToDirectory(
+      entry("docs/a.txt"),
+      "photos",
+    );
+
+    expect(ok).toBe(true);
+    expect(movePathMock).toHaveBeenCalledWith(
+      "docs/a.txt",
+      "photos/a.txt",
+      expect.stringContaining("移动文件"),
+    );
+    expect(harness.dialog.showMoveDialog.value).toBe(false);
+    expect(harness.refreshAfterMutation).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to move a directory into itself", async () => {
+    const harness = setup();
+
+    const ok = await harness.dialog.moveEntryToDirectory(
+      entry("docs", "directory"),
+      "docs/nested",
+    );
+
+    expect(ok).toBe(false);
+    expect(movePathMock).not.toHaveBeenCalled();
+    expect(harness.refreshAfterMutation).not.toHaveBeenCalled();
+  });
 });

@@ -6,12 +6,19 @@
       'file-card--active': active,
       'file-card--shortcut': isNavigationShortcut,
       'file-card--grid': true,
+      'drop-target': dragOver,
     }"
     :style="{ '--file-card-thumb-size': `${thumbnailSize}px` }"
     :title="file.name"
+    :draggable="!isNavigationShortcut"
     @click="handleClick"
     @dblclick="handleActivate"
     @contextmenu.prevent="handleContextMenu"
+    @dragstart="handleDragStart"
+    @dragend="handleDragEnd"
+    @dragover.prevent="handleDragOver"
+    @dragleave="handleDragLeave"
+    @drop.prevent="handleDrop"
   >
     <div class="file-card-thumb">
       <img
@@ -231,10 +238,14 @@ const emit = defineEmits<{
     payload: { file: FileInfo; shift: boolean; meta: boolean },
   ];
   "context-menu": [payload: { file: FileInfo; x: number; y: number }];
+  "drag-start": [file: FileInfo];
+  "drag-end": [];
+  "drop-on-folder": [targetDir: string];
 }>();
 
 const menuOpen = ref(false);
 const thumbFailed = ref(false);
+const dragOver = ref(false);
 
 const uiRole = computed(
   () => (props.file as FileInfo & { uiRole?: "self" | "parent" }).uiRole,
@@ -321,6 +332,38 @@ function handleContextMenu(event: MouseEvent) {
     x: event.clientX,
     y: event.clientY,
   });
+}
+
+/** 拖拽：仅真实条目可拖动，目录可作为放置目标。 */
+function handleDragStart(event: DragEvent) {
+  if (isNavigationShortcut.value) {
+    event.preventDefault();
+    return;
+  }
+  event.dataTransfer?.setData("text/plain", props.file.path);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+  emit("drag-start", props.file);
+}
+
+function handleDragEnd() {
+  dragOver.value = false;
+  emit("drag-end");
+}
+
+function handleDragOver(event: DragEvent) {
+  if (props.file.kind !== "directory" || isSelfShortcut.value) return;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  dragOver.value = true;
+}
+
+function handleDragLeave() {
+  dragOver.value = false;
+}
+
+function handleDrop() {
+  dragOver.value = false;
+  if (props.file.kind !== "directory" || isSelfShortcut.value) return;
+  emit("drop-on-folder", props.file.path);
 }
 
 function handleActivate() {

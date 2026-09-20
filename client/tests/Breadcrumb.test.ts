@@ -87,4 +87,14 @@ describe("Breadcrumb.vue", () => {
     await fireEvent.click(document.body);
     expect(screen.queryByText("images")).not.toBeInTheDocument();
   });
+
+  it("accepts drops on a path segment for drag-and-drop moves", async () => {
+    const { emitted } = render(Breadcrumb as any, { props: { breadcrumbs } });
+
+    const segment = screen.getByText("docs");
+    await fireEvent.dragOver(segment);
+    await fireEvent.drop(segment);
+
+    expect(emitted()["drop"]?.[0]).toEqual(["docs"]);
+  });
 });

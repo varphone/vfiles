@@ -178,4 +178,50 @@ describe("FileList.vue", () => {
     expect(events[0][0].x).toBe(120);
     expect(events[0][0].y).toBe(80);
   });
+
+  it("emits drag events and accepts drops on directories", async () => {
+    const { emitted } = render(FileList as any, {
+      props: {
+        desktop: true,
+        selectMode: false,
+        selectedPaths: new Set<string>(),
+        files: [
+          buildFile({ id: "d", name: "docs", path: "docs", kind: "directory" }),
+          buildFile({ id: "a", name: "a.txt", path: "a.txt" }),
+        ],
+      },
+    });
+
+    const fileRow = screen.getByText("a.txt").closest("tr")!;
+    await fireEvent.dragStart(fileRow);
+    const starts = emitted()["drag-start"] as Array<[{ path: string }]>;
+    expect(starts).toHaveLength(1);
+    expect(starts[0][0].path).toBe("a.txt");
+
+    const dirRow = screen.getByText("docs").closest("tr")!;
+    await fireEvent.dragOver(dirRow);
+    expect(dirRow).toHaveClass("drop-target");
+
+    await fireEvent.drop(dirRow);
+    expect(emitted()["drop-on-folder"]?.[0]).toEqual(["docs"]);
+    expect(dirRow).not.toHaveClass("drop-target");
+  });
+
+  it("ignores drops on non-directories", async () => {
+    const { emitted } = render(FileList as any, {
+      props: {
+        desktop: true,
+        selectMode: false,
+        selectedPaths: new Set<string>(),
+        files: [buildFile({ id: "a", name: "a.txt", path: "a.txt" })],
+      },
+    });
+
+    const row = screen.getByText("a.txt").closest("tr")!;
+    await fireEvent.dragOver(row);
+    await fireEvent.drop(row);
+
+    expect(emitted()["drop-on-folder"]).toBeUndefined();
+    expect(row).not.toHaveClass("drop-target");
+  });
 });

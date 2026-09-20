@@ -11,6 +11,7 @@
           :breadcrumbs="filesStore.breadcrumbs"
           :directories="filesStore.directories"
           @navigate="handleBreadcrumbNavigate"
+          @drop="handleDropOnFolder"
         />
       </div>
 
@@ -385,6 +386,9 @@
                 @toggle-select="toggleSelect"
                 @modifier-select="handleModifierSelect"
                 @context-menu="handleContextMenu"
+                @drag-start="handleDragStart"
+                @drag-end="handleDragEnd"
+                @drop-on-folder="handleDropOnFolder"
                 @share="handleShare"
                 @preview="handlePreview"
                 @open-folder="handleOpenFolder"
@@ -410,6 +414,9 @@
                 @toggle-select="toggleSelect"
                 @modifier-select="handleModifierSelect"
                 @context-menu="handleContextMenu"
+                @drag-start="handleDragStart"
+                @drag-end="handleDragEnd"
+                @drop-on-folder="handleDropOnFolder"
                 @toggle-select-all="toggleSelectAll"
                 @sort-change="handleSortChange"
                 @share="handleShare"
@@ -506,6 +513,9 @@
             @toggle-select="toggleSelect"
             @modifier-select="handleModifierSelect"
             @context-menu="handleContextMenu"
+            @drag-start="handleDragStart"
+            @drag-end="handleDragEnd"
+            @drop-on-folder="handleDropOnFolder"
             @share="handleShare"
             @preview="handlePreview"
             @open-folder="handleOpenFolder"
@@ -527,6 +537,9 @@
             @toggle-select="toggleSelect"
             @modifier-select="handleModifierSelect"
             @context-menu="handleContextMenu"
+            @drag-start="handleDragStart"
+            @drag-end="handleDragEnd"
+            @drop-on-folder="handleDropOnFolder"
             @share="handleShare"
             @preview="handlePreview"
             @open-folder="handleOpenFolder"
@@ -559,6 +572,9 @@
             @toggle-select="toggleSelect"
             @modifier-select="handleModifierSelect"
             @context-menu="handleContextMenu"
+            @drag-start="handleDragStart"
+            @drag-end="handleDragEnd"
+            @drop-on-folder="handleDropOnFolder"
             @share="handleShare"
             @preview="handlePreview"
             @open-folder="handleOpenFolder"
@@ -579,6 +595,9 @@
             @toggle-select="toggleSelect"
             @modifier-select="handleModifierSelect"
             @context-menu="handleContextMenu"
+            @drag-start="handleDragStart"
+            @drag-end="handleDragEnd"
+            @drop-on-folder="handleDropOnFolder"
             @share="handleShare"
             @preview="handlePreview"
             @open-folder="handleOpenFolder"
@@ -1024,6 +1043,7 @@ const {
   closeMoveDialog,
   openMoveForEntry,
   submitMoveDialog,
+  moveEntryToDirectory,
 } = useMoveDialog({
   currentPath,
   refreshAfterMutation,
@@ -1583,6 +1603,25 @@ async function handleRenameEntry(file: FileInfo) {
 
 function handleMoveEntry(file: FileInfo) {
   openMoveForEntry(file);
+}
+
+/** 当前正在拖动的条目（用于拖放移动）。 */
+const draggingFile = ref<FileInfo | null>(null);
+
+function handleDragStart(file: FileInfo) {
+  draggingFile.value = file;
+}
+
+function handleDragEnd() {
+  draggingFile.value = null;
+}
+
+async function handleDropOnFolder(targetDir: string) {
+  const file = draggingFile.value;
+  draggingFile.value = null;
+  if (!file) return;
+  // 校验（自身/子目录、未变化、重名）由 useMoveDialog 内的 planMoveOperations 统一处理
+  await moveEntryToDirectory(file, targetDir);
 }
 
 function handleViewHistory(file: FileInfo) {

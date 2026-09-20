@@ -16,13 +16,13 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 22 实测）
+### 验证基线（round 23 实测）
 
-- `cargo test --workspace`：通过（含批量路径查询与事务批量移动用例）。
+- `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：20 个文件 / 101 个用例通过。
-- 冒烟：移动含 51 个后代的目录约 **10ms**，全部路径正确更新；移动到已存在路径
-  返回 409 `PATH_CONFLICT` 且源目录保持 51 个子项不变。
+- `client` 单测：20 个文件 / **107** 个用例通过。
+- 冒烟：served 产物包含拖放相关标记；`POST /api/files/move` 行为正常
+  （`d1/note.txt` → `d2/note.txt`）。
 
 ### 主要发现
 
@@ -340,6 +340,18 @@
 - 测试：`find_paths` 只返回存在的路径、空输入为空；`move_entries` 批量成功、重复目标
   返回 `PathConflict`；既有移动/重命名等 59 个 HTTP 集成测试保持通过。
 
+### 2.28 拖放移动（round 23，交互）
+
+- 列表行与网格卡片支持 HTML5 拖拽：真实条目可拖动（`dragstart` 写入
+  `dataTransfer`），目录作为放置目标（`dragover`/`dragleave`/`drop`），并有
+  `.drop-target` 高亮（App.vue 全局样式）。
+- 面包屑路径段同样可作为放置目标，把条目移动到任意祖先目录。
+- `useMoveDialog` 抽出 `performMove` 核心，新增 `moveEntryToDirectory`；拖放复用同一
+  套校验（自身/子目录、未变化、重名）与刷新逻辑，不打开对话框。
+- 测试：`FileList` 拖拽事件与目录放置、非目录忽略放置；`Breadcrumb` 放置事件；
+  `useMoveDialog` 拖放移动/拒绝移动到自身子目录；`FileBrowser` 拖拽文件到目录行后
+  调用 `movePath`。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -393,7 +405,8 @@
 - `[x]` 右键上下文菜单；Shift 范围选择 / Ctrl(⌘) 加选（round 5）。
 - `[x]` 面包屑可点击跳转 + 当前目录子文件夹下拉（round 11）。
 - `[x]` 预览内上一个/下一个（按钮 + ←/→ 方向键）与位置指示（round 14）。
-- `[ ]` 面包屑拖放移动；网格视图排序入口与列表一致；移动端长按呼出菜单。
+- `[x]` 拖放移动：拖到目录行/卡片或面包屑路径段（round 23）。
+- `[ ]` 网格视图排序入口与列表一致；移动端长按呼出菜单。
 - `[ ]` 上传/下载与网格视图的空状态、加载骨架屏统一。
 
 ### 3.5 稳定性与可观测性（中）

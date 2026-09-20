@@ -22,6 +22,13 @@ import DialogHost from "./components/common/DialogHost.vue";
   box-sizing: border-box;
 }
 
+/* 拖放移动时的放置目标高亮（列表行 / 网格卡片 / 面包屑路径段共用） */
+.drop-target {
+  outline: 2px dashed #2f6db6;
+  outline-offset: -2px;
+  background-color: rgba(47, 109, 182, 0.08) !important;
+}
+
 html,
 body,
 #app {

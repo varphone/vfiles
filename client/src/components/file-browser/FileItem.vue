@@ -3,13 +3,24 @@
   <tr
     v-if="desktop"
     class="desktop-file-row"
+    :class="{ 'drop-target': dragOver }"
+    :draggable="!isNavigationShortcut"
     @click="handleClick"
     @dblclick="handleActivate"
     @contextmenu.prevent="handleContextMenu"
+    @dragstart="handleDragStart"
+    @dragend="handleDragEnd"
+    @dragover.prevent="handleDragOver"
+    @dragleave="handleDragLeave"
+    @drop.prevent="handleDrop"
   >
     <td class="is-narrow">
       <div class="is-flex is-align-items-center">
-        <label v-if="selectMode && !isNavigationShortcut" class="mr-2" @click.stop>
+        <label
+          v-if="selectMode && !isNavigationShortcut"
+          class="mr-2"
+          @click.stop
+        >
           <input
             type="checkbox"
             :checked="selected"
@@ -34,7 +45,9 @@
         @click.stop.prevent="activateNameLink"
       >
         <template v-for="(seg, i) in nameSegments" :key="i">
-          <mark v-if="seg.match" class="has-background-warning-light">{{ seg.text }}</mark>
+          <mark v-if="seg.match" class="has-background-warning-light">{{
+            seg.text
+          }}</mark>
           <span v-else>{{ seg.text }}</span>
         </template>
       </a>
@@ -45,7 +58,9 @@
         :title="file.name"
       >
         <template v-for="(seg, i) in nameSegments" :key="i">
-          <mark v-if="seg.match" class="has-background-warning-light">{{ seg.text }}</mark>
+          <mark v-if="seg.match" class="has-background-warning-light">{{
+            seg.text
+          }}</mark>
           <span v-else>{{ seg.text }}</span>
         </template>
       </span>
@@ -58,52 +73,125 @@
     <td class="is-narrow has-text-right">{{ desktopFileSizeLabel }}</td>
 
     <td class="is-narrow has-text-right" @click.stop>
-      <div v-if="!isParentShortcut" class="buttons has-addons are-small is-right mb-0 desktop-action-buttons">
+      <div
+        v-if="!isParentShortcut"
+        class="buttons has-addons are-small is-right mb-0 desktop-action-buttons"
+      >
         <template v-if="isSelfShortcut">
-          <button class="button is-ghost" @click="createDirectory" title="在当前目录下新建子目录" aria-label="在当前目录下新建子目录">
+          <button
+            class="button is-ghost"
+            @click="createDirectory"
+            title="在当前目录下新建子目录"
+            aria-label="在当前目录下新建子目录"
+          >
             <span class="icon is-small"><IconFolderPlus :size="16" /></span>
           </button>
         </template>
         <template v-else-if="file.kind === 'directory'">
-          <button class="button is-ghost" @click="createDirectory" title="在此目录下新建子目录" aria-label="在此目录下新建子目录">
+          <button
+            class="button is-ghost"
+            @click="createDirectory"
+            title="在此目录下新建子目录"
+            aria-label="在此目录下新建子目录"
+          >
             <span class="icon is-small"><IconFolderPlus :size="16" /></span>
           </button>
-          <button class="button is-ghost" @click="renameEntry" title="重命名目录" aria-label="重命名目录">
+          <button
+            class="button is-ghost"
+            @click="renameEntry"
+            title="重命名目录"
+            aria-label="重命名目录"
+          >
             <span class="icon is-small"><IconPencil :size="16" /></span>
           </button>
-          <button class="button is-ghost" @click="moveEntry" title="移动目录" aria-label="移动目录">
+          <button
+            class="button is-ghost"
+            @click="moveEntry"
+            title="移动目录"
+            aria-label="移动目录"
+          >
             <span class="icon is-small"><IconArrowsDiff :size="16" /></span>
           </button>
-          <button class="button is-ghost" @click="download" title="下载目录" aria-label="下载目录">
+          <button
+            class="button is-ghost"
+            @click="download"
+            title="下载目录"
+            aria-label="下载目录"
+          >
             <span class="icon is-small"><IconDownload :size="16" /></span>
           </button>
-          <button class="button is-ghost" @click="share" title="分享目录" aria-label="分享目录">
+          <button
+            class="button is-ghost"
+            @click="share"
+            title="分享目录"
+            aria-label="分享目录"
+          >
             <span class="icon is-small"><IconShare :size="16" /></span>
           </button>
-          <button class="button is-ghost is-danger" @click="confirmDelete" title="删除目录" aria-label="删除目录">
+          <button
+            class="button is-ghost is-danger"
+            @click="confirmDelete"
+            title="删除目录"
+            aria-label="删除目录"
+          >
             <span class="icon is-small"><IconTrash :size="16" /></span>
           </button>
         </template>
         <template v-else>
-          <button class="button is-ghost" @click="preview" title="预览文件" aria-label="预览文件">
+          <button
+            class="button is-ghost"
+            @click="preview"
+            title="预览文件"
+            aria-label="预览文件"
+          >
             <span class="icon is-small"><IconEye :size="16" /></span>
           </button>
-          <button class="button is-ghost" @click="viewHistory" title="查看历史" aria-label="查看历史">
+          <button
+            class="button is-ghost"
+            @click="viewHistory"
+            title="查看历史"
+            aria-label="查看历史"
+          >
             <span class="icon is-small"><IconHistory :size="16" /></span>
           </button>
-          <button class="button is-ghost" @click="renameEntry" title="重命名文件" aria-label="重命名文件">
+          <button
+            class="button is-ghost"
+            @click="renameEntry"
+            title="重命名文件"
+            aria-label="重命名文件"
+          >
             <span class="icon is-small"><IconPencil :size="16" /></span>
           </button>
-          <button class="button is-ghost" @click="moveEntry" title="移动文件" aria-label="移动文件">
+          <button
+            class="button is-ghost"
+            @click="moveEntry"
+            title="移动文件"
+            aria-label="移动文件"
+          >
             <span class="icon is-small"><IconArrowsDiff :size="16" /></span>
           </button>
-          <button class="button is-ghost" @click="download" title="下载文件" aria-label="下载文件">
+          <button
+            class="button is-ghost"
+            @click="download"
+            title="下载文件"
+            aria-label="下载文件"
+          >
             <span class="icon is-small"><IconDownload :size="16" /></span>
           </button>
-          <button class="button is-ghost" @click="share" title="分享文件" aria-label="分享文件">
+          <button
+            class="button is-ghost"
+            @click="share"
+            title="分享文件"
+            aria-label="分享文件"
+          >
             <span class="icon is-small"><IconShare :size="16" /></span>
           </button>
-          <button class="button is-ghost is-danger" @click="confirmDelete" title="删除文件" aria-label="删除文件">
+          <button
+            class="button is-ghost is-danger"
+            @click="confirmDelete"
+            title="删除文件"
+            aria-label="删除文件"
+          >
             <span class="icon is-small"><IconTrash :size="16" /></span>
           </button>
         </template>
@@ -120,85 +208,92 @@
       'is-expanded': showActions,
       'file-item--shortcut-parent': isParentShortcut,
       'file-item--shortcut-self': isSelfShortcut,
+      'drop-target': dragOver,
     }"
+    :draggable="!isNavigationShortcut"
     @click="handleClick"
     @dblclick="handleActivate"
     @contextmenu.prevent="handleContextMenu"
+    @dragstart="handleDragStart"
+    @dragend="handleDragEnd"
+    @dragover.prevent="handleDragOver"
+    @dragleave="handleDragLeave"
+    @drop.prevent="handleDrop"
   >
     <div class="media">
       <div class="media-left">
-          <figure class="image is-48x48">
-            <div class="file-icon">
-              <component :is="icon" :size="32" :stroke-width="1.5" />
-            </div>
-          </figure>
-        </div>
-        <div class="media-content">
-          <div class="content">
-            <p class="file-name" :class="nameTextClass" :title="file.name">
-              <template v-for="(seg, i) in nameSegments" :key="i"
-                ><mark v-if="seg.match" class="has-background-warning-light">{{
-                  seg.text
-                }}</mark
-                ><span v-else>{{ seg.text }}</span></template
-              >
-            </p>
-            <p class="file-info">
-              <template v-if="isNavigationShortcut">
-                <span class="tag is-light mr-2">
-                  {{ desktopFileKindLabel }}
-                </span>
-                <span class="has-text-grey-light is-size-7">
-                  {{ desktopSubtitle }}
-                </span>
-              </template>
-              <template v-else>
-                <span v-if="file.kind === 'file'" class="tag is-light mr-2">
-                  {{ formatSize(file.size_bytes || 0) }}
-                </span>
-                <span class="has-text-grey-light is-size-7">
-                  {{ formatDate(file.created_at) }}
-                </span>
-              </template>
-            </p>
-            <p v-if="file.lastCommit" class="file-commit">
-              <span class="tag is-info is-light">
-                {{ file.lastCommit.message }}
-              </span>
-            </p>
-
-            <div
-              v-if="file.kind === 'file' && file.matches && file.matches.length"
-              class="search-matches"
-            >
-              <p
-                v-for="m in file.matches"
-                :key="m.line"
-                class="is-size-7 has-text-grey"
-              >
-                <span class="has-text-grey-light mr-2">{{ m.line }}:</span>
-                <template v-for="(seg, i) in splitHighlight(m.text)" :key="i">
-                  <mark v-if="seg.match" class="has-background-warning-light">{{
-                    seg.text
-                  }}</mark>
-                  <span v-else>{{ seg.text }}</span>
-                </template>
-              </p>
-            </div>
+        <figure class="image is-48x48">
+          <div class="file-icon">
+            <component :is="icon" :size="32" :stroke-width="1.5" />
           </div>
-        </div>
-        <div v-if="selectMode && !isNavigationShortcut" class="media-right">
-          <div class="is-flex is-align-items-center">
-            <input
-              type="checkbox"
-              :checked="selected"
-              @click.stop
-              @change="toggleSelected"
-              aria-label="选择"
-            />
+        </figure>
+      </div>
+      <div class="media-content">
+        <div class="content">
+          <p class="file-name" :class="nameTextClass" :title="file.name">
+            <template v-for="(seg, i) in nameSegments" :key="i"
+              ><mark v-if="seg.match" class="has-background-warning-light">{{
+                seg.text
+              }}</mark
+              ><span v-else>{{ seg.text }}</span></template
+            >
+          </p>
+          <p class="file-info">
+            <template v-if="isNavigationShortcut">
+              <span class="tag is-light mr-2">
+                {{ desktopFileKindLabel }}
+              </span>
+              <span class="has-text-grey-light is-size-7">
+                {{ desktopSubtitle }}
+              </span>
+            </template>
+            <template v-else>
+              <span v-if="file.kind === 'file'" class="tag is-light mr-2">
+                {{ formatSize(file.size_bytes || 0) }}
+              </span>
+              <span class="has-text-grey-light is-size-7">
+                {{ formatDate(file.created_at) }}
+              </span>
+            </template>
+          </p>
+          <p v-if="file.lastCommit" class="file-commit">
+            <span class="tag is-info is-light">
+              {{ file.lastCommit.message }}
+            </span>
+          </p>
+
+          <div
+            v-if="file.kind === 'file' && file.matches && file.matches.length"
+            class="search-matches"
+          >
+            <p
+              v-for="m in file.matches"
+              :key="m.line"
+              class="is-size-7 has-text-grey"
+            >
+              <span class="has-text-grey-light mr-2">{{ m.line }}:</span>
+              <template v-for="(seg, i) in splitHighlight(m.text)" :key="i">
+                <mark v-if="seg.match" class="has-background-warning-light">{{
+                  seg.text
+                }}</mark>
+                <span v-else>{{ seg.text }}</span>
+              </template>
+            </p>
           </div>
         </div>
       </div>
+      <div v-if="selectMode && !isNavigationShortcut" class="media-right">
+        <div class="is-flex is-align-items-center">
+          <input
+            type="checkbox"
+            :checked="selected"
+            @click.stop
+            @change="toggleSelected"
+            aria-label="选择"
+          />
+        </div>
+      </div>
+    </div>
 
     <!-- 浮动操作栏 -->
     <Transition name="slide-up">
@@ -276,7 +371,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { confirmDialog } from "../../composables/dialog";
 import {
   IconArrowLeft,
@@ -322,7 +417,12 @@ const emit = defineEmits<{
   collapse: [];
   modifierSelect: [payload: { file: FileInfo; shift: boolean; meta: boolean }];
   contextMenu: [payload: { file: FileInfo; x: number; y: number }];
+  dragStart: [file: FileInfo];
+  dragEnd: [];
+  dropOnFolder: [targetDir: string];
 }>();
+
+const dragOver = ref(false);
 
 const showActions = computed(() => props.expanded);
 const uiRole = computed(
@@ -336,9 +436,7 @@ const isNameLink = computed(
   () => isNavigationShortcut.value || isDirectoryEntry.value,
 );
 const isSelfShortcut = computed(() => uiRole.value === "self");
-const isParentShortcut = computed(
-  () => uiRole.value === "parent",
-);
+const isParentShortcut = computed(() => uiRole.value === "parent");
 const nameTextClass = computed(() => ({
   "has-text-weight-bold": isDirectoryEntry.value,
 }));
@@ -514,6 +612,38 @@ function handleClick(event?: MouseEvent) {
 function handleContextMenu(event: MouseEvent) {
   if (isNavigationShortcut.value) return;
   emit("contextMenu", { file: props.file, x: event.clientX, y: event.clientY });
+}
+
+/** 拖拽：仅真实条目可拖动，目录可作为放置目标。 */
+function handleDragStart(event: DragEvent) {
+  if (isNavigationShortcut.value) {
+    event.preventDefault();
+    return;
+  }
+  event.dataTransfer?.setData("text/plain", props.file.path);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+  emit("dragStart", props.file);
+}
+
+function handleDragEnd() {
+  dragOver.value = false;
+  emit("dragEnd");
+}
+
+function handleDragOver(event: DragEvent) {
+  if (props.file.kind !== "directory" || isSelfShortcut.value) return;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  dragOver.value = true;
+}
+
+function handleDragLeave() {
+  dragOver.value = false;
+}
+
+function handleDrop() {
+  dragOver.value = false;
+  if (props.file.kind !== "directory" || isSelfShortcut.value) return;
+  emit("dropOnFolder", props.file.path);
 }
 
 function handleActivate() {
@@ -805,8 +935,6 @@ function share() {
     padding: 0.25rem 0.25rem;
   }
 }
-
-
 
 /* 深色模式 */
 @media (prefers-color-scheme: dark) {

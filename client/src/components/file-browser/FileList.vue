@@ -60,6 +60,9 @@
           @toggle-select="emit('toggle-select', file)"
           @modifier-select="emit('modifier-select', $event)"
           @context-menu="emit('context-menu', $event)"
+          @drag-start="emit('drag-start', $event)"
+          @drag-end="emit('drag-end')"
+          @drop-on-folder="emit('drop-on-folder', $event)"
           @share="emit('share', file)"
           @preview="emit('preview', file)"
           @open-folder="emit('open-folder', file)"
@@ -85,6 +88,11 @@
       @delete="emit('delete', file)"
       @view-history="emit('view-history', file)"
       @toggle-select="emit('toggle-select', file)"
+      @modifier-select="emit('modifier-select', $event)"
+      @context-menu="emit('context-menu', $event)"
+      @drag-start="emit('drag-start', $event)"
+      @drag-end="emit('drag-end')"
+      @drop-on-folder="emit('drop-on-folder', $event)"
       @share="emit('share', file)"
       @preview="emit('preview', file)"
       @open-folder="emit('open-folder', file)"
@@ -118,6 +126,9 @@ const emit = defineEmits<{
     payload: { file: FileInfo; shift: boolean; meta: boolean },
   ): void;
   (e: "context-menu", payload: { file: FileInfo; x: number; y: number }): void;
+  (e: "drag-start", file: FileInfo): void;
+  (e: "drag-end"): void;
+  (e: "drop-on-folder", targetDir: string): void;
 }>();
 
 const props = withDefaults(
