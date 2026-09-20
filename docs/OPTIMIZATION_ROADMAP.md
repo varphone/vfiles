@@ -16,13 +16,13 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 21 实测）
+### 验证基线（round 22 实测）
 
-- `cargo test --workspace`：通过（含批量历史与批量删除用例）。
+- `cargo test --workspace`：通过（含批量路径查询与事务批量移动用例）。
 - `cargo clippy --workspace --all-targets`：无告警。
 - `client` 单测：20 个文件 / 101 个用例通过。
-- 冒烟：删除 61 个条目 / 120 个版本（同一内容）的子树约 **12ms**，删除后
-  `entries`/`entry_versions` 均为 0，历史保留 `cleanup` 提交。
+- 冒烟：移动含 51 个后代的目录约 **10ms**，全部路径正确更新；移动到已存在路径
+  返回 409 `PATH_CONFLICT` 且源目录保持 51 个子项不变。
 
 ### 主要发现
 
@@ -326,6 +326,20 @@
 - 测试：批量历史覆盖所有条目、空输入返回空、批量删除后 `find_all` 为空；既有
   删除/移动/历史/快照等 59 个 HTTP 集成测试保持通过。
 
+### 2.27 移动路径的批量校验与事务更新（round 22，性能）
+
+- 移动目录时会遍历全部后代，旧实现对每个新路径调用一次 `find_by_path` 做冲突检查
+  （O(N) 次查询），并在循环中逐条 `move_entry`（无事务、逐条提交）；同时
+  `original_paths` 用 Vec 线性查找，整体 O(N²)。
+- `EntryRepo` 新增：
+  - `find_paths(namespace_id, &[NormalizedPath])`：一次批量查询存在的路径（按 500 分批）；
+  - `move_entries(&[(EntryId, NormalizedPath)])`：单事务内批量更新，并保留唯一约束冲突到
+    `PathConflict` 的映射。
+- `move_entries`（app）改用 `HashSet` 做 O(1) 的「是否原路径」判断、一次批量冲突检查、
+  一次事务批量更新。
+- 测试：`find_paths` 只返回存在的路径、空输入为空；`move_entries` 批量成功、重复目标
+  返回 `PathConflict`；既有移动/重命名等 59 个 HTTP 集成测试保持通过。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -343,6 +357,10 @@
 
 - `GET /api/files/tree/{path}` 仍一次性返回全部子项；客户端已分批渲染，但超大目录的
   JSON 体积与解析成本仍在。计划增加 `limit`/`cursor` 与 `total`，客户端按需加载。
+
+### 3.1e 移动路径的批量校验与事务（性能，中）
+
+- `[x]` 批量路径存在性检查 + 事务内批量更新（round 22）。
 
 ### 3.1d 快照引用的 blob 回收（稳定性，中）
 

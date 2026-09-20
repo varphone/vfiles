@@ -1872,34 +1872,39 @@ where
         let original_paths = moving_entries
             .iter()
             .map(|(entry, _)| entry.path_norm.as_str().to_string())
+            .collect::<std::collections::HashSet<String>>();
+
+        let candidates = moving_entries
+            .iter()
+            .filter(|(_, new_path)| !original_paths.contains(new_path.as_str()))
+            .map(|(_, new_path)| new_path.clone())
             .collect::<Vec<_>>();
 
-        for (_, new_path) in &moving_entries {
-            if original_paths
-                .iter()
-                .any(|existing| existing == new_path.as_str())
-            {
-                continue;
-            }
-
-            if self
-                .entry_repo
-                .find_by_path(namespace_id, new_path)
-                .await?
-                .is_some()
-            {
-                return Err(DomainError::PathConflict {
-                    message: format!("Path already exists: {}", new_path.as_str()),
-                });
-            }
+        // 一次批量查询待检查的新路径，避免逐个 find_by_path。
+        if let Some(existing) = self
+            .entry_repo
+            .find_paths(namespace_id, &candidates)
+            .await?
+            .into_iter()
+            .next()
+        {
+            return Err(DomainError::PathConflict {
+                message: format!("Path already exists: {}", existing.path_norm.as_str()),
+            });
         }
 
         moving_entries.sort_by(|left, right| {
             path_depth(&left.0.path_norm).cmp(&path_depth(&right.0.path_norm))
         });
 
+        // 单事务批量更新路径，避免逐条提交。
+        let moves = moving_entries
+            .iter()
+            .map(|(entry, new_path)| (entry.id, new_path.clone()))
+            .collect::<Vec<_>>();
+        self.entry_repo.move_entries(&moves).await?;
+
         for (entry, new_path) in &moving_entries {
-            self.entry_repo.move_entry(&entry.id, new_path).await?;
             changed_entries.push(ChangedEntry {
                 entry_id: entry.id,
                 path: new_path.as_str().to_string(),

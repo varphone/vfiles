@@ -1027,6 +1027,56 @@ impl EntryRepo for SqliteEntryRepo {
         rows.into_iter().map(parse_entry_row).collect()
     }
 
+    async fn find_paths(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[NormalizedPath],
+    ) -> DomainResult<Vec<Entry>> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        const CHUNK: usize = 500;
+        let mut entries = Vec::new();
+
+        for chunk in paths.chunks(CHUNK) {
+            let mut builder = sqlx::QueryBuilder::new(
+                "SELECT \
+                    e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at, \
+                    ( \
+                        SELECT ev.id \
+                        FROM entry_versions ev \
+                        WHERE ev.entry_id = e.id \
+                        ORDER BY ev.version DESC \
+                        LIMIT 1 \
+                    ) AS current_version_id \
+                 FROM entries e \
+                 WHERE e.namespace_id = ",
+            );
+            builder.push_bind(namespace_id.to_string());
+            builder.push(" AND e.path IN (");
+            let mut separated = builder.separated(", ");
+            for path in chunk {
+                separated.push_bind(path.as_str().to_string());
+            }
+            separated.push_unseparated(")");
+
+            let rows: Vec<EntryRow> = builder
+                .build_query_as()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to find paths: {}", e),
+                })?;
+
+            for row in rows {
+                entries.push(parse_entry_row(row)?);
+            }
+        }
+
+        Ok(entries)
+    }
+
     async fn create_entry(
         &self,
         namespace_id: &NamespaceId,
@@ -1208,6 +1258,39 @@ impl EntryRepo for SqliteEntryRepo {
                     message: format!("Failed to move entry: {}", e),
                 },
             })?;
+        Ok(())
+    }
+
+    async fn move_entries(&self, moves: &[(EntryId, NormalizedPath)]) -> DomainResult<()> {
+        if moves.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to begin move transaction: {}", e),
+        })?;
+
+        for (entry_id, new_path) in moves {
+            sqlx::query("UPDATE entries SET path = ? WHERE id = ?")
+                .bind(new_path.as_str())
+                .bind(entry_id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| match e {
+                    sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
+                        DomainError::PathConflict {
+                            message: format!("Path already exists: {}", new_path.as_str()),
+                        }
+                    }
+                    _ => DomainError::Internal {
+                        message: format!("Failed to move entry: {}", e),
+                    },
+                })?;
+        }
+
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to commit move transaction: {}", e),
+        })?;
         Ok(())
     }
 
@@ -4012,6 +4095,146 @@ mod entry_batch_cleanup_tests {
                 .expect("find_all should succeed")
                 .is_empty()
         );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+}
+
+#[cfg(test)]
+mod entry_move_batch_tests {
+    use super::*;
+    use crate::{SqliteMigrations, SqlitePoolFactory};
+    use camino::Utf8PathBuf;
+
+    async fn setup() -> (
+        Utf8PathBuf,
+        SqlitePool,
+        SqliteEntryRepo,
+        NamespaceId,
+        UserId,
+    ) {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-move-batch-test-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+
+        let user_id = user_repo
+            .create_admin("admin", "admin@example.com", "hashed-password")
+            .await
+            .expect("admin user should be created");
+        let namespace_id = namespace_repo
+            .create_default(&user_id, "default")
+            .await
+            .expect("default namespace should be created");
+
+        (db_path, pool, entry_repo, namespace_id, user_id)
+    }
+
+    async fn create(
+        repo: &SqliteEntryRepo,
+        ns: &NamespaceId,
+        user: &UserId,
+        path: &str,
+    ) -> EntryId {
+        repo.create_entry(
+            ns,
+            &NormalizedPath::new(path).expect("path should parse"),
+            EntryKind::File,
+            user,
+        )
+        .await
+        .expect("entry should be created")
+    }
+
+    #[tokio::test]
+    async fn find_paths_and_move_entries_work_in_batch() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+        let a = create(&repo, &namespace_id, &user_id, "docs/a.txt").await;
+        let b = create(&repo, &namespace_id, &user_id, "docs/b.txt").await;
+
+        let found = repo
+            .find_paths(
+                &namespace_id,
+                &[
+                    NormalizedPath::new("docs/a.txt").expect("path should parse"),
+                    NormalizedPath::new("missing.txt").expect("path should parse"),
+                    NormalizedPath::new("docs/b.txt").expect("path should parse"),
+                ],
+            )
+            .await
+            .expect("find_paths should succeed");
+        let mut paths: Vec<&str> = found.iter().map(|entry| entry.path_norm.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, vec!["docs/a.txt", "docs/b.txt"]);
+        assert!(
+            repo.find_paths(&namespace_id, &[])
+                .await
+                .expect("empty find_paths should succeed")
+                .is_empty()
+        );
+
+        repo.move_entries(&[
+            (
+                a,
+                NormalizedPath::new("docs/moved-a.txt").expect("path should parse"),
+            ),
+            (
+                b,
+                NormalizedPath::new("docs/moved-b.txt").expect("path should parse"),
+            ),
+        ])
+        .await
+        .expect("batch move should succeed");
+
+        assert!(
+            repo.find_by_path(
+                &namespace_id,
+                &NormalizedPath::new("docs/moved-a.txt").expect("path should parse"),
+            )
+            .await
+            .expect("lookup should succeed")
+            .is_some()
+        );
+        assert!(
+            repo.find_by_path(
+                &namespace_id,
+                &NormalizedPath::new("docs/moved-b.txt").expect("path should parse"),
+            )
+            .await
+            .expect("lookup should succeed")
+            .is_some()
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn move_entries_reports_path_conflicts() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+        create(&repo, &namespace_id, &user_id, "docs/a.txt").await;
+        let b = create(&repo, &namespace_id, &user_id, "docs/b.txt").await;
+
+        let result = repo
+            .move_entries(&[(
+                b,
+                NormalizedPath::new("docs/a.txt").expect("path should parse"),
+            )])
+            .await;
+
+        assert!(matches!(result, Err(DomainError::PathConflict { .. })));
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);

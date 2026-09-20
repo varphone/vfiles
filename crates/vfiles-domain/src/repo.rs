@@ -82,6 +82,12 @@ pub trait EntryRepo {
         namespace_id: &NamespaceId,
         root_path: &NormalizedPath,
     ) -> DomainResult<Vec<Entry>>;
+    /// 批量按路径查询（用于移动前的冲突检查），只返回存在的条目。
+    async fn find_paths(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[NormalizedPath],
+    ) -> DomainResult<Vec<Entry>>;
     async fn create_entry(
         &self,
         namespace_id: &NamespaceId,
@@ -102,6 +108,8 @@ pub trait EntryRepo {
         references: &[(BlobId, u32)],
     ) -> DomainResult<Vec<BlobId>>;
     async fn move_entry(&self, entry_id: &EntryId, new_path: &NormalizedPath) -> DomainResult<()>;
+    /// 批量更新路径，在单个事务内执行，避免逐个提交。
+    async fn move_entries(&self, moves: &[(EntryId, NormalizedPath)]) -> DomainResult<()>;
     async fn get_entry_history(
         &self,
         entry_id: &EntryId,
