@@ -1,4 +1,4 @@
-import { fireEvent, waitFor } from "@testing-library/vue";
+import { fireEvent, waitFor, within } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "./renderWithProviders";
 import FileBrowser from "../src/components/file-browser/FileBrowser.vue";
@@ -645,6 +645,53 @@ describe("FileBrowser.vue loading state", () => {
     await findByText("此文件夹为空");
   });
 });
+describe("FileBrowser.vue directory tree", () => {
+  it("shows the tree on wide screens and navigates from it", async () => {
+    // 宽屏：仅 min-width 查询为真
+    vi.stubGlobal("matchMedia", (q: string) => ({
+      matches: q.includes("min-width"),
+      media: q,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([
+      {
+        id: "docs",
+        name: "docs",
+        path: "docs",
+        kind: "directory",
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+
+    const { container } = renderWithProviders(FileBrowser as any);
+
+    // 目录树与文件列表里都会出现目录名，这里限定在树内查找
+    await waitFor(() => {
+      const tree = container.querySelector(".directory-tree");
+      expect(tree).not.toBeNull();
+      expect(within(tree as HTMLElement).queryByText("docs")).not.toBeNull();
+    });
+
+    const tree = container.querySelector(".directory-tree") as HTMLElement;
+    await fireEvent.click(within(tree).getByText("docs"));
+
+    await waitFor(() => {
+      expect(getFilesPageMock).toHaveBeenCalledWith("docs", {
+        commit: undefined,
+        limit: 200,
+        offset: 0,
+      });
+    });
+  });
+});
+
 describe("FileBrowser.vue details dialog", () => {
   it("opens metadata from the context menu on any entry", async () => {
     setDetailsVisible(false);

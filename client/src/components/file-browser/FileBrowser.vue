@@ -232,8 +232,19 @@
       <template v-if="!isMobile">
         <div
           class="desktop-content-layout"
-          :class="{ 'has-details': detailsVisible }"
+          :class="{
+            'has-tree': treeVisible,
+            'has-details': detailsVisible,
+          }"
         >
+          <DirectoryTree
+            v-if="treeVisible"
+            :current-path="currentPath"
+            :dragging="Boolean(draggingFile)"
+            @navigate="handleTreeNavigate"
+            @drop-on-folder="handleDropOnFolder"
+          />
+
           <div class="desktop-list-primary-shell">
             <div class="desktop-list-shell">
               <FileSkeleton
@@ -867,6 +878,7 @@ import FilePreviewModal from "./FilePreviewModal.vue";
 import BrowserSearchBox from "./BrowserSearchBox.vue";
 import UploadDropOverlay from "./UploadDropOverlay.vue";
 import FileDetailsContent from "./FileDetailsContent.vue";
+import DirectoryTree from "./DirectoryTree.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
 import SortMenu from "./SortMenu.vue";
@@ -917,11 +929,18 @@ const searchContentEnabled = computed(
 );
 
 const isMobile = ref(false);
+/** 目录树需要额外一列宽度，仅在宽屏桌面显示。 */
+const isWideScreen = ref(false);
 
 const MOBILE_LAYOUT_MEDIA_QUERY = "(max-width: 1023px)";
+const WIDE_LAYOUT_MEDIA_QUERY = "(min-width: 1280px)";
 
 function updateIsMobile() {
   isMobile.value = window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches;
+}
+
+function updateIsWideScreen() {
+  isWideScreen.value = window.matchMedia(WIDE_LAYOUT_MEDIA_QUERY).matches;
 }
 
 const showUploader = ref(false);
@@ -948,6 +967,14 @@ const {
   // 当前视图中的文件（不含目录与 `.`/`..`），用于预览的上一张/下一张
   getPreviewableFiles: () => previewableFiles.value,
 });
+
+/** 左侧目录树：宽屏桌面显示。 */
+const treeVisible = computed(() => !isMobile.value && isWideScreen.value);
+
+function handleTreeNavigate(path: string) {
+  if (searchActive.value) clearSearch();
+  filesStore.navigateTo(path);
+}
 
 /**
  * 右侧「详细信息」面板：桌面端显示，移动端隐藏。
@@ -1301,21 +1328,26 @@ onMounted(() => {
   });
 
   updateIsMobile();
-  try {
-    const mql = window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY);
-    const handler = () => updateIsMobile();
-    if ("addEventListener" in mql) {
-      mql.addEventListener("change", handler);
-      onBeforeUnmount(() => mql.removeEventListener("change", handler));
-    } else {
-      // @ts-expect-error older Safari
-      mql.addListener(handler);
-      // @ts-expect-error older Safari
-      onBeforeUnmount(() => mql.removeListener(handler));
+  updateIsWideScreen();
+  const watchMedia = (query: string, handler: () => void): void => {
+    try {
+      const mql = window.matchMedia(query);
+      if ("addEventListener" in mql) {
+        mql.addEventListener("change", handler);
+        onBeforeUnmount(() => mql.removeEventListener("change", handler));
+      } else {
+        // @ts-expect-error older Safari
+        mql.addListener(handler);
+        // @ts-expect-error older Safari
+        onBeforeUnmount(() => mql.removeListener(handler));
+      }
+    } catch {
+      // matchMedia 不可用时按默认值处理
     }
-  } catch {
-    // ignore
-  }
+  };
+
+  watchMedia(MOBILE_LAYOUT_MEDIA_QUERY, updateIsMobile);
+  watchMedia(WIDE_LAYOUT_MEDIA_QUERY, updateIsWideScreen);
 });
 
 onBeforeUnmount(() => {
@@ -2057,6 +2089,14 @@ function handleSortChange(field: SortField) {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-height: 0;
+}
+
+.desktop-content-layout.has-tree {
+  grid-template-columns: 232px minmax(0, 1fr);
+}
+
+.desktop-content-layout.has-tree.has-details {
+  grid-template-columns: 232px minmax(0, 1fr) 280px;
 }
 
 .desktop-content-layout.has-details {
