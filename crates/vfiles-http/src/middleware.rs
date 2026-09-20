@@ -6,7 +6,71 @@ use std::{
     time::{Duration, Instant},
 };
 
+use axum::{
+    extract::Request,
+    http::{HeaderName, HeaderValue},
+    middleware::Next,
+    response::Response,
+};
 use vfiles_config::LoginRateLimitConfig;
+
+tokio::task_local! {
+    pub static REQUEST_ID: String;
+}
+
+#[derive(Debug, Clone)]
+pub struct RequestId(pub String);
+
+const REQUEST_ID_HEADER: &str = "x-request-id";
+
+fn normalize_request_id(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 128 || !value.is_ascii() {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+pub async fn request_id_middleware(mut req: Request, next: Next) -> Response {
+    let request_id = req
+        .headers()
+        .get(REQUEST_ID_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(normalize_request_id)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    req.extensions_mut().insert(RequestId(request_id.clone()));
+
+    let mut response = REQUEST_ID.scope(request_id.clone(), next.run(req)).await;
+
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
+        response.headers_mut().insert(REQUEST_ID_HEADER, value);
+    }
+
+    response
+}
+
+pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
+    let mut response = next.run(req).await;
+    let headers = response.headers_mut();
+
+    headers
+        .entry(HeaderName::from_static("x-content-type-options"))
+        .or_insert(HeaderValue::from_static("nosniff"));
+    headers
+        .entry(HeaderName::from_static("x-frame-options"))
+        .or_insert(HeaderValue::from_static("SAMEORIGIN"));
+    headers
+        .entry(HeaderName::from_static("referrer-policy"))
+        .or_insert(HeaderValue::from_static("strict-origin-when-cross-origin"));
+    headers
+        .entry(HeaderName::from_static("permissions-policy"))
+        .or_insert(HeaderValue::from_static(
+            "camera=(), microphone=(), geolocation=()",
+        ));
+
+    response
+}
 
 #[derive(Debug)]
 struct LoginAttemptCounter {

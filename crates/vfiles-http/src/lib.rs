@@ -83,6 +83,10 @@ pub fn build_router(state: AppState) -> Router<()> {
     router
         .layer(build_cors_layer(&state.config))
         .layer(axum::middleware::from_fn(request_logger))
+        .layer(axum::middleware::from_fn(
+            middleware::security_headers_middleware,
+        ))
+        .layer(axum::middleware::from_fn(middleware::request_id_middleware))
         .with_state(state)
 }
 
@@ -126,12 +130,17 @@ async fn serve_frontend(State(state): State<AppState>, uri: Uri) -> Response {
 async fn request_logger(req: Request, next: Next) -> Result<Response, StatusCode> {
     let method = req.method().clone();
     let uri = req.uri().clone();
+    let request_id = req
+        .extensions()
+        .get::<middleware::RequestId>()
+        .map(|id| id.0.clone())
+        .unwrap_or_else(|| "-".to_string());
 
-    tracing::info!("{} {}", method, uri);
+    tracing::info!(request_id = %request_id, "{} {}", method, uri);
 
     let response = next.run(req).await;
 
-    tracing::info!("{} {} -> {}", method, uri, response.status());
+    tracing::info!(request_id = %request_id, "{} {} -> {}", method, uri, response.status());
 
     Ok(response)
 }

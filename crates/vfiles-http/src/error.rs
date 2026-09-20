@@ -8,6 +8,8 @@ use axum::{
 use serde::Serialize;
 use vfiles_domain::DomainError;
 
+use crate::middleware::REQUEST_ID;
+
 pub type ApiResult<T> = Result<T, ApiError>;
 
 #[derive(Debug, Serialize)]
@@ -22,8 +24,17 @@ pub struct ErrorResponse {
 pub enum ApiError {
     Domain(DomainError),
     Validation { field: String, message: String },
+    Forbidden { message: String },
     Internal(String),
     NotImplemented,
+}
+
+impl ApiError {
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self::Forbidden {
+            message: message.into(),
+        }
+    }
 }
 
 impl From<DomainError> for ApiError {
@@ -51,6 +62,12 @@ impl IntoResponse for ApiError {
                 StatusCode::FORBIDDEN,
                 "FORBIDDEN".to_string(),
                 "Access denied".to_string(),
+                None,
+            ),
+            ApiError::Forbidden { message } => (
+                StatusCode::FORBIDDEN,
+                "FORBIDDEN".to_string(),
+                message,
                 None,
             ),
             ApiError::Domain(DomainError::Authentication { message }) => (
@@ -191,7 +208,7 @@ impl IntoResponse for ApiError {
             code,
             message,
             details,
-            request_id: None, // TODO: Add request ID from middleware
+            request_id: REQUEST_ID.try_with(|request_id| request_id.clone()).ok(),
         };
 
         (status, Json(error_response)).into_response()
