@@ -145,7 +145,7 @@
                 <div class="desktop-search-inline">
                   <div class="control desktop-search-field">
                     <input
-                      ref="desktopSearchInputRef"
+                      :ref="setDesktopSearchInput"
                       v-model="searchQuery"
                       class="input is-small desktop-search-control"
                       type="text"
@@ -306,147 +306,18 @@
         </template>
       </div>
 
-      <div v-if="downloadQueue.length" class="box mb-4">
-        <div class="level is-mobile">
-          <div class="level-left">
-            <div class="level-item">
-              <div>
-                <p class="heading">下载队列</p>
-                <p class="title is-6">
-                  {{ downloadQueue.length }} 项
-                  <span v-if="downloading" class="tag is-info is-light ml-2"
-                    >下载中</span
-                  >
-                  <span
-                    v-if="queueCollapsed && activeDownload"
-                    class="tag is-light ml-2 is-size-7"
-                  >
-                    {{ activeDownload.filename }}
-                    <span v-if="activeDownloadPercent != null">
-                      · {{ activeDownloadPercent }}%</span
-                    >
-                  </span>
-                </p>
-              </div>
-            </div>
-          </div>
-          <div class="level-right">
-            <div class="level-item">
-              <div class="buttons">
-                <button
-                  class="button is-small is-light"
-                  @click="toggleQueuePanel"
-                  :disabled="!downloadQueue.length"
-                >
-                  {{ queueCollapsed ? "展开" : "最小化" }}
-                </button>
-                <button
-                  class="button is-small is-light"
-                  @click="clearFinished"
-                  :disabled="downloading && downloadQueue.length === 1"
-                >
-                  清空已完成
-                </button>
-                <button
-                  class="button is-small is-danger is-light"
-                  @click="cancelAll"
-                  :disabled="!downloadQueue.length"
-                >
-                  全部取消
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="!queueCollapsed" class="content">
-          <div
-            v-for="item in downloadQueue"
-            :key="item.id"
-            class="download-item"
-          >
-            <div
-              class="is-flex is-justify-content-space-between is-align-items-center"
-            >
-              <div class="mr-2" style="min-width: 0">
-                <strong class="is-size-7">{{ item.filename }}</strong>
-                <span class="tag is-light ml-2 is-size-7">{{
-                  item.kind === "folder" ? "ZIP" : "文件"
-                }}</span>
-                <span
-                  v-if="item.status === 'queued'"
-                  class="tag is-light ml-2 is-size-7"
-                  >排队中</span
-                >
-                <span
-                  v-else-if="item.status === 'downloading'"
-                  class="tag is-info is-light ml-2 is-size-7"
-                  >下载中
-                  <template v-if="item.progress?.total">
-                    {{
-                      formatProgress(item.progress.loaded, item.progress.total)
-                    }}
-                  </template>
-                </span>
-                <span
-                  v-else-if="item.status === 'done'"
-                  class="tag is-success is-light ml-2 is-size-7"
-                  >完成</span
-                >
-                <span
-                  v-else-if="item.status === 'canceled'"
-                  class="tag is-warning is-light ml-2 is-size-7"
-                  >已取消</span
-                >
-                <span
-                  v-else-if="item.status === 'error'"
-                  class="tag is-danger is-light ml-2 is-size-7"
-                  >失败</span
-                >
-              </div>
-
-              <div class="buttons is-right">
-                <button
-                  v-if="
-                    item.status === 'queued' || item.status === 'downloading'
-                  "
-                  class="button is-small is-light"
-                  @click="cancelItem(item.id)"
-                >
-                  取消
-                </button>
-                <button
-                  v-else
-                  class="button is-small is-light"
-                  @click="removeItem(item.id)"
-                >
-                  移除
-                </button>
-              </div>
-            </div>
-
-            <progress
-              v-if="
-                item.status === 'downloading' &&
-                item.progress &&
-                item.progress.total
-              "
-              class="progress is-small is-info mt-2"
-              :value="item.progress.loaded"
-              :max="item.progress.total"
-            ></progress>
-            <progress
-              v-else-if="item.status === 'downloading'"
-              class="progress is-small is-info mt-2"
-              max="100"
-            ></progress>
-
-            <p v-if="item.error" class="has-text-danger is-size-7 mt-1">
-              {{ item.error }}
-            </p>
-          </div>
-        </div>
-      </div>
+      <DownloadQueuePanel
+        :items="downloadQueue"
+        :collapsed="queueCollapsed"
+        :downloading="downloading"
+        :active-download="activeDownload"
+        :active-download-percent="activeDownloadPercent"
+        @toggle="toggleQueuePanel"
+        @clear-finished="clearFinished"
+        @cancel-all="cancelAll"
+        @cancel="cancelItem"
+        @remove="removeItem"
+      />
 
       <template v-if="!isMobile">
         <div class="desktop-list-primary-shell">
@@ -950,6 +821,7 @@ import { filesService } from "../../services/files.service";
 import FileList from "./FileList.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
+import DownloadQueuePanel from "./DownloadQueuePanel.vue";
 import ContextMenu, { type ContextMenuItem } from "./ContextMenu.vue";
 import MoveDialog from "./MoveDialog.vue";
 import FileUploader from "../file-uploader/FileUploader.vue";
@@ -959,6 +831,7 @@ import ShareDialog from "../common/ShareDialog.vue";
 import { confirmDialog, promptDialog } from "../../composables/dialog";
 import { useDownloadQueue } from "../../composables/useDownloadQueue";
 import { useFilePreview } from "../../composables/useFilePreview";
+import { useFileSearch } from "../../composables/useFileSearch";
 import type { FileInfo } from "../../types";
 import {
   sortBrowserItems,
@@ -1011,15 +884,35 @@ const expandedFilePath = ref<string>("");
 const { preview, previewFilename, closePreview, openPreview } =
   useFilePreview(browseCommit);
 
-const searchQuery = ref("");
-const searchResults = ref<FileInfo[]>([]);
-const searchLoading = ref(false);
-const searchError = ref<string | null>(null);
-const searchActive = ref(false);
-const searchContent = ref(false);
-const desktopSearchOpen = ref(false);
-const desktopSearchBoxRef = ref<HTMLElement | null>(null);
-const desktopSearchInputRef = ref<HTMLInputElement | null>(null);
+const {
+  searchQuery,
+  searchResults,
+  searchLoading,
+  searchError,
+  searchActive,
+  searchContent,
+  searchType,
+  searchScopeCurrent,
+  desktopSearchOpen,
+  desktopSearchBoxRef,
+  desktopSearchInputRef,
+  searchHistory,
+  searchMode,
+  desktopSearchFiltersActive,
+  closeDesktopSearch,
+  toggleDesktopSearch,
+  clearSearch,
+  runSearch,
+  doSearch,
+  runDesktopSearch,
+  clearDesktopSearch,
+} = useFileSearch(currentPath);
+
+/** 把模板中的高级搜索输入框写回 composable 的 ref（供聚焦使用）。 */
+function setDesktopSearchInput(el: Element | { $el?: Element } | null) {
+  const element = el instanceof HTMLInputElement ? el : null;
+  desktopSearchInputRef.value = element;
+}
 
 const {
   queueCollapsed,
@@ -1029,7 +922,6 @@ const {
   activeDownloadPercent,
   enqueueDownload,
   toggleQueuePanel,
-  formatProgress,
   cancelItem,
   cancelAll,
   clearFinished,
@@ -1075,85 +967,8 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
   return items;
 });
 
-const searchType = ref<"all" | "file" | "directory">("all");
-const searchScopeCurrent = ref(false);
-
-const searchMode = computed(() => (searchContent.value ? "content" : "name"));
-const desktopSearchFiltersActive = computed(
-  () =>
-    searchContent.value ||
-    searchType.value !== "all" ||
-    searchScopeCurrent.value,
-);
-
-const SEARCH_HISTORY_KEY = "vfiles.searchHistory";
-const searchHistory = ref<string[]>([]);
-
-function loadSearchHistory() {
-  try {
-    const raw = localStorage.getItem(SEARCH_HISTORY_KEY);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      searchHistory.value = parsed
-        .filter((x) => typeof x === "string")
-        .slice(0, 10);
-    }
-  } catch {
-    // ignore
-  }
-}
-
-function saveSearchHistory(next: string[]) {
-  searchHistory.value = next;
-  try {
-    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(next));
-  } catch {
-    // ignore
-  }
-}
-
-function closeDesktopSearch() {
-  desktopSearchOpen.value = false;
-}
-
-function toggleDesktopSearch() {
-  desktopSearchOpen.value = !desktopSearchOpen.value;
-}
-
-async function runDesktopSearch() {
-  const q = searchQuery.value.trim();
-  if (!q) {
-    clearSearch();
-    closeDesktopSearch();
-    void nextTick().then(() => desktopSearchInputRef.value?.focus());
-    return;
-  }
-
-  await runSearch();
-  if (!searchError.value) closeDesktopSearch();
-}
-
-function clearDesktopSearch() {
-  clearSearch();
-  closeDesktopSearch();
-  void nextTick().then(() => desktopSearchInputRef.value?.focus());
-}
-
-function pushSearchHistory(term: string) {
-  const value = term.trim();
-  if (!value) return;
-  const normalized = value;
-
-  const withoutDup = searchHistory.value.filter(
-    (x) => x.toLowerCase() !== normalized.toLowerCase(),
-  );
-  saveSearchHistory([normalized, ...withoutDup].slice(0, 10));
-}
-
 onMounted(() => {
   filesStore.loadFiles();
-  loadSearchHistory();
 
   const onDocPointer = (e: MouseEvent | TouchEvent) => {
     const target = e.target as Node | null;
@@ -1982,56 +1797,6 @@ async function handleUpload() {
   showUploader.value = false;
   appStore.success("文件上传成功");
   await refresh();
-}
-
-async function runSearch() {
-  return await doSearch(true);
-}
-
-// 搜索请求序号：快速连续搜索时只接受最后一次的结果，避免旧结果覆盖新结果。
-let searchSequence = 0;
-
-async function doSearch(pushHistoryEnabled: boolean) {
-  const q = searchQuery.value.trim();
-  searchError.value = null;
-
-  if (!q) {
-    clearSearch();
-    return;
-  }
-
-  const requestId = ++searchSequence;
-  searchLoading.value = true;
-  searchActive.value = true;
-
-  if (pushHistoryEnabled) {
-    pushSearchHistory(q);
-  }
-
-  try {
-    const scopePath = searchScopeCurrent.value ? filesStore.currentPath : "";
-    const results = await filesService.searchFiles(q, searchMode.value, {
-      type: searchType.value,
-      path: scopePath,
-    });
-    if (requestId !== searchSequence) return;
-    searchResults.value = results;
-  } catch (err) {
-    if (requestId !== searchSequence) return;
-    searchError.value = err instanceof Error ? err.message : "搜索失败";
-    searchResults.value = [];
-  } finally {
-    if (requestId === searchSequence) searchLoading.value = false;
-  }
-}
-
-function clearSearch() {
-  // 使仍在途的搜索请求失效，避免清空后旧结果又回填
-  searchSequence += 1;
-  searchQuery.value = "";
-  searchResults.value = [];
-  searchError.value = null;
-  searchActive.value = false;
 }
 
 function toggleBatchMode() {

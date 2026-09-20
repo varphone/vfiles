@@ -1,6 +1,6 @@
 import { computed, ref, type Ref } from "vue";
 import { filesService } from "../services/files.service";
-import { formatSize } from "../utils/filePresentation";
+import { formatDownloadProgress } from "../utils/filePresentation";
 
 export type DownloadQueueStatus =
   | "queued"
@@ -139,8 +139,7 @@ export function useDownloadQueue(browseCommit: Ref<string | undefined>) {
   }
 
   function formatProgress(loaded: number, total: number): string {
-    const percent = Math.floor((loaded / total) * 100);
-    return ` ${percent}% (${formatSize(loaded)}/${formatSize(total)})`;
+    return formatDownloadProgress(loaded, total);
   }
 
   function cancelItem(id: number) {

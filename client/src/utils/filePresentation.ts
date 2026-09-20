@@ -93,6 +93,13 @@ export function formatSize(bytes: number | undefined): string {
   return `${(value / Math.pow(k, index)).toFixed(1)} ${sizes[index]}`;
 }
 
+/** 下载进度文案，如 " 42% (1.0 KB/2.4 KB)"。 */
+export function formatDownloadProgress(loaded: number, total: number): string {
+  if (total <= 0) return ` ${formatSize(loaded)}`;
+  const percent = Math.floor((loaded / total) * 100);
+  return ` ${percent}% (${formatSize(loaded)}/${formatSize(total)})`;
+}
+
 export function formatDate(date: string | undefined): string {
   if (!date) return "--";
   const parsed = new Date(date);

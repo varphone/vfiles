@@ -16,14 +16,13 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 7 实测）
+### 验证基线（round 8 实测）
 
 - `cargo test --workspace`：通过（HTTP 集成 58 个 + `vfiles-http` 单元 7 个）。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：11 个文件 / 46 个用例通过。
+- `client` 单测：13 个文件 / 54 个用例通过。
 - `vue-tsc --noEmit`：无错误；`eslint .`：无告警。
-- `bun run build`：成功；冒烟验证首页产物包含预览/下载队列/搜索等标记，
-  `/api/files/content` 正常。
+- `bun run build`：成功；冒烟验证首页产物包含下载队列/搜索/全选等标记。
 
 ### 主要发现
 
@@ -166,6 +165,17 @@
 - 测试：下载队列串行执行、排队取消、清理已完成、进度文案；预览类型识别、MIME
   推断与 XSS 白名单（`javascript:`/`data:text/html` 被拒绝）。
 
+### 2.13 继续拆分 FileBrowser：搜索与下载面板（round 8，稳定性）
+
+- 新增 `composables/useFileSearch.ts`：查询条件、结果、加载态、桌面高级搜索面板与
+  搜索历史（含持久化与去重上限），并保留 round 6 的过期响应丢弃逻辑。
+- 新增 `components/file-browser/DownloadQueuePanel.vue`：把约 140 行队列模板抽成
+  展示型组件（props + 事件），进度文案复用共享的 `formatDownloadProgress`
+  （新增于 `utils/filePresentation`）。
+- `FileBrowser.vue` 由 2858 行降至 2625 行；相比 round 7 起点累计 −663 行（−20%）。
+- 测试：搜索历史去重/上限/持久化、作用域路径、`clearSearch` 状态复位；下载面板
+  渲染状态标签与进度、面板按钮与单项取消/移除事件、折叠与空状态。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -182,8 +192,10 @@
 ### 3.3 `FileBrowser.vue` 拆分（稳定性，中）
 
 - `[x]` 下载队列与文件预览抽为 composable（round 7，3288 → 2858 行）。
-- `[ ]` 继续抽出搜索/桌面+移动端状态、目录管理与批量操作，目标 < 1500 行。
-- `[ ]` 抽出桌面/移动两套模板片段为子组件（`BrowserToolbar`、`DownloadQueuePanel`）。
+- `[x]` 搜索抽为 `useFileSearch`，下载队列面板抽为 `DownloadQueuePanel.vue`
+  （round 8，2858 → 2625 行）。
+- `[ ]` 继续抽出目录管理、批量操作与移动路径计算等纯函数，目标 < 1500 行。
+- `[ ]` 抽出桌面/移动工具栏等模板片段为子组件（`BrowserToolbar`）。
 - 验收：单文件行数持续下降，已有测试保持通过并补充拆分后的单元测试。
 
 ### 3.4 交互增强（中，对齐主流云盘）
