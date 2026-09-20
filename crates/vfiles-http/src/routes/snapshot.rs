@@ -6,7 +6,7 @@ use axum_extra::extract::cookie::CookieJar;
 use crate::{
     AppState,
     dto::{CreateSnapshotRequest, SnapshotDto},
-    error::ApiResult,
+    error::{ApiJson, ApiResult},
     routes::protected_request_context,
 };
 
@@ -17,7 +17,7 @@ pub fn router() -> Router<AppState> {
 pub async fn create_snapshot(
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
-    Json(req): Json<CreateSnapshotRequest>,
+    ApiJson(req): ApiJson<CreateSnapshotRequest>,
 ) -> ApiResult<Json<SnapshotDto>> {
     let ctx = protected_request_context(&state, &jar).await?;
     let snapshot = state

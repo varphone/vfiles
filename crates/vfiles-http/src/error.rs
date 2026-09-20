@@ -12,6 +12,33 @@ use crate::middleware::REQUEST_ID;
 
 pub type ApiResult<T> = Result<T, ApiError>;
 
+/// 与 `axum::Json` 行为一致，但把请求体解析失败也转换成统一的错误信封。
+///
+/// 直接用 `axum::Json` 时，非法 JSON/缺字段会返回 axum 自己的 422 且响应体不是
+/// `{code, message, details}`，客户端无法按错误码本地化。
+pub struct ApiJson<T>(pub T);
+
+impl<S, T> axum::extract::FromRequest<S> for ApiJson<T>
+where
+    T: serde::de::DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(
+        request: axum::extract::Request,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        match axum::Json::<T>::from_request(request, state).await {
+            Ok(axum::Json(value)) => Ok(ApiJson(value)),
+            Err(rejection) => Err(ApiError::Validation {
+                field: "body".to_string(),
+                message: rejection.body_text(),
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {
     pub code: String,

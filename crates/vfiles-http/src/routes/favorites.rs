@@ -11,7 +11,7 @@ use vfiles_domain::{DomainError, NormalizedPath};
 
 use crate::{
     AppState,
-    error::{ApiError, ApiResult},
+    error::{ApiError, ApiJson, ApiResult},
     routes::protected_request_context,
 };
 
@@ -75,7 +75,7 @@ pub async fn list(
 pub async fn add(
     State(state): State<AppState>,
     jar: CookieJar,
-    Json(body): Json<FavoriteBody>,
+    ApiJson(body): ApiJson<FavoriteBody>,
 ) -> ApiResult<(StatusCode, Json<FavoriteListDto>)> {
     let ctx = protected_request_context(&state, &jar).await?;
     let entry_id = resolve_entry(&state, &ctx.namespace_id, &body.path).await?;

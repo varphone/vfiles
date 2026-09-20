@@ -11,7 +11,7 @@ use axum::{
 use crate::{
     AppState,
     dto::{CreateShareRequest, CreateShareResponse, ShareDto},
-    error::ApiError,
+    error::{ApiError, ApiJson},
     http_headers::{attachment_header, streaming_file_response},
     middleware::client_ip_from_headers,
     routes::authenticated_request_context,
@@ -51,7 +51,7 @@ fn build_archive_response(filename: &str, bytes: Vec<u8>) -> Result<Response, Ap
 async fn create_share(
     State(state): State<AppState>,
     jar: CookieJar,
-    Json(req): Json<CreateShareRequest>,
+    ApiJson(req): ApiJson<CreateShareRequest>,
 ) -> Result<Json<CreateShareResponse>, ApiError> {
     if !state.config.features.share_enabled {
         return Err(ApiError::Domain(vfiles_domain::DomainError::Forbidden));

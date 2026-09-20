@@ -11,7 +11,7 @@ use axum_extra::extract::cookie::CookieJar;
 use crate::{
     AppState,
     dto::{CreateDirectoryRequest, EntryDto, EntryPageDto, MoveEntryRequest},
-    error::{ApiError, ApiResult},
+    error::{ApiError, ApiJson, ApiResult},
     routes::protected_request_context,
 };
 use vfiles_domain::{DomainError, NamespaceId, NormalizedPath, SnapshotId};
@@ -52,7 +52,7 @@ pub fn router() -> Router<AppState> {
 pub async fn move_entry(
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
-    Json(req): Json<MoveEntryRequest>,
+    ApiJson(req): ApiJson<MoveEntryRequest>,
 ) -> ApiResult<StatusCode> {
     let ctx = protected_request_context(&state, &jar).await?;
     let source_path = NormalizedPath::new(&req.from).map_err(|_| {
@@ -205,15 +205,7 @@ async fn list_root_page(
         })
     })?;
 
-    let items = fetch_entry_items(
-        &state,
-        &ctx.namespace_id,
-        &root_path,
-        query.commit.as_deref(),
-    )
-    .await?;
-
-    Ok(Json(paginate(items, query.limit, query.offset)))
+    paginated_listing(&state, &ctx.namespace_id, &root_path, &query).await
 }
 
 /// 分页列出目录：`GET /api/files/list/{path}?limit=&offset=&commit=`
@@ -230,15 +222,45 @@ async fn list_directory_page(
         })
     })?;
 
-    let items = fetch_entry_items(
-        &state,
-        &ctx.namespace_id,
-        &normalized_path,
-        query.commit.as_deref(),
-    )
-    .await?;
+    paginated_listing(&state, &ctx.namespace_id, &normalized_path, &query).await
+}
 
-    Ok(Json(paginate(items, query.limit, query.offset)))
+/// 分页列目录：HEAD 走 SQL 分页（大目录不再全量拉取），
+/// 指定快照时仍按快照重建整棵子树后切片。
+async fn paginated_listing(
+    state: &AppState,
+    namespace_id: &NamespaceId,
+    path: &NormalizedPath,
+    query: &TreePageQuery,
+) -> ApiResult<Json<EntryPageDto>> {
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_PAGE_LIMIT)
+        .clamp(1, MAX_PAGE_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+
+    if let Some(commit) = query.commit.as_deref() {
+        let items = fetch_entry_items(state, namespace_id, path, Some(commit)).await?;
+        return Ok(Json(paginate(items, Some(limit), Some(offset))));
+    }
+
+    let (items, total) = state
+        .workspace_service
+        .live_children_page(namespace_id, path, limit as u32, offset as u32)
+        .await?;
+
+    let items: Vec<EntryDto> = items.into_iter().map(Into::into).collect();
+    let total = total as usize;
+    let offset = offset.min(total);
+    let end = (offset + items.len()).min(total);
+
+    Ok(Json(EntryPageDto {
+        items,
+        total,
+        limit,
+        offset,
+        has_more: end < total,
+    }))
 }
 
 async fn fetch_entry_items(
@@ -281,7 +303,7 @@ fn paginate(items: Vec<EntryDto>, limit: Option<usize>, offset: Option<usize>) -
 pub async fn create_directory(
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
-    Json(req): Json<CreateDirectoryRequest>,
+    ApiJson(req): ApiJson<CreateDirectoryRequest>,
 ) -> ApiResult<Json<EntryDto>> {
     let ctx = protected_request_context(&state, &jar).await?;
     let normalized_path = NormalizedPath::new(&req.path).map_err(|_| {

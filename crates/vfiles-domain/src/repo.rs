@@ -95,6 +95,16 @@ pub trait EntryRepo {
         limit: u32,
     ) -> DomainResult<Vec<Entry>>;
     /// 一次取回某目录及其所有后代（含 root 自身），按路径排序。
+    /// 分页取直接子条目：按「目录优先 + 路径升序」排序（与应用层排序一致），
+    /// 同时返回该目录下的条目总数，避免把整棵目录拉进内存后再切片。
+    async fn find_children_page(
+        &self,
+        namespace_id: &NamespaceId,
+        parent_path: &NormalizedPath,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<Entry>, u64)>;
+
     async fn find_subtree(
         &self,
         namespace_id: &NamespaceId,

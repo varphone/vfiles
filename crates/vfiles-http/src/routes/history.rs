@@ -12,7 +12,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
     AppState,
-    error::{ApiError, ApiResult},
+    error::{ApiError, ApiJson, ApiResult},
     routes::protected_request_context,
 };
 use vfiles_app::{DirectoryHistoryPage, EntryHistoryPage};
@@ -222,7 +222,7 @@ async fn get_entry_diff(
 async fn restore_entry_version(
     State(state): State<AppState>,
     jar: CookieJar,
-    Json(req): Json<RestoreVersionRequest>,
+    ApiJson(req): ApiJson<RestoreVersionRequest>,
 ) -> ApiResult<impl IntoResponse> {
     let ctx = protected_request_context(&state, &jar).await?;
     if !state.config.features.history_enabled {

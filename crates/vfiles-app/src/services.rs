@@ -1685,6 +1685,68 @@ where
 
         let children = self.entry_repo.find_children(namespace_id, path).await?;
 
+        let items = self.build_tree_items(children).await?;
+
+        let summary = TreeSummary {
+            total_files: items
+                .iter()
+                .filter(|item| item.kind == EntryKind::File)
+                .count() as u32,
+            total_dirs: items
+                .iter()
+                .filter(|item| item.kind == EntryKind::Directory)
+                .count() as u32,
+            total_size_bytes: items.iter().filter_map(|item| item.size_bytes).sum(),
+        };
+
+        Ok(TreeResponse {
+            path: path.as_str().to_string(),
+            mode: TreeMode::Live,
+            active_snapshot: None,
+            breadcrumbs: breadcrumbs_for(path),
+            items,
+            permissions: vec![Capability::Upload, Capability::ViewHistory],
+            summary,
+        })
+    }
+
+    /// 按页取子目录内容：SQL 侧分页 + 总数，避免大目录下每次请求都拉全量。
+    ///
+    /// 排序与 `live_tree` 一致（目录优先 + 名称升序），因此分页结果与原来的
+    /// 「全量取回后切片」完全一致。
+    pub async fn live_children_page(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<TreeItem>, u64)> {
+        if !path.as_str().is_empty() {
+            let entry = self
+                .entry_repo
+                .find_by_path(namespace_id, path)
+                .await?
+                .ok_or_else(|| DomainError::NotFound {
+                    resource: "entry".to_string(),
+                })?;
+
+            if entry.entry_type != EntryKind::Directory {
+                return Err(DomainError::Validation {
+                    message: "Path is not a directory".to_string(),
+                });
+            }
+        }
+
+        let (children, total) = self
+            .entry_repo
+            .find_children_page(namespace_id, path, limit, offset)
+            .await?;
+        let items = self.build_tree_items(children).await?;
+        Ok((items, total))
+    }
+
+    /// 批量补全版本信息并排序，返回可展示的条目列表。
+    async fn build_tree_items(&self, children: Vec<Entry>) -> DomainResult<Vec<TreeItem>> {
         // 批量取当前版本，避免逐个 child 查询造成 N+1。
         let version_ids: Vec<VersionId> = children
             .iter()
@@ -1744,27 +1806,7 @@ where
             kind_order.then_with(|| left.name.cmp(&right.name))
         });
 
-        let summary = TreeSummary {
-            total_files: items
-                .iter()
-                .filter(|item| item.kind == EntryKind::File)
-                .count() as u32,
-            total_dirs: items
-                .iter()
-                .filter(|item| item.kind == EntryKind::Directory)
-                .count() as u32,
-            total_size_bytes: items.iter().filter_map(|item| item.size_bytes).sum(),
-        };
-
-        Ok(TreeResponse {
-            path: path.as_str().to_string(),
-            mode: TreeMode::Live,
-            active_snapshot: None,
-            breadcrumbs: breadcrumbs_for(path),
-            items,
-            permissions: vec![Capability::Upload, Capability::ViewHistory],
-            summary,
-        })
+        Ok(items)
     }
 
     async fn snapshot_tree(

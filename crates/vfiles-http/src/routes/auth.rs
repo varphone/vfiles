@@ -12,7 +12,7 @@ use serde_json::json;
 use crate::{
     AppState,
     dto::{LoginResponseDto, UserDto},
-    error::{ApiError, ApiResult, ErrorResponse},
+    error::{ApiError, ApiJson, ApiResult, ErrorResponse},
     middleware::client_ip_from_headers,
 };
 use vfiles_domain::{DomainError, UserRepo};
@@ -44,7 +44,7 @@ pub async fn login(
     jar: CookieJar,
     axum::extract::State(state): axum::extract::State<AppState>,
     headers: HeaderMap,
-    Json(req): Json<vfiles_domain::LoginRequest>,
+    ApiJson(req): ApiJson<vfiles_domain::LoginRequest>,
 ) -> ApiResult<Response> {
     let login_identifier = req.username_or_email.clone();
     let login_key = login_rate_limit_key(&headers, &login_identifier);
@@ -136,7 +136,7 @@ fn login_rate_limited_response(retry_after_secs: u64) -> Response {
 
 pub async fn register(
     axum::extract::State(state): axum::extract::State<AppState>,
-    Json(req): Json<vfiles_domain::RegisterRequest>,
+    ApiJson(req): ApiJson<vfiles_domain::RegisterRequest>,
 ) -> ApiResult<Json<UserDto>> {
     tracing::info!("Registration attempt for user: {}", req.username);
 

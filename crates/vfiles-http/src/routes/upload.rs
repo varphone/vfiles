@@ -12,7 +12,7 @@ use tokio::io::AsyncWriteExt;
 use crate::{
     AppState,
     dto::UploadRequest,
-    error::{ApiError, ApiResult},
+    error::{ApiError, ApiJson, ApiResult},
     routes::protected_request_context,
 };
 use vfiles_domain::{DomainError, NormalizedPath, UploadId};
@@ -41,7 +41,7 @@ fn max_upload_size_bytes(state: &AppState) -> u64 {
 async fn create_upload(
     jar: CookieJar,
     axum::extract::State(state): axum::extract::State<AppState>,
-    Json(req): Json<UploadRequest>,
+    ApiJson(req): ApiJson<UploadRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let ctx = protected_request_context(&state, &jar).await?;
     tracing::info!(

@@ -1067,6 +1067,97 @@ impl EntryRepo for SqliteEntryRepo {
         rows.into_iter().map(parse_entry_row).collect()
     }
 
+    async fn find_children_page(
+        &self,
+        namespace_id: &NamespaceId,
+        parent_path: &NormalizedPath,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<Entry>, u64)> {
+        // sqlx 要求静态 SQL，因此根目录与子目录各写一份完整语句（均命中
+        // (namespace_id, path) 索引）；排序与 live tree 的「目录优先 + 名称升序」一致。
+        const TOTAL_ROOT: &str =
+            "SELECT COUNT(*) FROM entries e WHERE e.namespace_id = ? AND instr(e.path, '/') = 0";
+        const TOTAL_PREFIX: &str = "SELECT COUNT(*) FROM entries e WHERE e.namespace_id = ? AND e.path >= ? AND e.path < ?";
+        const PAGE_ROOT: &str = r#"
+            SELECT
+                e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+                (
+                    SELECT ev.id FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id
+            FROM entries e
+            WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
+            ORDER BY (e.kind = 'directory') DESC, e.path ASC
+            LIMIT ? OFFSET ?
+        "#;
+        const PAGE_PREFIX: &str = r#"
+            SELECT
+                e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+                (
+                    SELECT ev.id FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id
+            FROM entries e
+            WHERE e.namespace_id = ? AND e.path >= ? AND e.path < ?
+            ORDER BY (e.kind = 'directory') DESC, e.path ASC
+            LIMIT ? OFFSET ?
+        "#;
+        let is_root = parent_path.as_str().is_empty();
+        let root = parent_path.as_str().trim_end_matches('/');
+        let lower = format!("{root}/");
+        let upper = format!("{root}0");
+
+        let total: i64 = if is_root {
+            sqlx::query_scalar::<_, i64>(TOTAL_ROOT)
+                .bind(namespace_id.to_string())
+                .fetch_one(&self.pool)
+                .await
+        } else {
+            sqlx::query_scalar::<_, i64>(TOTAL_PREFIX)
+                .bind(namespace_id.to_string())
+                .bind(&lower)
+                .bind(&upper)
+                .fetch_one(&self.pool)
+                .await
+        }
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to count children: {e}"),
+        })?;
+
+        let rows: Vec<EntryRow> = if is_root {
+            sqlx::query_as::<_, EntryRow>(PAGE_ROOT)
+                .bind(namespace_id.to_string())
+                .bind(i64::from(limit))
+                .bind(i64::from(offset))
+                .fetch_all(&self.pool)
+                .await
+        } else {
+            sqlx::query_as::<_, EntryRow>(PAGE_PREFIX)
+                .bind(namespace_id.to_string())
+                .bind(&lower)
+                .bind(&upper)
+                .bind(i64::from(limit))
+                .bind(i64::from(offset))
+                .fetch_all(&self.pool)
+                .await
+        }
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list children page: {e}"),
+        })?;
+
+        let entries = rows
+            .into_iter()
+            .map(parse_entry_row)
+            .collect::<DomainResult<Vec<Entry>>>()?;
+
+        Ok((entries, total.max(0) as u64))
+    }
+
     async fn find_subtree(
         &self,
         namespace_id: &NamespaceId,

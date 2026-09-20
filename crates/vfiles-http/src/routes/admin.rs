@@ -12,7 +12,7 @@ use vfiles_domain::*;
 use crate::{
     AppState,
     dto::AdminUserSummaryDto,
-    error::{ApiError, ApiResult},
+    error::{ApiError, ApiJson, ApiResult},
 };
 
 #[derive(Debug, Deserialize)]
@@ -151,7 +151,7 @@ async fn list_users(
 async fn create_user(
     State(state): State<AppState>,
     jar: CookieJar,
-    Json(req): Json<CreateUserRequest>,
+    ApiJson(req): ApiJson<CreateUserRequest>,
 ) -> ApiResult<Json<CreateUserResponse>> {
     let actor = require_admin(&state, &jar).await?;
     let admin_service = state
@@ -203,7 +203,7 @@ async fn update_user(
     State(state): State<AppState>,
     jar: CookieJar,
     Path(user_id): Path<String>,
-    Json(req): Json<UpdateUserRequest>,
+    ApiJson(req): ApiJson<UpdateUserRequest>,
 ) -> ApiResult<StatusCode> {
     let actor = require_admin(&state, &jar).await?;
     let admin_service = state
@@ -300,7 +300,7 @@ async fn reset_password(
     State(state): State<AppState>,
     jar: CookieJar,
     Path(user_id): Path<String>,
-    Json(req): Json<ResetPasswordRequest>,
+    ApiJson(req): ApiJson<ResetPasswordRequest>,
 ) -> ApiResult<StatusCode> {
     let actor = require_admin(&state, &jar).await?;
     let admin_service = state

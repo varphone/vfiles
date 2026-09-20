@@ -16,7 +16,7 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 59 实测）
+### 验证基线（round 60 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
@@ -1068,6 +1068,33 @@
 - 遗留（记入 §3.8）：axum 的 `Json` 提取器在请求体本身非法时返回 422 且**响应体不是**
   我们的错误信封；要统一需要自定义提取器并替换各处理函数的 `Json<T>`，评估后暂不做。
 
+### 2.67 目录分页下沉到 SQL + 统一错误信封（round 60，性能/稳定性）
+
+- **性能（§3.1b 重启调查，找到真正瓶颈）**：先按路线图设想测量「深分页 OFFSET 成本」，
+  结果发现 **offset 深浅几乎不影响耗时**，但 `/api/files/list` 在 5 万条目目录下
+  **恒定 ~480ms**（`limit=3` 也一样），而 `/api/health` 仅 1.4ms。定位到真正原因：
+  分页此前是「仓储取回整目录 + 应用层切片」，每个请求都要物化全部条目与版本信息。
+- 修复：
+  - `EntryRepo::find_children_page()`：SQL 侧 `LIMIT/OFFSET` + `COUNT(*)`，
+    排序 `(kind = 'directory') DESC, path ASC` 与 live tree 的「目录优先 + 名称升序」
+    完全一致（同目录下比较完整路径等价于比较名称）；sqlx 要求静态 SQL，因此根目录与
+    子目录各写一份语句，均命中 `(namespace_id, path)` 索引；
+  - `WorkspaceService::live_children_page()` 复用抽出的 `build_tree_items()`（批量取版本，
+    避免 N+1）；`/api/files/list` 与 `/api/files/list/{path}` **统一**走同一个分页实现
+    （此前根目录有独立 handler，仍是全量路径）；指定快照（历史版本）时保留整树重建。
+- 实测（5 万条目目录，3 次取最快）：`offset=0` **480ms → 40ms**，
+  `offset=25000` 53ms、`offset=49800` 70ms；分页连续性、`total`、`has_more`、
+  越界空页与「目录优先」均已验证。
+- **游标分页（cursor）结论**：分页下沉到 SQL 后，残余的 OFFSET 扫描只占 40→70ms 的
+  增长，属于可接受范围；改成 keyset 需要调整 API 契约与客户端，收益有限，
+  因此**评估后不做**，改为记录测量数据。
+- **统一错误信封（§3.8 遗留）**：新增 `ApiJson<T>` 提取器（内部仍用 `axum::Json`），
+  把请求体解析失败转换为 `VALIDATION_FAILED` + `details{field:"body",reason}` + 400，
+  12 处 JSON 处理函数全部切换；此前非法 JSON 会得到 axum 自己的 422 且响应体不是
+  统一信封，客户端无法本地化。
+- 测试：新增「目录分页 SQL 化」集成用例（目录优先、页间连续、total/has_more、
+  越界空页、子目录路径）与「非法 JSON 使用统一信封」用例。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -1090,9 +1117,10 @@
   客户端滚动按需加载（round 41，见 §2.48）。
 - `[x]` 搜索结果分页正确性：分页统一收敛到「按得分排序之后」，修复两路命中各自
   `OFFSET` 导致的翻页重复/遗漏（round 53，见 §2.60）。
-- `[ ]` 用游标（cursor）替代 `offset`，避免大目录下深分页的 `OFFSET` 扫描成本；
-  搜索结果目前仍在应用层评分，若要真正减少扫描量，需要把匹配质量下沉到 SQL
-  （或引入索引/搜索表）。
+- `[x]` 目录分页下沉到 SQL（`LIMIT/OFFSET` + `COUNT`），5 万条目目录从 480ms 降到
+  40ms（round 60，见 §2.67）。
+- `[~]` 游标（cursor）替代 `offset`：实测残余 OFFSET 成本仅 40→70ms（5 万条目），
+  收益有限，评估后不做；搜索评分下沉到 SQL 仍是更大的独立课题。
 
 ### 3.1e 移动路径的批量校验与事务（性能，中）
 
@@ -1190,4 +1218,4 @@
   见 §2.56）。
 - `[x]` 校验/冲突/上传超限改为结构化 `details`（`field`/`reason`/`limit_bytes`），
   客户端按字段名与上限本地化（round 59，见 §2.66）。
-- `[ ]` 统一请求体解析失败（axum `Json` 提取器的 422）为同一种错误信封。
+- `[x]` 统一请求体解析失败为同一种错误信封（`ApiJson` 提取器，round 60，见 §2.67）。

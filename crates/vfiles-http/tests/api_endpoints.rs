@@ -2986,6 +2986,127 @@ async fn paged_search_keeps_content_matches_across_pages() {
     );
 }
 
+/// 目录分页在 SQL 侧完成：目录优先、页间连续、total/has_more 正确。
+#[tokio::test]
+async fn directory_listing_pages_in_sql_with_directory_first_order() {
+    let app = TestApp::new().await;
+    app.upload_version("", "b.txt", b"b", "seed").await;
+    app.upload_version("", "a.txt", b"a", "seed").await;
+    app.upload_version("", "c.txt", b"c", "seed").await;
+    // 先建目录（空内容的"上传"会被分片校验拒绝）
+    let created = app
+        .request_as_admin(
+            Request::builder()
+                .method("POST")
+                .uri("/api/files/directories")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{\"path\":\"zdir\"}"))
+                .expect("request should build"),
+        )
+        .await;
+    assert!(
+        created.status().is_success(),
+        "create dir: {}",
+        created.status()
+    );
+
+    // 第一页：目录优先，其余按名称升序
+    let first = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=2&offset=0")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let payload = response_json(first).await;
+    assert_eq!(payload["total"], Value::from(4));
+    assert_eq!(payload["limit"], Value::from(2));
+    assert_eq!(payload["offset"], Value::from(0));
+    assert_eq!(payload["has_more"], Value::Bool(true));
+    let names: Vec<String> = payload["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| item["name"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(names, vec!["zdir", "a.txt"]);
+
+    // 第二页与第一页连续
+    let second = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=2&offset=2")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let payload = response_json(second).await;
+    assert_eq!(payload["has_more"], Value::Bool(false));
+    let names: Vec<String> = payload["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| item["name"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(names, vec!["b.txt", "c.txt"]);
+
+    // 越界偏移返回空页
+    let beyond = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=2&offset=50")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let payload = response_json(beyond).await;
+    assert_eq!(payload["items"].as_array().map(Vec::len), Some(0));
+    assert_eq!(payload["has_more"], Value::Bool(false));
+
+    // 子目录同样走分页路径
+    let sub = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list/zdir?limit=5&offset=0")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(sub.status(), StatusCode::OK);
+    let payload = response_json(sub).await;
+    assert_eq!(payload["total"], Value::from(0));
+}
+
+/// 请求体本身非法时，也要返回统一的错误信封（而不是 axum 的 422 纯文本）。
+#[tokio::test]
+async fn malformed_json_body_uses_the_standard_error_envelope() {
+    let app = TestApp::new().await;
+
+    let response = app
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{not-json"))
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let payload = response_json(response).await;
+    assert_eq!(payload["code"], Value::from("VALIDATION_FAILED"));
+    assert_eq!(payload["details"]["field"], Value::from("body"));
+    assert!(
+        payload["details"]["reason"].is_string(),
+        "应给出结构化原因: {}",
+        payload["details"]
+    );
+    assert!(payload["request_id"].is_string(), "统一信封应带 request_id");
+}
+
 /// 校验失败与超限都返回结构化的 `details`，便于客户端本地化展示。
 #[tokio::test]
 async fn validation_and_size_errors_carry_structured_details() {
