@@ -95,6 +95,8 @@ pub trait EntryRepo {
         version_id: &VersionId,
     ) -> DomainResult<()>;
     async fn delete_entry(&self, entry_id: &EntryId) -> DomainResult<()>;
+    /// 批量删除条目，避免逐个删除造成 N 次查询。
+    async fn delete_entries(&self, entry_ids: &[EntryId]) -> DomainResult<()>;
     async fn release_blob_references(
         &self,
         references: &[(BlobId, u32)],
@@ -109,6 +111,11 @@ pub trait EntryRepo {
     async fn find_version(&self, version_id: &VersionId) -> DomainResult<EntryVersion>;
     /// 批量获取版本，避免目录列举时的 N+1 查询；不存在的 id 会被跳过。
     async fn find_versions(&self, version_ids: &[VersionId]) -> DomainResult<Vec<EntryVersion>>;
+    /// 批量获取多条条目的全部版本（用于删除前的引用计数汇总）。
+    async fn find_versions_for_entries(
+        &self,
+        entry_ids: &[EntryId],
+    ) -> DomainResult<Vec<EntryVersion>>;
     #[allow(clippy::too_many_arguments)]
     async fn create_version(
         &self,

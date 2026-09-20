@@ -1963,45 +1963,43 @@ where
                 change_type: ChangeType::Deleted,
             })
             .collect::<Vec<_>>();
-        let mut deleted_entries = Vec::new();
+        let mut deleted_entries = Vec::with_capacity(all_entries.len());
         let mut cleanup_warnings = Vec::new();
 
+        // 删除类型的快照项会忽略版本字段，无需逐条查询当前版本。
         for entry in &all_entries {
-            let version = self.version_for_entry(entry).await?;
             deleted_entries.push(pending_snapshot_entry(
                 entry.id,
                 &entry.path_norm,
                 entry.entry_type,
-                version.as_ref(),
+                None,
                 ChangeType::Deleted,
             ));
+        }
 
-            let blob_refs = self
-                .entry_repo
-                .get_entry_history(&entry.id, u32::MAX, None)
-                .await?
-                .into_iter()
-                .filter_map(|item| item.blob_id)
-                .fold(
-                    std::collections::HashMap::<BlobId, u32>::new(),
-                    |mut acc, blob_id| {
-                        *acc.entry(blob_id).or_insert(0) += 1;
-                        acc
-                    },
-                )
-                .into_iter()
-                .collect::<Vec<_>>();
+        // 一次汇总所有被删条目的版本引用，再批量删除并统一释放。
+        let entry_ids: Vec<EntryId> = all_entries.iter().map(|entry| entry.id).collect();
+        let mut blob_counts = HashMap::<BlobId, u32>::new();
+        for version in self
+            .entry_repo
+            .find_versions_for_entries(&entry_ids)
+            .await?
+        {
+            if let Some(blob_id) = version.blob_id {
+                *blob_counts.entry(blob_id).or_insert(0) += 1;
+            }
+        }
+        let blob_refs = blob_counts.into_iter().collect::<Vec<_>>();
 
-            self.entry_repo.delete_entry(&entry.id).await?;
+        self.entry_repo.delete_entries(&entry_ids).await?;
 
-            let released_blobs = self.entry_repo.release_blob_references(&blob_refs).await?;
-            for blob_id in released_blobs {
-                if let Err(err) = self.blob_store.delete_blob(&blob_id).await {
-                    cleanup_warnings.push(format!(
-                        "Failed to delete unreferenced blob {}: {}",
-                        blob_id, err
-                    ));
-                }
+        let released_blobs = self.entry_repo.release_blob_references(&blob_refs).await?;
+        for blob_id in released_blobs {
+            if let Err(err) = self.blob_store.delete_blob(&blob_id).await {
+                cleanup_warnings.push(format!(
+                    "Failed to delete unreferenced blob {}: {}",
+                    blob_id, err
+                ));
             }
         }
 

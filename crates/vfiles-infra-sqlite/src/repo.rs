@@ -1111,6 +1111,32 @@ impl EntryRepo for SqliteEntryRepo {
         Ok(())
     }
 
+    async fn delete_entries(&self, entry_ids: &[EntryId]) -> DomainResult<()> {
+        if entry_ids.is_empty() {
+            return Ok(());
+        }
+
+        const CHUNK: usize = 500;
+        for chunk in entry_ids.chunks(CHUNK) {
+            let mut builder = sqlx::QueryBuilder::new("DELETE FROM entries WHERE id IN (");
+            let mut separated = builder.separated(", ");
+            for entry_id in chunk {
+                separated.push_bind(entry_id.to_string());
+            }
+            separated.push_unseparated(")");
+
+            builder
+                .build()
+                .execute(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to delete entries: {}", e),
+                })?;
+        }
+
+        Ok(())
+    }
+
     async fn release_blob_references(
         &self,
         references: &[(BlobId, u32)],
@@ -1285,6 +1311,48 @@ impl EntryRepo for SqliteEntryRepo {
                 .await
                 .map_err(|e| DomainError::Internal {
                 message: format!("Failed to find entry versions: {}", e),
+            })?;
+
+            for row in rows {
+                versions.push(parse_entry_version_row(row)?);
+            }
+        }
+
+        Ok(versions)
+    }
+
+    async fn find_versions_for_entries(
+        &self,
+        entry_ids: &[EntryId],
+    ) -> DomainResult<Vec<EntryVersion>> {
+        if entry_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        const CHUNK: usize = 500;
+        let mut versions = Vec::new();
+
+        for chunk in entry_ids.chunks(CHUNK) {
+            let mut builder = sqlx::QueryBuilder::new(
+                "SELECT \
+                    ev.id, ev.entry_id, ev.version, ev.blob_id, ev.size, ev.content_type, \
+                    b.content_hash, ev.created_at, ev.created_by, ev.message \
+                 FROM entry_versions ev \
+                 LEFT JOIN blobs b ON b.id = ev.blob_id \
+                 WHERE ev.entry_id IN (",
+            );
+            let mut separated = builder.separated(", ");
+            for entry_id in chunk {
+                separated.push_bind(entry_id.to_string());
+            }
+            separated.push_unseparated(")");
+
+            let rows: Vec<EntryVersionRow> = builder
+                .build_query_as()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                message: format!("Failed to find versions for entries: {}", e),
             })?;
 
             for row in rows {
@@ -3853,6 +3921,97 @@ mod entry_repo_subtree_tests {
             .expect("subtree lookup should succeed");
         let paths: Vec<&str> = docs2.iter().map(|entry| entry.path_norm.as_str()).collect();
         assert_eq!(paths, vec!["docs2", "docs2/c.txt"]);
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+}
+
+#[cfg(test)]
+mod entry_batch_cleanup_tests {
+    use super::*;
+    use crate::{SqliteMigrations, SqlitePoolFactory};
+    use camino::Utf8PathBuf;
+
+    async fn setup() -> (
+        Utf8PathBuf,
+        SqlitePool,
+        SqliteEntryRepo,
+        NamespaceId,
+        UserId,
+    ) {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-batch-cleanup-test-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+
+        let user_id = user_repo
+            .create_admin("admin", "admin@example.com", "hashed-password")
+            .await
+            .expect("admin user should be created");
+        let namespace_id = namespace_repo
+            .create_default(&user_id, "default")
+            .await
+            .expect("default namespace should be created");
+
+        (db_path, pool, entry_repo, namespace_id, user_id)
+    }
+
+    #[tokio::test]
+    async fn batch_history_and_delete_cover_all_requested_entries() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+
+        let mut entry_ids = Vec::new();
+        for path in ["docs/a.txt", "docs/b.txt"] {
+            let entry_id = repo
+                .create_entry(
+                    &namespace_id,
+                    &NormalizedPath::new(path).expect("path should parse"),
+                    EntryKind::File,
+                    &user_id,
+                )
+                .await
+                .expect("entry should be created");
+            for message in ["one", "two"] {
+                repo.create_version(&entry_id, None, None, 5, None, &user_id, Some(message))
+                    .await
+                    .expect("version should be created");
+            }
+            entry_ids.push(entry_id);
+        }
+
+        let versions = repo
+            .find_versions_for_entries(&entry_ids)
+            .await
+            .expect("batch history should succeed");
+        assert_eq!(versions.len(), 4);
+        assert!(
+            repo.find_versions_for_entries(&[])
+                .await
+                .expect("empty batch should succeed")
+                .is_empty()
+        );
+
+        repo.delete_entries(&entry_ids)
+            .await
+            .expect("delete should succeed");
+        assert!(
+            repo.find_all(&namespace_id)
+                .await
+                .expect("find_all should succeed")
+                .is_empty()
+        );
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);
