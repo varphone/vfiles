@@ -119,6 +119,58 @@ describe("DirectoryTree.vue", () => {
     expect(screen.getByText("guides")).toBeInTheDocument();
   });
 
+  it("refreshes loaded levels when the refresh key changes", async () => {
+    const { rerender } = renderTree({ refreshKey: 0 });
+    await waitFor(() => expect(screen.getByText("docs")).toBeInTheDocument());
+    // 展开 docs，让第二层进入缓存
+    await fireEvent.click(screen.getByLabelText("展开 docs"));
+    await waitFor(() => expect(screen.getByText("api")).toBeInTheDocument());
+
+    // 服务端新增了一个目录：刷新后两层都应更新
+    getFilesPageMock.mockImplementation(async (path: string) => {
+      if (path === "") {
+        return page([
+          entry("图片", "directory"),
+          entry("docs", "directory"),
+          entry("fresh", "directory"),
+        ]);
+      }
+      if (path === "docs") {
+        return page([
+          entry("docs/api", "directory"),
+          entry("docs/guides", "directory"),
+          entry("docs/new", "directory"),
+        ]);
+      }
+      return page([]);
+    });
+
+    await rerender({ currentPath: "", dragging: false, refreshKey: 1 });
+
+    await waitFor(() => expect(screen.getByText("fresh")).toBeInTheDocument());
+    // 展开状态保留，第二层也刷新到最新（两层请求分别完成，需各自等待）
+    await waitFor(() => expect(screen.getByText("new")).toBeInTheDocument());
+    expect(screen.getByLabelText("收起 docs")).toBeInTheDocument();
+  });
+
+  it("keeps the current directory revealed after a refresh", async () => {
+    const { rerender } = renderTree({
+      currentPath: "docs/api",
+      refreshKey: 0,
+    });
+    await waitFor(() => expect(screen.getByText("api")).toBeInTheDocument());
+
+    await rerender({ currentPath: "docs/api", refreshKey: 2 });
+
+    await waitFor(() =>
+      expect(
+        document
+          .querySelector(".directory-tree-row.is-active")
+          ?.textContent?.trim(),
+      ).toBe("api"),
+    );
+  });
+
   it("only accepts drops while dragging", async () => {
     const { emitted, unmount } = renderTree({ dragging: true });
     await waitFor(() => expect(screen.getByText("docs")).toBeInTheDocument());

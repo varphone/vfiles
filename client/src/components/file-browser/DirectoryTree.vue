@@ -86,8 +86,10 @@ const props = withDefaults(
     currentPath?: string;
     /** 是否有条目正在被拖动（用于高亮可放置的目标）。 */
     dragging?: boolean;
+    /** 每次数据变更（新建/删除/重命名/移动）后递增，用于刷新已加载的层级。 */
+    refreshKey?: number;
   }>(),
-  { currentPath: "", dragging: false },
+  { currentPath: "", dragging: false, refreshKey: 0 },
 );
 
 const emit = defineEmits<{
@@ -102,8 +104,9 @@ const loading = ref<Set<string>>(new Set());
 const loadingRoot = ref(true);
 const dragOverPath = ref("");
 
-async function loadChildren(path: string) {
-  if (children.value[path] || loading.value.has(path)) return;
+async function loadChildren(path: string, options: { force?: boolean } = {}) {
+  if (loading.value.has(path)) return;
+  if (children.value[path] && !options.force) return;
   loading.value = new Set(loading.value).add(path);
 
   try {
@@ -191,6 +194,35 @@ async function revealCurrentPath(path: string) {
 onMounted(() => {
   void loadChildren("").then(() => revealCurrentPath(props.currentPath));
 });
+
+/**
+ * 刷新已加载的层级。
+ *
+ * 目录树对每层做了缓存，新建/删除/重命名目录后必须显式重取，否则要等用户
+ * 收起再展开才会更新。这里只重取「已经加载过」的层级（含根层），
+ * 保留展开状态，不会把用户展开的树折叠回去。
+ */
+async function refreshLoadedLevels() {
+  await loadChildren("", { force: true });
+
+  // 已展开的层级（含当前目录的祖先）重新拉取
+  const paths = new Set<string>([
+    ...expanded.value,
+    ...ancestorPaths(props.currentPath),
+  ]);
+  await Promise.all(
+    [...paths].map((path) => loadChildren(path, { force: true })),
+  );
+
+  await revealCurrentPath(props.currentPath);
+}
+
+watch(
+  () => props.refreshKey,
+  () => {
+    void refreshLoadedLevels();
+  },
+);
 
 watch(
   () => props.currentPath,

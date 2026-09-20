@@ -116,6 +116,7 @@
             <DirectoryTree
               :current-path="currentPath"
               :dragging="Boolean(draggingFile)"
+              :refresh-key="sidebarVersion"
               @navigate="handleTreeNavigate"
               @drop-on-folder="handleDropOnFolder"
             />
