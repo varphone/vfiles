@@ -1,8 +1,163 @@
 use std::fmt::Write;
 
-use axum::http::HeaderValue;
+use axum::{
+    body::Body,
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    response::Response,
+};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
+use tokio_util::io::ReaderStream;
+use vfiles_domain::ReadSeek;
 
 use crate::error::{ApiError, ApiResult};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RangeRequest {
+    Full,
+    Partial { start: u64, end: u64 },
+    Unsatisfiable,
+}
+
+pub(crate) fn parse_range(headers: &HeaderMap, total_size: u64) -> RangeRequest {
+    let Some(raw_value) = headers.get(header::RANGE) else {
+        return RangeRequest::Full;
+    };
+    let Ok(raw_value) = raw_value.to_str() else {
+        return RangeRequest::Full;
+    };
+    let Some(spec) = raw_value.trim().strip_prefix("bytes=") else {
+        return RangeRequest::Full;
+    };
+    if spec.contains(',') {
+        // Multiple ranges are intentionally not supported; serve the full file.
+        return RangeRequest::Full;
+    }
+    let Some((start_raw, end_raw)) = spec.split_once('-') else {
+        return RangeRequest::Full;
+    };
+
+    if total_size == 0 {
+        return RangeRequest::Unsatisfiable;
+    }
+
+    if start_raw.is_empty() {
+        let Ok(suffix_len) = end_raw.parse::<u64>() else {
+            return RangeRequest::Full;
+        };
+        if suffix_len == 0 {
+            return RangeRequest::Unsatisfiable;
+        }
+        let start = total_size.saturating_sub(suffix_len);
+        return RangeRequest::Partial {
+            start,
+            end: total_size - 1,
+        };
+    }
+
+    let Ok(start) = start_raw.parse::<u64>() else {
+        return RangeRequest::Full;
+    };
+    if start >= total_size {
+        return RangeRequest::Unsatisfiable;
+    }
+
+    let end = if end_raw.is_empty() {
+        total_size - 1
+    } else {
+        let Ok(end) = end_raw.parse::<u64>() else {
+            return RangeRequest::Full;
+        };
+        if end < start {
+            return RangeRequest::Full;
+        }
+        end.min(total_size - 1)
+    };
+
+    RangeRequest::Partial { start, end }
+}
+
+pub(crate) fn content_range_value(start: u64, end: u64, total: u64) -> ApiResult<HeaderValue> {
+    HeaderValue::from_str(&format!("bytes {}-{}/{}", start, end, total))
+        .map_err(|e| ApiError::Internal(format!("Invalid content range header: {}", e)))
+}
+
+pub(crate) fn unsatisfied_content_range_value(total: u64) -> ApiResult<HeaderValue> {
+    HeaderValue::from_str(&format!("bytes */{}", total))
+        .map_err(|e| ApiError::Internal(format!("Invalid content range header: {}", e)))
+}
+
+pub(crate) async fn streaming_file_response(
+    mut reader: Box<dyn ReadSeek + Send + Unpin>,
+    request_headers: &HeaderMap,
+    mime_type: Option<&str>,
+    size_bytes: u64,
+    attachment_filename: Option<&str>,
+) -> ApiResult<Response> {
+    let content_type = HeaderValue::from_str(mime_type.unwrap_or("application/octet-stream"))
+        .map_err(|e| ApiError::Internal(format!("Invalid content type header: {}", e)))?;
+    let accept_ranges = HeaderValue::from_static("bytes");
+
+    match parse_range(request_headers, size_bytes) {
+        RangeRequest::Unsatisfiable => {
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
+            response
+                .headers_mut()
+                .insert(header::ACCEPT_RANGES, accept_ranges);
+            response.headers_mut().insert(
+                header::CONTENT_RANGE,
+                unsatisfied_content_range_value(size_bytes)?,
+            );
+            if let Some(filename) = attachment_filename {
+                response
+                    .headers_mut()
+                    .insert(header::CONTENT_DISPOSITION, attachment_header(filename)?);
+            }
+            Ok(response)
+        }
+        RangeRequest::Partial { start, end } => {
+            reader
+                .seek(SeekFrom::Start(start))
+                .await
+                .map_err(|e| ApiError::Internal(format!("Failed to seek blob: {}", e)))?;
+
+            let length = end - start + 1;
+            let mut response =
+                Response::new(Body::from_stream(ReaderStream::new(reader.take(length))));
+            *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+            let headers = response.headers_mut();
+            headers.insert(header::CONTENT_TYPE, content_type);
+            headers.insert(header::ACCEPT_RANGES, accept_ranges);
+            headers.insert(
+                header::CONTENT_RANGE,
+                content_range_value(start, end, size_bytes)?,
+            );
+            insert_content_length(headers, length)?;
+            if let Some(filename) = attachment_filename {
+                headers.insert(header::CONTENT_DISPOSITION, attachment_header(filename)?);
+            }
+            Ok(response)
+        }
+        RangeRequest::Full => {
+            let mut response = Response::new(Body::from_stream(ReaderStream::new(reader)));
+            let headers = response.headers_mut();
+            headers.insert(header::CONTENT_TYPE, content_type);
+            headers.insert(header::ACCEPT_RANGES, accept_ranges);
+            insert_content_length(headers, size_bytes)?;
+            if let Some(filename) = attachment_filename {
+                headers.insert(header::CONTENT_DISPOSITION, attachment_header(filename)?);
+            }
+            Ok(response)
+        }
+    }
+}
+
+fn insert_content_length(headers: &mut axum::http::HeaderMap, size_bytes: u64) -> ApiResult<()> {
+    let value = HeaderValue::from_str(&size_bytes.to_string())
+        .map_err(|e| ApiError::Internal(format!("Invalid content length header: {}", e)))?;
+    headers.insert(header::CONTENT_LENGTH, value);
+    Ok(())
+}
 
 pub(crate) fn attachment_header(filename: &str) -> ApiResult<HeaderValue> {
     let fallback = ascii_filename_fallback(filename);

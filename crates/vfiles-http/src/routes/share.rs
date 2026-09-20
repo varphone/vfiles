@@ -3,7 +3,7 @@
 use axum::{
     Router,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{Json, Response},
     routing::{delete, get, post},
 };
@@ -12,11 +12,10 @@ use crate::{
     AppState,
     dto::{CreateShareRequest, CreateShareResponse, ShareDto},
     error::ApiError,
-    http_headers::attachment_header,
+    http_headers::{attachment_header, streaming_file_response},
     routes::authenticated_request_context,
 };
 use axum_extra::extract::cookie::CookieJar;
-use tokio_util::io::ReaderStream;
 use vfiles_domain::{DomainError, EntryKind};
 
 pub fn router() -> Router<AppState> {
@@ -26,31 +25,6 @@ pub fn router() -> Router<AppState> {
         .route("/shares/{code}/download", get(download_share))
         .route("/shares/{code}", get(access_share))
         .route("/shares/{code}", delete(disable_share))
-}
-
-fn build_download_response(
-    reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
-    filename: &str,
-    mime_type: Option<&str>,
-    size_bytes: u64,
-) -> Result<Response, ApiError> {
-    let mut response = Response::new(axum::body::Body::from_stream(ReaderStream::new(reader)));
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_TYPE,
-        axum::http::HeaderValue::from_str(mime_type.unwrap_or("application/octet-stream"))
-            .map_err(|e| ApiError::Internal(format!("Invalid content type header: {}", e)))?,
-    );
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_DISPOSITION,
-        attachment_header(filename)?,
-    );
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_LENGTH,
-        axum::http::HeaderValue::from_str(&size_bytes.to_string())
-            .map_err(|e| ApiError::Internal(format!("Invalid content length header: {}", e)))?,
-    );
-
-    Ok(response)
 }
 
 fn build_archive_response(filename: &str, bytes: Vec<u8>) -> Result<Response, ApiError> {
@@ -170,6 +144,7 @@ async fn access_share(
 
 pub async fn download_share(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(code): Path<String>,
 ) -> Result<Response, ApiError> {
     if !state.config.features.share_enabled {
@@ -187,12 +162,14 @@ pub async fn download_share(
                 .open_file(&share.namespace_id, &entry.path_norm, version.as_deref())
                 .await?;
 
-            build_download_response(
+            streaming_file_response(
                 file.reader,
-                &file.filename,
+                &headers,
                 file.mime_type.as_deref(),
                 file.size_bytes,
+                Some(&file.filename),
             )
+            .await
         }
         EntryKind::Directory => {
             let archive = state
