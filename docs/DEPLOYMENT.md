@@ -167,3 +167,12 @@ sudo ./vfiles register -t systemd \
 
 输出 `Purged N orphaned blob(s), freed M bytes`。建议在业务低峰期执行；被任何版本或
 快照引用的 blob 不会被删除。
+
+历史快照会持续引用 blob（这是可恢复任意版本的前提），可用快照裁剪控制磁盘占用：
+
+```bash
+# 每个命名空间仅保留最新 50 个快照，并释放被删快照的 blob 引用
+./vfiles maintenance prune-snapshots --keep 50
+```
+
+裁剪会删除旧快照（不可再恢复到这些提交），请在确认不再需要旧历史后执行。

@@ -1948,6 +1948,61 @@ impl SnapshotRepo for SqliteSnapshotRepo {
 
         Ok(entries)
     }
+
+    async fn list_all_snapshots(&self) -> DomainResult<Vec<Snapshot>> {
+        let rows: Vec<(String, String, String, Option<String>, String, String)> = sqlx::query_as(
+            "SELECT id, namespace_id, name, description, created_at, created_by \
+             FROM snapshots ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list all snapshots: {}", e),
+        })?;
+
+        let mut snapshots = Vec::new();
+        for row in rows {
+            let (kind, snapshot_no) = parse_snapshot_name(&row.2);
+            snapshots.push(Snapshot {
+                id: SnapshotId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
+                    DomainError::Internal {
+                        message: "Invalid UUID".to_string(),
+                    }
+                })?),
+                namespace_id: NamespaceId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(
+                    |_| DomainError::Internal {
+                        message: "Invalid UUID".to_string(),
+                    },
+                )?),
+                snapshot_no,
+                created_by: UserId::from_uuid(uuid::Uuid::parse_str(&row.5).map_err(|_| {
+                    DomainError::Internal {
+                        message: "Invalid UUID".to_string(),
+                    }
+                })?),
+                created_at: parse_timestamp(&row.4)?,
+                message: row
+                    .3
+                    .as_deref()
+                    .and_then(|value| NonEmptyMessage::new(value).ok()),
+                kind,
+            });
+        }
+
+        Ok(snapshots)
+    }
+
+    async fn delete_snapshot(&self, snapshot_id: &SnapshotId) -> DomainResult<()> {
+        // snapshot_entries 通过外键 ON DELETE CASCADE 一并删除。
+        sqlx::query("DELETE FROM snapshots WHERE id = ?")
+            .bind(snapshot_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to delete snapshot: {}", e),
+            })?;
+        Ok(())
+    }
 }
 
 use camino::Utf8PathBuf;

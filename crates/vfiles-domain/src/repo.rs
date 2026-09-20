@@ -164,6 +164,10 @@ pub trait SnapshotRepo {
         &self,
         snapshot_id: &SnapshotId,
     ) -> DomainResult<Vec<SnapshotEntry>>;
+    /// 列出全部快照（按创建时间倒序，维护任务使用）。
+    async fn list_all_snapshots(&self) -> DomainResult<Vec<Snapshot>>;
+    /// 删除快照及其条目（条目通过外键级联删除）。
+    async fn delete_snapshot(&self, snapshot_id: &SnapshotId) -> DomainResult<()>;
 }
 
 #[async_trait::async_trait]

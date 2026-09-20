@@ -47,10 +47,22 @@ enum Commands {
 enum MaintenanceCommands {
     /// Delete unreferenced blobs (with a grace period) to reclaim disk space
     GcBlobs(GcBlobsArgs),
+    /// Keep only the newest N snapshots per namespace, then reclaim their blobs
+    PruneSnapshots(PruneSnapshotsArgs),
 }
 
 #[derive(Debug, Args, Clone)]
 struct GcBlobsArgs {
+    /// Only purge blobs created more than this many seconds ago
+    #[arg(long, default_value_t = 3600)]
+    grace_seconds: u64,
+}
+
+#[derive(Debug, Args, Clone)]
+struct PruneSnapshotsArgs {
+    /// Number of newest snapshots to keep per namespace
+    #[arg(long, default_value_t = 50)]
+    keep: u32,
     /// Only purge blobs created more than this many seconds ago
     #[arg(long, default_value_t = 3600)]
     grace_seconds: u64,
@@ -682,6 +694,7 @@ fn is_frontend_dist(path: &Path) -> bool {
 async fn run_maintenance_command(command: MaintenanceCommands) -> anyhow::Result<()> {
     match command {
         MaintenanceCommands::GcBlobs(args) => run_gc_blobs(args).await,
+        MaintenanceCommands::PruneSnapshots(args) => run_prune_snapshots(args).await,
     }
 }
 
@@ -697,7 +710,8 @@ async fn run_gc_blobs(args: GcBlobsArgs) -> anyhow::Result<()> {
 
     let blob_store = FsBlobStore::new(pool.clone(), paths.blobs.clone());
     let entry_repo = SqliteEntryRepo::new(pool.clone());
-    let service = MaintenanceService::new(blob_store, entry_repo);
+    let snapshot_repo = SqliteSnapshotRepo::new(pool.clone());
+    let service = MaintenanceService::new(blob_store, entry_repo, snapshot_repo);
     let report = service.purge_orphan_blobs(args.grace_seconds).await?;
 
     println!(
@@ -708,6 +722,37 @@ async fn run_gc_blobs(args: GcBlobsArgs) -> anyhow::Result<()> {
         removed = report.removed,
         freed_bytes = report.freed_bytes,
         "Blob garbage collection finished"
+    );
+
+    pool.close().await;
+    Ok(())
+}
+
+/// 裁剪历史快照（每个命名空间保留最新 N 个），随后回收孤儿 blob。
+async fn run_prune_snapshots(args: PruneSnapshotsArgs) -> anyhow::Result<()> {
+    tracing::info!("Pruning snapshots (keep {} per namespace)...", args.keep);
+    let config = ConfigLoader::load()?;
+    let paths = vfiles_config::AppPaths::from_config(&config.storage);
+    let pool = SqlitePoolFactory::connect(&paths.database).await?;
+
+    let blob_store = FsBlobStore::new(pool.clone(), paths.blobs.clone());
+    let entry_repo = SqliteEntryRepo::new(pool.clone());
+    let snapshot_repo = SqliteSnapshotRepo::new(pool.clone());
+    let service = MaintenanceService::new(blob_store, entry_repo, snapshot_repo);
+
+    let report = service.prune_snapshots(args.keep).await?;
+    let purge = service.purge_orphan_blobs(args.grace_seconds).await?;
+
+    println!(
+        "Pruned {} snapshot(s), released {} blob(s); purged {} orphaned blob(s), freed {} bytes",
+        report.pruned_snapshots, report.released_blobs, purge.removed, purge.freed_bytes
+    );
+    tracing::info!(
+        pruned_snapshots = report.pruned_snapshots,
+        released_blobs = report.released_blobs,
+        purged_blobs = purge.removed,
+        freed_bytes = purge.freed_bytes,
+        "Snapshot pruning finished"
     );
 
     pool.close().await;

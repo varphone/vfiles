@@ -638,23 +638,77 @@ pub struct BlobPurgeReport {
     pub freed_bytes: u64,
 }
 
-/// 维护任务：清理没有任何版本或快照引用、且已过保护期的 blob。
-#[derive(Debug)]
-pub struct MaintenanceService<B, E> {
-    blob_store: B,
-    entry_repo: E,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SnapshotPruneReport {
+    pub pruned_snapshots: u64,
+    pub released_blobs: u64,
 }
 
-impl<B, E> MaintenanceService<B, E>
+/// 维护任务：清理没有任何版本或快照引用、且已过保护期的 blob，以及裁剪历史快照。
+#[derive(Debug)]
+pub struct MaintenanceService<B, E, S> {
+    blob_store: B,
+    entry_repo: E,
+    snapshot_repo: S,
+}
+
+impl<B, E, S> MaintenanceService<B, E, S>
 where
     B: BlobStore,
     E: EntryRepo,
+    S: SnapshotRepo,
 {
-    pub fn new(blob_store: B, entry_repo: E) -> Self {
+    pub fn new(blob_store: B, entry_repo: E, snapshot_repo: S) -> Self {
         Self {
             blob_store,
             entry_repo,
+            snapshot_repo,
         }
+    }
+
+    /// 每个命名空间仅保留最新的 `keep` 个快照，删除其余快照并释放其 blob 引用。
+    ///
+    /// 被删除快照中引用的 blob 会先释放引用计数；归零的 blob 行由
+    /// `release_blob_references` 删除，文件随后由调用方（或 `gc-blobs`）清理。
+    pub async fn prune_snapshots(&self, keep: u32) -> DomainResult<SnapshotPruneReport> {
+        let mut by_namespace: std::collections::HashMap<NamespaceId, Vec<Snapshot>> =
+            std::collections::HashMap::new();
+        for snapshot in self.snapshot_repo.list_all_snapshots().await? {
+            by_namespace
+                .entry(snapshot.namespace_id)
+                .or_default()
+                .push(snapshot);
+        }
+
+        let mut report = SnapshotPruneReport::default();
+        for snapshots in by_namespace.values_mut() {
+            // list_all_snapshots 已按创建时间倒序
+            for snapshot in snapshots.iter().skip(keep as usize) {
+                let entries = self
+                    .snapshot_repo
+                    .get_snapshot_entries(&snapshot.id)
+                    .await?;
+
+                let mut counts = std::collections::HashMap::<BlobId, u32>::new();
+                for entry in entries {
+                    if let Some(blob_id) = entry.blob_id {
+                        *counts.entry(blob_id).or_insert(0) += 1;
+                    }
+                }
+
+                self.snapshot_repo.delete_snapshot(&snapshot.id).await?;
+                report.pruned_snapshots += 1;
+
+                let references = counts.into_iter().collect::<Vec<_>>();
+                let removable = self.entry_repo.release_blob_references(&references).await?;
+                for blob_id in removable {
+                    self.blob_store.delete_blob(&blob_id).await?;
+                    report.released_blobs += 1;
+                }
+            }
+        }
+
+        Ok(report)
     }
 
     /// 删除无引用且创建时间早于 `grace_seconds` 之前的 blob，返回清理统计。
@@ -3977,7 +4031,9 @@ mod maintenance_tests {
             .await
             .expect("blob should store");
 
-        let service = MaintenanceService::new(blob_store.clone(), entry_repo.clone());
+        let snapshot_repo = vfiles_infra_sqlite::SqliteSnapshotRepo::new(pool.clone());
+        let service =
+            MaintenanceService::new(blob_store.clone(), entry_repo.clone(), snapshot_repo);
         let report = service
             .purge_orphan_blobs(3600)
             .await
@@ -4002,6 +4058,120 @@ mod maintenance_tests {
         assert!(fresh_path.exists(), "fresh file should be kept");
 
         pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn prune_snapshots_keeps_newest_and_releases_references() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+            .expect("temp path should be utf-8");
+        let pool = SqlitePoolFactory::connect(root.join("vfiles.db").as_path())
+            .await
+            .expect("pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+        let snapshot_repo = vfiles_infra_sqlite::SqliteSnapshotRepo::new(pool.clone());
+        let blob_store = FsBlobStore::new(pool.clone(), root.join("blobs"));
+
+        let user_id = user_repo
+            .create_admin("admin", "admin@example.com", "hashed")
+            .await
+            .expect("admin should be created");
+        let namespace_id = namespace_repo
+            .create_default(&user_id, "default")
+            .await
+            .expect("namespace should be created");
+
+        let (blob_id, content_hash, _) = blob_store
+            .store_blob(b"snapshot-data", None)
+            .await
+            .expect("blob should store");
+        let path = NormalizedPath::new("a.txt").expect("path should parse");
+        let entry_id = entry_repo
+            .create_entry(&namespace_id, &path, EntryKind::File, &user_id)
+            .await
+            .expect("entry should be created");
+        entry_repo
+            .create_version(
+                &entry_id,
+                Some(&blob_id),
+                Some(&content_hash),
+                13,
+                Some("text/plain"),
+                &user_id,
+                Some("v1"),
+            )
+            .await
+            .expect("version should be created");
+
+        for index in 0..3 {
+            let snapshot_id = snapshot_repo
+                .create_snapshot(
+                    &namespace_id,
+                    Some(&format!("s{index}")),
+                    SnapshotKind::AutoCommit,
+                    &user_id,
+                )
+                .await
+                .expect("snapshot should be created");
+            snapshot_repo
+                .add_snapshot_entries(
+                    &snapshot_id,
+                    &[SnapshotEntry {
+                        snapshot_id,
+                        entry_id,
+                        entry_path: path.clone(),
+                        entry_kind: EntryKind::File,
+                        entry_version_id: None,
+                        blob_id: Some(blob_id),
+                        size_bytes: Some(ByteSize::new(13)),
+                        mime_type: Some("text/plain".to_string()),
+                        version_no: Some(1),
+                        change_type: ChangeType::Added,
+                        created_by: Some(user_id),
+                        created_at: Some(time::OffsetDateTime::now_utc()),
+                    }],
+                )
+                .await
+                .expect("snapshot entry should be added");
+        }
+
+        let refs_before = blob_store
+            .get_blob_metadata(&blob_id)
+            .await
+            .expect("lookup should succeed")
+            .expect("blob should exist")
+            .ref_count;
+        assert_eq!(refs_before, 4, "1 version + 3 snapshot references");
+
+        let service =
+            MaintenanceService::new(blob_store.clone(), entry_repo, snapshot_repo.clone());
+        let report = service
+            .prune_snapshots(1)
+            .await
+            .expect("prune should succeed");
+
+        assert_eq!(report.pruned_snapshots, 2);
+        assert_eq!(
+            snapshot_repo
+                .list_all_snapshots()
+                .await
+                .expect("snapshots should list")
+                .len(),
+            1
+        );
+        let refs_after = blob_store
+            .get_blob_metadata(&blob_id)
+            .await
+            .expect("lookup should succeed")
+            .expect("blob should exist")
+            .ref_count;
+        assert_eq!(refs_after, refs_before - 2);
     }
 
     fn backdate_file(path: &Utf8PathBuf, when: time::OffsetDateTime) {

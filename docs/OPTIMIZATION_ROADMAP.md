@@ -16,13 +16,13 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 27 实测）
+### 验证基线（round 28 实测）
 
-- `cargo test --workspace`：通过（含 blob GC 用例）。
+- `cargo test --workspace`：通过（含快照裁剪用例）。
 - `cargo clippy --workspace --all-targets`：无告警。
 - `client` 单测：21 个文件 / 116 个用例通过。
-- 冒烟：`vfiles maintenance gc-blobs` 删除孤儿文件（保留被引用 blob），
-  `--grace-seconds` 保护期生效。
+- 冒烟：4 次上传后执行 `maintenance prune-snapshots --keep 1`，快照 4 → 1，
+  blob 引用总数随之减少 3；`gc-blobs` 的孤儿文件回收保持可用。
 
 ### 主要发现
 
@@ -407,6 +407,21 @@
 - 测试：`is_purgeable` 判定；真实 SQLite + 文件系统下清理孤儿文件、保留被引用与
   保护期内的文件；冒烟验证 CLI 与 `--grace-seconds` 行为。
 
+### 2.33 快照保留策略（round 28，稳定性）
+
+- 观察：`add_snapshot_entries` 会为快照中每个 blob 增加 `ref_count`，而删除只按版本
+  引用递减，因此只要仍有历史快照，blob 就不会归零——历史快照会持续占用磁盘。
+- `SnapshotRepo` 新增 `list_all_snapshots()`（按创建时间倒序）与 `delete_snapshot()`
+  （`snapshot_entries` 通过外键级联删除）。
+- `MaintenanceService` 扩展为泛型 `<BlobStore, EntryRepo, SnapshotRepo>`，新增
+  `prune_snapshots(keep)`：按命名空间分组、每组保留最新 `keep` 个快照，删除其余快照并
+  汇总其 blob 引用、调用 `release_blob_references` 释放（归零行删除、文件由
+  `delete_blob` 清理）。
+- CLI：`vfiles maintenance prune-snapshots --keep N [--grace-seconds N]`，执行后自动
+  运行一次孤儿 blob 回收；文档见 `docs/DEPLOYMENT.md`。
+- 测试：真实 SQLite 下 3 个快照（各引用同一 blob）裁剪 `keep=1` 后仅剩 1 个快照，
+  且 blob `ref_count` 恰好减少被删快照的引用数；冒烟验证 CLI 行为。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -432,9 +447,9 @@
 ### 3.1d 快照保留与 blob 回收（稳定性，中）
 
 - `[x]` 孤儿 blob 文件 GC（round 27）：清理「有文件、无元数据行、无引用」的残留。
-- `[ ]` 快照保留策略：`add_snapshot_entries` 会为快照中的每个 blob 增加 `ref_count`，
-  删除只按版本引用递减；只要仍有历史快照，blob 就不会归零。计划提供按数量/时间的
-  快照清理（或仅清理「仅被旧快照引用」的 blob）。
+- `[x]` 快照保留策略（round 28）：`prune-snapshots --keep N` 裁剪旧快照并释放其
+  blob 引用，配合 `gc-blobs` 回收磁盘。
+- `[ ]` 可按时间窗口（而非数量）保留快照；在服务内按周期自动执行维护任务。
 
 ### 3.2 缩略图格式与容量（性能 + 稳定性，中）
 
