@@ -285,6 +285,48 @@ export const filesService = {
   },
 
   /**
+   * 分页获取目录列表（`GET /api/files/list`）。
+   *
+   * 返回 `total` 用于展示总数与判断是否还有更多；`getFiles` 仍保留给需要完整列表的
+   * 场景（如移动对话框的重名检查）。
+   */
+  async getFilesPage(
+    path: string = "",
+    opts?: { commit?: string; limit?: number; offset?: number },
+  ): Promise<{
+    items: FileInfo[];
+    total: number;
+    limit: number;
+    offset: number;
+    has_more: boolean;
+  }> {
+    const endpoint = path
+      ? `/files/list/${encodeURIComponent(path)}`
+      : "/files/list";
+    const search = new URLSearchParams();
+    if (opts?.commit) search.set("commit", opts.commit);
+    if (opts?.limit !== undefined) search.set("limit", String(opts.limit));
+    if (opts?.offset !== undefined) search.set("offset", String(opts.offset));
+    const url = search.size > 0 ? `${endpoint}?${search.toString()}` : endpoint;
+
+    const response = await apiService.get<{
+      items: FileInfo[];
+      total: number;
+      limit: number;
+      offset: number;
+      has_more: boolean;
+    }>(url);
+    const payload = (response as any)?.data ?? response;
+    return {
+      items: Array.isArray(payload?.items) ? payload.items : [],
+      total: Number(payload?.total ?? 0),
+      limit: Number(payload?.limit ?? 0),
+      offset: Number(payload?.offset ?? 0),
+      has_more: Boolean(payload?.has_more),
+    };
+  },
+
+  /**
    * 移动/重命名文件或目录
    */
   async movePath(

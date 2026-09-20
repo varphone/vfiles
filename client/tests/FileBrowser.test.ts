@@ -3,14 +3,28 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "./renderWithProviders";
 import FileBrowser from "../src/components/file-browser/FileBrowser.vue";
 
+type PageOpts = { commit?: string; limit?: number; offset?: number };
+type PageResult = {
+  items: unknown[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+};
+
 const {
   getFilesMock,
+  getFilesPageMock,
   searchFilesMock,
   deleteFileMock,
   getFileContentMock,
   movePathMock,
 } = vi.hoisted(() => ({
-  getFilesMock: vi.fn(async (): Promise<unknown[]> => []),
+  getFilesMock: vi.fn(
+    async (_path: string, _commit?: string): Promise<unknown[]> => [],
+  ),
+  getFilesPageMock:
+    vi.fn<(path: string, opts?: PageOpts) => Promise<PageResult>>(),
   searchFilesMock: vi.fn(async (): Promise<unknown[]> => []),
   deleteFileMock: vi.fn(async () => ({ success: true })),
   getFileContentMock: vi.fn(async () => new Blob(["hello preview"])),
@@ -22,9 +36,30 @@ vi.mock("../src/composables/dialog", () => ({
   promptDialog: vi.fn(async () => null),
 }));
 
+// 服务端分页：以 getFilesMock 为全量数据源切片，保持既有断言不变。
+getFilesPageMock.mockImplementation(
+  async (
+    path: string,
+    opts?: { commit?: string; limit?: number; offset?: number },
+  ) => {
+    const all = (await getFilesMock(path, opts?.commit)) as unknown[];
+    const offset = opts?.offset ?? 0;
+    const limit = opts?.limit ?? all.length;
+    const items = all.slice(offset, offset + limit);
+    return {
+      items,
+      total: all.length,
+      limit,
+      offset,
+      has_more: offset + items.length < all.length,
+    };
+  },
+);
+
 vi.mock("../src/services/files.service", () => ({
   filesService: {
     getFiles: getFilesMock,
+    getFilesPage: getFilesPageMock,
     searchFiles: searchFilesMock,
     deleteFile: deleteFileMock,
     getFileContent: getFileContentMock,
@@ -52,6 +87,7 @@ function stubBrowserApis() {
 // 所有 describe 共用：重置服务 mock 并补齐浏览器 API（matchMedia 等）。
 beforeEach(() => {
   getFilesMock.mockReset();
+  getFilesPageMock.mockClear();
   searchFilesMock.mockReset();
   deleteFileMock.mockReset();
   getFileContentMock.mockReset();
@@ -473,6 +509,32 @@ describe("FileBrowser.vue large directories", () => {
     expect(container.textContent).toContain("已显示 40 / 47");
     expect(container.textContent).not.toContain("f44.txt");
   });
+
+  it("shows page progress when the directory has more server pages", async () => {
+    getFilesMock.mockResolvedValue(
+      Array.from({ length: 250 }, (_, index) => ({
+        id: `f${index}`,
+        name: `f${index}.txt`,
+        path: `f${index}.txt`,
+        kind: "file",
+        size_bytes: index + 1,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      })),
+    );
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("f0.txt");
+
+    // 服务端返回第一页 200 条，界面提示“已加载 / 总数”，并说明还有更多。
+    expect(container.textContent).toContain("当前目录 200 / 250 项");
+    expect(container.textContent).toContain("已显示 40 / 252");
+    expect(container.textContent).toContain("继续下滑加载更多");
+    expect(getFilesPageMock).toHaveBeenCalledWith(
+      "",
+      expect.objectContaining({ offset: 0, limit: 200 }),
+    );
+  });
 });
 describe("FileBrowser.vue drag and drop", () => {
   it("moves a dragged file into a dropped-on folder", async () => {
@@ -550,9 +612,7 @@ describe("FileBrowser.vue preview retry", () => {
     getFileContentMock.mockRejectedValueOnce(new Error("预览加载失败"));
     getFileContentMock.mockResolvedValueOnce(new Blob(["hello preview"]));
 
-    const { findByRole, findByText } = renderWithProviders(
-      FileBrowser as any,
-    );
+    const { findByRole, findByText } = renderWithProviders(FileBrowser as any);
 
     const name = await findByText("a.txt");
     await fireEvent.dblClick(name.closest("tr")!);

@@ -10,7 +10,7 @@ use axum_extra::extract::cookie::CookieJar;
 
 use crate::{
     AppState,
-    dto::{CreateDirectoryRequest, EntryDto, MoveEntryRequest},
+    dto::{CreateDirectoryRequest, EntryDto, EntryPageDto, MoveEntryRequest},
     error::{ApiError, ApiResult},
     routes::protected_request_context,
 };
@@ -20,6 +20,17 @@ use vfiles_domain::{DomainError, NamespaceId, NormalizedPath, SnapshotId};
 struct TreeQuery {
     commit: Option<String>,
 }
+
+/// 分页参数：默认每页 200，最多 1000。
+#[derive(Debug, Default, serde::Deserialize)]
+struct TreePageQuery {
+    commit: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+const DEFAULT_PAGE_LIMIT: usize = 200;
+const MAX_PAGE_LIMIT: usize = 1000;
 
 #[derive(Debug, Default, serde::Deserialize)]
 struct DeleteQuery {
@@ -33,6 +44,8 @@ pub fn router() -> Router<AppState> {
         .route("/move", post(move_entry))
         .route("/tree", get(list_root))
         .route("/tree/{*path}", get(list_directory))
+        .route("/list", get(list_root_page))
+        .route("/list/{*path}", get(list_directory_page))
         .route("/directories", post(create_directory))
 }
 
@@ -177,6 +190,92 @@ async fn list_directory_impl(
         .await?;
 
     Ok(Json(tree.items.into_iter().map(Into::into).collect()))
+}
+
+/// 分页列出根目录：`GET /api/files/list?limit=&offset=&commit=`
+async fn list_root_page(
+    Query(query): Query<TreePageQuery>,
+    axum::extract::State(state): axum::extract::State<AppState>,
+    jar: CookieJar,
+) -> ApiResult<Json<EntryPageDto>> {
+    let ctx = protected_request_context(&state, &jar).await?;
+    let root_path = NormalizedPath::new("").map_err(|_| {
+        ApiError::Domain(DomainError::Validation {
+            message: "Invalid root path".to_string(),
+        })
+    })?;
+
+    let items = fetch_entry_items(
+        &state,
+        &ctx.namespace_id,
+        &root_path,
+        query.commit.as_deref(),
+    )
+    .await?;
+
+    Ok(Json(paginate(items, query.limit, query.offset)))
+}
+
+/// 分页列出目录：`GET /api/files/list/{path}?limit=&offset=&commit=`
+async fn list_directory_page(
+    axum::extract::Path(path): axum::extract::Path<String>,
+    Query(query): Query<TreePageQuery>,
+    axum::extract::State(state): axum::extract::State<AppState>,
+    jar: CookieJar,
+) -> ApiResult<Json<EntryPageDto>> {
+    let ctx = protected_request_context(&state, &jar).await?;
+    let normalized_path = NormalizedPath::new(&path).map_err(|_| {
+        ApiError::Domain(DomainError::Validation {
+            message: "Invalid path format".to_string(),
+        })
+    })?;
+
+    let items = fetch_entry_items(
+        &state,
+        &ctx.namespace_id,
+        &normalized_path,
+        query.commit.as_deref(),
+    )
+    .await?;
+
+    Ok(Json(paginate(items, query.limit, query.offset)))
+}
+
+async fn fetch_entry_items(
+    state: &AppState,
+    namespace_id: &NamespaceId,
+    path: &NormalizedPath,
+    commit: Option<&str>,
+) -> ApiResult<Vec<EntryDto>> {
+    let snapshot_id = parse_snapshot_id(commit)?;
+    let tree = state
+        .workspace_service
+        .tree(namespace_id, path, snapshot_id.as_ref())
+        .await?;
+
+    Ok(tree.items.into_iter().map(Into::into).collect())
+}
+
+/// 对完整列表分页；`total` 始终为全量条目数，便于客户端展示与判断是否还有更多。
+fn paginate(items: Vec<EntryDto>, limit: Option<usize>, offset: Option<usize>) -> EntryPageDto {
+    let total = items.len();
+    let limit = limit.unwrap_or(DEFAULT_PAGE_LIMIT).clamp(1, MAX_PAGE_LIMIT);
+    let offset = offset.unwrap_or(0).min(total);
+    let end = (offset + limit).min(total);
+
+    let page = items
+        .into_iter()
+        .skip(offset)
+        .take(end - offset)
+        .collect::<Vec<_>>();
+
+    EntryPageDto {
+        items: page,
+        total,
+        limit,
+        offset,
+        has_more: end < total,
+    }
 }
 
 pub async fn create_directory(

@@ -431,8 +431,20 @@
                 ref="loadMoreSentinel"
                 class="desktop-load-more has-text-centered has-text-grey is-size-7 py-3"
               >
-                继续下滑加载更多（已显示 {{ desktopItems.length }} /
-                {{ activeList.length }}）...
+                <span v-if="filesStore.loadingMoreFiles">正在加载更多...</span>
+                <span v-else-if="filesStore.loadMoreError">
+                  {{ filesStore.loadMoreError }}
+                  <button
+                    class="button is-small is-light ml-2"
+                    @click="filesStore.loadMoreFiles()"
+                  >
+                    重试
+                  </button>
+                </span>
+                <span v-else
+                  >继续下滑加载更多（已显示 {{ desktopItems.length }} /
+                  {{ knownTotal }}）...</span
+                >
               </div>
             </template>
           </div>
@@ -441,7 +453,9 @@
             <span>{{
               searchActive
                 ? `搜索结果 ${searchResults.length} 项`
-                : `当前目录 ${files.length} 项`
+                : filesStore.hasMoreFiles
+                  ? `当前目录 ${files.length} / ${filesStore.totalFiles} 项`
+                  : `当前目录 ${files.length} 项`
             }}</span>
             <span>
               {{
@@ -552,7 +566,19 @@
             ref="loadMoreSentinel"
             class="has-text-centered has-text-grey is-size-7 py-2"
           >
-            继续下滑加载更多...
+            <template v-if="filesStore.loadingMoreFiles"
+              >正在加载更多...</template
+            >
+            <template v-else-if="filesStore.loadMoreError">
+              {{ filesStore.loadMoreError }}
+              <button
+                class="button is-small is-light ml-2"
+                @click="filesStore.loadMoreFiles()"
+              >
+                重试
+              </button>
+            </template>
+            <template v-else>继续下滑加载更多...</template>
           </div>
         </div>
 
@@ -610,7 +636,19 @@
             ref="loadMoreSentinel"
             class="has-text-centered has-text-grey is-size-7 py-2"
           >
-            继续下滑加载更多...
+            <template v-if="filesStore.loadingMoreFiles"
+              >正在加载更多...</template
+            >
+            <template v-else-if="filesStore.loadMoreError">
+              {{ filesStore.loadMoreError }}
+              <button
+                class="button is-small is-light ml-2"
+                @click="filesStore.loadMoreFiles()"
+              >
+                重试
+              </button>
+            </template>
+            <template v-else>继续下滑加载更多...</template>
           </div>
         </div>
       </template>
@@ -1381,7 +1419,18 @@ const sortedSearchResults = computed<FileInfo[]>(() => {
 const activeList = computed(() =>
   searchActive.value ? sortedSearchResults.value : navigationListItems.value,
 );
-const hasMore = computed(() => visibleCount.value < activeList.value.length);
+// 本地分批渲染之外，目录可能还有服务端未加载的页（服务端分页，默认每页 200 条）。
+const hasMoreLocal = computed(
+  () => visibleCount.value < activeList.value.length,
+);
+const hasMore = computed(() => {
+  if (searchActive.value) return hasMoreLocal.value;
+  return hasMoreLocal.value || filesStore.hasMoreFiles;
+});
+// 当前目录的已知条目总数（含 "." 与 ".." 两个虚拟条目），用于进度提示。
+const knownTotal = computed(() =>
+  searchActive.value ? activeList.value.length : filesStore.totalFiles + 2,
+);
 const visibleFiles = computed(() =>
   navigationListItems.value.slice(0, visibleCount.value),
 );
@@ -1448,10 +1497,19 @@ function maybeLoadMore() {
     window.innerHeight || document.documentElement.clientHeight || 0;
   if (rect.top > viewportHeight + 160) return;
 
-  const before = visibleCount.value;
-  bumpVisibleCount();
-  if (visibleCount.value === before) return;
-  void nextTick().then(() => maybeLoadMore());
+  // 先补齐本地已加载条目的渲染分片。
+  if (hasMoreLocal.value) {
+    const before = visibleCount.value;
+    bumpVisibleCount();
+    if (visibleCount.value === before) return;
+    void nextTick().then(() => maybeLoadMore());
+    return;
+  }
+
+  // 本地已全部渲染但服务端还有下一页：按需拉取，成功后由 length 监听继续补齐。
+  if (!searchActive.value && filesStore.hasMoreFiles) {
+    void filesStore.loadMoreFiles();
+  }
 }
 
 function setupLoadMoreObserver() {
@@ -1490,6 +1548,14 @@ watch(
 watch([isMobile, loadMoreSentinel], () => {
   void nextTick().then(() => setupLoadMoreObserver());
 });
+
+// 服务端分页追加数据后，若哨兵仍在视口内则继续拉取下一页。
+watch(
+  () => files.value.length,
+  () => {
+    void nextTick().then(() => maybeLoadMore());
+  },
+);
 
 onBeforeUnmount(() => {
   if (loadMoreObserver) {

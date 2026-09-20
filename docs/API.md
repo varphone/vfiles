@@ -34,6 +34,10 @@
 - `GET /api/files/tree/{path}`
   - 列出指定目录直属子项
   - Query: `commit` 可选，值为 snapshot/version 兼容标识
+- `GET /api/files/list` / `GET /api/files/list/{path}`
+  - 分页列出目录直属子项（大目录推荐使用）
+  - Query: `limit`（默认 200，夹取到 1..1000）、`offset`（默认 0）、`commit` 可选
+  - 响应：`{ items, total, limit, offset, has_more }`
 - `POST /api/files/directories`
   - Body: `path`
   - 创建目录；会自动补齐缺失父目录

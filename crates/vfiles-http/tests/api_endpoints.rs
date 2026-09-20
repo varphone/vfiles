@@ -3686,3 +3686,72 @@ async fn precompressed_static_assets_are_served_when_supported() {
         b"console.log('vfiles');"
     );
 }
+
+#[tokio::test]
+async fn paginated_directory_listing_reports_total_and_pages() {
+    let app = TestApp::new().await;
+    for index in 0..5 {
+        let response = app
+            .json_request_as_admin(
+                Method::POST,
+                "/api/files/directories",
+                json!({ "path": format!("p{index}") }),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let first = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=2&offset=0")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let payload = response_json(first).await;
+    assert_eq!(payload["total"], Value::from(5));
+    assert_eq!(payload["limit"], Value::from(2));
+    assert_eq!(payload["offset"], Value::from(0));
+    assert_eq!(payload["has_more"], Value::Bool(true));
+    assert_eq!(payload["items"].as_array().map(Vec::len), Some(2));
+
+    let last = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=2&offset=4")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let payload = response_json(last).await;
+    assert_eq!(payload["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(payload["has_more"], Value::Bool(false));
+
+    // limit 会被钳制到 1000，返回全部条目
+    let clamped = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=9999")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let payload = response_json(clamped).await;
+    assert_eq!(payload["limit"], Value::from(1000));
+    assert_eq!(payload["items"].as_array().map(Vec::len), Some(5));
+
+    // 子目录路径形式
+    let nested = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list/p0?limit=10")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(nested.status(), StatusCode::OK);
+    let payload = response_json(nested).await;
+    assert_eq!(payload["total"], Value::from(0));
+}

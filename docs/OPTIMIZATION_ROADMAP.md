@@ -16,12 +16,15 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 29 实测）
+### 验证基线（round 30 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：21 个文件 / **119** 个用例通过。
-- 冒烟：served 产物含移动端 `touchstart` 处理（`onTouchstart`）。
+- `client` 单测：21 个文件 / **124** 个用例通过；`vue-tsc`、`eslint`、`prettier`
+  检查通过。
+- 冒烟：真实服务下 210 个文件分页返回 `200 / 200+10`（`total=210`、`has_more`
+  正确），`limit` 越界被夹取到 1..1000，子目录 `/api/files/list/docs` 分页正确，
+  旧接口 `/api/files/tree` 行为不变，SPA 与 `br` 预压缩资源正常，`SIGTERM` 优雅退出。
 
 ### 主要发现
 
@@ -431,6 +434,27 @@
 - 测试：长按发出正确坐标、移动取消不触发、长按后 click 被抑制；既有 119 个前端用例
   保持通过。
 
+### 2.35 服务端目录分页（round 30，性能）
+
+- 背景：`GET /api/files/tree/{path}` 一次性返回目录全部子项，客户端虽已分批渲染，
+  但超大目录的 JSON 体积与服务端查询/序列化成本仍在（见 §3.1b）。
+- 新增只读接口 `GET /api/files/list` 与 `GET /api/files/list/{*path}`，查询参数
+  `limit`/`offset`/`commit`；`limit` 夹取到 `1..=1000`（默认 200），响应为
+  `EntryPageDto { items, total, limit, offset, has_more }`（`has_more` 由
+  `offset + items.len() < total` 计算，避免客户端自行推断）。
+- 分页与既有 `/tree` 接口共用同一套命名空间/提交快照读取路径（`fetch_entry_items`），
+  保持权限、`commit` 历史浏览与排序语义完全一致；`/tree` 保持不变以兼容
+  `getFiles` 的既有调用方（如移动对话框的重名检查）。
+- 前端：`files.service.getFilesPage()`；`files.store` 新增 `totalFiles` /
+  `hasMoreFiles` / `loadingMoreFiles` 与 `loadMoreFiles()`（沿用 `loadSequence`
+  序号守卫，目录切换后到达的旧页会被丢弃）；`FileBrowser` 的哨兵在本地分片渲染
+  完毕后按需拉取下一页，状态栏显示「已加载 / 总数」，加载中提示「正在加载更多...」。
+- 稳定性：追加分页失败单独记录在 `loadMoreError`（不清空已加载条目、不整屏报错），
+  哨兵处给出「重试」入口。
+- 测试：后端集成测试 `paginated_directory_listing_reports_total_and_pages`；
+  前端新增 4 个 store 用例（首页字段与追加、目录切换后旧页丢弃、无更多时不发请求、
+  追加失败保留已加载数据）与 1 个组件用例（分页进度展示），共 **124** 个用例通过。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -446,8 +470,10 @@
 
 ### 3.1b 服务端目录分页（性能，高）
 
-- `GET /api/files/tree/{path}` 仍一次性返回全部子项；客户端已分批渲染，但超大目录的
-  JSON 体积与解析成本仍在。计划增加 `limit`/`cursor` 与 `total`，客户端按需加载。
+- `[x]` 新增 `GET /api/files/list[/{path}]`，支持 `limit`/`offset`/`commit` 与
+  `total`/`has_more`，客户端按需加载（round 30）。
+- `[ ]` 搜索结果分页（当前 `/api/files/search` 仍一次性返回）。
+- `[ ]` 用游标（cursor）替代 `offset`，避免大目录下深分页的 `OFFSET` 扫描成本。
 
 ### 3.1e 移动路径的批量校验与事务（性能，中）
 

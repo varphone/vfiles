@@ -163,6 +163,16 @@ pub struct EntryDto {
     pub updated_at: Option<String>,
 }
 
+/// 分页的目录列表响应（`GET /api/files/list`）。
+#[derive(Debug, Serialize)]
+pub struct EntryPageDto {
+    pub items: Vec<EntryDto>,
+    pub total: usize,
+    pub limit: usize,
+    pub offset: usize,
+    pub has_more: bool,
+}
+
 impl From<Entry> for EntryDto {
     fn from(entry: Entry) -> Self {
         Self {
