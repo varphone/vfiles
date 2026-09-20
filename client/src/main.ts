@@ -4,12 +4,16 @@ import App from "./App.vue";
 import router from "./router";
 import { useAuthStore } from "./stores/auth.store";
 import { useAppStore } from "./stores/app.store";
+import { useThemeStore } from "./stores/theme.store";
 
 const app = createApp(App);
 const pinia = createPinia();
 
 const authStore = useAuthStore(pinia);
 const appStore = useAppStore(pinia);
+
+// 应用已保存/系统的配色方案（index.html 中已有首屏防闪烁脚本，这里负责后续同步）
+useThemeStore(pinia).init();
 
 // 登录成功后的免疫期（忽略401），解决移动端 cookie 同步延迟问题
 let loginSuccessAt = 0;

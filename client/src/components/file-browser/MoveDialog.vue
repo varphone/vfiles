@@ -300,8 +300,8 @@ async function goUp() {
 .move-dialog-summary {
   padding: 0.8rem 0.9rem;
   border-radius: 14px;
-  background: rgba(241, 245, 251, 0.88);
-  border: 1px solid rgba(214, 223, 235, 0.92);
+  background: var(--vf-surface-muted);
+  border: 1px solid var(--vf-border-soft);
 }
 
 .move-dialog-summary-title {
@@ -309,7 +309,7 @@ async function goUp() {
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: #607284;
+  color: var(--vf-text-muted);
   text-transform: uppercase;
 }
 
@@ -325,15 +325,15 @@ async function goUp() {
   max-width: 100%;
   padding: 0.32rem 0.6rem;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(214, 223, 235, 0.95);
-  color: #2a4058;
+  background: var(--vf-surface-translucent-strong);
+  border: 1px solid var(--vf-border-soft);
+  color: var(--vf-text-strong);
   font-size: 0.82rem;
   line-height: 1.2;
 }
 
 .move-dialog-chip.is-muted {
-  color: #6d7f95;
+  color: var(--vf-text-muted);
 }
 
 .move-dialog-toolbar {
@@ -345,8 +345,8 @@ async function goUp() {
 .move-dialog-target {
   padding: 0.75rem 0.9rem;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(214, 223, 235, 0.92);
+  background: var(--vf-surface-translucent);
+  border: 1px solid var(--vf-border-soft);
 }
 
 .move-dialog-target-label {
@@ -354,12 +354,12 @@ async function goUp() {
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: #71859d;
+  color: var(--vf-text-muted);
 }
 
 .move-dialog-target-value {
   margin-top: 0.32rem;
-  color: #203247;
+  color: var(--vf-text-strong);
   font-weight: 600;
   word-break: break-word;
 }
@@ -375,57 +375,57 @@ async function goUp() {
   padding: 0;
   border: none;
   background: transparent;
-  color: #2a66b8;
+  color: var(--vf-accent);
   cursor: pointer;
   font-size: 0.88rem;
 }
 
 .move-dialog-crumb:hover {
-  color: #194c93;
+  color: var(--vf-accent-strong);
   text-decoration: underline;
 }
 
 .move-dialog-crumb-sep {
-  color: #8da0b6;
+  color: var(--vf-text-subtle);
 }
 
 .move-dialog-hint {
   margin: -0.1rem 0 0;
-  color: #6d7f95;
+  color: var(--vf-text-muted);
   font-size: 0.82rem;
 }
 
 .move-dialog-target-status {
   padding: 0.78rem 0.9rem;
   border-radius: 14px;
-  border: 1px solid rgba(214, 223, 235, 0.92);
+  border: 1px solid var(--vf-border-soft);
 }
 
 .move-dialog-target-status.is-ready {
-  background: rgba(34, 197, 94, 0.1);
-  border-color: rgba(34, 197, 94, 0.22);
+  background: var(--vf-success-soft);
+  border-color: var(--vf-success-line);
 }
 
 .move-dialog-target-status.is-warning {
-  background: rgba(245, 158, 11, 0.12);
-  border-color: rgba(245, 158, 11, 0.26);
+  background: var(--vf-warning-soft);
+  border-color: var(--vf-warning-line);
 }
 
 .move-dialog-target-status-title {
-  color: #21364d;
+  color: var(--vf-text-strong);
   font-weight: 700;
 }
 
 .move-dialog-target-status-text {
   margin: 0.32rem 0 0;
-  color: #5f7084;
+  color: var(--vf-text-muted);
   font-size: 0.84rem;
 }
 
 .move-dialog-target-status-list {
   margin: 0.35rem 0 0;
   padding-left: 1.15rem;
-  color: #7c4a03;
+  color: var(--vf-warning-text);
   font-size: 0.84rem;
 }
 
@@ -438,8 +438,8 @@ async function goUp() {
   overflow: auto;
   padding: 0.35rem;
   border-radius: 16px;
-  background: rgba(248, 250, 253, 0.92);
-  border: 1px solid rgba(214, 223, 235, 0.92);
+  background: var(--vf-surface-stripe);
+  border: 1px solid var(--vf-border-soft);
 }
 
 .move-dialog-directory {
@@ -449,42 +449,42 @@ async function goUp() {
   gap: 0.18rem;
   width: 100%;
   padding: 0.8rem 0.9rem;
-  border: 1px solid rgba(214, 223, 235, 0.92);
+  border: 1px solid var(--vf-border-soft);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--vf-surface-translucent-strong);
   cursor: pointer;
   text-align: left;
 }
 
 .move-dialog-directory:hover {
-  border-color: rgba(81, 132, 208, 0.55);
-  background: rgba(240, 246, 255, 0.96);
+  border-color: var(--vf-accent-line);
+  background: var(--vf-accent-soft);
 }
 
 .move-dialog-directory.is-disabled {
   cursor: not-allowed;
   opacity: 0.62;
-  background: rgba(243, 244, 246, 0.96);
+  background: var(--vf-surface-soft);
 }
 
 .move-dialog-directory.is-disabled:hover {
-  border-color: rgba(214, 223, 235, 0.92);
-  background: rgba(243, 244, 246, 0.96);
+  border-color: var(--vf-border-soft);
+  background: var(--vf-surface-soft);
 }
 
 .move-dialog-directory-name {
-  color: #21364d;
+  color: var(--vf-text-strong);
   font-weight: 600;
 }
 
 .move-dialog-directory-path {
-  color: #6d7f95;
+  color: var(--vf-text-muted);
   font-size: 0.8rem;
 }
 
 .move-dialog-directory-note {
   margin-top: 0.15rem;
-  color: #8b5e12;
+  color: var(--vf-warning-text);
   font-size: 0.76rem;
 }
 

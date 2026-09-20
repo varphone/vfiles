@@ -91,6 +91,10 @@
 
           <div class="navbar-end">
             <div class="navbar-item">
+              <ThemeToggle />
+            </div>
+
+            <div class="navbar-item">
               <div
                 ref="accountMenuRef"
                 class="dropdown is-right"
@@ -436,6 +440,7 @@ import {
   IconRefresh,
 } from "@tabler/icons-vue";
 import FileBrowser from "../components/file-browser/FileBrowser.vue";
+import ThemeToggle from "../components/common/ThemeToggle.vue";
 import { useFilesStore } from "../stores/files.store";
 import { useAuthStore } from "../stores/auth.store";
 import { filesService } from "../services/files.service";
@@ -913,9 +918,17 @@ function toggleBatchAndClose() {
   overflow-x: hidden;
   isolation: isolate;
   background:
-    radial-gradient(circle at top left, rgba(153, 182, 214, 0.26), transparent 28%),
-    radial-gradient(circle at top right, rgba(216, 225, 235, 0.7), transparent 32%),
-    linear-gradient(180deg, #f6f8fb 0%, #eef3f7 46%, #e7edf4 100%);
+    radial-gradient(
+      circle at top left,
+      var(--vf-canvas-glow-1),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at top right,
+      var(--vf-canvas-glow-2),
+      transparent 32%
+    ),
+    var(--vf-canvas);
 }
 
 .home::before,
@@ -933,7 +946,7 @@ function toggleBatchAndClose() {
   right: -10rem;
   width: 24rem;
   height: 24rem;
-  background: rgba(196, 210, 226, 0.44);
+  background: var(--vf-canvas-blob-1);
 }
 
 .home::after {
@@ -941,7 +954,7 @@ function toggleBatchAndClose() {
   left: -8rem;
   width: 18rem;
   height: 18rem;
-  background: rgba(226, 233, 241, 0.78);
+  background: var(--vf-canvas-blob-2);
 }
 
 .hero {
@@ -950,7 +963,7 @@ function toggleBatchAndClose() {
 
 .app-top-bar {
   padding-top: env(safe-area-inset-top);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--vf-shadow-sm);
 }
 
 .mobile-bottom-bar {
@@ -959,7 +972,7 @@ function toggleBatchAndClose() {
   right: 0;
   bottom: 0;
   z-index: 2000;
-  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--vf-shadow-sm);
 }
 
 .mobile-bottom-bar-inner {
@@ -1078,12 +1091,12 @@ function toggleBatchAndClose() {
 
 .site-record-link {
   font-size: 0.75rem;
-  color: rgba(73, 89, 107, 0.88);
+  color: var(--vf-text-muted);
 }
 
 .site-record-link:hover,
 .site-record-link:focus-visible {
-  color: #3273dc;
+  color: var(--vf-accent);
   text-decoration: underline;
 }
 
@@ -1108,13 +1121,13 @@ function toggleBatchAndClose() {
 
   :deep(.file-browser-box) {
     border-radius: 30px;
-    border-color: rgba(214, 223, 235, 0.92);
+    border-color: var(--vf-border-soft);
     background: linear-gradient(
       180deg,
-      rgba(251, 253, 255, 0.96) 0%,
-      rgba(243, 247, 252, 0.96) 100%
+      var(--vf-surface-translucent-strong) 0%,
+      var(--vf-surface-soft) 100%
     );
-    box-shadow: 0 28px 56px rgba(33, 49, 76, 0.11);
+    box-shadow: var(--vf-shadow-md);
     padding: 0.95rem;
   }
 
@@ -1139,7 +1152,7 @@ function toggleBatchAndClose() {
   :deep(.breadcrumb-bar) {
     margin-bottom: 0.85rem;
     border-radius: 18px;
-    background: rgba(255, 255, 255, 0.76);
+    background: var(--vf-surface-overlay);
   }
 
   :deep(.desktop-command-bar) {
@@ -1150,19 +1163,19 @@ function toggleBatchAndClose() {
   :deep(.desktop-search-panel) {
     padding: 0.72rem;
     border-radius: 18px;
-    border-color: rgba(214, 223, 235, 0.92);
-    background: rgba(255, 255, 255, 0.82);
+    border-color: var(--vf-border-soft);
+    background: var(--vf-shell-panel);
   }
 
   :deep(.desktop-batch-strip) {
     margin-bottom: 0.65rem;
     border-radius: 18px;
-    background: rgba(47, 109, 182, 0.07);
+    background: var(--vf-accent-soft);
   }
 
   :deep(.desktop-list-shell) {
     border-radius: 22px;
-    background: rgba(255, 255, 255, 0.84);
+    background: var(--vf-surface-translucent);
     padding: 0.7rem;
   }
 }

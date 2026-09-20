@@ -463,9 +463,9 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   flex-direction: column;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--vf-border);
   border-radius: 10px;
-  background: #fff;
+  background: var(--vf-surface);
   cursor: pointer;
   overflow: visible;
   transition:
@@ -475,18 +475,18 @@ onBeforeUnmount(() => {
 }
 
 .file-card:hover {
-  border-color: #b5b5b5;
-  box-shadow: 0 6px 16px rgba(10, 10, 10, 0.1);
+  border-color: var(--vf-border-strong);
+  box-shadow: var(--vf-shadow-sm);
 }
 
 .file-card--active {
-  border-color: #485fc7;
-  box-shadow: 0 0 0 2px rgba(72, 95, 199, 0.2);
+  border-color: var(--vf-accent);
+  box-shadow: 0 0 0 2px var(--vf-focus-ring);
 }
 
 .file-card--selected {
-  border-color: #485fc7;
-  background: #f5f7ff;
+  border-color: var(--vf-accent);
+  background: var(--vf-accent-soft);
 }
 
 .file-card-thumb {
@@ -495,9 +495,9 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   height: var(--file-card-thumb-size, 144px);
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--vf-border-weak);
   border-radius: 10px 10px 0 0;
-  background: #fafafa;
+  background: var(--vf-surface-sunken);
   overflow: hidden;
 }
 
@@ -508,13 +508,13 @@ onBeforeUnmount(() => {
 }
 
 .file-card-thumb-icon {
-  color: #7a7a7a;
+  color: var(--vf-text-muted);
   width: auto;
   height: auto;
 }
 
 .file-card--shortcut .file-card-thumb {
-  background: #f3f6ff;
+  background: var(--vf-accent-soft);
 }
 
 .file-card-check {
@@ -525,8 +525,8 @@ onBeforeUnmount(() => {
   display: inline-flex;
   padding: 4px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 1px 3px rgba(10, 10, 10, 0.15);
+  background: var(--vf-surface-translucent);
+  box-shadow: var(--vf-shadow-sm);
 }
 
 .file-card-menu {
@@ -544,12 +544,12 @@ onBeforeUnmount(() => {
   height: 26px;
   border: none;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.9);
-  color: #4a4a4a;
+  background: var(--vf-surface-translucent);
+  color: var(--vf-text);
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.12s ease;
-  box-shadow: 0 1px 3px rgba(10, 10, 10, 0.15);
+  box-shadow: var(--vf-shadow-sm);
 }
 
 .file-card:hover .file-card-menu-trigger,
@@ -569,10 +569,10 @@ onBeforeUnmount(() => {
   right: 0;
   min-width: 160px;
   padding: 4px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--vf-border);
   border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 8px 24px rgba(10, 10, 10, 0.16);
+  background: var(--vf-surface);
+  box-shadow: var(--vf-shadow-menu);
   z-index: 30;
 }
 
@@ -585,22 +585,22 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #363636;
+  color: var(--vf-text);
   font-size: 0.8rem;
   text-align: left;
   cursor: pointer;
 }
 
 .file-card-menu-item:hover {
-  background: #f5f5f5;
+  background: var(--vf-surface-sunken);
 }
 
 .file-card-menu-item.is-danger {
-  color: #cc0f35;
+  color: var(--vf-danger-text);
 }
 
 .file-card-menu-item.is-danger:hover {
-  background: #feecf0;
+  background: var(--vf-danger-soft);
 }
 
 .file-card-body {
@@ -614,7 +614,7 @@ onBeforeUnmount(() => {
 .file-card-name {
   font-size: 0.82rem;
   line-height: 1.3;
-  color: #363636;
+  color: var(--vf-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -629,7 +629,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 4px;
   font-size: 0.7rem;
-  color: #8a8a8a;
+  color: var(--vf-text-subtle);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

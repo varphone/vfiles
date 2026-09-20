@@ -108,10 +108,10 @@ onBeforeUnmount(closeListeners);
   z-index: 60;
   min-width: 184px;
   padding: 4px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--vf-border);
   border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 12px 32px rgba(10, 10, 10, 0.18);
+  background: var(--vf-surface);
+  box-shadow: var(--vf-shadow-menu);
 }
 
 .vfiles-context-menu__item {
@@ -123,27 +123,27 @@ onBeforeUnmount(closeListeners);
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #363636;
+  color: var(--vf-text);
   font-size: 0.82rem;
   text-align: left;
   cursor: pointer;
 }
 
 .vfiles-context-menu__item:hover:not(:disabled) {
-  background: #f5f5f5;
+  background: var(--vf-surface-sunken);
 }
 
 .vfiles-context-menu__item:disabled {
-  color: #b5b5b5;
+  color: var(--vf-text-subtle);
   cursor: not-allowed;
 }
 
 .vfiles-context-menu__item.is-danger {
-  color: #cc0f35;
+  color: var(--vf-danger-text);
 }
 
 .vfiles-context-menu__item.is-danger:hover:not(:disabled) {
-  background: #feecf0;
+  background: var(--vf-danger-soft);
 }
 
 .vfiles-context-menu__icon {

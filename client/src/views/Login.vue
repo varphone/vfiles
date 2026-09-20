@@ -1,5 +1,8 @@
 <template>
   <section class="section auth-page">
+    <div class="auth-theme-toggle">
+      <ThemeToggle />
+    </div>
     <div class="container" style="max-width: 420px">
       <section class="section has-text-centered auth-brand">
         <img class="auth-brand-logo" src="/vfiles-icon.svg" alt="VFiles" />
@@ -192,6 +195,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
+import ThemeToggle from "../components/common/ThemeToggle.vue";
 import { useAuthStore } from "../stores/auth.store";
 import { useAppStore } from "../stores/app.store";
 import { authService } from "../services/auth.service";
@@ -331,7 +335,15 @@ onMounted(async () => {
 
 <style scoped>
 .auth-page {
+  position: relative;
   min-height: 100vh;
+}
+
+.auth-theme-toggle {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 10;
 }
 
 .auth-brand {
@@ -345,12 +357,12 @@ onMounted(async () => {
   display: block;
   width: min(42vw, 140px);
   height: auto;
-  filter: drop-shadow(0 14px 24px rgba(15, 23, 42, 0.12));
+  filter: drop-shadow(0 14px 24px var(--vf-shadow-color));
 }
 
 .auth-brand-title {
   letter-spacing: -0.04em;
-  color: #0f172a;
+  color: var(--vf-text-strong);
 }
 
 .auth-brand-subtitle {
@@ -364,12 +376,12 @@ onMounted(async () => {
 
 .site-record-link {
   font-size: 0.75rem;
-  color: rgba(74, 85, 104, 0.86);
+  color: var(--vf-text-muted);
 }
 
 .site-record-link:hover,
 .site-record-link:focus-visible {
-  color: #3273dc;
+  color: var(--vf-accent);
   text-decoration: underline;
 }
 </style>

@@ -93,7 +93,7 @@ const emit = defineEmits<{
   gap: 0.9rem;
   margin-top: 0.85rem;
   padding-top: 0.75rem;
-  border-top: 1px solid rgba(214, 223, 235, 0.9);
+  border-top: 1px solid var(--vf-border-soft);
 }
 
 .commit-hash-row {
@@ -101,12 +101,12 @@ const emit = defineEmits<{
   align-items: center;
   gap: 0.45rem;
   min-width: 0;
-  color: #5d6c7f;
+  color: var(--vf-text-subtle);
 }
 
 .commit-hash-label {
   font-size: 0.75rem;
-  color: #7a8899;
+  color: var(--vf-text-subtle);
 }
 
 .commit-actions {

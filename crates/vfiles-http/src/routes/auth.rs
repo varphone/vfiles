@@ -197,6 +197,9 @@ pub async fn me(
     jar: CookieJar,
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    // `enabled` 表示“是否必须登录”，与 `protected_request_context` 判断一致：
+    // 关闭认证（VFILES_AUTH_ENABLED=false）时前端不应再要求登录。
+    let auth_enabled = state.config.auth.enabled;
     let Some(auth_service) = state.auth_service.as_ref() else {
         return Ok(auth_me_response(
             false,
@@ -208,7 +211,7 @@ pub async fn me(
     // Get token from cookie
     let Some(token) = jar.get("auth_token") else {
         return Ok(auth_me_response(
-            true,
+            auth_enabled,
             state.config.auth.allow_register,
             None,
         ));
@@ -225,7 +228,7 @@ pub async fn me(
             | DomainError::NotFound { .. },
         ) => {
             return Ok(auth_me_response(
-                true,
+                auth_enabled,
                 state.config.auth.allow_register,
                 None,
             ));
@@ -237,7 +240,7 @@ pub async fn me(
         Ok(user) => user,
         Err(DomainError::NotFound { .. }) => {
             return Ok(auth_me_response(
-                true,
+                auth_enabled,
                 state.config.auth.allow_register,
                 None,
             ));
@@ -246,7 +249,7 @@ pub async fn me(
     };
 
     Ok(auth_me_response(
-        true,
+        auth_enabled,
         state.config.auth.allow_register,
         Some(user.into()),
     ))

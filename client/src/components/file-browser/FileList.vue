@@ -216,7 +216,7 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
 }
 
 .file-list-sort:hover {
-  color: #485fc7;
+  color: var(--vf-accent);
 }
 
 .file-list-sort-icon {

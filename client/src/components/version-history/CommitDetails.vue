@@ -56,7 +56,7 @@ const messageMeta = computed(() => describeCommitMessage(props.commit));
 .commit-message-detail {
   margin-top: 0.25rem;
   margin-bottom: 0.35rem;
-  color: #6b7280;
+  color: var(--vf-text-muted);
   font-size: 0.82rem;
 }
 
@@ -68,7 +68,7 @@ const messageMeta = computed(() => describeCommitMessage(props.commit));
 }
 
 .commit-author-label {
-  color: #9ca3af;
+  color: var(--vf-text-subtle);
   font-size: 0.74rem;
   letter-spacing: 0.04em;
 }

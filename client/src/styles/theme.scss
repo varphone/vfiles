@@ -1,0 +1,186 @@
+//! 语义化设计令牌（浅色 / 深色两套）。
+//!
+//! 组件里的零散色值统一收敛到这里，便于：
+//! 1. 支持暗色主题（跟随系统或用户显式选择）；
+//! 2. 后续统一调整视觉风格。
+//!
+//! 约定：
+//! - `--vf-*` 变量只在声明处出现字面色值，组件中一律引用变量；
+//! - 结构性颜色（文本、边框、面板）优先复用 Bulma 的 CSS 变量，
+//!   仅当 Bulma 没有对应语义时才新增 `--vf-*`；
+//! - 主题切换靠 `<html data-theme="light|dark">`，未设置时跟随系统；
+//! - 令牌按需增补，避免长期保留无人使用的变量。
+//!
+//! 切换方式见 `src/stores/theme.store.ts`。
+
+// 浅色：即项目此前的配色，保持视觉不变。
+@mixin vf-light-tokens {
+  color-scheme: light;
+
+  /* 强调色（链接、选中、拖放高亮） */
+  --vf-accent: #2f6db6;
+  --vf-accent-strong: #184d9b;
+  --vf-accent-text: #2b4d75;
+  --vf-accent-soft: rgba(47, 109, 182, 0.08);
+  --vf-accent-soft-strong: rgba(47, 109, 182, 0.16);
+  --vf-accent-tint: rgba(47, 109, 182, 0.1);
+  --vf-focus-ring: rgba(50, 115, 220, 0.2);
+
+  /* 面板 / 卡片 / 列表底色 */
+  --vf-surface: #ffffff;
+  --vf-surface-raised: #ffffff;
+  --vf-surface-sunken: #f5f8fc;
+  --vf-surface-stripe: rgba(248, 250, 253, 0.92);
+  --vf-surface-translucent: rgba(255, 255, 255, 0.9);
+  --vf-surface-translucent-strong: rgba(255, 255, 255, 0.95);
+  --vf-surface-overlay: rgba(255, 255, 255, 0.65);
+  --vf-surface-muted: rgba(241, 245, 251, 0.88);
+  --vf-surface-soft: rgba(243, 244, 246, 0.96);
+  --vf-surface-hover: rgba(47, 109, 182, 0.06);
+
+  /* 外壳渐变（文件浏览器外壳） */
+  --vf-shell-bg: linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
+  --vf-shell-panel: rgba(255, 255, 255, 0.82);
+
+  /* 页面背景（Home 装饰性渐变） */
+  --vf-canvas: linear-gradient(180deg, #f6f8fb 0%, #eef3f7 46%, #e7edf4 100%);
+  --vf-canvas-glow-1: rgba(153, 182, 214, 0.26);
+  --vf-canvas-glow-2: rgba(216, 225, 235, 0.7);
+  --vf-canvas-blob-1: rgba(196, 210, 226, 0.44);
+  --vf-canvas-blob-2: rgba(226, 233, 241, 0.78);
+
+  /* 边框 */
+  --vf-border: #d6dfeb;
+  --vf-border-soft: rgba(214, 223, 235, 0.92);
+  --vf-border-weak: #eef1f5;
+  --vf-border-strong: #b5b5b5;
+
+  /* 文本 */
+  --vf-text: #363636;
+  --vf-text-strong: #223448;
+  --vf-text-muted: #627386;
+  --vf-text-subtle: #90a0b2;
+
+  /* 阴影 */
+  --vf-shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.18);
+  --vf-shadow-md: 0 20px 48px rgba(32, 52, 88, 0.12);
+  --vf-shadow-lg: 0 22px 42px rgba(24, 38, 60, 0.18);
+  --vf-shadow-menu: 0 8px 24px rgba(10, 10, 10, 0.16);
+  --vf-shadow-color: rgba(15, 23, 42, 0.12);
+  /* 全屏遮罩（加载中 / 拖放） */
+  --vf-overlay: rgba(0, 0, 0, 0.7);
+
+  /* 语义色（软背景 + 深色文字） */
+  --vf-danger: #cc0f35;
+  --vf-danger-soft: #feecf0;
+  --vf-danger-text: #cc0f35;
+  --vf-success-soft: rgba(38, 132, 101, 0.12);
+  --vf-success-text: #166534;
+  --vf-success-line: rgba(38, 132, 101, 0.28);
+  --vf-warning-soft: rgba(186, 120, 18, 0.12);
+  --vf-warning-text: #7c4a03;
+  --vf-warning-line: rgba(186, 120, 18, 0.32);
+  --vf-accent-line: rgba(81, 132, 208, 0.55);
+
+  /* 骨架屏 */
+  --vf-skeleton-base: #e5e7eb;
+  --vf-skeleton-shine: rgba(255, 255, 255, 0.65);
+
+  /* 滚动条 */
+  --vf-scrollbar-track: #f1f1f1;
+  --vf-scrollbar-thumb: #888888;
+  --vf-scrollbar-thumb-hover: #555555;
+}
+
+// 深色：与 Bulma 的 `data-theme="dark"` 主题（h 221 / s 14%）保持一致。
+@mixin vf-dark-tokens {
+  color-scheme: dark;
+
+  --vf-accent: hsl(210, 68%, 62%);
+  --vf-accent-strong: hsl(210, 68%, 74%);
+  --vf-accent-text: hsl(210, 68%, 74%);
+  --vf-accent-soft: hsla(210, 68%, 62%, 0.14);
+  --vf-accent-soft-strong: hsla(210, 68%, 62%, 0.28);
+  --vf-accent-tint: hsla(210, 68%, 62%, 0.18);
+  --vf-focus-ring: hsla(210, 68%, 62%, 0.35);
+
+  --vf-surface: hsl(221, 14%, 12%);
+  --vf-surface-raised: hsl(221, 14%, 15%);
+  --vf-surface-sunken: hsl(221, 14%, 17%);
+  --vf-surface-stripe: hsla(221, 14%, 71%, 0.05);
+  --vf-surface-translucent: hsla(221, 14%, 12%, 0.9);
+  --vf-surface-translucent-strong: hsla(221, 14%, 12%, 0.94);
+  --vf-surface-overlay: hsla(221, 14%, 15%, 0.72);
+  --vf-surface-muted: hsla(221, 14%, 16%, 0.9);
+  --vf-surface-soft: hsla(221, 14%, 18%, 0.92);
+  --vf-surface-hover: hsla(210, 68%, 62%, 0.12);
+
+  --vf-shell-bg: linear-gradient(
+    180deg,
+    hsl(221, 14%, 13%) 0%,
+    hsl(221, 14%, 10%) 100%
+  );
+  --vf-shell-panel: hsla(221, 14%, 15%, 0.86);
+
+  --vf-canvas: linear-gradient(
+    180deg,
+    hsl(221, 18%, 11%) 0%,
+    hsl(221, 16%, 9%) 46%,
+    hsl(221, 15%, 8%) 100%
+  );
+  --vf-canvas-glow-1: hsla(210, 60%, 60%, 0.16);
+  --vf-canvas-glow-2: hsla(221, 14%, 71%, 0.08);
+  --vf-canvas-blob-1: hsla(210, 60%, 60%, 0.12);
+  --vf-canvas-blob-2: hsla(221, 14%, 71%, 0.06);
+
+  --vf-border: hsla(221, 14%, 71%, 0.24);
+  --vf-border-soft: hsla(221, 14%, 71%, 0.22);
+  --vf-border-weak: hsla(221, 14%, 71%, 0.14);
+  --vf-border-strong: hsla(221, 14%, 71%, 0.4);
+
+  --vf-text: hsl(221, 14%, 82%);
+  --vf-text-strong: hsl(221, 14%, 94%);
+  --vf-text-muted: hsl(221, 14%, 66%);
+  --vf-text-subtle: hsl(221, 14%, 52%);
+
+  --vf-shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.45);
+  --vf-shadow-md: 0 20px 48px rgba(0, 0, 0, 0.45);
+  --vf-shadow-lg: 0 22px 42px rgba(0, 0, 0, 0.55);
+  --vf-shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --vf-shadow-color: rgba(0, 0, 0, 0.5);
+  --vf-overlay: rgba(0, 0, 0, 0.78);
+
+  --vf-danger: hsl(348, 86%, 61%);
+  --vf-danger-soft: hsla(348, 86%, 61%, 0.16);
+  --vf-danger-text: hsl(348, 90%, 74%);
+  --vf-success-soft: hsla(160, 55%, 60%, 0.16);
+  --vf-success-text: hsl(160, 55%, 70%);
+  --vf-success-line: hsla(160, 55%, 60%, 0.42);
+  --vf-warning-soft: hsla(35, 80%, 62%, 0.16);
+  --vf-warning-text: hsl(35, 85%, 72%);
+  --vf-warning-line: hsla(35, 80%, 62%, 0.45);
+  --vf-accent-line: hsla(210, 68%, 62%, 0.6);
+
+  --vf-skeleton-base: hsla(221, 14%, 71%, 0.14);
+  --vf-skeleton-shine: hsla(221, 14%, 71%, 0.22);
+
+  --vf-scrollbar-track: hsl(221, 14%, 14%);
+  --vf-scrollbar-thumb: hsl(221, 14%, 32%);
+  --vf-scrollbar-thumb-hover: hsl(221, 14%, 42%);
+}
+
+// 默认（未显式指定）为浅色；显式 data-theme 与系统偏好见下方。
+:root {
+  @include vf-light-tokens;
+}
+
+[data-theme="dark"] {
+  @include vf-dark-tokens;
+}
+
+// 跟随系统：仅在用户未显式选择浅色时生效。
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    @include vf-dark-tokens;
+  }
+}

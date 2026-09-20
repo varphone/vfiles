@@ -37,7 +37,7 @@ function remove(id: number) {
 
 .notification {
   margin-bottom: 0.5rem;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--vf-shadow-sm);
 }
 
 .notification-enter-active,

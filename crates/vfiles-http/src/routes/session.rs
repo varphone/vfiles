@@ -16,5 +16,8 @@ pub async fn bootstrap_session(
     let ctx = request_context(&state, &cookies).await?;
     let mut bootstrap = state.session_service.bootstrap(auth_token).await?;
     bootstrap.active_workspace = Some(ctx.namespace_id);
+    // 与 `protected_request_context` 保持一致：是否必须登录以配置为准，
+    // 而不是“认证服务是否存在”（关闭认证时前端不应再跳登录页）。
+    bootstrap.auth_enabled = state.config.auth.enabled;
     Ok(Json(SessionBootstrapDto::from(bootstrap)))
 }

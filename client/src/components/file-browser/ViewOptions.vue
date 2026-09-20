@@ -182,7 +182,7 @@ onBeforeUnmount(() => {
 .view-options-label {
   margin-bottom: 6px;
   font-size: 0.72rem;
-  color: #7a7a7a;
+  color: var(--vf-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }

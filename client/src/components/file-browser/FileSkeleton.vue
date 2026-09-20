@@ -78,7 +78,7 @@ const skeletonCount = computed(
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 0.35rem;
-  border-bottom: 1px solid #f0f2f5;
+  border-bottom: 1px solid var(--vf-border-weak);
 }
 
 .file-skeleton-row:last-child {
@@ -90,7 +90,7 @@ const skeletonCount = computed(
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.6rem;
-  border: 1px solid #eef1f5;
+  border: 1px solid var(--vf-border-weak);
   border-radius: 10px;
 }
 
@@ -98,7 +98,7 @@ const skeletonCount = computed(
   position: relative;
   overflow: hidden;
   border-radius: 6px;
-  background: #eceff3;
+  background: var(--vf-skeleton-base);
 }
 
 /* 微光动画，提示正在加载 */
@@ -110,7 +110,7 @@ const skeletonCount = computed(
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(255, 255, 255, 0.65),
+    var(--vf-skeleton-shine),
     transparent
   );
   animation: file-skeleton-shimmer 1.3s infinite;

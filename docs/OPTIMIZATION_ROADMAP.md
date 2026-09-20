@@ -16,15 +16,15 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 30 实测）
+### 验证基线（round 31 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：21 个文件 / **124** 个用例通过；`vue-tsc`、`eslint`、`prettier`
-  检查通过。
-- 冒烟：真实服务下 210 个文件分页返回 `200 / 200+10`（`total=210`、`has_more`
-  正确），`limit` 越界被夹取到 1..1000，子目录 `/api/files/list/docs` 分页正确，
-  旧接口 `/api/files/tree` 行为不变，SPA 与 `br` 预压缩资源正常，`SIGTERM` 优雅退出。
+- `client` 单测：23 个文件 / **134** 个用例通过；`vue-tsc`、`eslint` 通过。
+- 冒烟（Playwright 真实浏览器）：浅色/深色/跟随系统三种模式渲染正确（body 背景
+  浅色 `rgb(255,255,255)` / 深色 `rgb(20,22,26)`），界面上的主题切换会写入
+  `localStorage` 并即时生效，列表、网格、预览弹窗、移动对话框均无控制台报错；
+  服务 `SIGTERM` 优雅退出。
 
 ### 主要发现
 
@@ -38,7 +38,7 @@
 | 交互   | 仅有表格视图，无网格/缩略图视图                           | 图片目录浏览体验差         | `[x]` 见 §2.3 |
 | 稳定性 | `FileBrowser.vue` 单文件近 3000 行，职责过载              | 维护与回归风险             | `[ ]` 见 §3.3 |
 | 稳定性 | 缩略图缺少尺寸/像素上限与磁盘缓存                         | 极端目录下的内存/带宽未知  | `[x]` 见 §2.5 |
-| 稳定性 | 暗色系统下 Bulma 变量变暗而自定义样式仍为浅色，视觉不一致 | 深色系统用户观感异常       | `[x]` 见 §2.6 |
+| 交互   | 只有浅色主题，深色系统下出现“深色组件 + 浅色面板”         | 深色系统用户观感异常       | `[x]` 见 §2.36 |
 
 ## 2. 迭代记录（已完成）
 
@@ -95,7 +95,7 @@
   样式块启用 `lang="scss"`。
 - 固定为浅色主题：原实现引入 Bulma 的 `prefers-color-scheme: dark` 变量，
   而自定义样式全是浅色，会在深色系统上产生“深色组件 + 浅色面板”的不一致；
-  暗色主题作为独立事项列入 §3.6。
+  暗色主题作为独立事项列入 §3.6，已在 round 31 完成（§2.36）。
 - 产物：`index-*.css` 由 **678.54KB 降至 416.72KB（gzip 66.63KB → 41.61KB）**。
 - 校验：脚本比对“源码中出现的 Bulma 类名”与“构建产物中的类名”，无缺失
   （`dropdown-trigger` 在 Bulma 1.0 本身无样式，属正常）。
@@ -455,6 +455,40 @@
   前端新增 4 个 store 用例（首页字段与追加、目录切换后旧页丢弃、无更多时不发请求、
   追加失败保留已加载数据）与 1 个组件用例（分页进度展示），共 **124** 个用例通过。
 
+### 2.36 暗色主题（round 31，交互）
+
+- 背景：此前 `bulma.scss` 固定为浅色（注释里已标记“将来要支持暗色主题”），
+  组件内散落约 200 处硬编码色值，深色系统下会出现“深色组件 + 浅色面板”。
+- 新增 `src/styles/theme.scss` 设计令牌层：浅色/深色两套 `--vf-*` 语义变量
+  （画布、面板、边框、文本、强调、语义色、阴影、骨架屏、滚动条），共 53 个，
+  全部有实际使用点；`bulma.scss` 改为 `@use "bulma/sass/themes"`，Bulma 组件
+  自动跟随 `data-theme` 或系统偏好。
+- 主题切换：`theme.store.ts`（`system`/`light`/`dark`，localStorage 持久化、
+  监听 `prefers-color-scheme` 变化）+ `ThemeToggle.vue` 下拉菜单，接入首页导航栏
+  与登录页；`index.html` 内联脚本在首屏绘制前应用已保存主题，避免白屏闪烁，
+  并同步 `meta[name=theme-color]`。
+- 迁移范围：文件列表/网格/面包屑/右键菜单/骨架屏/预览/移动对话框/分享对话框/
+  版本历史/上传区域/首页与登录页等 18 个组件，约 200 处色值改为令牌；
+  `FileItem.vue` 里遗留的 `@media (prefers-color-scheme: dark)` 块被令牌取代
+  （它此前不响应显式切换）。
+- 成本：index CSS 546 KB → brotli **30.1 KB**（新增深色变量后 br 仅 +3.1 KB，
+  全量 br 176.7 KB → 179.8 KB），首屏传输基本不变。
+- 测试：新增 7 个 store 用例（默认跟随系统、显式浅色覆盖系统深色、持久化与清除、
+  读取已保存值、忽略非法值、仅在跟随系统时响应系统切换、循环切换）与 3 个组件
+  用例（切换后写入 localStorage 与 `data-theme`、当前项 `aria-checked`、共享 store），
+  合计 134 个用例。
+
+### 2.37 关闭认证时前端仍要求登录（round 31，稳定性）
+
+- 问题：`/api/auth/me` 的 `enabled` 与 `session/bootstrap` 的 `auth_enabled`
+  取自“认证服务是否存在”（实际总是存在），而接口鉴权 `protected_request_context`
+  取的是 `config.auth.enabled`。于是 `VFILES_AUTH_ENABLED=false` 时 API 无需登录，
+  前端却仍被路由守卫重定向到登录页，且登录页的“未启用认证”提示永不出现。
+- 修复：两处统一以 `state.config.auth.enabled` 为准（`crates/vfiles-http/src/routes/
+  auth.rs`、`session.rs`），与鉴权判断保持一致。
+- 验证：真实服务下 `curl /api/auth/me` 返回 `enabled:false`、bootstrap
+  `auth_enabled:false`，浏览器直接进入文件浏览器且无报错。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -526,6 +560,12 @@
 - `[ ]` 图片解码失败、超大文件跳过等场景补充计数指标。
 
 ### 3.6 暗色主题（交互，中）
+
+- `[x]` 设计令牌 + Bulma 双主题 + 切换入口 + 全组件迁移（round 31）。
+- `[ ]` 代码预览缺少语法高亮配色（`highlight.js` 只加载了语言包，没有引入
+  任何主题 CSS），可在标记层补一套浅色/深色 hljs 配色。
+- `[ ]` 深色下部分按钮仍使用 `is-light`（浅底），可统一为主流云盘的“幽灵按钮”
+  风格。
 
 - 若要正式支持暗色主题，需要同时提供 Bulma `themes` 变量与自定义样式（Home、
   FileCard、FileItem 等硬编码颜色）的暗色分支，并提供主题切换与持久化。

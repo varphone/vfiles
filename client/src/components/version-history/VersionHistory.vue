@@ -634,8 +634,8 @@ function loadMore() {
 .spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid rgba(0, 0, 0, 0.1);
-  border-top-color: #3273dc;
+  border: 3px solid var(--vf-border);
+  border-top-color: var(--vf-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   margin: 0 auto;
@@ -664,7 +664,7 @@ function loadMore() {
   top: 1.5rem;
   bottom: 0;
   width: 2px;
-  background: #dbdbdb;
+  background: var(--vf-border);
 }
 
 :deep(.timeline-item:last-child)::before {
@@ -677,15 +677,15 @@ function loadMore() {
   top: 0.5rem;
   width: 1.25rem;
   height: 1.25rem;
-  border: 2px solid #dbdbdb;
+  border: 2px solid var(--vf-border);
   border-radius: 50%;
-  background: white;
+  background: var(--vf-surface);
   z-index: 1;
 }
 
 :deep(.timeline-marker.is-primary) {
-  border-color: #3273dc;
-  background: #3273dc;
+  border-color: var(--vf-accent);
+  background: var(--vf-accent);
 }
 
 :deep(.timeline-content) {

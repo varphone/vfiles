@@ -24,15 +24,17 @@ import DialogHost from "./components/common/DialogHost.vue";
 
 /* 拖放移动时的放置目标高亮（列表行 / 网格卡片 / 面包屑路径段共用） */
 .drop-target {
-  outline: 2px dashed #2f6db6;
+  outline: 2px dashed var(--vf-accent);
   outline-offset: -2px;
-  background-color: rgba(47, 109, 182, 0.08) !important;
+  background-color: var(--vf-accent-soft) !important;
 }
 
 html,
 body,
 #app {
   height: 100%;
+  background-color: var(--bulma-scheme-main);
+  color: var(--bulma-text);
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
     Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
@@ -66,16 +68,16 @@ body,
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: var(--vf-scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #888;
+  background: var(--vf-scrollbar-thumb);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: var(--vf-scrollbar-thumb-hover);
 }
 
 /* 动画 */

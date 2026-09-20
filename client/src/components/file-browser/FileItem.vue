@@ -776,7 +776,7 @@ function share() {
 
 .file-item:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--vf-shadow-sm);
 }
 
 .desktop-name-text {
@@ -806,22 +806,22 @@ function share() {
 }
 
 .file-item--shortcut-self {
-  background: rgba(38, 132, 101, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(38, 132, 101, 0.12);
+  background: var(--vf-success-soft);
+  box-shadow: inset 0 0 0 1px var(--vf-success-line);
 }
 
 .file-item--shortcut-parent {
-  background: rgba(186, 120, 18, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(186, 120, 18, 0.12);
+  background: var(--vf-warning-soft);
+  box-shadow: inset 0 0 0 1px var(--vf-warning-line);
 }
 
 .file-item--shortcut-self .file-icon {
-  color: #1d7d62;
+  color: var(--vf-success-text);
   background: transparent;
 }
 
 .file-item--shortcut-parent .file-icon {
-  color: #9a650b;
+  color: var(--vf-warning-text);
   background: transparent;
 }
 
@@ -894,9 +894,9 @@ function share() {
   bottom: 0;
   left: 0;
   right: 0;
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--vf-surface-translucent-strong);
   backdrop-filter: blur(8px);
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  border-top: 1px solid var(--vf-border-weak);
   padding: 0.5rem 0.75rem;
 }
 
@@ -916,7 +916,7 @@ function share() {
   padding: 0.25rem 0.5rem;
   border: none;
   background: transparent;
-  color: #4a4a4a;
+  color: var(--vf-text);
   cursor: pointer;
   border-radius: 6px;
   transition: all 0.15s;
@@ -925,8 +925,8 @@ function share() {
 }
 
 .action-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
-  color: #3273dc;
+  background: var(--vf-surface-hover);
+  color: var(--vf-accent);
 }
 
 .action-btn:active {
@@ -934,8 +934,8 @@ function share() {
 }
 
 .action-btn.is-danger:hover {
-  background: rgba(255, 56, 96, 0.1);
-  color: #ff3860;
+  background: var(--vf-danger-soft);
+  color: var(--vf-danger);
 }
 
 .action-btn span {
@@ -981,22 +981,6 @@ function share() {
   .action-btn {
     min-width: 2.5rem;
     padding: 0.25rem 0.25rem;
-  }
-}
-
-/* 深色模式 */
-@media (prefers-color-scheme: dark) {
-  .file-actions {
-    background: rgba(30, 30, 30, 0.95);
-    border-top-color: rgba(255, 255, 255, 0.1);
-  }
-
-  .action-btn {
-    color: #f5f5f5;
-  }
-
-  .action-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
   }
 }
 </style>

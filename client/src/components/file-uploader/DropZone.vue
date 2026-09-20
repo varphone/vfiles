@@ -95,16 +95,16 @@ function onDirectorySelect(event: Event) {
 
 <style scoped>
 .drop-zone {
-  border: 2px dashed #dbdbdb;
+  border: 2px dashed var(--vf-border);
   border-radius: 8px;
   padding: 0.75rem 1rem;
   transition: all 0.3s;
-  background: #fafafa;
+  background: var(--vf-surface-sunken);
 }
 
 .drop-zone.is-active {
-  border-color: #3273dc;
-  background: #eff5ff;
+  border-color: var(--vf-accent);
+  background: var(--vf-accent-soft);
 }
 
 .drop-zone-content {
@@ -118,7 +118,7 @@ function onDirectorySelect(event: Event) {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: #7a7a7a;
+  color: var(--vf-text-muted);
 }
 
 .drop-zone-buttons {
@@ -127,7 +127,7 @@ function onDirectorySelect(event: Event) {
 }
 
 .icon-upload {
-  color: #b5b5b5;
+  color: var(--vf-text-subtle);
 }
 
 .drop-zone-text {

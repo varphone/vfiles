@@ -1843,12 +1843,13 @@ function handleSortChange(field: SortField) {
 
 <style scoped>
 .file-browser {
-  --explorer-accent: #2f6db6;
-  --explorer-accent-soft: rgba(47, 109, 182, 0.1);
-  --explorer-panel-bg: rgba(255, 255, 255, 0.92);
-  --explorer-panel-border: #d6dfeb;
-  --explorer-shell-bg: linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
-  --explorer-list-bg: rgba(255, 255, 255, 0.9);
+  /* 指向全局设计令牌，随明暗主题切换 */
+  --explorer-accent: var(--vf-accent);
+  --explorer-accent-soft: var(--vf-accent-tint);
+  --explorer-panel-bg: var(--vf-surface-translucent);
+  --explorer-panel-border: var(--vf-border);
+  --explorer-shell-bg: var(--vf-shell-bg);
+  --explorer-list-bg: var(--vf-surface-translucent);
   margin: 0 auto;
   padding: 0;
 }
@@ -1859,7 +1860,7 @@ function handleSortChange(field: SortField) {
   border-radius: 22px;
   border: 1px solid var(--explorer-panel-border);
   background: var(--explorer-shell-bg);
-  box-shadow: 0 20px 48px rgba(32, 52, 88, 0.12);
+  box-shadow: var(--vf-shadow-md);
   padding: 1rem;
 }
 
@@ -1867,8 +1868,8 @@ function handleSortChange(field: SortField) {
   margin-bottom: 1rem;
   padding: 0.55rem 0.7rem;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.65);
-  border: 1px solid rgba(214, 223, 235, 0.9);
+  background: var(--vf-surface-overlay);
+  border: 1px solid var(--vf-border-soft);
 }
 
 .file-browser-toolbar {
@@ -1946,10 +1947,10 @@ function handleSortChange(field: SortField) {
   width: max-content;
   max-width: min(calc(100vw - 2rem), 28rem);
   z-index: 25;
-  background: #ffffff;
+  background: var(--vf-surface);
   opacity: 1;
   isolation: isolate;
-  box-shadow: 0 22px 42px rgba(24, 38, 60, 0.18);
+  box-shadow: var(--vf-shadow-lg);
 }
 
 .desktop-search-panel--dropdown::after {
@@ -1959,7 +1960,7 @@ function handleSortChange(field: SortField) {
   top: -0.42rem;
   width: 0.82rem;
   height: 0.82rem;
-  background: #ffffff;
+  background: var(--vf-surface);
   border-left: 1px solid var(--explorer-panel-border);
   border-top: 1px solid var(--explorer-panel-border);
   transform: rotate(45deg);
@@ -1970,7 +1971,7 @@ function handleSortChange(field: SortField) {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #6f8299;
+  color: var(--vf-text-muted);
 }
 
 .desktop-search-control {
@@ -2009,7 +2010,7 @@ function handleSortChange(field: SortField) {
   align-items: center;
   gap: 0.55rem;
   flex-wrap: wrap;
-  color: #5d6d81;
+  color: var(--vf-text-muted);
   font-size: 0.8rem;
 }
 
@@ -2019,8 +2020,8 @@ function handleSortChange(field: SortField) {
   gap: 0.42rem;
   padding: 0.38rem 0.72rem;
   border-radius: 999px;
-  border: 1px solid #d6dfeb;
-  background: #f5f8fc;
+  border: 1px solid var(--vf-border);
+  background: var(--vf-surface-sunken);
   line-height: 1;
 }
 
@@ -2030,7 +2031,7 @@ function handleSortChange(field: SortField) {
 
 .desktop-filter-select select {
   border-radius: 999px;
-  background-color: #ffffff;
+  background-color: var(--vf-surface);
 }
 
 .desktop-search-dropdown-actions {
@@ -2049,8 +2050,8 @@ function handleSortChange(field: SortField) {
   gap: 1rem;
   padding: 0.58rem 0.8rem;
   border-radius: 12px;
-  background: rgba(47, 109, 182, 0.08);
-  border: 1px solid rgba(47, 109, 182, 0.16);
+  background: var(--vf-accent-soft);
+  border: 1px solid var(--vf-accent-soft-strong);
   margin-bottom: 0.65rem;
 }
 
@@ -2063,7 +2064,7 @@ function handleSortChange(field: SortField) {
 }
 
 .desktop-batch-meta {
-  color: #2b4d75;
+  color: var(--vf-accent-text);
   font-weight: 700;
 }
 
@@ -2109,7 +2110,7 @@ function handleSortChange(field: SortField) {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #607287;
+  color: var(--vf-text-muted);
 }
 
 .desktop-nav-item {
@@ -2121,7 +2122,7 @@ function handleSortChange(field: SortField) {
   border: none;
   border-radius: 12px;
   background: transparent;
-  color: #314255;
+  color: var(--vf-text-strong);
   cursor: pointer;
   transition:
     background-color 0.16s ease,
@@ -2132,18 +2133,18 @@ function handleSortChange(field: SortField) {
 .desktop-nav-item:hover:not(:disabled),
 .desktop-nav-item.is-active {
   background: var(--explorer-accent-soft);
-  color: #184d9b;
+  color: var(--vf-accent-strong);
 }
 
 .desktop-nav-item.is-empty,
 .desktop-nav-item:disabled {
-  color: #98a5b5;
+  color: var(--vf-text-subtle);
   cursor: default;
 }
 
 .desktop-list-meta {
   margin-bottom: 0.7rem;
-  color: #607287;
+  color: var(--vf-text-muted);
   font-size: 0.78rem;
 }
 
@@ -2155,14 +2156,14 @@ function handleSortChange(field: SortField) {
   padding: 0.65rem 0.85rem;
   border-radius: 14px;
   border: 1px solid var(--explorer-panel-border);
-  background: rgba(248, 250, 253, 0.92);
-  color: #627386;
+  background: var(--vf-surface-stripe);
+  color: var(--vf-text-muted);
   font-size: 0.78rem;
 }
 
 .desktop-status-shortcuts {
   margin-left: auto;
-  color: #90a0b2;
+  color: var(--vf-text-subtle);
   white-space: nowrap;
 }
 
@@ -2181,13 +2182,13 @@ function handleSortChange(field: SortField) {
   margin: 0;
   font-size: 1.15rem;
   line-height: 1.35;
-  color: #223448;
+  color: var(--vf-text-strong);
   word-break: break-word;
 }
 
 .desktop-detail-path {
   margin: -0.2rem 0 0;
-  color: #7a8a9e;
+  color: var(--vf-text-subtle);
   font-size: 0.82rem;
   word-break: break-all;
 }
@@ -2209,12 +2210,12 @@ function handleSortChange(field: SortField) {
   font-size: 0.74rem;
   letter-spacing: 0.03em;
   text-transform: uppercase;
-  color: #75859a;
+  color: var(--vf-text-subtle);
 }
 
 .desktop-detail-grid dd {
   margin: 0;
-  color: #314255;
+  color: var(--vf-text-strong);
   font-size: 0.9rem;
   word-break: break-word;
 }
@@ -2231,8 +2232,8 @@ function handleSortChange(field: SortField) {
 .spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid rgba(0, 0, 0, 0.1);
-  border-top-color: #3273dc;
+  border: 3px solid var(--vf-skeleton-base);
+  border-top-color: var(--vf-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   margin: 0 auto;
@@ -2262,14 +2263,14 @@ function handleSortChange(field: SortField) {
   gap: 0.75rem;
   margin-top: 0.85rem;
   padding-top: 0.75rem;
-  border-top: 1px solid #eef1f5;
+  border-top: 1px solid var(--vf-border-weak);
 }
 
 .preview-position {
   min-width: 4.5rem;
   text-align: center;
   font-size: 0.8rem;
-  color: #627386;
+  color: var(--vf-text-muted);
 }
 
 .preview-iframe {

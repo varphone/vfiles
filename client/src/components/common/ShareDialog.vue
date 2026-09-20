@@ -180,8 +180,8 @@ async function copyToClipboard() {
   margin-top: 0.7rem;
   padding: 0.55rem 0.7rem;
   border-radius: 12px;
-  background: rgba(34, 197, 94, 0.12);
-  color: #166534;
+  background: var(--vf-success-soft);
+  color: var(--vf-success-text);
   font-size: 0.88rem;
   font-weight: 600;
 }

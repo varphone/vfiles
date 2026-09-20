@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
   max-width: 16rem;
   padding: 3px 8px;
   border-radius: 8px;
-  color: #3a5470;
+  color: var(--vf-text-strong);
   font-size: 0.9rem;
   font-weight: 600;
   text-decoration: none;
@@ -173,12 +173,12 @@ onBeforeUnmount(() => {
 }
 
 .path-bar-segment:hover {
-  background: rgba(47, 109, 182, 0.1);
-  color: #2f6db6;
+  background: var(--vf-accent-tint);
+  color: var(--vf-accent);
 }
 
 .path-bar-item.is-active .path-bar-segment {
-  color: #1f3550;
+  color: var(--vf-text-strong);
   cursor: default;
 }
 
@@ -196,13 +196,13 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #627386;
+  color: var(--vf-text-muted);
   cursor: pointer;
 }
 
 .path-bar-toggle:hover {
-  background: rgba(47, 109, 182, 0.12);
-  color: #2f6db6;
+  background: var(--vf-accent-tint);
+  color: var(--vf-accent);
 }
 
 .path-bar-menu {
@@ -214,10 +214,10 @@ onBeforeUnmount(() => {
   max-height: 320px;
   overflow-y: auto;
   padding: 4px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--vf-border);
   border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 12px 32px rgba(10, 10, 10, 0.16);
+  background: var(--vf-surface);
+  box-shadow: var(--vf-shadow-menu);
 }
 
 .path-bar-menu-item {

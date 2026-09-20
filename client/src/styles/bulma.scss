@@ -2,19 +2,18 @@
 //!
 //! 直接引入 `bulma/css/bulma.min.css` 会把全部组件（含未使用的 menu/panel/
 //! message/pagination、grid 与 hero 等）打包进首屏 CSS。这里只 `@use` 实际用到的
-//! 局部模块，并固定为浅色主题（应用自定义样式均为浅色，避免与 Bulma 的
-//! `prefers-color-scheme: dark` 变量混搭出“深色组件 + 浅色面板”的不一致）。
+//! 局部模块。
 //!
-//! 新增 UI 时如果用到新的 Bulma 组件，请在此处补上对应模块；
-//! 若将来要正式支持暗色主题，把 light/setup 的组合替换为 `@use "bulma/sass/themes";`
-//! 并补齐自定义样式即可。
+//! 主题：`bulma/sass/themes` 同时输出浅色与深色两套变量，切换方式为
+//! `<html data-theme="light|dark">`，未设置时跟随 `prefers-color-scheme`。
+//! 应用自定义样式通过 `src/styles/theme.scss` 的 `--vf-*` 令牌保持一致，
+//! 因此这里不再固定为浅色。
+//!
+//! 新增 UI 时如果用到新的 Bulma 组件，请在此处补上对应模块。
 
 // 基础：CSS 变量、主题、重置与全局排版
 @use "bulma/sass/utilities";
-@use "bulma/sass/utilities/initial-variables" as iv;
-@use "bulma/sass/utilities/css-variables" as cv;
-@use "bulma/sass/themes/light";
-@use "bulma/sass/themes/setup";
+@use "bulma/sass/themes";
 @use "bulma/sass/base/minireset";
 @use "bulma/sass/base/generic";
 @use "bulma/sass/base/animations";
@@ -59,13 +58,5 @@
 // 辅助类（flex/间距/排版/颜色/可见性等，动态拼接的类名依赖它们）
 @use "bulma/sass/helpers";
 
-// 浅色主题变量（固定浅色，不跟随系统暗色）
-#{iv.$variables-host} {
-  @include light.light-theme;
-  @include setup.setup-theme;
-}
-
-@include cv.bulma-theme($name: "light") {
-  @include light.light-theme;
-  @include setup.setup-theme;
-}
+// 自定义设计令牌（浅色 / 深色）
+@use "../styles/theme";

@@ -37,6 +37,17 @@ cd client && bun run lint
 cd client && bun run fmt
 ```
 
+## 前端样式与主题
+
+- 颜色一律使用设计令牌，不要在组件里写死色值：令牌定义在
+  `client/src/styles/theme.scss`（`--vf-*`），浅色与深色各一套。
+- 结构性颜色优先复用 Bulma 变量（`--bulma-*`）；Bulma 主题由
+  `client/src/styles/bulma.scss` 引入，跟随 `<html data-theme="light|dark">`
+  或系统 `prefers-color-scheme`。
+- 新增令牌时同时补浅色与深色两组值，并确保真的有组件在用。
+- 主题切换逻辑在 `client/src/stores/theme.store.ts`，界面入口是
+  `client/src/components/common/ThemeToggle.vue`。
+
 ## 提交前建议
 
 1. 只提交和当前任务直接相关的改动。
