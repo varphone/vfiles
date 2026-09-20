@@ -99,6 +99,7 @@ pub trait EntryRepo {
         cursor: Option<&str>,
     ) -> DomainResult<Vec<EntryVersion>>;
     async fn find_version(&self, version_id: &VersionId) -> DomainResult<EntryVersion>;
+    #[allow(clippy::too_many_arguments)]
     async fn create_version(
         &self,
         entry_id: &EntryId,

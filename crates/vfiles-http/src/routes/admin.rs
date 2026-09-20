@@ -132,7 +132,7 @@ async fn list_users(
     let page = query.page.unwrap_or(1);
     let page_size = query.page_size.unwrap_or(20);
 
-    if page < 1 || page_size < 1 || page_size > 100 {
+    if page < 1 || !(1..=100).contains(&page_size) {
         return Err(ApiError::Validation {
             field: "page/page_size".to_string(),
             message: "Invalid pagination parameters".to_string(),

@@ -738,7 +738,7 @@ async fn chunked_upload_history_and_download_round_trip() {
     let old_content = app
         .request_as_admin(
             Request::builder()
-                .uri(&format!(
+                .uri(format!(
                     "/api/files/content?path=docs/note.txt&commit={}",
                     version1
                 ))
@@ -755,7 +755,7 @@ async fn chunked_upload_history_and_download_round_trip() {
     let diff = app
         .request_as_admin(
             Request::builder()
-                .uri(&format!(
+                .uri(format!(
                     "/api/history/diff?path=docs/note.txt&commit={}",
                     version2
                 ))
@@ -807,7 +807,7 @@ async fn chunked_upload_history_and_download_round_trip() {
     let versioned_folder_download = app
         .request_as_admin(
             Request::builder()
-                .uri(&format!(
+                .uri(format!(
                     "/api/download/folder?path=docs&commit={}",
                     version1
                 ))
@@ -852,7 +852,7 @@ async fn chunked_upload_history_and_download_round_trip() {
     let snapshot_folder_download = app
         .request_as_admin(
             Request::builder()
-                .uri(&format!(
+                .uri(format!(
                     "/api/download/folder?path=docs&commit={}",
                     snapshot_id
                 ))
@@ -1675,7 +1675,7 @@ async fn directory_history_returns_snapshot_commits_for_tree_and_content_browsin
     let tree = app
         .request_as_admin(
             Request::builder()
-                .uri(&format!("/api/files/tree/docs?commit={}", snapshot_id))
+                .uri(format!("/api/files/tree/docs?commit={}", snapshot_id))
                 .body(Body::empty())
                 .expect("request should build"),
         )
@@ -1695,7 +1695,7 @@ async fn directory_history_returns_snapshot_commits_for_tree_and_content_browsin
     let content = app
         .request_as_admin(
             Request::builder()
-                .uri(&format!(
+                .uri(format!(
                     "/api/files/content?path=docs/note.txt&commit={}",
                     snapshot_id
                 ))
@@ -2416,7 +2416,7 @@ async fn share_download_supports_files_and_directories() {
     let file_download = app
         .request(
             Request::builder()
-                .uri(&format!("/s/{}", file_code))
+                .uri(format!("/s/{}", file_code))
                 .body(Body::empty())
                 .expect("request should build"),
         )
@@ -2444,7 +2444,7 @@ async fn share_download_supports_files_and_directories() {
     let directory_download = app
         .request(
             Request::builder()
-                .uri(&format!("/s/{}", directory_code))
+                .uri(format!("/s/{}", directory_code))
                 .body(Body::empty())
                 .expect("request should build"),
         )
@@ -2501,7 +2501,7 @@ async fn share_download_supports_unicode_filenames() {
     let download = app
         .request(
             Request::builder()
-                .uri(&format!("/s/{}", code))
+                .uri(format!("/s/{}", code))
                 .body(Body::empty())
                 .expect("request should build"),
         )
@@ -2552,7 +2552,7 @@ async fn share_download_uses_owner_namespace_in_multi_user_mode() {
     let download = app
         .request(
             Request::builder()
-                .uri(&format!("/s/{}", code))
+                .uri(format!("/s/{}", code))
                 .body(Body::empty())
                 .expect("request should build"),
         )
@@ -3078,7 +3078,7 @@ async fn share_disable_requires_share_owner() {
         .request_with_cookie(
             Request::builder()
                 .method(Method::DELETE)
-                .uri(&format!("/api/share/shares/{}", code))
+                .uri(format!("/api/share/shares/{}", code))
                 .body(Body::empty())
                 .expect("request should build"),
             &member_cookie,
@@ -3090,7 +3090,7 @@ async fn share_disable_requires_share_owner() {
         .request_with_cookie(
             Request::builder()
                 .method(Method::DELETE)
-                .uri(&format!("/api/share/shares/{}", code))
+                .uri(format!("/api/share/shares/{}", code))
                 .body(Body::empty())
                 .expect("request should build"),
             &admin_cookie,
@@ -3127,7 +3127,7 @@ async fn admin_route_prevents_deleting_last_admin() {
         .request_with_cookie(
             Request::builder()
                 .method(Method::DELETE)
-                .uri(&format!("/api/admin/users/{}", admin_id))
+                .uri(format!("/api/admin/users/{}", admin_id))
                 .body(Body::empty())
                 .expect("request should build"),
             &admin_cookie,
@@ -3291,7 +3291,7 @@ async fn admin_can_update_user_email_and_member_can_login_with_new_email() {
     let user_response = app
         .request_with_cookie(
             Request::builder()
-                .uri(&format!("/api/admin/users/{}", member_id))
+                .uri(format!("/api/admin/users/{}", member_id))
                 .body(Body::empty())
                 .expect("request should build"),
             &admin_cookie,
@@ -3377,7 +3377,7 @@ async fn admin_can_revoke_user_sessions() {
         .request_with_cookie(
             Request::builder()
                 .method(Method::POST)
-                .uri(&format!("/api/admin/users/{}/revoke-sessions", member_id))
+                .uri(format!("/api/admin/users/{}/revoke-sessions", member_id))
                 .body(Body::empty())
                 .expect("request should build"),
             &admin_cookie,

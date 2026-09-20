@@ -679,7 +679,7 @@ fn change_type_as_str(change_type: ChangeType) -> &'static str {
 }
 
 fn entry_name(path: &str) -> String {
-    path.split('/').last().unwrap_or("").to_string()
+    path.split('/').next_back().unwrap_or("").to_string()
 }
 
 fn parse_entry_row(row: EntryRow) -> DomainResult<Entry> {
@@ -1707,15 +1707,15 @@ impl BlobStore for FsBlobStore {
             message: "Invalid hash format".to_string(),
         })?;
 
-        if let Some(expected) = expected_sha256 {
-            if expected != hash_hex {
-                return Err(DomainError::Internal {
-                    message: format!(
-                        "Blob integrity check failed: expected {}, got {}",
-                        expected, hash_hex
-                    ),
-                });
-            }
+        if let Some(expected) = expected_sha256
+            && expected != hash_hex
+        {
+            return Err(DomainError::Internal {
+                message: format!(
+                    "Blob integrity check failed: expected {}, got {}",
+                    expected, hash_hex
+                ),
+            });
         }
 
         let blob_id = Self::blob_id_for_hash(&hash_hex);
@@ -1810,16 +1810,16 @@ impl BlobStore for FsBlobStore {
             message: "Invalid hash format".to_string(),
         })?;
 
-        if let Some(expected) = expected_sha256 {
-            if expected != hash_hex {
-                let _ = fs::remove_file(&temp_path).await;
-                return Err(DomainError::Internal {
-                    message: format!(
-                        "Blob integrity check failed: expected {}, got {}",
-                        expected, hash_hex
-                    ),
-                });
-            }
+        if let Some(expected) = expected_sha256
+            && expected != hash_hex
+        {
+            let _ = fs::remove_file(&temp_path).await;
+            return Err(DomainError::Internal {
+                message: format!(
+                    "Blob integrity check failed: expected {}, got {}",
+                    expected, hash_hex
+                ),
+            });
         }
 
         let blob_id = Self::blob_id_for_hash(&hash_hex);
@@ -2210,25 +2210,23 @@ impl UploadStore for FsUploadStore {
             })?
         {
             let path = entry.path();
-            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                if filename.starts_with("part_") {
-                    if let Ok(part_index) = filename.trim_start_matches("part_").parse::<u32>() {
-                        let metadata =
-                            entry.metadata().await.map_err(|e| DomainError::Internal {
-                                message: format!("Failed to get part metadata: {}", e),
-                            })?;
-                        let size_bytes = ByteSize::new(metadata.len());
+            if let Some(filename) = path.file_name().and_then(|n| n.to_str())
+                && filename.starts_with("part_")
+                && let Ok(part_index) = filename.trim_start_matches("part_").parse::<u32>()
+            {
+                let metadata = entry.metadata().await.map_err(|e| DomainError::Internal {
+                    message: format!("Failed to get part metadata: {}", e),
+                })?;
+                let size_bytes = ByteSize::new(metadata.len());
 
-                        parts.push(UploadPart {
-                            upload_session_id: *upload_id,
-                            part_index,
-                            temp_rel_path: format!("part_{}", part_index),
-                            size_bytes,
-                            sha256_hex: String::new(), // Would need to be stored
-                            received_at: time::OffsetDateTime::now_utc(),
-                        });
-                    }
-                }
+                parts.push(UploadPart {
+                    upload_session_id: *upload_id,
+                    part_index,
+                    temp_rel_path: format!("part_{}", part_index),
+                    size_bytes,
+                    sha256_hex: String::new(), // Would need to be stored
+                    received_at: time::OffsetDateTime::now_utc(),
+                });
             }
         }
 
@@ -2494,7 +2492,7 @@ where
         for row in rows {
             // Extract filename from path
             let path = &row.path;
-            let name = path.split('/').last().unwrap_or(path).to_string();
+            let name = path.split('/').next_back().unwrap_or(path).to_string();
 
             let entry = Entry {
                 id: EntryId::from_uuid(uuid::Uuid::parse_str(&row.entry_id).map_err(|e| {
@@ -2586,7 +2584,7 @@ where
                             )
                             .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
                         })
-                        .unwrap_or_else(|| time::OffsetDateTime::now_utc()),
+                        .unwrap_or_else(time::OffsetDateTime::now_utc),
                     change_type: ChangeType::Modified, // Default
                     change_message: row.change_message.as_ref().map(|msg| {
                         NonEmptyMessage::new(msg)
@@ -2709,149 +2707,146 @@ where
             }
 
             // Try to get blob content
-            if let Some(blob_id_str) = &row.blob_id {
-                if let Ok(blob_id) = uuid::Uuid::parse_str(blob_id_str) {
-                    let blob_id = BlobId::from_uuid(blob_id);
-                    if let Ok(Some(blob_stream)) = self.blob_store.get_blob_stream(&blob_id).await {
-                        let mut lines = BufReader::new(blob_stream).lines();
-                        let mut line_number = 0_u32;
-                        let mut matches = Vec::new();
-                        let mut read_failed = false;
+            if let Some(blob_id_str) = &row.blob_id
+                && let Ok(blob_id) = uuid::Uuid::parse_str(blob_id_str)
+            {
+                let blob_id = BlobId::from_uuid(blob_id);
+                if let Ok(Some(blob_stream)) = self.blob_store.get_blob_stream(&blob_id).await {
+                    let mut lines = BufReader::new(blob_stream).lines();
+                    let mut line_number = 0_u32;
+                    let mut matches = Vec::new();
+                    let mut read_failed = false;
 
-                        loop {
-                            match lines.next_line().await {
-                                Ok(Some(line)) => {
-                                    line_number += 1;
-                                    if line.to_lowercase().contains(&search_term) {
-                                        matches.push(SearchMatch {
-                                            match_type: SearchMatchType::Content,
-                                            context: Some(line.trim().to_string()),
-                                            line_number: Some(line_number),
-                                        });
-                                    }
-                                }
-                                Ok(None) => break,
-                                Err(_) => {
-                                    read_failed = true;
-                                    break;
+                    loop {
+                        match lines.next_line().await {
+                            Ok(Some(line)) => {
+                                line_number += 1;
+                                if line.to_lowercase().contains(&search_term) {
+                                    matches.push(SearchMatch {
+                                        match_type: SearchMatchType::Content,
+                                        context: Some(line.trim().to_string()),
+                                        line_number: Some(line_number),
+                                    });
                                 }
                             }
+                            Ok(None) => break,
+                            Err(_) => {
+                                read_failed = true;
+                                break;
+                            }
                         }
+                    }
 
-                        if read_failed || matches.is_empty() {
-                            continue;
-                        }
+                    if read_failed || matches.is_empty() {
+                        continue;
+                    }
 
-                        // Extract filename from path
-                        let path = &row.path;
-                        let name = path.split('/').last().unwrap_or(path).to_string();
+                    // Extract filename from path
+                    let path = &row.path;
+                    let name = path.split('/').next_back().unwrap_or(path).to_string();
 
-                        let entry = Entry {
-                            id: EntryId::from_uuid(uuid::Uuid::parse_str(&row.entry_id).map_err(
+                    let entry = Entry {
+                        id: EntryId::from_uuid(uuid::Uuid::parse_str(&row.entry_id).map_err(
+                            |e| DomainError::Internal {
+                                message: format!("Invalid entry ID: {}", e),
+                            },
+                        )?),
+                        namespace_id: NamespaceId::from_uuid(
+                            uuid::Uuid::parse_str(&row.namespace_id).map_err(|e| {
+                                DomainError::Internal {
+                                    message: format!("Invalid namespace ID: {}", e),
+                                }
+                            })?,
+                        ),
+                        parent_entry_id: None, // TODO: populate from path
+                        path_norm: NormalizedPath::new(path).map_err(|e| {
+                            DomainError::Internal {
+                                message: format!("Invalid path: {}", e),
+                            }
+                        })?,
+                        name,
+                        entry_type: match row.entry_type.as_str() {
+                            "file" => EntryKind::File,
+                            "directory" => EntryKind::Directory,
+                            _ => continue, // Skip invalid entries
+                        },
+                        current_version_id: row.version_id.as_ref().map(|id| {
+                            VersionId::from_uuid(
+                                uuid::Uuid::parse_str(id)
+                                    .map_err(|e| DomainError::Internal {
+                                        message: format!("Invalid version ID: {}", e),
+                                    })
+                                    .unwrap(), // Safe because we checked
+                            )
+                        }),
+                        created_at: time::OffsetDateTime::parse(
+                            &row.entry_created_at,
+                            &time::format_description::well_known::Rfc3339,
+                        )
+                        .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
+                        deleted_at: None,
+                    };
+
+                    let version = if let Some(version_id) = &row.version_id {
+                        Some(EntryVersion {
+                            id: VersionId::from_uuid(uuid::Uuid::parse_str(version_id).map_err(
                                 |e| DomainError::Internal {
-                                    message: format!("Invalid entry ID: {}", e),
+                                    message: format!("Invalid version ID: {}", e),
                                 },
                             )?),
-                            namespace_id: NamespaceId::from_uuid(
-                                uuid::Uuid::parse_str(&row.namespace_id).map_err(|e| {
+                            entry_id: entry.id,
+                            version_no: row.version_no.unwrap_or(1) as u32,
+                            blob_id: Some(blob_id),
+                            size_bytes: ByteSize::new(row.size_bytes.unwrap_or(0) as u64),
+                            mime_type: row.mime_type,
+                            is_text: true,
+                            content_hash: row
+                                .content_hash
+                                .as_deref()
+                                .map(ContentHash::new)
+                                .transpose()
+                                .map_err(|_| DomainError::Internal {
+                                    message: "Invalid content hash".to_string(),
+                                })?
+                                .unwrap_or_else(default_content_hash),
+                            created_by: UserId::from_uuid(
+                                uuid::Uuid::parse_str(
+                                    row.created_by.as_ref().unwrap_or(&"".to_string()),
+                                )
+                                .map_err(|e| {
                                     DomainError::Internal {
-                                        message: format!("Invalid namespace ID: {}", e),
+                                        message: format!("Invalid user ID: {}", e),
                                     }
                                 })?,
                             ),
-                            parent_entry_id: None, // TODO: populate from path
-                            path_norm: NormalizedPath::new(path).map_err(|e| {
-                                DomainError::Internal {
-                                    message: format!("Invalid path: {}", e),
-                                }
-                            })?,
-                            name,
-                            entry_type: match row.entry_type.as_str() {
-                                "file" => EntryKind::File,
-                                "directory" => EntryKind::Directory,
-                                _ => continue, // Skip invalid entries
-                            },
-                            current_version_id: row.version_id.as_ref().map(|id| {
-                                VersionId::from_uuid(
-                                    uuid::Uuid::parse_str(id)
-                                        .map_err(|e| DomainError::Internal {
-                                            message: format!("Invalid version ID: {}", e),
-                                        })
-                                        .unwrap(), // Safe because we checked
-                                )
-                            }),
-                            created_at: time::OffsetDateTime::parse(
-                                &row.entry_created_at,
-                                &time::format_description::well_known::Rfc3339,
-                            )
-                            .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
-                            deleted_at: None,
-                        };
-
-                        let version = if let Some(version_id) = &row.version_id {
-                            Some(EntryVersion {
-                                id: VersionId::from_uuid(
-                                    uuid::Uuid::parse_str(version_id).map_err(|e| {
-                                        DomainError::Internal {
-                                            message: format!("Invalid version ID: {}", e),
-                                        }
-                                    })?,
-                                ),
-                                entry_id: entry.id,
-                                version_no: row.version_no.unwrap_or(1) as u32,
-                                blob_id: Some(blob_id),
-                                size_bytes: ByteSize::new(row.size_bytes.unwrap_or(0) as u64),
-                                mime_type: row.mime_type,
-                                is_text: true,
-                                content_hash: row
-                                    .content_hash
-                                    .as_deref()
-                                    .map(ContentHash::new)
-                                    .transpose()
-                                    .map_err(|_| DomainError::Internal {
-                                        message: "Invalid content hash".to_string(),
-                                    })?
-                                    .unwrap_or_else(default_content_hash),
-                                created_by: UserId::from_uuid(
-                                    uuid::Uuid::parse_str(
-                                        row.created_by.as_ref().unwrap_or(&"".to_string()),
+                            created_at: row
+                                .version_created_at
+                                .as_ref()
+                                .map(|dt| {
+                                    time::OffsetDateTime::parse(
+                                        dt,
+                                        &time::format_description::well_known::Rfc3339,
                                     )
-                                    .map_err(|e| {
-                                        DomainError::Internal {
-                                            message: format!("Invalid user ID: {}", e),
-                                        }
-                                    })?,
-                                ),
-                                created_at: row
-                                    .version_created_at
-                                    .as_ref()
-                                    .map(|dt| {
-                                        time::OffsetDateTime::parse(
-                                            dt,
-                                            &time::format_description::well_known::Rfc3339,
-                                        )
-                                        .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
-                                    })
-                                    .unwrap_or_else(|| time::OffsetDateTime::now_utc()),
-                                change_type: ChangeType::Modified,
-                                change_message: row.change_message.as_ref().map(|msg| {
-                                    NonEmptyMessage::new(msg).unwrap_or_else(|_| {
-                                        NonEmptyMessage::new("Updated").unwrap()
-                                    })
-                                }),
-                                source_upload_id: None,
-                            })
-                        } else {
-                            None
-                        };
+                                    .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+                                })
+                                .unwrap_or_else(time::OffsetDateTime::now_utc),
+                            change_type: ChangeType::Modified,
+                            change_message: row.change_message.as_ref().map(|msg| {
+                                NonEmptyMessage::new(msg)
+                                    .unwrap_or_else(|_| NonEmptyMessage::new("Updated").unwrap())
+                            }),
+                            source_upload_id: None,
+                        })
+                    } else {
+                        None
+                    };
 
-                        results.push(SearchResult {
-                            entry,
-                            version,
-                            matches,
-                            score: 0.8, // Content matches get slightly lower score than filename matches
-                        });
-                    }
+                    results.push(SearchResult {
+                        entry,
+                        version,
+                        matches,
+                        score: 0.8, // Content matches get slightly lower score than filename matches
+                    });
                 }
             }
         }
@@ -3415,8 +3410,6 @@ mod snapshot_repo_tests {
         for _ in 0..task_count {
             let repo = Arc::clone(&repo);
             let barrier = Arc::clone(&barrier);
-            let namespace_id = namespace_id;
-            let user_id = user_id;
 
             handles.push(tokio::spawn(async move {
                 barrier.wait().await;

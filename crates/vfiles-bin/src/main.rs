@@ -683,12 +683,12 @@ fn resolve_frontend_dist() -> Option<PathBuf> {
         }
     }
 
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join("client").join("dist");
-            if is_frontend_dist(&candidate) {
-                return Some(candidate);
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let candidate = dir.join("client").join("dist");
+        if is_frontend_dist(&candidate) {
+            return Some(candidate);
         }
     }
 

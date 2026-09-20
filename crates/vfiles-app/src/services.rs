@@ -239,8 +239,7 @@ fn basename(path: &NormalizedPath) -> &str {
 fn archive_name_for(path: &NormalizedPath) -> String {
     path.as_str()
         .split('/')
-        .filter(|segment| !segment.is_empty())
-        .last()
+        .rfind(|segment| !segment.is_empty())
         .unwrap_or("root")
         .to_string()
 }
@@ -257,7 +256,7 @@ fn relative_path_for_directory(
         return full_path
             .as_str()
             .split('/')
-            .last()
+            .next_back()
             .unwrap_or(full_path.as_str())
             .to_string();
     }
@@ -751,12 +750,12 @@ impl AuthService {
                 message: "Username already exists".to_string(),
             });
         }
-        if let Some(email) = email.as_ref() {
-            if self.user_repo.find_by_email(email).await.is_ok() {
-                return Err(DomainError::Conflict {
-                    message: "Email already exists".to_string(),
-                });
-            }
+        if let Some(email) = email.as_ref()
+            && self.user_repo.find_by_email(email).await.is_ok()
+        {
+            return Err(DomainError::Conflict {
+                message: "Email already exists".to_string(),
+            });
         }
 
         // Hash password (placeholder - in real impl, use proper hashing)
@@ -1945,8 +1944,7 @@ where
         let mut seen_entries = std::collections::HashSet::new();
         all_entries.retain(|entry| seen_entries.insert(entry.id));
 
-        all_entries
-            .sort_by(|left, right| path_depth(&right.path_norm).cmp(&path_depth(&left.path_norm)));
+        all_entries.sort_by_key(|entry| std::cmp::Reverse(path_depth(&entry.path_norm)));
 
         let changed_entries = all_entries
             .iter()
@@ -2060,6 +2058,7 @@ where
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn init_upload(
         &self,
         namespace_id: &NamespaceId,
@@ -2082,16 +2081,15 @@ where
             .entry_repo
             .find_by_path(namespace_id, &file_path)
             .await?
+            && entry.entry_type != EntryKind::File
         {
-            if entry.entry_type != EntryKind::File {
-                return Err(DomainError::PathConflict {
-                    message: format!("Path is occupied by a directory: {}", file_path.as_str()),
-                });
-            }
+            return Err(DomainError::PathConflict {
+                message: format!("Path is occupied by a directory: {}", file_path.as_str()),
+            });
         }
 
         let chunk_size =
-            requested_chunk_size.unwrap_or_else(|| size_bytes.max(1).min(5 * 1024 * 1024));
+            requested_chunk_size.unwrap_or_else(|| size_bytes.clamp(1, 5 * 1024 * 1024));
         if chunk_size == 0 {
             return Err(DomainError::Validation {
                 message: "Chunk size must be greater than zero".to_string(),
@@ -3044,12 +3042,11 @@ where
             let email = EmailAddress::new(&email)?;
             if current_user.email.as_ref() != Some(&email) {
                 if let Ok(existing_user) = self.auth_service.user_repo().find_by_email(&email).await
+                    && existing_user.id != *user_id
                 {
-                    if existing_user.id != *user_id {
-                        return Err(DomainError::Conflict {
-                            message: "Email already exists".to_string(),
-                        });
-                    }
+                    return Err(DomainError::Conflict {
+                        message: "Email already exists".to_string(),
+                    });
                 }
                 self.auth_service
                     .user_repo()
@@ -3671,7 +3668,7 @@ mod tests {
             .workspace_service
             .delete_entries(
                 &context.namespace_id,
-                &[file_path.clone()],
+                std::slice::from_ref(&file_path),
                 Some("delete file"),
                 &context.user_id,
             )
