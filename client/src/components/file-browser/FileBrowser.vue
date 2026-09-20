@@ -325,10 +325,10 @@
       <template v-if="!isMobile">
         <div class="desktop-list-primary-shell">
           <div class="desktop-list-shell">
-            <div v-if="loading" class="has-text-centered py-6">
-              <div class="spinner mb-3"></div>
-              <p class="has-text-grey">加载中...</p>
-            </div>
+            <FileSkeleton
+              v-if="loading"
+              :variant="viewMode === 'grid' ? 'grid' : 'list'"
+            />
 
             <div v-else-if="error" class="notification is-danger is-light">
               <IconAlertCircle :size="20" class="mr-2" />
@@ -458,10 +458,10 @@
       </template>
 
       <template v-else>
-        <div v-if="loading" class="has-text-centered py-6">
-          <div class="spinner mb-3"></div>
-          <p class="has-text-grey">加载中...</p>
-        </div>
+        <FileSkeleton
+          v-if="loading"
+          :variant="viewMode === 'grid' ? 'grid' : 'list'"
+        />
 
         <div v-else-if="error" class="notification is-danger is-light">
           <IconAlertCircle :size="20" class="mr-2" />
@@ -899,6 +899,7 @@ import FileList from "./FileList.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
 import Breadcrumb from "./Breadcrumb.vue";
+import FileSkeleton from "./FileSkeleton.vue";
 import DownloadQueuePanel from "./DownloadQueuePanel.vue";
 import ContextMenu, { type ContextMenuItem } from "./ContextMenu.vue";
 import MoveDialog from "./MoveDialog.vue";

@@ -16,13 +16,13 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 23 实测）
+### 验证基线（round 24 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：20 个文件 / **107** 个用例通过。
-- 冒烟：served 产物包含拖放相关标记；`POST /api/files/move` 行为正常
-  （`d1/note.txt` → `d2/note.txt`）。
+- `client` 单测：21 个文件 / **111** 个用例通过。
+- 冒烟：served 产物包含骨架屏结构（`file-skeleton-row`/`file-skeleton-card`）与
+  微光动画样式（`file-skeleton-shimmer`）。
 
 ### 主要发现
 
@@ -352,6 +352,19 @@
   `useMoveDialog` 拖放移动/拒绝移动到自身子目录；`FileBrowser` 拖拽文件到目录行后
   调用 `movePath`。
 
+### 2.29 列表/网格加载骨架屏（round 24，交互）
+
+- 原先加载态只有一个 spinner + 「加载中...」；主流云盘使用骨架屏减少布局跳动并
+  提示内容形态。
+- 新增 `FileSkeleton.vue`：`variant` 支持 `list`（行：图标 + 名称 + 日期 + 大小）与
+  `grid`（缩略图卡片），默认 6/8 项，带微光动画，并遵循
+  `prefers-reduced-motion`；容器为 `role="status" aria-busy="true"` 且含
+  `sr-only` 文本。
+- `FileBrowser` 桌面与移动端的加载态改为按当前视图渲染对应骨架屏（预览弹窗的
+  spinner 保留）。
+- 测试：骨架屏行/卡片数量、默认 6 行、`aria-busy` 与可读文本；FileBrowser 加载中
+  展示骨架屏并在完成后渲染空目录状态。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -406,6 +419,7 @@
 - `[x]` 面包屑可点击跳转 + 当前目录子文件夹下拉（round 11）。
 - `[x]` 预览内上一个/下一个（按钮 + ←/→ 方向键）与位置指示（round 14）。
 - `[x]` 拖放移动：拖到目录行/卡片或面包屑路径段（round 23）。
+- `[x]` 加载骨架屏（列表/网格）取代单一 spinner（round 24）。
 - `[ ]` 网格视图排序入口与列表一致；移动端长按呼出菜单。
 - `[ ]` 上传/下载与网格视图的空状态、加载骨架屏统一。
 

@@ -515,3 +515,21 @@ describe("FileBrowser.vue drag and drop", () => {
     });
   });
 });
+describe("FileBrowser.vue loading state", () => {
+  it("shows a skeleton while the directory loads", async () => {
+    let resolveFiles!: (value: unknown[]) => void;
+    getFilesMock.mockReturnValueOnce(
+      new Promise<unknown[]>((resolve) => {
+        resolveFiles = resolve;
+      }),
+    );
+
+    const { findByRole, findByText } = renderWithProviders(FileBrowser as any);
+
+    const status = await findByRole("status");
+    expect(status).toHaveAttribute("aria-busy", "true");
+
+    resolveFiles([]);
+    await findByText("此文件夹为空");
+  });
+});
