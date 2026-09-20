@@ -1031,7 +1031,7 @@ pub struct FileContentStream {
     pub filename: String,
     pub mime_type: Option<String>,
     pub size_bytes: u64,
-    pub reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    pub reader: Box<dyn vfiles_domain::ReadSeek + Send + Unpin>,
 }
 
 #[derive(Debug, Clone)]

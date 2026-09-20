@@ -1879,7 +1879,7 @@ impl BlobStore for FsBlobStore {
     async fn get_blob_stream(
         &self,
         blob_id: &BlobId,
-    ) -> DomainResult<Option<Box<dyn tokio::io::AsyncRead + Send + Unpin>>> {
+    ) -> DomainResult<Option<Box<dyn vfiles_domain::ReadSeek + Send + Unpin>>> {
         let blob_path = self.get_blob_path(blob_id);
         match fs::File::open(&blob_path).await {
             Ok(file) => Ok(Some(Box::new(file))),

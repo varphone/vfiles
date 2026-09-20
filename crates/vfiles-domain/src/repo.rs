@@ -1,5 +1,10 @@
 use crate::*;
 
+/// Object-safe blob stream that supports seeking for HTTP Range requests.
+pub trait ReadSeek: tokio::io::AsyncRead + tokio::io::AsyncSeek {}
+
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncSeek + ?Sized> ReadSeek for T {}
+
 // Repo traits
 #[async_trait::async_trait]
 pub trait UserRepo {
@@ -149,7 +154,7 @@ pub trait BlobStore {
     async fn get_blob_stream(
         &self,
         blob_id: &BlobId,
-    ) -> DomainResult<Option<Box<dyn tokio::io::AsyncRead + Send + Unpin>>>;
+    ) -> DomainResult<Option<Box<dyn ReadSeek + Send + Unpin>>>;
     async fn delete_blob(&self, blob_id: &BlobId) -> DomainResult<()>;
     async fn blob_exists(&self, sha256: &ContentHash) -> DomainResult<bool>;
     async fn get_blob_metadata(&self, blob_id: &BlobId) -> DomainResult<Option<Blob>>;
