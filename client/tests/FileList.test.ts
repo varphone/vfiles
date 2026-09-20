@@ -133,4 +133,49 @@ describe("FileList.vue", () => {
     await fireEvent.click(screen.getByLabelText("全选当前视图"));
     expect(emitted()["toggle-select-all"]).toHaveLength(1);
   });
+
+  it("emits modifier-select for shift/ctrl clicks", async () => {
+    const { emitted } = render(FileList as any, {
+      props: {
+        desktop: true,
+        selectMode: false,
+        selectedPaths: new Set<string>(),
+        files: [buildFile({ id: "a", name: "a.txt", path: "a.txt" })],
+      },
+    });
+
+    const row = screen.getByText("a.txt").closest("tr")!;
+    await fireEvent.click(row, { shiftKey: true });
+    await fireEvent.click(row, { ctrlKey: true });
+
+    const events = emitted()["modifier-select"] as Array<
+      [{ file: { path: string }; shift: boolean; meta: boolean }]
+    >;
+    expect(events).toHaveLength(2);
+    expect(events[0][0].shift).toBe(true);
+    expect(events[0][0].meta).toBe(false);
+    expect(events[1][0].meta).toBe(true);
+  });
+
+  it("emits context-menu with the pointer position", async () => {
+    const { emitted } = render(FileList as any, {
+      props: {
+        desktop: true,
+        selectMode: false,
+        selectedPaths: new Set<string>(),
+        files: [buildFile({ id: "a", name: "a.txt", path: "a.txt" })],
+      },
+    });
+
+    const row = screen.getByText("a.txt").closest("tr")!;
+    await fireEvent.contextMenu(row, { clientX: 120, clientY: 80 });
+
+    const events = emitted()["context-menu"] as Array<
+      [{ file: { path: string }; x: number; y: number }]
+    >;
+    expect(events).toHaveLength(1);
+    expect(events[0][0].file.path).toBe("a.txt");
+    expect(events[0][0].x).toBe(120);
+    expect(events[0][0].y).toBe(80);
+  });
 });

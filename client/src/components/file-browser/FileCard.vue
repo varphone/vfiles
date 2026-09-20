@@ -11,6 +11,7 @@
     :title="file.name"
     @click="handleClick"
     @dblclick="handleActivate"
+    @contextmenu.prevent="handleContextMenu"
   >
     <div class="file-card-thumb">
       <img
@@ -226,6 +227,10 @@ const emit = defineEmits<{
   preview: [file: FileInfo];
   "open-folder": [file: FileInfo];
   "create-directory": [file: FileInfo];
+  "modifier-select": [
+    payload: { file: FileInfo; shift: boolean; meta: boolean },
+  ];
+  "context-menu": [payload: { file: FileInfo; x: number; y: number }];
 }>();
 
 const menuOpen = ref(false);
@@ -285,11 +290,19 @@ const nameSegments = computed(() =>
   splitByNeedle(props.file.name ?? "", props.highlight ?? ""),
 );
 
-function handleClick() {
+function handleClick(event?: MouseEvent) {
   if (isNavigationShortcut.value) {
     emit("open-folder", props.file);
     return;
   }
+
+  const shift = event?.shiftKey ?? false;
+  const meta = (event?.ctrlKey || event?.metaKey) ?? false;
+  if (shift || meta) {
+    emit("modifier-select", { file: props.file, shift, meta });
+    return;
+  }
+
   if (props.selectMode) {
     emit("toggle-select", props.file);
     return;
@@ -299,6 +312,15 @@ function handleClick() {
     return;
   }
   emit("click", props.file);
+}
+
+function handleContextMenu(event: MouseEvent) {
+  if (isNavigationShortcut.value) return;
+  emit("context-menu", {
+    file: props.file,
+    x: event.clientX,
+    y: event.clientY,
+  });
 }
 
 function handleActivate() {

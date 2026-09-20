@@ -203,4 +203,81 @@ describe("FileBrowser.vue", () => {
 
     expect(queryByText("已选 1 项")).not.toBeInTheDocument();
   });
+
+  it("supports ctrl-click plus shift-click range selection", async () => {
+    getFilesMock.mockResolvedValue([
+      {
+        id: "a",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file",
+        size_bytes: 1,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+      {
+        id: "b",
+        name: "b.txt",
+        path: "b.txt",
+        kind: "file",
+        size_bytes: 2,
+        created_at: "2026-04-11T00:00:00.000Z",
+        updated_at: "2026-04-11T00:00:00.000Z",
+      },
+      {
+        id: "c",
+        name: "c.txt",
+        path: "c.txt",
+        kind: "file",
+        size_bytes: 3,
+        created_at: "2026-04-12T00:00:00.000Z",
+        updated_at: "2026-04-12T00:00:00.000Z",
+      },
+    ]);
+
+    const { findAllByText, findByText } = renderWithProviders(
+      FileBrowser as any,
+    );
+    await findByText("a.txt");
+
+    const rowOf = async (name: string) =>
+      (await findAllByText(name))[0].closest("tr")!;
+
+    await fireEvent.click(await rowOf("a.txt"), { ctrlKey: true });
+    await fireEvent.click(await rowOf("c.txt"), { shiftKey: true });
+
+    expect((await findAllByText("已选 3 项")).length).toBeGreaterThan(0);
+  });
+
+  it("opens a context menu and runs the chosen action", async () => {
+    getFilesMock.mockResolvedValue([
+      {
+        id: "a",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file",
+        size_bytes: 1,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+
+    const { findByText, findByRole } = renderWithProviders(FileBrowser as any);
+    const name = await findByText("a.txt");
+
+    await fireEvent.contextMenu(name.closest("tr")!, {
+      clientX: 40,
+      clientY: 30,
+    });
+
+    const deleteItem = await findByRole("menuitem", { name: "删除" });
+    await fireEvent.click(deleteItem);
+
+    await waitFor(() => {
+      expect(deleteFileMock).toHaveBeenCalledWith(
+        "a.txt",
+        expect.stringContaining("删除文件"),
+      );
+    });
+  });
 });

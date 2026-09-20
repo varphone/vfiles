@@ -58,6 +58,8 @@
           @delete="emit('delete', file)"
           @view-history="emit('view-history', file)"
           @toggle-select="emit('toggle-select', file)"
+          @modifier-select="emit('modifier-select', $event)"
+          @context-menu="emit('context-menu', $event)"
           @share="emit('share', file)"
           @preview="emit('preview', file)"
           @open-folder="emit('open-folder', file)"
@@ -111,6 +113,11 @@ const emit = defineEmits<{
   (e: "create-directory", file: FileInfo): void;
   (e: "sort-change", field: SortField): void;
   (e: "toggle-select-all"): void;
+  (
+    e: "modifier-select",
+    payload: { file: FileInfo; shift: boolean; meta: boolean },
+  ): void;
+  (e: "context-menu", payload: { file: FileInfo; x: number; y: number }): void;
 }>();
 
 const props = withDefaults(

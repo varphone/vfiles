@@ -1,6 +1,12 @@
 <template>
   <!-- Desktop: <tr> root so table layout enforces column alignment natively -->
-  <tr v-if="desktop" class="desktop-file-row" @click="handleClick" @dblclick="handleActivate">
+  <tr
+    v-if="desktop"
+    class="desktop-file-row"
+    @click="handleClick"
+    @dblclick="handleActivate"
+    @contextmenu.prevent="handleContextMenu"
+  >
     <td class="is-narrow">
       <div class="is-flex is-align-items-center">
         <label v-if="selectMode && !isNavigationShortcut" class="mr-2" @click.stop>
@@ -117,6 +123,7 @@
     }"
     @click="handleClick"
     @dblclick="handleActivate"
+    @contextmenu.prevent="handleContextMenu"
   >
     <div class="media">
       <div class="media-left">
@@ -313,6 +320,8 @@ const emit = defineEmits<{
   openFolder: [file: FileInfo];
   createDirectory: [file: FileInfo];
   collapse: [];
+  modifierSelect: [payload: { file: FileInfo; shift: boolean; meta: boolean }];
+  contextMenu: [payload: { file: FileInfo; x: number; y: number }];
 }>();
 
 const showActions = computed(() => props.expanded);
@@ -481,9 +490,17 @@ function formatDate(date: string): string {
   });
 }
 
-function handleClick() {
+function handleClick(event?: MouseEvent) {
   if (isNavigationShortcut.value) {
     emit("openFolder", props.file);
+    return;
+  }
+
+  const shift = event?.shiftKey ?? false;
+  const meta = (event?.ctrlKey || event?.metaKey) ?? false;
+  // Shift/Ctrl(Cmd) 点击进入范围/加选，交由父组件统一维护选择状态
+  if (shift || meta) {
+    emit("modifierSelect", { file: props.file, shift, meta });
     return;
   }
 
@@ -492,6 +509,11 @@ function handleClick() {
     return;
   }
   emit("click", props.file);
+}
+
+function handleContextMenu(event: MouseEvent) {
+  if (isNavigationShortcut.value) return;
+  emit("contextMenu", { file: props.file, x: event.clientX, y: event.clientY });
 }
 
 function handleActivate() {

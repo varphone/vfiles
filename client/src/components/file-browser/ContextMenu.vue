@@ -1,0 +1,160 @@
+<template>
+  <Teleport to="body">
+    <div
+      v-if="show"
+      ref="menuRef"
+      class="vfiles-context-menu"
+      :style="panelStyle"
+      role="menu"
+      @contextmenu.prevent
+    >
+      <button
+        v-for="item in items"
+        :key="item.key"
+        class="vfiles-context-menu__item"
+        :class="{ 'is-danger': item.danger }"
+        type="button"
+        role="menuitem"
+        :disabled="item.disabled"
+        @click="choose(item)"
+      >
+        <span
+          v-if="item.icon"
+          class="vfiles-context-menu__icon"
+          aria-hidden="true"
+        >
+          <component :is="item.icon" :size="16" />
+        </span>
+        <span>{{ item.label }}</span>
+      </button>
+    </div>
+  </Teleport>
+</template>
+
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import type { Component } from "vue";
+
+export interface ContextMenuItem {
+  key: string;
+  label: string;
+  icon?: Component;
+  danger?: boolean;
+  disabled?: boolean;
+}
+
+const props = defineProps<{
+  show: boolean;
+  x: number;
+  y: number;
+  items: ContextMenuItem[];
+}>();
+
+const emit = defineEmits<{
+  (e: "select", key: string): void;
+  (e: "close"): void;
+}>();
+
+const menuRef = ref<HTMLElement | null>(null);
+const MENU_WIDTH = 184;
+
+const panelStyle = computed(() => ({
+  left: `${Math.max(8, Math.min(props.x, window.innerWidth - MENU_WIDTH - 8))}px`,
+  top: `${Math.max(8, Math.min(props.y, window.innerHeight - 8))}px`,
+}));
+
+function choose(item: ContextMenuItem) {
+  if (item.disabled) return;
+  emit("select", item.key);
+  emit("close");
+}
+
+function onDocumentPointer(event: MouseEvent) {
+  if (!props.show) return;
+  const menu = menuRef.value;
+  if (menu && event.target instanceof Node && menu.contains(event.target))
+    return;
+  emit("close");
+}
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" && props.show) emit("close");
+}
+
+function onViewportChange() {
+  if (props.show) emit("close");
+}
+
+watch(
+  () => props.show,
+  (show) => {
+    if (show) return;
+    closeListeners();
+  },
+);
+
+function closeListeners() {
+  document.removeEventListener("click", onDocumentPointer, true);
+  document.removeEventListener("keydown", onKeydown);
+  window.removeEventListener("resize", onViewportChange);
+  window.removeEventListener("scroll", onViewportChange, true);
+}
+
+onMounted(() => {
+  document.addEventListener("click", onDocumentPointer, true);
+  document.addEventListener("keydown", onKeydown);
+  window.addEventListener("resize", onViewportChange);
+  window.addEventListener("scroll", onViewportChange, true);
+});
+
+onBeforeUnmount(closeListeners);
+</script>
+
+<style scoped>
+.vfiles-context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 184px;
+  padding: 4px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(10, 10, 10, 0.18);
+}
+
+.vfiles-context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #363636;
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vfiles-context-menu__item:hover:not(:disabled) {
+  background: #f5f5f5;
+}
+
+.vfiles-context-menu__item:disabled {
+  color: #b5b5b5;
+  cursor: not-allowed;
+}
+
+.vfiles-context-menu__item.is-danger {
+  color: #cc0f35;
+}
+
+.vfiles-context-menu__item.is-danger:hover:not(:disabled) {
+  background: #feecf0;
+}
+
+.vfiles-context-menu__icon {
+  display: inline-flex;
+}
+</style>

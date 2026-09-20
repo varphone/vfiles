@@ -499,6 +499,8 @@
                 @delete="handleDelete"
                 @view-history="handleViewHistory"
                 @toggle-select="toggleSelect"
+                @modifier-select="handleModifierSelect"
+                @context-menu="handleContextMenu"
                 @share="handleShare"
                 @preview="handlePreview"
                 @open-folder="handleOpenFolder"
@@ -522,6 +524,8 @@
                 @delete="handleDelete"
                 @view-history="handleViewHistory"
                 @toggle-select="toggleSelect"
+                @modifier-select="handleModifierSelect"
+                @context-menu="handleContextMenu"
                 @toggle-select-all="toggleSelectAll"
                 @sort-change="handleSortChange"
                 @share="handleShare"
@@ -596,6 +600,8 @@
             @delete="handleDelete"
             @view-history="handleViewHistory"
             @toggle-select="toggleSelect"
+            @modifier-select="handleModifierSelect"
+            @context-menu="handleContextMenu"
             @share="handleShare"
             @preview="handlePreview"
             @open-folder="handleOpenFolder"
@@ -615,6 +621,8 @@
             @delete="handleDelete"
             @view-history="handleViewHistory"
             @toggle-select="toggleSelect"
+            @modifier-select="handleModifierSelect"
+            @context-menu="handleContextMenu"
             @share="handleShare"
             @preview="handlePreview"
             @open-folder="handleOpenFolder"
@@ -645,6 +653,8 @@
             @delete="handleDelete"
             @view-history="handleViewHistory"
             @toggle-select="toggleSelect"
+            @modifier-select="handleModifierSelect"
+            @context-menu="handleContextMenu"
             @share="handleShare"
             @preview="handlePreview"
             @open-folder="handleOpenFolder"
@@ -663,6 +673,8 @@
             @delete="handleDelete"
             @view-history="handleViewHistory"
             @toggle-select="toggleSelect"
+            @modifier-select="handleModifierSelect"
+            @context-menu="handleContextMenu"
             @share="handleShare"
             @preview="handlePreview"
             @open-folder="handleOpenFolder"
@@ -827,6 +839,15 @@
       @confirm="submitMoveDialog"
     />
 
+    <ContextMenu
+      :show="contextMenu.show"
+      :x="contextMenu.x"
+      :y="contextMenu.y"
+      :items="contextMenuItems"
+      @select="handleContextMenuSelect"
+      @close="contextMenu.show = false"
+    />
+
     <!-- 预览对话框（当前版本） -->
     <Modal
       :show="preview.open"
@@ -905,6 +926,7 @@ import {
 import { storeToRefs } from "pinia";
 import {
   IconFolderOpen,
+  IconFolderPlus,
   IconAlertCircle,
   IconSearch,
   IconChevronDown,
@@ -912,6 +934,13 @@ import {
   IconChecklist,
   IconRefresh,
   IconUpload,
+  IconEye,
+  IconHistory,
+  IconPencil,
+  IconArrowsDiff,
+  IconDownload,
+  IconShare,
+  IconTrash,
 } from "@tabler/icons-vue";
 import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
@@ -921,6 +950,7 @@ import { filesService } from "../../services/files.service";
 import FileList from "./FileList.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
+import ContextMenu, { type ContextMenuItem } from "./ContextMenu.vue";
 import MoveDialog from "./MoveDialog.vue";
 import FileUploader from "../file-uploader/FileUploader.vue";
 import VersionHistory from "../version-history/VersionHistory.vue";
@@ -1302,8 +1332,42 @@ const downloading = computed(() =>
 
 const batchMode = ref(false);
 const selectedPaths = ref<Set<string>>(new Set());
+/** 最近一次点击的条目路径，用于 Shift 范围选择。 */
+const lastSelectedPath = ref<string>("");
 
 const selectedCount = computed(() => selectedPaths.value.size);
+
+const contextMenu = ref<{
+  show: boolean;
+  x: number;
+  y: number;
+  file: FileInfo | null;
+}>({ show: false, x: 0, y: 0, file: null });
+
+const contextMenuItems = computed<ContextMenuItem[]>(() => {
+  const file = contextMenu.value.file;
+  if (!file) return [];
+  const isDirectory = file.kind === "directory";
+
+  const items: ContextMenuItem[] = [];
+  if (isDirectory) {
+    items.push({ key: "open", label: "打开", icon: IconFolderOpen });
+    items.push({
+      key: "create-directory",
+      label: "在此新建子目录",
+      icon: IconFolderPlus,
+    });
+  } else {
+    items.push({ key: "preview", label: "预览", icon: IconEye });
+    items.push({ key: "history", label: "历史版本", icon: IconHistory });
+  }
+  items.push({ key: "rename", label: "重命名", icon: IconPencil });
+  items.push({ key: "move", label: "移动", icon: IconArrowsDiff });
+  items.push({ key: "download", label: "下载", icon: IconDownload });
+  items.push({ key: "share", label: "分享", icon: IconShare });
+  items.push({ key: "delete", label: "删除", icon: IconTrash, danger: true });
+  return items;
+});
 
 const searchType = ref<"all" | "file" | "directory">("all");
 const searchScopeCurrent = ref(false);
@@ -2189,6 +2253,8 @@ function handleItemClick(file: BrowserListItem) {
 
   if (!isMobile.value && !batchMode.value) {
     desktopActivePath.value = file.path;
+    // 记录锚点，便于随后 Shift 点击做范围选择
+    lastSelectedPath.value = file.path;
     return;
   }
 
@@ -2462,6 +2528,7 @@ function findActiveItem(): BrowserListItem | undefined {
 
 function toggleSelect(file: FileInfo) {
   desktopActivePath.value = file.path;
+  lastSelectedPath.value = file.path;
   const next = new Set(selectedPaths.value);
   if (next.has(file.path)) {
     next.delete(file.path);
@@ -2469,6 +2536,99 @@ function toggleSelect(file: FileInfo) {
     next.add(file.path);
   }
   selectedPaths.value = next;
+}
+
+/** 当前可见的、可选择的真实条目（排除 `.`/`..` 快捷项）。 */
+function selectableItems(): BrowserListItem[] {
+  const list = searchActive.value
+    ? sortedSearchResults.value
+    : navigationListItems.value;
+  return list.filter((file) => !(file as BrowserListItem).uiRole);
+}
+
+/**
+ * Shift/Ctrl(⌘) 点击：Shift 选中最近一次点击到当前项的连续区间，
+ * Ctrl(⌘) 切换单项选择；两者都会自动进入批量模式。
+ */
+function handleModifierSelect(payload: {
+  file: FileInfo;
+  shift: boolean;
+  meta: boolean;
+}) {
+  const file = payload.file as BrowserListItem;
+  if (file.uiRole) return;
+
+  if (payload.shift && lastSelectedPath.value) {
+    const list = selectableItems();
+    const from = list.findIndex((item) => item.path === lastSelectedPath.value);
+    const to = list.findIndex((item) => item.path === file.path);
+    if (from !== -1 && to !== -1) {
+      const [start, end] = from <= to ? [from, to] : [to, from];
+      const next = new Set(selectedPaths.value);
+      for (let index = start; index <= end; index += 1) {
+        next.add(list[index].path);
+      }
+      selectedPaths.value = next;
+      batchMode.value = true;
+      desktopActivePath.value = file.path;
+      return;
+    }
+  }
+
+  batchMode.value = true;
+  toggleSelect(file);
+}
+
+function handleContextMenu(payload: { file: FileInfo; x: number; y: number }) {
+  const file = payload.file as BrowserListItem;
+  if (file.uiRole) return;
+
+  if (batchMode.value && !selectedPaths.value.has(file.path)) {
+    selectedPaths.value = new Set([file.path]);
+    lastSelectedPath.value = file.path;
+  }
+  desktopActivePath.value = file.path;
+  contextMenu.value = {
+    show: true,
+    x: payload.x,
+    y: payload.y,
+    file: payload.file,
+  };
+}
+
+function handleContextMenuSelect(key: string) {
+  const file = contextMenu.value.file;
+  if (!file) return;
+
+  switch (key) {
+    case "open":
+      handleOpenFolder(file);
+      break;
+    case "create-directory":
+      void handleCreateDirectory(file);
+      break;
+    case "preview":
+      handlePreview(file);
+      break;
+    case "history":
+      handleViewHistory(file);
+      break;
+    case "rename":
+      void handleRenameEntry(file);
+      break;
+    case "move":
+      handleMoveEntry(file);
+      break;
+    case "download":
+      handleDownload(file);
+      break;
+    case "share":
+      handleShare(file);
+      break;
+    case "delete":
+      void handleDelete(file);
+      break;
+  }
 }
 
 /** 点击表头：切换字段时改字段，重复点击同一字段时切换升降序。 */
