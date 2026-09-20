@@ -286,7 +286,18 @@ export function useFilePreview(
     return cachedHljs;
   }
 
+  // 递增序号 + AbortController：快速切换预览时丢弃过期响应，并取消在途请求。
+  let previewSequence = 0;
+  let pendingAbort: AbortController | null = null;
+
+  function cancelPendingLoad() {
+    pendingAbort?.abort();
+    pendingAbort = null;
+  }
+
   function closePreview() {
+    previewSequence += 1;
+    cancelPendingLoad();
     if (preview.value.objectUrl) URL.revokeObjectURL(preview.value.objectUrl);
     preview.value = {
       open: false,
@@ -301,7 +312,12 @@ export function useFilePreview(
   }
 
   async function openPreview(filePath: string) {
+    // closePreview 会递增序号并取消上一个请求，随后这里取得自己的序号
     closePreview();
+    const requestId = previewSequence;
+    const controller = new AbortController();
+    pendingAbort = controller;
+
     preview.value.open = true;
     preview.value.loading = true;
     preview.value.path = filePath;
@@ -316,7 +332,11 @@ export function useFilePreview(
       const blob = await filesService.getFileContent(
         filePath,
         browseCommit.value,
+        { signal: controller.signal },
       );
+
+      // 期间用户已切换/关闭预览：丢弃这次结果，避免旧内容覆盖新内容
+      if (requestId !== previewSequence) return;
 
       if (
         preview.value.kind === "image" ||
@@ -349,9 +369,14 @@ export function useFilePreview(
         }
       }
     } catch (err) {
+      // 主动取消不算失败，也不清空新预览的 loading 状态
+      if (requestId !== previewSequence || controller.signal.aborted) return;
       preview.value.error = err instanceof Error ? err.message : "预览失败";
     } finally {
-      preview.value.loading = false;
+      if (requestId === previewSequence) {
+        preview.value.loading = false;
+        pendingAbort = null;
+      }
     }
   }
 

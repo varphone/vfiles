@@ -1,4 +1,5 @@
 import { apiService } from "./api.service";
+import { fetchWithRetry } from "./fetch-retry";
 import type { ContentMatch, FileInfo, FileHistory } from "../types";
 
 type DownloadProgress = { loaded: number; total?: number };
@@ -39,7 +40,8 @@ async function fetchToBlob(
   url: string,
   opts?: { signal?: AbortSignal; onProgress?: (p: DownloadProgress) => void },
 ): Promise<Blob> {
-  const response = await fetch(url, {
+  // 只重试“拿到响应头之前”的失败，避免进度回退
+  const response = await fetchWithRetry(url, {
     signal: opts?.signal,
     credentials: "include",
   });
@@ -367,10 +369,15 @@ export const filesService = {
   /**
    * 获取文件内容
    */
-  async getFileContent(path: string, commit?: string): Promise<Blob> {
+  async getFileContent(
+    path: string,
+    commit?: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<Blob> {
     const params = new URLSearchParams({ path });
     if (commit) params.set("commit", commit);
-    const response = await fetch(`/api/files/content?${params}`, {
+    const response = await fetchWithRetry(`/api/files/content?${params}`, {
+      signal: opts?.signal,
       credentials: "include",
     });
 
@@ -602,7 +609,7 @@ export const filesService = {
   ): Promise<string> {
     const params = new URLSearchParams({ path, commit });
     if (parent) params.set("parent", parent);
-    const response = await fetch(`/api/history/diff?${params}`, {
+    const response = await fetchWithRetry(`/api/history/diff?${params}`, {
       credentials: "include",
     });
     if (!response.ok) {
