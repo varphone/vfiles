@@ -2154,6 +2154,33 @@ where
         }
 
         let upload_stream = self.upload_store.assemble_upload_stream(upload_id).await?;
+        self.commit_upload_stream(session, upload_stream, expected_sha256, message)
+            .await
+    }
+
+    pub async fn complete_upload_from_stream(
+        &self,
+        upload_id: &UploadId,
+        expected_sha256: Option<&str>,
+        message: Option<&str>,
+        upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    ) -> DomainResult<UploadCompleteResponse> {
+        let session = self.upload_store.get_upload_session(upload_id).await?;
+        if session.expires_at < time::OffsetDateTime::now_utc() {
+            return Err(DomainError::UploadExpired);
+        }
+
+        self.commit_upload_stream(session, upload_stream, expected_sha256, message)
+            .await
+    }
+
+    async fn commit_upload_stream(
+        &self,
+        session: UploadSession,
+        upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        expected_sha256: Option<&str>,
+        message: Option<&str>,
+    ) -> DomainResult<UploadCompleteResponse> {
         let (blob_id, content_hash, created_blob, stored_size) = self
             .blob_store
             .store_blob_stream(upload_stream, expected_sha256)
@@ -2220,11 +2247,13 @@ where
             }
         };
 
-        self.upload_store.complete_upload_session(upload_id).await?;
-        let upload = self.upload_store.get_upload_session(upload_id).await?;
-        if let Err(err) = self.upload_store.cancel_upload_session(upload_id).await {
+        self.upload_store
+            .complete_upload_session(&session.id)
+            .await?;
+        let upload = self.upload_store.get_upload_session(&session.id).await?;
+        if let Err(err) = self.upload_store.cancel_upload_session(&session.id).await {
             tracing::warn!(
-                upload_id = %upload_id,
+                upload_id = %session.id,
                 error = ?err,
                 "failed to cleanup completed upload session"
             );
