@@ -3534,3 +3534,72 @@ async fn thumbnail_requires_authentication() {
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn static_frontend_is_compressed_for_clients_that_accept_it() {
+    let app = TestApp::new_with_static_frontend(
+        "<html><body>vfiles-ui-compression-check-that-is-long-enough</body></html>",
+    )
+    .await;
+
+    let response = app
+        .request(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/")
+                .header(header::ACCEPT_ENCODING, "gzip, br")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let encoding = response
+        .headers()
+        .get(header::CONTENT_ENCODING)
+        .expect("static asset should be compressed")
+        .to_str()
+        .expect("content-encoding should be ascii");
+    assert!(
+        encoding == "gzip" || encoding == "br",
+        "unexpected content-encoding: {encoding}"
+    );
+
+    // Without Accept-Encoding the body is served uncompressed.
+    let identity = app
+        .request(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(identity.status(), StatusCode::OK);
+    assert!(identity.headers().get(header::CONTENT_ENCODING).is_none());
+}
+
+#[tokio::test]
+async fn range_requests_stay_uncompressed_even_with_accept_encoding() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "range-enc.txt", b"0123456789", "range upload")
+        .await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range-enc.txt")
+                .header(header::RANGE, "bytes=2-5")
+                .header(header::ACCEPT_ENCODING, "gzip, br")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert!(
+        response.headers().get(header::CONTENT_ENCODING).is_none(),
+        "partial responses must not be re-encoded"
+    );
+    assert_eq!(response_bytes(response).await.as_ref(), b"2345");
+}

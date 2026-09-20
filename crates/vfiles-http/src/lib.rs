@@ -18,6 +18,7 @@ use axum::{
 };
 use std::sync::Arc;
 use tower_http::compression::CompressionLayer;
+use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use vfiles_app::{
     AdminService, AuthService, HealthService, HistoryService, SearchService, SessionService,
@@ -64,14 +65,12 @@ pub struct AppState {
 }
 
 pub fn build_router(state: AppState) -> Router<()> {
-    let api_router = routes::api_router().layer(CompressionLayer::new());
-
     let mut router = Router::new()
         .route(
             "/s/{code}",
             axum::routing::get(routes::share::download_share),
         )
-        .nest("/api", api_router);
+        .nest("/api", routes::api_router());
 
     if state
         .frontend_assets
@@ -82,6 +81,7 @@ pub fn build_router(state: AppState) -> Router<()> {
     }
 
     router
+        .layer(build_compression_layer())
         .layer(build_cors_layer(&state.config))
         .layer(axum::middleware::from_fn(request_logger))
         .layer(axum::middleware::from_fn(
@@ -89,6 +89,26 @@ pub fn build_router(state: AppState) -> Router<()> {
         ))
         .layer(axum::middleware::from_fn(middleware::request_id_middleware))
         .with_state(state)
+}
+
+/// 压缩层作用于整个路由（含静态前端资源与 `/api`）。
+///
+/// 静态资源此前完全未压缩：首屏 CSS/JS 会以数百 KB 明文传输，这是最大的首屏瓶颈。
+/// 这里在 `DefaultPredicate`（跳过图片/SSE/gRPC 与 <32B 的响应）之外，再排除视频、
+/// 音频、PDF、压缩包与 `application/octet-stream`，避免对已压缩内容做无谓的 CPU 开销。
+/// Range / `Content-Range` 响应由 tower-http 自动跳过，下载的断点续传不受影响。
+fn build_compression_layer() -> CompressionLayer<impl Predicate> {
+    let predicate = DefaultPredicate::new()
+        .and(NotForContentType::new("audio/"))
+        .and(NotForContentType::new("video/"))
+        .and(NotForContentType::const_new("application/pdf"))
+        .and(NotForContentType::const_new("application/zip"))
+        .and(NotForContentType::const_new("application/gzip"))
+        .and(NotForContentType::const_new("application/x-7z-compressed"))
+        .and(NotForContentType::const_new("application/x-rar-compressed"))
+        .and(NotForContentType::const_new("application/octet-stream"));
+
+    CompressionLayer::new().compress_when(predicate)
 }
 
 fn build_cors_layer(config: &AppConfig) -> CorsLayer {
