@@ -513,6 +513,8 @@
                 :expanded-path="expandedFilePath"
                 :active-path="desktopActivePath"
                 :desktop="true"
+                :sort-field="fileView.sortField"
+                :sort-direction="fileView.sortDirection"
                 @click="handleItemClick"
                 @download="handleDownload"
                 @rename="handleRenameEntry"
@@ -520,6 +522,8 @@
                 @delete="handleDelete"
                 @view-history="handleViewHistory"
                 @toggle-select="toggleSelect"
+                @toggle-select-all="toggleSelectAll"
+                @sort-change="handleSortChange"
                 @share="handleShare"
                 @preview="handlePreview"
                 @open-folder="handleOpenFolder"
@@ -542,6 +546,9 @@
               }}
             </span>
             <span v-if="selectedCount > 0">已选 {{ selectedCount }} 项</span>
+            <span class="desktop-status-shortcuts is-hidden-touch">
+              Ctrl/⌘+A 全选 · Delete 删除 · F2 重命名 · Enter 打开 · Esc 退出
+            </span>
           </div>
         </div>
       </template>
@@ -925,6 +932,7 @@ import { loadHighlight } from "../../utils/highlight";
 import {
   sortBrowserItems,
   sortFiles,
+  type SortField,
   type SortState,
 } from "../../utils/fileSort";
 
@@ -1388,8 +1396,75 @@ onMounted(() => {
   };
 
   const onDocKeydown = (e: KeyboardEvent) => {
-    if (e.key !== "Escape") return;
-    if (desktopSearchOpen.value) closeDesktopSearch();
+    if (e.defaultPrevented) return;
+
+    // Escape 逐层退出：高级搜索 → 预览 → 批量模式 → 选择
+    if (e.key === "Escape") {
+      if (desktopSearchOpen.value) {
+        closeDesktopSearch();
+        return;
+      }
+      if (preview.value.open) {
+        closePreview();
+        return;
+      }
+      if (batchMode.value) {
+        toggleBatchMode();
+        return;
+      }
+      if (selectedPaths.value.size > 0) clearSelection();
+      return;
+    }
+
+    // 输入控件或弹窗内不触发文件操作快捷键
+    if (anyOverlayOpen() || isTypingTarget(e.target)) return;
+
+    const modifier = e.ctrlKey || e.metaKey;
+    if (modifier && (e.key === "a" || e.key === "A")) {
+      e.preventDefault();
+      if (!batchMode.value) batchMode.value = true;
+      selectAllVisible();
+      return;
+    }
+
+    if (e.key === "Delete" || e.key === "Backspace") {
+      if (selectedPaths.value.size > 0) {
+        e.preventDefault();
+        void batchDelete();
+        return;
+      }
+      const active = findActiveItem();
+      if (active) {
+        e.preventDefault();
+        void handleDelete(active);
+      }
+      return;
+    }
+
+    if (e.key === "F2") {
+      if (selectedPaths.value.size === 1) {
+        e.preventDefault();
+        void renameSelected();
+        return;
+      }
+      const active = findActiveItem();
+      if (active) {
+        e.preventDefault();
+        void handleRenameEntry(active);
+      }
+      return;
+    }
+
+    if (e.key === "Enter") {
+      const active = findActiveItem();
+      if (!active) return;
+      e.preventDefault();
+      if (active.kind === "directory") {
+        handleOpenFolder(active);
+      } else {
+        handlePreview(active);
+      }
+    }
   };
 
   document.addEventListener("click", onDocPointer, true);
@@ -2345,6 +2420,46 @@ defineExpose({
   searchLoading,
 });
 
+const OVERLAY_INPUT_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  if (!element) return false;
+  if (OVERLAY_INPUT_TAGS.has(element.tagName)) return true;
+  return element.isContentEditable === true;
+}
+
+function anyOverlayOpen(): boolean {
+  return (
+    preview.value.open ||
+    showUploader.value ||
+    showHistory.value ||
+    showShareDialog.value ||
+    showMoveDialog.value ||
+    dirManagerOpen.value
+  );
+}
+
+/** 当前键盘操作的目标：优先高亮行，其次唯一的已选条目。 */
+function findActiveItem(): BrowserListItem | undefined {
+  const list = (
+    searchActive.value ? sortedSearchResults.value : navigationListItems.value
+  ) as BrowserListItem[];
+
+  if (desktopActivePath.value) {
+    const active = list.find((file) => file.path === desktopActivePath.value);
+    if (active && !active.uiRole) return active;
+  }
+
+  if (selectedPaths.value.size === 1) {
+    const [only] = selectedPaths.value;
+    const selected = list.find((file) => file.path === only);
+    if (selected && !selected.uiRole) return selected;
+  }
+
+  return undefined;
+}
+
 function toggleSelect(file: FileInfo) {
   desktopActivePath.value = file.path;
   const next = new Set(selectedPaths.value);
@@ -2354,6 +2469,32 @@ function toggleSelect(file: FileInfo) {
     next.add(file.path);
   }
   selectedPaths.value = next;
+}
+
+/** 点击表头：切换字段时改字段，重复点击同一字段时切换升降序。 */
+function handleSortChange(field: SortField) {
+  if (fileView.sortField === field) {
+    fileView.toggleSortDirection();
+    return;
+  }
+  fileView.setSortField(field);
+}
+
+function toggleSelectAll() {
+  if (!batchMode.value) return;
+  const selectable = (
+    searchActive.value ? sortedSearchResults.value : navigationListItems.value
+  ).filter((file) => !(file as BrowserListItem).uiRole);
+
+  const allSelected =
+    selectable.length > 0 &&
+    selectable.every((file) => selectedPaths.value.has(file.path));
+
+  if (allSelected) {
+    clearSelection();
+  } else {
+    selectAllVisible();
+  }
 }
 
 function clearSelection() {
@@ -2787,6 +2928,12 @@ async function renameSelected() {
   background: rgba(248, 250, 253, 0.92);
   color: #627386;
   font-size: 0.78rem;
+}
+
+.desktop-status-shortcuts {
+  margin-left: auto;
+  color: #90a0b2;
+  white-space: nowrap;
 }
 
 .desktop-detail-card {

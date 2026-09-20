@@ -144,4 +144,63 @@ describe("FileBrowser.vue", () => {
       expect(container.querySelectorAll(".file-card").length).toBe(2);
     });
   });
+
+  it("selects every entry with Ctrl+A and exits batch mode with Escape", async () => {
+    getFilesMock.mockResolvedValue([
+      {
+        id: "a",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file",
+        size_bytes: 10,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+      {
+        id: "b",
+        name: "b.txt",
+        path: "b.txt",
+        kind: "file",
+        size_bytes: 20,
+        created_at: "2026-04-11T00:00:00.000Z",
+        updated_at: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const { findAllByText, findByText, queryByText } = renderWithProviders(
+      FileBrowser as any,
+    );
+    await findByText("a.txt");
+
+    await fireEvent.keyDown(document, { key: "a", ctrlKey: true });
+    expect((await findAllByText("已选 2 项")).length).toBeGreaterThan(0);
+
+    await fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => {
+      expect(queryByText("已选 2 项")).not.toBeInTheDocument();
+    });
+  });
+
+  it("ignores shortcuts while typing in an input", async () => {
+    getFilesMock.mockResolvedValue([
+      {
+        id: "a",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file",
+        size_bytes: 10,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+
+    const { findByText, findByPlaceholderText, queryByText } =
+      renderWithProviders(FileBrowser as any);
+    await findByText("a.txt");
+
+    const input = await findByPlaceholderText("搜索名称、扩展名或路径");
+    await fireEvent.keyDown(input, { key: "a", ctrlKey: true });
+
+    expect(queryByText("已选 1 项")).not.toBeInTheDocument();
+  });
 });
