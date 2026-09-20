@@ -11,9 +11,9 @@ import Notification from "./components/common/Notification.vue";
 import DialogHost from "./components/common/DialogHost.vue";
 </script>
 
-<style>
-/* 引入Bulma样式 */
-@import "bulma/css/bulma.min.css";
+<style lang="scss">
+/* 按需引入 Bulma（见 src/styles/bulma.scss） */
+@use "./styles/bulma";
 
 /* 自定义全局样式 */
 * {

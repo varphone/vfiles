@@ -1,0 +1,71 @@
+//! 按需引入的 Bulma 入口。
+//!
+//! 直接引入 `bulma/css/bulma.min.css` 会把全部组件（含未使用的 menu/panel/
+//! message/pagination、grid 与 hero 等）打包进首屏 CSS。这里只 `@use` 实际用到的
+//! 局部模块，并固定为浅色主题（应用自定义样式均为浅色，避免与 Bulma 的
+//! `prefers-color-scheme: dark` 变量混搭出“深色组件 + 浅色面板”的不一致）。
+//!
+//! 新增 UI 时如果用到新的 Bulma 组件，请在此处补上对应模块；
+//! 若将来要正式支持暗色主题，把 light/setup 的组合替换为 `@use "bulma/sass/themes";`
+//! 并补齐自定义样式即可。
+
+// 基础：CSS 变量、主题、重置与全局排版
+@use "bulma/sass/utilities";
+@use "bulma/sass/utilities/initial-variables" as iv;
+@use "bulma/sass/utilities/css-variables" as cv;
+@use "bulma/sass/themes/light";
+@use "bulma/sass/themes/setup";
+@use "bulma/sass/base/minireset";
+@use "bulma/sass/base/generic";
+@use "bulma/sass/base/animations";
+
+// 元素
+@use "bulma/sass/elements/box";
+@use "bulma/sass/elements/button";
+@use "bulma/sass/elements/content";
+@use "bulma/sass/elements/delete";
+@use "bulma/sass/elements/icon";
+@use "bulma/sass/elements/image";
+@use "bulma/sass/elements/loader";
+@use "bulma/sass/elements/notification";
+@use "bulma/sass/elements/progress";
+@use "bulma/sass/elements/table";
+@use "bulma/sass/elements/tag";
+@use "bulma/sass/elements/title";
+
+// 表单（field/control/help 在 tools 中）
+@use "bulma/sass/form/shared";
+@use "bulma/sass/form/input-textarea";
+@use "bulma/sass/form/select";
+@use "bulma/sass/form/checkbox-radio";
+@use "bulma/sass/form/file";
+@use "bulma/sass/form/tools";
+
+// 组件（menu/panel/message/pagination 未使用）
+@use "bulma/sass/components/breadcrumb";
+@use "bulma/sass/components/card";
+@use "bulma/sass/components/dropdown";
+@use "bulma/sass/components/modal";
+@use "bulma/sass/components/navbar";
+@use "bulma/sass/components/tabs";
+
+// 布局（hero 未使用）
+@use "bulma/sass/layout/container";
+@use "bulma/sass/layout/footer";
+@use "bulma/sass/layout/level";
+@use "bulma/sass/layout/media";
+@use "bulma/sass/layout/section";
+
+// 辅助类（flex/间距/排版/颜色/可见性等，动态拼接的类名依赖它们）
+@use "bulma/sass/helpers";
+
+// 浅色主题变量（固定浅色，不跟随系统暗色）
+#{iv.$variables-host} {
+  @include light.light-theme;
+  @include setup.setup-theme;
+}
+
+@include cv.bulma-theme($name: "light") {
+  @include light.light-theme;
+  @include setup.setup-theme;
+}
