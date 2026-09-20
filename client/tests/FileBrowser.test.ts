@@ -645,6 +645,120 @@ describe("FileBrowser.vue loading state", () => {
     await findByText("此文件夹为空");
   });
 });
+describe("FileBrowser.vue keyboard navigation", () => {
+  function files() {
+    return ["a.txt", "b.txt", "c.txt"].map((name, index) => ({
+      id: name,
+      name,
+      path: name,
+      kind: "file",
+      size_bytes: (index + 1) * 10,
+      created_at: "2026-04-10T00:00:00.000Z",
+      updated_at: "2026-04-10T00:00:00.000Z",
+    }));
+  }
+
+  /** 单选场景下高亮行即活动行；多选时请用 selectedNames。 */
+  function activeName(container: Element) {
+    return container
+      .querySelector(".desktop-file-row.is-row-selected .desktop-name-text")
+      ?.textContent?.trim();
+  }
+
+  function selectedNames(container: Element) {
+    return Array.from(
+      container.querySelectorAll(".desktop-file-row.is-row-selected"),
+    ).map((row) =>
+      row.querySelector(".desktop-name-text")?.textContent?.trim(),
+    );
+  }
+
+  it("moves the active row with the arrow keys", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(files());
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("a.txt");
+
+    // 初始活动行是第一个真实条目
+    await waitFor(() => expect(activeName(container)).toBe("a.txt"));
+
+    await fireEvent.keyDown(document, { key: "ArrowDown" });
+    await waitFor(() => expect(activeName(container)).toBe("b.txt"));
+
+    await fireEvent.keyDown(document, { key: "ArrowDown" });
+    await waitFor(() => expect(activeName(container)).toBe("c.txt"));
+
+    // 到底后不再移动
+    await fireEvent.keyDown(document, { key: "ArrowDown" });
+    await waitFor(() => expect(activeName(container)).toBe("c.txt"));
+
+    await fireEvent.keyDown(document, { key: "ArrowUp" });
+    await waitFor(() => expect(activeName(container)).toBe("b.txt"));
+
+    await fireEvent.keyDown(document, { key: "End" });
+    await waitFor(() => expect(activeName(container)).toBe("c.txt"));
+
+    await fireEvent.keyDown(document, { key: "Home" });
+    await waitFor(() => expect(activeName(container)).toBe("a.txt"));
+  });
+
+  it("extends the selection with shift and arrow keys", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(files());
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("a.txt");
+    await waitFor(() => expect(activeName(container)).toBe("a.txt"));
+
+    // 先用 Ctrl(⌘) 点击设下区间锚点，再用 Shift+方向键扩展
+    const first = await findByText("a.txt");
+    await fireEvent.click(first, { ctrlKey: true });
+    await fireEvent.keyDown(document, { key: "ArrowDown", shiftKey: true });
+
+    // 区间选择会同时高亮 a.txt 与 b.txt；再按一次扩展到 c.txt
+    await waitFor(() =>
+      expect(selectedNames(container)).toEqual(["a.txt", "b.txt"]),
+    );
+
+    await fireEvent.keyDown(document, { key: "ArrowDown", shiftKey: true });
+    await waitFor(() =>
+      expect(selectedNames(container)).toEqual(["a.txt", "b.txt", "c.txt"]),
+    );
+  });
+
+  it("anchors the first shift-extension at the current row", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(files());
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("a.txt");
+    await waitFor(() => expect(activeName(container)).toBe("a.txt"));
+
+    // 没有任何点击时，第一次 Shift+↓ 应从当前行开始形成区间
+    await fireEvent.keyDown(document, { key: "ArrowDown", shiftKey: true });
+
+    await waitFor(() =>
+      expect(selectedNames(container)).toEqual(["a.txt", "b.txt"]),
+    );
+  });
+
+  it("ignores arrow keys while typing in an input", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(files());
+
+    const { findByPlaceholderText, findByText, container } =
+      renderWithProviders(FileBrowser as any);
+    await findByText("a.txt");
+    await waitFor(() => expect(activeName(container)).toBe("a.txt"));
+
+    const input = await findByPlaceholderText("搜索名称、扩展名或路径");
+    await fireEvent.keyDown(input, { key: "ArrowDown" });
+
+    expect(activeName(container)).toBe("a.txt");
+  });
+});
+
 describe("FileBrowser.vue directory tree", () => {
   it("shows the tree on wide screens and navigates from it", async () => {
     // 宽屏：仅 min-width 查询为真

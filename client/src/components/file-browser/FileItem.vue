@@ -3,6 +3,7 @@
   <tr
     v-if="desktop"
     class="desktop-file-row"
+    :data-vfiles-path="file.path"
     :class="{ 'drop-target': dragOver, 'is-row-selected': selected }"
     :draggable="!isNavigationShortcut"
     @click="handleClick"

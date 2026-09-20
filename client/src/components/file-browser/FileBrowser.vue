@@ -430,7 +430,8 @@
           </span>
           <span v-if="selectedCount > 0">已选 {{ selectedCount }} 项</span>
           <span class="desktop-status-shortcuts is-hidden-touch">
-            Ctrl/⌘+A 全选 · Delete 删除 · F2 重命名 · Enter 打开 · Esc 退出
+            Ctrl/⌘+A 全选 · ↑↓ 移动 · Delete 删除 · F2 重命名 · Enter 打开 · Esc
+            退出
           </span>
         </div>
       </template>
@@ -1292,6 +1293,17 @@ onMounted(() => {
       return;
     }
 
+    if (
+      e.key === "ArrowUp" ||
+      e.key === "ArrowDown" ||
+      e.key === "Home" ||
+      e.key === "End"
+    ) {
+      e.preventDefault();
+      moveActiveRow(e.key, e.shiftKey);
+      return;
+    }
+
     if (e.key === "F2") {
       if (selectedPaths.value.size === 1) {
         e.preventDefault();
@@ -1831,6 +1843,75 @@ function findActiveItem(): BrowserListItem | undefined {
   }
 
   return undefined;
+}
+
+/**
+ * 方向键 / Home / End 移动活动行（主流文件管理器的基本键盘操作）。
+ *
+ * - 普通方向键：移动高亮行，批量模式下选择也跟随移动；
+ * - Shift + 方向键：从上次选中项扩展到当前行（复用 useFileSelection 的区间选择）；
+ * - `.`/`..` 快捷项参与移动，但不参与选择（与鼠标点击一致）。
+ */
+function moveActiveRow(key: string, shift: boolean) {
+  // `.`/`..` 是导航快捷项而不是真实条目：方向键只在真实条目间移动，
+  // 与 Shift 区间选择（useFileSelection 的 selectableItems）保持一致。
+  const list = (
+    searchActive.value ? sortedSearchResults.value : navigationListItems.value
+  ).filter((item) => !(item as BrowserListItem).uiRole);
+  if (list.length === 0) return;
+
+  const currentIndex = list.findIndex(
+    (item) => item.path === desktopActivePath.value,
+  );
+  let nextIndex: number;
+  switch (key) {
+    case "ArrowUp":
+      nextIndex = currentIndex <= 0 ? 0 : currentIndex - 1;
+      break;
+    case "ArrowDown":
+      nextIndex =
+        currentIndex === -1 ? 0 : Math.min(list.length - 1, currentIndex + 1);
+      break;
+    case "Home":
+      nextIndex = 0;
+      break;
+    case "End":
+      nextIndex = list.length - 1;
+      break;
+    default:
+      return;
+  }
+
+  const next = list[nextIndex];
+  if (!next) return;
+
+  const previousPath = desktopActivePath.value;
+  const previousIsReal = list.some((item) => item.path === previousPath);
+
+  desktopActivePath.value = next.path;
+  if (shift) {
+    // 还没有锚点时，把移动前的活动行作为区间起点，保证第一次 Shift+方向键
+    // 就能选中「原位置 → 新位置」的区间
+    if (!lastSelectedPath.value && previousIsReal) {
+      lastSelectedPath.value = previousPath;
+    }
+    handleModifierSelect({ file: next, shift: true, meta: false });
+  } else if (batchMode.value) {
+    selectedPaths.value = new Set([next.path]);
+  }
+
+  // 目标行可能还没渲染（分批渲染），先补齐渲染范围再滚动到可见区域
+  if (nextIndex >= visibleCount.value) {
+    visibleCount.value = Math.min(activeList.value.length, nextIndex + 1);
+  }
+  void nextTick().then(() => scrollActiveIntoView(next.path));
+}
+
+function scrollActiveIntoView(path: string) {
+  if (typeof document === "undefined") return;
+  const selector = `[data-vfiles-path="${CSS.escape(path)}"]`;
+  const element = document.querySelector<HTMLElement>(selector);
+  element?.scrollIntoView?.({ block: "nearest" });
 }
 
 function handleContextMenu(payload: { file: FileInfo; x: number; y: number }) {

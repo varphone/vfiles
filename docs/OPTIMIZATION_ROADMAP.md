@@ -16,11 +16,11 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 49 实测）
+### 验证基线（round 50 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：39 个文件 / **243** 个用例通过；`vue-tsc`、`eslint`、`prettier`
+- `client` 单测：39 个文件 / **247** 个用例通过；`vue-tsc`、`eslint`、`prettier`
   通过。
 - 后端：`cargo test --workspace` 全部通过、`clippy --all-targets` 无告警、`fmt`
   干净（`frontend.rs` 的历史格式差异保持原样）。
@@ -879,6 +879,21 @@
 - 冒烟：真实接口 `POST /api/files/move` 冲突返回
   `{"code":"PATH_CONFLICT","details":{"path":"b.txt"}}`；浏览器内重命名冲突的提示为
   **「目标路径已被占用：b.txt」**，无控制台报错。
+
+### 2.57 方向键导航与 Shift 区间选择（round 50，交互）
+
+- 背景：键盘此前只支持 Ctrl/⌘+A、Delete、F2、Enter、Esc，**没有方向键导航**——主流
+  文件管理器里上下键移动高亮是最基本的操作。
+- `moveActiveRow()`：↑/↓ 逐行移动、Home/End 跳到首尾；只在**真实条目**之间移动
+  （`.`/`..` 是导航快捷项，跳过它们，与 Shift 区间选择保持一致）；批量模式下选择跟随
+  移动；目标行若尚未渲染（分批渲染）会先补齐渲染范围，再 `scrollIntoView` 滚动到可见。
+- Shift + ↑/↓：复用 `useFileSelection` 的区间选择；**第一次按 Shift 时以移动前的活动行
+  作为锚点**，因此首按即可选中「原位置 → 新位置」的区间。
+- 行与卡片新增 `data-vfiles-path`，供滚动定位；状态栏快捷键提示补充 `↑↓ 移动`。
+- 测试：新增 4 个用例（方向键移动与越界不变、Home/End、Shift 区间扩展、Shift 首按锚点）
+  以及「输入框内不触发方向键」的回归。
+- 冒烟：真实浏览器中 `initial f01 → ↓ f02 → End f08 → Home f01`；Shift+↓ 连续两次
+  得到 `[f01,f02]` → `[f01,f02,f03]`；无控制台报错。
 
 ## 3. 后续迭代计划（按优先级）
 
