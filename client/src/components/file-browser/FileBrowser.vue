@@ -163,109 +163,21 @@
               >
                 <IconChecklist :size="18" />
               </button>
-              <div ref="desktopSearchBoxRef" class="desktop-search-box">
-                <div class="desktop-search-inline">
-                  <div class="control desktop-search-field">
-                    <input
-                      :ref="setDesktopSearchInput"
-                      v-model="searchQuery"
-                      class="input is-small desktop-search-control"
-                      type="text"
-                      :placeholder="
-                        searchMode === 'content'
-                          ? '搜索当前工作区中的文本内容'
-                          : '搜索名称、扩展名或路径'
-                      "
-                      list="vfiles-search-history-desktop"
-                      @keyup.enter="runDesktopSearch"
-                    />
-                    <datalist id="vfiles-search-history-desktop">
-                      <option
-                        v-for="item in searchHistory"
-                        :key="item"
-                        :value="item"
-                      />
-                    </datalist>
-                  </div>
-
-                  <div class="desktop-search-action-group">
-                    <button
-                      class="vf-ghost-button desktop-search-button"
-                      :class="{ 'is-active': searchActive }"
-                      :disabled="searchLoading"
-                      @click="runDesktopSearch"
-                    >
-                      <IconSearch :size="16" />
-                      <span>搜索</span>
-                    </button>
-                    <button
-                      class="vf-icon-button desktop-search-toggle"
-                      :class="{
-                        'is-active':
-                          desktopSearchOpen || desktopSearchFiltersActive,
-                        'is-open': desktopSearchOpen,
-                      }"
-                      title="高级搜索"
-                      aria-label="高级搜索"
-                      :aria-expanded="desktopSearchOpen"
-                      @click="toggleDesktopSearch"
-                    >
-                      <IconChevronDown :size="16" />
-                    </button>
-                  </div>
-                </div>
-
-                <div
-                  v-if="desktopSearchOpen"
-                  class="desktop-search-panel desktop-search-panel--dropdown"
-                >
-                  <div class="desktop-search-panel-heading">高级搜索</div>
-
-                  <div class="desktop-search-filters">
-                    <label class="checkbox desktop-filter-pill">
-                      <input
-                        type="checkbox"
-                        v-model="searchContent"
-                        :disabled="searchLoading || !searchContentEnabled"
-                      />
-                      全文搜索
-                    </label>
-                    <p
-                      v-if="!searchContentEnabled"
-                      class="is-size-7 has-text-warning ml-2"
-                    >
-                      (未启用)
-                    </p>
-
-                    <div class="select is-small desktop-filter-select">
-                      <select v-model="searchType" :disabled="searchLoading">
-                        <option value="all">全部</option>
-                        <option value="file">仅文件</option>
-                        <option value="directory">仅文件夹</option>
-                      </select>
-                    </div>
-
-                    <label class="checkbox desktop-filter-pill">
-                      <input
-                        type="checkbox"
-                        v-model="searchScopeCurrent"
-                        :disabled="searchLoading"
-                      />
-                      仅当前目录
-                    </label>
-                  </div>
-
-                  <div class="desktop-search-dropdown-actions">
-                    <button
-                      class="button is-small is-light desktop-command-button desktop-search-clear"
-                      :disabled="searchLoading"
-                      @click="clearDesktopSearch"
-                    >
-                      清空搜索
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <BrowserSearchBox
+                v-model="searchQuery"
+                v-model:open="desktopSearchOpen"
+                v-model:content="searchContent"
+                v-model:type="searchType"
+                v-model:scope-current="searchScopeCurrent"
+                :loading="searchLoading"
+                :active="searchActive"
+                :content-enabled="searchContentEnabled"
+                :filters-active="desktopSearchFiltersActive"
+                :history="searchHistory"
+                :register-input="setDesktopSearchInput"
+                @search="runDesktopSearch"
+                @clear="clearDesktopSearch"
+              />
 
               <button
                 class="vf-primary-button desktop-primary-action"
@@ -883,7 +795,6 @@ import {
   IconFolderPlus,
   IconAlertCircle,
   IconSearch,
-  IconChevronDown,
   IconArrowLeft,
   IconChecklist,
   IconRefresh,
@@ -907,6 +818,7 @@ import FileList from "./FileList.vue";
 import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
 import FilePreviewModal from "./FilePreviewModal.vue";
+import BrowserSearchBox from "./BrowserSearchBox.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
 import Breadcrumb from "./Breadcrumb.vue";
@@ -1048,7 +960,6 @@ const {
   searchMode,
   desktopSearchFiltersActive,
   closeDesktopSearch,
-  toggleDesktopSearch,
   clearSearch,
   runSearch,
   doSearch,
@@ -1936,163 +1847,6 @@ function handleSortChange(field: SortField) {
 
 .desktop-primary-action {
   margin-left: 0.25rem;
-}
-
-/* 搜索框占据剩余宽度但不过分拉伸，右侧留给主操作按钮 */
-.desktop-search-box {
-  position: relative;
-  z-index: 3;
-  margin-left: auto;
-  flex: 1 1 18rem;
-  min-width: 8rem;
-  max-width: 26rem;
-}
-
-.desktop-search-inline {
-  display: flex;
-  align-items: stretch;
-  gap: 0.45rem;
-}
-
-.desktop-search-field {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.desktop-command-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.38rem;
-  min-height: 2rem;
-  border-radius: 999px;
-  padding-inline: 0.82rem;
-  font-weight: 600;
-}
-
-.desktop-search-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-  padding: 0.72rem;
-  border-radius: 14px;
-  border: 1px solid var(--explorer-panel-border);
-  background: var(--explorer-panel-bg);
-}
-
-.desktop-search-panel--dropdown {
-  position: absolute;
-  top: calc(100% + 0.45rem);
-  left: auto;
-  right: 0;
-  width: max-content;
-  max-width: min(calc(100vw - 2rem), 28rem);
-  z-index: 25;
-  background: var(--vf-surface);
-  opacity: 1;
-  isolation: isolate;
-  box-shadow: var(--vf-shadow-lg);
-}
-
-.desktop-search-panel--dropdown::after {
-  content: "";
-  position: absolute;
-  right: 1.25rem;
-  top: -0.42rem;
-  width: 0.82rem;
-  height: 0.82rem;
-  background: var(--vf-surface);
-  border-left: 1px solid var(--explorer-panel-border);
-  border-top: 1px solid var(--explorer-panel-border);
-  transform: rotate(45deg);
-}
-
-.desktop-search-panel-heading {
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--vf-text-muted);
-}
-
-/* 搜索输入做成主流云盘的胶囊搜索框 */
-.desktop-search-control {
-  min-height: 2rem;
-  border-radius: var(--vf-radius-pill);
-  border-color: transparent;
-  background: var(--vf-surface-sunken);
-  box-shadow: none;
-}
-
-.desktop-search-control:focus,
-.desktop-search-control:focus-within {
-  border-color: var(--vf-accent);
-  box-shadow: 0 0 0 3px var(--vf-focus-ring);
-  background: var(--vf-surface);
-}
-
-.desktop-search-action-group {
-  display: inline-flex;
-  align-items: stretch;
-  flex-shrink: 0;
-}
-
-.desktop-search-button {
-  justify-content: center;
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-
-.desktop-search-toggle {
-  padding-inline: 0.68rem;
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-}
-
-.desktop-search-toggle svg {
-  transition: transform 0.18s ease;
-}
-
-.desktop-search-toggle.is-open svg {
-  transform: rotate(180deg);
-}
-
-.desktop-search-filters {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  flex-wrap: wrap;
-  color: var(--vf-text-muted);
-  font-size: 0.8rem;
-}
-
-.desktop-filter-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.42rem;
-  padding: 0.38rem 0.72rem;
-  border-radius: 999px;
-  border: 1px solid var(--vf-border);
-  background: var(--vf-surface-sunken);
-  line-height: 1;
-}
-
-.desktop-filter-pill input {
-  margin: 0;
-}
-
-.desktop-filter-select select {
-  border-radius: 999px;
-  background-color: var(--vf-surface);
-}
-
-.desktop-search-dropdown-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.desktop-search-clear {
-  min-width: 0;
 }
 
 .desktop-list-primary-shell {

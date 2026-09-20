@@ -1,0 +1,114 @@
+import { fireEvent, render, screen } from "@testing-library/vue";
+import { describe, expect, it, vi } from "vitest";
+import BrowserSearchBox from "../src/components/file-browser/BrowserSearchBox.vue";
+
+function renderBox(props: Record<string, unknown> = {}) {
+  return render(BrowserSearchBox as any, {
+    props: {
+      modelValue: "",
+      open: false,
+      content: false,
+      type: "all",
+      scopeCurrent: false,
+      loading: false,
+      active: false,
+      contentEnabled: true,
+      filtersActive: false,
+      history: ["报告", "notes"],
+      ...props,
+    },
+  });
+}
+
+describe("BrowserSearchBox.vue", () => {
+  it("describes what will be searched", async () => {
+    const { unmount } = renderBox();
+    expect(
+      screen.getByPlaceholderText("搜索名称、扩展名或路径"),
+    ).toBeInTheDocument();
+    unmount();
+
+    renderBox({ content: true });
+    expect(
+      screen.getByPlaceholderText("搜索当前工作区中的文本内容"),
+    ).toBeInTheDocument();
+  });
+
+  it("emits input changes and the search action", async () => {
+    const { emitted } = renderBox();
+    const input = screen.getByPlaceholderText("搜索名称、扩展名或路径");
+
+    await fireEvent.update(input, "报告");
+    expect(emitted()["update:modelValue"]?.[0]).toEqual(["报告"]);
+
+    await fireEvent.keyUp(input, { key: "Enter" });
+    expect(emitted()["search"]).toHaveLength(1);
+
+    await fireEvent.click(screen.getByText("搜索"));
+    expect(emitted()["search"]).toHaveLength(2);
+  });
+
+  it("toggles the advanced panel", async () => {
+    const { emitted } = renderBox({ open: false });
+    await fireEvent.click(screen.getByLabelText("高级搜索"));
+    expect(emitted()["update:open"]?.[0]).toEqual([true]);
+  });
+
+  it("only renders the filters when open", () => {
+    const { unmount } = renderBox({ open: false });
+    expect(screen.queryByText("全文搜索")).toBeNull();
+    unmount();
+
+    renderBox({ open: true });
+    expect(screen.getByText("全文搜索")).toBeInTheDocument();
+    expect(screen.getByText("仅当前目录")).toBeInTheDocument();
+  });
+
+  it("emits filter changes", async () => {
+    const { emitted } = renderBox({ open: true });
+
+    await fireEvent.click(screen.getByLabelText("全文搜索"));
+    expect(emitted()["update:content"]?.[0]).toEqual([true]);
+
+    await fireEvent.update(
+      screen.getByRole("combobox", { name: "搜索类型" }),
+      "directory",
+    );
+    expect(emitted()["update:type"]?.[0]).toEqual(["directory"]);
+
+    await fireEvent.click(screen.getByLabelText("仅当前目录"));
+    expect(emitted()["update:scopeCurrent"]?.[0]).toEqual([true]);
+
+    await fireEvent.click(screen.getByText("清空搜索"));
+    expect(emitted()["clear"]).toHaveLength(1);
+  });
+
+  it("disables full-text search when the feature is off", () => {
+    renderBox({ open: true, contentEnabled: false });
+
+    expect(screen.getByText("(未启用)")).toBeInTheDocument();
+    expect(
+      (screen.getByLabelText("全文搜索") as HTMLInputElement).disabled,
+    ).toBe(true);
+  });
+
+  it("registers the input element for focusing", () => {
+    const registerInput = vi.fn();
+    const { unmount } = renderBox({ registerInput });
+
+    expect(registerInput).toHaveBeenCalled();
+    const lastRegistered = () =>
+      registerInput.mock.calls[registerInput.mock.calls.length - 1]?.[0];
+    expect(lastRegistered()).toBeInstanceOf(HTMLInputElement);
+
+    unmount();
+    expect(lastRegistered()).toBeNull();
+  });
+
+  it("closes the panel when clicking outside", async () => {
+    const { emitted } = renderBox({ open: true });
+
+    await fireEvent.click(document.body);
+    expect(emitted()["update:open"]?.[0]).toEqual([false]);
+  });
+});
