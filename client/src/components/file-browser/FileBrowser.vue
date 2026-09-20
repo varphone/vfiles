@@ -867,7 +867,6 @@ import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 import { useFileViewStore } from "../../stores/fileView.store";
-import { filesService } from "../../services/files.service";
 import FileList from "./FileList.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
@@ -885,6 +884,7 @@ import { useFilePreview } from "../../composables/useFilePreview";
 import { useFileSearch } from "../../composables/useFileSearch";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
+import { useMoveDialog } from "../../composables/useMoveDialog";
 import type { FileInfo } from "../../types";
 import {
   sortBrowserItems,
@@ -892,13 +892,7 @@ import {
   type SortField,
   type SortState,
 } from "../../utils/fileSort";
-import {
-  buildSiblingPath,
-  isSafeDirName,
-  normalizeTargetDirectory,
-  parentDirectoryPath,
-  planMoveOperations,
-} from "../../utils/filePaths";
+import { buildSiblingPath, isSafeDirName } from "../../utils/filePaths";
 
 const filesStore = useFilesStore();
 const appStore = useAppStore();
@@ -929,11 +923,7 @@ function updateIsMobile() {
 const showUploader = ref(false);
 const showHistory = ref(false);
 const showShareDialog = ref(false);
-const showMoveDialog = ref(false);
 const selectedFile = ref<FileInfo | null>(null);
-const moveDialogItems = ref<FileInfo[]>([]);
-const moveDialogInitialPath = ref("");
-const moveDialogSubmitting = ref(false);
 const fileUploaderRef = ref<InstanceType<typeof FileUploader> | null>(null);
 const expandedFilePath = ref<string>("");
 
@@ -1013,6 +1003,28 @@ const {
   setActivePath: (path) => {
     desktopActivePath.value = path;
   },
+});
+
+const {
+  showMoveDialog,
+  moveDialogItems,
+  moveDialogInitialPath,
+  moveDialogSubmitting,
+  openMoveDialog,
+  closeMoveDialog,
+  openMoveForEntry,
+  submitMoveDialog,
+} = useMoveDialog({
+  currentPath,
+  refreshAfterMutation,
+  // 选择相关的 helper 在下方 useFileSelection 中定义，这里延迟调用即可
+  replaceSelectedPath: (oldPath, newPath) =>
+    replaceSelectedPath(oldPath, newPath),
+  getActivePath: () => desktopActivePath.value,
+  setActivePath: (path) => {
+    desktopActivePath.value = path;
+  },
+  clearSelection: () => clearSelection(),
 });
 
 const {
@@ -1268,25 +1280,6 @@ function normalizeEntryName(
     return null;
   }
   return name;
-}
-
-function resetMoveDialogState() {
-  showMoveDialog.value = false;
-  moveDialogItems.value = [];
-  moveDialogInitialPath.value = "";
-  moveDialogSubmitting.value = false;
-}
-
-function openMoveDialog(items: FileInfo[], initialPath: string) {
-  if (items.length === 0) return;
-  moveDialogItems.value = items;
-  moveDialogInitialPath.value = normalizeTargetDirectory(initialPath);
-  showMoveDialog.value = true;
-}
-
-function closeMoveDialog() {
-  if (moveDialogSubmitting.value) return;
-  resetMoveDialogState();
 }
 
 // 4.2: 移动端无限滚动（分批渲染）
@@ -1646,56 +1639,8 @@ async function handleRenameEntry(file: FileInfo) {
   }
 }
 
-async function handleMoveEntry(file: FileInfo) {
-  openMoveDialog([file], parentDirectoryPath(file.path));
-}
-
-async function submitMoveDialog(targetDir: string) {
-  const items = moveDialogItems.value.slice();
-  if (items.length === 0) return;
-
-  const normalizedTargetDir = normalizeTargetDirectory(targetDir);
-  moveDialogSubmitting.value = true;
-
-  try {
-    const targetEntries = await filesService.getFiles(normalizedTargetDir);
-    const operations = planMoveOperations(
-      items,
-      normalizedTargetDir,
-      targetEntries,
-    );
-
-    for (const { file, to } of operations) {
-      await filesService.movePath(
-        file.path,
-        to,
-        `移动${file.kind === "directory" ? "目录" : "文件"}: ${file.path} -> ${to}`,
-      );
-      replaceSelectedPath(file.path, to);
-      if (desktopActivePath.value === file.path) {
-        desktopActivePath.value =
-          parentDirectoryPath(to) === currentPath.value ? to : "";
-      }
-    }
-
-    const successMessage =
-      items.length === 1
-        ? items[0]?.kind === "directory"
-          ? "目录移动成功"
-          : "文件移动成功"
-        : `已移动 ${items.length} 个项目`;
-
-    if (items.length > 1) {
-      clearSelection();
-    }
-
-    appStore.success(successMessage);
-    resetMoveDialogState();
-    await refreshAfterMutation();
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : "移动失败");
-    moveDialogSubmitting.value = false;
-  }
+function handleMoveEntry(file: FileInfo) {
+  openMoveForEntry(file);
 }
 
 function handleViewHistory(file: FileInfo) {
