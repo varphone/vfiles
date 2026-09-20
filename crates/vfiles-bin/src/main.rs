@@ -863,6 +863,12 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     let pool = SqlitePoolFactory::connect(&paths.database).await?;
     tracing::info!("Database connection established");
 
+    // 启动时补齐迁移：老库（例如只在早期版本 init 过的库）不会自动获得新表/索引，
+    // 之前仅在 `vfiles init` 里跑迁移，导致升级二进制后 serve 时报「表不存在」。
+    tracing::info!("Running database migrations...");
+    SqliteMigrations::run(&pool).await?;
+    tracing::info!("Database migrations up to date");
+
     // Create repos
     tracing::debug!("Creating repository instances...");
     let user_repo = SqliteUserRepo::new(pool.clone());

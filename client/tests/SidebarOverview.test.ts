@@ -114,6 +114,18 @@ describe("SidebarOverview.vue", () => {
     expect(events[0][0]).toMatchObject({ path: "docs", kind: "directory" });
   });
 
+  it("still shows usage when only the favorites request fails", async () => {
+    // 老库缺少 favorites 表时接口会 500，但存储用量/最近更新不应因此消失
+    getFavoritesMock.mockRejectedValue(new Error("服务器内部错误"));
+
+    render(SidebarOverview as any);
+
+    expect(await screen.findByText("2.0 KB")).toBeInTheDocument();
+    expect(screen.getByText("report.md")).toBeInTheDocument();
+    expect(screen.queryByText(/服务器内部错误/)).toBeNull();
+    expect(screen.queryByText("收藏")).toBeNull();
+  });
+
   it("keeps failures local instead of throwing", async () => {
     getOverviewMock.mockRejectedValueOnce(new Error("加载概览失败"));
 

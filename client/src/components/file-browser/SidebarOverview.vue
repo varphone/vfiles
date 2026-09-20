@@ -153,20 +153,30 @@ async function removeFavorite(item: FavoriteEntry) {
 async function load() {
   loading.value = true;
   error.value = "";
-  try {
-    const [nextOverview, nextFavorites] = await Promise.all([
-      filesService.getOverview(),
-      filesService.getFavorites(),
-    ]);
-    overview.value = nextOverview;
-    favorites.value = nextFavorites;
-    emit("favorites-changed", nextFavorites);
-  } catch (err) {
+
+  // 两个接口各自独立降级：收藏接口失败（例如服务端缺少 favorites 表）时
+  // 存储用量与最近更新仍应正常显示，反之亦然。
+  const [overviewResult, favoritesResult] = await Promise.allSettled([
+    filesService.getOverview(),
+    filesService.getFavorites(),
+  ]);
+
+  if (overviewResult.status === "fulfilled") {
+    overview.value = overviewResult.value;
+  } else {
     // 概览是辅助信息：失败时只在本区域提示，不影响文件列表
-    error.value = err instanceof Error ? err.message : "加载概览失败";
-  } finally {
-    loading.value = false;
+    const reason = overviewResult.reason;
+    error.value = reason instanceof Error ? reason.message : "加载概览失败";
   }
+
+  if (favoritesResult.status === "fulfilled") {
+    favorites.value = favoritesResult.value;
+    emit("favorites-changed", favoritesResult.value);
+  } else {
+    favorites.value = [];
+  }
+
+  loading.value = false;
 }
 
 onMounted(load);

@@ -1198,6 +1198,29 @@
 - 测试：新增 2 个 `FileBrowser` 用例（面板可见时无操作列表头且每行 5 个单元格；
   面板隐藏时有表头且每行 6 个单元格）。
 
+### 2.73 修复「老库启动不迁移」导致侧栏报错（round 66，稳定性）
+
+- 现象（用户反馈）：在项目目录 `cargo r -- serve` 启动后，侧栏「存储用量」显示
+  「服务器内部错误」，「最近更新」也没有内容。
+- 复现与定位：用项目自带的老库启动，`GET /api/files/overview` 返回 200，但
+  `GET /api/files/favorites` **返回 500**。查库发现 `_sqlx_migrations` 只有 `[1]`，
+  `favorites` 表不存在——因为 **`SqliteMigrations::run` 只在 `vfiles init` 里调用**，
+  `serve` 从不执行迁移：用旧版本 init 出来的库，升级二进制后永远不会补上新表/索引。
+  侧栏 `SidebarOverview.load()` 用 `Promise.all` 同时请求概览与收藏，收藏一旦失败，
+  整段加载失败，于是存储用量与最近更新一起空白。
+- 修复：
+  - `run_serve` 在连接数据库后执行 `SqliteMigrations::run`（幂等；失败即报错退出，
+    不会带着不完整的库对外服务），并补充日志「Running database migrations...
+    / Database migrations up to date」；
+  - `SidebarOverview` 改为 `Promise.allSettled`：概览与收藏**各自独立降级**，
+    收藏接口失败时存储用量与最近更新仍然正常显示（反之亦然）。
+- 验证：用项目里那个只有迁移 1 的老库启动，日志显示迁移执行，`_sqlx_migrations`
+  变为 `[1, 2, 3]` 且 `favorites` 表存在；`/api/files/favorites` 与
+  `/api/files/overview` 均返回 200；浏览器侧栏显示「20.0 MB / 2 文件 · 1 目录」与
+  两条真实最近文件，无失败请求、无控制台报错。
+- 测试：新增 1 个侧栏用例（收藏请求失败时仍显示用量与最近更新、且不显示错误文案）；
+  文档补充升级说明（`serve` 自动迁移）。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
