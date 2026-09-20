@@ -106,7 +106,7 @@
                       <IconUser v-if="!accountInitial" :size="14" />
                       <template v-else>{{ accountInitial }}</template>
                     </span>
-                    <span class="app-bar-account-name is-hidden-touch">
+                    <span class="app-bar-account-name">
                       {{ auth.user?.username || "账号" }}
                     </span>
                     <IconChevronDown :size="14" class="app-bar-account-caret" />
@@ -537,6 +537,14 @@ onMounted(() => {
       const el = accountMenuRef.value;
       if (el && !el.contains(target)) accountMenuOpen.value = false;
     }
+    // 移动端展开的顶栏菜单：点击菜单与汉堡按钮之外也收起
+    if (mobileMenuOpen.value) {
+      const insideMenu =
+        target instanceof Element &&
+        (target.closest(".navbar-menu") !== null ||
+          target.closest(".navbar-burger") !== null);
+      if (!insideMenu) mobileMenuOpen.value = false;
+    }
   };
 
   const onDocKeydown = (e: KeyboardEvent) => {
@@ -544,6 +552,7 @@ onMounted(() => {
     actionMenuOpen.value = false;
     batchMenuOpen.value = false;
     accountMenuOpen.value = false;
+    mobileMenuOpen.value = false;
   };
 
   document.addEventListener("click", onDocPointer, true);
@@ -1150,6 +1159,56 @@ async function renameSelected() {
 }
 
 @media screen and (max-width: 1023px) {
+  /* 展开的顶栏菜单：整行可点、文字与图标左对齐，并显示被 is-hidden-touch
+     隐藏的标签（外观名称、账号名），否则菜单里只剩两个没有说明的图标。 */
+  .app-top-bar .navbar-menu.is-active {
+    /* Bulma 在移动端给 .navbar-menu 设了 overflow: auto，会裁掉展开的下拉；
+       这个菜单只有两行，不需要内部滚动。 */
+    overflow: visible;
+    border-bottom: 1px solid var(--vf-border-weak);
+    box-shadow: var(--vf-shadow-menu);
+  }
+
+  .app-top-bar .navbar-menu.is-active .navbar-item {
+    display: flex;
+    width: 100%;
+    padding: 0.35rem 1rem;
+  }
+
+  /* ThemeToggle 是子组件：内部元素需要 :deep 才能命中（scoped 属性作用于子组件根节点） */
+  .app-top-bar .navbar-menu.is-active .theme-toggle,
+  .app-top-bar .navbar-menu.is-active .navbar-item > .dropdown {
+    width: 100%;
+  }
+
+  .app-top-bar .navbar-menu.is-active :deep(.theme-toggle-button),
+  .app-top-bar .navbar-menu.is-active .app-bar-account {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 0.5rem;
+    height: 2.2rem;
+    padding-left: 0.35rem;
+    font-size: 0.9rem;
+  }
+
+  .app-top-bar .navbar-menu.is-active :deep(.theme-toggle-label) {
+    display: inline !important;
+  }
+
+  .app-top-bar .navbar-menu.is-active .navbar-end .navbar-item + .navbar-item {
+    border-top: 1px solid var(--vf-border-weak);
+  }
+
+  /* 展开的下拉（外观/账号）要盖住下面的行，否则会被后续行遮住 */
+  .app-top-bar .navbar-menu.is-active .dropdown.is-active {
+    position: relative;
+    z-index: 60;
+  }
+
+  .app-top-bar .navbar-menu.is-active .dropdown.is-active .dropdown-menu {
+    z-index: 60;
+  }
+
   .section {
     padding: 0;
   }
