@@ -180,6 +180,26 @@ export function useDownloadQueue(browseCommit: Ref<string | undefined>) {
     downloadQueue.value = downloadQueue.value.filter((item) => item.id !== id);
   }
 
+  /** 重试失败或已取消的条目：重新排队并继续处理。 */
+  function retryItem(id: number) {
+    const item = downloadQueue.value.find((entry) => entry.id === id);
+    if (!item) return;
+    if (item.status === "queued" || item.status === "downloading") return;
+
+    downloadQueue.value = downloadQueue.value.map((entry) =>
+      entry.id === id
+        ? {
+            ...entry,
+            status: "queued",
+            error: undefined,
+            progress: undefined,
+            abort: undefined,
+          }
+        : entry,
+    );
+    void processQueue();
+  }
+
   return {
     queueCollapsed,
     downloadQueue,
@@ -194,5 +214,6 @@ export function useDownloadQueue(browseCommit: Ref<string | undefined>) {
     cancelAll,
     clearFinished,
     removeItem,
+    retryItem,
   };
 }

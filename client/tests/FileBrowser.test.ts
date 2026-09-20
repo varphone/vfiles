@@ -49,21 +49,22 @@ function stubBrowserApis() {
   );
 }
 
-describe("FileBrowser.vue", () => {
-  beforeEach(() => {
-    getFilesMock.mockReset();
-    searchFilesMock.mockReset();
-    deleteFileMock.mockReset();
-    getFileContentMock.mockReset();
-    movePathMock.mockReset();
-    movePathMock.mockResolvedValue({ success: true });
-    getFilesMock.mockResolvedValue([]);
-    searchFilesMock.mockResolvedValue([]);
-    deleteFileMock.mockResolvedValue({ success: true });
-    getFileContentMock.mockResolvedValue(new Blob(["hello preview"]));
-    stubBrowserApis();
-  });
+// 所有 describe 共用：重置服务 mock 并补齐浏览器 API（matchMedia 等）。
+beforeEach(() => {
+  getFilesMock.mockReset();
+  searchFilesMock.mockReset();
+  deleteFileMock.mockReset();
+  getFileContentMock.mockReset();
+  movePathMock.mockReset();
+  movePathMock.mockResolvedValue({ success: true });
+  getFilesMock.mockResolvedValue([]);
+  searchFilesMock.mockResolvedValue([]);
+  deleteFileMock.mockResolvedValue({ success: true });
+  getFileContentMock.mockResolvedValue(new Blob(["hello preview"]));
+  stubBrowserApis();
+});
 
+describe("FileBrowser.vue", () => {
   it("shows empty folder message when no files", async () => {
     const { findByText } = renderWithProviders(FileBrowser as any);
     await findByText("此文件夹为空");
@@ -531,5 +532,36 @@ describe("FileBrowser.vue loading state", () => {
 
     resolveFiles([]);
     await findByText("此文件夹为空");
+  });
+});
+describe("FileBrowser.vue preview retry", () => {
+  it("retries a failed preview", async () => {
+    getFilesMock.mockResolvedValue([
+      {
+        id: "a",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file",
+        size_bytes: 1,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+    getFileContentMock.mockRejectedValueOnce(new Error("预览加载失败"));
+    getFileContentMock.mockResolvedValueOnce(new Blob(["hello preview"]));
+
+    const { findByRole, findByText } = renderWithProviders(
+      FileBrowser as any,
+    );
+
+    const name = await findByText("a.txt");
+    await fireEvent.dblClick(name.closest("tr")!);
+
+    await findByText("预览加载失败");
+    await fireEvent.click(await findByRole("button", { name: /重试/ }));
+
+    await waitFor(() => {
+      expect(getFileContentMock).toHaveBeenCalledTimes(2);
+    });
   });
 });

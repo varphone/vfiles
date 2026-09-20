@@ -118,4 +118,43 @@ describe("useDownloadQueue", () => {
     const queue = useDownloadQueue(ref(undefined));
     expect(queue.formatProgress(512, 1024)).toBe(" 50% (512.0 B/1.0 KB)");
   });
+
+  it("retries a failed item and completes it", async () => {
+    fetchFileDownloadMock.mockRejectedValueOnce(new Error("boom"));
+    fetchFileDownloadMock.mockResolvedValueOnce({
+      blob: new Blob(["ok"]),
+      filename: "a.txt",
+    });
+
+    const queue = useDownloadQueue(ref(undefined));
+    queue.enqueueDownload("file", "a.txt");
+    await flush();
+    expect(queue.downloadQueue.value[0].status).toBe("error");
+    expect(queue.downloadQueue.value[0].error).toBe("boom");
+
+    queue.retryItem(queue.downloadQueue.value[0].id);
+    await flush();
+
+    expect(queue.downloadQueue.value[0].status).toBe("done");
+    expect(queue.downloadQueue.value[0].error).toBeUndefined();
+    expect(fetchFileDownloadMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores retry for active items", async () => {
+    const gate = deferred<{ blob: Blob; filename: string }>();
+    fetchFileDownloadMock.mockReturnValueOnce(gate.promise);
+
+    const queue = useDownloadQueue(ref(undefined));
+    queue.enqueueDownload("file", "a.txt");
+    await flush();
+    expect(queue.downloadQueue.value[0].status).toBe("downloading");
+
+    queue.retryItem(queue.downloadQueue.value[0].id);
+    await flush();
+    expect(queue.downloadQueue.value[0].status).toBe("downloading");
+    expect(fetchFileDownloadMock).toHaveBeenCalledTimes(1);
+
+    gate.resolve({ blob: new Blob(["ok"]), filename: "a.txt" });
+    await flush();
+  });
 });

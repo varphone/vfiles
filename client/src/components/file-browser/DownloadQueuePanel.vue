@@ -100,13 +100,21 @@
             >
               取消
             </button>
-            <button
-              v-else
-              class="button is-small is-light"
-              @click="emit('remove', item.id)"
-            >
-              移除
-            </button>
+            <template v-else>
+              <button
+                v-if="item.status === 'error' || item.status === 'canceled'"
+                class="button is-small is-link is-light"
+                @click="emit('retry', item.id)"
+              >
+                重试
+              </button>
+              <button
+                class="button is-small is-light"
+                @click="emit('remove', item.id)"
+              >
+                移除
+              </button>
+            </template>
           </div>
         </div>
 
@@ -156,6 +164,7 @@ const emit = defineEmits<{
   (e: "cancel-all"): void;
   (e: "cancel", id: number): void;
   (e: "remove", id: number): void;
+  (e: "retry", id: number): void;
 }>();
 
 function formatProgress(loaded: number, total: number): string {

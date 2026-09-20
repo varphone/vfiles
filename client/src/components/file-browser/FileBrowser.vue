@@ -320,6 +320,7 @@
         @cancel-all="cancelAll"
         @cancel="cancelItem"
         @remove="removeItem"
+        @retry="retryItem"
       />
 
       <template v-if="!isMobile">
@@ -785,6 +786,15 @@
 
       <div v-else-if="preview.error" class="notification is-danger is-light">
         {{ preview.error }}
+        <div class="mt-2">
+          <button
+            class="button is-small is-danger is-light"
+            @click="openPreview(preview.path)"
+          >
+            <IconRefresh :size="16" class="mr-1" />
+            重试
+          </button>
+        </div>
       </div>
 
       <div v-else>
@@ -1104,6 +1114,7 @@ const {
   cancelAll,
   clearFinished,
   removeItem,
+  retryItem,
 } = useDownloadQueue(browseCommit);
 
 const contextMenu = ref<{

@@ -86,4 +86,33 @@ describe("DownloadQueuePanel.vue", () => {
     });
     expect(container.querySelector(".box")).toBeNull();
   });
+
+  it("offers retry for failed or canceled items", async () => {
+    const { emitted } = render(DownloadQueuePanel as any, {
+      props: {
+        items: [
+          item({ id: 3, status: "error", error: "网络错误" }),
+          item({ id: 4, status: "canceled" }),
+        ],
+        collapsed: false,
+      },
+    });
+
+    const retryButtons = screen.getAllByRole("button", { name: "重试" });
+    expect(retryButtons).toHaveLength(2);
+
+    await fireEvent.click(retryButtons[0]);
+    expect(emitted()["retry"]?.[0]).toEqual([3]);
+  });
+
+  it("does not offer retry for finished items", () => {
+    render(DownloadQueuePanel as any, {
+      props: { items: [item({ id: 5, status: "done" })], collapsed: false },
+    });
+
+    expect(
+      screen.queryByRole("button", { name: "重试" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "移除" })).toBeInTheDocument();
+  });
 });
