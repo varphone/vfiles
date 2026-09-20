@@ -145,6 +145,18 @@ export function safeImageSrc(src: string | null | undefined): string {
  *
  * 从 FileBrowser 抽出，减小主组件体积并便于单测纯函数。
  */
+/** 预览状态：由 `useFilePreview` 维护，预览弹窗只负责渲染。 */
+export interface PreviewState {
+  open: boolean;
+  loading: boolean;
+  error: string | null;
+  path: string;
+  kind: PreviewKind;
+  text: string;
+  html: string;
+  objectUrl: string;
+}
+
 export interface FilePreviewOptions {
   /** 当前可预览的文件列表（用于上一个/下一个导航）。 */
   getPreviewableFiles?: () => FileInfo[];
@@ -154,7 +166,7 @@ export function useFilePreview(
   browseCommit: Ref<string | undefined>,
   options: FilePreviewOptions = {},
 ) {
-  const preview = ref({
+  const preview = ref<PreviewState>({
     open: false,
     loading: false,
     error: null as string | null,

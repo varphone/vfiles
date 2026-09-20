@@ -849,119 +849,22 @@
     />
 
     <!-- 预览对话框（当前版本） -->
-    <Modal
+    <FilePreviewModal
       :show="preview.open"
-      :title="`预览: ${previewFilename}`"
-      :mobile-compact="true"
+      :filename="previewFilename"
+      :preview="preview"
+      :can-go-prev="canGoPrev"
+      :can-go-next="canGoNext"
+      :position="previewIndex + 1"
+      :total="previewTotal"
+      :can-copy="canCopyPreview"
+      :copy-state="previewCopyState"
       @close="closePreview"
-    >
-      <div v-if="preview.loading" class="has-text-centered py-6">
-        <div class="spinner mb-3"></div>
-        <p class="has-text-grey">加载预览中...</p>
-      </div>
-
-      <div v-else-if="preview.error" class="notification is-danger is-light">
-        {{ preview.error }}
-        <div class="mt-2">
-          <button
-            class="button is-small is-danger is-light"
-            @click="openPreview(preview.path)"
-          >
-            <IconRefresh :size="16" class="mr-1" />
-            重试
-          </button>
-        </div>
-      </div>
-
-      <div v-else>
-        <figure v-if="preview.kind === 'image'" class="image">
-          <img
-            :src="preview.objectUrl"
-            :alt="previewFilename"
-            loading="lazy"
-            decoding="async"
-          />
-        </figure>
-
-        <div v-else-if="preview.kind === 'pdf'" class="preview-frame">
-          <iframe
-            :src="preview.objectUrl"
-            title="PDF 预览"
-            class="preview-iframe"
-          />
-        </div>
-
-        <div v-else-if="preview.kind === 'video'" class="preview-media">
-          <video :src="preview.objectUrl" controls class="preview-video" />
-        </div>
-
-        <div v-else-if="preview.kind === 'audio'" class="preview-media">
-          <audio :src="preview.objectUrl" controls class="preview-audio" />
-        </div>
-
-        <div
-          v-else-if="preview.kind === 'markdown'"
-          class="content markdown-body"
-          v-html="preview.html"
-        ></div>
-
-        <div v-else-if="preview.kind === 'code'" class="content">
-          <pre
-            class="preview-code hljs"
-          ><code v-html="preview.html"></code></pre>
-        </div>
-
-        <div v-else-if="preview.kind === 'text'" class="content">
-          <pre class="preview-text">{{ preview.text }}</pre>
-        </div>
-
-        <div v-else class="notification is-warning is-light">
-          暂不支持该文件类型的在线预览，请使用下载。
-        </div>
-      </div>
-
-      <div v-if="previewTotal > 1 || canCopyPreview" class="preview-nav">
-        <button
-          v-if="canCopyPreview"
-          class="button is-small is-light preview-copy"
-          :title="previewCopyState === 'failed' ? '复制失败' : '复制文件内容'"
-          @click="copyPreviewContent"
-        >
-          <IconCopy :size="16" />
-          <span>{{
-            previewCopyState === "done"
-              ? "已复制"
-              : previewCopyState === "failed"
-                ? "复制失败"
-                : "复制"
-          }}</span>
-        </button>
-
-        <template v-if="previewTotal > 1">
-          <button
-            class="button is-small is-light"
-            :disabled="!canGoPrev"
-            title="上一张（←）"
-            @click="prevPreview"
-          >
-            <IconChevronLeft :size="16" />
-            <span>上一张</span>
-          </button>
-          <span class="preview-position">
-            {{ Math.max(previewIndex + 1, 1) }} / {{ previewTotal }}
-          </span>
-          <button
-            class="button is-small is-light"
-            :disabled="!canGoNext"
-            title="下一张（→）"
-            @click="nextPreview"
-          >
-            <span>下一张</span>
-            <IconChevronRight :size="16" />
-          </button>
-        </template>
-      </div>
-    </Modal>
+      @retry="openPreview"
+      @prev="prevPreview"
+      @next="nextPreview"
+      @copy="copyPreviewContent"
+    />
   </div>
 </template>
 
@@ -981,8 +884,6 @@ import {
   IconAlertCircle,
   IconSearch,
   IconChevronDown,
-  IconChevronLeft,
-  IconChevronRight,
   IconArrowLeft,
   IconChecklist,
   IconRefresh,
@@ -994,7 +895,6 @@ import {
   IconDownload,
   IconShare,
   IconTrash,
-  IconCopy,
   IconLayoutSidebarRight,
   IconAdjustmentsHorizontal,
   IconX,
@@ -1006,6 +906,7 @@ import { useFileViewStore } from "../../stores/fileView.store";
 import FileList from "./FileList.vue";
 import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
+import FilePreviewModal from "./FilePreviewModal.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
 import Breadcrumb from "./Breadcrumb.vue";
@@ -2284,95 +2185,6 @@ function handleSortChange(field: SortField) {
   white-space: nowrap;
 }
 
-.desktop-detail-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.8rem;
-}
-
-.desktop-detail-card.is-empty {
-  min-height: 220px;
-  justify-content: center;
-}
-
-.desktop-detail-name {
-  margin: 0;
-  font-size: 1.15rem;
-  line-height: 1.35;
-  color: var(--vf-text-strong);
-  word-break: break-word;
-}
-
-.desktop-detail-path {
-  margin: -0.2rem 0 0;
-  color: var(--vf-text-subtle);
-  font-size: 0.82rem;
-  word-break: break-all;
-}
-
-.desktop-detail-tags {
-  display: flex;
-  gap: 0.45rem;
-  flex-wrap: wrap;
-}
-
-.desktop-detail-grid {
-  display: grid;
-  gap: 0.75rem;
-  margin: 0;
-}
-
-.desktop-detail-grid dt {
-  margin: 0 0 0.2rem;
-  font-size: 0.74rem;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--vf-text-subtle);
-}
-
-.desktop-detail-grid dd {
-  margin: 0;
-  color: var(--vf-text-strong);
-  font-size: 0.9rem;
-  word-break: break-word;
-}
-
-.desktop-detail-actions {
-  display: grid;
-  gap: 0.55rem;
-}
-
-.desktop-detail-actions .button {
-  justify-content: flex-start;
-}
-
-.spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid var(--vf-skeleton-base);
-  border-top-color: var(--vf-accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  margin: 0 auto;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.preview-text {
-  max-height: 60vh;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.preview-frame {
-  height: 70vh;
-}
-
 /* 桌面内容区：列表 + 右侧详细信息面板 */
 .desktop-content-layout {
   display: grid;
@@ -2414,57 +2226,6 @@ function handleSortChange(field: SortField) {
   display: flex;
   gap: 0.5rem;
   margin-top: 0.75rem;
-}
-
-.preview-copy {
-  margin-right: auto;
-}
-
-.preview-nav {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
-  margin-top: 0.85rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--vf-border-weak);
-}
-
-.preview-position {
-  min-width: 4.5rem;
-  text-align: center;
-  font-size: 0.8rem;
-  color: var(--vf-text-muted);
-}
-
-.preview-iframe {
-  width: 100%;
-  height: 100%;
-  border: 0;
-}
-
-.preview-media {
-  max-height: 70vh;
-}
-
-.preview-video {
-  width: 100%;
-  max-height: 70vh;
-}
-
-.preview-audio {
-  width: 100%;
-}
-
-.markdown-body :deep(pre) {
-  max-height: 60vh;
-  overflow: auto;
-}
-
-.preview-code {
-  max-height: 60vh;
-  overflow: auto;
-  white-space: pre;
 }
 
 @media screen and (max-width: 1023px) {
