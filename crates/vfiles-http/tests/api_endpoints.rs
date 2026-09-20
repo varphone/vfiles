@@ -1667,6 +1667,29 @@ async fn login_for_unknown_user_returns_invalid_credentials() {
 }
 
 #[tokio::test]
+async fn login_with_invalid_identifier_format_returns_invalid_credentials() {
+    let app = TestApp::new().await;
+
+    let response = app
+        .json_request(
+            Method::POST,
+            "/api/auth/login",
+            json!({
+                "username_or_email": "not-an-email@",
+                "password": "wrong-password",
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let payload = response_json(response).await;
+    assert_eq!(
+        payload["code"],
+        Value::String("INVALID_CREDENTIALS".to_string())
+    );
+}
+
+#[tokio::test]
 async fn login_rate_limit_blocks_repeated_failed_attempts() {
     let app = TestApp::new_with_login_rate_limit(3).await;
 

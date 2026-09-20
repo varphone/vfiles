@@ -770,16 +770,20 @@ impl AuthService {
     }
 
     pub async fn login(&self, req: LoginRequest) -> DomainResult<LoginResponse> {
-        // Try to find user by username or email
+        // Try to find user by username or email. Invalid identifier formats are
+        // reported as invalid credentials so login failures do not reveal which
+        // half of the identifier guessed incorrectly.
         let user = if req.username_or_email.contains('@') {
-            let email = EmailAddress::new(&req.username_or_email)?;
+            let email = EmailAddress::new(&req.username_or_email)
+                .map_err(|_| DomainError::InvalidCredentials)?;
             match self.user_repo.find_by_email(&email).await {
                 Ok(user) => user,
                 Err(DomainError::NotFound { .. }) => return Err(DomainError::InvalidCredentials),
                 Err(err) => return Err(err),
             }
         } else {
-            let username = Username::new(&req.username_or_email)?;
+            let username = Username::new(&req.username_or_email)
+                .map_err(|_| DomainError::InvalidCredentials)?;
             match self.user_repo.find_by_username(&username).await {
                 Ok(user) => user,
                 Err(DomainError::NotFound { .. }) => return Err(DomainError::InvalidCredentials),

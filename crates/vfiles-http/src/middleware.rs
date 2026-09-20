@@ -29,13 +29,21 @@ impl LoginAttemptLimiter {
         Self::default()
     }
 
+    fn lock_counters(&self) -> std::sync::MutexGuard<'_, HashMap<String, LoginAttemptCounter>> {
+        // A poisoned lock must not turn a login rejection into a process panic.
+        // The counters are best-effort, so recovering the previous state is safe.
+        self.counters
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub fn check(&self, config: &LoginRateLimitConfig, key: &str) -> Option<LoginRateLimitBlock> {
         if !config.enabled {
             return None;
         }
 
         let now = Instant::now();
-        let mut counters = self.counters.lock().expect("login limiter lock poisoned");
+        let mut counters = self.lock_counters();
         Self::prune_expired(&mut counters, now);
 
         let counter = counters.get(key)?;
@@ -56,7 +64,11 @@ impl LoginAttemptLimiter {
 
         let now = Instant::now();
         let window = Duration::from_millis(config.window_ms.max(1));
-        let mut counters = self.counters.lock().expect("login limiter lock poisoned");
+        let mut counters = self.lock_counters();
+
+        if counters.len() >= 50_000 {
+            Self::prune_expired(&mut counters, now);
+        }
 
         match counters.get_mut(key) {
             Some(counter) if now < counter.reset_at => {
@@ -81,7 +93,7 @@ impl LoginAttemptLimiter {
     }
 
     pub fn clear(&self, key: &str) {
-        let mut counters = self.counters.lock().expect("login limiter lock poisoned");
+        let mut counters = self.lock_counters();
         counters.remove(key);
     }
 
