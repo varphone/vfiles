@@ -16,11 +16,11 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 51 实测）
+### 验证基线（round 52 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：39 个文件 / **249** 个用例通过；`vue-tsc`、`eslint`、`prettier`
+- `client` 单测：40 个文件 / **255** 个用例通过；`vue-tsc`、`eslint`、`prettier`
   通过。
 - 后端：`cargo test --workspace` 全部通过、`clippy --all-targets` 无告警、`fmt`
   干净（`frontend.rs` 的历史格式差异保持原样）。
@@ -913,6 +913,21 @@
   `report-2026.txt` 并提示「重命名成功」；再进一次用 Esc 取消，名称保持
   `report-2026.txt` 未被改写；网格视图同样通过卡片菜单进入内联编辑并成功改名；
   全程无控制台报错。
+
+### 2.59 网格视图按行方向键导航（round 52，交互）
+
+- 背景：round 50 的方向键导航只在网格视图里按「一项」上下移动，左右键完全无效；
+  主流文件管理器的网格/图标视图里上下键是按**一行**移动。
+- 新增 `src/utils/gridLayout.ts`：`countRowColumns(tops)` 从卡片纵向偏移量推断首行列数
+  （只保留纯计算部分便于单测，允许亚像素误差，空数组返回 1 以免步长退化为 0），
+  `columnsFromElements()` 负责从 DOM 取偏移量。
+- `moveActiveRow`：网格视图下上下键步长 = 实际渲染的列数；列表与网格都支持左右键
+  （左/右 = 前/后一项），Home/End 仍然到首尾；无布局环境（jsdom）自动退化为逐项移动。
+- 测试：新增 5 个布局工具用例（首行计数、单行/单项、空数组、亚像素容差）与 1 个
+  `FileBrowser` 集成用例（把渲染出的卡片偏移量改成每行 3 张，验证 ↓ 跨一行、→ 跨一项、
+  ↑ 回到上一行）；`activeName` 辅助函数同时支持列表行与网格卡片。
+- 冒烟：真实浏览器 1280px 宽、每行 4 张卡时，`g01 → ↓ g05 → → g06 → ↑ g02 → End g11`，
+  零控制台报错。
 
 ## 3. 后续迭代计划（按优先级）
 

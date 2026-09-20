@@ -724,10 +724,14 @@ describe("FileBrowser.vue keyboard navigation", () => {
     }));
   }
 
-  /** 单选场景下高亮行即活动行；多选时请用 selectedNames。 */
+  /** 单选场景下高亮行（或网格里的活动卡片）即活动项。 */
   function activeName(container: Element) {
+    const row = container.querySelector(
+      ".desktop-file-row.is-row-selected .desktop-name-text",
+    );
+    if (row) return row.textContent?.trim();
     return container
-      .querySelector(".desktop-file-row.is-row-selected .desktop-name-text")
+      .querySelector(".file-card--active .file-card-name")
       ?.textContent?.trim();
   }
 
@@ -807,6 +811,53 @@ describe("FileBrowser.vue keyboard navigation", () => {
     await waitFor(() =>
       expect(selectedNames(container)).toEqual(["a.txt", "b.txt"]),
     );
+  });
+
+  it("moves by a row in grid view using the rendered columns", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(
+      Array.from({ length: 6 }, (_, index) => ({
+        id: `f${index}`,
+        name: `f${index}.txt`,
+        path: `f${index}.txt`,
+        kind: "file",
+        size_bytes: index + 1,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      })),
+    );
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("f0.txt");
+    const { useFileViewStore } = await import("../src/stores/fileView.store");
+    const view = useFileViewStore();
+    view.setMode("grid");
+    await waitFor(() =>
+      expect(container.querySelectorAll(".file-card").length).toBe(6),
+    );
+
+    // jsdom 没有布局，手动给出「每行 3 张卡」的偏移量
+    const cards = Array.from(
+      container.querySelectorAll<HTMLElement>(".file-card"),
+    );
+    cards.forEach((card, index) => {
+      Object.defineProperty(card, "offsetTop", {
+        value: Math.floor(index / 3) * 120,
+        configurable: true,
+      });
+    });
+
+    await waitFor(() => expect(activeName(container)).toBe("f0.txt"));
+
+    // 下移一行 → 第 4 项；右移一项 → 第 5 项；上移一行 → 第 2 项
+    await fireEvent.keyDown(document, { key: "ArrowDown" });
+    await waitFor(() => expect(activeName(container)).toBe("f3.txt"));
+
+    await fireEvent.keyDown(document, { key: "ArrowRight" });
+    await waitFor(() => expect(activeName(container)).toBe("f4.txt"));
+
+    await fireEvent.keyDown(document, { key: "ArrowUp" });
+    await waitFor(() => expect(activeName(container)).toBe("f1.txt"));
   });
 
   it("ignores arrow keys while typing in an input", async () => {

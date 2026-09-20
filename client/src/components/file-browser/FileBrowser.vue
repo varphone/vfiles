@@ -920,6 +920,7 @@ import { useFileSearch } from "../../composables/useFileSearch";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
+import { columnsFromElements } from "../../utils/gridLayout";
 import { useMoveDialog } from "../../composables/useMoveDialog";
 import { useTouchGestures } from "../../composables/useTouchGestures";
 import type { FileInfo } from "../../types";
@@ -1318,6 +1319,8 @@ onMounted(() => {
     if (
       e.key === "ArrowUp" ||
       e.key === "ArrowDown" ||
+      e.key === "ArrowLeft" ||
+      e.key === "ArrowRight" ||
       e.key === "Home" ||
       e.key === "End"
     ) {
@@ -1874,11 +1877,24 @@ function findActiveItem(): BrowserListItem | undefined {
 }
 
 /**
+ * 网格视图下「上下键移动一行」的步长：按实际渲染的卡片推断列数。
+ *
+ * jsdom 等无布局环境下 offsetTop 全为 0，会退化成「一行一张卡」，
+ * 因此这里只做兜底，真正的行为由 `columnsFromElements` 决定。
+ */
+function gridColumnStep(): number {
+  if (typeof document === "undefined") return 1;
+  const cards = Array.from(document.querySelectorAll(".file-grid .file-card"));
+  return cards.length > 0 ? columnsFromElements(cards) : 1;
+}
+
+/**
  * 方向键 / Home / End 移动活动行（主流文件管理器的基本键盘操作）。
  *
+ * - 列表视图：上下左右都按一项移动；网格视图：左右按一项、上下按**一行**（列数由布局推断）；
  * - 普通方向键：移动高亮行，批量模式下选择也跟随移动；
  * - Shift + 方向键：从上次选中项扩展到当前行（复用 useFileSelection 的区间选择）；
- * - `.`/`..` 快捷项参与移动，但不参与选择（与鼠标点击一致）。
+ * - `.`/`..` 快捷项不参与移动与选择（与鼠标点击一致）。
  */
 function moveActiveRow(key: string, shift: boolean) {
   // `.`/`..` 是导航快捷项而不是真实条目：方向键只在真实条目间移动，
@@ -1891,12 +1907,22 @@ function moveActiveRow(key: string, shift: boolean) {
   const currentIndex = list.findIndex(
     (item) => item.path === desktopActivePath.value,
   );
+  const rowStep = viewMode.value === "grid" ? gridColumnStep() : 1;
   let nextIndex: number;
   switch (key) {
     case "ArrowUp":
-      nextIndex = currentIndex <= 0 ? 0 : currentIndex - 1;
+      nextIndex = currentIndex <= 0 ? 0 : Math.max(0, currentIndex - rowStep);
       break;
     case "ArrowDown":
+      nextIndex =
+        currentIndex === -1
+          ? 0
+          : Math.min(list.length - 1, currentIndex + rowStep);
+      break;
+    case "ArrowLeft":
+      nextIndex = currentIndex <= 0 ? 0 : currentIndex - 1;
+      break;
+    case "ArrowRight":
       nextIndex =
         currentIndex === -1 ? 0 : Math.min(list.length - 1, currentIndex + 1);
       break;
