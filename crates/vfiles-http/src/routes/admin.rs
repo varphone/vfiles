@@ -9,7 +9,11 @@ use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use vfiles_domain::*;
 
-use crate::{AppState, dto::AdminUserSummaryDto};
+use crate::{
+    AppState,
+    dto::AdminUserSummaryDto,
+    error::{ApiError, ApiResult},
+};
 
 #[derive(Debug, Deserialize)]
 pub struct ListUsersQuery {
@@ -64,12 +68,15 @@ pub fn router() -> Router<AppState> {
         .route("/users/{user_id}/reset-password", post(reset_password))
 }
 
-fn parse_role(value: &str) -> Result<Role, (StatusCode, String)> {
+fn parse_role(value: &str) -> ApiResult<Role> {
     match value {
         "admin" => Ok(Role::Admin),
         "manager" => Ok(Role::Manager),
         "user" => Ok(Role::User),
-        _ => Err((StatusCode::BAD_REQUEST, "Invalid role".to_string())),
+        _ => Err(ApiError::Validation {
+            field: "role".to_string(),
+            message: "Invalid role".to_string(),
+        }),
     }
 }
 
@@ -85,46 +92,27 @@ fn can_manage_user(actor_role: Role, target_role: Role, requested_role: Option<R
     actor_role.can_access_admin_panel()
 }
 
-async fn require_admin(
-    state: &AppState,
-    jar: &CookieJar,
-) -> Result<AuthUser, (StatusCode, String)> {
+async fn require_admin(state: &AppState, jar: &CookieJar) -> ApiResult<AuthUser> {
     if state.admin_service.is_none() {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Admin access not available".to_string(),
-        ));
+        return Err(ApiError::forbidden("Admin access not available"));
     }
 
-    let auth_service = state.auth_service.as_ref().ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            "Authentication required".to_string(),
-        )
-    })?;
+    let auth_service = state
+        .auth_service
+        .as_ref()
+        .ok_or(ApiError::Domain(DomainError::Unauthorized))?;
 
-    let token = jar.get("auth_token").ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            "Authentication required".to_string(),
-        )
-    })?;
+    let token = jar
+        .get("auth_token")
+        .ok_or(ApiError::Domain(DomainError::Unauthorized))?;
 
     let auth_user = auth_service
         .authenticate_session(token.value())
         .await
-        .map_err(|_| {
-            (
-                StatusCode::UNAUTHORIZED,
-                "Authentication required".to_string(),
-            )
-        })?;
+        .map_err(|_| ApiError::Domain(DomainError::Unauthorized))?;
 
     if !auth_user.role.can_access_admin_panel() {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Admin or manager role required".to_string(),
-        ));
+        return Err(ApiError::forbidden("Admin or manager role required"));
     }
 
     Ok(auth_user)
@@ -134,57 +122,47 @@ async fn list_users(
     State(state): State<AppState>,
     jar: CookieJar,
     Query(query): Query<ListUsersQuery>,
-) -> Result<Json<AdminUserListResponse>, (StatusCode, String)> {
+) -> ApiResult<Json<AdminUserListResponse>> {
     let _actor = require_admin(&state, &jar).await?;
-    let admin_service = state.admin_service.as_ref().ok_or_else(|| {
-        (
-            StatusCode::FORBIDDEN,
-            "Admin access not available".to_string(),
-        )
-    })?;
+    let admin_service = state
+        .admin_service
+        .as_ref()
+        .ok_or_else(|| ApiError::forbidden("Admin access not available"))?;
 
     let page = query.page.unwrap_or(1);
     let page_size = query.page_size.unwrap_or(20);
 
     if page < 1 || page_size < 1 || page_size > 100 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Invalid pagination parameters".to_string(),
-        ));
+        return Err(ApiError::Validation {
+            field: "page/page_size".to_string(),
+            message: "Invalid pagination parameters".to_string(),
+        });
     }
 
-    match admin_service.list_users(page, page_size).await {
-        Ok(user_list) => Ok(Json(AdminUserListResponse {
-            users: user_list.users.into_iter().map(Into::into).collect(),
-            total_count: user_list.total_count,
-            page: user_list.page,
-            page_size: user_list.page_size,
-        })),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to list users: {}", e),
-        )),
-    }
+    let user_list = admin_service.list_users(page, page_size).await?;
+    Ok(Json(AdminUserListResponse {
+        users: user_list.users.into_iter().map(Into::into).collect(),
+        total_count: user_list.total_count,
+        page: user_list.page,
+        page_size: user_list.page_size,
+    }))
 }
 
 async fn create_user(
     State(state): State<AppState>,
     jar: CookieJar,
     Json(req): Json<CreateUserRequest>,
-) -> Result<Json<CreateUserResponse>, (StatusCode, String)> {
+) -> ApiResult<Json<CreateUserResponse>> {
     let actor = require_admin(&state, &jar).await?;
-    let admin_service = state.admin_service.as_ref().ok_or_else(|| {
-        (
-            StatusCode::FORBIDDEN,
-            "Admin access not available".to_string(),
-        )
-    })?;
+    let admin_service = state
+        .admin_service
+        .as_ref()
+        .ok_or_else(|| ApiError::forbidden("Admin access not available"))?;
 
     let role = parse_role(&req.role)?;
     if !can_manage_user(actor.role, Role::User, Some(role)) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Only admin can assign admin or manager roles".to_string(),
+        return Err(ApiError::forbidden(
+            "Only admin can assign admin or manager roles",
         ));
     }
 
@@ -195,47 +173,30 @@ async fn create_user(
         role,
     };
 
-    match admin_service.create_user(create_req).await {
-        Ok(user_id) => Ok(Json(CreateUserResponse {
-            user_id: user_id.to_string(),
-        })),
-        Err(DomainError::Conflict { message }) => Err((StatusCode::CONFLICT, message)),
-        Err(DomainError::Validation { message }) => Err((StatusCode::BAD_REQUEST, message)),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to create user: {}", e),
-        )),
-    }
+    let user_id = admin_service.create_user(create_req).await?;
+    Ok(Json(CreateUserResponse {
+        user_id: user_id.to_string(),
+    }))
 }
 
 async fn get_user(
     State(state): State<AppState>,
     jar: CookieJar,
     Path(user_id): Path<String>,
-) -> Result<Json<AdminUserSummaryDto>, (StatusCode, String)> {
+) -> ApiResult<Json<AdminUserSummaryDto>> {
     let _actor = require_admin(&state, &jar).await?;
-    let admin_service = state.admin_service.as_ref().ok_or_else(|| {
-        (
-            StatusCode::FORBIDDEN,
-            "Admin access not available".to_string(),
-        )
+    let admin_service = state
+        .admin_service
+        .as_ref()
+        .ok_or_else(|| ApiError::forbidden("Admin access not available"))?;
+
+    let user_id = UserId::from_string(&user_id).map_err(|_| ApiError::Validation {
+        field: "user_id".to_string(),
+        message: "Invalid user ID".to_string(),
     })?;
 
-    let user_id = match UserId::from_string(&user_id) {
-        Ok(id) => id,
-        Err(_) => return Err((StatusCode::BAD_REQUEST, "Invalid user ID".to_string())),
-    };
-
-    match admin_service.get_user_details(&user_id).await {
-        Ok(user) => Ok(Json(user.into())),
-        Err(DomainError::NotFound { .. }) => {
-            Err((StatusCode::NOT_FOUND, "User not found".to_string()))
-        }
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to get user: {}", e),
-        )),
-    }
+    let user = admin_service.get_user_details(&user_id).await?;
+    Ok(Json(user.into()))
 }
 
 async fn update_user(
@@ -243,30 +204,19 @@ async fn update_user(
     jar: CookieJar,
     Path(user_id): Path<String>,
     Json(req): Json<UpdateUserRequest>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> ApiResult<StatusCode> {
     let actor = require_admin(&state, &jar).await?;
-    let admin_service = state.admin_service.as_ref().ok_or_else(|| {
-        (
-            StatusCode::FORBIDDEN,
-            "Admin access not available".to_string(),
-        )
+    let admin_service = state
+        .admin_service
+        .as_ref()
+        .ok_or_else(|| ApiError::forbidden("Admin access not available"))?;
+
+    let user_id = UserId::from_string(&user_id).map_err(|_| ApiError::Validation {
+        field: "user_id".to_string(),
+        message: "Invalid user ID".to_string(),
     })?;
 
-    let user_id = match UserId::from_string(&user_id) {
-        Ok(id) => id,
-        Err(_) => return Err((StatusCode::BAD_REQUEST, "Invalid user ID".to_string())),
-    };
-
-    let current_user = admin_service
-        .get_user_details(&user_id)
-        .await
-        .map_err(|err| match err {
-            DomainError::NotFound { .. } => (StatusCode::NOT_FOUND, "User not found".to_string()),
-            _ => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to get user: {}", err),
-            ),
-        })?;
+    let current_user = admin_service.get_user_details(&user_id).await?;
 
     let role = if let Some(role_str) = req.role {
         Some(parse_role(&role_str)?)
@@ -275,9 +225,8 @@ async fn update_user(
     };
 
     if !can_manage_user(actor.role, current_user.role, role) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Only admin can manage admin or manager accounts".to_string(),
+        return Err(ApiError::forbidden(
+            "Only admin can manage admin or manager accounts",
         ));
     }
 
@@ -287,115 +236,64 @@ async fn update_user(
         email: req.email,
     };
 
-    match admin_service.update_user(&user_id, update_req).await {
-        Ok(()) => Ok(StatusCode::NO_CONTENT),
-        Err(DomainError::NotFound { .. }) => {
-            Err((StatusCode::NOT_FOUND, "User not found".to_string()))
-        }
-        Err(DomainError::Conflict { message }) => Err((StatusCode::CONFLICT, message)),
-        Err(DomainError::Validation { message }) => Err((StatusCode::BAD_REQUEST, message)),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to update user: {}", e),
-        )),
-    }
+    admin_service.update_user(&user_id, update_req).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn revoke_user_sessions(
     State(state): State<AppState>,
     jar: CookieJar,
     Path(user_id): Path<String>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> ApiResult<StatusCode> {
     let actor = require_admin(&state, &jar).await?;
-    let admin_service = state.admin_service.as_ref().ok_or_else(|| {
-        (
-            StatusCode::FORBIDDEN,
-            "Admin access not available".to_string(),
-        )
+    let admin_service = state
+        .admin_service
+        .as_ref()
+        .ok_or_else(|| ApiError::forbidden("Admin access not available"))?;
+
+    let user_id = UserId::from_string(&user_id).map_err(|_| ApiError::Validation {
+        field: "user_id".to_string(),
+        message: "Invalid user ID".to_string(),
     })?;
 
-    let user_id = match UserId::from_string(&user_id) {
-        Ok(id) => id,
-        Err(_) => return Err((StatusCode::BAD_REQUEST, "Invalid user ID".to_string())),
-    };
-
-    let current_user = admin_service
-        .get_user_details(&user_id)
-        .await
-        .map_err(|err| match err {
-            DomainError::NotFound { .. } => (StatusCode::NOT_FOUND, "User not found".to_string()),
-            _ => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to get user: {}", err),
-            ),
-        })?;
+    let current_user = admin_service.get_user_details(&user_id).await?;
 
     if !can_manage_user(actor.role, current_user.role, None) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Only admin can manage admin or manager accounts".to_string(),
+        return Err(ApiError::forbidden(
+            "Only admin can manage admin or manager accounts",
         ));
     }
 
-    match admin_service.revoke_user_sessions(&user_id).await {
-        Ok(()) => Ok(StatusCode::NO_CONTENT),
-        Err(DomainError::NotFound { .. }) => {
-            Err((StatusCode::NOT_FOUND, "User not found".to_string()))
-        }
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to revoke user sessions: {}", e),
-        )),
-    }
+    admin_service.revoke_user_sessions(&user_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn delete_user(
     State(state): State<AppState>,
     jar: CookieJar,
     Path(user_id): Path<String>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> ApiResult<StatusCode> {
     let actor = require_admin(&state, &jar).await?;
-    let admin_service = state.admin_service.as_ref().ok_or_else(|| {
-        (
-            StatusCode::FORBIDDEN,
-            "Admin access not available".to_string(),
-        )
+    let admin_service = state
+        .admin_service
+        .as_ref()
+        .ok_or_else(|| ApiError::forbidden("Admin access not available"))?;
+
+    let user_id = UserId::from_string(&user_id).map_err(|_| ApiError::Validation {
+        field: "user_id".to_string(),
+        message: "Invalid user ID".to_string(),
     })?;
 
-    let user_id = match UserId::from_string(&user_id) {
-        Ok(id) => id,
-        Err(_) => return Err((StatusCode::BAD_REQUEST, "Invalid user ID".to_string())),
-    };
-
-    let current_user = admin_service
-        .get_user_details(&user_id)
-        .await
-        .map_err(|err| match err {
-            DomainError::NotFound { .. } => (StatusCode::NOT_FOUND, "User not found".to_string()),
-            _ => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to get user: {}", err),
-            ),
-        })?;
+    let current_user = admin_service.get_user_details(&user_id).await?;
 
     if !can_manage_user(actor.role, current_user.role, None) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Only admin can manage admin or manager accounts".to_string(),
+        return Err(ApiError::forbidden(
+            "Only admin can manage admin or manager accounts",
         ));
     }
 
-    match admin_service.delete_user(&user_id).await {
-        Ok(()) => Ok(StatusCode::NO_CONTENT),
-        Err(DomainError::NotFound { .. }) => {
-            Err((StatusCode::NOT_FOUND, "User not found".to_string()))
-        }
-        Err(DomainError::Conflict { message }) => Err((StatusCode::CONFLICT, message)),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to delete user: {}", e),
-        )),
-    }
+    admin_service.delete_user(&user_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn reset_password(
@@ -403,49 +301,28 @@ async fn reset_password(
     jar: CookieJar,
     Path(user_id): Path<String>,
     Json(req): Json<ResetPasswordRequest>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> ApiResult<StatusCode> {
     let actor = require_admin(&state, &jar).await?;
-    let admin_service = state.admin_service.as_ref().ok_or_else(|| {
-        (
-            StatusCode::FORBIDDEN,
-            "Admin access not available".to_string(),
-        )
+    let admin_service = state
+        .admin_service
+        .as_ref()
+        .ok_or_else(|| ApiError::forbidden("Admin access not available"))?;
+
+    let user_id = UserId::from_string(&user_id).map_err(|_| ApiError::Validation {
+        field: "user_id".to_string(),
+        message: "Invalid user ID".to_string(),
     })?;
 
-    let user_id = match UserId::from_string(&user_id) {
-        Ok(id) => id,
-        Err(_) => return Err((StatusCode::BAD_REQUEST, "Invalid user ID".to_string())),
-    };
-
-    let current_user = admin_service
-        .get_user_details(&user_id)
-        .await
-        .map_err(|err| match err {
-            DomainError::NotFound { .. } => (StatusCode::NOT_FOUND, "User not found".to_string()),
-            _ => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to get user: {}", err),
-            ),
-        })?;
+    let current_user = admin_service.get_user_details(&user_id).await?;
 
     if !can_manage_user(actor.role, current_user.role, None) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Only admin can manage admin or manager accounts".to_string(),
+        return Err(ApiError::forbidden(
+            "Only admin can manage admin or manager accounts",
         ));
     }
 
-    match admin_service
+    admin_service
         .reset_user_password(&user_id, &req.new_password)
-        .await
-    {
-        Ok(()) => Ok(StatusCode::NO_CONTENT),
-        Err(DomainError::NotFound { .. }) => {
-            Err((StatusCode::NOT_FOUND, "User not found".to_string()))
-        }
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to reset password: {}", e),
-        )),
-    }
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
