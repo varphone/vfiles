@@ -27,66 +27,56 @@
         <div class="navbar-menu" :class="{ 'is-active': mobileMenuOpen }">
           <div class="navbar-start">
             <div class="navbar-item is-hidden-touch">
-              <div class="buttons has-addons are-small mb-0">
+              <div
+                class="app-bar-history"
+                :class="{ 'is-error': dirHistoryError }"
+                role="group"
+                aria-label="版本切换"
+              >
                 <button
-                  class="button is-light"
+                  class="vf-icon-button app-bar-history-button"
                   :disabled="dirHistoryLoading"
                   title="快退到最早快照"
+                  aria-label="快退到最早快照"
                   @click="desktopHistoryFastBack"
                 >
                   <IconChevronsLeft :size="16" />
                 </button>
                 <button
-                  class="button is-light"
+                  class="vf-icon-button app-bar-history-button"
                   :disabled="dirHistoryLoading"
                   title="后退到更早快照"
+                  aria-label="后退到更早快照"
                   @click="desktopHistoryStepBack"
                 >
                   <IconChevronLeft :size="16" />
                 </button>
+                <span
+                  class="app-bar-history-label"
+                  :title="desktopHistoryStateLabel"
+                >
+                  {{ desktopHistoryStateLabel }}
+                </span>
                 <button
-                  class="button is-light"
+                  class="vf-icon-button app-bar-history-button"
                   :disabled="dirHistoryLoading || !browseCommit"
                   title="前进到较新快照"
+                  aria-label="前进到较新快照"
                   @click="desktopHistoryStepForward"
                 >
                   <IconChevronRight :size="16" />
                 </button>
                 <button
-                  class="button is-light"
+                  class="vf-icon-button app-bar-history-button"
                   :disabled="dirHistoryLoading || !browseCommit"
                   title="回到当前版本"
+                  aria-label="回到当前版本"
                   @click="desktopHistoryFastForward"
                 >
                   <IconChevronsRight :size="16" />
                 </button>
               </div>
             </div>
-
-            <div class="navbar-item is-hidden-touch">
-              <span
-                class="tag ml-2"
-                :class="dirHistoryError ? 'is-danger is-light' : 'is-light'"
-              >
-                {{ desktopHistoryStateLabel }}
-              </span>
-            </div>
-
-            <a class="navbar-item is-hidden-desktop" href="#" @click.prevent="refreshAndClose"
-              >刷新</a
-            >
-            <a class="navbar-item is-hidden-desktop" href="#" @click.prevent="goRootAndClose"
-              >根目录</a
-            >
-            <a class="navbar-item is-hidden-desktop" href="#" @click.prevent="goBackAndClose"
-              >上一级</a
-            >
-            <a class="navbar-item is-hidden-desktop" href="#" @click.prevent="openUploaderAndClose"
-              >上传文件</a
-            >
-            <a class="navbar-item is-hidden-desktop" href="#" @click.prevent="toggleBatchAndClose"
-              >批量模式</a
-            >
           </div>
 
           <div class="navbar-end">
@@ -102,15 +92,20 @@
               >
                 <div class="dropdown-trigger">
                   <button
-                    class="button is-light is-small"
+                    class="app-bar-account"
                     aria-haspopup="true"
                     :aria-expanded="accountMenuOpen ? 'true' : 'false'"
+                    :title="auth.user?.username || '账号'"
                     @click="accountMenuOpen = !accountMenuOpen"
                   >
-                    <span>{{ auth.user?.username || '账号' }}</span>
-                    <span class="icon is-small">
-                      <IconChevronDown :size="16" />
+                    <span class="app-bar-avatar" aria-hidden="true">
+                      <IconUser v-if="!accountInitial" :size="14" />
+                      <template v-else>{{ accountInitial }}</template>
                     </span>
+                    <span class="app-bar-account-name is-hidden-touch">
+                      {{ auth.user?.username || "账号" }}
+                    </span>
+                    <IconChevronDown :size="14" class="app-bar-account-caret" />
                   </button>
                 </div>
 
@@ -183,39 +178,6 @@
     <div class="mobile-bottom-bar is-hidden-desktop">
       <div class="container is-fluid">
         <div class="mobile-bottom-bar-inner">
-          <div class="mobile-bottom-bar-top">
-            <div class="field has-addons mobile-search-field mb-0">
-              <div class="control is-expanded">
-                <input
-                  v-model="mobileSearchQuery"
-                  class="input is-small"
-                  type="search"
-                  placeholder="搜索当前目录"
-                  @keydown.enter.prevent="runMobileSearch"
-                />
-              </div>
-              <div class="control">
-                <button
-                  class="button is-link is-small"
-                  :class="{ 'is-loading': isSearchLoading }"
-                  :disabled="isSearchLoading"
-                  @click="runMobileSearch"
-                >
-                  <IconSearch :size="18" />
-                </button>
-              </div>
-              <div class="control">
-                <button
-                  class="button is-light is-small"
-                  :disabled="isSearchLoading"
-                  @click="clearMobileSearch"
-                >
-                  清空
-                </button>
-              </div>
-            </div>
-          </div>
-
           <div class="mobile-bottom-bar-bottom">
           <div
             ref="actionMenuRef"
@@ -270,9 +232,10 @@
                 <IconHome :size="18" />
               </button>
               <button
-                class="button is-light"
+                class="button is-link"
                 @click="openUploader"
                 title="上传"
+                aria-label="上传"
               >
                 <IconUpload :size="18" />
               </button>
@@ -426,7 +389,6 @@ import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import {
   IconMenu2,
-  IconSearch,
   IconChecklist,
   IconDotsVertical,
   IconArrowLeft,
@@ -435,6 +397,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconChevronsRight,
+  IconUser,
   IconHome,
   IconUpload,
   IconRefresh,
@@ -497,7 +460,6 @@ async function logoutFromMenu() {
 const actionMenuOpen = ref(false);
 const actionMenuRef = ref<HTMLElement | null>(null);
 const actionMode = ref<"nav" | "history" | "batch">("nav");
-const mobileSearchQuery = ref("");
 const batchMenuOpen = ref(false);
 const batchMenuRef = ref<HTMLElement | null>(null);
 const dirHistoryLoading = ref(false);
@@ -613,10 +575,6 @@ const isBatchMode = computed(() => browserRef.value?.batchMode?.value ?? false);
 const selectedCount = computed(
   () => browserRef.value?.selectedCount?.value ?? 0,
 );
-const isSearchLoading = computed(
-  () => browserRef.value?.searchLoading?.value ?? false,
-);
-
 function setActionMode(mode: "nav" | "history" | "batch") {
   actionMode.value = mode;
   actionMenuOpen.value = false;
@@ -676,6 +634,12 @@ const canNext = computed(() => {
 const canLast = computed(() => {
   const idx = dirSelectedIndex.value;
   return idx > 0;
+});
+
+/** 账号头像用用户名首字符，未登录时回退到用户图标。 */
+const accountInitial = computed(() => {
+  const name = auth.user?.username || "";
+  return name ? name.slice(0, 1).toUpperCase() : "";
 });
 
 const desktopHistoryStateLabel = computed(() => {
@@ -846,17 +810,6 @@ async function runBatchMenuAction(action: "delete" | "move" | "rename") {
   if (action === "rename") await renameSelected();
 }
 
-async function runMobileSearch() {
-  const q = mobileSearchQuery.value.trim();
-  browserRef.value?.setSearchQuery(q);
-  await browserRef.value?.runSearch();
-}
-
-function clearMobileSearch() {
-  mobileSearchQuery.value = "";
-  browserRef.value?.clearSearch();
-}
-
 function selectAll() {
   browserRef.value?.selectAllVisible();
 }
@@ -881,34 +834,6 @@ async function renameSelected() {
   await browserRef.value?.renameSelected();
 }
 
-function closeMobileMenu() {
-  mobileMenuOpen.value = false;
-}
-
-function openUploaderAndClose() {
-  openUploader();
-  closeMobileMenu();
-}
-
-function refreshAndClose() {
-  refresh();
-  closeMobileMenu();
-}
-
-function goBackAndClose() {
-  goBack();
-  closeMobileMenu();
-}
-
-function goRootAndClose() {
-  goRoot();
-  closeMobileMenu();
-}
-
-function toggleBatchAndClose() {
-  toggleBatch();
-  closeMobileMenu();
-}
 </script>
 
 <style scoped>
@@ -931,6 +856,78 @@ function toggleBatchAndClose() {
   box-shadow: none;
 }
 
+/* 版本切换：紧凑胶囊，左右各两个箭头，中间显示当前版本 */
+.app-bar-history {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.1rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-pill);
+  background: var(--vf-surface-sunken);
+}
+
+.app-bar-history.is-error {
+  border-color: var(--vf-danger);
+}
+
+.app-bar-history-button {
+  width: 1.65rem;
+  height: 1.65rem;
+}
+
+.app-bar-history-label {
+  min-width: 5.5rem;
+  padding: 0 0.5rem;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--vf-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-bar-account {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: 2rem;
+  padding: 0 0.6rem 0 0.25rem;
+  border: 1px solid transparent;
+  border-radius: var(--vf-radius-pill);
+  background: transparent;
+  color: var(--vf-text);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.app-bar-account:hover,
+.app-bar-account:focus-visible {
+  background: var(--vf-surface-hover);
+  border-color: var(--vf-border-weak);
+}
+
+.app-bar-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: var(--vf-accent);
+  color: #ffffff;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.app-bar-account-caret {
+  color: var(--vf-text-muted);
+}
+
 .mobile-bottom-bar {
   position: fixed;
   left: 0;
@@ -947,19 +944,13 @@ function toggleBatchAndClose() {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 0.5rem;
-  padding: 0.5rem;
-}
-
-.mobile-bottom-bar-top {
-  padding: 0.25rem;
-  border-radius: 0.25rem;
+  padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom));
 }
 
 .mobile-bottom-bar-bottom {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.35rem;
 }
 
 .mobile-action-panel {
@@ -1019,6 +1010,36 @@ function toggleBatchAndClose() {
 
 .mobile-batch-count {
   flex: 0 0 auto;
+}
+
+/* 底部操作按钮：与桌面工具栏一致的图标按钮语言 */
+.mobile-action-buttons .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--vf-radius);
+  background: transparent;
+  color: var(--vf-text-muted);
+}
+
+.mobile-action-buttons .button:hover,
+.mobile-action-buttons .button:active {
+  background: var(--vf-surface-hover);
+  color: var(--vf-text-strong);
+}
+
+.mobile-action-buttons .button.is-link {
+  background: var(--vf-accent);
+  color: #ffffff;
+}
+
+.mobile-action-buttons .button.is-link:hover {
+  background: var(--vf-accent-strong);
+  color: #ffffff;
 }
 
 .mobile-action-buttons {

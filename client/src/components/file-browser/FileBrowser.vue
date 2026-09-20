@@ -26,12 +26,12 @@
             <span v-else>下拉刷新</span>
           </div>
 
-          <div class="field has-addons mt-3">
+          <div class="mobile-search-row">
             <div class="control is-expanded">
               <input
                 v-model="searchQuery"
-                class="input"
-                type="text"
+                class="input is-small mobile-search-input"
+                type="search"
                 :placeholder="
                   searchMode === 'content' ? '搜索文件内容...' : '搜索文件名...'
                 "
@@ -46,62 +46,70 @@
                 />
               </datalist>
             </div>
-            <div class="control">
-              <button
-                class="button is-link"
-                :class="{ 'is-loading': searchLoading }"
-                :disabled="searchLoading"
-                @click="runSearch"
-              >
-                <IconSearch :size="20" />
-              </button>
-            </div>
-            <div class="control">
-              <button
-                class="button"
-                :disabled="searchLoading"
-                @click="clearSearch"
-              >
-                清空
-              </button>
-            </div>
+            <button
+              class="vf-icon-button"
+              :class="{ 'is-active': mobileSearchFiltersOpen }"
+              title="搜索筛选"
+              aria-label="搜索筛选"
+              :aria-expanded="mobileSearchFiltersOpen ? 'true' : 'false'"
+              @click="mobileSearchFiltersOpen = !mobileSearchFiltersOpen"
+            >
+              <IconAdjustmentsHorizontal :size="18" />
+            </button>
+            <button
+              class="vf-icon-button"
+              :class="{
+                'is-active': searchActive,
+                'is-loading': searchLoading,
+              }"
+              :disabled="searchLoading"
+              title="搜索"
+              aria-label="搜索"
+              @click="runSearch"
+            >
+              <IconSearch :size="18" />
+            </button>
+            <button
+              v-if="searchActive || searchQuery"
+              class="vf-icon-button"
+              title="清空搜索"
+              aria-label="清空搜索"
+              :disabled="searchLoading"
+              @click="clearSearch"
+            >
+              <IconX :size="18" />
+            </button>
           </div>
 
-          <div class="field mt-2">
-            <label class="checkbox">
+          <div v-if="mobileSearchFiltersOpen" class="mobile-search-filters">
+            <label class="checkbox mobile-filter-item">
               <input
                 type="checkbox"
                 v-model="searchContent"
                 :disabled="searchLoading || !searchContentEnabled"
               />
-              全文
+              全文搜索
             </label>
-            <p v-if="!searchContentEnabled" class="help is-warning">
+            <p v-if="!searchContentEnabled" class="help is-warning mb-0">
               内容搜索功能未启用
             </p>
-          </div>
 
-          <div class="field is-grouped is-grouped-multiline mt-2">
-            <div class="control">
-              <div class="select is-small">
-                <select v-model="searchType" :disabled="searchLoading">
-                  <option value="all">全部</option>
-                  <option value="file">仅文件</option>
-                  <option value="directory">仅文件夹</option>
-                </select>
-              </div>
+            <div class="select is-small">
+              <select v-model="searchType" :disabled="searchLoading">
+                <option value="all">全部</option>
+                <option value="file">仅文件</option>
+                <option value="directory">仅文件夹</option>
+              </select>
             </div>
 
-            <div class="control">
-              <label class="checkbox">
-                <input
-                  type="checkbox"
-                  v-model="searchScopeCurrent"
-                  :disabled="searchLoading"
-                />
-                仅当前目录
-              </label>
-            </div>
+            <label class="checkbox mobile-filter-item">
+              <input
+                type="checkbox"
+                v-model="searchScopeCurrent"
+                :disabled="searchLoading"
+              />
+              仅当前目录
+            </label>
           </div>
 
           <div v-if="searchError" class="notification is-danger is-light">
@@ -1128,6 +1136,8 @@ import {
   IconCopy,
   IconLayoutSidebarRight,
   IconInfoCircle,
+  IconAdjustmentsHorizontal,
+  IconX,
 } from "@tabler/icons-vue";
 import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
@@ -1226,6 +1236,9 @@ const {
 const detailsVisible = computed(
   () => !isMobile.value && fileView.detailsVisible,
 );
+
+/** 移动端搜索筛选面板（默认收起，保持顶部只有一行搜索框）。 */
+const mobileSearchFiltersOpen = ref(false);
 const detailItem = computed<BrowserListItem | undefined>(() =>
   findActiveItem(),
 );
@@ -2128,6 +2141,40 @@ function handleSortChange(field: SortField) {
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
+/* 移动端：紧凑搜索行，筛选折叠在图标后面 */
+.mobile-search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.mobile-search-input {
+  border-radius: var(--vf-radius-pill);
+  border-color: transparent;
+  background: var(--vf-surface-sunken);
+}
+
+.mobile-search-input:focus {
+  border-color: var(--vf-accent);
+  background: var(--vf-surface);
+}
+
+.mobile-search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+  padding: 0.6rem;
+  border-radius: var(--vf-radius);
+  background: var(--vf-surface-sunken);
+  font-size: 0.82rem;
+}
+
+.mobile-filter-item {
+  margin-bottom: 0 !important;
+}
+
 .desktop-command-bar {
   display: block;
 }
@@ -2706,7 +2753,7 @@ function handleSortChange(field: SortField) {
   }
 
   .file-browser-toolbar {
-    display: none;
+    padding: 0.55rem 0.9rem;
   }
 
   .breadcrumb-actions .buttons {
