@@ -439,3 +439,28 @@ describe("FileBrowser.vue preview navigation", () => {
     await findByText("预览: a.txt");
   });
 });
+
+describe("FileBrowser.vue large directories", () => {
+  it("renders the first page only and offers to load more", async () => {
+    getFilesMock.mockResolvedValue(
+      Array.from({ length: 45 }, (_, index) => ({
+        id: `f${index}`,
+        name: `f${index}.txt`,
+        path: `f${index}.txt`,
+        kind: "file",
+        size_bytes: index + 1,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      })),
+    );
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("f0.txt");
+
+    // 首批 40 条（另有 `.`/`..` 两个快捷项共 47 条）
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(40);
+    expect(container.textContent).toContain("继续下滑加载更多");
+    expect(container.textContent).toContain("已显示 40 / 47");
+    expect(container.textContent).not.toContain("f44.txt");
+  });
+});

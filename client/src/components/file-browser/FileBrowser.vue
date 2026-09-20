@@ -417,6 +417,15 @@
                 @open-folder="handleOpenFolder"
                 @create-directory="handleCreateDirectory"
               />
+
+              <div
+                v-if="hasMore"
+                ref="loadMoreSentinel"
+                class="desktop-load-more has-text-centered has-text-grey is-size-7 py-3"
+              >
+                继续下滑加载更多（已显示 {{ desktopItems.length }} /
+                {{ activeList.length }}）...
+              </div>
             </template>
           </div>
 
@@ -1282,10 +1291,10 @@ function normalizeEntryName(
   return name;
 }
 
-// 4.2: 移动端无限滚动（分批渲染）
-const MOBILE_INITIAL_COUNT = 40;
-const MOBILE_CHUNK_COUNT = 30;
-const mobileVisibleCount = ref(MOBILE_INITIAL_COUNT);
+// 4.2: 大数据目录的分批渲染（桌面与移动端通用）
+const INITIAL_VISIBLE_COUNT = 40;
+const VISIBLE_CHUNK_COUNT = 30;
+const visibleCount = ref(INITIAL_VISIBLE_COUNT);
 const loadMoreSentinel = ref<HTMLElement | null>(null);
 let loadMoreObserver: IntersectionObserver | null = null;
 
@@ -1339,22 +1348,19 @@ const sortedSearchResults = computed<FileInfo[]>(() => {
 const activeList = computed(() =>
   searchActive.value ? sortedSearchResults.value : navigationListItems.value,
 );
-const hasMore = computed(
-  () => isMobile.value && mobileVisibleCount.value < activeList.value.length,
+const hasMore = computed(() => visibleCount.value < activeList.value.length);
+const visibleFiles = computed(() =>
+  navigationListItems.value.slice(0, visibleCount.value),
 );
-const visibleFiles = computed(() => {
-  if (!isMobile.value) return navigationListItems.value;
-  return navigationListItems.value.slice(0, mobileVisibleCount.value);
-});
-const visibleSearchResults = computed(() => {
-  if (!isMobile.value) return sortedSearchResults.value;
-  return sortedSearchResults.value.slice(0, mobileVisibleCount.value);
-});
-const desktopItems = computed(() => {
-  return searchActive.value
+const visibleSearchResults = computed(() =>
+  sortedSearchResults.value.slice(0, visibleCount.value),
+);
+const desktopItems = computed(() =>
+  (searchActive.value
     ? sortedSearchResults.value
-    : navigationListItems.value;
-});
+    : navigationListItems.value
+  ).slice(0, visibleCount.value),
+);
 const desktopActivePath = ref("");
 
 watch(
@@ -1385,14 +1391,34 @@ watch(
 
 function bumpVisibleCount() {
   const total = activeList.value.length;
-  mobileVisibleCount.value = Math.min(
+  visibleCount.value = Math.min(
     total,
-    mobileVisibleCount.value + MOBILE_CHUNK_COUNT,
+    visibleCount.value + VISIBLE_CHUNK_COUNT,
   );
 }
 
 function resetVisibleCount() {
-  mobileVisibleCount.value = MOBILE_INITIAL_COUNT;
+  visibleCount.value = INITIAL_VISIBLE_COUNT;
+}
+
+/**
+ * 分批渲染：只要哨兵还在视口附近就继续补齐，避免 IntersectionObserver
+ * 在同一交叉状态下不再回调导致列表停在首批。
+ */
+function maybeLoadMore() {
+  if (!hasMore.value) return;
+  const sentinel = loadMoreSentinel.value;
+  if (!sentinel) return;
+
+  const rect = sentinel.getBoundingClientRect();
+  const viewportHeight =
+    window.innerHeight || document.documentElement.clientHeight || 0;
+  if (rect.top > viewportHeight + 160) return;
+
+  const before = visibleCount.value;
+  bumpVisibleCount();
+  if (visibleCount.value === before) return;
+  void nextTick().then(() => maybeLoadMore());
 }
 
 function setupLoadMoreObserver() {
@@ -1401,17 +1427,15 @@ function setupLoadMoreObserver() {
     loadMoreObserver = null;
   }
 
-  if (!isMobile.value) return;
   if (!("IntersectionObserver" in window)) return;
   if (!loadMoreSentinel.value) return;
 
   loadMoreObserver = new IntersectionObserver(
     (entries) => {
       if (!entries.some((e) => e.isIntersecting)) return;
-      if (!hasMore.value) return;
-      bumpVisibleCount();
+      maybeLoadMore();
     },
-    { root: null, threshold: 0.1 },
+    { root: null, threshold: 0.1, rootMargin: "120px" },
   );
 
   loadMoreObserver.observe(loadMoreSentinel.value);
