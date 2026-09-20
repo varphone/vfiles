@@ -1,6 +1,10 @@
 <template>
   <div class="home">
-    <nav class="navbar is-fixed-top app-top-bar" role="navigation" aria-label="主页导航">
+    <nav
+      class="navbar is-fixed-top app-top-bar"
+      role="navigation"
+      aria-label="主页导航"
+    >
       <div class="container is-fluid">
         <div class="navbar-brand">
           <router-link class="navbar-item" to="/">
@@ -79,6 +83,42 @@
             </div>
           </div>
 
+          <div class="navbar-menu app-bar-search-slot is-hidden-touch">
+            <form
+              class="app-bar-search"
+              role="search"
+              @submit.prevent="submitSearch"
+            >
+              <span class="app-bar-search-icon" aria-hidden="true">
+                <IconSearch :size="15" />
+              </span>
+              <input
+                v-model="appBarQuery"
+                class="app-bar-search-input"
+                type="search"
+                aria-label="全局搜索"
+                placeholder="搜索名称、扩展名或路径"
+                list="vfiles-search-history-appbar"
+              />
+              <datalist id="vfiles-search-history-appbar">
+                <option
+                  v-for="item in searchHistory"
+                  :key="item"
+                  :value="item"
+                />
+              </datalist>
+              <button
+                v-if="appBarQuery"
+                class="vf-icon-button app-bar-search-clear"
+                type="button"
+                aria-label="清空搜索"
+                @click="appBarQuery = ''"
+              >
+                <IconX :size="14" />
+              </button>
+            </form>
+          </div>
+
           <div class="navbar-end">
             <div class="navbar-item">
               <ThemeToggle />
@@ -119,7 +159,10 @@
                     <hr class="dropdown-divider" />
 
                     <router-link
-                      v-if="auth.enabled && ['admin', 'manager'].includes(auth.user?.role || '')"
+                      v-if="
+                        auth.enabled &&
+                        ['admin', 'manager'].includes(auth.user?.role || '')
+                      "
                       class="dropdown-item"
                       to="/admin/users"
                       @click="closeAccountMenus"
@@ -162,7 +205,10 @@
           />
         </div>
 
-        <footer class="site-record-footer has-text-centered" aria-label="备案信息">
+        <footer
+          class="site-record-footer has-text-centered"
+          aria-label="备案信息"
+        >
           <a
             class="site-record-link"
             href="https://beian.miit.gov.cn/"
@@ -179,197 +225,198 @@
       <div class="container is-fluid">
         <div class="mobile-bottom-bar-inner">
           <div class="mobile-bottom-bar-bottom">
-          <div
-            ref="actionMenuRef"
-            class="dropdown is-up"
-            :class="{ 'is-active': actionMenuOpen }"
-          >
-            <div class="dropdown-trigger">
-              <button
-                class="button is-light is-small"
-                aria-haspopup="true"
-                :aria-expanded="actionMenuOpen ? 'true' : 'false'"
-                @click="actionMenuOpen = !actionMenuOpen"
-                title="操作菜单"
-              >
-                <IconMenu2 :size="18" />
-              </button>
-            </div>
-            <div class="dropdown-menu" role="menu">
-              <div class="dropdown-content">
-                <a
-                  class="dropdown-item"
-                  href="#"
-                  @click.prevent="setActionMode('nav')"
-                  >导航</a
-                >
-                <a
-                  class="dropdown-item"
-                  href="#"
-                  @click.prevent="setActionMode('history')"
-                  >历史</a
-                >
-                <a
-                  class="dropdown-item"
-                  href="#"
-                  @click.prevent="setActionMode('batch')"
-                  >批量</a
-                >
-              </div>
-            </div>
-          </div>
-
-          <div class="mobile-action-panel">
-            <!-- 导航模式 -->
             <div
-              v-if="actionMode === 'nav'"
-              class="buttons are-small mb-0 mobile-action-buttons"
+              ref="actionMenuRef"
+              class="dropdown is-up"
+              :class="{ 'is-active': actionMenuOpen }"
             >
-              <button class="button is-light" @click="goBack" title="上一级">
-                <IconArrowLeft :size="18" />
-              </button>
-              <button class="button is-light" @click="goRoot" title="根目录">
-                <IconHome :size="18" />
-              </button>
-              <button
-                class="button is-link"
-                @click="openUploader"
-                title="上传"
-                aria-label="上传"
+              <div class="dropdown-trigger">
+                <button
+                  class="button is-light is-small"
+                  aria-haspopup="true"
+                  :aria-expanded="actionMenuOpen ? 'true' : 'false'"
+                  @click="actionMenuOpen = !actionMenuOpen"
+                  title="操作菜单"
+                >
+                  <IconMenu2 :size="18" />
+                </button>
+              </div>
+              <div class="dropdown-menu" role="menu">
+                <div class="dropdown-content">
+                  <a
+                    class="dropdown-item"
+                    href="#"
+                    @click.prevent="setActionMode('nav')"
+                    >导航</a
+                  >
+                  <a
+                    class="dropdown-item"
+                    href="#"
+                    @click.prevent="setActionMode('history')"
+                    >历史</a
+                  >
+                  <a
+                    class="dropdown-item"
+                    href="#"
+                    @click.prevent="setActionMode('batch')"
+                    >批量</a
+                  >
+                </div>
+              </div>
+            </div>
+
+            <div class="mobile-action-panel">
+              <!-- 导航模式 -->
+              <div
+                v-if="actionMode === 'nav'"
+                class="buttons are-small mb-0 mobile-action-buttons"
               >
-                <IconUpload :size="18" />
-              </button>
-              <button class="button is-light" @click="refresh" title="刷新">
-                <IconRefresh :size="18" />
-              </button>
-            </div>
+                <button class="button is-light" @click="goBack" title="上一级">
+                  <IconArrowLeft :size="18" />
+                </button>
+                <button class="button is-light" @click="goRoot" title="根目录">
+                  <IconHome :size="18" />
+                </button>
+                <button
+                  class="button is-link"
+                  @click="openUploader"
+                  title="上传"
+                  aria-label="上传"
+                >
+                  <IconUpload :size="18" />
+                </button>
+                <button class="button is-light" @click="refresh" title="刷新">
+                  <IconRefresh :size="18" />
+                </button>
+              </div>
 
-            <!-- 历史模式 -->
-            <div
-              v-else-if="actionMode === 'history'"
-              class="mobile-history-panel"
-            >
-              <div class="mobile-history-hash">
-                <code class="is-size-7">{{ historyHashShort }}</code>
-                <span
-                  v-if="historyDateShort"
-                  class="is-size-7 has-text-grey-light ml-2"
-                  >{{ historyDateShort }}</span
-                >
-              </div>
-              <div class="buttons are-small mb-0 mobile-action-buttons">
-                <button
-                  class="button is-light"
-                  :disabled="dirHistoryLoading || !canPrev"
-                  @click="historyPrev"
-                  title="向前"
-                  aria-label="向前"
-                >
-                  <IconChevronLeft :size="18" />
-                </button>
-                <button
-                  class="button is-light"
-                  :disabled="dirHistoryLoading || !canNext"
-                  @click="historyNext"
-                  title="向后"
-                  aria-label="向后"
-                >
-                  <IconChevronRight :size="18" />
-                </button>
-                <button
-                  class="button is-light"
-                  :disabled="dirHistoryLoading || !canLast"
-                  @click="historyLast"
-                  title="跳到最后"
-                  aria-label="跳到最后"
-                >
-                  <IconChevronsRight :size="18" />
-                </button>
-              </div>
-            </div>
-
-            <!-- 批量模式 -->
-            <div v-else class="mobile-batch-panel">
-              <div class="is-size-7 has-text-grey mr-2 mobile-batch-count">
-                已选 {{ selectedCount }}
-              </div>
-              <div class="mobile-batch-actions">
+              <!-- 历史模式 -->
+              <div
+                v-else-if="actionMode === 'history'"
+                class="mobile-history-panel"
+              >
+                <div class="mobile-history-hash">
+                  <code class="is-size-7">{{ historyHashShort }}</code>
+                  <span
+                    v-if="historyDateShort"
+                    class="is-size-7 has-text-grey-light ml-2"
+                    >{{ historyDateShort }}</span
+                  >
+                </div>
                 <div class="buttons are-small mb-0 mobile-action-buttons">
                   <button
                     class="button is-light"
-                    @click="toggleBatch"
-                    title="进入/退出批量"
+                    :disabled="dirHistoryLoading || !canPrev"
+                    @click="historyPrev"
+                    title="向前"
+                    aria-label="向前"
                   >
-                    <IconChecklist :size="18" />
+                    <IconChevronLeft :size="18" />
                   </button>
                   <button
                     class="button is-light"
-                    :disabled="!isBatchMode"
-                    @click="selectAll"
-                    title="全选"
+                    :disabled="dirHistoryLoading || !canNext"
+                    @click="historyNext"
+                    title="向后"
+                    aria-label="向后"
                   >
-                    全选
+                    <IconChevronRight :size="18" />
                   </button>
                   <button
                     class="button is-light"
-                    :disabled="!isBatchMode"
-                    @click="clearSelection"
-                    title="取消选择"
+                    :disabled="dirHistoryLoading || !canLast"
+                    @click="historyLast"
+                    title="跳到最后"
+                    aria-label="跳到最后"
                   >
-                    取消
-                  </button>
-                  <button
-                    class="button is-info"
-                    :disabled="selectedCount === 0"
-                    @click="batchDownload"
-                    title="批量下载"
-                  >
-                    下载
+                    <IconChevronsRight :size="18" />
                   </button>
                 </div>
+              </div>
 
-                <div
-                  ref="batchMenuRef"
-                  class="dropdown is-up mobile-batch-more"
-                  :class="{ 'is-active': batchMenuOpen }"
-                >
-                  <div class="dropdown-trigger">
+              <!-- 批量模式 -->
+              <div v-else class="mobile-batch-panel">
+                <div class="is-size-7 has-text-grey mr-2 mobile-batch-count">
+                  已选 {{ selectedCount }}
+                </div>
+                <div class="mobile-batch-actions">
+                  <div class="buttons are-small mb-0 mobile-action-buttons">
                     <button
-                      class="button is-light is-small"
-                      aria-haspopup="true"
-                      :aria-expanded="batchMenuOpen ? 'true' : 'false'"
-                      title="更多批量操作"
-                      @click="batchMenuOpen = !batchMenuOpen"
+                      class="button is-light"
+                      @click="toggleBatch"
+                      title="进入/退出批量"
                     >
-                      <IconDotsVertical :size="18" />
+                      <IconChecklist :size="18" />
+                    </button>
+                    <button
+                      class="button is-light"
+                      :disabled="!isBatchMode"
+                      @click="selectAll"
+                      title="全选"
+                    >
+                      全选
+                    </button>
+                    <button
+                      class="button is-light"
+                      :disabled="!isBatchMode"
+                      @click="clearSelection"
+                      title="取消选择"
+                    >
+                      取消
+                    </button>
+                    <button
+                      class="button is-info"
+                      :disabled="selectedCount === 0"
+                      @click="batchDownload"
+                      title="批量下载"
+                    >
+                      下载
                     </button>
                   </div>
-                  <div class="dropdown-menu" role="menu">
-                    <div class="dropdown-content">
-                      <a
-                        class="dropdown-item"
-                        :class="{ 'is-disabled': selectedCount === 0 }"
-                        href="#"
-                        @click.prevent="runBatchMenuAction('delete')"
+
+                  <div
+                    ref="batchMenuRef"
+                    class="dropdown is-up mobile-batch-more"
+                    :class="{ 'is-active': batchMenuOpen }"
+                  >
+                    <div class="dropdown-trigger">
+                      <button
+                        class="button is-light is-small"
+                        aria-haspopup="true"
+                        :aria-expanded="batchMenuOpen ? 'true' : 'false'"
+                        title="更多批量操作"
+                        @click="batchMenuOpen = !batchMenuOpen"
                       >
-                        删除
-                      </a>
-                      <a
-                        class="dropdown-item"
-                        :class="{ 'is-disabled': selectedCount === 0 }"
-                        href="#"
-                        @click.prevent="runBatchMenuAction('move')"
-                      >
-                        移动
-                      </a>
-                      <a
-                        class="dropdown-item"
-                        :class="{ 'is-disabled': selectedCount !== 1 }"
-                        href="#"
-                        @click.prevent="runBatchMenuAction('rename')"
-                      >
-                        重命名
-                      </a>
+                        <IconDotsVertical :size="18" />
+                      </button>
+                    </div>
+                    <div class="dropdown-menu" role="menu">
+                      <div class="dropdown-content">
+                        <a
+                          class="dropdown-item"
+                          :class="{ 'is-disabled': selectedCount === 0 }"
+                          href="#"
+                          @click.prevent="runBatchMenuAction('delete')"
+                        >
+                          删除
+                        </a>
+                        <a
+                          class="dropdown-item"
+                          :class="{ 'is-disabled': selectedCount === 0 }"
+                          href="#"
+                          @click.prevent="runBatchMenuAction('move')"
+                        >
+                          移动
+                        </a>
+                        <a
+                          class="dropdown-item"
+                          :class="{ 'is-disabled': selectedCount !== 1 }"
+                          href="#"
+                          @click.prevent="runBatchMenuAction('rename')"
+                        >
+                          重命名
+                        </a>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -380,13 +427,12 @@
       </div>
     </div>
   </div>
-  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import {
   IconMenu2,
   IconChecklist,
@@ -437,6 +483,46 @@ const accountMenuRef = ref<HTMLElement | null>(null);
 const auth = useAuthStore();
 const appStore = useAppStore();
 const router = useRouter();
+const route = useRoute();
+const appBarQuery = ref("");
+const searchHistory = ref<string[]>([]);
+
+/** 应用栏只投递查询请求，实际搜索仍由 FileBrowser 执行（结果与分页都在那边）。 */
+function submitSearch() {
+  const query = appBarQuery.value.trim();
+  if (!query) return;
+  appStore.requestSearch(query);
+  if (route.path !== "/") void router.push("/");
+  // 复用搜索历史（与浏览器里的搜索框共用同一份存储）
+  searchHistory.value = [
+    query,
+    ...searchHistory.value.filter((item) => item !== query),
+  ].slice(0, 8);
+  try {
+    localStorage.setItem(
+      "vfiles.searchHistory",
+      JSON.stringify(searchHistory.value),
+    );
+  } catch {
+    // 忽略存储失败（隐私模式等）
+  }
+}
+
+onMounted(() => {
+  try {
+    const raw = localStorage.getItem("vfiles.searchHistory");
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        searchHistory.value = parsed.filter(
+          (item): item is string => typeof item === "string",
+        );
+      }
+    }
+  } catch {
+    searchHistory.value = [];
+  }
+});
 
 async function doLogout() {
   try {
@@ -700,7 +786,9 @@ async function ensureDirHistoryLoaded() {
 
 async function desktopHistoryFastBack() {
   if (!(await ensureDirHistoryLoaded())) return;
-  applyHistoryHash(dirHistoryCommits.value[dirHistoryCommits.value.length - 1]?.hash);
+  applyHistoryHash(
+    dirHistoryCommits.value[dirHistoryCommits.value.length - 1]?.hash,
+  );
 }
 
 async function desktopHistoryStepBack() {
@@ -712,7 +800,8 @@ async function desktopHistoryStepBack() {
   }
 
   const idx = dirSelectedIndex.value;
-  const nextHash = idx >= 0 ? dirHistoryCommits.value[idx + 1]?.hash : undefined;
+  const nextHash =
+    idx >= 0 ? dirHistoryCommits.value[idx + 1]?.hash : undefined;
   applyHistoryHash(nextHash);
 }
 
@@ -833,7 +922,6 @@ async function batchMove() {
 async function renameSelected() {
   await browserRef.value?.renameSelected();
 }
-
 </script>
 
 <style scoped>
@@ -847,6 +935,61 @@ async function renameSelected() {
 
 .hero {
   margin-bottom: 0;
+}
+
+/* 应用栏全局搜索：胶囊输入，桌面端显示 */
+.app-bar-search-slot {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  padding: 0 1rem;
+}
+
+/* 移动端用工具栏里的搜索行，应用栏不重复提供入口 */
+@media screen and (max-width: 1023px) {
+  .app-bar-search-slot {
+    display: none;
+  }
+}
+
+.app-bar-search {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: min(28rem, 100%);
+  height: 2.1rem;
+  padding: 0 0.5rem 0 0.65rem;
+  border: 1px solid var(--vf-border);
+  border-radius: 999px;
+  background: var(--vf-surface-sunken);
+}
+
+.app-bar-search:focus-within {
+  border-color: var(--vf-accent);
+  background: var(--vf-surface-raised);
+}
+
+.app-bar-search-icon {
+  display: inline-flex;
+  color: var(--vf-text-muted);
+}
+
+.app-bar-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--vf-text);
+  font-size: 0.84rem;
+  outline: none;
+}
+
+.app-bar-search-input::placeholder {
+  color: var(--vf-text-subtle);
+}
+
+.app-bar-search-clear {
+  flex: 0 0 auto;
 }
 
 .app-top-bar {

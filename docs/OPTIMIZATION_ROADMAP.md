@@ -16,11 +16,11 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 60 实测）
+### 验证基线（round 61 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：41 个文件 / **263** 个用例通过；`vue-tsc`、`eslint`、`prettier`
+- `client` 单测：42 个文件 / **265** 个用例通过；`vue-tsc`、`eslint`、`prettier`
   通过。
 - 后端：`cargo test --workspace` 全部通过、`clippy --all-targets` 无告警、`fmt`
   干净（`frontend.rs` 的历史格式差异保持原样）。
@@ -1095,6 +1095,23 @@
 - 测试：新增「目录分页 SQL 化」集成用例（目录优先、页间连续、total/has_more、
   越界空页、子目录路径）与「非法 JSON 使用统一信封」用例。
 
+### 2.68 应用栏全局搜索（round 61，交互）
+
+- 背景：搜索入口此前只在内容区工具栏，与 Drive/OneDrive 的「顶栏全局搜索」不一致。
+- **不改动搜索状态的归属**：搜索状态（结果、分页、过期响应守卫）仍由 `FileBrowser`
+  持有，应用栏只通过 store 投递一次「搜索请求」（`appStore.requestSearch` /
+  `pendingSearch` / `clearPendingSearch`），`FileBrowser` 消费后填充自己的
+  `searchQuery` 并执行既有搜索流程。这样避免了把整套搜索状态提升到页面级的重构风险，
+  同时自动复用搜索历史、结果渲染与分页。
+- 应用栏：桌面端在品牌与版本胶囊之间加入胶囊式搜索框（带图标、清空按钮与历史
+  `datalist`）；提交后写入与文件浏览器相同的 `vfiles.searchHistory` 存储；
+  **移动端隐藏**（保留工具栏内已有的搜索行）。
+- 测试：新增 store 通道用例（去空格、空查询不入队、消费后清空）与
+  `FileBrowser` 消费用例（收到请求后调用搜索接口）。
+- 冒烟：桌面端顶栏输入 `needle` 回车后，列表显示 `find-needle.txt`，工具栏搜索框
+  同步显示该查询；移动端应用栏搜索槽为 `display: none` 且工具栏搜索行仍在；
+  无控制台报错。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -1206,8 +1223,8 @@
 - `[x]` 右键 / 长按的「详细信息」弹窗，移动端也能查看元数据（round 45，见 §2.52）。
 - `[x]` 顶栏重设计：快照切换器收进胶囊按钮，账号入口改头像样式（round 36，见 §2.43）。
 - `[x]` 移动端工具栏合并：顶部搜索 + 底部单行操作栏（round 36，见 §2.43）。
-- `[ ]` 主搜索框上移到应用栏（对齐 Drive/OneDrive 的全局搜索），需要把搜索状态从
-  `FileBrowser` 提升到页面级。
+- `[x]` 应用栏全局搜索：通过 store 单向投递搜索请求，搜索状态仍由 `FileBrowser`
+  持有（round 61，见 §2.68）。
 - `[x]` 整窗拖放上传浮层（round 42，见 §2.49）。
 - `[x]` 通知改为卡片式提示：类型图标、避开顶栏、限制堆叠条数（round 48，见 §2.55）。
 - `[x]` 上传进度胶囊：工具栏直接显示队列状态并可点击回到对话框（round 58，见 §2.65）。
