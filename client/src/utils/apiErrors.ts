@@ -10,6 +10,9 @@
 export interface ApiErrorDetails {
   path?: string;
   field?: string;
+  reason?: string;
+  limit_bytes?: number;
+  size_bytes?: number;
 }
 
 export interface ApiErrorPayload {
@@ -39,6 +42,7 @@ export const API_ERROR_MESSAGES: Record<string, string> = {
   SEARCH_INDEX_NOT_READY: "搜索索引尚未就绪，请稍后重试",
   RATE_LIMITED: "操作过于频繁，请稍后重试",
   VALIDATION_FAILED: "输入内容不合法",
+  FILE_TOO_LARGE: "文件过大，已超过上限",
   CONFLICT: "操作冲突，请刷新后重试",
   NOT_IMPLEMENTED: "该功能尚未开放",
   INTERNAL_ERROR: "服务器内部错误，请稍后重试",
@@ -50,6 +54,20 @@ export const API_ERROR_MESSAGES: Record<string, string> = {
  * @param payload 服务端返回的 `{ code, message, details }`
  * @param fallback 完全无法判断时使用的兜底文案（通常是调用方自己的中文提示）
  */
+/** 校验字段名 → 中文标签（服务端只给英文字段名）。 */
+export const FIELD_LABELS: Record<string, string> = {
+  username: "用户名",
+  email: "邮箱",
+  password: "密码",
+  role: "角色",
+  page: "分页参数",
+  page_size: "分页参数",
+  path: "路径",
+  name: "名称",
+  message: "备注",
+  body: "请求内容",
+};
+
 export function localizeApiError(
   payload: ApiErrorPayload | null | undefined,
   fallback: string,
@@ -58,13 +76,42 @@ export function localizeApiError(
   const localized = code ? API_ERROR_MESSAGES[code] : undefined;
 
   if (localized) {
-    const detail = payload?.details?.path?.trim();
-    return detail ? `${localized}：${detail}` : localized;
+    // 路径冲突：附上冲突路径
+    const path = payload?.details?.path?.trim();
+    if (path) return `${localized}：${path}`;
+
+    // 上传超限：附上人类可读的上限
+    const limit = payload?.details?.limit_bytes;
+    if (code === "FILE_TOO_LARGE" && typeof limit === "number" && limit > 0) {
+      return `${localized}（最大 ${formatBytes(limit)}）`;
+    }
+
+    // 校验失败：指出具体字段（英文原因不直接展示，避免中英混杂）
+    const field = payload?.details?.field?.trim();
+    if (field) {
+      const label = FIELD_LABELS[field.toLowerCase()] ?? field;
+      return `${localized}：${label}`;
+    }
+
+    return localized;
   }
 
   // 未知错误码：优先展示服务端文案（可能是面向用户的自定义消息）
   const message = payload?.message?.trim();
   return message || fallback;
+}
+
+/** 服务端上限等字节数的人类可读格式（与界面其它位置保持一致）。 */
+function formatBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const rounded = unit === 0 ? value : Math.round(value * 10) / 10;
+  return `${rounded} ${units[unit]}`;
 }
 
 /** 从 axios 抛出的错误里取出错误负载（兼容 `data` 包裹与旧格式）。 */

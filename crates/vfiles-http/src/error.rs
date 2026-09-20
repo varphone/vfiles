@@ -23,8 +23,18 @@ pub struct ErrorResponse {
 #[derive(Debug)]
 pub enum ApiError {
     Domain(DomainError),
-    Validation { field: String, message: String },
-    Forbidden { message: String },
+    Validation {
+        field: String,
+        message: String,
+    },
+    /// 上传/写入超过允许的大小上限（带上结构化上限，便于客户端本地化展示）。
+    FileTooLarge {
+        limit_bytes: u64,
+        size_bytes: u64,
+    },
+    Forbidden {
+        message: String,
+    },
     Internal(String),
     NotImplemented,
 }
@@ -41,6 +51,33 @@ impl From<DomainError> for ApiError {
     fn from(err: DomainError) -> Self {
         ApiError::Domain(err)
     }
+}
+
+/// 校验失败的结构化信息：`{field?, reason}`。
+///
+/// 客户端按错误码渲染中文，并可用 `field` 指出具体字段（如 `password`），
+/// 无需从英文消息里猜。
+/// 只带原因的结构化信息：`{reason}`。
+fn reason_details(reason: &str) -> Option<serde_json::Value> {
+    validation_details(None, reason)
+}
+
+fn validation_details(field: Option<&str>, reason: &str) -> Option<serde_json::Value> {
+    let mut details = serde_json::Map::new();
+    if let Some(field) = field.filter(|value| !value.is_empty()) {
+        details.insert(
+            "field".to_string(),
+            serde_json::Value::String(field.to_string()),
+        );
+    }
+    if !reason.is_empty() {
+        details.insert(
+            "reason".to_string(),
+            serde_json::Value::String(reason.to_string()),
+        );
+    }
+
+    (!details.is_empty()).then_some(serde_json::Value::Object(details))
 }
 
 /// 从 `PathConflict` 的英文消息里取出冲突路径，作为结构化 `details`。
@@ -179,30 +216,51 @@ impl IntoResponse for ApiError {
                 format!("Feature not implemented: {}", feature),
                 None,
             ),
-            ApiError::Domain(DomainError::Validation { message }) => (
-                StatusCode::BAD_REQUEST,
-                "VALIDATION_FAILED".to_string(),
-                format!("Validation failed: {}", message),
-                None,
-            ),
-            ApiError::Domain(DomainError::Conflict { message }) => (
-                StatusCode::CONFLICT,
-                "CONFLICT".to_string(),
-                format!("Conflict: {}", message),
-                None,
-            ),
+            ApiError::Domain(DomainError::Validation { message }) => {
+                let details = validation_details(None, &message);
+                (
+                    StatusCode::BAD_REQUEST,
+                    "VALIDATION_FAILED".to_string(),
+                    format!("Validation failed: {}", message),
+                    details,
+                )
+            }
+            ApiError::Domain(DomainError::Conflict { message }) => {
+                let details = reason_details(&message);
+                (
+                    StatusCode::CONFLICT,
+                    "CONFLICT".to_string(),
+                    format!("Conflict: {}", message),
+                    details,
+                )
+            }
             ApiError::Domain(DomainError::Internal { message: _ }) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INTERNAL_ERROR".to_string(),
                 "Internal server error".to_string(),
                 None,
             ),
-            ApiError::Validation { field, message } => (
-                StatusCode::BAD_REQUEST,
-                "VALIDATION_FAILED".to_string(),
-                format!("Validation failed for {}: {}", field, message),
-                None,
+            ApiError::FileTooLarge {
+                limit_bytes,
+                size_bytes,
+            } => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "FILE_TOO_LARGE".to_string(),
+                format!("File too large. Maximum size is {limit_bytes} bytes"),
+                Some(serde_json::json!({
+                    "limit_bytes": limit_bytes,
+                    "size_bytes": size_bytes,
+                })),
             ),
+            ApiError::Validation { field, message } => {
+                let details = validation_details(Some(&field), &message);
+                (
+                    StatusCode::BAD_REQUEST,
+                    "VALIDATION_FAILED".to_string(),
+                    format!("Validation failed for {}: {}", field, message),
+                    details,
+                )
+            }
             ApiError::Internal(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INTERNAL_ERROR".to_string(),

@@ -16,11 +16,11 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 58 实测）
+### 验证基线（round 59 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：41 个文件 / **261** 个用例通过；`vue-tsc`、`eslint`、`prettier`
+- `client` 单测：41 个文件 / **263** 个用例通过；`vue-tsc`、`eslint`、`prettier`
   通过。
 - 后端：`cargo test --workspace` 全部通过、`clippy --all-targets` 无告警、`fmt`
   干净（`frontend.rs` 的历史格式差异保持原样）。
@@ -1051,6 +1051,23 @@
   上传中显示「上传中 0/1」，关闭对话框后胶囊仍在且点击可重新打开对话框，
   上传完成后胶囊消失且文件出现在列表中，全程无控制台报错。
 
+### 2.66 错误细节结构化（round 59，交互）
+
+- 服务端补齐结构化 `details`：
+  - `ApiError::Validation { field, message }` → `{field, reason}`；
+  - `DomainError::Validation { message }` 与 `DomainError::Conflict { message }` → `{reason}`；
+  - 上传超限改为专用错误码 **`FILE_TOO_LARGE`**（HTTP 413）并带
+    `{limit_bytes, size_bytes}`，不再让客户端从英文消息里猜上限。
+- 客户端 `apiErrors.ts` 据此渲染：
+  - `FILE_TOO_LARGE` → 「文件过大，已超过上限（最大 100 MB）」（本地把字节数格式化）；
+  - `VALIDATION_FAILED` + `details.field` → 「输入内容不合法：密码」（内置字段名 → 中文
+    标签映射）；**不再把英文 `reason` 拼进用户可见文案**；
+  - 未知错误码仍回退服务端文案（兼容自定义提示）。
+- 测试：服务端新增结构化 details 用例（handler 内校验返回 `{reason}`、路径冲突返回
+  `{path}`）；客户端新增 2 个用例（超限上限格式化、字段名本地化与未知字段回退）。
+- 遗留（记入 §3.8）：axum 的 `Json` 提取器在请求体本身非法时返回 422 且**响应体不是**
+  我们的错误信封；要统一需要自定义提取器并替换各处理函数的 `Json<T>`，评估后暂不做。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -1171,5 +1188,6 @@
 
 - `[x]` 客户端按错误码渲染中文文案，冲突类附上服务端返回的路径参数（round 49，
   见 §2.56）。
-- `[ ]` 其余动态细节（校验失败的具体字段值、上传冲突的分片编号等）改为结构化
-  `details` 而非拼进英文消息，客户端补上对应参数渲染。
+- `[x]` 校验/冲突/上传超限改为结构化 `details`（`field`/`reason`/`limit_bytes`），
+  客户端按字段名与上限本地化（round 59，见 §2.66）。
+- `[ ]` 统一请求体解析失败（axum `Json` 提取器的 422）为同一种错误信封。

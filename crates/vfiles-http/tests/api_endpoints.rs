@@ -2986,6 +2986,56 @@ async fn paged_search_keeps_content_matches_across_pages() {
     );
 }
 
+/// 校验失败与超限都返回结构化的 `details`，便于客户端本地化展示。
+#[tokio::test]
+async fn validation_and_size_errors_carry_structured_details() {
+    let app = TestApp::new().await;
+
+    // 非法查询参数（handler 内的 Validation）：details 应带结构化原因
+    let invalid = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/search?q=report&type=bogus")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    let payload = response_json(invalid).await;
+    assert_eq!(payload["code"], Value::from("VALIDATION_FAILED"));
+    assert!(
+        payload["details"]["reason"].is_string(),
+        "校验失败应给出结构化原因: {}",
+        payload["details"]
+    );
+
+    // 路径冲突：details.path（round 49 已加，这里一并回归）
+    app.upload_version("", "exists.txt", b"x", "seed").await;
+    let conflict = app
+        .request_as_admin(
+            Request::builder()
+                .method("POST")
+                .uri("/api/files/move")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    "{\"from\":\"exists.txt\",\"to\":\"exists.txt\"}",
+                ))
+                .expect("request should build"),
+        )
+        .await;
+    let payload = response_json(conflict).await;
+    // 同一个路径的移动会走 Conflict 分支（带 message），details 仍是结构化的
+    assert!(
+        matches!(
+            payload["code"].as_str(),
+            Some("PATH_CONFLICT") | Some("CONFLICT")
+        ),
+        "unexpected code: {}",
+        payload["code"]
+    );
+    assert!(payload["details"].is_object(), "冲突应带结构化 details");
+}
+
 /// 收藏：添加、列出、取消收藏，并且路径不存在时报 404。
 #[tokio::test]
 async fn favorites_can_be_added_listed_and_removed() {

@@ -28,6 +28,40 @@ describe("localizeApiError", () => {
     ).toBe("目标路径已被占用：docs/a.txt");
   });
 
+  it("renders the size limit for oversized uploads", () => {
+    expect(
+      localizeApiError(
+        {
+          code: "FILE_TOO_LARGE",
+          message: "File too large. Maximum size is 104857600 bytes",
+          details: { limit_bytes: 104857600, size_bytes: 200000000 },
+        },
+        "兜底",
+      ),
+    ).toBe("文件过大，已超过上限（最大 100 MB）");
+  });
+
+  it("names the offending field for validation failures", () => {
+    expect(
+      localizeApiError(
+        {
+          code: "VALIDATION_FAILED",
+          message: "Validation failed for password: too short",
+          details: { field: "password", reason: "too short" },
+        },
+        "兜底",
+      ),
+    ).toBe("输入内容不合法：密码");
+
+    // 未知字段直接回退字段名，不展示英文原因
+    expect(
+      localizeApiError(
+        { code: "VALIDATION_FAILED", details: { field: "nickname" } },
+        "兜底",
+      ),
+    ).toBe("输入内容不合法：nickname");
+  });
+
   it("keeps the server message for unknown codes", () => {
     expect(
       localizeApiError(

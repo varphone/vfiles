@@ -247,12 +247,11 @@ async fn process_single_upload(
                 })? {
                     file_size = file_size.saturating_add(chunk.len() as u64);
                     if file_size > max_upload_size {
-                        return Err(ApiError::Domain(DomainError::Validation {
-                            message: format!(
-                                "File too large. Maximum size is {} bytes",
-                                max_upload_size
-                            ),
-                        }));
+                        // 专用错误码 + 结构化上限，客户端可直接渲染「文件过大（上限 …）」
+                        return Err(ApiError::FileTooLarge {
+                            limit_bytes: max_upload_size,
+                            size_bytes: file_size,
+                        });
                     }
                     temp_file.write_all(&chunk).await.map_err(|err| {
                         ApiError::Internal(format!("Failed to write upload temp file: {}", err))
