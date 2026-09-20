@@ -176,3 +176,25 @@ sudo ./vfiles register -t systemd \
 ```
 
 裁剪会删除旧快照（不可再恢复到这些提交），请在确认不再需要旧历史后执行。
+
+### 周期性维护
+
+除了手动执行，也可以让服务在后台按周期自动维护。**默认关闭**（涉及不可逆删除，需显式开启）：
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `VFILES_MAINTENANCE_ENABLED` | `false` | 是否启用周期性维护 |
+| `VFILES_MAINTENANCE_INTERVAL_SECONDS` | `86400` | 执行间隔（秒），最小 60 |
+| `VFILES_MAINTENANCE_INITIAL_DELAY_SECONDS` | `300` | 启动后首次执行前等待（秒），不超过间隔且最多 5 分钟 |
+| `VFILES_MAINTENANCE_BLOB_GRACE_SECONDS` | `3600` | 孤儿 blob 保护期（秒） |
+| `VFILES_MAINTENANCE_SNAPSHOT_KEEP` | `0` | 每个命名空间保留的快照数；`0`（默认）表示不裁剪快照 |
+
+```bash
+export VFILES_MAINTENANCE_ENABLED=true
+export VFILES_MAINTENANCE_SNAPSHOT_KEEP=50   # 需要控制历史占用时再打开
+```
+
+每轮先按需裁剪快照、再回收孤儿 blob，日志（`RUST_LOG=info`）会输出
+`Periodic maintenance finished pruned_snapshots=.. released_blobs=.. purged_blobs=.. freed_bytes=..`；
+单轮失败只记录告警并在下个周期重试，不影响服务。停机（SIGTERM/SIGINT）时会先停止维护任务、
+再关闭数据库连接池。

@@ -24,6 +24,7 @@ pub struct AppConfig {
     pub mail: MailConfig,
     pub search: SearchConfig,
     pub limits: LimitsConfig,
+    pub maintenance: MaintenanceConfig,
     pub features: FeatureMatrix,
 }
 
@@ -101,6 +102,36 @@ pub struct LimitsConfig {
     pub max_file_size_bytes: u64,
     pub upload_chunk_size_bytes: u64,
     pub rate_limit_requests_per_minute: u32,
+}
+
+/// 周期性维护（快照裁剪 + 孤儿 blob 回收）。
+///
+/// 默认关闭：这些操作会不可逆地删除数据，需运维显式开启。
+#[derive(Debug, Clone)]
+pub struct MaintenanceConfig {
+    pub enabled: bool,
+    /// 两次维护之间的间隔（秒），最小 60 秒。
+    pub interval_seconds: u64,
+    /// 首次执行前的等待时间（秒），避免与启动/重启叠加。
+    pub initial_delay_seconds: u64,
+    /// 孤儿 blob 的保护期（秒）：创建时间晚于该窗口的 blob 不会被回收。
+    pub blob_grace_seconds: u64,
+    /// 每个命名空间保留的最新快照数；0 表示不裁剪快照。
+    pub snapshot_keep: u32,
+}
+
+/// 维护间隔的下限，避免配置成极小值后变成忙循环。
+pub const MIN_MAINTENANCE_INTERVAL_SECONDS: u64 = 60;
+/// 维护间隔的下限对应值：首次执行的等待时间上限。
+pub const MAX_MAINTENANCE_INITIAL_DELAY_SECONDS: u64 = 300;
+
+impl MaintenanceConfig {
+    /// 首次执行前的等待时间：不超过间隔本身，也不超过 5 分钟。
+    pub fn effective_initial_delay_seconds(&self) -> u64 {
+        self.initial_delay_seconds
+            .min(self.interval_seconds)
+            .min(MAX_MAINTENANCE_INITIAL_DELAY_SECONDS)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -201,6 +232,32 @@ impl ConfigLoader {
         ])?
         .unwrap_or(10);
 
+        let maintenance_enabled =
+            Self::env_parse_bool(&["VFILES_MAINTENANCE_ENABLED", "MAINTENANCE_ENABLED"])?
+                .unwrap_or(false);
+        let maintenance_interval_seconds = Self::env_parse::<u64>(&[
+            "VFILES_MAINTENANCE_INTERVAL_SECONDS",
+            "MAINTENANCE_INTERVAL_SECONDS",
+        ])?
+        .unwrap_or(86_400)
+        .max(MIN_MAINTENANCE_INTERVAL_SECONDS);
+        let maintenance_initial_delay_seconds = Self::env_parse::<u64>(&[
+            "VFILES_MAINTENANCE_INITIAL_DELAY_SECONDS",
+            "MAINTENANCE_INITIAL_DELAY_SECONDS",
+        ])?
+        .unwrap_or(MAX_MAINTENANCE_INITIAL_DELAY_SECONDS);
+        let maintenance_blob_grace_seconds = Self::env_parse::<u64>(&[
+            "VFILES_MAINTENANCE_BLOB_GRACE_SECONDS",
+            "MAINTENANCE_BLOB_GRACE_SECONDS",
+        ])?
+        .unwrap_or(3600);
+        // 0 表示不裁剪快照；默认不裁剪，避免静默丢历史
+        let maintenance_snapshot_keep = Self::env_parse::<u32>(&[
+            "VFILES_MAINTENANCE_SNAPSHOT_KEEP",
+            "MAINTENANCE_SNAPSHOT_KEEP",
+        ])?
+        .unwrap_or(0);
+
         let config = AppConfig {
             http: HttpConfig {
                 host,
@@ -243,6 +300,13 @@ impl ConfigLoader {
                 max_file_size_bytes: 4_u64 * 1024 * 1024 * 1024,   // 4096MB
                 upload_chunk_size_bytes: 5 * 1024 * 1024,          // 5MB
                 rate_limit_requests_per_minute: 60,
+            },
+            maintenance: MaintenanceConfig {
+                enabled: maintenance_enabled,
+                interval_seconds: maintenance_interval_seconds,
+                initial_delay_seconds: maintenance_initial_delay_seconds,
+                blob_grace_seconds: maintenance_blob_grace_seconds,
+                snapshot_keep: maintenance_snapshot_keep,
             },
             features: FeatureMatrix {
                 auth_enabled,
@@ -385,6 +449,45 @@ mod tests {
         assert!(config.auth.login_rate_limit.enabled);
         assert_eq!(config.auth.login_rate_limit.window_ms, 300_000);
         assert_eq!(config.auth.login_rate_limit.max_attempts, 10);
+    }
+
+    #[test]
+    fn test_maintenance_defaults_are_conservative() {
+        let config = ConfigLoader::load().unwrap();
+
+        assert!(
+            !config.maintenance.enabled,
+            "周期性维护涉及不可逆删除，必须显式开启"
+        );
+        assert_eq!(config.maintenance.interval_seconds, 86_400);
+        assert_eq!(config.maintenance.initial_delay_seconds, 300);
+        assert_eq!(config.maintenance.blob_grace_seconds, 3_600);
+        assert_eq!(
+            config.maintenance.snapshot_keep, 0,
+            "默认不裁剪快照，避免静默丢失历史"
+        );
+    }
+
+    #[test]
+    fn test_maintenance_initial_delay_is_bounded() {
+        let mut config = MaintenanceConfig {
+            enabled: true,
+            interval_seconds: 3_600,
+            initial_delay_seconds: 10_000,
+            blob_grace_seconds: 3_600,
+            snapshot_keep: 10,
+        };
+        assert_eq!(
+            config.effective_initial_delay_seconds(),
+            MAX_MAINTENANCE_INITIAL_DELAY_SECONDS
+        );
+
+        // 首次等待不得超过间隔本身
+        config.interval_seconds = 120;
+        assert_eq!(config.effective_initial_delay_seconds(), 120);
+
+        config.initial_delay_seconds = 5;
+        assert_eq!(config.effective_initial_delay_seconds(), 5);
     }
 
     #[test]

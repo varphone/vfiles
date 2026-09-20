@@ -3,11 +3,12 @@ use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+use std::time::Duration;
 use vfiles_app::{
     AdminService, AuthService, BootstrapService, HealthService, HistoryService, MaintenanceService,
     SearchService, SessionService, ShareService, UploadService, WorkspaceService,
 };
-use vfiles_config::ConfigLoader;
+use vfiles_config::{ConfigLoader, MIN_MAINTENANCE_INTERVAL_SECONDS, MaintenanceConfig};
 use vfiles_domain::*;
 use vfiles_http::{AppState, FrontendAssets, build_router, middleware::LoginAttemptLimiter};
 use vfiles_infra_fs::FsStorageBootstrap;
@@ -906,6 +907,17 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
             .await?;
     let default_actor_user_id = UserId::from_uuid(uuid::Uuid::parse_str(&default_actor_user_id)?);
 
+    // 维护服务在 AppState 之前构建（后者的字段会 move 走 repo/blob store）
+    let maintenance_service = MaintenanceService::new(
+        blob_store.clone(),
+        entry_repo.clone(),
+        snapshot_repo.clone(),
+    );
+    let maintenance_schedule = config
+        .maintenance
+        .enabled
+        .then(|| MaintenanceSchedule::from_config(&config.maintenance));
+
     // Create app state
     let app_state = AppState {
         health_service,
@@ -942,13 +954,42 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("Server listening on http://{}", addr);
 
+    // 周期性维护：与 HTTP 服务并行运行，停机时先取消再关闭连接池
+    let (maintenance_shutdown_tx, maintenance_shutdown_rx) = tokio::sync::watch::channel(false);
+    let maintenance_task = match maintenance_schedule {
+        Some(schedule) => {
+            tracing::info!(
+                interval_seconds = schedule.interval.as_secs(),
+                initial_delay_seconds = schedule.initial_delay.as_secs(),
+                blob_grace_seconds = schedule.blob_grace_seconds,
+                snapshot_keep = schedule.snapshot_keep,
+                "Periodic maintenance enabled"
+            );
+            Some(tokio::spawn(run_maintenance_loop(
+                maintenance_service,
+                schedule,
+                maintenance_shutdown_rx,
+            )))
+        }
+        None => {
+            tracing::debug!("Periodic maintenance disabled (VFILES_MAINTENANCE_ENABLED=false)");
+            None
+        }
+    };
+
     tracing::info!("VFiles server started successfully!");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
-    // 收到 SIGTERM/SIGINT 后先停止接收新请求，再干净地关闭连接池。
-    tracing::info!("Shutdown signal received; closing database pool");
+    // 收到 SIGTERM/SIGINT 后先停止接收新请求，再停止维护任务，最后关闭连接池。
+    tracing::info!("Shutdown signal received; stopping maintenance and closing database pool");
+    let _ = maintenance_shutdown_tx.send(true);
+    if let Some(task) = maintenance_task
+        && let Err(err) = task.await
+    {
+        tracing::warn!(error = %err, "maintenance task did not stop cleanly");
+    }
     pool.close().await;
     tracing::info!("VFiles server stopped");
 
@@ -956,6 +997,93 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
 }
 
 /// 等待 Ctrl+C（SIGINT）或 SIGTERM，用于优雅停机。
+/// 周期性维护的运行参数。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MaintenanceSchedule {
+    interval: Duration,
+    initial_delay: Duration,
+    blob_grace_seconds: u64,
+    snapshot_keep: u32,
+}
+
+impl MaintenanceSchedule {
+    fn from_config(config: &MaintenanceConfig) -> Self {
+        Self {
+            // 配置已做过下限收敛，这里再兜一层，避免绕过配置构造出忙循环
+            interval: Duration::from_secs(
+                config
+                    .interval_seconds
+                    .max(MIN_MAINTENANCE_INTERVAL_SECONDS),
+            ),
+            initial_delay: Duration::from_secs(config.effective_initial_delay_seconds()),
+            blob_grace_seconds: config.blob_grace_seconds,
+            snapshot_keep: config.snapshot_keep,
+        }
+    }
+}
+
+type Maintenance = MaintenanceService<FsBlobStore, SqliteEntryRepo, SqliteSnapshotRepo>;
+
+/// 周期执行维护，直到收到停机信号。
+///
+/// 首次执行等待 `initial_delay`（默认 5 分钟），避免与启动/重启时的
+/// 其他 I/O 叠加；此后按 `interval` 执行，单次失败只记录告警并在下个周期重试。
+async fn run_maintenance_loop(
+    service: Maintenance,
+    schedule: MaintenanceSchedule,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    if !schedule.initial_delay.is_zero() {
+        tracing::debug!(
+            initial_delay_seconds = schedule.initial_delay.as_secs(),
+            "Waiting before the first maintenance run"
+        );
+        tokio::select! {
+            _ = tokio::time::sleep(schedule.initial_delay) => {}
+            _ = shutdown.changed() => return,
+        }
+    }
+
+    // 首轮在 initial_delay 之后立即执行
+    run_maintenance_tick(&service, &schedule).await;
+
+    let mut ticker = tokio::time::interval(schedule.interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // interval 的第一拍立即到期（上面已经跑过首轮），这里丢弃它
+    ticker.tick().await;
+
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => run_maintenance_tick(&service, &schedule).await,
+            _ = shutdown.changed() => {
+                tracing::info!("Periodic maintenance stopped");
+                return;
+            }
+        }
+    }
+}
+
+/// 执行一次维护并记录结果；失败只告警，不终止服务。
+async fn run_maintenance_tick(service: &Maintenance, schedule: &MaintenanceSchedule) {
+    match service
+        .run_once(schedule.blob_grace_seconds, schedule.snapshot_keep)
+        .await
+    {
+        Ok(report) => {
+            tracing::info!(
+                pruned_snapshots = report.pruned_snapshots,
+                released_blobs = report.released_blobs,
+                purged_blobs = report.purged_blobs,
+                freed_bytes = report.freed_bytes,
+                "Periodic maintenance finished"
+            );
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "Periodic maintenance failed; retrying next interval");
+        }
+    }
+}
+
 async fn shutdown_signal() {
     let ctrl_c = async {
         if let Err(err) = tokio::signal::ctrl_c().await {
@@ -991,6 +1119,38 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn maintenance_config(interval_seconds: u64, initial_delay_seconds: u64) -> MaintenanceConfig {
+        MaintenanceConfig {
+            enabled: true,
+            interval_seconds,
+            initial_delay_seconds,
+            blob_grace_seconds: 3600,
+            snapshot_keep: 0,
+        }
+    }
+
+    #[test]
+    fn maintenance_schedule_clamps_interval_and_delay() {
+        let schedule = MaintenanceSchedule::from_config(&maintenance_config(5, 10_000));
+
+        assert_eq!(
+            schedule.interval,
+            Duration::from_secs(MIN_MAINTENANCE_INTERVAL_SECONDS),
+            "间隔不得小于下限，避免配置成忙循环"
+        );
+        assert_eq!(schedule.initial_delay, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn maintenance_schedule_keeps_sane_values_untouched() {
+        let schedule = MaintenanceSchedule::from_config(&maintenance_config(3600, 120));
+
+        assert_eq!(schedule.interval, Duration::from_secs(3600));
+        assert_eq!(schedule.initial_delay, Duration::from_secs(120));
+        assert_eq!(schedule.blob_grace_seconds, 3600);
+        assert_eq!(schedule.snapshot_keep, 0);
+    }
 
     #[test]
     fn serve_accepts_host_and_port_overrides() {

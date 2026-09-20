@@ -16,16 +16,16 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 33 实测）
+### 验证基线（round 34 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
 - `client` 单测：26 个文件 / **165** 个用例通过；`vue-tsc`、`eslint`、`prettier`
   通过。
-- 冒烟（Playwright 真实浏览器）：内容接口首包返回 503 时**恰好重试一次**后渲染成功；
-  持续 503 时共计 3 次请求（首次 + 2 次重试）后展示错误与「重试」按钮，不会卡在
-  加载中；快速切换预览后显示的是最新文件；下载 `big.txt` 触发真实浏览器下载事件；
-  全流程无控制台报错；服务 `SIGTERM` 优雅退出。
+- 冒烟（真实服务）：开启周期性维护后 1 秒执行首轮并输出
+  `Periodic maintenance finished pruned_snapshots=0 released_blobs=0 purged_blobs=1 freed_bytes=14`，
+  伪造的孤儿 blob 文件被实际删除；**默认（未开启）时孤儿文件保留**，证明维护是显式开关；
+  `SIGTERM` 时先打印 `Periodic maintenance stopped` 再 `VFiles server stopped`，优雅退出。
 
 ### 主要发现
 
@@ -535,6 +535,27 @@
   重试与抛出、重试前释放响应体、取消后不重试、已取消时直接失败）与 4 个预览并发
   用例（过期响应丢弃、切换时取消在途请求、关闭后不写回、取消不报错）。
 
+### 2.40 周期性维护任务（round 34，稳定性）
+
+- 背景：`gc-blobs` / `prune-snapshots` 此前只能在业务低峰期手动执行（见
+  `docs/DEPLOYMENT.md`），长期运行的实例容易积累孤儿 blob 与过多快照。
+- 配置：新增 `MaintenanceConfig`（`crates/vfiles-config`），环境变量
+  `VFILES_MAINTENANCE_ENABLED`（默认 **false**，因为涉及不可逆删除）、
+  `..._INTERVAL_SECONDS`（默认 86400，下限 60）、`..._INITIAL_DELAY_SECONDS`
+  （默认 300，且不超过间隔与 5 分钟）、`..._BLOB_GRACE_SECONDS`（默认 3600）、
+  `..._SNAPSHOT_KEEP`（默认 0 = 不裁剪快照）。
+- `MaintenanceService::run_once()` 把两步合成一次执行：先裁剪快照释放 blob 引用，
+  再回收孤儿 blob，返回合并报告（`pruned_snapshots` / `released_blobs` /
+  `purged_blobs` / `freed_bytes`）。顺序很重要：先裁剪才能让同一轮回收掉刚释放的 blob。
+- `vfiles serve` 在后台启动维护循环：首轮在 `initial_delay` 后立即执行，此后按
+  `interval` 执行；单轮失败只告警并在下个周期重试；通过 `tokio::sync::watch` 与
+  停机信号联动，收到 SIGTERM/SIGINT 后先停止维护任务再关闭连接池，避免任务持有
+  已关闭的连接池。
+- 测试：`vfiles-config` 新增默认值（必须显式开启、默认不裁剪快照）与首次延迟收敛
+  用例；`vfiles-app` 新增两个 `run_once` 用例（合并报告：裁剪旧快照释放的 blob
+  同一轮被回收 + 孤儿文件被清理；`keep=0` 时不裁剪任何快照）；`vfiles-bin` 新增
+  调度参数收敛用例。冒烟验证真实服务下的开启/关闭两种行为与优雅停机日志。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -603,7 +624,7 @@
 - `[x]` 服务端优雅停机（SIGTERM/SIGINT → 停止收新请求 → 关闭连接池，退出码 0）（round 25）。
 - `[x]` 预览/下载失败的「重试」入口与下载队列重试（round 26）。
 - `[x]` 原始 `fetch`（预览/下载/diff）的有界自动重试与预览请求取消（round 33，见 §2.39）。
-- `[ ]` 服务内按周期自动执行维护任务（`gc-blobs` / `prune-snapshots`），而非仅靠 CLI。
+- `[x]` 服务内按周期自动执行维护任务（`gc-blobs` / `prune-snapshots`）（round 34，见 §2.40）。
 - `[ ]` 图片解码失败、超大文件跳过等场景补充计数指标。
 
 ### 3.6 暗色主题（交互，中）

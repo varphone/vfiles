@@ -644,6 +644,15 @@ pub struct SnapshotPruneReport {
     pub released_blobs: u64,
 }
 
+/// 一次完整维护的结果：先按需裁剪快照，再回收孤儿 blob。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MaintenanceRunReport {
+    pub pruned_snapshots: u64,
+    pub released_blobs: u64,
+    pub purged_blobs: u64,
+    pub freed_bytes: u64,
+}
+
 /// 维护任务：清理没有任何版本或快照引用、且已过保护期的 blob，以及裁剪历史快照。
 #[derive(Debug)]
 pub struct MaintenanceService<B, E, S> {
@@ -664,6 +673,30 @@ where
             entry_repo,
             snapshot_repo,
         }
+    }
+
+    /// 执行一次完整维护：`snapshot_keep > 0` 时先裁剪快照，随后回收孤儿 blob。
+    ///
+    /// 裁剪快照会先释放其 blob 引用，因此必须排在回收之前，否则被释放的
+    /// blob 要等下一轮才会真正删除。
+    pub async fn run_once(
+        &self,
+        blob_grace_seconds: u64,
+        snapshot_keep: u32,
+    ) -> DomainResult<MaintenanceRunReport> {
+        let prune = if snapshot_keep > 0 {
+            self.prune_snapshots(snapshot_keep).await?
+        } else {
+            SnapshotPruneReport::default()
+        };
+        let purge = self.purge_orphan_blobs(blob_grace_seconds).await?;
+
+        Ok(MaintenanceRunReport {
+            pruned_snapshots: prune.pruned_snapshots,
+            released_blobs: prune.released_blobs,
+            purged_blobs: purge.removed,
+            freed_bytes: purge.freed_bytes,
+        })
     }
 
     /// 每个命名空间仅保留最新的 `keep` 个快照，删除其余快照并释放其 blob 引用。
@@ -4172,6 +4205,220 @@ mod maintenance_tests {
             .expect("blob should exist")
             .ref_count;
         assert_eq!(refs_after, refs_before - 2);
+    }
+
+    #[tokio::test]
+    async fn run_once_combines_snapshot_pruning_and_blob_purge() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+            .expect("temp path should be utf-8");
+        let pool = SqlitePoolFactory::connect(root.join("vfiles.db").as_path())
+            .await
+            .expect("pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+        let snapshot_repo = vfiles_infra_sqlite::SqliteSnapshotRepo::new(pool.clone());
+        let blob_store = FsBlobStore::new(pool.clone(), root.join("blobs"));
+
+        let user_id = user_repo
+            .create_admin("admin", "admin@example.com", "hashed")
+            .await
+            .expect("admin should be created");
+        let namespace_id = namespace_repo
+            .create_default(&user_id, "default")
+            .await
+            .expect("namespace should be created");
+
+        // 场景一：文件已被删除（版本引用随之释放），只剩旧快照还引用这个 blob
+        let (blob_id, content_hash, _) = blob_store
+            .store_blob(b"deleted-file", None)
+            .await
+            .expect("blob should store");
+        let path = NormalizedPath::new("gone.txt").expect("path should parse");
+        let entry_id = entry_repo
+            .create_entry(&namespace_id, &path, EntryKind::File, &user_id)
+            .await
+            .expect("entry should be created");
+        entry_repo
+            .create_version(
+                &entry_id,
+                Some(&blob_id),
+                Some(&content_hash),
+                12,
+                Some("text/plain"),
+                &user_id,
+                Some("v1"),
+            )
+            .await
+            .expect("version should be created");
+
+        let old_snapshot = snapshot_repo
+            .create_snapshot(
+                &namespace_id,
+                Some("old"),
+                SnapshotKind::AutoCommit,
+                &user_id,
+            )
+            .await
+            .expect("snapshot should be created");
+        snapshot_repo
+            .add_snapshot_entries(
+                &old_snapshot,
+                &[SnapshotEntry {
+                    snapshot_id: old_snapshot,
+                    entry_id,
+                    entry_path: path.clone(),
+                    entry_kind: EntryKind::File,
+                    entry_version_id: None,
+                    blob_id: Some(blob_id),
+                    size_bytes: Some(ByteSize::new(12)),
+                    mime_type: Some("text/plain".to_string()),
+                    version_no: Some(1),
+                    change_type: ChangeType::Added,
+                    created_by: Some(user_id),
+                    created_at: Some(time::OffsetDateTime::now_utc()),
+                }],
+            )
+            .await
+            .expect("snapshot entry should be added");
+
+        // 模拟删除文件：条目连同版本引用一起释放，此时 blob 只剩快照引用
+        entry_repo
+            .delete_entries(&[entry_id])
+            .await
+            .expect("entry should be deleted");
+        entry_repo
+            .release_blob_references(&[(blob_id, 1)])
+            .await
+            .expect("version reference should be released");
+
+        // 更新的空快照：裁剪时保留它
+        snapshot_repo
+            .create_snapshot(
+                &namespace_id,
+                Some("newest"),
+                SnapshotKind::AutoCommit,
+                &user_id,
+            )
+            .await
+            .expect("snapshot should be created");
+
+        // 场景二：中断上传留下的孤儿文件（有文件、无元数据行、已过保护期）
+        let (orphan_id, _, _) = blob_store
+            .store_blob(b"orphan", None)
+            .await
+            .expect("blob should store");
+        let orphan_string = orphan_id.to_string();
+        let orphan_path = root
+            .join("blobs")
+            .join(&orphan_string[0..2])
+            .join(&orphan_string[2..]);
+        backdate_file(
+            &orphan_path,
+            time::OffsetDateTime::now_utc() - time::Duration::hours(2),
+        );
+
+        let blob_string = blob_id.to_string();
+        let released_path = root
+            .join("blobs")
+            .join(&blob_string[0..2])
+            .join(&blob_string[2..]);
+        assert!(released_path.exists());
+
+        let service =
+            MaintenanceService::new(blob_store.clone(), entry_repo, snapshot_repo.clone());
+        let report = service
+            .run_once(3600, 1)
+            .await
+            .expect("maintenance run should succeed");
+
+        // 旧快照被裁剪 → 其 blob 引用归零 → 行与文件一并清理
+        assert_eq!(report.pruned_snapshots, 1);
+        assert_eq!(report.released_blobs, 1);
+        assert!(!released_path.exists(), "released blob file should be gone");
+        // 同一轮里孤儿文件也被回收
+        assert_eq!(report.purged_blobs, 1);
+        assert!(!orphan_path.exists(), "orphan file should be gone");
+        assert!(report.freed_bytes > 0);
+
+        let snapshots = snapshot_repo
+            .list_all_snapshots()
+            .await
+            .expect("snapshots should list");
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(
+            snapshots[0]
+                .message
+                .as_ref()
+                .map(|message| message.as_str()),
+            Some("newest")
+        );
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn run_once_without_snapshot_retention_only_purges() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+            .expect("temp path should be utf-8");
+        let pool = SqlitePoolFactory::connect(root.join("vfiles.db").as_path())
+            .await
+            .expect("pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+        let snapshot_repo = vfiles_infra_sqlite::SqliteSnapshotRepo::new(pool.clone());
+        let blob_store = FsBlobStore::new(pool.clone(), root.join("blobs"));
+
+        let user_id = user_repo
+            .create_admin("admin", "admin@example.com", "hashed")
+            .await
+            .expect("admin should be created");
+        let namespace_id = namespace_repo
+            .create_default(&user_id, "default")
+            .await
+            .expect("namespace should be created");
+
+        let _snapshot_id = snapshot_repo
+            .create_snapshot(
+                &namespace_id,
+                Some("keep-me"),
+                SnapshotKind::AutoCommit,
+                &user_id,
+            )
+            .await
+            .expect("snapshot should be created");
+
+        let service = MaintenanceService::new(blob_store, entry_repo, snapshot_repo.clone());
+        let report = service
+            .run_once(3600, 0)
+            .await
+            .expect("maintenance run should succeed");
+
+        assert_eq!(report.pruned_snapshots, 0);
+        assert_eq!(report.released_blobs, 0);
+        assert_eq!(report.purged_blobs, 0);
+        assert_eq!(
+            snapshot_repo
+                .list_all_snapshots()
+                .await
+                .expect("snapshots should list")
+                .len(),
+            1,
+            "keep=0 means snapshots are never pruned"
+        );
+
+        pool.close().await;
     }
 
     fn backdate_file(path: &Utf8PathBuf, when: time::OffsetDateTime) {
