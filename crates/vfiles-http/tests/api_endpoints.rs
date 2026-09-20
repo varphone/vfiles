@@ -163,6 +163,17 @@ impl TestApp {
                 "console.log('vfiles');",
             )
             .expect("frontend asset should be written");
+            // 构建期预压缩产物（真实构建由 scripts/precompress.mjs 生成）。
+            std::fs::write(
+                frontend_dist.join("assets/app.js.br"),
+                "BROTLI:console.log('vfiles');",
+            )
+            .expect("brotli variant should be written");
+            std::fs::write(
+                frontend_dist.join("assets/app.js.gz"),
+                "GZIP:console.log('vfiles');",
+            )
+            .expect("gzip variant should be written");
             frontend_dist
         });
 
@@ -3602,4 +3613,76 @@ async fn range_requests_stay_uncompressed_even_with_accept_encoding() {
         "partial responses must not be re-encoded"
     );
     assert_eq!(response_bytes(response).await.as_ref(), b"2345");
+}
+
+#[tokio::test]
+async fn precompressed_static_assets_are_served_when_supported() {
+    let app = TestApp::new_with_static_frontend("<html><body>vfiles-ui</body></html>").await;
+
+    let brotli = app
+        .request(
+            Request::builder()
+                .uri("/assets/app.js")
+                .header(header::ACCEPT_ENCODING, "gzip, br")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(brotli.status(), StatusCode::OK);
+    assert_eq!(
+        brotli
+            .headers()
+            .get(header::CONTENT_ENCODING)
+            .expect("content-encoding should be present"),
+        "br"
+    );
+    assert!(
+        brotli
+            .headers()
+            .get(header::VARY)
+            .expect("vary should be present")
+            .to_str()
+            .expect("vary should be ascii")
+            .contains("accept-encoding")
+    );
+    assert_eq!(
+        response_bytes(brotli).await.as_ref(),
+        b"BROTLI:console.log('vfiles');"
+    );
+
+    let gzip = app
+        .request(
+            Request::builder()
+                .uri("/assets/app.js")
+                .header(header::ACCEPT_ENCODING, "gzip")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(gzip.status(), StatusCode::OK);
+    assert_eq!(
+        gzip.headers()
+            .get(header::CONTENT_ENCODING)
+            .expect("content-encoding should be present"),
+        "gzip"
+    );
+    assert_eq!(
+        response_bytes(gzip).await.as_ref(),
+        b"GZIP:console.log('vfiles');"
+    );
+
+    let raw = app
+        .request(
+            Request::builder()
+                .uri("/assets/app.js")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(raw.status(), StatusCode::OK);
+    assert!(raw.headers().get(header::CONTENT_ENCODING).is_none());
+    assert_eq!(
+        response_bytes(raw).await.as_ref(),
+        b"console.log('vfiles');"
+    );
 }

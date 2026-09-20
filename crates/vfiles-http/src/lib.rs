@@ -140,12 +140,20 @@ fn build_cors_layer(config: &AppConfig) -> CorsLayer {
     }
 }
 
-async fn serve_frontend(State(state): State<AppState>, uri: Uri) -> Response {
+async fn serve_frontend(
+    State(state): State<AppState>,
+    uri: Uri,
+    headers: axum::http::HeaderMap,
+) -> Response {
     let Some(frontend_assets) = state.frontend_assets.as_ref() else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    frontend_assets.serve(uri.path()).await
+    let accept_encoding = headers
+        .get(header::ACCEPT_ENCODING)
+        .and_then(|value| value.to_str().ok());
+
+    frontend_assets.serve(uri.path(), accept_encoding).await
 }
 
 async fn request_logger(req: Request, next: Next) -> Result<Response, StatusCode> {

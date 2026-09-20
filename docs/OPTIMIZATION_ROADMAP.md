@@ -16,13 +16,15 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 11 实测）
+### 验证基线（round 12 实测）
 
-- `cargo test --workspace`：通过（HTTP 集成 58 个 + `vfiles-http` 单元 7 个）。
+- `cargo test --workspace`：通过（HTTP 集成 59 个 + `vfiles-http` 单元 9 个，含预压缩
+  协商与 `Accept-Encoding` 解析用例）。
 - `cargo clippy --workspace --all-targets`：无告警。
 - `client` 单测：17 个文件 / 79 个用例通过。
 - `vue-tsc --noEmit`：无错误；`eslint .`：无告警。
-- `bun run build`：成功；冒烟验证面包屑导航相关产物标记。
+- `bun run build`：成功，并生成 12 组 `.br`/`.gz`；冒烟验证预压缩协商与
+  `Content-Length`。
 
 ### 主要发现
 
@@ -208,13 +210,24 @@
 - 测试：段落渲染与点击事件、子目录下拉展开/选择后关闭、无子目录不显示触发器、
   点击外部关闭。
 
+### 2.17 静态资源构建期预压缩（round 12，性能）
+
+- 新增 `client/scripts/precompress.mjs`：`bun run build` 在 `vite build` 之后为
+  dist 中 ≥1KB 的文本资源生成 `.br`（quality 11）与 `.gz`（level 9），仅在更小时落盘。
+- `frontend.rs` 读取 `Accept-Encoding`（支持 `*` 通配与 `q=0`，优先 br），命中
+  `<asset>.br`/`<asset>.gz` 时直接返回并带上 `Content-Encoding` 与 `Vary`；
+  否则回退原文由中间件实时压缩。
+- 显式声明 `Content-Length`：预压缩响应不再退化为 chunked，实测 CSS
+  `content-length: 28722` 与磁盘 `.br` 完全一致（brotli q11 优于原 gzip 41.6KB）。
+- 测试：`Accept-Encoding` 解析（通配/q=0/q>0）、brotli 优先；集成测试覆盖
+  br/gzip/无编码三种路径与 `Vary` 头。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
 
-- 当前压缩在每次请求时实时进行（浏览器缓存与 `immutable` 头可缓解）。可改为构建期
-  生成 `.br`/`.gz` 并在 `frontend.rs` 中按 `Accept-Encoding` 直接返回，消除运行时
-  CPU 开销；或引入带缓存的压缩中间件。
+- `[x]` 构建期生成 `.br`/`.gz`，服务端按 `Accept-Encoding` 直接返回（round 12）。
+- `[ ]` 可选：对二进制资源也做预压缩评估；为 `index.html` 等小文件决定是否降低阈值。
 
 ### 3.2 缩略图格式与容量（性能 + 稳定性，中）
 
