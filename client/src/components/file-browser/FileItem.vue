@@ -41,8 +41,22 @@
     </td>
 
     <td>
+      <input
+        v-if="renaming"
+        :ref="registerRenameInput"
+        v-model="renameDraft"
+        class="input is-small rename-input"
+        type="text"
+        :aria-label="`重命名 ${file.name}`"
+        @click.stop
+        @dblclick.stop
+        @keydown.enter.prevent.stop="commitRename"
+        @keydown.esc.prevent.stop="cancelRename"
+        @keydown.stop
+        @blur="onRenameBlur"
+      />
       <a
-        v-if="isNameLink"
+        v-else-if="isNameLink"
         href="#"
         class="desktop-name-text desktop-name-link"
         :class="nameTextClass"
@@ -57,7 +71,7 @@
         </template>
       </a>
       <span
-        v-else
+        v-else-if="!renaming"
         class="desktop-name-text"
         :class="nameTextClass"
         :title="file.name"
@@ -241,7 +255,21 @@
       </div>
       <div class="media-content">
         <div class="content">
-          <p class="file-name" :class="nameTextClass" :title="file.name">
+          <input
+            v-if="renaming"
+            :ref="registerRenameInput"
+            v-model="renameDraft"
+            class="input is-small rename-input"
+            type="text"
+            :aria-label="`重命名 ${file.name}`"
+            @click.stop
+            @touchstart.stop
+            @keydown.enter.prevent.stop="commitRename"
+            @keydown.esc.prevent.stop="cancelRename"
+            @keydown.stop
+            @blur="onRenameBlur"
+          />
+          <p v-else class="file-name" :class="nameTextClass" :title="file.name">
             <template v-for="(seg, i) in nameSegments" :key="i"
               ><mark v-if="seg.match" class="has-background-warning-light">{{
                 seg.text
@@ -385,7 +413,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { confirmDialog } from "../../composables/dialog";
 import {
   IconArrowsDiff,
@@ -414,6 +442,8 @@ const props = defineProps<{
   selected?: boolean;
   expanded?: boolean;
   desktop?: boolean;
+  /** 是否处于内联重命名状态 */
+  renaming?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -421,6 +451,8 @@ const emit = defineEmits<{
   download: [file: FileInfo];
   delete: [file: FileInfo];
   rename: [file: FileInfo];
+  renameCommit: [file: FileInfo, name: string];
+  renameCancel: [file: FileInfo];
   move: [file: FileInfo];
   viewHistory: [file: FileInfo];
   toggleSelect: [file: FileInfo];
@@ -446,6 +478,60 @@ const isNavigationShortcut = computed(
   () => uiRole.value === "self" || uiRole.value === "parent",
 );
 const isDirectoryEntry = computed(() => props.file.kind === "directory");
+/** 内联重命名：父组件通过 `renaming` 打开，输入框自动聚焦并选中主文件名。 */
+const renameDraft = ref("");
+// 提交/取消后输入框会被移除，浏览器会补发一次 blur；用它避免重复提交
+let renameSettled = false;
+const renameInputRef = ref<HTMLInputElement | null>(null);
+
+function registerRenameInput(element: unknown) {
+  renameInputRef.value = element instanceof HTMLInputElement ? element : null;
+}
+
+/** 选中主文件名（保留扩展名），与资源管理器一致。 */
+function selectBaseName(input: HTMLInputElement) {
+  const dot = props.file.name.lastIndexOf(".");
+  const end = dot > 0 ? dot : props.file.name.length;
+  input.setSelectionRange(0, end);
+}
+
+watch(
+  () => props.renaming,
+  (renaming) => {
+    if (!renaming) return;
+    renameSettled = false;
+    renameDraft.value = props.file.name;
+    void nextTick().then(() => {
+      const input = renameInputRef.value;
+      if (!input) return;
+      input.focus();
+      selectBaseName(input);
+    });
+  },
+  { immediate: true },
+);
+
+function commitRename() {
+  renameSettled = true;
+  emit("renameCommit", props.file, renameDraft.value.trim());
+}
+
+function cancelRename() {
+  renameSettled = true;
+  emit("renameCancel", props.file);
+}
+
+/** 失焦即提交（名称变化时），与主流文件管理器一致。 */
+function onRenameBlur() {
+  if (renameSettled) return;
+  const name = renameDraft.value.trim();
+  if (name && name !== props.file.name) {
+    emit("renameCommit", props.file, name);
+    return;
+  }
+  emit("renameCancel", props.file);
+}
+
 const isNameLink = computed(
   () => isNavigationShortcut.value || isDirectoryEntry.value,
 );
@@ -725,6 +811,14 @@ function share() {
 /* 文件名用正文色（不再整列蓝色链接），hover 时才提示可点击 */
 .is-folder-name {
   font-weight: 600;
+}
+
+/* 内联重命名输入框：占满名称列，字号与正文一致 */
+.rename-input {
+  width: 100%;
+  max-width: 22rem;
+  height: 1.9rem;
+  font-size: 0.84rem;
 }
 
 .desktop-name-text {

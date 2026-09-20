@@ -328,6 +328,9 @@
                   @click="handleItemClick"
                   @download="handleDownload"
                   @rename="handleRenameEntry"
+                  :renaming-path="renamingPath"
+                  @rename-commit="commitRenameEntry"
+                  @rename-cancel="cancelRenameEntry"
                   @move="handleMoveEntry"
                   @delete="handleDelete"
                   @view-history="handleViewHistory"
@@ -356,6 +359,9 @@
                   @click="handleItemClick"
                   @download="handleDownload"
                   @rename="handleRenameEntry"
+                  :renaming-path="renamingPath"
+                  @rename-commit="commitRenameEntry"
+                  @rename-cancel="cancelRenameEntry"
                   @move="handleMoveEntry"
                   @delete="handleDelete"
                   @view-history="handleViewHistory"
@@ -408,6 +414,9 @@
             @share="handleShare"
             @view-history="handleViewHistory"
             @rename="handleRenameEntry"
+            :renaming-path="renamingPath"
+            @rename-commit="commitRenameEntry"
+            @rename-cancel="cancelRenameEntry"
             @move="handleMoveEntry"
             @delete="handleDelete"
           />
@@ -487,6 +496,9 @@
             @click="handleItemClick"
             @download="handleDownload"
             @rename="handleRenameEntry"
+            :renaming-path="renamingPath"
+            @rename-commit="commitRenameEntry"
+            @rename-cancel="cancelRenameEntry"
             @move="handleMoveEntry"
             @delete="handleDelete"
             @view-history="handleViewHistory"
@@ -511,6 +523,9 @@
             @click="handleItemClick"
             @download="handleDownload"
             @rename="handleRenameEntry"
+            :renaming-path="renamingPath"
+            @rename-commit="commitRenameEntry"
+            @rename-cancel="cancelRenameEntry"
             @move="handleMoveEntry"
             @delete="handleDelete"
             @view-history="handleViewHistory"
@@ -558,6 +573,9 @@
             @click="handleItemClick"
             @download="handleDownload"
             @rename="handleRenameEntry"
+            :renaming-path="renamingPath"
+            @rename-commit="commitRenameEntry"
+            @rename-cancel="cancelRenameEntry"
             @move="handleMoveEntry"
             @delete="handleDelete"
             @view-history="handleViewHistory"
@@ -581,6 +599,9 @@
             @click="handleItemClick"
             @download="handleDownload"
             @rename="handleRenameEntry"
+            :renaming-path="renamingPath"
+            @rename-commit="commitRenameEntry"
+            @rename-cancel="cancelRenameEntry"
             @move="handleMoveEntry"
             @delete="handleDelete"
             @view-history="handleViewHistory"
@@ -892,7 +913,6 @@ import FileUploader from "../file-uploader/FileUploader.vue";
 import VersionHistory from "../version-history/VersionHistory.vue";
 import Modal from "../common/Modal.vue";
 import ShareDialog from "../common/ShareDialog.vue";
-import { promptDialog } from "../../composables/dialog";
 import { copyText } from "../../utils/clipboard";
 import { useDownloadQueue } from "../../composables/useDownloadQueue";
 import { useFilePreview } from "../../composables/useFilePreview";
@@ -946,6 +966,8 @@ function updateIsWideScreen() {
 
 const showUploader = ref(false);
 const showDetailsDialog = ref(false);
+/** 正在内联重命名的条目路径（空字符串表示没有）。 */
+const renamingPath = ref("");
 const detailsDialogFile = ref<FileInfo | null>(null);
 const showHistory = ref(false);
 const showShareDialog = ref(false);
@@ -1707,16 +1729,18 @@ async function handleCreateDirectory(file: FileInfo) {
   );
 }
 
-async function handleRenameEntry(file: FileInfo) {
-  const raw = await promptDialog({
-    title: "重命名",
-    message: "输入新名称（仅名称，不含路径分隔符）",
-    defaultValue: file.name,
-    placeholder: file.name,
-  });
-  if (raw == null) return;
+/** 打开内联重命名（F2 / 右键菜单 / 行内按钮）；同时把该行设为活动行。 */
+function handleRenameEntry(file: FileInfo) {
+  desktopActivePath.value = file.path;
+  renamingPath.value = file.path;
+}
 
-  const name = normalizeEntryName(raw, "非法名称");
+/** 提交内联重命名：校验名称后调用重命名接口。 */
+async function commitRenameEntry(file: FileInfo, rawName: string) {
+  renamingPath.value = "";
+  if (!rawName) return;
+
+  const name = normalizeEntryName(rawName, "非法名称");
   if (!name) return;
   if (name === file.name) {
     appStore.error("名称未变化");
@@ -1740,6 +1764,10 @@ async function handleRenameEntry(file: FileInfo) {
   } catch (err) {
     appStore.error(err instanceof Error ? err.message : "重命名失败");
   }
+}
+
+function cancelRenameEntry() {
+  renamingPath.value = "";
 }
 
 function handleMoveEntry(file: FileInfo) {

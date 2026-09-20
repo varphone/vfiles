@@ -645,6 +645,72 @@ describe("FileBrowser.vue loading state", () => {
     await findByText("此文件夹为空");
   });
 });
+describe("FileBrowser.vue inline rename", () => {
+  function files() {
+    return [
+      {
+        id: "a",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file",
+        size_bytes: 10,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ];
+  }
+
+  it("renames in place with Enter instead of a dialog", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(files());
+    movePathMock.mockResolvedValue({ success: true });
+
+    const { findByLabelText, findByRole, findByText } = renderWithProviders(
+      FileBrowser as any,
+    );
+    const name = await findByText("a.txt");
+
+    // 右键菜单里的「重命名」现在打开内联输入框，而不是弹对话框
+    await fireEvent.contextMenu(name.closest("tr")!);
+    await fireEvent.click(await findByRole("menuitem", { name: "重命名" }));
+
+    const input = await findByLabelText("重命名 a.txt");
+    expect((input as HTMLInputElement).value).toBe("a.txt");
+
+    await fireEvent.update(input, "renamed.txt");
+    await fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(movePathMock).toHaveBeenCalledWith(
+        "a.txt",
+        "renamed.txt",
+        expect.stringContaining("重命名"),
+      );
+    });
+  });
+
+  it("cancels inline rename with Escape without calling the API", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(files());
+    movePathMock.mockClear();
+
+    const { findByLabelText, findByRole, findByText, queryByLabelText } =
+      renderWithProviders(FileBrowser as any);
+    const name = await findByText("a.txt");
+
+    await fireEvent.contextMenu(name.closest("tr")!);
+    await fireEvent.click(await findByRole("menuitem", { name: "重命名" }));
+    const input = await findByLabelText("重命名 a.txt");
+    await fireEvent.update(input, "ignored.txt");
+    await fireEvent.keyDown(input, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(queryByLabelText("重命名 a.txt")).toBeNull();
+    });
+    expect(movePathMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("FileBrowser.vue keyboard navigation", () => {
   function files() {
     return ["a.txt", "b.txt", "c.txt"].map((name, index) => ({

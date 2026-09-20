@@ -56,6 +56,9 @@
           @click="emit('click', file)"
           @download="emit('download', file)"
           @rename="emit('rename', file)"
+          :renaming="renamingPath === file.path"
+          @rename-commit="(target, name) => emit('rename-commit', target, name)"
+          @rename-cancel="(target) => emit('rename-cancel', target)"
           @move="emit('move', file)"
           @delete="emit('delete', file)"
           @view-history="emit('view-history', file)"
@@ -86,6 +89,9 @@
       @click="emit('click', file)"
       @download="emit('download', file)"
       @rename="emit('rename', file)"
+      :renaming="renamingPath === file.path"
+      @rename-commit="(target, name) => emit('rename-commit', target, name)"
+      @rename-cancel="(target) => emit('rename-cancel', target)"
       @move="emit('move', file)"
       @delete="emit('delete', file)"
       @view-history="emit('view-history', file)"
@@ -117,6 +123,8 @@ const emit = defineEmits<{
   (e: "click", file: FileInfo): void;
   (e: "download", file: FileInfo): void;
   (e: "rename", file: FileInfo): void;
+  (e: "rename-commit", file: FileInfo, name: string): void;
+  (e: "rename-cancel", file: FileInfo): void;
   (e: "move", file: FileInfo): void;
   (e: "delete", file: FileInfo): void;
   (e: "view-history", file: FileInfo): void;
@@ -140,6 +148,7 @@ const emit = defineEmits<{
 const props = withDefaults(
   defineProps<{
     files: FileInfo[];
+    renamingPath?: string;
     highlight?: string;
     selectMode: boolean;
     selectedPaths: Set<string>;
@@ -150,6 +159,7 @@ const props = withDefaults(
     sortDirection?: SortDirection;
   }>(),
   {
+    renamingPath: "",
     highlight: "",
     expandedPath: "",
     activePath: "",

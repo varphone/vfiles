@@ -148,7 +148,22 @@
     </div>
 
     <div class="file-card-body">
+      <input
+        v-if="renaming"
+        :ref="registerRenameInput"
+        v-model="renameDraft"
+        class="input is-small rename-input"
+        type="text"
+        :aria-label="`重命名 ${file.name}`"
+        @click.stop
+        @dblclick.stop
+        @keydown.enter.prevent.stop="commitRename"
+        @keydown.esc.prevent.stop="cancelRename"
+        @keydown.stop
+        @blur="onRenameBlur"
+      />
       <div
+        v-else
         class="file-card-name"
         :class="{ 'has-text-weight-bold': isDirectoryEntry }"
       >
@@ -173,7 +188,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import {
   IconArrowLeft,
   IconArrowsDiff,
@@ -211,6 +226,8 @@ import type { FileInfo } from "../../types";
 const props = withDefaults(
   defineProps<{
     file: FileInfo;
+    /** 是否处于内联重命名状态 */
+    renaming?: boolean;
     commit?: string;
     highlight?: string;
     selectMode?: boolean;
@@ -232,6 +249,8 @@ const emit = defineEmits<{
   click: [file: FileInfo];
   download: [file: FileInfo];
   rename: [file: FileInfo];
+  renameCommit: [file: FileInfo, name: string];
+  renameCancel: [file: FileInfo];
   move: [file: FileInfo];
   delete: [file: FileInfo];
   "view-history": [file: FileInfo];
@@ -248,6 +267,59 @@ const emit = defineEmits<{
   "drag-end": [];
   "drop-on-folder": [targetDir: string];
 }>();
+
+/** 内联重命名：与列表行一致，打开时聚焦并选中主文件名。 */
+const renameDraft = ref("");
+// 提交/取消后输入框会被移除，浏览器会补发一次 blur；用它避免重复提交
+let renameSettled = false;
+const renameInputRef = ref<HTMLInputElement | null>(null);
+
+function registerRenameInput(element: unknown) {
+  renameInputRef.value = element instanceof HTMLInputElement ? element : null;
+}
+
+function selectBaseName(input: HTMLInputElement) {
+  const dot = props.file.name.lastIndexOf(".");
+  const end = dot > 0 ? dot : props.file.name.length;
+  input.setSelectionRange(0, end);
+}
+
+watch(
+  () => props.renaming,
+  (renaming) => {
+    if (!renaming) return;
+    renameSettled = false;
+    renameDraft.value = props.file.name;
+    void nextTick().then(() => {
+      const input = renameInputRef.value;
+      if (!input) return;
+      input.focus();
+      selectBaseName(input);
+    });
+  },
+  { immediate: true },
+);
+
+function commitRename() {
+  renameSettled = true;
+  emit("renameCommit", props.file, renameDraft.value.trim());
+}
+
+function cancelRename() {
+  renameSettled = true;
+  emit("renameCancel", props.file);
+}
+
+/** 失焦即提交（名称有变化时），与主流文件管理器一致。 */
+function onRenameBlur() {
+  if (renameSettled) return;
+  const name = renameDraft.value.trim();
+  if (name && name !== props.file.name) {
+    emit("renameCommit", props.file, name);
+    return;
+  }
+  emit("renameCancel", props.file);
+}
 
 const menuOpen = ref(false);
 const thumbFailed = ref(false);
@@ -615,6 +687,13 @@ onBeforeUnmount(() => {
   gap: 2px;
   padding: 8px 10px 10px;
   min-width: 0;
+}
+
+/* 内联重命名输入框 */
+.rename-input {
+  width: 100%;
+  height: 1.9rem;
+  font-size: 0.8rem;
 }
 
 .file-card-name {
