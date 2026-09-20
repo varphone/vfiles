@@ -1509,10 +1509,30 @@ where
         }
 
         let children = self.entry_repo.find_children(namespace_id, path).await?;
-        let mut items = Vec::new();
+
+        // 批量取当前版本，避免逐个 child 查询造成 N+1。
+        let version_ids: Vec<VersionId> = children
+            .iter()
+            .filter_map(|child| match (child.entry_type, child.current_version_id) {
+                (EntryKind::File, Some(version_id)) => Some(version_id),
+                _ => None,
+            })
+            .collect();
+        let versions_by_id: HashMap<VersionId, EntryVersion> = self
+            .entry_repo
+            .find_versions(&version_ids)
+            .await?
+            .into_iter()
+            .map(|version| (version.id, version))
+            .collect();
+
+        let mut items = Vec::with_capacity(children.len());
 
         for child in children {
-            let version = self.version_for_entry(&child).await?;
+            let version = match (child.entry_type, child.current_version_id) {
+                (EntryKind::File, Some(version_id)) => versions_by_id.get(&version_id),
+                _ => None,
+            };
             items.push(TreeItem {
                 entry_id: child.id,
                 name: child.name.clone(),

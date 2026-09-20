@@ -99,6 +99,8 @@ pub trait EntryRepo {
         cursor: Option<&str>,
     ) -> DomainResult<Vec<EntryVersion>>;
     async fn find_version(&self, version_id: &VersionId) -> DomainResult<EntryVersion>;
+    /// 批量获取版本，避免目录列举时的 N+1 查询；不存在的 id 会被跳过。
+    async fn find_versions(&self, version_ids: &[VersionId]) -> DomainResult<Vec<EntryVersion>>;
     #[allow(clippy::too_many_arguments)]
     async fn create_version(
         &self,

@@ -16,13 +16,13 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 17 实测）
+### 验证基线（round 18 实测）
 
-- `cargo test --workspace`：通过（HTTP 集成 59 个 + `vfiles-http` 单元 9 个）。
+- `cargo test --workspace`：通过（含新增的批量版本查询用例）。
 - `cargo clippy --workspace --all-targets`：无告警。
 - `client` 单测：20 个文件 / 101 个用例通过。
-- `vue-tsc --noEmit`：无错误；`eslint .`：无告警。
-- `bun run build`：成功（预压缩 12 组）；冒烟验证下拉刷新产物标记。
+- 冒烟：200 个文件目录的 `tree` 约 11ms，全部条目 `size_bytes`/`mime_type`/
+  `updated_at` 均已填充。
 
 ### 主要发现
 
@@ -271,6 +271,17 @@
 - `FileBrowser.vue` 由 2331 行降至 2249 行；相比 round 7 起点累计 −1039 行（−32%）。
 - 测试：达到阈值触发刷新、短距离不触发、左缘右滑返回、非边缘不返回、禁用/被弹窗
   阻塞时完全不响应。
+
+### 2.23 目录列举的 N+1 查询修复（round 18，性能）
+
+- 审计后端时发现 `live_tree` 对每个子项都调用一次 `version_for_entry`（`find_version`），
+  即一个目录 N 个文件会产生 N 次额外查询。
+- `EntryRepo` 新增 `find_versions(&[VersionId])`：SQLite 侧用 `QueryBuilder` 单条
+  `IN (...)` 查询（按 500 分批以规避绑定参数上限），缺失 id 自动跳过。
+- `live_tree` 先收集文件类子项的 `current_version_id`，一次批量取回后以
+  `HashMap<VersionId, EntryVersion>` 组装，查询次数由 N+1 降为 2。
+- 测试：批量查询返回全部版本、空输入返回空、缺失 id 被跳过；既有 HTTP 集成测试
+  （含目录列举）保持通过。
 
 ## 3. 后续迭代计划（按优先级）
 

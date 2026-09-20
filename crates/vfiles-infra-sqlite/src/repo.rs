@@ -1177,6 +1177,46 @@ impl EntryRepo for SqliteEntryRepo {
         parse_entry_version_row(row)
     }
 
+    async fn find_versions(&self, version_ids: &[VersionId]) -> DomainResult<Vec<EntryVersion>> {
+        if version_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // SQLite 对绑定参数数量有限制，分批查询。
+        const CHUNK: usize = 500;
+        let mut versions = Vec::with_capacity(version_ids.len());
+
+        for chunk in version_ids.chunks(CHUNK) {
+            let mut builder = sqlx::QueryBuilder::new(
+                "SELECT \
+                    ev.id, ev.entry_id, ev.version, ev.blob_id, ev.size, ev.content_type, \
+                    b.content_hash, ev.created_at, ev.created_by, ev.message \
+                 FROM entry_versions ev \
+                 LEFT JOIN blobs b ON b.id = ev.blob_id \
+                 WHERE ev.id IN (",
+            );
+            let mut separated = builder.separated(", ");
+            for version_id in chunk {
+                separated.push_bind(version_id.to_string());
+            }
+            separated.push_unseparated(")");
+
+            let rows: Vec<EntryVersionRow> = builder
+                .build_query_as()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                message: format!("Failed to find entry versions: {}", e),
+            })?;
+
+            for row in rows {
+                versions.push(parse_entry_version_row(row)?);
+            }
+        }
+
+        Ok(versions)
+    }
+
     async fn create_version(
         &self,
         entry_id: &EntryId,
@@ -3442,5 +3482,105 @@ mod snapshot_repo_tests {
         assert_eq!(snapshot_nos, (1..=task_count as u32).collect::<Vec<_>>());
 
         cleanup_db(pool, db_path).await;
+    }
+}
+
+#[cfg(test)]
+mod entry_version_batch_tests {
+    use super::*;
+    use crate::{SqliteMigrations, SqlitePoolFactory};
+    use camino::Utf8PathBuf;
+
+    async fn setup() -> (
+        Utf8PathBuf,
+        SqlitePool,
+        SqliteEntryRepo,
+        NamespaceId,
+        UserId,
+    ) {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-entry-version-test-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+
+        let user_id = user_repo
+            .create_admin("admin", "admin@example.com", "hashed-password")
+            .await
+            .expect("admin user should be created");
+        let namespace_id = namespace_repo
+            .create_default(&user_id, "default")
+            .await
+            .expect("default namespace should be created");
+
+        (db_path, pool, entry_repo, namespace_id, user_id)
+    }
+
+    #[tokio::test]
+    async fn find_versions_fetches_many_and_skips_missing() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+        let path = NormalizedPath::new("docs/a.txt").expect("path should parse");
+        let entry_id = repo
+            .create_entry(&namespace_id, &path, EntryKind::File, &user_id)
+            .await
+            .expect("entry should be created");
+
+        let first = repo
+            .create_version(
+                &entry_id,
+                None,
+                None,
+                10,
+                Some("text/plain"),
+                &user_id,
+                Some("one"),
+            )
+            .await
+            .expect("first version should be created");
+        let second = repo
+            .create_version(
+                &entry_id,
+                None,
+                None,
+                20,
+                Some("text/plain"),
+                &user_id,
+                Some("two"),
+            )
+            .await
+            .expect("second version should be created");
+
+        let versions = repo
+            .find_versions(&[first.id, second.id])
+            .await
+            .expect("batch lookup should succeed");
+        assert_eq!(versions.len(), 2);
+
+        assert!(
+            repo.find_versions(&[])
+                .await
+                .expect("empty lookup should succeed")
+                .is_empty()
+        );
+
+        let only_first = repo
+            .find_versions(&[first.id, VersionId::new()])
+            .await
+            .expect("lookup with missing id should succeed");
+        assert_eq!(only_first.len(), 1);
+        assert_eq!(only_first[0].id, first.id);
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
     }
 }
