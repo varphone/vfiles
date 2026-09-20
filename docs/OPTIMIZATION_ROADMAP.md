@@ -16,13 +16,13 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 19 实测）
+### 验证基线（round 20 实测）
 
-- `cargo test --workspace`：通过（含批量版本与 `find_all` 用例）。
+- `cargo test --workspace`：通过（含 `find_subtree` 前缀边界用例）。
 - `cargo clippy --workspace --all-targets`：无告警。
 - `client` 单测：20 个文件 / 101 个用例通过。
-- 冒烟：201 条目工作区的写操作（上传，含生成快照）约 18–33ms；`/api/history`
-  正常返回提交记录。
+- 冒烟：`DELETE /api/files?path=docs` 递归删除含嵌套目录的子树约 7ms，`docs2`
+  （前缀相同的兄弟目录）不受影响，`/api/history` 记录了自定义消息的删除提交。
 
 ### 主要发现
 
@@ -299,6 +299,18 @@
 - 测试：`find_all` 返回全部条目、按路径排序、文件带当前版本而目录为空；既有
   快照/历史/上传等 59 个 HTTP 集成测试保持通过。
 
+### 2.25 子树遍历改为单次范围查询（round 20，性能）
+
+- 审计发现 `collect_descendants`（删除目录、历史/差异按目录作用域、移动目录）按目录
+  递归 `find_children`，查询次数为 O(目录数)。
+- `EntryRepo` 新增 `find_subtree(namespace_id, root_path)`：用范围比较
+  `path = root OR (path >= "root/" AND path < "root0")` 一次取回 root 及全部后代，
+  可命中 `(namespace_id, path)` 索引；相比 `LIKE "root/%"` 无需转义、且不受
+  `case_sensitive_like` 影响。
+- `collect_descendants` 改为调用 `find_subtree`，删除目录由 O(目录数) 次查询降为 1 次。
+- 测试：`find_subtree("docs")` 只返回该分支，`docs2` 等同前缀兄弟目录不被误伤；既有
+  删除/移动/历史等 59 个 HTTP 集成测试保持通过。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -306,10 +318,11 @@
 - `[x]` 构建期生成 `.br`/`.gz`，服务端按 `Accept-Encoding` 直接返回（round 12）。
 - `[ ]` 可选：对二进制资源也做预压缩评估；为 `index.html` 等小文件决定是否降低阈值。
 
-### 3.1c 删除路径的子树遍历（性能，中）
+### 3.1c 删除/移动路径的子树遍历（性能，中）
 
-- `collect_descendants`（删除/移动目录时使用）仍按目录递归 `find_children`；可改用
-  `find_all` 后按路径前缀过滤，将 O(目录数) 次查询降为 1 次。
+- `[x]` `EntryRepo::find_subtree` 单次范围查询取代按目录递归（round 20）。
+- `[ ]` 移动时的冲突检查仍对每个后代调用一次 `find_by_path`；可增加批量路径存在性
+  查询。
 
 ### 3.1b 服务端目录分页（性能，高）
 

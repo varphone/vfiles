@@ -981,6 +981,52 @@ impl EntryRepo for SqliteEntryRepo {
         rows.into_iter().map(parse_entry_row).collect()
     }
 
+    async fn find_subtree(
+        &self,
+        namespace_id: &NamespaceId,
+        root_path: &NormalizedPath,
+    ) -> DomainResult<Vec<Entry>> {
+        let root = root_path.as_str().trim_end_matches('/');
+        // 范围比较（而非 LIKE）以便命中 (namespace_id, path) 索引：
+        // root 自身取相等，后代形如 "root/..."，因此 "root/" <= path < "root0"。
+        let lower = format!("{}/", root);
+        let upper = format!("{}0", root);
+
+        let rows: Vec<EntryRow> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id
+            FROM entries e
+            WHERE e.namespace_id = ?
+              AND (e.path = ? OR (e.path >= ? AND e.path < ?))
+            ORDER BY e.path
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(root)
+        .bind(&lower)
+        .bind(&upper)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to find subtree: {}", e),
+        })?;
+
+        rows.into_iter().map(parse_entry_row).collect()
+    }
+
     async fn create_entry(
         &self,
         namespace_id: &NamespaceId,
@@ -3716,6 +3762,97 @@ mod entry_repo_lookup_tests {
             .find(|entry| entry.path_norm.as_str() == "docs")
             .expect("directory should be present");
         assert!(directory.current_version_id.is_none());
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+}
+
+#[cfg(test)]
+mod entry_repo_subtree_tests {
+    use super::*;
+    use crate::{SqliteMigrations, SqlitePoolFactory};
+    use camino::Utf8PathBuf;
+
+    async fn setup() -> (
+        Utf8PathBuf,
+        SqlitePool,
+        SqliteEntryRepo,
+        NamespaceId,
+        UserId,
+    ) {
+        let db_path = Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("vfiles-subtree-test-{}.db", uuid::Uuid::new_v4())),
+        )
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+
+        let user_id = user_repo
+            .create_admin("admin", "admin@example.com", "hashed-password")
+            .await
+            .expect("admin user should be created");
+        let namespace_id = namespace_repo
+            .create_default(&user_id, "default")
+            .await
+            .expect("default namespace should be created");
+
+        (db_path, pool, entry_repo, namespace_id, user_id)
+    }
+
+    #[tokio::test]
+    async fn find_subtree_returns_only_the_requested_branch() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+
+        for (path, kind) in [
+            ("docs", EntryKind::Directory),
+            ("docs/a.txt", EntryKind::File),
+            ("docs/nested", EntryKind::Directory),
+            ("docs/nested/b.txt", EntryKind::File),
+            ("docs2", EntryKind::File),
+            ("docs2/c.txt", EntryKind::File),
+            ("other.txt", EntryKind::File),
+        ] {
+            repo.create_entry(
+                &namespace_id,
+                &NormalizedPath::new(path).expect("path should parse"),
+                kind,
+                &user_id,
+            )
+            .await
+            .expect("entry should be created");
+        }
+
+        let docs = repo
+            .find_subtree(
+                &namespace_id,
+                &NormalizedPath::new("docs").expect("path should parse"),
+            )
+            .await
+            .expect("subtree lookup should succeed");
+        let paths: Vec<&str> = docs.iter().map(|entry| entry.path_norm.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec!["docs", "docs/a.txt", "docs/nested", "docs/nested/b.txt"]
+        );
+
+        let docs2 = repo
+            .find_subtree(
+                &namespace_id,
+                &NormalizedPath::new("docs2").expect("path should parse"),
+            )
+            .await
+            .expect("subtree lookup should succeed");
+        let paths: Vec<&str> = docs2.iter().map(|entry| entry.path_norm.as_str()).collect();
+        assert_eq!(paths, vec!["docs2", "docs2/c.txt"]);
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);

@@ -350,24 +350,8 @@ async fn collect_descendants<E>(
 where
     E: EntryRepo,
 {
-    let mut entries = vec![root.clone()];
-    let mut index = 0;
-
-    while index < entries.len() {
-        let current = entries[index].clone();
-        index += 1;
-
-        if current.entry_type != EntryKind::Directory {
-            continue;
-        }
-
-        let children = entry_repo
-            .find_children(namespace_id, &current.path_norm)
-            .await?;
-        entries.extend(children);
-    }
-
-    Ok(entries)
+    // 单次范围查询取回 root 及其全部后代，避免按目录递归（O(目录数) 次查询）。
+    entry_repo.find_subtree(namespace_id, &root.path_norm).await
 }
 
 async fn collect_namespace_entries<E>(
