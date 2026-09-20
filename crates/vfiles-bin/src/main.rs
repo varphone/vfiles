@@ -823,6 +823,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         blob_store: Arc::new(blob_store),
         upload_store: std::sync::Arc::new(upload_store),
         login_attempt_limiter: Arc::new(LoginAttemptLimiter::new()),
+        share_download_limiter: Arc::new(vfiles_http::FixedWindowLimiter::new()),
         default_namespace_id,
         default_actor_user_id,
         frontend_assets,

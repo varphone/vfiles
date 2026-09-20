@@ -13,6 +13,7 @@ use crate::{
     dto::{CreateShareRequest, CreateShareResponse, ShareDto},
     error::ApiError,
     http_headers::{attachment_header, streaming_file_response},
+    middleware::client_ip_from_headers,
     routes::authenticated_request_context,
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -149,6 +150,21 @@ pub async fn download_share(
 ) -> Result<Response, ApiError> {
     if !state.config.features.share_enabled {
         return Err(ApiError::Domain(DomainError::Forbidden));
+    }
+
+    let max_downloads_per_minute = state.config.limits.rate_limit_requests_per_minute.max(1);
+    let rate_limit_key = format!("share:{}:{}", code, client_ip_from_headers(&headers));
+    if let Some(block) = state.share_download_limiter.check_and_record(
+        max_downloads_per_minute,
+        std::time::Duration::from_secs(60),
+        &rate_limit_key,
+    ) {
+        tracing::warn!(
+            share_code = %code,
+            retry_after_secs = block.retry_after_secs,
+            "share download rate limit exceeded"
+        );
+        return Err(ApiError::Domain(DomainError::RateLimited));
     }
 
     let share = state.share_service.access_share(&code).await?;

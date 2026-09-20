@@ -33,7 +33,7 @@ use vfiles_infra_sqlite::{
 };
 
 pub use frontend::FrontendAssets;
-pub use middleware::LoginAttemptLimiter;
+pub use middleware::{FixedWindowLimiter, LoginAttemptLimiter};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -56,6 +56,7 @@ pub struct AppState {
     pub blob_store: Arc<dyn BlobStore + Send + Sync>,
     pub upload_store: Arc<dyn UploadStore + Send + Sync>,
     pub login_attempt_limiter: Arc<LoginAttemptLimiter>,
+    pub share_download_limiter: Arc<FixedWindowLimiter>,
     pub default_namespace_id: NamespaceId,
     pub default_actor_user_id: UserId,
     pub frontend_assets: Option<FrontendAssets>,
