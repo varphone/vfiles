@@ -1221,6 +1221,19 @@
 - 测试：新增 1 个侧栏用例（收藏请求失败时仍显示用量与最近更新、且不显示错误文案）；
   文档补充升级说明（`serve` 自动迁移）。
 
+### 2.74 修复对话框底部按钮贴在一起（round 67，交互）
+
+- 现象（用户反馈）：移动对话框底部「取消 / 移动到当前目录」两个按钮紧挨在一起。
+- 真因：项目只挑选了 Bulma 的 modal 布局样式，**没有包含给底部按钮加间距的规则**
+  （构建产物里没有 `.modal-card-foot .button:not(:last-child){margin-inline-end:...}`），
+  而 `.modal-card-foot` 自身只有 `display: flex` + 右对齐，于是所有走
+  `Modal` 的 `#footer` 插槽的对话框都会出现按钮贴边。
+- 修复：在 `Modal.vue` 的 `.modal-card-foot` 上加 `gap: 0.5rem` 与 `flex-wrap: wrap`
+  （窄屏自动换行）；因为 `MoveDialog` / `DialogHost` / `ShareDialog` /
+  `FileBrowser` 的详情弹窗都复用同一个 footer 元素，一处修复覆盖全部对话框。
+- 验证：移动对话框实测 footer `column-gap: 8px`，两按钮同排且间隔 8px
+  （取消 right=856、移动到当前目录 left=864）；截图确认视觉正常，无控制台报错。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）

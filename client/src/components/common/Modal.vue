@@ -78,6 +78,9 @@ function close() {
 
 .modal-card-foot {
   justify-content: flex-end;
+  /* Bulma 的 modal 组件只挑了布局部分，按钮间距规则没进来，默认两个按钮会贴在一起 */
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 @media screen and (max-width: 768px) {
