@@ -280,4 +280,41 @@ describe("FileBrowser.vue", () => {
       );
     });
   });
+
+  it("closes the context menu on an outside click and can reopen it", async () => {
+    getFilesMock.mockResolvedValue([
+      {
+        id: "a",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file",
+        size_bytes: 1,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+
+    const { findByText, findByRole, queryByRole } = renderWithProviders(
+      FileBrowser as any,
+    );
+    const name = await findByText("a.txt");
+    const row = name.closest("tr")!;
+
+    await fireEvent.contextMenu(row, { clientX: 10, clientY: 10 });
+    expect(await findByRole("menuitem", { name: "重命名" })).toBeInTheDocument();
+
+    await fireEvent.click(document.body);
+    await waitFor(() => {
+      expect(queryByRole("menuitem", { name: "重命名" })).toBeNull();
+    });
+
+    // 再次打开仍然可用（监听器不应在关闭时被移除）
+    await fireEvent.contextMenu(row, { clientX: 12, clientY: 12 });
+    expect(await findByRole("menuitem", { name: "重命名" })).toBeInTheDocument();
+
+    await fireEvent.click(document.body);
+    await waitFor(() => {
+      expect(queryByRole("menuitem", { name: "重命名" })).toBeNull();
+    });
+  });
 });

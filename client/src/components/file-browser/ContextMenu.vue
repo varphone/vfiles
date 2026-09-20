@@ -32,7 +32,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import type { Component } from "vue";
 
 export interface ContextMenuItem {
@@ -84,14 +84,6 @@ function onKeydown(event: KeyboardEvent) {
 function onViewportChange() {
   if (props.show) emit("close");
 }
-
-watch(
-  () => props.show,
-  (show) => {
-    if (show) return;
-    closeListeners();
-  },
-);
 
 function closeListeners() {
   document.removeEventListener("click", onDocumentPointer, true);

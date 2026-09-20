@@ -20,7 +20,7 @@
 
 - `cargo test --workspace`：通过（HTTP 集成测试 58 个）。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：8 个文件 / 32 个用例通过。
+- `client` 单测：8 个文件 / 33 个用例通过。
 - `vue-tsc --noEmit`：无错误；`eslint .`：无告警。
 - `bun run build`：成功；服务端 `--features embed` 重新嵌入并冒烟验证新产物可正常
   加载与压缩传输。
@@ -133,7 +133,8 @@
   记录锚点，因此“先点一项，再 Shift 点另一项”也能形成范围选择。
 - 右键未选中项时，在批量模式下切换为仅选中该项；右键不改变非批量模式的可见状态。
 - 测试：`FileList`（`modifier-select`/`context-menu` 事件与坐标）与 `FileBrowser`
-  （Ctrl 加选 + Shift 范围得到 3 项、右键菜单执行删除动作）新增用例。
+  （Ctrl 加选 + Shift 范围得到 3 项、右键菜单执行删除动作、外部点击关闭后可再次打开）
+  新增用例。
 
 ## 3. 后续迭代计划（按优先级）
 
