@@ -795,9 +795,16 @@ impl AuthService {
             return Err(DomainError::InvalidCredentials);
         }
 
-        // Verify password (placeholder)
         if !self.verify_password(&req.password, &user.password_hash)? {
             return Err(DomainError::InvalidCredentials);
+        }
+
+        // Transparently migrate legacy SHA-256 password hashes after a
+        // successful login. Failures must not block the login.
+        if !user.password_hash.starts_with("$argon2")
+            && let Ok(new_hash) = self.hash_password(&req.password)
+        {
+            let _ = self.user_repo.update_password(&user.id, &new_hash).await;
         }
 
         // Create session
@@ -887,11 +894,38 @@ impl AuthService {
     }
 
     pub fn hash_password_for_storage(password: &str) -> DomainResult<String> {
-        // Placeholder - use proper hashing in production
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
+        use argon2::{Argon2, PasswordHasher, password_hash::SaltString};
+
+        let salt = SaltString::encode_b64(uuid::Uuid::new_v4().as_bytes()).map_err(|err| {
+            DomainError::Internal {
+                message: format!("Failed to generate password salt: {}", err),
+            }
+        })?;
+        Argon2::default()
+            .hash_password(password.as_bytes(), &salt)
+            .map(|hash| hash.to_string())
+            .map_err(|err| DomainError::Internal {
+                message: format!("Failed to hash password: {}", err),
+            })
+    }
+
+    pub fn verify_password_for_storage(password: &str, hash: &str) -> bool {
+        if hash.starts_with("$argon2") {
+            use argon2::{Argon2, PasswordHash, PasswordVerifier};
+            let Ok(parsed_hash) = PasswordHash::new(hash) else {
+                return false;
+            };
+            return Argon2::default()
+                .verify_password(password.as_bytes(), &parsed_hash)
+                .is_ok();
+        }
+
+        // Legacy SHA-256 hashes are accepted for existing installations and
+        // upgraded transparently on the next successful login.
+        let mut hasher = sha2::Sha256::new();
+        use sha2::Digest;
         hasher.update(password.as_bytes());
-        Ok(hex::encode(hasher.finalize()))
+        hex::encode(hasher.finalize()) == hash
     }
 
     fn hash_password(&self, password: &str) -> DomainResult<String> {
@@ -899,7 +933,7 @@ impl AuthService {
     }
 
     fn verify_password(&self, password: &str, hash: &str) -> DomainResult<bool> {
-        Ok(self.hash_password(password)? == hash)
+        Ok(Self::verify_password_for_storage(password, hash))
     }
 
     fn hash_token(&self, token: &str) -> DomainResult<String> {

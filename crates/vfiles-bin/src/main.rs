@@ -931,10 +931,13 @@ mod tests {
     fn resolve_password_hash_input_hashes_plaintext_password() {
         let hash = resolve_password_hash_input(Some("secret123"), None)
             .expect("plaintext password should hash");
-        let expected =
-            AuthService::hash_password_for_storage("secret123").expect("hash should be generated");
 
-        assert_eq!(hash, expected);
+        assert!(hash.starts_with("$argon2"));
+        assert!(AuthService::verify_password_for_storage("secret123", &hash));
+        assert!(!AuthService::verify_password_for_storage(
+            "wrong-password",
+            &hash
+        ));
     }
 
     #[test]
