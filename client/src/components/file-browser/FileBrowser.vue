@@ -957,17 +957,15 @@ import VersionHistory from "../version-history/VersionHistory.vue";
 import Modal from "../common/Modal.vue";
 import ShareDialog from "../common/ShareDialog.vue";
 import { confirmDialog, promptDialog } from "../../composables/dialog";
+import { useDownloadQueue } from "../../composables/useDownloadQueue";
+import { useFilePreview } from "../../composables/useFilePreview";
 import type { FileInfo } from "../../types";
-import { loadHighlight } from "../../utils/highlight";
 import {
   sortBrowserItems,
   sortFiles,
   type SortField,
   type SortState,
 } from "../../utils/fileSort";
-
-let cachedMarked: any | null = null;
-let cachedHljs: any | null = null;
 
 const filesStore = useFilesStore();
 const appStore = useAppStore();
@@ -1010,277 +1008,8 @@ const moveDialogSubmitting = ref(false);
 const fileUploaderRef = ref<InstanceType<typeof FileUploader> | null>(null);
 const expandedFilePath = ref<string>("");
 
-type PreviewKind =
-  | "text"
-  | "image"
-  | "markdown"
-  | "code"
-  | "pdf"
-  | "video"
-  | "audio"
-  | "unsupported";
-const preview = ref({
-  open: false,
-  loading: false,
-  error: null as string | null,
-  path: "",
-  kind: "text" as PreviewKind,
-  text: "",
-  html: "",
-  objectUrl: "",
-});
-
-const previewFilename = computed(
-  () => preview.value.path.split("/").pop() || "file",
-);
-
-function getExtension(p: string): string {
-  const name = p.split("/").pop() || "";
-  const idx = name.lastIndexOf(".");
-  if (idx <= 0 || idx === name.length - 1) return "";
-  return name.slice(idx + 1).toLowerCase();
-}
-
-function detectPreviewKind(filePath: string): PreviewKind {
-  const ext = getExtension(filePath);
-  const imageExts = new Set([
-    "png",
-    "jpg",
-    "jpeg",
-    "gif",
-    "webp",
-    "bmp",
-    "svg",
-  ]);
-  if (imageExts.has(ext)) return "image";
-
-  if (ext === "pdf") return "pdf";
-
-  const videoExts = new Set(["mp4", "webm", "ogg", "mov", "m4v"]);
-  if (videoExts.has(ext)) return "video";
-
-  const audioExts = new Set(["mp3", "wav", "ogg", "m4a", "aac", "flac"]);
-  if (audioExts.has(ext)) return "audio";
-
-  const mdExts = new Set(["md", "markdown"]);
-  if (mdExts.has(ext)) return "markdown";
-
-  const codeExts = new Set([
-    "js",
-    "ts",
-    "jsx",
-    "tsx",
-    "vue",
-    "json",
-    "css",
-    "scss",
-    "html",
-    "xml",
-    "yml",
-    "yaml",
-    "csv",
-    "log",
-    "sh",
-    "py",
-    "java",
-    "c",
-    "cpp",
-    "go",
-    "rs",
-  ]);
-  if (codeExts.has(ext)) return "code";
-
-  const textExts = new Set(["txt", "log"]);
-  if (textExts.has(ext) || ext === "") return "text";
-
-  return "unsupported";
-}
-
-function guessMimeByExt(filePath: string): string {
-  const ext = getExtension(filePath);
-  if (ext === "pdf") return "application/pdf";
-  if (ext === "svg") return "image/svg+xml";
-  if (ext === "png") return "image/png";
-  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
-  if (ext === "gif") return "image/gif";
-  if (ext === "webp") return "image/webp";
-  if (ext === "bmp") return "image/bmp";
-
-  if (ext === "mp4" || ext === "m4v") return "video/mp4";
-  if (ext === "webm") return "video/webm";
-  if (ext === "mov") return "video/quicktime";
-  if (ext === "ogg") return "application/ogg";
-
-  if (ext === "mp3") return "audio/mpeg";
-  if (ext === "wav") return "audio/wav";
-  if (ext === "m4a") return "audio/mp4";
-  if (ext === "aac") return "audio/aac";
-  if (ext === "flac") return "audio/flac";
-
-  return "application/octet-stream";
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function safeLinkHref(href: string | null | undefined): string {
-  const raw = (href || "").trim();
-  if (!raw) return "#";
-  if (raw.startsWith("#")) return raw;
-  if (raw.startsWith("/")) return raw;
-  if (/^https?:\/\//i.test(raw)) return raw;
-  if (/^mailto:/i.test(raw)) return raw;
-  return "#";
-}
-
-function safeImageSrc(src: string | null | undefined): string {
-  const raw = (src || "").trim();
-  if (!raw) return "";
-  if (/^https?:\/\//i.test(raw)) return raw;
-  if (/^data:image\//i.test(raw)) return raw;
-  if (raw.startsWith("/")) return raw;
-  return "";
-}
-
-async function getMarked() {
-  if (cachedMarked) return cachedMarked;
-  const mod: any = await import("marked");
-  const markedApi = mod?.marked ?? mod;
-
-  const mdRenderer: any = {
-    html(token: any) {
-      const html =
-        typeof token === "string" ? token : (token?.text ?? token?.raw ?? "");
-      return escapeHtml(String(html));
-    },
-    link(tokenOrHref: any, title?: any, text?: any) {
-      const href =
-        tokenOrHref && typeof tokenOrHref === "object"
-          ? tokenOrHref.href
-          : tokenOrHref;
-      const linkTitle =
-        tokenOrHref && typeof tokenOrHref === "object"
-          ? tokenOrHref.title
-          : title;
-      const linkText =
-        tokenOrHref && typeof tokenOrHref === "object"
-          ? tokenOrHref.text
-          : text;
-
-      const safeHref = safeLinkHref(href);
-      const t = linkTitle ? ` title="${escapeHtml(String(linkTitle))}"` : "";
-      const inner =
-        typeof linkText === "string"
-          ? (markedApi.parseInline(linkText) as string)
-          : "";
-      return `<a href="${escapeHtml(safeHref)}"${t} target="_blank" rel="noopener noreferrer">${inner}</a>`;
-    },
-    image(tokenOrHref: any, title?: any, text?: any) {
-      const href =
-        tokenOrHref && typeof tokenOrHref === "object"
-          ? tokenOrHref.href
-          : tokenOrHref;
-      const imgTitle =
-        tokenOrHref && typeof tokenOrHref === "object"
-          ? tokenOrHref.title
-          : title;
-      const altText =
-        tokenOrHref && typeof tokenOrHref === "object"
-          ? tokenOrHref.text
-          : text;
-
-      const safeSrc = safeImageSrc(href);
-      if (!safeSrc) return "";
-
-      const t = imgTitle ? ` title="${escapeHtml(String(imgTitle))}"` : "";
-      const alt = altText ? escapeHtml(String(altText)) : "";
-      return `<img src="${escapeHtml(safeSrc)}" alt="${alt}" loading="lazy" decoding="async"${t} />`;
-    },
-  };
-
-  markedApi.use({
-    renderer: mdRenderer,
-    gfm: true,
-    breaks: true,
-  });
-
-  cachedMarked = markedApi;
-  return markedApi;
-}
-
-async function getHljs() {
-  if (cachedHljs) return cachedHljs;
-  cachedHljs = await loadHighlight();
-  return cachedHljs;
-}
-
-function closePreview() {
-  if (preview.value.objectUrl) URL.revokeObjectURL(preview.value.objectUrl);
-  preview.value = {
-    open: false,
-    loading: false,
-    error: null,
-    path: "",
-    kind: "text",
-    text: "",
-    html: "",
-    objectUrl: "",
-  };
-}
-
-async function openPreview(filePath: string) {
-  closePreview();
-  preview.value.open = true;
-  preview.value.loading = true;
-  preview.value.path = filePath;
-  preview.value.kind = detectPreviewKind(filePath);
-
-  try {
-    if (preview.value.kind === "unsupported") {
-      preview.value.loading = false;
-      return;
-    }
-
-    const blob = await filesService.getFileContent(
-      filePath,
-      browseCommit.value,
-    );
-
-    if (
-      preview.value.kind === "image" ||
-      preview.value.kind === "pdf" ||
-      preview.value.kind === "video" ||
-      preview.value.kind === "audio"
-    ) {
-      const typed = new Blob([await blob.arrayBuffer()], {
-        type: guessMimeByExt(filePath),
-      });
-      preview.value.objectUrl = URL.createObjectURL(typed);
-    } else {
-      const text = await blob.text();
-      if (preview.value.kind === "markdown") {
-        const markedApi = await getMarked();
-        preview.value.html = markedApi.parse(text) as string;
-      } else if (preview.value.kind === "code") {
-        const hljsApi = await getHljs();
-        const highlighted = hljsApi.highlightAuto(text);
-        preview.value.html = highlighted.value;
-      } else {
-        preview.value.text = text;
-      }
-    }
-  } catch (err) {
-    preview.value.error = err instanceof Error ? err.message : "预览失败";
-  } finally {
-    preview.value.loading = false;
-  }
-}
+const { preview, previewFilename, closePreview, openPreview } =
+  useFilePreview(browseCommit);
 
 const searchQuery = ref("");
 const searchResults = ref<FileInfo[]>([]);
@@ -1292,43 +1021,20 @@ const desktopSearchOpen = ref(false);
 const desktopSearchBoxRef = ref<HTMLElement | null>(null);
 const desktopSearchInputRef = ref<HTMLInputElement | null>(null);
 
-const queueCollapsed = ref(false);
-const activeDownload = computed(() =>
-  downloadQueue.value.find((x) => x.status === "downloading"),
-);
-const activeDownloadPercent = computed(() => {
-  const a = activeDownload.value;
-  if (!a?.progress?.total) return null;
-  if (a.progress.total <= 0) return null;
-  return Math.min(
-    100,
-    Math.floor((a.progress.loaded / a.progress.total) * 100),
-  );
-});
-
-type DownloadQueueStatus =
-  | "queued"
-  | "downloading"
-  | "done"
-  | "error"
-  | "canceled";
-type DownloadQueueKind = "file" | "folder";
-type DownloadQueueItem = {
-  id: number;
-  kind: DownloadQueueKind;
-  path: string;
-  filename: string;
-  status: DownloadQueueStatus;
-  progress?: { loaded: number; total?: number };
-  error?: string;
-  abort?: AbortController;
-};
-
-const downloadQueue = ref<DownloadQueueItem[]>([]);
-let nextDownloadId = 1;
-const downloading = computed(() =>
-  downloadQueue.value.some((x) => x.status === "downloading"),
-);
+const {
+  queueCollapsed,
+  downloadQueue,
+  downloading,
+  activeDownload,
+  activeDownloadPercent,
+  enqueueDownload,
+  toggleQueuePanel,
+  formatProgress,
+  cancelItem,
+  cancelAll,
+  clearFinished,
+  removeItem,
+} = useDownloadQueue(browseCommit);
 
 const batchMode = ref(false);
 const selectedPaths = ref<Set<string>>(new Set());
@@ -2107,142 +1813,6 @@ async function onTouchEnd(e: TouchEvent) {
   pullDistance.value = 0;
   pullReady.value = false;
   touchMode.value = "none";
-}
-
-function enqueueDownload(kind: DownloadQueueKind, path: string) {
-  const wasEmpty = downloadQueue.value.length === 0;
-  const filename =
-    kind === "folder"
-      ? `${path.split("/").filter(Boolean).pop() || "root"}.zip`
-      : path.split("/").pop() || "download";
-
-  downloadQueue.value = [
-    ...downloadQueue.value,
-    {
-      id: nextDownloadId++,
-      kind,
-      path,
-      filename,
-      status: "queued",
-    },
-  ];
-
-  // 第一次出现队列时默认展开，方便用户查看进度。
-  if (wasEmpty) queueCollapsed.value = false;
-
-  void processQueue();
-}
-
-function toggleQueuePanel() {
-  queueCollapsed.value = !queueCollapsed.value;
-}
-
-async function processQueue() {
-  if (downloading.value) return;
-
-  const next = downloadQueue.value.find((x) => x.status === "queued");
-  if (!next) return;
-
-  const abort = new AbortController();
-  downloadQueue.value = downloadQueue.value.map((x) =>
-    x.id === next.id
-      ? { ...x, status: "downloading", progress: { loaded: 0 }, abort }
-      : x,
-  );
-
-  try {
-    const onProgress = (p: { loaded: number; total?: number }) => {
-      downloadQueue.value = downloadQueue.value.map((x) =>
-        x.id === next.id ? { ...x, progress: p } : x,
-      );
-    };
-
-    const commit = browseCommit.value;
-    const result =
-      next.kind === "folder"
-        ? await filesService.fetchFolderDownload(next.path, commit, {
-            signal: abort.signal,
-            onProgress,
-          })
-        : await filesService.fetchFileDownload(next.path, commit, {
-            signal: abort.signal,
-            onProgress,
-          });
-
-    filesService.saveDownloadedBlob(result.blob, result.filename);
-    downloadQueue.value = downloadQueue.value.map((x) =>
-      x.id === next.id ? { ...x, status: "done", abort: undefined } : x,
-    );
-  } catch (err: any) {
-    const isAbort = err?.name === "AbortError";
-    downloadQueue.value = downloadQueue.value.map((x) =>
-      x.id === next.id
-        ? {
-            ...x,
-            status: isAbort ? "canceled" : "error",
-            error: isAbort
-              ? undefined
-              : err instanceof Error
-                ? err.message
-                : "下载失败",
-            abort: undefined,
-          }
-        : x,
-    );
-  } finally {
-    // 继续下一个
-    void processQueue();
-  }
-}
-
-function formatProgress(loaded: number, total: number): string {
-  const percent = Math.floor((loaded / total) * 100);
-  const formatSize = (bytes: number): string => {
-    if (bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
-  };
-  return ` ${percent}% (${formatSize(loaded)}/${formatSize(total)})`;
-}
-
-function cancelItem(id: number) {
-  const item = downloadQueue.value.find((x) => x.id === id);
-  if (!item) return;
-
-  if (item.status === "queued") {
-    downloadQueue.value = downloadQueue.value.map((x) =>
-      x.id === id ? { ...x, status: "canceled" } : x,
-    );
-    return;
-  }
-
-  if (item.status === "downloading") {
-    item.abort?.abort();
-  }
-}
-
-function cancelAll() {
-  for (const item of downloadQueue.value) {
-    if (item.status === "queued") {
-      downloadQueue.value = downloadQueue.value.map((x) =>
-        x.id === item.id ? { ...x, status: "canceled" } : x,
-      );
-    } else if (item.status === "downloading") {
-      item.abort?.abort();
-    }
-  }
-}
-
-function clearFinished() {
-  downloadQueue.value = downloadQueue.value.filter(
-    (x) => x.status === "queued" || x.status === "downloading",
-  );
-}
-
-function removeItem(id: number) {
-  downloadQueue.value = downloadQueue.value.filter((x) => x.id !== id);
 }
 
 function handleItemClick(file: BrowserListItem) {

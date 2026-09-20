@@ -16,15 +16,14 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 6 实测）
+### 验证基线（round 7 实测）
 
-- `cargo test --workspace`：通过（HTTP 集成 58 个 + `vfiles-http` 单元 7 个，含新增
-  缩略图缓存清理用例）。
+- `cargo test --workspace`：通过（HTTP 集成 58 个 + `vfiles-http` 单元 7 个）。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：9 个文件 / 36 个用例通过。
+- `client` 单测：11 个文件 / 46 个用例通过。
 - `vue-tsc --noEmit`：无错误；`eslint .`：无告警。
-- `bun run build`：成功；`--features embed` 构建成功，并冒烟验证缩略图缓存
-  命中/生成日志与前端产物。
+- `bun run build`：成功；冒烟验证首页产物包含预览/下载队列/搜索等标记，
+  `/api/files/content` 正常。
 
 ### 主要发现
 
@@ -155,6 +154,18 @@
 - 增加日志：生成/命中为 `debug`，清理为 `info`（含回收数量与字节）。
 - 测试：清理到目标数量且保留最新条目、低于上限时不做任何删除。
 
+### 2.12 拆分 FileBrowser：下载队列与文件预览（round 7，稳定性）
+
+- 新增 `composables/useDownloadQueue.ts`：串行下载、进度、取消、失败提示与队列面板
+  状态整体抽出；文件名推导与进度文案复用共享的 `formatSize`。
+- 新增 `composables/useFilePreview.ts`：预览状态与 `openPreview`/`closePreview`，
+  以及扩展名→预览类型、MIME 推断、HTML 转义与链接/图片来源白名单等纯函数；
+  markdown/highlight 仍是动态 import，不进入首屏包。
+- `FileBrowser.vue` 由 3288 行降至 2858 行（−430 行，−13%），主组件进一步收敛为
+  编排层。
+- 测试：下载队列串行执行、排队取消、清理已完成、进度文案；预览类型识别、MIME
+  推断与 XSS 白名单（`javascript:`/`data:text/html` 被拒绝）。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -170,9 +181,10 @@
 
 ### 3.3 `FileBrowser.vue` 拆分（稳定性，中）
 
-- 抽出搜索、批量操作、下载队列、目录管理、预览为独立 composable / 组件，
-  把主组件收敛为编排层。
-- 验收：单文件行数显著下降，已有测试保持通过并补充拆分后的单元测试。
+- `[x]` 下载队列与文件预览抽为 composable（round 7，3288 → 2858 行）。
+- `[ ]` 继续抽出搜索/桌面+移动端状态、目录管理与批量操作，目标 < 1500 行。
+- `[ ]` 抽出桌面/移动两套模板片段为子组件（`BrowserToolbar`、`DownloadQueuePanel`）。
+- 验收：单文件行数持续下降，已有测试保持通过并补充拆分后的单元测试。
 
 ### 3.4 交互增强（中，对齐主流云盘）
 
