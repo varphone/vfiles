@@ -30,6 +30,30 @@ struct TestApp {
     _temp_dir: TempDir,
 }
 
+fn single_upload_multipart(
+    filename: &str,
+    path: &str,
+    message: &str,
+    bytes: &[u8],
+) -> (Vec<u8>, String) {
+    let boundary = "----vfiles-single-upload-boundary";
+    let mut body = Vec::new();
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(
+        format!(
+            "\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"path\"\r\n\r\n{path}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"message\"\r\n\r\n{message}\r\n--{boundary}--\r\n"
+        )
+        .as_bytes(),
+    );
+    (body, format!("multipart/form-data; boundary={boundary}"))
+}
+
 fn password_hash(password: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(password.as_bytes());
@@ -1026,6 +1050,41 @@ async fn history_restore_endpoint_creates_new_current_version() {
         history_payload["data"]["commits"][0]["hasCustomMessage"],
         Value::Bool(true)
     );
+}
+
+#[tokio::test]
+async fn single_upload_streams_multipart_file_to_storage() {
+    let app = TestApp::new().await;
+    let payload = b"streaming single upload content\n";
+    let (body, content_type) =
+        single_upload_multipart("streamed.txt", "docs", "streamed upload", payload);
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/files/upload")
+                .header(header::CONTENT_TYPE, content_type)
+                .body(Body::from(body))
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload_json = response_json(response).await;
+    assert_eq!(payload_json["completed"], Value::Bool(true));
+    assert_eq!(payload_json["size"], Value::from(payload.len()));
+
+    let content = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/streamed.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(content.status(), StatusCode::OK);
+    assert_eq!(response_bytes(content).await.as_ref(), payload);
 }
 
 #[tokio::test]
