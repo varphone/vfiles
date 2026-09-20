@@ -72,6 +72,99 @@ pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
     response
 }
 
+pub(crate) fn client_ip_from_headers(headers: &axum::http::HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next().map(str::trim))
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            ["cf-connecting-ip", "x-real-ip", "x-client-ip"]
+                .iter()
+                .find_map(|header_name| {
+                    headers
+                        .get(*header_name)
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                })
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[derive(Debug)]
+struct FixedWindowCounter {
+    requests: u32,
+    reset_at: Instant,
+}
+
+#[derive(Debug, Default)]
+pub struct FixedWindowLimiter {
+    counters: Mutex<HashMap<String, FixedWindowCounter>>,
+}
+
+impl FixedWindowLimiter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn lock_counters(&self) -> std::sync::MutexGuard<'_, HashMap<String, FixedWindowCounter>> {
+        self.counters
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub fn check_and_record(
+        &self,
+        max_requests: u32,
+        window: Duration,
+        key: &str,
+    ) -> Option<LoginRateLimitBlock> {
+        if max_requests == 0 {
+            return Some(LoginRateLimitBlock {
+                retry_after_secs: 1,
+            });
+        }
+
+        let now = Instant::now();
+        let mut counters = self.lock_counters();
+
+        if counters.len() >= 50_000 {
+            counters.retain(|_, counter| now < counter.reset_at);
+        }
+
+        match counters.get_mut(key) {
+            Some(counter) if now >= counter.reset_at => {
+                counter.requests = 1;
+                counter.reset_at = now + window;
+                None
+            }
+            Some(counter) if counter.requests >= max_requests => {
+                let retry_after = counter.reset_at.saturating_duration_since(now);
+                Some(LoginRateLimitBlock {
+                    retry_after_secs: ceil_duration_seconds(retry_after),
+                })
+            }
+            Some(counter) => {
+                counter.requests = counter.requests.saturating_add(1);
+                None
+            }
+            None => {
+                counters.insert(
+                    key.to_string(),
+                    FixedWindowCounter {
+                        requests: 1,
+                        reset_at: now + window,
+                    },
+                );
+                None
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 struct LoginAttemptCounter {
     failures: u32,
@@ -203,6 +296,32 @@ mod tests {
             .check(&config, "127.0.0.1|admin")
             .expect("limiter should block after max failures");
         assert!(block.retry_after_secs >= 1);
+    }
+
+    #[test]
+    fn fixed_window_limiter_blocks_after_limit() {
+        let limiter = super::FixedWindowLimiter::new();
+        let window = std::time::Duration::from_secs(60);
+
+        assert!(
+            limiter
+                .check_and_record(2, window, "share:a:127.0.0.1")
+                .is_none()
+        );
+        assert!(
+            limiter
+                .check_and_record(2, window, "share:a:127.0.0.1")
+                .is_none()
+        );
+        let block = limiter
+            .check_and_record(2, window, "share:a:127.0.0.1")
+            .expect("limiter should block after limit");
+        assert!(block.retry_after_secs >= 1);
+        assert!(
+            limiter
+                .check_and_record(2, window, "share:b:127.0.0.1")
+                .is_none()
+        );
     }
 
     #[test]

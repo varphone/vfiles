@@ -13,6 +13,7 @@ use crate::{
     AppState,
     dto::{LoginResponseDto, UserDto},
     error::{ApiError, ApiResult, ErrorResponse},
+    middleware::client_ip_from_headers,
 };
 use vfiles_domain::{DomainError, UserRepo};
 
@@ -99,28 +100,6 @@ pub async fn login(
     let jar = jar.add(cookie);
 
     Ok((jar, Json(response_dto)).into_response())
-}
-
-fn client_ip_from_headers(headers: &HeaderMap) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next().map(str::trim))
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            ["cf-connecting-ip", "x-real-ip", "x-client-ip"]
-                .iter()
-                .find_map(|header_name| {
-                    headers
-                        .get(*header_name)
-                        .and_then(|value| value.to_str().ok())
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(str::to_string)
-                })
-        })
-        .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn login_rate_limit_key(headers: &HeaderMap, username_or_email: &str) -> String {
