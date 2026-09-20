@@ -1,0 +1,121 @@
+//! 代码与语法高亮配色。
+//!
+//! `highlight.js` 只负责产生 `hljs-*` 类名，颜色需要应用侧提供；这里按
+//! `src/styles/theme.scss` 的令牌定义浅色/深色两套配色，覆盖预览与
+//! Markdown 代码块。
+//!
+//! 注意：class 前缀固定为 `hljs-`（highlight.js 输出），无法改名前缀。
+
+.hljs {
+  display: block;
+  padding: 0.85rem 1rem;
+  overflow: auto;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: 10px;
+  background: var(--vf-code-bg);
+  color: var(--vf-code-text);
+}
+
+/* 注释与引用 */
+.hljs-comment,
+.hljs-quote {
+  color: var(--vf-code-comment);
+  font-style: italic;
+}
+
+/* 关键字、选择器、模板标签 */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-doctag,
+.hljs-template-tag,
+.hljs-name {
+  color: var(--vf-code-keyword);
+  font-weight: 600;
+}
+
+/* 字符串、正则、元信息 */
+.hljs-string,
+.hljs-regexp,
+.hljs-meta .hljs-string {
+  color: var(--vf-code-string);
+}
+
+.hljs-meta,
+.hljs-meta .hljs-keyword {
+  color: var(--vf-code-meta);
+}
+
+/* 数字与常量 */
+.hljs-number,
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--vf-code-literal);
+}
+
+/* 函数与标题 */
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_,
+.hljs-section {
+  color: var(--vf-code-function);
+  font-weight: 600;
+}
+
+/* 类型与内置对象 */
+.hljs-type,
+.hljs-built_in,
+.hljs-class .hljs-title,
+.hljs-params {
+  color: var(--vf-code-type);
+}
+
+/* 变量、属性、标签 */
+.hljs-variable,
+.hljs-attr,
+.hljs-attribute,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-property {
+  color: var(--vf-code-attr);
+}
+
+.hljs-tag {
+  color: var(--vf-code-tag);
+}
+
+/* 差异视图（部分语言支持） */
+.hljs-addition {
+  color: var(--vf-code-addition);
+  background: var(--vf-code-addition-bg);
+}
+
+.hljs-deletion {
+  color: var(--vf-code-deletion);
+  background: var(--vf-code-deletion-bg);
+}
+
+/* 强调与下划线标记 */
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 700;
+}
+
+/* Markdown 预览里的代码块：沿用同一套配色，但不需要外层内边距叠加 */
+.markdown-body pre {
+  padding: 0;
+  background: transparent;
+}
+
+.markdown-body pre code {
+  display: block;
+  padding: 0.85rem 1rem;
+  overflow: auto;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: 10px;
+  background: var(--vf-code-bg);
+  color: var(--vf-code-text);
+}

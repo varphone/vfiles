@@ -596,6 +596,71 @@ describe("FileBrowser.vue loading state", () => {
     await findByText("此文件夹为空");
   });
 });
+describe("FileBrowser.vue preview copy", () => {
+  function typeScriptFile() {
+    return [
+      {
+        id: "main",
+        name: "main.ts",
+        path: "main.ts",
+        kind: "file",
+        size_bytes: 12,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ];
+  }
+
+  it("copies the previewed source code to the clipboard", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    getFilesMock.mockResolvedValue(typeScriptFile());
+    getFileContentMock.mockResolvedValue(
+      new Blob(["const answer: number = 42;\n"]),
+    );
+
+    const { findByText, findByRole } = renderWithProviders(FileBrowser as any);
+
+    const name = await findByText("main.ts");
+    await fireEvent.dblClick(name.closest("tr")!);
+
+    const copyButton = await findByRole("button", { name: /复制/ });
+    await fireEvent.click(copyButton);
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("const answer: number = 42;\n");
+    });
+    await findByText("已复制");
+  });
+
+  it("does not offer copying for binary previews", async () => {
+    getFilesMock.mockResolvedValue([
+      {
+        id: "img",
+        name: "photo.png",
+        path: "photo.png",
+        kind: "file",
+        size_bytes: 4,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+    getFileContentMock.mockResolvedValue(new Blob(["png"]));
+
+    const { findByText, queryByRole } = renderWithProviders(FileBrowser as any);
+
+    const name = await findByText("photo.png");
+    await fireEvent.dblClick(name.closest("tr")!);
+
+    await waitFor(() => {
+      expect(queryByRole("button", { name: /复制/ })).toBeNull();
+    });
+  });
+});
+
 describe("FileBrowser.vue preview retry", () => {
   it("retries a failed preview", async () => {
     getFilesMock.mockResolvedValue([

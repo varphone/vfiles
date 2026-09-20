@@ -14,6 +14,8 @@ import DialogHost from "./components/common/DialogHost.vue";
 <style lang="scss">
 /* 按需引入 Bulma（见 src/styles/bulma.scss） */
 @use "./styles/bulma";
+/* 代码预览与 Markdown 代码块配色 */
+@use "./styles/code-theme";
 
 /* 自定义全局样式 */
 * {

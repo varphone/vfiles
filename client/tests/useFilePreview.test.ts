@@ -86,6 +86,53 @@ describe("preview sanitizers", () => {
   });
 });
 
+describe("useFilePreview rendering", () => {
+  it("highlights fenced code blocks inside markdown", async () => {
+    getFileContentMock.mockResolvedValueOnce(
+      new Blob(["# 标题\n\n```ts\nconst a: number = 1;\n```\n"]),
+    );
+    const preview = useFilePreview(ref(undefined));
+
+    await preview.openPreview("notes/readme.md");
+    await flush();
+    await flush();
+
+    expect(preview.preview.value.kind).toBe("markdown");
+    expect(preview.preview.value.html).toContain(
+      '<code class="hljs language-ts">',
+    );
+    expect(preview.preview.value.html).toContain("hljs-keyword");
+  });
+
+  it("leaves markdown without code blocks untouched", async () => {
+    getFileContentMock.mockResolvedValueOnce(new Blob(["# 只有标题\n"]));
+    const preview = useFilePreview(ref(undefined));
+
+    await preview.openPreview("notes/plain.md");
+    await flush();
+    await flush();
+
+    expect(preview.preview.value.html).toContain("<h1");
+    expect(preview.preview.value.html).not.toContain("hljs");
+  });
+
+  it("highlights code files by their extension", async () => {
+    getFileContentMock.mockResolvedValueOnce(
+      new Blob(["interface A { b: string }\nconst x: A = { b: 'v' };\n"]),
+    );
+    const preview = useFilePreview(ref(undefined));
+
+    await preview.openPreview("src/types.ts");
+    await flush();
+    await flush();
+
+    expect(preview.preview.value.kind).toBe("code");
+    expect(preview.preview.value.html).toContain("hljs-keyword");
+    // 模板里已经有外层 <pre>，这里只放高亮后的片段
+    expect(preview.preview.value.html).not.toContain("<pre>");
+  });
+});
+
 describe("useFilePreview navigation", () => {
   it("moves to the previous/next previewable file and respects the ends", async () => {
     const files = [file("a.txt"), file("b.txt"), file("c.txt")];

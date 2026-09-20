@@ -82,6 +82,25 @@
   --vf-warning-line: rgba(186, 120, 18, 0.32);
   --vf-accent-line: rgba(81, 132, 208, 0.55);
 
+  /* 代码 / 语法高亮（GitHub Light 风格） */
+  --vf-code-bg: #f6f8fa;
+  --vf-code-text: #24292f;
+  --vf-code-comment: #6a737d;
+  --vf-code-keyword: #cf222e;
+  --vf-code-string: #0a3069;
+  --vf-code-number: #0550ae;
+  --vf-code-function: #8250df;
+  --vf-code-type: #953800;
+  --vf-code-variable: #116329;
+  --vf-code-literal: #0550ae;
+  --vf-code-meta: #82071e;
+  --vf-code-tag: #116329;
+  --vf-code-attr: #0550ae;
+  --vf-code-addition: #116329;
+  --vf-code-addition-bg: rgba(17, 99, 41, 0.1);
+  --vf-code-deletion: #82071e;
+  --vf-code-deletion-bg: rgba(130, 7, 30, 0.1);
+
   /* 骨架屏 */
   --vf-skeleton-base: #e5e7eb;
   --vf-skeleton-shine: rgba(255, 255, 255, 0.65);
@@ -160,6 +179,24 @@
   --vf-warning-text: hsl(35, 85%, 72%);
   --vf-warning-line: hsla(35, 80%, 62%, 0.45);
   --vf-accent-line: hsla(210, 68%, 62%, 0.6);
+
+  --vf-code-bg: hsl(221, 16%, 10%);
+  --vf-code-text: hsl(221, 14%, 84%);
+  --vf-code-comment: hsl(221, 14%, 56%);
+  --vf-code-keyword: #ff7b72;
+  --vf-code-string: #a5d6ff;
+  --vf-code-number: #79c0ff;
+  --vf-code-function: #d2a8ff;
+  --vf-code-type: #ffa657;
+  --vf-code-variable: #7ee787;
+  --vf-code-literal: #79c0ff;
+  --vf-code-meta: #ffa198;
+  --vf-code-tag: #7ee787;
+  --vf-code-attr: #79c0ff;
+  --vf-code-addition: #aff5b4;
+  --vf-code-addition-bg: hsla(137, 55%, 60%, 0.14);
+  --vf-code-deletion: #ffdcd7;
+  --vf-code-deletion-bg: hsla(348, 86%, 61%, 0.16);
 
   --vf-skeleton-base: hsla(221, 14%, 71%, 0.14);
   --vf-skeleton-shine: hsla(221, 14%, 71%, 0.22);

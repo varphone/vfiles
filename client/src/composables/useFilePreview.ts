@@ -1,10 +1,18 @@
 import { computed, ref, type Ref } from "vue";
 import { filesService } from "../services/files.service";
-import { loadHighlight } from "../utils/highlight";
+import {
+  hasFencedCodeBlock,
+  highlightCode,
+  languageForPath,
+  loadHighlight,
+  renderHighlightedCode,
+} from "../utils/highlight";
 import type { FileInfo } from "../types";
 
 // 动态依赖只加载一次，后续预览复用
-let cachedMarked: any | null = null;
+let markedRendererInstalled = false;
+// Markdown 渲染器读取它决定代码块是否高亮（先有代码块才加载 highlight.js）。
+let activeHighlight: Awaited<ReturnType<typeof loadHighlight>> | null = null;
 let cachedHljs: any | null = null;
 
 export type PreviewKind =
@@ -190,10 +198,13 @@ export function useFilePreview(
     goToOffset(1);
   }
 
-  async function getMarked() {
-    if (cachedMarked) return cachedMarked;
+  async function getMarked(withCodeHighlight = false) {
     const mod: any = await import("marked");
     const markedApi = mod?.marked ?? mod;
+
+    if (withCodeHighlight && !activeHighlight) {
+      activeHighlight = await getHljs();
+    }
 
     const mdRenderer: any = {
       html(token: any) {
@@ -223,6 +234,15 @@ export function useFilePreview(
             : "";
         return `<a href="${escapeHtml(safeHref)}"${t} target="_blank" rel="noopener noreferrer">${inner}</a>`;
       },
+      code(token: any) {
+        const code =
+          typeof token === "string" ? token : (token?.text ?? token?.raw ?? "");
+        const language = typeof token?.lang === "string" ? token.lang : "";
+        if (!activeHighlight) {
+          return `<pre><code class="hljs">${escapeHtml(code)}</code></pre>`;
+        }
+        return renderHighlightedCode(activeHighlight, code, language);
+      },
       image(tokenOrHref: any, title?: any, text?: any) {
         const href =
           tokenOrHref && typeof tokenOrHref === "object"
@@ -246,13 +266,17 @@ export function useFilePreview(
       },
     };
 
-    markedApi.use({
-      renderer: mdRenderer,
-      gfm: true,
-      breaks: true,
-    });
+    // `marked` 的渲染器是全局合并的：只安装一次，避免第二次调用时
+    // 把 code 重载覆盖成不带高亮的版本。
+    if (!markedRendererInstalled) {
+      markedApi.use({
+        renderer: mdRenderer,
+        gfm: true,
+        breaks: true,
+      });
+      markedRendererInstalled = true;
+    }
 
-    cachedMarked = markedApi;
     return markedApi;
   }
 
@@ -307,12 +331,19 @@ export function useFilePreview(
       } else {
         const text = await blob.text();
         if (preview.value.kind === "markdown") {
-          const markedApi = await getMarked();
+          // 只有真的出现围栏代码块时才加载高亮包（约 150KB）。
+          const markedApi = await getMarked(hasFencedCodeBlock(text));
           preview.value.html = markedApi.parse(text) as string;
         } else if (preview.value.kind === "code") {
           const hljsApi = await getHljs();
-          const highlighted = hljsApi.highlightAuto(text);
-          preview.value.html = highlighted.value;
+          // 按扩展名指定语言（比自动识别更准），未知语言回退到自动识别。
+          preview.value.html = highlightCode(
+            hljsApi,
+            text,
+            languageForPath(filePath),
+          ).value;
+          // 同时保留原文，供“复制内容”使用
+          preview.value.text = text;
         } else {
           preview.value.text = text;
         }

@@ -35,7 +35,6 @@
             type="text"
             :value="shareUrl"
             readonly
-            ref="urlInput"
           />
           <span class="icon is-small is-right">
             <IconCheck :size="16" />
@@ -89,6 +88,7 @@ import { ref, computed } from "vue";
 import { IconCopy, IconCheck } from "@tabler/icons-vue";
 import Modal from "../common/Modal.vue";
 import { filesService } from "../../services/files.service";
+import { copyText } from "../../utils/clipboard";
 
 const props = defineProps<{
   isActive: boolean;
@@ -106,7 +106,6 @@ const error = ref("");
 const shareUrl = ref("");
 const expiresAt = ref("");
 const copied = ref(false);
-const urlInput = ref<HTMLInputElement | null>(null);
 
 const expiresAtFormatted = computed(() => {
   if (!expiresAt.value) return "";
@@ -142,23 +141,13 @@ async function createShare() {
 async function copyToClipboard() {
   if (!shareUrl.value) return;
 
-  try {
-    await navigator.clipboard.writeText(shareUrl.value);
-    copied.value = true;
-    setTimeout(() => {
-      copied.value = false;
-    }, 2000);
-  } catch {
-    // 回退方案
-    if (urlInput.value) {
-      urlInput.value.select();
-      document.execCommand("copy");
-      copied.value = true;
-      setTimeout(() => {
-        copied.value = false;
-      }, 2000);
-    }
-  }
+  const ok = await copyText(shareUrl.value);
+  if (!ok) return;
+
+  copied.value = true;
+  setTimeout(() => {
+    copied.value = false;
+  }, 2000);
 }
 </script>
 

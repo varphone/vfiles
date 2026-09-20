@@ -882,28 +882,46 @@
         </div>
       </div>
 
-      <div v-if="previewTotal > 1" class="preview-nav">
+      <div v-if="previewTotal > 1 || canCopyPreview" class="preview-nav">
         <button
-          class="button is-small is-light"
-          :disabled="!canGoPrev"
-          title="上一张（←）"
-          @click="prevPreview"
+          v-if="canCopyPreview"
+          class="button is-small is-light preview-copy"
+          :title="previewCopyState === 'failed' ? '复制失败' : '复制文件内容'"
+          @click="copyPreviewContent"
         >
-          <IconChevronLeft :size="16" />
-          <span>上一张</span>
+          <IconCopy :size="16" />
+          <span>{{
+            previewCopyState === "done"
+              ? "已复制"
+              : previewCopyState === "failed"
+                ? "复制失败"
+                : "复制"
+          }}</span>
         </button>
-        <span class="preview-position">
-          {{ Math.max(previewIndex + 1, 1) }} / {{ previewTotal }}
-        </span>
-        <button
-          class="button is-small is-light"
-          :disabled="!canGoNext"
-          title="下一张（→）"
-          @click="nextPreview"
-        >
-          <span>下一张</span>
-          <IconChevronRight :size="16" />
-        </button>
+
+        <template v-if="previewTotal > 1">
+          <button
+            class="button is-small is-light"
+            :disabled="!canGoPrev"
+            title="上一张（←）"
+            @click="prevPreview"
+          >
+            <IconChevronLeft :size="16" />
+            <span>上一张</span>
+          </button>
+          <span class="preview-position">
+            {{ Math.max(previewIndex + 1, 1) }} / {{ previewTotal }}
+          </span>
+          <button
+            class="button is-small is-light"
+            :disabled="!canGoNext"
+            title="下一张（→）"
+            @click="nextPreview"
+          >
+            <span>下一张</span>
+            <IconChevronRight :size="16" />
+          </button>
+        </template>
       </div>
     </Modal>
   </div>
@@ -938,6 +956,7 @@ import {
   IconDownload,
   IconShare,
   IconTrash,
+  IconCopy,
 } from "@tabler/icons-vue";
 import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
@@ -956,6 +975,7 @@ import VersionHistory from "../version-history/VersionHistory.vue";
 import Modal from "../common/Modal.vue";
 import ShareDialog from "../common/ShareDialog.vue";
 import { promptDialog } from "../../composables/dialog";
+import { copyText } from "../../utils/clipboard";
 import { useDownloadQueue } from "../../composables/useDownloadQueue";
 import { useFilePreview } from "../../composables/useFilePreview";
 import { useFileSearch } from "../../composables/useFileSearch";
@@ -1020,6 +1040,31 @@ const {
   // 当前视图中的文件（不含目录与 `.`/`..`），用于预览的上一张/下一张
   getPreviewableFiles: () => previewableFiles.value,
 });
+
+/** 代码/文本预览支持一键复制原文，复制结果在按钮上就地反馈。 */
+const previewCopyState = ref<"idle" | "done" | "failed">("idle");
+const canCopyPreview = computed(
+  () =>
+    (preview.value.kind === "code" || preview.value.kind === "text") &&
+    !preview.value.loading &&
+    !preview.value.error &&
+    preview.value.text.length > 0,
+);
+
+async function copyPreviewContent() {
+  const ok = await copyText(preview.value.text);
+  previewCopyState.value = ok ? "done" : "failed";
+  window.setTimeout(() => {
+    previewCopyState.value = "idle";
+  }, 2000);
+}
+
+watch(
+  () => preview.value.path,
+  () => {
+    previewCopyState.value = "idle";
+  },
+);
 
 /** 预览导航使用的文件列表，跟随当前视图（目录或搜索结果）。 */
 const previewableFiles = computed<FileInfo[]>(() =>
@@ -2256,6 +2301,10 @@ function handleSortChange(field: SortField) {
   height: 70vh;
 }
 
+.preview-copy {
+  margin-right: auto;
+}
+
 .preview-nav {
   display: flex;
   align-items: center;
@@ -2301,21 +2350,6 @@ function handleSortChange(field: SortField) {
   max-height: 60vh;
   overflow: auto;
   white-space: pre;
-}
-
-.hljs :deep(.hljs-comment),
-.hljs :deep(.hljs-quote) {
-  opacity: 0.7;
-}
-
-.hljs :deep(.hljs-keyword),
-.hljs :deep(.hljs-selector-tag),
-.hljs :deep(.hljs-title) {
-  font-weight: 600;
-}
-
-.hljs :deep(.hljs-string) {
-  font-style: italic;
 }
 
 @media screen and (max-width: 1023px) {

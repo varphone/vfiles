@@ -16,15 +16,16 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 31 实测）
+### 验证基线（round 32 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：23 个文件 / **134** 个用例通过；`vue-tsc`、`eslint` 通过。
-- 冒烟（Playwright 真实浏览器）：浅色/深色/跟随系统三种模式渲染正确（body 背景
-  浅色 `rgb(255,255,255)` / 深色 `rgb(20,22,26)`），界面上的主题切换会写入
-  `localStorage` 并即时生效，列表、网格、预览弹窗、移动对话框均无控制台报错；
-  服务 `SIGTERM` 优雅退出。
+- `client` 单测：25 个文件 / **153** 个用例通过；`vue-tsc`、`eslint`、`prettier`
+  通过。
+- 冒烟（Playwright 真实浏览器）：浅/深色下代码预览配色分别为
+  `rgb(246,248,250)` / `rgb(21,24,30)`，关键字 `#cf222e` / `#ff7b72`，
+  Markdown 围栏代码块同样高亮；「复制」按钮可把源码写入剪贴板并显示「已复制」；
+  全流程无控制台报错；服务 `SIGTERM` 优雅退出。
 
 ### 主要发现
 
@@ -489,6 +490,32 @@
 - 验证：真实服务下 `curl /api/auth/me` 返回 `enabled:false`、bootstrap
   `auth_enabled:false`，浏览器直接进入文件浏览器且无报错。
 
+### 2.38 代码预览语法高亮与一键复制（round 32，交互）
+
+- 背景：`highlight.js` 此前只加载了语言包、**没有任何配色**，代码与 Markdown
+  代码块都是单色文本；深色主题上线后这个短板更明显。
+- 新增 `src/styles/code-theme.scss`：覆盖 highlight.js 的 `hljs-*` 类名（注释、
+  关键字、字符串、数字、函数、类型、变量、差异、强调等），配色同样走
+  `--vf-*` 令牌（浅色取 GitHub Light、深色取 GitHub Dark 色相），代码块统一
+  圆角、内边距与 1px 边框；同时取代 `FileBrowser.vue` 里零散的 `:deep(.hljs-*)`
+  规则。
+- `highlight.ts` 新增纯函数：`languageForPath()`（扩展名 → hljs 语言名）、
+  `highlightCode()`（指定语言失败时回退自动识别）、`renderHighlightedCode()`
+  （渲染完整 `<pre><code>`，并过滤围栏语言串里的非法字符防止拼进 class 属性）、
+  `hasFencedCodeBlock()`；代码预览改用扩展名推断语言，比自动识别更准。
+- Markdown 预览的围栏代码块现在也会高亮：`marked` 渲染器增加 `code` 处理，
+  且只有真的出现围栏代码块时才动态加载高亮包（约 150KB），纯文档预览不受影响。
+  `marked` 的渲染器是全局合并的，因此只在首次安装一次，避免第二次调用把
+  `code` 覆写成不带高亮的版本。
+- 一键复制：新增 `src/utils/clipboard.ts`（`copyText()`，Clipboard API 失败时
+  回退到临时 `<textarea>` + `execCommand`，并保证临时节点被清理），代码/文本预览
+  底部出现「复制」按钮，成功后就地显示「已复制」；`ShareDialog` 改用同一个
+  helper，删掉了重复的复制逻辑。
+- 测试：新增 10 个 `highlight` 用例（语言推断、围栏识别、回退逻辑、语言串清洗）、
+  4 个 `clipboard` 用例（含回退与失败路径，并借此发现并修复了临时节点泄漏）、
+  3 个预览渲染用例（Markdown 带/不带围栏、按扩展名高亮的代码预览）与 2 个组件
+  用例（复制成功反馈、二进制预览不显示复制按钮）。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -562,8 +589,7 @@
 ### 3.6 暗色主题（交互，中）
 
 - `[x]` 设计令牌 + Bulma 双主题 + 切换入口 + 全组件迁移（round 31）。
-- `[ ]` 代码预览缺少语法高亮配色（`highlight.js` 只加载了语言包，没有引入
-  任何主题 CSS），可在标记层补一套浅色/深色 hljs 配色。
+- `[x]` 代码/Markdown 语法高亮配色 + 代码预览一键复制（round 32，见 §2.38）。
 - `[ ]` 深色下部分按钮仍使用 `is-light`（浅底），可统一为主流云盘的“幽灵按钮”
   风格。
 
