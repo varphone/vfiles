@@ -1479,19 +1479,6 @@ const desktopItems = computed(() =>
 const desktopActivePath = ref("");
 
 // 文件列表重新加载（上传/删除/重命名/移动/切换目录）后刷新侧栏概览
-// 应用栏的全局搜索：把查询交给既有的桌面搜索流程执行
-watch(
-  () => appStore.pendingSearch,
-  (query) => {
-    if (!query) return;
-    appStore.clearPendingSearch();
-    // 同一个 `searchQuery` ref 同时驱动桌面与移动端搜索框
-    searchQuery.value = query;
-    desktopSearchOpen.value = true;
-    void runDesktopSearch();
-  },
-);
-
 watch(
   () => filesStore.files,
   () => {
@@ -2053,23 +2040,6 @@ function handleSortChange(field: SortField) {
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
-/* 移动端：紧凑搜索行，筛选折叠在图标后面 */
-.desktop-command-bar {
-  display: block;
-}
-
-.desktop-command-group {
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-.desktop-primary-action {
-  margin-left: 0.25rem;
-}
-
 .desktop-list-primary-shell {
   display: flex;
   flex-direction: column;
@@ -2290,12 +2260,6 @@ function handleSortChange(field: SortField) {
   .level .button {
     width: 100%;
     justify-content: center;
-  }
-}
-
-@media screen and (max-width: 1023px) {
-  .desktop-command-bar {
-    grid-template-columns: 1fr;
   }
 }
 </style>

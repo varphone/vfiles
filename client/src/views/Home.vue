@@ -83,42 +83,6 @@
             </div>
           </div>
 
-          <div class="navbar-menu app-bar-search-slot is-hidden-touch">
-            <form
-              class="app-bar-search"
-              role="search"
-              @submit.prevent="submitSearch"
-            >
-              <span class="app-bar-search-icon" aria-hidden="true">
-                <IconSearch :size="15" />
-              </span>
-              <input
-                v-model="appBarQuery"
-                class="app-bar-search-input"
-                type="search"
-                aria-label="全局搜索"
-                placeholder="搜索名称、扩展名或路径"
-                list="vfiles-search-history-appbar"
-              />
-              <datalist id="vfiles-search-history-appbar">
-                <option
-                  v-for="item in searchHistory"
-                  :key="item"
-                  :value="item"
-                />
-              </datalist>
-              <button
-                v-if="appBarQuery"
-                class="vf-icon-button app-bar-search-clear"
-                type="button"
-                aria-label="清空搜索"
-                @click="appBarQuery = ''"
-              >
-                <IconX :size="14" />
-              </button>
-            </form>
-          </div>
-
           <div class="navbar-end">
             <div class="navbar-item">
               <ThemeToggle />
@@ -432,7 +396,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
-import { useRoute, useRouter } from "vue-router";
+import { useRouter } from "vue-router";
 import {
   IconMenu2,
   IconChecklist,
@@ -483,47 +447,6 @@ const accountMenuRef = ref<HTMLElement | null>(null);
 const auth = useAuthStore();
 const appStore = useAppStore();
 const router = useRouter();
-const route = useRoute();
-const appBarQuery = ref("");
-const searchHistory = ref<string[]>([]);
-
-/** 应用栏只投递查询请求，实际搜索仍由 FileBrowser 执行（结果与分页都在那边）。 */
-function submitSearch() {
-  const query = appBarQuery.value.trim();
-  if (!query) return;
-  appStore.requestSearch(query);
-  if (route.path !== "/") void router.push("/");
-  // 复用搜索历史（与浏览器里的搜索框共用同一份存储）
-  searchHistory.value = [
-    query,
-    ...searchHistory.value.filter((item) => item !== query),
-  ].slice(0, 8);
-  try {
-    localStorage.setItem(
-      "vfiles.searchHistory",
-      JSON.stringify(searchHistory.value),
-    );
-  } catch {
-    // 忽略存储失败（隐私模式等）
-  }
-}
-
-onMounted(() => {
-  try {
-    const raw = localStorage.getItem("vfiles.searchHistory");
-    if (raw) {
-      const parsed: unknown = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        searchHistory.value = parsed.filter(
-          (item): item is string => typeof item === "string",
-        );
-      }
-    }
-  } catch {
-    searchHistory.value = [];
-  }
-});
-
 async function doLogout() {
   try {
     await auth.logout();
@@ -935,61 +858,6 @@ async function renameSelected() {
 
 .hero {
   margin-bottom: 0;
-}
-
-/* 应用栏全局搜索：胶囊输入，桌面端显示 */
-.app-bar-search-slot {
-  flex: 1 1 auto;
-  display: flex;
-  justify-content: center;
-  padding: 0 1rem;
-}
-
-/* 移动端用工具栏里的搜索行，应用栏不重复提供入口 */
-@media screen and (max-width: 1023px) {
-  .app-bar-search-slot {
-    display: none;
-  }
-}
-
-.app-bar-search {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  width: min(28rem, 100%);
-  height: 2.1rem;
-  padding: 0 0.5rem 0 0.65rem;
-  border: 1px solid var(--vf-border);
-  border-radius: 999px;
-  background: var(--vf-surface-sunken);
-}
-
-.app-bar-search:focus-within {
-  border-color: var(--vf-accent);
-  background: var(--vf-surface-raised);
-}
-
-.app-bar-search-icon {
-  display: inline-flex;
-  color: var(--vf-text-muted);
-}
-
-.app-bar-search-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  border: none;
-  background: transparent;
-  color: var(--vf-text);
-  font-size: 0.84rem;
-  outline: none;
-}
-
-.app-bar-search-input::placeholder {
-  color: var(--vf-text-subtle);
-}
-
-.app-bar-search-clear {
-  flex: 0 0 auto;
 }
 
 .app-top-bar {

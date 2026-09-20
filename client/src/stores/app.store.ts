@@ -57,28 +57,8 @@ export const useAppStore = defineStore("app", () => {
     showNotification("info", message);
   }
 
-  /**
-   * 应用栏「全局搜索」→ 文件浏览器的单向通道。
-   *
-   * 搜索状态仍由 FileBrowser 持有（结果渲染、分页、过期响应处理都在那里），
-   * 应用栏只负责把一个查询请求投递过去，避免把整套搜索状态提升到页面级。
-   */
-  const pendingSearch = ref<string | null>(null);
-
-  function requestSearch(query: string) {
-    const trimmed = query.trim();
-    pendingSearch.value = trimmed.length > 0 ? trimmed : null;
-  }
-
-  function clearPendingSearch() {
-    pendingSearch.value = null;
-  }
-
   return {
     notifications,
-    pendingSearch,
-    requestSearch,
-    clearPendingSearch,
     showNotification,
     removeNotification,
     success,

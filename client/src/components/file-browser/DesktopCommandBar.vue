@@ -162,6 +162,26 @@ const emit = defineEmits<{
   display: block;
 }
 
+/* 动作组排成一行：左侧导航/视图/排序/详情/批量，搜索框自适应，上传按钮固定右侧 */
+.desktop-command-group {
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.desktop-command-group > :deep(.desktop-search-box) {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.desktop-primary-action {
+  margin-left: 0.25rem;
+  flex: 0 0 auto;
+}
+
 /* 上传进度胶囊：与「上传」按钮并排，显示队列进度 */
 .upload-indicator {
   display: inline-flex;

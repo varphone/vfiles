@@ -24,7 +24,8 @@
         </a>
 
         <button
-          v-if="index === breadcrumbs.length - 1 && directories.length > 0"
+          v-if="index === breadcrumbs.length - 1"
+          :ref="registerToggle"
           class="path-bar-toggle"
           type="button"
           :aria-expanded="open ? 'true' : 'false'"
@@ -34,24 +35,19 @@
           <IconChevronDown :size="14" />
         </button>
 
-        <div
-          v-if="index === breadcrumbs.length - 1 && open"
-          ref="menuRef"
-          class="path-bar-menu dropdown-content"
-          role="menu"
-        >
-          <a
-            v-for="directory in directories"
-            :key="directory.path"
-            class="dropdown-item path-bar-menu-item"
-            href="#"
-            role="menuitem"
-            @click.prevent="go(directory.path)"
-          >
-            <IconFolder :size="15" class="mr-2" />
-            <span>{{ directory.name }}</span>
-          </a>
-        </div>
+        <!--
+          菜单挂到 body：面包屑列表为了横向滚动设置了 overflow-x: auto，
+          绝对定位的下拉会被这个滚动容器裁剪（表现为「点了没反应」）。
+        -->
+        <Teleport v-if="index === breadcrumbs.length - 1 && open" to="body">
+          <div ref="menuRef" class="path-bar-menu" :style="menuStyle">
+            <BreadcrumbTreeMenu
+              :current-path="crumb.path"
+              :directories="directories"
+              @navigate="go"
+            />
+          </div>
+        </Teleport>
       </li>
     </ul>
   </nav>
@@ -59,7 +55,8 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
-import { IconChevronDown, IconFolder, IconHome } from "@tabler/icons-vue";
+import { IconChevronDown, IconHome } from "@tabler/icons-vue";
+import BreadcrumbTreeMenu from "./BreadcrumbTreeMenu.vue";
 import type { FileInfo } from "../../types";
 
 withDefaults(
@@ -79,10 +76,34 @@ const emit = defineEmits<{
 }>();
 
 const open = ref(false);
-const dropTarget = ref("");
+const dropTarget = ref<string | null>(null);
+const toggleEl = ref<HTMLElement | null>(null);
+/** 菜单固定定位（相对视口），打开时按按钮位置计算。 */
+const menuStyle = ref<Record<string, string>>({});
+
+function registerToggle(element: unknown) {
+  toggleEl.value = element instanceof HTMLElement ? element : null;
+}
+
+function updateMenuPosition() {
+  const rect = toggleEl.value?.getBoundingClientRect();
+  if (!rect) return;
+  // 贴右边缘时向左收，避免菜单超出视口
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - 232));
+  menuStyle.value = {
+    position: "fixed",
+    top: `${Math.round(rect.bottom + 6)}px`,
+    left: `${Math.round(left)}px`,
+  };
+}
 
 function toggle() {
+  if (!open.value) updateMenuPosition();
   open.value = !open.value;
+}
+
+function closeMenu() {
+  open.value = false;
 }
 
 function go(path: string) {
@@ -96,19 +117,21 @@ function onDragOver(path: string) {
 }
 
 function onDragLeave(path: string) {
-  if (dropTarget.value === path) dropTarget.value = "";
+  if (dropTarget.value === path) dropTarget.value = null;
 }
 
 function onDrop(path: string) {
-  dropTarget.value = "";
+  dropTarget.value = null;
   emit("drop", path);
 }
 
 function onDocumentClick(event: MouseEvent) {
   if (!open.value) return;
   const target = event.target;
-  if (target instanceof Element && target.closest(".path-bar") !== null) {
-    return;
+  if (target instanceof Element) {
+    // 菜单已 Teleport 到 body，需要单独判断
+    if (target.closest(".path-bar-menu") !== null) return;
+    if (target.closest(".path-bar") !== null) return;
   }
   open.value = false;
 }
@@ -120,11 +143,16 @@ function onKeydown(event: KeyboardEvent) {
 onMounted(() => {
   document.addEventListener("click", onDocumentClick, true);
   document.addEventListener("keydown", onKeydown);
+  // 视口变化时菜单位置会失效，直接关闭更稳妥
+  window.addEventListener("resize", closeMenu);
+  window.addEventListener("scroll", closeMenu, true);
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener("click", onDocumentClick, true);
   document.removeEventListener("keydown", onKeydown);
+  window.removeEventListener("resize", closeMenu);
+  window.removeEventListener("scroll", closeMenu, true);
 });
 </script>
 
@@ -206,13 +234,8 @@ onBeforeUnmount(() => {
 }
 
 .path-bar-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 40;
+  z-index: 60;
   min-width: 190px;
-  max-height: 320px;
-  overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--vf-border);
   border-radius: 10px;
