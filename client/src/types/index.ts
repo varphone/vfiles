@@ -13,6 +13,13 @@ export interface FileInfo {
   lastCommit?: { message?: string };
 }
 
+/** 收藏条目（`GET /api/files/favorites`）。 */
+export interface FavoriteEntry {
+  path: string;
+  name: string;
+  kind: "file" | "directory";
+}
+
 /** 侧栏聚合数据（`GET /api/files/overview`）。 */
 export interface WorkspaceOverview {
   file_count: number;

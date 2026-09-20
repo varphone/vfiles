@@ -245,8 +245,10 @@
               @drop-on-folder="handleDropOnFolder"
             />
             <SidebarOverview
-              :refresh-key="mutationVersion"
+              :refresh-key="sidebarVersion"
               @open-file="handleOpenRecentFile"
+              @open-favorite="handleOpenFavorite"
+              @favorites-changed="handleFavoritesChanged"
             />
           </aside>
 
@@ -892,8 +894,11 @@ import {
   IconLayoutSidebarRight,
   IconAdjustmentsHorizontal,
   IconInfoCircle,
+  IconStar,
+  IconStarFilled,
   IconX,
 } from "@tabler/icons-vue";
+import { filesService } from "../../services/files.service";
 import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
@@ -975,8 +980,10 @@ const showUploader = ref(false);
 const showDetailsDialog = ref(false);
 /** 正在内联重命名的条目路径（空字符串表示没有）。 */
 const renamingPath = ref("");
-/** 文件列表每次重新加载后递增，用于让侧栏概览刷新。 */
-const mutationVersion = ref(0);
+/** 文件列表重新加载或收藏变化后递增，用于让侧栏概览刷新。 */
+const sidebarVersion = ref(0);
+/** 已收藏的条目路径，用于右键菜单里的星标状态。 */
+const favoritePaths = ref<Set<string>>(new Set());
 const detailsDialogFile = ref<FileInfo | null>(null);
 const showHistory = ref(false);
 const showShareDialog = ref(false);
@@ -1002,6 +1009,44 @@ const {
 
 /** 左侧目录树：宽屏桌面显示。 */
 const treeVisible = computed(() => !isMobile.value && isWideScreen.value);
+
+function handleFavoritesChanged(entries: { path: string }[]) {
+  const next = new Set(entries.map((entry) => entry.path));
+  // 侧栏自身加载后也会上报；只有集合真的变化时才让侧栏重新拉取，
+  // 否则「加载 → 上报 → 再加载」会形成请求死循环
+  const changed =
+    next.size !== favoritePaths.value.size ||
+    [...next].some((path) => !favoritePaths.value.has(path));
+  favoritePaths.value = next;
+
+  if (changed) {
+    sidebarVersion.value += 1;
+  }
+}
+
+/** 点击侧栏「收藏」：跳到该条目所在目录（文件则同时设为活动行）。 */
+function handleOpenFavorite(entry: { path: string; kind: string }) {
+  if (searchActive.value) clearSearch();
+  if (entry.kind === "directory") {
+    filesStore.navigateTo(entry.path);
+    return;
+  }
+  handleOpenRecentFile(entry);
+}
+
+/** 切换收藏状态（右键菜单与侧栏共用）。 */
+async function toggleFavorite(file: FileInfo) {
+  const isFavorite = favoritePaths.value.has(file.path);
+  try {
+    const entries = isFavorite
+      ? await filesService.removeFavorite(file.path)
+      : await filesService.addFavorite(file.path);
+    handleFavoritesChanged(entries);
+    appStore.success(isFavorite ? "已取消收藏" : "已加入收藏");
+  } catch (err) {
+    appStore.error(err instanceof Error ? err.message : "收藏操作失败");
+  }
+}
 
 /** 点击侧栏「最近更新」：跳到文件所在目录并把它设为活动行。 */
 function handleOpenRecentFile(file: { path: string }) {
@@ -1252,7 +1297,13 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
     items.push({ key: "preview", label: "预览", icon: IconEye });
     items.push({ key: "history", label: "历史版本", icon: IconHistory });
   }
+  const isFavorite = favoritePaths.value.has(file.path);
   items.push({ key: "details", label: "详细信息", icon: IconInfoCircle });
+  items.push({
+    key: "favorite",
+    label: isFavorite ? "取消收藏" : "加入收藏",
+    icon: isFavorite ? IconStarFilled : IconStar,
+  });
   items.push({ key: "rename", label: "重命名", icon: IconPencil });
   items.push({ key: "move", label: "移动", icon: IconArrowsDiff });
   items.push({ key: "download", label: "下载", icon: IconDownload });
@@ -1541,7 +1592,7 @@ const desktopActivePath = ref("");
 watch(
   () => filesStore.files,
   () => {
-    mutationVersion.value += 1;
+    sidebarVersion.value += 1;
   },
 );
 
@@ -2020,6 +2071,9 @@ function handleContextMenuSelect(key: string) {
   switch (key) {
     case "details":
       openDetailsDialog(file);
+      break;
+    case "favorite":
+      void toggleFavorite(file);
       break;
     case "open":
       handleOpenFolder(file);

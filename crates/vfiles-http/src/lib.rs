@@ -26,7 +26,8 @@ use vfiles_app::{
 };
 use vfiles_config::AppConfig;
 use vfiles_domain::{
-    BlobStore, EntryRepo, NamespaceId, NamespaceRepo, SnapshotRepo, UploadStore, UserId,
+    BlobStore, EntryRepo, FavoriteRepo, NamespaceId, NamespaceRepo, SnapshotRepo, UploadStore,
+    UserId,
 };
 use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteAdminRepo, SqliteEntryRepo, SqlitePool, SqliteSearchRepo,
@@ -53,6 +54,7 @@ pub struct AppState {
     pub db_pool: SqlitePool,
     pub namespace_repo: Arc<dyn NamespaceRepo + Send + Sync>,
     pub entry_repo: Arc<dyn EntryRepo + Send + Sync>,
+    pub favorite_repo: Arc<dyn FavoriteRepo + Send + Sync>,
     pub snapshot_repo: Arc<dyn SnapshotRepo + Send + Sync>,
     pub blob_store: Arc<dyn BlobStore + Send + Sync>,
     pub upload_store: Arc<dyn UploadStore + Send + Sync>,

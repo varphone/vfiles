@@ -267,9 +267,10 @@ impl TestApp {
             history_service,
             workspace_service,
             upload_service,
-            db_pool: pool,
+            db_pool: pool.clone(),
             namespace_repo: Arc::new(namespace_repo),
             entry_repo: Arc::new(entry_repo),
+            favorite_repo: Arc::new(vfiles_infra_sqlite::SqliteFavoriteRepo::new(pool.clone())),
             snapshot_repo: Arc::new(snapshot_repo),
             blob_store: Arc::new(blob_store),
             upload_store: Arc::new(upload_store),
@@ -2983,6 +2984,174 @@ async fn paged_search_keeps_content_matches_across_pages() {
             .all(|(path, score)| path == "needle-name.txt" || *score < 1.0),
         "内容命中的得分应低于文件名命中: {seen:?}"
     );
+}
+
+/// 收藏：添加、列出、取消收藏，并且路径不存在时报 404。
+#[tokio::test]
+async fn favorites_can_be_added_listed_and_removed() {
+    let app = TestApp::new().await;
+    app.upload_version("", "keep.txt", b"content", "seed").await;
+    app.upload_version("docs", "doc.md", b"doc", "seed").await;
+
+    // 初始为空
+    let empty = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/favorites")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(empty.status(), StatusCode::OK);
+    let payload = response_json(empty).await;
+    assert_eq!(payload["items"].as_array().map(Vec::len), Some(0));
+
+    // 添加两个（其中一个为目录）
+    for path in ["keep.txt", "docs"] {
+        let response = app
+            .request_as_admin(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/files/favorites")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(format!("{{\"path\":\"{path}\"}}")))
+                    .expect("request should build"),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::CREATED, "add {path}");
+    }
+
+    // 重复添加是幂等的
+    let again = app
+        .request_as_admin(
+            Request::builder()
+                .method("POST")
+                .uri("/api/files/favorites")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{\"path\":\"keep.txt\"}"))
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(again.status(), StatusCode::CREATED);
+    let payload = response_json(again).await;
+    assert_eq!(payload["items"].as_array().map(Vec::len), Some(2));
+
+    // 列表包含名称与类型
+    let listed = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/favorites")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let payload = response_json(listed).await;
+    let items = payload["items"].as_array().expect("items array");
+    let mut pairs: Vec<(String, String)> = items
+        .iter()
+        .map(|item| {
+            (
+                item["path"].as_str().unwrap_or_default().to_string(),
+                item["kind"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+    pairs.sort();
+    assert_eq!(
+        pairs,
+        vec![
+            ("docs".to_string(), "directory".to_string()),
+            ("keep.txt".to_string(), "file".to_string()),
+        ]
+    );
+
+    // 取消收藏
+    let removed = app
+        .request_as_admin(
+            Request::builder()
+                .method("DELETE")
+                .uri("/api/files/favorites?path=keep.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(removed.status(), StatusCode::OK);
+    let payload = response_json(removed).await;
+    assert_eq!(payload["items"].as_array().map(Vec::len), Some(1));
+
+    // 不存在的路径 → 404
+    let missing = app
+        .request_as_admin(
+            Request::builder()
+                .method("POST")
+                .uri("/api/files/favorites")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{\"path\":\"nope.txt\"}"))
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+    // 未登录 → 401
+    let anonymous = app
+        .request(
+            Request::builder()
+                .uri("/api/files/favorites")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// 删除条目后收藏应随外键级联清除。
+#[tokio::test]
+async fn favorites_are_cascaded_when_the_entry_is_deleted() {
+    let app = TestApp::new().await;
+    app.upload_version("", "temp.txt", b"x", "seed").await;
+    app.upload_version("", "keep.txt", b"y", "seed").await;
+
+    for path in ["temp.txt", "keep.txt"] {
+        let response = app
+            .request_as_admin(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/files/favorites")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(format!("{{\"path\":\"{path}\"}}")))
+                    .expect("request should build"),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    let deleted = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/files?path=temp.txt&message=delete")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert!(
+        deleted.status().is_success(),
+        "delete should succeed: {}",
+        deleted.status()
+    );
+
+    let listed = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/favorites")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let payload = response_json(listed).await;
+    let items = payload["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1, "被删除条目的收藏应级联清除");
+    assert_eq!(items[0]["path"], Value::from("keep.txt"));
 }
 
 /// 侧栏聚合：统计文件/目录数量与总字节数，并按时间倒序返回最近文件。

@@ -3,6 +3,7 @@ import { fetchWithRetry } from "./fetch-retry";
 import { extractErrorPayload, localizeApiError } from "../utils/apiErrors";
 import type {
   ContentMatch,
+  FavoriteEntry,
   FileInfo,
   FileHistory,
   WorkspaceOverview,
@@ -278,6 +279,35 @@ export const filesService = {
   /**
    * 获取文件列表
    */
+  /** 收藏列表（路径 + 名称 + 类型）。 */
+  async getFavorites(): Promise<FavoriteEntry[]> {
+    const response = await apiService.get<{ items: FavoriteEntry[] }>(
+      "/files/favorites",
+    );
+    const payload = (response as any)?.data ?? response;
+    return Array.isArray(payload?.items) ? payload.items : [];
+  },
+
+  /** 添加收藏（幂等），返回最新列表。 */
+  async addFavorite(path: string): Promise<FavoriteEntry[]> {
+    const response = await apiService.post<{ items: FavoriteEntry[] }>(
+      "/files/favorites",
+      { path },
+    );
+    const payload = (response as any)?.data ?? response;
+    return Array.isArray(payload?.items) ? payload.items : [];
+  },
+
+  /** 取消收藏（幂等），返回最新列表。 */
+  async removeFavorite(path: string): Promise<FavoriteEntry[]> {
+    const response = await apiService.delete<{ items: FavoriteEntry[] }>(
+      "/files/favorites",
+      { path },
+    );
+    const payload = (response as any)?.data ?? response;
+    return Array.isArray(payload?.items) ? payload.items : [];
+  },
+
   /** 侧栏聚合：条目统计 + 最近文件。 */
   async getOverview(): Promise<WorkspaceOverview> {
     const response = await apiService.get<WorkspaceOverview>("/files/overview");

@@ -3,8 +3,8 @@
 pub mod repo;
 
 pub use repo::{
-    FsBlobStore, FsUploadStore, SqliteAdminRepo, SqliteEntryRepo, SqliteNamespaceRepo,
-    SqliteSearchRepo, SqliteSessionRepo, SqliteShareRepo, SqliteSnapshotRepo,
+    FsBlobStore, FsUploadStore, SqliteAdminRepo, SqliteEntryRepo, SqliteFavoriteRepo,
+    SqliteNamespaceRepo, SqliteSearchRepo, SqliteSessionRepo, SqliteShareRepo, SqliteSnapshotRepo,
     SqliteSystemSettingsRepo, SqliteUserRepo,
 };
 

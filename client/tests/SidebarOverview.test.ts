@@ -1,12 +1,22 @@
-import { render, screen, waitFor } from "@testing-library/vue";
+import { render, screen, waitFor, within } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SidebarOverview from "../src/components/file-browser/SidebarOverview.vue";
 
-const { getOverviewMock } = vi.hoisted(() => ({ getOverviewMock: vi.fn() }));
+const { getOverviewMock, getFavoritesMock, removeFavoriteMock } = vi.hoisted(
+  () => ({
+    getOverviewMock: vi.fn(),
+    getFavoritesMock: vi.fn(),
+    removeFavoriteMock: vi.fn(),
+  }),
+);
 
 vi.mock("../src/services/files.service", () => ({
   SEARCH_PAGE_SIZE: 100,
-  filesService: { getOverview: getOverviewMock },
+  filesService: {
+    getOverview: getOverviewMock,
+    getFavorites: getFavoritesMock,
+    removeFavorite: removeFavoriteMock,
+  },
 }));
 
 function overview(overrides: Record<string, unknown> = {}) {
@@ -31,6 +41,10 @@ describe("SidebarOverview.vue", () => {
   beforeEach(() => {
     getOverviewMock.mockReset();
     getOverviewMock.mockResolvedValue(overview());
+    getFavoritesMock.mockReset();
+    getFavoritesMock.mockResolvedValue([]);
+    removeFavoriteMock.mockReset();
+    removeFavoriteMock.mockResolvedValue([]);
   });
 
   it("renders storage usage and recent files", async () => {
@@ -61,6 +75,43 @@ describe("SidebarOverview.vue", () => {
     await rerender({ refreshKey: 1 });
 
     await waitFor(() => expect(getOverviewMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("lists favorites and removes one from the sidebar", async () => {
+    getFavoritesMock.mockResolvedValue([
+      { path: "docs/report.md", name: "report.md", kind: "file" },
+    ]);
+
+    const { emitted } = render(SidebarOverview as any);
+    expect(await screen.findByText("收藏")).toBeInTheDocument();
+    // 收藏与「最近更新」都会出现 report.md，这里限定在收藏区块内断言
+    const favoriteBlock = screen.getByText("收藏").closest("div")!;
+    expect(
+      within(favoriteBlock).getByTitle("docs/report.md"),
+    ).toBeInTheDocument();
+
+    removeFavoriteMock.mockResolvedValue([]);
+    (screen.getByLabelText("取消收藏 report.md") as HTMLElement).click();
+
+    await waitFor(() =>
+      expect(removeFavoriteMock).toHaveBeenCalledWith("docs/report.md"),
+    );
+    await waitFor(() => expect(screen.queryByText("收藏")).toBeNull());
+    const events = emitted()["favorites-changed"] as unknown[][];
+    expect(events[events.length - 1]?.[0]).toEqual([]);
+  });
+
+  it("emits the clicked favorite", async () => {
+    getFavoritesMock.mockResolvedValue([
+      { path: "docs", name: "docs", kind: "directory" },
+    ]);
+
+    const { emitted } = render(SidebarOverview as any);
+    const item = await screen.findByTitle("docs");
+    item.click();
+
+    const events = emitted()["open-favorite"] as unknown[][];
+    expect(events[0][0]).toMatchObject({ path: "docs", kind: "directory" });
   });
 
   it("keeps failures local instead of throwing", async () => {

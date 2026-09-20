@@ -94,6 +94,19 @@
     - `type` 可选：`all` / `file` / `directory`
     - `limit` / `offset` 可选
 
+## 侧栏聚合与收藏
+
+- `GET /api/files/overview`
+  - 返回 `file_count`、`directory_count`、`total_bytes` 与 `recent_files`（最近 8 条），
+    用于侧栏「存储用量 / 最近更新」
+- `GET /api/files/favorites`
+  - 返回收藏条目 `items[{path,name,kind}]`
+- `POST /api/files/favorites`
+  - Body: `path`；幂等，返回最新列表
+- `DELETE /api/files/favorites?path=...`
+  - 幂等，返回最新列表
+  - 收藏按条目 ID 记录：重命名/移动后仍然有效，条目删除后自动清除
+
 ## 分享
 
 - `POST /api/share/shares`

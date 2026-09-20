@@ -1654,6 +1654,95 @@ impl EntryRepo for SqliteEntryRepo {
     }
 }
 
+/// 收藏夹仓储：按条目 ID 记录，重命名/移动后依然有效。
+#[derive(Debug, Clone)]
+pub struct SqliteFavoriteRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteFavoriteRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait::async_trait]
+impl FavoriteRepo for SqliteFavoriteRepo {
+    async fn list(&self, namespace_id: &NamespaceId) -> DomainResult<Vec<Entry>> {
+        let rows: Vec<EntryRow> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id
+            FROM favorites f
+            JOIN entries e ON e.id = f.entry_id
+            WHERE f.namespace_id = ?
+            ORDER BY f.created_at DESC, e.path ASC
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list favorites: {e}"),
+        })?;
+
+        rows.into_iter().map(parse_entry_row).collect()
+    }
+
+    async fn add(&self, namespace_id: &NamespaceId, entry_id: &EntryId) -> DomainResult<bool> {
+        let result =
+            sqlx::query("INSERT OR IGNORE INTO favorites (namespace_id, entry_id) VALUES (?, ?)")
+                .bind(namespace_id.to_string())
+                .bind(entry_id.to_string())
+                .execute(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to add favorite: {e}"),
+                })?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn remove(&self, namespace_id: &NamespaceId, entry_id: &EntryId) -> DomainResult<bool> {
+        let result = sqlx::query("DELETE FROM favorites WHERE namespace_id = ? AND entry_id = ?")
+            .bind(namespace_id.to_string())
+            .bind(entry_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to remove favorite: {e}"),
+            })?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn contains(&self, namespace_id: &NamespaceId, entry_id: &EntryId) -> DomainResult<bool> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM favorites WHERE namespace_id = ? AND entry_id = ?",
+        )
+        .bind(namespace_id.to_string())
+        .bind(entry_id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to check favorite: {e}"),
+        })?;
+
+        Ok(count > 0)
+    }
+}
+
 #[derive(Debug)]
 pub struct SqliteSnapshotRepo {
     pool: SqlitePool,

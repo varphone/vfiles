@@ -26,6 +26,34 @@
       </p>
     </div>
 
+    <div v-if="favorites.length > 0" class="sidebar-overview-block">
+      <p class="sidebar-overview-title">收藏</p>
+      <ul class="sidebar-recent">
+        <li v-for="item in favorites" :key="item.path">
+          <div class="sidebar-favorite-row">
+            <button
+              class="sidebar-recent-item"
+              type="button"
+              :title="item.path"
+              @click="emit('open-favorite', item)"
+            >
+              <FileTypeIcon :file="favoriteAsFileInfo(item)" :size="15" />
+              <span class="sidebar-recent-name">{{ item.name }}</span>
+            </button>
+            <button
+              class="sidebar-favorite-remove"
+              type="button"
+              :aria-label="`取消收藏 ${item.name}`"
+              title="取消收藏"
+              @click="removeFavorite(item)"
+            >
+              <IconStarFilled :size="13" />
+            </button>
+          </div>
+        </li>
+      </ul>
+    </div>
+
     <div
       v-if="overview && overview.recent_files.length > 0"
       class="sidebar-overview-block"
@@ -54,7 +82,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { filesService } from "../../services/files.service";
-import type { RecentFile, WorkspaceOverview } from "../../types";
+import type { FavoriteEntry, RecentFile, WorkspaceOverview } from "../../types";
+import { IconStarFilled } from "@tabler/icons-vue";
 import { formatRelativeDate, formatSize } from "../../utils/filePresentation";
 import FileTypeIcon from "./FileTypeIcon.vue";
 
@@ -74,9 +103,13 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: "open-file", file: RecentFile): void;
+  (e: "open-favorite", entry: FavoriteEntry): void;
+  /// 收藏增删后通知父组件，便于同步右键菜单里的星标状态
+  (e: "favorites-changed", entries: FavoriteEntry[]): void;
 }>();
 
 const overview = ref<WorkspaceOverview | null>(null);
+const favorites = ref<FavoriteEntry[]>([]);
 const loading = ref(false);
 const error = ref("");
 
@@ -97,11 +130,37 @@ function recentAsFileInfo(file: RecentFile) {
   };
 }
 
+/** 收藏条目的最小 FileInfo（只为取图标）。 */
+function favoriteAsFileInfo(item: FavoriteEntry) {
+  return {
+    id: item.path,
+    name: item.name,
+    path: item.path,
+    kind: item.kind,
+    created_at: "",
+  };
+}
+
+async function removeFavorite(item: FavoriteEntry) {
+  try {
+    favorites.value = await filesService.removeFavorite(item.path);
+    emit("favorites-changed", favorites.value);
+  } catch {
+    // 取消失败时保持原样，下一次刷新会恢复
+  }
+}
+
 async function load() {
   loading.value = true;
   error.value = "";
   try {
-    overview.value = await filesService.getOverview();
+    const [nextOverview, nextFavorites] = await Promise.all([
+      filesService.getOverview(),
+      filesService.getFavorites(),
+    ]);
+    overview.value = nextOverview;
+    favorites.value = nextFavorites;
+    emit("favorites-changed", nextFavorites);
   } catch (err) {
     // 概览是辅助信息：失败时只在本区域提示，不影响文件列表
     error.value = err instanceof Error ? err.message : "加载概览失败";
@@ -208,6 +267,35 @@ watch(
   flex: 0 0 auto;
   font-size: 0.7rem;
   color: var(--vf-text-subtle);
+}
+
+.sidebar-favorite-row {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.sidebar-favorite-row .sidebar-recent-item {
+  flex: 1 1 auto;
+}
+
+.sidebar-favorite-remove {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--vf-radius-sm);
+  background: transparent;
+  color: var(--vf-warning-text);
+  cursor: pointer;
+}
+
+.sidebar-favorite-remove:hover {
+  background: var(--vf-surface-hover);
 }
 
 .sidebar-skeleton-line {

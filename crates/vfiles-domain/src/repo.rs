@@ -157,6 +157,22 @@ pub trait EntryRepo {
     ) -> DomainResult<EntryVersion>;
 }
 
+/// 收藏夹：以条目 ID 记录，重命名/移动后依然有效。
+#[async_trait::async_trait]
+pub trait FavoriteRepo {
+    /// 列出收藏的条目（按收藏时间倒序）。
+    async fn list(&self, namespace_id: &NamespaceId) -> DomainResult<Vec<Entry>>;
+
+    /// 添加收藏；已存在时幂等返回 `false`。
+    async fn add(&self, namespace_id: &NamespaceId, entry_id: &EntryId) -> DomainResult<bool>;
+
+    /// 取消收藏；不存在时返回 `false`。
+    async fn remove(&self, namespace_id: &NamespaceId, entry_id: &EntryId) -> DomainResult<bool>;
+
+    /// 该条目是否已收藏。
+    async fn contains(&self, namespace_id: &NamespaceId, entry_id: &EntryId) -> DomainResult<bool>;
+}
+
 #[async_trait::async_trait]
 pub trait SnapshotRepo {
     async fn create_snapshot(

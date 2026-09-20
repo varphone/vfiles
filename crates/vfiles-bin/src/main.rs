@@ -12,7 +12,9 @@ use vfiles_config::{ConfigLoader, MIN_MAINTENANCE_INTERVAL_SECONDS, MaintenanceC
 use vfiles_domain::*;
 use vfiles_http::{AppState, FrontendAssets, build_router, middleware::LoginAttemptLimiter};
 use vfiles_infra_fs::FsStorageBootstrap;
-use vfiles_infra_sqlite::{SqliteHealthProbe, SqliteMigrations, SqlitePoolFactory, repo::*};
+use vfiles_infra_sqlite::{
+    SqliteFavoriteRepo, SqliteHealthProbe, SqliteMigrations, SqlitePoolFactory, repo::*,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "vfiles")]
@@ -876,6 +878,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     let blob_store = FsBlobStore::new(pool.clone(), paths.blobs.clone());
     let upload_store = FsUploadStore::new(paths.uploads.clone());
     let search_repo = SqliteSearchRepo::new(pool.clone(), blob_store.clone());
+    let favorite_repo = SqliteFavoriteRepo::new(pool.clone());
 
     // Create services
     tracing::debug!("Creating service instances...");
@@ -945,6 +948,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         db_pool: pool.clone(),
         namespace_repo: std::sync::Arc::new(namespace_repo),
         entry_repo: std::sync::Arc::new(entry_repo),
+        favorite_repo: std::sync::Arc::new(favorite_repo),
         snapshot_repo: std::sync::Arc::new(snapshot_repo),
         blob_store: Arc::new(blob_store),
         upload_store: std::sync::Arc::new(upload_store),
