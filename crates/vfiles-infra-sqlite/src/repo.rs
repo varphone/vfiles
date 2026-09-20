@@ -1078,7 +1078,9 @@ impl EntryRepo for SqliteEntryRepo {
         // (namespace_id, path) 索引）；排序与 live tree 的「目录优先 + 名称升序」一致。
         const TOTAL_ROOT: &str =
             "SELECT COUNT(*) FROM entries e WHERE e.namespace_id = ? AND instr(e.path, '/') = 0";
-        const TOTAL_PREFIX: &str = "SELECT COUNT(*) FROM entries e WHERE e.namespace_id = ? AND e.path >= ? AND e.path < ?";
+        // 只统计**直接子条目**：用 LIKE 前缀 + 「前缀之后不再含 /」过滤，
+        // 否则会把整棵子树都算进来（`a/` 的范围匹配会命中 `a/docs/x`）。
+        const TOTAL_PREFIX: &str = "SELECT COUNT(*) FROM entries e WHERE e.namespace_id = ? AND e.path LIKE ? AND instr(substr(e.path, length(?) + 1), '/') = 0";
         const PAGE_ROOT: &str = r#"
             SELECT
                 e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
@@ -1103,14 +1105,17 @@ impl EntryRepo for SqliteEntryRepo {
                     LIMIT 1
                 ) AS current_version_id
             FROM entries e
-            WHERE e.namespace_id = ? AND e.path >= ? AND e.path < ?
+            WHERE e.namespace_id = ? AND e.path LIKE ?
+              AND instr(substr(e.path, length(?) + 1), '/') = 0
             ORDER BY (e.kind = 'directory') DESC, e.path ASC
             LIMIT ? OFFSET ?
         "#;
         let is_root = parent_path.as_str().is_empty();
         let root = parent_path.as_str().trim_end_matches('/');
-        let lower = format!("{root}/");
-        let upper = format!("{root}0");
+        // LIKE 前缀与长度参数：`instr(substr(path, length(prefix)+1), '/') = 0`
+        // 保证只取直接子条目
+        let direct_prefix = format!("{root}/");
+        let like_pattern = format!("{direct_prefix}%");
 
         let total: i64 = if is_root {
             sqlx::query_scalar::<_, i64>(TOTAL_ROOT)
@@ -1120,8 +1125,8 @@ impl EntryRepo for SqliteEntryRepo {
         } else {
             sqlx::query_scalar::<_, i64>(TOTAL_PREFIX)
                 .bind(namespace_id.to_string())
-                .bind(&lower)
-                .bind(&upper)
+                .bind(&like_pattern)
+                .bind(&direct_prefix)
                 .fetch_one(&self.pool)
                 .await
         }
@@ -1139,8 +1144,8 @@ impl EntryRepo for SqliteEntryRepo {
         } else {
             sqlx::query_as::<_, EntryRow>(PAGE_PREFIX)
                 .bind(namespace_id.to_string())
-                .bind(&lower)
-                .bind(&upper)
+                .bind(&like_pattern)
+                .bind(&direct_prefix)
                 .bind(i64::from(limit))
                 .bind(i64::from(offset))
                 .fetch_all(&self.pool)

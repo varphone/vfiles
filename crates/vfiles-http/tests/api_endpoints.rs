@@ -2986,6 +2986,85 @@ async fn paged_search_keeps_content_matches_across_pages() {
     );
 }
 
+/// 目录列表只返回**直接子条目**：嵌套目录的后代不能出现在父目录的列表里。
+///
+/// 回归用例：round 60 把分页下沉到 SQL 时用 `path >= 'a/' AND path < 'a0'`
+/// 做范围匹配，这会把整棵子树（如 `a/docs/x`）也算作 `a` 的子条目，
+/// 导致列表多出孙子条目、目录树出现重复行。
+#[tokio::test]
+async fn directory_listing_returns_only_direct_children() {
+    let app = TestApp::new().await;
+
+    for path in ["a", "a/docs", "a/docs/x", "b", "b/docs"] {
+        let created = app
+            .request_as_admin(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/files/directories")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(format!("{{\"path\":\"{path}\"}}")))
+                    .expect("request should build"),
+            )
+            .await;
+        assert!(
+            created.status().is_success(),
+            "create {path}: {}",
+            created.status()
+        );
+    }
+    app.upload_version("a", "top.txt", b"top", "seed").await;
+    app.upload_version("a/docs", "deep.txt", b"deep", "seed")
+        .await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list/a?limit=50")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let payload = response_json(response).await;
+    let mut paths: Vec<String> = payload["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| item["path"].as_str().unwrap_or_default().to_string())
+        .collect();
+    paths.sort();
+
+    assert_eq!(
+        paths,
+        vec!["a/docs".to_string(), "a/top.txt".to_string(),],
+        "只应返回直接子条目，不能包含 a/docs/x 或 a/docs/deep.txt"
+    );
+    assert_eq!(payload["total"], Value::from(2), "total 也只统计直接子条目");
+
+    // 再深一层：a/docs 只包含它自己的直接子条目
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list/a/docs?limit=50")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let payload = response_json(response).await;
+    let mut paths: Vec<String> = payload["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| item["path"].as_str().unwrap_or_default().to_string())
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec!["a/docs/deep.txt".to_string(), "a/docs/x".to_string()],
+    );
+}
+
 /// 目录分页在 SQL 侧完成：目录优先、页间连续、total/has_more 正确。
 #[tokio::test]
 async fn directory_listing_pages_in_sql_with_directory_first_order() {

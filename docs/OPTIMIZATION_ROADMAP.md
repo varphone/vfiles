@@ -1349,6 +1349,26 @@
   （间距 14px）；截图确认已是独立圆角面板，与上下两个区域都有留白，无控制台报错。
 - 说明：移动端批量操作在底栏面板里（另一处布局），不受影响。
 
+### 2.81 修复目录列表返回整棵子树（round 74，稳定性）
+
+- 现象（用户反馈）：目录树里「全部文件」激活状态不对；**不同层次的同名文件夹选中后会同时高亮**。
+- 定位：树里出现**重复行**（`a/docs/x` 出现两次），同名目录（`a/docs` 与 `b/docs`）的子孙
+  行复用同一路径，于是「同一个 path 在多处渲染」——高亮自然一起亮。
+  根因在服务端：round 60 把目录分页下沉到 SQL 时用了**范围匹配**
+  `e.path >= 'a/' AND e.path < 'a0'`，它匹配的是**整棵子树**而不是直接子条目，
+  于是 `/api/files/list/a` 返回了 `a/docs`、`a/docs/x`、`a/docs/deep.txt`。
+- 修复：改用与原有 `find_children` 一致的**直接子条目**判定——
+  `e.path LIKE 'parent/%' AND instr(substr(e.path, length('parent/') + 1), '/') = 0`，
+  COUNT 与分页查询同步修改（`total` 也只统计直接子条目）。
+- 回归测试：新增 `directory_listing_returns_only_direct_children`（先证明旧实现失败：
+  返回 `["a/docs","a/docs/deep.txt","a/docs/x","a/top.txt"]`，修复后为 `["a/docs","a/top.txt"]`，
+  并校验 `total=2` 与更深一层的 `a/docs` 只含 `a/docs/deep.txt`、`a/docs/x`）。
+- 验证（真实浏览器，含同名嵌套目录 `a/docs` 与 `b/docs`）：
+  - 列表接口修复后 `/a` → `total 1`（仅 `docs`）、`/a/docs` → `total 1`（仅 `x`）；
+  - 目录树 **8 行无重复**（修复前 `a/docs/x`、`b/docs/x` 各出现两次）；
+  - 点击 `b/docs` 只有 `b/docs` 高亮，再点 `a/docs` 只有 `a/docs` 高亮，两者不再同时点亮；
+  - 全程无控制台报错。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
