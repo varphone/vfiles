@@ -7,9 +7,11 @@
   >
     <div class="box file-browser-box">
       <div class="breadcrumb-bar">
-        <div class="breadcrumb-current-path" :title="currentPathLabel">
-          {{ currentPathLabel }}
-        </div>
+        <Breadcrumb
+          :breadcrumbs="filesStore.breadcrumbs"
+          :directories="filesStore.directories"
+          @navigate="handleBreadcrumbNavigate"
+        />
       </div>
 
       <div class="file-browser-toolbar">
@@ -821,6 +823,7 @@ import { filesService } from "../../services/files.service";
 import FileList from "./FileList.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
+import Breadcrumb from "./Breadcrumb.vue";
 import DownloadQueuePanel from "./DownloadQueuePanel.vue";
 import ContextMenu, { type ContextMenuItem } from "./ContextMenu.vue";
 import MoveDialog from "./MoveDialog.vue";
@@ -866,10 +869,6 @@ const viewMode = computed(() => fileView.mode);
 const searchContentEnabled = computed(
   () => authStore.features?.searchContent ?? false,
 );
-
-const currentPathLabel = computed(() => {
-  return currentPath.value ? `/${currentPath.value}` : "根目录";
-});
 
 const isMobile = ref(false);
 
@@ -1146,6 +1145,12 @@ onBeforeUnmount(() => {
 function navigateTo(path: string) {
   expandedFilePath.value = "";
   filesStore.navigateTo(path);
+}
+
+/** 面包屑跳转：处于搜索结果时先退出搜索，再进入目标目录。 */
+function handleBreadcrumbNavigate(path: string) {
+  if (searchActive.value) clearSearch();
+  navigateTo(path);
 }
 
 function refresh() {
@@ -1777,17 +1782,6 @@ function handleSortChange(field: SortField) {
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.65);
   border: 1px solid rgba(214, 223, 235, 0.9);
-}
-
-.breadcrumb-current-path {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.95rem;
-  font-weight: 600;
-  line-height: 1.35;
-  color: #24384d;
 }
 
 .file-browser-toolbar {
