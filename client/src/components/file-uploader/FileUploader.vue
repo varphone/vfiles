@@ -58,6 +58,15 @@ const hasQueued = computed(() =>
   queue.value.some((x) => x.status === "queued"),
 );
 
+/** 队列概览：工具栏用它显示「上传中 x/y」，无需打开对话框。 */
+const summary = computed(() => ({
+  total: queue.value.length,
+  done: queue.value.filter((x) => x.status === "done").length,
+  failed: queue.value.filter((x) => x.status === "error").length,
+  active: queue.value.filter((x) => x.status === "uploading").length,
+  queued: queue.value.filter((x) => x.status === "queued").length,
+}));
+
 const queueView = computed<UploadQueueItemView[]>(() =>
   queue.value.map((x) => ({
     id: x.id,
@@ -178,6 +187,7 @@ async function startUpload() {
 defineExpose({
   uploading,
   hasQueued,
+  summary,
   /** 供整窗拖放把文件直接加入队列。 */
   addFiles,
   hasFiles: computed(() => queue.value.length > 0),

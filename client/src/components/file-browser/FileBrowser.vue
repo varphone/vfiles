@@ -183,6 +183,17 @@
               />
 
               <button
+                v-if="uploadIndicator"
+                class="vf-ghost-button upload-indicator"
+                type="button"
+                :title="uploadIndicator.title"
+                @click="showUploader = true"
+              >
+                <span class="upload-indicator-dot" aria-hidden="true"></span>
+                <span>{{ uploadIndicator.label }}</span>
+              </button>
+
+              <button
                 class="vf-primary-button desktop-primary-action"
                 @click="showUploader = true"
               >
@@ -980,6 +991,26 @@ const showUploader = ref(false);
 const showDetailsDialog = ref(false);
 /** 正在内联重命名的条目路径（空字符串表示没有）。 */
 const renamingPath = ref("");
+/** 工具栏上的上传进度：有队列时显示「上传中 x/y」，点击打开上传对话框。 */
+const uploadIndicator = computed(() => {
+  const summary = fileUploaderRef.value?.summary;
+  if (!summary || summary.total === 0) return null;
+
+  const finished = summary.done + summary.failed;
+  const label =
+    summary.active > 0
+      ? `上传中 ${finished}/${summary.total}`
+      : summary.queued > 0
+        ? `待上传 ${summary.total}`
+        : `上传完成 ${summary.done}/${summary.total}`;
+  const title =
+    summary.failed > 0
+      ? `上传队列：${summary.done} 成功，${summary.failed} 失败`
+      : "查看上传队列";
+
+  return { label, title };
+});
+
 /** 文件列表重新加载或收藏变化后递增，用于让侧栏概览刷新。 */
 const sidebarVersion = ref(0);
 /** 已收藏的条目路径，用于右键菜单里的星标状态。 */
@@ -2308,6 +2339,39 @@ function handleSortChange(field: SortField) {
 
 .desktop-content-layout.has-tree {
   grid-template-columns: 232px minmax(0, 1fr);
+}
+
+/* 上传进度胶囊：与「上传」按钮并排，显示队列进度 */
+.upload-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--vf-text-muted);
+}
+
+.upload-indicator-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--vf-accent);
+  animation: upload-indicator-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes upload-indicator-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .upload-indicator-dot {
+    animation: none;
+  }
 }
 
 /* 侧栏 = 目录树（可滚动）+ 概览（固定高度） */
