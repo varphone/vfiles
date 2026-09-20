@@ -33,7 +33,10 @@ function stubBrowserApis() {
     removeEventListener: () => {},
     dispatchEvent: () => false,
   }));
-  vi.stubGlobal("confirm", vi.fn(() => true));
+  vi.stubGlobal(
+    "confirm",
+    vi.fn(() => true),
+  );
 }
 
 describe("FileBrowser.vue", () => {
@@ -101,5 +104,44 @@ describe("FileBrowser.vue", () => {
 
     await findByText("没有找到匹配的文件");
     expect(queryByText("搜索结果：1 项（文件名）")).not.toBeInTheDocument();
+  });
+
+  it("renders grid cards and applies the selected sort order", async () => {
+    getFilesMock.mockResolvedValue([
+      {
+        id: "b",
+        name: "b.txt",
+        path: "b.txt",
+        kind: "file",
+        size_bytes: 2048,
+        created_at: "2026-04-09T00:00:00.000Z",
+        updated_at: "2026-04-09T00:00:00.000Z",
+      },
+      {
+        id: "a",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file",
+        size_bytes: 10,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+
+    const { container, findByText } = renderWithProviders(FileBrowser as any);
+    await findByText("b.txt");
+
+    const { useFileViewStore } = await import("../src/stores/fileView.store");
+    const view = useFileViewStore();
+    view.setMode("grid");
+    expect(view.mode).toBe("grid");
+
+    await waitFor(() => {
+      const names = Array.from(
+        container.querySelectorAll(".file-card-name"),
+      ).map((el) => el.textContent?.trim());
+      expect(names).toEqual(["a.txt", "b.txt"]);
+      expect(container.querySelectorAll(".file-card").length).toBe(2);
+    });
   });
 });

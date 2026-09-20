@@ -140,6 +140,7 @@
                 <IconChecklist :size="16" />
                 <span>{{ batchMode ? "退出批量" : "批量选择" }}</span>
               </button>
+              <ViewOptions />
               <div ref="desktopSearchBoxRef" class="desktop-search-box">
                 <div class="desktop-search-inline">
                   <div class="control desktop-search-field">
@@ -258,7 +259,10 @@
           <div v-if="batchMode" class="desktop-batch-strip">
             <div class="desktop-batch-meta">已选 {{ selectedCount }} 项</div>
             <div class="desktop-batch-actions">
-              <button class="button is-small is-light" @click="selectAllVisible">
+              <button
+                class="button is-small is-light"
+                @click="selectAllVisible"
+              >
                 全选当前视图
               </button>
               <button class="button is-small is-light" @click="clearSelection">
@@ -479,7 +483,29 @@
                 }}）
               </div>
 
+              <FileGrid
+                v-if="viewMode === 'grid'"
+                :files="desktopItems"
+                :highlight="searchActive ? searchQuery : ''"
+                :commit="browseCommit"
+                :select-mode="batchMode"
+                :selected-paths="selectedPaths"
+                :active-path="desktopActivePath"
+                :thumbnail-size="fileView.thumbnailSize"
+                @click="handleItemClick"
+                @download="handleDownload"
+                @rename="handleRenameEntry"
+                @move="handleMoveEntry"
+                @delete="handleDelete"
+                @view-history="handleViewHistory"
+                @toggle-select="toggleSelect"
+                @share="handleShare"
+                @preview="handlePreview"
+                @open-folder="handleOpenFolder"
+                @create-directory="handleCreateDirectory"
+              />
               <FileList
+                v-else
                 :files="desktopItems"
                 :highlight="searchActive ? searchQuery : ''"
                 :select-mode="batchMode"
@@ -503,9 +529,17 @@
           </div>
 
           <div class="desktop-status-bar">
-            <span>{{ searchActive ? `搜索结果 ${searchResults.length} 项` : `当前目录 ${files.length} 项` }}</span>
+            <span>{{
+              searchActive
+                ? `搜索结果 ${searchResults.length} 项`
+                : `当前目录 ${files.length} 项`
+            }}</span>
             <span>
-              {{ parentPath != null ? "单击文件夹进入，点“返回上一级”回退" : "单击文件夹进入子目录" }}
+              {{
+                parentPath != null
+                  ? "单击文件夹进入，点“返回上一级”回退"
+                  : "单击文件夹进入子目录"
+              }}
             </span>
             <span v-if="selectedCount > 0">已选 {{ selectedCount }} 项</span>
           </div>
@@ -540,8 +574,28 @@
           <div v-if="searchResults.length === 0" class="has-text-centered py-6">
             <p class="has-text-grey">没有找到匹配的文件</p>
           </div>
+          <FileGrid
+            v-if="viewMode === 'grid' && visibleSearchResults.length"
+            :files="visibleSearchResults"
+            :highlight="searchQuery"
+            :commit="browseCommit"
+            :select-mode="batchMode"
+            :selected-paths="selectedPaths"
+            :thumbnail-size="fileView.thumbnailSize"
+            @click="handleItemClick"
+            @download="handleDownload"
+            @rename="handleRenameEntry"
+            @move="handleMoveEntry"
+            @delete="handleDelete"
+            @view-history="handleViewHistory"
+            @toggle-select="toggleSelect"
+            @share="handleShare"
+            @preview="handlePreview"
+            @open-folder="handleOpenFolder"
+            @create-directory="handleCreateDirectory"
+          />
           <FileList
-            v-if="visibleSearchResults.length"
+            v-else-if="visibleSearchResults.length"
             :files="visibleSearchResults"
             :highlight="searchQuery"
             :select-mode="batchMode"
@@ -570,7 +624,27 @@
         </div>
 
         <div v-else class="file-list">
+          <FileGrid
+            v-if="viewMode === 'grid'"
+            :files="visibleFiles"
+            :commit="browseCommit"
+            :select-mode="batchMode"
+            :selected-paths="selectedPaths"
+            :thumbnail-size="fileView.thumbnailSize"
+            @click="handleItemClick"
+            @download="handleDownload"
+            @rename="handleRenameEntry"
+            @move="handleMoveEntry"
+            @delete="handleDelete"
+            @view-history="handleViewHistory"
+            @toggle-select="toggleSelect"
+            @share="handleShare"
+            @preview="handlePreview"
+            @open-folder="handleOpenFolder"
+            @create-directory="handleCreateDirectory"
+          />
           <FileList
+            v-else
             :files="visibleFiles"
             :select-mode="batchMode"
             :selected-paths="selectedPaths"
@@ -835,8 +909,11 @@ import {
 import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
+import { useFileViewStore } from "../../stores/fileView.store";
 import { filesService } from "../../services/files.service";
 import FileList from "./FileList.vue";
+import FileGrid from "./FileGrid.vue";
+import ViewOptions from "./ViewOptions.vue";
 import MoveDialog from "./MoveDialog.vue";
 import FileUploader from "../file-uploader/FileUploader.vue";
 import VersionHistory from "../version-history/VersionHistory.vue";
@@ -844,6 +921,12 @@ import Modal from "../common/Modal.vue";
 import ShareDialog from "../common/ShareDialog.vue";
 import { confirmDialog, promptDialog } from "../../composables/dialog";
 import type { FileInfo } from "../../types";
+import { loadHighlight } from "../../utils/highlight";
+import {
+  sortBrowserItems,
+  sortFiles,
+  type SortState,
+} from "../../utils/fileSort";
 
 let cachedMarked: any | null = null;
 let cachedHljs: any | null = null;
@@ -851,8 +934,16 @@ let cachedHljs: any | null = null;
 const filesStore = useFilesStore();
 const appStore = useAppStore();
 const authStore = useAuthStore();
+const fileView = useFileViewStore();
 const { files, loading, error, currentPath, browseCommit } =
   storeToRefs(filesStore);
+
+const sortState = computed<SortState>(() => ({
+  field: fileView.sortField,
+  direction: fileView.sortDirection,
+  foldersFirst: fileView.foldersFirst,
+}));
+const viewMode = computed(() => fileView.mode);
 
 const searchContentEnabled = computed(
   () => authStore.features?.searchContent ?? false,
@@ -1087,8 +1178,7 @@ async function getMarked() {
 
 async function getHljs() {
   if (cachedHljs) return cachedHljs;
-  const mod: any = await import("highlight.js");
-  cachedHljs = mod?.default ?? mod;
+  cachedHljs = await loadHighlight();
   return cachedHljs;
 }
 
@@ -1388,7 +1478,10 @@ function isSafeDirName(name: string): boolean {
   return true;
 }
 
-function normalizeEntryName(rawName: string, invalidMessage: string): string | null {
+function normalizeEntryName(
+  rawName: string,
+  invalidMessage: string,
+): string | null {
   const name = rawName.trim();
   if (!isSafeDirName(name)) {
     appStore.error(invalidMessage);
@@ -1491,7 +1584,10 @@ async function refreshAfterMutation() {
   }
 }
 
-async function createDirectoryAt(parentPath: string, name: string): Promise<string> {
+async function createDirectoryAt(
+  parentPath: string,
+  name: string,
+): Promise<string> {
   const dirPath = buildChildPath(parentPath, name);
   await filesService.createDirectory(dirPath, `创建目录: ${dirPath}`);
   return dirPath;
@@ -1661,11 +1757,19 @@ const parentListItem = computed<BrowserListItem>(() => {
 });
 
 const navigationListItems = computed<BrowserListItem[]>(() => {
-  return [currentListItem.value, parentListItem.value, ...files.value];
+  return [
+    currentListItem.value,
+    parentListItem.value,
+    ...sortBrowserItems(files.value, sortState.value),
+  ];
+});
+
+const sortedSearchResults = computed<FileInfo[]>(() => {
+  return sortFiles(searchResults.value, sortState.value);
 });
 
 const activeList = computed(() =>
-  searchActive.value ? searchResults.value : navigationListItems.value,
+  searchActive.value ? sortedSearchResults.value : navigationListItems.value,
 );
 const hasMore = computed(
   () => isMobile.value && mobileVisibleCount.value < activeList.value.length,
@@ -1675,11 +1779,13 @@ const visibleFiles = computed(() => {
   return navigationListItems.value.slice(0, mobileVisibleCount.value);
 });
 const visibleSearchResults = computed(() => {
-  if (!isMobile.value) return searchResults.value;
-  return searchResults.value.slice(0, mobileVisibleCount.value);
+  if (!isMobile.value) return sortedSearchResults.value;
+  return sortedSearchResults.value.slice(0, mobileVisibleCount.value);
 });
 const desktopItems = computed(() => {
-  return searchActive.value ? searchResults.value : navigationListItems.value;
+  return searchActive.value
+    ? sortedSearchResults.value
+    : navigationListItems.value;
 });
 const desktopActivePath = ref("");
 
@@ -1696,11 +1802,14 @@ watch(
       return;
     }
 
-    if (!desktopItems.value.some((file) => file.path === desktopActivePath.value)) {
+    if (
+      !desktopItems.value.some((file) => file.path === desktopActivePath.value)
+    ) {
       const firstRealItem = desktopItems.value.find(
         (file) => !(file as BrowserListItem).uiRole,
       );
-      desktopActivePath.value = firstRealItem?.path || desktopItems.value[0].path;
+      desktopActivePath.value =
+        firstRealItem?.path || desktopItems.value[0].path;
     }
   },
   { immediate: true },
@@ -2046,7 +2155,9 @@ async function handleDelete(file: FileInfo) {
     if (searchActive.value) {
       await doSearch(false);
     }
-    appStore.success(file.kind === "directory" ? "目录删除成功" : "文件删除成功");
+    appStore.success(
+      file.kind === "directory" ? "目录删除成功" : "文件删除成功",
+    );
   } catch (err) {
     appStore.error(err instanceof Error ? err.message : "删除失败");
   }
@@ -2054,7 +2165,9 @@ async function handleDelete(file: FileInfo) {
 
 async function handleCreateDirectory(file: FileInfo) {
   if (file.kind !== "directory") return;
-  await promptCreateDirectory((file as BrowserListItem).uiTargetPath ?? file.path);
+  await promptCreateDirectory(
+    (file as BrowserListItem).uiTargetPath ?? file.path,
+  );
 }
 
 async function handleRenameEntry(file: FileInfo) {
@@ -2083,7 +2196,9 @@ async function handleRenameEntry(file: FileInfo) {
     if (desktopActivePath.value === file.path) {
       desktopActivePath.value = to;
     }
-    appStore.success(file.kind === "directory" ? "目录重命名成功" : "重命名成功");
+    appStore.success(
+      file.kind === "directory" ? "目录重命名成功" : "重命名成功",
+    );
     await refreshAfterMutation();
   } catch (err) {
     appStore.error(err instanceof Error ? err.message : "重命名失败");
@@ -2103,7 +2218,11 @@ async function submitMoveDialog(targetDir: string) {
 
   try {
     const targetEntries = await filesService.getFiles(normalizedTargetDir);
-    const operations = planMoveOperations(items, normalizedTargetDir, targetEntries);
+    const operations = planMoveOperations(
+      items,
+      normalizedTargetDir,
+      targetEntries,
+    );
 
     for (const { file, to } of operations) {
       await filesService.movePath(
@@ -2327,7 +2446,10 @@ async function batchMove() {
   const items = getSelectedItems();
   if (items.length === 0) return;
 
-  openMoveDialog(items, filesStore.currentPath || parentDirectoryPath(items[0]?.path || ""));
+  openMoveDialog(
+    items,
+    filesStore.currentPath || parentDirectoryPath(items[0]?.path || ""),
+  );
 }
 
 async function renameSelected() {
@@ -2630,7 +2752,9 @@ async function renameSelected() {
   background: transparent;
   color: #314255;
   cursor: pointer;
-  transition: background-color 0.16s ease, color 0.16s ease;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease;
   text-align: left;
 }
 

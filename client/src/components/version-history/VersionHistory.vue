@@ -171,6 +171,7 @@ import { filesService } from "../../services/files.service";
 import { useAppStore } from "../../stores/app.store";
 import { confirmDialog } from "../../composables/dialog";
 import type { FileHistory } from "../../types";
+import { loadHighlight } from "../../utils/highlight";
 import CommitList from "./CommitList.vue";
 
 let cachedMarked: any | null = null;
@@ -394,8 +395,7 @@ async function getMarked() {
 
 async function getHljs() {
   if (cachedHljs) return cachedHljs;
-  const mod: any = await import("highlight.js");
-  cachedHljs = mod?.default ?? mod;
+  cachedHljs = await loadHighlight();
   return cachedHljs;
 }
 
@@ -604,11 +604,7 @@ async function restoreVersion(hash: string) {
 
   restoringHash.value = hash;
   try {
-    await filesService.restoreFileVersion(
-      props.filePath,
-      hash,
-      "恢复历史版本",
-    );
+    await filesService.restoreFileVersion(props.filePath, hash, "恢复历史版本");
     appStore.success("已恢复并生成新版本");
     await loadHistory();
   } catch (err) {
