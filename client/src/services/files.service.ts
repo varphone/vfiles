@@ -243,7 +243,8 @@ function toContentMatches(matches?: SearchMatchDto[]): ContentMatch[] {
 
   for (const match of matches || []) {
     if (match.match_type !== "content") continue;
-    if (!match.context || !match.line_number || match.line_number <= 0) continue;
+    if (!match.context || !match.line_number || match.line_number <= 0)
+      continue;
 
     const key = `${match.line_number}:${match.context}`;
     deduped.set(key, {
@@ -273,7 +274,9 @@ export const filesService = {
    * 获取文件列表
    */
   async getFiles(path: string = "", commit?: string): Promise<FileInfo[]> {
-    const endpoint = path ? `/files/tree/${encodeURIComponent(path)}` : "/files/tree";
+    const endpoint = path
+      ? `/files/tree/${encodeURIComponent(path)}`
+      : "/files/tree";
     const search = new URLSearchParams();
     if (commit) search.set("commit", commit);
     const url = search.size > 0 ? `${endpoint}?${search.toString()}` : endpoint;
@@ -300,6 +303,23 @@ export const filesService = {
     _message: string = "创建目录",
   ): Promise<any> {
     return await apiService.post("/files/directories", { path });
+  },
+
+  /**
+   * 服务端缩略图地址。
+   *
+   * 直接返回 URL 交给 `<img>` 加载：同源请求会自动携带鉴权 Cookie，
+   * 浏览器可以复用原生懒加载与 HTTP 缓存（服务端提供 ETag / Cache-Control），
+   * 前端无需再手工管理 objectURL。
+   */
+  thumbnailUrl(
+    path: string,
+    opts?: { commit?: string; size?: number },
+  ): string {
+    const params = new URLSearchParams({ path });
+    if (opts?.commit) params.set("commit", opts.commit);
+    if (opts?.size) params.set("size", String(opts.size));
+    return `/api/files/thumbnail?${params}`;
   },
 
   /**
@@ -392,7 +412,9 @@ export const filesService = {
         },
       );
 
-      const initData = ((initResp as any)?.data ?? initResp) as UploadInitResponse | undefined;
+      const initData = ((initResp as any)?.data ?? initResp) as
+        | UploadInitResponse
+        | undefined;
       const uploadId = initData?.uploadId ?? initData?.upload_id;
       const chunkSize = initData?.chunkSize ?? initData?.chunk_size;
       const totalChunks = initData?.totalChunks ?? initData?.total_chunks;
@@ -642,14 +664,16 @@ export const filesService = {
       params.type = opts.type;
     }
 
-    const response = await apiService.get<SearchResultDto[]>("/files/search", params);
+    const response = await apiService.get<SearchResultDto[]>(
+      "/files/search",
+      params,
+    );
 
     const payload = Array.isArray(response)
       ? response
       : (((response as any)?.data as SearchResultDto[] | undefined) ?? []);
 
-    return mergeSearchResults(payload)
-      .map(mapSearchResultToFileInfo);
+    return mergeSearchResults(payload).map(mapSearchResultToFileInfo);
   },
 
   /**

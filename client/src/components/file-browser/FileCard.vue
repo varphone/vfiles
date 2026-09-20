@@ -1,6 +1,5 @@
 <template>
   <div
-    ref="cardRef"
     class="file-card"
     :class="{
       'file-card--selected': selected,
@@ -21,6 +20,7 @@
         :alt="file.name"
         loading="lazy"
         decoding="async"
+        @error="thumbFailed = true"
       />
       <span v-else class="icon file-card-thumb-icon">
         <component :is="icon" :size="iconSize" :stroke-width="1.4" />
@@ -160,7 +160,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import {
   IconArrowLeft,
   IconArrowsDiff,
@@ -184,16 +184,14 @@ import {
   IconVideo,
 } from "@tabler/icons-vue";
 import { confirmDialog } from "../../composables/dialog";
+import { filesService } from "../../services/files.service";
 import {
   fileIconKind,
   formatDate,
   formatSize,
+  isImageFile,
   splitByNeedle,
 } from "../../utils/filePresentation";
-import {
-  shouldThumbnail,
-  useThumbnailStore,
-} from "../../stores/thumbnails.store";
 import type { FileInfo } from "../../types";
 
 const props = withDefaults(
@@ -230,10 +228,8 @@ const emit = defineEmits<{
   "create-directory": [file: FileInfo];
 }>();
 
-const thumbnailStore = useThumbnailStore();
-const cardRef = ref<HTMLElement | null>(null);
 const menuOpen = ref(false);
-let observer: IntersectionObserver | null = null;
+const thumbFailed = ref(false);
 
 const uiRole = computed(
   () => (props.file as FileInfo & { uiRole?: "self" | "parent" }).uiRole,
@@ -272,8 +268,13 @@ const icon = computed(() => {
 });
 
 const thumbnailUrl = computed(() => {
-  if (isNavigationShortcut.value) return "";
-  return thumbnailStore.get(props.file.path, props.commit)?.url || "";
+  if (isNavigationShortcut.value || thumbFailed.value) return "";
+  if (!isImageFile(props.file)) return "";
+  return filesService.thumbnailUrl(props.file.path, {
+    commit: props.commit,
+    // 请求 2x 尺寸以适配高分屏；服务端会按 blob + size 缓存。
+    size: Math.min(512, Math.round(props.thumbnailSize * 2)),
+  });
 });
 
 const sizeLabel = computed(() => formatSize(props.file.size_bytes));
@@ -283,38 +284,6 @@ const dateLabel = computed(() =>
 const nameSegments = computed(() =>
   splitByNeedle(props.file.name ?? "", props.highlight ?? ""),
 );
-
-function requestThumbnail() {
-  if (thumbnailUrl.value) return;
-  thumbnailStore.request(props.file, props.commit);
-}
-
-onMounted(() => {
-  const el = cardRef.value;
-  if (
-    !shouldThumbnail(props.file) ||
-    !el ||
-    typeof IntersectionObserver === "undefined"
-  ) {
-    return;
-  }
-
-  observer = new IntersectionObserver(
-    (observed) => {
-      if (observed.some((entry) => entry.isIntersecting)) {
-        requestThumbnail();
-        observer?.disconnect();
-        observer = null;
-      }
-    },
-    { rootMargin: "160px" },
-  );
-  observer.observe(el);
-});
-
-onBeforeUnmount(() => {
-  observer?.disconnect();
-});
 
 function handleClick() {
   if (isNavigationShortcut.value) {

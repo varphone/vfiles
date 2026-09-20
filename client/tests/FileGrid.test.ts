@@ -30,8 +30,13 @@ function renderGrid(files: FileInfo[]) {
 describe("FileGrid.vue", () => {
   it("renders a card for every entry with name and size metadata", () => {
     setActivePinia(createPinia());
-    renderGrid([
-      buildFile({ id: "a", name: "photo.png", size_bytes: 2048 }),
+    const { container } = renderGrid([
+      buildFile({
+        id: "a",
+        name: "photo.png",
+        path: "photo.png",
+        size_bytes: 2048,
+      }),
       buildFile({
         id: "b",
         name: "docs",
@@ -43,6 +48,19 @@ describe("FileGrid.vue", () => {
     expect(screen.getByText("photo.png")).toBeInTheDocument();
     expect(screen.getByText("docs")).toBeInTheDocument();
     expect(screen.getByText("2.0 KB")).toBeInTheDocument();
+    // 图片走服务端缩略图接口，且带上请求尺寸。
+    const image = container.querySelector<HTMLImageElement>(
+      ".file-card-thumb-image",
+    );
+    expect(image).not.toBeNull();
+    const src = image!.getAttribute("src") || "";
+    expect(src).toContain("/api/files/thumbnail?");
+    expect(src).toContain("path=photo.png");
+    expect(src).toContain("size=");
+    // 目录不请求缩略图。
+    expect(container.querySelectorAll(".file-card-thumb-image")).toHaveLength(
+      1,
+    );
   });
 
   it("shows a checkbox per card in selection mode", () => {
