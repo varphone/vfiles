@@ -981,6 +981,92 @@ impl EntryRepo for SqliteEntryRepo {
         rows.into_iter().map(parse_entry_row).collect()
     }
 
+    async fn stats(&self, namespace_id: &NamespaceId) -> DomainResult<NamespaceStats> {
+        #[derive(sqlx::FromRow)]
+        struct StatsRow {
+            file_count: i64,
+            directory_count: i64,
+            total_bytes: i64,
+        }
+
+        // 只统计当前版本（version 最大的一条）的大小；目录没有版本，按 0 计。
+        // entries 表没有 current_version_id 列，这里用子查询取最新版本。
+        let row: StatsRow = sqlx::query_as(
+            r#"
+            SELECT
+                COUNT(CASE WHEN e.kind = 'file' THEN 1 END) as file_count,
+                COUNT(CASE WHEN e.kind = 'directory' THEN 1 END) as directory_count,
+                COALESCE(
+                    SUM(
+                        CASE WHEN e.kind = 'file' THEN (
+                            SELECT ev.size FROM entry_versions ev
+                            WHERE ev.entry_id = e.id
+                            ORDER BY ev.version DESC
+                            LIMIT 1
+                        ) ELSE 0 END
+                    ),
+                    0
+                ) as total_bytes
+            FROM entries e
+            WHERE e.namespace_id = ?
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to load namespace stats: {e}"),
+        })?;
+
+        Ok(NamespaceStats {
+            file_count: row.file_count.max(0) as u64,
+            directory_count: row.directory_count.max(0) as u64,
+            total_bytes: row.total_bytes.max(0) as u64,
+        })
+    }
+
+    async fn recent_files(
+        &self,
+        namespace_id: &NamespaceId,
+        limit: u32,
+    ) -> DomainResult<Vec<Entry>> {
+        let rows: Vec<EntryRow> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id
+            FROM entries e
+            WHERE e.namespace_id = ? AND e.kind = 'file'
+            ORDER BY (
+                SELECT ev.created_at FROM entry_versions ev
+                WHERE ev.entry_id = e.id
+                ORDER BY ev.version DESC
+                LIMIT 1
+            ) DESC, e.path ASC
+            LIMIT ?
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list recent files: {e}"),
+        })?;
+
+        rows.into_iter().map(parse_entry_row).collect()
+    }
+
     async fn find_subtree(
         &self,
         namespace_id: &NamespaceId,

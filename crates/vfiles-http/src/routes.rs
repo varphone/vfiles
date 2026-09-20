@@ -15,6 +15,7 @@ pub mod content;
 pub mod download;
 pub mod health;
 pub mod history;
+pub mod overview;
 pub mod search;
 pub mod session;
 pub mod share;
@@ -169,4 +170,5 @@ pub fn files_router() -> Router<AppState> {
         .merge(upload::router())
         .merge(snapshot::router())
         .merge(search::router())
+        .merge(overview::router())
 }

@@ -2985,6 +2985,72 @@ async fn paged_search_keeps_content_matches_across_pages() {
     );
 }
 
+/// 侧栏聚合：统计文件/目录数量与总字节数，并按时间倒序返回最近文件。
+#[tokio::test]
+async fn overview_reports_namespace_stats_and_recent_files() {
+    let app = TestApp::new().await;
+
+    app.upload_version("", "first.txt", b"12345", "seed first")
+        .await;
+    app.upload_version("docs", "second.md", b"1234567890", "seed second")
+        .await;
+    // 覆盖同一条目：大小应只统计当前版本
+    app.upload_version("", "first.txt", b"123", "seed first again")
+        .await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/overview")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let payload = response_json(response).await;
+    assert_eq!(payload["file_count"], Value::from(2));
+    assert_eq!(payload["directory_count"], Value::from(1));
+    assert_eq!(
+        payload["total_bytes"],
+        Value::from(13),
+        "只统计当前版本：3 + 10"
+    );
+
+    let recent = payload["recent_files"]
+        .as_array()
+        .expect("recent_files array");
+    assert_eq!(recent.len(), 2);
+    // 最近更新的是 first.txt 的新版本
+    assert_eq!(recent[0]["path"], Value::from("first.txt"));
+    assert_eq!(recent[0]["name"], Value::from("first.txt"));
+    assert_eq!(recent[0]["size_bytes"], Value::from(3));
+    assert_eq!(recent[1]["path"], Value::from("docs/second.md"));
+    assert_eq!(recent[1]["name"], Value::from("second.md"));
+    assert!(
+        recent[0]["updated_at"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "最近文件应带更新时间"
+    );
+}
+
+/// 侧栏聚合需要登录态，未认证时应拒绝。
+#[tokio::test]
+async fn overview_requires_authentication() {
+    let app = TestApp::new().await;
+
+    let response = app
+        .request(
+            Request::builder()
+                .uri("/api/files/overview")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
 /// 默认配置（未开启 AVIF）下，缩略图一律 JPEG，并声明 `Vary: accept`。
 ///
 /// AVIF 编码开销远高于 JPEG，默认关闭；协商与编码逻辑由 thumbnail.rs 的单测覆盖，

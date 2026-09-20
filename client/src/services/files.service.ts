@@ -1,7 +1,12 @@
 import { apiService } from "./api.service";
 import { fetchWithRetry } from "./fetch-retry";
 import { extractErrorPayload, localizeApiError } from "../utils/apiErrors";
-import type { ContentMatch, FileInfo, FileHistory } from "../types";
+import type {
+  ContentMatch,
+  FileInfo,
+  FileHistory,
+  WorkspaceOverview,
+} from "../types";
 
 type DownloadProgress = { loaded: number; total?: number };
 
@@ -273,6 +278,24 @@ export const filesService = {
   /**
    * 获取文件列表
    */
+  /** 侧栏聚合：条目统计 + 最近文件。 */
+  async getOverview(): Promise<WorkspaceOverview> {
+    const response = await apiService.get<WorkspaceOverview>("/files/overview");
+    // 该接口直接返回 DTO（没有 { success, data } 包裹），两种形态都兼容
+    const payload = (response as any)?.data ?? response;
+    if (!payload || typeof payload.file_count !== "number") {
+      throw new Error("加载概览失败");
+    }
+    return {
+      file_count: Number(payload.file_count ?? 0),
+      directory_count: Number(payload.directory_count ?? 0),
+      total_bytes: Number(payload.total_bytes ?? 0),
+      recent_files: Array.isArray(payload.recent_files)
+        ? payload.recent_files
+        : [],
+    };
+  },
+
   async getFiles(path: string = "", commit?: string): Promise<FileInfo[]> {
     const endpoint = path
       ? `/files/tree/${encodeURIComponent(path)}`

@@ -13,6 +13,22 @@ export interface FileInfo {
   lastCommit?: { message?: string };
 }
 
+/** 侧栏聚合数据（`GET /api/files/overview`）。 */
+export interface WorkspaceOverview {
+  file_count: number;
+  directory_count: number;
+  total_bytes: number;
+  recent_files: RecentFile[];
+}
+
+export interface RecentFile {
+  path: string;
+  name: string;
+  size_bytes: number;
+  mime_type?: string | null;
+  updated_at: string;
+}
+
 export interface ContentMatch {
   line: number;
   text: string;

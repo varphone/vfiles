@@ -48,6 +48,14 @@ pub trait SessionRepo {
     async fn cleanup_expired_sessions(&self) -> DomainResult<i64>;
 }
 
+/// 命名空间统计（侧栏聚合入口使用）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NamespaceStats {
+    pub file_count: u64,
+    pub directory_count: u64,
+    pub total_bytes: u64,
+}
+
 #[async_trait::async_trait]
 pub trait NamespaceRepo {
     async fn create_default(&self, owner_id: &UserId, slug: &str) -> DomainResult<NamespaceId>;
@@ -76,6 +84,16 @@ pub trait EntryRepo {
     ) -> DomainResult<Vec<Entry>>;
     /// 一次取回命名空间下的全部条目（含 current_version_id），避免递归列举。
     async fn find_all(&self, namespace_id: &NamespaceId) -> DomainResult<Vec<Entry>>;
+
+    /// 命名空间内的条目统计（文件数、目录数、总字节数），用 SQL 聚合避免全量拉取。
+    async fn stats(&self, namespace_id: &NamespaceId) -> DomainResult<NamespaceStats>;
+
+    /// 最近更新的文件（按版本创建时间倒序），用于侧栏「最近」。
+    async fn recent_files(
+        &self,
+        namespace_id: &NamespaceId,
+        limit: u32,
+    ) -> DomainResult<Vec<Entry>>;
     /// 一次取回某目录及其所有后代（含 root 自身），按路径排序。
     async fn find_subtree(
         &self,

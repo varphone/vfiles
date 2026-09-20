@@ -237,13 +237,18 @@
             'has-details': detailsVisible,
           }"
         >
-          <DirectoryTree
-            v-if="treeVisible"
-            :current-path="currentPath"
-            :dragging="Boolean(draggingFile)"
-            @navigate="handleTreeNavigate"
-            @drop-on-folder="handleDropOnFolder"
-          />
+          <aside v-if="treeVisible" class="browser-sidebar">
+            <DirectoryTree
+              :current-path="currentPath"
+              :dragging="Boolean(draggingFile)"
+              @navigate="handleTreeNavigate"
+              @drop-on-folder="handleDropOnFolder"
+            />
+            <SidebarOverview
+              :refresh-key="mutationVersion"
+              @open-file="handleOpenRecentFile"
+            />
+          </aside>
 
           <div class="desktop-list-primary-shell">
             <div class="desktop-list-shell">
@@ -901,6 +906,7 @@ import BrowserSearchBox from "./BrowserSearchBox.vue";
 import UploadDropOverlay from "./UploadDropOverlay.vue";
 import FileDetailsContent from "./FileDetailsContent.vue";
 import DirectoryTree from "./DirectoryTree.vue";
+import SidebarOverview from "./SidebarOverview.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
 import SortMenu from "./SortMenu.vue";
@@ -969,6 +975,8 @@ const showUploader = ref(false);
 const showDetailsDialog = ref(false);
 /** 正在内联重命名的条目路径（空字符串表示没有）。 */
 const renamingPath = ref("");
+/** 文件列表每次重新加载后递增，用于让侧栏概览刷新。 */
+const mutationVersion = ref(0);
 const detailsDialogFile = ref<FileInfo | null>(null);
 const showHistory = ref(false);
 const showShareDialog = ref(false);
@@ -994,6 +1002,16 @@ const {
 
 /** 左侧目录树：宽屏桌面显示。 */
 const treeVisible = computed(() => !isMobile.value && isWideScreen.value);
+
+/** 点击侧栏「最近更新」：跳到文件所在目录并把它设为活动行。 */
+function handleOpenRecentFile(file: { path: string }) {
+  if (searchActive.value) clearSearch();
+  const parent = file.path.includes("/")
+    ? file.path.slice(0, file.path.lastIndexOf("/"))
+    : "";
+  filesStore.navigateTo(parent);
+  desktopActivePath.value = file.path;
+}
 
 function handleTreeNavigate(path: string) {
   if (searchActive.value) clearSearch();
@@ -1518,6 +1536,14 @@ const desktopItems = computed(() =>
   ).slice(0, visibleCount.value),
 );
 const desktopActivePath = ref("");
+
+// 文件列表重新加载（上传/删除/重命名/移动/切换目录）后刷新侧栏概览
+watch(
+  () => filesStore.files,
+  () => {
+    mutationVersion.value += 1;
+  },
+);
 
 watch(
   [isMobile, desktopItems, currentPath],
@@ -2228,6 +2254,14 @@ function handleSortChange(field: SortField) {
 
 .desktop-content-layout.has-tree {
   grid-template-columns: 232px minmax(0, 1fr);
+}
+
+/* 侧栏 = 目录树（可滚动）+ 概览（固定高度） */
+.browser-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 
 .desktop-content-layout.has-tree.has-details {

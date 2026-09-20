@@ -16,11 +16,11 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 55 实测）
+### 验证基线（round 56 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：40 个文件 / **255** 个用例通过；`vue-tsc`、`eslint`、`prettier`
+- `client` 单测：41 个文件 / **259** 个用例通过；`vue-tsc`、`eslint`、`prettier`
   通过。
 - 后端：`cargo test --workspace` 全部通过、`clippy --all-targets` 无告警、`fmt`
   干净（`frontend.rs` 的历史格式差异保持原样）。
@@ -995,6 +995,28 @@
   真实服务上 `--keep 1 --older-than-days 30` 删掉 3 条超龄快照、保留最新一条，
   `--keep 10 --older-than-days 30` 删除 0 条，符合「与」语义。
 
+### 2.63 侧栏存储用量与「最近更新」（round 56，交互/性能）
+
+- 背景：侧栏此前只有目录树；主流云盘还会给出「存储用量」与「最近文件」。
+- 后端新增 `GET /api/files/overview`：
+  - `EntryRepo::stats()` 用 **SQL 聚合**（文件数 / 目录数 / 总字节数）实现，
+    总字节数只累计**当前版本**（`entries` 表没有 `current_version_id` 列，
+    用 `ORDER BY version DESC LIMIT 1` 子查询取最新版本），避免把整棵目录树拉进内存；
+  - `EntryRepo::recent_files(namespace, limit)` 按最新版本创建时间倒序取前 8 条；
+  - 路由 `overview.rs` 需要登录态，返回 `{file_count, directory_count, total_bytes,
+    recent_files[{path,name,size_bytes,mime_type,updated_at}]}`。
+- 前端新增 `SidebarOverview.vue`：显示存储用量（人类可读）+ 文件/目录计数 +
+  最近更新列表（类型图标、相对时间）；加载失败只在本区域提示并提供重试，
+  不影响文件列表。点击最近文件会跳到其所在目录并把该行设为活动行
+  （实测：点击 `c.bin` 后面包屑变为「根目录 › docs」、`c.bin` 高亮）。
+- 侧栏结构：目录树（可滚动）+ 概览（固定高度）包在 `.browser-sidebar` 里，
+  文件列表变更（上传/删除/重命名/移动/切换目录）后自动刷新概览。
+- 测试：4 个 `SidebarOverview` 用例（渲染用量与最近文件、点击上报路径、
+  refreshKey 变化触发重载、失败局部降级）+ 2 个后端集成用例
+  （统计与最近文件正确性、未登录 401）。
+- 冒烟：真实服务返回 `file_count=3 / directory_count=1 / total_bytes=3018`，
+  侧栏显示「2.9 KB · 3 文件 · 1 目录」与按时间倒序的最近文件，无控制台报错。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -1097,8 +1119,8 @@
 
 - `[x]` 第一轮：设计令牌 + 应用外壳 + 工具栏 + 文件列表/网格 + 空状态 + 品牌主色（round 34，见 §2.41）。
 - `[x]` 左侧目录树（按需加载、祖先自动展开、可拖放），宽屏显示（round 46，见 §2.53）。
-- `[ ]` 左侧导航的聚合入口（最近 / 收藏 / 存储用量）——需要后端补充聚合接口后再做，
-  避免放不可用的假入口。
+- `[x]` 左侧导航的聚合入口：存储用量 + 最近更新（round 56，见 §2.63）。
+- `[ ]` 左侧导航的「收藏」入口（需要新增收藏表与接口）。
 - `[x]` 右侧「详细信息」面板（round 35，见 §2.42）。
 - `[x]` 右键 / 长按的「详细信息」弹窗，移动端也能查看元数据（round 45，见 §2.52）。
 - `[x]` 顶栏重设计：快照切换器收进胶囊按钮，账号入口改头像样式（round 36，见 §2.43）。
