@@ -949,6 +949,38 @@ impl EntryRepo for SqliteEntryRepo {
         rows.into_iter().map(parse_entry_row).collect()
     }
 
+    async fn find_all(&self, namespace_id: &NamespaceId) -> DomainResult<Vec<Entry>> {
+        let rows: Vec<EntryRow> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id
+            FROM entries e
+            WHERE e.namespace_id = ?
+            ORDER BY e.path
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to find all entries: {}", e),
+        })?;
+
+        rows.into_iter().map(parse_entry_row).collect()
+    }
+
     async fn create_entry(
         &self,
         namespace_id: &NamespaceId,
@@ -3579,6 +3611,111 @@ mod entry_version_batch_tests {
             .expect("lookup with missing id should succeed");
         assert_eq!(only_first.len(), 1);
         assert_eq!(only_first[0].id, first.id);
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+}
+
+#[cfg(test)]
+mod entry_repo_lookup_tests {
+    use super::*;
+    use crate::{SqliteMigrations, SqlitePoolFactory};
+    use camino::Utf8PathBuf;
+
+    async fn setup() -> (
+        Utf8PathBuf,
+        SqlitePool,
+        SqliteEntryRepo,
+        NamespaceId,
+        UserId,
+    ) {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-entry-lookup-test-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+
+        let user_id = user_repo
+            .create_admin("admin", "admin@example.com", "hashed-password")
+            .await
+            .expect("admin user should be created");
+        let namespace_id = namespace_repo
+            .create_default(&user_id, "default")
+            .await
+            .expect("default namespace should be created");
+
+        (db_path, pool, entry_repo, namespace_id, user_id)
+    }
+
+    #[tokio::test]
+    async fn find_all_returns_every_entry_sorted_with_current_versions() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+
+        for (path, kind) in [
+            ("docs", EntryKind::Directory),
+            ("docs/a.txt", EntryKind::File),
+            ("b.txt", EntryKind::File),
+        ] {
+            repo.create_entry(
+                &namespace_id,
+                &NormalizedPath::new(path).expect("path should parse"),
+                kind,
+                &user_id,
+            )
+            .await
+            .expect("entry should be created");
+        }
+
+        let docs = repo
+            .find_by_path(
+                &namespace_id,
+                &NormalizedPath::new("docs/a.txt").expect("path should parse"),
+            )
+            .await
+            .expect("lookup should succeed")
+            .expect("entry should exist");
+        repo.create_version(
+            &docs.id,
+            None,
+            None,
+            42,
+            Some("text/plain"),
+            &user_id,
+            Some("initial"),
+        )
+        .await
+        .expect("version should be created");
+
+        let all = repo
+            .find_all(&namespace_id)
+            .await
+            .expect("find_all should succeed");
+
+        let paths: Vec<&str> = all.iter().map(|entry| entry.path_norm.as_str()).collect();
+        assert_eq!(paths, vec!["b.txt", "docs", "docs/a.txt"]);
+
+        let file = all
+            .iter()
+            .find(|entry| entry.path_norm.as_str() == "docs/a.txt")
+            .expect("file should be present");
+        assert!(file.current_version_id.is_some());
+
+        let directory = all
+            .iter()
+            .find(|entry| entry.path_norm.as_str() == "docs")
+            .expect("directory should be present");
+        assert!(directory.current_version_id.is_none());
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);

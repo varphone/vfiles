@@ -74,6 +74,8 @@ pub trait EntryRepo {
         namespace_id: &NamespaceId,
         parent_path: &NormalizedPath,
     ) -> DomainResult<Vec<Entry>>;
+    /// 一次取回命名空间下的全部条目（含 current_version_id），避免递归列举。
+    async fn find_all(&self, namespace_id: &NamespaceId) -> DomainResult<Vec<Entry>>;
     async fn create_entry(
         &self,
         namespace_id: &NamespaceId,

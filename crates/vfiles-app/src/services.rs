@@ -377,26 +377,8 @@ async fn collect_namespace_entries<E>(
 where
     E: EntryRepo,
 {
-    let root = NormalizedPath::new("").map_err(|_| DomainError::Internal {
-        message: "Invalid root path".to_string(),
-    })?;
-    let mut entries = entry_repo.find_children(namespace_id, &root).await?;
-    let mut index = 0;
-
-    while index < entries.len() {
-        let current = entries[index].clone();
-        index += 1;
-
-        if current.entry_type != EntryKind::Directory {
-            continue;
-        }
-
-        let children = entry_repo
-            .find_children(namespace_id, &current.path_norm)
-            .await?;
-        entries.extend(children);
-    }
-
+    // 单次查询取回全部条目，避免按目录递归列举（O(目录数) 次查询）。
+    let mut entries = entry_repo.find_all(namespace_id).await?;
     entries.sort_by(|left, right| left.path_norm.as_str().cmp(right.path_norm.as_str()));
     Ok(entries)
 }
@@ -433,16 +415,35 @@ async fn collect_snapshot_state<E>(
 where
     E: EntryRepo,
 {
-    let mut snapshot_entries = Vec::new();
+    let entries = collect_namespace_entries(entry_repo, namespace_id).await?;
 
-    for entry in collect_namespace_entries(entry_repo, namespace_id).await? {
-        let version = resolve_current_version_for_entry(entry_repo, &entry).await?;
+    // 批量取当前版本，避免每个条目一次查询（每次变更都会走这里）。
+    let version_ids: Vec<VersionId> = entries
+        .iter()
+        .filter_map(|entry| match (entry.entry_type, entry.current_version_id) {
+            (EntryKind::File, Some(version_id)) => Some(version_id),
+            _ => None,
+        })
+        .collect();
+    let versions_by_id: HashMap<VersionId, EntryVersion> = entry_repo
+        .find_versions(&version_ids)
+        .await?
+        .into_iter()
+        .map(|version| (version.id, version))
+        .collect();
+
+    let mut snapshot_entries = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let version = match (entry.entry_type, entry.current_version_id) {
+            (EntryKind::File, Some(version_id)) => versions_by_id.get(&version_id),
+            _ => None,
+        };
         snapshot_entries.push(pending_snapshot_entry(
             entry.id,
             &entry.path_norm,
             entry.entry_type,
-            version.as_ref(),
-            snapshot_change_type(entry.entry_type, version.as_ref()),
+            version,
+            snapshot_change_type(entry.entry_type, version),
         ));
     }
 

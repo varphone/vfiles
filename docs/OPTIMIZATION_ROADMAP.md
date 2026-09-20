@@ -16,13 +16,13 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 18 实测）
+### 验证基线（round 19 实测）
 
-- `cargo test --workspace`：通过（含新增的批量版本查询用例）。
+- `cargo test --workspace`：通过（含批量版本与 `find_all` 用例）。
 - `cargo clippy --workspace --all-targets`：无告警。
 - `client` 单测：20 个文件 / 101 个用例通过。
-- 冒烟：200 个文件目录的 `tree` 约 11ms，全部条目 `size_bytes`/`mime_type`/
-  `updated_at` 均已填充。
+- 冒烟：201 条目工作区的写操作（上传，含生成快照）约 18–33ms；`/api/history`
+  正常返回提交记录。
 
 ### 主要发现
 
@@ -283,12 +283,33 @@
 - 测试：批量查询返回全部版本、空输入返回空、缺失 id 被跳过；既有 HTTP 集成测试
   （含目录列举）保持通过。
 
+### 2.24 快照收集与命名空间列举的查询优化（round 19，性能）
+
+- 继续后端审计发现两处放大效应：
+  1. `collect_snapshot_state`（每次写操作都会执行）遍历命名空间全部条目，并对**每个
+     条目**调用一次 `find_version`；
+  2. `collect_namespace_entries` 通过按目录递归 `find_children` 列举，查询次数为
+     O(目录数)。
+- `EntryRepo` 新增 `find_all(namespace_id)`：单条 SQL（含 `current_version_id`
+  相关子查询）取回全部条目并按路径排序；`collect_namespace_entries` 改为直接调用它。
+- `collect_snapshot_state` 先收集文件类条目的 `current_version_id`，一次
+  `find_versions` 批量取回后用 HashMap 组装；`pending_snapshot_entry` 不再需要
+  每个条目一次查询。
+- 结果：写操作从「O(目录数) + O(文件数) 次查询」降为固定 2 次查询。
+- 测试：`find_all` 返回全部条目、按路径排序、文件带当前版本而目录为空；既有
+  快照/历史/上传等 59 个 HTTP 集成测试保持通过。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
 
 - `[x]` 构建期生成 `.br`/`.gz`，服务端按 `Accept-Encoding` 直接返回（round 12）。
 - `[ ]` 可选：对二进制资源也做预压缩评估；为 `index.html` 等小文件决定是否降低阈值。
+
+### 3.1c 删除路径的子树遍历（性能，中）
+
+- `collect_descendants`（删除/移动目录时使用）仍按目录递归 `find_children`；可改用
+  `find_all` 后按路径前缀过滤，将 O(目录数) 次查询降为 1 次。
 
 ### 3.1b 服务端目录分页（性能，高）
 
