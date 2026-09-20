@@ -16,13 +16,13 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 8 实测）
+### 验证基线（round 9 实测）
 
 - `cargo test --workspace`：通过（HTTP 集成 58 个 + `vfiles-http` 单元 7 个）。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：13 个文件 / 54 个用例通过。
+- `client` 单测：15 个文件 / 67 个用例通过。
 - `vue-tsc --noEmit`：无错误；`eslint .`：无告警。
-- `bun run build`：成功；冒烟验证首页产物包含下载队列/搜索/全选等标记。
+- `bun run build`：成功；冒烟验证 `/api/files/directories` 与目录管理相关产物标记。
 
 ### 主要发现
 
@@ -176,6 +176,18 @@
 - 测试：搜索历史去重/上限/持久化、作用域路径、`clearSearch` 状态复位；下载面板
   渲染状态标签与进度、面板按钮与单项取消/移除事件、折叠与空状态。
 
+### 2.14 拆分 FileBrowser：目录管理与路径工具（round 9，稳定性）
+
+- 新增 `utils/filePaths.ts`：`isSafeDirName`、`buildChildPath`/`buildSiblingPath`、
+  `parentDirectoryPath`、`normalizeTargetDirectory`、`resolveMoveTargetPath`、
+  `planMoveOperations` 等纯函数，便于复用与测试。
+- 新增 `composables/useDirectoryManager.ts`：目录对话框状态与新建/重命名/删除当前
+  目录、重命名条目、变更后刷新；依赖（`navigateTo`/`refresh`/`doSearch` 等）通过
+  参数注入，便于测试。
+- `FileBrowser.vue` 由 2625 行降至 2430 行；相比 round 7 起点累计 −858 行（−26%）。
+- 测试：路径构造/规整、移动目标的自身子目录与重名校验；目录名跟随、新建子目录后
+  刷新（含搜索态重新搜索）、重命名跳转、删除需输入匹配目录名、跨目录新建后跳转。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -194,8 +206,9 @@
 - `[x]` 下载队列与文件预览抽为 composable（round 7，3288 → 2858 行）。
 - `[x]` 搜索抽为 `useFileSearch`，下载队列面板抽为 `DownloadQueuePanel.vue`
   （round 8，2858 → 2625 行）。
-- `[ ]` 继续抽出目录管理、批量操作与移动路径计算等纯函数，目标 < 1500 行。
-- `[ ]` 抽出桌面/移动工具栏等模板片段为子组件（`BrowserToolbar`）。
+- `[x]` 目录管理与移动/路径计算抽为 `useDirectoryManager` + `utils/filePaths`
+  （round 9，2625 → 2430 行）。
+- `[ ]` 继续抽出批量选择与桌面/移动工具栏模板，目标 < 1500 行。
 - 验收：单文件行数持续下降，已有测试保持通过并补充拆分后的单元测试。
 
 ### 3.4 交互增强（中，对齐主流云盘）

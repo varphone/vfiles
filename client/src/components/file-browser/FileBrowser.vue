@@ -832,6 +832,7 @@ import { confirmDialog, promptDialog } from "../../composables/dialog";
 import { useDownloadQueue } from "../../composables/useDownloadQueue";
 import { useFilePreview } from "../../composables/useFilePreview";
 import { useFileSearch } from "../../composables/useFileSearch";
+import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import type { FileInfo } from "../../types";
 import {
   sortBrowserItems,
@@ -839,6 +840,13 @@ import {
   type SortField,
   type SortState,
 } from "../../utils/fileSort";
+import {
+  buildSiblingPath,
+  isSafeDirName,
+  normalizeTargetDirectory,
+  parentDirectoryPath,
+  planMoveOperations,
+} from "../../utils/filePaths";
 
 const filesStore = useFilesStore();
 const appStore = useAppStore();
@@ -913,6 +921,30 @@ function setDesktopSearchInput(el: Element | { $el?: Element } | null) {
   const element = el instanceof HTMLInputElement ? el : null;
   desktopSearchInputRef.value = element;
 }
+
+const {
+  dirManagerOpen,
+  dirOpLoading,
+  dirOpBusy,
+  newDirName,
+  renameDirName,
+  refreshAfterMutation,
+  renameEntryPath,
+  promptCreateDirectory,
+  createSubDir,
+  renameCurrentDir,
+  deleteCurrentDir,
+} = useDirectoryManager({
+  currentPath,
+  searchActive,
+  clearSearch,
+  navigateTo,
+  refresh,
+  doSearch,
+  setActivePath: (path) => {
+    desktopActivePath.value = path;
+  },
+});
 
 const {
   queueCollapsed,
@@ -1110,34 +1142,6 @@ const parentPath = computed<string | null>(() => {
   return parts.join("/");
 });
 
-const dirManagerOpen = ref(false);
-const dirOpLoading = ref<null | "create" | "rename" | "delete">(null);
-const dirOpBusy = computed(() => dirOpLoading.value !== null);
-const newDirName = ref("");
-const renameDirName = ref("");
-
-const currentDirName = computed(() => {
-  if (!currentPath.value) return "";
-  const parts = currentPath.value.split("/").filter(Boolean);
-  return parts[parts.length - 1] || "";
-});
-
-watch(
-  () => currentPath.value,
-  () => {
-    renameDirName.value = currentDirName.value;
-  },
-  { immediate: true },
-);
-
-function isSafeDirName(name: string): boolean {
-  const n = name.trim();
-  if (!n) return false;
-  if (n === "." || n === "..") return false;
-  if (n.includes("/") || n.includes("\\")) return false;
-  return true;
-}
-
 function normalizeEntryName(
   rawName: string,
   invalidMessage: string,
@@ -1148,66 +1152,6 @@ function normalizeEntryName(
     return null;
   }
   return name;
-}
-
-function buildChildPath(parentPath: string, name: string): string {
-  return parentPath ? `${parentPath}/${name}` : name;
-}
-
-function buildSiblingPath(path: string, name: string): string {
-  const parent = parentDirectoryPath(path);
-  return parent ? `${parent}/${name}` : name;
-}
-
-function parentDirectoryPath(path: string): string {
-  const parts = path.split("/").filter(Boolean);
-  parts.pop();
-  return parts.join("/");
-}
-
-function normalizeTargetDirectory(rawPath: string): string {
-  return rawPath
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
-}
-
-function resolveMoveTargetPath(file: FileInfo, targetDir: string): string {
-  if (
-    file.kind === "directory" &&
-    (targetDir === file.path || targetDir.startsWith(`${file.path}/`))
-  ) {
-    throw new Error("不能将目录移动到自身或其子目录");
-  }
-
-  const to = buildChildPath(targetDir, file.name);
-  if (to === file.path) {
-    throw new Error("目标目录未变化");
-  }
-
-  return to;
-}
-
-function planMoveOperations(
-  items: FileInfo[],
-  targetDir: string,
-  targetEntries: Pick<FileInfo, "path">[] = [],
-) {
-  const usedTargets = new Set<string>();
-  const existingPaths = new Set(targetEntries.map((entry) => entry.path));
-
-  return items.map((file) => {
-    const to = resolveMoveTargetPath(file, targetDir);
-    if (usedTargets.has(to)) {
-      throw new Error(`目标目录中会产生重名项：${file.name}`);
-    }
-    if (existingPaths.has(to)) {
-      throw new Error(`目标目录已存在同名项目：${file.name}`);
-    }
-    usedTargets.add(to);
-    return { file, to };
-  });
 }
 
 function resetMoveDialogState() {
@@ -1235,143 +1179,6 @@ function replaceSelectedPath(oldPath: string, newPath: string) {
   next.delete(oldPath);
   next.add(newPath);
   selectedPaths.value = next;
-}
-
-async function refreshAfterMutation() {
-  await refresh();
-  if (searchActive.value) {
-    await doSearch(false);
-  }
-}
-
-async function createDirectoryAt(
-  parentPath: string,
-  name: string,
-): Promise<string> {
-  const dirPath = buildChildPath(parentPath, name);
-  await filesService.createDirectory(dirPath, `创建目录: ${dirPath}`);
-  return dirPath;
-}
-
-async function renameEntryPath(
-  path: string,
-  name: string,
-  message: string,
-): Promise<string> {
-  const targetPath = buildSiblingPath(path, name);
-  await filesService.movePath(path, targetPath, message);
-  return targetPath;
-}
-
-async function promptCreateDirectory(parentPath: string = currentPath.value) {
-  const raw = await promptDialog({
-    title: "新建目录",
-    message: "输入目录名（仅名称，不含路径分隔符）",
-    placeholder: "目录名",
-  });
-  if (raw == null) return;
-
-  const name = normalizeEntryName(raw, "非法目录名");
-  if (!name) return;
-
-  try {
-    const dirPath = await createDirectoryAt(parentPath, name);
-    appStore.success("目录创建成功");
-    if (parentPath === currentPath.value) {
-      desktopActivePath.value = dirPath;
-    } else {
-      if (searchActive.value) {
-        clearSearch();
-      }
-      navigateTo(parentPath);
-      return;
-    }
-    await refreshAfterMutation();
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : "目录创建失败");
-  }
-}
-
-async function createSubDir() {
-  const name = normalizeEntryName(newDirName.value, "非法目录名");
-  if (!name) return;
-
-  dirOpLoading.value = "create";
-  try {
-    const dirPath = await createDirectoryAt(currentPath.value, name);
-    appStore.success("目录创建成功");
-    newDirName.value = "";
-    desktopActivePath.value = dirPath;
-    await refreshAfterMutation();
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : "目录创建失败");
-  } finally {
-    if (dirOpLoading.value === "create") dirOpLoading.value = null;
-  }
-}
-
-async function renameCurrentDir() {
-  if (!currentPath.value) return;
-  const name = normalizeEntryName(renameDirName.value, "非法目录名");
-  if (!name) return;
-  if (name === currentDirName.value) {
-    appStore.error("目录名未变化");
-    return;
-  }
-
-  dirOpLoading.value = "rename";
-  const targetPath = buildSiblingPath(currentPath.value, name);
-  try {
-    const to = await renameEntryPath(
-      currentPath.value,
-      name,
-      `重命名目录: ${currentPath.value} -> ${targetPath}`,
-    );
-    appStore.success("重命名成功");
-    dirManagerOpen.value = false;
-    navigateTo(to);
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : "重命名失败");
-  } finally {
-    if (dirOpLoading.value === "rename") dirOpLoading.value = null;
-  }
-}
-
-async function deleteCurrentDir() {
-  if (!currentPath.value) return;
-
-  const expected = currentDirName.value;
-  const typed = await promptDialog({
-    title: "删除目录",
-    message: `危险操作：删除目录 /${currentPath.value}\n\n此操作会删除其下全部内容，并生成提交。\n请输入目录名“${expected}”以确认：`,
-    placeholder: expected,
-    confirmText: "删除",
-    danger: true,
-  });
-  if (typed == null) return;
-  if (typed.trim() !== expected) {
-    appStore.error("确认失败：目录名不匹配");
-    return;
-  }
-
-  const parts = currentPath.value.split("/").filter(Boolean);
-  parts.pop();
-  const parent = parts.join("/");
-
-  dirOpLoading.value = "delete";
-  try {
-    await filesService.deleteFile(
-      currentPath.value,
-      `删除目录: ${currentPath.value}`,
-    );
-    appStore.success("目录删除成功");
-    dirManagerOpen.value = false;
-    navigateTo(parent);
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : "删除失败");
-  } finally {
-    if (dirOpLoading.value === "delete") dirOpLoading.value = null;
-  }
 }
 
 // 4.2: 移动端无限滚动（分批渲染）
