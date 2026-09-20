@@ -38,8 +38,29 @@ const JPEG_QUALITY: u8 = 82;
 const CACHE_CONTROL: &str = "private, max-age=604800";
 
 /// 缩略图磁盘缓存上限与清理目标（按 mtime 回收最旧的条目）。
-const MAX_CACHE_ENTRIES: usize = 2000;
-const TARGET_CACHE_ENTRIES: usize = 1600;
+///
+/// 只按条目数设限时，大图缩略图会让缓存体积失控（每张 512px JPEG 可达上百 KB），
+/// 因此同时按「条目数 + 总字节数」约束，任一超限都会触发回收。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ThumbnailCacheLimits {
+    pub max_entries: usize,
+    pub target_entries: usize,
+    pub max_bytes: u64,
+    pub target_bytes: u64,
+}
+
+impl ThumbnailCacheLimits {
+    /// 由配置构造；清理目标取上限的 80%，与既有的条目数策略保持一致。
+    pub fn new(max_entries: usize, max_bytes: u64) -> Self {
+        Self {
+            max_entries,
+            target_entries: max_entries.saturating_mul(4) / 5,
+            max_bytes,
+            target_bytes: max_bytes / 5 * 4,
+        }
+    }
+}
+
 /// 每写入多少次尝试一次后台清理。
 const PRUNE_EVERY_WRITES: u64 = 64;
 
@@ -51,9 +72,15 @@ const SUPPORTED_MIME_TYPES: &[&str] = &[
     "image/gif",
     "image/webp",
     "image/bmp",
+    "image/tiff",
+    "image/x-icon",
+    "image/vnd.microsoft.icon",
+    "image/qoi",
 ];
 
-const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp"];
+const SUPPORTED_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "ico", "qoi",
+];
 
 #[derive(Debug, Deserialize)]
 struct ThumbnailQuery {
@@ -126,7 +153,13 @@ async fn get_file_thumbnail(
     tracing::debug!(path = %raw_path, size, bytes = bytes.len(), "thumbnail generated");
 
     write_cache(&cache_path, &bytes).await;
-    maybe_schedule_prune(cache_path.parent().map(PathBuf::from));
+    maybe_schedule_prune(
+        cache_path.parent().map(PathBuf::from),
+        ThumbnailCacheLimits::new(
+            state.config.limits.thumbnail_cache_max_entries,
+            state.config.limits.thumbnail_cache_max_bytes,
+        ),
+    );
 
     Ok(thumbnail_response(bytes, &etag))
 }
@@ -185,7 +218,7 @@ async fn write_cache(path: &PathBuf, bytes: &[u8]) {
 }
 
 /// 每隔若干次写入触发一次后台清理，避免目录扫描出现在每个请求上。
-fn maybe_schedule_prune(dir: Option<PathBuf>) {
+fn maybe_schedule_prune(dir: Option<PathBuf>, limits: ThumbnailCacheLimits) {
     let Some(dir) = dir else {
         return;
     };
@@ -194,14 +227,14 @@ fn maybe_schedule_prune(dir: Option<PathBuf>) {
         return;
     }
     tokio::spawn(async move {
-        prune_thumbnail_cache(&dir, MAX_CACHE_ENTRIES, TARGET_CACHE_ENTRIES).await;
+        prune_thumbnail_cache(&dir, limits).await;
     });
 }
 
-/// 按 mtime 从旧到新删除缩略图，直到条目数不超过 `target`。
+/// 按 mtime 从旧到新删除缩略图，直到条目数与总字节数都不超过清理目标。
 ///
 /// 只统计普通文件；孤儿缩略图（源文件已删除）与失败留下的 `.tmp` 会自然变旧并被回收。
-pub(crate) async fn prune_thumbnail_cache(dir: &PathBuf, max_entries: usize, target: usize) {
+pub(crate) async fn prune_thumbnail_cache(dir: &PathBuf, limits: ThumbnailCacheLimits) {
     let Ok(mut read_dir) = tokio::fs::read_dir(dir).await else {
         return;
     };
@@ -218,26 +251,39 @@ pub(crate) async fn prune_thumbnail_cache(dir: &PathBuf, max_entries: usize, tar
         entries.push((entry.path(), modified, metadata.len()));
     }
 
-    if entries.len() <= max_entries {
+    let mut remaining_entries = entries.len();
+    let mut remaining_bytes: u64 = entries.iter().map(|(_, _, size)| *size).sum();
+    if remaining_entries <= limits.max_entries && remaining_bytes <= limits.max_bytes {
         return;
     }
 
     entries.sort_by_key(|(_, modified, _)| *modified);
-    let remove_count = entries.len().saturating_sub(target);
 
     let mut removed = 0usize;
     let mut removed_bytes = 0u64;
-    for (path, _, size) in entries.iter().take(remove_count) {
+    let newest = entries.len().saturating_sub(1);
+    for (index, (path, _, size)) in entries.iter().enumerate() {
+        if remaining_entries <= limits.target_entries && remaining_bytes <= limits.target_bytes {
+            break;
+        }
+        // 始终保留最新的一个条目：单张缩略图超过字节目标时，
+        // 若允许清空，缓存会在每个请求上「删光→重新生成」，反而更慢。
+        if index == newest {
+            break;
+        }
         if tokio::fs::remove_file(path).await.is_ok() {
             removed += 1;
-            removed_bytes += size;
+            removed_bytes = removed_bytes.saturating_add(*size);
+            remaining_entries = remaining_entries.saturating_sub(1);
+            remaining_bytes = remaining_bytes.saturating_sub(*size);
         }
     }
 
     tracing::info!(
         removed,
         removed_bytes,
-        remaining = entries.len() - removed,
+        remaining_entries,
+        remaining_bytes,
         "pruned thumbnail cache"
     );
 }
@@ -347,19 +393,29 @@ mod tests {
         names
     }
 
+    /// 写入 `count` 个固定大小的条目，mtime 依次递增（越大越新）。
+    async fn seed_cache(dir: &std::path::Path, count: usize, bytes: usize) -> Vec<PathBuf> {
+        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let mut paths = Vec::new();
+        for index in 0..count {
+            let path = dir.join(format!("thumb-{index}.jpg"));
+            tokio::fs::write(&path, vec![b'x'; bytes])
+                .await
+                .expect("write");
+            set_modified(&path, base + Duration::from_secs(index as u64 * 60));
+            paths.push(path);
+        }
+        paths
+    }
+
     #[tokio::test]
     async fn prune_removes_oldest_entries_down_to_target() {
         let dir = tempfile::tempdir().expect("temp dir should be created");
         let dir_path = dir.path().to_path_buf();
-        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        seed_cache(&dir_path, 5, 5).await;
 
-        for index in 0..5u64 {
-            let path = dir_path.join(format!("thumb-{index}.jpg"));
-            tokio::fs::write(&path, b"thumb").await.expect("write");
-            set_modified(&path, base + Duration::from_secs(index * 60));
-        }
-
-        prune_thumbnail_cache(&dir_path, 3, 2).await;
+        // 条目数上限 3、目标 2；字节上限足够大，不参与决策
+        prune_thumbnail_cache(&dir_path, ThumbnailCacheLimits::new(3, u64::MAX)).await;
 
         assert_eq!(cached_names(&dir_path), vec!["thumb-3.jpg", "thumb-4.jpg"]);
     }
@@ -372,8 +428,105 @@ mod tests {
             .await
             .expect("write");
 
-        prune_thumbnail_cache(&dir_path, 3, 2).await;
+        prune_thumbnail_cache(&dir_path, ThumbnailCacheLimits::new(3, 1024)).await;
 
         assert_eq!(cached_names(&dir_path), vec!["only.jpg"]);
+    }
+
+    #[tokio::test]
+    async fn prune_enforces_the_byte_limit_even_below_the_entry_limit() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let dir_path = dir.path().to_path_buf();
+        // 5 条 × 100 字节 = 500 字节；字节上限 250、目标 200
+        seed_cache(&dir_path, 5, 100).await;
+
+        prune_thumbnail_cache(&dir_path, ThumbnailCacheLimits::new(100, 250)).await;
+
+        let names = cached_names(&dir_path);
+        assert_eq!(
+            names,
+            vec!["thumb-3.jpg", "thumb-4.jpg"],
+            "应保留最新的 2 条（200 字节）以满足字节目标"
+        );
+        let total: u64 = names
+            .iter()
+            .map(|name| std::fs::metadata(dir_path.join(name)).expect("meta").len())
+            .sum();
+        assert_eq!(total, 200);
+    }
+
+    #[tokio::test]
+    async fn prune_keeps_a_single_oversized_entry() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let dir_path = dir.path().to_path_buf();
+        // 单条 500 字节已超过 250 字节上限：仍会删到只剩它（不能删空）
+        seed_cache(&dir_path, 3, 250).await;
+
+        prune_thumbnail_cache(&dir_path, ThumbnailCacheLimits::new(100, 250)).await;
+
+        assert_eq!(cached_names(&dir_path), vec!["thumb-2.jpg"]);
+    }
+
+    /// 用 image 编码器生成一张纯色图，覆盖新增格式的解码路径。
+    fn encode_sample(format: image::ImageFormat) -> Vec<u8> {
+        use image::{Rgba, RgbaImage};
+        use std::io::Cursor;
+
+        // ICO 解码要求内嵌 PNG 为 RGBA，因此统一用带 alpha 的样本
+        let mut image = RgbaImage::new(8, 8);
+        for pixel in image.pixels_mut() {
+            *pixel = Rgba([10, 120, 200, 255]);
+        }
+
+        let mut buffer = Cursor::new(Vec::new());
+        image
+            .write_to(&mut buffer, format)
+            .expect("sample image should encode");
+        buffer.into_inner()
+    }
+
+    #[test]
+    fn supports_tiff_ico_and_qoi_sources() {
+        for (format, extension, mime) in [
+            (image::ImageFormat::Tiff, "tiff", "image/tiff"),
+            (image::ImageFormat::Ico, "ico", "image/x-icon"),
+            (image::ImageFormat::Qoi, "qoi", "image/qoi"),
+            (image::ImageFormat::Png, "png", "image/png"),
+        ] {
+            let source = encode_sample(format);
+            let thumbnail = generate_thumbnail(&source, 64)
+                .unwrap_or_else(|err| panic!("{extension} should decode: {err}"));
+            // 结果统一是 JPEG
+            assert_eq!(&thumbnail[..3], &[0xFF, 0xD8, 0xFF], "{extension} output");
+
+            assert!(
+                is_supported_image(&None, &format!("photo.{extension}")),
+                "{extension} should be accepted by extension"
+            );
+            assert!(
+                is_supported_image(&Some(mime.to_string()), "photo"),
+                "{extension} should be accepted by mime {mime}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_formats_without_a_decoder() {
+        assert!(!is_supported_image(&Some("image/svg+xml".to_string()), "x"));
+        assert!(!is_supported_image(&None, "scan.pdf"));
+        assert!(!is_supported_image(
+            &Some("image/avif".to_string()),
+            "photo.avif"
+        ));
+    }
+
+    #[test]
+    fn cache_limits_derive_targets_from_the_maximum() {
+        let limits = ThumbnailCacheLimits::new(2000, 256 * 1024 * 1024);
+
+        assert_eq!(limits.max_entries, 2000);
+        assert_eq!(limits.target_entries, 1600);
+        assert_eq!(limits.max_bytes, 268_435_456);
+        assert_eq!(limits.target_bytes, 214_748_364);
     }
 }

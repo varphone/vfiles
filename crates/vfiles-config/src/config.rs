@@ -102,6 +102,10 @@ pub struct LimitsConfig {
     pub max_file_size_bytes: u64,
     pub upload_chunk_size_bytes: u64,
     pub rate_limit_requests_per_minute: u32,
+    /// 缩略图磁盘缓存的条目上限；超出后按 mtime 回收最旧条目。
+    pub thumbnail_cache_max_entries: usize,
+    /// 缩略图磁盘缓存的字节上限；超出后同样触发回收。
+    pub thumbnail_cache_max_bytes: u64,
 }
 
 /// 周期性维护（快照裁剪 + 孤儿 blob 回收）。
@@ -258,6 +262,18 @@ impl ConfigLoader {
         ])?
         .unwrap_or(0);
 
+        let thumbnail_cache_max_entries = Self::env_parse::<usize>(&[
+            "VFILES_THUMBNAIL_CACHE_MAX_ENTRIES",
+            "THUMBNAIL_CACHE_MAX_ENTRIES",
+        ])?
+        .unwrap_or(2000)
+        .max(1);
+        // 以 MB 配置更符合运维直觉；0 表示不退让上限（由条目数兜底）
+        let thumbnail_cache_max_mb =
+            Self::env_parse::<u64>(&["VFILES_THUMBNAIL_CACHE_MAX_MB", "THUMBNAIL_CACHE_MAX_MB"])?
+                .unwrap_or(256);
+        let thumbnail_cache_max_bytes = thumbnail_cache_max_mb.saturating_mul(1024 * 1024);
+
         let config = AppConfig {
             http: HttpConfig {
                 host,
@@ -300,6 +316,8 @@ impl ConfigLoader {
                 max_file_size_bytes: 4_u64 * 1024 * 1024 * 1024,   // 4096MB
                 upload_chunk_size_bytes: 5 * 1024 * 1024,          // 5MB
                 rate_limit_requests_per_minute: 60,
+                thumbnail_cache_max_entries,
+                thumbnail_cache_max_bytes,
             },
             maintenance: MaintenanceConfig {
                 enabled: maintenance_enabled,
@@ -449,6 +467,14 @@ mod tests {
         assert!(config.auth.login_rate_limit.enabled);
         assert_eq!(config.auth.login_rate_limit.window_ms, 300_000);
         assert_eq!(config.auth.login_rate_limit.max_attempts, 10);
+    }
+
+    #[test]
+    fn test_thumbnail_cache_limits_have_sane_defaults() {
+        let config = ConfigLoader::load().unwrap();
+
+        assert_eq!(config.limits.thumbnail_cache_max_entries, 2000);
+        assert_eq!(config.limits.thumbnail_cache_max_bytes, 256 * 1024 * 1024);
     }
 
     #[test]

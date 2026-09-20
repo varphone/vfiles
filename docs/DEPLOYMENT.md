@@ -177,6 +177,20 @@ sudo ./vfiles register -t systemd \
 
 裁剪会删除旧快照（不可再恢复到这些提交），请在确认不再需要旧历史后执行。
 
+### 缩略图缓存
+
+网格视图的缩略图会按「blob + 尺寸」缓存在 `<存储根>/thumbnails`，按 mtime 回收最旧条目：
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `VFILES_THUMBNAIL_CACHE_MAX_ENTRIES` | `2000` | 缓存条目上限 |
+| `VFILES_THUMBNAIL_CACHE_MAX_MB` | `256` | 缓存总字节上限（MB） |
+
+两者任一超限都会触发回收（每 64 次写入检查一次），清理到上限的 80% 为止，并始终保留最新
+一条，避免单张超大缩略图导致缓存被反复清空。日志（`RUST_LOG=info`）会输出
+`pruned thumbnail cache removed=.. removed_bytes=.. remaining_entries=.. remaining_bytes=..`。
+支持的源格式：JPEG / PNG / GIF / WebP / BMP / TIFF / ICO / QOI。
+
 ### 周期性维护
 
 除了手动执行，也可以让服务在后台按周期自动维护。**默认关闭**（涉及不可逆删除，需显式开启）：

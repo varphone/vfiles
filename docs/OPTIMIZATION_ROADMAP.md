@@ -16,12 +16,18 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 39 实测）
+### 验证基线（round 40 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
 - `client` 单测：31 个文件 / **202** 个用例通过；`vue-tsc`、`eslint`、`prettier`
   通过。
+- 后端：`cargo test --workspace` 全部通过、`clippy --all-targets` 无告警、`fmt`
+  干净（`frontend.rs` 的历史格式差异保持原样）。
+- 缩略图冒烟：70 张 PNG 全部返回 `200 image/jpeg`；把字节上限设为 0 时日志出现
+  `pruned thumbnail cache removed=64 removed_bytes=47424 remaining_entries=1`（证明按
+  字节回收与「至少保留最新一条」生效）；手工构造的 TIFF 与 ICO 也返回
+  `200 image/jpeg`（`ffd8ffe0` 开头），无生成失败日志。
 - 界面：Playwright 对浅色/深色桌面、网格视图、批量模式、移动端与移动对话框逐张截图
   核对（见 §2.41、§2.42、§2.43）；右侧详细信息面板的初始状态、跟随选中、显示/隐藏
   持久化、移动端不渲染均有断言覆盖；顶栏版本胶囊、移动端单行底栏与移动搜索流程
@@ -681,6 +687,25 @@
   **202** 项通过；Playwright 复核搜索（2 条命中）、下拉筛选、点击外部与 Escape
   关闭（结果仍保留）、清空后恢复全量列表，全程无控制台报错。
 
+### 2.47 缩略图缓存按字节设限与更多格式（round 40，性能 + 稳定性）
+
+- 背景：缩略图磁盘缓存此前只按「条目数」设限（2000/1600）。512px 的 JPEG 缩略图
+  每张可达上百 KB，2000 条就可能占用数百 MB；同时 `image` 只启用了
+  jpeg/png/gif/webp/bmp，TIFF、ICO、QOI 会被判为不支持（415）。
+- 缓存上限：新增 `ThumbnailCacheLimits`（条目数 + 总字节数），回收时按 mtime 从旧到新
+  删除，直到**两个目标同时满足**；并且始终保留最新的一个条目——单张缩略图超过字节
+  目标时若允许清空，缓存会在每个请求上「删光→重新生成」，反而更慢。日志增加
+  `remaining_entries` / `remaining_bytes`。
+  上限可通过环境变量覆盖：`VFILES_THUMBNAIL_CACHE_MAX_ENTRIES`（默认 2000）、
+  `VFILES_THUMBNAIL_CACHE_MAX_MB`（默认 256），清理目标取上限的 80%。
+- 格式支持：`image` 增加 `tiff` / `ico` / `qoi`（均为纯 Rust，无需系统库），
+  支持列表与 mime 列表同步扩展（`image/tiff`、`image/x-icon`、
+  `image/vnd.microsoft.icon`、`image/qoi`）。AVIF 解码需要 dav1d 系统库，
+  暂不引入，已记录为后续项。
+- 测试：`vfiles-http` 新增 4 个缓存用例（字节超限但条目未超、单张超限时保留最新一条、
+  目标值派生）与 2 个格式用例（TIFF/ICO/QOI/PNG 解码为 JPEG + 扩展名/mime 识别；
+  SVG/PDF/AVIF 仍被拒绝），`vfiles-config` 新增默认值用例；前端 202 项保持通过。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -715,7 +740,9 @@
 ### 3.2 缩略图格式与容量（性能 + 稳定性，中）
 
 - `[x]` 容量上限 + 按 mtime 回收，日志可观测（round 6）。
-- `[ ]` 支持 `AVIF`/`TIFF` 等更多格式，或按需返回 WebP；按总字节数（而非条目数）设限。
+- `[x]` 按总字节数（而非仅条目数）设限，上限可用环境变量覆盖；新增 TIFF/ICO/QOI
+  解码支持（round 40，见 §2.47）。
+- `[ ]` AVIF 解码（需要 dav1d 系统库）与按需输出 WebP。
 
 ### 3.3 `FileBrowser.vue` 拆分（稳定性，中）
 
