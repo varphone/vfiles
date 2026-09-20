@@ -282,45 +282,16 @@
             </div>
           </div>
 
-          <div v-if="batchMode" class="desktop-batch-strip">
-            <div class="desktop-batch-meta">已选 {{ selectedCount }} 项</div>
-            <div class="desktop-batch-actions">
-              <button class="vf-ghost-button" @click="selectAllVisible">
-                全选当前视图
-              </button>
-              <button class="vf-ghost-button" @click="clearSelection">
-                清空选择
-              </button>
-              <button
-                class="vf-ghost-button"
-                :disabled="selectedCount === 0"
-                @click="batchDownload"
-              >
-                下载
-              </button>
-              <button
-                class="vf-ghost-button"
-                :disabled="selectedCount === 0"
-                @click="batchMove"
-              >
-                移动
-              </button>
-              <button
-                class="vf-ghost-button"
-                :disabled="selectedCount !== 1"
-                @click="renameSelected"
-              >
-                重命名
-              </button>
-              <button
-                class="vf-ghost-button is-danger"
-                :disabled="selectedCount === 0"
-                @click="batchDelete"
-              >
-                删除
-              </button>
-            </div>
-          </div>
+          <BatchActionBar
+            v-if="batchMode"
+            :selected-count="selectedCount"
+            @select-all="selectAllVisible"
+            @clear-selection="clearSelection"
+            @download="batchDownload"
+            @move="batchMove"
+            @rename="renameSelected"
+            @delete="batchDelete"
+          />
 
           <div v-if="searchError" class="notification is-danger is-light mb-3">
             <IconAlertCircle :size="20" class="mr-2" />
@@ -502,128 +473,18 @@
             </div>
           </div>
 
-          <aside
+          <FileDetailsPanel
             v-if="detailsVisible"
-            class="desktop-details"
-            aria-label="详细信息"
-          >
-            <template v-if="detailItem">
-              <div class="desktop-details-header">
-                <span class="desktop-details-icon">
-                  <FileTypeIcon
-                    :file="detailItem"
-                    :size="36"
-                    :stroke-width="1.3"
-                  />
-                </span>
-                <div class="desktop-details-titles">
-                  <p class="desktop-details-name" :title="detailItem.name">
-                    {{ detailItem.name }}
-                  </p>
-                  <p class="desktop-details-path" :title="detailItem.path">
-                    {{ detailItem.path ? `/${detailItem.path}` : "/" }}
-                  </p>
-                </div>
-              </div>
-
-              <dl class="desktop-details-grid">
-                <div>
-                  <dt>类型</dt>
-                  <dd>{{ fileKindLabel(detailItem) }}</dd>
-                </div>
-                <div>
-                  <dt>大小</dt>
-                  <dd>
-                    {{
-                      detailItem.kind === "directory"
-                        ? "--"
-                        : formatSize(detailItem.size_bytes || 0)
-                    }}
-                  </dd>
-                </div>
-                <div>
-                  <dt>修改时间</dt>
-                  <dd :title="detailModifiedAbsolute">
-                    {{ detailModifiedRelative }}
-                  </dd>
-                </div>
-                <div>
-                  <dt>创建时间</dt>
-                  <dd>{{ formatDate(detailItem.created_at) }}</dd>
-                </div>
-                <div v-if="detailItem.lastCommit?.message">
-                  <dt>最近提交</dt>
-                  <dd>{{ detailItem.lastCommit.message }}</dd>
-                </div>
-              </dl>
-
-              <div class="desktop-details-actions">
-                <button
-                  v-if="detailItem.kind === 'file'"
-                  class="vf-ghost-button"
-                  @click="handlePreview(detailItem)"
-                >
-                  <IconEye :size="16" />
-                  <span>预览</span>
-                </button>
-                <button
-                  v-else
-                  class="vf-ghost-button"
-                  @click="handleOpenFolder(detailItem)"
-                >
-                  <IconFolderOpen :size="16" />
-                  <span>打开</span>
-                </button>
-                <button
-                  class="vf-ghost-button"
-                  @click="handleDownload(detailItem)"
-                >
-                  <IconDownload :size="16" />
-                  <span>下载</span>
-                </button>
-                <button
-                  class="vf-ghost-button"
-                  @click="handleShare(detailItem)"
-                >
-                  <IconShare :size="16" />
-                  <span>分享</span>
-                </button>
-                <button
-                  class="vf-ghost-button"
-                  @click="handleViewHistory(detailItem)"
-                >
-                  <IconHistory :size="16" />
-                  <span>历史版本</span>
-                </button>
-                <button
-                  class="vf-ghost-button"
-                  @click="handleRenameEntry(detailItem)"
-                >
-                  <IconPencil :size="16" />
-                  <span>重命名</span>
-                </button>
-                <button
-                  class="vf-ghost-button"
-                  @click="handleMoveEntry(detailItem)"
-                >
-                  <IconArrowsDiff :size="16" />
-                  <span>移动</span>
-                </button>
-                <button
-                  class="vf-ghost-button is-danger"
-                  @click="handleDelete(detailItem)"
-                >
-                  <IconTrash :size="16" />
-                  <span>删除</span>
-                </button>
-              </div>
-            </template>
-
-            <div v-else class="desktop-details-empty">
-              <IconInfoCircle :size="28" />
-              <p>选中文件或文件夹后，这里会显示详细信息</p>
-            </div>
-          </aside>
+            :item="detailItem"
+            @preview="handlePreview"
+            @open-folder="handleOpenFolder"
+            @download="handleDownload"
+            @share="handleShare"
+            @view-history="handleViewHistory"
+            @rename="handleRenameEntry"
+            @move="handleMoveEntry"
+            @delete="handleDelete"
+          />
         </div>
 
         <div class="desktop-status-bar">
@@ -1135,7 +996,6 @@ import {
   IconTrash,
   IconCopy,
   IconLayoutSidebarRight,
-  IconInfoCircle,
   IconAdjustmentsHorizontal,
   IconX,
 } from "@tabler/icons-vue";
@@ -1144,7 +1004,8 @@ import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 import { useFileViewStore } from "../../stores/fileView.store";
 import FileList from "./FileList.vue";
-import FileTypeIcon from "./FileTypeIcon.vue";
+import FileDetailsPanel from "./FileDetailsPanel.vue";
+import BatchActionBar from "./BatchActionBar.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
 import Breadcrumb from "./Breadcrumb.vue";
@@ -1158,12 +1019,6 @@ import Modal from "../common/Modal.vue";
 import ShareDialog from "../common/ShareDialog.vue";
 import { promptDialog } from "../../composables/dialog";
 import { copyText } from "../../utils/clipboard";
-import {
-  fileKindLabel,
-  formatDate,
-  formatRelativeDate,
-  formatSize,
-} from "../../utils/filePresentation";
 import { useDownloadQueue } from "../../composables/useDownloadQueue";
 import { useFilePreview } from "../../composables/useFilePreview";
 import { useFileSearch } from "../../composables/useFileSearch";
@@ -1242,15 +1097,6 @@ const mobileSearchFiltersOpen = ref(false);
 const detailItem = computed<BrowserListItem | undefined>(() =>
   findActiveItem(),
 );
-const detailModified = computed(() =>
-  detailItem.value
-    ? detailItem.value.updated_at || detailItem.value.created_at
-    : undefined,
-);
-const detailModifiedRelative = computed(() =>
-  formatRelativeDate(detailModified.value),
-);
-const detailModifiedAbsolute = computed(() => formatDate(detailModified.value));
 
 /** 代码/文本预览支持一键复制原文，复制结果在按钮上就地反馈。 */
 const previewCopyState = ref<"idle" | "done" | "failed">("idle");
@@ -2348,40 +2194,12 @@ function handleSortChange(field: SortField) {
   min-width: 0;
 }
 
-/* 批量操作条：贴住内容区顶部，横向铺满 */
-.desktop-batch-strip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  padding: 0.55rem 1.1rem;
-  background: var(--vf-accent-soft);
-  border-bottom: 1px solid var(--vf-border-weak);
-}
-
 .desktop-list-primary-shell {
   display: flex;
   flex-direction: column;
   position: relative;
   z-index: 0;
   min-height: 0;
-}
-
-.desktop-batch-meta {
-  color: var(--vf-accent-text);
-  font-weight: 700;
-}
-
-.desktop-batch-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.4rem;
-}
-
-.desktop-batch-actions .vf-ghost-button {
-  min-height: 1.9rem;
 }
 
 .desktop-list-shell {
@@ -2564,96 +2382,6 @@ function handleSortChange(field: SortField) {
 
 .desktop-content-layout.has-details {
   grid-template-columns: minmax(0, 1fr) 280px;
-}
-
-.desktop-details {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  padding: 1.1rem;
-  border-left: 1px solid var(--vf-border-weak);
-  background: var(--vf-surface);
-  min-width: 0;
-}
-
-.desktop-details-header {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  min-width: 0;
-}
-
-.desktop-details-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 3rem;
-  height: 3rem;
-  border-radius: var(--vf-radius);
-  background: var(--vf-surface-sunken);
-  color: var(--vf-text-muted);
-}
-
-.desktop-details-titles {
-  min-width: 0;
-}
-
-.desktop-details-name {
-  font-size: 0.92rem;
-  font-weight: 600;
-  color: var(--vf-text-strong);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desktop-details-path {
-  font-size: 0.76rem;
-  color: var(--vf-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desktop-details-grid {
-  display: grid;
-  gap: 0.6rem;
-  margin: 0;
-}
-
-.desktop-details-grid dt {
-  font-size: 0.72rem;
-  color: var(--vf-text-subtle);
-}
-
-.desktop-details-grid dd {
-  margin: 0.1rem 0 0;
-  font-size: 0.84rem;
-  color: var(--vf-text);
-  word-break: break-word;
-}
-
-.desktop-details-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.3rem;
-}
-
-.desktop-details-actions .vf-ghost-button {
-  justify-content: flex-start;
-}
-
-.desktop-details-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  margin: auto;
-  padding: 1rem;
-  text-align: center;
-  color: var(--vf-text-subtle);
-  font-size: 0.82rem;
 }
 
 /* 空状态：图标 + 标题 + 说明 + 操作 */
