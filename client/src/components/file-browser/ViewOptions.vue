@@ -133,7 +133,10 @@ onBeforeUnmount(() => {
   margin-bottom: 8px;
 }
 
-.view-options.dropdown.is-active .vf-ghost-button {
+/* 下拉展开时高亮「视图」触发器本身。
+   注意只能用直接子选择器：面板也在 .view-options 内部，
+   若写成后代选择器会把面板里的显示方式按钮一起点亮，导致激活态看起来不对。 */
+.view-options.dropdown.is-active > .dropdown-trigger .vf-ghost-button {
   background: var(--vf-accent-soft);
   color: var(--vf-accent-strong);
 }
