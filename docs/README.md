@@ -11,6 +11,7 @@
 - [API.md](API.md) - 当前 Rust HTTP API 概览
 - [ARCHITECTURE.md](ARCHITECTURE.md) - 当前代码结构与运行时架构
 - [CONTRIBUTING.md](CONTRIBUTING.md) - 本地开发、测试与提交流程
+- [OPTIMIZATION_ROADMAP.md](OPTIMIZATION_ROADMAP.md) - 设计/实现审计与稳定性、性能、交互优化路线图
 
 ## 历史/规划资料
 
