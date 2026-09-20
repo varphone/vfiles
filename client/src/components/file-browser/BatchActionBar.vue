@@ -60,16 +60,19 @@ const emit = defineEmits<{
 </script>
 
 <style scoped>
-/* 批量操作条：贴住内容区顶部，横向铺满 */
+/* 批量操作条：独立圆角面板，与上方工具栏和下方列表都留出间距，
+   避免贴在一起像是工具栏没画完 */
 .desktop-batch-strip {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
-  padding: 0.55rem 1.1rem;
+  margin: 0.5rem 0 0.25rem;
+  padding: 0.5rem 0.75rem;
   background: var(--vf-accent-soft);
-  border-bottom: 1px solid var(--vf-border-weak);
+  border: 1px solid var(--vf-accent-soft-strong);
+  border-radius: var(--vf-radius);
 }
 
 .desktop-batch-meta {
