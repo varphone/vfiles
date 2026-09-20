@@ -19,6 +19,7 @@ pub mod search;
 pub mod session;
 pub mod share;
 pub mod snapshot;
+pub mod thumbnail;
 pub mod tree;
 pub mod upload;
 
@@ -164,6 +165,7 @@ pub fn files_router() -> Router<AppState> {
     Router::new()
         .merge(tree::router())
         .merge(content::router())
+        .merge(thumbnail::router())
         .merge(upload::router())
         .merge(snapshot::router())
         .merge(search::router())

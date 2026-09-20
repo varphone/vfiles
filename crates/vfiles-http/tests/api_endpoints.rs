@@ -3399,3 +3399,138 @@ async fn admin_can_revoke_user_sessions() {
     let after_payload = response_json(after_revoke).await;
     assert_eq!(after_payload["data"]["user"], Value::Null);
 }
+
+fn png_fixture(width: u32, height: u32) -> Vec<u8> {
+    use image::{ImageFormat, Rgb, RgbImage};
+
+    let mut image = RgbImage::new(width, height);
+    for (x, y, pixel) in image.enumerate_pixels_mut() {
+        *pixel = Rgb([(x % 256) as u8, (y % 256) as u8, 128]);
+    }
+
+    let mut cursor = Cursor::new(Vec::new());
+    image
+        .write_to(&mut cursor, ImageFormat::Png)
+        .expect("png fixture should encode");
+    cursor.into_inner()
+}
+
+async fn upload_fixture(app: &TestApp, filename: &str, path: &str, bytes: &[u8]) {
+    let (body, content_type) = single_upload_multipart(filename, path, "fixture", bytes);
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/files/upload")
+                .header(header::CONTENT_TYPE, content_type)
+                .body(Body::from(body))
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn thumbnail_generates_cached_jpeg_and_supports_conditional_requests() {
+    let app = TestApp::new().await;
+    let png = png_fixture(400, 300);
+    upload_fixture(&app, "photo.png", "docs", &png).await;
+
+    let uri = "/api/files/thumbnail?path=docs/photo.png&size=128";
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri(uri)
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .expect("content-type should be present"),
+        "image/jpeg"
+    );
+    let cache_control = response
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .expect("cache-control should be present")
+        .to_str()
+        .expect("cache-control should be ascii");
+    assert!(cache_control.contains("max-age"));
+    let etag = response
+        .headers()
+        .get(header::ETAG)
+        .expect("etag should be present")
+        .clone();
+
+    let thumbnail = response_bytes(response).await;
+    assert_eq!(
+        image::guess_format(&thumbnail).expect("thumbnail format should be detected"),
+        image::ImageFormat::Jpeg
+    );
+    let decoded = image::load_from_memory(&thumbnail).expect("thumbnail should decode");
+    assert_eq!((decoded.width(), decoded.height()), (128, 96));
+
+    // A second request is served from the on-disk cache and stays byte-identical.
+    let cached = app
+        .request_as_admin(
+            Request::builder()
+                .uri(uri)
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(cached.status(), StatusCode::OK);
+    assert_eq!(response_bytes(cached).await, thumbnail);
+
+    // Conditional requests revalidate with the ETag instead of resending bytes.
+    let not_modified = app
+        .request_as_admin(
+            Request::builder()
+                .uri(uri)
+                .header(header::IF_NONE_MATCH, etag)
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
+}
+
+#[tokio::test]
+async fn thumbnail_rejects_non_image_files() {
+    let app = TestApp::new().await;
+    upload_fixture(&app, "notes.txt", "docs", b"not an image").await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/thumbnail?path=docs/notes.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[tokio::test]
+async fn thumbnail_requires_authentication() {
+    let app = TestApp::new().await;
+    let png = png_fixture(64, 64);
+    upload_fixture(&app, "photo.png", "docs", &png).await;
+
+    let response = app
+        .request(
+            Request::builder()
+                .uri("/api/files/thumbnail?path=docs/photo.png")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}

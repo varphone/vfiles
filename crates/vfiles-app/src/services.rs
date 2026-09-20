@@ -1035,6 +1035,7 @@ pub struct FileContentStream {
 
 #[derive(Debug, Clone)]
 pub struct FileContentBytes {
+    pub blob_id: BlobId,
     pub filename: String,
     pub mime_type: Option<String>,
     pub size_bytes: u64,
@@ -1447,6 +1448,7 @@ where
             })?;
 
         Ok(FileContentBytes {
+            blob_id: resolved.blob_id,
             filename: resolved.filename,
             mime_type: resolved.mime_type,
             size_bytes: resolved.size_bytes,
