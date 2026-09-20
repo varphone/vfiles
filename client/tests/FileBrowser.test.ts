@@ -67,6 +67,43 @@ vi.mock("../src/services/files.service", () => ({
   },
 }));
 
+/**
+ * 视图偏好存进 localStorage，测试环境（bun + jsdom）的实现不完整，
+ * 这里提供确定性实现，便于显式控制「详细信息」面板的开关。
+ */
+function installLocalStorageStub() {
+  const backing = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    value: {
+      getItem: (key: string) => (backing.has(key) ? backing.get(key)! : null),
+      setItem: (key: string, value: string) => backing.set(key, String(value)),
+      removeItem: (key: string) => backing.delete(key),
+      clear: () => backing.clear(),
+      key: (index: number) => Array.from(backing.keys())[index] ?? null,
+      get length() {
+        return backing.size;
+      },
+    },
+    configurable: true,
+    writable: true,
+  });
+}
+
+/** 桌面端默认会渲染右侧详细信息面板；列表相关断言需要关掉它避免文本重复。 */
+function setDetailsVisible(visible: boolean) {
+  localStorage.setItem(
+    "vfiles:file-browser:view",
+    JSON.stringify({
+      mode: "list",
+      sortField: "name",
+      sortDirection: "asc",
+      foldersFirst: true,
+      thumbnailSize: 144,
+      detailsVisible: visible,
+    }),
+  );
+}
+
 function stubBrowserApis() {
   vi.stubGlobal("matchMedia", (q: string) => ({
     matches: false,
@@ -86,6 +123,8 @@ function stubBrowserApis() {
 
 // 所有 describe 共用：重置服务 mock 并补齐浏览器 API（matchMedia 等）。
 beforeEach(() => {
+  installLocalStorageStub();
+  setDetailsVisible(false);
   getFilesMock.mockReset();
   getFilesPageMock.mockClear();
   searchFilesMock.mockReset();
@@ -596,6 +635,75 @@ describe("FileBrowser.vue loading state", () => {
     await findByText("此文件夹为空");
   });
 });
+describe("FileBrowser.vue details panel", () => {
+  const files = [
+    {
+      id: "docs",
+      name: "docs",
+      path: "docs",
+      kind: "directory",
+      created_at: "2026-04-10T00:00:00.000Z",
+      updated_at: "2026-04-10T00:00:00.000Z",
+    },
+    {
+      id: "readme",
+      name: "readme.md",
+      path: "readme.md",
+      kind: "file",
+      size_bytes: 2048,
+      created_at: "2026-04-10T00:00:00.000Z",
+      updated_at: "2026-04-10T00:00:00.000Z",
+    },
+  ];
+
+  it("shows metadata and actions for the active entry", async () => {
+    setDetailsVisible(true);
+    getFilesMock.mockResolvedValue(files);
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("readme.md");
+
+    const panel = container.querySelector(".desktop-details");
+    expect(panel).not.toBeNull();
+    // 默认活动条目是第一个真实条目（文件夹）
+    await waitFor(() => {
+      expect(
+        panel?.querySelector(".desktop-details-name")?.textContent,
+      ).toContain("docs");
+    });
+    expect(panel?.textContent).toContain("文件夹");
+    const actions = Array.from(
+      panel?.querySelectorAll(".desktop-details-actions button") ?? [],
+    ).map((button) => button.textContent?.trim());
+    expect(actions).toContain("打开");
+    expect(actions).toContain("删除");
+  });
+
+  it("follows the active entry and can be hidden", async () => {
+    setDetailsVisible(true);
+    getFilesMock.mockResolvedValue(files);
+
+    const { findByText, getByLabelText, container } = renderWithProviders(
+      FileBrowser as any,
+    );
+    await findByText("readme.md");
+    const panel = () => container.querySelector(".desktop-details");
+
+    await fireEvent.click(await findByText("readme.md"));
+    await waitFor(() => {
+      expect(
+        panel()?.querySelector(".desktop-details-name")?.textContent,
+      ).toContain("readme.md");
+    });
+
+    await fireEvent.click(getByLabelText("隐藏详细信息"));
+    await waitFor(() => expect(panel()).toBeNull());
+
+    await fireEvent.click(getByLabelText("显示详细信息"));
+    await waitFor(() => expect(panel()).not.toBeNull());
+  });
+});
+
 describe("FileBrowser.vue preview copy", () => {
   function typeScriptFile() {
     return [

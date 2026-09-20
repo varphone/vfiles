@@ -133,6 +133,20 @@
               <ViewOptions />
               <button
                 class="vf-icon-button"
+                :class="{ 'is-active': fileView.detailsVisible }"
+                :title="
+                  fileView.detailsVisible ? '隐藏详细信息' : '显示详细信息'
+                "
+                :aria-label="
+                  fileView.detailsVisible ? '隐藏详细信息' : '显示详细信息'
+                "
+                :aria-pressed="fileView.detailsVisible ? 'true' : 'false'"
+                @click="fileView.toggleDetails()"
+              >
+                <IconLayoutSidebarRight :size="18" />
+              </button>
+              <button
+                class="vf-icon-button"
                 :class="{ 'is-active': batchMode }"
                 :title="batchMode ? '退出批量选择' : '批量选择'"
                 :aria-label="batchMode ? '退出批量选择' : '批量选择'"
@@ -322,177 +336,307 @@
       />
 
       <template v-if="!isMobile">
-        <div class="desktop-list-primary-shell">
-          <div class="desktop-list-shell">
-            <FileSkeleton
-              v-if="loading"
-              :variant="viewMode === 'grid' ? 'grid' : 'list'"
-            />
-
-            <div v-else-if="error" class="notification is-danger is-light">
-              <IconAlertCircle :size="20" class="mr-2" />
-              {{ error }}
-              <div class="mt-2">
-                <button
-                  class="button is-small is-danger is-light"
-                  :class="{ 'is-loading': loading }"
-                  :disabled="loading"
-                  @click="refresh"
-                >
-                  <IconRefresh :size="16" class="mr-1" />
-                  重试
-                </button>
-              </div>
-            </div>
-
-            <div
-              v-else-if="!searchActive && files.length === 0"
-              class="browser-empty"
-            >
-              <IconFolderOpen :size="56" class="browser-empty-icon" />
-              <p class="browser-empty-title">此文件夹为空</p>
-              <p class="browser-empty-hint">
-                拖拽文件到这里，或使用下面的按钮上传
-              </p>
-              <div class="browser-empty-actions">
-                <button
-                  class="button is-link is-small"
-                  @click="showUploader = true"
-                >
-                  <IconUpload :size="16" />
-                  <span>上传文件</span>
-                </button>
-                <button
-                  class="button is-small"
-                  @click="promptCreateDirectory(currentPath || '')"
-                >
-                  <IconFolderPlus :size="16" />
-                  <span>新建文件夹</span>
-                </button>
-              </div>
-            </div>
-
-            <div
-              v-else-if="searchActive && searchResults.length === 0"
-              class="browser-empty"
-            >
-              <IconSearch :size="48" class="browser-empty-icon" />
-              <p class="browser-empty-title">没有找到匹配的文件</p>
-              <p class="browser-empty-hint">换个关键字，或清空搜索条件</p>
-              <div class="browser-empty-actions">
-                <button class="button is-small" @click="clearSearch">
-                  清空搜索
-                </button>
-              </div>
-            </div>
-
-            <template v-else>
-              <div v-if="searchActive" class="desktop-list-meta">
-                搜索结果：{{ searchResults.length }} 项（{{
-                  searchMode === "content" ? "内容" : "文件名"
-                }}）
-              </div>
-
-              <FileGrid
-                v-if="viewMode === 'grid'"
-                :files="desktopItems"
-                :highlight="searchActive ? searchQuery : ''"
-                :commit="browseCommit"
-                :select-mode="batchMode"
-                :selected-paths="selectedPaths"
-                :active-path="desktopActivePath"
-                :thumbnail-size="fileView.thumbnailSize"
-                @click="handleItemClick"
-                @download="handleDownload"
-                @rename="handleRenameEntry"
-                @move="handleMoveEntry"
-                @delete="handleDelete"
-                @view-history="handleViewHistory"
-                @toggle-select="toggleSelect"
-                @modifier-select="handleModifierSelect"
-                @context-menu="handleContextMenu"
-                @drag-start="handleDragStart"
-                @drag-end="handleDragEnd"
-                @drop-on-folder="handleDropOnFolder"
-                @share="handleShare"
-                @preview="handlePreview"
-                @open-folder="handleOpenFolder"
-                @create-directory="handleCreateDirectory"
-              />
-              <FileList
-                v-else
-                :files="desktopItems"
-                :highlight="searchActive ? searchQuery : ''"
-                :select-mode="batchMode"
-                :selected-paths="selectedPaths"
-                :expanded-path="expandedFilePath"
-                :active-path="desktopActivePath"
-                :desktop="true"
-                :sort-field="fileView.sortField"
-                :sort-direction="fileView.sortDirection"
-                @click="handleItemClick"
-                @download="handleDownload"
-                @rename="handleRenameEntry"
-                @move="handleMoveEntry"
-                @delete="handleDelete"
-                @view-history="handleViewHistory"
-                @toggle-select="toggleSelect"
-                @modifier-select="handleModifierSelect"
-                @context-menu="handleContextMenu"
-                @drag-start="handleDragStart"
-                @drag-end="handleDragEnd"
-                @drop-on-folder="handleDropOnFolder"
-                @toggle-select-all="toggleSelectAll"
-                @sort-change="handleSortChange"
-                @share="handleShare"
-                @preview="handlePreview"
-                @open-folder="handleOpenFolder"
-                @create-directory="handleCreateDirectory"
+        <div
+          class="desktop-content-layout"
+          :class="{ 'has-details': detailsVisible }"
+        >
+          <div class="desktop-list-primary-shell">
+            <div class="desktop-list-shell">
+              <FileSkeleton
+                v-if="loading"
+                :variant="viewMode === 'grid' ? 'grid' : 'list'"
               />
 
-              <div
-                v-if="hasMore"
-                ref="loadMoreSentinel"
-                class="desktop-load-more has-text-centered has-text-grey is-size-7 py-3"
-              >
-                <span v-if="filesStore.loadingMoreFiles">正在加载更多...</span>
-                <span v-else-if="filesStore.loadMoreError">
-                  {{ filesStore.loadMoreError }}
+              <div v-else-if="error" class="notification is-danger is-light">
+                <IconAlertCircle :size="20" class="mr-2" />
+                {{ error }}
+                <div class="mt-2">
                   <button
-                    class="button is-small is-light ml-2"
-                    @click="filesStore.loadMoreFiles()"
+                    class="button is-small is-danger is-light"
+                    :class="{ 'is-loading': loading }"
+                    :disabled="loading"
+                    @click="refresh"
                   >
+                    <IconRefresh :size="16" class="mr-1" />
                     重试
                   </button>
-                </span>
-                <span v-else
-                  >继续下滑加载更多（已显示 {{ desktopItems.length }} /
-                  {{ knownTotal }}）...</span
-                >
+                </div>
               </div>
-            </template>
+
+              <div
+                v-else-if="!searchActive && files.length === 0"
+                class="browser-empty"
+              >
+                <IconFolderOpen :size="56" class="browser-empty-icon" />
+                <p class="browser-empty-title">此文件夹为空</p>
+                <p class="browser-empty-hint">
+                  拖拽文件到这里，或使用下面的按钮上传
+                </p>
+                <div class="browser-empty-actions">
+                  <button
+                    class="button is-link is-small"
+                    @click="showUploader = true"
+                  >
+                    <IconUpload :size="16" />
+                    <span>上传文件</span>
+                  </button>
+                  <button
+                    class="button is-small"
+                    @click="promptCreateDirectory(currentPath || '')"
+                  >
+                    <IconFolderPlus :size="16" />
+                    <span>新建文件夹</span>
+                  </button>
+                </div>
+              </div>
+
+              <div
+                v-else-if="searchActive && searchResults.length === 0"
+                class="browser-empty"
+              >
+                <IconSearch :size="48" class="browser-empty-icon" />
+                <p class="browser-empty-title">没有找到匹配的文件</p>
+                <p class="browser-empty-hint">换个关键字，或清空搜索条件</p>
+                <div class="browser-empty-actions">
+                  <button class="button is-small" @click="clearSearch">
+                    清空搜索
+                  </button>
+                </div>
+              </div>
+
+              <template v-else>
+                <div v-if="searchActive" class="desktop-list-meta">
+                  搜索结果：{{ searchResults.length }} 项（{{
+                    searchMode === "content" ? "内容" : "文件名"
+                  }}）
+                </div>
+
+                <FileGrid
+                  v-if="viewMode === 'grid'"
+                  :files="desktopItems"
+                  :highlight="searchActive ? searchQuery : ''"
+                  :commit="browseCommit"
+                  :select-mode="batchMode"
+                  :selected-paths="selectedPaths"
+                  :active-path="desktopActivePath"
+                  :thumbnail-size="fileView.thumbnailSize"
+                  @click="handleItemClick"
+                  @download="handleDownload"
+                  @rename="handleRenameEntry"
+                  @move="handleMoveEntry"
+                  @delete="handleDelete"
+                  @view-history="handleViewHistory"
+                  @toggle-select="toggleSelect"
+                  @modifier-select="handleModifierSelect"
+                  @context-menu="handleContextMenu"
+                  @drag-start="handleDragStart"
+                  @drag-end="handleDragEnd"
+                  @drop-on-folder="handleDropOnFolder"
+                  @share="handleShare"
+                  @preview="handlePreview"
+                  @open-folder="handleOpenFolder"
+                  @create-directory="handleCreateDirectory"
+                />
+                <FileList
+                  v-else
+                  :files="desktopItems"
+                  :highlight="searchActive ? searchQuery : ''"
+                  :select-mode="batchMode"
+                  :selected-paths="selectedPaths"
+                  :expanded-path="expandedFilePath"
+                  :active-path="desktopActivePath"
+                  :desktop="true"
+                  :sort-field="fileView.sortField"
+                  :sort-direction="fileView.sortDirection"
+                  @click="handleItemClick"
+                  @download="handleDownload"
+                  @rename="handleRenameEntry"
+                  @move="handleMoveEntry"
+                  @delete="handleDelete"
+                  @view-history="handleViewHistory"
+                  @toggle-select="toggleSelect"
+                  @modifier-select="handleModifierSelect"
+                  @context-menu="handleContextMenu"
+                  @drag-start="handleDragStart"
+                  @drag-end="handleDragEnd"
+                  @drop-on-folder="handleDropOnFolder"
+                  @toggle-select-all="toggleSelectAll"
+                  @sort-change="handleSortChange"
+                  @share="handleShare"
+                  @preview="handlePreview"
+                  @open-folder="handleOpenFolder"
+                  @create-directory="handleCreateDirectory"
+                />
+
+                <div
+                  v-if="hasMore"
+                  ref="loadMoreSentinel"
+                  class="desktop-load-more has-text-centered has-text-grey is-size-7 py-3"
+                >
+                  <span v-if="filesStore.loadingMoreFiles"
+                    >正在加载更多...</span
+                  >
+                  <span v-else-if="filesStore.loadMoreError">
+                    {{ filesStore.loadMoreError }}
+                    <button
+                      class="button is-small is-light ml-2"
+                      @click="filesStore.loadMoreFiles()"
+                    >
+                      重试
+                    </button>
+                  </span>
+                  <span v-else
+                    >继续下滑加载更多（已显示 {{ desktopItems.length }} /
+                    {{ knownTotal }}）...</span
+                  >
+                </div>
+              </template>
+            </div>
           </div>
 
-          <div class="desktop-status-bar">
-            <span>{{
-              searchActive
-                ? `搜索结果 ${searchResults.length} 项`
-                : filesStore.hasMoreFiles
-                  ? `当前目录 ${files.length} / ${filesStore.totalFiles} 项`
-                  : `当前目录 ${files.length} 项`
-            }}</span>
-            <span>
-              {{
-                parentPath != null
-                  ? "单击文件夹进入，点“返回上一级”回退"
-                  : "单击文件夹进入子目录"
-              }}
-            </span>
-            <span v-if="selectedCount > 0">已选 {{ selectedCount }} 项</span>
-            <span class="desktop-status-shortcuts is-hidden-touch">
-              Ctrl/⌘+A 全选 · Delete 删除 · F2 重命名 · Enter 打开 · Esc 退出
-            </span>
-          </div>
+          <aside
+            v-if="detailsVisible"
+            class="desktop-details"
+            aria-label="详细信息"
+          >
+            <template v-if="detailItem">
+              <div class="desktop-details-header">
+                <span class="desktop-details-icon">
+                  <FileTypeIcon
+                    :file="detailItem"
+                    :size="36"
+                    :stroke-width="1.3"
+                  />
+                </span>
+                <div class="desktop-details-titles">
+                  <p class="desktop-details-name" :title="detailItem.name">
+                    {{ detailItem.name }}
+                  </p>
+                  <p class="desktop-details-path" :title="detailItem.path">
+                    {{ detailItem.path ? `/${detailItem.path}` : "/" }}
+                  </p>
+                </div>
+              </div>
+
+              <dl class="desktop-details-grid">
+                <div>
+                  <dt>类型</dt>
+                  <dd>{{ fileKindLabel(detailItem) }}</dd>
+                </div>
+                <div>
+                  <dt>大小</dt>
+                  <dd>
+                    {{
+                      detailItem.kind === "directory"
+                        ? "--"
+                        : formatSize(detailItem.size_bytes || 0)
+                    }}
+                  </dd>
+                </div>
+                <div>
+                  <dt>修改时间</dt>
+                  <dd :title="detailModifiedAbsolute">
+                    {{ detailModifiedRelative }}
+                  </dd>
+                </div>
+                <div>
+                  <dt>创建时间</dt>
+                  <dd>{{ formatDate(detailItem.created_at) }}</dd>
+                </div>
+                <div v-if="detailItem.lastCommit?.message">
+                  <dt>最近提交</dt>
+                  <dd>{{ detailItem.lastCommit.message }}</dd>
+                </div>
+              </dl>
+
+              <div class="desktop-details-actions">
+                <button
+                  v-if="detailItem.kind === 'file'"
+                  class="vf-ghost-button"
+                  @click="handlePreview(detailItem)"
+                >
+                  <IconEye :size="16" />
+                  <span>预览</span>
+                </button>
+                <button
+                  v-else
+                  class="vf-ghost-button"
+                  @click="handleOpenFolder(detailItem)"
+                >
+                  <IconFolderOpen :size="16" />
+                  <span>打开</span>
+                </button>
+                <button
+                  class="vf-ghost-button"
+                  @click="handleDownload(detailItem)"
+                >
+                  <IconDownload :size="16" />
+                  <span>下载</span>
+                </button>
+                <button
+                  class="vf-ghost-button"
+                  @click="handleShare(detailItem)"
+                >
+                  <IconShare :size="16" />
+                  <span>分享</span>
+                </button>
+                <button
+                  class="vf-ghost-button"
+                  @click="handleViewHistory(detailItem)"
+                >
+                  <IconHistory :size="16" />
+                  <span>历史版本</span>
+                </button>
+                <button
+                  class="vf-ghost-button"
+                  @click="handleRenameEntry(detailItem)"
+                >
+                  <IconPencil :size="16" />
+                  <span>重命名</span>
+                </button>
+                <button
+                  class="vf-ghost-button"
+                  @click="handleMoveEntry(detailItem)"
+                >
+                  <IconArrowsDiff :size="16" />
+                  <span>移动</span>
+                </button>
+                <button
+                  class="vf-ghost-button is-danger"
+                  @click="handleDelete(detailItem)"
+                >
+                  <IconTrash :size="16" />
+                  <span>删除</span>
+                </button>
+              </div>
+            </template>
+
+            <div v-else class="desktop-details-empty">
+              <IconInfoCircle :size="28" />
+              <p>选中文件或文件夹后，这里会显示详细信息</p>
+            </div>
+          </aside>
+        </div>
+
+        <div class="desktop-status-bar">
+          <span>{{
+            searchActive
+              ? `搜索结果 ${searchResults.length} 项`
+              : filesStore.hasMoreFiles
+                ? `当前目录 ${files.length} / ${filesStore.totalFiles} 项`
+                : `当前目录 ${files.length} 项`
+          }}</span>
+          <span>
+            {{
+              parentPath != null
+                ? "单击文件夹进入，点“返回上一级”回退"
+                : "单击文件夹进入子目录"
+            }}
+          </span>
+          <span v-if="selectedCount > 0">已选 {{ selectedCount }} 项</span>
+          <span class="desktop-status-shortcuts is-hidden-touch">
+            Ctrl/⌘+A 全选 · Delete 删除 · F2 重命名 · Enter 打开 · Esc 退出
+          </span>
         </div>
       </template>
 
@@ -982,12 +1126,15 @@ import {
   IconShare,
   IconTrash,
   IconCopy,
+  IconLayoutSidebarRight,
+  IconInfoCircle,
 } from "@tabler/icons-vue";
 import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 import { useFileViewStore } from "../../stores/fileView.store";
 import FileList from "./FileList.vue";
+import FileTypeIcon from "./FileTypeIcon.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
 import Breadcrumb from "./Breadcrumb.vue";
@@ -1001,6 +1148,12 @@ import Modal from "../common/Modal.vue";
 import ShareDialog from "../common/ShareDialog.vue";
 import { promptDialog } from "../../composables/dialog";
 import { copyText } from "../../utils/clipboard";
+import {
+  fileKindLabel,
+  formatDate,
+  formatRelativeDate,
+  formatSize,
+} from "../../utils/filePresentation";
 import { useDownloadQueue } from "../../composables/useDownloadQueue";
 import { useFilePreview } from "../../composables/useFilePreview";
 import { useFileSearch } from "../../composables/useFileSearch";
@@ -1065,6 +1218,26 @@ const {
   // 当前视图中的文件（不含目录与 `.`/`..`），用于预览的上一张/下一张
   getPreviewableFiles: () => previewableFiles.value,
 });
+
+/**
+ * 右侧「详细信息」面板：桌面端显示，移动端隐藏。
+ * 展示当前活动条目（键盘高亮或唯一选中项，见 findActiveItem）。
+ */
+const detailsVisible = computed(
+  () => !isMobile.value && fileView.detailsVisible,
+);
+const detailItem = computed<BrowserListItem | undefined>(() =>
+  findActiveItem(),
+);
+const detailModified = computed(() =>
+  detailItem.value
+    ? detailItem.value.updated_at || detailItem.value.created_at
+    : undefined,
+);
+const detailModifiedRelative = computed(() =>
+  formatRelativeDate(detailModified.value),
+);
+const detailModifiedAbsolute = computed(() => formatDate(detailModified.value));
 
 /** 代码/文本预览支持一键复制原文，复制结果在按钮上就地反馈。 */
 const previewCopyState = ref<"idle" | "done" | "failed">("idle");
@@ -1528,8 +1701,17 @@ watch(
       return;
     }
 
+    const current = desktopItems.value.find(
+      (file) => file.path === desktopActivePath.value,
+    );
+    // 目录刚加载时列表里只有 `.`/`..` 两个快捷项，会把活动行落在快捷项上；
+    // 真实条目出现后改选第一个真实条目（用户已显式选择时不打扰）。
+    const currentIsShortcut =
+      !current || Boolean((current as BrowserListItem).uiRole);
     if (
-      !desktopItems.value.some((file) => file.path === desktopActivePath.value)
+      currentIsShortcut &&
+      selectedPaths.value.size === 0 &&
+      desktopItems.value.length > 0
     ) {
       const firstRealItem = desktopItems.value.find(
         (file) => !(file as BrowserListItem).uiRole,
@@ -2324,6 +2506,107 @@ function handleSortChange(field: SortField) {
 
 .preview-frame {
   height: 70vh;
+}
+
+/* 桌面内容区：列表 + 右侧详细信息面板 */
+.desktop-content-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.desktop-content-layout.has-details {
+  grid-template-columns: minmax(0, 1fr) 280px;
+}
+
+.desktop-details {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.1rem;
+  border-left: 1px solid var(--vf-border-weak);
+  background: var(--vf-surface);
+  min-width: 0;
+}
+
+.desktop-details-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.desktop-details-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 3rem;
+  height: 3rem;
+  border-radius: var(--vf-radius);
+  background: var(--vf-surface-sunken);
+  color: var(--vf-text-muted);
+}
+
+.desktop-details-titles {
+  min-width: 0;
+}
+
+.desktop-details-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--vf-text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-details-path {
+  font-size: 0.76rem;
+  color: var(--vf-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-details-grid {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+}
+
+.desktop-details-grid dt {
+  font-size: 0.72rem;
+  color: var(--vf-text-subtle);
+}
+
+.desktop-details-grid dd {
+  margin: 0.1rem 0 0;
+  font-size: 0.84rem;
+  color: var(--vf-text);
+  word-break: break-word;
+}
+
+.desktop-details-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+.desktop-details-actions .vf-ghost-button {
+  justify-content: flex-start;
+}
+
+.desktop-details-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  margin: auto;
+  padding: 1rem;
+  text-align: center;
+  color: var(--vf-text-subtle);
+  font-size: 0.82rem;
 }
 
 /* 空状态：图标 + 标题 + 说明 + 操作 */

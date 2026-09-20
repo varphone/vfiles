@@ -16,6 +16,8 @@ interface PersistedViewPrefs {
   sortDirection: SortDirection;
   foldersFirst: boolean;
   thumbnailSize: number;
+  /** 桌面端是否显示右侧「详细信息」面板 */
+  detailsVisible: boolean;
 }
 
 const SORT_FIELDS: SortField[] = ["name", "size", "modified", "type"];
@@ -40,6 +42,7 @@ function readPersisted(): PersistedViewPrefs {
     sortDirection: DEFAULT_SORT_STATE.direction,
     foldersFirst: DEFAULT_SORT_STATE.foldersFirst,
     thumbnailSize: DEFAULT_THUMBNAIL_SIZE,
+    detailsVisible: true,
   };
 
   if (typeof localStorage === "undefined") return fallback;
@@ -62,6 +65,10 @@ function readPersisted(): PersistedViewPrefs {
           ? parsed.foldersFirst
           : fallback.foldersFirst,
       thumbnailSize: clampThumbnailSize(parsed.thumbnailSize),
+      detailsVisible:
+        typeof parsed.detailsVisible === "boolean"
+          ? parsed.detailsVisible
+          : fallback.detailsVisible,
     };
   } catch {
     return fallback;
@@ -76,6 +83,7 @@ export const useFileViewStore = defineStore("fileView", () => {
   const sortDirection = ref<SortDirection>(initial.sortDirection);
   const foldersFirst = ref(initial.foldersFirst);
   const thumbnailSize = ref(initial.thumbnailSize);
+  const detailsVisible = ref(initial.detailsVisible);
 
   function persist() {
     if (typeof localStorage === "undefined") return;
@@ -86,6 +94,7 @@ export const useFileViewStore = defineStore("fileView", () => {
         sortDirection: sortDirection.value,
         foldersFirst: foldersFirst.value,
         thumbnailSize: thumbnailSize.value,
+        detailsVisible: detailsVisible.value,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch {
@@ -94,7 +103,14 @@ export const useFileViewStore = defineStore("fileView", () => {
   }
 
   watch(
-    [mode, sortField, sortDirection, foldersFirst, thumbnailSize],
+    [
+      mode,
+      sortField,
+      sortDirection,
+      foldersFirst,
+      thumbnailSize,
+      detailsVisible,
+    ],
     persist,
     {
       flush: "post",
@@ -130,12 +146,24 @@ export const useFileViewStore = defineStore("fileView", () => {
     thumbnailSize.value = clampThumbnailSize(next);
   }
 
+  /** 桌面端右侧「详细信息」面板开关（移动端不展示，见 FileBrowser）。 */
+  function setDetailsVisible(next: boolean) {
+    detailsVisible.value = Boolean(next);
+  }
+
+  function toggleDetails() {
+    detailsVisible.value = !detailsVisible.value;
+  }
+
   return {
     mode,
     sortField,
     sortDirection,
     foldersFirst,
     thumbnailSize,
+    detailsVisible,
+    setDetailsVisible,
+    toggleDetails,
     setMode,
     toggleMode,
     setSortField,

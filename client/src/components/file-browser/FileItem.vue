@@ -34,7 +34,7 @@
         </label>
 
         <span class="icon mr-2">
-          <component :is="icon" :size="18" :stroke-width="1.7" />
+          <FileTypeIcon :file="file" :size="18" :stroke-width="1.7" />
         </span>
       </div>
     </td>
@@ -234,7 +234,7 @@
       <div class="media-left">
         <figure class="image is-48x48">
           <div class="file-icon">
-            <component :is="icon" :size="32" :stroke-width="1.5" />
+            <FileTypeIcon :file="file" :size="32" :stroke-width="1.5" />
           </div>
         </figure>
       </div>
@@ -387,16 +387,9 @@
 import { computed, onBeforeUnmount, ref } from "vue";
 import { confirmDialog } from "../../composables/dialog";
 import {
-  IconArrowLeft,
   IconArrowsDiff,
-  IconFolder,
   IconFolderPlus,
   IconFolderOpen,
-  IconFile,
-  IconFileText,
-  IconFileCode,
-  IconPhoto,
-  IconFileZip,
   IconHistory,
   IconPencil,
   IconDownload,
@@ -405,7 +398,9 @@ import {
   IconEye,
 } from "@tabler/icons-vue";
 import type { FileInfo } from "../../types";
+import FileTypeIcon from "./FileTypeIcon.vue";
 import {
+  fileKindLabel,
   formatDate,
   formatRelativeDate,
   formatSize,
@@ -480,17 +475,8 @@ const desktopFileSizeLabel = computed(() => {
 const desktopFileKindLabel = computed(() => {
   if (isParentShortcut.value) return "父目录";
   if (isSelfShortcut.value) return "当前目录";
-  if (props.file.kind === "directory") return "文件夹";
-
-  const ext = getExtension(props.file.name);
-  if (props.file.mime_type?.startsWith("image/")) return "图像文件";
-  if (props.file.mime_type?.startsWith("video/")) return "视频文件";
-  if (props.file.mime_type?.startsWith("audio/")) return "音频文件";
-  if (ext === "pdf") return "PDF 文档";
-  if (["txt", "md", "log"].includes(ext)) return "文本文档";
-  if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "压缩文件";
-  if (ext) return `${ext.toUpperCase()} 文件`;
-  return "文件";
+  // 统一走共享实现，避免各处对「代码 / 视频」的判定不一致
+  return fileKindLabel(props.file);
 });
 
 const desktopSubtitle = computed(() => {
@@ -511,42 +497,6 @@ const desktopSubtitle = computed(() => {
   }
 
   return props.file.mime_type || "双击打开预览";
-});
-
-const icon = computed(() => {
-  if (isParentShortcut.value) return IconArrowLeft;
-  if (props.file.kind === "directory") return IconFolder;
-
-  const ext = props.file.name.split(".").pop()?.toLowerCase();
-
-  if (["jpg", "jpeg", "png", "gif", "svg", "webp"].includes(ext || "")) {
-    return IconPhoto;
-  }
-  if (
-    [
-      "js",
-      "ts",
-      "jsx",
-      "tsx",
-      "vue",
-      "py",
-      "java",
-      "cpp",
-      "c",
-      "go",
-      "rs",
-    ].includes(ext || "")
-  ) {
-    return IconFileCode;
-  }
-  if (["txt", "md", "log"].includes(ext || "")) {
-    return IconFileText;
-  }
-  if (["zip", "tar", "gz", "rar", "7z"].includes(ext || "")) {
-    return IconFileZip;
-  }
-
-  return IconFile;
 });
 
 type NameSegment = { text: string; match: boolean };
@@ -583,11 +533,6 @@ const nameSegments = computed<NameSegment[]>(() => {
 
 function splitHighlight(text: string): NameSegment[] {
   return splitByNeedle(text, props.highlight ?? "");
-}
-
-function getExtension(name: string): string {
-  const ext = name.split(".").pop()?.toLowerCase();
-  return ext || "";
 }
 
 function handleClick(event?: MouseEvent) {

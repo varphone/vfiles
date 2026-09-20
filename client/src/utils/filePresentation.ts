@@ -151,6 +151,9 @@ export function fileKindLabel(file: FileInfo): string {
   if (file.kind === "directory") return "文件夹";
 
   const ext = getExtension(file.name);
+  // 扩展名优先于 mime：浏览器/上传方常把 .ts 识别成 video/mp2t（TypeScript 源码），
+  // 这类“视频”标签会严重误导用户。
+  if (CODE_EXTENSIONS.has(ext)) return "代码文件";
   if (file.mime_type?.startsWith("image/")) return "图像文件";
   if (file.mime_type?.startsWith("video/")) return "视频文件";
   if (file.mime_type?.startsWith("audio/")) return "音频文件";
@@ -169,6 +172,10 @@ export function isImageFile(file: FileInfo): boolean {
 
 export function fileIconKind(file: FileInfo): FileIconKind {
   if (file.kind === "directory") return "folder";
+
+  // 同上：代码类扩展名优先，避免 .ts 被当作视频
+  const extension = getExtension(file.name);
+  if (CODE_EXTENSIONS.has(extension)) return "code";
 
   if (file.mime_type) {
     if (file.mime_type.startsWith("image/")) return "image";

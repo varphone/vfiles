@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { nextTick } from "vue";
 import { useFileViewStore } from "../src/stores/fileView.store";
 
 const STORAGE_KEY = "vfiles:file-browser:view";
@@ -60,6 +61,22 @@ describe("fileView store", () => {
     store.setSortField("invalid" as never);
     expect(store.mode).toBe("list");
     expect(store.sortField).toBe("name");
+  });
+
+  it("defaults the details panel to visible and persists changes", async () => {
+    const store = useFileViewStore();
+    expect(store.detailsVisible).toBe(true);
+
+    store.toggleDetails();
+    expect(store.detailsVisible).toBe(false);
+
+    // persist() 走 post-flush watcher，等一个 tick 再断言落盘结果
+    await nextTick();
+    const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
+    expect(persisted.detailsVisible).toBe(false);
+
+    store.setDetailsVisible(true);
+    expect(store.detailsVisible).toBe(true);
   });
 
   it("clamps the thumbnail size to the supported range", () => {
