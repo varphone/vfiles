@@ -683,9 +683,13 @@ where
         &self,
         blob_grace_seconds: u64,
         snapshot_keep: u32,
+        snapshot_max_age_days: u32,
     ) -> DomainResult<MaintenanceRunReport> {
         let prune = if snapshot_keep > 0 {
-            self.prune_snapshots(snapshot_keep).await?
+            let older_than = (snapshot_max_age_days > 0)
+                .then(|| std::time::Duration::from_secs(u64::from(snapshot_max_age_days) * 86_400));
+            self.prune_snapshots_with_age(snapshot_keep, older_than)
+                .await?
         } else {
             SnapshotPruneReport::default()
         };
@@ -704,6 +708,19 @@ where
     /// 被删除快照中引用的 blob 会先释放引用计数；归零的 blob 行由
     /// `release_blob_references` 删除，文件随后由调用方（或 `gc-blobs`）清理。
     pub async fn prune_snapshots(&self, keep: u32) -> DomainResult<SnapshotPruneReport> {
+        self.prune_snapshots_with_age(keep, None).await
+    }
+
+    /// 在数量上限之外，再按**时间窗口**裁剪：只删除「既不在最新 `keep` 个之内、
+    /// 又早于 `older_than`（相对当前时间）的快照」。
+    ///
+    /// `older_than = None` 时退化为纯数量策略；两个条件是「与」的关系，
+    /// 因此开启时间窗口不会比只按数量裁剪删得更多。
+    pub async fn prune_snapshots_with_age(
+        &self,
+        keep: u32,
+        older_than: Option<std::time::Duration>,
+    ) -> DomainResult<SnapshotPruneReport> {
         let mut by_namespace: std::collections::HashMap<NamespaceId, Vec<Snapshot>> =
             std::collections::HashMap::new();
         for snapshot in self.snapshot_repo.list_all_snapshots().await? {
@@ -713,10 +730,18 @@ where
                 .push(snapshot);
         }
 
+        let cutoff = older_than.map(|age| {
+            time::OffsetDateTime::now_utc() - time::Duration::seconds(age.as_secs() as i64)
+        });
         let mut report = SnapshotPruneReport::default();
         for snapshots in by_namespace.values_mut() {
             // list_all_snapshots 已按创建时间倒序
             for snapshot in snapshots.iter().skip(keep as usize) {
+                if let Some(cutoff) = cutoff
+                    && snapshot.created_at >= cutoff
+                {
+                    continue;
+                }
                 let entries = self
                     .snapshot_repo
                     .get_snapshot_entries(&snapshot.id)
@@ -4114,6 +4139,96 @@ mod maintenance_tests {
         pool.close().await;
     }
 
+    /// 时间窗口：只裁剪「既不在最新 keep 个之内、又早于窗口」的快照。
+    #[tokio::test]
+    async fn prune_snapshots_respects_the_age_window() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+            .expect("temp path should be utf-8");
+        let pool = SqlitePoolFactory::connect(root.join("vfiles.db").as_path())
+            .await
+            .expect("pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+        let snapshot_repo = vfiles_infra_sqlite::SqliteSnapshotRepo::new(pool.clone());
+        let blob_store = FsBlobStore::new(pool.clone(), root.join("blobs"));
+
+        let user_id = user_repo
+            .create_admin("admin", "admin@example.com", "hashed")
+            .await
+            .expect("admin should be created");
+        let namespace_id = namespace_repo
+            .create_default(&user_id, "default")
+            .await
+            .expect("namespace should be created");
+
+        let mut ids = Vec::new();
+        for index in 0..3 {
+            ids.push(
+                snapshot_repo
+                    .create_snapshot(
+                        &namespace_id,
+                        Some(&format!("s{index}")),
+                        SnapshotKind::AutoCommit,
+                        &user_id,
+                    )
+                    .await
+                    .expect("snapshot should be created"),
+            );
+        }
+
+        // 明确时间顺序：最新的保持「刚刚创建」，另两条分别在 40/50 天前
+        let stamps = [
+            time::OffsetDateTime::now_utc() - time::Duration::days(50),
+            time::OffsetDateTime::now_utc() - time::Duration::days(40),
+            time::OffsetDateTime::now_utc(),
+        ];
+        for (snapshot_id, stamp) in ids.iter().zip(stamps) {
+            let text = stamp
+                .format(&time::format_description::well_known::Rfc3339)
+                .expect("format");
+            sqlx::query("UPDATE snapshots SET created_at = ? WHERE id = ?")
+                .bind(&text)
+                .bind(snapshot_id.to_string())
+                .execute(&pool)
+                .await
+                .expect("backdate should succeed");
+        }
+
+        let service = MaintenanceService::new(blob_store, entry_repo, snapshot_repo.clone());
+
+        // keep=10 时数量策略不会删任何东西（时间窗口是「与」条件）
+        let report = service
+            .prune_snapshots_with_age(10, Some(std::time::Duration::from_secs(30 * 86_400)))
+            .await
+            .expect("prune should succeed");
+        assert_eq!(
+            report.pruned_snapshots, 0,
+            "没有超出数量上限时，时间窗口不应删除任何快照"
+        );
+
+        // keep=1 + 窗口 30 天 → 只删「超出最新 1 条」且「早于 30 天」的两条
+        let report = service
+            .prune_snapshots_with_age(1, Some(std::time::Duration::from_secs(30 * 86_400)))
+            .await
+            .expect("prune should succeed");
+        assert_eq!(report.pruned_snapshots, 2);
+
+        let remaining = snapshot_repo
+            .list_all_snapshots()
+            .await
+            .expect("list should succeed");
+        assert_eq!(remaining.len(), 1, "最新快照必须保留");
+        assert_eq!(remaining[0].id, ids[2]);
+
+        pool.close().await;
+    }
+
     #[tokio::test]
     async fn prune_snapshots_keeps_newest_and_releases_references() {
         let temp_dir = tempfile::tempdir().expect("temp dir should be created");
@@ -4354,7 +4469,7 @@ mod maintenance_tests {
         let service =
             MaintenanceService::new(blob_store.clone(), entry_repo, snapshot_repo.clone());
         let report = service
-            .run_once(3600, 1)
+            .run_once(3600, 1, 0)
             .await
             .expect("maintenance run should succeed");
 
@@ -4422,7 +4537,7 @@ mod maintenance_tests {
 
         let service = MaintenanceService::new(blob_store, entry_repo, snapshot_repo.clone());
         let report = service
-            .run_once(3600, 0)
+            .run_once(3600, 0, 0)
             .await
             .expect("maintenance run should succeed");
 

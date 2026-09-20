@@ -2818,7 +2818,7 @@ async fn health_reports_thumbnail_counters() {
         .as_u64()
         .expect("unsupported counter");
     assert!(
-        unsupported_after >= unsupported_before + 1,
+        unsupported_after > unsupported_before,
         "unsupported counter should grow: {unsupported_before} -> {unsupported_after}"
     );
     assert!(

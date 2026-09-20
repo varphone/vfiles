@@ -16,7 +16,7 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 54 实测）
+### 验证基线（round 55 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
@@ -973,18 +973,41 @@
 - 冒烟（开启 AVIF）：`Accept: image/avif` 返回 `content-type: image/avif` + `vary: accept`，
   缓存目录同时出现 `.avif` 与 `.jpg`；命中缓存后响应 4ms。
 
+### 2.62 快照时间窗口保留 + 两项性能项收尾（round 55，稳定性/性能）
+
+- **§3.1c 审计结论：已完成**（无需改动）。移动流程早已用
+  `entry_repo.find_paths(namespace_id, &candidates)` 一次性批量查询全部后代的新路径，
+  再在单事务里 `move_entries`；本次核对确认没有遗留的「逐个后代 `find_by_path`」循环，
+  仅保留移动源/目标各一次的路径查找。
+- **§3.1d 时间窗口保留（新增能力）**：
+  - `SnapshotService::prune_snapshots_with_age(keep, older_than)`：只删除
+    「**不在最新 `keep` 个之内**」且「**早于 `older_than`**」的快照——两个条件是「与」，
+    因此开启时间窗口不会比纯数量策略删得更多；`older_than = None` 时行为与原来完全一致。
+  - 维护任务新增 `VFILES_MAINTENANCE_SNAPSHOT_MAX_AGE_DAYS`（默认 0 = 不按时间裁剪）；
+    CLI 新增 `prune-snapshots --older-than-days N`。
+- **§3.1 预压缩评估（决定不扩大范围）**：
+  - `index.html` 1,219B 已经超过 1KB 阈值并被预压缩（`.br` 511B / `.gz` 745B），
+    降低阈值只能再收进更小的文件，产物数量翻倍、收益仅数百字节；
+  - 前端 dist 里**没有二进制资源**（图标是 SVG，压缩率 28%–34%，已覆盖），而 JPEG/PNG/woff2
+    本身已是压缩格式，二次 brotli 通常只有 0–2% 收益，因此**决定不对二进制资源做预压缩**。
+- 测试与冒烟：新增单测 `prune_snapshots_respects_the_age_window`（把快照回拨到
+  40/50 天前，验证 `keep=10 + 30 天` 不删任何东西、`keep=1 + 30 天` 只删超龄的两条）；
+  真实服务上 `--keep 1 --older-than-days 30` 删掉 3 条超龄快照、保留最新一条，
+  `--keep 10 --older-than-days 30` 删除 0 条，符合「与」语义。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
 
 - `[x]` 构建期生成 `.br`/`.gz`，服务端按 `Accept-Encoding` 直接返回（round 12）。
-- `[ ]` 可选：对二进制资源也做预压缩评估；为 `index.html` 等小文件决定是否降低阈值。
+- `[x]` 评估结论：`index.html` 已超阈值并被预压缩，dist 内无二进制资源、其余压缩格式
+  二次压缩收益 0–2%，**决定不扩大预压缩范围**（round 55，见 §2.62）。
 
 ### 3.1c 删除/移动路径的子树遍历（性能，中）
 
 - `[x]` `EntryRepo::find_subtree` 单次范围查询取代按目录递归（round 20）。
-- `[ ]` 移动时的冲突检查仍对每个后代调用一次 `find_by_path`；可增加批量路径存在性
-  查询。
+- `[x]` 移动冲突检查已改为单次 `find_paths` 批量查询 + 单事务 `move_entries`
+  （round 22 落地，round 55 复核确认无逐后代查询残留，见 §2.62）。
 
 ### 3.1b 服务端目录分页（性能，高）
 
@@ -1008,7 +1031,8 @@
 - `[x]` 快照保留策略（round 28）：`prune-snapshots --keep N` 裁剪旧快照并释放其
   blob 引用，配合 `gc-blobs` 回收磁盘。
 - `[x]` 在服务内按周期自动执行维护任务（round 39，见 §2.46）。
-- `[ ]` 可按时间窗口（而非数量）保留快照。
+- `[x]` 时间窗口保留：`--older-than-days` / `VFILES_MAINTENANCE_SNAPSHOT_MAX_AGE_DAYS`，
+  与数量策略取「与」（round 55，见 §2.62）。
 
 ### 3.2 缩略图格式与容量（性能 + 稳定性，中）
 

@@ -177,6 +177,7 @@ sudo ./vfiles register -t systemd \
 ```bash
 # 每个命名空间仅保留最新 50 个快照，并释放被删快照的 blob 引用
 ./vfiles maintenance prune-snapshots --keep 50
+./vfiles maintenance prune-snapshots --keep 50 --older-than-days 90  # 再叠加时间窗口
 ```
 
 裁剪会删除旧快照（不可再恢复到这些提交），请在确认不再需要旧历史后执行。
@@ -258,6 +259,7 @@ RUST_LOG=vfiles_http=warn ./vfiles serve  # 只看 HTTP 层告警
 | `VFILES_MAINTENANCE_INITIAL_DELAY_SECONDS` | `300` | 启动后首次执行前等待（秒），不超过间隔且最多 5 分钟 |
 | `VFILES_MAINTENANCE_BLOB_GRACE_SECONDS` | `3600` | 孤儿 blob 保护期（秒） |
 | `VFILES_MAINTENANCE_SNAPSHOT_KEEP` | `0` | 每个命名空间保留的快照数；`0`（默认）表示不裁剪快照 |
+| `VFILES_MAINTENANCE_SNAPSHOT_MAX_AGE_DAYS` | `0` | 快照最长保留天数；`0`（默认）表示不按时间裁剪。与数量策略是「与」关系：只删除既超出 `KEEP` 又早于该天数的快照 |
 
 ```bash
 export VFILES_MAINTENANCE_ENABLED=true

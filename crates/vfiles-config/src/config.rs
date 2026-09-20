@@ -127,6 +127,8 @@ pub struct MaintenanceConfig {
     pub blob_grace_seconds: u64,
     /// 每个命名空间保留的最新快照数；0 表示不裁剪快照。
     pub snapshot_keep: u32,
+    /// 快照最长保留天数（0 表示不按时间裁剪，只按数量）。
+    pub snapshot_max_age_days: u32,
 }
 
 /// 维护间隔的下限，避免配置成极小值后变成忙循环。
@@ -245,6 +247,11 @@ impl ConfigLoader {
         let search_content_enabled =
             Self::env_parse_bool(&["VFILES_FEATURES_SEARCH_CONTENT", "FEATURES_SEARCH_CONTENT"])?
                 .unwrap_or(false);
+        let maintenance_snapshot_max_age_days = Self::env_parse::<u32>(&[
+            "VFILES_MAINTENANCE_SNAPSHOT_MAX_AGE_DAYS",
+            "MAINTENANCE_SNAPSHOT_MAX_AGE_DAYS",
+        ])?
+        .unwrap_or(0);
         let maintenance_enabled =
             Self::env_parse_bool(&["VFILES_MAINTENANCE_ENABLED", "MAINTENANCE_ENABLED"])?
                 .unwrap_or(false);
@@ -337,6 +344,7 @@ impl ConfigLoader {
                 initial_delay_seconds: maintenance_initial_delay_seconds,
                 blob_grace_seconds: maintenance_blob_grace_seconds,
                 snapshot_keep: maintenance_snapshot_keep,
+                snapshot_max_age_days: maintenance_snapshot_max_age_days,
             },
             features: FeatureMatrix {
                 auth_enabled,
@@ -514,6 +522,7 @@ mod tests {
             initial_delay_seconds: 10_000,
             blob_grace_seconds: 3_600,
             snapshot_keep: 10,
+            snapshot_max_age_days: 0,
         };
         assert_eq!(
             config.effective_initial_delay_seconds(),

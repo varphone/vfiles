@@ -64,6 +64,9 @@ struct PruneSnapshotsArgs {
     /// Number of newest snapshots to keep per namespace
     #[arg(long, default_value_t = 50)]
     keep: u32,
+    /// Only prune snapshots older than this many days (0 disables the age window)
+    #[arg(long, default_value_t = 0)]
+    older_than_days: u32,
     /// Only purge blobs created more than this many seconds ago
     #[arg(long, default_value_t = 3600)]
     grace_seconds: u64,
@@ -732,7 +735,11 @@ async fn run_gc_blobs(args: GcBlobsArgs) -> anyhow::Result<()> {
 
 /// 裁剪历史快照（每个命名空间保留最新 N 个），随后回收孤儿 blob。
 async fn run_prune_snapshots(args: PruneSnapshotsArgs) -> anyhow::Result<()> {
-    tracing::info!("Pruning snapshots (keep {} per namespace)...", args.keep);
+    tracing::info!(
+        "Pruning snapshots (keep {} per namespace, older than {} days)...",
+        args.keep,
+        args.older_than_days
+    );
     let config = ConfigLoader::load()?;
     let paths = vfiles_config::AppPaths::from_config(&config.storage);
     let pool = SqlitePoolFactory::connect(&paths.database).await?;
@@ -742,7 +749,12 @@ async fn run_prune_snapshots(args: PruneSnapshotsArgs) -> anyhow::Result<()> {
     let snapshot_repo = SqliteSnapshotRepo::new(pool.clone());
     let service = MaintenanceService::new(blob_store, entry_repo, snapshot_repo);
 
-    let report = service.prune_snapshots(args.keep).await?;
+    // vfiles-bin 没有直接依赖 time crate，这里用手写时长避免新增依赖
+    let older_than = (args.older_than_days > 0)
+        .then(|| std::time::Duration::from_secs(u64::from(args.older_than_days) * 86_400));
+    let report = service
+        .prune_snapshots_with_age(args.keep, older_than)
+        .await?;
     let purge = service.purge_orphan_blobs(args.grace_seconds).await?;
 
     println!(
@@ -1005,6 +1017,8 @@ struct MaintenanceSchedule {
     initial_delay: Duration,
     blob_grace_seconds: u64,
     snapshot_keep: u32,
+    /// 快照最长保留天数（0 表示不按时间裁剪，只按数量）。
+    snapshot_max_age_days: u32,
 }
 
 impl MaintenanceSchedule {
@@ -1019,6 +1033,7 @@ impl MaintenanceSchedule {
             initial_delay: Duration::from_secs(config.effective_initial_delay_seconds()),
             blob_grace_seconds: config.blob_grace_seconds,
             snapshot_keep: config.snapshot_keep,
+            snapshot_max_age_days: config.snapshot_max_age_days,
         }
     }
 }
@@ -1067,7 +1082,11 @@ async fn run_maintenance_loop(
 /// 执行一次维护并记录结果；失败只告警，不终止服务。
 async fn run_maintenance_tick(service: &Maintenance, schedule: &MaintenanceSchedule) {
     match service
-        .run_once(schedule.blob_grace_seconds, schedule.snapshot_keep)
+        .run_once(
+            schedule.blob_grace_seconds,
+            schedule.snapshot_keep,
+            schedule.snapshot_max_age_days,
+        )
         .await
     {
         Ok(report) => {
@@ -1128,6 +1147,7 @@ mod tests {
             initial_delay_seconds,
             blob_grace_seconds: 3600,
             snapshot_keep: 0,
+            snapshot_max_age_days: 0,
         }
     }
 
