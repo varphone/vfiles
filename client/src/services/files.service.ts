@@ -214,6 +214,9 @@ type SearchResultDto = {
   score?: number;
 };
 
+/** 搜索每页条数：首屏按需拉取，滚动到底再取下一页。 */
+export const SEARCH_PAGE_SIZE = 100;
+
 function normalizeSearchScope(path?: string): string {
   return (path || "").trim().replace(/^\/+|\/+$/g, "");
 }
@@ -696,15 +699,27 @@ export const filesService = {
   async searchFiles(
     query: string,
     mode: "name" | "content" = "name",
-    opts?: { type?: "all" | "file" | "directory"; path?: string },
-  ): Promise<FileInfo[]> {
+    opts?: {
+      type?: "all" | "file" | "directory";
+      path?: string;
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<{
+    items: FileInfo[];
+    hasMore: boolean;
+    limit: number;
+    offset: number;
+  }> {
     const scope = normalizeSearchScope(opts?.path);
+    const limit = opts?.limit ?? SEARCH_PAGE_SIZE;
+    const offset = opts?.offset ?? 0;
     const params: Record<string, string | number | boolean> = {
       q: query,
       search_files: true,
       search_content: mode === "content",
-      limit: 500,
-      offset: 0,
+      limit,
+      offset,
     };
     if (scope) {
       params.path = scope;
@@ -713,16 +728,20 @@ export const filesService = {
       params.type = opts.type;
     }
 
-    const response = await apiService.get<SearchResultDto[]>(
-      "/files/search",
-      params,
-    );
+    const response = await apiService.get<unknown>("/files/search", params);
+    const payload = (response as any)?.data ?? response;
 
-    const payload = Array.isArray(response)
-      ? response
-      : (((response as any)?.data as SearchResultDto[] | undefined) ?? []);
+    // 兼容旧版直接返回数组的响应
+    const rawItems: SearchResultDto[] = Array.isArray(payload)
+      ? (payload as SearchResultDto[])
+      : ((payload?.items as SearchResultDto[] | undefined) ?? []);
 
-    return mergeSearchResults(payload).map(mapSearchResultToFileInfo);
+    return {
+      items: mergeSearchResults(rawItems).map(mapSearchResultToFileInfo),
+      hasMore: Boolean((payload as any)?.has_more),
+      limit,
+      offset,
+    };
   },
 
   /**

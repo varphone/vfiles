@@ -1,5 +1,5 @@
 import { computed, nextTick, ref, type Ref } from "vue";
-import { filesService } from "../services/files.service";
+import { filesService, SEARCH_PAGE_SIZE } from "../services/files.service";
 import type { FileInfo } from "../types";
 
 const SEARCH_HISTORY_KEY = "vfiles.searchHistory";
@@ -22,6 +22,10 @@ export function useFileSearch(currentPath: Ref<string>) {
   const desktopSearchBoxRef = ref<HTMLElement | null>(null);
   const desktopSearchInputRef = ref<HTMLInputElement | null>(null);
   const searchHistory = ref<string[]>([]);
+  // 搜索结果分页：hasMore 表示服务端还有下一页
+  const searchHasMore = ref(false);
+  const searchLoadingMore = ref(false);
+  const searchLimit = SEARCH_PAGE_SIZE;
 
   const searchMode = computed(() => (searchContent.value ? "content" : "name"));
   const desktopSearchFiltersActive = computed(
@@ -82,6 +86,8 @@ export function useFileSearch(currentPath: Ref<string>) {
     searchResults.value = [];
     searchError.value = null;
     searchActive.value = false;
+    searchHasMore.value = false;
+    searchLoadingMore.value = false;
   }
 
   async function runSearch() {
@@ -100,6 +106,9 @@ export function useFileSearch(currentPath: Ref<string>) {
     const requestId = ++searchSequence;
     searchLoading.value = true;
     searchActive.value = true;
+    // 新一轮搜索重置分页状态，避免上一轮的「还有更多」残留
+    searchHasMore.value = false;
+    searchLoadingMore.value = false;
 
     if (pushHistoryEnabled) {
       pushSearchHistory(query);
@@ -107,18 +116,52 @@ export function useFileSearch(currentPath: Ref<string>) {
 
     try {
       const scopePath = searchScopeCurrent.value ? currentPath.value : "";
-      const results = await filesService.searchFiles(query, searchMode.value, {
+      const page = await filesService.searchFiles(query, searchMode.value, {
         type: searchType.value,
         path: scopePath,
+        limit: searchLimit,
+        offset: 0,
       });
       if (requestId !== searchSequence) return;
-      searchResults.value = results;
+      searchResults.value = page.items;
+      searchHasMore.value = page.hasMore;
     } catch (err) {
       if (requestId !== searchSequence) return;
       searchError.value = err instanceof Error ? err.message : "搜索失败";
       searchResults.value = [];
+      searchHasMore.value = false;
     } finally {
       if (requestId === searchSequence) searchLoading.value = false;
+    }
+  }
+
+  /** 追加下一页搜索结果；期间用户改了条件或清空搜索时丢弃结果。 */
+  async function loadMoreSearchResults() {
+    if (!searchHasMore.value || searchLoadingMore.value) return;
+
+    const requestId = searchSequence;
+    const query = searchQuery.value.trim();
+    if (!query) return;
+
+    const scopePath = searchScopeCurrent.value ? currentPath.value : "";
+    searchLoadingMore.value = true;
+
+    try {
+      const page = await filesService.searchFiles(query, searchMode.value, {
+        type: searchType.value,
+        path: scopePath,
+        limit: searchLimit,
+        offset: searchResults.value.length,
+      });
+      if (requestId !== searchSequence) return;
+      searchResults.value = [...searchResults.value, ...page.items];
+      searchHasMore.value = page.hasMore;
+    } catch (err) {
+      if (requestId === searchSequence) {
+        searchError.value = err instanceof Error ? err.message : "加载更多失败";
+      }
+    } finally {
+      if (requestId === searchSequence) searchLoadingMore.value = false;
     }
   }
 
@@ -158,6 +201,9 @@ export function useFileSearch(currentPath: Ref<string>) {
     searchHistory,
     searchMode,
     desktopSearchFiltersActive,
+    searchHasMore,
+    searchLoadingMore,
+    loadMoreSearchResults,
     loadSearchHistory,
     pushSearchHistory,
     closeDesktopSearch,

@@ -2755,15 +2755,84 @@ async fn file_search_finds_dotted_filename() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let payload = response_json(response).await;
-    let results = payload
+    assert_eq!(payload["has_more"], Value::Bool(false));
+    assert_eq!(payload["limit"], Value::from(500));
+    let results = payload["items"]
         .as_array()
-        .expect("search response should be an array");
+        .expect("search response should carry an items array");
 
     assert_eq!(results.len(), 1);
     assert!(results.iter().any(|item| {
         item["entry"]["path"] == Value::String("packages/2.4.3a0.tgz".to_string())
             && item["entry"]["name"] == Value::String("2.4.3a0.tgz".to_string())
     }));
+}
+
+#[tokio::test]
+async fn file_search_pages_results_with_has_more() {
+    let app = TestApp::new().await;
+
+    // 5 个同名片段、不同序号的条目
+    for index in 0..5 {
+        app.upload_version(
+            "",
+            &format!("report-{index}.txt"),
+            b"paged payload",
+            "seed paged search",
+        )
+        .await;
+    }
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0u32;
+    let mut pages = 0;
+
+    loop {
+        let response = app
+            .request_as_admin(
+                Request::builder()
+                    .uri(format!(
+                        "/api/files/search?q=report&search_files=true&limit=2&offset={offset}"
+                    ))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let payload = response_json(response).await;
+        assert_eq!(payload["limit"], Value::from(2));
+        assert_eq!(payload["offset"], Value::from(offset));
+
+        let items = payload["items"]
+            .as_array()
+            .expect("search response should carry an items array")
+            .clone();
+        assert!(
+            items.len() <= 2,
+            "page must respect the requested limit, got {}",
+            items.len()
+        );
+
+        for item in &items {
+            seen.push(item["entry"]["path"].as_str().unwrap_or_default().to_string());
+        }
+
+        let has_more = payload["has_more"].as_bool().expect("has_more should exist");
+        pages += 1;
+        if !has_more {
+            break;
+        }
+        assert!(pages < 5, "paging should terminate");
+        offset += 2;
+    }
+
+    assert_eq!(seen.len(), 5, "所有命中都应通过翻页返回: {seen:?}");
+    let mut sorted = seen.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(sorted.len(), 5, "翻页不应重复返回同一条目: {seen:?}");
+    assert_eq!(pages, 3, "5 条命中按每页 2 条应为 3 页");
 }
 
 #[tokio::test]
@@ -2791,9 +2860,9 @@ async fn content_search_returns_line_matches_when_feature_enabled() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let payload = response_json(response).await;
-    let results = payload
+    let results = payload["items"]
         .as_array()
-        .expect("search response should be an array");
+        .expect("search response should carry an items array");
     assert_eq!(results.len(), 1);
     assert_eq!(
         results[0]["entry"]["path"],

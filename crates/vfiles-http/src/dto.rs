@@ -324,6 +324,18 @@ impl From<vfiles_domain::SearchResult> for SearchResultDto {
     }
 }
 
+/// 搜索结果分页信封。
+///
+/// 不返回 `total`：检索按名称与内容两路查询后在应用层合并排序，统计精确总数需要
+/// 额外一轮扫描；多取一条记录即可确定 `has_more`，对客户端已经足够。
+#[derive(Debug, Serialize)]
+pub struct SearchPageDto {
+    pub items: Vec<SearchResultDto>,
+    pub limit: u32,
+    pub offset: u32,
+    pub has_more: bool,
+}
+
 #[derive(Debug, Serialize)]
 pub struct SearchMatchDto {
     pub match_type: String,

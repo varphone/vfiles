@@ -57,10 +57,20 @@ getFilesPageMock.mockImplementation(
 );
 
 vi.mock("../src/services/files.service", () => ({
+  SEARCH_PAGE_SIZE: 100,
   filesService: {
     getFiles: getFilesMock,
     getFilesPage: getFilesPageMock,
-    searchFiles: searchFilesMock,
+    // 组合式函数读取分页信封，这里把「数据源 mock」包一层
+    searchFiles: vi.fn(async (...args: unknown[]) => {
+      const result = await (
+        searchFilesMock as (...a: unknown[]) => Promise<unknown>
+      )(...args);
+      if (Array.isArray(result)) {
+        return { items: result, hasMore: false, limit: 100, offset: 0 };
+      }
+      return result;
+    }),
     deleteFile: deleteFileMock,
     getFileContent: getFileContentMock,
     movePath: movePathMock,

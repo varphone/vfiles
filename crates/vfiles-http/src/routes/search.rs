@@ -6,7 +6,12 @@ use axum_extra::extract::cookie::CookieJar;
 use serde::Deserialize;
 use vfiles_domain::{EntryKind, NormalizedPath, SearchQuery};
 
-use crate::{AppState, dto::SearchResultDto, error::ApiError, routes::protected_request_context};
+use crate::{
+    AppState,
+    dto::{SearchPageDto, SearchResultDto},
+    error::ApiError,
+    routes::protected_request_context,
+};
 
 pub fn router() -> axum::Router<AppState> {
     axum::Router::new().route("/search", axum::routing::get(search))
@@ -33,11 +38,14 @@ fn default_limit() -> u32 {
     50
 }
 
+/// 单页上限：客户端按需翻页，避免一次拉回过多结果。
+const MAX_SEARCH_LIMIT: u32 = 500;
+
 async fn search(
     State(state): State<AppState>,
     jar: CookieJar,
     Query(params): Query<SearchParams>,
-) -> Result<Json<Vec<SearchResultDto>>, ApiError> {
+) -> Result<Json<SearchPageDto>, ApiError> {
     let ctx = protected_request_context(&state, &jar).await?;
     if params.search_content && !state.config.features.search_content {
         return Err(ApiError::Domain(vfiles_domain::DomainError::Forbidden));
@@ -80,6 +88,8 @@ async fn search(
         }
     };
 
+    let limit = params.limit.clamp(1, MAX_SEARCH_LIMIT);
+
     // Build search query
     let query = SearchQuery {
         query: params.q,
@@ -88,15 +98,20 @@ async fn search(
         search_content: params.search_content,
         path_prefix,
         entry_kind,
-        limit: params.limit.min(500),
+        // 多取一条用于判断是否还有下一页
+        limit: limit + 1,
         offset: params.offset,
     };
 
     // Perform search
-    let results = state.search_service.search(query).await?;
+    let mut results = state.search_service.search(query).await?;
+    let has_more = results.len() > limit as usize;
+    results.truncate(limit as usize);
 
-    // Convert to DTOs
-    let dtos = results.into_iter().map(SearchResultDto::from).collect();
-
-    Ok(Json(dtos))
+    Ok(Json(SearchPageDto {
+        items: results.into_iter().map(SearchResultDto::from).collect(),
+        limit,
+        offset: params.offset,
+        has_more,
+    }))
 }

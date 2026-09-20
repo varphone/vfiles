@@ -16,11 +16,11 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 40 实测）
+### 验证基线（round 41 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：31 个文件 / **202** 个用例通过；`vue-tsc`、`eslint`、`prettier`
+- `client` 单测：31 个文件 / **206** 个用例通过；`vue-tsc`、`eslint`、`prettier`
   通过。
 - 后端：`cargo test --workspace` 全部通过、`clippy --all-targets` 无告警、`fmt`
   干净（`frontend.rs` 的历史格式差异保持原样）。
@@ -706,6 +706,29 @@
   目标值派生）与 2 个格式用例（TIFF/ICO/QOI/PNG 解码为 JPEG + 扩展名/mime 识别；
   SVG/PDF/AVIF 仍被拒绝），`vfiles-config` 新增默认值用例；前端 202 项保持通过。
 
+### 2.48 搜索结果分页（round 41，性能）
+
+- 背景：`/api/files/search` 虽然早就接受 `limit`/`offset`（默认 50、上限 500），但
+  响应是裸数组、没有 `has_more`，客户端固定 `limit=500` 一次拉完——大工作区下既浪费
+  带宽，又会在超过 500 条时静默截断。
+- 后端返回分页信封 `SearchPageDto { items, limit, offset, has_more }`：内部按
+  `limit + 1` 取数，多出的一条只用于判定 `has_more`，随后截断——避免为了精确
+  `total` 再扫一轮（检索按名称/内容两路查询后在应用层合并排序，统计总数代价高）。
+  `limit` 收敛到 `1..=500`。
+- 客户端：`searchFiles()` 返回 `{ items, hasMore, limit, offset }`（仍兼容旧版数组
+  响应），每页 `SEARCH_PAGE_SIZE = 100`；`useFileSearch` 新增
+  `searchHasMore` / `searchLoadingMore` / `loadMoreSearchResults()`，沿用
+  `searchSequence` 序号守卫（切词后到达的旧页会被丢弃），`clearSearch` 与新一轮搜索
+  都会重置分页状态；`FileBrowser` 的加载哨兵在搜索态下也会继续取下一页。
+- 测试：后端新增 `file_search_pages_results_with_has_more`（5 条命中按每页 2 条跑完
+  3 页，断言每页不超限、不重复、`has_more` 收敛），并更新 2 处既有断言读信封；
+  前端新增 4 个分页用例（追加下一页并续传 offset、无更多时不再请求、切词后丢弃旧页、
+  清空搜索重置分页）。
+- 冒烟：131 个文件下 `limit=100` 依次请求 offset 0/100 得到 `100/30` 且
+  `has_more` 由 true 变 false，`limit=0` 收敛为 1、`limit=9999` 收敛为 500；
+  Playwright 实际滚动触发两次请求 `(100,0)` → `(100,100)`，列表由 100 条增长到
+  130 条（末行为 `bulk-130.txt`），无控制台报错。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -723,7 +746,8 @@
 
 - `[x]` 新增 `GET /api/files/list[/{path}]`，支持 `limit`/`offset`/`commit` 与
   `total`/`has_more`，客户端按需加载（round 30）。
-- `[ ]` 搜索结果分页（当前 `/api/files/search` 仍一次性返回）。
+- `[x]` 搜索结果分页：`/api/files/search` 返回 `items/limit/offset/has_more`，
+  客户端滚动按需加载（round 41，见 §2.48）。
 - `[ ]` 用游标（cursor）替代 `offset`，避免大目录下深分页的 `OFFSET` 扫描成本。
 
 ### 3.1e 移动路径的批量校验与事务（性能，中）

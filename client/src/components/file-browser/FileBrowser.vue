@@ -364,7 +364,7 @@
                   ref="loadMoreSentinel"
                   class="desktop-load-more has-text-centered has-text-grey is-size-7 py-3"
                 >
-                  <span v-if="filesStore.loadingMoreFiles"
+                  <span v-if="searchLoadingMore || filesStore.loadingMoreFiles"
                     >正在加载更多...</span
                   >
                   <span v-else-if="filesStore.loadMoreError">
@@ -516,7 +516,7 @@
             ref="loadMoreSentinel"
             class="has-text-centered has-text-grey is-size-7 py-2"
           >
-            <template v-if="filesStore.loadingMoreFiles"
+            <template v-if="searchLoadingMore || filesStore.loadingMoreFiles"
               >正在加载更多...</template
             >
             <template v-else-if="filesStore.loadMoreError">
@@ -586,7 +586,7 @@
             ref="loadMoreSentinel"
             class="has-text-centered has-text-grey is-size-7 py-2"
           >
-            <template v-if="filesStore.loadingMoreFiles"
+            <template v-if="searchLoadingMore || filesStore.loadingMoreFiles"
               >正在加载更多...</template
             >
             <template v-else-if="filesStore.loadMoreError">
@@ -959,6 +959,9 @@ const {
   searchHistory,
   searchMode,
   desktopSearchFiltersActive,
+  searchHasMore,
+  searchLoadingMore,
+  loadMoreSearchResults,
   closeDesktopSearch,
   clearSearch,
   runSearch,
@@ -1338,7 +1341,7 @@ const hasMoreLocal = computed(
   () => visibleCount.value < activeList.value.length,
 );
 const hasMore = computed(() => {
-  if (searchActive.value) return hasMoreLocal.value;
+  if (searchActive.value) return hasMoreLocal.value || searchHasMore.value;
   return hasMoreLocal.value || filesStore.hasMoreFiles;
 });
 // 当前目录的已知条目总数（含 "." 与 ".." 两个虚拟条目），用于进度提示。
@@ -1430,7 +1433,12 @@ function maybeLoadMore() {
   }
 
   // 本地已全部渲染但服务端还有下一页：按需拉取，成功后由 length 监听继续补齐。
-  if (!searchActive.value && filesStore.hasMoreFiles) {
+  if (searchActive.value) {
+    if (searchHasMore.value) void loadMoreSearchResults();
+    return;
+  }
+
+  if (filesStore.hasMoreFiles) {
     void filesStore.loadMoreFiles();
   }
 }
