@@ -108,10 +108,13 @@ export const useAuthStore = defineStore("auth", () => {
     loading.value = true;
     error.value = null;
     try {
-      const userData = await authService.register({ username, password, email });
-      // New Rust API returns user data directly on success
+      await authService.register({ username, password, email });
+      // Registration creates the account but does not establish a session.
+      // Log in immediately so the user lands in the application with a valid
+      // auth cookie instead of looking logged-in until the next refresh.
+      const loginData = await authService.login({ username, password });
       enabled.value = true;
-      user.value = userData as any;
+      user.value = (loginData as any)?.user ?? null;
       // 标记登录成功时间，用于免疫期
       if (
         typeof window !== "undefined" &&

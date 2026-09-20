@@ -116,7 +116,7 @@
 
             <p v-if="auth.error" class="help is-danger">{{ auth.error }}</p>
             <p v-if="mode === 'register'" class="help">
-              提示：首次注册用户会自动成为 <code>admin</code>。
+              提示：注册成功后将自动登录；管理员权限需由现有管理员或命令行创建。
             </p>
           </form>
 
