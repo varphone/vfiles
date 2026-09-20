@@ -9,9 +9,10 @@ pub use repo::{
 };
 
 use camino::Utf8Path;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Sqlite};
 use std::str::FromStr;
+use std::time::Duration;
 use vfiles_domain::DomainResult;
 
 pub type SqlitePool = Pool<Sqlite>;
@@ -49,7 +50,11 @@ impl SqlitePoolFactory {
             .map_err(|e| vfiles_domain::DomainError::Internal {
                 message: format!("Failed to build database connection options: {}", e),
             })?
-            .create_if_missing(true);
+            .create_if_missing(true)
+            .foreign_keys(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(Duration::from_secs(5));
 
         SqlitePoolOptions::new()
             .connect_with(options)
