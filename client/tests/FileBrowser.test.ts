@@ -645,6 +645,49 @@ describe("FileBrowser.vue loading state", () => {
     await findByText("此文件夹为空");
   });
 });
+describe("FileBrowser.vue create folder entry", () => {
+  it("no longer renders navigation shortcut rows", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([
+      {
+        id: "docs",
+        name: "docs",
+        path: "docs",
+        kind: "directory",
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("docs");
+
+    const names = Array.from(
+      container.querySelectorAll("tr.desktop-file-row .desktop-name-text"),
+    ).map((el) => el.textContent?.trim());
+    expect(names).toEqual(["docs"]);
+    expect(names).not.toContain(".");
+    expect(names).not.toContain("..");
+  });
+
+  it("asks for a folder name from the toolbar button", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([]);
+    const { promptDialog } = await import("../src/composables/dialog");
+
+    const { findByLabelText } = renderWithProviders(FileBrowser as any);
+
+    await fireEvent.click(await findByLabelText("新建文件夹"));
+
+    // 复用既有的「新建目录」提示流程（对话框由 DialogHost 渲染）
+    await waitFor(() =>
+      expect(promptDialog).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "新建目录" }),
+      ),
+    );
+  });
+});
+
 describe("FileBrowser.vue action column", () => {
   function files() {
     return [

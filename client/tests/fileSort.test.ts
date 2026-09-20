@@ -119,14 +119,11 @@ describe("sortBrowserItems", () => {
     expect(sorted.map((f) => f.name)).toEqual([".", "..", "a.txt", "b.txt"]);
   });
 
-  it("preserves the relative order of shortcut entries", () => {
-    const items = [
-      { ...dir("z"), uiRole: "parent" as const },
-      file({ name: "a.txt" }),
-      { ...dir("."), uiRole: "self" as const },
-    ];
-
+  it("sorts every entry like a normal item (no more shortcut rows)", () => {
+    // 列表已移除“.”“..”快捷项，sortBrowserItems 只做常规排序
+    const items = [dir("z"), file({ name: "a.txt" })];
     const sorted = sortBrowserItems(items, state());
-    expect(sorted.map((f) => f.name)).toEqual(["z", ".", "a.txt"]);
+
+    expect(sorted.map((f) => f.name)).toEqual(["z", "a.txt"]);
   });
 });

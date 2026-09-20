@@ -103,16 +103,15 @@ export function sortFiles<T extends FileInfo>(
 /**
  * 只对“真实条目”排序，保留当前目录/上级目录等快捷项在列表最前。
  */
+/**
+ * 浏览器列表排序。
+ *
+ * 早期版本会把“.”“..”快捷项固定排在最前，现在列表只包含真实条目，
+ * 这里保留独立函数是为了索引/来源切换时语义清晰。
+ */
 export function sortBrowserItems<T extends FileInfo>(
   items: readonly T[],
   state: SortState,
-  isShortcut: (item: T) => boolean = (item) =>
-    Boolean((item as { uiRole?: string }).uiRole),
 ): T[] {
-  const shortcuts: T[] = [];
-  const rest: T[] = [];
-  for (const item of items) {
-    (isShortcut(item) ? shortcuts : rest).push(item);
-  }
-  return [...shortcuts, ...sortFiles(rest, state)];
+  return sortFiles([...items], state);
 }

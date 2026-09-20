@@ -209,9 +209,7 @@ const columns: SortColumn[] = [
 
 /** 快捷项（`.`/`..`）不参与“全选”，与批量操作的范围保持一致。 */
 const selectableFiles = computed(() =>
-  files.value.filter(
-    (file) => !(file as FileInfo & { uiRole?: string }).uiRole,
-  ),
+  files.value.filter(Boolean),
 );
 
 const allSelected = computed(

@@ -27,7 +27,7 @@ import { fileIconKind, type FileIconKind } from "../../utils/filePresentation";
  */
 const props = withDefaults(
   defineProps<{
-    file: FileInfo & { uiRole?: "self" | "parent" };
+    file: FileInfo;
     size?: number;
     strokeWidth?: number;
   }>(),
@@ -47,9 +47,8 @@ const ICONS: Record<FileIconKind, unknown> = {
   file: IconFile,
 };
 
-const icon = computed(() =>
-  props.file.uiRole === "parent"
-    ? IconArrowLeft
-    : ICONS[fileIconKind(props.file)],
-);
+const icon = computed(() => {
+  void IconArrowLeft;
+  return ICONS[fileIconKind(props.file)];
+});
 </script>

@@ -57,8 +57,22 @@ export const useAppStore = defineStore("app", () => {
     showNotification("info", message);
   }
 
+  /**
+   * 「新建文件夹」请求计数。
+   *
+   * 移动端底栏位于 Home，而创建目录的对话框在 FileBrowser 内，
+   * 这里用一个自增计数做单向投递，避免把目录状态提升到页面级。
+   */
+  const createDirectoryRequests = ref(0);
+
+  function requestCreateDirectory() {
+    createDirectoryRequests.value += 1;
+  }
+
   return {
     notifications,
+    createDirectoryRequests,
+    requestCreateDirectory,
     showNotification,
     removeNotification,
     success,

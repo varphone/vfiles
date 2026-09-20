@@ -242,6 +242,14 @@
                   <IconHome :size="18" />
                 </button>
                 <button
+                  class="button is-light"
+                  @click="appStore.requestCreateDirectory()"
+                  title="新建文件夹"
+                  aria-label="新建文件夹"
+                >
+                  <IconFolderPlus :size="18" />
+                </button>
+                <button
                   class="button is-link"
                   @click="openUploader"
                   title="上传"
@@ -411,6 +419,7 @@ import {
   IconHome,
   IconUpload,
   IconRefresh,
+  IconFolderPlus,
 } from "@tabler/icons-vue";
 import FileBrowser from "../components/file-browser/FileBrowser.vue";
 import ThemeToggle from "../components/common/ThemeToggle.vue";

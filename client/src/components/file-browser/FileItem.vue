@@ -5,7 +5,7 @@
     class="desktop-file-row"
     :data-vfiles-path="file.path"
     :class="{ 'drop-target': dragOver, 'is-row-selected': selected }"
-    :draggable="!isNavigationShortcut"
+    draggable
     @click="handleClick"
     @dblclick="handleActivate"
     @contextmenu.prevent="handleContextMenu"
@@ -22,7 +22,7 @@
     <td class="is-narrow">
       <div class="is-flex is-align-items-center">
         <label
-          v-if="selectMode && !isNavigationShortcut"
+          v-if="selectMode"
           class="mr-2"
           @click.stop
         >
@@ -99,20 +99,9 @@
       @click.stop
     >
       <div
-        v-if="!isParentShortcut"
         class="buttons has-addons are-small is-right mb-0 desktop-action-buttons"
       >
-        <template v-if="isSelfShortcut">
-          <button
-            class="button is-ghost"
-            @click="createDirectory"
-            title="在当前目录下新建子目录"
-            aria-label="在当前目录下新建子目录"
-          >
-            <span class="icon is-small"><IconFolderPlus :size="16" /></span>
-          </button>
-        </template>
-        <template v-else-if="file.kind === 'directory'">
+        <template v-if="file.kind === 'directory'">
           <button
             class="button is-ghost"
             @click="createDirectory"
@@ -231,11 +220,9 @@
     :class="{
       'has-background-light': selected,
       'is-expanded': showActions,
-      'file-item--shortcut-parent': isParentShortcut,
-      'file-item--shortcut-self': isSelfShortcut,
       'drop-target': dragOver,
     }"
-    :draggable="!isNavigationShortcut"
+    draggable
     @click="handleClick"
     @dblclick="handleActivate"
     @contextmenu.prevent="handleContextMenu"
@@ -282,15 +269,7 @@
             >
           </p>
           <p class="file-info">
-            <template v-if="isNavigationShortcut">
-              <span class="tag is-light mr-2">
-                {{ desktopFileKindLabel }}
-              </span>
-              <span class="has-text-grey-light is-size-7">
-                {{ desktopSubtitle }}
-              </span>
-            </template>
-            <template v-else>
+            <template>
               <span v-if="file.kind === 'file'" class="tag is-light mr-2">
                 {{ formatSize(file.size_bytes || 0) }}
               </span>
@@ -328,7 +307,7 @@
           </div>
         </div>
       </div>
-      <div v-if="selectMode && !isNavigationShortcut" class="media-right">
+      <div v-if="selectMode" class="media-right">
         <div class="is-flex is-align-items-center">
           <input
             type="checkbox"
@@ -344,22 +323,13 @@
     <!-- 浮动操作栏 -->
     <Transition name="slide-up">
       <div
-        v-if="showActions && !selectMode && !isParentShortcut"
+        v-if="showActions && !selectMode"
         class="file-actions"
         @click.stop
       >
         <div class="actions-bar">
           <button
-            v-if="isSelfShortcut"
-            class="action-btn"
-            @click="createDirectory"
-            title="新建目录"
-          >
-            <IconFolderPlus :size="20" />
-            <span>新建目录</span>
-          </button>
-          <button
-            v-else-if="file.kind === 'directory'"
+            v-if="file.kind === 'directory'"
             class="action-btn"
             @click="openFolder"
             title="打开"
@@ -386,7 +356,6 @@
             <span>历史</span>
           </button>
           <button
-            v-if="!isSelfShortcut"
             class="action-btn"
             @click="moveEntry"
             title="移动"
@@ -477,12 +446,6 @@ const emit = defineEmits<{
 const dragOver = ref(false);
 
 const showActions = computed(() => props.expanded);
-const uiRole = computed(
-  () => (props.file as FileInfo & { uiRole?: "self" | "parent" }).uiRole,
-);
-const isNavigationShortcut = computed(
-  () => uiRole.value === "self" || uiRole.value === "parent",
-);
 const isDirectoryEntry = computed(() => props.file.kind === "directory");
 /** 内联重命名：父组件通过 `renaming` 打开，输入框自动聚焦并选中主文件名。 */
 const renameDraft = ref("");
@@ -538,58 +501,29 @@ function onRenameBlur() {
   emit("renameCancel", props.file);
 }
 
-const isNameLink = computed(
-  () => isNavigationShortcut.value || isDirectoryEntry.value,
-);
-const isSelfShortcut = computed(() => uiRole.value === "self");
-const isParentShortcut = computed(() => uiRole.value === "parent");
+const isNameLink = computed(() => isDirectoryEntry.value);
 const nameTextClass = computed(() => ({
   // 文件夹名称略重，颜色仍走正文色，避免整列都是链接蓝
   "is-folder-name": isDirectoryEntry.value,
 }));
 
 const desktopFileDateLabel = computed(() => {
-  if (isNavigationShortcut.value) return "--";
   return formatRelativeDate(props.file.updated_at || props.file.created_at);
 });
 
 /** 悬停显示精确时间，作为相对时间的补充 */
 const desktopFileDateTitle = computed(() => {
-  if (isNavigationShortcut.value) return undefined;
   return formatDate(props.file.updated_at || props.file.created_at);
 });
 
 const desktopFileSizeLabel = computed(() => {
-  if (isNavigationShortcut.value) return "--";
   if (props.file.kind === "directory") return "--";
   return formatSize(props.file.size_bytes || 0);
 });
 
 const desktopFileKindLabel = computed(() => {
-  if (isParentShortcut.value) return "父目录";
-  if (isSelfShortcut.value) return "当前目录";
   // 统一走共享实现，避免各处对「代码 / 视频」的判定不一致
   return fileKindLabel(props.file);
-});
-
-const desktopSubtitle = computed(() => {
-  if (isParentShortcut.value) {
-    return "返回上一层";
-  }
-
-  if (isSelfShortcut.value) {
-    return "在此目录中新建";
-  }
-
-  if (props.file.lastCommit?.message) {
-    return props.file.lastCommit.message;
-  }
-
-  if (props.file.kind === "directory") {
-    return props.file.path || "根目录";
-  }
-
-  return props.file.mime_type || "双击打开预览";
 });
 
 type NameSegment = { text: string; match: boolean };
@@ -635,11 +569,6 @@ function handleClick(event?: MouseEvent) {
     return;
   }
 
-  if (isNavigationShortcut.value) {
-    emit("openFolder", props.file);
-    return;
-  }
-
   const shift = event?.shiftKey ?? false;
   const meta = (event?.ctrlKey || event?.metaKey) ?? false;
   // Shift/Ctrl(Cmd) 点击进入范围/加选，交由父组件统一维护选择状态
@@ -656,7 +585,6 @@ function handleClick(event?: MouseEvent) {
 }
 
 function handleContextMenu(event: MouseEvent) {
-  if (isNavigationShortcut.value) return;
   emit("contextMenu", { file: props.file, x: event.clientX, y: event.clientY });
 }
 
@@ -673,7 +601,7 @@ function clearLongPress() {
 }
 
 function handleLongPressStart(event: TouchEvent) {
-  if (isNavigationShortcut.value || props.desktop) return;
+  if (props.desktop) return;
   const touch = event.touches[0];
   if (!touch) return;
 
@@ -694,12 +622,8 @@ function handleLongPressCancel() {
 
 onBeforeUnmount(clearLongPress);
 
-/** 拖拽：仅真实条目可拖动，目录可作为放置目标。 */
+/** 拖拽：条目可拖动，目录可作为放置目标。 */
 function handleDragStart(event: DragEvent) {
-  if (isNavigationShortcut.value) {
-    event.preventDefault();
-    return;
-  }
   event.dataTransfer?.setData("text/plain", props.file.path);
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
   emit("dragStart", props.file);
@@ -711,7 +635,7 @@ function handleDragEnd() {
 }
 
 function handleDragOver(event: DragEvent) {
-  if (props.file.kind !== "directory" || isSelfShortcut.value) return;
+  if (props.file.kind !== "directory") return;
   if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
   dragOver.value = true;
 }
@@ -722,15 +646,11 @@ function handleDragLeave() {
 
 function handleDrop() {
   dragOver.value = false;
-  if (props.file.kind !== "directory" || isSelfShortcut.value) return;
+  if (props.file.kind !== "directory") return;
   emit("dropOnFolder", props.file.path);
 }
 
 function handleActivate() {
-  if (isNavigationShortcut.value) {
-    emit("openFolder", props.file);
-    return;
-  }
   if (props.selectMode) return;
   if (props.file.kind === "directory") {
     emit("openFolder", props.file);
@@ -890,21 +810,6 @@ function share() {
   .desktop-action-buttons {
     opacity: 1;
   }
-}
-
-.file-item--shortcut-self,
-.file-item--shortcut-parent {
-  background: var(--vf-surface);
-}
-
-.file-item--shortcut-self .file-icon {
-  color: var(--vf-text-muted);
-  background: transparent;
-}
-
-.file-item--shortcut-parent .file-icon {
-  color: var(--vf-text-muted);
-  background: transparent;
 }
 
 .file-item.is-expanded {

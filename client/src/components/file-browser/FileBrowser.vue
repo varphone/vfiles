@@ -63,6 +63,7 @@
             @toggle-details="fileView.toggleDetails()"
             @toggle-batch="toggleBatchMode"
             @upload="showUploader = true"
+            @create-folder="createDirectoryHere"
             @search="runDesktopSearch"
             @clear="clearDesktopSearch"
             @update:search-query="searchQuery = $event"
@@ -966,9 +967,7 @@ const detailsVisible = computed(
 
 /** 移动端搜索筛选面板（默认收起，保持顶部只有一行搜索框）。 */
 const mobileSearchFiltersOpen = ref(false);
-const detailItem = computed<BrowserListItem | undefined>(() =>
-  findActiveItem(),
-);
+const detailItem = computed<FileInfo | undefined>(() => findActiveItem());
 
 /**
  * 整窗拖放上传：把桌面文件直接拖进浏览器。
@@ -1035,7 +1034,7 @@ const previewableFiles = computed<FileInfo[]>(() =>
   (searchActive.value
     ? sortedSearchResults.value
     : navigationListItems.value
-  ).filter((file) => file.kind === "file" && !(file as BrowserListItem).uiRole),
+  ).filter((file) => file.kind === "file"),
 );
 
 const {
@@ -1405,48 +1404,10 @@ const visibleCount = ref(INITIAL_VISIBLE_COUNT);
 const loadMoreSentinel = ref<HTMLElement | null>(null);
 let loadMoreObserver: IntersectionObserver | null = null;
 
-type BrowserListItem = FileInfo & {
-  uiRole?: "self" | "parent";
-  uiTargetPath?: string;
-};
-
-const currentListItem = computed<BrowserListItem>(() => ({
-  id: `self:${currentPath.value || "root"}`,
-  name: ".",
-  path: `__vfiles_shortcut_self__:${currentPath.value || "root"}`,
-  kind: "directory",
-  created_at: "",
-  updated_at: "",
-  mime_type: undefined,
-  size_bytes: undefined,
-  is_text: false,
-  uiRole: "self",
-  uiTargetPath: currentPath.value || "",
-}));
-
-const parentListItem = computed<BrowserListItem>(() => {
-  return {
-    id: `parent:${currentPath.value || "root"}`,
-    name: "..",
-    path: `__vfiles_shortcut_parent__:${(parentPath.value ?? currentPath.value) || "root"}`,
-    kind: "directory",
-    created_at: "",
-    updated_at: "",
-    mime_type: undefined,
-    size_bytes: undefined,
-    is_text: false,
-    uiRole: "parent",
-    uiTargetPath: parentPath.value ?? "",
-  };
-});
-
-const navigationListItems = computed<BrowserListItem[]>(() => {
-  return [
-    currentListItem.value,
-    parentListItem.value,
-    ...sortBrowserItems(files.value, sortState.value),
-  ];
-});
+/** 目录列表（不含 `.`/`..` 之类的合成条目，导航交给面包屑/目录树/上一级按钮）。 */
+const navigationListItems = computed<FileInfo[]>(() =>
+  sortBrowserItems(files.value, sortState.value),
+);
 
 const sortedSearchResults = computed<FileInfo[]>(() => {
   return sortFiles(searchResults.value, sortState.value);
@@ -1482,6 +1443,14 @@ const desktopItems = computed(() =>
 const desktopActivePath = ref("");
 
 // 文件列表重新加载（上传/删除/重命名/移动/切换目录）后刷新侧栏概览
+// 移动端底栏的「新建文件夹」：在当前位置打开创建对话框
+watch(
+  () => appStore.createDirectoryRequests,
+  () => {
+    void createDirectoryHere();
+  },
+);
+
 watch(
   () => filesStore.files,
   () => {
@@ -1505,20 +1474,13 @@ watch(
     const current = desktopItems.value.find(
       (file) => file.path === desktopActivePath.value,
     );
-    // 目录刚加载时列表里只有 `.`/`..` 两个快捷项，会把活动行落在快捷项上；
-    // 真实条目出现后改选第一个真实条目（用户已显式选择时不打扰）。
-    const currentIsShortcut =
-      !current || Boolean((current as BrowserListItem).uiRole);
+    // 目录刚加载时还没有活动行：默认选中第一个条目（用户已显式选择时不打扰）。
     if (
-      currentIsShortcut &&
+      !current &&
       selectedPaths.value.size === 0 &&
       desktopItems.value.length > 0
     ) {
-      const firstRealItem = desktopItems.value.find(
-        (file) => !(file as BrowserListItem).uiRole,
-      );
-      desktopActivePath.value =
-        firstRealItem?.path || desktopItems.value[0].path;
+      desktopActivePath.value = desktopItems.value[0].path;
     }
   },
   { immediate: true },
@@ -1636,7 +1598,7 @@ const {
   goBack,
 });
 
-function handleItemClick(file: BrowserListItem) {
+function handleItemClick(file: FileInfo) {
   if (file.kind === "directory") {
     handleOpenFolder(file);
     return;
@@ -1665,7 +1627,7 @@ function handleOpenFolder(file: FileInfo) {
     if (searchActive.value) {
       clearSearch();
     }
-    navigateTo((file as BrowserListItem).uiTargetPath ?? file.path);
+    navigateTo(file.path);
   }
 }
 
@@ -1697,9 +1659,12 @@ async function handleDelete(file: FileInfo) {
 
 async function handleCreateDirectory(file: FileInfo) {
   if (file.kind !== "directory") return;
-  await promptCreateDirectory(
-    (file as BrowserListItem).uiTargetPath ?? file.path,
-  );
+  await promptCreateDirectory(file.path);
+}
+
+/** 在当前目录下新建文件夹（工具栏按钮 / 移动端入口）。 */
+async function createDirectoryHere() {
+  await promptCreateDirectory(currentPath.value || "");
 }
 
 /** 打开内联重命名（F2 / 右键菜单 / 行内按钮）；同时把该行设为活动行。 */
@@ -1827,20 +1792,20 @@ function anyOverlayOpen(): boolean {
 }
 
 /** 当前键盘操作的目标：优先高亮行，其次唯一的已选条目。 */
-function findActiveItem(): BrowserListItem | undefined {
-  const list = (
-    searchActive.value ? sortedSearchResults.value : navigationListItems.value
-  ) as BrowserListItem[];
+function findActiveItem(): FileInfo | undefined {
+  const list = searchActive.value
+    ? sortedSearchResults.value
+    : navigationListItems.value;
 
   if (desktopActivePath.value) {
     const active = list.find((file) => file.path === desktopActivePath.value);
-    if (active && !active.uiRole) return active;
+    if (active) return active;
   }
 
   if (selectedPaths.value.size === 1) {
     const [only] = selectedPaths.value;
     const selected = list.find((file) => file.path === only);
-    if (selected && !selected.uiRole) return selected;
+    if (selected) return selected;
   }
 
   return undefined;
@@ -1867,11 +1832,9 @@ function gridColumnStep(): number {
  * - `.`/`..` 快捷项不参与移动与选择（与鼠标点击一致）。
  */
 function moveActiveRow(key: string, shift: boolean) {
-  // `.`/`..` 是导航快捷项而不是真实条目：方向键只在真实条目间移动，
-  // 与 Shift 区间选择（useFileSelection 的 selectableItems）保持一致。
-  const list = (
-    searchActive.value ? sortedSearchResults.value : navigationListItems.value
-  ).filter((item) => !(item as BrowserListItem).uiRole);
+  const list = searchActive.value
+    ? sortedSearchResults.value
+    : navigationListItems.value;
   if (list.length === 0) return;
 
   const currentIndex = list.findIndex(
@@ -1939,9 +1902,7 @@ function scrollActiveIntoView(path: string) {
 }
 
 function handleContextMenu(payload: { file: FileInfo; x: number; y: number }) {
-  const file = payload.file as BrowserListItem;
-  if (file.uiRole) return;
-
+  const file = payload.file;
   narrowSelectionTo(file.path);
   desktopActivePath.value = file.path;
   contextMenu.value = {

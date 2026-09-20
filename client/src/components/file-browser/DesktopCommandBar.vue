@@ -63,6 +63,17 @@
       />
 
       <button
+        class="vf-ghost-button desktop-create-folder"
+        type="button"
+        title="新建文件夹"
+        aria-label="新建文件夹"
+        @click="emit('create-folder')"
+      >
+        <IconFolderPlus :size="16" />
+        <span>新建文件夹</span>
+      </button>
+
+      <button
         v-if="uploadIndicator"
         class="vf-ghost-button upload-indicator"
         type="button"
@@ -94,6 +105,7 @@ import {
   IconAlertCircle,
   IconArrowLeft,
   IconChecklist,
+  IconFolderPlus,
   IconLayoutSidebarRight,
   IconRefresh,
   IconUpload,
@@ -147,6 +159,7 @@ const emit = defineEmits<{
   (e: "toggle-details"): void;
   (e: "toggle-batch"): void;
   (e: "upload"): void;
+  (e: "create-folder"): void;
   (e: "search"): void;
   (e: "clear"): void;
   (e: "update:searchQuery", value: string): void;
@@ -180,6 +193,15 @@ const emit = defineEmits<{
 .desktop-primary-action {
   margin-left: 0.25rem;
   flex: 0 0 auto;
+}
+
+/* 新建文件夹：文字按钮，放在上传左侧（搜索框自适应收缩，工具栏保持单行） */
+.desktop-create-folder {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
 }
 
 /* 上传进度胶囊：与「上传」按钮并排，显示队列进度 */

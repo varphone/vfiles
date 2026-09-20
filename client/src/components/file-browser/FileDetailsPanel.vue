@@ -79,7 +79,7 @@ import FileDetailsContent from "./FileDetailsContent.vue";
  * 列表/选择状态。
  */
 defineProps<{
-  item?: FileInfo & { uiRole?: "self" | "parent" };
+  item?: FileInfo;
 }>();
 
 const emit = defineEmits<{

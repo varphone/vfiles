@@ -63,7 +63,7 @@ import FileTypeIcon from "./FileTypeIcon.vue";
  * 避免两处各写一遍字段与文案；操作按钮由调用方通过 `actions` 插槽提供。
  */
 const props = defineProps<{
-  file: FileInfo & { uiRole?: "self" | "parent" };
+  file: FileInfo;
 }>();
 
 const modified = computed(() => props.file.updated_at || props.file.created_at);

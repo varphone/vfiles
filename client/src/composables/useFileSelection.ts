@@ -20,8 +20,9 @@ export interface FileSelectionDeps {
   renameEntry: (file: FileInfo) => Promise<void> | void;
 }
 
-function isShortcut(file: FileInfo): boolean {
-  return Boolean((file as FileInfo & { uiRole?: string }).uiRole);
+function isShortcut(_file: FileInfo): boolean {
+  // 列表已不再注入“.”“..”快捷项；保留该判断以便调用点语义稳定
+  return false;
 }
 
 /**

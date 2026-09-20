@@ -5,13 +5,12 @@
     :class="{
       'file-card--selected': selected,
       'file-card--active': active,
-      'file-card--shortcut': isNavigationShortcut,
       'file-card--grid': true,
       'drop-target': dragOver,
     }"
     :style="{ '--file-card-thumb-size': `${thumbnailSize}px` }"
     :title="file.name"
-    :draggable="!isNavigationShortcut"
+    draggable
     @click="handleClick"
     @dblclick="handleActivate"
     @contextmenu.prevent="handleContextMenu"
@@ -40,7 +39,7 @@
       </span>
 
       <label
-        v-if="selectMode && !isNavigationShortcut"
+        v-if="selectMode"
         class="file-card-check"
         @click.stop
       >
@@ -52,7 +51,7 @@
         />
       </label>
 
-      <div v-if="!isNavigationShortcut" class="file-card-menu" @click.stop>
+      <div class="file-card-menu" @click.stop>
         <button
           class="file-card-menu-trigger"
           type="button"
@@ -65,16 +64,16 @@
 
         <div v-if="menuOpen" class="file-card-menu-panel" role="menu">
           <button
-            v-if="isSelfShortcut || file.kind === 'directory'"
+            v-if="file.kind === 'directory'"
             class="file-card-menu-item"
             role="menuitem"
             @click="runAndClose(emitCreateDirectory)"
           >
             <IconFolderPlus :size="16" />
-            <span>{{ isSelfShortcut ? "新建子目录" : "在此新建子目录" }}</span>
+            <span>在此新建子目录</span>
           </button>
           <button
-            v-if="!isSelfShortcut && file.kind === 'directory'"
+            v-if="file.kind === 'directory'"
             class="file-card-menu-item"
             role="menuitem"
             @click="runAndClose(() => emit('open-folder', file))"
@@ -83,7 +82,7 @@
             <span>打开</span>
           </button>
           <button
-            v-if="!isSelfShortcut && file.kind === 'file'"
+            v-if="file.kind === 'file'"
             class="file-card-menu-item"
             role="menuitem"
             @click="runAndClose(() => emit('preview', file))"
@@ -92,7 +91,7 @@
             <span>预览</span>
           </button>
           <button
-            v-if="!isSelfShortcut && file.kind === 'file'"
+            v-if="file.kind === 'file'"
             class="file-card-menu-item"
             role="menuitem"
             @click="runAndClose(() => emit('view-history', file))"
@@ -101,7 +100,6 @@
             <span>历史版本</span>
           </button>
           <button
-            v-if="!isSelfShortcut"
             class="file-card-menu-item"
             role="menuitem"
             @click="runAndClose(() => emit('rename', file))"
@@ -110,7 +108,6 @@
             <span>重命名</span>
           </button>
           <button
-            v-if="!isSelfShortcut"
             class="file-card-menu-item"
             role="menuitem"
             @click="runAndClose(() => emit('move', file))"
@@ -135,7 +132,6 @@
             <span>分享</span>
           </button>
           <button
-            v-if="!isSelfShortcut"
             class="file-card-menu-item is-danger"
             role="menuitem"
             @click="runAndClose(confirmDelete)"
@@ -175,13 +171,9 @@
         </template>
       </div>
       <div class="file-card-meta" :title="dateTitle">
-        <span v-if="isParentShortcut">父目录</span>
-        <span v-else-if="isSelfShortcut">当前目录</span>
-        <template v-else>
-          <span v-if="file.kind === 'file'">{{ sizeLabel }}</span>
-          <span class="file-card-meta-sep" v-if="file.kind === 'file'">·</span>
-          <span>{{ dateLabel }}</span>
-        </template>
+        <span v-if="file.kind === 'file'">{{ sizeLabel }}</span>
+        <span class="file-card-meta-sep" v-if="file.kind === 'file'">·</span>
+        <span>{{ dateLabel }}</span>
       </div>
     </div>
   </div>
@@ -190,7 +182,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import {
-  IconArrowLeft,
   IconArrowsDiff,
   IconDots,
   IconDownload,
@@ -325,20 +316,11 @@ const menuOpen = ref(false);
 const thumbFailed = ref(false);
 const dragOver = ref(false);
 
-const uiRole = computed(
-  () => (props.file as FileInfo & { uiRole?: "self" | "parent" }).uiRole,
-);
-const isSelfShortcut = computed(() => uiRole.value === "self");
-const isParentShortcut = computed(() => uiRole.value === "parent");
-const isNavigationShortcut = computed(
-  () => isSelfShortcut.value || isParentShortcut.value,
-);
 const isDirectoryEntry = computed(() => props.file.kind === "directory");
 
 const iconSize = computed(() => Math.round(props.thumbnailSize * 0.32));
 
 const icon = computed(() => {
-  if (isParentShortcut.value) return IconArrowLeft;
   switch (fileIconKind(props.file)) {
     case "folder":
       return IconFolder;
@@ -362,7 +344,7 @@ const icon = computed(() => {
 });
 
 const thumbnailUrl = computed(() => {
-  if (isNavigationShortcut.value || thumbFailed.value) return "";
+  if (thumbFailed.value) return "";
   if (!isImageFile(props.file)) return "";
   return filesService.thumbnailUrl(props.file.path, {
     commit: props.commit,
@@ -389,11 +371,6 @@ function handleClick(event?: MouseEvent) {
     return;
   }
 
-  if (isNavigationShortcut.value) {
-    emit("open-folder", props.file);
-    return;
-  }
-
   const shift = event?.shiftKey ?? false;
   const meta = (event?.ctrlKey || event?.metaKey) ?? false;
   if (shift || meta) {
@@ -413,7 +390,6 @@ function handleClick(event?: MouseEvent) {
 }
 
 function handleContextMenu(event: MouseEvent) {
-  if (isNavigationShortcut.value) return;
   emit("context-menu", {
     file: props.file,
     x: event.clientX,
@@ -434,7 +410,6 @@ function clearLongPress() {
 }
 
 function handleLongPressStart(event: TouchEvent) {
-  if (isNavigationShortcut.value) return;
   const touch = event.touches[0];
   if (!touch) return;
 
@@ -455,12 +430,8 @@ function handleLongPressCancel() {
 
 onBeforeUnmount(clearLongPress);
 
-/** 拖拽：仅真实条目可拖动，目录可作为放置目标。 */
+/** 拖拽：条目可拖动，目录可作为放置目标。 */
 function handleDragStart(event: DragEvent) {
-  if (isNavigationShortcut.value) {
-    event.preventDefault();
-    return;
-  }
   event.dataTransfer?.setData("text/plain", props.file.path);
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
   emit("drag-start", props.file);
@@ -472,7 +443,7 @@ function handleDragEnd() {
 }
 
 function handleDragOver(event: DragEvent) {
-  if (props.file.kind !== "directory" || isSelfShortcut.value) return;
+  if (props.file.kind !== "directory") return;
   if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
   dragOver.value = true;
 }
@@ -483,15 +454,11 @@ function handleDragLeave() {
 
 function handleDrop() {
   dragOver.value = false;
-  if (props.file.kind !== "directory" || isSelfShortcut.value) return;
+  if (props.file.kind !== "directory") return;
   emit("drop-on-folder", props.file.path);
 }
 
 function handleActivate() {
-  if (isNavigationShortcut.value) {
-    emit("open-folder", props.file);
-    return;
-  }
   if (props.selectMode) return;
   if (props.file.kind === "directory") {
     emit("open-folder", props.file);
