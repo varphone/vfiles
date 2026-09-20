@@ -29,11 +29,11 @@ export const useFilesStore = defineStore("files", () => {
   });
 
   const directories = computed(() => {
-    return files.value.filter((f) => f.type === "directory");
+    return files.value.filter((f) => f.kind === "directory");
   });
 
   const regularFiles = computed(() => {
-    return files.value.filter((f) => f.type === "file");
+    return files.value.filter((f) => f.kind === "file");
   });
 
   // 方法

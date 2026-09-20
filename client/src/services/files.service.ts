@@ -3,13 +3,48 @@ import type { ContentMatch, FileInfo, FileHistory } from "../types";
 
 type DownloadProgress = { loaded: number; total?: number };
 
+async function responseError(
+  response: Response,
+  fallback: string,
+): Promise<Error> {
+  if (response.status === 401 && typeof window !== "undefined") {
+    window.dispatchEvent(new Event("vfiles:unauthorized"));
+  }
+
+  let message = fallback;
+  try {
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const payload: unknown = await response.json();
+      if (payload && typeof payload === "object") {
+        const record = payload as Record<string, unknown>;
+        if (typeof record.message === "string" && record.message) {
+          message = record.message;
+        } else if (typeof record.error === "string" && record.error) {
+          message = record.error;
+        }
+      }
+    } else {
+      const text = (await response.text()).trim();
+      if (text) message = text;
+    }
+  } catch {
+    // Keep the caller-provided fallback when the error body cannot be parsed.
+  }
+
+  return new Error(message);
+}
+
 async function fetchToBlob(
   url: string,
   opts?: { signal?: AbortSignal; onProgress?: (p: DownloadProgress) => void },
 ): Promise<Blob> {
-  const response = await fetch(url, { signal: opts?.signal });
+  const response = await fetch(url, {
+    signal: opts?.signal,
+    credentials: "include",
+  });
   if (!response.ok) {
-    throw new Error("下载失败");
+    throw await responseError(response, "下载失败");
   }
 
   const totalStr = response.headers.get("content-length");
@@ -273,10 +308,12 @@ export const filesService = {
   async getFileContent(path: string, commit?: string): Promise<Blob> {
     const params = new URLSearchParams({ path });
     if (commit) params.set("commit", commit);
-    const response = await fetch(`/api/files/content?${params}`);
+    const response = await fetch(`/api/files/content?${params}`, {
+      credentials: "include",
+    });
 
     if (!response.ok) {
-      throw new Error("获取文件内容失败");
+      throw await responseError(response, "获取文件内容失败");
     }
 
     return response.blob();
@@ -501,9 +538,11 @@ export const filesService = {
   ): Promise<string> {
     const params = new URLSearchParams({ path, commit });
     if (parent) params.set("parent", parent);
-    const response = await fetch(`/api/history/diff?${params}`);
+    const response = await fetch(`/api/history/diff?${params}`, {
+      credentials: "include",
+    });
     if (!response.ok) {
-      throw new Error("获取 diff 失败");
+      throw await responseError(response, "获取 diff 失败");
     }
     return response.text();
   },

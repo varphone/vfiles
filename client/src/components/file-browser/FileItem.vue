@@ -369,11 +369,8 @@ const desktopSubtitle = computed(() => {
     return "当前目录快捷入口，可直接新建子目录";
   }
 
-  const extendedFile = props.file as FileInfo & {
-    lastCommit?: { message?: string };
-  };
-  if (extendedFile.lastCommit?.message) {
-    return extendedFile.lastCommit.message;
+  if (props.file.lastCommit?.message) {
+    return props.file.lastCommit.message;
   }
 
   if (props.file.kind === "directory") {

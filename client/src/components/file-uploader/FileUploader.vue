@@ -120,10 +120,6 @@ function cancelAll() {
   }
 }
 
-function close() {
-  emit("close");
-}
-
 async function startUpload() {
   if (!hasQueued.value) return;
   if (uploading.value) return;

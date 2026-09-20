@@ -10,6 +10,7 @@ export interface FileInfo {
   created_at: string;
   updated_at?: string;
   matches?: ContentMatch[];
+  lastCommit?: { message?: string };
 }
 
 export interface ContentMatch {

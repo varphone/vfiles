@@ -458,7 +458,7 @@
             </div>
 
             <div
-              v-else-if="!searchActive && navigationListItems.length === 0"
+              v-else-if="!searchActive && files.length === 0"
               class="has-text-centered py-6"
             >
               <IconFolderOpen :size="64" class="has-text-grey-light mb-3" />
@@ -1419,16 +1419,6 @@ function normalizeTargetDirectory(rawPath: string): string {
     .replace(/\/+$/, "");
 }
 
-async function moveEntryToDirectory(
-  file: FileInfo,
-  targetDir: string,
-  message: string,
-): Promise<string> {
-  const to = resolveMoveTargetPath(file, targetDir);
-  await filesService.movePath(file.path, to, message);
-  return to;
-}
-
 function resolveMoveTargetPath(file: FileInfo, targetDir: string): string {
   if (
     file.kind === "directory" &&
@@ -1569,11 +1559,12 @@ async function renameCurrentDir() {
   }
 
   dirOpLoading.value = "rename";
+  const targetPath = buildSiblingPath(currentPath.value, name);
   try {
     const to = await renameEntryPath(
       currentPath.value,
       name,
-      `重命名目录: ${currentPath.value} -> ${to}`,
+      `重命名目录: ${currentPath.value} -> ${targetPath}`,
     );
     appStore.success("重命名成功");
     dirManagerOpen.value = false;
@@ -1880,10 +1871,9 @@ function enqueueDownload(kind: DownloadQueueKind, path: string) {
     },
   ];
 
-  // 第一次出现队列时默认展开
+  // 第一次出现队列时默认展开，方便用户查看进度。
   if (wasEmpty) queueCollapsed.value = false;
 
-  // 自动启动队列
   void processQueue();
 }
 
@@ -2031,13 +2021,9 @@ function handleOpenFolder(file: FileInfo) {
 }
 
 function handleDownload(file: FileInfo) {
-  if (file.kind === "directory") {
-    // 文件夹下载：使用浏览器原生下载
-    filesService.downloadFolder(file.path, browseCommit.value);
-  } else {
-    // 单文件下载：使用浏览器原生下载
-    filesService.downloadFile(file.path, browseCommit.value);
-  }
+  // Route downloads through the queue so users get progress, error feedback,
+  // and cancellation support instead of a silent browser download.
+  enqueueDownload(file.kind === "directory" ? "folder" : "file", file.path);
 }
 
 async function handleDelete(file: FileInfo) {

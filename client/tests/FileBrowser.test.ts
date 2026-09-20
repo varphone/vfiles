@@ -4,8 +4,8 @@ import { renderWithProviders } from "./renderWithProviders";
 import FileBrowser from "../src/components/file-browser/FileBrowser.vue";
 
 const { getFilesMock, searchFilesMock, deleteFileMock } = vi.hoisted(() => ({
-  getFilesMock: vi.fn(async () => []),
-  searchFilesMock: vi.fn(async () => []),
+  getFilesMock: vi.fn(async (): Promise<unknown[]> => []),
+  searchFilesMock: vi.fn(async (): Promise<unknown[]> => []),
   deleteFileMock: vi.fn(async () => ({ success: true })),
 }));
 
@@ -87,7 +87,10 @@ describe("FileBrowser.vue", () => {
     await fireEvent.click(await findByText("删除"));
 
     await waitFor(() => {
-      expect(deleteFileMock).toHaveBeenCalledWith("docs/match.txt", undefined);
+      expect(deleteFileMock).toHaveBeenCalledWith(
+        "docs/match.txt",
+        expect.stringContaining("删除文件"),
+      );
       expect(searchFilesMock).toHaveBeenCalledTimes(2);
     });
 

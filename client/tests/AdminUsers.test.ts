@@ -14,7 +14,9 @@ const mockUsers = [
 ];
 
 vi.mock("../src/services/auth.service", async () => {
-  const actual = await vi.importActual("../src/services/auth.service");
+  const actual = await vi.importActual<
+    typeof import("../src/services/auth.service")
+  >("../src/services/auth.service");
   return {
     authService: {
       ...actual.authService,
