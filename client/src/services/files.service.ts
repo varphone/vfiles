@@ -1,5 +1,6 @@
 import { apiService } from "./api.service";
 import { fetchWithRetry } from "./fetch-retry";
+import { extractErrorPayload, localizeApiError } from "../utils/apiErrors";
 import type { ContentMatch, FileInfo, FileHistory } from "../types";
 
 type DownloadProgress = { loaded: number; total?: number };
@@ -17,14 +18,8 @@ async function responseError(
     const contentType = response.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
       const payload: unknown = await response.json();
-      if (payload && typeof payload === "object") {
-        const record = payload as Record<string, unknown>;
-        if (typeof record.message === "string" && record.message) {
-          message = record.message;
-        } else if (typeof record.error === "string" && record.error) {
-          message = record.error;
-        }
-      }
+      // 按错误码渲染中文文案，未知错误码保留服务端文案
+      message = localizeApiError(extractErrorPayload(payload), fallback);
     } else {
       const text = (await response.text()).trim();
       if (text) message = text;

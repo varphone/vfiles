@@ -43,6 +43,18 @@ impl From<DomainError> for ApiError {
     }
 }
 
+/// 从 `PathConflict` 的英文消息里取出冲突路径，作为结构化 `details`。
+///
+/// 领域错误的消息形如 `Path already exists: docs/a.txt`，路径始终在最后一个 `": "`
+/// 之后；取不到时返回 `None`，客户端会退回通用文案。
+fn path_conflict_detail(message: &str) -> Option<serde_json::Value> {
+    let path = message.rsplit(": ").next()?.trim();
+    if path.is_empty() || path == message {
+        return None;
+    }
+    Some(serde_json::json!({ "path": path }))
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code, message, details) = match self {
@@ -122,7 +134,8 @@ impl IntoResponse for ApiError {
                 StatusCode::CONFLICT,
                 "PATH_CONFLICT".to_string(),
                 format!("Path conflict: {}", message),
-                None,
+                // 冲突路径对用户最有用：抽出来放进 details，客户端可拼成中文提示
+                path_conflict_detail(&message),
             ),
             ApiError::Domain(DomainError::UploadExpired) => (
                 StatusCode::GONE,
@@ -221,6 +234,42 @@ mod tests {
     use axum::{http::StatusCode, response::IntoResponse};
     use http_body_util::BodyExt;
     use vfiles_domain::DomainError;
+
+    #[test]
+    fn path_conflict_details_carry_the_offending_path() {
+        assert_eq!(
+            super::path_conflict_detail("Path already exists: docs/a.txt"),
+            Some(serde_json::json!({ "path": "docs/a.txt" }))
+        );
+        assert_eq!(
+            super::path_conflict_detail("Path is occupied by a file: b.txt"),
+            Some(serde_json::json!({ "path": "b.txt" }))
+        );
+        // 没有可提取的路径时不编造 details
+        assert_eq!(super::path_conflict_detail("Path conflict"), None);
+        assert_eq!(super::path_conflict_detail(""), None);
+    }
+
+    #[tokio::test]
+    async fn path_conflict_response_exposes_the_path_in_details() {
+        let response = ApiError::Domain(DomainError::PathConflict {
+            message: "Path already exists: docs/a.txt".to_string(),
+        })
+        .into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body should collect")
+            .to_bytes();
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("body should be valid json");
+
+        assert_eq!(payload["code"], "PATH_CONFLICT");
+        assert_eq!(payload["details"]["path"], "docs/a.txt");
+    }
 
     #[tokio::test]
     async fn internal_errors_do_not_expose_error_details() {

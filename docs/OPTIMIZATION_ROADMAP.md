@@ -16,11 +16,11 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 48 实测）
+### 验证基线（round 49 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：38 个文件 / **237** 个用例通过；`vue-tsc`、`eslint`、`prettier`
+- `client` 单测：39 个文件 / **243** 个用例通过；`vue-tsc`、`eslint`、`prettier`
   通过。
 - 后端：`cargo test --workspace` 全部通过、`clippy --all-targets` 无告警、`fmt`
   干净（`frontend.rs` 的历史格式差异保持原样）。
@@ -859,6 +859,27 @@
 - 冒烟：桌面触发重命名冲突得到红色竖条 + 图标的提示（`top=64`，顶栏高 53）；移动端拖入
   文件后的成功提示 `top=64`、宽 358（390-32），不再遮挡顶栏；无控制台报错。
 
+### 2.56 API 错误文案本地化（round 49，交互）
+
+- 背景：服务端返回的领域错误是英文（如重命名冲突提示
+  `Path conflict: Path already exists: b.txt`），前端直接展示，与中文界面不一致；
+  服务端其实**早就有稳定的 `code` 字段**，只是客户端从未使用。
+- 客户端新增 `src/utils/apiErrors.ts`：22 个错误码 → 中文文案映射，`localizeApiError()`
+  在识别到错误码时渲染中文，并在服务端提供 `details` 时拼接参数（如冲突路径）；
+  未知错误码回退到服务端文案，保证自定义提示不丢失；`extractErrorPayload()`
+  同时兼容 `{code,message}` 与 `{data:{...}}` 包裹、以及旧的 `error` 字段。
+- 接入三条错误路径：axios 响应拦截器（覆盖绝大多数接口）、`api.service` 的两处原生
+  fetch（`putBinary` / `postFormNative`）、`files.service.responseError`
+  （预览内容、下载、diff）。调用方原有的中文兜底文案仍然保留。
+- 服务端补充结构化信息：`PATH_CONFLICT` 响应新增 `details.path`（从领域错误消息末尾
+  提取，提取不到则不编造），客户端据此渲染「目标路径已被占用：b.txt」。
+- 测试：客户端新增 6 个用例（已知错误码、带路径参数的冲突、未知错误码回退、空负载兜底、
+  两种响应包裹形式、旧 `error` 字段）；服务端新增 2 个用例（路径提取的边界、冲突响应
+  的 `details.path`）。
+- 冒烟：真实接口 `POST /api/files/move` 冲突返回
+  `{"code":"PATH_CONFLICT","details":{"path":"b.txt"}}`；浏览器内重命名冲突的提示为
+  **「目标路径已被占用：b.txt」**，无控制台报错。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -965,7 +986,7 @@
 
 ### 3.8 错误文案本地化（交互，中）
 
-- 目前服务端返回的领域错误是英文（例如重命名冲突时提示
-  `Path conflict: Path already exists: b.txt`），前端直接展示，与中文界面不一致。
-- 计划：在服务端为常见领域错误补充面向用户的文案（或返回稳定的错误码 + 参数），
-  前端按错误码渲染中文提示；先覆盖冲突、校验、未授权三类高频场景。
+- `[x]` 客户端按错误码渲染中文文案，冲突类附上服务端返回的路径参数（round 49，
+  见 §2.56）。
+- `[ ]` 其余动态细节（校验失败的具体字段值、上传冲突的分片编号等）改为结构化
+  `details` 而非拼进英文消息，客户端补上对应参数渲染。

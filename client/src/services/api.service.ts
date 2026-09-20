@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from "axios";
 import type { ApiResponse } from "../types";
+import { extractErrorPayload, localizeApiError } from "../utils/apiErrors";
 
 type RequestOptions = {
   timeoutMs?: number;
@@ -115,7 +116,11 @@ class ApiService {
         if (status === 401 && typeof window !== "undefined") {
           window.dispatchEvent(new Event("vfiles:unauthorized"));
         }
-        const message = this.handleError(error);
+        // 按错误码渲染中文文案；未知错误码时保留服务端文案
+        const message = localizeApiError(
+          extractErrorPayload(error.response?.data),
+          this.handleError(error),
+        );
         return Promise.reject(
           new ApiError(
             message,
@@ -300,7 +305,10 @@ class ApiService {
     if (!response.ok) {
       this.dispatchUnauthorized(response.status);
       throw new ApiError(
-        this.extractErrorMessage(payload),
+        localizeApiError(
+          extractErrorPayload(payload),
+          this.extractErrorMessage(payload),
+        ),
         response.status,
         payload && typeof payload === "object"
           ? (payload as ApiResponse)
@@ -341,7 +349,10 @@ class ApiService {
     if (!response.ok) {
       this.dispatchUnauthorized(response.status);
       throw new ApiError(
-        this.extractErrorMessage(payload),
+        localizeApiError(
+          extractErrorPayload(payload),
+          this.extractErrorMessage(payload),
+        ),
         response.status,
         payload && typeof payload === "object"
           ? (payload as ApiResponse)
