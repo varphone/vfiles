@@ -16,13 +16,12 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 28 实测）
+### 验证基线（round 29 实测）
 
-- `cargo test --workspace`：通过（含快照裁剪用例）。
+- `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：21 个文件 / 116 个用例通过。
-- 冒烟：4 次上传后执行 `maintenance prune-snapshots --keep 1`，快照 4 → 1，
-  blob 引用总数随之减少 3；`gc-blobs` 的孤儿文件回收保持可用。
+- `client` 单测：21 个文件 / **119** 个用例通过。
+- 冒烟：served 产物含移动端 `touchstart` 处理（`onTouchstart`）。
 
 ### 主要发现
 
@@ -422,6 +421,16 @@
 - 测试：真实 SQLite 下 3 个快照（各引用同一 blob）裁剪 `keep=1` 后仅剩 1 个快照，
   且 blob `ref_count` 恰好减少被删快照的引用数；冒烟验证 CLI 行为。
 
+### 2.34 移动端长按呼出菜单（round 29，交互）
+
+- 背景：桌面右键与 Android Chrome 长按会触发 `contextmenu`，但 iOS Safari 不可靠，
+  移动端缺少统一的长按菜单入口。
+- `FileItem`（移动端列表）与 `FileCard`（网格）新增 500ms 长按识别：以触摸点坐标发出
+  与右键一致的 `context-menu` 事件，复用现有 `ContextMenu` 组件；手指移动 / 抬起 /
+  取消即中止，且长按后紧随的 `click` 会被忽略，避免误触选择或打开。
+- 测试：长按发出正确坐标、移动取消不触发、长按后 click 被抑制；既有 119 个前端用例
+  保持通过。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -477,7 +486,8 @@
 - `[x]` 预览内上一个/下一个（按钮 + ←/→ 方向键）与位置指示（round 14）。
 - `[x]` 拖放移动：拖到目录行/卡片或面包屑路径段（round 23）。
 - `[x]` 加载骨架屏（列表/网格）取代单一 spinner（round 24）。
-- `[ ]` 网格视图排序入口与列表一致；移动端长按呼出菜单。
+- `[x]` 移动端长按呼出上下文菜单（round 29）。
+- `[ ]` 网格视图排序入口与列表一致。
 - `[ ]` 上传/下载与网格视图的空状态、加载骨架屏统一。
 
 ### 3.5 稳定性与可观测性（中）

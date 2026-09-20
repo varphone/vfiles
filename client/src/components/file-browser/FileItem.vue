@@ -8,6 +8,10 @@
     @click="handleClick"
     @dblclick="handleActivate"
     @contextmenu.prevent="handleContextMenu"
+    @touchstart="handleLongPressStart"
+    @touchmove="handleLongPressCancel"
+    @touchend="handleLongPressCancel"
+    @touchcancel="handleLongPressCancel"
     @dragstart="handleDragStart"
     @dragend="handleDragEnd"
     @dragover.prevent="handleDragOver"
@@ -214,6 +218,10 @@
     @click="handleClick"
     @dblclick="handleActivate"
     @contextmenu.prevent="handleContextMenu"
+    @touchstart="handleLongPressStart"
+    @touchmove="handleLongPressCancel"
+    @touchend="handleLongPressCancel"
+    @touchcancel="handleLongPressCancel"
     @dragstart="handleDragStart"
     @dragend="handleDragEnd"
     @dragover.prevent="handleDragOver"
@@ -371,7 +379,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import { confirmDialog } from "../../composables/dialog";
 import {
   IconArrowLeft,
@@ -589,6 +597,12 @@ function formatDate(date: string): string {
 }
 
 function handleClick(event?: MouseEvent) {
+  // 长按已打开菜单，忽略随之而来的 click
+  if (longPressFired) {
+    longPressFired = false;
+    return;
+  }
+
   if (isNavigationShortcut.value) {
     emit("openFolder", props.file);
     return;
@@ -613,6 +627,40 @@ function handleContextMenu(event: MouseEvent) {
   if (isNavigationShortcut.value) return;
   emit("contextMenu", { file: props.file, x: event.clientX, y: event.clientY });
 }
+
+// 移动端长按：以触摸点坐标打开上下文菜单（iOS 不会触发 contextmenu）。
+const LONG_PRESS_MS = 500;
+let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+let longPressFired = false;
+
+function clearLongPress() {
+  if (longPressTimer !== null) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+}
+
+function handleLongPressStart(event: TouchEvent) {
+  if (isNavigationShortcut.value || props.desktop) return;
+  const touch = event.touches[0];
+  if (!touch) return;
+
+  longPressFired = false;
+  const x = touch.clientX;
+  const y = touch.clientY;
+  clearLongPress();
+  longPressTimer = setTimeout(() => {
+    longPressTimer = null;
+    longPressFired = true;
+    emit("contextMenu", { file: props.file, x, y });
+  }, LONG_PRESS_MS);
+}
+
+function handleLongPressCancel() {
+  clearLongPress();
+}
+
+onBeforeUnmount(clearLongPress);
 
 /** 拖拽：仅真实条目可拖动，目录可作为放置目标。 */
 function handleDragStart(event: DragEvent) {

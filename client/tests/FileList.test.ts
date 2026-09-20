@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/vue";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import FileList from "../src/components/file-browser/FileList.vue";
 import type { FileInfo } from "../src/types";
 
@@ -223,5 +223,66 @@ describe("FileList.vue", () => {
 
     expect(emitted()["drop-on-folder"]).toBeUndefined();
     expect(row).not.toHaveClass("drop-target");
+  });
+
+  it("opens the context menu on long press in the mobile list", () => {
+    vi.useFakeTimers();
+    try {
+      const { emitted } = render(FileList as any, {
+        props: {
+          desktop: false,
+          selectMode: false,
+          selectedPaths: new Set<string>(),
+          files: [buildFile({ id: "a", name: "a.txt", path: "a.txt" })],
+        },
+      });
+
+      const item = screen.getByText("a.txt").closest(".file-item")!;
+      const touchStart = new Event("touchstart", { bubbles: true }) as any;
+      touchStart.touches = [{ clientX: 30, clientY: 40 }];
+      item.dispatchEvent(touchStart);
+
+      vi.advanceTimersByTime(600);
+
+      const events = emitted()["context-menu"] as Array<
+        [{ file: { path: string }; x: number; y: number }]
+      >;
+      expect(events).toHaveLength(1);
+      expect(events[0][0].file.path).toBe("a.txt");
+      expect(events[0][0].x).toBe(30);
+      expect(events[0][0].y).toBe(40);
+
+      // 长按后的 click 不应再触发选择/打开
+      item.dispatchEvent(new Event("click", { bubbles: true }));
+      expect(emitted()["click"]).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels the long press when the finger moves", () => {
+    vi.useFakeTimers();
+    try {
+      const { emitted } = render(FileList as any, {
+        props: {
+          desktop: false,
+          selectMode: false,
+          selectedPaths: new Set<string>(),
+          files: [buildFile({ id: "a", name: "a.txt", path: "a.txt" })],
+        },
+      });
+
+      const item = screen.getByText("a.txt").closest(".file-item")!;
+      const touchStart = new Event("touchstart", { bubbles: true }) as any;
+      touchStart.touches = [{ clientX: 10, clientY: 10 }];
+      item.dispatchEvent(touchStart);
+      item.dispatchEvent(new Event("touchmove", { bubbles: true }));
+
+      vi.advanceTimersByTime(600);
+
+      expect(emitted()["context-menu"]).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

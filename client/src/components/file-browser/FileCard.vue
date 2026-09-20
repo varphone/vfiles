@@ -14,6 +14,10 @@
     @click="handleClick"
     @dblclick="handleActivate"
     @contextmenu.prevent="handleContextMenu"
+    @touchstart="handleLongPressStart"
+    @touchmove="handleLongPressCancel"
+    @touchend="handleLongPressCancel"
+    @touchcancel="handleLongPressCancel"
     @dragstart="handleDragStart"
     @dragend="handleDragEnd"
     @dragover.prevent="handleDragOver"
@@ -302,6 +306,12 @@ const nameSegments = computed(() =>
 );
 
 function handleClick(event?: MouseEvent) {
+  // 长按已打开菜单，忽略随之而来的 click
+  if (longPressFired) {
+    longPressFired = false;
+    return;
+  }
+
   if (isNavigationShortcut.value) {
     emit("open-folder", props.file);
     return;
@@ -333,6 +343,40 @@ function handleContextMenu(event: MouseEvent) {
     y: event.clientY,
   });
 }
+
+// 移动端长按：以触摸点坐标打开上下文菜单（iOS 不会触发 contextmenu）。
+const LONG_PRESS_MS = 500;
+let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+let longPressFired = false;
+
+function clearLongPress() {
+  if (longPressTimer !== null) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+}
+
+function handleLongPressStart(event: TouchEvent) {
+  if (isNavigationShortcut.value) return;
+  const touch = event.touches[0];
+  if (!touch) return;
+
+  longPressFired = false;
+  const x = touch.clientX;
+  const y = touch.clientY;
+  clearLongPress();
+  longPressTimer = setTimeout(() => {
+    longPressTimer = null;
+    longPressFired = true;
+    emit("context-menu", { file: props.file, x, y });
+  }, LONG_PRESS_MS);
+}
+
+function handleLongPressCancel() {
+  clearLongPress();
+}
+
+onBeforeUnmount(clearLongPress);
 
 /** 拖拽：仅真实条目可拖动，目录可作为放置目标。 */
 function handleDragStart(event: DragEvent) {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { render, screen } from "@testing-library/vue";
 import FileGrid from "../src/components/file-browser/FileGrid.vue";
@@ -75,5 +75,34 @@ describe("FileGrid.vue", () => {
     });
 
     expect(screen.getByLabelText("选择 a.txt")).toBeInTheDocument();
+  });
+
+  it("opens the context menu on long press in the grid", () => {
+    vi.useFakeTimers();
+    try {
+      const { emitted } = render(FileGrid as any, {
+        global: { plugins: [createPinia()] },
+        props: {
+          files: [buildFile({ id: "a", name: "a.png", path: "a.png" })],
+          selectMode: false,
+          selectedPaths: new Set<string>(),
+        },
+      });
+
+      const card = document.querySelector(".file-card")!;
+      const touchStart = new Event("touchstart", { bubbles: true }) as any;
+      touchStart.touches = [{ clientX: 12, clientY: 24 }];
+      card.dispatchEvent(touchStart);
+
+      vi.advanceTimersByTime(600);
+
+      const events = emitted()["context-menu"] as Array<
+        [{ file: { path: string }; x: number; y: number }]
+      >;
+      expect(events).toHaveLength(1);
+      expect(events[0][0]).toMatchObject({ x: 12, y: 24 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
