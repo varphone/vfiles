@@ -114,6 +114,39 @@ export function formatDate(date: string | undefined): string {
   });
 }
 
+/**
+ * 列表/网格用的相对时间：今天显示 "HH:mm"，昨天/本周显示 "昨天 HH:mm" / "N 天前"，
+ * 更早显示日期。主流云盘都用这种方式降低信息密度，精确时间放在 title 里。
+ */
+export function formatRelativeDate(
+  date: string | undefined,
+  now: Date = new Date(),
+): string {
+  if (!date) return "--";
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return date || "--";
+
+  const startOfDay = (value: Date) =>
+    new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const dayDiff = Math.round(
+    (startOfDay(now) - startOfDay(parsed)) / (24 * 60 * 60 * 1000),
+  );
+  const time = parsed.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  if (dayDiff === 0) return `今天 ${time}`;
+  if (dayDiff === 1) return `昨天 ${time}`;
+  if (dayDiff > 1 && dayDiff < 7) return `${dayDiff} 天前`;
+
+  return parsed.toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
 export function fileKindLabel(file: FileInfo): string {
   if (file.kind === "directory") return "文件夹";
 

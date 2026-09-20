@@ -16,6 +16,8 @@ import DialogHost from "./components/common/DialogHost.vue";
 @use "./styles/bulma";
 /* 代码预览与 Markdown 代码块配色 */
 @use "./styles/code-theme";
+/* 通用控件（图标按钮 / 次要按钮 / 主操作按钮） */
+@use "./styles/controls";
 
 /* 自定义全局样式 */
 * {

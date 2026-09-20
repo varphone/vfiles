@@ -6,7 +6,7 @@
   >
     <div class="dropdown-trigger">
       <button
-        class="button is-small is-light desktop-command-button"
+        class="vf-ghost-button"
         type="button"
         aria-haspopup="true"
         :aria-expanded="open ? 'true' : 'false'"
@@ -177,6 +177,11 @@ onBeforeUnmount(() => {
 
 .view-options-section {
   margin-bottom: 8px;
+}
+
+.view-options.dropdown.is-active .vf-ghost-button {
+  background: var(--vf-accent-soft);
+  color: var(--vf-accent-strong);
 }
 
 .view-options-label {

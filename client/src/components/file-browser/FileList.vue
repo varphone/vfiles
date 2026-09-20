@@ -1,6 +1,6 @@
 <template>
   <div v-if="desktop" class="table-container">
-    <table class="table is-fullwidth is-hoverable is-narrow is-striped">
+    <table class="table is-fullwidth is-hoverable is-narrow file-list-table">
       <thead>
         <tr>
           <th class="is-narrow">
@@ -35,7 +35,9 @@
               >
             </button>
           </th>
-          <th class="is-narrow has-text-right">操作</th>
+          <th class="is-narrow has-text-right file-list-actions-header">
+            操作
+          </th>
         </tr>
       </thead>
       <tbody>
@@ -202,6 +204,36 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
 </script>
 
 <style scoped>
+/* 主流网盘风格：无斑马纹、细分隔线、粘性表头 */
+.file-list-table {
+  background: transparent;
+  margin-bottom: 0;
+}
+
+.file-list-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+  background: var(--vf-surface);
+  color: var(--vf-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.file-list-table tbody td {
+  padding: 0 0.75rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+  vertical-align: middle;
+}
+
+.file-list-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
 .file-list-sort {
   display: inline-flex;
   align-items: center;

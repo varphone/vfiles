@@ -28,6 +28,7 @@
 
   /* 面板 / 卡片 / 列表底色 */
   --vf-surface: #ffffff;
+  --vf-app-bar: #ffffff;
   --vf-surface-raised: #ffffff;
   --vf-surface-sunken: #f5f8fc;
   --vf-surface-stripe: rgba(248, 250, 253, 0.92);
@@ -43,11 +44,7 @@
   --vf-shell-panel: rgba(255, 255, 255, 0.82);
 
   /* 页面背景（Home 装饰性渐变） */
-  --vf-canvas: linear-gradient(180deg, #f6f8fb 0%, #eef3f7 46%, #e7edf4 100%);
-  --vf-canvas-glow-1: rgba(153, 182, 214, 0.26);
-  --vf-canvas-glow-2: rgba(216, 225, 235, 0.7);
-  --vf-canvas-blob-1: rgba(196, 210, 226, 0.44);
-  --vf-canvas-blob-2: rgba(226, 233, 241, 0.78);
+  --vf-canvas: #f5f6f8;
 
   /* 边框 */
   --vf-border: #d6dfeb;
@@ -61,7 +58,15 @@
   --vf-text-muted: #627386;
   --vf-text-subtle: #90a0b2;
 
+  /* 圆角与间距（与主流云盘一致的克制尺度） */
+  --vf-radius-sm: 6px;
+  --vf-radius: 10px;
+  --vf-radius-lg: 14px;
+  --vf-radius-pill: 999px;
+
   /* 阴影 */
+  --vf-shadow-card:
+    0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
   --vf-shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.18);
   --vf-shadow-md: 0 20px 48px rgba(32, 52, 88, 0.12);
   --vf-shadow-lg: 0 22px 42px rgba(24, 38, 60, 0.18);
@@ -124,6 +129,7 @@
   --vf-focus-ring: hsla(210, 68%, 62%, 0.35);
 
   --vf-surface: hsl(221, 14%, 12%);
+  --vf-app-bar: hsl(221, 14%, 11%);
   --vf-surface-raised: hsl(221, 14%, 15%);
   --vf-surface-sunken: hsl(221, 14%, 17%);
   --vf-surface-stripe: hsla(221, 14%, 71%, 0.05);
@@ -141,16 +147,7 @@
   );
   --vf-shell-panel: hsla(221, 14%, 15%, 0.86);
 
-  --vf-canvas: linear-gradient(
-    180deg,
-    hsl(221, 18%, 11%) 0%,
-    hsl(221, 16%, 9%) 46%,
-    hsl(221, 15%, 8%) 100%
-  );
-  --vf-canvas-glow-1: hsla(210, 60%, 60%, 0.16);
-  --vf-canvas-glow-2: hsla(221, 14%, 71%, 0.08);
-  --vf-canvas-blob-1: hsla(210, 60%, 60%, 0.12);
-  --vf-canvas-blob-2: hsla(221, 14%, 71%, 0.06);
+  --vf-canvas: hsl(221, 16%, 9%);
 
   --vf-border: hsla(221, 14%, 71%, 0.24);
   --vf-border-soft: hsla(221, 14%, 71%, 0.22);
@@ -161,6 +158,8 @@
   --vf-text-strong: hsl(221, 14%, 94%);
   --vf-text-muted: hsl(221, 14%, 66%);
   --vf-text-subtle: hsl(221, 14%, 52%);
+
+  --vf-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
 
   --vf-shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.45);
   --vf-shadow-md: 0 20px 48px rgba(0, 0, 0, 0.45);

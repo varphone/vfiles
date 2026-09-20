@@ -3,7 +3,7 @@
   <tr
     v-if="desktop"
     class="desktop-file-row"
-    :class="{ 'drop-target': dragOver }"
+    :class="{ 'drop-target': dragOver, 'is-row-selected': selected }"
     :draggable="!isNavigationShortcut"
     @click="handleClick"
     @dblclick="handleActivate"
@@ -43,7 +43,7 @@
       <a
         v-if="isNameLink"
         href="#"
-        class="desktop-name-text desktop-name-link has-text-link"
+        class="desktop-name-text desktop-name-link"
         :class="nameTextClass"
         :title="file.name"
         @click.stop.prevent="activateNameLink"
@@ -70,7 +70,9 @@
       </span>
     </td>
 
-    <td class="is-narrow">{{ desktopFileDateLabel }}</td>
+    <td class="is-narrow desktop-file-date" :title="desktopFileDateTitle">
+      {{ desktopFileDateLabel }}
+    </td>
 
     <td class="is-narrow">{{ desktopFileKindLabel }}</td>
 
@@ -259,8 +261,11 @@
               <span v-if="file.kind === 'file'" class="tag is-light mr-2">
                 {{ formatSize(file.size_bytes || 0) }}
               </span>
-              <span class="has-text-grey-light is-size-7">
-                {{ formatDate(file.created_at) }}
+              <span
+                class="has-text-grey-light is-size-7"
+                :title="formatDate(file.created_at)"
+              >
+                {{ formatRelativeDate(file.created_at) }}
               </span>
             </template>
           </p>
@@ -400,6 +405,11 @@ import {
   IconEye,
 } from "@tabler/icons-vue";
 import type { FileInfo } from "../../types";
+import {
+  formatDate,
+  formatRelativeDate,
+  formatSize,
+} from "../../utils/filePresentation";
 
 const props = defineProps<{
   file: FileInfo;
@@ -446,11 +456,18 @@ const isNameLink = computed(
 const isSelfShortcut = computed(() => uiRole.value === "self");
 const isParentShortcut = computed(() => uiRole.value === "parent");
 const nameTextClass = computed(() => ({
-  "has-text-weight-bold": isDirectoryEntry.value,
+  // 文件夹名称略重，颜色仍走正文色，避免整列都是链接蓝
+  "is-folder-name": isDirectoryEntry.value,
 }));
 
 const desktopFileDateLabel = computed(() => {
   if (isNavigationShortcut.value) return "--";
+  return formatRelativeDate(props.file.updated_at || props.file.created_at);
+});
+
+/** 悬停显示精确时间，作为相对时间的补充 */
+const desktopFileDateTitle = computed(() => {
+  if (isNavigationShortcut.value) return undefined;
   return formatDate(props.file.updated_at || props.file.created_at);
 });
 
@@ -478,11 +495,11 @@ const desktopFileKindLabel = computed(() => {
 
 const desktopSubtitle = computed(() => {
   if (isParentShortcut.value) {
-    return "进入上一层目录";
+    return "返回上一层";
   }
 
   if (isSelfShortcut.value) {
-    return "当前目录快捷入口，可直接新建子目录";
+    return "在此目录中新建";
   }
 
   if (props.file.lastCommit?.message) {
@@ -571,29 +588,6 @@ function splitHighlight(text: string): NameSegment[] {
 function getExtension(name: string): string {
   const ext = name.split(".").pop()?.toLowerCase();
   return ext || "";
-}
-
-function formatSize(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
-}
-
-function formatDate(date: string): string {
-  const parsed = new Date(date);
-  if (Number.isNaN(parsed.getTime())) {
-    return date || "--";
-  }
-
-  return parsed.toLocaleString("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function handleClick(event?: MouseEvent) {
@@ -762,21 +756,29 @@ function share() {
 </script>
 
 <style scoped>
+/* 移动端列表：扁平行 + 细分隔线（主流网盘移动端不用卡片阴影） */
 .file-item {
   cursor: pointer;
-  transition: all 0.2s;
-  margin-bottom: 0.75rem;
+  transition: background-color 0.15s ease;
+  margin-bottom: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border-bottom: 1px solid var(--vf-border-weak);
   content-visibility: auto;
   contain-intrinsic-size: 96px;
-  padding-left: 0.75rem;
-  padding-right: 0.75rem;
+  padding: 0.75rem 0.9rem;
   position: relative;
   overflow: hidden;
 }
 
-.file-item:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--vf-shadow-sm);
+.file-item:hover,
+.file-item:active {
+  background: var(--vf-surface-hover);
+}
+
+/* 文件名用正文色（不再整列蓝色链接），hover 时才提示可点击 */
+.is-folder-name {
+  font-weight: 600;
 }
 
 .desktop-name-text {
@@ -784,44 +786,78 @@ function share() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 0.875rem;
+  color: var(--vf-text);
 }
 
 .desktop-name-link {
   cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 0.12em;
+  text-decoration: none;
 }
 
 .desktop-name-link:hover,
 .desktop-name-link:focus-visible {
-  text-decoration-thickness: 2px;
+  color: var(--vf-accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+/* 行高与 hover/选中态对齐主流云盘 */
+.desktop-file-row {
+  height: 3rem;
 }
 
 .desktop-file-row > td {
   vertical-align: middle;
 }
 
+/* 次要信息用低对比度颜色，让名称成为视觉焦点 */
+.desktop-file-row > td.is-narrow,
+.desktop-file-date {
+  color: var(--vf-text-muted);
+  font-size: 0.8rem;
+}
+
+.desktop-file-row:hover > td {
+  background: var(--vf-surface-hover);
+}
+
+.desktop-file-row.is-row-selected > td {
+  background: var(--vf-accent-soft);
+}
+
+/* 行内操作默认隐藏，hover / 键盘聚焦时出现，减少视觉噪音 */
 .desktop-action-buttons {
   flex-wrap: nowrap;
+  justify-content: flex-end;
+  opacity: 0;
+  transition: opacity 0.12s ease;
 }
 
-.file-item--shortcut-self {
-  background: var(--vf-success-soft);
-  box-shadow: inset 0 0 0 1px var(--vf-success-line);
+.desktop-file-row:hover .desktop-action-buttons,
+.desktop-file-row:focus-within .desktop-action-buttons,
+.desktop-file-row.is-row-selected .desktop-action-buttons {
+  opacity: 1;
 }
 
+@media (hover: none) {
+  .desktop-action-buttons {
+    opacity: 1;
+  }
+}
+
+.file-item--shortcut-self,
 .file-item--shortcut-parent {
-  background: var(--vf-warning-soft);
-  box-shadow: inset 0 0 0 1px var(--vf-warning-line);
+  background: var(--vf-surface);
 }
 
 .file-item--shortcut-self .file-icon {
-  color: var(--vf-success-text);
+  color: var(--vf-text-muted);
   background: transparent;
 }
 
 .file-item--shortcut-parent .file-icon {
-  color: var(--vf-warning-text);
+  color: var(--vf-text-muted);
   background: transparent;
 }
 

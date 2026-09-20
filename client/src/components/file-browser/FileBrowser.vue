@@ -114,36 +114,33 @@
           <div class="desktop-command-bar">
             <div class="desktop-command-group">
               <button
-                class="button is-small is-light desktop-command-button"
+                class="vf-icon-button"
                 :disabled="!currentPath"
+                title="上一级"
+                aria-label="上一级"
                 @click="goBack"
               >
-                <IconArrowLeft :size="16" />
-                <span>上一级</span>
+                <IconArrowLeft :size="18" />
               </button>
               <button
-                class="button is-small is-light desktop-command-button"
+                class="vf-icon-button"
+                title="刷新"
+                aria-label="刷新"
                 @click="refresh"
               >
-                <IconRefresh :size="16" />
-                <span>刷新</span>
-              </button>
-              <button
-                class="button is-small is-primary desktop-command-button"
-                @click="showUploader = true"
-              >
-                <IconUpload :size="16" />
-                <span>上传文件</span>
-              </button>
-              <button
-                class="button is-small desktop-command-button"
-                :class="batchMode ? 'is-link is-light' : 'is-light'"
-                @click="toggleBatchMode"
-              >
-                <IconChecklist :size="16" />
-                <span>{{ batchMode ? "退出批量" : "批量选择" }}</span>
+                <IconRefresh :size="18" />
               </button>
               <ViewOptions />
+              <button
+                class="vf-icon-button"
+                :class="{ 'is-active': batchMode }"
+                :title="batchMode ? '退出批量选择' : '批量选择'"
+                :aria-label="batchMode ? '退出批量选择' : '批量选择'"
+                :aria-pressed="batchMode ? 'true' : 'false'"
+                @click="toggleBatchMode"
+              >
+                <IconChecklist :size="18" />
+              </button>
               <div ref="desktopSearchBoxRef" class="desktop-search-box">
                 <div class="desktop-search-inline">
                   <div class="control desktop-search-field">
@@ -171,11 +168,8 @@
 
                   <div class="desktop-search-action-group">
                     <button
-                      class="button is-small desktop-command-button desktop-search-button"
-                      :class="[
-                        searchActive ? 'is-link is-light' : 'is-light',
-                        { 'is-loading': searchLoading },
-                      ]"
+                      class="vf-ghost-button desktop-search-button"
+                      :class="{ 'is-active': searchActive }"
                       :disabled="searchLoading"
                       @click="runDesktopSearch"
                     >
@@ -183,13 +177,12 @@
                       <span>搜索</span>
                     </button>
                     <button
-                      class="button is-small desktop-command-button desktop-search-toggle"
-                      :class="[
-                        desktopSearchOpen || desktopSearchFiltersActive
-                          ? 'is-link is-light'
-                          : 'is-light',
-                        { 'is-open': desktopSearchOpen },
-                      ]"
+                      class="vf-icon-button desktop-search-toggle"
+                      :class="{
+                        'is-active':
+                          desktopSearchOpen || desktopSearchFiltersActive,
+                        'is-open': desktopSearchOpen,
+                      }"
                       title="高级搜索"
                       aria-label="高级搜索"
                       :aria-expanded="desktopSearchOpen"
@@ -251,6 +244,14 @@
                   </div>
                 </div>
               </div>
+
+              <button
+                class="vf-primary-button desktop-primary-action"
+                @click="showUploader = true"
+              >
+                <IconUpload :size="16" />
+                <span>上传</span>
+              </button>
             </div>
 
             <div v-if="searchError" class="notification is-danger is-light">
@@ -262,42 +263,39 @@
           <div v-if="batchMode" class="desktop-batch-strip">
             <div class="desktop-batch-meta">已选 {{ selectedCount }} 项</div>
             <div class="desktop-batch-actions">
-              <button
-                class="button is-small is-light"
-                @click="selectAllVisible"
-              >
+              <button class="vf-ghost-button" @click="selectAllVisible">
                 全选当前视图
               </button>
-              <button class="button is-small is-light" @click="clearSelection">
+              <button class="vf-ghost-button" @click="clearSelection">
                 清空选择
               </button>
               <button
-                class="button is-small is-info"
+                class="vf-ghost-button"
                 :disabled="selectedCount === 0"
                 @click="batchDownload"
               >
-                批量下载
+                下载
               </button>
               <button
-                class="button is-small is-danger is-light"
-                :disabled="selectedCount === 0"
-                @click="batchDelete"
-              >
-                删除
-              </button>
-              <button
-                class="button is-small is-light"
+                class="vf-ghost-button"
                 :disabled="selectedCount === 0"
                 @click="batchMove"
               >
                 移动
               </button>
               <button
-                class="button is-small is-light"
+                class="vf-ghost-button"
                 :disabled="selectedCount !== 1"
                 @click="renameSelected"
               >
                 重命名
+              </button>
+              <button
+                class="vf-ghost-button is-danger"
+                :disabled="selectedCount === 0"
+                @click="batchDelete"
+              >
+                删除
               </button>
             </div>
           </div>
@@ -349,17 +347,43 @@
 
             <div
               v-else-if="!searchActive && files.length === 0"
-              class="has-text-centered py-6"
+              class="browser-empty"
             >
-              <IconFolderOpen :size="64" class="has-text-grey-light mb-3" />
-              <p class="has-text-grey">此文件夹为空</p>
+              <IconFolderOpen :size="56" class="browser-empty-icon" />
+              <p class="browser-empty-title">此文件夹为空</p>
+              <p class="browser-empty-hint">
+                拖拽文件到这里，或使用下面的按钮上传
+              </p>
+              <div class="browser-empty-actions">
+                <button
+                  class="button is-link is-small"
+                  @click="showUploader = true"
+                >
+                  <IconUpload :size="16" />
+                  <span>上传文件</span>
+                </button>
+                <button
+                  class="button is-small"
+                  @click="promptCreateDirectory(currentPath || '')"
+                >
+                  <IconFolderPlus :size="16" />
+                  <span>新建文件夹</span>
+                </button>
+              </div>
             </div>
 
             <div
               v-else-if="searchActive && searchResults.length === 0"
-              class="has-text-centered py-6"
+              class="browser-empty"
             >
-              <p class="has-text-grey">没有找到匹配的文件</p>
+              <IconSearch :size="48" class="browser-empty-icon" />
+              <p class="browser-empty-title">没有找到匹配的文件</p>
+              <p class="browser-empty-hint">换个关键字，或清空搜索条件</p>
+              <div class="browser-empty-actions">
+                <button class="button is-small" @click="clearSearch">
+                  清空搜索
+                </button>
+              </div>
             </div>
 
             <template v-else>
@@ -496,10 +520,11 @@
 
         <div
           v-else-if="!searchActive && files.length === 0"
-          class="has-text-centered py-6"
+          class="browser-empty"
         >
-          <IconFolderOpen :size="64" class="has-text-grey-light mb-3" />
-          <p class="has-text-grey">此文件夹为空</p>
+          <IconFolderOpen :size="56" class="browser-empty-icon" />
+          <p class="browser-empty-title">此文件夹为空</p>
+          <p class="browser-empty-hint">点击右下角按钮上传文件</p>
         </div>
 
         <div v-else-if="searchActive" class="file-list">
@@ -1899,57 +1924,52 @@ function handleSortChange(field: SortField) {
   padding: 0;
 }
 
+/* 单一内容面板：内部区块之间只用细分隔线，不再层层嵌套卡片 */
 .file-browser-box {
   display: flex;
   flex-direction: column;
-  border-radius: 22px;
-  border: 1px solid var(--explorer-panel-border);
-  background: var(--explorer-shell-bg);
-  box-shadow: var(--vf-shadow-md);
-  padding: 1rem;
+  border-radius: var(--vf-radius-lg);
+  border: 1px solid var(--vf-border-weak);
+  background: var(--vf-surface);
+  box-shadow: var(--vf-shadow-card);
 }
 
 .breadcrumb-bar {
-  margin-bottom: 1rem;
-  padding: 0.55rem 0.7rem;
-  border-radius: 14px;
-  background: var(--vf-surface-overlay);
-  border: 1px solid var(--vf-border-soft);
+  padding: 0.85rem 1.1rem;
+  border-bottom: 1px solid var(--vf-border-weak);
 }
 
 .file-browser-toolbar {
   position: relative;
   z-index: 2;
-  margin-bottom: 0.85rem;
+  padding: 0.6rem 1.1rem;
+  border-bottom: 1px solid var(--vf-border-weak);
 }
 
 .desktop-command-bar {
   display: block;
-  margin-bottom: 0.65rem;
 }
 
 .desktop-command-group {
   min-width: 0;
   display: flex;
-  gap: 0.55rem;
-  padding: 0.72rem;
-  border-radius: 14px;
-  border: 1px solid var(--explorer-panel-border);
-  background: var(--explorer-panel-bg);
-}
-
-.desktop-command-group {
   flex-wrap: wrap;
   align-items: center;
+  gap: 0.3rem;
 }
 
+.desktop-primary-action {
+  margin-left: 0.25rem;
+}
+
+/* 搜索框占据剩余宽度但不过分拉伸，右侧留给主操作按钮 */
 .desktop-search-box {
   position: relative;
   z-index: 3;
   margin-left: auto;
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: none;
+  flex: 1 1 18rem;
+  min-width: 8rem;
+  max-width: 26rem;
 }
 
 .desktop-search-inline {
@@ -2019,9 +2039,20 @@ function handleSortChange(field: SortField) {
   color: var(--vf-text-muted);
 }
 
+/* 搜索输入做成主流云盘的胶囊搜索框 */
 .desktop-search-control {
   min-height: 2rem;
-  border-radius: 999px;
+  border-radius: var(--vf-radius-pill);
+  border-color: transparent;
+  background: var(--vf-surface-sunken);
+  box-shadow: none;
+}
+
+.desktop-search-control:focus,
+.desktop-search-control:focus-within {
+  border-color: var(--vf-accent);
+  box-shadow: 0 0 0 3px var(--vf-focus-ring);
+  background: var(--vf-surface);
 }
 
 .desktop-search-action-group {
@@ -2088,24 +2119,24 @@ function handleSortChange(field: SortField) {
   min-width: 0;
 }
 
+/* 批量操作条：贴住内容区顶部，横向铺满 */
 .desktop-batch-strip {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.58rem 0.8rem;
-  border-radius: 12px;
+  flex-wrap: wrap;
+  padding: 0.55rem 1.1rem;
   background: var(--vf-accent-soft);
-  border: 1px solid var(--vf-accent-soft-strong);
-  margin-bottom: 0.65rem;
+  border-bottom: 1px solid var(--vf-border-weak);
 }
 
 .desktop-list-primary-shell {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
   position: relative;
   z-index: 0;
+  min-height: 0;
 }
 
 .desktop-batch-meta {
@@ -2120,16 +2151,12 @@ function handleSortChange(field: SortField) {
   gap: 0.4rem;
 }
 
-.desktop-batch-actions .button {
-  border-radius: 999px;
-  font-weight: 600;
+.desktop-batch-actions .vf-ghost-button {
+  min-height: 1.9rem;
 }
 
 .desktop-list-shell {
   min-width: 0;
-  border-radius: 18px;
-  border: 1px solid var(--explorer-panel-border);
-  background: var(--explorer-panel-bg);
 }
 
 .desktop-content-pane {
@@ -2142,7 +2169,6 @@ function handleSortChange(field: SortField) {
 .desktop-list-shell {
   display: flex;
   flex-direction: column;
-  padding: 0.8rem;
 }
 
 .desktop-pane-section + .desktop-pane-section {
@@ -2193,15 +2219,14 @@ function handleSortChange(field: SortField) {
   font-size: 0.78rem;
 }
 
+/* 状态栏退化为一行低调的说明文字 */
 .desktop-status-bar {
   display: flex;
   align-items: center;
   gap: 1rem;
   flex-wrap: wrap;
-  padding: 0.65rem 0.85rem;
-  border-radius: 14px;
-  border: 1px solid var(--explorer-panel-border);
-  background: var(--vf-surface-stripe);
+  padding: 0.55rem 1.1rem;
+  border-top: 1px solid var(--vf-border-weak);
   color: var(--vf-text-muted);
   font-size: 0.78rem;
 }
@@ -2299,6 +2324,38 @@ function handleSortChange(field: SortField) {
 
 .preview-frame {
   height: 70vh;
+}
+
+/* 空状态：图标 + 标题 + 说明 + 操作 */
+.browser-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 3.5rem 1rem;
+  text-align: center;
+}
+
+.browser-empty-icon {
+  color: var(--vf-text-subtle);
+  margin-bottom: 0.35rem;
+}
+
+.browser-empty-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--vf-text-strong);
+}
+
+.browser-empty-hint {
+  font-size: 0.82rem;
+  color: var(--vf-text-muted);
+}
+
+.browser-empty-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
 }
 
 .preview-copy {

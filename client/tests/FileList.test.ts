@@ -53,15 +53,13 @@ describe("FileList.vue", () => {
       },
     });
 
-    expect(screen.getByRole("link", { name: "." })).toHaveClass(
-      "has-text-link",
-    );
-    expect(screen.getByRole("link", { name: ".." })).toHaveClass(
-      "has-text-link",
-    );
-    expect(screen.getByRole("link", { name: "docs" })).toHaveClass(
-      "has-text-link",
-    );
+    // 目录与快捷项保持“可点击”的语义（<a>），但颜色走正文色，
+    // 由 .desktop-name-link 的 hover 态给出可点击提示。
+    for (const name of [".", "..", "docs"]) {
+      const link = screen.getByRole("link", { name });
+      expect(link).toHaveClass("desktop-name-link");
+      expect(link).not.toHaveClass("has-text-link");
+    }
     expect(
       screen.queryByRole("link", { name: "readme.txt" }),
     ).not.toBeInTheDocument();

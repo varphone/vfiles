@@ -11,6 +11,13 @@
 //!
 //! 新增 UI 时如果用到新的 Bulma 组件，请在此处补上对应模块。
 
+// 品牌主色：把 Bulma 的 primary 对齐应用强调色（#2f6db6），
+// 否则 is-primary 按钮会是 Bulma 默认的青绿色，与自定义强调色不一致。
+@use "bulma/sass/utilities/derived-variables" with (
+  $primary: #2f6db6,
+  $link: #2f6db6
+);
+
 // 基础：CSS 变量、主题、重置与全局排版
 @use "bulma/sass/utilities";
 @use "bulma/sass/themes";

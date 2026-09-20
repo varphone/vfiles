@@ -912,49 +912,12 @@ function toggleBatchAndClose() {
 </script>
 
 <style scoped>
+/* 主流云盘的中性底色：不再使用装饰性渐变，让内容面板成为唯一焦点 */
 .home {
   position: relative;
   min-height: 100vh;
   overflow-x: hidden;
-  isolation: isolate;
-  background:
-    radial-gradient(
-      circle at top left,
-      var(--vf-canvas-glow-1),
-      transparent 28%
-    ),
-    radial-gradient(
-      circle at top right,
-      var(--vf-canvas-glow-2),
-      transparent 32%
-    ),
-    var(--vf-canvas);
-}
-
-.home::before,
-.home::after {
-  content: "";
-  position: absolute;
-  border-radius: 999px;
-  filter: blur(8px);
-  pointer-events: none;
-  z-index: -1;
-}
-
-.home::before {
-  top: 5rem;
-  right: -10rem;
-  width: 24rem;
-  height: 24rem;
-  background: var(--vf-canvas-blob-1);
-}
-
-.home::after {
-  top: 18rem;
-  left: -8rem;
-  width: 18rem;
-  height: 18rem;
-  background: var(--vf-canvas-blob-2);
+  background: var(--vf-canvas);
 }
 
 .hero {
@@ -963,7 +926,9 @@ function toggleBatchAndClose() {
 
 .app-top-bar {
   padding-top: env(safe-area-inset-top);
-  box-shadow: var(--vf-shadow-sm);
+  background: var(--vf-app-bar);
+  border-bottom: 1px solid var(--vf-border-weak);
+  box-shadow: none;
 }
 
 .mobile-bottom-bar {
@@ -972,7 +937,9 @@ function toggleBatchAndClose() {
   right: 0;
   bottom: 0;
   z-index: 2000;
-  box-shadow: var(--vf-shadow-sm);
+  background: var(--vf-app-bar);
+  border-top: 1px solid var(--vf-border-weak);
+  box-shadow: none;
 }
 
 .mobile-bottom-bar-inner {
@@ -1120,15 +1087,11 @@ function toggleBatchAndClose() {
   }
 
   :deep(.file-browser-box) {
-    border-radius: 30px;
-    border-color: var(--vf-border-soft);
-    background: linear-gradient(
-      180deg,
-      var(--vf-surface-translucent-strong) 0%,
-      var(--vf-surface-soft) 100%
-    );
-    box-shadow: var(--vf-shadow-md);
-    padding: 0.95rem;
+    border-radius: var(--vf-radius-lg);
+    border: 1px solid var(--vf-border-weak);
+    background: var(--vf-surface);
+    box-shadow: var(--vf-shadow-card);
+    padding: 0;
   }
 
   .home-browser-shell {
@@ -1140,52 +1103,12 @@ function toggleBatchAndClose() {
     flex-direction: column;
   }
 
-  :deep(.breadcrumb-bar),
-  :deep(.desktop-command-group),
-  :deep(.desktop-search-panel),
-  :deep(.desktop-batch-strip),
-  :deep(.desktop-list-shell) {
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
-  }
-
-  :deep(.breadcrumb-bar) {
-    margin-bottom: 0.85rem;
-    border-radius: 18px;
-    background: var(--vf-surface-overlay);
-  }
-
   :deep(.desktop-command-bar) {
-    margin-bottom: 0.65rem;
-  }
-
-  :deep(.desktop-command-group),
-  :deep(.desktop-search-panel) {
-    padding: 0.72rem;
-    border-radius: 18px;
-    border-color: var(--vf-border-soft);
-    background: var(--vf-shell-panel);
-  }
-
-  :deep(.desktop-batch-strip) {
-    margin-bottom: 0.65rem;
-    border-radius: 18px;
-    background: var(--vf-accent-soft);
-  }
-
-  :deep(.desktop-list-shell) {
-    border-radius: 22px;
-    background: var(--vf-surface-translucent);
-    padding: 0.7rem;
+    margin-bottom: 0;
   }
 }
 
 @media screen and (max-width: 1023px) {
-  .home::before,
-  .home::after {
-    opacity: 0.55;
-  }
-
   .section {
     padding: 0;
   }

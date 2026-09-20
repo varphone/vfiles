@@ -158,7 +158,7 @@
           <span v-else>{{ seg.text }}</span>
         </template>
       </div>
-      <div class="file-card-meta">
+      <div class="file-card-meta" :title="dateTitle">
         <span v-if="isParentShortcut">父目录</span>
         <span v-else-if="isSelfShortcut">当前目录</span>
         <template v-else>
@@ -200,6 +200,7 @@ import { filesService } from "../../services/files.service";
 import {
   fileIconKind,
   formatDate,
+  formatRelativeDate,
   formatSize,
   isImageFile,
   splitByNeedle,
@@ -299,6 +300,9 @@ const thumbnailUrl = computed(() => {
 
 const sizeLabel = computed(() => formatSize(props.file.size_bytes));
 const dateLabel = computed(() =>
+  formatRelativeDate(props.file.updated_at || props.file.created_at),
+);
+const dateTitle = computed(() =>
   formatDate(props.file.updated_at || props.file.created_at),
 );
 const nameSegments = computed(() =>
@@ -463,8 +467,8 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--vf-border);
-  border-radius: 10px;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius);
   background: var(--vf-surface);
   cursor: pointer;
   overflow: visible;
@@ -475,8 +479,9 @@ onBeforeUnmount(() => {
 }
 
 .file-card:hover {
-  border-color: var(--vf-border-strong);
-  box-shadow: var(--vf-shadow-sm);
+  border-color: var(--vf-border);
+  box-shadow: var(--vf-shadow-card);
+  transform: translateY(-1px);
 }
 
 .file-card--active {
@@ -496,7 +501,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   height: var(--file-card-thumb-size, 144px);
   border-bottom: 1px solid var(--vf-border-weak);
-  border-radius: 10px 10px 0 0;
+  border-radius: var(--vf-radius) var(--vf-radius) 0 0;
   background: var(--vf-surface-sunken);
   overflow: hidden;
 }

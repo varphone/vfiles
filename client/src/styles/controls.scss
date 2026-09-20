@@ -1,0 +1,112 @@
+//! 通用控件样式（全局）。
+//!
+//! 主流云盘的工具栏按钮以「无边框图标按钮」为主，只有主操作使用填充按钮。
+//! 这里定义可复用的按钮基类，供各组件直接引用，避免每个组件各写一套。
+
+.vf-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--vf-radius-sm);
+  background: transparent;
+  color: var(--vf-text-muted);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.vf-icon-button:hover:not(:disabled),
+.vf-icon-button:focus-visible {
+  background: var(--vf-surface-hover);
+  color: var(--vf-text-strong);
+}
+
+.vf-icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.vf-icon-button.is-active {
+  background: var(--vf-accent-soft);
+  color: var(--vf-accent-strong);
+}
+
+/* 带文字的次要按钮：无边框，hover 出现浅底 */
+.vf-ghost-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  padding: 0 0.7rem;
+  border: none;
+  border-radius: var(--vf-radius-sm);
+  background: transparent;
+  color: var(--vf-text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.vf-ghost-button:hover:not(:disabled),
+.vf-ghost-button:focus-visible {
+  background: var(--vf-surface-hover);
+  color: var(--vf-text-strong);
+}
+
+.vf-ghost-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.vf-ghost-button.is-active {
+  background: var(--vf-accent-soft);
+  color: var(--vf-accent-strong);
+}
+
+.vf-ghost-button.is-danger {
+  color: var(--vf-danger-text);
+}
+
+.vf-ghost-button.is-danger:hover:not(:disabled),
+.vf-ghost-button.is-danger:focus-visible {
+  background: var(--vf-danger-soft);
+  color: var(--vf-danger-text);
+}
+
+/* 主操作按钮：填充强调色胶囊 */
+.vf-primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  padding: 0 0.95rem;
+  border: none;
+  border-radius: var(--vf-radius-pill);
+  background: var(--vf-accent);
+  color: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.vf-primary-button:hover:not(:disabled),
+.vf-primary-button:focus-visible {
+  background: var(--vf-accent-strong);
+}
+
+.vf-primary-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
