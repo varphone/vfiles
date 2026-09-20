@@ -35,6 +35,9 @@ VFILES_AUTH_ENABLED=true
 VFILES_AUTH_ALLOW_REGISTER=true
 VFILES_AUTH_COOKIE_SECRET=replace-with-a-random-secret-at-least-32-chars
 
+# 功能开关（默认关闭；开启后前端会同步解锁对应入口）
+VFILES_FEATURES_SEARCH_CONTENT=false
+
 VFILES_FRONTEND_DIST=./client/dist
 RUST_LOG=info
 ```
@@ -47,6 +50,7 @@ RUST_LOG=info
 - `VFILES_STORAGE_ROOT` 下会自动创建 `blobs`、`uploads`、`tmp`、`export`、`logs`、`backups` 等目录。
 - `VFILES_FRONTEND_DIST` 在运行时用于外部静态资源托管；启用 `embed` feature 时，也可在编译期指定待嵌入目录。
 - 仍兼容读取旧别名 `PUBLIC_BASE_URL`、`CORS_ORIGIN`、`HTTP_COOKIE_SECURE`、`AUTH_SECRET`、`ENABLE_AUTH`、`AUTH_ALLOW_REGISTER`，但新部署不建议继续使用旧名字。
+- `VFILES_FEATURES_SEARCH_CONTENT` 控制**全文（内容）搜索**：默认关闭，因为它需要逐个读取并扫描文件内容，代价明显高于文件名搜索。开启后 `/api/session/bootstrap` 会把 `features.search_content` 置为 `true`，前端「高级搜索 → 全文搜索」才会解锁；服务端仍会对未开启时携带 `search_content=true` 的请求返回 403。
 - 上传限额、分块大小、会话 TTL 等参数当前仍使用程序内建默认值，尚未开放成环境变量。
 
 ## 构建与启动

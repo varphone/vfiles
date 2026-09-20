@@ -2887,6 +2887,13 @@ where
     }
 }
 
+/// 文件名搜索最多取回多少行候选（分页在应用层完成，这里只做兜底）。
+const MAX_FILENAME_SEARCH_CANDIDATES: i64 = 2000;
+/// 内容搜索最多扫描多少个候选文件。
+const MAX_CONTENT_SEARCH_CANDIDATES: i64 = 500;
+/// 内容搜索最多返回多少条命中。
+const MAX_CONTENT_SEARCH_MATCHES: usize = 500;
+
 #[async_trait::async_trait]
 impl<B> SearchRepo for SqliteSearchRepo<B>
 where
@@ -2908,8 +2915,9 @@ where
             .as_ref()
             .map(|path| path.as_str().to_string());
         let path_like = path_exact.as_ref().map(|path| format!("{path}/%"));
-        let limit = query.limit as i64;
-        let offset = query.offset as i64;
+        // 分页由应用层在按得分排序后统一处理：这里返回候选范围内的全部文件名命中，
+        // 否则「下一页」会按 created_at 而不是最终得分排序，页与页之间会出现重复/遗漏。
+        let candidate_limit = MAX_FILENAME_SEARCH_CANDIDATES;
 
         #[derive(sqlx::FromRow)]
         struct EntrySearchRow {
@@ -2953,8 +2961,8 @@ where
               AND (LOWER(e.path) LIKE ?)
                             AND (? IS NULL OR e.kind = ?)
                             AND (? IS NULL OR e.path = ? OR e.path LIKE ?)
-            ORDER BY e.created_at DESC
-            LIMIT ? OFFSET ?
+            ORDER BY e.created_at DESC, e.path ASC
+            LIMIT ?
             "#,
         )
         .bind(namespace_id)
@@ -2964,8 +2972,7 @@ where
         .bind(path_exact.clone())
         .bind(path_exact)
         .bind(path_like)
-        .bind(limit)
-        .bind(offset)
+        .bind(candidate_limit)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DomainError::Internal {
@@ -3116,8 +3123,9 @@ where
             .as_ref()
             .map(|path| path.as_str().to_string());
         let path_like = path_exact.as_ref().map(|path| format!("{path}/%"));
-        let limit = query.limit as i64;
-        let offset = query.offset as i64;
+        // 同文件名搜索：分页统一由应用层在排序后处理，这里只限制候选文件数量，
+        // 并在候选范围内收集全部命中（上限 MAX_CONTENT_SEARCH_MATCHES）。
+        let candidate_limit = MAX_CONTENT_SEARCH_CANDIDATES;
 
         // Define a struct for the query result
         #[derive(sqlx::FromRow)]
@@ -3139,7 +3147,6 @@ where
         }
 
         // Find text files in the namespace
-        let candidate_limit = limit * 2; // Get more candidates since we'll filter by content
         let rows: Vec<ContentSearchRow> = sqlx::query_as::<_, ContentSearchRow>(
             r#"
             SELECT
@@ -3165,8 +3172,8 @@ where
               AND (ev.content_type LIKE 'text/%' OR ev.content_type LIKE 'application/json%')
                             AND (? IS NULL OR e.kind = ?)
                             AND (? IS NULL OR e.path = ? OR e.path LIKE ?)
-            ORDER BY e.created_at DESC
-            LIMIT ? OFFSET ?
+            ORDER BY e.created_at DESC, e.path ASC
+            LIMIT ?
             "#,
         )
         .bind(namespace_id)
@@ -3176,7 +3183,6 @@ where
         .bind(path_exact)
         .bind(path_like)
         .bind(candidate_limit)
-        .bind(offset)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DomainError::Internal {
@@ -3185,8 +3191,8 @@ where
 
         let mut results = Vec::new();
         for row in rows {
-            // Skip if we already have enough results
-            if results.len() >= query.limit as usize {
+            // 候选范围内收集全部命中（分页在应用层完成），仍设上限防止极端耗时
+            if results.len() >= MAX_CONTENT_SEARCH_MATCHES {
                 break;
             }
 

@@ -16,7 +16,7 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 52 实测）
+### 验证基线（round 53 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
@@ -929,6 +929,29 @@
 - 冒烟：真实浏览器 1280px 宽、每行 4 张卡时，`g01 → ↓ g05 → → g06 → ↑ g02 → End g11`，
   零控制台报错。
 
+### 2.60 搜索分页正确性修复与内容搜索开关（round 53，稳定性/性能）
+
+- **审计发现（真实缺陷）**：搜索分页此前由仓储层的 `ORDER BY created_at DESC LIMIT ? OFFSET ?`
+  完成，但文件名命中与内容命中是**两路各自分页**，合并后应用层才按得分排序。
+  结果是「下一页」不是上一页的延续：同时开启全文搜索时，文件名命中（得分 1.0）在每一页
+  都会把内容命中（0.8）挤出窗口——内容命中从第二页起完全取不到，`has_more` 也随之失真。
+- 修复：把分页收敛到**排序之后的唯一位置**——
+  - 仓储层不再做 SQL 分页（只保留候选上限：文件名 2000 行、内容候选 500 个文件、
+    内容命中 500 条），并加上 `e.path ASC` 作为确定性排序附加键；
+  - `SearchService::search` 合并两路结果后按「得分降序 + 路径升序」排序，再统一
+    `offset`/`limit` 切片，并限制最多 `MAX_SEARCH_RESULTS = 2000` 条参与分页。
+- 回归用例（先证明旧实现失败）：`paged_search_keeps_content_matches_across_pages`
+  在修复前只能翻出 2/3 条命中（`second-body.txt` 永远取不到），修复后三页连续返回
+  且首条为文件名命中；另加 `search_offset_beyond_results_returns_empty_page` 覆盖越界偏移。
+- **可配置化**：`FeatureMatrix.search_content` 此前在 `from_env()` 里硬编码为 `false`，
+  部署时无法开启（接口返回 403）。新增 `VFILES_FEATURES_SEARCH_CONTENT`（默认 false），
+  开启后 `/api/session/bootstrap` 的 `features.search_content` 为 true，前端「全文搜索」
+  才会解锁；服务端对未开启时的越权请求仍返回 403。文档已更新到 `DEPLOYMENT.md`。
+- 冒烟：开启开关后按 `limit=1` 翻页得到
+  `offset0 needle-name.txt(1.0) → offset1 body-a.txt(0.8, 带命中行) → offset2 body-b.txt(0.8)
+  → offset3 空且 has_more=false`，与「单页取全部」结果顺序完全一致；
+  `/api/session/bootstrap` 返回 `search_content: true`，前端可正常发起搜索，无控制台报错。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -948,7 +971,11 @@
   `total`/`has_more`，客户端按需加载（round 30）。
 - `[x]` 搜索结果分页：`/api/files/search` 返回 `items/limit/offset/has_more`，
   客户端滚动按需加载（round 41，见 §2.48）。
-- `[ ]` 用游标（cursor）替代 `offset`，避免大目录下深分页的 `OFFSET` 扫描成本。
+- `[x]` 搜索结果分页正确性：分页统一收敛到「按得分排序之后」，修复两路命中各自
+  `OFFSET` 导致的翻页重复/遗漏（round 53，见 §2.60）。
+- `[ ]` 用游标（cursor）替代 `offset`，避免大目录下深分页的 `OFFSET` 扫描成本；
+  搜索结果目前仍在应用层评分，若要真正减少扫描量，需要把匹配质量下沉到 SQL
+  （或引入索引/搜索表）。
 
 ### 3.1e 移动路径的批量校验与事务（性能，中）
 
@@ -959,7 +986,8 @@
 - `[x]` 孤儿 blob 文件 GC（round 27）：清理「有文件、无元数据行、无引用」的残留。
 - `[x]` 快照保留策略（round 28）：`prune-snapshots --keep N` 裁剪旧快照并释放其
   blob 引用，配合 `gc-blobs` 回收磁盘。
-- `[ ]` 可按时间窗口（而非数量）保留快照；在服务内按周期自动执行维护任务。
+- `[x]` 在服务内按周期自动执行维护任务（round 39，见 §2.46）。
+- `[ ]` 可按时间窗口（而非数量）保留快照。
 
 ### 3.2 缩略图格式与容量（性能 + 稳定性，中）
 

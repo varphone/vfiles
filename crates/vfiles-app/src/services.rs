@@ -2890,6 +2890,9 @@ pub struct ChangedEntry {
     pub change_type: ChangeType,
 }
 
+/// 单次搜索最多参与分页的结果数；按得分取前 N 条，避免超大结果集进入内存。
+pub const MAX_SEARCH_RESULTS: usize = 2000;
+
 #[derive(Debug, Clone)]
 pub struct SearchService<R> {
     search_repo: R,
@@ -2903,6 +2906,12 @@ where
         Self { search_repo }
     }
 
+    /// 合并文件名与内容命中、按得分排序后再分页。
+    ///
+    /// 分页必须发生在**排序之后**：此前 `LIMIT/OFFSET` 由仓储层按 `created_at`
+    /// 各自执行，两路结果合并后被重新按得分排序，导致「下一页」并不是上一页的延续
+    /// —— 同时开启文件名与内容搜索时，内容命中会被同页的文件名命中挤出，
+    /// 翻页时甚至完全取不到。这里改为仓储层返回全部命中，由本层统一排序 + 切片。
     pub async fn search(&self, query: SearchQuery) -> DomainResult<Vec<SearchResult>> {
         let mut results = Vec::new();
 
@@ -2918,14 +2927,26 @@ where
             results.extend(content_results);
         }
 
-        // Sort by score (descending)
+        // Sort by score (descending)，同分时按路径排序，保证分页结果稳定且可复现
         results.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.entry.path_norm.as_str().cmp(b.entry.path_norm.as_str()))
         });
 
-        // Apply limit after combining results
+        // 只保留前 MAX_SEARCH_RESULTS 条，避免一次搜索把过多结果带进内存/响应
+        if results.len() > MAX_SEARCH_RESULTS {
+            results.truncate(MAX_SEARCH_RESULTS);
+        }
+
+        // Apply offset/limit after sorting so pages are contiguous
+        let offset = query.offset as usize;
+        if offset >= results.len() {
+            return Ok(Vec::new());
+        }
+
+        results = results.split_off(offset);
         if results.len() > query.limit as usize {
             results.truncate(query.limit as usize);
         }

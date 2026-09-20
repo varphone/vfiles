@@ -2898,6 +2898,112 @@ async fn file_search_pages_results_with_has_more() {
     assert_eq!(pages, 3, "5 条命中按每页 2 条应为 3 页");
 }
 
+/// 同时开启文件名与内容搜索时，翻页必须是同一份「按得分排序」结果的连续切片。
+///
+/// 回归用例：此前 `LIMIT/OFFSET` 由仓储层按 `created_at` 分别执行，两路结果合并后
+/// 再按得分排序，导致文件名命中（得分更高）每一页都会把内容命中挤出窗口，内容命中
+/// 在第二页之后完全取不到。
+#[tokio::test]
+async fn paged_search_keeps_content_matches_across_pages() {
+    let mut features = default_features();
+    features.search_content = true;
+    let app = TestApp::new_with_features(features).await;
+
+    // 文件名命中：名字里带 needle
+    app.upload_version("", "needle-name.txt", b"plain body", "seed name hit")
+        .await;
+    // 内容命中：名字不含 needle，正文包含
+    app.upload_version(
+        "",
+        "body-only.txt",
+        b"the needle lives in the body",
+        "seed content hit",
+    )
+    .await;
+    // 另一条内容命中，用于验证第二页
+    app.upload_version(
+        "",
+        "second-body.txt",
+        b"another needle here",
+        "seed content hit 2",
+    )
+    .await;
+
+    let mut seen: Vec<(String, f64)> = Vec::new();
+    let mut offset = 0u32;
+
+    loop {
+        let response = app
+            .request_as_admin(
+                Request::builder()
+                    .uri(format!(
+                        "/api/files/search?q=needle&search_files=true&search_content=true&limit=1&offset={offset}"
+                    ))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let payload = response_json(response).await;
+        let items = payload["items"].as_array().expect("items array").clone();
+        for item in &items {
+            seen.push((
+                item["entry"]["path"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                item["score"].as_f64().unwrap_or_default(),
+            ));
+        }
+
+        if !payload["has_more"].as_bool().unwrap_or(false) {
+            break;
+        }
+        offset += 1;
+        assert!(offset < 10, "paging should terminate");
+    }
+
+    let paths: Vec<&str> = seen.iter().map(|(path, _)| path.as_str()).collect();
+    assert_eq!(seen.len(), 3, "文件名与内容命中都应通过翻页返回: {paths:?}");
+    let mut unique = paths.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), 3, "翻页不应重复: {paths:?}");
+    // 得分更高的文件名命中必须排在内容命中之前
+    assert_eq!(
+        paths[0], "needle-name.txt",
+        "文件名命中应排在最前: {paths:?}"
+    );
+    assert!(
+        seen.iter()
+            .all(|(path, score)| path == "needle-name.txt" || *score < 1.0),
+        "内容命中的得分应低于文件名命中: {seen:?}"
+    );
+}
+
+/// 偏移量超过结果总数时应返回空页且不再声明还有下一页。
+#[tokio::test]
+async fn search_offset_beyond_results_returns_empty_page() {
+    let app = TestApp::new().await;
+    app.upload_version("", "needle.txt", b"body", "seed").await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/search?q=needle&search_files=true&limit=5&offset=50")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let payload = response_json(response).await;
+    assert_eq!(payload["items"].as_array().map(Vec::len), Some(0));
+    assert_eq!(payload["has_more"], Value::Bool(false));
+    assert_eq!(payload["offset"], Value::from(50));
+}
+
 #[tokio::test]
 async fn content_search_returns_line_matches_when_feature_enabled() {
     let mut features = default_features();

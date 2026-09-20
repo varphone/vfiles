@@ -236,6 +236,10 @@ impl ConfigLoader {
         ])?
         .unwrap_or(10);
 
+        // 全文（内容）搜索默认关闭：它需要读取并扫描文件内容，代价明显高于文件名搜索。
+        let search_content_enabled =
+            Self::env_parse_bool(&["VFILES_FEATURES_SEARCH_CONTENT", "FEATURES_SEARCH_CONTENT"])?
+                .unwrap_or(false);
         let maintenance_enabled =
             Self::env_parse_bool(&["VFILES_MAINTENANCE_ENABLED", "MAINTENANCE_ENABLED"])?
                 .unwrap_or(false);
@@ -330,7 +334,7 @@ impl ConfigLoader {
                 auth_enabled,
                 multi_user: true,
                 email_login: false,
-                search_content: false,
+                search_content: search_content_enabled,
                 share_enabled: true,
                 history_enabled: true,
             },
