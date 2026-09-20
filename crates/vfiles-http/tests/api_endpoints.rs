@@ -851,6 +851,102 @@ async fn chunked_upload_history_and_download_round_trip() {
 }
 
 #[tokio::test]
+async fn file_content_and_download_support_range_requests() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "range.txt", b"0123456789", "range upload")
+        .await;
+
+    let content_partial = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range.txt")
+                .header(header::RANGE, "bytes=2-5")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(content_partial.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        content_partial
+            .headers()
+            .get(header::ACCEPT_RANGES)
+            .expect("accept-ranges should be present"),
+        "bytes"
+    );
+    assert_eq!(
+        content_partial
+            .headers()
+            .get(header::CONTENT_RANGE)
+            .expect("content-range should be present"),
+        "bytes 2-5/10"
+    );
+    assert_eq!(
+        content_partial
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .expect("content-length should be present"),
+        "4"
+    );
+    assert_eq!(response_bytes(content_partial).await.as_ref(), b"2345");
+
+    let content_suffix = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range.txt")
+                .header(header::RANGE, "bytes=-3")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(content_suffix.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        content_suffix
+            .headers()
+            .get(header::CONTENT_RANGE)
+            .expect("content-range should be present"),
+        "bytes 7-9/10"
+    );
+    assert_eq!(response_bytes(content_suffix).await.as_ref(), b"789");
+
+    let download_partial = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/download?path=docs/range.txt")
+                .header(header::RANGE, "bytes=0-1")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(download_partial.status(), StatusCode::PARTIAL_CONTENT);
+    assert!(
+        download_partial
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .is_some(),
+        "content-disposition should be present"
+    );
+    assert_eq!(response_bytes(download_partial).await.as_ref(), b"01");
+
+    let unsatisfied = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/download?path=docs/range.txt")
+                .header(header::RANGE, "bytes=99-")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(unsatisfied.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(
+        unsatisfied
+            .headers()
+            .get(header::CONTENT_RANGE)
+            .expect("content-range should be present"),
+        "bytes */10"
+    );
+}
+
+#[tokio::test]
 async fn history_restore_endpoint_creates_new_current_version() {
     let app = TestApp::new().await;
 
