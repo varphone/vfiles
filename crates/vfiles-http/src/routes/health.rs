@@ -5,6 +5,7 @@ use serde::Serialize;
 use time::OffsetDateTime;
 
 use crate::{AppState, error::ApiResult};
+use vfiles_infra_sqlite::SqliteHealthProbe;
 
 #[derive(Serialize)]
 pub struct HealthResponse {
@@ -42,7 +43,7 @@ pub async fn readiness_check(State(state): State<AppState>) -> ApiResult<Json<Re
 
     // Check database
     tracing::debug!("Checking database readiness...");
-    match state.health_service.check_readiness().await {
+    match SqliteHealthProbe::check_readiness(&state.db_pool).await {
         Ok(_) => {
             tracing::debug!("Database check passed");
             checks.push(HealthCheck {
@@ -57,6 +58,41 @@ pub async fn readiness_check(State(state): State<AppState>) -> ApiResult<Json<Re
                 name: "database".to_string(),
                 status: "error".to_string(),
                 message: Some(format!("Database check failed: {}", e)),
+            });
+        }
+    }
+
+    // Check that the storage root still exists and is a directory. A missing
+    // storage root would make uploads/downloads fail even though the API process
+    // itself is alive.
+    tracing::debug!("Checking storage readiness...");
+    let storage_root = state.config.storage.root.as_std_path();
+    match tokio::fs::metadata(storage_root).await {
+        Ok(metadata) if metadata.is_dir() => {
+            tracing::debug!("Storage check passed");
+            checks.push(HealthCheck {
+                name: "storage".to_string(),
+                status: "ok".to_string(),
+                message: None,
+            });
+        }
+        Ok(_) => {
+            tracing::error!(
+                "Storage root is not a directory: {}",
+                storage_root.display()
+            );
+            checks.push(HealthCheck {
+                name: "storage".to_string(),
+                status: "error".to_string(),
+                message: Some("Storage root is not a directory".to_string()),
+            });
+        }
+        Err(e) => {
+            tracing::error!("Storage check failed: {}", e);
+            checks.push(HealthCheck {
+                name: "storage".to_string(),
+                status: "error".to_string(),
+                message: Some(format!("Storage root is unavailable: {}", e)),
             });
         }
     }
