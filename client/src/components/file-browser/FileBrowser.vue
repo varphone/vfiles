@@ -761,6 +761,11 @@
     />
 
     <!-- 预览对话框（当前版本） -->
+    <UploadDropOverlay
+      :visible="externalDropActive"
+      :target-label="dropTargetLabel"
+    />
+
     <FilePreviewModal
       :show="preview.open"
       :filename="previewFilename"
@@ -819,6 +824,7 @@ import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
 import FilePreviewModal from "./FilePreviewModal.vue";
 import BrowserSearchBox from "./BrowserSearchBox.vue";
+import UploadDropOverlay from "./UploadDropOverlay.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
 import Breadcrumb from "./Breadcrumb.vue";
@@ -837,6 +843,7 @@ import { useFilePreview } from "../../composables/useFilePreview";
 import { useFileSearch } from "../../composables/useFileSearch";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
+import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
 import { useMoveDialog } from "../../composables/useMoveDialog";
 import { useTouchGestures } from "../../composables/useTouchGestures";
 import type { FileInfo } from "../../types";
@@ -910,6 +917,40 @@ const mobileSearchFiltersOpen = ref(false);
 const detailItem = computed<BrowserListItem | undefined>(() =>
   findActiveItem(),
 );
+
+/**
+ * 整窗拖放上传：把桌面文件直接拖进浏览器。
+ *
+ * 已有弹窗（预览/上传/移动/历史/分享）时交给弹窗自己处理，不弹整窗提示。
+ */
+const anyDialogOpen = computed(
+  () =>
+    preview.value.open ||
+    showUploader.value ||
+    showHistory.value ||
+    showShareDialog.value ||
+    showMoveDialog.value ||
+    dirManagerOpen.value,
+);
+const dropTargetLabel = computed(() =>
+  filesStore.currentPath
+    ? filesStore.currentPath.split("/").filter(Boolean).pop() ||
+      filesStore.currentPath
+    : "根目录",
+);
+
+function queueDroppedFiles(files: File[]) {
+  showUploader.value = true;
+  void nextTick().then(() => {
+    fileUploaderRef.value?.addFiles(files);
+    appStore.success(`已添加 ${files.length} 个文件到上传队列`);
+  });
+}
+
+const { dragging: externalDropActive } = useWindowFileDrop({
+  onFiles: queueDroppedFiles,
+  enabled: () => !anyDialogOpen.value,
+});
 
 /** 代码/文本预览支持一键复制原文，复制结果在按钮上就地反馈。 */
 const previewCopyState = ref<"idle" | "done" | "failed">("idle");

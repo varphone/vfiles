@@ -16,11 +16,11 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 41 实测）
+### 验证基线（round 42 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：31 个文件 / **206** 个用例通过；`vue-tsc`、`eslint`、`prettier`
+- `client` 单测：33 个文件 / **216** 个用例通过；`vue-tsc`、`eslint`、`prettier`
   通过。
 - 后端：`cargo test --workspace` 全部通过、`clippy --all-targets` 无告警、`fmt`
   干净（`frontend.rs` 的历史格式差异保持原样）。
@@ -729,6 +729,26 @@
   Playwright 实际滚动触发两次请求 `(100,0)` → `(100,100)`，列表由 100 条增长到
   130 条（末行为 `bulk-130.txt`），无控制台报错。
 
+### 2.49 整窗拖放上传（round 42，交互）
+
+- 背景：此前只支持「拖动条目移动到文件夹」（内部拖拽）与上传对话框内的拖放区，
+  从桌面把文件拖进浏览器窗口不会有任何反应——主流云盘都支持，是最常见的上传方式。
+- 新增 `useWindowFileDrop` 组合式函数：在 window 上监听 dragenter/dragover/
+  dragleave/drop，仅当 `dataTransfer.types` 含 `Files`（外部文件）时激活，
+  因此内部拖拽移动不受影响；用深度计数避免子元素间的 dragenter/dragleave 让浮层
+  闪烁；`dragover` 必须 `preventDefault` 才会收到 drop，`drop` 也阻止默认行为，
+  否则浏览器会直接打开文件。弹窗打开时（预览/上传/移动/历史/分享）自动让位。
+- 新增 `UploadDropOverlay.vue`：整窗半透明浮层 + 虚线卡片，提示「松开即可上传」
+  与目标目录名称；`pointer-events: none` 保证不会挡住落点。
+- `FileUploader` 暴露 `addFiles()`，拖入的文件直接进入既有上传队列并打开对话框，
+  复用原有的分片/进度/取消逻辑，另给出一条成功提示。
+- 测试：新增 6 个组合式函数用例（浮层显隐与深度计数、内部拖拽忽略、文件交接与浮层
+  收起、drop 阻止默认、dragover 仅在携带文件时阻止、弹窗期间禁用）、2 个浮层用例、
+  2 个 `FileBrowser` 集成用例（拖入后队列出现对应文件、拖入过程显示/移除提示）。
+- 冒烟：Playwright 真实拖放（DataTransfer + DragEvent）验证浮层文案为
+  「松开即可上传 / 文件会上传到 docs」（当前目录），松手后浮层消失、上传对话框打开
+  且队列中出现该文件，无控制台报错。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -827,4 +847,5 @@
 - `[x]` 移动端工具栏合并：顶部搜索 + 底部单行操作栏（round 36，见 §2.43）。
 - `[ ]` 主搜索框上移到应用栏（对齐 Drive/OneDrive 的全局搜索），需要把搜索状态从
   `FileBrowser` 提升到页面级。
-- `[ ]` 拖拽上传浮层、上传进度与通知的视觉统一。
+- `[x]` 整窗拖放上传浮层（round 42，见 §2.49）。
+- `[ ]` 上传进度与通知的视觉统一。

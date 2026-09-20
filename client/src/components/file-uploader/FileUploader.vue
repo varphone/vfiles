@@ -137,22 +137,17 @@ async function startUpload() {
 
     try {
       const message = next.message.trim() || defaultUploadMessage(next.file);
-      await filesService.uploadFile(
-        next.file,
-        props.targetPath,
-        message,
-        {
-          signal: abort.signal,
-          onProgress: ({ loaded, total }) => {
-            if (!total) {
-              next.percent = null;
-              return;
-            }
-            next.percent = Math.min(100, Math.floor((loaded / total) * 100));
-          },
-          relativePath: next.relativePath,
+      await filesService.uploadFile(next.file, props.targetPath, message, {
+        signal: abort.signal,
+        onProgress: ({ loaded, total }) => {
+          if (!total) {
+            next.percent = null;
+            return;
+          }
+          next.percent = Math.min(100, Math.floor((loaded / total) * 100));
         },
-      );
+        relativePath: next.relativePath,
+      });
       next.status = "done";
       next.abort = undefined;
       next.percent = 100;
@@ -183,6 +178,8 @@ async function startUpload() {
 defineExpose({
   uploading,
   hasQueued,
+  /** 供整窗拖放把文件直接加入队列。 */
+  addFiles,
   hasFiles: computed(() => queue.value.length > 0),
   startUpload,
   cancelAll,

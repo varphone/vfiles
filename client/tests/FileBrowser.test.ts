@@ -645,6 +645,62 @@ describe("FileBrowser.vue loading state", () => {
     await findByText("此文件夹为空");
   });
 });
+describe("FileBrowser.vue window file drop", () => {
+  function dispatchDrop(files: File[]) {
+    const event = new Event("drop", { cancelable: true, bubbles: true });
+    Object.assign(event, {
+      dataTransfer: { types: ["Files"], files, dropEffect: "" },
+    });
+    window.dispatchEvent(event);
+  }
+
+  it("queues files dropped onto the window", async () => {
+    getFilesMock.mockResolvedValue([]);
+
+    const { findAllByText, findByText, container } = renderWithProviders(
+      FileBrowser as any,
+    );
+    await findByText("此文件夹为空");
+
+    dispatchDrop([
+      new File(["a"], "拖入-1.txt", { type: "text/plain" }),
+      new File(["b"], "拖入-2.txt", { type: "text/plain" }),
+    ]);
+
+    // 上传对话框自动打开并带上这两个文件
+    await findAllByText("拖入-1.txt");
+    expect(container.textContent).toContain("拖入-2.txt");
+  });
+
+  it("shows the overlay only while a file drag is in progress", async () => {
+    getFilesMock.mockResolvedValue([]);
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("此文件夹为空");
+
+    const dragEnter = new Event("dragenter", { bubbles: true });
+    Object.assign(dragEnter, {
+      dataTransfer: { types: ["Files"], files: [], dropEffect: "" },
+    });
+    window.dispatchEvent(dragEnter);
+    await waitFor(() => {
+      expect(container.ownerDocument.body.textContent).toContain(
+        "松开即可上传",
+      );
+    });
+
+    const dragLeave = new Event("dragleave", { bubbles: true });
+    Object.assign(dragLeave, {
+      dataTransfer: { types: ["Files"], files: [], dropEffect: "" },
+    });
+    window.dispatchEvent(dragLeave);
+    await waitFor(() => {
+      expect(container.ownerDocument.body.textContent).not.toContain(
+        "松开即可上传",
+      );
+    });
+  });
+});
+
 describe("FileBrowser.vue details panel", () => {
   const files = [
     {
