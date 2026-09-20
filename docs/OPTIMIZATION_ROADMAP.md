@@ -16,11 +16,11 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 42 实测）
+### 验证基线（round 43 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：33 个文件 / **216** 个用例通过；`vue-tsc`、`eslint`、`prettier`
+- `client` 单测：34 个文件 / **219** 个用例通过；`vue-tsc`、`eslint`、`prettier`
   通过。
 - 后端：`cargo test --workspace` 全部通过、`clippy --all-targets` 无告警、`fmt`
   干净（`frontend.rs` 的历史格式差异保持原样）。
@@ -749,6 +749,28 @@
   「松开即可上传 / 文件会上传到 docs」（当前目录），松手后浮层消失、上传对话框打开
   且队列中出现该文件，无控制台报错。
 
+### 2.50 按钮与进度条的统一（round 43，交互）
+
+- 背景：设计令牌铺开三轮后，仍有 86 处 `is-light`／Bulma 默认按钮保持「浅底方块」
+  样式，深色模式下尤其突兀；上传进度用 `is-primary`、下载进度用 `is-info`，
+  同一个概念两种颜色。
+- 按钮统一（全局，一处生效）：
+  - Bulma 的中性按钮（默认 / `is-light`）统一为**幽灵按钮**——透明底、细边框、
+    正文文字色，hover 给一层浅底，disabled 统一 45% 透明度；带语义的按钮
+    （`is-primary`/`is-link`/`is-danger`/…）保持各自填充样式，因此不需要逐文件改
+    86 处调用。
+  - Bulma 的 `is-ghost`（行内操作图标）统一为次要文字色（`--vf-text-muted`），
+    hover 才变强调色；删除态 hover 使用危险色浅底，不再默认就是蓝/粉。
+- 进度条统一：新增 `ProgressBar.vue`（轨道 `--vf-surface-sunken`、填充
+  `--vf-accent`、高度 0.5rem、未知总量走不确定态动画、带 `aria-label`），
+  上传队列与下载面板都改用它，并删除被取代的 `UploadProgress.vue`；
+  下载面板新增 `downloadPercent()` 把字节进度换算成百分比。
+- 验证：浅/深色下采样中性按钮均为 `transparent` 底 + `--vf-border` 边框 + 正文色，
+  行内图标为 `--vf-text-muted`；`is-primary` 仍是品牌蓝填充 + 白字。冒烟实测
+  上传 24MB 文件时出现 `aria-label="上传 big-upload.bin"` 的进度条（高 8px）并成功入库；
+  下载同一文件时进度条 `value=33`、轨道 `#f5f8fc`、填充 `#2f6db6`（与上传一致），
+  全程无控制台报错。测试新增 3 个 `ProgressBar` 用例。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -831,8 +853,7 @@
 
 - `[x]` 设计令牌 + Bulma 双主题 + 切换入口 + 全组件迁移（round 31）。
 - `[x]` 代码/Markdown 语法高亮配色 + 代码预览一键复制（round 32，见 §2.38）。
-- `[ ]` 深色下部分按钮仍使用 `is-light`（浅底），可统一为主流云盘的“幽灵按钮”
-  风格。
+- `[x]` 中性按钮统一为幽灵按钮、进度条统一（round 43，见 §2.50）。
 
 - 若要正式支持暗色主题，需要同时提供 Bulma `themes` 变量与自定义样式（Home、
   FileCard、FileItem 等硬编码颜色）的暗色分支，并提供主题切换与持久化。

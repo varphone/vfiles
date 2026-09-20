@@ -66,10 +66,11 @@
         </div>
       </div>
 
-      <UploadProgress
+      <ProgressBar
         v-if="item.status === 'uploading'"
         :mode="item.percent != null ? 'determinate' : 'indeterminate'"
         :value="item.percent ?? 0"
+        :label="`上传 ${item.file.name}`"
       />
 
       <div class="field mt-3 mb-1">
@@ -96,7 +97,7 @@
 
 <script setup lang="ts">
 import { IconFile } from "@tabler/icons-vue";
-import UploadProgress from "./UploadProgress.vue";
+import ProgressBar from "../common/ProgressBar.vue";
 
 export type UploadQueueItemView = {
   id: number;

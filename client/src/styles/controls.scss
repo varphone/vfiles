@@ -37,6 +37,29 @@
   color: var(--vf-accent-strong);
 }
 
+/* Bulma 的 is-ghost（行内操作图标）统一为次要文字色，hover 才变强调色 */
+.button.is-ghost {
+  color: var(--vf-text-muted);
+  text-decoration: none;
+}
+
+.button.is-ghost:hover:not([disabled]),
+.button.is-ghost:focus-visible {
+  background-color: var(--vf-surface-hover);
+  color: var(--vf-accent-strong);
+  text-decoration: none;
+}
+
+.button.is-ghost.is-danger {
+  color: var(--vf-text-muted);
+}
+
+.button.is-ghost.is-danger:hover:not([disabled]),
+.button.is-ghost.is-danger:focus-visible {
+  background-color: var(--vf-danger-soft);
+  color: var(--vf-danger-text);
+}
+
 /* 带文字的次要按钮：无边框，hover 出现浅底 */
 .vf-ghost-button {
   display: inline-flex;
@@ -81,6 +104,92 @@
 .vf-ghost-button.is-danger:focus-visible {
   background: var(--vf-danger-soft);
   color: var(--vf-danger-text);
+}
+
+/* Bulma 的中性按钮（默认 / is-light）统一为「幽灵按钮」：
+   透明底 + 细边框 + 次要文字色，hover 时给一层浅底。
+   带语义的按钮（is-primary/is-link/is-danger/...）保持各自的填充样式。 */
+.button:not(
+  .is-primary,
+  .is-link,
+  .is-info,
+  .is-success,
+  .is-warning,
+  .is-danger,
+  .is-white,
+  .is-black,
+  .is-text,
+  .is-ghost,
+  .is-static
+) {
+  background-color: transparent;
+  border-color: var(--vf-border);
+  color: var(--vf-text);
+  box-shadow: none;
+}
+
+.button:not(
+    .is-primary,
+    .is-link,
+    .is-info,
+    .is-success,
+    .is-warning,
+    .is-danger,
+    .is-white,
+    .is-black,
+    .is-text,
+    .is-ghost,
+    .is-static
+  ):hover,
+.button:not(
+    .is-primary,
+    .is-link,
+    .is-info,
+    .is-success,
+    .is-warning,
+    .is-danger,
+    .is-white,
+    .is-black,
+    .is-text,
+    .is-ghost,
+    .is-static
+  ):focus-visible {
+  background-color: var(--vf-surface-hover);
+  border-color: var(--vf-border);
+  color: var(--vf-text-strong);
+}
+
+.button:not(
+    .is-primary,
+    .is-link,
+    .is-info,
+    .is-success,
+    .is-warning,
+    .is-danger,
+    .is-white,
+    .is-black,
+    .is-text,
+    .is-ghost,
+    .is-static
+  ):active {
+  background-color: var(--vf-surface-sunken);
+  color: var(--vf-text-strong);
+}
+
+.button:not(
+    .is-primary,
+    .is-link,
+    .is-info,
+    .is-success,
+    .is-warning,
+    .is-danger,
+    .is-white,
+    .is-black,
+    .is-text,
+    .is-ghost,
+    .is-static
+  )[disabled] {
+  opacity: 0.45;
 }
 
 /* 主操作按钮：填充强调色胶囊 */

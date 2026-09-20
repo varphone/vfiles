@@ -118,17 +118,13 @@
           </div>
         </div>
 
-        <progress
-          v-if="item.status === 'downloading' && item.progress?.total"
-          class="progress is-small is-info mt-2"
-          :value="item.progress.loaded"
-          :max="item.progress.total"
-        ></progress>
-        <progress
-          v-else-if="item.status === 'downloading'"
-          class="progress is-small is-info mt-2"
-          max="100"
-        ></progress>
+        <ProgressBar
+          v-if="item.status === 'downloading'"
+          class="mt-2"
+          :mode="item.progress?.total ? 'determinate' : 'indeterminate'"
+          :value="downloadPercent(item)"
+          :label="`下载 ${item.filename}`"
+        />
 
         <p v-if="item.error" class="has-text-danger is-size-7 mt-1">
           {{ item.error }}
@@ -139,6 +135,7 @@
 </template>
 
 <script setup lang="ts">
+import ProgressBar from "../common/ProgressBar.vue";
 import type { DownloadQueueItem } from "../../composables/useDownloadQueue";
 import { formatDownloadProgress } from "../../utils/filePresentation";
 
@@ -169,5 +166,13 @@ const emit = defineEmits<{
 
 function formatProgress(loaded: number, total: number): string {
   return formatDownloadProgress(loaded, total);
+}
+
+/** 已加载字节 → 百分比（总量未知时返回 0，由不确定态动画呈现）。 */
+function downloadPercent(item: DownloadQueueItem): number {
+  const loaded = item.progress?.loaded ?? 0;
+  const total = item.progress?.total ?? 0;
+  if (total <= 0) return 0;
+  return Math.min(100, Math.floor((loaded / total) * 100));
 }
 </script>
