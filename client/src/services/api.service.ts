@@ -6,6 +6,57 @@ type RequestOptions = {
   signal?: AbortSignal;
 };
 
+/** 幂等 GET 请求遇到这些状态码时值得重试。 */
+export const RETRYABLE_STATUS_CODES = [429, 502, 503, 504] as const;
+
+/** 最多重试次数（首次请求之外）。 */
+export const MAX_RETRIES = 2;
+
+type RetryableErrorLike = {
+  code?: string;
+  response?: { status?: number };
+  config?: {
+    method?: string;
+    signal?: { aborted?: boolean };
+  };
+};
+
+/**
+ * 是否应该重试：仅幂等请求（GET），且为网络/超时错误或可重试状态码，
+ * 调用方主动取消的请求不重试。
+ */
+export function isRetryableError(error: RetryableErrorLike): boolean {
+  const config = error.config;
+  if (!config) return false;
+
+  const method = (config.method ?? "get").toLowerCase();
+  if (method !== "get") return false;
+  if (config.signal?.aborted) return false;
+  if (error.code === "ERR_CANCELED" || error.code === "ECONNABORTED") {
+    // 超时值得重试，但被调用方取消不值重试
+    return error.code === "ECONNABORTED";
+  }
+
+  if (!error.response) return true;
+  return RETRYABLE_STATUS_CODES.includes(
+    error.response.status as (typeof RETRYABLE_STATUS_CODES)[number],
+  );
+}
+
+/** 指数退避 + 抖动，避免多个客户端同时重试。 */
+export function computeRetryDelayMs(
+  attempt: number,
+  random: () => number = Math.random,
+): number {
+  const base = Math.min(2000, 300 * 2 ** Math.max(0, attempt - 1));
+  const jitter = Math.floor(random() * 100);
+  return base + jitter;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class ApiError extends Error {
   status?: number;
   data?: ApiResponse;
@@ -46,7 +97,20 @@ class ApiService {
       (response) => {
         return response.data;
       },
-      (error: AxiosError) => {
+      async (error: AxiosError) => {
+        const config = error.config as
+          | (typeof error.config & { __retryCount?: number })
+          | undefined;
+
+        if (config && isRetryableError(error)) {
+          const attempt = (config.__retryCount ?? 0) + 1;
+          if (attempt <= MAX_RETRIES) {
+            config.__retryCount = attempt;
+            await delay(computeRetryDelayMs(attempt));
+            return this.api.request(config);
+          }
+        }
+
         const status = error.response?.status;
         if (status === 401 && typeof window !== "undefined") {
           window.dispatchEvent(new Event("vfiles:unauthorized"));

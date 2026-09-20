@@ -369,4 +369,29 @@ describe("FileBrowser.vue", () => {
     });
     expect(document.body.textContent).toContain("fast.txt");
   });
+
+  it("offers a retry button when loading fails", async () => {
+    getFilesMock.mockRejectedValueOnce(new Error("网络错误"));
+    getFilesMock.mockResolvedValueOnce([
+      {
+        id: "a",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file",
+        size_bytes: 1,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+
+    const { findByRole, findByText } = renderWithProviders(FileBrowser as any);
+
+    await findByText("网络错误");
+    expect(getFilesMock).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(await findByRole("button", { name: /重试/ }));
+
+    await findByText("a.txt");
+    expect(getFilesMock).toHaveBeenCalledTimes(2);
+  });
 });

@@ -332,6 +332,17 @@
             <div v-else-if="error" class="notification is-danger is-light">
               <IconAlertCircle :size="20" class="mr-2" />
               {{ error }}
+              <div class="mt-2">
+                <button
+                  class="button is-small is-danger is-light"
+                  :class="{ 'is-loading': loading }"
+                  :disabled="loading"
+                  @click="refresh"
+                >
+                  <IconRefresh :size="16" class="mr-1" />
+                  重试
+                </button>
+              </div>
             </div>
 
             <div
@@ -439,6 +450,17 @@
         <div v-else-if="error" class="notification is-danger is-light">
           <IconAlertCircle :size="20" class="mr-2" />
           {{ error }}
+          <div class="mt-2">
+            <button
+              class="button is-small is-danger is-light"
+              :class="{ 'is-loading': loading }"
+              :disabled="loading"
+              @click="refresh"
+            >
+              <IconRefresh :size="16" class="mr-1" />
+              重试
+            </button>
+          </div>
         </div>
 
         <div
