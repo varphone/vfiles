@@ -88,6 +88,8 @@ pub trait EntryRepo {
         namespace_id: &NamespaceId,
         paths: &[NormalizedPath],
     ) -> DomainResult<Vec<Entry>>;
+    /// 列出所有仍被版本或快照引用的 blob id（维护任务使用）。
+    async fn referenced_blob_ids(&self) -> DomainResult<Vec<BlobId>>;
     async fn create_entry(
         &self,
         namespace_id: &NamespaceId,
@@ -184,6 +186,18 @@ pub trait BlobStore {
     async fn delete_blob(&self, blob_id: &BlobId) -> DomainResult<()>;
     async fn blob_exists(&self, sha256: &ContentHash) -> DomainResult<bool>;
     async fn get_blob_metadata(&self, blob_id: &BlobId) -> DomainResult<Option<Blob>>;
+    /// 列出全部 blob 元数据（维护任务使用）。
+    async fn list_blobs(&self) -> DomainResult<Vec<Blob>>;
+    /// 删除未被引用的 blob（同时删除数据库行与文件）。
+    ///
+    /// 通过 `expected_ref_count` 做乐观校验：若期间计数被并发修改则跳过删除。
+    async fn purge_blob(&self, blob_id: &BlobId, expected_ref_count: u32) -> DomainResult<bool>;
+    /// 列出磁盘上实际存在的 blob 文件及其修改时间（维护任务使用）。
+    ///
+    /// 用于发现「文件已写入但数据库行未建立」的孤兒文件（例如上传中断）。
+    async fn list_stored_blob_files(
+        &self,
+    ) -> DomainResult<Vec<(BlobId, time::OffsetDateTime, u64)>>;
 }
 
 #[async_trait::async_trait]

@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use vfiles_app::{
-    AdminService, AuthService, BootstrapService, HealthService, HistoryService, SearchService,
-    SessionService, ShareService, UploadService, WorkspaceService,
+    AdminService, AuthService, BootstrapService, HealthService, HistoryService, MaintenanceService,
+    SearchService, SessionService, ShareService, UploadService, WorkspaceService,
 };
 use vfiles_config::ConfigLoader;
 use vfiles_domain::*;
@@ -36,6 +36,24 @@ enum Commands {
     },
     /// Run health checks
     Check,
+    /// Maintenance tasks
+    Maintenance {
+        #[command(subcommand)]
+        command: MaintenanceCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum MaintenanceCommands {
+    /// Delete unreferenced blobs (with a grace period) to reclaim disk space
+    GcBlobs(GcBlobsArgs),
+}
+
+#[derive(Debug, Args, Clone)]
+struct GcBlobsArgs {
+    /// Only purge blobs created more than this many seconds ago
+    #[arg(long, default_value_t = 3600)]
+    grace_seconds: u64,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -184,6 +202,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Check => {
             run_check().await?;
+        }
+        Commands::Maintenance { command } => {
+            run_maintenance_command(command).await?;
         }
     }
 
@@ -656,6 +677,41 @@ async fn run_check() -> anyhow::Result<()> {
 
 fn is_frontend_dist(path: &Path) -> bool {
     path.is_dir() && path.join("index.html").is_file()
+}
+
+async fn run_maintenance_command(command: MaintenanceCommands) -> anyhow::Result<()> {
+    match command {
+        MaintenanceCommands::GcBlobs(args) => run_gc_blobs(args).await,
+    }
+}
+
+/// 清理无引用且已过保护期的 blob，回收磁盘空间。
+async fn run_gc_blobs(args: GcBlobsArgs) -> anyhow::Result<()> {
+    tracing::info!(
+        "Purging orphaned blobs (grace period: {}s)...",
+        args.grace_seconds
+    );
+    let config = ConfigLoader::load()?;
+    let paths = vfiles_config::AppPaths::from_config(&config.storage);
+    let pool = SqlitePoolFactory::connect(&paths.database).await?;
+
+    let blob_store = FsBlobStore::new(pool.clone(), paths.blobs.clone());
+    let entry_repo = SqliteEntryRepo::new(pool.clone());
+    let service = MaintenanceService::new(blob_store, entry_repo);
+    let report = service.purge_orphan_blobs(args.grace_seconds).await?;
+
+    println!(
+        "Purged {} orphaned blob(s), freed {} bytes",
+        report.removed, report.freed_bytes
+    );
+    tracing::info!(
+        removed = report.removed,
+        freed_bytes = report.freed_bytes,
+        "Blob garbage collection finished"
+    );
+
+    pool.close().await;
+    Ok(())
 }
 
 fn resolve_frontend_dist() -> Option<PathBuf> {

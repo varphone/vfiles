@@ -1077,6 +1077,29 @@ impl EntryRepo for SqliteEntryRepo {
         Ok(entries)
     }
 
+    async fn referenced_blob_ids(&self) -> DomainResult<Vec<BlobId>> {
+        let rows: Vec<String> = sqlx::query_scalar(
+            r#"
+            SELECT blob_id FROM entry_versions WHERE blob_id IS NOT NULL
+            UNION
+            SELECT blob_id FROM snapshot_entries WHERE blob_id IS NOT NULL
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list referenced blobs: {}", e),
+        })?;
+
+        rows.iter()
+            .map(|id| {
+                BlobId::from_string(id).map_err(|_| DomainError::Internal {
+                    message: "Invalid blob id".to_string(),
+                })
+            })
+            .collect()
+    }
+
     async fn create_entry(
         &self,
         namespace_id: &NamespaceId,
@@ -2219,6 +2242,143 @@ impl BlobStore for FsBlobStore {
             },
         )
         .transpose()
+    }
+
+    async fn list_blobs(&self) -> DomainResult<Vec<Blob>> {
+        let rows: Vec<(
+            String,
+            String,
+            String,
+            i64,
+            Option<String>,
+            i64,
+            String,
+            Option<String>,
+        )> = sqlx::query_as(
+            r#"
+            SELECT id, content_hash, storage_key, size, content_type, ref_count, created_at, verified_at
+            FROM blobs
+            ORDER BY created_at
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list blobs: {}", e),
+        })?;
+
+        rows.into_iter()
+            .map(
+                |(
+                    id,
+                    content_hash,
+                    storage_key,
+                    size,
+                    content_type,
+                    ref_count,
+                    created_at,
+                    verified_at,
+                )| {
+                    Ok(Blob {
+                        id: BlobId::from_string(&id).map_err(|_| DomainError::Internal {
+                            message: "Invalid blob id".to_string(),
+                        })?,
+                        sha256_hex: content_hash,
+                        storage_key,
+                        size_bytes: ByteSize::new(size as u64),
+                        mime_type_detected: content_type,
+                        ref_count: ref_count.max(0) as u32,
+                        created_at: parse_timestamp(&created_at)?,
+                        verified_at: verified_at.as_deref().map(parse_timestamp).transpose()?,
+                    })
+                },
+            )
+            .collect()
+    }
+
+    async fn purge_blob(&self, blob_id: &BlobId, expected_ref_count: u32) -> DomainResult<bool> {
+        // 乐观校验：计数被并发修改时跳过，避免误删正在使用的 blob。
+        let result = sqlx::query("DELETE FROM blobs WHERE id = ? AND ref_count = ?")
+            .bind(blob_id.to_string())
+            .bind(i64::from(expected_ref_count))
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to purge blob row: {}", e),
+            })?;
+
+        if result.rows_affected() == 0 {
+            return Ok(false);
+        }
+
+        self.delete_blob(blob_id).await?;
+        Ok(true)
+    }
+
+    async fn list_stored_blob_files(
+        &self,
+    ) -> DomainResult<Vec<(BlobId, time::OffsetDateTime, u64)>> {
+        // 目录结构为 <base>/<前2位>/<其余36-2位>，由文件名可还原 BlobId。
+        let mut files = Vec::new();
+        let base = &self.base_path;
+        if !base.is_dir() {
+            return Ok(files);
+        }
+
+        let mut shard_dirs = fs::read_dir(base)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to read blob directory: {}", e),
+            })?;
+
+        while let Some(entry) =
+            shard_dirs
+                .next_entry()
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to read blob directory entry: {}", e),
+                })?
+        {
+            let shard = entry.file_name().to_string_lossy().into_owned();
+            if shard.len() != 2 {
+                continue;
+            }
+
+            let mut shard_files = match fs::read_dir(entry.path()).await {
+                Ok(files) => files,
+                Err(_) => continue,
+            };
+
+            while let Some(file_entry) =
+                shard_files
+                    .next_entry()
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to read blob file entry: {}", e),
+                    })?
+            {
+                let name = file_entry.file_name().to_string_lossy().into_owned();
+                if name.ends_with(".tmp") {
+                    continue;
+                }
+
+                let candidate = format!("{shard}{name}");
+                let Ok(blob_id) = BlobId::from_string(&candidate) else {
+                    continue;
+                };
+
+                let Ok(metadata) = file_entry.metadata().await else {
+                    continue;
+                };
+                let modified = metadata
+                    .modified()
+                    .map(time::OffsetDateTime::from)
+                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                files.push((blob_id, modified, metadata.len()));
+            }
+        }
+
+        Ok(files)
     }
 }
 

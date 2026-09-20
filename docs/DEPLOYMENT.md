@@ -152,3 +152,18 @@ sudo ./vfiles register -t systemd \
 - `./vfiles check` 可以完成健康检查
 - 如果提供前端静态资源，访问根路径可以加载页面
 - 上传、删除、移动等写操作可正常产生历史版本
+
+## 维护任务
+
+上传中断可能在 blob 目录留下「有文件但无元数据行」的孤儿文件（内容寻址，删除后若再次
+上传相同内容会重新落盘，因此清理是安全的）：
+
+```bash
+# 默认保护期 1 小时，只清理早于保护期的孤儿 blob
+./vfiles maintenance gc-blobs
+# 自定义保护期（秒）
+./vfiles maintenance gc-blobs --grace-seconds 600
+```
+
+输出 `Purged N orphaned blob(s), freed M bytes`。建议在业务低峰期执行；被任何版本或
+快照引用的 blob 不会被删除。

@@ -16,12 +16,13 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 26 实测）
+### 验证基线（round 27 实测）
 
-- `cargo test --workspace`：通过。
+- `cargo test --workspace`：通过（含 blob GC 用例）。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：21 个文件 / **116** 个用例通过。
-- 冒烟：served 产物包含重试相关标记；服务端优雅停机保持可用。
+- `client` 单测：21 个文件 / 116 个用例通过。
+- 冒烟：`vfiles maintenance gc-blobs` 删除孤儿文件（保留被引用 blob），
+  `--grace-seconds` 保护期生效。
 
 ### 主要发现
 
@@ -388,6 +389,24 @@
 - 测试：下载失败后重试成功、活动条目不重复触发、面板按钮显隐与事件、预览失败后重试
   再次请求内容。
 
+### 2.32 孤儿 blob 文件回收（round 27，稳定性）
+
+- 审计发现：`store_blob` 只写磁盘文件，元数据行由 `create_version` 建立；若上传
+  在两者之间失败，会在 blob 目录留下**有文件、无元数据行、无任何引用**的孤儿文件，
+  现有删除路径只处理「有行」的 blob，无法回收它们。
+- `BlobStore` 新增：
+  - `list_stored_blob_files()`：按 `<前2位>/<其余>` 目录结构还原 `BlobId` 并返回
+    文件修改时间与大小；
+  - `purge_blob(blob_id, expected_ref_count)`：乐观校验后删除「行 + 文件」；
+  - `list_blobs()` 供行级扫描。
+- `EntryRepo::referenced_blob_ids()`：`UNION` 版本表与快照表的 blob 引用集合。
+- 新增 `MaintenanceService::purge_orphan_blobs(grace_seconds)`：先做行级清理（无引用
+  且超过保护期），再删除磁盘上无元数据行的孤儿文件；保护期避免误删上传中的文件。
+- CLI：`vfiles maintenance gc-blobs [--grace-seconds N]`（默认 3600s），输出清理数量与
+  释放字节；文档见 `docs/DEPLOYMENT.md`。
+- 测试：`is_purgeable` 判定；真实 SQLite + 文件系统下清理孤儿文件、保留被引用与
+  保护期内的文件；冒烟验证 CLI 与 `--grace-seconds` 行为。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -410,12 +429,12 @@
 
 - `[x]` 批量路径存在性检查 + 事务内批量更新（round 22）。
 
-### 3.1d 快照引用的 blob 回收（稳定性，中）
+### 3.1d 快照保留与 blob 回收（稳定性，中）
 
-- 观察：`add_snapshot_entries` 会为快照中的每个 blob 增加 `ref_count`，而删除只按
-  「被删条目的版本引用数」递减；因此只要还存在历史快照，blob 就不会归零回收（属于
-  有意的快照保留语义，但缺少针对「仅被旧快照引用」的垃圾回收策略）。
-- 计划：提供按快照数量/时间窗口的 blob GC，或在删除时同时减少对应快照引用。
+- `[x]` 孤儿 blob 文件 GC（round 27）：清理「有文件、无元数据行、无引用」的残留。
+- `[ ]` 快照保留策略：`add_snapshot_entries` 会为快照中的每个 blob 增加 `ref_count`，
+  删除只按版本引用递减；只要仍有历史快照，blob 就不会归零。计划提供按数量/时间的
+  快照清理（或仅清理「仅被旧快照引用」的 blob）。
 
 ### 3.2 缩略图格式与容量（性能 + 稳定性，中）
 

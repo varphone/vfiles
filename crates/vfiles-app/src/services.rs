@@ -632,6 +632,84 @@ impl Clone for HealthService {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BlobPurgeReport {
+    pub removed: u64,
+    pub freed_bytes: u64,
+}
+
+/// 维护任务：清理没有任何版本或快照引用、且已过保护期的 blob。
+#[derive(Debug)]
+pub struct MaintenanceService<B, E> {
+    blob_store: B,
+    entry_repo: E,
+}
+
+impl<B, E> MaintenanceService<B, E>
+where
+    B: BlobStore,
+    E: EntryRepo,
+{
+    pub fn new(blob_store: B, entry_repo: E) -> Self {
+        Self {
+            blob_store,
+            entry_repo,
+        }
+    }
+
+    /// 删除无引用且创建时间早于 `grace_seconds` 之前的 blob，返回清理统计。
+    ///
+    /// 保护期用于避免误删正在进行中的上传（blob 已落盘但版本尚未建立引用）。
+    pub async fn purge_orphan_blobs(&self, grace_seconds: u64) -> DomainResult<BlobPurgeReport> {
+        let cutoff = time::OffsetDateTime::now_utc()
+            - time::Duration::seconds(i64::try_from(grace_seconds).unwrap_or(i64::MAX));
+
+        let referenced: std::collections::HashSet<BlobId> = self
+            .entry_repo
+            .referenced_blob_ids()
+            .await?
+            .into_iter()
+            .collect();
+
+        let known_blobs = self.blob_store.list_blobs().await?;
+        let known: std::collections::HashSet<BlobId> =
+            known_blobs.iter().map(|blob| blob.id).collect();
+
+        let mut report = BlobPurgeReport::default();
+
+        // 1) 有元数据行但无任何引用（异常/崩溃残留）。
+        for blob in &known_blobs {
+            if !is_purgeable(blob, referenced.contains(&blob.id), cutoff) {
+                continue;
+            }
+            if self.blob_store.purge_blob(&blob.id, blob.ref_count).await? {
+                report.removed += 1;
+                report.freed_bytes += blob.size_bytes.as_u64();
+            }
+        }
+
+        // 2) 磁盘上有文件但从未写入元数据行（上传中断留下的孤儿文件）。
+        for (blob_id, modified, size) in self.blob_store.list_stored_blob_files().await? {
+            if known.contains(&blob_id) || referenced.contains(&blob_id) {
+                continue;
+            }
+            if modified >= cutoff {
+                continue;
+            }
+            self.blob_store.delete_blob(&blob_id).await?;
+            report.removed += 1;
+            report.freed_bytes += size;
+        }
+
+        Ok(report)
+    }
+}
+
+/// blob 是否可被回收：没有任何引用且早于保护期截止时间。
+pub fn is_purgeable(blob: &Blob, is_referenced: bool, cutoff: time::OffsetDateTime) -> bool {
+    !is_referenced && blob.created_at < cutoff
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionBootstrap {
     pub auth_enabled: bool,
@@ -3788,5 +3866,150 @@ mod tests {
             .await
             .expect("archive tree should still load");
         assert!(archive_tree_after_delete.items.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod maintenance_tests {
+    use super::*;
+    use camino::Utf8PathBuf;
+    use vfiles_infra_sqlite::{
+        FsBlobStore, SqliteEntryRepo, SqliteMigrations, SqliteNamespaceRepo, SqlitePoolFactory,
+    };
+
+    fn sample_blob(ref_count: u32, created_at: time::OffsetDateTime) -> Blob {
+        Blob {
+            id: BlobId::new(),
+            sha256_hex: "hash".to_string(),
+            storage_key: "key".to_string(),
+            size_bytes: ByteSize::new(10),
+            mime_type_detected: None,
+            ref_count,
+            created_at,
+            verified_at: None,
+        }
+    }
+
+    #[test]
+    fn is_purgeable_requires_no_reference_and_grace_period() {
+        let now = time::OffsetDateTime::now_utc();
+        let cutoff = now - time::Duration::hours(1);
+
+        let old = sample_blob(1, now - time::Duration::hours(2));
+        let fresh = sample_blob(1, now);
+
+        assert!(is_purgeable(&old, false, cutoff));
+        assert!(!is_purgeable(&old, true, cutoff));
+        assert!(!is_purgeable(&fresh, false, cutoff));
+    }
+
+    #[tokio::test]
+    async fn purges_orphan_files_but_keeps_referenced_and_fresh_ones() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+            .expect("temp path should be utf-8");
+        let pool = SqlitePoolFactory::connect(root.join("vfiles.db").as_path())
+            .await
+            .expect("pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+        let blob_store = FsBlobStore::new(pool.clone(), root.join("blobs"));
+
+        let user_id = user_repo
+            .create_admin("admin", "admin@example.com", "hashed")
+            .await
+            .expect("admin should be created");
+        let namespace_id = namespace_repo
+            .create_default(&user_id, "default")
+            .await
+            .expect("namespace should be created");
+
+        // 被引用的 blob（版本已建立）
+        let (referenced_id, content_hash, _) = blob_store
+            .store_blob(b"referenced", None)
+            .await
+            .expect("blob should store");
+        let entry_id = entry_repo
+            .create_entry(
+                &namespace_id,
+                &NormalizedPath::new("a.txt").expect("path should parse"),
+                EntryKind::File,
+                &user_id,
+            )
+            .await
+            .expect("entry should be created");
+        entry_repo
+            .create_version(
+                &entry_id,
+                Some(&referenced_id),
+                Some(&content_hash),
+                10,
+                Some("text/plain"),
+                &user_id,
+                Some("v1"),
+            )
+            .await
+            .expect("version should be created");
+
+        // 孤儿文件：只有磁盘文件、没有元数据行（模拟上传中断）
+        let (orphan_id, _, _) = blob_store
+            .store_blob(b"orphan", None)
+            .await
+            .expect("blob should store");
+        let orphan_string = orphan_id.to_string();
+        let orphan_path = root
+            .join("blobs")
+            .join(&orphan_string[0..2])
+            .join(&orphan_string[2..]);
+        backdate_file(
+            &orphan_path,
+            time::OffsetDateTime::now_utc() - time::Duration::hours(2),
+        );
+
+        // 刚写入的孤儿文件应受保护期保护
+        let (fresh_id, _, _) = blob_store
+            .store_blob(b"fresh-orphan", None)
+            .await
+            .expect("blob should store");
+
+        let service = MaintenanceService::new(blob_store.clone(), entry_repo.clone());
+        let report = service
+            .purge_orphan_blobs(3600)
+            .await
+            .expect("purge should succeed");
+
+        assert_eq!(report.removed, 1);
+        assert!(report.freed_bytes > 0);
+        assert!(!orphan_path.exists(), "orphan file should be removed");
+        assert!(
+            blob_store
+                .get_blob_metadata(&referenced_id)
+                .await
+                .expect("lookup should succeed")
+                .is_some()
+        );
+
+        let fresh_string = fresh_id.to_string();
+        let fresh_path = root
+            .join("blobs")
+            .join(&fresh_string[0..2])
+            .join(&fresh_string[2..]);
+        assert!(fresh_path.exists(), "fresh file should be kept");
+
+        pool.close().await;
+    }
+
+    fn backdate_file(path: &Utf8PathBuf, when: time::OffsetDateTime) {
+        let file = std::fs::File::options()
+            .write(true)
+            .open(path.as_std_path())
+            .expect("blob file should open");
+        file.set_modified(std::time::SystemTime::from(when))
+            .expect("mtime should be set");
     }
 }
