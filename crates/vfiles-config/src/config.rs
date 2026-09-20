@@ -106,6 +106,11 @@ pub struct LimitsConfig {
     pub thumbnail_cache_max_entries: usize,
     /// 缩略图磁盘缓存的字节上限；超出后同样触发回收。
     pub thumbnail_cache_max_bytes: u64,
+    /// 是否允许输出 AVIF 缩略图（默认关闭）。
+    ///
+    /// AVIF 体积明显更小，但纯 Rust 编码器开销远高于 JPEG（实测 384px 缩略图
+    /// 约 2.0s vs 0.004s），因此默认关闭，由运维按 CPU 余量决定是否开启。
+    pub thumbnail_avif: bool,
 }
 
 /// 周期性维护（快照裁剪 + 孤儿 blob 回收）。
@@ -277,6 +282,8 @@ impl ConfigLoader {
             Self::env_parse::<u64>(&["VFILES_THUMBNAIL_CACHE_MAX_MB", "THUMBNAIL_CACHE_MAX_MB"])?
                 .unwrap_or(256);
         let thumbnail_cache_max_bytes = thumbnail_cache_max_mb.saturating_mul(1024 * 1024);
+        let thumbnail_avif =
+            Self::env_parse_bool(&["VFILES_THUMBNAIL_AVIF", "THUMBNAIL_AVIF"])?.unwrap_or(false);
 
         let config = AppConfig {
             http: HttpConfig {
@@ -322,6 +329,7 @@ impl ConfigLoader {
                 rate_limit_requests_per_minute: 60,
                 thumbnail_cache_max_entries,
                 thumbnail_cache_max_bytes,
+                thumbnail_avif,
             },
             maintenance: MaintenanceConfig {
                 enabled: maintenance_enabled,

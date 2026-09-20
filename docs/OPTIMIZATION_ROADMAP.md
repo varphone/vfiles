@@ -16,7 +16,7 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 53 实测）
+### 验证基线（round 54 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
@@ -952,6 +952,27 @@
   → offset3 空且 has_more=false`，与「单页取全部」结果顺序完全一致；
   `/api/session/bootstrap` 返回 `search_content: true`，前端可正常发起搜索，无控制台报错。
 
+### 2.61 缩略图 AVIF 输出与 Accept 协商（round 54，性能）
+
+- 背景：缩略图此前固定输出 JPEG（256px 约 30KB），而 AVIF 在同画质下体积小得多。
+- **格式协商**：`negotiate_thumbnail_format(Accept, allow_avif)` 解析 `Accept`：
+  显式声明的格式优先于通配（只写 `image/webp` 的客户端不会被塞 AVIF），
+  支持 `q=0` 明确拒绝，缺失或都不匹配时回退 JPEG（兼容性最好）。
+  ETag 与磁盘缓存文件名都带上格式后缀（`{blob}-{size}.{ext}`），切换格式不会命中旧内容；
+  响应新增 `Vary: accept`，避免中间缓存串味。
+- **AVIF 默认关闭**（`VFILES_THUMBNAIL_AVIF`，默认 false）：实测 384px 缩略图
+  AVIF 4.8KB vs JPEG 30.3KB（小 6 倍），但纯 Rust 编码器（ravif）首次编码
+  约 2.0s（JPEG 0.004s，已用最快档 speed=10），必须由运维按 CPU 余量决定；
+  开启后结果落盘缓存，只有首次请求付出代价。
+- **WebP 主动不做**：`image` crate 只有无损 WebP 编码器，实测照片类缩略图无损 WebP
+  160KB，是 JPEG 的 5.6 倍（渐变图才占优），协商到 WebP 属于性能倒退；
+  需要有损 WebP 得引入 libwebp（C 依赖）。已写入 `DEPLOYMENT.md` 的说明。
+- 测试：单测覆盖协商决策（浏览器典型 Accept、只写 WebP、显式拒绝 AVIF、通配、
+  缺失、`text/html`）与两种格式的编码魔数；集成用例断言默认配置下一律 JPEG 且
+  带 `Vary: accept`。顺带修掉 round 47 引入的计数用例并发 flaky（改为增量下界断言）。
+- 冒烟（开启 AVIF）：`Accept: image/avif` 返回 `content-type: image/avif` + `vary: accept`，
+  缓存目录同时出现 `.avif` 与 `.jpg`；命中缓存后响应 4ms。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -994,7 +1015,10 @@
 - `[x]` 容量上限 + 按 mtime 回收，日志可观测（round 6）。
 - `[x]` 按总字节数（而非仅条目数）设限，上限可用环境变量覆盖；新增 TIFF/ICO/QOI
   解码支持（round 40，见 §2.47）。
-- `[ ]` AVIF 解码（需要 dav1d 系统库）与按需输出 WebP。
+- `[x]` AVIF 输出（默认关闭，`VFILES_THUMBNAIL_AVIF`）与 Accept 协商（round 54，见 §2.61）。
+- `[~]` AVIF **解码**：需要 `avif-native`（libdav1d，C 依赖），会引入系统库与
+  交叉编译成本，评估后暂不做——需要时可通过把 AVIF 源文件先转码再入库规避。
+- `[x]` 按需 WebP：实测无损 WebP 在照片类内容上是 JPEG 的 5.6 倍，**决定不提供**。
 
 ### 3.3 `FileBrowser.vue` 拆分（稳定性，中）
 

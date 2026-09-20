@@ -2813,10 +2813,13 @@ async fn health_reports_thumbnail_counters() {
         )
         .await;
     let after_payload = response_json(after).await;
-    assert_eq!(
-        after_payload["thumbnail"]["unsupported"].as_u64(),
-        Some(unsupported_before + 1),
-        "unsupported counter should increase by one"
+    // 计数是进程级的，测试并行执行时其他用例也会累加，因此用「增量下界」断言
+    let unsupported_after = after_payload["thumbnail"]["unsupported"]
+        .as_u64()
+        .expect("unsupported counter");
+    assert!(
+        unsupported_after >= unsupported_before + 1,
+        "unsupported counter should grow: {unsupported_before} -> {unsupported_after}"
     );
     assert!(
         after_payload["thumbnail"]["failed"].as_u64().is_some(),
@@ -2980,6 +2983,74 @@ async fn paged_search_keeps_content_matches_across_pages() {
             .all(|(path, score)| path == "needle-name.txt" || *score < 1.0),
         "内容命中的得分应低于文件名命中: {seen:?}"
     );
+}
+
+/// 默认配置（未开启 AVIF）下，缩略图一律 JPEG，并声明 `Vary: accept`。
+///
+/// AVIF 编码开销远高于 JPEG，默认关闭；协商与编码逻辑由 thumbnail.rs 的单测覆盖，
+/// 开启后的端到端行为在发布前用 `VFILES_THUMBNAIL_AVIF=true` 冒烟验证。
+#[tokio::test]
+async fn thumbnail_returns_jpeg_and_varies_on_accept() {
+    let app = TestApp::new().await;
+
+    let source = sample_png();
+    app.upload_version("", "photo.png", &source, "seed image")
+        .await;
+
+    for accept in [
+        "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "image/webp,image/png",
+        "image/jpeg,image/png",
+    ] {
+        let response = app
+            .request_as_admin(
+                Request::builder()
+                    .uri("/api/files/thumbnail?path=photo.png&size=64")
+                    .header(header::ACCEPT, accept)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK, "accept: {accept}");
+
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let vary = response
+            .headers()
+            .get(header::VARY)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body should collect")
+            .to_bytes();
+
+        assert_eq!(content_type, "image/jpeg", "accept: {accept}");
+        assert_eq!(vary, "accept", "响应必须声明 Vary，避免缓存串味");
+        assert_eq!(&body[..2], &[0xFF, 0xD8], "应返回 JPEG 魔数");
+    }
+}
+
+/// 一张 8×8 的 PNG 源图，供缩略图相关用例复用。
+fn sample_png() -> Vec<u8> {
+    use image::{Rgba, RgbaImage};
+
+    let mut image = RgbaImage::new(8, 8);
+    for pixel in image.pixels_mut() {
+        *pixel = Rgba([10, 120, 200, 255]);
+    }
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    image
+        .write_to(&mut buffer, image::ImageFormat::Png)
+        .expect("sample png");
+    buffer.into_inner()
 }
 
 /// 偏移量超过结果总数时应返回空页且不再声明还有下一页。

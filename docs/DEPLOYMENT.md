@@ -181,6 +181,27 @@ sudo ./vfiles register -t systemd \
 
 裁剪会删除旧快照（不可再恢复到这些提交），请在确认不再需要旧历史后执行。
 
+### 缩略图格式（AVIF 默认关闭）
+
+缩略图会按请求的 `Accept` 协商输出格式，并声明 `Vary: accept`：
+
+| 场景 | 输出 |
+| --- | --- |
+| `VFILES_THUMBNAIL_AVIF=true` 且客户端接受 `image/avif` | AVIF（体积最小，CPU 开销大） |
+| 其他情况（含默认配置） | JPEG |
+
+```bash
+# 默认：只输出 JPEG
+VFILES_THUMBNAIL_AVIF=false
+
+# 开启 AVIF：实测 384px 缩略图 4.8KB vs JPEG 30.3KB，但首次编码约 2.0s（JPEG 0.004s），
+# 结果会落盘缓存，只有首次请求付出代价
+VFILES_THUMBNAIL_AVIF=true
+```
+
+> 服务端**不输出 WebP**：`image` crate 只提供无损 WebP 编码器，实测照片类缩略图
+> 无损 WebP 达 160KB（JPEG 28KB），属于性能倒退。需要有损 WebP 需引入 libwebp（C 依赖）。
+
 ### 日志级别
 
 默认输出 `info` 及以上级别（启动、维护任务、缩略图告警等），可用 `RUST_LOG` 覆盖：

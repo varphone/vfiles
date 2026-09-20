@@ -41,6 +41,9 @@ image = { version = "0.25", default-features = false, features = [
     "tiff",
     "ico",
     "qoi",
+    # AVIF 编码（纯 Rust 的 ravif），用于按 Accept 协商输出更小的缩略图；
+    # 解码 AVIF 源文件需要 avif-native（dav1d，C 依赖），这里不启用。
+    "avif",
 ] }
 include_dir = "0.7"
 log = "0.4"

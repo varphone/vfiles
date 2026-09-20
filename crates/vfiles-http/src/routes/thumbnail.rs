@@ -191,21 +191,29 @@ async fn get_file_thumbnail(
         return Ok(unsupported_response());
     }
 
-    let etag = format!("\"{}-{}\"", file.blob_id, size);
+    // 按 Accept 协商输出格式：etag 与缓存文件都带上格式，避免切换格式命中旧内容
+    let format = negotiate_thumbnail_format(
+        headers
+            .get(header::ACCEPT)
+            .and_then(|value| value.to_str().ok()),
+        state.config.limits.thumbnail_avif,
+    );
+    let etag = format!("\"{}-{}-{}\"", file.blob_id, size, format.as_str());
     if is_not_modified(&headers, &etag) {
         return Ok(not_modified_response(&etag));
     }
 
-    let cache_path = thumbnail_cache_path(&state, &file.blob_id.to_string(), size);
+    let cache_path = thumbnail_cache_path(&state, &file.blob_id.to_string(), size, format);
 
     if let Some(bytes) = read_cache(&cache_path).await {
         STATS.cache_hits.fetch_add(1, Ordering::Relaxed);
-        tracing::debug!(path = %raw_path, size, "thumbnail cache hit");
-        return Ok(thumbnail_response(bytes, &etag));
+        tracing::debug!(path = %raw_path, size, format = format.as_str(), "thumbnail cache hit");
+        return Ok(thumbnail_response(bytes, &etag, format));
     }
 
     let source = file.bytes;
-    let generated = tokio::task::spawn_blocking(move || generate_thumbnail(&source, size)).await;
+    let generated =
+        tokio::task::spawn_blocking(move || generate_thumbnail(&source, size, format)).await;
 
     let bytes = match generated {
         Ok(Ok(bytes)) => bytes,
@@ -228,7 +236,13 @@ async fn get_file_thumbnail(
     };
 
     STATS.generated.fetch_add(1, Ordering::Relaxed);
-    tracing::debug!(path = %raw_path, size, bytes = bytes.len(), "thumbnail generated");
+    tracing::debug!(
+        path = %raw_path,
+        size,
+        format = format.as_str(),
+        bytes = bytes.len(),
+        "thumbnail generated"
+    );
 
     write_cache(&cache_path, &bytes).await;
     maybe_schedule_prune(
@@ -239,7 +253,7 @@ async fn get_file_thumbnail(
         ),
     );
 
-    Ok(thumbnail_response(bytes, &etag))
+    Ok(thumbnail_response(bytes, &etag, format))
 }
 
 fn is_supported_image(mime_type: &Option<String>, filename: &str) -> bool {
@@ -258,13 +272,18 @@ fn is_supported_image(mime_type: &Option<String>, filename: &str) -> bool {
         .any(|candidate| extension == *candidate)
 }
 
-fn thumbnail_cache_path(state: &AppState, blob_id: &str, size: u32) -> PathBuf {
+fn thumbnail_cache_path(
+    state: &AppState,
+    blob_id: &str,
+    size: u32,
+    format: ThumbnailFormat,
+) -> PathBuf {
     state
         .config
         .storage
         .root
         .join("thumbnails")
-        .join(format!("{blob_id}-{size}.jpg"))
+        .join(format!("{blob_id}-{size}.{}", format.extension()))
         .into_std_path_buf()
 }
 
@@ -376,7 +395,147 @@ pub(crate) async fn prune_thumbnail_cache(dir: &PathBuf, limits: ThumbnailCacheL
 }
 
 /// Decode, downscale and re-encode an image as a small opaque JPEG.
-fn generate_thumbnail(source: &[u8], size: u32) -> Result<Vec<u8>, String> {
+/// 缩略图输出格式：按 `Accept` 协商，支持时优先比 JPEG 更小的 AVIF。
+///
+/// 这里**不提供 WebP 输出**：`image` crate 只带无损 WebP 编码器，
+/// 实测照片类缩略图无损 WebP 反而是 JPEG 的 5 倍多（160KB vs 28KB），
+/// 协商到 WebP 会变成性能倒退；需要有损 WebP 时得引入 libwebp（C 依赖）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ThumbnailFormat {
+    Jpeg,
+    Avif,
+}
+
+impl ThumbnailFormat {
+    pub(crate) fn extension(self) -> &'static str {
+        match self {
+            ThumbnailFormat::Jpeg => "jpg",
+            ThumbnailFormat::Avif => "avif",
+        }
+    }
+
+    pub(crate) fn content_type(self) -> &'static str {
+        match self {
+            ThumbnailFormat::Jpeg => "image/jpeg",
+            ThumbnailFormat::Avif => "image/avif",
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            ThumbnailFormat::Jpeg => "jpeg",
+            ThumbnailFormat::Avif => "avif",
+        }
+    }
+}
+
+/// 从 `Accept` 头里挑一个可用的图片格式。
+///
+/// 只认显式的 `image/avif`、`image/jpeg`（含 `q=0` 表示明确拒绝）与
+/// `image/*`、`*/*` 通配；找不到或全部被拒绝时回退 JPEG（兼容性最好）。
+pub(crate) fn negotiate_thumbnail_format(
+    accept: Option<&str>,
+    allow_avif: bool,
+) -> ThumbnailFormat {
+    let Some(accept) = accept else {
+        return ThumbnailFormat::Jpeg;
+    };
+
+    // 解析为 (media range, q)：q 缺省为 1，q=0 表示不接受
+    let mut entries: Vec<(String, f32)> = Vec::new();
+    for part in accept.split(',') {
+        let mut segments = part.split(';');
+        let Some(media) = segments.next() else {
+            continue;
+        };
+        let media = media.trim().to_ascii_lowercase();
+        if media.is_empty() {
+            continue;
+        }
+
+        let mut quality = 1.0_f32;
+        for parameter in segments {
+            let parameter = parameter.trim();
+            if let Some(value) = parameter.strip_prefix("q=") {
+                quality = value.trim().parse().unwrap_or(1.0);
+            }
+        }
+        entries.push((media, quality));
+    }
+
+    let explicit = |candidate: &str| -> bool {
+        entries
+            .iter()
+            .any(|(media, quality)| *quality > 0.0 && media == candidate)
+    };
+    let wildcard = |candidate: &str| -> bool {
+        entries.iter().any(|(media, quality)| {
+            *quality > 0.0 && (media == "image/*" || media == "*/*") && media != candidate
+        })
+    };
+    let rejected = |candidate: &str| -> bool {
+        entries
+            .iter()
+            .any(|(media, quality)| media == candidate && *quality <= 0.0)
+    };
+
+    // AVIF 编码开销远高于 JPEG（实测 384px 约 2.0s vs 0.004s），默认关闭，
+    // 由 `VFILES_THUMBNAIL_AVIF` 决定是否参与协商
+    let mut supported = vec![("image/jpeg", ThumbnailFormat::Jpeg)];
+    if allow_avif {
+        supported.insert(0, ("image/avif", ThumbnailFormat::Avif));
+    }
+
+    // 显式列出的格式优先（例如只写 image/webp 的客户端不该拿到 AVIF）
+    for &(candidate, format) in &supported {
+        if explicit(candidate) && !rejected(candidate) {
+            return format;
+        }
+    }
+
+    // 只有 */* 或 image/* 时才按「越小越好」挑格式
+    for &(candidate, format) in &supported {
+        if wildcard(candidate) && !rejected(candidate) {
+            return format;
+        }
+    }
+
+    ThumbnailFormat::Jpeg
+}
+
+/// 按目标格式编码缩略图，输入是已经扁平化到白色背景的 RGB 图。
+fn encode_thumbnail(format: ThumbnailFormat, image: &image::RgbImage) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    match format {
+        ThumbnailFormat::Jpeg => {
+            let mut encoder =
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, JPEG_QUALITY);
+            encoder.encode_image(image).map_err(|err| err.to_string())?;
+        }
+        ThumbnailFormat::Avif => {
+            // speed 越大越快、压缩率越低。实测 384px 缩略图 speed=6 需 5.3s、
+            // speed=10 约 0.4s，体积仍远小于 JPEG，因此取最快档。
+            use image::ImageEncoder;
+            let encoder =
+                image::codecs::avif::AvifEncoder::new_with_speed_quality(&mut output, 10, 60);
+            encoder
+                .write_image(
+                    image.as_raw(),
+                    image.width(),
+                    image.height(),
+                    image::ExtendedColorType::Rgb8,
+                )
+                .map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(output)
+}
+
+fn generate_thumbnail(
+    source: &[u8],
+    size: u32,
+    format: ThumbnailFormat,
+) -> Result<Vec<u8>, String> {
     use image::{ImageReader, Limits, Rgb, RgbImage};
 
     let mut reader = ImageReader::new(std::io::Cursor::new(source))
@@ -409,12 +568,7 @@ fn generate_thumbnail(source: &[u8], size: u32) -> Result<Vec<u8>, String> {
         );
     }
 
-    let mut output = Vec::new();
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, JPEG_QUALITY);
-    encoder
-        .encode_image(&flattened)
-        .map_err(|err| err.to_string())?;
-    Ok(output)
+    encode_thumbnail(format, &flattened)
 }
 
 fn is_not_modified(headers: &HeaderMap, etag: &str) -> bool {
@@ -424,11 +578,16 @@ fn is_not_modified(headers: &HeaderMap, etag: &str) -> bool {
         .is_some_and(|value| value.trim() == etag || value.trim() == "*")
 }
 
-fn thumbnail_response(bytes: Vec<u8>, etag: &str) -> Response {
+fn thumbnail_response(bytes: Vec<u8>, etag: &str, format: ThumbnailFormat) -> Response {
     let mut response = Response::new(Body::from(bytes));
     *response.status_mut() = StatusCode::OK;
     let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg"));
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(format.content_type()),
+    );
+    // 同一 URL 会因 Accept 返回不同格式，必须声明 Vary，避免中间缓存串味
+    headers.insert(header::VARY, HeaderValue::from_static("accept"));
     headers.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static(CACHE_CONTROL),
@@ -593,7 +752,7 @@ mod tests {
             (image::ImageFormat::Png, "png", "image/png"),
         ] {
             let source = encode_sample(format);
-            let thumbnail = generate_thumbnail(&source, 64)
+            let thumbnail = generate_thumbnail(&source, 64, ThumbnailFormat::Jpeg)
                 .unwrap_or_else(|err| panic!("{extension} should decode: {err}"));
             // 结果统一是 JPEG
             assert_eq!(&thumbnail[..3], &[0xFF, 0xD8, 0xFF], "{extension} output");
@@ -617,6 +776,60 @@ mod tests {
             &Some("image/avif".to_string()),
             "photo.avif"
         ));
+    }
+
+    #[test]
+    fn negotiates_output_format_from_accept() {
+        use super::{ThumbnailFormat, negotiate_thumbnail_format};
+
+        let avif = |accept: Option<&str>| negotiate_thumbnail_format(accept, true);
+        let no_avif = |accept: Option<&str>| negotiate_thumbnail_format(accept, false);
+
+        // 开启 AVIF 时，浏览器典型 Accept 优先 AVIF
+        assert_eq!(
+            avif(Some("image/avif,image/webp,image/apng,image/*,*/*;q=0.8")),
+            ThumbnailFormat::Avif
+        );
+        // 未开启 AVIF 时即使客户端支持也回退 JPEG
+        assert_eq!(
+            no_avif(Some("image/avif,image/webp,image/apng,image/*,*/*;q=0.8")),
+            ThumbnailFormat::Jpeg
+        );
+        // 只声明 WebP（没有通配）的客户端回退 JPEG：服务端不提供无损 WebP 输出
+        assert_eq!(avif(Some("image/webp,image/png")), ThumbnailFormat::Jpeg);
+        // 声明了 WebP 但同时也接受 */* 时，可以给更小的 AVIF
+        assert_eq!(avif(Some("image/webp,*/*;q=0.5")), ThumbnailFormat::Avif);
+        // 老客户端只接受 JPEG
+        assert_eq!(avif(Some("image/jpeg,image/png")), ThumbnailFormat::Jpeg);
+        // 显式列出 PNG（不在支持列表）+ 通配时，显式声明优先于通配
+        assert_eq!(avif(Some("image/png,*/*;q=0.5")), ThumbnailFormat::Avif);
+        // 明确拒绝 AVIF（q=0）时退回 JPEG
+        assert_eq!(
+            avif(Some("image/avif;q=0,image/jpeg")),
+            ThumbnailFormat::Jpeg
+        );
+        // 通配与缺失都回退 JPEG
+        assert_eq!(avif(Some("*/*")), ThumbnailFormat::Avif);
+        assert_eq!(avif(None), ThumbnailFormat::Jpeg);
+        assert_eq!(avif(Some("text/html")), ThumbnailFormat::Jpeg);
+    }
+
+    #[test]
+    fn encodes_every_supported_output_format() {
+        use super::{ThumbnailFormat, encode_thumbnail, generate_thumbnail};
+
+        let source = encode_sample(image::ImageFormat::Png);
+        let rgb = image::RgbImage::new(4, 4);
+
+        // 两种格式都能编码出非空数据，且走完整链路时产出对应魔数
+        assert!(encode_thumbnail(ThumbnailFormat::Jpeg, &rgb).is_ok());
+        let avif = encode_thumbnail(ThumbnailFormat::Avif, &rgb).expect("avif");
+        assert_eq!(&avif[4..8], b"ftyp");
+
+        let jpeg = generate_thumbnail(&source, 4, ThumbnailFormat::Jpeg).expect("jpeg chain");
+        assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+        let avif_chain = generate_thumbnail(&source, 4, ThumbnailFormat::Avif).expect("avif chain");
+        assert_eq!(&avif_chain[4..8], b"ftyp");
     }
 
     #[test]
