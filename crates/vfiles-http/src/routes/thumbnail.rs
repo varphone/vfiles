@@ -6,6 +6,7 @@
 //! `ETag` so browsers can keep them in their HTTP cache.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::{
     Router,
@@ -35,6 +36,14 @@ const MAX_SOURCE_PIXELS: u64 = 50_000_000;
 const MAX_SOURCE_DIMENSION: u32 = 16_384;
 const JPEG_QUALITY: u8 = 82;
 const CACHE_CONTROL: &str = "private, max-age=604800";
+
+/// 缩略图磁盘缓存上限与清理目标（按 mtime 回收最旧的条目）。
+const MAX_CACHE_ENTRIES: usize = 2000;
+const TARGET_CACHE_ENTRIES: usize = 1600;
+/// 每写入多少次尝试一次后台清理。
+const PRUNE_EVERY_WRITES: u64 = 64;
+
+static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const SUPPORTED_MIME_TYPES: &[&str] = &[
     "image/jpeg",
@@ -93,6 +102,7 @@ async fn get_file_thumbnail(
     let cache_path = thumbnail_cache_path(&state, &file.blob_id.to_string(), size);
 
     if let Some(bytes) = read_cache(&cache_path).await {
+        tracing::debug!(path = %raw_path, size, "thumbnail cache hit");
         return Ok(thumbnail_response(bytes, &etag));
     }
 
@@ -113,7 +123,10 @@ async fn get_file_thumbnail(
         }
     };
 
+    tracing::debug!(path = %raw_path, size, bytes = bytes.len(), "thumbnail generated");
+
     write_cache(&cache_path, &bytes).await;
+    maybe_schedule_prune(cache_path.parent().map(PathBuf::from));
 
     Ok(thumbnail_response(bytes, &etag))
 }
@@ -169,6 +182,64 @@ async fn write_cache(path: &PathBuf, bytes: &[u8]) {
         tracing::debug!(error = %err, "failed to persist thumbnail cache entry");
         let _ = tokio::fs::remove_file(&temp_path).await;
     }
+}
+
+/// 每隔若干次写入触发一次后台清理，避免目录扫描出现在每个请求上。
+fn maybe_schedule_prune(dir: Option<PathBuf>) {
+    let Some(dir) = dir else {
+        return;
+    };
+    let count = WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    if !count.is_multiple_of(PRUNE_EVERY_WRITES) {
+        return;
+    }
+    tokio::spawn(async move {
+        prune_thumbnail_cache(&dir, MAX_CACHE_ENTRIES, TARGET_CACHE_ENTRIES).await;
+    });
+}
+
+/// 按 mtime 从旧到新删除缩略图，直到条目数不超过 `target`。
+///
+/// 只统计普通文件；孤儿缩略图（源文件已删除）与失败留下的 `.tmp` 会自然变旧并被回收。
+pub(crate) async fn prune_thumbnail_cache(dir: &PathBuf, max_entries: usize, target: usize) {
+    let Ok(mut read_dir) = tokio::fs::read_dir(dir).await else {
+        return;
+    };
+
+    let mut entries: Vec<(PathBuf, std::time::SystemTime, u64)> = Vec::new();
+    while let Ok(Some(entry)) = read_dir.next_entry().await {
+        let Ok(metadata) = entry.metadata().await else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
+        entries.push((entry.path(), modified, metadata.len()));
+    }
+
+    if entries.len() <= max_entries {
+        return;
+    }
+
+    entries.sort_by_key(|(_, modified, _)| *modified);
+    let remove_count = entries.len().saturating_sub(target);
+
+    let mut removed = 0usize;
+    let mut removed_bytes = 0u64;
+    for (path, _, size) in entries.iter().take(remove_count) {
+        if tokio::fs::remove_file(path).await.is_ok() {
+            removed += 1;
+            removed_bytes += size;
+        }
+    }
+
+    tracing::info!(
+        removed,
+        removed_bytes,
+        remaining = entries.len() - removed,
+        "pruned thumbnail cache"
+    );
 }
 
 /// Decode, downscale and re-encode an image as a small opaque JPEG.
@@ -251,4 +322,58 @@ fn not_modified_response(etag: &str) -> Response {
 
 fn unsupported_response() -> Response {
     (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported image type").into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    fn set_modified(path: &PathBuf, modified: SystemTime) {
+        let file = std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("cached file should open");
+        file.set_modified(modified).expect("mtime should be set");
+    }
+
+    fn cached_names(dir: &PathBuf) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .expect("cache dir should list")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[tokio::test]
+    async fn prune_removes_oldest_entries_down_to_target() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let dir_path = dir.path().to_path_buf();
+        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+
+        for index in 0..5u64 {
+            let path = dir_path.join(format!("thumb-{index}.jpg"));
+            tokio::fs::write(&path, b"thumb").await.expect("write");
+            set_modified(&path, base + Duration::from_secs(index * 60));
+        }
+
+        prune_thumbnail_cache(&dir_path, 3, 2).await;
+
+        assert_eq!(cached_names(&dir_path), vec!["thumb-3.jpg", "thumb-4.jpg"]);
+    }
+
+    #[tokio::test]
+    async fn prune_is_a_noop_below_the_limit() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let dir_path = dir.path().to_path_buf();
+        tokio::fs::write(dir_path.join("only.jpg"), b"thumb")
+            .await
+            .expect("write");
+
+        prune_thumbnail_cache(&dir_path, 3, 2).await;
+
+        assert_eq!(cached_names(&dir_path), vec!["only.jpg"]);
+    }
 }
