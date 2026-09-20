@@ -17,7 +17,7 @@ use axum::{
     routing::get,
 };
 use axum_extra::extract::cookie::CookieJar;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use vfiles_domain::{DomainError, NormalizedPath};
 
 use crate::{
@@ -65,6 +65,69 @@ impl ThumbnailCacheLimits {
 const PRUNE_EVERY_WRITES: u64 = 64;
 
 static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// 缩略图相关的进程内计数。
+///
+/// 解码失败与「跳过」此前只写日志，排障时无法一眼看出量级；这里累计计数，
+/// 并在日志里带上累计值，运维既能看单条也能看趋势（见 `/api/health`）。
+#[derive(Debug, Default)]
+pub(crate) struct ThumbnailStats {
+    /// 命中磁盘缓存
+    pub cache_hits: AtomicU64,
+    /// 新生成并写盘
+    pub generated: AtomicU64,
+    /// 因格式不支持或源文件过大而跳过
+    pub unsupported: AtomicU64,
+    /// 解码/编码失败
+    pub failed: AtomicU64,
+    /// 缓存回收删除的条目数与字节数
+    pub pruned_entries: AtomicU64,
+    pub pruned_bytes: AtomicU64,
+}
+
+impl ThumbnailStats {
+    const fn new() -> Self {
+        Self {
+            cache_hits: AtomicU64::new(0),
+            generated: AtomicU64::new(0),
+            unsupported: AtomicU64::new(0),
+            failed: AtomicU64::new(0),
+            pruned_entries: AtomicU64::new(0),
+            pruned_bytes: AtomicU64::new(0),
+        }
+    }
+}
+
+pub(crate) static STATS: ThumbnailStats = ThumbnailStats::new();
+
+/// 供健康检查读取的快照（只读、无锁）。
+#[derive(Debug, Serialize)]
+pub struct ThumbnailStatsSnapshot {
+    pub cache_hits: u64,
+    pub generated: u64,
+    pub unsupported: u64,
+    pub failed: u64,
+    pub pruned_entries: u64,
+    pub pruned_bytes: u64,
+}
+
+impl ThumbnailStats {
+    pub(crate) fn snapshot(&self) -> ThumbnailStatsSnapshot {
+        ThumbnailStatsSnapshot {
+            cache_hits: self.cache_hits.load(Ordering::Relaxed),
+            generated: self.generated.load(Ordering::Relaxed),
+            unsupported: self.unsupported.load(Ordering::Relaxed),
+            failed: self.failed.load(Ordering::Relaxed),
+            pruned_entries: self.pruned_entries.load(Ordering::Relaxed),
+            pruned_bytes: self.pruned_bytes.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// 健康检查里的缩略图计数。
+pub(crate) fn stats_snapshot() -> ThumbnailStatsSnapshot {
+    STATS.snapshot()
+}
 
 const SUPPORTED_MIME_TYPES: &[&str] = &[
     "image/jpeg",
@@ -118,6 +181,13 @@ async fn get_file_thumbnail(
         .await?;
 
     if !is_supported_image(&file.mime_type, &file.filename) || file.size_bytes > MAX_SOURCE_BYTES {
+        let skipped = STATS.unsupported.fetch_add(1, Ordering::Relaxed) + 1;
+        tracing::debug!(
+            path = %raw_path,
+            size_bytes = file.size_bytes,
+            skipped_total = skipped,
+            "thumbnail skipped: unsupported format or oversized source"
+        );
         return Ok(unsupported_response());
     }
 
@@ -129,6 +199,7 @@ async fn get_file_thumbnail(
     let cache_path = thumbnail_cache_path(&state, &file.blob_id.to_string(), size);
 
     if let Some(bytes) = read_cache(&cache_path).await {
+        STATS.cache_hits.fetch_add(1, Ordering::Relaxed);
         tracing::debug!(path = %raw_path, size, "thumbnail cache hit");
         return Ok(thumbnail_response(bytes, &etag));
     }
@@ -139,7 +210,13 @@ async fn get_file_thumbnail(
     let bytes = match generated {
         Ok(Ok(bytes)) => bytes,
         Ok(Err(message)) => {
-            tracing::warn!(path = %raw_path, error = %message, "failed to generate thumbnail");
+            let failed = STATS.failed.fetch_add(1, Ordering::Relaxed) + 1;
+            tracing::warn!(
+                path = %raw_path,
+                error = %message,
+                failed_total = failed,
+                "failed to generate thumbnail"
+            );
             return Ok(unsupported_response());
         }
         Err(err) => {
@@ -150,6 +227,7 @@ async fn get_file_thumbnail(
         }
     };
 
+    STATS.generated.fetch_add(1, Ordering::Relaxed);
     tracing::debug!(path = %raw_path, size, bytes = bytes.len(), "thumbnail generated");
 
     write_cache(&cache_path, &bytes).await;
@@ -277,6 +355,15 @@ pub(crate) async fn prune_thumbnail_cache(dir: &PathBuf, limits: ThumbnailCacheL
             remaining_entries = remaining_entries.saturating_sub(1);
             remaining_bytes = remaining_bytes.saturating_sub(*size);
         }
+    }
+
+    if removed > 0 {
+        STATS
+            .pruned_entries
+            .fetch_add(removed as u64, Ordering::Relaxed);
+        STATS
+            .pruned_bytes
+            .fetch_add(removed_bytes, Ordering::Relaxed);
     }
 
     tracing::info!(
@@ -439,8 +526,20 @@ mod tests {
         let dir_path = dir.path().to_path_buf();
         // 5 条 × 100 字节 = 500 字节；字节上限 250、目标 200
         seed_cache(&dir_path, 5, 100).await;
+        // 计数是进程级的，测试并发执行时只会更大，因此用「增量下界」断言
+        let before = STATS.snapshot();
 
         prune_thumbnail_cache(&dir_path, ThumbnailCacheLimits::new(100, 250)).await;
+
+        let after = STATS.snapshot();
+        assert!(
+            after.pruned_entries >= before.pruned_entries + 3,
+            "pruned entries counter should grow by at least the three files removed"
+        );
+        assert!(
+            after.pruned_bytes >= before.pruned_bytes + 300,
+            "pruned bytes counter should grow by at least the bytes removed"
+        );
 
         let names = cached_names(&dir_path);
         assert_eq!(

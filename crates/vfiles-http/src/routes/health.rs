@@ -4,13 +4,19 @@ use axum::{Json, extract::State};
 use serde::Serialize;
 use time::OffsetDateTime;
 
-use crate::{AppState, error::ApiResult};
+use crate::{
+    AppState,
+    error::ApiResult,
+    routes::thumbnail::{ThumbnailStatsSnapshot, stats_snapshot},
+};
 use vfiles_infra_sqlite::SqliteHealthProbe;
 
 #[derive(Serialize)]
 pub struct HealthResponse {
     pub status: String,
     pub timestamp: String,
+    /// 缩略图计数：解码失败、格式跳过、缓存命中与回收量，便于排障与容量评估。
+    pub thumbnail: ThumbnailStatsSnapshot,
 }
 
 #[derive(Serialize)]
@@ -34,6 +40,7 @@ pub async fn health_check() -> Json<HealthResponse> {
         timestamp: OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap(),
+        thumbnail: stats_snapshot(),
     })
 }
 

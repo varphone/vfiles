@@ -16,7 +16,7 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 46 实测）
+### 验证基线（round 47 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
@@ -827,6 +827,26 @@
   后面包屑变为 `根目录 / docs / api`、树内高亮 api、列表显示 `nested.txt`；
   1100px 与移动端下目录树数量为 0；全程无控制台报错。
 
+### 2.54 缩略图计数指标与默认日志级别（round 47，稳定性）
+
+- 背景：缩略图的解码失败、格式跳过此前只写日志且没有累计值，排障时无法判断量级；
+  更严重的是**未设置 `RUST_LOG` 时 `EnvFilter::from_default_env()` 会禁用所有事件**，
+  也就是默认配置下服务几乎不输出任何日志（连告警都被吞掉）。
+- 计数：`thumbnail.rs` 新增进程内计数（缓存命中 / 生成 / 不支持或过大跳过 / 解码失败 /
+  回收条目数与字节数），并在对应分支累加：
+  - 跳过与失败分支的日志带上累计值（`skipped_total` / `failed_total`），便于按日志看趋势；
+  - 回收成功时累计 `pruned_entries` / `pruned_bytes`。
+- 暴露：`GET /api/health` 增加 `thumbnail` 对象（只读快照，无锁），运维可以直接采集；
+  健康检查仍保持轻量（仅原子读）。
+- 日志默认级别：改为 `RUST_LOG` 未设置时默认 `info`（仍可通过环境变量覆盖），
+  启动信息、维护任务结果与缩略图告警默认可见。
+- 测试：新增集成用例 `health_reports_thumbnail_counters`（基线计数 → 请求不支持格式的
+  缩略图 → 计数 +1，并校验各字段存在）；回收用例补充计数增量断言（并发下用下界）。
+- 冒烟：真实服务上依次请求 PNG（`generated:1`）、重复请求（`cache_hits:1`）、
+  txt（415，`unsupported:1`）、损坏 PNG（415，`failed:1`）；去掉 `RUST_LOG` 重启后
+  默认日志出现 `Server listening ...`、`VFiles server started` 与
+  `WARN ... failed to generate thumbnail ... failed_total=1`。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -903,7 +923,8 @@
 - `[x]` 预览/下载失败的「重试」入口与下载队列重试（round 26）。
 - `[x]` 原始 `fetch`（预览/下载/diff）的有界自动重试与预览请求取消（round 33，见 §2.39）。
 - `[x]` 服务内按周期自动执行维护任务（`gc-blobs` / `prune-snapshots`）（round 34，见 §2.40）。
-- `[ ]` 图片解码失败、超大文件跳过等场景补充计数指标。
+- `[x]` 图片解码失败、超大文件跳过等场景补充计数指标，并在 `/api/health` 暴露；
+  日志默认级别改为 `info`（round 47，见 §2.54）。
 
 ### 3.6 暗色主题（交互，中）
 

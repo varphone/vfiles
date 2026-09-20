@@ -177,6 +177,37 @@ sudo ./vfiles register -t systemd \
 
 裁剪会删除旧快照（不可再恢复到这些提交），请在确认不再需要旧历史后执行。
 
+### 日志级别
+
+默认输出 `info` 及以上级别（启动、维护任务、缩略图告警等），可用 `RUST_LOG` 覆盖：
+
+```bash
+RUST_LOG=debug ./vfiles serve          # 调试
+RUST_LOG=vfiles_http=warn ./vfiles serve  # 只看 HTTP 层告警
+```
+
+### 健康检查与缩略图计数
+
+`GET /api/health` 除 `status`/`timestamp` 外，还会返回缩略图的进程内计数，便于采集与排障：
+
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-01-01T00:00:00Z",
+  "thumbnail": {
+    "cache_hits": 12,
+    "generated": 5,
+    "unsupported": 2,
+    "failed": 1,
+    "pruned_entries": 64,
+    "pruned_bytes": 47424
+  }
+}
+```
+
+`unsupported` 表示格式不支持或源文件过大而被跳过，`failed` 表示解码/编码失败（两者都返回
+415）；`pruned_*` 累计缓存回收量。计数自进程启动起累计，重启后归零。
+
 ### 缩略图缓存
 
 网格视图的缩略图会按「blob + 尺寸」缓存在 `<存储根>/thumbnails`，按 mtime 回收最旧条目：

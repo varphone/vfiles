@@ -191,10 +191,11 @@ struct UserDeleteArgs {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing subscriber for output
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+    // 日志默认 info 级别（RUST_LOG 仍可覆盖）。此前未设置 RUST_LOG 时
+    // EnvFilter 会禁用所有事件，出错（缩略图解码失败、维护任务异常等）也完全静默。
+    let log_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(log_filter).init();
 
     let cli = Cli::parse();
 

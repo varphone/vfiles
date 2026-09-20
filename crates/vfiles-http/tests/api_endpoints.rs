@@ -2768,6 +2768,62 @@ async fn file_search_finds_dotted_filename() {
     }));
 }
 
+/// 健康检查暴露缩略图计数：先打一次不支持格式的请求，计数应随之上浮。
+#[tokio::test]
+async fn health_reports_thumbnail_counters() {
+    let app = TestApp::new().await;
+
+    let before = app
+        .request(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(before.status(), StatusCode::OK);
+    let before_payload = response_json(before).await;
+    let unsupported_before = before_payload["thumbnail"]["unsupported"]
+        .as_u64()
+        .expect("thumbnail counters should be exposed");
+    assert!(
+        before_payload["thumbnail"]["generated"].is_u64(),
+        "generated counter should be present"
+    );
+
+    // 上传一个文本文件并请求缩略图：格式不支持 → unsupported 计数 +1
+    app.upload_version("", "notes.txt", b"plain text", "seed text")
+        .await;
+    let thumbnail = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/thumbnail?path=notes.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(thumbnail.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    let after = app
+        .request(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let after_payload = response_json(after).await;
+    assert_eq!(
+        after_payload["thumbnail"]["unsupported"].as_u64(),
+        Some(unsupported_before + 1),
+        "unsupported counter should increase by one"
+    );
+    assert!(
+        after_payload["thumbnail"]["failed"].as_u64().is_some(),
+        "failed counter should be present"
+    );
+}
+
 #[tokio::test]
 async fn file_search_pages_results_with_has_more() {
     let app = TestApp::new().await;
@@ -2815,10 +2871,17 @@ async fn file_search_pages_results_with_has_more() {
         );
 
         for item in &items {
-            seen.push(item["entry"]["path"].as_str().unwrap_or_default().to_string());
+            seen.push(
+                item["entry"]["path"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            );
         }
 
-        let has_more = payload["has_more"].as_bool().expect("has_more should exist");
+        let has_more = payload["has_more"]
+            .as_bool()
+            .expect("has_more should exist");
         pages += 1;
         if !has_more {
             break;
