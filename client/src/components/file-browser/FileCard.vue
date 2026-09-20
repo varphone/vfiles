@@ -38,11 +38,7 @@
         <component :is="icon" :size="iconSize" :stroke-width="1.4" />
       </span>
 
-      <label
-        v-if="selectMode"
-        class="file-card-check"
-        @click.stop
-      >
+      <label v-if="selectMode" class="file-card-check" @click.stop>
         <input
           type="checkbox"
           :checked="selected"
@@ -50,96 +46,96 @@
           @change="emit('toggle-select', file)"
         />
       </label>
+    </div>
 
-      <div class="file-card-menu" @click.stop>
+    <div class="file-card-menu" @click.stop>
+      <button
+        class="file-card-menu-trigger"
+        type="button"
+        :aria-expanded="menuOpen ? 'true' : 'false'"
+        :aria-label="`${file.name} 的操作`"
+        @click="toggleMenu"
+      >
+        <IconDots :size="16" />
+      </button>
+
+      <div v-if="menuOpen" class="file-card-menu-panel" role="menu">
         <button
-          class="file-card-menu-trigger"
-          type="button"
-          :aria-expanded="menuOpen ? 'true' : 'false'"
-          :aria-label="`${file.name} 的操作`"
-          @click="toggleMenu"
+          v-if="file.kind === 'directory'"
+          class="file-card-menu-item"
+          role="menuitem"
+          @click="runAndClose(emitCreateDirectory)"
         >
-          <IconDots :size="16" />
+          <IconFolderPlus :size="16" />
+          <span>在此新建子目录</span>
         </button>
-
-        <div v-if="menuOpen" class="file-card-menu-panel" role="menu">
-          <button
-            v-if="file.kind === 'directory'"
-            class="file-card-menu-item"
-            role="menuitem"
-            @click="runAndClose(emitCreateDirectory)"
-          >
-            <IconFolderPlus :size="16" />
-            <span>在此新建子目录</span>
-          </button>
-          <button
-            v-if="file.kind === 'directory'"
-            class="file-card-menu-item"
-            role="menuitem"
-            @click="runAndClose(() => emit('open-folder', file))"
-          >
-            <IconFolderOpen :size="16" />
-            <span>打开</span>
-          </button>
-          <button
-            v-if="file.kind === 'file'"
-            class="file-card-menu-item"
-            role="menuitem"
-            @click="runAndClose(() => emit('preview', file))"
-          >
-            <IconEye :size="16" />
-            <span>预览</span>
-          </button>
-          <button
-            v-if="file.kind === 'file'"
-            class="file-card-menu-item"
-            role="menuitem"
-            @click="runAndClose(() => emit('view-history', file))"
-          >
-            <IconHistory :size="16" />
-            <span>历史版本</span>
-          </button>
-          <button
-            class="file-card-menu-item"
-            role="menuitem"
-            @click="runAndClose(() => emit('rename', file))"
-          >
-            <IconPencil :size="16" />
-            <span>重命名</span>
-          </button>
-          <button
-            class="file-card-menu-item"
-            role="menuitem"
-            @click="runAndClose(() => emit('move', file))"
-          >
-            <IconArrowsDiff :size="16" />
-            <span>移动</span>
-          </button>
-          <button
-            class="file-card-menu-item"
-            role="menuitem"
-            @click="runAndClose(() => emit('download', file))"
-          >
-            <IconDownload :size="16" />
-            <span>下载</span>
-          </button>
-          <button
-            class="file-card-menu-item"
-            role="menuitem"
-            @click="runAndClose(() => emit('share', file))"
-          >
-            <IconShare :size="16" />
-            <span>分享</span>
-          </button>
-          <button
-            class="file-card-menu-item is-danger"
-            role="menuitem"
-            @click="runAndClose(confirmDelete)"
-          >
-            <IconTrash :size="16" />
-            <span>删除</span>
-          </button>
-        </div>
+        <button
+          v-if="file.kind === 'directory'"
+          class="file-card-menu-item"
+          role="menuitem"
+          @click="runAndClose(() => emit('open-folder', file))"
+        >
+          <IconFolderOpen :size="16" />
+          <span>打开</span>
+        </button>
+        <button
+          v-if="file.kind === 'file'"
+          class="file-card-menu-item"
+          role="menuitem"
+          @click="runAndClose(() => emit('preview', file))"
+        >
+          <IconEye :size="16" />
+          <span>预览</span>
+        </button>
+        <button
+          v-if="file.kind === 'file'"
+          class="file-card-menu-item"
+          role="menuitem"
+          @click="runAndClose(() => emit('view-history', file))"
+        >
+          <IconHistory :size="16" />
+          <span>历史版本</span>
+        </button>
+        <button
+          class="file-card-menu-item"
+          role="menuitem"
+          @click="runAndClose(() => emit('rename', file))"
+        >
+          <IconPencil :size="16" />
+          <span>重命名</span>
+        </button>
+        <button
+          class="file-card-menu-item"
+          role="menuitem"
+          @click="runAndClose(() => emit('move', file))"
+        >
+          <IconArrowsDiff :size="16" />
+          <span>移动</span>
+        </button>
+        <button
+          class="file-card-menu-item"
+          role="menuitem"
+          @click="runAndClose(() => emit('download', file))"
+        >
+          <IconDownload :size="16" />
+          <span>下载</span>
+        </button>
+        <button
+          class="file-card-menu-item"
+          role="menuitem"
+          @click="runAndClose(() => emit('share', file))"
+        >
+          <IconShare :size="16" />
+          <span>分享</span>
+        </button>
+        <button
+          class="file-card-menu-item is-danger"
+          role="menuitem"
+          @click="runAndClose(confirmDelete)"
+        >
+          <IconTrash :size="16" />
+          <span>删除</span>
+        </button>
       </div>
     </div>
 
