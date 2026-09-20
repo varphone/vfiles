@@ -1,6 +1,7 @@
 import { computed, ref, type Ref } from "vue";
 import { filesService } from "../services/files.service";
 import { loadHighlight } from "../utils/highlight";
+import type { FileInfo } from "../types";
 
 // 动态依赖只加载一次，后续预览复用
 let cachedMarked: any | null = null;
@@ -136,7 +137,15 @@ export function safeImageSrc(src: string | null | undefined): string {
  *
  * 从 FileBrowser 抽出，减小主组件体积并便于单测纯函数。
  */
-export function useFilePreview(browseCommit: Ref<string | undefined>) {
+export interface FilePreviewOptions {
+  /** 当前可预览的文件列表（用于上一个/下一个导航）。 */
+  getPreviewableFiles?: () => FileInfo[];
+}
+
+export function useFilePreview(
+  browseCommit: Ref<string | undefined>,
+  options: FilePreviewOptions = {},
+) {
   const preview = ref({
     open: false,
     loading: false,
@@ -151,6 +160,35 @@ export function useFilePreview(browseCommit: Ref<string | undefined>) {
   const previewFilename = computed(
     () => preview.value.path.split("/").pop() || "file",
   );
+
+  const previewTotal = computed(
+    () => options.getPreviewableFiles?.().length ?? 0,
+  );
+
+  const previewIndex = computed(() => {
+    const files = options.getPreviewableFiles?.() ?? [];
+    return files.findIndex((file) => file.path === preview.value.path);
+  });
+
+  const canGoPrev = computed(() => previewIndex.value > 0);
+  const canGoNext = computed(
+    () =>
+      previewIndex.value >= 0 && previewIndex.value < previewTotal.value - 1,
+  );
+
+  function goToOffset(offset: number) {
+    const files = options.getPreviewableFiles?.() ?? [];
+    const next = files[previewIndex.value + offset];
+    if (next) void openPreview(next.path);
+  }
+
+  function prevPreview() {
+    goToOffset(-1);
+  }
+
+  function nextPreview() {
+    goToOffset(1);
+  }
 
   async function getMarked() {
     if (cachedMarked) return cachedMarked;
@@ -289,6 +327,12 @@ export function useFilePreview(browseCommit: Ref<string | undefined>) {
   return {
     preview,
     previewFilename,
+    previewIndex,
+    previewTotal,
+    canGoPrev,
+    canGoNext,
+    prevPreview,
+    nextPreview,
     closePreview,
     openPreview,
   };

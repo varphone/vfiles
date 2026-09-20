@@ -805,6 +805,30 @@
           暂不支持该文件类型的在线预览，请使用下载。
         </div>
       </div>
+
+      <div v-if="previewTotal > 1" class="preview-nav">
+        <button
+          class="button is-small is-light"
+          :disabled="!canGoPrev"
+          title="上一张（←）"
+          @click="prevPreview"
+        >
+          <IconChevronLeft :size="16" />
+          <span>上一张</span>
+        </button>
+        <span class="preview-position">
+          {{ Math.max(previewIndex + 1, 1) }} / {{ previewTotal }}
+        </span>
+        <button
+          class="button is-small is-light"
+          :disabled="!canGoNext"
+          title="下一张（→）"
+          @click="nextPreview"
+        >
+          <span>下一张</span>
+          <IconChevronRight :size="16" />
+        </button>
+      </div>
     </Modal>
   </div>
 </template>
@@ -825,6 +849,8 @@ import {
   IconAlertCircle,
   IconSearch,
   IconChevronDown,
+  IconChevronLeft,
+  IconChevronRight,
   IconArrowLeft,
   IconChecklist,
   IconRefresh,
@@ -911,8 +937,29 @@ const moveDialogSubmitting = ref(false);
 const fileUploaderRef = ref<InstanceType<typeof FileUploader> | null>(null);
 const expandedFilePath = ref<string>("");
 
-const { preview, previewFilename, closePreview, openPreview } =
-  useFilePreview(browseCommit);
+const {
+  preview,
+  previewFilename,
+  previewIndex,
+  previewTotal,
+  canGoPrev,
+  canGoNext,
+  prevPreview,
+  nextPreview,
+  closePreview,
+  openPreview,
+} = useFilePreview(browseCommit, {
+  // 当前视图中的文件（不含目录与 `.`/`..`），用于预览的上一张/下一张
+  getPreviewableFiles: () => previewableFiles.value,
+});
+
+/** 预览导航使用的文件列表，跟随当前视图（目录或搜索结果）。 */
+const previewableFiles = computed<FileInfo[]>(() =>
+  (searchActive.value
+    ? sortedSearchResults.value
+    : navigationListItems.value
+  ).filter((file) => file.kind === "file" && !(file as BrowserListItem).uiRole),
+);
 
 const {
   searchQuery,
@@ -1080,6 +1127,20 @@ onMounted(() => {
       }
       if (selectedPaths.value.size > 0) clearSelection();
       return;
+    }
+
+    // 预览打开时用左右方向键切换上一个/下一个
+    if (preview.value.open) {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        prevPreview();
+        return;
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        nextPreview();
+        return;
+      }
     }
 
     // 输入控件或弹窗内不触发文件操作快捷键
@@ -2188,6 +2249,23 @@ function handleSortChange(field: SortField) {
 
 .preview-frame {
   height: 70vh;
+}
+
+.preview-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #eef1f5;
+}
+
+.preview-position {
+  min-width: 4.5rem;
+  text-align: center;
+  font-size: 0.8rem;
+  color: #627386;
 }
 
 .preview-iframe {

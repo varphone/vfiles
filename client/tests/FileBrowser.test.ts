@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "./renderWithProviders";
 import FileBrowser from "../src/components/file-browser/FileBrowser.vue";
 
-const { getFilesMock, searchFilesMock, deleteFileMock } = vi.hoisted(() => ({
-  getFilesMock: vi.fn(async (): Promise<unknown[]> => []),
-  searchFilesMock: vi.fn(async (): Promise<unknown[]> => []),
-  deleteFileMock: vi.fn(async () => ({ success: true })),
-}));
+const { getFilesMock, searchFilesMock, deleteFileMock, getFileContentMock } =
+  vi.hoisted(() => ({
+    getFilesMock: vi.fn(async (): Promise<unknown[]> => []),
+    searchFilesMock: vi.fn(async (): Promise<unknown[]> => []),
+    deleteFileMock: vi.fn(async () => ({ success: true })),
+    getFileContentMock: vi.fn(async () => new Blob(["hello preview"])),
+  }));
 
 vi.mock("../src/composables/dialog", () => ({
   confirmDialog: vi.fn(async () => true),
@@ -19,6 +21,7 @@ vi.mock("../src/services/files.service", () => ({
     getFiles: getFilesMock,
     searchFiles: searchFilesMock,
     deleteFile: deleteFileMock,
+    getFileContent: getFileContentMock,
   },
 }));
 
@@ -44,9 +47,11 @@ describe("FileBrowser.vue", () => {
     getFilesMock.mockReset();
     searchFilesMock.mockReset();
     deleteFileMock.mockReset();
+    getFileContentMock.mockReset();
     getFilesMock.mockResolvedValue([]);
     searchFilesMock.mockResolvedValue([]);
     deleteFileMock.mockResolvedValue({ success: true });
+    getFileContentMock.mockResolvedValue(new Blob(["hello preview"]));
     stubBrowserApis();
   });
 
@@ -393,5 +398,44 @@ describe("FileBrowser.vue", () => {
 
     await findByText("a.txt");
     expect(getFilesMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("FileBrowser.vue preview navigation", () => {
+  it("opens a preview and moves to the next file with the arrow key", async () => {
+    getFilesMock.mockResolvedValue([
+      {
+        id: "a",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file",
+        size_bytes: 1,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+      {
+        id: "b",
+        name: "b.txt",
+        path: "b.txt",
+        kind: "file",
+        size_bytes: 2,
+        created_at: "2026-04-11T00:00:00.000Z",
+        updated_at: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const { findByText, findAllByText } = renderWithProviders(
+      FileBrowser as any,
+    );
+    const names = await findAllByText("a.txt");
+    await fireEvent.dblClick(names[0].closest("tr")!);
+
+    await findByText("预览: a.txt");
+
+    await fireEvent.keyDown(document, { key: "ArrowRight" });
+    await findByText("预览: b.txt");
+
+    await fireEvent.keyDown(document, { key: "ArrowLeft" });
+    await findByText("预览: a.txt");
   });
 });

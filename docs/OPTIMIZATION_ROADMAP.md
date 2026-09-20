@@ -16,13 +16,13 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 13 实测）
+### 验证基线（round 14 实测）
 
 - `cargo test --workspace`：通过（HTTP 集成 59 个 + `vfiles-http` 单元 9 个）。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：18 个文件 / 86 个用例通过。
+- `client` 单测：18 个文件 / 89 个用例通过。
 - `vue-tsc --noEmit`：无错误；`eslint .`：无告警。
-- `bun run build`：成功（预压缩仍生成 12 组）；冒烟验证重试 UI 与错误文案产物。
+- `bun run build`：成功（预压缩 12 组）；冒烟验证预览导航产物标记。
 
 ### 主要发现
 
@@ -231,6 +231,17 @@
 - 测试：重试判定（GET 网络错误/超时/可重试状态码、POST 与取消不重试）、退避与上限、
   以及加载失败→点击重试→重新拉取成功的集成用例。
 
+### 2.19 预览内的上一个/下一个导航（round 14，交互）
+
+- 对标主流云盘的图片/文档查看器：预览支持在当前视图内连续浏览。
+- `useFilePreview` 新增可选依赖 `getPreviewableFiles`，派生 `previewIndex`/
+  `previewTotal`/`canGoPrev`/`canGoNext` 与 `prevPreview()`/`nextPreview()`；
+  切换复用 `openPreview`，会正确释放上一个 objectURL。
+- 预览弹窗新增导航栏（上一张 / `n / total` / 下一张），仅在可预览文件 >1 时显示；
+  键盘 ←/→ 在预览打开时切换（不影响其他快捷键）。
+- 测试：导航边界（首/末禁用、越界不动、单文件不可导航）与 FileBrowser 集成
+  （双击打开 → → 下一张 → ← 上一张，标题随之更新）。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -259,6 +270,7 @@
 - `[x]` 列表视图点击表头排序、`Ctrl/⌘+A`、`Delete`/`F2`/`Enter`/`Esc`（round 4）。
 - `[x]` 右键上下文菜单；Shift 范围选择 / Ctrl(⌘) 加选（round 5）。
 - `[x]` 面包屑可点击跳转 + 当前目录子文件夹下拉（round 11）。
+- `[x]` 预览内上一个/下一个（按钮 + ←/→ 方向键）与位置指示（round 14）。
 - `[ ]` 面包屑拖放移动；网格视图排序入口与列表一致；移动端长按呼出菜单。
 - `[ ]` 上传/下载与网格视图的空状态、加载骨架屏统一。
 

@@ -1,11 +1,34 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { ref } from "vue";
 import {
   detectPreviewKind,
   escapeHtml,
   guessMimeByExt,
   safeImageSrc,
   safeLinkHref,
+  useFilePreview,
 } from "../src/composables/useFilePreview";
+import type { FileInfo } from "../src/types";
+
+const { getFileContentMock } = vi.hoisted(() => ({
+  getFileContentMock: vi.fn(async () => new Blob(["hello"])),
+}));
+
+vi.mock("../src/services/files.service", () => ({
+  filesService: { getFileContent: getFileContentMock },
+}));
+
+function file(name: string): FileInfo {
+  return {
+    id: name,
+    name,
+    path: name,
+    kind: "file",
+    created_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("detectPreviewKind", () => {
   it("maps extensions to preview kinds", () => {
@@ -60,5 +83,49 @@ describe("preview sanitizers", () => {
     expect(safeImageSrc("javascript:alert(1)")).toBe("");
     expect(safeImageSrc("data:text/html,<b>")).toBe("");
     expect(safeImageSrc("relative.png")).toBe("");
+  });
+});
+
+describe("useFilePreview navigation", () => {
+  it("moves to the previous/next previewable file and respects the ends", async () => {
+    const files = [file("a.txt"), file("b.txt"), file("c.txt")];
+    const preview = useFilePreview(ref(undefined), {
+      getPreviewableFiles: () => files,
+    });
+
+    await preview.openPreview("b.txt");
+    await flush();
+    expect(preview.preview.value.path).toBe("b.txt");
+    expect(preview.previewIndex.value).toBe(1);
+    expect(preview.previewTotal.value).toBe(3);
+    expect(preview.canGoPrev.value).toBe(true);
+    expect(preview.canGoNext.value).toBe(true);
+
+    preview.nextPreview();
+    await flush();
+    expect(preview.preview.value.path).toBe("c.txt");
+    expect(preview.canGoNext.value).toBe(false);
+
+    preview.nextPreview();
+    await flush();
+    expect(preview.preview.value.path).toBe("c.txt");
+
+    preview.prevPreview();
+    await flush();
+    expect(preview.preview.value.path).toBe("b.txt");
+    expect(preview.canGoPrev.value).toBe(true);
+  });
+
+  it("cannot navigate outside a single-file list", async () => {
+    const files = [file("only.txt")];
+    const preview = useFilePreview(ref(undefined), {
+      getPreviewableFiles: () => files,
+    });
+
+    await preview.openPreview("only.txt");
+    await flush();
+    expect(preview.previewTotal.value).toBe(1);
+    expect(preview.canGoPrev.value).toBe(false);
+    expect(preview.canGoNext.value).toBe(false);
   });
 });
