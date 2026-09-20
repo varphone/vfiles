@@ -17,102 +17,22 @@
 
       <div class="file-browser-toolbar">
         <template v-if="isMobile">
-          <div
-            v-if="pullIndicatorVisible"
-            class="has-text-centered is-size-7 has-text-grey mb-2"
-          >
-            <span v-if="pullRefreshing">刷新中...</span>
-            <span v-else-if="pullReady">释放刷新</span>
-            <span v-else>下拉刷新</span>
-          </div>
-
-          <div class="mobile-search-row">
-            <div class="control is-expanded">
-              <input
-                v-model="searchQuery"
-                class="input is-small mobile-search-input"
-                type="search"
-                :placeholder="
-                  searchMode === 'content' ? '搜索文件内容...' : '搜索文件名...'
-                "
-                list="vfiles-search-history"
-                @keyup.enter="runSearch"
-              />
-              <datalist id="vfiles-search-history">
-                <option
-                  v-for="item in searchHistory"
-                  :key="item"
-                  :value="item"
-                />
-              </datalist>
-            </div>
-            <ViewOptions />
-            <SortMenu />
-            <button
-              class="vf-icon-button"
-              :class="{ 'is-active': mobileSearchFiltersOpen }"
-              title="搜索筛选"
-              aria-label="搜索筛选"
-              :aria-expanded="mobileSearchFiltersOpen ? 'true' : 'false'"
-              @click="mobileSearchFiltersOpen = !mobileSearchFiltersOpen"
-            >
-              <IconAdjustmentsHorizontal :size="18" />
-            </button>
-            <button
-              class="vf-icon-button"
-              :class="{
-                'is-active': searchActive,
-                'is-loading': searchLoading,
-              }"
-              :disabled="searchLoading"
-              title="搜索"
-              aria-label="搜索"
-              @click="runSearch"
-            >
-              <IconSearch :size="18" />
-            </button>
-            <button
-              v-if="searchActive || searchQuery"
-              class="vf-icon-button"
-              title="清空搜索"
-              aria-label="清空搜索"
-              :disabled="searchLoading"
-              @click="clearSearch"
-            >
-              <IconX :size="18" />
-            </button>
-          </div>
-
-          <div v-if="mobileSearchFiltersOpen" class="mobile-search-filters">
-            <label class="checkbox mobile-filter-item">
-              <input
-                type="checkbox"
-                v-model="searchContent"
-                :disabled="searchLoading || !searchContentEnabled"
-              />
-              全文搜索
-            </label>
-            <p v-if="!searchContentEnabled" class="help is-warning mb-0">
-              内容搜索功能未启用
-            </p>
-
-            <div class="select is-small">
-              <select v-model="searchType" :disabled="searchLoading">
-                <option value="all">全部</option>
-                <option value="file">仅文件</option>
-                <option value="directory">仅文件夹</option>
-              </select>
-            </div>
-
-            <label class="checkbox mobile-filter-item">
-              <input
-                type="checkbox"
-                v-model="searchScopeCurrent"
-                :disabled="searchLoading"
-              />
-              仅当前目录
-            </label>
-          </div>
+          <MobileSearchBar
+            v-model:query="searchQuery"
+            v-model:content="searchContent"
+            v-model:type="searchType"
+            v-model:scope-current="searchScopeCurrent"
+            v-model:filters-open="mobileSearchFiltersOpen"
+            :loading="searchLoading"
+            :active="searchActive"
+            :content-enabled="searchContentEnabled"
+            :history="searchHistory"
+            :pull-indicator-visible="pullIndicatorVisible"
+            :pull-refreshing="pullRefreshing"
+            :pull-ready="pullReady"
+            @search="runSearch"
+            @clear="clearSearch"
+          />
 
           <div v-if="searchError" class="notification is-danger is-light">
             <IconAlertCircle :size="20" class="mr-2" />
@@ -121,92 +41,36 @@
         </template>
 
         <template v-else>
-          <div class="desktop-command-bar">
-            <div class="desktop-command-group">
-              <button
-                class="vf-icon-button"
-                :disabled="!currentPath"
-                title="上一级"
-                aria-label="上一级"
-                @click="goBack"
-              >
-                <IconArrowLeft :size="18" />
-              </button>
-              <button
-                class="vf-icon-button"
-                title="刷新"
-                aria-label="刷新"
-                @click="refresh"
-              >
-                <IconRefresh :size="18" />
-              </button>
-              <ViewOptions />
-              <SortMenu />
-              <button
-                class="vf-icon-button"
-                :class="{ 'is-active': fileView.detailsVisible }"
-                :title="
-                  fileView.detailsVisible ? '隐藏详细信息' : '显示详细信息'
-                "
-                :aria-label="
-                  fileView.detailsVisible ? '隐藏详细信息' : '显示详细信息'
-                "
-                :aria-pressed="fileView.detailsVisible ? 'true' : 'false'"
-                @click="fileView.toggleDetails()"
-              >
-                <IconLayoutSidebarRight :size="18" />
-              </button>
-              <button
-                class="vf-icon-button"
-                :class="{ 'is-active': batchMode }"
-                :title="batchMode ? '退出批量选择' : '批量选择'"
-                :aria-label="batchMode ? '退出批量选择' : '批量选择'"
-                :aria-pressed="batchMode ? 'true' : 'false'"
-                @click="toggleBatchMode"
-              >
-                <IconChecklist :size="18" />
-              </button>
-              <BrowserSearchBox
-                v-model="searchQuery"
-                v-model:open="desktopSearchOpen"
-                v-model:content="searchContent"
-                v-model:type="searchType"
-                v-model:scope-current="searchScopeCurrent"
-                :loading="searchLoading"
-                :active="searchActive"
-                :content-enabled="searchContentEnabled"
-                :filters-active="desktopSearchFiltersActive"
-                :history="searchHistory"
-                :register-input="setDesktopSearchInput"
-                @search="runDesktopSearch"
-                @clear="clearDesktopSearch"
-              />
-
-              <button
-                v-if="uploadIndicator"
-                class="vf-ghost-button upload-indicator"
-                type="button"
-                :title="uploadIndicator.title"
-                @click="showUploader = true"
-              >
-                <span class="upload-indicator-dot" aria-hidden="true"></span>
-                <span>{{ uploadIndicator.label }}</span>
-              </button>
-
-              <button
-                class="vf-primary-button desktop-primary-action"
-                @click="showUploader = true"
-              >
-                <IconUpload :size="16" />
-                <span>上传</span>
-              </button>
-            </div>
-
-            <div v-if="searchError" class="notification is-danger is-light">
-              <IconAlertCircle :size="18" class="mr-2" />
-              {{ searchError }}
-            </div>
-          </div>
+          <DesktopCommandBar
+            :can-go-up="Boolean(currentPath)"
+            :details-visible="fileView.detailsVisible"
+            :batch-mode="batchMode"
+            :search-query="searchQuery"
+            :search-open="desktopSearchOpen"
+            :search-content="searchContent"
+            :search-type="searchType"
+            :search-scope-current="searchScopeCurrent"
+            :search-loading="searchLoading"
+            :search-active="searchActive"
+            :search-content-enabled="searchContentEnabled"
+            :search-filters-active="desktopSearchFiltersActive"
+            :search-history="searchHistory"
+            :search-error="searchError"
+            :upload-indicator="uploadIndicator"
+            :register-input="setDesktopSearchInput"
+            @go-up="goBack"
+            @refresh="refresh"
+            @toggle-details="fileView.toggleDetails()"
+            @toggle-batch="toggleBatchMode"
+            @upload="showUploader = true"
+            @search="runDesktopSearch"
+            @clear="clearDesktopSearch"
+            @update:search-query="searchQuery = $event"
+            @update:search-open="desktopSearchOpen = $event"
+            @update:search-content="searchContent = $event"
+            @update:search-type="searchType = $event as SearchType"
+            @update:search-scope-current="searchScopeCurrent = $event"
+          />
 
           <BatchActionBar
             v-if="batchMode"
@@ -891,8 +755,6 @@ import {
   IconFolderPlus,
   IconAlertCircle,
   IconSearch,
-  IconArrowLeft,
-  IconChecklist,
   IconRefresh,
   IconUpload,
   IconEye,
@@ -902,12 +764,9 @@ import {
   IconDownload,
   IconShare,
   IconTrash,
-  IconLayoutSidebarRight,
-  IconAdjustmentsHorizontal,
   IconInfoCircle,
   IconStar,
   IconStarFilled,
-  IconX,
 } from "@tabler/icons-vue";
 import { filesService } from "../../services/files.service";
 import { useFilesStore } from "../../stores/files.store";
@@ -918,14 +777,14 @@ import FileList from "./FileList.vue";
 import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
 import FilePreviewModal from "./FilePreviewModal.vue";
-import BrowserSearchBox from "./BrowserSearchBox.vue";
 import UploadDropOverlay from "./UploadDropOverlay.vue";
 import FileDetailsContent from "./FileDetailsContent.vue";
 import DirectoryTree from "./DirectoryTree.vue";
 import SidebarOverview from "./SidebarOverview.vue";
 import FileGrid from "./FileGrid.vue";
-import ViewOptions from "./ViewOptions.vue";
-import SortMenu from "./SortMenu.vue";
+import MobileSearchBar from "./MobileSearchBar.vue";
+import DesktopCommandBar from "./DesktopCommandBar.vue";
+import type { SearchType } from "./BrowserSearchBox.vue";
 import Breadcrumb from "./Breadcrumb.vue";
 import FileSkeleton from "./FileSkeleton.vue";
 import DownloadQueuePanel from "./DownloadQueuePanel.vue";
@@ -2195,48 +2054,6 @@ function handleSortChange(field: SortField) {
 }
 
 /* 移动端：紧凑搜索行，筛选折叠在图标后面 */
-.mobile-search-row {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-/* 移动端搜索行里的视图/排序下拉需要浮在列表之上 */
-.mobile-search-row .dropdown-menu {
-  z-index: 30;
-}
-
-.mobile-search-row .dropdown-menu .vf-ghost-button {
-  min-height: 1.75rem;
-}
-
-.mobile-search-input {
-  border-radius: var(--vf-radius-pill);
-  border-color: transparent;
-  background: var(--vf-surface-sunken);
-}
-
-.mobile-search-input:focus {
-  border-color: var(--vf-accent);
-  background: var(--vf-surface);
-}
-
-.mobile-search-filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.6rem;
-  margin-top: 0.5rem;
-  padding: 0.6rem;
-  border-radius: var(--vf-radius);
-  background: var(--vf-surface-sunken);
-  font-size: 0.82rem;
-}
-
-.mobile-filter-item {
-  margin-bottom: 0 !important;
-}
-
 .desktop-command-bar {
   display: block;
 }
