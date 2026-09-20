@@ -842,9 +842,49 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     tracing::info!("Server listening on http://{}", addr);
 
     tracing::info!("VFiles server started successfully!");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+
+    // 收到 SIGTERM/SIGINT 后先停止接收新请求，再干净地关闭连接池。
+    tracing::info!("Shutdown signal received; closing database pool");
+    pool.close().await;
+    tracing::info!("VFiles server stopped");
 
     Ok(())
+}
+
+/// 等待 Ctrl+C（SIGINT）或 SIGTERM，用于优雅停机。
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            tracing::warn!(error = %err, "failed to listen for ctrl-c");
+            std::future::pending::<()>().await;
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to listen for SIGTERM");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    tracing::info!("Shutdown signal received; finishing in-flight requests");
 }
 
 #[cfg(test)]

@@ -16,13 +16,12 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 24 实测）
+### 验证基线（round 25 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：21 个文件 / **111** 个用例通过。
-- 冒烟：served 产物包含骨架屏结构（`file-skeleton-row`/`file-skeleton-card`）与
-  微光动画样式（`file-skeleton-shimmer`）。
+- `client` 单测：21 个文件 / 111 个用例通过。
+- 冒烟：进程收到 `SIGTERM` 后输出优雅停机日志并以**退出码 0** 结束。
 
 ### 主要发现
 
@@ -365,6 +364,18 @@
 - 测试：骨架屏行/卡片数量、默认 6 行、`aria-busy` 与可读文本；FileBrowser 加载中
   展示骨架屏并在完成后渲染空目录状态。
 
+### 2.30 服务端优雅停机（round 25，稳定性）
+
+- 审计发现 `axum::serve(...).await` 没有优雅停机：systemd 重启/停止或 Ctrl+C 会直接
+  中断进程（退出码 143），在途请求被截断、连接池未显式关闭。
+- 新增 `shutdown_signal()`：同时等待 `SIGINT`（Ctrl+C）与 `SIGTERM`（Unix），
+  通过 `with_graceful_shutdown` 先停止接收新请求并等待在途请求结束，随后关闭
+  SQLite 连接池并输出 `VFiles server stopped`。
+- 文档：`docs/DEPLOYMENT.md` 的 systemd 章节补充优雅停机行为说明。
+- 验证：启动服务 → `/api/health` 200 → `kill -TERM` → 日志依次出现
+  `Shutdown signal received`、`closing database pool`、`VFiles server stopped`，
+  进程**退出码 0**。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -427,6 +438,7 @@
 
 - `[x]` 前端目录/搜索过期响应丢弃；缩略图命中/生成/清理日志（round 6）。
 - `[x]` 幂等 GET 的有限自动重试 + 列表加载失败重试按钮（round 13）。
+- `[x]` 服务端优雅停机（SIGTERM/SIGINT → 停止收新请求 → 关闭连接池，退出码 0）（round 25）。
 - `[ ]` 为内容/下载等 `fetch` 路径补充重试或可恢复失败提示。
 - `[ ]` 图片解码失败、超大文件跳过等场景补充计数指标。
 

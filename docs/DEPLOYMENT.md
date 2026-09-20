@@ -131,6 +131,10 @@ sudo ./vfiles register -t systemd \
 - `--data-directory` 会写入 `VFILES_STORAGE_ROOT` 环境变量，用于显式指定数据根目录
 - 如果只想注册服务但暂不启动，省略 `--start` 即可；命令会完成 `daemon-reload` 和 `enable`
 
+服务进程支持优雅停机：收到 `SIGTERM`（`systemctl stop/restart`）或 `SIGINT`（Ctrl+C）
+后会先停止接收新请求、等待在途请求结束，再关闭数据库连接池并以退出码 0 结束，日志中会
+依次出现 `Shutdown signal received` 与 `VFiles server stopped`。
+
 ## 反向代理
 
 如果通过 Nginx 或 Caddy 暴露服务，建议：
