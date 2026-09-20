@@ -164,9 +164,21 @@ fn serve_embedded_file(path: &str) -> Option<Response> {
 
 fn static_file_response(body: Body, path_hint: &str) -> Response {
     let mime = mime_guess::from_path(path_hint).first_or_octet_stream();
+    let cache_control = if path_hint.ends_with("index.html") {
+        // The SPA shell must be revalidated so new asset hashes are picked up.
+        "no-cache"
+    } else if path_hint.contains("assets/") {
+        // Vite emits content-hashed asset filenames; they are safe to cache
+        // aggressively.
+        "public, max-age=31536000, immutable"
+    } else {
+        "public, max-age=3600"
+    };
+
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime.as_ref())
+        .header(header::CACHE_CONTROL, cache_control)
         .body(body)
         .expect("static file response should build")
 }
