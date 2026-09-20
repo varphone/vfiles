@@ -16,14 +16,13 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 16 实测）
+### 验证基线（round 17 实测）
 
 - `cargo test --workspace`：通过（HTTP 集成 59 个 + `vfiles-http` 单元 9 个）。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：19 个文件 / 96 个用例通过。
+- `client` 单测：20 个文件 / 101 个用例通过。
 - `vue-tsc --noEmit`：无错误；`eslint .`：无告警。
-- `bun run build`：成功（预压缩 12 组）；冒烟验证分批渲染产物标记与包含 45 个子目录
-  的目录接口。
+- `bun run build`：成功（预压缩 12 组）；冒烟验证下拉刷新产物标记。
 
 ### 主要发现
 
@@ -263,6 +262,16 @@
   边距），避免 IntersectionObserver 在同一交叉状态不再回调导致“卡在首批”。
 - 测试：45 项目录仅渲染首批 40 行、显示分批提示且不含末项；既有用例全部保持通过。
 
+### 2.22 拆分 FileBrowser：移动端手势（round 17，稳定性）
+
+- 新增 `composables/useTouchGestures.ts`：下拉刷新（阈值 60 / 上限 90）与左缘右滑返回
+  （边缘 24px、水平位移 >80 且垂直 <60），含指示器显隐与刷新成功提示。
+- `FileBrowser` 只保留模板绑定，传入 `enabled`（移动端）、`isBlocked`、`refresh`、
+  `goBack`；顺带统一为 `anyOverlayOpen`，目录管理弹窗打开时也不再触发手势。
+- `FileBrowser.vue` 由 2331 行降至 2249 行；相比 round 7 起点累计 −1039 行（−32%）。
+- 测试：达到阈值触发刷新、短距离不触发、左缘右滑返回、非边缘不返回、禁用/被弹窗
+  阻塞时完全不响应。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -289,6 +298,7 @@
   （round 9，2625 → 2430 行）。
 - `[x]` 批量选择/批量操作抽为 `useFileSelection`（round 10，2430 → 2268 行）。
 - `[x]` 移动对话框抽为 `useMoveDialog`（round 15，2362 → 2313 行）。
+- `[x]` 移动端手势抽为 `useTouchGestures`（round 17，2331 → 2249 行）。
 - `[ ]` 继续抽出分享/历史/上传器等对话框编排与桌面/移动工具栏模板，目标 < 1500 行。
 - 验收：单文件行数持续下降，已有测试保持通过并补充拆分后的单元测试。
 

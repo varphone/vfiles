@@ -894,6 +894,7 @@ import { useFileSearch } from "../../composables/useFileSearch";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useMoveDialog } from "../../composables/useMoveDialog";
+import { useTouchGestures } from "../../composables/useTouchGestures";
 import type { FileInfo } from "../../types";
 import {
   sortBrowserItems,
@@ -1465,102 +1466,19 @@ onBeforeUnmount(() => {
   }
 });
 
-// 4.2: 下拉刷新 + 手势（边缘右滑返回）
-const pullDistance = ref(0);
-const pullReady = ref(false);
-const pullRefreshing = ref(false);
-
-const pullIndicatorVisible = computed(
-  () => pullRefreshing.value || pullDistance.value > 10,
-);
-
-const touchStart = ref({ x: 0, y: 0, t: 0 });
-const touchMode = ref<"none" | "pull" | "swipe">("none");
-
-const anyModalOpen = computed(() => {
-  return (
-    showUploader.value ||
-    showHistory.value ||
-    showShareDialog.value ||
-    showMoveDialog.value ||
-    preview.value.open
-  );
+const {
+  pullReady,
+  pullRefreshing,
+  pullIndicatorVisible,
+  onTouchStart,
+  onTouchMove,
+  onTouchEnd,
+} = useTouchGestures({
+  enabled: isMobile,
+  isBlocked: anyOverlayOpen,
+  refresh,
+  goBack,
 });
-
-function onTouchStart(e: TouchEvent) {
-  if (!isMobile.value) return;
-  if (anyModalOpen.value) return;
-  const t = e.touches[0];
-  if (!t) return;
-  touchStart.value = { x: t.clientX, y: t.clientY, t: Date.now() };
-  touchMode.value = "none";
-}
-
-function onTouchMove(e: TouchEvent) {
-  if (!isMobile.value) return;
-  if (anyModalOpen.value) return;
-  const t = e.touches[0];
-  if (!t) return;
-
-  const dx = t.clientX - touchStart.value.x;
-  const dy = t.clientY - touchStart.value.y;
-
-  if (touchMode.value === "none") {
-    if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) {
-      touchMode.value = "swipe";
-    } else if (dy > 8 && Math.abs(dy) > Math.abs(dx) && window.scrollY <= 0) {
-      touchMode.value = "pull";
-    }
-  }
-
-  if (
-    touchMode.value === "pull" &&
-    window.scrollY <= 0 &&
-    !pullRefreshing.value
-  ) {
-    const next = Math.min(90, Math.max(0, dy));
-    pullDistance.value = next;
-    pullReady.value = next >= 60;
-  }
-}
-
-async function onTouchEnd(e: TouchEvent) {
-  if (!isMobile.value) return;
-  if (anyModalOpen.value) return;
-
-  const changed = e.changedTouches[0];
-  if (!changed) {
-    pullDistance.value = 0;
-    pullReady.value = false;
-    touchMode.value = "none";
-    return;
-  }
-
-  const dx = changed.clientX - touchStart.value.x;
-  const dy = changed.clientY - touchStart.value.y;
-
-  if (touchMode.value === "swipe") {
-    const fromEdge = touchStart.value.x <= 24;
-    const horizontal = dx > 80 && Math.abs(dy) < 60;
-    if (fromEdge && horizontal) {
-      goBack();
-    }
-  }
-
-  if (touchMode.value === "pull" && pullReady.value && !pullRefreshing.value) {
-    pullRefreshing.value = true;
-    try {
-      await Promise.resolve(refresh());
-      appStore.success("已刷新");
-    } finally {
-      pullRefreshing.value = false;
-    }
-  }
-
-  pullDistance.value = 0;
-  pullReady.value = false;
-  touchMode.value = "none";
-}
 
 function handleItemClick(file: BrowserListItem) {
   if (file.kind === "directory") {
