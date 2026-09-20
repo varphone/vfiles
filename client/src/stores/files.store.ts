@@ -37,18 +37,27 @@ export const useFilesStore = defineStore("files", () => {
   });
 
   // 方法
+  // 递增的请求序号：并发或快速切换目录时只接受最新一次请求的结果，
+  // 避免先发出的旧请求后返回而覆盖新目录的数据（也避免 loading 被提前置否）。
+  let loadSequence = 0;
+
   async function loadFiles(path: string = "") {
+    const requestId = ++loadSequence;
+    const commit = browseCommit.value;
     loading.value = true;
     error.value = null;
 
     try {
-      files.value = await filesService.getFiles(path, browseCommit.value);
+      const result = await filesService.getFiles(path, commit);
+      if (requestId !== loadSequence) return;
+      files.value = result;
       currentPath.value = path;
     } catch (err) {
+      if (requestId !== loadSequence) return;
       error.value = err instanceof Error ? err.message : "加载文件失败";
       files.value = [];
     } finally {
-      loading.value = false;
+      if (requestId === loadSequence) loading.value = false;
     }
   }
 

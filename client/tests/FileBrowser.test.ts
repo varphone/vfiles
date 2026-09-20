@@ -301,7 +301,9 @@ describe("FileBrowser.vue", () => {
     const row = name.closest("tr")!;
 
     await fireEvent.contextMenu(row, { clientX: 10, clientY: 10 });
-    expect(await findByRole("menuitem", { name: "重命名" })).toBeInTheDocument();
+    expect(
+      await findByRole("menuitem", { name: "重命名" }),
+    ).toBeInTheDocument();
 
     await fireEvent.click(document.body);
     await waitFor(() => {
@@ -310,11 +312,61 @@ describe("FileBrowser.vue", () => {
 
     // 再次打开仍然可用（监听器不应在关闭时被移除）
     await fireEvent.contextMenu(row, { clientX: 12, clientY: 12 });
-    expect(await findByRole("menuitem", { name: "重命名" })).toBeInTheDocument();
+    expect(
+      await findByRole("menuitem", { name: "重命名" }),
+    ).toBeInTheDocument();
 
     await fireEvent.click(document.body);
     await waitFor(() => {
       expect(queryByRole("menuitem", { name: "重命名" })).toBeNull();
     });
+  });
+
+  it("ignores a stale search response that resolves after a newer one", async () => {
+    let resolveSlow!: (value: unknown[]) => void;
+    const slowSearch = new Promise<unknown[]>((resolve) => {
+      resolveSlow = resolve;
+    });
+
+    searchFilesMock.mockReturnValueOnce(slowSearch);
+    searchFilesMock.mockResolvedValueOnce([
+      {
+        id: "fast",
+        name: "fast.txt",
+        path: "fast.txt",
+        kind: "file",
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+
+    const { findByPlaceholderText } = renderWithProviders(FileBrowser as any);
+
+    const input = await findByPlaceholderText("搜索名称、扩展名或路径");
+    await fireEvent.update(input, "slow");
+    await fireEvent.keyUp(input, { key: "Enter", code: "Enter", charCode: 13 });
+    await fireEvent.update(input, "fast");
+    await fireEvent.keyUp(input, { key: "Enter", code: "Enter", charCode: 13 });
+
+    // 命中片段会被 <mark> 拆成多个节点，这里用整体文本判断
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("fast.txt");
+    });
+
+    resolveSlow([
+      {
+        id: "slow",
+        name: "slow.txt",
+        path: "slow.txt",
+        kind: "file",
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+
+    await waitFor(() => {
+      expect(document.body.textContent).not.toContain("slow.txt");
+    });
+    expect(document.body.textContent).toContain("fast.txt");
   });
 });

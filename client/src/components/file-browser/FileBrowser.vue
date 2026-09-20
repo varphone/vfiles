@@ -2418,6 +2418,9 @@ async function runSearch() {
   return await doSearch(true);
 }
 
+// 搜索请求序号：快速连续搜索时只接受最后一次的结果，避免旧结果覆盖新结果。
+let searchSequence = 0;
+
 async function doSearch(pushHistoryEnabled: boolean) {
   const q = searchQuery.value.trim();
   searchError.value = null;
@@ -2427,6 +2430,7 @@ async function doSearch(pushHistoryEnabled: boolean) {
     return;
   }
 
+  const requestId = ++searchSequence;
   searchLoading.value = true;
   searchActive.value = true;
 
@@ -2436,19 +2440,24 @@ async function doSearch(pushHistoryEnabled: boolean) {
 
   try {
     const scopePath = searchScopeCurrent.value ? filesStore.currentPath : "";
-    searchResults.value = await filesService.searchFiles(q, searchMode.value, {
+    const results = await filesService.searchFiles(q, searchMode.value, {
       type: searchType.value,
       path: scopePath,
     });
+    if (requestId !== searchSequence) return;
+    searchResults.value = results;
   } catch (err) {
+    if (requestId !== searchSequence) return;
     searchError.value = err instanceof Error ? err.message : "搜索失败";
     searchResults.value = [];
   } finally {
-    searchLoading.value = false;
+    if (requestId === searchSequence) searchLoading.value = false;
   }
 }
 
 function clearSearch() {
+  // 使仍在途的搜索请求失效，避免清空后旧结果又回填
+  searchSequence += 1;
   searchQuery.value = "";
   searchResults.value = [];
   searchError.value = null;
