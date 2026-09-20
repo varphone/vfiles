@@ -1891,6 +1891,84 @@ async fn health_json_response_supports_gzip_when_requested() {
 }
 
 #[tokio::test]
+async fn request_id_and_security_headers_are_applied() {
+    let app = TestApp::new().await;
+
+    let response = app
+        .request(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/auth/me")
+                .header("x-request-id", "test-request-123")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-request-id")
+            .expect("request id header should be present"),
+        "test-request-123"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("x-content-type-options")
+            .expect("content type options header should be present"),
+        "nosniff"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("x-frame-options")
+            .expect("frame options header should be present"),
+        "SAMEORIGIN"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("referrer-policy")
+            .expect("referrer policy header should be present"),
+        "strict-origin-when-cross-origin"
+    );
+}
+
+#[tokio::test]
+async fn admin_errors_return_structured_json_with_request_id() {
+    let app = TestApp::new().await;
+
+    let response = app
+        .request(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/admin/users")
+                .header("x-request-id", "admin-request-123")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-request-id")
+            .expect("request id header should be present"),
+        "admin-request-123"
+    );
+
+    let payload = response_json(response).await;
+    assert_eq!(payload["code"], Value::String("UNAUTHORIZED".to_string()));
+    assert_eq!(
+        payload["request_id"],
+        Value::String("admin-request-123".to_string())
+    );
+}
+
+#[tokio::test]
 async fn tree_json_response_supports_gzip_when_requested() {
     let app = TestApp::new().await;
 
@@ -2772,6 +2850,13 @@ async fn backend_serves_static_frontend_and_spa_fallback() {
         )
         .await;
     assert_eq!(root_response.status(), StatusCode::OK);
+    assert_eq!(
+        root_response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("index cache control should be present"),
+        "no-cache"
+    );
     let root_body = String::from_utf8_lossy(&response_bytes(root_response).await).to_string();
     assert!(root_body.contains("vfiles-ui"));
 
@@ -2785,6 +2870,13 @@ async fn backend_serves_static_frontend_and_spa_fallback() {
         )
         .await;
     assert_eq!(asset_response.status(), StatusCode::OK);
+    assert_eq!(
+        asset_response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("asset cache control should be present"),
+        "public, max-age=31536000, immutable"
+    );
     let asset_body = String::from_utf8_lossy(&response_bytes(asset_response).await).to_string();
     assert!(asset_body.contains("console.log"));
 
