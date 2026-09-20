@@ -645,6 +645,40 @@ describe("FileBrowser.vue loading state", () => {
     await findByText("此文件夹为空");
   });
 });
+describe("FileBrowser.vue details dialog", () => {
+  it("opens metadata from the context menu on any entry", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([
+      {
+        id: "readme",
+        name: "readme.md",
+        path: "readme.md",
+        kind: "file",
+        size_bytes: 4096,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+
+    const { findByRole, findByText, container } = renderWithProviders(
+      FileBrowser as any,
+    );
+    const name = await findByText("readme.md");
+    await fireEvent.contextMenu(name.closest("tr")!);
+
+    await fireEvent.click(await findByRole("menuitem", { name: "详细信息" }));
+
+    await waitFor(() => {
+      expect(container.ownerDocument.body.textContent).toContain(
+        "详细信息: readme.md",
+      );
+    });
+    const dialog = container.ownerDocument.querySelector(".modal.is-active");
+    expect(dialog?.textContent).toContain("4.0 KB");
+    expect(dialog?.textContent).toContain("文本文档");
+  });
+});
+
 describe("FileBrowser.vue window file drop", () => {
   function dispatchDrop(files: File[]) {
     const event = new Event("drop", { cancelable: true, bubbles: true });

@@ -764,6 +764,43 @@
     />
 
     <!-- 预览对话框（当前版本） -->
+    <Modal
+      :show="showDetailsDialog"
+      :title="`详细信息: ${detailsDialogFile?.name || ''}`"
+      :mobile-compact="true"
+      @close="showDetailsDialog = false"
+    >
+      <FileDetailsContent v-if="detailsDialogFile" :file="detailsDialogFile">
+        <template #actions>
+          <button
+            v-if="detailsDialogFile.kind === 'file'"
+            class="vf-ghost-button"
+            @click="
+              handlePreview(detailsDialogFile);
+              showDetailsDialog = false;
+            "
+          >
+            <IconEye :size="16" />
+            <span>预览</span>
+          </button>
+          <button
+            class="vf-ghost-button"
+            @click="handleDownload(detailsDialogFile)"
+          >
+            <IconDownload :size="16" />
+            <span>下载</span>
+          </button>
+          <button
+            class="vf-ghost-button"
+            @click="handleShare(detailsDialogFile)"
+          >
+            <IconShare :size="16" />
+            <span>分享</span>
+          </button>
+        </template>
+      </FileDetailsContent>
+    </Modal>
+
     <UploadDropOverlay
       :visible="externalDropActive"
       :target-label="dropTargetLabel"
@@ -816,6 +853,7 @@ import {
   IconTrash,
   IconLayoutSidebarRight,
   IconAdjustmentsHorizontal,
+  IconInfoCircle,
   IconX,
 } from "@tabler/icons-vue";
 import { useFilesStore } from "../../stores/files.store";
@@ -828,6 +866,7 @@ import BatchActionBar from "./BatchActionBar.vue";
 import FilePreviewModal from "./FilePreviewModal.vue";
 import BrowserSearchBox from "./BrowserSearchBox.vue";
 import UploadDropOverlay from "./UploadDropOverlay.vue";
+import FileDetailsContent from "./FileDetailsContent.vue";
 import FileGrid from "./FileGrid.vue";
 import ViewOptions from "./ViewOptions.vue";
 import SortMenu from "./SortMenu.vue";
@@ -886,6 +925,8 @@ function updateIsMobile() {
 }
 
 const showUploader = ref(false);
+const showDetailsDialog = ref(false);
+const detailsDialogFile = ref<FileInfo | null>(null);
 const showHistory = ref(false);
 const showShareDialog = ref(false);
 const selectedFile = ref<FileInfo | null>(null);
@@ -934,7 +975,8 @@ const anyDialogOpen = computed(
     showHistory.value ||
     showShareDialog.value ||
     showMoveDialog.value ||
-    dirManagerOpen.value,
+    dirManagerOpen.value ||
+    showDetailsDialog.value,
 );
 const dropTargetLabel = computed(() =>
   filesStore.currentPath
@@ -1141,6 +1183,7 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
     items.push({ key: "preview", label: "预览", icon: IconEye });
     items.push({ key: "history", label: "历史版本", icon: IconHistory });
   }
+  items.push({ key: "details", label: "详细信息", icon: IconInfoCircle });
   items.push({ key: "rename", label: "重命名", icon: IconPencil });
   items.push({ key: "move", label: "移动", icon: IconArrowsDiff });
   items.push({ key: "download", label: "下载", icon: IconDownload });
@@ -1772,11 +1815,19 @@ function handleContextMenu(payload: { file: FileInfo; x: number; y: number }) {
   };
 }
 
+function openDetailsDialog(file: FileInfo) {
+  detailsDialogFile.value = file;
+  showDetailsDialog.value = true;
+}
+
 function handleContextMenuSelect(key: string) {
   const file = contextMenu.value.file;
   if (!file) return;
 
   switch (key) {
+    case "details":
+      openDetailsDialog(file);
+      break;
     case "open":
       handleOpenFolder(file);
       break;
