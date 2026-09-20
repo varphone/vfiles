@@ -7,6 +7,9 @@ interface Notification {
   message: string;
 }
 
+/** 同时保留的通知条数上限：超出时丢弃最旧的一条，避免批量操作刷屏。 */
+export const MAX_NOTIFICATIONS = 4;
+
 export const useAppStore = defineStore("app", () => {
   const notifications = ref<Notification[]>([]);
   let notificationId = 0;
@@ -18,6 +21,11 @@ export const useAppStore = defineStore("app", () => {
   ) {
     const id = notificationId++;
     notifications.value.push({ id, type, message });
+
+    // 批量操作可能一次产生多条通知，这里只保留最近的几条
+    if (notifications.value.length > MAX_NOTIFICATIONS) {
+      notifications.value = notifications.value.slice(-MAX_NOTIFICATIONS);
+    }
 
     if (duration > 0) {
       setTimeout(() => {

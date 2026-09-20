@@ -16,11 +16,11 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 47 实测）
+### 验证基线（round 48 实测）
 
 - `cargo test --workspace`：通过。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：37 个文件 / **234** 个用例通过；`vue-tsc`、`eslint`、`prettier`
+- `client` 单测：38 个文件 / **237** 个用例通过；`vue-tsc`、`eslint`、`prettier`
   通过。
 - 后端：`cargo test --workspace` 全部通过、`clippy --all-targets` 无告警、`fmt`
   干净（`frontend.rs` 的历史格式差异保持原样）。
@@ -847,6 +847,18 @@
   默认日志出现 `Server listening ...`、`VFiles server started` 与
   `WARN ... failed to generate thumbnail ... failed_total=1`。
 
+### 2.55 通知改为卡片式提示（round 48，交互）
+
+- 背景：通知此前是 Bulma 的整块 `notification`，**位置 `top: 1rem` 会压住固定顶栏**，
+  没有类型图标，批量操作连发多条时会无限堆叠刷屏。
+- `Notification.vue` 改为卡片式提示：左侧 3px 语义色竖条 + 类型图标（成功/失败/警告/信息）
+  + 文案 + 关闭按钮；位置下移到 `顶栏高度 + 0.75rem`，宽度 `min(24rem, 100vw - 2rem)`；
+  容器设为 `role="status"` + `aria-live="polite"`，并支持 `prefers-reduced-motion`。
+- `app.store` 增加 `MAX_NOTIFICATIONS = 4`：超出时丢弃最旧的一条，避免批量操作刷屏。
+- 测试：新增 3 个通知用例（按通知渲染且带 live region、关闭按钮生效、只保留最近几条）。
+- 冒烟：桌面触发重命名冲突得到红色竖条 + 图标的提示（`top=64`，顶栏高 53）；移动端拖入
+  文件后的成功提示 `top=64`、宽 358（390-32），不再遮挡顶栏；无控制台报错。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -948,4 +960,12 @@
 - `[ ]` 主搜索框上移到应用栏（对齐 Drive/OneDrive 的全局搜索），需要把搜索状态从
   `FileBrowser` 提升到页面级。
 - `[x]` 整窗拖放上传浮层（round 42，见 §2.49）。
-- `[ ]` 上传进度与通知的视觉统一。
+- `[x]` 通知改为卡片式提示：类型图标、避开顶栏、限制堆叠条数（round 48，见 §2.55）。
+- `[ ]` 上传进度面板与提示的进一步统一（队列面板与提示目前是两套区域）。
+
+### 3.8 错误文案本地化（交互，中）
+
+- 目前服务端返回的领域错误是英文（例如重命名冲突时提示
+  `Path conflict: Path already exists: b.txt`），前端直接展示，与中文界面不一致。
+- 计划：在服务端为常见领域错误补充面向用户的文案（或返回稳定的错误码 + 参数），
+  前端按错误码渲染中文提示；先覆盖冲突、校验、未授权三类高频场景。
