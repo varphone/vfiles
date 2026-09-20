@@ -828,11 +828,12 @@ import FileUploader from "../file-uploader/FileUploader.vue";
 import VersionHistory from "../version-history/VersionHistory.vue";
 import Modal from "../common/Modal.vue";
 import ShareDialog from "../common/ShareDialog.vue";
-import { confirmDialog, promptDialog } from "../../composables/dialog";
+import { promptDialog } from "../../composables/dialog";
 import { useDownloadQueue } from "../../composables/useDownloadQueue";
 import { useFilePreview } from "../../composables/useFilePreview";
 import { useFileSearch } from "../../composables/useFileSearch";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
+import { useFileSelection } from "../../composables/useFileSelection";
 import type { FileInfo } from "../../types";
 import {
   sortBrowserItems,
@@ -947,6 +948,40 @@ const {
 });
 
 const {
+  batchMode,
+  selectedPaths,
+  lastSelectedPath,
+  selectedCount,
+  toggleBatchMode,
+  toggleSelect,
+  handleModifierSelect,
+  clearSelection,
+  replaceSelectedPath,
+  narrowSelectionTo,
+  selectAllVisible,
+  toggleSelectAll,
+  batchDownload,
+  batchDelete,
+  batchMove,
+  renameSelected,
+} = useFileSelection({
+  searchActive,
+  getVisibleItems: () =>
+    searchActive.value ? sortedSearchResults.value : navigationListItems.value,
+  getSelectionPool: () =>
+    searchActive.value ? searchResults.value : files.value,
+  setActivePath: (path) => {
+    desktopActivePath.value = path;
+  },
+  currentPath,
+  browseCommit,
+  refresh,
+  doSearch,
+  openMoveDialog,
+  renameEntry: handleRenameEntry,
+});
+
+const {
   queueCollapsed,
   downloadQueue,
   downloading,
@@ -959,13 +994,6 @@ const {
   clearFinished,
   removeItem,
 } = useDownloadQueue(browseCommit);
-
-const batchMode = ref(false);
-const selectedPaths = ref<Set<string>>(new Set());
-/** 最近一次点击的条目路径，用于 Shift 范围选择。 */
-const lastSelectedPath = ref<string>("");
-
-const selectedCount = computed(() => selectedPaths.value.size);
 
 const contextMenu = ref<{
   show: boolean;
@@ -1171,14 +1199,6 @@ function openMoveDialog(items: FileInfo[], initialPath: string) {
 function closeMoveDialog() {
   if (moveDialogSubmitting.value) return;
   resetMoveDialogState();
-}
-
-function replaceSelectedPath(oldPath: string, newPath: string) {
-  if (!selectedPaths.value.has(oldPath)) return;
-  const next = new Set(selectedPaths.value);
-  next.delete(oldPath);
-  next.add(newPath);
-  selectedPaths.value = next;
 }
 
 // 4.2: 移动端无限滚动（分批渲染）
@@ -1606,13 +1626,6 @@ async function handleUpload() {
   await refresh();
 }
 
-function toggleBatchMode() {
-  batchMode.value = !batchMode.value;
-  if (!batchMode.value) {
-    clearSelection();
-  }
-}
-
 defineExpose({
   openUploader: () => {
     showUploader.value = true;
@@ -1677,67 +1690,11 @@ function findActiveItem(): BrowserListItem | undefined {
   return undefined;
 }
 
-function toggleSelect(file: FileInfo) {
-  desktopActivePath.value = file.path;
-  lastSelectedPath.value = file.path;
-  const next = new Set(selectedPaths.value);
-  if (next.has(file.path)) {
-    next.delete(file.path);
-  } else {
-    next.add(file.path);
-  }
-  selectedPaths.value = next;
-}
-
-/** 当前可见的、可选择的真实条目（排除 `.`/`..` 快捷项）。 */
-function selectableItems(): BrowserListItem[] {
-  const list = searchActive.value
-    ? sortedSearchResults.value
-    : navigationListItems.value;
-  return list.filter((file) => !(file as BrowserListItem).uiRole);
-}
-
-/**
- * Shift/Ctrl(⌘) 点击：Shift 选中最近一次点击到当前项的连续区间，
- * Ctrl(⌘) 切换单项选择；两者都会自动进入批量模式。
- */
-function handleModifierSelect(payload: {
-  file: FileInfo;
-  shift: boolean;
-  meta: boolean;
-}) {
-  const file = payload.file as BrowserListItem;
-  if (file.uiRole) return;
-
-  if (payload.shift && lastSelectedPath.value) {
-    const list = selectableItems();
-    const from = list.findIndex((item) => item.path === lastSelectedPath.value);
-    const to = list.findIndex((item) => item.path === file.path);
-    if (from !== -1 && to !== -1) {
-      const [start, end] = from <= to ? [from, to] : [to, from];
-      const next = new Set(selectedPaths.value);
-      for (let index = start; index <= end; index += 1) {
-        next.add(list[index].path);
-      }
-      selectedPaths.value = next;
-      batchMode.value = true;
-      desktopActivePath.value = file.path;
-      return;
-    }
-  }
-
-  batchMode.value = true;
-  toggleSelect(file);
-}
-
 function handleContextMenu(payload: { file: FileInfo; x: number; y: number }) {
   const file = payload.file as BrowserListItem;
   if (file.uiRole) return;
 
-  if (batchMode.value && !selectedPaths.value.has(file.path)) {
-    selectedPaths.value = new Set([file.path]);
-    lastSelectedPath.value = file.path;
-  }
+  narrowSelectionTo(file.path);
   desktopActivePath.value = file.path;
   contextMenu.value = {
     show: true,
@@ -1789,125 +1746,6 @@ function handleSortChange(field: SortField) {
     return;
   }
   fileView.setSortField(field);
-}
-
-function toggleSelectAll() {
-  if (!batchMode.value) return;
-  const selectable = (
-    searchActive.value ? sortedSearchResults.value : navigationListItems.value
-  ).filter((file) => !(file as BrowserListItem).uiRole);
-
-  const allSelected =
-    selectable.length > 0 &&
-    selectable.every((file) => selectedPaths.value.has(file.path));
-
-  if (allSelected) {
-    clearSelection();
-  } else {
-    selectAllVisible();
-  }
-}
-
-function clearSelection() {
-  selectedPaths.value = new Set();
-}
-
-function selectAllVisible() {
-  const list = searchActive.value
-    ? searchResults.value
-    : navigationListItems.value.filter(
-        (file) => !(file as BrowserListItem).uiRole,
-      );
-  const next = new Set(selectedPaths.value);
-  for (const f of list) {
-    next.add(f.path);
-  }
-  selectedPaths.value = next;
-}
-
-function getSelectedItems(): FileInfo[] {
-  const list = searchActive.value ? searchResults.value : files.value;
-  const map = new Map(list.map((f) => [f.path, f] as const));
-  const items: FileInfo[] = [];
-  for (const p of selectedPaths.value) {
-    const it = map.get(p);
-    if (it) items.push(it);
-  }
-  return items;
-}
-
-async function batchDownload() {
-  const items = getSelectedItems();
-  if (items.length === 0) return;
-
-  // 分离文件和文件夹
-  const files = items.filter((f) => f.kind !== "directory");
-  const folders = items.filter((f) => f.kind === "directory");
-
-  const totalCount = files.length + folders.length;
-  if (totalCount > 10) {
-    const ok = await confirmDialog({
-      title: "批量下载",
-      message: `将开始下载 ${totalCount} 个项目，可能会被浏览器拦截弹窗。继续吗？`,
-      confirmText: "继续下载",
-    });
-    if (!ok) return;
-  }
-
-  // 单文件使用浏览器原生下载
-  for (const f of files) {
-    filesService.downloadFile(f.path, browseCommit.value);
-  }
-
-  // 文件夹也使用浏览器原生下载
-  for (const f of folders) {
-    filesService.downloadFolder(f.path, browseCommit.value);
-  }
-
-  appStore.success(`已开始下载 ${totalCount} 个项目`);
-}
-
-async function batchDelete() {
-  const items = getSelectedItems();
-  if (items.length === 0) return;
-
-  const ok = await confirmDialog({
-    title: "批量删除",
-    message: `确定要删除 ${items.length} 项吗？此操作会生成一次或多次提交。`,
-    confirmText: "删除",
-    danger: true,
-  });
-  if (!ok) return;
-
-  try {
-    for (const f of items) {
-      await filesService.deleteFile(f.path, "批量删除");
-    }
-    appStore.success("批量删除完成");
-    clearSelection();
-    await refresh();
-    if (searchActive.value) {
-      await doSearch(false);
-    }
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : "批量删除失败");
-  }
-}
-
-async function batchMove() {
-  const items = getSelectedItems();
-  if (items.length === 0) return;
-
-  openMoveDialog(
-    items,
-    filesStore.currentPath || parentDirectoryPath(items[0]?.path || ""),
-  );
-}
-
-async function renameSelected() {
-  const items = getSelectedItems();
-  if (items.length !== 1) return;
-  await handleRenameEntry(items[0]);
 }
 </script>
 

@@ -16,13 +16,13 @@
   `embed` feature 将 `client/dist` 编入二进制。
 - 数据：SQLite（WAL）+ 内容寻址 blob 存储 + 快照/版本历史。
 
-### 验证基线（round 9 实测）
+### 验证基线（round 10 实测）
 
 - `cargo test --workspace`：通过（HTTP 集成 58 个 + `vfiles-http` 单元 7 个）。
 - `cargo clippy --workspace --all-targets`：无告警。
-- `client` 单测：15 个文件 / 67 个用例通过。
+- `client` 单测：16 个文件 / 74 个用例通过。
 - `vue-tsc --noEmit`：无错误；`eslint .`：无告警。
-- `bun run build`：成功；冒烟验证 `/api/files/directories` 与目录管理相关产物标记。
+- `bun run build`：成功；冒烟验证批量操作相关产物标记。
 
 ### 主要发现
 
@@ -188,6 +188,15 @@
 - 测试：路径构造/规整、移动目标的自身子目录与重名校验；目录名跟随、新建子目录后
   刷新（含搜索态重新搜索）、重命名跳转、删除需输入匹配目录名、跨目录新建后跳转。
 
+### 2.15 拆分 FileBrowser：批量选择与批量操作（round 10，稳定性）
+
+- 新增 `composables/useFileSelection.ts`：选择状态、Ctrl/⌘ 加选与 Shift 范围选择、
+  全选/半选、批量下载/删除/移动/重命名；视图数据与导航依赖通过 `deps` 注入。
+- `handleContextMenu` 复用 `narrowSelectionTo`，行为不变。
+- `FileBrowser.vue` 由 2430 行降至 2268 行；相比 round 7 起点累计 −1020 行（−31%）。
+- 测试：单项切换与退出批量清空、Ctrl+Shift 范围、全选/再点清空、批量删除刷新
+  （含搜索态重搜）、取消确认后不删除、批量移动使用当前目录、仅选中一项才重命名。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
@@ -208,7 +217,8 @@
   （round 8，2858 → 2625 行）。
 - `[x]` 目录管理与移动/路径计算抽为 `useDirectoryManager` + `utils/filePaths`
   （round 9，2625 → 2430 行）。
-- `[ ]` 继续抽出批量选择与桌面/移动工具栏模板，目标 < 1500 行。
+- `[x]` 批量选择/批量操作抽为 `useFileSelection`（round 10，2430 → 2268 行）。
+- `[ ]` 继续抽出预览/分享/历史等对话框编排与桌面/移动工具栏模板，目标 < 1500 行。
 - 验收：单文件行数持续下降，已有测试保持通过并补充拆分后的单元测试。
 
 ### 3.4 交互增强（中，对齐主流云盘）
