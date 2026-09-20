@@ -9,6 +9,11 @@ const { getFilesMock, searchFilesMock, deleteFileMock } = vi.hoisted(() => ({
   deleteFileMock: vi.fn(async () => ({ success: true })),
 }));
 
+vi.mock("../src/composables/dialog", () => ({
+  confirmDialog: vi.fn(async () => true),
+  promptDialog: vi.fn(async () => null),
+}));
+
 vi.mock("../src/services/files.service", () => ({
   filesService: {
     getFiles: getFilesMock,

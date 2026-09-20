@@ -169,6 +169,7 @@ import { ref, onBeforeUnmount, computed, watch } from "vue";
 import { IconHistory } from "@tabler/icons-vue";
 import { filesService } from "../../services/files.service";
 import { useAppStore } from "../../stores/app.store";
+import { confirmDialog } from "../../composables/dialog";
 import type { FileHistory } from "../../types";
 import CommitList from "./CommitList.vue";
 
@@ -594,9 +595,11 @@ async function restoreVersion(hash: string) {
   if (restoringHash.value) return;
 
   const short = hash.substring(0, 8);
-  const ok = window.confirm(
-    `确定要恢复到版本 ${short} 吗？这会生成一个新的提交。`,
-  );
+  const ok = await confirmDialog({
+    title: "恢复历史版本",
+    message: `确定要恢复到版本 ${short} 吗？这会生成一个新的提交。`,
+    confirmText: "恢复",
+  });
   if (!ok) return;
 
   restoringHash.value = hash;

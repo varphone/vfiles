@@ -270,6 +270,7 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
+import { confirmDialog } from "../../composables/dialog";
 import {
   IconArrowLeft,
   IconArrowsDiff,
@@ -531,8 +532,14 @@ function download() {
   emit("download", props.file);
 }
 
-function confirmDelete() {
-  if (confirm(`确定要删除 ${props.file.name} 吗？`)) {
+async function confirmDelete() {
+  const ok = await confirmDialog({
+    title: "删除确认",
+    message: `确定要删除 ${props.file.name} 吗？`,
+    confirmText: "删除",
+    danger: true,
+  });
+  if (ok) {
     emit("delete", props.file);
   }
 }

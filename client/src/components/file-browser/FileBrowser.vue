@@ -842,6 +842,7 @@ import FileUploader from "../file-uploader/FileUploader.vue";
 import VersionHistory from "../version-history/VersionHistory.vue";
 import Modal from "../common/Modal.vue";
 import ShareDialog from "../common/ShareDialog.vue";
+import { confirmDialog, promptDialog } from "../../composables/dialog";
 import type { FileInfo } from "../../types";
 
 let cachedMarked: any | null = null;
@@ -1507,7 +1508,11 @@ async function renameEntryPath(
 }
 
 async function promptCreateDirectory(parentPath: string = currentPath.value) {
-  const raw = prompt("输入目录名（仅名称，不含路径分隔符）", "");
+  const raw = await promptDialog({
+    title: "新建目录",
+    message: "输入目录名（仅名称，不含路径分隔符）",
+    placeholder: "目录名",
+  });
   if (raw == null) return;
 
   const name = normalizeEntryName(raw, "非法目录名");
@@ -1580,10 +1585,13 @@ async function deleteCurrentDir() {
   if (!currentPath.value) return;
 
   const expected = currentDirName.value;
-  const typed = prompt(
-    `危险操作：删除目录 /${currentPath.value}\n\n此操作会删除其下全部内容，并生成提交。\n请输入目录名“${expected}”以确认：`,
-    "",
-  );
+  const typed = await promptDialog({
+    title: "删除目录",
+    message: `危险操作：删除目录 /${currentPath.value}\n\n此操作会删除其下全部内容，并生成提交。\n请输入目录名“${expected}”以确认：`,
+    placeholder: expected,
+    confirmText: "删除",
+    danger: true,
+  });
   if (typed == null) return;
   if (typed.trim() !== expected) {
     appStore.error("确认失败：目录名不匹配");
@@ -2050,7 +2058,12 @@ async function handleCreateDirectory(file: FileInfo) {
 }
 
 async function handleRenameEntry(file: FileInfo) {
-  const raw = prompt("输入新名称（仅名称，不含路径分隔符）", file.name);
+  const raw = await promptDialog({
+    title: "重命名",
+    message: "输入新名称（仅名称，不含路径分隔符）",
+    defaultValue: file.name,
+    placeholder: file.name,
+  });
   if (raw == null) return;
 
   const name = normalizeEntryName(raw, "非法名称");
@@ -2262,9 +2275,11 @@ async function batchDownload() {
 
   const totalCount = files.length + folders.length;
   if (totalCount > 10) {
-    const ok = confirm(
-      `将开始下载 ${totalCount} 个项目，可能会被浏览器拦截弹窗。继续吗？`,
-    );
+    const ok = await confirmDialog({
+      title: "批量下载",
+      message: `将开始下载 ${totalCount} 个项目，可能会被浏览器拦截弹窗。继续吗？`,
+      confirmText: "继续下载",
+    });
     if (!ok) return;
   }
 
@@ -2285,9 +2300,12 @@ async function batchDelete() {
   const items = getSelectedItems();
   if (items.length === 0) return;
 
-  const ok = confirm(
-    `确定要删除 ${items.length} 项吗？此操作会生成一次或多次提交。`,
-  );
+  const ok = await confirmDialog({
+    title: "批量删除",
+    message: `确定要删除 ${items.length} 项吗？此操作会生成一次或多次提交。`,
+    confirmText: "删除",
+    danger: true,
+  });
   if (!ok) return;
 
   try {

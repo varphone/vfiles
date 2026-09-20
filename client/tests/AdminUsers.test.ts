@@ -13,6 +13,11 @@ const mockUsers = [
   },
 ];
 
+vi.mock("../src/composables/dialog", () => ({
+  confirmDialog: vi.fn(async () => true),
+  promptDialog: vi.fn(async () => null),
+}));
+
 vi.mock("../src/services/auth.service", async () => {
   const actual = await vi.importActual<
     typeof import("../src/services/auth.service")

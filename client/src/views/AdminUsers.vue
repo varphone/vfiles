@@ -140,6 +140,7 @@ import {
   type AdminUserCapabilities,
 } from "../services/auth.service";
 import { useAppStore } from "../stores/app.store";
+import { confirmDialog } from "../composables/dialog";
 import { useAuthStore } from "../stores/auth.store";
 
 const app = useAppStore();
@@ -263,9 +264,12 @@ async function toggleDisabled(u: AdminUser) {
 }
 
 async function revokeSessions(u: AdminUser) {
-  const ok = window.confirm(
-    `确定要强制下线用户 ${u.username} 吗？\n（将使其现有登录立即失效）`,
-  );
+  const ok = await confirmDialog({
+    title: "强制下线",
+    message: `确定要强制下线用户 ${u.username} 吗？\n（将使其现有登录立即失效）`,
+    confirmText: "强制下线",
+    danger: true,
+  });
   if (!ok) return;
 
   loading.value = true;

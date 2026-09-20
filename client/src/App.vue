@@ -1,12 +1,14 @@
 <template>
   <div id="app">
     <Notification />
+    <DialogHost />
     <router-view />
   </div>
 </template>
 
 <script setup lang="ts">
 import Notification from "./components/common/Notification.vue";
+import DialogHost from "./components/common/DialogHost.vue";
 </script>
 
 <style>
