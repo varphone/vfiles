@@ -7,7 +7,7 @@ use axum::{
 };
 use axum_extra::extract::{Multipart, cookie::CookieJar};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
+use tokio::io::AsyncWriteExt;
 
 use crate::{
     AppState,
@@ -196,32 +196,72 @@ async fn complete_upload(
 async fn upload_file(
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
-    mut multipart: Multipart,
+    multipart: Multipart,
 ) -> ApiResult<Json<serde_json::Value>> {
     let ctx = protected_request_context(&state, &jar).await?;
-    tracing::info!("Processing single file upload");
+    let temp_dir = state.config.storage.root.join("tmp");
+    tokio::fs::create_dir_all(&temp_dir).await.map_err(|err| {
+        ApiError::Internal(format!("Failed to create upload temp directory: {}", err))
+    })?;
+    let temp_path = temp_dir.join(format!("single-upload-{}.tmp", uuid::Uuid::new_v4()));
 
-    let mut file_data: Option<Vec<u8>> = None;
+    let result = process_single_upload(&state, &ctx, multipart, temp_path.as_std_path()).await;
+    let _ = tokio::fs::remove_file(temp_path.as_std_path()).await;
+    result
+}
+
+async fn process_single_upload(
+    state: &AppState,
+    ctx: &crate::routes::RequestContext,
+    mut multipart: Multipart,
+    temp_path: &std::path::Path,
+) -> ApiResult<Json<serde_json::Value>> {
+    tracing::info!("Processing streaming single file upload");
+
     let mut filename: Option<String> = None;
     let mut path: String = String::new();
     let mut message: String = "Upload file".to_string();
+    let mut file_size: u64 = 0;
+    let mut saw_file = false;
+    let max_upload_size = max_upload_size_bytes(state);
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
+    while let Some(mut field) = multipart.next_field().await.map_err(|err| {
         ApiError::Domain(DomainError::Validation {
-            message: format!("Failed to read multipart field: {}", e),
+            message: format!("Failed to read multipart field: {}", err),
         })
     })? {
         let name = field.name().unwrap_or("").to_string();
 
         match name.as_str() {
             "file" => {
-                filename = field.file_name().map(|s| s.to_string());
-                let data = field.bytes().await.map_err(|e| {
-                    ApiError::Domain(DomainError::Validation {
-                        message: format!("Failed to read file data: {}", e),
-                    })
+                saw_file = true;
+                filename = field.file_name().map(str::to_string);
+                let mut temp_file = tokio::fs::File::create(temp_path).await.map_err(|err| {
+                    ApiError::Internal(format!("Failed to create upload temp file: {}", err))
                 })?;
-                file_data = Some(data.to_vec());
+
+                while let Some(chunk) = field.chunk().await.map_err(|err| {
+                    ApiError::Domain(DomainError::Validation {
+                        message: format!("Failed to read file data: {}", err),
+                    })
+                })? {
+                    file_size = file_size.saturating_add(chunk.len() as u64);
+                    if file_size > max_upload_size {
+                        return Err(ApiError::Domain(DomainError::Validation {
+                            message: format!(
+                                "File too large. Maximum size is {} bytes",
+                                max_upload_size
+                            ),
+                        }));
+                    }
+                    temp_file.write_all(&chunk).await.map_err(|err| {
+                        ApiError::Internal(format!("Failed to write upload temp file: {}", err))
+                    })?;
+                }
+
+                temp_file.flush().await.map_err(|err| {
+                    ApiError::Internal(format!("Failed to flush upload temp file: {}", err))
+                })?;
             }
             "path" => {
                 let bytes = field.bytes().await.map_err(|_| {
@@ -245,16 +285,16 @@ async fn upload_file(
                     String::from_utf8(bytes.to_vec()).unwrap_or_else(|_| "Upload file".to_string());
             }
             _ => {
-                // Ignore unknown fields
+                // Ignore unknown fields.
             }
         }
     }
 
-    let file_data = file_data.ok_or_else(|| {
-        ApiError::Domain(DomainError::Validation {
+    if !saw_file {
+        return Err(ApiError::Domain(DomainError::Validation {
             message: "No file provided".to_string(),
-        })
-    })?;
+        }));
+    }
 
     let filename = filename.ok_or_else(|| {
         ApiError::Domain(DomainError::Validation {
@@ -262,7 +302,6 @@ async fn upload_file(
         })
     })?;
 
-    // Validate filename
     if filename.is_empty()
         || filename.contains('/')
         || filename.contains('\\')
@@ -271,16 +310,6 @@ async fn upload_file(
     {
         return Err(ApiError::Domain(DomainError::Validation {
             message: "Invalid filename".to_string(),
-        }));
-    }
-
-    // Validate file size
-    let max_upload_size = max_upload_size_bytes(&state);
-    if u64::try_from(file_data.len()).expect("multipart payload length should fit in u64")
-        > max_upload_size
-    {
-        return Err(ApiError::Domain(DomainError::Validation {
-            message: format!("File too large. Maximum size is {} bytes", max_upload_size),
         }));
     }
 
@@ -296,37 +325,37 @@ async fn upload_file(
             &ctx.namespace_id,
             &target_path,
             &filename,
-            file_data.len() as u64,
+            file_size,
             None,
-            Some(file_data.len() as u64),
+            Some(file_size.max(1)),
             &ctx.actor_user_id,
         )
         .await?;
 
-    let mut hasher = Sha256::new();
-    hasher.update(&file_data);
-    let sha256 = hex::encode(hasher.finalize());
-
-    state
-        .upload_service
-        .upload_part(&upload.upload_id, 0, &file_data)
-        .await?;
+    let temp_file = tokio::fs::File::open(temp_path)
+        .await
+        .map_err(|err| ApiError::Internal(format!("Failed to reopen upload temp file: {}", err)))?;
 
     let completed = state
         .upload_service
-        .complete_upload(&upload.upload_id, Some(&sha256), Some(message.as_str()))
+        .complete_upload_from_stream(
+            &upload.upload_id,
+            None,
+            Some(message.as_str()),
+            Box::new(temp_file),
+        )
         .await?;
 
     tracing::info!(
-        "Single file upload completed: {} ({} bytes)",
+        "Streaming single file upload completed: {} ({} bytes)",
         filename,
-        file_data.len()
+        file_size
     );
 
     Ok(Json(serde_json::json!({
         "upload_id": upload.upload_id.to_string(),
         "filename": filename,
-        "size": file_data.len(),
+        "size": file_size,
         "completed": true,
         "path": completed.entry.path_norm.as_str(),
         "version_id": completed.version.id.to_string(),
