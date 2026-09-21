@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/vue";
+import { fireEvent, render, screen } from "@testing-library/vue";
 import { describe, expect, it } from "vitest";
 import FileDetailsContent from "../src/components/file-browser/FileDetailsContent.vue";
 import type { FileInfo } from "../src/types";
@@ -41,6 +41,52 @@ describe("FileDetailsContent.vue", () => {
     expect(screen.getByText("文件夹")).toBeInTheDocument();
     expect(screen.getByText("--")).toBeInTheDocument();
     expect(screen.queryByText("最近提交")).toBeNull();
+  });
+
+  it("shows an image preview when a thumbnail url is available", async () => {
+    const { container } = render(FileDetailsContent as any, {
+      props: {
+        file: file({ name: "logo.png", path: "图片/logo.png" }),
+        previewUrl: "/api/files/thumbnail?path=...",
+      },
+    });
+
+    const image = container.querySelector(
+      ".details-preview-image",
+    ) as HTMLImageElement;
+    expect(image).not.toBeNull();
+    expect(image.getAttribute("src")).toContain("/api/files/thumbnail");
+
+    // 缩略图加载失败时回退到类型图标
+    await fireEvent.error(image);
+    expect(container.querySelector(".details-preview-image")).toBeNull();
+  });
+
+  it("renders the close button only when asked and emits close", async () => {
+    const { container, emitted } = render(FileDetailsContent as any, {
+      props: { file: file({ name: "a.txt" }), showClose: true },
+    });
+
+    const close = container.querySelector(
+      ".details-close",
+    ) as HTMLButtonElement;
+    expect(close).not.toBeNull();
+    await fireEvent.click(close);
+    expect(emitted("close")).toHaveLength(1);
+  });
+
+  it("shows the parent folder as the location", () => {
+    const { unmount } = render(FileDetailsContent as any, {
+      props: { file: file({ name: "main.ts", path: "src/lib/main.ts" }) },
+    });
+    expect(screen.getByText("/src/lib")).toBeInTheDocument();
+    unmount();
+
+    render(FileDetailsContent as any, {
+      props: { file: file({ name: "root.txt", path: "root.txt" }) },
+    });
+    expect(screen.getByText("位置")).toBeInTheDocument();
+    expect(screen.getAllByText("/").length).toBeGreaterThan(0);
   });
 
   it("only renders the actions slot when provided", () => {

@@ -1,7 +1,15 @@
 import { fireEvent, render, screen } from "@testing-library/vue";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import FileDetailsPanel from "../src/components/file-browser/FileDetailsPanel.vue";
 import type { FileInfo } from "../src/types";
+
+vi.mock("../src/services/files.service", () => ({
+  SEARCH_PAGE_SIZE: 100,
+  filesService: {
+    thumbnailUrl: (path: string, opts?: { size?: number }) =>
+      `/api/files/thumbnail?path=${encodeURIComponent(path)}&size=${opts?.size ?? 0}`,
+  },
+}));
 
 function file(overrides: Partial<FileInfo>): FileInfo {
   return {
@@ -16,6 +24,40 @@ function file(overrides: Partial<FileInfo>): FileInfo {
 }
 
 describe("FileDetailsPanel.vue", () => {
+  it("requests a thumbnail for image files only", () => {
+    const { container, unmount } = render(FileDetailsPanel as any, {
+      props: {
+        item: file({ name: "logo.png", path: "图片/logo.png" }),
+        commit: "abc123",
+      },
+    });
+    const image = container.querySelector(
+      ".details-preview-image",
+    ) as HTMLImageElement | null;
+    expect(image).not.toBeNull();
+    expect(image!.getAttribute("src")).toContain("size=320");
+    unmount();
+
+    // 非图片：不请求缩略图，显示类型图标
+    const text = render(FileDetailsPanel as any, {
+      props: { item: file({ name: "a.txt", path: "a.txt" }) },
+    });
+    expect(text.container.querySelector(".details-preview-image")).toBeNull();
+  });
+
+  it("emits close from the panel close button", async () => {
+    const { container, emitted } = render(FileDetailsPanel as any, {
+      props: { item: file({ name: "a.txt" }) },
+    });
+
+    const close = container.querySelector(
+      ".details-close",
+    ) as HTMLButtonElement;
+    expect(close).not.toBeNull();
+    await fireEvent.click(close);
+    expect(emitted("close")).toHaveLength(1);
+  });
+
   it("shows a placeholder when nothing is active", () => {
     render(FileDetailsPanel as any, { props: {} });
 

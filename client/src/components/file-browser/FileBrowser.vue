@@ -298,6 +298,8 @@
           <FileDetailsPanel
             v-if="detailsVisible"
             :item="detailItem"
+            :commit="browseCommit"
+            @close="fileView.toggleDetails()"
             @preview="handlePreview"
             @open-folder="handleOpenFolder"
             @download="handleDownload"

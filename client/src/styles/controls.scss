@@ -96,6 +96,18 @@
   color: var(--vf-accent-strong);
 }
 
+/* 主操作：用于「预览 / 打开」等首选动作，视觉上强于普通 ghost 按钮 */
+.vf-ghost-button.is-primary {
+  background: var(--vf-accent);
+  color: #fff;
+}
+
+.vf-ghost-button.is-primary:hover:not(:disabled),
+.vf-ghost-button.is-primary:focus-visible {
+  background: var(--vf-accent-strong);
+  color: #fff;
+}
+
 .vf-ghost-button.is-danger {
   color: var(--vf-danger-text);
 }

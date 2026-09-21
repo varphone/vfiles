@@ -1,11 +1,16 @@
 <template>
   <aside class="desktop-details" aria-label="详细信息">
     <template v-if="item">
-      <FileDetailsContent :file="item">
+      <FileDetailsContent
+        :file="item"
+        :preview-url="previewUrl"
+        show-close
+        @close="emit('close')"
+      >
         <template #actions>
           <button
             v-if="item.kind === 'file'"
-            class="vf-ghost-button"
+            class="vf-ghost-button is-primary details-primary"
             @click="emit('preview', item)"
           >
             <IconEye :size="16" />
@@ -13,7 +18,7 @@
           </button>
           <button
             v-else
-            class="vf-ghost-button"
+            class="vf-ghost-button is-primary details-primary"
             @click="emit('open-folder', item)"
           >
             <IconFolderOpen :size="16" />
@@ -40,7 +45,7 @@
             <span>移动</span>
           </button>
           <button
-            class="vf-ghost-button is-danger"
+            class="vf-ghost-button is-danger details-danger"
             @click="emit('delete', item)"
           >
             <IconTrash :size="16" />
@@ -58,6 +63,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import {
   IconArrowsDiff,
   IconDownload,
@@ -70,6 +76,8 @@ import {
   IconTrash,
 } from "@tabler/icons-vue";
 import type { FileInfo } from "../../types";
+import { filesService } from "../../services/files.service";
+import { isImageFile } from "../../utils/filePresentation";
 import FileDetailsContent from "./FileDetailsContent.vue";
 
 /**
@@ -78,8 +86,10 @@ import FileDetailsContent from "./FileDetailsContent.vue";
  * 只负责展示与事件上抛：当前条目、是否显示由父组件决定，避免这里再持有
  * 列表/选择状态。
  */
-defineProps<{
+const props = defineProps<{
   item?: FileInfo;
+  /** 浏览版本（用于按版本取缩略图）。 */
+  commit?: string;
 }>();
 
 const emit = defineEmits<{
@@ -91,7 +101,18 @@ const emit = defineEmits<{
   (e: "rename", file: FileInfo): void;
   (e: "move", file: FileInfo): void;
   (e: "delete", file: FileInfo): void;
+  (e: "close"): void;
 }>();
+
+/** 图片文件才请求缩略图；其它类型由内容组件回退到类型图标。 */
+const previewUrl = computed(() => {
+  const item = props.item;
+  if (!item || item.kind !== "file" || !isImageFile(item)) return undefined;
+  return filesService.thumbnailUrl(item.path, {
+    commit: props.commit,
+    size: 320,
+  });
+});
 </script>
 
 <style scoped>
@@ -103,6 +124,14 @@ const emit = defineEmits<{
   border-left: 1px solid var(--vf-border-weak);
   background: var(--vf-surface);
   min-width: 0;
+  /* 与列表一致：面板自身吸顶并内部滚动，长列表滚动时信息与操作始终可见 */
+  position: sticky;
+  top: calc(
+    var(--bulma-navbar-height, 3.25rem) + env(safe-area-inset-top) + 0.6rem
+  );
+  align-self: start;
+  max-height: calc(100vh - var(--bulma-navbar-height, 3.25rem) - 2rem);
+  overflow-y: auto;
 }
 
 .desktop-details-empty {
@@ -115,5 +144,11 @@ const emit = defineEmits<{
   text-align: center;
   color: var(--vf-text-subtle);
   font-size: 0.82rem;
+}
+
+/* 主操作（预览/打开）与危险操作横跨两列，形成清晰的主次 */
+.desktop-details :deep(.details-primary),
+.desktop-details :deep(.details-danger) {
+  grid-column: span 2;
 }
 </style>
