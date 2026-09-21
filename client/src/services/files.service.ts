@@ -378,6 +378,11 @@ export const filesService = {
     };
   },
 
+  /** 停用（删除）分享链接。 */
+  async disableShare(code: string): Promise<void> {
+    await apiService.delete(`/shares/${encodeURIComponent(code)}`);
+  },
+
   async getFiles(path: string = "", commit?: string): Promise<FileInfo[]> {
     const endpoint = path
       ? `/files/tree/${encodeURIComponent(path)}`

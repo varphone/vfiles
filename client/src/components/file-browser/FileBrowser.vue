@@ -689,6 +689,7 @@
     <ShareDialog
       :is-active="showShareDialog"
       :file-path="selectedFile?.path || ''"
+      :file="selectedFile || undefined"
       @close="showShareDialog = false"
     />
 
