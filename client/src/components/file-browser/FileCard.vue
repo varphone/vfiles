@@ -25,13 +25,23 @@
     @drop.prevent="handleDrop"
   >
     <div class="file-card-thumb">
+      <!-- 缩略图未就绪时先铺骨架，加载完成再淡入，避免大目录滚动时闪白 -->
+      <span
+        v-if="thumbnailUrl && !thumbLoaded && !thumbFailed"
+        class="skeleton-block file-card-thumb-placeholder"
+        aria-hidden="true"
+      ></span>
       <img
         v-if="thumbnailUrl"
+        ref="thumbImageRef"
         class="file-card-thumb-image"
+        :class="{ 'is-loaded': thumbLoaded }"
         :src="thumbnailUrl"
         :alt="file.name"
         loading="lazy"
         decoding="async"
+        fetchpriority="low"
+        @load="thumbLoaded = true"
         @error="thumbFailed = true"
       />
       <span v-else class="icon file-card-thumb-icon">
@@ -327,6 +337,8 @@ function onRenameBlur() {
 
 const menuOpen = ref(false);
 const thumbFailed = ref(false);
+const thumbLoaded = ref(false);
+
 const dragOver = ref(false);
 
 const isDirectoryEntry = computed(() => props.file.kind === "directory");
@@ -357,6 +369,18 @@ const icon = computed(() => {
 });
 
 const thumbnailUrl = computed(() => {
+
+const thumbImageRef = ref<HTMLImageElement | null>(null);
+
+// 命中缓存时 load 事件可能在挂载前就结束，这里补一次检查，避免缩略图一直透明
+watch(
+  [thumbImageRef, thumbnailUrl],
+  () => {
+    const image = thumbImageRef.value;
+    if (image?.complete && image.naturalWidth > 0) thumbLoaded.value = true;
+  },
+  { immediate: true, flush: "post" },
+);
   if (thumbFailed.value) return "";
   if (!isImageFile(props.file)) return "";
   return filesService.thumbnailUrl(props.file.path, {
@@ -559,10 +583,32 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+.file-card-thumb-placeholder {
+  position: absolute;
+  inset: 0;
+  border-radius: 0;
+  background: var(--vf-skeleton-base);
+}
+
 .file-card-thumb-image {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  /* 加载完成后淡入（配合骨架占位） */
+  opacity: 0;
+  transition: opacity 0.18s ease-out;
+  object-position: center;
+}
+
+.file-card-thumb-image.is-loaded {
+  opacity: 1;
+}
+
+/* 关闭动画（系统设置）时直接显示 */
+@media (prefers-reduced-motion: reduce) {
+  .file-card-thumb-image {
+    transition: none;
+  }
 }
 
 .file-card-thumb-icon {
