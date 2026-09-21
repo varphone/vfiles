@@ -25,6 +25,7 @@ use vfiles_infra_sqlite::{
 #[derive(Debug, Parser)]
 #[command(name = "vfiles")]
 #[command(about = "VFiles server")]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
