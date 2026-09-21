@@ -212,11 +212,15 @@
               </EmptyState>
 
               <template v-else>
-                <div v-if="searchActive" class="desktop-list-meta">
-                  搜索结果：{{ searchResults.length }} 项（{{
-                    searchMode === "content" ? "内容" : "文件名"
-                  }}）
-                </div>
+                <SearchResultToolbar
+                  v-if="searchActive"
+                  class="desktop-list-meta"
+                  :results="searchResults"
+                  :active="resultFilter"
+                  :query="searchQuery"
+                  :visible-count="desktopItems.length"
+                  @update:active="setResultFilter"
+                />
 
                 <FileGrid
                   v-if="viewMode === 'grid'"
@@ -227,6 +231,7 @@
                   :selected-paths="selectedPaths"
                   :active-path="desktopActivePath"
                   :thumbnail-size="fileView.thumbnailSize"
+                  :show-location="searchActive"
                   @click="handleItemClick"
                   @download="handleDownload"
                   @rename="handleRenameEntry"
@@ -251,6 +256,7 @@
                   v-else
                   :files="desktopItems"
                   :highlight="searchActive ? searchQuery : ''"
+                  :show-location="searchActive"
                   :select-mode="batchMode"
                   :selected-paths="selectedPaths"
                   :expanded-path="expandedFilePath"
@@ -380,11 +386,13 @@
         />
 
         <div v-else-if="searchActive" class="file-list">
-          <p class="has-text-grey is-size-7 mb-2">
-            搜索结果：{{ searchResults.length }} 项（{{
-              searchMode === "content" ? "内容" : "文件名"
-            }}）
-          </p>
+          <SearchResultToolbar
+            :results="searchResults"
+            :active="resultFilter"
+            :query="searchQuery"
+            :visible-count="visibleSearchResults.length"
+            @update:active="setResultFilter"
+          />
           <EmptyState
             v-if="searchResults.length === 0"
             :icon="IconSearch"
@@ -810,6 +818,7 @@ import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 import { useFileViewStore } from "../../stores/fileView.store";
 import FileList from "./FileList.vue";
+import SearchResultToolbar from "./SearchResultToolbar.vue";
 import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
 import FilePreviewModal from "./FilePreviewModal.vue";
@@ -834,11 +843,15 @@ import ShareDialog from "../common/ShareDialog.vue";
 import { copyText } from "../../utils/clipboard";
 import { useDownloadQueue } from "../../composables/useDownloadQueue";
 import { useFilePreview } from "../../composables/useFilePreview";
-import { useFileSearch } from "../../composables/useFileSearch";
+import {
+  useFileSearch,
+  type SearchResultFilter,
+} from "../../composables/useFileSearch";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
 import { columnsFromElements } from "../../utils/gridLayout";
+import { fileIconKind } from "../../utils/filePresentation";
 import { useMoveDialog } from "../../composables/useMoveDialog";
 import { useTouchGestures } from "../../composables/useTouchGestures";
 import type { FileInfo } from "../../types";
@@ -1086,6 +1099,8 @@ const previewableFiles = computed<FileInfo[]>(() =>
 );
 
 const {
+  resultFilter,
+  setResultFilter,
   searchQuery,
   searchResults,
   searchLoading,
@@ -1467,8 +1482,35 @@ const navigationListItems = computed<FileInfo[]>(() =>
   sortBrowserItems(files.value, sortState.value),
 );
 
+/** 搜索结果按图标分类归入筛选桶（与搜索工具条的 chips 口径一致）。 */
+function searchResultBucket(file: FileInfo): SearchResultFilter {
+  switch (fileIconKind(file)) {
+    case "folder":
+      return "folder";
+    case "image":
+      return "image";
+    case "video":
+      return "video";
+    case "audio":
+      return "audio";
+    case "text":
+    case "code":
+    case "pdf":
+      return "document";
+    default:
+      return "other";
+  }
+}
+
+const filteredSearchResults = computed<FileInfo[]>(() => {
+  if (resultFilter.value === "all") return searchResults.value;
+  return searchResults.value.filter(
+    (file) => searchResultBucket(file) === resultFilter.value,
+  );
+});
+
 const sortedSearchResults = computed<FileInfo[]>(() => {
-  return sortFiles(searchResults.value, sortState.value);
+  return sortFiles(filteredSearchResults.value, sortState.value);
 });
 
 const activeList = computed(() =>

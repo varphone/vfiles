@@ -95,6 +95,15 @@
         </template>
       </span>
 
+      <span
+        v-if="showLocation && locationLabel"
+        class="desktop-name-location"
+        :title="locationLabel"
+      >
+        <IconFolder :size="12" />
+        <span class="desktop-name-location-text">{{ locationLabel }}</span>
+      </span>
+
       <!-- 行内操作入口：hover / 选中 / 触屏常驻，菜单与右键菜单一致 -->
       <button
         ref="rowMenuButton"
@@ -406,6 +415,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { confirmDialog } from "../../composables/dialog";
 import {
   IconArrowsDiff,
+  IconFolder,
   IconFolderPlus,
   IconFolderOpen,
   IconHistory,
@@ -436,7 +446,16 @@ const props = defineProps<{
   renaming?: boolean;
   /** 是否显示「操作」列（详情面板可见时由父组件关闭） */
   showActionColumn?: boolean;
+  /** 搜索结果中显示所在目录 */
+  showLocation?: boolean;
 }>();
+
+/** 条目所在目录（搜索结果用）：`/` 表示根目录。 */
+const locationLabel = computed(() => {
+  const parts = (props.file.path || "").split("/");
+  parts.pop();
+  return parts.length ? `/${parts.join("/")}` : "/";
+});
 
 const emit = defineEmits<{
   click: [file: FileInfo];
@@ -834,6 +853,25 @@ function share() {
 .desktop-name-cell {
   position: relative;
   padding-right: 2.1rem !important;
+}
+
+/* 搜索结果：名称下方显示所在目录，帮助区分同名文件 */
+.desktop-name-location {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  max-width: 100%;
+  margin-top: 0.1rem;
+  color: var(--vf-text-subtle);
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.desktop-name-location-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 行内操作入口「⋯」：默认隐藏，hover / 聚焦 / 选中 / 触屏时出现。

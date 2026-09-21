@@ -9,6 +9,16 @@ const SEARCH_HISTORY_KEY = "vfiles.searchHistory";
  *
  * 从 FileBrowser 抽出；搜索请求带序号，快速连续搜索时只接受最新结果。
  */
+/** 搜索结果可用的类型筛选。 */
+export type SearchResultFilter =
+  | "all"
+  | "folder"
+  | "document"
+  | "image"
+  | "video"
+  | "audio"
+  | "other";
+
 export function useFileSearch(currentPath: Ref<string>) {
   const searchQuery = ref("");
   const searchResults = ref<FileInfo[]>([]);
@@ -79,6 +89,13 @@ export function useFileSearch(currentPath: Ref<string>) {
     desktopSearchOpen.value = !desktopSearchOpen.value;
   }
 
+  /** 搜索结果类型筛选：all / folder / document / image / video / audio / other */
+  const resultFilter = ref<SearchResultFilter>("all");
+
+  function setResultFilter(filter: SearchResultFilter) {
+    resultFilter.value = filter;
+  }
+
   function clearSearch() {
     // 使仍在途的搜索请求失效，避免清空后旧结果又回填
     searchSequence += 1;
@@ -88,6 +105,7 @@ export function useFileSearch(currentPath: Ref<string>) {
     searchActive.value = false;
     searchHasMore.value = false;
     searchLoadingMore.value = false;
+    resultFilter.value = "all";
   }
 
   async function runSearch() {
@@ -106,9 +124,10 @@ export function useFileSearch(currentPath: Ref<string>) {
     const requestId = ++searchSequence;
     searchLoading.value = true;
     searchActive.value = true;
-    // 新一轮搜索重置分页状态，避免上一轮的「还有更多」残留
+    // 新一轮搜索重置分页与筛选状态，避免上一轮残留
     searchHasMore.value = false;
     searchLoadingMore.value = false;
+    resultFilter.value = "all";
 
     if (pushHistoryEnabled) {
       pushSearchHistory(query);
@@ -187,6 +206,8 @@ export function useFileSearch(currentPath: Ref<string>) {
   loadSearchHistory();
 
   return {
+    resultFilter,
+    setResultFilter,
     searchQuery,
     searchResults,
     searchLoading,

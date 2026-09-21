@@ -166,6 +166,14 @@
           <span v-else>{{ seg.text }}</span>
         </template>
       </div>
+      <div
+        v-if="showLocation && locationLabel"
+        class="file-card-location"
+        :title="locationLabel"
+      >
+        <IconFolder :size="11" />
+        <span class="file-card-location-text">{{ locationLabel }}</span>
+      </div>
       <div class="file-card-meta" :title="dateTitle">
         <span v-if="file.kind === 'file'">{{ sizeLabel }}</span>
         <span class="file-card-meta-sep" v-if="file.kind === 'file'">·</span>
@@ -221,6 +229,8 @@ const props = withDefaults(
     selected?: boolean;
     active?: boolean;
     thumbnailSize?: number;
+    /** 搜索结果中显示所在目录 */
+    showLocation?: boolean;
   }>(),
   {
     commit: undefined,
@@ -231,6 +241,13 @@ const props = withDefaults(
     thumbnailSize: 144,
   },
 );
+
+/** 条目所在目录（搜索结果用）：`/` 表示根目录。 */
+const locationLabel = computed(() => {
+  const parts = (props.file.path || "").split("/");
+  parts.pop();
+  return parts.length ? `/${parts.join("/")}` : "/";
+});
 
 const emit = defineEmits<{
   click: [file: FileInfo];
@@ -657,6 +674,23 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 1.9rem;
   font-size: 0.8rem;
+}
+
+/* 搜索结果：卡片上标出所在目录 */
+.file-card-location {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  max-width: 100%;
+  color: var(--vf-text-subtle);
+  font-size: 0.7rem;
+}
+
+.file-card-location-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-card-name {

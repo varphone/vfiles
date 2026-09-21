@@ -67,6 +67,7 @@
           @rename="emit('rename', file)"
           :renaming="renamingPath === file.path"
           :show-action-column="showActionColumn"
+          :show-location="showLocation"
           @rename-commit="(target, name) => emit('rename-commit', target, name)"
           @rename-cancel="(target) => emit('rename-cancel', target)"
           @move="emit('move', file)"
@@ -162,6 +163,8 @@ const props = withDefaults(
     renamingPath?: string;
     /** 是否显示「操作」列；详情面板可见时可关掉，避免与面板里的操作重复。 */
     showActionColumn?: boolean;
+    /** 搜索结果里显示条目所在目录（主流网盘搜索结果的必要信息）。 */
+    showLocation?: boolean;
     highlight?: string;
     selectMode: boolean;
     selectedPaths: Set<string>;
@@ -173,6 +176,7 @@ const props = withDefaults(
   }>(),
   {
     showActionColumn: true,
+    showLocation: false,
     renamingPath: "",
     highlight: "",
     expandedPath: "",
@@ -186,6 +190,7 @@ const props = withDefaults(
 const {
   files,
   highlight,
+  showLocation,
   selectMode,
   selectedPaths,
   expandedPath,

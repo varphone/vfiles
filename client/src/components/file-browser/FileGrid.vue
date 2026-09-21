@@ -15,6 +15,7 @@
         (!selectMode && activePath === file.path)
       "
       :active="activePath === file.path"
+      :show-location="showLocation"
       :thumbnail-size="thumbnailSize"
       @click="emit('click', file)"
       @download="emit('download', file)"
@@ -78,6 +79,8 @@ const props = withDefaults(
     selectedPaths: Set<string>;
     activePath?: string;
     thumbnailSize?: number;
+    /** 搜索结果中显示所在目录 */
+    showLocation?: boolean;
   }>(),
   {
     renamingPath: "",

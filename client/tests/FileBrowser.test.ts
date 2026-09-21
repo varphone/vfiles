@@ -197,7 +197,7 @@ describe("FileBrowser.vue", () => {
     await fireEvent.update(input, "match");
     await fireEvent.keyUp(input, { key: "Enter", code: "Enter", charCode: 13 });
 
-    await findByText("搜索结果：1 项（文件名）");
+    await findByText("找到 1 项");
     const [fileName] = await findAllByText(
       (_, element) => element?.textContent === "match.txt",
     );
@@ -213,7 +213,7 @@ describe("FileBrowser.vue", () => {
     });
 
     await findByText("没有找到匹配的文件");
-    expect(queryByText("搜索结果：1 项（文件名）")).not.toBeInTheDocument();
+    expect(queryByText("找到 1 项")).not.toBeInTheDocument();
   });
 
   it("renders grid cards and applies the selected sort order", async () => {
