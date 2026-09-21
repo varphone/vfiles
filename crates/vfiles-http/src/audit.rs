@@ -21,6 +21,7 @@ pub mod action {
     pub const FILE_DELETE: &str = "file.delete";
     pub const FILE_MOVE: &str = "file.move";
     pub const FILE_RENAME: &str = "file.rename";
+    pub const FILE_TRANSFER: &str = "file.transfer";
     pub const FILE_RESTORE: &str = "file.restore";
     pub const DIR_CREATE: &str = "directory.create";
     pub const SHARE_CREATE: &str = "share.create";

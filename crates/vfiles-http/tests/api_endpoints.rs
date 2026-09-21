@@ -274,6 +274,12 @@ impl TestApp {
             audit_service: vfiles_app::AuditService::new(
                 vfiles_infra_sqlite::SqliteAuditLogRepo::new(pool.clone()),
             ),
+            ownership_service: vfiles_app::OwnershipService::new(
+                Arc::new(vfiles_infra_sqlite::SqliteEntryRepo::new(pool.clone())),
+                Arc::new(vfiles_infra_sqlite::SqliteNamespaceRepo::new(pool.clone())),
+                Arc::new(vfiles_infra_sqlite::SqliteUserRepo::new(pool.clone())),
+                Arc::new(vfiles_infra_sqlite::SqliteSnapshotRepo::new(pool.clone())),
+            ),
             snapshot_repo: Arc::new(snapshot_repo),
             blob_store: Arc::new(blob_store),
             upload_store: Arc::new(upload_store),
@@ -2466,6 +2472,216 @@ async fn expired_share_can_still_be_disabled_by_owner() {
         Some(0),
         "停止后列表应为空: {payload:?}"
     );
+}
+
+/// 所有权转移：文件连同版本历史转给另一个用户，双方各自能看到应有的内容。
+#[tokio::test]
+async fn transfer_moves_entry_and_version_history_to_target_user() {
+    let app = TestApp::new().await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+
+    // admin 上传两个版本，制造历史
+    app.upload_version("docs", "交接.txt", b"v1\n", "第一版")
+        .await;
+    app.upload_version("docs", "交接.txt", b"v2 content\n", "第二版")
+        .await;
+
+    // alice 接收
+    app.register_user("receiver", "receiver@example.com", "receiver-password")
+        .await;
+    let alice_cookie = app.login_cookie("receiver", "receiver-password").await;
+    let alice_bootstrap = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/session/bootstrap")
+                .body(Body::empty())
+                .expect("request should build"),
+            &alice_cookie,
+        )
+        .await;
+    let target_user_id = response_json(alice_bootstrap).await["current_user"]
+        .as_str()
+        .expect("target user id")
+        .to_string();
+
+    let transfer = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/transfer",
+            json!({ "paths": ["docs/交接.txt"], "target_user_id": target_user_id }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(
+        transfer.status(),
+        StatusCode::OK,
+        "转移应成功: {}",
+        String::from_utf8_lossy(&response_bytes(transfer).await)
+    );
+
+    // 源侧：文件消失
+    let source_list = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/files/tree/docs")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let source_payload = response_json(source_list).await;
+    let source_names: Vec<&str> = source_payload
+        .as_array()
+        .expect("source tree")
+        .iter()
+        .filter_map(|item| item["name"].as_str())
+        .collect();
+    assert!(
+        !source_names.contains(&"交接.txt"),
+        "源用户不应再看到该文件: {source_names:?}"
+    );
+
+    // 目标侧：文件出现，且**版本历史完整**
+    let target_list = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/files/tree/docs")
+                .body(Body::empty())
+                .expect("request should build"),
+            &alice_cookie,
+        )
+        .await;
+    let target_payload = response_json(target_list).await;
+    let target_names: Vec<&str> = target_payload
+        .as_array()
+        .expect("target tree")
+        .iter()
+        .filter_map(|item| item["name"].as_str())
+        .collect();
+    assert!(
+        target_names.contains(&"交接.txt"),
+        "目标用户应看到该文件: {target_names:?}"
+    );
+
+    let history = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/history?path=docs/交接.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+            &alice_cookie,
+        )
+        .await;
+    assert_eq!(history.status(), StatusCode::OK);
+    let history_payload = response_json(history).await;
+    // 历史接口返回 { success, data: { commits: [...] } }
+    let messages: Vec<&str> = history_payload["data"]["commits"]
+        .as_array()
+        .expect("commits")
+        .iter()
+        .filter_map(|commit| commit["message"].as_str())
+        .collect();
+    assert!(
+        messages.iter().any(|message| message.contains("第一版"))
+            && messages.iter().any(|message| message.contains("第二版")),
+        "版本历史应随所有权一起转移: {messages:?}"
+    );
+
+    // 不能转给自己
+    let admin_bootstrap = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/session/bootstrap")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let admin_id = response_json(admin_bootstrap).await["current_user"]
+        .as_str()
+        .expect("admin id")
+        .to_string();
+    app.upload_version("", "自转.txt", b"x", "seed").await;
+    let self_transfer = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/transfer",
+            json!({ "paths": ["自转.txt"], "target_user_id": admin_id }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(self_transfer.status(), StatusCode::BAD_REQUEST);
+}
+
+/// 转移冲突与鉴权：目标已有同名条目时整体失败；未登录不可调用。
+#[tokio::test]
+async fn transfer_rejects_conflicts_and_requires_auth() {
+    let app = TestApp::new().await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+    app.upload_version("", "同名.txt", b"admin\n", "seed").await;
+
+    app.register_user("owner2", "owner2@example.com", "owner2-password")
+        .await;
+    let other_cookie = app.login_cookie("owner2", "owner2-password").await;
+    app.upload_version_with_cookie(&other_cookie, "", "同名.txt", b"other\n", "seed")
+        .await;
+
+    let bootstrap = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/session/bootstrap")
+                .body(Body::empty())
+                .expect("request should build"),
+            &other_cookie,
+        )
+        .await;
+    let target_id = response_json(bootstrap).await["current_user"]
+        .as_str()
+        .expect("user id")
+        .to_string();
+
+    let conflict = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/transfer",
+            json!({ "paths": ["同名.txt"], "target_user_id": target_id }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(
+        conflict.status(),
+        StatusCode::CONFLICT,
+        "目标已有同名条目应返回冲突"
+    );
+
+    let anonymous = app
+        .json_request(
+            Method::POST,
+            "/api/files/transfer",
+            json!({ "paths": ["同名.txt"], "target_user_id": target_id }),
+        )
+        .await;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+
+    // 目标用户列表：只包含其他可用用户
+    let targets = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/files/users/directory")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let target_payload = response_json(targets).await;
+    let names: Vec<&str> = target_payload
+        .as_array()
+        .expect("targets")
+        .iter()
+        .filter_map(|item| item["username"].as_str())
+        .collect();
+    assert!(names.contains(&"owner2"), "应列出其他用户: {names:?}");
+    assert!(!names.contains(&"admin"), "不应包含自己: {names:?}");
 }
 
 /// 审计日志：登录/上传/下载都会被记录，只有管理员可读，且接口不提供修改入口。

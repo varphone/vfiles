@@ -163,7 +163,33 @@
 - 文件：`file.upload`、`file.download`、`file.delete`、`file.move`
 - 分享：`share.create`、`share.disable`、`share.download`
 - 用户管理：`user.create`、`user.update`、`user.sessions_revoke`
+- 文件操作：`file.transfer`（转移所有权给其他用户）
 - 审计自身：`audit.export`（导出只读日志）
+
+## 转移所有权
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/files/users/directory` | 可作为转移目标的其他用户（启用中，排除自己），需登录 |
+| POST | `/api/files/transfer` | 把当前用户名下的条目（含目录子树）转给另一个用户 |
+
+`POST /api/files/transfer` 请求体：
+
+```json
+{ "paths": ["交接资料", "个人笔记.txt"], "target_user_id": "<uuid>", "message": "项目交接" }
+```
+
+响应：`{ "transferred": 4, "target_username": "alice" }`
+
+行为约定：
+
+- **版本历史随条目一起转移**（`entry_versions` 按条目 ID 关联，blob 为全局内容寻址存储，无需复制）；
+- 目录会连同整棵子树一起转移；
+- 目标命名空间缺少的祖先目录会自动补齐（例如只转 `docs/a.txt` 时会为对方创建 `docs`）；
+- 目标用户已有同名路径时整体失败（`409 CONFLICT`），不会静默覆盖；
+- 不能转移根目录，也不能转给自己（`400`）；源路径之间不允许重叠（`409`）；
+- 源与目标命名空间各写一条快照（`转移给 X…` / `接收来自 Y…`，备注会带上）；
+- 转移会写入审计日志：动作 `file.transfer`，说明形如「转移给 alice（4 个条目，含版本历史）」。
 
 ## 分享链接管理
 

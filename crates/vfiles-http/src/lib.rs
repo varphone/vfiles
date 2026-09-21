@@ -65,6 +65,8 @@ pub struct AppState {
     /// FTP 批量导入的运行计数（由 bin 装配注入，HTTP 与 FTP 共用同一实例）。
     pub ingest_stats: Arc<vfiles_app::IngestStats>,
     pub share_download_limiter: Arc<FixedWindowLimiter>,
+    /// 所有权转移（文件/目录交给另一个用户，版本历史随行）。
+    pub ownership_service: vfiles_app::OwnershipService,
     /// 审计日志：只追加、只查询（数据库触发器禁止修改/删除）。
     pub audit_service: vfiles_app::AuditService<vfiles_infra_sqlite::SqliteAuditLogRepo>,
     pub default_namespace_id: NamespaceId,

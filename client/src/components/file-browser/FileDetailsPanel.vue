@@ -67,6 +67,14 @@
         <button
           class="vf-ghost-button details-selection-wide"
           type="button"
+          @click="emit('transfer-selection')"
+        >
+          <IconUserShare :size="16" />
+          <span>转移所有权</span>
+        </button>
+        <button
+          class="vf-ghost-button details-selection-wide"
+          type="button"
           @click="emit('clear-selection')"
         >
           <span>清空选择</span>
@@ -126,6 +134,10 @@
             <IconArrowsDiff :size="16" />
             <span>移动</span>
           </button>
+          <button class="vf-ghost-button" @click="emit('transfer', item)">
+            <IconUserShare :size="16" />
+            <span>转移所有权</span>
+          </button>
           <button
             class="vf-ghost-button is-danger details-danger"
             @click="emit('delete', item)"
@@ -160,6 +172,7 @@ import {
   IconPencil,
   IconShare,
   IconTrash,
+  IconUserShare,
   IconX,
 } from "@tabler/icons-vue";
 import type { FileInfo } from "../../types";
@@ -194,9 +207,11 @@ const emit = defineEmits<{
   (e: "view-history", file: FileInfo): void;
   (e: "rename", file: FileInfo): void;
   (e: "move", file: FileInfo): void;
+  (e: "transfer", file: FileInfo): void;
   (e: "delete", file: FileInfo): void;
   (e: "close"): void;
   (e: "download-selection"): void;
+  (e: "transfer-selection"): void;
   (e: "move-selection"): void;
   (e: "delete-selection"): void;
   (e: "select-all"): void;

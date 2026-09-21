@@ -24,6 +24,14 @@
       </button>
       <button
         class="vf-ghost-button"
+        :disabled="selectedCount === 0"
+        title="把所选条目（含版本历史）交给另一个用户"
+        @click="emit('transfer')"
+      >
+        转移所有权
+      </button>
+      <button
+        class="vf-ghost-button"
         :disabled="selectedCount !== 1"
         @click="emit('rename')"
       >
@@ -54,6 +62,7 @@ const emit = defineEmits<{
   (e: "clear-selection"): void;
   (e: "download"): void;
   (e: "move"): void;
+  (e: "transfer"): void;
   (e: "rename"): void;
   (e: "delete"): void;
 }>();

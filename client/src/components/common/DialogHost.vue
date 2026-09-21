@@ -2,6 +2,7 @@
   <Modal
     :show="dialog !== null"
     :title="dialog?.title ?? '确认操作'"
+    layer="overlay"
     @close="cancel"
   >
     <template v-if="dialog">
@@ -48,17 +49,14 @@ import {
 const inputValue = ref("");
 const inputRef = ref<HTMLInputElement | null>(null);
 
-watch(
-  dialog,
-  async (request: DialogRequest | null) => {
-    inputValue.value = request?.defaultValue ?? "";
-    if (request?.kind === "prompt") {
-      await nextTick();
-      inputRef.value?.focus();
-      inputRef.value?.select();
-    }
-  },
-);
+watch(dialog, async (request: DialogRequest | null) => {
+  inputValue.value = request?.defaultValue ?? "";
+  if (request?.kind === "prompt") {
+    await nextTick();
+    inputRef.value?.focus();
+    inputRef.value?.select();
+  }
+});
 
 function cancel() {
   resolveDialog(dialog.value?.kind === "prompt" ? null : false);
@@ -66,9 +64,7 @@ function cancel() {
 
 function accept() {
   if (!dialog.value) return;
-  resolveDialog(
-    dialog.value.kind === "prompt" ? inputValue.value : true,
-  );
+  resolveDialog(dialog.value.kind === "prompt" ? inputValue.value : true);
 }
 </script>
 

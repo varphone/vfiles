@@ -276,6 +276,20 @@ impl UserRepo for SqliteUserRepo {
 
         Ok(users)
     }
+
+    async fn list_transfer_targets(&self, exclude: &UserId) -> DomainResult<Vec<User>> {
+        let rows: Vec<UserRow> = sqlx::query_as(
+            "SELECT id, username, email, password_hash, role, disabled, created_at, updated_at, password_changed_at FROM users WHERE id != ? AND disabled = 0 ORDER BY username ASC LIMIT 500"
+        )
+        .bind(exclude.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list transfer targets: {}", e),
+        })?;
+
+        rows.into_iter().map(user_from_row).collect()
+    }
 }
 
 #[derive(Debug)]
@@ -1543,6 +1557,48 @@ impl EntryRepo for SqliteEntryRepo {
                     message: format!("Failed to move entry: {}", e),
                 },
             })?;
+        Ok(())
+    }
+
+    async fn transfer_entries(&self, moves: &[(EntryId, NamespaceId)]) -> DomainResult<()> {
+        if moves.is_empty() {
+            return Ok(());
+        }
+
+        let now = time::OffsetDateTime::now_utc();
+        let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to begin transfer transaction: {}", e),
+        })?;
+
+        for (entry_id, namespace_id) in moves {
+            let result =
+                sqlx::query("UPDATE entries SET namespace_id = ?, updated_at = ? WHERE id = ?")
+                    .bind(namespace_id.to_string())
+                    .bind(now)
+                    .bind(entry_id.to_string())
+                    .execute(&mut *tx)
+                    .await;
+
+            match result {
+                Ok(_) => {}
+                // (namespace_id, path) 唯一约束：目标命名空间下已有同名路径
+                Err(sqlx::Error::Database(ref db_err)) if db_err.is_unique_violation() => {
+                    return Err(DomainError::PathConflict {
+                        message: "target namespace already has an entry at this path".to_string(),
+                    });
+                }
+                Err(e) => {
+                    return Err(DomainError::Internal {
+                        message: format!("Failed to transfer entry: {}", e),
+                    });
+                }
+            }
+        }
+
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to commit transfer transaction: {}", e),
+        })?;
+
         Ok(())
     }
 

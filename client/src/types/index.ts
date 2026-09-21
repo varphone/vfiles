@@ -35,6 +35,17 @@ export interface CategoryUsage {
   file_count: number;
 }
 
+/** 所有权转移目标用户（GET /api/files/users/directory）。 */
+export interface TransferTarget {
+  id: string;
+  username: string;
+}
+
+export interface TransferOwnershipResult {
+  transferred: number;
+  target_username: string;
+}
+
 /** 审计日志条目（GET /api/audit/logs，只读）。 */
 export interface AuditLogEntry {
   id: string;

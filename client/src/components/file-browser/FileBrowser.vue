@@ -328,6 +328,7 @@
             @share="handleShare"
             @download-selection="batchDownload"
             @move-selection="batchMove"
+            @transfer-selection="openTransferDialog(selectedItems)"
             @delete-selection="batchDelete"
             @select-all="selectAllVisible"
             @clear-selection="clearSelection"
@@ -337,6 +338,7 @@
             @rename-commit="commitRenameEntry"
             @rename-cancel="cancelRenameEntry"
             @move="handleMoveEntry"
+            @transfer="openTransferDialog([$event])"
             @delete="handleDelete"
           />
         </div>
@@ -781,6 +783,14 @@
       :target-label="dropTargetLabel"
     />
 
+    <TransferOwnershipDialog
+      ref="transferDialogRef"
+      :show="showTransferDialog"
+      :items="transferItems"
+      @close="closeTransferDialog"
+      @transfer="submitTransfer"
+    />
+
     <KeyboardShortcutsDialog
       :show="showShortcuts"
       @close="showShortcuts = false"
@@ -832,6 +842,7 @@ import {
   IconArrowsDiff,
   IconDownload,
   IconShare,
+  IconUserShare,
   IconTrash,
   IconInfoCircle,
   IconKeyboard,
@@ -845,6 +856,7 @@ import { useAuthStore } from "../../stores/auth.store";
 import { useFileViewStore } from "../../stores/fileView.store";
 import FileList from "./FileList.vue";
 import KeyboardShortcutsDialog from "./KeyboardShortcutsDialog.vue";
+import TransferOwnershipDialog from "./TransferOwnershipDialog.vue";
 import SearchResultToolbar from "./SearchResultToolbar.vue";
 import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
@@ -970,6 +982,46 @@ const detailsDialogFile = ref<FileInfo | null>(null);
 const showHistory = ref(false);
 const showShareDialog = ref(false);
 const showShortcuts = ref(false);
+const showTransferDialog = ref(false);
+const transferItems = ref<FileInfo[]>([]);
+const transferDialogRef = ref<{ finish: () => void } | null>(null);
+
+/** 打开所有权转移对话框（支持单条与批量）。 */
+function openTransferDialog(items: FileInfo[]) {
+  const targets = items.filter((item) => item.path !== "");
+  if (targets.length === 0) return;
+  transferItems.value = targets;
+  showTransferDialog.value = true;
+}
+
+function closeTransferDialog() {
+  showTransferDialog.value = false;
+  transferItems.value = [];
+}
+
+/** 提交转移：成功则刷新列表并清空选择。 */
+async function submitTransfer(
+  target: { id: string; username: string },
+  message: string,
+) {
+  const paths = transferItems.value.map((item) => item.path);
+  try {
+    const result = await filesService.transferOwnership(
+      paths,
+      target.id,
+      message || undefined,
+    );
+    appStore.success(
+      `已把 ${result.transferred} 个条目转移给 ${result.target_username}`,
+    );
+    closeTransferDialog();
+    clearSelection();
+    await refresh();
+  } catch (e) {
+    appStore.error(e instanceof Error ? e.message : "转移失败");
+    transferDialogRef.value?.finish();
+  }
+}
 const selectedFile = ref<FileInfo | null>(null);
 const fileUploaderRef = ref<InstanceType<typeof FileUploader> | null>(null);
 const expandedFilePath = ref<string>("");
@@ -1323,6 +1375,11 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
   });
   items.push({ key: "rename", label: "重命名", icon: IconPencil });
   items.push({ key: "move", label: "移动", icon: IconArrowsDiff });
+  items.push({
+    key: "transfer",
+    label: "转移所有权",
+    icon: IconUserShare,
+  });
   items.push({ key: "download", label: "下载", icon: IconDownload });
   items.push({ key: "share", label: "分享", icon: IconShare });
   items.push({ key: "delete", label: "删除", icon: IconTrash, danger: true });
@@ -2276,6 +2333,9 @@ function handleContextMenuSelect(key: string) {
       break;
     case "move":
       handleMoveEntry(file);
+      break;
+    case "transfer":
+      openTransferDialog([file]);
       break;
     case "download":
       handleDownload(file);

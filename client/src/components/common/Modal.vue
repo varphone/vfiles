@@ -1,5 +1,8 @@
 <template>
-  <div class="modal" :class="{ 'is-active': show }">
+  <div
+    class="modal"
+    :class="{ 'is-active': show, 'is-overlay-layer': layer === 'overlay' }"
+  >
     <div class="modal-background" @click="close"></div>
     <div
       class="modal-card"
@@ -28,6 +31,11 @@ const props = defineProps<{
   mobileCompact?: boolean;
   /** 需要横向空间的对话框（如两栏的版本历史）使用更宽的卡片。 */
   wide?: boolean;
+  /**
+   * 层级：`overlay` 用于「对话框之上」的全局确认框，
+   * 否则从某个对话框里触发的确认会被它自己盖住。
+   */
+  layer?: "base" | "overlay";
 }>();
 
 const emit = defineEmits<{
@@ -66,6 +74,11 @@ function close() {
 <style scoped>
 .modal {
   z-index: 100;
+}
+
+/* 全局确认框要盖住任何业务对话框 */
+.modal.is-overlay-layer {
+  z-index: 1000;
 }
 
 .modal-card.is-wide {

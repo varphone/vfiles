@@ -474,7 +474,7 @@ pub(crate) async fn ensure_directory_path(
     Ok(changed_entries)
 }
 
-async fn create_snapshot_record(
+pub(crate) async fn create_snapshot_record(
     snapshot_repo: &(dyn SnapshotRepo + Send + Sync),
     namespace_id: &NamespaceId,
     message: Option<&str>,

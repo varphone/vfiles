@@ -29,6 +29,8 @@ pub trait UserRepo {
     async fn update_password(&self, id: &UserId, password_hash: &str) -> DomainResult<()>;
     async fn disable_user(&self, id: &UserId) -> DomainResult<()>;
     async fn list_users(&self, limit: i64, offset: i64) -> DomainResult<Vec<User>>;
+    /// 列出可用作用户间转移目标的其他用户（启用中，排除自己）。
+    async fn list_transfer_targets(&self, exclude: &UserId) -> DomainResult<Vec<User>>;
 }
 
 #[async_trait::async_trait]
@@ -161,6 +163,8 @@ pub trait EntryRepo {
         namespace_id: &NamespaceId,
         root_path: &NormalizedPath,
     ) -> DomainResult<Vec<Entry>>;
+    /// 转移所有权：把条目迁到另一个命名空间（路径不变，版本历史随条目保留）。
+    async fn transfer_entries(&self, moves: &[(EntryId, NamespaceId)]) -> DomainResult<()>;
     /// 批量按路径查询（用于移动前的冲突检查），只返回存在的条目。
     async fn find_paths(
         &self,

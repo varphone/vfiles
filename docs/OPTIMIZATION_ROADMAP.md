@@ -2216,6 +2216,46 @@
   与 1 个接口用例（聚合内容、筛选、非管理员 403）；前端 `AuditLogs` 新增 2 例
   （概览条与 chip 筛选、概览失败不影响列表），前端 60 文件 / 409 用例、19 个 Rust 目标全绿。
 
+### 3.16 转移所有权（round 111，功能，用户需求）
+
+- 需求：把目录或文件转移给另一个用户，**最好连历史版本一起转过去**。
+- 设计：条目属于某个命名空间（`entries.namespace_id`），版本历史（`entry_versions`）按
+  **条目 ID** 关联、blob 是全局内容寻址存储——因此「转移所有权」只需把条目的
+  `namespace_id` 改为目标用户的命名空间，**历史版本天然随行、无需复制数据**。
+- 实现：
+  1. `EntryRepo::transfer_entries(&[(EntryId, NamespaceId)])`（单事务，唯一约束冲突 →
+     `PathConflict`）；`UserRepo::list_transfer_targets`（启用中、排除自己）；
+  2. 新增应用服务 `OwnershipService`：校验目标用户与自转、源路径重叠、**目标同名路径冲突**，
+     用 `find_subtree` 展开目录子树，为缺失的**祖先目录**在目标命名空间补齐
+     （只补齐不属于本次转移集合的祖先），最后转移并在**双方各写一条快照**
+     （「转移给 X：备注」/「接收来自 Y：备注」）；
+  3. 接口：`POST /api/files/transfer`、`GET /api/files/users/directory`，并写入审计
+     （新动作 `file.transfer`）；
+  4. 前端：`filesService.transferOwnership/listTransferTargets`；
+     新增 `TransferOwnershipDialog.vue`（用户搜索选择、备注、二次确认、加载骨架与空态）；
+     入口：右键菜单、详情面板操作区、批量操作条；成功后刷新列表、清空选择并提示。
+- **联调中发现并修复的两个真实缺陷**：
+  1. **嵌套确认框被盖住**：从对话框里调用全局 `confirmDialog` 时两者 z-index 都是 100，
+     而 `DialogHost` 在 DOM 中更靠前，导致确认按钮被下层对话框遮挡、点不到。
+     给 `Modal` 增加 `layer="overlay"`（z-index 1000）并让 `DialogHost` 使用；
+  2. **祖先目录冲突**：最初为每个被转移条目的父目录都调用 `ensure_directory_path`，
+     于是「转移目录本身」时先在目标创建同名目录，随后转移该目录又撞上唯一约束 → 409。
+     改为只补齐**不属于本次转移集合**的祖先目录。
+- 验证（真实服务 1400×900，admin 把 `交接资料/`（含 `图纸/平面图.txt`、`说明.txt`）转给 alice）：
+  - 界面：右键菜单出现「转移所有权」；对话框显示待转条目与目标用户并注明「版本历史会一起转移」；
+    确认后提示「已把 **4** 个条目转移给 alice」；
+  - 源侧根目录只剩 `个人笔记.txt`；目标侧出现 `交接资料`，进入后可见 `图纸` 与 `说明.txt`；
+  - **历史随行**：alice 查 `GET /api/history?path=交接资料/说明.txt` → 1 个提交
+    「导入: 交接资料/说明.txt」（原创建者是 admin）；
+  - 数据核对：4 个条目归属 alice，`entry_versions` 随条目保留；
+    admin 侧快照「转移给 alice：项目交接给 alice」、alice 侧「接收来自 admin 的文件：项目交接给 alice」；
+  - 审计记录：「转移给 alice（4 个条目，含版本历史）」；
+  - **无越权**：admin 再读该文件内容/目录返回 404；历史接口只返回 admin 自己命名空间里的历史快照记录；
+  - 无控制台报错。
+- 测试：Rust 新增 2 个接口用例（目标可见 + **历史完整**、自转 400、冲突 409、未登录 401、
+  目标列表不含自己）；前端新增 `TransferOwnershipDialog` 6 例与 `FileBrowser` 1 例；
+  前端 61 文件 / 416 用例、19 个 Rust 目标与 clippy 全绿。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）

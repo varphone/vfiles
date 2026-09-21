@@ -1,4 +1,4 @@
-import { fireEvent, waitFor, within } from "@testing-library/vue";
+import { fireEvent, screen, waitFor, within } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
 import { renderWithProviders } from "./renderWithProviders";
@@ -21,6 +21,8 @@ const {
   deleteFileMock,
   getFileContentMock,
   movePathMock,
+  listTransferTargetsMock,
+  transferOwnershipMock,
 } = vi.hoisted(() => ({
   getFilesMock: vi.fn(
     async (_path: string, _commit?: string): Promise<unknown[]> => [],
@@ -31,6 +33,11 @@ const {
   deleteFileMock: vi.fn(async () => ({ success: true })),
   getFileContentMock: vi.fn(async () => new Blob(["hello preview"])),
   movePathMock: vi.fn(async () => ({ success: true })),
+  listTransferTargetsMock: vi.fn(async (): Promise<unknown[]> => []),
+  transferOwnershipMock: vi.fn(async () => ({
+    transferred: 1,
+    target_username: "alice",
+  })),
 }));
 
 vi.mock("../src/composables/dialog", () => ({
@@ -63,6 +70,8 @@ vi.mock("../src/services/files.service", () => ({
   filesService: {
     getFiles: getFilesMock,
     getFilesPage: getFilesPageMock,
+    listTransferTargets: listTransferTargetsMock,
+    transferOwnership: transferOwnershipMock,
     // 侧栏概览与收藏：不 stub 时会在挂载后产生未处理的 rejection
     getOverview: vi.fn(async () => ({
       file_count: 0,
@@ -1746,5 +1755,69 @@ describe("FileBrowser.vue grid paging", () => {
     // PageDown 按「可视行数 × 列数」= 3 行 × 3 列 = 9
     await fireEvent.keyDown(document, { key: "PageDown" });
     await waitFor(() => expect(activeIndex()).toBe(columns + 9));
+  });
+});
+
+describe("FileBrowser.vue ownership transfer", () => {
+  function transferFile(name: string) {
+    return {
+      id: name,
+      name,
+      path: name,
+      kind: "file" as const,
+      size_bytes: 12,
+      created_at: "2026-04-10T00:00:00.000Z",
+      updated_at: "2026-04-10T00:00:00.000Z",
+    };
+  }
+
+  it("opens the transfer dialog from the row context menu and calls the service", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([transferFile("交接.txt")]);
+    listTransferTargetsMock.mockReset();
+    transferOwnershipMock.mockReset();
+    listTransferTargetsMock.mockResolvedValue([
+      { id: "u-1", username: "alice" },
+    ]);
+    transferOwnershipMock.mockResolvedValue({
+      transferred: 1,
+      target_username: "alice",
+    });
+
+    const { findByText } = renderWithProviders(FileBrowser as any);
+    await findByText("交接.txt");
+
+    // 右键菜单 → 转移所有权
+    await fireEvent.contextMenu(
+      document.querySelector(
+        'tr.desktop-file-row[data-vfiles-path="交接.txt"]',
+      )!,
+    );
+    const menuItem = (await screen.findAllByText("转移所有权")).find((node) =>
+      node.closest('[role="menuitem"]'),
+    );
+    await fireEvent.click(menuItem!);
+
+    // 对话框出现并列出目标用户
+    await waitFor(() =>
+      expect(screen.getByText("接收用户")).toBeInTheDocument(),
+    );
+    await waitFor(() => expect(screen.getByText("alice")).toBeInTheDocument());
+
+    await fireEvent.click(screen.getByText("alice"));
+    await fireEvent.click(
+      screen
+        .getAllByText("转移所有权")
+        .map((node) => node.closest("button"))
+        .find((button) => button !== null)!,
+    );
+
+    await waitFor(() =>
+      expect(transferOwnershipMock).toHaveBeenCalledWith(
+        ["交接.txt"],
+        "u-1",
+        undefined,
+      ),
+    );
   });
 });

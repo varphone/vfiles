@@ -11,6 +11,8 @@ import type {
   FileHistory,
   ShareLink,
   StorageCategory,
+  TransferOwnershipResult,
+  TransferTarget,
   WorkspaceOverview,
 } from "../types";
 
@@ -379,6 +381,34 @@ export const filesService = {
       recent_files: Array.isArray(payload.recent_files)
         ? payload.recent_files
         : [],
+    };
+  },
+
+  /** 可接收所有权转移的其他用户。 */
+  async listTransferTargets(): Promise<TransferTarget[]> {
+    const response = await apiService.get<TransferTarget[]>(
+      "/files/users/directory",
+    );
+    const payload = (response as any)?.data ?? response;
+    return Array.isArray(payload) ? payload : [];
+  },
+
+  /**
+   * 转移所有权：把路径（含目录子树）连版本历史一起交给另一个用户。
+   */
+  async transferOwnership(
+    paths: string[],
+    targetUserId: string,
+    message?: string,
+  ): Promise<TransferOwnershipResult> {
+    const response = await apiService.post<TransferOwnershipResult>(
+      "/files/transfer",
+      { paths, target_user_id: targetUserId, message },
+    );
+    const payload = (response as any)?.data ?? response;
+    return {
+      transferred: Number(payload?.transferred ?? 0),
+      target_username: String(payload?.target_username ?? ""),
     };
   },
 

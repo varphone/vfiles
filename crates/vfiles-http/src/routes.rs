@@ -25,6 +25,7 @@ pub mod session;
 pub mod share;
 pub mod snapshot;
 pub mod thumbnail;
+pub mod transfer;
 pub mod tree;
 pub mod upload;
 
@@ -174,4 +175,5 @@ pub fn files_router() -> Router<AppState> {
         .merge(overview::router())
         .merge(favorites::router())
         .merge(ftp::router())
+        .merge(transfer::router())
 }
