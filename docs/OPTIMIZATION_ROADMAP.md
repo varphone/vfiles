@@ -1395,6 +1395,48 @@
     （`line 1`）；列表仅高亮 1 行；
   - 移动：详情面板置顶显示，四个操作按钮同行；空态提示与「收起详情」可用。
 
+### 2.83 FTP(S) 批量导入（round 76，新功能）
+
+- 目标：为「一次导入几百到几万个文件」提供 FTP 通道，客户端可递归上传整个目录。
+- 研究阶段发现的关键阻碍（先修前置能力，再落协议）：
+  1. **每次写入都会写一份全命名空间快照**（`collect_snapshot_state` 读取全部条目与版本），
+     逐文件提交在批量导入时退化为 O(文件数 × 条目数)；
+  2. 流式写入没有大小上限（HTTP 层自己计数，FTP 若不复用会绕过 `max_file_size_bytes`）；
+  3. 客户端断开会把 `tmp/blob-upload-*.tmp` 留在磁盘上；
+  4. 凭据校验、命名空间解析与登录限流都锁在 HTTP 层。
+- 交付内容：
+  - **应用层**：`ImportBatch`（新增）按文件数阈值/会话结束提交**一次**全量快照，支持
+    `batch` / `per-file` / `off` 三种策略；`import_file_stream` 用 `take(limit+1)` 做流式限额
+    并在超限时回滚 blob；`store_blob_stream` 在读写失败时清理临时文件；
+    `AuthService::verify_credentials`、`NamespaceService`、`LoginAttemptLimiter` 下沉供多协议复用。
+  - **新 crate `vfiles-ftp`**：基于 `unftp-core` 的 `StorageBackend` 实现（list/get/put/mkd/rmd/del/
+    rename/cwd）、复用 Web 凭据与角色白名单的认证器、路径沙箱（`..` 在根处夹取，`CDUP` 仍可用）、
+    领域错误→FTP 应答映射、`IngestStats` 计数；自建 accept 循环（`Server::service`）以共享停机信号。
+  - **配置与装配**：`VFILES_FTP_*`（默认关闭）含主机/端口/被动端口段与通告地址/角色白名单/并发与
+    空闲超时/FTPS 证书/快照策略，`validate()` 拒绝端口冲突、只配证书不配私钥、要求 FTPS 无证书、
+    未知快照策略、以及「未开启认证却开启 FTP」；`FeatureMatrix.ftp_enabled`、`GET /api/files/ftp-info`
+    与 `/api/health` 的 `ftp` 计数块；`serve` 内 FTP 与 HTTP 共享 watch 停机信号。
+  - **前端**：上传对话框内「用 FTP 批量导入」折叠卡片（服务器/端口/账号/加密状态/被动端口段/
+    可复制 curl 示例），仅在功能开关开启时渲染。
+- 验证证据：
+  - Rust：19 个测试目标全绿（含 5 个真实 TCP + suppaftp 的端到端用例：上传/下载/改列/重命名/删除、
+    错误口令与路径穿越、超限回滚、非空目录 RMD 失败），clippy 全目标零告警；
+  - 前端：45 文件 / 287 用例（含 5 个 FTP 卡片用例），`vue-tsc`/`eslint`/`prettier`/构建通过；
+  - 真实二进制冒烟：`VFILES_FTP_ENABLED=true` 后 `curl -T` 与 `curl --ftp-create-dirs` 上传成功，
+    网页端可见文件与目录、历史记录出现「FTP 上传: hello.txt」，`ftp-info` 与 `health.ftp` 数据正确，
+    SIGTERM 停止监听且无残留端口；默认配置下不监听任何 FTP 端口；
+  - **规模对比**（1200 个 256B 文件，同一台机器，Python `ftplib` 递归上传）：
+
+    | 快照策略 | 耗时 | 吞吐 | 快照数 |
+    | --- | --- | --- | --- |
+    | `per-file` | 72.9s | 16.5 文件/秒 | 1201 |
+    | `batch`（默认，阈值 200） | 53.8s | 22.3 文件/秒 | 7 |
+
+    即默认策略下**快照数降低约 170 倍、导入耗时下降约 26%**；文件少时两种策略差异不明显
+    （300 文件时约 20 文件/秒），说明收益来自消除快照的平方级写入。
+- 后续可选项：`vfiles ftp` 子命令（FTP 与 HTTP 分离部署）与 `vfiles import <目录>`（服务端本地
+  目录导入，复用同一批次 API，无网络暴露）。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）

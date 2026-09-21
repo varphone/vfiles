@@ -38,6 +38,21 @@ VFILES_AUTH_COOKIE_SECRET=replace-with-a-random-secret-at-least-32-chars
 # 功能开关（默认关闭；开启后前端会同步解锁对应入口）
 VFILES_FEATURES_SEARCH_CONTENT=false
 
+# FTP(S) 批量导入（默认关闭，见「FTP 批量导入」一节）
+VFILES_FTP_ENABLED=false
+VFILES_FTP_HOST=0.0.0.0
+VFILES_FTP_PORT=2121
+VFILES_FTP_PASSIVE_PORTS=50000-50100
+# VFILES_FTP_PASSIVE_HOST=files.example.com
+# VFILES_FTP_ALLOWED_ROLES=admin,manager
+# VFILES_FTP_MAX_CONNECTIONS=8
+# VFILES_FTP_IDLE_TIMEOUT_SECONDS=300
+# VFILES_FTP_SNAPSHOT_MODE=batch
+# VFILES_FTP_SNAPSHOT_FLUSH_FILES=200
+# VFILES_FTP_TLS_CERT=/etc/vfiles/ftp-cert.pem
+# VFILES_FTP_TLS_KEY=/etc/vfiles/ftp-key.pem
+# VFILES_FTP_TLS_REQUIRED=true
+
 VFILES_FRONTEND_DIST=./client/dist
 RUST_LOG=info
 ```
@@ -52,6 +67,9 @@ RUST_LOG=info
 - 仍兼容读取旧别名 `PUBLIC_BASE_URL`、`CORS_ORIGIN`、`HTTP_COOKIE_SECURE`、`AUTH_SECRET`、`ENABLE_AUTH`、`AUTH_ALLOW_REGISTER`，但新部署不建议继续使用旧名字。
 - `VFILES_FEATURES_SEARCH_CONTENT` 控制**全文（内容）搜索**：默认关闭，因为它需要逐个读取并扫描文件内容，代价明显高于文件名搜索。开启后 `/api/session/bootstrap` 会把 `features.search_content` 置为 `true`，前端「高级搜索 → 全文搜索」才会解锁；服务端仍会对未开启时携带 `search_content=true` 的请求返回 403。
 - 上传限额、分块大小、会话 TTL 等参数当前仍使用程序内建默认值，尚未开放成环境变量。
+- `VFILES_FTP_*` 一组变量控制批量导入：`VFILES_FTP_ENABLED` 默认 `false`（FTP 是明文协议，
+  必须显式开启），开启时若 `VFILES_AUTH_ENABLED=false` 会被配置校验直接拒绝，避免出现
+  「无需认证即可写入」的导入通道；其余参数见下文「FTP 批量导入」。
 
 ## 构建与启动
 
@@ -216,6 +234,48 @@ RUST_LOG=debug ./vfiles serve          # 调试
 RUST_LOG=vfiles_http=warn ./vfiles serve  # 只看 HTTP 层告警
 ```
 
+### FTP 批量导入
+
+面向「一次导入几百到几万个文件」的场景：与其在浏览器里逐个上传，不如让运维/用户用
+FileZilla、WinSCP、`lftp`、`curl` 等客户端直接连到 VFiles 的 FTP 端口，递归上传整个目录。
+
+```
+VFILES_FTP_ENABLED=true
+VFILES_FTP_HOST=0.0.0.0            # 默认 0.0.0.0；建议只在内网或叠加防火墙白名单
+VFILES_FTP_PORT=2121              # 非特权端口，无需 root；不能与 VFILES_HTTP_PORT 相同
+VFILES_FTP_PASSIVE_PORTS=50000-50100
+VFILES_FTP_PASSIVE_HOST=files.example.com   # NAT/端口映射时对外通告的地址
+VFILES_FTP_ALLOWED_ROLES=admin,manager      # 空值表示不限制角色
+VFILES_FTP_MAX_CONNECTIONS=8                # 并发会话上限（SQLite 单写者）
+VFILES_FTP_IDLE_TIMEOUT_SECONDS=300
+VFILES_FTP_SNAPSHOT_MODE=batch              # batch（默认）/ per-file / off
+VFILES_FTP_SNAPSHOT_FLUSH_FILES=200         # batch 模式下每累积多少个文件提交一次快照
+```
+
+要点：
+
+- **只能看到自己的文件**：登录后 `/` 就是该用户的命名空间根目录，`..` 在根之上会被夹取，
+  因此不存在跨用户或跨宿主机目录的访问路径。
+- **加密**：默认明文（启动日志会告警）。如需加密，配置 PEM 证书与私钥即启用显式 FTPS，
+  并可用 `VFILES_FTP_TLS_REQUIRED=true` 拒绝明文连接：
+  ```
+  VFILES_FTP_TLS_CERT=/etc/vfiles/ftp-cert.pem
+  VFILES_FTP_TLS_KEY=/etc/vfiles/ftp-key.pem
+  VFILES_FTP_TLS_REQUIRED=true
+  ```
+- **防火墙**：除控制端口外，还需放行整个被动端口段（上例 `50000-50100`）。
+  客户端务必使用被动模式；服务端只接受被动模式。
+- **快照策略**：
+  - `batch`（默认）：一个会话内每 `VFILES_FTP_SNAPSHOT_FLUSH_FILES` 个文件提交一次快照，
+    会话结束时再提交剩余部分。历史里会出现「FTP 导入（N 个文件）」条目。
+  - `per-file`：每个文件一次快照，与网页上传的粒度完全一致（文件很多时明显更慢）。
+  - `off`：导入不产生快照（只记录文件与版本），最快但不便于历史回放。
+- **重复上传同名文件**会生成新版本，与网页上传一致；相同内容的文件命中去重，不额外占用空间。
+- **中断的上传不会留下条目**：超过 `VFILES_FTP_...`（复用 `limits.max_file_size_bytes`）
+  的文件会被拒绝，临时文件也会清理。
+- FTP 的实际监听地址、端口、被动端口段与 TLS 状态会随 `/api/files/ftp-info` 返回，
+  并显示在网页「上传」对话框的「用 FTP 批量导入」卡片里。
+
 ### 健康检查与缩略图计数
 
 `GET /api/health` 除 `status`/`timestamp` 外，还会返回缩略图的进程内计数，便于采集与排障：
@@ -237,6 +297,25 @@ RUST_LOG=vfiles_http=warn ./vfiles serve  # 只看 HTTP 层告警
 
 `unsupported` 表示格式不支持或源文件过大而被跳过，`failed` 表示解码/编码失败（两者都返回
 415）；`pruned_*` 累计缓存回收量。计数自进程启动起累计，重启后归零。
+
+启用 FTP 后，同一响应还会带 `ftp` 计数块（会话、登录、上传/下载字节、快照提交量）：
+
+```json
+{
+  "ftp": {
+    "active_sessions": 1,
+    "total_sessions": 12,
+    "logins_ok": 11,
+    "logins_failed": 1,
+    "files_uploaded": 1200,
+    "bytes_uploaded": 307200,
+    "files_downloaded": 3,
+    "bytes_downloaded": 2048,
+    "snapshots_flushed": 7,
+    "errors": 0
+  }
+}
+```
 
 ### 缩略图缓存
 

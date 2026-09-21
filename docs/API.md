@@ -107,6 +107,27 @@
   - 幂等，返回最新列表
   - 收藏按条目 ID 记录：重命名/移动后仍然有效，条目删除后自动清除
 
+## FTP 导入信息
+
+`GET /api/files/ftp-info`（需要登录）
+
+返回当前部署的 FTP 连接参数，便于前端展示与排错；**不包含任何口令或证书内容**。
+
+```json
+{
+  "enabled": true,
+  "host": "files.example.com",
+  "port": 2121,
+  "passive_ports": { "start": 50000, "end": 50100 },
+  "tls": { "enabled": true, "required": true },
+  "example_command": "curl --ftp-ssl -T 本地文件 ftp://files.example.com:2121/目录/",
+  "path_mapping": "登录后 / 即该用户的命名空间根目录"
+}
+```
+
+未启用 FTP 时 `enabled` 为 `false`，`example_command` 为 `null`。未登录访问返回 401。
+运行计数（会话数、上传/下载字节、快照提交量）在 `GET /api/health` 的 `ftp` 字段中。
+
 ## 分享
 
 - `POST /api/share/shares`
