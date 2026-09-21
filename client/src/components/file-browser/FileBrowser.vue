@@ -357,6 +357,9 @@
             }}
           </span>
           <span v-if="selectedCount > 0">已选 {{ selectedCount }} 项</span>
+          <span v-if="typeAheadPrefix" class="desktop-status-typeahead">
+            定位：<strong>{{ typeAheadPrefix }}</strong>
+          </span>
           <button
             class="desktop-status-shortcuts is-hidden-touch"
             type="button"
@@ -1342,8 +1345,14 @@ onMounted(() => {
   const onDocKeydown = (e: KeyboardEvent) => {
     if (e.defaultPrevented) return;
 
-    // Escape 逐层退出：高级搜索 → 预览 → 批量模式 → 选择
+    // Escape 逐层退出：按键定位前缀 → 高级搜索 → 预览 → 批量模式 → 选择
     if (e.key === "Escape") {
+      if (typeAheadPrefix.value) {
+        e.preventDefault();
+        typeAheadPrefix.value = "";
+        if (typeAheadTimer) window.clearTimeout(typeAheadTimer);
+        return;
+      }
       if (desktopSearchOpen.value) {
         closeDesktopSearch();
         return;
@@ -1419,10 +1428,32 @@ onMounted(() => {
       e.key === "ArrowLeft" ||
       e.key === "ArrowRight" ||
       e.key === "Home" ||
-      e.key === "End"
+      e.key === "End" ||
+      e.key === "PageUp" ||
+      e.key === "PageDown"
     ) {
       e.preventDefault();
       moveActiveRow(e.key, e.shiftKey);
+      return;
+    }
+
+    // Space：切换活动行选中态
+    if (e.key === " " || e.key === "Spacebar") {
+      e.preventDefault();
+      toggleActiveRowSelection();
+      return;
+    }
+
+    // 可打印字符（不含组合键）：按名称前缀定位；有匹配才拦截，否则放行
+    if (
+      !modifier &&
+      !e.altKey &&
+      e.key.length === 1 &&
+      e.key !== " " &&
+      /[\p{L}\p{N}._-]/u.test(e.key) &&
+      handleTypeAhead(e.key)
+    ) {
+      e.preventDefault();
       return;
     }
 
@@ -2047,6 +2078,18 @@ function moveActiveRow(key: string, shift: boolean) {
     case "End":
       nextIndex = list.length - 1;
       break;
+    case "PageUp":
+      nextIndex = Math.max(
+        0,
+        (currentIndex === -1 ? 0 : currentIndex) - pageStep(),
+      );
+      break;
+    case "PageDown":
+      nextIndex =
+        currentIndex === -1
+          ? 0
+          : Math.min(list.length - 1, currentIndex + pageStep());
+      break;
     default:
       return;
   }
@@ -2074,6 +2117,71 @@ function moveActiveRow(key: string, shift: boolean) {
     visibleCount.value = Math.min(activeList.value.length, nextIndex + 1);
   }
   void nextTick().then(() => scrollActiveIntoView(next.path));
+}
+
+/** 一屏能显示多少行：按已渲染行高推断，兜底 10 行。 */
+function pageStep(): number {
+  if (typeof document === "undefined") return 10;
+  const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
+  const rows = Array.from(
+    document.querySelectorAll<HTMLElement>("tr.desktop-file-row, .file-item"),
+  );
+  if (!shell || rows.length < 2) return 10;
+  const rowHeight =
+    rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top;
+  if (rowHeight <= 0) return 10;
+  return Math.max(1, Math.floor(shell.clientHeight / rowHeight));
+}
+
+/** 按键定位（type-ahead）：连续输入会在 800ms 后重置，主流文件管理器都有此行为。 */
+const typeAheadPrefix = ref("");
+let typeAheadTimer: number | undefined;
+
+function handleTypeAhead(character: string): boolean {
+  const list = searchActive.value
+    ? sortedSearchResults.value
+    : navigationListItems.value;
+  if (list.length === 0) return false;
+
+  typeAheadPrefix.value += character;
+  if (typeAheadTimer) window.clearTimeout(typeAheadTimer);
+  typeAheadTimer = window.setTimeout(() => {
+    typeAheadPrefix.value = "";
+  }, 800);
+
+  const prefix = typeAheadPrefix.value.toLowerCase();
+  const startIndex = Math.max(
+    0,
+    list.findIndex((item) => item.path === desktopActivePath.value),
+  );
+  // 先找当前位置之后的匹配项，绕回开头再找一次（与主流行为一致）
+  const ordered = [...list.slice(startIndex), ...list.slice(0, startIndex)];
+  const match = ordered.find((item) =>
+    item.name.toLowerCase().startsWith(prefix),
+  );
+  if (!match) {
+    // 无匹配：清空前缀，不显示提示，也不拦截按键
+    typeAheadPrefix.value = "";
+    if (typeAheadTimer) window.clearTimeout(typeAheadTimer);
+    return false;
+  }
+
+  const index = list.findIndex((item) => item.path === match.path);
+  desktopActivePath.value = match.path;
+  if (batchMode.value) selectedPaths.value = new Set([match.path]);
+  if (index >= visibleCount.value) {
+    visibleCount.value = Math.min(activeList.value.length, index + 1);
+  }
+  void nextTick().then(() => scrollActiveIntoView(match.path));
+  return true;
+}
+
+/** Space：切换活动行的选中态（主流文件列表都支持）。 */
+function toggleActiveRowSelection() {
+  const active = findActiveItem();
+  if (!active) return;
+  if (!batchMode.value) batchMode.value = true;
+  toggleSelect(active);
 }
 
 function scrollActiveIntoView(path: string) {
@@ -2347,6 +2455,14 @@ function handleSortChange(field: SortField) {
 .desktop-status-shortcuts:focus-visible {
   background: var(--vf-surface-hover);
   color: var(--vf-text);
+}
+
+.desktop-status-typeahead {
+  color: var(--vf-accent);
+}
+
+.desktop-status-typeahead strong {
+  font-weight: 600;
 }
 
 .desktop-status-shortcuts-more {

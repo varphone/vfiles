@@ -109,7 +109,11 @@
 | 分组 | 快捷键 | 作用 |
 | --- | --- | --- |
 | 导航 | <kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> | 移动高亮行（网格中 ↑↓ 按整行移动） |
-| 导航 | <kbd>Home</kbd> <kbd>End</kbd> / <kbd>Enter</kbd> / <kbd>Esc</kbd> | 跳到首尾、打开或预览、退出选择态 |
+| 导航 | <kbd>Home</kbd> <kbd>End</kbd> | 跳到列表开头 / 结尾 |
+| 导航 | <kbd>PageUp</kbd> <kbd>PageDown</kbd> | 按整屏上下移动（步长按实际行高与可视高度计算） |
+| 导航 | 字母 / 数字键 | **按键定位**：跳到名称以所输前缀开头的条目（底部显示当前前缀，<kbd>Esc</kbd> 取消，无匹配时不拦截按键） |
+| 导航 | <kbd>Enter</kbd> / <kbd>Esc</kbd> | 打开或预览、退出选择态 |
+| 选择 | <kbd>空格</kbd> | 选中 / 取消选中当前高亮的条目 |
 | 选择 | <kbd>Ctrl</kbd>+<kbd>A</kbd> | 全选当前视图（⌘+A 同效） |
 | 选择 | <kbd>Ctrl</kbd>+单击 / <kbd>Shift</kbd>+单击 / <kbd>Shift</kbd>+<kbd>↑↓</kbd> | 加选、连续选择、键盘扩展选择 |
 | 操作 | <kbd>F2</kbd> / <kbd>Delete</kbd> / <kbd>Shift</kbd>+<kbd>F10</kbd> | 重命名、删除、打开行菜单 |

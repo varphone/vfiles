@@ -1581,3 +1581,96 @@ describe("FileBrowser.vue keyboard shortcuts help", () => {
     expect(container.querySelector(".shortcuts")).toBeNull();
   });
 });
+
+describe("FileBrowser.vue keyboard navigation extras", () => {
+  function files(count: number) {
+    return Array.from({ length: count }, (_, index) => ({
+      id: `f${index}`,
+      name: `文件-${String(index).padStart(3, "0")}.txt`,
+      path: `文件-${String(index).padStart(3, "0")}.txt`,
+      kind: "file" as const,
+      size_bytes: 10,
+      created_at: "2026-04-10T00:00:00.000Z",
+      updated_at: "2026-04-10T00:00:00.000Z",
+    }));
+  }
+
+  function activePath(container: Element): string | null {
+    return (
+      container
+        .querySelector<HTMLElement>(
+          "tr.desktop-file-row.is-row-selected, tr.desktop-file-row.is-active",
+        )
+        ?.getAttribute("data-vfiles-path") ?? null
+    );
+  }
+
+  it("jumps to an entry by typing its name prefix and shows the prefix", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([
+      { ...files(1)[0], name: "alpha.txt", path: "alpha.txt" },
+      { ...files(1)[0], name: "beta.txt", path: "beta.txt" },
+      { ...files(1)[0], name: "报告.md", path: "报告.md" },
+    ]);
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("alpha.txt");
+
+    await fireEvent.keyDown(document, { key: "b" });
+    await waitFor(() => expect(activePath(container)).toBe("beta.txt"));
+    expect(
+      container.querySelector(".desktop-status-typeahead")?.textContent,
+    ).toContain("b");
+
+    // Esc 清空定位前缀
+    await fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() =>
+      expect(container.querySelector(".desktop-status-typeahead")).toBeNull(),
+    );
+  });
+
+  it("ignores typed characters that match nothing", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(files(3));
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("文件-000.txt");
+
+    await fireEvent.keyDown(document, { key: "z" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(container.querySelector(".desktop-status-typeahead")).toBeNull();
+  });
+
+  it("moves by a page with PageDown and toggles selection with Space", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(files(30));
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("文件-000.txt");
+
+    // 无布局环境下按 10 行兜底：Home 复位后 PageDown/PageUp 各走 10 行
+    await fireEvent.keyDown(document, { key: "Home" });
+    await waitFor(() => expect(activePath(container)).toBe("文件-000.txt"));
+
+    await fireEvent.keyDown(document, { key: "PageDown" });
+    await waitFor(() => expect(activePath(container)).toBe("文件-010.txt"));
+
+    await fireEvent.keyDown(document, { key: "PageUp" });
+    await waitFor(() => expect(activePath(container)).toBe("文件-000.txt"));
+
+    // Space 选中高亮行并进入批量模式
+    await fireEvent.keyDown(document, { key: " " });
+    await waitFor(() =>
+      expect(
+        container.querySelector("tr.desktop-file-row.is-row-selected"),
+      ).not.toBeNull(),
+    );
+    // 再按一次取消
+    await fireEvent.keyDown(document, { key: " " });
+    await waitFor(() =>
+      expect(
+        container.querySelector("tr.desktop-file-row.is-row-selected"),
+      ).toBeNull(),
+    );
+  });
+});

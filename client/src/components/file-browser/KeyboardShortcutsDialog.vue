@@ -51,6 +51,11 @@ const groups = [
     items: [
       { keys: "↑ ↓ ← →", description: "移动高亮行（网格中 ↑↓ 按整行移动）" },
       { keys: "Home End", description: "跳到列表开头 / 结尾" },
+      { keys: "PageUp PageDown", description: "按整屏上下移动" },
+      {
+        keys: "字母 / 数字",
+        description: "按键定位到名称以该前缀开头的条目（Esc 取消）",
+      },
       { keys: "Enter", description: "打开文件夹，或预览文件" },
       { keys: "Esc", description: "退出批量选择 / 关闭当前面板" },
     ],
@@ -58,6 +63,7 @@ const groups = [
   {
     title: "选择",
     items: [
+      { keys: "空格", description: "选中 / 取消选中当前高亮的条目" },
       { keys: "Ctrl A", description: "全选当前视图（⌘+A 同效）" },
       { keys: "Ctrl 单击", description: "加选 / 取消单个条目" },
       { keys: "Shift 单击", description: "从上次选中项起连续选择" },
