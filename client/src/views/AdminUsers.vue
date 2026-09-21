@@ -1,80 +1,201 @@
 <template>
-  <section class="section">
-    <div class="container">
-      <div class="level">
-        <div class="level-left">
-          <div class="level-item">
-            <h1 class="title is-4 mb-0">用户管理</h1>
-          </div>
+  <div class="admin-page">
+    <div class="admin-card">
+      <!-- 页头：标题 + 概览 + 搜索/刷新（与文件浏览器的卡片语言一致） -->
+      <header class="admin-header">
+        <div class="admin-header-titles">
+          <h1 class="admin-title">用户管理</h1>
+          <p class="admin-subtitle">
+            共 {{ users.length }} 位用户
+            <template v-if="filteredUsers.length !== users.length">
+              · 当前显示 {{ filteredUsers.length }} 位
+            </template>
+          </p>
         </div>
-        <div class="level-right">
-          <div class="level-item">
+
+        <div class="admin-header-actions">
+          <div class="admin-search">
+            <IconSearch :size="15" class="admin-search-icon" />
+            <input
+              v-model.trim="searchQuery"
+              class="input is-small admin-search-input"
+              type="search"
+              placeholder="搜索用户名或邮箱"
+              aria-label="搜索用户名或邮箱"
+            />
             <button
-              class="button is-light"
-              :class="{ 'is-loading': loading }"
-              @click="reload"
+              v-if="searchQuery"
+              class="vf-icon-button admin-search-clear"
+              type="button"
+              title="清空搜索"
+              aria-label="清空搜索"
+              @click="searchQuery = ''"
             >
-              刷新
+              <IconX :size="14" />
             </button>
           </div>
+
+          <button
+            class="vf-ghost-button admin-refresh"
+            type="button"
+            :disabled="loading"
+            @click="reload"
+          >
+            <IconRefresh :size="15" :class="{ 'is-spinning': loading }" />
+            <span>刷新</span>
+          </button>
         </div>
+      </header>
+
+      <div v-if="roleBuckets.length > 1" class="admin-filters">
+        <button
+          class="vf-ghost-button admin-filter"
+          :class="{ 'is-active': roleFilter === 'all' }"
+          type="button"
+          :aria-pressed="roleFilter === 'all' ? 'true' : 'false'"
+          @click="roleFilter = 'all'"
+        >
+          <span>全部</span>
+          <span class="admin-filter-count">{{ users.length }}</span>
+        </button>
+        <button
+          v-for="bucket in roleBuckets"
+          :key="bucket.role"
+          class="vf-ghost-button admin-filter"
+          :class="{ 'is-active': roleFilter === bucket.role }"
+          type="button"
+          :aria-pressed="roleFilter === bucket.role ? 'true' : 'false'"
+          @click="roleFilter = bucket.role"
+        >
+          <span>{{ bucket.label }}</span>
+          <span class="admin-filter-count">{{ bucket.count }}</span>
+        </button>
       </div>
 
-      <div v-if="error" class="notification is-danger is-light">
-        {{ error }}
-      </div>
+      <p v-if="unsupportedActionsMessage" class="admin-note">
+        <IconInfoCircle :size="14" />
+        <span>{{ unsupportedActionsMessage }}</span>
+      </p>
 
-      <div
-        v-if="unsupportedActionsMessage"
-        class="notification is-warning is-light"
+      <EmptyState
+        v-if="error"
+        :icon="IconAlertCircle"
+        tone="error"
+        title="加载失败"
+        :hint="error"
       >
-        {{ unsupportedActionsMessage }}
+        <template #actions>
+          <button class="vf-ghost-button is-primary" @click="reload">
+            <IconRefresh :size="15" />
+            <span>重试</span>
+          </button>
+        </template>
+      </EmptyState>
+
+      <div v-else-if="loading && users.length === 0" class="admin-skeleton">
+        <div v-for="row in 4" :key="row" class="admin-skeleton-row"></div>
       </div>
 
-      <div class="table-container">
-        <table class="table is-fullwidth is-striped">
+      <EmptyState
+        v-else-if="users.length === 0"
+        :icon="IconUsers"
+        title="暂无用户"
+        hint="创建用户后会在这里显示"
+      />
+
+      <EmptyState
+        v-else-if="filteredUsers.length === 0"
+        :icon="IconSearch"
+        title="没有找到匹配的用户"
+        hint="换个关键字，或清除角色筛选"
+      >
+        <template #actions>
+          <button class="vf-ghost-button" @click="clearFilters">
+            <span>清除筛选</span>
+          </button>
+        </template>
+      </EmptyState>
+
+      <div v-else class="admin-table-wrap">
+        <table class="table is-fullwidth is-hoverable admin-table">
           <thead>
             <tr>
               <th>用户名</th>
               <th>邮箱</th>
-              <th>角色</th>
-              <th>状态</th>
-              <th>创建时间</th>
-              <th style="width: 320px">操作</th>
+              <th class="is-narrow">角色</th>
+              <th class="is-narrow">状态</th>
+              <th class="is-narrow">创建时间</th>
+              <th class="admin-actions-header">操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="u in users" :key="u.id">
+            <tr v-for="u in filteredUsers" :key="u.id">
               <td>
-                <code>{{ u.username }}</code>
-              </td>
-              <td>
-                <div class="field has-addons">
-                  <div class="control is-expanded">
-                    <input
-                      class="input is-small"
-                      type="email"
-                      placeholder="user@example.com"
-                      :disabled="loading || !capabilities.canUpdateEmail || !canManageUser(u)"
-                      v-model.trim="emailDraft[u.id]"
-                    />
-                  </div>
-                  <div class="control">
-                    <button
-                      class="button is-small is-light"
-                      :disabled="loading || !capabilities.canUpdateEmail || !canManageUser(u)"
-                      @click="saveEmail(u)"
-                    >
-                      保存
-                    </button>
+                <div class="admin-user">
+                  <span class="admin-avatar" aria-hidden="true">
+                    {{ (u.username || "?").slice(0, 1).toUpperCase() }}
+                  </span>
+                  <div class="admin-user-titles">
+                    <span class="admin-user-name">{{ u.username }}</span>
+                    <span v-if="u.id === auth.user?.id" class="admin-user-self">
+                      当前账号
+                    </span>
                   </div>
                 </div>
               </td>
+
               <td>
+                <!-- 邮箱：默认只读文本，点铅笔进入行内编辑（避免整列都是输入框） -->
+                <div v-if="editingId === u.id" class="admin-email-edit">
+                  <input
+                    :ref="registerEmailInput"
+                    v-model.trim="emailDraft[u.id]"
+                    class="input is-small"
+                    type="email"
+                    placeholder="user@example.com"
+                    :aria-label="`${u.username} 的邮箱`"
+                    @keydown.enter.prevent="saveEmail(u)"
+                    @keydown.esc.prevent="cancelEdit"
+                  />
+                  <button
+                    class="vf-ghost-button is-primary admin-edit-button"
+                    type="button"
+                    :disabled="loading"
+                    @click="saveEmail(u)"
+                  >
+                    保存
+                  </button>
+                  <button
+                    class="vf-ghost-button admin-edit-button"
+                    type="button"
+                    @click="cancelEdit"
+                  >
+                    取消
+                  </button>
+                </div>
+                <div v-else class="admin-email">
+                  <span class="admin-email-text" :title="u.email || ''">
+                    {{ u.email || "未设置" }}
+                  </span>
+                  <button
+                    v-if="canEditEmail(u)"
+                    class="vf-icon-button admin-email-edit-button"
+                    type="button"
+                    :title="`修改 ${u.username} 的邮箱`"
+                    :aria-label="`修改 ${u.username} 的邮箱`"
+                    @click="startEdit(u)"
+                  >
+                    <IconPencil :size="14" />
+                  </button>
+                </div>
+              </td>
+
+              <td class="is-narrow">
                 <div class="select is-small">
                   <select
                     :value="u.role"
                     :disabled="loading || !canManageRole(u)"
+                    :aria-label="`${u.username} 的角色`"
                     @change="
                       onChangeRole(
                         u.id,
@@ -82,36 +203,48 @@
                       )
                     "
                   >
-                    <option value="user">user</option>
-                    <option value="manager">manager</option>
-                    <option value="admin">admin</option>
+                    <option value="user">普通用户</option>
+                    <option value="manager">管理者</option>
+                    <option value="admin">管理员</option>
                   </select>
                 </div>
               </td>
-              <td>
+
+              <td class="is-narrow">
                 <span
-                  class="tag"
-                  :class="u.disabled ? 'is-warning' : 'is-success'"
+                  class="admin-status"
+                  :class="u.disabled ? 'is-disabled' : 'is-active'"
                 >
-                  {{ u.disabled ? "禁用" : "正常" }}
+                  <span class="admin-status-dot" aria-hidden="true"></span>
+                  <span>{{ u.disabled ? "已禁用" : "正常" }}</span>
                 </span>
               </td>
-              <td>
-                <span class="is-size-7">{{ u.createdAt }}</span>
+
+              <td class="is-narrow">
+                <span class="admin-date" :title="u.createdAt">
+                  {{ formatRelativeDate(u.createdAt) }}
+                </span>
               </td>
-              <td>
-                <div class="buttons are-small">
+
+              <td class="admin-actions">
+                <div class="admin-actions-group">
                   <button
-                    class="button is-light"
+                    class="vf-ghost-button admin-action"
+                    type="button"
                     :disabled="loading || !canManageUser(u)"
                     @click="toggleDisabled(u)"
                   >
                     {{ u.disabled ? "启用" : "禁用" }}
                   </button>
-
                   <button
-                    class="button is-warning is-light"
-                    :disabled="loading || auth.user?.id === u.id || !capabilities.canRevokeSessions || !canManageUser(u)"
+                    class="vf-ghost-button is-danger admin-action"
+                    type="button"
+                    :disabled="
+                      loading ||
+                      auth.user?.id === u.id ||
+                      !capabilities.canRevokeSessions ||
+                      !canManageUser(u)
+                    "
                     @click="revokeSessions(u)"
                   >
                     强制下线
@@ -119,21 +252,24 @@
                 </div>
               </td>
             </tr>
-
-            <tr v-if="!loading && users.length === 0">
-              <td colspan="6" class="has-text-centered has-text-grey">
-                暂无用户
-              </td>
-            </tr>
           </tbody>
         </table>
       </div>
     </div>
-  </section>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
+import {
+  IconAlertCircle,
+  IconInfoCircle,
+  IconPencil,
+  IconRefresh,
+  IconSearch,
+  IconUsers,
+  IconX,
+} from "@tabler/icons-vue";
 import {
   authService,
   type AdminUser,
@@ -142,6 +278,8 @@ import {
 import { useAppStore } from "../stores/app.store";
 import { confirmDialog } from "../composables/dialog";
 import { useAuthStore } from "../stores/auth.store";
+import EmptyState from "../components/common/EmptyState.vue";
+import { formatRelativeDate } from "../utils/filePresentation";
 
 const app = useAppStore();
 const auth = useAuthStore();
@@ -150,11 +288,21 @@ const users = ref<AdminUser[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const emailDraft = ref<Record<string, string>>({});
+const searchQuery = ref("");
+const roleFilter = ref<"all" | AdminUser["role"]>("all");
+const editingId = ref<string | null>(null);
+const emailInput = ref<HTMLInputElement | null>(null);
 const defaultCapabilities: AdminUserCapabilities = {
   canUpdateEmail: true,
   canRevokeSessions: true,
 };
 const capabilities = ref<AdminUserCapabilities>({ ...defaultCapabilities });
+
+const ROLE_LABELS: Record<AdminUser["role"], string> = {
+  admin: "管理员",
+  manager: "管理者",
+  user: "普通用户",
+};
 
 const unsupportedActionsMessage = computed(() => {
   const unsupported: string[] = [];
@@ -170,6 +318,39 @@ const unsupportedActionsMessage = computed(() => {
     : null;
 });
 
+/** 关键字匹配用户名/邮箱/角色中文名，便于快速定位。 */
+const filteredUsers = computed(() => {
+  const query = searchQuery.value.toLowerCase();
+  return users.value.filter((user) => {
+    if (roleFilter.value !== "all" && user.role !== roleFilter.value) {
+      return false;
+    }
+    if (!query) return true;
+    return (
+      user.username.toLowerCase().includes(query) ||
+      (user.email ?? "").toLowerCase().includes(query) ||
+      (ROLE_LABELS[user.role] ?? "").includes(searchQuery.value)
+    );
+  });
+});
+
+/** 角色筛选 chips：只显示实际存在的角色。 */
+const roleBuckets = computed(() => {
+  const order: AdminUser["role"][] = ["admin", "manager", "user"];
+  return order
+    .map((role) => ({
+      role,
+      label: ROLE_LABELS[role] ?? role,
+      count: users.value.filter((user) => user.role === role).length,
+    }))
+    .filter((bucket) => bucket.count > 0);
+});
+
+function clearFilters() {
+  searchQuery.value = "";
+  roleFilter.value = "all";
+}
+
 function canManageUser(user: AdminUser): boolean {
   if (auth.user?.role === "admin") {
     return true;
@@ -184,6 +365,27 @@ function canManageUser(user: AdminUser): boolean {
 
 function canManageRole(user: AdminUser): boolean {
   return auth.user?.role === "admin" && canManageUser(user);
+}
+
+function canEditEmail(user: AdminUser): boolean {
+  return capabilities.value.canUpdateEmail && canManageUser(user);
+}
+
+function registerEmailInput(element: unknown) {
+  if (element instanceof HTMLInputElement) {
+    emailInput.value = element;
+  }
+}
+
+async function startEdit(user: AdminUser) {
+  emailDraft.value = { ...emailDraft.value, [user.id]: user.email || "" };
+  editingId.value = user.id;
+  await nextTick();
+  emailInput.value?.focus();
+}
+
+function cancelEdit() {
+  editingId.value = null;
 }
 
 async function reload() {
@@ -223,6 +425,7 @@ async function saveEmail(u: AdminUser) {
   try {
     const res = await authService.setUserEmail(u.id, nextEmail);
     if (!res.success) throw new Error(res.error || "保存邮箱失败");
+    editingId.value = null;
     app.success("已保存邮箱");
     await reload();
   } catch (e) {
@@ -289,3 +492,314 @@ onMounted(() => {
   void reload();
 });
 </script>
+
+<style scoped>
+.admin-page {
+  padding: 1.25rem 1rem 3rem;
+}
+
+.admin-card {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.1rem 1.2rem 1.3rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-lg);
+  background: var(--vf-surface);
+  box-shadow: var(--vf-shadow-card);
+}
+
+.admin-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+}
+
+.admin-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--vf-text-strong);
+}
+
+.admin-subtitle {
+  margin: 0.15rem 0 0;
+  color: var(--vf-text-muted);
+  font-size: 0.8rem;
+}
+
+.admin-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.admin-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.admin-search-icon {
+  position: absolute;
+  left: 0.5rem;
+  color: var(--vf-text-subtle);
+  pointer-events: none;
+}
+
+.admin-search-input {
+  width: min(16rem, 60vw);
+  padding-left: 1.75rem;
+  padding-right: 1.6rem;
+  font-size: 0.8rem;
+}
+
+.admin-search-clear {
+  position: absolute;
+  right: 0.2rem;
+}
+
+.admin-refresh {
+  min-height: 1.9rem;
+  padding: 0 0.6rem;
+  font-size: 0.8rem;
+}
+
+/* 角色筛选 chips */
+.admin-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  padding: 0.7rem 0 0;
+}
+
+.admin-filter {
+  gap: 0.3rem;
+  min-height: 1.75rem;
+  padding: 0 0.55rem;
+  font-size: 0.78rem;
+}
+
+.admin-filter-count {
+  color: var(--vf-text-subtle);
+  font-size: 0.72rem;
+}
+
+.admin-filter.is-active .admin-filter-count {
+  color: currentColor;
+  opacity: 0.75;
+}
+
+.admin-note {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.75rem 0 0;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--vf-warning-line);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-warning-soft);
+  color: var(--vf-text);
+  font-size: 0.78rem;
+}
+
+.admin-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem 0;
+}
+
+.admin-skeleton-row {
+  height: 2.2rem;
+  border-radius: var(--vf-radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--vf-skeleton-base) 0%,
+    var(--vf-skeleton-shine) 50%,
+    var(--vf-skeleton-base) 100%
+  );
+  background-size: 200% 100%;
+  animation: admin-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes admin-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.admin-table-wrap {
+  margin-top: 0.6rem;
+  overflow-x: auto;
+}
+
+.admin-table {
+  font-size: 0.84rem;
+}
+
+.admin-table thead th {
+  border-bottom: 1px solid var(--vf-border-weak);
+  color: var(--vf-text-muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.admin-table tbody tr:hover {
+  background: var(--vf-surface-hover);
+}
+
+.admin-user {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.admin-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 50%;
+  background: var(--vf-accent-soft);
+  color: var(--vf-accent-strong);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.admin-user-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.admin-user-name {
+  color: var(--vf-text-strong);
+  font-weight: 600;
+}
+
+.admin-user-self {
+  color: var(--vf-text-subtle);
+  font-size: 0.72rem;
+}
+
+.admin-email {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.admin-email-text {
+  color: var(--vf-text);
+}
+
+.admin-email-edit-button {
+  opacity: 0;
+}
+
+.admin-table tbody tr:hover .admin-email-edit-button,
+.admin-email-edit-button:focus-visible {
+  opacity: 1;
+}
+
+.admin-email-edit {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.admin-edit-button {
+  min-height: 1.75rem;
+  padding: 0 0.5rem;
+  font-size: 0.76rem;
+}
+
+.admin-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.admin-status-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+}
+
+.admin-status.is-active {
+  color: var(--vf-success-text);
+}
+
+.admin-status.is-active .admin-status-dot {
+  background: var(--vf-success-text);
+}
+
+.admin-status.is-disabled {
+  color: var(--vf-warning-text);
+}
+
+.admin-status.is-disabled .admin-status-dot {
+  background: var(--vf-warning-text);
+}
+
+.admin-date {
+  color: var(--vf-text-subtle);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.admin-actions-header {
+  text-align: right;
+}
+
+.admin-actions {
+  text-align: right;
+}
+
+.admin-actions-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.admin-action {
+  min-height: 1.8rem;
+  padding: 0 0.55rem;
+  font-size: 0.77rem;
+  white-space: nowrap;
+}
+
+.is-spinning {
+  animation: admin-spin 0.9s linear infinite;
+}
+
+@keyframes admin-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media screen and (max-width: 700px) {
+  .admin-page {
+    padding: 0.75rem 0.5rem 2rem;
+  }
+
+  .admin-card {
+    padding: 0.9rem 0.85rem 1.1rem;
+  }
+
+  .admin-search-input {
+    width: 100%;
+  }
+}
+</style>
