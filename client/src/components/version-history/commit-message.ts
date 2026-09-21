@@ -62,29 +62,31 @@ function describeStructuredMessage(
     case "added":
       return {
         title: message,
-        detail: hasCustomMessage ? "创建文件并记录了更新消息" : "创建文件",
+        detail: hasCustomMessage ? undefined : "创建文件",
         tagLabel: "创建",
         tagTone: "is-success",
       };
     case "deleted":
       return {
         title: message,
-        detail: hasCustomMessage ? "删除文件并记录了更新消息" : "删除文件",
+        detail: hasCustomMessage ? undefined : "删除文件",
         tagLabel: "删除",
         tagTone: "is-danger",
       };
     case "renamed":
       return {
         title: message,
-        detail: hasCustomMessage ? "重命名文件并记录了更新消息" : "重命名文件",
+        detail: hasCustomMessage ? undefined : "重命名文件",
         tagLabel: "重命名",
         tagTone: "is-link",
       };
     case "modified":
     default:
+      // 自定义备注的标题就是消息本身，再补一句「这条更新消息会显示在版本历史里」
+      // 属于重复信息，直接省略，让列表更紧凑
       return {
         title: message,
-        detail: hasCustomMessage ? "这条更新消息会显示在版本历史里" : "系统生成的更新记录",
+        detail: hasCustomMessage ? undefined : "系统生成的更新记录",
         tagLabel: hasCustomMessage ? "备注" : "更新",
         tagTone: hasCustomMessage ? "is-primary" : "is-info",
       };

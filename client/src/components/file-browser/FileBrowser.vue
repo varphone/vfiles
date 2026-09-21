@@ -652,6 +652,7 @@
       :show="showHistory"
       :title="`文件历史: ${selectedFile?.name}`"
       :mobile-compact="true"
+      wide
       @close="showHistory = false"
     >
       <VersionHistory v-if="selectedFile" :file-path="selectedFile.path" />

@@ -1,172 +1,229 @@
 <template>
   <div class="version-history">
-    <div v-if="diff.open" class="box mb-4">
-      <div class="level is-mobile">
-        <div class="level-left">
-          <div class="level-item">
-            <div>
-              <p class="heading">对比视图（文本）</p>
-              <p class="title is-6">
-                <code class="is-size-7">{{ diff.hash.substring(0, 8) }}</code>
-                <span class="ml-2">{{ previewView.filename }}</span>
-              </p>
-            </div>
-          </div>
-        </div>
-        <div class="level-right">
-          <div class="level-item">
-            <button class="button is-small" @click="closeDiff">关闭</button>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="diff.loading" class="has-text-centered py-5">
-        <div class="spinner mb-3"></div>
-        <p class="has-text-grey">加载 diff 中...</p>
-      </div>
-
-      <div v-else-if="diff.error" class="notification is-warning is-light">
-        {{ diff.error }}
-      </div>
-
-      <div v-else class="content">
-        <pre class="diff-text">{{ diff.text }}</pre>
-      </div>
+    <div class="history-summary-row">
+      <p class="history-summary">
+        <span class="history-summary-strong">{{ history.totalCommits }}</span>
+        个版本
+        <template v-if="currentShort">
+          <span class="history-summary-sep">·</span>
+          当前
+          <code class="history-summary-hash" :title="history.currentVersion">
+            {{ currentShort }}
+          </code>
+        </template>
+      </p>
+      <button
+        v-if="detailOpen"
+        class="vf-ghost-button history-detail-close"
+        type="button"
+        @click="closeDetail"
+      >
+        收起详情
+      </button>
     </div>
 
-    <div v-if="preview.open" class="box mb-4">
-      <div class="level is-mobile">
-        <div class="level-left">
-          <div class="level-item">
-            <div>
-              <p class="heading">预览版本</p>
-              <p class="title is-6">
-                <code class="is-size-7">{{ previewView.hashShort }}</code>
-                <span class="ml-2">{{ previewView.filename }}</span>
+    <div class="history-layout" :class="{ 'has-detail': detailOpen }">
+      <section class="history-list-pane" aria-label="版本列表">
+        <div v-if="loading" class="history-state">
+          <div class="spinner mb-3"></div>
+          <p class="history-state-text">加载历史记录中...</p>
+        </div>
+
+        <div v-else-if="error" class="notification is-danger is-light">
+          {{ error }}
+        </div>
+
+        <div
+          v-else-if="history.commits.length === 0"
+          class="history-state history-state-empty"
+        >
+          <IconHistory :size="48" class="history-state-icon" />
+          <p class="history-state-text">暂无历史记录</p>
+        </div>
+
+        <template v-else>
+          <CommitList
+            :commits="history.commits"
+            :total-commits="history.totalCommits"
+            :current-version="history.currentVersion"
+            :restoring-hash="restoringHash"
+            :format-date="formatDate"
+            :selected-hash="selectedHash"
+            @view-version="viewVersion"
+            @view-diff="viewDiff"
+            @restore-version="restoreVersion"
+            @download-version="downloadVersion"
+          />
+
+          <div
+            v-if="history.totalCommits > history.commits.length"
+            class="history-more"
+          >
+            <button
+              class="vf-ghost-button"
+              type="button"
+              :disabled="loading"
+              @click="loadMore"
+            >
+              加载更多（还有
+              {{ history.totalCommits - history.commits.length }} 个）
+            </button>
+          </div>
+        </template>
+      </section>
+
+      <aside class="history-detail-pane" aria-label="版本详情">
+        <!-- 文本对比 -->
+        <template v-if="diff.open">
+          <header class="history-detail-head">
+            <div class="history-detail-titles">
+              <p class="history-detail-label">版本对比</p>
+              <p class="history-detail-title">
+                <code :title="diff.hash">{{ diff.hash.substring(0, 8) }}</code>
+                <span class="history-detail-name">{{
+                  previewView.filename
+                }}</span>
               </p>
             </div>
+            <button class="vf-ghost-button" type="button" @click="closeDiff">
+              关闭
+            </button>
+          </header>
+
+          <div class="history-detail-body">
+            <div v-if="diff.loading" class="history-state">
+              <div class="spinner mb-3"></div>
+              <p class="history-state-text">加载 diff 中...</p>
+            </div>
+
+            <div
+              v-else-if="diff.error"
+              class="notification is-warning is-light"
+            >
+              {{ diff.error }}
+            </div>
+
+            <pre v-else class="diff-text">{{ diff.text }}</pre>
           </div>
-        </div>
-        <div class="level-right">
-          <div class="level-item">
-            <div class="buttons">
+        </template>
+
+        <!-- 版本预览 -->
+        <template v-else-if="preview.open">
+          <header class="history-detail-head">
+            <div class="history-detail-titles">
+              <p class="history-detail-label">版本预览</p>
+              <p class="history-detail-title">
+                <code :title="preview.hash">{{ previewView.hashShort }}</code>
+                <span class="history-detail-name">{{
+                  previewView.filename
+                }}</span>
+              </p>
+            </div>
+            <div class="history-detail-actions">
               <button
-                class="button is-small is-success is-light"
+                class="vf-ghost-button"
+                type="button"
                 @click="downloadVersion(preview.hash)"
-                title="下载此版本"
               >
-                <IconDownload :size="18" />
+                <IconDownload :size="15" />
+                <span>下载此版本</span>
               </button>
               <button
-                class="button is-small"
+                class="vf-ghost-button"
+                type="button"
                 @click="closePreview"
-                title="关闭预览"
               >
                 关闭
               </button>
             </div>
+          </header>
+
+          <div class="history-detail-body">
+            <div v-if="preview.loading" class="history-state">
+              <div class="spinner mb-3"></div>
+              <p class="history-state-text">加载预览中...</p>
+            </div>
+
+            <div
+              v-else-if="preview.error"
+              class="notification is-danger is-light"
+            >
+              {{ preview.error }}
+            </div>
+
+            <template v-else>
+              <figure v-if="preview.kind === 'image'" class="image">
+                <img
+                  :src="preview.objectUrl"
+                  :alt="previewView.filename"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </figure>
+
+              <div v-else-if="preview.kind === 'pdf'" class="preview-frame">
+                <iframe
+                  :src="preview.objectUrl"
+                  title="PDF 预览"
+                  class="preview-iframe"
+                />
+              </div>
+
+              <div v-else-if="preview.kind === 'video'" class="preview-media">
+                <video
+                  :src="preview.objectUrl"
+                  controls
+                  class="preview-video"
+                />
+              </div>
+
+              <div v-else-if="preview.kind === 'audio'" class="preview-media">
+                <audio
+                  :src="preview.objectUrl"
+                  controls
+                  class="preview-audio"
+                />
+              </div>
+
+              <div
+                v-else-if="preview.kind === 'markdown'"
+                class="content markdown-body"
+                v-html="preview.html"
+              ></div>
+
+              <div v-else-if="preview.kind === 'code'" class="content">
+                <pre
+                  class="preview-code hljs"
+                ><code v-html="preview.html"></code></pre>
+              </div>
+
+              <div v-else-if="preview.kind === 'text'" class="content">
+                <pre class="preview-text">{{ preview.text }}</pre>
+              </div>
+
+              <div v-else class="notification is-warning is-light">
+                暂不支持该文件类型的在线预览，请使用下载。
+              </div>
+            </template>
           </div>
+        </template>
+
+        <!-- 空态：提示如何查看某个版本 -->
+        <div v-else class="history-detail-empty">
+          <IconHistory :size="40" class="history-state-icon" />
+          <p class="history-detail-empty-title">查看某个版本</p>
+          <p class="history-detail-empty-hint">
+            在左侧版本上选择「预览」或「对比」，内容会显示在这里。
+          </p>
         </div>
-      </div>
-
-      <div v-if="preview.loading" class="has-text-centered py-5">
-        <div class="spinner mb-3"></div>
-        <p class="has-text-grey">加载预览中...</p>
-      </div>
-
-      <div v-else-if="preview.error" class="notification is-danger is-light">
-        {{ preview.error }}
-      </div>
-
-      <div v-else>
-        <figure v-if="preview.kind === 'image'" class="image">
-          <img
-            :src="preview.objectUrl"
-            :alt="previewView.filename"
-            loading="lazy"
-            decoding="async"
-          />
-        </figure>
-
-        <div v-else-if="preview.kind === 'pdf'" class="preview-frame">
-          <iframe
-            :src="preview.objectUrl"
-            title="PDF 预览"
-            class="preview-iframe"
-          />
-        </div>
-
-        <div v-else-if="preview.kind === 'video'" class="preview-media">
-          <video :src="preview.objectUrl" controls class="preview-video" />
-        </div>
-
-        <div v-else-if="preview.kind === 'audio'" class="preview-media">
-          <audio :src="preview.objectUrl" controls class="preview-audio" />
-        </div>
-
-        <div
-          v-else-if="preview.kind === 'markdown'"
-          class="content markdown-body"
-          v-html="preview.html"
-        ></div>
-
-        <div v-else-if="preview.kind === 'code'" class="content">
-          <pre
-            class="preview-code hljs"
-          ><code v-html="preview.html"></code></pre>
-        </div>
-
-        <div v-else-if="preview.kind === 'text'" class="content">
-          <pre class="preview-text">{{ preview.text }}</pre>
-        </div>
-
-        <div v-else class="notification is-warning is-light">
-          暂不支持该文件类型的在线预览，请使用下载。
-        </div>
-      </div>
-    </div>
-
-    <div v-if="loading" class="has-text-centered py-6">
-      <div class="spinner mb-3"></div>
-      <p class="has-text-grey">加载历史记录中...</p>
-    </div>
-
-    <div v-else-if="error" class="notification is-danger is-light">
-      {{ error }}
-    </div>
-
-    <div
-      v-else-if="history.commits.length === 0"
-      class="has-text-centered py-6"
-    >
-      <IconHistory :size="64" class="has-text-grey-light mb-3" />
-      <p class="has-text-grey">暂无历史记录</p>
-    </div>
-
-    <CommitList
-      v-else
-      :commits="history.commits"
-      :currentVersion="history.currentVersion"
-      :restoringHash="restoringHash"
-      :formatDate="formatDate"
-      @view-version="viewVersion"
-      @view-diff="viewDiff"
-      @restore-version="restoreVersion"
-      @download-version="downloadVersion"
-    />
-
-    <div
-      v-if="history.totalCommits > history.commits.length"
-      class="has-text-centered mt-4"
-    >
-      <button class="button is-light" @click="loadMore">加载更多</button>
+      </aside>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onBeforeUnmount, computed, watch } from "vue";
-import { IconHistory } from "@tabler/icons-vue";
+import { IconDownload, IconHistory } from "@tabler/icons-vue";
 import { filesService } from "../../services/files.service";
 import { useAppStore } from "../../stores/app.store";
 import { confirmDialog } from "../../composables/dialog";
@@ -240,6 +297,28 @@ const previewView = computed(() => {
     hashShort: previewHashShort.value,
   };
 });
+
+const currentShort = computed(() =>
+  history.value.currentVersion
+    ? history.value.currentVersion.substring(0, 8)
+    : "",
+);
+
+/** 详情面板当前展示的版本（用于列表高亮）。 */
+const selectedHash = computed(() =>
+  diff.value.open
+    ? diff.value.hash
+    : preview.value.open
+      ? preview.value.hash
+      : "",
+);
+const detailOpen = computed(() => diff.value.open || preview.value.open);
+
+/** 移动端/窄屏：收起详情面板，回到纯列表。 */
+function closeDetail() {
+  closeDiff();
+  closePreview();
+}
 
 watch(
   () => props.filePath,
@@ -510,8 +589,9 @@ onBeforeUnmount(() => {
 });
 
 async function viewVersion(hash: string) {
-  // 打开预览并加载内容
+  // 打开预览并加载内容；预览与对比共用右侧面板，需先关掉对比
   closePreview();
+  closeDiff();
   preview.value.open = true;
   preview.value.loading = true;
   preview.value.hash = hash;
@@ -627,159 +707,232 @@ function loadMore() {
 
 <style scoped>
 .version-history {
-  max-height: 70vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: min(920px, 100%);
 }
 
-.spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid var(--vf-border);
-  border-top-color: var(--vf-accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  margin: 0 auto;
+.history-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
+.history-summary {
+  margin: 0;
+  color: var(--vf-text-muted);
+  font-size: 0.8rem;
+}
+
+.history-summary-strong {
+  color: var(--vf-text-strong);
+  font-weight: 600;
+}
+
+.history-summary-sep {
+  margin: 0 0.3rem;
+  color: var(--vf-border);
+}
+
+.history-summary-hash {
+  font-size: 0.78rem;
+  color: var(--vf-text-muted);
+}
+
+/* 宽屏两栏：左列表右详情；窄屏单栏，详情置顶 */
+.history-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.85rem;
+}
+
+@media screen and (min-width: 900px) {
+  .history-layout {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
   }
 }
 
-.timeline {
-  padding: 1rem 0;
+.history-list-pane {
+  min-width: 0;
+  max-height: min(64vh, 560px);
+  overflow-y: auto;
+  padding-right: 0.2rem;
 }
 
-:deep(.timeline-item) {
-  position: relative;
-  padding-left: 2rem;
-  padding-bottom: 2rem;
-}
-
-:deep(.timeline-item)::before {
-  content: "";
-  position: absolute;
-  left: 0.5rem;
-  top: 1.5rem;
-  bottom: 0;
-  width: 2px;
-  background: var(--vf-border);
-}
-
-:deep(.timeline-item:last-child)::before {
-  display: none;
-}
-
-:deep(.timeline-marker) {
-  position: absolute;
-  left: 0;
-  top: 0.5rem;
-  width: 1.25rem;
-  height: 1.25rem;
-  border: 2px solid var(--vf-border);
-  border-radius: 50%;
-  background: var(--vf-surface);
-  z-index: 1;
-}
-
-:deep(.timeline-marker.is-primary) {
-  border-color: var(--vf-accent);
-  background: var(--vf-accent);
-}
-
-:deep(.timeline-content) {
-  margin-left: 1rem;
-}
-
-:deep(.commit-hash) {
-  margin-top: 0.5rem;
-}
-
-:deep(.buttons) {
+.history-detail-pane {
   display: flex;
-  gap: 0.25rem;
+  flex-direction: column;
+  min-width: 0;
+  max-height: min(64vh, 560px);
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius);
+  background: var(--vf-surface);
 }
 
-.preview-text {
-  max-height: 45vh;
+/* 移动端：打开详情时把详情放到列表上方，避免用户来回滚动 */
+@media screen and (max-width: 899px) {
+  .history-layout.has-detail .history-detail-pane {
+    order: -1;
+  }
+
+  .history-list-pane,
+  .history-detail-pane {
+    max-height: none;
+  }
+}
+
+.history-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0.7rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+}
+
+.history-detail-titles {
+  min-width: 0;
+}
+
+.history-detail-label {
+  margin: 0;
+  color: var(--vf-text-subtle);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.history-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.15rem 0 0;
+  color: var(--vf-text-strong);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.history-detail-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.history-detail-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
+  padding: 0.7rem;
+}
+
+.history-detail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  flex: 1 1 auto;
+  min-height: 12rem;
+  padding: 1.4rem 1rem;
+  text-align: center;
+}
+
+.history-detail-empty-title {
+  margin: 0;
+  color: var(--vf-text);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.history-detail-empty-hint {
+  margin: 0;
+  max-width: 18rem;
+  color: var(--vf-text-subtle);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.history-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.history-state-empty {
+  min-height: 10rem;
+}
+
+.history-state-icon {
+  color: var(--vf-text-subtle);
+  margin-bottom: 0.5rem;
+}
+
+.history-state-text {
+  margin: 0;
+  color: var(--vf-text-muted);
+  font-size: 0.84rem;
+}
+
+.history-more {
+  display: flex;
+  justify-content: center;
+  padding: 0.5rem 0 0.2rem;
+}
+
+.diff-text {
+  margin: 0;
+  padding: 0.6rem;
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-code-bg, var(--vf-surface-sunken));
+  color: var(--vf-text);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.preview-code,
+.preview-text {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .preview-frame {
-  height: 60vh;
+  position: relative;
+  width: 100%;
+  height: min(52vh, 460px);
 }
 
 .preview-iframe {
   width: 100%;
   height: 100%;
-  border: 0;
-}
-
-.preview-media {
-  max-height: 60vh;
+  border: none;
+  border-radius: var(--vf-radius-sm);
 }
 
 .preview-video {
   width: 100%;
-  max-height: 60vh;
+  max-height: min(52vh, 460px);
+  border-radius: var(--vf-radius-sm);
 }
 
 .preview-audio {
   width: 100%;
-}
-
-.markdown-body :deep(pre) {
-  max-height: 45vh;
-  overflow: auto;
-}
-
-.preview-code {
-  max-height: 45vh;
-  overflow: auto;
-  white-space: pre;
-}
-
-/* highlight.js：不引入主题色，仅做轻量层次 */
-.hljs :deep(.hljs-comment),
-.hljs :deep(.hljs-quote) {
-  opacity: 0.7;
-}
-
-.hljs :deep(.hljs-keyword),
-.hljs :deep(.hljs-selector-tag),
-.hljs :deep(.hljs-title) {
-  font-weight: 600;
-}
-
-.hljs :deep(.hljs-string) {
-  font-style: italic;
-}
-
-.diff-text {
-  max-height: 45vh;
-  overflow: auto;
-  white-space: pre;
-}
-
-@media screen and (max-width: 768px) {
-  :deep(.timeline-item) {
-    padding-left: 1.5rem;
-  }
-
-  :deep(.level) {
-    flex-direction: column;
-    align-items: flex-start !important;
-  }
-
-  :deep(.level-right) {
-    margin-top: 0.5rem;
-  }
-
-  :deep(.buttons) {
-    flex-direction: row;
-  }
 }
 </style>

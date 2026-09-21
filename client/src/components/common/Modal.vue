@@ -1,7 +1,10 @@
 <template>
   <div class="modal" :class="{ 'is-active': show }">
     <div class="modal-background" @click="close"></div>
-    <div class="modal-card" :class="{ 'is-mobile-compact': mobileCompact }">
+    <div
+      class="modal-card"
+      :class="{ 'is-mobile-compact': mobileCompact, 'is-wide': wide }"
+    >
       <header class="modal-card-head">
         <p class="modal-card-title">{{ title }}</p>
         <button class="delete" aria-label="close" @click="close"></button>
@@ -22,9 +25,12 @@ withDefaults(
     show: boolean;
     title: string;
     mobileCompact?: boolean;
+    /** 需要横向空间的对话框（如两栏的版本历史）使用更宽的卡片。 */
+    wide?: boolean;
   }>(),
   {
     mobileCompact: false,
+    wide: false,
   },
 );
 
@@ -40,6 +46,10 @@ function close() {
 <style scoped>
 .modal {
   z-index: 100;
+}
+
+.modal-card.is-wide {
+  width: min(960px, 92vw);
 }
 
 .modal-card {

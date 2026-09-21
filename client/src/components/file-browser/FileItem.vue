@@ -21,11 +21,7 @@
   >
     <td class="is-narrow">
       <div class="is-flex is-align-items-center">
-        <label
-          v-if="selectMode"
-          class="mr-2"
-          @click.stop
-        >
+        <label v-if="selectMode" class="mr-2" @click.stop>
           <input
             type="checkbox"
             :checked="selected"
@@ -269,17 +265,15 @@
             >
           </p>
           <p class="file-info">
-            <template>
-              <span v-if="file.kind === 'file'" class="tag is-light mr-2">
-                {{ formatSize(file.size_bytes || 0) }}
-              </span>
-              <span
-                class="has-text-grey-light is-size-7"
-                :title="formatDate(file.created_at)"
-              >
-                {{ formatRelativeDate(file.created_at) }}
-              </span>
-            </template>
+            <span v-if="file.kind === 'file'" class="tag is-light mr-2">
+              {{ formatSize(file.size_bytes || 0) }}
+            </span>
+            <span
+              class="has-text-grey-light is-size-7"
+              :title="formatDate(file.created_at)"
+            >
+              {{ formatRelativeDate(file.created_at) }}
+            </span>
           </p>
           <p v-if="file.lastCommit" class="file-commit">
             <span class="tag is-info is-light">
@@ -322,11 +316,7 @@
 
     <!-- 浮动操作栏 -->
     <Transition name="slide-up">
-      <div
-        v-if="showActions && !selectMode"
-        class="file-actions"
-        @click.stop
-      >
+      <div v-if="showActions && !selectMode" class="file-actions" @click.stop>
         <div class="actions-bar">
           <button
             v-if="file.kind === 'directory'"
@@ -355,11 +345,7 @@
             <IconHistory :size="20" />
             <span>历史</span>
           </button>
-          <button
-            class="action-btn"
-            @click="moveEntry"
-            title="移动"
-          >
+          <button class="action-btn" @click="moveEntry" title="移动">
             <IconArrowsDiff :size="20" />
             <span>移动</span>
           </button>
