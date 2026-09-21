@@ -33,6 +33,24 @@ pub trait UserRepo {
     async fn list_transfer_targets(&self, exclude: &UserId) -> DomainResult<Vec<User>>;
 }
 
+/// 访问令牌仓储（只存摘要；明文不落库）。
+#[async_trait::async_trait]
+pub trait AccessTokenRepo {
+    async fn create(&self, token: &NewAccessToken) -> DomainResult<AccessToken>;
+    /// 列出某用户的令牌（含已撤销，按创建时间倒序）。
+    async fn list_for_user(&self, user_id: &UserId) -> DomainResult<Vec<AccessToken>>;
+    /// 按 SHA-256 摘要查找（鉴权热路径）。
+    async fn find_by_hash(&self, token_hash: &str) -> DomainResult<Option<AccessToken>>;
+    /// 记录最近使用时间（鉴权时尽力而为，失败不影响请求）。
+    async fn touch_last_used(
+        &self,
+        id: &AccessTokenId,
+        at: time::OffsetDateTime,
+    ) -> DomainResult<()>;
+    /// 撤销：仅允许撤销自己的令牌，返回是否真的撤销了。
+    async fn revoke(&self, user_id: &UserId, id: &AccessTokenId) -> DomainResult<bool>;
+}
+
 #[async_trait::async_trait]
 pub trait SessionRepo {
     async fn create_session(

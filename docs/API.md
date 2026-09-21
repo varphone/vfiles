@@ -164,7 +164,48 @@
 - 分享：`share.create`、`share.disable`、`share.download`
 - 用户管理：`user.create`、`user.update`、`user.sessions_revoke`
 - 文件操作：`file.transfer`（转移所有权给其他用户）
+- 访问令牌：`token.create`、`token.revoke`
 - 审计自身：`audit.export`（导出只读日志）
+
+## 访问令牌（CLI / 构建系统）
+
+给脚本、CI 等程序使用的 API 凭证：创建后把明文当 `Bearer` 令牌使用，**无需登录会话**。
+
+```bash
+# 所有需要登录的接口都接受 Bearer 令牌
+curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci"
+```
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/tokens` | 列出自己的令牌（只返回前缀，不含明文） |
+| POST | `/api/tokens` | 创建令牌，**响应里返回一次明文** |
+| DELETE | `/api/tokens/{id}` | 撤销令牌（立即失效） |
+| GET | `/api/tokens/expiry-options` | 可选有效期（`0/30/90/365` 天，0 表示永久） |
+
+`POST /api/tokens` 请求/响应：
+
+```json
+{ "name": "CI 构建", "expires_in_days": 90 }
+```
+```json
+{
+  "token": {
+    "id": "…", "name": "CI 构建", "token_prefix": "vfat_1a2b3c4d",
+    "scopes": "full", "created_at": "…", "expires_at": "…",
+    "last_used_at": null, "revoked_at": null, "active": true
+  },
+  "plaintext": "vfat_8f0a…e841"
+}
+```
+
+安全约定：
+
+- 明文形如 `vfat_<64 位十六进制>`，**只在创建响应里出现一次**；服务端只保存 SHA-256 摘要与展示前缀；
+- 令牌**不能创建或撤销令牌**（这些接口只接受会话 Cookie 鉴权，返回 `403`），避免泄露后自我扩权；
+- 撤销、过期或用户被禁用后，令牌立即失效（`401`）；
+- 鉴权时会刷新 `last_used_at`，便于识别长期未用的令牌；
+- 创建与撤销都会写入审计日志（动作 `token.create` / `token.revoke`）。
 
 ## 转移所有权
 

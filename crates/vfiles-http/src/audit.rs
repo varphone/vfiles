@@ -31,6 +31,8 @@ pub mod action {
     pub const USER_UPDATE: &str = "user.update";
     pub const USER_SESSIONS_REVOKE: &str = "user.sessions_revoke";
     pub const AUDIT_EXPORT: &str = "audit.export";
+    pub const TOKEN_CREATE: &str = "token.create";
+    pub const TOKEN_REVOKE: &str = "token.revoke";
 }
 
 /// 从请求头取出 (IP, User-Agent)。

@@ -35,6 +35,29 @@ export interface CategoryUsage {
   file_count: number;
 }
 
+/** 访问令牌（GET /api/tokens；明文只在创建时返回一次）。 */
+export interface AccessToken {
+  id: string;
+  name: string;
+  token_prefix: string;
+  scopes: string;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  active: boolean;
+}
+
+export interface CreatedAccessToken {
+  token: AccessToken;
+  plaintext: string;
+}
+
+export interface TokenExpiryOption {
+  days: number;
+  label: string;
+}
+
 /** 所有权转移目标用户（GET /api/files/users/directory）。 */
 export interface TransferTarget {
   id: string;

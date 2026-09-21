@@ -2,15 +2,18 @@ import { apiService } from "./api.service";
 import { fetchWithRetry } from "./fetch-retry";
 import { extractErrorPayload, localizeApiError } from "../utils/apiErrors";
 import type {
+  AccessToken,
   AuditLogPage,
   AuditLogQueryParams,
   AuditLogSummary,
   ContentMatch,
+  CreatedAccessToken,
   FavoriteEntry,
   FileInfo,
   FileHistory,
   ShareLink,
   StorageCategory,
+  TokenExpiryOption,
   TransferOwnershipResult,
   TransferTarget,
   WorkspaceOverview,
@@ -382,6 +385,43 @@ export const filesService = {
         ? payload.recent_files
         : [],
     };
+  },
+
+  /** 当前用户的访问令牌（不含明文）。 */
+  async listAccessTokens(): Promise<AccessToken[]> {
+    const response = await apiService.get<AccessToken[]>("/tokens");
+    const payload = (response as any)?.data ?? response;
+    return Array.isArray(payload) ? payload : [];
+  },
+
+  /** 令牌有效期选项（由服务端定义，前端不硬编码）。 */
+  async listTokenExpiryOptions(): Promise<TokenExpiryOption[]> {
+    const response = await apiService.get<TokenExpiryOption[]>(
+      "/tokens/expiry-options",
+    );
+    const payload = (response as any)?.data ?? response;
+    return Array.isArray(payload) ? payload : [];
+  },
+
+  /** 创建访问令牌：明文只在这次响应里返回。 */
+  async createAccessToken(
+    name: string,
+    expiresInDays: number,
+  ): Promise<CreatedAccessToken> {
+    const response = await apiService.post<CreatedAccessToken>("/tokens", {
+      name,
+      expires_in_days: expiresInDays,
+    });
+    const payload = (response as any)?.data ?? response;
+    return {
+      token: payload?.token,
+      plaintext: String(payload?.plaintext ?? ""),
+    };
+  },
+
+  /** 撤销访问令牌（立即失效）。 */
+  async revokeAccessToken(id: string): Promise<void> {
+    await apiService.delete(`/tokens/${encodeURIComponent(id)}`);
   },
 
   /** 可接收所有权转移的其他用户。 */

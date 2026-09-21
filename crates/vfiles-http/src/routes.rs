@@ -25,6 +25,7 @@ pub mod session;
 pub mod share;
 pub mod snapshot;
 pub mod thumbnail;
+pub mod tokens;
 pub mod transfer;
 pub mod tree;
 pub mod upload;
@@ -65,6 +66,13 @@ pub(crate) async fn authenticated_request_context(
 }
 
 async fn optional_auth_user(state: &AppState, jar: &CookieJar) -> ApiResult<Option<AuthUser>> {
+    // 访问令牌优先：`Authorization: Bearer vfat_...` 由中间件复制成 vfiles_token cookie
+    if let Some(token) = jar.get(crate::middleware::ACCESS_TOKEN_COOKIE)
+        && let Some(auth_user) = authenticate_access_token(state, token.value()).await?
+    {
+        return Ok(Some(auth_user));
+    }
+
     let Some(auth_service) = &state.auth_service else {
         return Ok(None);
     };
@@ -87,27 +95,57 @@ async fn optional_auth_user(state: &AppState, jar: &CookieJar) -> ApiResult<Opti
     }
 }
 
-async fn require_auth_user(state: &AppState, jar: &CookieJar) -> ApiResult<AuthUser> {
-    let auth_service = state
-        .auth_service
-        .as_ref()
-        .ok_or(ApiError::Domain(DomainError::Unauthorized))?;
-    let cookie = jar
-        .get("auth_token")
-        .ok_or(ApiError::Domain(DomainError::Unauthorized))?;
+/// 用访问令牌鉴权：校验令牌并把所属用户组装成 [`AuthUser`]。
+///
+/// 用户被禁用时视为无效令牌。
+async fn authenticate_access_token(
+    state: &AppState,
+    plaintext: &str,
+) -> ApiResult<Option<AuthUser>> {
+    let Some(token) = state
+        .access_token_service
+        .authenticate(plaintext)
+        .await
+        .map_err(ApiError::Domain)?
+    else {
+        return Ok(None);
+    };
 
-    match auth_service.authenticate_session(cookie.value()).await {
-        Ok(auth_user) => Ok(auth_user),
-        Err(
-            DomainError::Unauthorized
-            | DomainError::InvalidCredentials
-            | DomainError::UserDisabled
-            | DomainError::SessionExpired
-            | DomainError::SessionRevoked
-            | DomainError::NotFound { .. },
-        ) => Err(ApiError::Domain(DomainError::Unauthorized)),
-        Err(err) => Err(ApiError::Domain(err)),
+    let user = match state.user_repo.find_by_id(&token.user_id).await {
+        Ok(user) => user,
+        Err(DomainError::NotFound { .. }) => return Ok(None),
+        Err(err) => return Err(ApiError::Domain(err)),
+    };
+    if user.disabled {
+        return Ok(None);
     }
+
+    Ok(Some(AuthUser {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+    }))
+}
+
+/// 仅会话（Cookie）鉴权：令牌不能用来创建/撤销令牌，避免泄露后自我扩大。
+pub(crate) async fn require_session_auth_user(
+    state: &AppState,
+    jar: &CookieJar,
+) -> ApiResult<AuthUser> {
+    if jar.get(crate::middleware::ACCESS_TOKEN_COOKIE).is_some() {
+        return Err(ApiError::Domain(DomainError::Forbidden));
+    }
+    require_auth_user(state, jar).await
+}
+
+/// 需要登录：会话 Cookie 或访问令牌任一有效即可。
+///
+/// 复用 [`optional_auth_user`]，保证两条鉴权路径（会话 / 令牌）行为一致。
+async fn require_auth_user(state: &AppState, jar: &CookieJar) -> ApiResult<AuthUser> {
+    optional_auth_user(state, jar)
+        .await?
+        .ok_or(ApiError::Domain(DomainError::Unauthorized))
 }
 
 async fn request_context_from_auth_user(
@@ -160,6 +198,8 @@ pub fn api_router() -> Router<AppState> {
         .nest("/share", share::router())
         .nest("/admin", admin::router())
         .nest("/audit", audit::router())
+        // 访问令牌是用户级资源，放在 /api/tokens 而不是 /api/files 下
+        .merge(tokens::router())
         .route("/health", get(health::health_check))
         .route("/ready", get(health::readiness_check))
 }

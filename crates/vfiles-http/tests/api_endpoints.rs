@@ -274,6 +274,10 @@ impl TestApp {
             audit_service: vfiles_app::AuditService::new(
                 vfiles_infra_sqlite::SqliteAuditLogRepo::new(pool.clone()),
             ),
+            user_repo: Arc::new(vfiles_infra_sqlite::SqliteUserRepo::new(pool.clone())),
+            access_token_service: vfiles_app::AccessTokenService::new(Arc::new(
+                vfiles_infra_sqlite::SqliteAccessTokenRepo::new(pool.clone()),
+            )),
             ownership_service: vfiles_app::OwnershipService::new(
                 Arc::new(vfiles_infra_sqlite::SqliteEntryRepo::new(pool.clone())),
                 Arc::new(vfiles_infra_sqlite::SqliteNamespaceRepo::new(pool.clone())),
@@ -2472,6 +2476,215 @@ async fn expired_share_can_still_be_disabled_by_owner() {
         Some(0),
         "停止后列表应为空: {payload:?}"
     );
+}
+
+/// 访问令牌：可用来上传/下载（CLI、构建系统场景），撤销后失效，且不能自我扩权。
+#[tokio::test]
+async fn access_token_authenticates_api_requests() {
+    use axum::http::header;
+
+    let app = TestApp::new().await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+
+    // 1) 创建令牌（仅会话鉴权）
+    let created = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/tokens",
+            json!({ "name": "CI 构建", "expires_in_days": 90 }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(created.status(), StatusCode::OK);
+    let payload = response_json(created).await;
+    let plaintext = payload["plaintext"]
+        .as_str()
+        .expect("plaintext token")
+        .to_string();
+    assert!(
+        plaintext.starts_with("vfat_") && plaintext.len() > 40,
+        "令牌应带前缀且足够长: {plaintext}"
+    );
+    assert_eq!(payload["token"]["name"], "CI 构建");
+    assert!(payload["token"]["active"].as_bool().unwrap_or(false));
+    // 列表里只有前缀，没有明文
+    assert_eq!(
+        payload["token"]["token_prefix"].as_str().map(str::len),
+        Some("vfat_".len() + 8)
+    );
+
+    let bearer = format!("Bearer {plaintext}");
+
+    // 2) 用令牌列目录
+    let list = app
+        .request(
+            Request::builder()
+                .uri("/api/files/tree")
+                .header(header::AUTHORIZATION, &bearer)
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(list.status(), StatusCode::OK, "令牌应能列目录");
+
+    // 3) 用令牌上传（init → chunk → complete）
+    let init = app
+        .request(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/files/upload/init")
+                .header(header::AUTHORIZATION, &bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "path": "ci",
+                        "filename": "构建产物.txt",
+                        "size": 5,
+                        "chunk_size": 5,
+                    }))
+                    .expect("json body"),
+                ))
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(
+        init.status(),
+        StatusCode::OK,
+        "令牌应能发起上传: {}",
+        String::from_utf8_lossy(&response_bytes(init).await)
+    );
+    let upload_id = response_json(init).await["upload_id"]
+        .as_str()
+        .expect("upload_id")
+        .to_string();
+
+    let chunk = app
+        .request(
+            Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/api/files/upload/chunks/{upload_id}/0"))
+                .header(header::AUTHORIZATION, &bearer)
+                .body(Body::from("build".as_bytes().to_vec()))
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(chunk.status(), StatusCode::OK, "令牌应能上传分片");
+
+    let complete = app
+        .request(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/files/upload/complete/{upload_id}"))
+                .header(header::AUTHORIZATION, &bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "message": "由 CI 上传" })).expect("json body"),
+                ))
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(
+        complete.status(),
+        StatusCode::OK,
+        "令牌应能完成上传: {}",
+        String::from_utf8_lossy(&response_bytes(complete).await)
+    );
+
+    // 4) 用令牌下载，内容一致
+    let download = app
+        .request(
+            Request::builder()
+                .uri(format!(
+                    "/api/files/content?path={}",
+                    "ci/%E6%9E%84%E5%BB%BA%E4%BA%A7%E7%89%A9.txt"
+                ))
+                .header(header::AUTHORIZATION, &bearer)
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(download.status(), StatusCode::OK, "令牌应能下载文件");
+    let body = response_bytes(download).await;
+    assert_eq!(&body[..], b"build", "下载内容应与上传一致");
+
+    // 5) 令牌出现在列表里，且记录了最近使用时间
+    let list_response = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/tokens")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let tokens = response_json(list_response).await;
+    let items = tokens.as_array().expect("token list");
+    assert_eq!(items.len(), 1, "应只有一个令牌: {tokens:?}");
+    assert!(
+        items[0]["last_used_at"].is_string(),
+        "使用后应记录 last_used_at: {tokens:?}"
+    );
+
+    // 6) 令牌不能创建令牌（防止泄露后自我扩权）
+    let escalate = app
+        .request(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/tokens")
+                .header(header::AUTHORIZATION, &bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "name": "不该成功" })).expect("json body"),
+                ))
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(escalate.status(), StatusCode::FORBIDDEN);
+
+    // 7) 撤销后令牌立即失效
+    let token_id = items[0]["id"].as_str().expect("token id").to_string();
+    let revoked = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/tokens/{token_id}"))
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+
+    let after_revoke = app
+        .request(
+            Request::builder()
+                .uri("/api/files/tree")
+                .header(header::AUTHORIZATION, &bearer)
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(
+        after_revoke.status(),
+        StatusCode::UNAUTHORIZED,
+        "撤销后的令牌不应通过鉴权"
+    );
+
+    // 8) 非法有效期与匿名创建
+    let bad_expiry = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/tokens",
+            json!({ "name": "bad", "expires_in_days": 7 }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(bad_expiry.status(), StatusCode::BAD_REQUEST);
+
+    let anonymous = app
+        .json_request(Method::POST, "/api/tokens", json!({ "name": "anon" }))
+        .await;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
 }
 
 /// 所有权转移：文件连同版本历史转给另一个用户，双方各自能看到应有的内容。

@@ -34,6 +34,11 @@ const router = createRouter({
       component: () => import("../views/SharedLinks.vue"),
     },
     {
+      path: "/settings/tokens",
+      name: "access-tokens",
+      component: () => import("../views/AccessTokens.vue"),
+    },
+    {
       path: "/admin/users",
       name: "admin-users",
       component: () => import("../views/AdminUsers.vue"),

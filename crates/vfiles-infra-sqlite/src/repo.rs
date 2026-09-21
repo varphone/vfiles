@@ -5650,3 +5650,157 @@ mod entry_move_batch_tests {
         let _ = std::fs::remove_file(db_path);
     }
 }
+
+/// 访问令牌仓储：只存 SHA-256 摘要，明文只在创建时返回一次。
+#[derive(Debug)]
+pub struct SqliteAccessTokenRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteAccessTokenRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct AccessTokenRow {
+    id: String,
+    user_id: String,
+    name: String,
+    token_prefix: String,
+    scopes: String,
+    expires_at: Option<time::OffsetDateTime>,
+    last_used_at: Option<time::OffsetDateTime>,
+    revoked_at: Option<time::OffsetDateTime>,
+    created_at: time::OffsetDateTime,
+}
+
+fn access_token_from_row(row: AccessTokenRow) -> DomainResult<AccessToken> {
+    Ok(AccessToken {
+        id: AccessTokenId::from_string(&row.id).map_err(|_| DomainError::Internal {
+            message: "Invalid access token id".to_string(),
+        })?,
+        user_id: UserId::from_string(&row.user_id).map_err(|_| DomainError::Internal {
+            message: "Invalid user id on access token".to_string(),
+        })?,
+        name: row.name,
+        token_prefix: row.token_prefix,
+        scopes: row.scopes,
+        expires_at: row.expires_at,
+        last_used_at: row.last_used_at,
+        revoked_at: row.revoked_at,
+        created_at: row.created_at,
+    })
+}
+
+#[async_trait::async_trait]
+impl AccessTokenRepo for SqliteAccessTokenRepo {
+    async fn create(&self, token: &NewAccessToken) -> DomainResult<AccessToken> {
+        let created_at = time::OffsetDateTime::now_utc();
+        sqlx::query(
+            r#"
+            INSERT INTO access_tokens
+                (id, user_id, name, token_hash, token_prefix, scopes, expires_at, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#,
+        )
+        .bind(token.id.to_string())
+        .bind(token.user_id.to_string())
+        .bind(&token.name)
+        .bind(&token.token_hash)
+        .bind(&token.token_prefix)
+        .bind(&token.scopes)
+        .bind(token.expires_at)
+        .bind(created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to create access token: {e}"),
+        })?;
+
+        Ok(AccessToken {
+            id: token.id,
+            user_id: token.user_id,
+            name: token.name.clone(),
+            token_prefix: token.token_prefix.clone(),
+            scopes: token.scopes.clone(),
+            expires_at: token.expires_at,
+            last_used_at: None,
+            revoked_at: None,
+            created_at,
+        })
+    }
+
+    async fn list_for_user(&self, user_id: &UserId) -> DomainResult<Vec<AccessToken>> {
+        let rows: Vec<AccessTokenRow> = sqlx::query_as(
+            r#"
+            SELECT id, user_id, name, token_prefix, scopes,
+                   expires_at, last_used_at, revoked_at, created_at
+            FROM access_tokens
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(user_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list access tokens: {e}"),
+        })?;
+
+        rows.into_iter().map(access_token_from_row).collect()
+    }
+
+    async fn find_by_hash(&self, token_hash: &str) -> DomainResult<Option<AccessToken>> {
+        let row: Option<AccessTokenRow> = sqlx::query_as(
+            r#"
+            SELECT id, user_id, name, token_prefix, scopes,
+                   expires_at, last_used_at, revoked_at, created_at
+            FROM access_tokens
+            WHERE token_hash = ?
+            "#,
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to look up access token: {e}"),
+        })?;
+
+        row.map(access_token_from_row).transpose()
+    }
+
+    async fn touch_last_used(
+        &self,
+        id: &AccessTokenId,
+        at: time::OffsetDateTime,
+    ) -> DomainResult<()> {
+        sqlx::query("UPDATE access_tokens SET last_used_at = ? WHERE id = ?")
+            .bind(at)
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to update access token usage: {e}"),
+            })?;
+
+        Ok(())
+    }
+
+    async fn revoke(&self, user_id: &UserId, id: &AccessTokenId) -> DomainResult<bool> {
+        let result = sqlx::query(
+            "UPDATE access_tokens SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
+        )
+        .bind(time::OffsetDateTime::now_utc())
+        .bind(id.to_string())
+        .bind(user_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to revoke access token: {e}"),
+        })?;
+
+        Ok(result.rows_affected() > 0)
+    }
+}

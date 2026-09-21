@@ -55,6 +55,7 @@ newtype_id!(SnapshotId);
 newtype_id!(UploadId);
 newtype_id!(ShareId);
 newtype_id!(BlobId);
+newtype_id!(AccessTokenId);
 
 // Domain entities
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -447,6 +448,47 @@ pub struct AuditLogQuery {
     pub until: Option<time::OffsetDateTime>,
     pub limit: u32,
     pub offset: u32,
+}
+
+/// 访问令牌：给 CLI / 构建系统使用的 API 凭证。
+///
+/// 明文只在创建时返回一次；库里存 SHA-256 摘要与用于展示的前缀。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessToken {
+    pub id: AccessTokenId,
+    pub user_id: UserId,
+    pub name: String,
+    pub token_prefix: String,
+    pub scopes: String,
+    pub expires_at: Option<time::OffsetDateTime>,
+    pub last_used_at: Option<time::OffsetDateTime>,
+    pub revoked_at: Option<time::OffsetDateTime>,
+    pub created_at: time::OffsetDateTime,
+}
+
+impl AccessToken {
+    /// 是否仍然可用（未撤销、未过期）。
+    pub fn is_active(&self, now: time::OffsetDateTime) -> bool {
+        if self.revoked_at.is_some() {
+            return false;
+        }
+        match self.expires_at {
+            Some(expires_at) => expires_at > now,
+            None => true,
+        }
+    }
+}
+
+/// 新建访问令牌所需的字段（明文由服务层生成，不入库）。
+#[derive(Debug, Clone)]
+pub struct NewAccessToken {
+    pub id: AccessTokenId,
+    pub user_id: UserId,
+    pub name: String,
+    pub token_hash: String,
+    pub token_prefix: String,
+    pub scopes: String,
+    pub expires_at: Option<time::OffsetDateTime>,
 }
 
 /// 审计日志查询结果。

@@ -2256,6 +2256,36 @@
   目标列表不含自己）；前端新增 `TransferOwnershipDialog` 6 例与 `FileBrowser` 1 例；
   前端 61 文件 / 416 用例、19 个 Rust 目标与 clippy 全绿。
 
+### 3.17 访问令牌（round 112，功能，用户需求）
+
+- 需求：给 CLI、构建系统等程序提供上传/下载用的凭证（无需登录会话）。
+- 实现：
+  1. 迁移 `0005_access_tokens.sql`：`access_tokens(id, user_id, name, token_hash, token_prefix,
+     scopes, expires_at, last_used_at, revoked_at, created_at)` + 用户/摘要索引；
+  2. 领域：`AccessToken`（`is_active(now)`）、`NewAccessToken`、`AccessTokenRepo`
+     （create/list_for_user/find_by_hash/touch_last_used/revoke），SQLite 实现只存 **SHA-256 摘要**；
+  3. 应用：`AccessTokenService`——明文 `vfat_<64 hex>`（两个 UUIDv4 拼接，256 位随机），
+     创建校验名称与有效期白名单（0/30/90/365 天），鉴权校验未撤销/未过期并刷新 `last_used_at`；
+  4. HTTP：中间件把 `Authorization: Bearer vfat_…` 归一化成内部 cookie，
+     `optional_auth_user` 增加令牌分支、`require_auth_user` 复用它——**所有既有接口无需改动即支持令牌**；
+     `POST/GET /api/tokens`、`DELETE /api/tokens/{id}`、`GET /api/tokens/expiry-options`，
+     且令牌管理接口**只接受会话鉴权**；审计动作 `token.create`/`token.revoke`；
+  5. 前端：账号菜单 →「访问令牌」页（列表 + 状态徽标 + 一次性明文对话框 + 复制 + 撤销二次确认 +
+     可复制的 curl 用法示例）。
+- **浏览器验证中发现并修复的缺陷**：令牌 DTO 的时间戳原本用 `OffsetDateTime::to_string()`
+  （`2026-09-21 18:17:32 … +00:00:00`），不是 RFC3339，前端 `new Date()` 解析失败导致
+  「创建时间/最近使用/有效期」直接显示原始字符串；改用统一的 `format_timestamp`（RFC3339）后正常。
+- 验证（真实服务 1400×900 + Bearer-only 请求）：
+  - 界面创建「CI 构建」（90 天）→ 明文 `vfat_4863464d…`（64 hex），列表显示前缀、`有效`、
+    `从未使用` → 使用后变「今天 02:17」、有效期「至 2026/12/21」；
+  - **不用 Cookie、只用令牌**：`upload/init → chunks → complete` 全部 200，
+    `GET /api/files/tree?path=ci` 返回 `["ci"]`，下载内容与上传一致（`hello build`）；
+  - **匿名（无 Cookie 无令牌）**：401；**撤销后**再用令牌：401；**用令牌创建令牌**：403；
+  - 审计日志新增 `token.create` / `token.revoke` 记录。
+- 测试：Rust 新增 1 个端到端接口用例（创建 → Bearer 上传/下载 → 列表含前缀不含明文 →
+  记录 last_used_at → 令牌不能创建令牌 403 → 撤销后 401 → 非法有效期 400 → 匿名 401）；
+  前端新增 `AccessTokens` 7 例；前端 62 文件 / 423 用例、19 个 Rust 目标与 clippy 全绿。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）

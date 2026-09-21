@@ -75,6 +75,35 @@ pub async fn request_id_middleware(mut req: Request, next: Next) -> Response {
     response
 }
 
+/// 访问令牌专用 cookie 名：把 `Authorization: Bearer` 复制到 cookie，
+/// 这样既有的 `CookieJar` 鉴权路径（以及所有现有处理函数）无需改动即可支持令牌。
+pub const ACCESS_TOKEN_COOKIE: &str = "vfiles_token";
+
+/// 把 `Authorization: Bearer <token>` 归一化成内部 cookie。
+///
+/// 只在请求确实带了 Bearer 且看起来是访问令牌时改写；否则原样放行。
+pub async fn bearer_token_middleware(mut req: Request, next: Next) -> Response {
+    let bearer = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            let (scheme, token) = value.split_once(' ')?;
+            scheme.eq_ignore_ascii_case("bearer").then(|| token.trim())
+        })
+        .filter(|token| token.starts_with("vfat_"))
+        .map(str::to_string);
+
+    if let Some(token) = bearer
+        && let Ok(value) =
+            axum::http::HeaderValue::from_str(&format!("{ACCESS_TOKEN_COOKIE}={token}"))
+    {
+        req.headers_mut().append(axum::http::header::COOKIE, value);
+    }
+
+    next.run(req).await
+}
+
 pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
     let mut response = next.run(req).await;
     let headers = response.headers_mut();

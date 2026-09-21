@@ -136,6 +136,15 @@
                     </router-link>
 
                     <router-link
+                      v-if="auth.enabled && auth.user"
+                      class="dropdown-item"
+                      to="/settings/tokens"
+                      @click="closeAccountMenus"
+                    >
+                      访问令牌
+                    </router-link>
+
+                    <router-link
                       v-if="
                         auth.enabled &&
                         ['admin', 'manager'].includes(auth.user?.role || '')

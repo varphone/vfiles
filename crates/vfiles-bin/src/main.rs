@@ -1125,6 +1125,10 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         entry_repo: Arc::clone(&entry_repo_arc),
         favorite_repo: std::sync::Arc::new(favorite_repo),
         audit_service: vfiles_app::AuditService::new(SqliteAuditLogRepo::new(pool.clone())),
+        user_repo: Arc::new(SqliteUserRepo::new(pool.clone())),
+        access_token_service: vfiles_app::AccessTokenService::new(Arc::new(
+            SqliteAccessTokenRepo::new(pool.clone()),
+        )),
         ownership_service: vfiles_app::OwnershipService::new(
             Arc::clone(&entry_repo_arc),
             Arc::new(SqliteNamespaceRepo::new(pool.clone())),
