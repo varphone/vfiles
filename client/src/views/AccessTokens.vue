@@ -273,18 +273,22 @@ const copied = ref(false);
 const plaintextInput = ref<HTMLInputElement | null>(null);
 
 const usageSnippet = computed(
-  () => `# 上传
-curl -X POST "$VFILES/api/files/upload/init" \\
-  -H "Authorization: Bearer $VFILES_TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d '{"path":"ci","filename":"app.tar.gz","size":123,"chunk_size":123}'
+  () => `# 上传（单请求，最简单）
+curl -T app.tar.gz \
+  -H "Authorization: Bearer $VFILES_TOKEN" \
+  "$VFILES/api/files/upload/ci/app.tar.gz"
+
+# 上传到指定目录（URL 以 / 结尾时，curl 自动补本地文件名）
+curl -T app.tar.gz \
+  -H "Authorization: Bearer $VFILES_TOKEN" \
+  "$VFILES/api/files/upload/ci/"
 
 # 下载
-curl -L -H "Authorization: Bearer $VFILES_TOKEN" \\
+curl -sS -H "Authorization: Bearer $VFILES_TOKEN" \
   "$VFILES/api/files/content?path=ci/app.tar.gz" -o app.tar.gz
 
 # 列表
-curl -H "Authorization: Bearer $VFILES_TOKEN" "$VFILES/api/files/tree?path=ci"`,
+curl -sS -H "Authorization: Bearer $VFILES_TOKEN" "$VFILES/api/files/tree?path=ci"`,
 );
 
 async function reload() {

@@ -65,6 +65,13 @@ impl TestApp {
         Self::new_with_settings(true, default_features(), None).await
     }
 
+    /// 自定义单文件上限（用于验证服务端按配置上限拒绝上传）。
+    async fn new_with_max_file_size_bytes(max_file_size_bytes: u64) -> Self {
+        let mut features = default_features();
+        features.max_file_size_bytes = max_file_size_bytes;
+        Self::new_with_settings(true, features, None).await
+    }
+
     async fn new_with_public_base_url(public_base_url: &str) -> Self {
         Self::new_with_public_base_url_and_cookie_secure(public_base_url, None).await
     }
@@ -2476,6 +2483,232 @@ async fn expired_share_can_still_be_disabled_by_owner() {
         Some(0),
         "停止后列表应为空: {payload:?}"
     );
+}
+
+/// 上传必须按单文件配置上限拒绝（此前只在客户端预检）。
+#[tokio::test]
+async fn upload_rejects_files_over_the_configured_limit() {
+    let app = TestApp::new_with_max_file_size_bytes(1024 * 1024).await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+
+    // 测试配置的单文件上限是 1MB：2MB 应被拒绝
+    let oversized = vec![b'x'; 2 * 1024 * 1024];
+    let upload = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/files/upload/too-big.bin")
+                .body(Body::from(oversized.clone()))
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(
+        upload.status(),
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "超过单文件上限应返回 413"
+    );
+    let payload = response_json(upload).await;
+    assert!(
+        payload["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("1048576")),
+        "错误信息应包含上限字节数: {payload:?}"
+    );
+
+    // 分片上传同样按该上限拒绝
+    let init = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/upload/init",
+            json!({
+                "path": "",
+                "filename": "too-big-2.bin",
+                "size": 2 * 1024 * 1024,
+                "chunk_size": 2 * 1024 * 1024,
+            }),
+        )
+        .await;
+    // 分片上传在 init 阶段用校验错误拒绝（沿用既有行为与文案）
+    assert_eq!(
+        init.status(),
+        StatusCode::BAD_REQUEST,
+        "分片上传的 init 也应拒绝超限文件"
+    );
+    let init_payload = response_json(init).await;
+    assert!(
+        init_payload["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("1048576")),
+        "init 的错误信息应包含上限字节数: {init_payload:?}"
+    );
+
+    // 1MB 以内正常
+    let allowed = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/files/upload/ok.bin")
+                .body(Body::from(vec![b'y'; 1024]))
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(allowed.status(), StatusCode::OK);
+}
+
+/// 单请求上传（原始 body）：curl 友好的上传方式，无需 init/分片。
+#[tokio::test]
+async fn put_upload_accepts_raw_body() {
+    let app = TestApp::new().await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+
+    // 1) 指定目录 + 文件名
+    let upload = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/files/upload?path=ci&filename=%E6%9E%84%E5%BB%BA%E4%BA%A7%E7%89%A9.txt&message=CI%20%E4%B8%8A%E4%BC%A0")
+                .header(header::CONTENT_TYPE, "application/octet-stream")
+                .body(Body::from("hello build".as_bytes().to_vec()))
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(
+        upload.status(),
+        StatusCode::OK,
+        "原始 body 上传应成功: {}",
+        String::from_utf8_lossy(&response_bytes(upload).await)
+    );
+    let payload = response_json(upload).await;
+    assert_eq!(payload["completed"], Value::from(true));
+    assert_eq!(payload["filename"], "构建产物.txt");
+    assert_eq!(payload["size"], Value::from(11));
+    assert_eq!(payload["path"], "ci/构建产物.txt");
+
+    // 内容可原样下载
+    let download = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/files/content?path=ci/%E6%9E%84%E5%BB%BA%E4%BA%A7%E7%89%A9.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(download.status(), StatusCode::OK);
+    assert_eq!(&response_bytes(download).await[..], b"hello build");
+
+    // 2) 只给 path（最后一段当文件名），根目录
+    let root_upload = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/files/upload?path=%E6%A0%B9%E7%9B%AE%E5%BD%95.txt")
+                .body(Body::from("root file".as_bytes().to_vec()))
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(root_upload.status(), StatusCode::OK);
+    let root_payload = response_json(root_upload).await;
+    assert_eq!(root_payload["path"], "根目录.txt");
+
+    // 3) 覆盖同名文件会生成新版本
+    let second = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/files/upload?path=%E6%A0%B9%E7%9B%AE%E5%BD%95.txt&message=%E7%AC%AC%E4%BA%8C%E7%89%88")
+                .body(Body::from("root file v2".as_bytes().to_vec()))
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let history = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/history?path=%E6%A0%B9%E7%9B%AE%E5%BD%95.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let messages: Vec<String> = response_json(history).await["data"]["commits"]
+        .as_array()
+        .expect("commits")
+        .iter()
+        .filter_map(|commit| commit["message"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        messages.iter().any(|message| message.contains("第二版")),
+        "覆盖上传应写入版本说明: {messages:?}"
+    );
+
+    // 4) 目标是已存在的目录 → 400（提示明确，而不是模糊的冲突）
+    let directory_target = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/files/upload?path=ci")
+                .body(Body::from("x".as_bytes().to_vec()))
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(directory_target.status(), StatusCode::BAD_REQUEST);
+    let directory_payload = response_json(directory_target).await;
+    assert!(
+        directory_payload["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("directory")),
+        "应提示目标是目录: {directory_payload:?}"
+    );
+
+    // 5) URL 路径形式（curl -T 会把文件名拼到 URL 后面）
+    let url_form = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/files/upload/ci/url-form.txt?message=URL%20%E5%BD%A2%E5%BC%8F")
+                .body(Body::from("via url path".as_bytes().to_vec()))
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(
+        url_form.status(),
+        StatusCode::OK,
+        "URL 路径形式应可用: {}",
+        String::from_utf8_lossy(&response_bytes(url_form).await)
+    );
+    let url_payload = response_json(url_form).await;
+    assert_eq!(url_payload["path"], "ci/url-form.txt");
+
+    let url_download = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/files/content?path=ci/url-form.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(url_download.status(), StatusCode::OK);
+    assert_eq!(&response_bytes(url_download).await[..], b"via url path");
+
+    let anonymous = app
+        .request(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/files/upload?path=ci&filename=a.txt")
+                .body(Body::from("x".as_bytes().to_vec()))
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
 }
 
 /// 访问令牌：可用来上传/下载（CLI、构建系统场景），撤销后失效，且不能自我扩权。

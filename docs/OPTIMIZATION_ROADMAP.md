@@ -2305,6 +2305,33 @@
 验证：浏览器实测（1400×900）通知筛选「失败」→「没有失败通知」、成功筛选 1 条、单条移除
 后 1→0；CSV 汇总区块与筛选一致。前端 62 文件 / 425 用例、19 个 Rust 目标与 clippy 全绿。
 
+### 3.19 单请求上传接口（round 114，功能，用户需求）
+
+- 需求：现有 init/分片流程很难用在 `curl` 上，希望有对 curl 友好的上传接口。
+- 实现：
+  1. 新增 `PUT /api/files/upload`（query：`path` / `filename` / `message`）与
+     `PUT /api/files/upload/{*path}`（路径写在 URL 里，配合 `curl -T` 会自动补文件名）；
+     请求体为**原始文件内容**，流式落盘；
+  2. 抽公共收尾逻辑 `finish_single_upload`，与既有 multipart（`POST /api/files/upload`）
+     共用 `init_upload` + `complete_upload_from_stream`，因此版本历史/快照/审计行为一致；
+  3. 边写边校验大小，`Content-Length` 已知时提前 413；目标解析支持
+     「URL 路径整段当目标」与「`path` 最后一段当文件名」，目标是已存在目录时返回 400 明确提示。
+- **顺带修复的真实缺陷**：配置项 `VFILES_MAX_FILE_SIZE_MB`（界面上展示的单文件上限）
+  此前只在客户端预检，**服务端并未强制**，任何 API 都能上传超限文件；
+  现在所有上传路径（multipart / 分片 init / 原始 body）都取
+  `min(上传硬上限, 单文件配置上限)` 校验，超限返回 413（分片 init 沿用既有 400+文案）。
+- 验证（真实 `curl`，含访问令牌）：
+  - `curl -T app-1.0.tar.gz "…/upload/ci/app-1.0.tar.gz?message=构建产物"` → 200，
+    2MB 文件下载后 **sha256 与上传一致**；
+  - `curl -X PUT --data-binary @说明.txt "…/upload?path=ci&filename=说明.txt"` → 200；
+  - `PUT …/upload/ci/url-form.txt` → 列表可见、内容一致；
+  - 1MB 上限实例上：2MB 直接 PUT → **413** `FILE_TOO_LARGE`（`limit_bytes/size_bytes`）；
+    `Transfer-Encoding: chunked`（无 Content-Length）→ 累计超限即 **413**；1MB 内 → 200；
+  - 缺文件名 → 400、匿名 → 401。
+- 测试：Rust 新增 2 个接口用例（原始 body 上传含 URL 形式/覆盖成新版本/目录目标 400/匿名 401；
+  所有上传路径按配置上限拒绝）；前端令牌页示例改为单请求上传；前端 62 文件 / 425 用例、
+  19 个 Rust 目标与 clippy 全绿。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）

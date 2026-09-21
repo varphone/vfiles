@@ -211,7 +211,19 @@
 - 创建后**明文只显示一次**，请立刻复制保存；关闭后只能看到前缀（如 `vfat_1a2b3c4d…`）；
 - 列表里能看到创建时间、最近使用时间、有效期与状态（有效 / 已过期 / 已撤销）；
 - 「撤销」后**立即失效**，正在使用它的程序会收到 401；
-- 页面下方提供可直接复制的 `curl` 示例（上传 / 下载 / 列表）。
+- 页面下方提供可直接复制的 `curl` 示例（**单请求上传** / 下载 / 列表）：
+
+  ```bash
+  # 上传（CI 常用：curl -T 把文件直接 PUT 上去，无需 init/分片）
+  curl -T app.tar.gz -H "Authorization: Bearer $VFILES_TOKEN" \
+    "$VFILES/api/files/upload/ci/app.tar.gz"
+
+  # 下载
+  curl -sS -H "Authorization: Bearer $VFILES_TOKEN" \
+    "$VFILES/api/files/content?path=ci/app.tar.gz" -o app.tar.gz
+  ```
+
+  需要 multipart 时也可以 `curl -F "file=@app.tar.gz" -F "path=ci" "$VFILES/api/files/upload"`。
 
 安全提示：
 

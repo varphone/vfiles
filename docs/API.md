@@ -62,6 +62,49 @@
   - `multipart/form-data`
   - 字段：`file`, `path?`, `message?`
 
+### 单请求上传（curl 友好）
+
+不想走 init/分片流程时，可以直接把文件内容作为请求体一次上传，适合 `curl`、CI 与构建脚本：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| PUT | `/api/files/upload?path=<目录>&filename=<文件名>&message=<说明>` | 原始 body 上传 |
+| PUT | `/api/files/upload/<命名空间内路径>` | 同样用原始 body，路径写在 URL 里 |
+
+```bash
+# 1) 路径写在 URL 里（curl -T 会自动把本地文件名拼到以 / 结尾的 URL 后面）
+curl -T app.tar.gz -H "Authorization: Bearer $TOKEN" \
+  "$VFILES/api/files/upload/ci/app.tar.gz"
+
+curl -T app.tar.gz -H "Authorization: Bearer $TOKEN" "$VFILES/api/files/upload/ci/"
+
+# 2) query 形式
+curl -X PUT --data-binary @app.tar.gz \
+  -H "Authorization: Bearer $TOKEN" \
+  "$VFILES/api/files/upload?path=ci&filename=app.tar.gz&message=CI%20构建"
+
+# 3) 也可以直接跟着文件路径（`?path=ci/app.tar.gz`）
+curl -T app.tar.gz -H "Authorization: Bearer $TOKEN" \
+  "$VFILES/api/files/upload?path=ci/app.tar.gz"
+```
+
+响应与 multipart 上传一致（`completed` / `path` / `size` / `version_id`）：
+
+```json
+{ "upload_id": "…", "filename": "app.tar.gz", "size": 123456, "completed": true,
+  "path": "ci/app.tar.gz", "version_id": "…" }
+```
+
+行为约定：
+
+- 请求体**流式落盘**，边写边校验大小：超过单文件上限（`VFILES_MAX_FILE_SIZE_MB`，
+  同时受 4096MB 上传硬上限约束）立即返回 `413 FILE_TOO_LARGE`（带 `limit_bytes`/`size_bytes`）；
+  `Content-Length` 已知时会**提前拒绝**，不白传一遍；
+- 同名文件会写成新版本（可用 `message` 作为版本说明）；
+- 目标是已存在的目录时返回 `400`（提示不要用目录路径当文件名）；
+- 与 multipart（`POST /api/files/upload`，`curl -F "file=@…"`）共用同一套入库逻辑，
+  版本历史、快照与审计（`file.upload`）行为一致。
+
 ### 分块上传
 
 - `POST /api/files/upload/init`
