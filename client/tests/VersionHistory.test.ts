@@ -93,6 +93,44 @@ describe("VersionHistory.vue", () => {
     );
   });
 
+  it("explains the retention policy above the list", async () => {
+    const { container } = renderHistory();
+
+    await waitFor(() =>
+      expect(container.querySelector(".history-retention")).not.toBeNull(),
+    );
+    expect(
+      container.querySelector(".history-retention")?.textContent,
+    ).toContain("历史版本会长期保留");
+  });
+
+  it("uses the shared empty and error states", async () => {
+    historyMock.mockResolvedValueOnce({
+      commits: [],
+      currentVersion: "",
+      totalCommits: 0,
+    });
+    const empty = renderHistory();
+    await waitFor(() =>
+      expect(
+        empty.container.querySelector(".empty-state-title")?.textContent,
+      ).toBe("暂无历史记录"),
+    );
+    empty.unmount();
+
+    historyMock.mockRejectedValueOnce(new Error("服务器内部错误"));
+    const failed = renderHistory();
+    await waitFor(() =>
+      expect(
+        failed.container.querySelector(".empty-state.is-error")?.textContent,
+      ).toContain("服务器内部错误"),
+    );
+    // 失败态提供重试
+    expect(
+      failed.container.querySelector(".empty-state-actions button"),
+    ).not.toBeNull();
+  });
+
   it("marks the current version and only offers restore for older ones", async () => {
     const { container } = renderHistory();
     await waitFor(() =>

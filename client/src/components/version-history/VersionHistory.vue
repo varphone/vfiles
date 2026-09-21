@@ -29,19 +29,38 @@
           <p class="history-state-text">加载历史记录中...</p>
         </div>
 
-        <div v-else-if="error" class="notification is-danger is-light">
-          {{ error }}
-        </div>
-
-        <div
-          v-else-if="history.commits.length === 0"
-          class="history-state history-state-empty"
+        <EmptyState
+          v-else-if="error"
+          :icon="IconAlertCircle"
+          tone="error"
+          compact
+          title="加载历史记录失败"
+          :hint="error"
         >
-          <IconHistory :size="48" class="history-state-icon" />
-          <p class="history-state-text">暂无历史记录</p>
-        </div>
+          <template #actions>
+            <button class="vf-ghost-button is-primary" @click="loadHistory">
+              <IconRefresh :size="15" />
+              <span>重试</span>
+            </button>
+          </template>
+        </EmptyState>
+
+        <EmptyState
+          v-else-if="history.commits.length === 0"
+          :icon="IconHistory"
+          compact
+          title="暂无历史记录"
+          hint="文件每次上传新版本后，都会在这里留下记录"
+        />
 
         <template v-else>
+          <p class="history-retention">
+            <IconInfoCircle :size="14" />
+            <span>
+              历史版本会长期保留，可随时预览、对比、下载或恢复；删除该文件会同时删除这些历史。
+            </span>
+          </p>
+
           <CommitList
             :commits="history.commits"
             :total-commits="history.totalCommits"
@@ -96,12 +115,10 @@
               <p class="history-state-text">加载 diff 中...</p>
             </div>
 
-            <div
-              v-else-if="diff.error"
-              class="notification is-warning is-light"
-            >
-              {{ diff.error }}
-            </div>
+            <p v-else-if="diff.error" class="history-inline-note is-warning">
+              <IconAlertTriangle :size="14" />
+              <span>{{ diff.error }}</span>
+            </p>
 
             <pre v-else class="diff-text">{{ diff.text }}</pre>
           </div>
@@ -144,12 +161,14 @@
               <p class="history-state-text">加载预览中...</p>
             </div>
 
-            <div
+            <EmptyState
               v-else-if="preview.error"
-              class="notification is-danger is-light"
-            >
-              {{ preview.error }}
-            </div>
+              :icon="IconAlertCircle"
+              tone="error"
+              compact
+              title="预览失败"
+              :hint="preview.error"
+            />
 
             <template v-else>
               <figure v-if="preview.kind === 'image'" class="image">
@@ -201,21 +220,35 @@
                 <pre class="preview-text">{{ preview.text }}</pre>
               </div>
 
-              <div v-else class="notification is-warning is-light">
-                暂不支持该文件类型的在线预览，请使用下载。
-              </div>
+              <EmptyState
+                v-else
+                :icon="IconFileOff"
+                compact
+                title="暂不支持在线预览"
+                hint="该类型无法在浏览器中打开，请下载此版本查看"
+              >
+                <template #actions>
+                  <button
+                    class="vf-ghost-button is-primary"
+                    @click="downloadVersion(preview.hash)"
+                  >
+                    <IconDownload :size="15" />
+                    <span>下载此版本</span>
+                  </button>
+                </template>
+              </EmptyState>
             </template>
           </div>
         </template>
 
         <!-- 空态：提示如何查看某个版本 -->
-        <div v-else class="history-detail-empty">
-          <IconHistory :size="40" class="history-state-icon" />
-          <p class="history-detail-empty-title">查看某个版本</p>
-          <p class="history-detail-empty-hint">
-            在左侧版本上选择「预览」或「对比」，内容会显示在这里。
-          </p>
-        </div>
+        <EmptyState
+          v-else
+          :icon="IconHistory"
+          compact
+          title="查看某个版本"
+          hint="在左侧版本上选择「预览」或「对比」，内容会显示在这里"
+        />
       </aside>
     </div>
   </div>
@@ -223,7 +256,16 @@
 
 <script setup lang="ts">
 import { ref, onBeforeUnmount, computed, watch } from "vue";
-import { IconDownload, IconHistory } from "@tabler/icons-vue";
+import {
+  IconAlertCircle,
+  IconAlertTriangle,
+  IconDownload,
+  IconFileOff,
+  IconHistory,
+  IconInfoCircle,
+  IconRefresh,
+} from "@tabler/icons-vue";
+import EmptyState from "../common/EmptyState.vue";
 import { filesService } from "../../services/files.service";
 import { useAppStore } from "../../stores/app.store";
 import { confirmDialog } from "../../composables/dialog";
@@ -873,6 +915,40 @@ function loadMore() {
 
 .history-state-empty {
   min-height: 10rem;
+}
+
+/* 保留说明：一行提示，不抢列表焦点 */
+.history-retention {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin: 0 0 0.6rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-surface-sunken);
+  color: var(--vf-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+/* diff 等次级提示：黄色行内条 */
+.history-inline-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--vf-warning-line);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-warning-soft);
+  color: var(--vf-text);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.history-inline-note.is-warning {
+  border-color: var(--vf-warning-line);
 }
 
 .history-state-icon {
