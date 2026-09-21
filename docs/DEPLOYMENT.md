@@ -277,6 +277,21 @@ VFILES_FTP_SNAPSHOT_FLUSH_FILES=200         # batch 模式下每累积多少个�
   的文件会被拒绝，临时文件也会清理。
 - FTP 的实际监听地址、端口、被动端口段与 TLS 状态会随 `/api/files/ftp-info` 返回，
   并显示在网页「上传」对话框的「用 FTP 批量导入」卡片里。
+- **展示给客户端的地址按「能连得上」优先选择**（响应里的 `host_source` 会说明来源）：
+
+  | 优先级 | 来源 | `host_source` |
+  | --- | --- | --- |
+  | 1 | `VFILES_FTP_PASSIVE_HOST` | `passive_host` |
+  | 2 | 当前请求的 `Host` 头（客户端访问 Web 用的地址） | `request` |
+  | 3 | `VFILES_HTTP_PUBLIC_BASE_URL` 的主机名 | `public_base_url` |
+  | 4 | `VFILES_FTP_HOST`（配置了具体网卡地址时） | `bind_address` |
+  | 5 | 通过默认路由探测到的本机地址 | `detected_address` |
+  | 6 | 回环地址（此时 `remote_reachable=false`，页面提示「仅本机可访问」） | `loopback` |
+
+  也就是说：**远程可达的地址永远优先于回环地址**。默认部署里 `VFILES_HTTP_PUBLIC_BASE_URL`
+  常为 `http://localhost:3000`，此时页面会展示服务器网卡地址（如 `192.168.1.5`）而不是
+  `localhost`；客户端用域名访问 Web 时，则直接展示该域名。`0.0.0.0`/`::` 这类通配地址
+  永远不会展示给客户端。`VFILES_FTP_PASSIVE_HOST` 若被设成回环地址，同样会被可用地址取代。
 - **启动失败不会拖垮站点**：FTP 端口被占用时只记录错误日志并继续提供 HTTP 服务。
 - 若数据已经在服务器本地（例如从旧系统迁移），也可以完全不开 FTP，
   直接用下面的 `vfiles import` 命令导入。

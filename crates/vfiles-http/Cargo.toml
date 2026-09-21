@@ -38,6 +38,7 @@ zip.workspace = true
 embed = ["dep:include_dir"]
 
 [dev-dependencies]
+url.workspace = true
 camino.workspace = true
 http-body-util.workspace = true
 tempfile.workspace = true

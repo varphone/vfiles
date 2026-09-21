@@ -1469,6 +1469,33 @@
     `--dry-run` 不写入、源目录缺失与用户不存在报错）与 3 个配置用例（默认开启、开关解析矩阵、
     校验规则），前端无需改动。
 
+### 2.85 优化 FTP 连接信息中的服务器地址（round 78，交互）
+
+- 现象：上传对话框里的 FTP 地址不可靠——默认配置下 `VFILES_HTTP_PUBLIC_BASE_URL` 是
+  `http://localhost:3000`，而原实现按「配置优先」把它当作展示地址，于是远程客户端拿到
+  `localhost`；`VFILES_FTP_HOST` 为 `0.0.0.0` 时甚至可能展示通配地址。
+- 修复：`/api/files/ftp-info` 改为**按「客户端最可能连得上」挑选地址**，并返回
+  `host_source`（来源）与 `remote_reachable`（是否可能被其它机器访问）：
+  1. `VFILES_FTP_PASSIVE_HOST`（管理员显式指定）；
+  2. 当前请求的 `Host` 头（客户端正是用它访问 Web）；
+  3. `VFILES_HTTP_PUBLIC_BASE_URL` 主机名；
+  4. `VFILES_FTP_HOST`（具体网卡地址时）；
+  5. 通过默认路由探测到的本机地址（`UdpSocket::connect` 选路，不发包，结果缓存）；
+  6. 回环地址（`remote_reachable=false`，页面提示「仅本机可访问」）。
+  关键点是**远程可达地址永远优先于回环地址**：写测试时先按「配置优先」实现，
+  两个用例立刻失败（`localhost` 压过了内网地址与绑定地址），据此修正为两级筛选。
+- 前端：卡片新增地址来源标签（管理员指定 / 当前访问地址 / 站点地址 / 服务绑定地址 /
+  本机网卡地址 / 本机回环），`remote_reachable=false` 时显示醒目提示并建议配置
+  `VFILES_FTP_PASSIVE_HOST`；IPv6 字面量在示例命令中带方括号。
+- 验证（真实服务 + 浏览器，本机内网地址 192.168.5.201）：
+  - 默认配置下用 `Host: localhost` / `127.0.0.1` 访问 → 返回 `192.168.5.201`
+    （`detected_address`，`remote_reachable=true`），页面显示「服务器 本机网卡地址
+    192.168.5.201」且**无**告警；
+  - `Host: 192.168.5.201` → 展示该地址（`request`）；`Host: files.example.com` → 展示域名；
+  - `VFILES_FTP_PASSIVE_HOST=ftp.example.com` → 两种 Host 都展示 `ftp.example.com`（优先级最高）；
+  - 单元测试覆盖：通配地址不展示、`localhost`/`127.0.0.1`/`[::1]` 判定为仅本机、IPv6 方括号、
+    以及「显式回环地址被可用地址取代」。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）

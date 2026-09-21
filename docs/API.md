@@ -117,6 +117,8 @@
 {
   "enabled": true,
   "host": "files.example.com",
+  "host_source": "passive_host",
+  "remote_reachable": true,
   "port": 2121,
   "passive_ports": { "start": 50000, "end": 50100 },
   "tls": { "enabled": true, "required": true },
@@ -127,6 +129,13 @@
 
 FTP 默认启用；显式关闭（`VFILES_FTP_ENABLED=false`）或认证关闭时 `enabled` 为 `false`，
 `example_command` 为 `null`。未登录访问返回 401。
+
+`host` 按「客户端最可能连得上」的顺序选取，并用 `host_source` 说明来源：
+`passive_host`（`VFILES_FTP_PASSIVE_HOST`）→ `request`（当前请求的 Host 头）→
+`public_base_url` → `bind_address` → `detected_address`（本机网卡地址）→ `loopback`。
+`remote_reachable=false` 表示只能给出回环地址（例如服务器没有可用网卡地址或全部来源都是
+localhost），前端会提示「仅本机可访问」。通配地址（`0.0.0.0`/`::`）不会出现在 `host` 中；
+IPv6 字面量在 `example_command` 中带方括号。
 运行计数（会话数、上传/下载字节、快照提交量）在 `GET /api/health` 的 `ftp` 字段中。
 
 ## 分享

@@ -24,6 +24,8 @@ vi.mock("../src/utils/clipboard", () => ({ copyText: copyTextMock }));
 const enabledInfo = {
   enabled: true,
   host: "files.example.com",
+  host_source: "passive_host" as const,
+  remote_reachable: true,
   port: 2121,
   passive_ports: { start: 50000, end: 50100 },
   tls: { enabled: true, required: true },
@@ -94,6 +96,37 @@ describe("FtpImportHint.vue", () => {
     await waitFor(() =>
       expect(copyTextMock).toHaveBeenCalledWith("files.example.com"),
     );
+  });
+
+  it("explains where the address came from", async () => {
+    const { getByRole, findByText } = render(FtpImportHint as any, {
+      global: { plugins: [createPinia()] },
+    });
+
+    await fireEvent.click(getByRole("button", { name: /FTP 批量导入/ }));
+    await waitFor(() => expect(ftpInfoMock).toHaveBeenCalled());
+
+    expect(await findByText("管理员指定")).toBeInTheDocument();
+    expect(document.querySelectorAll(".ftp-import-warning")).toHaveLength(0);
+  });
+
+  it("warns when the address is only reachable from this machine", async () => {
+    ftpInfoMock.mockResolvedValue({
+      ...enabledInfo,
+      host: "localhost",
+      host_source: "request",
+      remote_reachable: false,
+    });
+    const { getByRole, findByText, container } = render(FtpImportHint as any, {
+      global: { plugins: [createPinia()] },
+    });
+
+    await fireEvent.click(getByRole("button", { name: /FTP 批量导入/ }));
+    await waitFor(() => expect(ftpInfoMock).toHaveBeenCalled());
+
+    expect(await findByText(/仅本机可访问/)).toBeInTheDocument();
+    expect(container.querySelectorAll(".ftp-import-warning")).toHaveLength(1);
+    expect(await findByText("当前访问地址")).toBeInTheDocument();
   });
 
   it("surfaces a readable error when the info cannot be loaded", async () => {

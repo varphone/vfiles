@@ -275,6 +275,15 @@ function mapSearchResultToFileInfo(result: SearchResultDto): FileInfo {
   };
 }
 
+/** 服务端返回的地址来源，用于解释「为什么展示这个地址」。 */
+export type FtpHostSource =
+  | "passive_host"
+  | "request"
+  | "public_base_url"
+  | "bind_address"
+  | "detected_address"
+  | "loopback";
+
 export const filesService = {
   /**
    * 获取文件列表
@@ -288,6 +297,8 @@ export const filesService = {
   async getFtpInfo(): Promise<{
     enabled: boolean;
     host: string;
+    host_source?: FtpHostSource;
+    remote_reachable?: boolean;
     port: number;
     passive_ports?: { start: number; end: number };
     tls: { enabled: boolean; required: boolean };
@@ -297,6 +308,8 @@ export const filesService = {
     const response = await apiService.get<{
       enabled: boolean;
       host: string;
+      host_source?: FtpHostSource;
+      remote_reachable?: boolean;
       port: number;
       passive_ports?: { start: number; end: number };
       tls: { enabled: boolean; required: boolean };

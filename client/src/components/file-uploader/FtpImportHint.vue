@@ -29,7 +29,9 @@
       <template v-else-if="info && info.enabled">
         <dl class="ftp-import-facts">
           <div class="ftp-import-fact">
-            <dt>服务器</dt>
+            <dt>
+              服务器<span class="ftp-import-source">{{ hostSourceLabel }}</span>
+            </dt>
             <dd>
               <code class="ftp-import-value" :title="info.host">
                 {{ info.host }}
@@ -75,6 +77,19 @@
           </div>
         </dl>
 
+        <p
+          v-if="info.remote_reachable === false"
+          class="ftp-import-warning"
+          role="note"
+        >
+          <IconAlertTriangle :size="15" class="ftp-import-warning-icon" />
+          <span>
+            上面是仅本机可访问的地址；其它机器上的客户端请改用服务器的内网/公网
+            IP 或域名，也可让管理员设置
+            <code>VFILES_FTP_PASSIVE_HOST</code> 指定对外地址。
+          </span>
+        </p>
+
         <p class="ftp-import-note">
           登录后 <code>/</code> 就是你的文件根目录，上传到
           <code>{{ targetPath || "/" }}</code>
@@ -115,15 +130,30 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { IconChevronDown, IconCopy, IconServer } from "@tabler/icons-vue";
+import {
+  IconAlertTriangle,
+  IconChevronDown,
+  IconCopy,
+  IconServer,
+} from "@tabler/icons-vue";
 import { filesService } from "../../services/files.service";
 import { useAuthStore } from "../../stores/auth.store";
 import { copyText } from "../../utils/clipboard";
 
 type PassivePorts = { start: number; end: number };
+type FtpHostSource =
+  | "passive_host"
+  | "request"
+  | "public_base_url"
+  | "bind_address"
+  | "detected_address"
+  | "loopback";
+
 export type FtpConnectionInfo = {
   enabled: boolean;
   host: string;
+  host_source?: FtpHostSource;
+  remote_reachable?: boolean;
   port: number;
   passive_ports?: PassivePorts;
   tls: { enabled: boolean; required: boolean };
@@ -145,6 +175,21 @@ const info = ref<FtpConnectionInfo | null>(null);
 const copiedKey = ref<string | null>(null);
 
 const username = computed(() => auth.user?.username ?? "");
+
+const HOST_SOURCE_LABELS: Record<FtpHostSource, string> = {
+  passive_host: "管理员指定",
+  request: "当前访问地址",
+  public_base_url: "站点地址",
+  bind_address: "服务绑定地址",
+  detected_address: "本机网卡地址",
+  loopback: "本机回环",
+};
+
+/** 地址来源说明：让用户知道这个地址是怎么来的，避免误用 localhost。 */
+const hostSourceLabel = computed(() => {
+  const source = info.value?.host_source;
+  return source ? (HOST_SOURCE_LABELS[source] ?? "") : "";
+});
 
 async function loadInfo() {
   if (info.value || loading.value) return;
@@ -287,6 +332,36 @@ watch(
   min-height: 1.6rem;
   padding: 0 0.4rem;
   font-size: 0.72rem;
+}
+
+.ftp-import-source {
+  margin-left: 0.3rem;
+  padding: 0 0.25rem;
+  border-radius: 3px;
+  background: var(--vf-surface);
+  color: var(--vf-text-subtle);
+  font-size: 0.68rem;
+  font-weight: 400;
+}
+
+.ftp-import-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin: 0 0 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--vf-warning-line);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-warning-soft);
+  color: var(--vf-text);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.ftp-import-warning-icon {
+  flex: 0 0 auto;
+  margin-top: 0.1rem;
+  color: var(--vf-warning-text);
 }
 
 .ftp-import-note {
