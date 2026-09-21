@@ -277,6 +277,15 @@ pub struct Share {
     pub disabled_at: Option<time::OffsetDateTime>,
 }
 
+/// 分享链接 + 被分享条目的基本信息（分享管理页需要展示文件名与位置）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShareWithEntry {
+    pub share: Share,
+    pub entry_path: String,
+    pub entry_name: String,
+    pub entry_kind: EntryKind,
+}
+
 // Value objects
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NormalizedPath(String);

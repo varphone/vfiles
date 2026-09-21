@@ -35,6 +35,20 @@ export interface CategoryUsage {
   file_count: number;
 }
 
+/** 分享链接（GET /api/share/shares）。 */
+export interface ShareLink {
+  id: string;
+  entry_id: string;
+  entry_name: string;
+  entry_path: string;
+  entry_kind: "file" | "directory";
+  code: string;
+  expires_at: string | null;
+  created_at: string;
+  access_count: number;
+  last_accessed_at: string | null;
+}
+
 export interface WorkspaceOverview {
   file_count: number;
   directory_count: number;

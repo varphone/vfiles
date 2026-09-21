@@ -94,6 +94,33 @@
     - `type` 可选：`all` / `file` / `directory`
     - `limit` / `offset` 可选
 
+## 分享链接管理
+
+`GET /api/share/shares`（需要登录）列出当前用户创建且未停用的分享链接，
+结果已包含被分享条目的名称、路径与类型，便于直接展示：
+
+```json
+[
+  {
+    "id": "…",
+    "entry_id": "…",
+    "entry_name": "季报.txt",
+    "entry_path": "文档/季报.txt",
+    "entry_kind": "file",
+    "code": "c2a413be",
+    "expires_at": "2026-09-28T16:29:51Z",
+    "created_by": "…",
+    "created_at": "2026-09-21T16:29:51Z",
+    "access_count": 3,
+    "last_accessed_at": null
+  }
+]
+```
+
+- `entry_kind` 为 `file` 或 `directory`；`entry_name` 由条目路径末段推导（数据库中条目只有路径）；
+- 单条分享接口（创建 / 按 code 查询）的 `entry_*` 字段为空或默认值，因为不需要回查条目；
+- 停止分享仍使用 `DELETE /api/share/shares/{code}`。
+
 ## 侧栏聚合与收藏
 
 `GET /api/files/overview`（需要登录）返回条目统计、**按类型聚合的占用**与最近文件：

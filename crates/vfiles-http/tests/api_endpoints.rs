@@ -2396,6 +2396,64 @@ async fn share_creation_uses_configured_public_base_url() {
     );
 }
 
+/// 分享管理列表：必须带上被分享条目的名称、路径与类型（前端要展示文件名而不是 UUID）。
+#[tokio::test]
+async fn share_list_includes_entry_metadata() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "季报.txt", b"report\n", "seed")
+        .await;
+    app.json_request_as_admin(
+        Method::POST,
+        "/api/files/directories",
+        json!({ "path": "docs/归档" }),
+    )
+    .await;
+
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+    for path in ["docs/季报.txt", "docs/归档"] {
+        let response = app
+            .json_request_with_cookie(
+                Method::POST,
+                "/api/share/shares",
+                json!({ "path": path }),
+                &admin_cookie,
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let list = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/share/shares")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(list.status(), StatusCode::OK);
+    let payload = response_json(list).await;
+    let shares = payload.as_array().expect("share list should be an array");
+    assert_eq!(shares.len(), 2, "两个分享都应返回: {payload:?}");
+
+    let by_name = |name: &str| {
+        shares
+            .iter()
+            .find(|item| item["entry_name"].as_str() == Some(name))
+            .cloned()
+            .unwrap_or_else(|| panic!("缺少 {name} 的分享: {payload:?}"))
+    };
+
+    let file_share = by_name("季报.txt");
+    assert_eq!(file_share["entry_path"], Value::from("docs/季报.txt"));
+    assert_eq!(file_share["entry_kind"], Value::from("file"));
+    assert!(file_share["code"].as_str().is_some_and(|v| !v.is_empty()));
+
+    let dir_share = by_name("归档");
+    assert_eq!(dir_share["entry_path"], Value::from("docs/归档"));
+    assert_eq!(dir_share["entry_kind"], Value::from("directory"));
+}
+
 #[tokio::test]
 async fn share_download_supports_files_and_directories() {
     let app = TestApp::new().await;

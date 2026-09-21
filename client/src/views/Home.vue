@@ -123,6 +123,15 @@
                     <hr class="dropdown-divider" />
 
                     <router-link
+                      v-if="auth.user && auth.features?.shareEnabled !== false"
+                      class="dropdown-item"
+                      to="/shares"
+                      @click="closeAccountMenus"
+                    >
+                      我的分享
+                    </router-link>
+
+                    <router-link
                       v-if="
                         auth.enabled &&
                         ['admin', 'manager'].includes(auth.user?.role || '')

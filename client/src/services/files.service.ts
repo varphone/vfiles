@@ -6,6 +6,7 @@ import type {
   FavoriteEntry,
   FileInfo,
   FileHistory,
+  ShareLink,
   StorageCategory,
   WorkspaceOverview,
 } from "../types";
@@ -376,6 +377,13 @@ export const filesService = {
         ? payload.recent_files
         : [],
     };
+  },
+
+  /** 列出当前用户创建的分享链接（含被分享条目的名称/路径/类型）。 */
+  async listShares(): Promise<ShareLink[]> {
+    const response = await apiService.get<ShareLink[]>("/share/shares");
+    const payload = (response as any)?.data ?? response;
+    return Array.isArray(payload) ? payload : [];
   },
 
   /** 停用（删除）分享链接。 */

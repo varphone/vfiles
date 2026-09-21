@@ -374,12 +374,30 @@ pub struct SearchQueryDto {
 pub struct ShareDto {
     pub id: String,
     pub entry_id: String,
+    /// 被分享条目的名称与路径（分享管理页展示用）。
+    pub entry_name: String,
+    pub entry_path: String,
+    /// `file` 或 `directory`
+    pub entry_kind: String,
     pub code: String,
     pub expires_at: Option<String>,
     pub created_by: String,
     pub created_at: String,
     pub access_count: u32,
     pub last_accessed_at: Option<String>,
+}
+
+impl From<vfiles_domain::ShareWithEntry> for ShareDto {
+    fn from(item: vfiles_domain::ShareWithEntry) -> Self {
+        let mut dto = Self::from(item.share);
+        dto.entry_name = item.entry_name;
+        dto.entry_path = item.entry_path;
+        dto.entry_kind = match item.entry_kind {
+            vfiles_domain::EntryKind::Directory => "directory".to_string(),
+            vfiles_domain::EntryKind::File => "file".to_string(),
+        };
+        dto
+    }
 }
 
 impl From<vfiles_domain::Share> for ShareDto {
@@ -391,6 +409,9 @@ impl From<vfiles_domain::Share> for ShareDto {
             expires_at: format_timestamp_opt(share.expires_at),
             created_by: share.created_by.to_string(),
             created_at: format_timestamp(share.created_at),
+            entry_name: String::new(),
+            entry_path: String::new(),
+            entry_kind: "file".to_string(),
             access_count: share.access_count,
             last_accessed_at: format_timestamp_opt(share.last_accessed_at),
         }

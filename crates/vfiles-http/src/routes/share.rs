@@ -119,7 +119,10 @@ async fn list_shares(
 
     tracing::info!("Listing shares for user: {}", user_id.to_string());
 
-    let shares = state.share_service.list_shares_by_user(&user_id).await?;
+    let shares = state
+        .share_service
+        .list_shares_with_entry_by_user(&user_id)
+        .await?;
 
     let dtos = shares.into_iter().map(ShareDto::from).collect();
 

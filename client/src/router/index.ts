@@ -24,6 +24,11 @@ const router = createRouter({
       component: () => import("../views/ResetPassword.vue"),
     },
     {
+      path: "/shares",
+      name: "shared-links",
+      component: () => import("../views/SharedLinks.vue"),
+    },
+    {
       path: "/admin/users",
       name: "admin-users",
       component: () => import("../views/AdminUsers.vue"),

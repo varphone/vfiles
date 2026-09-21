@@ -3727,6 +3727,11 @@ type ShareRow = (
     Option<String>,
 );
 
+/// `entries` 表只有路径没有独立名称列，展示用的名称从路径末段推导。
+fn entry_name_from_path(path: &str) -> String {
+    path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
 fn parse_share_row(
     (
         id,
@@ -3884,6 +3889,77 @@ impl ShareRepo for SqliteShareRepo {
         let mut shares = Vec::new();
         for row in rows {
             shares.push(parse_share_row(row)?);
+        }
+
+        Ok(shares)
+    }
+
+    async fn find_shares_with_entry_by_user(
+        &self,
+        user_id: &UserId,
+    ) -> DomainResult<Vec<ShareWithEntry>> {
+        #[derive(sqlx::FromRow)]
+        struct ShareWithEntryRow {
+            id: String,
+            namespace_id: String,
+            entry_id: String,
+            entry_version_id: Option<String>,
+            code: String,
+            expires_at: Option<String>,
+            created_by: String,
+            created_at: String,
+            access_count: i64,
+            last_accessed_at: Option<String>,
+            disabled_at: Option<String>,
+            entry_path: String,
+            entry_kind: String,
+        }
+
+        let rows: Vec<ShareWithEntryRow> = sqlx::query_as(
+            r#"
+            SELECT
+                s.id, s.namespace_id, s.entry_id, s.entry_version_id, s.code,
+                s.expires_at, s.created_by, s.created_at, s.access_count,
+                s.last_accessed_at, s.disabled_at,
+                e.path AS entry_path, e.kind AS entry_kind
+            FROM shares s
+            JOIN entries e ON e.id = s.entry_id
+            WHERE s.created_by = ? AND s.disabled_at IS NULL
+            ORDER BY s.created_at DESC
+            "#,
+        )
+        .bind(user_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to find shares with entry by user: {e}"),
+        })?;
+
+        let mut shares = Vec::with_capacity(rows.len());
+        for row in rows {
+            let kind = match row.entry_kind.as_str() {
+                "directory" => EntryKind::Directory,
+                _ => EntryKind::File,
+            };
+            shares.push(ShareWithEntry {
+                // parse_share_row 接收元组（与其它查询保持一致）
+                share: parse_share_row((
+                    row.id,
+                    row.namespace_id,
+                    row.entry_id,
+                    row.entry_version_id,
+                    row.code,
+                    row.expires_at,
+                    row.created_by,
+                    row.created_at,
+                    row.access_count,
+                    row.last_accessed_at,
+                    row.disabled_at,
+                ))?,
+                entry_name: entry_name_from_path(&row.entry_path),
+                entry_path: row.entry_path,
+                entry_kind: kind,
+            });
         }
 
         Ok(shares)
