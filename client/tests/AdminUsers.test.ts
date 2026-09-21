@@ -124,3 +124,31 @@ describe("AdminUsers.vue", () => {
     );
   });
 });
+
+describe("AdminUsers.vue header actions", () => {
+  it("offers the same 刷新 / 返回文件 actions as 我的分享 and 审计日志", async () => {
+    const { findByText, container } = renderWithProviders(AdminUsers);
+    await findByText("用户管理");
+
+    const actions = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(
+        ".admin-header-actions button",
+      ),
+    ).map((button) => button.textContent?.trim());
+
+    expect(actions).toContain("刷新");
+    expect(actions).toContain("返回文件");
+  });
+
+  it("refreshes when 刷新 is clicked", async () => {
+    const listUsers = vi.mocked(authService.listUsers);
+    listUsers.mockClear();
+
+    const { findByText, getByText } = renderWithProviders(AdminUsers);
+    await findByText("用户管理");
+    await waitFor(() => expect(listUsers).toHaveBeenCalledTimes(1));
+
+    await fireEvent.click(getByText("刷新"));
+    await waitFor(() => expect(listUsers).toHaveBeenCalledTimes(2));
+  });
+});

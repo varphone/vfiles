@@ -44,6 +44,10 @@
             <IconRefresh :size="15" :class="{ 'is-spinning': loading }" />
             <span>刷新</span>
           </button>
+          <button class="vf-ghost-button" type="button" @click="goFiles">
+            <IconFolderOpen :size="15" />
+            <span>返回文件</span>
+          </button>
         </div>
       </header>
 
@@ -263,8 +267,10 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import {
   IconAlertCircle,
+  IconFolderOpen,
   IconInfoCircle,
   IconPencil,
   IconRefresh,
@@ -286,6 +292,12 @@ import { formatRelativeDate } from "../utils/filePresentation";
 
 const app = useAppStore();
 const auth = useAuthStore();
+const router = useRouter();
+
+/** 与「我的分享」「审计日志」一致：返回文件浏览器。 */
+function goFiles() {
+  router.push({ path: "/" });
+}
 
 const users = ref<AdminUser[]>([]);
 const loading = ref(false);
