@@ -2608,6 +2608,85 @@ async fn audit_log_records_key_actions_and_is_admin_only() {
     );
 }
 
+/// 审计日志导出：只读 CSV，尊重筛选，且导出动作本身会被审计。
+#[tokio::test]
+async fn audit_logs_csv_export_respects_filters_and_is_audited() {
+    let app = TestApp::new().await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+
+    let export = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/audit/logs.csv?action=login.success")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(export.status(), StatusCode::OK);
+    assert_eq!(
+        export
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("text/csv; charset=utf-8")
+    );
+    let disposition = export
+        .headers()
+        .get("content-disposition")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        disposition.contains("attachment") && disposition.contains(".csv"),
+        "应作为附件下载: {disposition}"
+    );
+
+    let body =
+        String::from_utf8(response_bytes(export).await.to_vec()).expect("csv should be utf-8");
+    let lines: Vec<&str> = body.lines().collect();
+    assert!(lines[0].contains("时间") && lines[0].contains("IP") && lines[0].contains("设备"));
+    // 仅筛选 login.success：表头 + 1 行
+    assert_eq!(lines.len(), 2, "CSV 应只包含筛选后的记录: {body:?}");
+    assert!(lines[1].contains("login.success"));
+    assert!(lines[1].contains("admin"));
+
+    // 导出本身写入审计（audit.export）
+    let list = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/audit/logs?action=audit.export")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let payload = response_json(list).await;
+    let items = payload["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "应记录一次导出: {payload:?}");
+    assert!(
+        items[0]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("动作=login.success")),
+        "导出记录应包含筛选条件: {payload:?}"
+    );
+
+    // 非管理员不可导出
+    app.register_user("auditor2", "auditor2@example.com", "viewer-password")
+        .await;
+    let viewer_cookie = app.login_cookie("auditor2", "viewer-password").await;
+    let forbidden = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/audit/logs.csv")
+                .body(Body::empty())
+                .expect("request should build"),
+            &viewer_cookie,
+        )
+        .await;
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+}
+
 /// 分享管理列表：必须带上被分享条目的名称、路径与类型（前端要展示文件名而不是 UUID）。
 #[tokio::test]
 async fn share_list_includes_entry_metadata() {

@@ -13,6 +13,17 @@
         </div>
 
         <div class="audit-header-actions">
+          <a
+            class="vf-ghost-button"
+            :href="exportHref"
+            :class="{ 'is-disabled': total === 0 }"
+            :aria-disabled="total === 0 ? 'true' : 'false'"
+            download
+            title="按当前筛选条件导出 CSV（只读导出）"
+          >
+            <IconDownload :size="15" />
+            <span>导出 CSV</span>
+          </a>
           <button
             class="vf-ghost-button"
             type="button"
@@ -218,6 +229,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import {
   IconAlertCircle,
+  IconDownload,
   IconFilter,
   IconFolderOpen,
   IconHistory,
@@ -275,6 +287,7 @@ const ACTION_LABELS: Record<string, string> = {
   "user.create": "创建用户",
   "user.update": "更新用户",
   "user.sessions_revoke": "强制下线",
+  "audit.export": "导出审计日志",
 };
 
 function actionLabel(value: string): string {
@@ -285,6 +298,16 @@ function formatAuditTime(value: string): string {
   if (!value) return "—";
   return formatRelativeDate(value);
 }
+
+/** 导出链接：带上当前筛选条件，服务端按条件导出（最多 1 万条）。 */
+const exportHref = computed(() => {
+  const params = new URLSearchParams();
+  if (keyword.value) params.set("keyword", keyword.value);
+  if (action.value) params.set("action", action.value);
+  if (result.value) params.set("result", result.value);
+  const query = params.toString();
+  return `/api/audit/logs.csv${query ? `?${query}` : ""}`;
+});
 
 function goFiles() {
   router.push({ path: "/" });
@@ -432,6 +455,19 @@ onMounted(() => {
   width: min(16rem, 60vw);
   padding-left: 1.75rem;
   font-size: 0.8rem;
+}
+
+/* 导出按钮与其它按钮一致，禁用时降低不透明度 */
+.audit-header-actions .vf-ghost-button {
+  min-height: 1.9rem;
+  padding: 0 0.55rem;
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.audit-header-actions .vf-ghost-button.is-disabled {
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 .audit-apply {

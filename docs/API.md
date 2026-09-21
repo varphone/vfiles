@@ -138,12 +138,18 @@
 数据库层另有触发器，任何直接的 `UPDATE` / `DELETE` 语句都会被拒绝，
 因此审计记录无法修改或删除。`username` 为冗余快照，用户改名或删除后历史仍可读。
 
+**导出**：`GET /api/audit/logs.csv`（仅管理员）按同样的筛选参数导出 CSV 附件，
+最多 10000 行；响应为 `text/csv; charset=utf-8`（带 UTF-8 BOM，便于 Excel 识别），
+文件名形如 `audit-logs-20260921.csv`。导出动作本身也会写入一条 `audit.export` 记录
+（说明里包含所用筛选条件）。
+
 已记录的动作：
 
 - 认证：`login.success`、`login.failure`（含限流拒绝）
 - 文件：`file.upload`、`file.download`、`file.delete`、`file.move`
 - 分享：`share.create`、`share.disable`、`share.download`
 - 用户管理：`user.create`、`user.update`、`user.sessions_revoke`
+- 审计自身：`audit.export`（导出只读日志）
 
 ## 分享链接管理
 

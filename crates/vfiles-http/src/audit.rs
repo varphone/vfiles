@@ -29,6 +29,7 @@ pub mod action {
     pub const USER_CREATE: &str = "user.create";
     pub const USER_UPDATE: &str = "user.update";
     pub const USER_SESSIONS_REVOKE: &str = "user.sessions_revoke";
+    pub const AUDIT_EXPORT: &str = "audit.export";
 }
 
 /// 从请求头取出 (IP, User-Agent)。

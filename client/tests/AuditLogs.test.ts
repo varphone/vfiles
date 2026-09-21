@@ -148,6 +148,57 @@ describe("AuditLogs.vue", () => {
     ).not.toBeNull();
   });
 
+  it("offers a CSV export link carrying the current filters", async () => {
+    const { container } = renderPage();
+    await waitFor(() =>
+      expect(container.querySelectorAll("tbody tr")).toHaveLength(1),
+    );
+
+    const exportLink = container.querySelector<HTMLAnchorElement>(
+      'a[href^="/api/audit/logs.csv"]',
+    )!;
+    expect(exportLink).not.toBeNull();
+    expect(exportLink.getAttribute("download")).not.toBeNull();
+    expect(exportLink.getAttribute("href")).toBe("/api/audit/logs.csv");
+
+    // 应用筛选后导出链接应带上条件
+    await fireEvent.update(
+      screen.getByLabelText("搜索用户名或 IP"),
+      "203.0.113",
+    );
+    await fireEvent.change(screen.getByLabelText("按结果筛选"), {
+      target: { value: "failure" },
+    });
+    await fireEvent.click(screen.getByText("筛选"));
+
+    await waitFor(() =>
+      expect(
+        container
+          .querySelector<HTMLAnchorElement>('a[href^="/api/audit/logs.csv"]')!
+          .getAttribute("href"),
+      ).toBe("/api/audit/logs.csv?keyword=203.0.113&result=failure"),
+    );
+  });
+
+  it("disables the export link when there is nothing to export", async () => {
+    listLogsMock.mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0,
+    });
+    const { container } = renderPage();
+
+    await waitFor(() =>
+      expect(container.querySelector(".empty-state-title")).not.toBeNull(),
+    );
+    const exportLink = container.querySelector<HTMLAnchorElement>(
+      'a[href^="/api/audit/logs.csv"]',
+    )!;
+    expect(exportLink.getAttribute("aria-disabled")).toBe("true");
+    expect(exportLink.classList.contains("is-disabled")).toBe(true);
+  });
+
   it("paginates when the total exceeds one page", async () => {
     listLogsMock.mockResolvedValue({
       items: [entry()],
