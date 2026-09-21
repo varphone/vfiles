@@ -205,13 +205,15 @@
             >
               <div class="dropdown-trigger">
                 <button
-                  class="button is-light is-small"
+                  class="button is-light is-small mobile-bar-button"
                   aria-haspopup="true"
                   :aria-expanded="actionMenuOpen ? 'true' : 'false'"
-                  @click="actionMenuOpen = !actionMenuOpen"
                   title="操作菜单"
+                  aria-label="操作菜单"
+                  @click="actionMenuOpen = !actionMenuOpen"
                 >
                   <IconMenu2 :size="18" />
+                  <span class="mobile-bar-label">更多</span>
                 </button>
               </div>
               <div class="dropdown-menu" role="menu">
@@ -244,30 +246,50 @@
                 v-if="actionMode === 'nav'"
                 class="buttons are-small mb-0 mobile-action-buttons"
               >
-                <button class="button is-light" @click="goBack" title="上一级">
+                <button
+                  class="button is-light mobile-bar-button"
+                  title="上一级"
+                  aria-label="上一级"
+                  @click="goBack"
+                >
                   <IconArrowLeft :size="18" />
-                </button>
-                <button class="button is-light" @click="goRoot" title="根目录">
-                  <IconHome :size="18" />
+                  <span class="mobile-bar-label">上一级</span>
                 </button>
                 <button
-                  class="button is-light"
+                  class="button is-light mobile-bar-button"
+                  title="根目录"
+                  aria-label="根目录"
+                  @click="goRoot"
+                >
+                  <IconHome :size="18" />
+                  <span class="mobile-bar-label">首页</span>
+                </button>
+                <button
+                  class="button is-light mobile-bar-button"
                   @click="appStore.requestCreateDirectory()"
                   title="新建文件夹"
                   aria-label="新建文件夹"
                 >
                   <IconFolderPlus :size="18" />
+                  <span class="mobile-bar-label">新建</span>
                 </button>
                 <button
-                  class="button is-link"
+                  class="button is-link mobile-bar-button"
                   @click="openUploader"
                   title="上传"
                   aria-label="上传"
                 >
                   <IconUpload :size="18" />
+                  <span class="mobile-bar-label">上传</span>
                 </button>
-                <button class="button is-light" @click="refresh" title="刷新">
+                <button
+                  class="button is-light mobile-bar-button"
+                  @click="refresh"
+                  title="刷新"
+                  aria-label="刷新"
+                >
                   <IconRefresh :size="18" />
+                  <span class="mobile-bar-label">刷新</span>
                 </button>
               </div>
 
@@ -994,6 +1016,24 @@ async function renameSelected() {
   padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom));
 }
 
+/* 图标 + 文字：触屏没有 hover，底部操作必须自解释 */
+.mobile-bar-button {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  min-height: 2.75rem;
+  padding: 0.25rem 0.35rem;
+  line-height: 1.1;
+}
+
+.mobile-bar-label {
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
 .mobile-bottom-bar-bottom {
   display: flex;
   align-items: center;
@@ -1060,13 +1100,23 @@ async function renameSelected() {
 }
 
 /* 底部操作按钮：与桌面工具栏一致的图标按钮语言 */
+/* 按钮等分剩余宽度且不换行：固定宽度会让 5 个按钮超出面板宽度并叠在一起 */
+.mobile-action-buttons {
+  display: flex;
+  flex-wrap: nowrap;
+  width: 100%;
+  gap: 0.15rem;
+}
+
 .mobile-action-buttons .button {
   display: inline-flex;
+  flex: 1 1 0;
   align-items: center;
   justify-content: center;
-  width: 2.4rem;
-  height: 2.4rem;
-  padding: 0;
+  width: auto;
+  min-width: 0;
+  height: 2.75rem;
+  padding: 0 0.1rem;
   border: none;
   border-radius: var(--vf-radius);
   background: transparent;

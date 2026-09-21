@@ -67,6 +67,17 @@ function remove(id: number) {
   pointer-events: none;
 }
 
+/* 移动端提示条放到底部：顶部会盖住面包屑与搜索行（主流移动端同样如此） */
+@media screen and (max-width: 1023px) {
+  .notifications {
+    top: auto;
+    bottom: calc(4.9rem + env(safe-area-inset-bottom) + var(--vv-bottom, 0px));
+    left: 0.75rem;
+    right: 0.75rem;
+    width: auto;
+  }
+}
+
 /* 卡片式提示：图标 + 文案 + 关闭，颜色仍按语义区分 */
 .toast {
   display: flex;

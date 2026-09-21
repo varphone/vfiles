@@ -74,3 +74,34 @@ describe("FileItem.vue row actions", () => {
     expect(checkbox.checked).toBe(true);
   });
 });
+
+describe("FileItem.vue mobile row meta", () => {
+  it("renders size and date as plain muted text instead of pills", () => {
+    const { container } = render(FileItem as any, {
+      props: { file: file({ kind: "file", size_bytes: 1536 }) },
+    });
+
+    const info = container.querySelector(".file-info")!;
+    expect(info.querySelector(".file-info-size")?.textContent?.trim()).toBe(
+      "1.5 KB",
+    );
+    expect(info.querySelector(".file-info-sep")).not.toBeNull();
+    expect(info.querySelector(".file-info-date")).not.toBeNull();
+    // 不再使用胶囊标签
+    expect(info.querySelector(".tag")).toBeNull();
+  });
+
+  it("renders the latest commit message as muted text", () => {
+    const { container } = render(FileItem as any, {
+      props: {
+        file: file({
+          lastCommit: { message: "更新说明", hash: "abc1234" },
+        } as Partial<FileInfo>),
+      },
+    });
+
+    const commit = container.querySelector(".file-commit-message");
+    expect(commit?.textContent?.trim()).toBe("更新说明");
+    expect(container.querySelector(".file-commit .tag")).toBeNull();
+  });
+});

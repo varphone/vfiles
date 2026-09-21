@@ -304,18 +304,21 @@
             >
           </p>
           <p class="file-info">
-            <span v-if="file.kind === 'file'" class="tag is-light mr-2">
+            <span v-if="file.kind === 'file'" class="file-info-size">
               {{ formatSize(file.size_bytes || 0) }}
             </span>
             <span
-              class="has-text-grey-light is-size-7"
-              :title="formatDate(file.created_at)"
+              v-if="file.kind === 'file'"
+              class="file-info-sep"
+              aria-hidden="true"
+              >·</span
             >
+            <span class="file-info-date" :title="formatDate(file.created_at)">
               {{ formatRelativeDate(file.created_at) }}
             </span>
           </p>
           <p v-if="file.lastCommit" class="file-commit">
-            <span class="tag is-info is-light">
+            <span class="file-commit-message">
               {{ file.lastCommit.message }}
             </span>
           </p>
@@ -962,6 +965,28 @@ function share() {
   margin-right: 0 !important;
   margin-bottom: 0 !important;
   word-break: break-word;
+}
+
+/* 移动端行内元信息：弱化文本而不是胶囊标签（与桌面列表一致） */
+.file-info-size,
+.file-info-date,
+.file-info-sep {
+  color: var(--vf-text-subtle);
+  font-size: 0.76rem;
+}
+
+.file-info-sep {
+  margin: 0 0.25rem;
+}
+
+.file-commit-message {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vf-text-muted);
+  font-size: 0.74rem;
 }
 
 .file-info {
