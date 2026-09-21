@@ -2,7 +2,10 @@ use std::{collections::HashMap, io::Write, sync::Arc};
 
 use tokio::io::AsyncReadExt;
 use vfiles_domain::*;
-use vfiles_infra_sqlite::{SqliteSessionRepo, SqliteUserRepo};
+use vfiles_infra_sqlite::{
+    FsBlobStore, FsUploadStore, SqliteEntryRepo, SqliteSessionRepo, SqliteSnapshotRepo,
+    SqliteUserRepo,
+};
 
 pub(crate) fn normalize_message(message: Option<&str>) -> Option<String> {
     message.and_then(|value| {
@@ -342,38 +345,29 @@ fn upload_view_from_session(upload: &UploadSession, parts: &[UploadPart]) -> Upl
     }
 }
 
-async fn collect_descendants<E>(
-    entry_repo: &E,
+async fn collect_descendants(
+    entry_repo: &(dyn EntryRepo + Send + Sync),
     namespace_id: &NamespaceId,
     root: &Entry,
-) -> DomainResult<Vec<Entry>>
-where
-    E: EntryRepo,
-{
+) -> DomainResult<Vec<Entry>> {
     // 单次范围查询取回 root 及其全部后代，避免按目录递归（O(目录数) 次查询）。
     entry_repo.find_subtree(namespace_id, &root.path_norm).await
 }
 
-async fn collect_namespace_entries<E>(
-    entry_repo: &E,
+async fn collect_namespace_entries(
+    entry_repo: &(dyn EntryRepo + Send + Sync),
     namespace_id: &NamespaceId,
-) -> DomainResult<Vec<Entry>>
-where
-    E: EntryRepo,
-{
+) -> DomainResult<Vec<Entry>> {
     // 单次查询取回全部条目，避免按目录递归列举（O(目录数) 次查询）。
     let mut entries = entry_repo.find_all(namespace_id).await?;
     entries.sort_by(|left, right| left.path_norm.as_str().cmp(right.path_norm.as_str()));
     Ok(entries)
 }
 
-async fn resolve_current_version_for_entry<E>(
-    entry_repo: &E,
+async fn resolve_current_version_for_entry(
+    entry_repo: &(dyn EntryRepo + Send + Sync),
     entry: &Entry,
-) -> DomainResult<Option<EntryVersion>>
-where
-    E: EntryRepo,
-{
+) -> DomainResult<Option<EntryVersion>> {
     match (entry.entry_type, entry.current_version_id) {
         (EntryKind::File, Some(version_id)) => {
             Ok(Some(entry_repo.find_version(&version_id).await?))
@@ -391,14 +385,11 @@ fn snapshot_change_type(entry_kind: EntryKind, version: Option<&EntryVersion>) -
         })
 }
 
-pub(crate) async fn collect_snapshot_state<E>(
-    entry_repo: &E,
+pub(crate) async fn collect_snapshot_state(
+    entry_repo: &(dyn EntryRepo + Send + Sync),
     namespace_id: &NamespaceId,
     extra_entries: Vec<PendingSnapshotEntry>,
-) -> DomainResult<Vec<PendingSnapshotEntry>>
-where
-    E: EntryRepo,
-{
+) -> DomainResult<Vec<PendingSnapshotEntry>> {
     let entries = collect_namespace_entries(entry_repo, namespace_id).await?;
 
     // 批量取当前版本，避免每个条目一次查询（每次变更都会走这里）。
@@ -436,15 +427,12 @@ where
     Ok(snapshot_entries)
 }
 
-pub(crate) async fn ensure_directory_path<E>(
-    entry_repo: &E,
+pub(crate) async fn ensure_directory_path(
+    entry_repo: &(dyn EntryRepo + Send + Sync),
     namespace_id: &NamespaceId,
     directory_path: &NormalizedPath,
     user_id: &UserId,
-) -> DomainResult<Vec<ChangedEntry>>
-where
-    E: EntryRepo,
-{
+) -> DomainResult<Vec<ChangedEntry>> {
     if directory_path.as_str().is_empty() {
         return Ok(Vec::new());
     }
@@ -486,17 +474,14 @@ where
     Ok(changed_entries)
 }
 
-async fn create_snapshot_record<S>(
-    snapshot_repo: &S,
+async fn create_snapshot_record(
+    snapshot_repo: &(dyn SnapshotRepo + Send + Sync),
     namespace_id: &NamespaceId,
     message: Option<&str>,
     kind: SnapshotKind,
     user_id: &UserId,
     snapshot_entries: Vec<PendingSnapshotEntry>,
-) -> DomainResult<SnapshotId>
-where
-    S: SnapshotRepo,
-{
+) -> DomainResult<SnapshotId> {
     let normalized_message = normalize_message(message);
     let applied_at = time::OffsetDateTime::now_utc();
     let snapshot_id = snapshot_repo
@@ -524,18 +509,15 @@ fn path_matches_scope(path: &NormalizedPath, scope: &NormalizedPath) -> bool {
             .starts_with(&format!("{}/", scope.as_str().trim_end_matches('/')))
 }
 
-pub(crate) async fn finalize_mutation<S>(
-    snapshot_repo: &S,
+pub(crate) async fn finalize_mutation(
+    snapshot_repo: &(dyn SnapshotRepo + Send + Sync),
     namespace_id: &NamespaceId,
     message: Option<&str>,
     user_id: &UserId,
     changed_entries: Vec<ChangedEntry>,
     snapshot_entries: Vec<PendingSnapshotEntry>,
     warnings: Vec<String>,
-) -> DomainResult<MutationResult>
-where
-    S: SnapshotRepo,
-{
+) -> DomainResult<MutationResult> {
     let applied_at = time::OffsetDateTime::now_utc();
     let snapshot_id = create_snapshot_record(
         snapshot_repo,
@@ -554,6 +536,17 @@ where
         applied_at,
     })
 }
+
+/// 生产环境使用的具体仓储组合。
+///
+/// 交付层（HTTP、FTP）需要按同一组合装配 `WorkspaceService`，这里给出别名，
+/// 避免各处重复书写泛型参数。
+pub type DefaultWorkspaceService =
+    WorkspaceService<SqliteEntryRepo, SqliteSnapshotRepo, FsBlobStore, FsUploadStore>;
+
+/// 同上，用于上传服务。
+pub type DefaultUploadService =
+    UploadService<SqliteEntryRepo, SqliteSnapshotRepo, FsBlobStore, FsUploadStore>;
 
 /// 命名空间解析：按用户取默认命名空间，不存在则创建。
 ///
@@ -706,9 +699,9 @@ pub struct MaintenanceService<B, E, S> {
 
 impl<B, E, S> MaintenanceService<B, E, S>
 where
-    B: BlobStore,
-    E: EntryRepo,
-    S: SnapshotRepo,
+    B: BlobStore + Send + Sync,
+    E: EntryRepo + Send + Sync,
+    S: SnapshotRepo + Send + Sync,
 {
     pub fn new(blob_store: B, entry_repo: E, snapshot_repo: S) -> Self {
         Self {
@@ -1290,9 +1283,9 @@ pub struct WorkspaceService<E, S, B, U> {
 
 impl<E, S, B, U> WorkspaceService<E, S, B, U>
 where
-    E: EntryRepo,
-    S: SnapshotRepo,
-    B: BlobStore,
+    E: EntryRepo + Send + Sync,
+    S: SnapshotRepo + Send + Sync,
+    B: BlobStore + Send + Sync,
     U: UploadStore,
 {
     pub fn new(entry_repo: E, snapshot_repo: S, blob_store: B, upload_store: U) -> Self {
@@ -2343,9 +2336,9 @@ pub struct UploadService<E, S, B, U> {
 
 impl<E, S, B, U> UploadService<E, S, B, U>
 where
-    E: EntryRepo,
-    S: SnapshotRepo,
-    B: BlobStore,
+    E: EntryRepo + Send + Sync,
+    S: SnapshotRepo + Send + Sync,
+    B: BlobStore + Send + Sync,
     U: UploadStore,
 {
     pub fn new(entry_repo: E, snapshot_repo: S, blob_store: B, upload_store: U) -> Self {
@@ -2660,9 +2653,9 @@ pub struct HistoryService<E, S, B, U> {
 
 impl<E, S, B, U> HistoryService<E, S, B, U>
 where
-    E: EntryRepo,
-    S: SnapshotRepo,
-    B: BlobStore,
+    E: EntryRepo + Send + Sync,
+    S: SnapshotRepo + Send + Sync,
+    B: BlobStore + Send + Sync,
     U: UserRepo,
 {
     pub fn new(entry_repo: E, snapshot_repo: S, blob_store: B, user_repo: U) -> Self {
@@ -3088,7 +3081,7 @@ pub struct ShareService<R, E> {
 impl<R, E> ShareService<R, E>
 where
     R: ShareRepo + Clone,
-    E: EntryRepo + Clone,
+    E: EntryRepo + Clone + Send + Sync,
 {
     pub fn new(share_repo: R, entry_repo: E) -> Self {
         Self {

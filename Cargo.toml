@@ -2,6 +2,7 @@
 members = [
     "crates/vfiles-bin",
     "crates/vfiles-config",
+    "crates/vfiles-ftp",
     "crates/vfiles-domain",
     "crates/vfiles-app",
     "crates/vfiles-http",

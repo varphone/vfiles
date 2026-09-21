@@ -9,6 +9,8 @@
 //! - 只有**快照**被延后到 `flush`，用于历史回放与变更记录；
 //! - 批次未 flush 就中断时，数据仍然有效，只是这些变更会体现在下一次快照里。
 
+use std::sync::Arc;
+
 use tokio::io::AsyncReadExt;
 
 use vfiles_domain::*;
@@ -46,11 +48,10 @@ pub enum SnapshotMode {
 ///
 /// 与 `UploadService` 的差别：没有 upload session、无需预先声明大小（FTP 的
 /// `STOR` 不提供大小），大小上限在流式读取时通过 `take` 截断并校验。
-#[derive(Debug)]
-pub struct ImportBatch<E, S, B> {
-    entry_repo: E,
-    snapshot_repo: S,
-    blob_store: B,
+pub struct ImportBatch {
+    entry_repo: Arc<dyn EntryRepo + Send + Sync>,
+    snapshot_repo: Arc<dyn SnapshotRepo + Send + Sync>,
+    blob_store: Arc<dyn BlobStore + Send + Sync>,
     namespace_id: NamespaceId,
     actor_user_id: UserId,
     /// 快照消息前缀，例如 "FTP 导入"；实际消息会带上文件数。
@@ -66,17 +67,25 @@ pub struct ImportBatch<E, S, B> {
     snapshots_written: u64,
 }
 
-impl<E, S, B> ImportBatch<E, S, B>
-where
-    E: EntryRepo,
-    S: SnapshotRepo,
-    B: BlobStore,
-{
+impl std::fmt::Debug for ImportBatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImportBatch")
+            .field("namespace_id", &self.namespace_id)
+            .field("actor_user_id", &self.actor_user_id)
+            .field("snapshot_mode", &self.snapshot_mode)
+            .field("files_imported", &self.files_imported)
+            .field("bytes_imported", &self.bytes_imported)
+            .field("snapshots_written", &self.snapshots_written)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ImportBatch {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        entry_repo: E,
-        snapshot_repo: S,
-        blob_store: B,
+        entry_repo: Arc<dyn EntryRepo + Send + Sync>,
+        snapshot_repo: Arc<dyn SnapshotRepo + Send + Sync>,
+        blob_store: Arc<dyn BlobStore + Send + Sync>,
         namespace_id: NamespaceId,
         actor_user_id: UserId,
         label: impl Into<String>,
@@ -174,7 +183,7 @@ where
             })?;
 
         let changed_directories = ensure_directory_path(
-            &self.entry_repo,
+            &*self.entry_repo,
             &self.namespace_id,
             &parent_path,
             &self.actor_user_id,
@@ -297,9 +306,9 @@ where
         let message = self.snapshot_message(count);
         let changed_entries = std::mem::take(&mut self.changed);
         let snapshot_entries =
-            collect_snapshot_state(&self.entry_repo, &self.namespace_id, Vec::new()).await?;
+            collect_snapshot_state(&*self.entry_repo, &self.namespace_id, Vec::new()).await?;
         let mutation = finalize_mutation(
-            &self.snapshot_repo,
+            &*self.snapshot_repo,
             &self.namespace_id,
             Some(&message),
             &self.actor_user_id,
@@ -382,15 +391,11 @@ mod tests {
             }
         }
 
-        fn batch(
-            &self,
-            mode: SnapshotMode,
-            threshold: usize,
-        ) -> ImportBatch<SqliteEntryRepo, SqliteSnapshotRepo, FsBlobStore> {
+        fn batch(&self, mode: SnapshotMode, threshold: usize) -> ImportBatch {
             ImportBatch::new(
-                self.entry_repo.clone(),
-                self.snapshot_repo.clone(),
-                self.blob_store.clone(),
+                Arc::new(self.entry_repo.clone()),
+                Arc::new(self.snapshot_repo.clone()),
+                Arc::new(self.blob_store.clone()),
                 self.namespace_id,
                 self.user_id,
                 "FTP 导入",

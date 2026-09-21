@@ -15,6 +15,7 @@ async-trait.workspace = true
 futures.workspace = true
 hex.workspace = true
 mime_guess.workspace = true
+serde.workspace = true
 sha2.workspace = true
 similar.workspace = true
 time.workspace = true

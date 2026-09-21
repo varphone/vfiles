@@ -1,0 +1,29 @@
+[package]
+name = "vfiles-ftp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vfiles-app = { path = "../vfiles-app" }
+vfiles-config = { path = "../vfiles-config" }
+vfiles-domain = { path = "../vfiles-domain" }
+
+async-trait.workspace = true
+libunftp = { version = "0.23", default-features = false, features = ["ring"] }
+# libunftp 0.23 把 StorageBackend/Authenticator 放在 unftp-core 中且不再公开 re-export，
+# 自定义后端必须直接依赖同一份 core（版本与 libunftp 的依赖保持一致）。
+unftp-core = "0.1"
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }
+
+camino.workspace = true
+sqlx.workspace = true
+suppaftp = { version = "6", features = ["async"] }
+tempfile.workspace = true
+tokio.workspace = true
