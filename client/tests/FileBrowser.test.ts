@@ -838,6 +838,37 @@ describe("FileBrowser.vue action column", () => {
   });
 });
 
+describe("FileBrowser.vue view and sort menus", () => {
+  it("keeps 文件夹置顶 only in the sort menu", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([]);
+
+    const { container, findAllByText } = renderWithProviders(
+      FileBrowser as any,
+    );
+    await findAllByText("全部文件").catch(() => []);
+
+    // 视图菜单：只负责显示方式与缩略图大小
+    await fireEvent.click(
+      container.querySelector(".view-options .vf-ghost-button")!,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".view-options-panel")).not.toBeNull(),
+    );
+    const viewPanel = container.querySelector(".view-options-panel")!;
+    expect(viewPanel.textContent).toContain("显示方式");
+    expect(viewPanel.textContent).not.toContain("文件夹置顶");
+
+    // 排序菜单：文件夹置顶属于排序选项
+    const sortTrigger = container.querySelector(".sort-menu button")!;
+    await fireEvent.click(sortTrigger);
+    await waitFor(() => {
+      const text = container.querySelector(".sort-menu")?.textContent ?? "";
+      expect(text).toContain("文件夹置顶");
+    });
+  });
+});
+
 describe("FileBrowser.vue inline rename", () => {
   function files() {
     return [

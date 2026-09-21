@@ -1127,8 +1127,37 @@ async function renameSelected() {
 }
 
 @media screen and (min-width: 1024px) {
+  /* 桌面端固定整屏高度：页面本身不滚动，文件列表在自己的内容区内滚动。
+     这样工具栏、列头、状态栏与侧栏/详情面板始终可见（主流网盘的应用外壳）。 */
   .home {
+    height: 100dvh;
     min-height: 100dvh;
+    overflow: hidden;
+  }
+
+  .home-content {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .home-main-container {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .home-browser-shell {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .site-record-footer {
+    flex: 0 0 auto;
   }
 
   .mobile-bottom-bar {
@@ -1151,10 +1180,6 @@ async function renameSelected() {
     background: var(--vf-surface);
     box-shadow: var(--vf-shadow-card);
     padding: 0;
-  }
-
-  .home-browser-shell {
-    display: block;
   }
 
   :deep(.file-browser-box) {

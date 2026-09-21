@@ -48,15 +48,6 @@
           </div>
         </div>
 
-        <label class="checkbox view-options-checkbox">
-          <input
-            type="checkbox"
-            :checked="view.foldersFirst"
-            @change="view.toggleFoldersFirst()"
-          />
-          文件夹置顶
-        </label>
-
         <template v-if="view.mode === 'grid'">
           <hr class="dropdown-divider" />
           <div class="view-options-section">
@@ -162,10 +153,6 @@ onBeforeUnmount(() => {
   color: var(--vf-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
-}
-
-.view-options-checkbox {
-  font-size: 0.8rem;
 }
 
 .dropdown-divider {

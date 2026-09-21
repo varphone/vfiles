@@ -1565,6 +1565,35 @@
 - 测试：Rust 新增 2 个接口用例（分类字节数与倒序、空命名空间返回空数组），
   前端新增 4 个侧栏用例（占比与图例、最小宽度、空轨道、旧服务端缺字段兼容）。
 
+### 2.89 界面迭代（第 3 轮）：桌面应用外壳与工具栏收敛（round 82，视觉/交互）
+
+- 目标：主流网盘（Drive / OneDrive）的文件区是**固定外壳 + 列表内部滚动**，工具栏、列头、
+  状态栏常驻；VFiles 之前整页滚动，滚到列表深处时工具栏、列头与状态栏都会滚出视野。
+- 改动：
+  1. **应用外壳**（`Home.vue` 桌面媒体查询）：`.home` / `.home-content` 固定 `100dvh` 且不滚动，
+     `.home-main-container` → `.home-browser-shell` → `.file-browser` → `.file-browser-box`
+     逐级 `flex:1 + min-height:0`，页脚固定在底部；
+  2. **列表内部滚动**（`FileBrowser.vue`）：`.desktop-content-layout` 增加
+     `grid-template-rows: minmax(0, 1fr)`（否则 grid 行按内容撑开），`.desktop-list-shell`
+     成为唯一滚动容器并 `sticky` 列头；
+  3. **列头图标**：「名称 ▲/▼」改为 `IconChevronUp/Down` 小箭头（主色），与主流一致；
+  4. **菜单去重**：视图菜单删掉与排序菜单重复的「文件夹置顶」（主流把它归为排序选项），
+     视图菜单只保留显示方式与缩略图大小。
+- 排障记录（值得留存的两处坑）：
+  - 第一版外壳不生效：同一媒体查询里后出现的 `.home-browser-shell { display: block }`
+    覆盖了新加的 `display: flex`，flex 链断裂、盒子按内容长到 2201px；
+  - 第二版外壳生效但列表仍不可滚：Bulma 的 `.table-container` 默认 `overflow-y: hidden`
+    把长表格裁掉，桌面端改为 `overflow: visible`，由列表壳统一滚动。
+- 验证（真实服务，81 个文件，1440×900）：
+  - `pageScrollable: false`、`listScrollable: true`，多次滚到底后 `listScrollTop: 3351`、
+    首屏可见行由「设计稿」变为「文件-070.txt」、末行可见（`lastVisible: true`）；
+  - 列头 / 工具栏 / 状态栏位置完全不变（`headerStayed/toolbarStayed/statusStayed: true`）；
+  - 列头指示器为 `svg`（不再是 ▲/▼ 文本）；视图菜单不含「文件夹置顶」、排序菜单仍含该项
+    （`名称 | 排序方式 | 名称 | 修改时间 | 大小 | 类型 | 升序 | 降序 | 文件夹置顶`）；
+  - 移动端（390×844）保持整页滚动：`pageScrollable: true`、底栏可见、`scrollY: 600` 生效；
+  - 桌面与移动端均无控制台报错。
+- 测试：新增 2 例（列头排序指示器为 svg 且不再出现 ▲/▼；视图菜单不含「文件夹置顶」而排序菜单包含）。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）

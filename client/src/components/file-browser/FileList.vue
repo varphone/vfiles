@@ -27,12 +27,18 @@
               @click="emit('sort-change', column.field)"
             >
               <span>{{ column.label }}</span>
-              <span
-                v-if="sortField === column.field"
+              <IconChevronUp
+                v-if="sortField === column.field && sortDirection === 'asc'"
+                :size="14"
                 class="file-list-sort-icon"
                 aria-hidden="true"
-                >{{ sortDirection === "asc" ? "▲" : "▼" }}</span
-              >
+              />
+              <IconChevronDown
+                v-else-if="sortField === column.field"
+                :size="14"
+                class="file-list-sort-icon"
+                aria-hidden="true"
+              />
             </button>
           </th>
           <th
@@ -115,6 +121,7 @@
 
 <script setup lang="ts">
 import { computed, toRefs } from "vue";
+import { IconChevronDown, IconChevronUp } from "@tabler/icons-vue";
 import type { FileInfo } from "../../types";
 import {
   SORT_FIELD_LABELS,
@@ -208,9 +215,7 @@ const columns: SortColumn[] = [
 ];
 
 /** 快捷项（`.`/`..`）不参与“全选”，与批量操作的范围保持一致。 */
-const selectableFiles = computed(() =>
-  files.value.filter(Boolean),
-);
+const selectableFiles = computed(() => files.value.filter(Boolean));
 
 const allSelected = computed(
   () =>
@@ -259,6 +264,14 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
   border-bottom: none;
 }
 
+/* 桌面端由 .desktop-list-shell 统一滚动：Bulma 的 .table-container 默认
+   overflow-y: hidden 会把长列表裁掉且无法滚动 */
+@media screen and (min-width: 1024px) {
+  .table-container {
+    overflow: visible;
+  }
+}
+
 .file-list-sort {
   display: inline-flex;
   align-items: center;
@@ -277,8 +290,8 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
 }
 
 .file-list-sort-icon {
-  font-size: 0.65rem;
-  line-height: 1;
+  flex: 0 0 auto;
+  color: var(--vf-accent);
 }
 
 .file-list-select-all {

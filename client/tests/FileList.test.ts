@@ -86,6 +86,26 @@ describe("FileList.vue", () => {
     expect(sizeHeader).toHaveAttribute("aria-sort", "none");
   });
 
+  it("marks the active sort column with a chevron icon", () => {
+    const { container } = render(FileList as any, {
+      props: {
+        desktop: true,
+        selectMode: false,
+        selectedPaths: new Set<string>(),
+        sortField: "name",
+        sortDirection: "desc",
+        files: [buildFile({ name: "readme.txt" })],
+      },
+    });
+
+    // 主流样式：指示器是小箭头图标，而不是 ▲/▼ 文本
+    const icons = container.querySelectorAll(".file-list-sort-icon");
+    expect(icons).toHaveLength(1);
+    expect(icons[0].tagName.toLowerCase()).toBe("svg");
+    expect(container.textContent).not.toContain("▼");
+    expect(container.textContent).not.toContain("▲");
+  });
+
   it("shows an indeterminate select-all checkbox for a partial selection", async () => {
     const files: FileInfo[] = [
       buildFile({ id: "a", name: "a.txt", path: "a.txt" }) as FileInfo,

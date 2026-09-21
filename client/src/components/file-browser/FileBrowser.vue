@@ -2030,6 +2030,49 @@ function handleSortChange(field: SortField) {
   box-shadow: var(--vf-shadow-card);
 }
 
+/* 桌面端由外层应用外壳给定高度：盒子撑满剩余空间，内部列表自行滚动 */
+@media screen and (min-width: 1024px) {
+  .file-browser {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .file-browser-box {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .desktop-content-layout {
+    flex: 1 1 auto;
+    min-height: 0;
+    /* 单行铺满容器高度：否则 grid 行按内容撑开，列表无法内部滚动 */
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .desktop-list-primary-shell {
+    min-height: 0;
+  }
+
+  .desktop-list-shell {
+    flex: 1 1 auto;
+    min-height: 0;
+    /* 列表区域是唯一滚动容器：行、加载更多提示一起滚动，
+       列头用 sticky 常驻，与主流网盘一致 */
+    overflow: auto;
+    scrollbar-gutter: stable;
+  }
+
+  .desktop-list-shell thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--vf-surface);
+  }
+}
+
 .breadcrumb-bar {
   padding: 0.85rem 1.1rem;
   border-bottom: 1px solid var(--vf-border-weak);
