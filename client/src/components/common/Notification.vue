@@ -55,9 +55,10 @@ function remove(id: number) {
 </script>
 
 <style scoped>
+/* 桌面端放在右下角：右上角是通知中心与账号菜单，避免 toast 盖住它们 */
 .notifications {
   position: fixed;
-  top: calc(var(--bulma-navbar-height, 3.25rem) + 0.75rem);
+  bottom: 1rem;
   right: 1rem;
   z-index: 10000;
   display: flex;
@@ -67,10 +68,9 @@ function remove(id: number) {
   pointer-events: none;
 }
 
-/* 移动端提示条放到底部：顶部会盖住面包屑与搜索行（主流移动端同样如此） */
+/* 移动端：同样贴底，但要抬到底部操作栏之上 */
 @media screen and (max-width: 1023px) {
   .notifications {
-    top: auto;
     bottom: calc(4.9rem + env(safe-area-inset-bottom) + var(--vv-bottom, 0px));
     left: 0.75rem;
     right: 0.75rem;

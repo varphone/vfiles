@@ -85,6 +85,10 @@
 
           <div class="navbar-end">
             <div class="navbar-item">
+              <NotificationCenter />
+            </div>
+
+            <div class="navbar-item">
               <ThemeToggle />
             </div>
 
@@ -462,6 +466,7 @@ import {
   IconFolderPlus,
 } from "@tabler/icons-vue";
 import FileBrowser from "../components/file-browser/FileBrowser.vue";
+import NotificationCenter from "../components/common/NotificationCenter.vue";
 import ThemeToggle from "../components/common/ThemeToggle.vue";
 import { useFilesStore } from "../stores/files.store";
 import { useAuthStore } from "../stores/auth.store";
