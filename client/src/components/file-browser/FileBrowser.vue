@@ -265,6 +265,8 @@
                   :show-action-column="!detailsVisible"
                   :sort-field="fileView.sortField"
                   :sort-direction="fileView.sortDirection"
+                  :column-widths="fileView.columnWidths"
+                  @resize-column="fileView.setColumnWidth"
                   @click="handleItemClick"
                   @download="handleDownload"
                   @rename="handleRenameEntry"

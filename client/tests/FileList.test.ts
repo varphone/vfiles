@@ -106,6 +106,54 @@ describe("FileList.vue", () => {
     expect(container.textContent).not.toContain("▲");
   });
 
+  it("exposes a resizer per column that emits widths", async () => {
+    const { container, emitted } = render(FileList as any, {
+      props: {
+        desktop: true,
+        selectMode: false,
+        selectedPaths: new Set<string>(),
+        files: [buildFile({ name: "readme.txt" })],
+      },
+    });
+
+    const resizers = container.querySelectorAll(".file-list-resizer");
+    expect(resizers).toHaveLength(4);
+    expect(resizers[0]).toHaveAttribute("aria-label", "调整「名称」列宽");
+
+    // 拖拽：按下后移动 60px，应上报默认宽度 + 60
+    await fireEvent.mouseDown(resizers[0], { clientX: 100 });
+    await fireEvent.mouseMove(window, { clientX: 160 });
+    await fireEvent.mouseUp(window);
+    expect(emitted()["resize-column"]?.[0]).toEqual(["name", 380]);
+
+    // 双击恢复默认宽度
+    await fireEvent.dblClick(resizers[0]);
+    expect(emitted()["resize-column"]?.[1]).toEqual(["name", 320]);
+
+    // 键盘微调
+    await fireEvent.keyDown(resizers[1], { key: "ArrowRight" });
+    expect(emitted()["resize-column"]?.[2]).toEqual(["modified", 166]);
+    await fireEvent.keyDown(resizers[1], { key: "ArrowLeft" });
+    expect(emitted()["resize-column"]?.[3]).toEqual(["modified", 134]);
+  });
+
+  it("renders persisted column widths", () => {
+    const { container } = render(FileList as any, {
+      props: {
+        desktop: true,
+        selectMode: false,
+        selectedPaths: new Set<string>(),
+        files: [buildFile({ name: "readme.txt" })],
+        columnWidths: { name: 410, modified: 120, type: 110, size: 80 },
+      },
+    });
+
+    const cols = container.querySelectorAll("colgroup col");
+    // 第一列是勾选框，之后依次对应四个可拖拽列
+    expect(cols[1].getAttribute("style")).toContain("410px");
+    expect(cols[2].getAttribute("style")).toContain("120px");
+  });
+
   it("shows an indeterminate select-all checkbox for a partial selection", async () => {
     const files: FileInfo[] = [
       buildFile({ id: "a", name: "a.txt", path: "a.txt" }) as FileInfo,

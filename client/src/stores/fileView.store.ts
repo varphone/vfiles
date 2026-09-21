@@ -18,6 +18,8 @@ interface PersistedViewPrefs {
   thumbnailSize: number;
   /** 桌面端是否显示右侧「详细信息」面板 */
   detailsVisible: boolean;
+  /** 桌面列表列宽（像素） */
+  columnWidths: Record<ColumnWidthKey, number>;
 }
 
 const SORT_FIELDS: SortField[] = ["name", "size", "modified", "type"];
@@ -35,6 +37,41 @@ function clampThumbnailSize(value: unknown): number {
   );
 }
 
+/** 桌面列表可拖拽的列（勾选框与操作列不参与）。 */
+export type ColumnWidthKey = "name" | "modified" | "type" | "size";
+
+export const DEFAULT_COLUMN_WIDTHS: Record<ColumnWidthKey, number> = {
+  name: 320,
+  modified: 150,
+  type: 130,
+  size: 96,
+};
+
+export const MIN_COLUMN_WIDTH = 88;
+export const MAX_COLUMN_WIDTH = 640;
+
+const COLUMN_KEYS: ColumnWidthKey[] = ["name", "modified", "type", "size"];
+
+function clampColumnWidth(value: unknown, fallback: number): number {
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(
+    MAX_COLUMN_WIDTH,
+    Math.max(MIN_COLUMN_WIDTH, Math.round(num)),
+  );
+}
+
+function readPersistedColumnWidths(
+  raw: Partial<Record<ColumnWidthKey, unknown>> | undefined,
+): Record<ColumnWidthKey, number> {
+  const widths = { ...DEFAULT_COLUMN_WIDTHS };
+  if (!raw) return widths;
+  for (const key of COLUMN_KEYS) {
+    widths[key] = clampColumnWidth(raw[key], DEFAULT_COLUMN_WIDTHS[key]);
+  }
+  return widths;
+}
+
 function readPersisted(): PersistedViewPrefs {
   const fallback: PersistedViewPrefs = {
     mode: "list",
@@ -43,6 +80,7 @@ function readPersisted(): PersistedViewPrefs {
     foldersFirst: DEFAULT_SORT_STATE.foldersFirst,
     thumbnailSize: DEFAULT_THUMBNAIL_SIZE,
     detailsVisible: true,
+    columnWidths: { ...DEFAULT_COLUMN_WIDTHS },
   };
 
   if (typeof localStorage === "undefined") return fallback;
@@ -69,6 +107,7 @@ function readPersisted(): PersistedViewPrefs {
         typeof parsed.detailsVisible === "boolean"
           ? parsed.detailsVisible
           : fallback.detailsVisible,
+      columnWidths: readPersistedColumnWidths(parsed.columnWidths),
     };
   } catch {
     return fallback;
@@ -84,6 +123,10 @@ export const useFileViewStore = defineStore("fileView", () => {
   const foldersFirst = ref(initial.foldersFirst);
   const thumbnailSize = ref(initial.thumbnailSize);
   const detailsVisible = ref(initial.detailsVisible);
+  /** 桌面列表列宽（可拖拽，随视图偏好一起持久化）。 */
+  const columnWidths = ref<Record<ColumnWidthKey, number>>({
+    ...initial.columnWidths,
+  });
 
   function persist() {
     if (typeof localStorage === "undefined") return;
@@ -95,6 +138,7 @@ export const useFileViewStore = defineStore("fileView", () => {
         foldersFirst: foldersFirst.value,
         thumbnailSize: thumbnailSize.value,
         detailsVisible: detailsVisible.value,
+        columnWidths: { ...columnWidths.value },
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch {
@@ -110,12 +154,27 @@ export const useFileViewStore = defineStore("fileView", () => {
       foldersFirst,
       thumbnailSize,
       detailsVisible,
+      columnWidths,
     ],
     persist,
     {
       flush: "post",
     },
   );
+
+  /** 设置某一列宽度（自动夹在允许范围内）。 */
+  function setColumnWidth(key: ColumnWidthKey, width: number) {
+    if (!COLUMN_KEYS.includes(key)) return;
+    columnWidths.value = {
+      ...columnWidths.value,
+      [key]: clampColumnWidth(width, DEFAULT_COLUMN_WIDTHS[key]),
+    };
+  }
+
+  /** 双击列边界时恢复该列默认宽度。 */
+  function resetColumnWidth(key: ColumnWidthKey) {
+    setColumnWidth(key, DEFAULT_COLUMN_WIDTHS[key]);
+  }
 
   function setMode(next: FileViewMode) {
     if (VIEW_MODES.includes(next)) mode.value = next;
@@ -162,6 +221,9 @@ export const useFileViewStore = defineStore("fileView", () => {
     foldersFirst,
     thumbnailSize,
     detailsVisible,
+    columnWidths,
+    setColumnWidth,
+    resetColumnWidth,
     setDetailsVisible,
     toggleDetails,
     setMode,

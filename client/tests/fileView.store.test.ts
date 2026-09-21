@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { nextTick } from "vue";
-import { useFileViewStore } from "../src/stores/fileView.store";
+import {
+  DEFAULT_COLUMN_WIDTHS,
+  useFileViewStore,
+} from "../src/stores/fileView.store";
 
 const STORAGE_KEY = "vfiles:file-browser:view";
 
@@ -106,6 +109,38 @@ describe("fileView store", () => {
     expect(store.sortDirection).toBe("desc");
     expect(store.foldersFirst).toBe(false);
     expect(store.thumbnailSize).toBe(200);
+  });
+
+  it("stores column widths with clamping and resets to defaults", () => {
+    const store = useFileViewStore();
+    expect(store.columnWidths.name).toBe(DEFAULT_COLUMN_WIDTHS.name);
+
+    store.setColumnWidth("name", 400);
+    expect(store.columnWidths.name).toBe(400);
+
+    // 过窄/过宽都被夹到允许范围
+    store.setColumnWidth("name", 10);
+    expect(store.columnWidths.name).toBe(88);
+    store.setColumnWidth("name", 5000);
+    expect(store.columnWidths.name).toBe(640);
+
+    store.resetColumnWidth("name");
+    expect(store.columnWidths.name).toBe(DEFAULT_COLUMN_WIDTHS.name);
+  });
+
+  it("persists column widths and restores them", async () => {
+    const store = useFileViewStore();
+    store.setColumnWidth("modified", 260);
+    await nextTick();
+
+    const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
+    expect(persisted.columnWidths.modified).toBe(260);
+
+    setActivePinia(createPinia());
+    const restored = useFileViewStore();
+    expect(restored.columnWidths.modified).toBe(260);
+    // 其它列回到默认值
+    expect(restored.columnWidths.name).toBe(DEFAULT_COLUMN_WIDTHS.name);
   });
 
   it("falls back to defaults on corrupt storage", () => {
