@@ -1,60 +1,48 @@
 <template>
-  <section class="section">
-    <div class="container" style="max-width: 420px">
-      <div class="box">
-        <h1 class="title is-4">找回密码</h1>
-
-        <p class="help mb-4">
-          请输入绑定的邮箱。若该邮箱已绑定账号，系统将发送重置链接。
-        </p>
-
-        <form @submit.prevent="submit">
-          <div class="field">
-            <label class="label">邮箱</label>
-            <div class="control">
-              <input
-                v-model.trim="email"
-                class="input"
-                type="email"
-                autocomplete="email"
-                placeholder="user@example.com"
-                :disabled="loading"
-              />
-            </div>
-          </div>
-
-          <div class="field">
-            <div class="control">
-              <button
-                class="button is-link is-fullwidth"
-                :class="{ 'is-loading': loading }"
-                :disabled="loading"
-                type="submit"
-              >
-                发送重置邮件
-              </button>
-            </div>
-          </div>
-
-          <div class="buttons is-right">
-            <button
-              class="button is-light"
-              type="button"
-              :disabled="loading"
-              @click="goLogin"
-            >
-              返回登录
-            </button>
-          </div>
-        </form>
+  <AuthShell
+    title="找回密码"
+    description="请输入绑定的邮箱。若该邮箱已绑定账号，系统将发送重置链接。"
+  >
+    <form class="auth-form" @submit.prevent="submit">
+      <div class="auth-field">
+        <label class="auth-label" for="forgot-email">邮箱</label>
+        <div class="auth-input-wrap">
+          <IconMail :size="16" class="auth-input-icon" />
+          <input
+            id="forgot-email"
+            v-model.trim="email"
+            class="input auth-input"
+            type="email"
+            autocomplete="email"
+            placeholder="user@example.com"
+            :disabled="loading"
+          />
+        </div>
       </div>
-    </div>
-  </section>
+
+      <button
+        class="vf-ghost-button is-primary auth-submit"
+        :class="{ 'is-loading': loading }"
+        :disabled="loading"
+        type="submit"
+      >
+        发送重置邮件
+      </button>
+
+      <div class="auth-links">
+        <button class="auth-link-button" type="button" @click="goLogin">
+          返回登录
+        </button>
+      </div>
+    </form>
+  </AuthShell>
 </template>
 
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRouter } from "vue-router";
+import { IconMail } from "@tabler/icons-vue";
+import AuthShell from "../components/auth/AuthShell.vue";
 import { authService } from "../services/auth.service";
 import { useAppStore } from "../stores/app.store";
 
@@ -87,3 +75,69 @@ async function submit() {
   }
 }
 </script>
+
+<style scoped>
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.auth-label {
+  color: var(--vf-text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.auth-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.auth-input-icon {
+  position: absolute;
+  /* Bulma 的 .input 也是定位元素，不抬高层级时图标会被输入框底色盖住 */
+  z-index: 1;
+  left: 0.55rem;
+  color: var(--vf-text-subtle);
+  pointer-events: none;
+}
+
+.auth-input {
+  padding-left: 2rem;
+  font-size: 0.86rem;
+}
+
+.auth-submit {
+  justify-content: center;
+  width: 100%;
+  min-height: 2.35rem;
+  font-size: 0.9rem;
+}
+
+.auth-links {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.auth-link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--vf-accent);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.auth-link-button:hover,
+.auth-link-button:focus-visible {
+  text-decoration: underline;
+}
+</style>

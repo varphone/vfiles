@@ -1,201 +1,177 @@
 <template>
-  <section class="section auth-page">
-    <div class="auth-theme-toggle">
-      <ThemeToggle />
-    </div>
-    <div class="container" style="max-width: 420px">
-      <section class="section has-text-centered auth-brand">
-        <img class="auth-brand-logo" src="/vfiles-icon.svg" alt="VFiles" />
-        <h1 class="title is-size-1 mb-0 auth-brand-title">VFiles</h1>
-        <h2 class="subtitle has-text-grey auth-brand-subtitle">
-          基于版本控制的文件管理系统
-        </h2>
-      </section>
-      <div class="box">
-        <div
-          v-if="auth.initialized && auth.enabled === false"
-          class="notification is-info is-light"
+  <AuthShell>
+    <AuthNotice v-if="auth.initialized && auth.enabled === false" tone="info">
+      当前服务未启用认证（ENABLE_AUTH=false）。
+      <button class="auth-link-button" type="button" @click="goHome">
+        返回首页
+      </button>
+    </AuthNotice>
+
+    <template v-else>
+      <AuthNotice v-if="reasonText" tone="warning">{{ reasonText }}</AuthNotice>
+
+      <!-- 模式切换：登录 / 邮箱验证码 / 注册（分段控件，与主界面控件语言一致） -->
+      <div class="auth-modes" role="tablist" aria-label="登录方式">
+        <button
+          v-for="option in modeOptions"
+          :key="option.value"
+          class="auth-mode"
+          :class="{ 'is-active': mode === option.value }"
+          type="button"
+          role="tab"
+          :aria-selected="mode === option.value ? 'true' : 'false'"
+          @click="mode = option.value"
         >
-          当前服务未启用认证（ENABLE_AUTH=false）。
-          <div class="mt-3">
-            <button class="button is-link" @click="goHome">返回首页</button>
+          {{ option.label }}
+        </button>
+      </div>
+
+      <AuthNotice
+        v-if="auth.enabled && !auth.allowRegister && mode !== 'email'"
+        tone="info"
+      >
+        管理员已关闭注册（AUTH_ALLOW_REGISTER=false）。
+      </AuthNotice>
+
+      <form v-if="mode !== 'email'" class="auth-form" @submit.prevent="submit">
+        <div class="auth-field">
+          <label class="auth-label" for="auth-username">用户名</label>
+          <div class="auth-input-wrap">
+            <IconUser :size="16" class="auth-input-icon" />
+            <input
+              id="auth-username"
+              v-model.trim="username"
+              class="input auth-input"
+              type="text"
+              autocomplete="username"
+              placeholder="3-32 位，字母数字-_"
+              :disabled="auth.loading"
+            />
           </div>
         </div>
 
-        <template v-else>
-          <div v-if="reasonText" class="notification is-warning is-light">
-            {{ reasonText }}
+        <div v-if="mode === 'register'" class="auth-field">
+          <label class="auth-label" for="auth-email">邮箱（可选）</label>
+          <div class="auth-input-wrap">
+            <IconMail :size="16" class="auth-input-icon" />
+            <input
+              id="auth-email"
+              v-model.trim="email"
+              class="input auth-input"
+              type="email"
+              autocomplete="email"
+              placeholder="用于找回密码/验证码登录"
+              :disabled="auth.loading"
+            />
           </div>
+        </div>
 
-          <div class="tabs is-toggle is-fullwidth">
-            <ul>
-              <li :class="{ 'is-active': mode === 'login' }">
-                <a href="#" @click.prevent="mode = 'login'">登录</a>
-              </li>
-              <li :class="{ 'is-active': mode === 'email' }">
-                <a href="#" @click.prevent="mode = 'email'">邮箱验证码</a>
-              </li>
-              <li
-                v-if="auth.allowRegister"
-                :class="{ 'is-active': mode === 'register' }"
-              >
-                <a href="#" @click.prevent="mode = 'register'">注册</a>
-              </li>
-            </ul>
+        <div class="auth-field">
+          <label class="auth-label" for="auth-password">密码</label>
+          <div class="auth-input-wrap">
+            <IconLock :size="16" class="auth-input-icon" />
+            <input
+              id="auth-password"
+              v-model="password"
+              class="input auth-input"
+              type="password"
+              :autocomplete="
+                mode === 'login' ? 'current-password' : 'new-password'
+              "
+              placeholder="至少 6 位"
+              :disabled="auth.loading"
+            />
           </div>
+        </div>
 
-          <div
-            v-if="auth.enabled && !auth.allowRegister"
-            class="notification is-info is-light"
-          >
-            管理员已关闭注册（AUTH_ALLOW_REGISTER=false）。
-          </div>
-
-          <form v-if="mode !== 'email'" @submit.prevent="submit">
-            <div class="field">
-              <label class="label">用户名</label>
-              <div class="control">
-                <input
-                  v-model.trim="username"
-                  class="input"
-                  type="text"
-                  autocomplete="username"
-                  placeholder="3-32 位，字母数字-_"
-                  :disabled="auth.loading"
-                />
-              </div>
-            </div>
-
-            <div v-if="mode === 'register'" class="field">
-              <label class="label">邮箱（可选）</label>
-              <div class="control">
-                <input
-                  v-model.trim="email"
-                  class="input"
-                  type="email"
-                  autocomplete="email"
-                  placeholder="用于找回密码/验证码登录"
-                  :disabled="auth.loading"
-                />
-              </div>
-            </div>
-
-            <div class="field">
-              <label class="label">密码</label>
-              <div class="control">
-                <input
-                  v-model="password"
-                  class="input"
-                  type="password"
-                  :autocomplete="
-                    mode === 'login' ? 'current-password' : 'new-password'
-                  "
-                  placeholder="至少 6 位"
-                  :disabled="auth.loading"
-                />
-              </div>
-            </div>
-
-            <div class="field">
-              <div class="control">
-                <button
-                  class="button is-link is-fullwidth"
-                  :class="{ 'is-loading': auth.loading }"
-                  :disabled="auth.loading"
-                  type="submit"
-                >
-                  {{ mode === "login" ? "登录" : "注册" }}
-                </button>
-              </div>
-            </div>
-
-            <div v-if="mode === 'login'" class="field">
-              <div class="control has-text-right mt-2">
-                <a href="#" class="is-size-7" @click.prevent="goForgotPassword"
-                  >忘记密码？</a
-                >
-              </div>
-            </div>
-
-            <p v-if="auth.error" class="help is-danger">{{ auth.error }}</p>
-            <p v-if="mode === 'register'" class="help">
-              提示：注册成功后将自动登录；管理员权限需由现有管理员或命令行创建。
-            </p>
-          </form>
-
-          <form v-else @submit.prevent="submitEmailLogin">
-            <div class="field">
-              <label class="label">邮箱</label>
-              <div class="control">
-                <input
-                  v-model.trim="emailLogin"
-                  class="input"
-                  type="email"
-                  autocomplete="email"
-                  placeholder="user@example.com"
-                  :disabled="emailLoading"
-                />
-              </div>
-            </div>
-
-            <div class="field has-addons">
-              <div class="control is-expanded">
-                <input
-                  v-model.trim="emailCode"
-                  class="input"
-                  type="text"
-                  inputmode="numeric"
-                  autocomplete="one-time-code"
-                  placeholder="6 位验证码"
-                  :disabled="emailLoading"
-                />
-              </div>
-              <div class="control">
-                <button
-                  class="button is-light"
-                  type="button"
-                  :disabled="emailLoading"
-                  @click="sendEmailCode"
-                >
-                  发送验证码
-                </button>
-              </div>
-            </div>
-
-            <div class="field">
-              <div class="control">
-                <button
-                  class="button is-link is-fullwidth"
-                  :class="{ 'is-loading': emailLoading }"
-                  :disabled="emailLoading"
-                  type="submit"
-                >
-                  验证码登录
-                </button>
-              </div>
-            </div>
-          </form>
-        </template>
-      </div>
-
-      <footer class="site-record-footer has-text-centered" aria-label="备案信息">
-        <a
-          class="site-record-link"
-          href="https://beian.miit.gov.cn/"
-          target="_blank"
-          rel="noreferrer"
+        <button
+          class="vf-ghost-button is-primary auth-submit"
+          :class="{ 'is-loading': auth.loading }"
+          :disabled="auth.loading"
+          type="submit"
         >
-          苏ICP备2026014694号-1
-        </a>
-      </footer>
-    </div>
-  </section>
+          {{ mode === "login" ? "登录" : "注册" }}
+        </button>
+
+        <div v-if="mode === 'login'" class="auth-links">
+          <button
+            class="auth-link-button"
+            type="button"
+            @click="goForgotPassword"
+          >
+            忘记密码？
+          </button>
+        </div>
+
+        <AuthNotice v-if="auth.error" tone="error">{{ auth.error }}</AuthNotice>
+        <p v-if="mode === 'register'" class="auth-hint">
+          提示：注册成功后将自动登录；管理员权限需由现有管理员或命令行创建。
+        </p>
+      </form>
+
+      <form v-else class="auth-form" @submit.prevent="submitEmailLogin">
+        <div class="auth-field">
+          <label class="auth-label" for="auth-email-login">邮箱</label>
+          <div class="auth-input-wrap">
+            <IconMail :size="16" class="auth-input-icon" />
+            <input
+              id="auth-email-login"
+              v-model.trim="emailLogin"
+              class="input auth-input"
+              type="email"
+              autocomplete="email"
+              placeholder="user@example.com"
+              :disabled="emailLoading"
+            />
+          </div>
+        </div>
+
+        <div class="auth-field">
+          <label class="auth-label" for="auth-code">验证码</label>
+          <div class="auth-code-row">
+            <div class="auth-input-wrap">
+              <IconKey :size="16" class="auth-input-icon" />
+              <input
+                id="auth-code"
+                v-model.trim="emailCode"
+                class="input auth-input"
+                type="text"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                placeholder="6 位验证码"
+                :disabled="emailLoading"
+              />
+            </div>
+            <button
+              class="vf-ghost-button auth-code-send"
+              type="button"
+              :disabled="emailLoading"
+              @click="sendEmailCode"
+            >
+              发送验证码
+            </button>
+          </div>
+        </div>
+
+        <button
+          class="vf-ghost-button is-primary auth-submit"
+          :class="{ 'is-loading': emailLoading }"
+          :disabled="emailLoading"
+          type="submit"
+        >
+          验证码登录
+        </button>
+      </form>
+    </template>
+  </AuthShell>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import ThemeToggle from "../components/common/ThemeToggle.vue";
+import { IconKey, IconLock, IconMail, IconUser } from "@tabler/icons-vue";
+import AuthShell from "../components/auth/AuthShell.vue";
+import AuthNotice from "../components/auth/AuthNotice.vue";
 import { useAuthStore } from "../stores/auth.store";
 import { useAppStore } from "../stores/app.store";
 import { authService } from "../services/auth.service";
@@ -205,7 +181,21 @@ const app = useAppStore();
 const router = useRouter();
 const route = useRoute();
 
-const mode = ref<"login" | "register" | "email">("login");
+type AuthMode = "login" | "register" | "email";
+
+const mode = ref<AuthMode>("login");
+
+/** 模式切换项：注册关闭时不显示注册。 */
+const modeOptions = computed(() => {
+  const options: { value: AuthMode; label: string }[] = [
+    { value: "login", label: "登录" },
+    { value: "email", label: "邮箱验证码" },
+  ];
+  if (auth.allowRegister) {
+    options.push({ value: "register", label: "注册" });
+  }
+  return options;
+});
 const username = ref("");
 const password = ref("");
 const email = ref("");
@@ -334,54 +324,121 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.auth-page {
-  position: relative;
-  min-height: 100vh;
-}
-
-.auth-theme-toggle {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  z-index: 10;
-}
-
-.auth-brand {
+.auth-modes {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1rem;
+  gap: 0.25rem;
+  padding: 0.2rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius);
+  background: var(--vf-surface-sunken);
 }
 
-.auth-brand-logo {
-  display: block;
-  width: min(42vw, 140px);
-  height: auto;
-  filter: drop-shadow(0 14px 24px var(--vf-shadow-color));
+.auth-mode {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.35rem 0.4rem;
+  border: none;
+  border-radius: var(--vf-radius-sm);
+  background: transparent;
+  color: var(--vf-text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
 }
 
-.auth-brand-title {
-  letter-spacing: -0.04em;
+.auth-mode:hover {
   color: var(--vf-text-strong);
 }
 
-.auth-brand-subtitle {
-  max-width: 22rem;
-  margin-inline: auto;
+.auth-mode.is-active {
+  background: var(--vf-surface);
+  color: var(--vf-accent-strong);
+  font-weight: 600;
+  box-shadow: var(--vf-shadow-card);
 }
 
-.site-record-footer {
-  padding: 1rem 0 0;
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
 }
 
-.site-record-link {
-  font-size: 0.75rem;
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.auth-label {
   color: var(--vf-text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
-.site-record-link:hover,
-.site-record-link:focus-visible {
+.auth-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.auth-input-icon {
+  position: absolute;
+  /* Bulma 的 .input 也是定位元素，不抬高层级时图标会被输入框底色盖住 */
+  z-index: 1;
+  left: 0.55rem;
+  color: var(--vf-text-subtle);
+  pointer-events: none;
+}
+
+.auth-input {
+  padding-left: 2rem;
+  font-size: 0.86rem;
+}
+
+.auth-code-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.auth-code-send {
+  flex: 0 0 auto;
+  min-height: 2.1rem;
+  font-size: 0.8rem;
+}
+
+.auth-submit {
+  justify-content: center;
+  width: 100%;
+  min-height: 2.35rem;
+  font-size: 0.9rem;
+}
+
+.auth-links {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.auth-link-button {
+  padding: 0;
+  border: none;
+  background: none;
   color: var(--vf-accent);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.auth-link-button:hover,
+.auth-link-button:focus-visible {
   text-decoration: underline;
+}
+
+.auth-hint {
+  margin: 0;
+  color: var(--vf-text-subtle);
+  font-size: 0.78rem;
+  line-height: 1.5;
 }
 </style>

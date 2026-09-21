@@ -546,6 +546,8 @@ onMounted(() => {
 
 .admin-search-icon {
   position: absolute;
+  /* Bulma 的 .input 也是定位元素，不抬高层级时图标会被输入框底色盖住 */
+  z-index: 1;
   left: 0.5rem;
   color: var(--vf-text-subtle);
   pointer-events: none;
