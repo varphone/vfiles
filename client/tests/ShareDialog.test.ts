@@ -124,6 +124,67 @@ describe("ShareDialog.vue", () => {
     );
   });
 
+  it("offers 1 年 and 永久 expiry options and marks permanent links", async () => {
+    // 永久分享没有过期时间（真实服务端在 ttl=0 时返回空字符串）
+    createShareMock.mockResolvedValueOnce({
+      code: "perm1",
+      url: "https://files.example.com/s/perm1",
+      expiresIn: 0,
+      expiresAt: "",
+    });
+    const { container } = renderDialog();
+
+    const options = Array.from(
+      container.querySelectorAll<HTMLOptionElement>("#share-ttl option"),
+    ).map((option) => option.textContent?.trim());
+    expect(options).toEqual([
+      "1 小时",
+      "1 天",
+      "7 天",
+      "30 天",
+      "1 年",
+      "永久",
+    ]);
+
+    // 选择永久时提示语随之变化
+    await fireEvent.update(
+      container.querySelector<HTMLSelectElement>("#share-ttl")!,
+      "0",
+    );
+    expect(container.querySelector(".share-hint")?.textContent).toContain(
+      "永久链接不会自动失效",
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: /生成链接/ }));
+    await waitFor(() =>
+      expect(container.querySelector(".share-chip")?.textContent).toContain(
+        "永久有效",
+      ),
+    );
+    // 永久分享不发送有效期（服务端视为不过期）
+    expect(createShareMock).toHaveBeenCalledWith("文档/报告.txt", {
+      commit: undefined,
+      ttl: 0,
+    });
+  });
+
+  it("sends a one-year expiry when 1 年 is selected", async () => {
+    const { container } = renderDialog();
+
+    await fireEvent.update(
+      container.querySelector<HTMLSelectElement>("#share-ttl")!,
+      "31536000",
+    );
+    await fireEvent.click(screen.getByRole("button", { name: /生成链接/ }));
+
+    await waitFor(() =>
+      expect(createShareMock).toHaveBeenCalledWith("文档/报告.txt", {
+        commit: undefined,
+        ttl: 31536000,
+      }),
+    );
+  });
+
   it("resets the generated link when the dialog closes", async () => {
     const { rerender } = renderDialog();
     await fireEvent.click(screen.getByRole("button", { name: /生成链接/ }));

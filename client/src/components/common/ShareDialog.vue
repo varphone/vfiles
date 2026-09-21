@@ -24,13 +24,22 @@
         <label class="share-label" for="share-ttl">链接有效期</label>
         <div class="select is-fullwidth">
           <select id="share-ttl" v-model="selectedTtl">
-            <option :value="3600">1 小时</option>
-            <option :value="86400">1 天</option>
-            <option :value="604800">7 天</option>
-            <option :value="2592000">30 天</option>
+            <option
+              v-for="option in ttlOptions"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </option>
           </select>
         </div>
-        <p class="share-hint">到期后链接自动失效；随时可以在这里停止分享。</p>
+        <p class="share-hint">
+          {{
+            isPermanent
+              ? "永久链接不会自动失效，需要手动停止分享。"
+              : "到期后链接自动失效；随时可以在这里停止分享。"
+          }}
+        </p>
       </div>
 
       <!-- 生成结果：链接卡片 + 复制/打开/停止 -->
@@ -60,7 +69,10 @@
         <div class="share-result-meta">
           <span class="share-chip">
             <IconClock :size="14" />
-            <span>有效期至 {{ expiresAtFormatted || "不限" }}</span>
+            <span v-if="expiresAtFormatted"
+              >有效期至 {{ expiresAtFormatted }}</span
+            >
+            <span v-else>永久有效</span>
           </span>
           <button
             class="vf-ghost-button share-open"
@@ -139,7 +151,18 @@ const emit = defineEmits<{
   close: [];
 }>();
 
-const selectedTtl = ref(604800); // 默认 7 天
+/** 链接有效期选项：`value` 为秒数，0 表示永久有效。 */
+const ttlOptions = [
+  { value: 3600, label: "1 小时" },
+  { value: 86400, label: "1 天" },
+  { value: 604800, label: "7 天" },
+  { value: 2592000, label: "30 天" },
+  { value: 31536000, label: "1 年" },
+  { value: 0, label: "永久" },
+] as const;
+
+const selectedTtl = ref<number>(604800); // 默认 7 天
+const isPermanent = computed(() => selectedTtl.value === 0);
 const loading = ref(false);
 const stopping = ref(false);
 const error = ref("");
@@ -189,6 +212,7 @@ async function createShare() {
   try {
     const result = await filesService.createShareLink(props.filePath, {
       commit: props.commit,
+      // 0 表示永久：服务端收到没有 expires_at 的请求即视为不过期
       ttl: selectedTtl.value,
     });
     shareUrl.value = result.url;
