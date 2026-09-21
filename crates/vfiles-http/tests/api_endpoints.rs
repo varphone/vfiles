@@ -3155,11 +3155,24 @@ async fn audit_logs_csv_export_respects_filters_and_is_audited() {
     let body =
         String::from_utf8(response_bytes(export).await.to_vec()).expect("csv should be utf-8");
     let lines: Vec<&str> = body.lines().collect();
-    assert!(lines[0].contains("时间") && lines[0].contains("IP") && lines[0].contains("设备"));
-    // 仅筛选 login.success：表头 + 1 行
-    assert_eq!(lines.len(), 2, "CSV 应只包含筛选后的记录: {body:?}");
-    assert!(lines[1].contains("login.success"));
-    assert!(lines[1].contains("admin"));
+    // 前几行是汇总区块（总记录/失败/Top 用户/Top 动作），随后才是数据表头
+    assert!(
+        body.contains("汇总") && body.contains("Top 用户") && body.contains("Top 动作"),
+        "CSV 应带汇总区块: {body:?}"
+    );
+    assert!(lines[0].contains("汇总"), "汇总区块应在最前面: {body:?}");
+    let header_index = lines
+        .iter()
+        .position(|line| line.contains("时间") && line.contains("设备"))
+        .expect("应包含数据表头");
+    let data_lines: Vec<&&str> = lines[header_index + 1..]
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    // 仅筛选 login.success：只有 1 条数据行
+    assert_eq!(data_lines.len(), 1, "CSV 应只包含筛选后的记录: {body:?}");
+    assert!(data_lines[0].contains("login.success"));
+    assert!(data_lines[0].contains("admin"));
 
     // 导出本身写入审计（audit.export）
     let list = app

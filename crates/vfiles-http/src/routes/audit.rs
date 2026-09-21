@@ -222,6 +222,18 @@ fn csv_field(value: &str) -> String {
     }
 }
 
+/// 把聚合结果拼成「key 次数」形式的可读文本。
+fn describe_counts(counts: &[vfiles_domain::AuditCount]) -> String {
+    if counts.is_empty() {
+        return "（无）".to_string();
+    }
+    counts
+        .iter()
+        .map(|item| format!("{} {}", item.key, item.count))
+        .collect::<Vec<_>>()
+        .join("；")
+}
+
 fn csv_row(fields: &[String]) -> String {
     fields
         .iter()
@@ -259,6 +271,36 @@ async fn export_logs_csv(
     }
 
     let mut csv = String::from("\u{feff}"); // BOM：便于 Excel 正确识别 UTF-8
+
+    // 汇总区块：把当前筛选条件下的聚合一起导出，便于直接归档
+    let summary = state
+        .audit_service
+        .summarize(&build_filter(&query, 1, 0)?, 5)
+        .await
+        .ok();
+    if let Some(summary) = &summary {
+        csv.push_str(&csv_row(&["汇总".to_string(), describe_filter(&query)]));
+        csv.push('\n');
+        csv.push_str(&csv_row(&["总记录".to_string(), summary.total.to_string()]));
+        csv.push('\n');
+        csv.push_str(&csv_row(&[
+            "失败".to_string(),
+            summary.failures.to_string(),
+        ]));
+        csv.push('\n');
+        csv.push_str(&csv_row(&[
+            "Top 用户".to_string(),
+            describe_counts(&summary.users),
+        ]));
+        csv.push('\n');
+        csv.push_str(&csv_row(&[
+            "Top 动作".to_string(),
+            describe_counts(&summary.actions),
+        ]));
+        csv.push('\n');
+        csv.push('\n');
+    }
+
     csv.push_str(&csv_row(&[
         "时间".to_string(),
         "用户".to_string(),
