@@ -2608,6 +2608,87 @@ async fn audit_log_records_key_actions_and_is_admin_only() {
     );
 }
 
+/// 审计概览：总量、失败数与 Top 用户/动作，并尊重筛选条件。
+#[tokio::test]
+async fn audit_summary_reports_totals_and_top_keys() {
+    let app = TestApp::new().await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+    // 再制造一次失败登录（匿名）
+    app.json_request(
+        Method::POST,
+        "/api/auth/login",
+        json!({ "username_or_email": "admin", "password": "wrong-password" }),
+    )
+    .await;
+
+    let response = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/audit/summary")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = response_json(response).await;
+
+    assert_eq!(
+        payload["failures"],
+        Value::from(1),
+        "应统计出一条失败: {payload:?}"
+    );
+    assert!(
+        payload["total"].as_u64().unwrap_or(0) >= 2,
+        "应包含登录成功与失败: {payload:?}"
+    );
+    let users = payload["users"]
+        .as_array()
+        .expect("users should be an array");
+    assert!(
+        users.iter().any(|item| item["key"] == "admin"),
+        "Top 用户应包含 admin: {payload:?}"
+    );
+    let actions = payload["actions"]
+        .as_array()
+        .expect("actions should be an array");
+    assert!(
+        actions.iter().any(|item| item["key"] == "login.failure"),
+        "Top 动作应包含 login.failure: {payload:?}"
+    );
+
+    // 只看失败：总量与 Top 动作随之变化
+    let failures = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/audit/summary?result=failure")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let failure_payload = response_json(failures).await;
+    assert_eq!(failure_payload["total"], Value::from(1));
+    let failure_actions = failure_payload["actions"].as_array().unwrap();
+    assert_eq!(failure_actions.len(), 1);
+    assert_eq!(failure_actions[0]["key"], "login.failure");
+
+    // 非管理员不可访问
+    app.register_user("sumviewer", "viewer3@example.com", "viewer-password")
+        .await;
+    let viewer_cookie = app.login_cookie("sumviewer", "viewer-password").await;
+    let forbidden = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/audit/summary")
+                .body(Body::empty())
+                .expect("request should build"),
+            &viewer_cookie,
+        )
+        .await;
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+}
+
 /// 审计日志导出：只读 CSV，尊重筛选，且导出动作本身会被审计。
 #[tokio::test]
 async fn audit_logs_csv_export_respects_filters_and_is_audited() {

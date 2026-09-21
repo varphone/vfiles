@@ -5,9 +5,10 @@ import { createRouter, createMemoryHistory } from "vue-router";
 import AuditLogs from "../src/views/AuditLogs.vue";
 import type { AuditLogEntry } from "../src/types";
 
-const { listLogsMock, listActionsMock } = vi.hoisted(() => ({
+const { listLogsMock, listActionsMock, summaryMock } = vi.hoisted(() => ({
   listLogsMock: vi.fn(),
   listActionsMock: vi.fn(async () => ["login.success", "file.upload"]),
+  summaryMock: vi.fn(),
 }));
 
 vi.mock("../src/services/files.service", () => ({
@@ -15,6 +16,7 @@ vi.mock("../src/services/files.service", () => ({
   filesService: {
     listAuditLogs: listLogsMock,
     listAuditActions: listActionsMock,
+    getAuditSummary: summaryMock,
   },
 }));
 
@@ -55,6 +57,19 @@ describe("AuditLogs.vue", () => {
       offset: 0,
     });
     listActionsMock.mockClear();
+    summaryMock.mockReset();
+    summaryMock.mockResolvedValue({
+      total: 5,
+      failures: 1,
+      users: [
+        { key: "admin", count: 4 },
+        { key: "(匿名)", count: 1 },
+      ],
+      actions: [
+        { key: "login.success", count: 3 },
+        { key: "login.failure", count: 1 },
+      ],
+    });
   });
 
   it("lists entries with time, user, action, result, ip and device", async () => {
@@ -237,6 +252,81 @@ describe("AuditLogs.vue", () => {
     expect(
       container.querySelector(".audit-subtitle")?.textContent ?? "",
     ).not.toContain("近 7 天");
+  });
+
+  it("shows a summary strip and filters when a chip is clicked", async () => {
+    const { container } = renderPage();
+
+    await waitFor(() =>
+      expect(container.querySelector(".audit-summary")).not.toBeNull(),
+    );
+    expect(
+      container.querySelector(".audit-summary-total")?.textContent,
+    ).toContain("共 5 条");
+    expect(
+      container.querySelector(".audit-summary-failures")?.textContent,
+    ).toContain("失败 1 条");
+
+    const chips = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".audit-summary-chip"),
+    ).map((chip) => ({
+      label: chip.querySelector("span")?.textContent?.trim(),
+      count: chip.querySelector(".audit-summary-count")?.textContent?.trim(),
+    }));
+    // 动作标识会映射成中文标签
+    expect(chips).toEqual([
+      { label: "admin", count: "4" },
+      { label: "(匿名)", count: "1" },
+      { label: "登录成功", count: "3" },
+      { label: "登录失败", count: "1" },
+    ]);
+
+    // 点用户 chip → 关键字筛选
+    listLogsMock.mockClear();
+    await fireEvent.click(
+      Array.from(
+        container.querySelectorAll<HTMLButtonElement>(".audit-summary-chip"),
+      ).find((chip) => chip.textContent?.includes("admin"))!,
+    );
+    await waitFor(() =>
+      expect(listLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ keyword: "admin", offset: 0 }),
+      ),
+    );
+
+    // 点动作 chip → 动作筛选
+    listLogsMock.mockClear();
+    await fireEvent.click(
+      Array.from(
+        container.querySelectorAll<HTMLButtonElement>(".audit-summary-chip"),
+      ).find((chip) => chip.textContent?.includes("登录失败"))!,
+    );
+    await waitFor(() =>
+      expect(listLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ action: "login.failure", offset: 0 }),
+      ),
+    );
+
+    // 点失败数 → 只看失败
+    listLogsMock.mockClear();
+    await fireEvent.click(
+      container.querySelector<HTMLButtonElement>(".audit-summary-failures")!,
+    );
+    await waitFor(() =>
+      expect(listLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ result: "failure", offset: 0 }),
+      ),
+    );
+  });
+
+  it("tolerates a failing summary without breaking the list", async () => {
+    summaryMock.mockRejectedValue(new Error("概览不可用"));
+    const { container } = renderPage();
+
+    await waitFor(() =>
+      expect(container.querySelectorAll("tbody tr")).toHaveLength(1),
+    );
+    expect(container.querySelector(".audit-summary")).toBeNull();
   });
 
   it("offers a CSV export link carrying the current filters", async () => {

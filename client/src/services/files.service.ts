@@ -4,6 +4,7 @@ import { extractErrorPayload, localizeApiError } from "../utils/apiErrors";
 import type {
   AuditLogPage,
   AuditLogQueryParams,
+  AuditLogSummary,
   ContentMatch,
   FavoriteEntry,
   FileInfo,
@@ -401,6 +402,26 @@ export const filesService = {
       total: Number(payload?.total ?? 0),
       limit: Number(payload?.limit ?? 0),
       offset: Number(payload?.offset ?? 0),
+    };
+  },
+
+  /** 审计概览：当前筛选条件下的总量、失败数与 Top 用户/动作。 */
+  async getAuditSummary(
+    params: AuditLogQueryParams = {},
+  ): Promise<AuditLogSummary> {
+    const response = await apiService.get<AuditLogSummary>("/audit/summary", {
+      keyword: params.keyword || undefined,
+      action: params.action || undefined,
+      result: params.result || undefined,
+      since: params.since || undefined,
+      until: params.until || undefined,
+    });
+    const payload = (response as any)?.data ?? response;
+    return {
+      total: Number(payload?.total ?? 0),
+      failures: Number(payload?.failures ?? 0),
+      users: Array.isArray(payload?.users) ? payload.users : [],
+      actions: Array.isArray(payload?.actions) ? payload.actions : [],
     };
   },
 

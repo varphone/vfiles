@@ -57,6 +57,18 @@ export interface AuditLogPage {
   offset: number;
 }
 
+export interface AuditCount {
+  key: string;
+  count: number;
+}
+
+export interface AuditLogSummary {
+  total: number;
+  failures: number;
+  users: AuditCount[];
+  actions: AuditCount[];
+}
+
 export interface AuditLogQueryParams {
   keyword?: string;
   action?: string;

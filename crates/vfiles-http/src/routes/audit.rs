@@ -34,6 +34,7 @@ pub fn router() -> Router<AppState> {
         .route("/logs", get(list_logs))
         .route("/actions", get(list_actions))
         .route("/logs.csv", get(export_logs_csv))
+        .route("/summary", get(summarize_logs))
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,6 +79,20 @@ impl From<AuditLog> for AuditLogDto {
             detail: log.detail,
         }
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuditCountDto {
+    pub key: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuditLogSummaryDto {
+    pub total: u64,
+    pub failures: u64,
+    pub users: Vec<AuditCountDto>,
+    pub actions: Vec<AuditCountDto>,
 }
 
 #[derive(Debug, Serialize)]
@@ -305,6 +320,45 @@ async fn export_logs_csv(
     );
 
     Ok(response)
+}
+
+/// Top 用户/动作的数量：概览只展示前几条，避免面板过宽。
+const SUMMARY_TOP: u32 = 5;
+
+async fn summarize_logs(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Query(query): Query<ListAuditQuery>,
+) -> ApiResult<Json<AuditLogSummaryDto>> {
+    require_admin(&state, &jar).await?;
+
+    let filter = build_filter(&query, 1, 0)?;
+    let summary = state
+        .audit_service
+        .summarize(&filter, SUMMARY_TOP)
+        .await
+        .map_err(ApiError::Domain)?;
+
+    Ok(Json(AuditLogSummaryDto {
+        total: summary.total,
+        failures: summary.failures,
+        users: summary
+            .users
+            .into_iter()
+            .map(|item| AuditCountDto {
+                key: item.key,
+                count: item.count,
+            })
+            .collect(),
+        actions: summary
+            .actions
+            .into_iter()
+            .map(|item| AuditCountDto {
+                key: item.key,
+                count: item.count,
+            })
+            .collect(),
+    }))
 }
 
 async fn list_actions(

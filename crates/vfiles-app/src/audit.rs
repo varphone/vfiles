@@ -5,7 +5,9 @@
 //! 数据库层的触发器保证日志只可追加、不可修改或删除。
 
 use tracing::warn;
-use vfiles_domain::{AuditLogPage, AuditLogQuery, AuditLogRepo, DomainResult, NewAuditLog};
+use vfiles_domain::{
+    AuditLogPage, AuditLogQuery, AuditLogRepo, AuditLogSummary, DomainResult, NewAuditLog,
+};
 
 #[derive(Clone)]
 pub struct AuditService<R> {
@@ -39,5 +41,14 @@ where
     /// 已出现过的动作（用于筛选下拉）。
     pub async fn actions(&self) -> DomainResult<Vec<String>> {
         self.repo.distinct_actions().await
+    }
+
+    /// 当前筛选条件下的聚合概览。
+    pub async fn summarize(
+        &self,
+        query: &AuditLogQuery,
+        top: u32,
+    ) -> DomainResult<AuditLogSummary> {
+        self.repo.summarize(query, top).await
     }
 }

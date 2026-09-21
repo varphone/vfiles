@@ -138,6 +138,20 @@
 数据库层另有触发器，任何直接的 `UPDATE` / `DELETE` 语句都会被拒绝，
 因此审计记录无法修改或删除。`username` 为冗余快照，用户改名或删除后历史仍可读。
 
+**概览**：`GET /api/audit/summary`（仅管理员）接受与列表相同的筛选参数，
+返回当前条件下的总量、失败数与 Top 5 用户/动作：
+
+```json
+{
+  "total": 17,
+  "failures": 3,
+  "users": [ { "key": "admin", "count": 11 }, { "key": "alice", "count": 6 } ],
+  "actions": [ { "key": "login.success", "count": 8 }, { "key": "file.download", "count": 3 } ]
+}
+```
+
+匿名记录（没有用户名的操作，例如失败的登录）归入 `(匿名)`。
+
 **导出**：`GET /api/audit/logs.csv`（仅管理员）按同样的筛选参数导出 CSV 附件，
 最多 10000 行；响应为 `text/csv; charset=utf-8`（带 UTF-8 BOM，便于 Excel 识别），
 文件名形如 `audit-logs-20260921.csv`。导出动作本身也会写入一条 `audit.export` 记录

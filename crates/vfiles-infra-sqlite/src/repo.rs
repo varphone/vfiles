@@ -2087,6 +2087,120 @@ impl AuditLogRepo for SqliteAuditLogRepo {
         })
     }
 
+    async fn summarize(&self, query: &AuditLogQuery, top: u32) -> DomainResult<AuditLogSummary> {
+        // 与 list 相同的过滤条件（sqlx 要求静态 SQL，因此这里各写一遍）
+        let keyword = query
+            .keyword
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("%{value}%"));
+        let action = query
+            .action
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let result = query.result.map(|value| value.as_str().to_string());
+        let since = query.since;
+        let until = query.until;
+        let top = top.clamp(1, 50) as i64;
+
+        let (total, failures): (i64, i64) = sqlx::query_as(
+            r#"
+            SELECT
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN result = 'failure' THEN 1 ELSE 0 END), 0)
+            FROM audit_logs
+            WHERE (?1 IS NULL OR username LIKE ?1 OR ip LIKE ?1)
+              AND (?2 IS NULL OR action = ?2)
+              AND (?3 IS NULL OR result = ?3)
+              AND (?4 IS NULL OR created_at >= ?4)
+              AND (?5 IS NULL OR created_at < ?5)
+            "#,
+        )
+        .bind(keyword.as_deref())
+        .bind(action.as_deref())
+        .bind(result.as_deref())
+        .bind(since)
+        .bind(until)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to summarize audit logs: {e}"),
+        })?;
+
+        let users: Vec<(String, i64)> = sqlx::query_as(
+            r#"
+            SELECT
+                CASE WHEN username = '' THEN '(匿名)' ELSE username END AS key,
+                COUNT(*) AS count
+            FROM audit_logs
+            WHERE (?1 IS NULL OR username LIKE ?1 OR ip LIKE ?1)
+              AND (?2 IS NULL OR action = ?2)
+              AND (?3 IS NULL OR result = ?3)
+              AND (?4 IS NULL OR created_at >= ?4)
+              AND (?5 IS NULL OR created_at < ?5)
+            GROUP BY key
+            ORDER BY count DESC, key ASC
+            LIMIT ?6
+            "#,
+        )
+        .bind(keyword.as_deref())
+        .bind(action.as_deref())
+        .bind(result.as_deref())
+        .bind(since)
+        .bind(until)
+        .bind(top)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to summarize audit users: {e}"),
+        })?;
+
+        let actions: Vec<(String, i64)> = sqlx::query_as(
+            r#"
+            SELECT action AS key, COUNT(*) AS count
+            FROM audit_logs
+            WHERE (?1 IS NULL OR username LIKE ?1 OR ip LIKE ?1)
+              AND (?2 IS NULL OR action = ?2)
+              AND (?3 IS NULL OR result = ?3)
+              AND (?4 IS NULL OR created_at >= ?4)
+              AND (?5 IS NULL OR created_at < ?5)
+            GROUP BY action
+            ORDER BY count DESC, key ASC
+            LIMIT ?6
+            "#,
+        )
+        .bind(keyword.as_deref())
+        .bind(action.as_deref())
+        .bind(result.as_deref())
+        .bind(since)
+        .bind(until)
+        .bind(top)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to summarize audit actions: {e}"),
+        })?;
+
+        let to_counts = |rows: Vec<(String, i64)>| {
+            rows.into_iter()
+                .map(|(key, count)| AuditCount {
+                    key,
+                    count: count.max(0) as u64,
+                })
+                .collect()
+        };
+
+        Ok(AuditLogSummary {
+            total: total.max(0) as u64,
+            failures: failures.max(0) as u64,
+            users: to_counts(users),
+            actions: to_counts(actions),
+        })
+    }
+
     async fn distinct_actions(&self) -> DomainResult<Vec<String>> {
         let actions: Vec<String> =
             sqlx::query_scalar("SELECT DISTINCT action FROM audit_logs ORDER BY action ASC")
@@ -4847,6 +4961,79 @@ mod audit_log_tests {
             .expect("legacy row should be parsed");
         assert_eq!(legacy.created_at.year(), 2026);
         assert_eq!(legacy.created_at.hour(), 3);
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    /// 概览聚合：总量、失败数与 Top 用户/动作，并且尊重筛选。
+    #[tokio::test]
+    async fn summary_counts_totals_and_top_keys() {
+        let (db_path, pool, repo) = setup().await;
+        for _ in 0..3 {
+            repo.append(&sample("login.success", "alice"))
+                .await
+                .unwrap();
+        }
+        repo.append(&sample("file.download", "alice"))
+            .await
+            .unwrap();
+        repo.append(&sample("file.upload", "bob")).await.unwrap();
+        // sample() 默认 success，失败记录要显式构造
+        repo.append(
+            &NewAuditLog::failure("login.failure")
+                .user(None, "bob")
+                .request(Some("198.51.100.4".to_string()), None),
+        )
+        .await
+        .unwrap();
+        // 匿名（username 为空）会被归到 (匿名)
+        repo.append(&NewAuditLog::failure("login.failure").user(None, ""))
+            .await
+            .unwrap();
+
+        let all = repo
+            .summarize(&AuditLogQuery::default(), 5)
+            .await
+            .expect("summarize");
+        assert_eq!(all.total, 7);
+        assert_eq!(all.failures, 2);
+        assert_eq!(
+            all.users.first().map(|item| item.key.as_str()),
+            Some("alice")
+        );
+        assert_eq!(all.users.first().map(|item| item.count), Some(4));
+        assert_eq!(
+            all.actions.first().map(|item| item.key.as_str()),
+            Some("login.success")
+        );
+        assert_eq!(all.actions.first().map(|item| item.count), Some(3));
+        assert!(
+            all.users.iter().any(|item| item.key == "(匿名)"),
+            "匿名记录应计入 (匿名): {:?}",
+            all.users
+        );
+
+        // 只看失败：用户/动作统计随之变化
+        let failures = repo
+            .summarize(
+                &AuditLogQuery {
+                    result: Some(AuditResult::Failure),
+                    ..Default::default()
+                },
+                5,
+            )
+            .await
+            .unwrap();
+        assert_eq!(failures.total, 2);
+        assert_eq!(failures.failures, 2);
+        assert_eq!(failures.actions.len(), 1);
+        assert_eq!(failures.actions[0].key, "login.failure");
+        assert_eq!(failures.users.len(), 2);
+
+        // Top 限制生效
+        let top_two = repo.summarize(&AuditLogQuery::default(), 2).await.unwrap();
+        assert_eq!(top_two.users.len(), 2);
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);

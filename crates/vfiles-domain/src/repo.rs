@@ -245,6 +245,9 @@ pub trait AuditLogRepo {
 
     /// 可选的动作列表（用于前端筛选下拉）。
     async fn distinct_actions(&self) -> DomainResult<Vec<String>>;
+
+    /// 按条件聚合：总量、失败数，以及 Top 用户与 Top 动作。
+    async fn summarize(&self, query: &AuditLogQuery, top: u32) -> DomainResult<AuditLogSummary>;
 }
 
 #[async_trait::async_trait]

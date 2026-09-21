@@ -49,6 +49,53 @@
         </span>
       </p>
 
+      <div v-if="summary.total > 0" class="audit-summary">
+        <div class="audit-summary-totals">
+          <span class="audit-summary-total">
+            共 <strong>{{ summary.total }}</strong> 条
+          </span>
+          <button
+            v-if="summary.failures > 0"
+            class="audit-summary-failures"
+            type="button"
+            :title="'只看失败记录'"
+            @click="showFailuresOnly"
+          >
+            失败 <strong>{{ summary.failures }}</strong> 条
+          </button>
+        </div>
+
+        <div v-if="summary.users.length > 0" class="audit-summary-group">
+          <span class="audit-summary-label">用户</span>
+          <button
+            v-for="item in summary.users"
+            :key="item.key"
+            class="vf-ghost-button audit-summary-chip"
+            type="button"
+            :title="`只看「${item.key}」的记录`"
+            @click="filterByUser(item.key)"
+          >
+            <span>{{ item.key }}</span>
+            <span class="audit-summary-count">{{ item.count }}</span>
+          </button>
+        </div>
+
+        <div v-if="summary.actions.length > 0" class="audit-summary-group">
+          <span class="audit-summary-label">动作</span>
+          <button
+            v-for="item in summary.actions"
+            :key="item.key"
+            class="vf-ghost-button audit-summary-chip"
+            type="button"
+            :title="`只看「${actionLabel(item.key)}」`"
+            @click="filterByAction(item.key)"
+          >
+            <span>{{ actionLabel(item.key) }}</span>
+            <span class="audit-summary-count">{{ item.count }}</span>
+          </button>
+        </div>
+      </div>
+
       <div class="audit-filters">
         <div class="audit-search">
           <IconSearch :size="15" class="audit-search-icon" />
@@ -281,7 +328,7 @@ import EmptyState from "../components/common/EmptyState.vue";
 import SkeletonList from "../components/common/SkeletonList.vue";
 import { filesService } from "../services/files.service";
 import { formatRelativeDate } from "../utils/filePresentation";
-import type { AuditLogEntry } from "../types";
+import type { AuditLogEntry, AuditLogSummary } from "../types";
 
 /**
  * 审计日志（管理员）：只读列表 + 筛选 + 分页。
@@ -293,6 +340,13 @@ const router = useRouter();
 const pageSize = 50;
 
 const items = ref<AuditLogEntry[]>([]);
+const emptySummary = (): AuditLogSummary => ({
+  total: 0,
+  failures: 0,
+  users: [],
+  actions: [],
+});
+const summary = ref<AuditLogSummary>(emptySummary());
 const total = ref(0);
 const actions = ref<string[]>([]);
 const loading = ref(false);
@@ -431,6 +485,7 @@ function clearFilters() {
   range.value = "all";
   customSince.value = "";
   customUntil.value = "";
+  summary.value = emptySummary();
   applyFilters();
 }
 
@@ -460,6 +515,7 @@ async function reload() {
     });
     items.value = page.items;
     total.value = page.total;
+    void loadSummary();
   } catch (e) {
     items.value = [];
     total.value = 0;
@@ -467,6 +523,40 @@ async function reload() {
   } finally {
     loading.value = false;
   }
+}
+
+/** 概览与列表一起刷新（同一组筛选条件）。 */
+async function loadSummary() {
+  try {
+    summary.value = await filesService.getAuditSummary({
+      keyword: keyword.value,
+      action: action.value,
+      result: result.value,
+      ...rangeBounds(),
+    });
+  } catch {
+    // 概览失败不影响主列表
+    summary.value = emptySummary();
+  }
+}
+
+/** 点击概览里的用户 / 动作即筛选。 */
+function filterByUser(key: string) {
+  keyword.value = key === "(匿名)" ? "" : key;
+  offset.value = 0;
+  void reload();
+}
+
+function filterByAction(key: string) {
+  action.value = key;
+  offset.value = 0;
+  void reload();
+}
+
+function showFailuresOnly() {
+  result.value = "failure";
+  offset.value = 0;
+  void reload();
 }
 
 async function loadActions() {
@@ -540,6 +630,69 @@ onMounted(() => {
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
   font-size: 0.78rem;
+}
+
+/* 概览条：总量/失败 + Top 用户/动作，点击即筛选 */
+.audit-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0.65rem;
+  margin-top: 0.7rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-surface-sunken);
+  font-size: 0.78rem;
+}
+
+.audit-summary-totals {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--vf-text-muted);
+}
+
+.audit-summary-total strong {
+  color: var(--vf-text-strong);
+}
+
+.audit-summary-failures {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--vf-danger-text);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.audit-summary-failures:hover {
+  text-decoration: underline;
+}
+
+.audit-summary-group {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.audit-summary-label {
+  color: var(--vf-text-subtle);
+  font-size: 0.74rem;
+}
+
+.audit-summary-chip {
+  gap: 0.3rem;
+  min-height: 1.6rem;
+  padding: 0 0.45rem;
+  font-size: 0.75rem;
+}
+
+.audit-summary-count {
+  color: var(--vf-text-subtle);
+  font-size: 0.7rem;
 }
 
 .audit-filters {

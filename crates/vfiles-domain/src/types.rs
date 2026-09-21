@@ -456,6 +456,22 @@ pub struct AuditLogPage {
     pub total: u64,
 }
 
+/// 审计日志聚合项（按用户或按动作统计）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditCount {
+    pub key: String,
+    pub count: u64,
+}
+
+/// 审计日志概览：在**当前筛选条件**下的总量、失败数与 Top 用户/动作。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AuditLogSummary {
+    pub total: u64,
+    pub failures: u64,
+    pub users: Vec<AuditCount>,
+    pub actions: Vec<AuditCount>,
+}
+
 // Value objects
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NormalizedPath(String);
