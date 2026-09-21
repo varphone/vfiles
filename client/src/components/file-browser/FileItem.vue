@@ -21,12 +21,27 @@
   >
     <td class="is-narrow">
       <div class="is-flex is-align-items-center">
-        <label v-if="selectMode" class="mr-2" @click.stop>
+        <!-- 复选框：批量模式下常驻，其余情况 hover/选中时出现，方便像网盘一样直接勾选 -->
+        <label
+          v-if="selectMode || selected"
+          class="mr-2"
+          @click.stop
+          @dblclick.stop
+        >
           <input
             type="checkbox"
             :checked="selected"
             @change="toggleSelected"
             aria-label="选择"
+          />
+        </label>
+        <label v-else class="mr-2 desktop-row-check" @click.stop @dblclick.stop>
+          <input
+            type="checkbox"
+            :checked="false"
+            @change="toggleSelected"
+            :aria-label="`选择 ${file.name}`"
+            tabindex="-1"
           />
         </label>
 
@@ -36,7 +51,7 @@
       </div>
     </td>
 
-    <td>
+    <td class="desktop-name-cell">
       <input
         v-if="renaming"
         :ref="registerRenameInput"
@@ -79,6 +94,21 @@
           <span v-else>{{ seg.text }}</span>
         </template>
       </span>
+
+      <!-- 行内操作入口：hover / 选中 / 触屏常驻，菜单与右键菜单一致 -->
+      <button
+        ref="rowMenuButton"
+        class="vf-icon-button desktop-row-menu"
+        type="button"
+        :aria-label="`${file.name} 的操作`"
+        :aria-haspopup="true"
+        :aria-expanded="menuOpen ? 'true' : 'false'"
+        title="更多操作"
+        @click.stop.prevent="openRowMenu"
+        @dblclick.stop
+      >
+        <IconDots :size="16" />
+      </button>
     </td>
 
     <td class="is-narrow desktop-file-date" :title="desktopFileDateTitle">
@@ -384,6 +414,7 @@ import {
   IconTrash,
   IconShare,
   IconEye,
+  IconDots,
 } from "@tabler/icons-vue";
 import type { FileInfo } from "../../types";
 import FileTypeIcon from "./FileTypeIcon.vue";
@@ -430,6 +461,9 @@ const emit = defineEmits<{
 }>();
 
 const dragOver = ref(false);
+const rowMenuButton = ref<HTMLButtonElement | null>(null);
+/** 本行的菜单是否已打开（仅用于 aria-expanded）。 */
+const menuOpen = ref(false);
 
 const showActions = computed(() => props.expanded);
 const isDirectoryEntry = computed(() => props.file.kind === "directory");
@@ -465,6 +499,24 @@ watch(
   },
   { immediate: true },
 );
+
+/**
+ * 打开本行的操作菜单。
+ *
+ * 坐标取按钮左下角：菜单会出现在「⋯」正下方，和 Google Drive / OneDrive 的
+ * 行内菜单位置一致；父组件复用同一个 ContextMenu 组件渲染。
+ */
+function openRowMenu() {
+  const rect = rowMenuButton.value?.getBoundingClientRect();
+  const x = rect ? rect.left : 0;
+  const y = rect ? rect.bottom + 4 : 0;
+  menuOpen.value = true;
+  emit("contextMenu", { file: props.file, x, y });
+  // 菜单是受控组件，父组件关闭后这里同步复位
+  window.setTimeout(() => {
+    menuOpen.value = false;
+  }, 300);
+}
 
 function commitRename() {
   renameSettled = true;
@@ -776,6 +828,50 @@ function share() {
 
 .desktop-file-row.is-row-selected > td {
   background: var(--vf-accent-soft);
+}
+
+/* 名称单元格：为尾部「⋯」预留空间，并作为其定位参考 */
+.desktop-name-cell {
+  position: relative;
+  padding-right: 2.1rem !important;
+}
+
+/* 行内操作入口「⋯」：默认隐藏，hover / 聚焦 / 选中 / 触屏时出现。
+   即使隐藏了「操作」列，用户也能在行内直接打开下载/重命名/移动等菜单。 */
+.desktop-row-menu {
+  position: absolute;
+  top: 50%;
+  right: 0.35rem;
+  transform: translateY(-50%);
+  width: 1.75rem;
+  height: 1.75rem;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.desktop-file-row:hover .desktop-row-menu,
+.desktop-file-row:focus-within .desktop-row-menu,
+.desktop-file-row.is-row-selected .desktop-row-menu {
+  opacity: 1;
+}
+
+/* hover 才出现的复选框：批量模式下由 FileItem 直接渲染常驻版本 */
+.desktop-row-check {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.desktop-file-row:hover .desktop-row-check,
+.desktop-file-row:focus-within .desktop-row-check,
+.desktop-file-row.is-row-selected .desktop-row-check {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .desktop-row-menu,
+  .desktop-row-check {
+    opacity: 1;
+  }
 }
 
 /* 行内操作默认隐藏，hover / 键盘聚焦时出现，减少视觉噪音 */

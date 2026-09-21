@@ -73,17 +73,6 @@
             @update:search-scope-current="searchScopeCurrent = $event"
           />
 
-          <BatchActionBar
-            v-if="batchMode"
-            :selected-count="selectedCount"
-            @select-all="selectAllVisible"
-            @clear-selection="clearSelection"
-            @download="batchDownload"
-            @move="batchMove"
-            @rename="renameSelected"
-            @delete="batchDelete"
-          />
-
           <div v-if="searchError" class="notification is-danger is-light mb-3">
             <IconAlertCircle :size="20" class="mr-2" />
             {{ searchError }}
@@ -130,6 +119,22 @@
           </aside>
 
           <div class="desktop-list-primary-shell">
+            <!--
+              批量操作条属于列表列：宽度与列表一致（不会压到详情面板），
+              且吸顶范围覆盖整个列表列——长列表滚动时始终可达。
+              放在工具栏内会被工具栏高度限制住，放在 layout 外层则会横跨详情列。
+            -->
+            <BatchActionBar
+              v-if="batchMode || selectedCount > 0"
+              :selected-count="selectedCount"
+              @select-all="selectAllVisible"
+              @clear-selection="clearSelection"
+              @download="batchDownload"
+              @move="batchMove"
+              @rename="renameSelected"
+              @delete="batchDelete"
+            />
+
             <div class="desktop-list-shell">
               <FileSkeleton
                 v-if="loading"
@@ -218,7 +223,7 @@
                   @move="handleMoveEntry"
                   @delete="handleDelete"
                   @view-history="handleViewHistory"
-                  @toggle-select="toggleSelect"
+                  @toggle-select="handleRowSelect"
                   @modifier-select="handleModifierSelect"
                   @context-menu="handleContextMenu"
                   @drag-start="handleDragStart"
@@ -250,7 +255,7 @@
                   @move="handleMoveEntry"
                   @delete="handleDelete"
                   @view-history="handleViewHistory"
-                  @toggle-select="toggleSelect"
+                  @toggle-select="handleRowSelect"
                   @modifier-select="handleModifierSelect"
                   @context-menu="handleContextMenu"
                   @drag-start="handleDragStart"
@@ -1291,6 +1296,16 @@ onMounted(() => {
       return;
     }
 
+    // 键盘打开行菜单（Windows 惯例：Shift+F10 或菜单键）
+    if ((e.shiftKey && e.key === "F10") || e.key === "ContextMenu") {
+      const target = findActiveItem();
+      if (target) {
+        e.preventDefault();
+        openRowContextMenu(target);
+        return;
+      }
+    }
+
     if (e.key === "F2") {
       if (selectedPaths.value.size === 1) {
         e.preventDefault();
@@ -1793,6 +1808,15 @@ function anyOverlayOpen(): boolean {
 }
 
 /** 当前键盘操作的目标：优先高亮行，其次唯一的已选条目。 */
+/**
+ * 行内复选框：即使不在「批量选择」模式，勾选一项也应立刻出现操作条
+ * （与主流网盘一致：勾选即进入选择态，不必先点工具栏按钮）。
+ */
+function handleRowSelect(file: FileInfo) {
+  if (!batchMode.value) batchMode.value = true;
+  toggleSelect(file);
+}
+
 function findActiveItem(): FileInfo | undefined {
   const list = searchActive.value
     ? sortedSearchResults.value
@@ -1900,6 +1924,17 @@ function scrollActiveIntoView(path: string) {
   const selector = `[data-vfiles-path="${CSS.escape(path)}"]`;
   const element = document.querySelector<HTMLElement>(selector);
   element?.scrollIntoView?.({ block: "nearest" });
+}
+
+/** 在指定行的右侧打开操作菜单（键盘触发时按行位置定位）。 */
+function openRowContextMenu(file: FileInfo) {
+  if (typeof document === "undefined") return;
+  const selector = `[data-vfiles-path="${CSS.escape(file.path)}"]`;
+  const element = document.querySelector<HTMLElement>(selector);
+  const rect = element?.getBoundingClientRect();
+  const x = rect ? rect.right - 8 : 0;
+  const y = rect ? rect.bottom : 0;
+  handleContextMenu({ file, x, y });
 }
 
 function handleContextMenu(payload: { file: FileInfo; x: number; y: number }) {

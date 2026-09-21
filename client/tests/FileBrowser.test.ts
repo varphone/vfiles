@@ -61,6 +61,14 @@ vi.mock("../src/services/files.service", () => ({
   filesService: {
     getFiles: getFilesMock,
     getFilesPage: getFilesPageMock,
+    // 侧栏概览与收藏：不 stub 时会在挂载后产生未处理的 rejection
+    getOverview: vi.fn(async () => ({
+      file_count: 0,
+      directory_count: 0,
+      total_size_bytes: 0,
+      recent_files: [],
+    })),
+    getFavorites: vi.fn(async () => []),
     // 组合式函数读取分页信封，这里把「数据源 mock」包一层
     searchFiles: vi.fn(async (...args: unknown[]) => {
       const result = await (
@@ -718,6 +726,103 @@ describe("FileBrowser.vue action column", () => {
     // 表格列数：名称/修改时间/类型/大小（不含操作）
     const row = container.querySelector("tr.desktop-file-row")!;
     expect(row.querySelectorAll("td").length).toBe(5);
+  });
+
+  it("keeps a per-row menu available while the action column is hidden", async () => {
+    // 这就是用户反馈的场景：详情面板开着、操作列隐藏，仍要能直接操作某一行
+    setDetailsVisible(true);
+    getFilesMock.mockResolvedValue(files());
+
+    const { container } = renderWithProviders(FileBrowser as any);
+    await waitFor(() =>
+      expect(container.querySelector("tr.desktop-file-row")).not.toBeNull(),
+    );
+
+    const row = container.querySelector("tr.desktop-file-row")!;
+    const menuButton = row.querySelector(".desktop-row-menu");
+    expect(menuButton).not.toBeNull();
+    expect(menuButton!.getAttribute("aria-label")).toContain("a.txt");
+
+    await fireEvent.click(menuButton!);
+    await waitFor(() =>
+      expect(document.querySelector(".vfiles-context-menu")).not.toBeNull(),
+    );
+    // 菜单里应包含下载/重命名/移动等常用操作
+    const labels = Array.from(
+      document.querySelectorAll(".vfiles-context-menu [role='menuitem']"),
+    ).map((item) => item.textContent?.trim());
+    expect(labels).toEqual(
+      expect.arrayContaining(["下载", "重命名", "移动", "删除"]),
+    );
+  });
+
+  it("reveals the batch action bar as soon as a row checkbox is ticked", async () => {
+    setDetailsVisible(true);
+    getFilesMock.mockResolvedValue(files());
+
+    const { container } = renderWithProviders(FileBrowser as any);
+    // 详情面板里也有文件名的文本，这里只等列表行渲染
+    await waitFor(() =>
+      expect(container.querySelector("tr.desktop-file-row")).not.toBeNull(),
+    );
+
+    // 未进入批量选择模式时，行内也应提供复选框（hover 出现）
+    const row = container.querySelector("tr.desktop-file-row")!;
+    const checkbox = row.querySelector(
+      'input[type="checkbox"]',
+    ) as HTMLInputElement;
+    expect(checkbox).not.toBeNull();
+
+    await fireEvent.change(checkbox);
+
+    // 勾选后无需再点工具栏「批量选择」，操作条直接出现
+    await waitFor(() =>
+      expect(container.querySelector(".desktop-batch-strip")).not.toBeNull(),
+    );
+    const bar = container.querySelector(".desktop-batch-strip");
+    expect(bar).not.toBeNull();
+    expect(bar!.textContent).toContain("下载");
+    expect(bar!.textContent).toContain("移动");
+    expect(bar!.textContent).toContain("重命名");
+  });
+
+  it("keeps the selection bar inside the list column so it can stick", async () => {
+    setDetailsVisible(true);
+    getFilesMock.mockResolvedValue(files());
+
+    const { container } = renderWithProviders(FileBrowser as any);
+    await waitFor(() =>
+      expect(container.querySelector("tr.desktop-file-row")).not.toBeNull(),
+    );
+
+    const row = container.querySelector("tr.desktop-file-row")!;
+    await fireEvent.change(row.querySelector('input[type="checkbox"]')!);
+
+    await waitFor(() =>
+      expect(container.querySelector(".desktop-batch-strip")).not.toBeNull(),
+    );
+    const bar = container.querySelector(".desktop-batch-strip")!;
+    // 放在列表列内部：吸顶范围覆盖整个列表，且不会横跨详情面板
+    expect(bar.closest(".desktop-list-primary-shell")).not.toBeNull();
+    expect(bar.closest(".file-browser-toolbar")).toBeNull();
+  });
+
+  it("opens the row menu from the keyboard", async () => {
+    setDetailsVisible(true);
+    getFilesMock.mockResolvedValue(files());
+
+    const { container } = renderWithProviders(FileBrowser as any);
+    await waitFor(() =>
+      expect(container.querySelector("tr.desktop-file-row")).not.toBeNull(),
+    );
+
+    // 先用方向键把活动行定位到列表，再按 Shift+F10
+    await fireEvent.keyDown(document, { key: "ArrowDown" });
+    await fireEvent.keyDown(document, { key: "F10", shiftKey: true });
+
+    await waitFor(() =>
+      expect(document.querySelector(".vfiles-context-menu")).not.toBeNull(),
+    );
   });
 
   it("shows the action column when the details panel is hidden", async () => {

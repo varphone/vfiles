@@ -870,8 +870,17 @@ async function renameSelected() {
 .home {
   position: relative;
   min-height: 100vh;
-  overflow-x: hidden;
+  /* 用 clip 而不是 hidden：hidden 会让 .home 变成滚动容器，导致内部的
+     position: sticky（批量操作条）失效；clip 只裁剪不建立滚动容器。
+     旧浏览器不支持 clip 时退回 hidden（仅失去吸顶效果）。 */
+  overflow-x: clip;
   background: var(--vf-canvas);
+}
+
+@supports not (overflow: clip) {
+  .home {
+    overflow-x: hidden;
+  }
 }
 
 .hero {
