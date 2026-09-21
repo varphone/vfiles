@@ -774,11 +774,14 @@
       :total="previewTotal"
       :can-copy="canCopyPreview"
       :copy-state="previewCopyState"
+      :file="previewFile"
       @close="closePreview"
       @retry="openPreview"
       @prev="prevPreview"
       @next="nextPreview"
       @copy="copyPreviewContent"
+      @download="downloadPreviewedFile"
+      @reveal="revealPreviewedFile"
     />
   </div>
 </template>
@@ -1074,6 +1077,35 @@ const canCopyPreview = computed(
     !preview.value.error &&
     preview.value.text.length > 0,
 );
+
+/** 当前预览的条目：用于顶栏图标、大小与「下载 / 所在文件夹」入口。 */
+const previewFile = computed<FileInfo | null>(() => {
+  const path = preview.value.path;
+  if (!path) return null;
+  return (
+    [...files.value, ...searchResults.value].find(
+      (item) => item.path === path,
+    ) ?? null
+  );
+});
+
+function downloadPreviewedFile() {
+  const file = previewFile.value;
+  if (file) handleDownload(file);
+}
+
+/** 打开所在文件夹并高亮该文件（主流预览器的「在文件夹中显示」）。 */
+async function revealPreviewedFile() {
+  const file = previewFile.value;
+  if (!file) return;
+  const slash = file.path.lastIndexOf("/");
+  const parent = slash > 0 ? file.path.slice(0, slash) : "";
+
+  closePreview();
+  if (searchActive.value) clearSearch();
+  await filesStore.loadFiles(parent);
+  desktopActivePath.value = file.path;
+}
 
 async function copyPreviewContent() {
   const ok = await copyText(preview.value.text);

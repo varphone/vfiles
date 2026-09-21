@@ -535,13 +535,23 @@ describe("FileBrowser.vue preview navigation", () => {
     const names = await findAllByText("a.txt");
     await fireEvent.dblClick(names[0].closest("tr")!);
 
-    await findByText("预览: a.txt");
+    // 灯箱里文件名的位置由顶栏承担（模态标题只写「预览」）
+    const previewName = async (name: string) => {
+      await waitFor(() =>
+        expect(
+          document.querySelector(".preview-toolbar-name")?.textContent?.trim(),
+        ).toBe(name),
+      );
+    };
+
+    await findByText("预览");
+    await previewName("a.txt");
 
     await fireEvent.keyDown(document, { key: "ArrowRight" });
-    await findByText("预览: b.txt");
+    await previewName("b.txt");
 
     await fireEvent.keyDown(document, { key: "ArrowLeft" });
-    await findByText("预览: a.txt");
+    await previewName("a.txt");
   });
 });
 

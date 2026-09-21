@@ -76,12 +76,15 @@ describe("FilePreviewModal.vue", () => {
     expect(code?.innerHTML).toContain("hljs-keyword");
   });
 
-  it("warns for unsupported kinds", () => {
-    renderModal({ preview: state({ kind: "unsupported" }) });
+  it("warns for unsupported kinds and offers a download", async () => {
+    const { emitted } = renderModal({
+      preview: state({ kind: "unsupported" }),
+      file: { name: "a.xyz", path: "a.xyz", kind: "file" },
+    });
 
-    expect(
-      screen.getByText("暂不支持该文件类型的在线预览，请使用下载。"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("暂不支持在线预览")).toBeInTheDocument();
+    await fireEvent.click(screen.getByText("下载文件"));
+    expect(emitted()["download"]).toHaveLength(1);
   });
 
   it("shows the copy button only when copying is possible", async () => {
@@ -89,12 +92,12 @@ describe("FilePreviewModal.vue", () => {
       canCopy: true,
       copyState: "idle",
     });
-    await fireEvent.click(screen.getByText("复制"));
+    await fireEvent.click(screen.getByText("复制内容"));
     expect(emitted()["copy"]).toHaveLength(1);
     unmount();
 
     renderModal({ canCopy: false });
-    expect(screen.queryByText("复制")).toBeNull();
+    expect(screen.queryByText("复制内容")).toBeNull();
   });
 
   it("reflects the copy feedback label", () => {
@@ -106,9 +109,79 @@ describe("FilePreviewModal.vue", () => {
     expect(screen.getByText("复制失败")).toBeInTheDocument();
   });
 
-  it("only shows navigation for multi-file previews", async () => {
+  it("offers 下载 and 所在文件夹 for the previewed file", async () => {
+    const { emitted } = renderModal({
+      file: { name: "main.ts", path: "src/main.ts", kind: "file" },
+    });
+
+    await fireEvent.click(screen.getByText("下载"));
+    expect(emitted()["download"]).toHaveLength(1);
+
+    await fireEvent.click(screen.getByText("所在文件夹"));
+    expect(emitted()["reveal"]).toHaveLength(1);
+  });
+
+  it("zooms, rotates and fits an image with buttons and keyboard", async () => {
+    const { container } = renderModal({
+      preview: state({ kind: "image", objectUrl: "blob:preview" }),
+      file: { name: "图.png", path: "图.png", kind: "file" },
+    });
+
+    const image = () => container.querySelector<HTMLElement>(".preview-image")!;
+    expect(container.querySelector(".preview-zoom")?.textContent).toBe("100%");
+
+    await fireEvent.click(screen.getByLabelText("放大"));
+    expect(container.querySelector(".preview-zoom")?.textContent).toBe("125%");
+    expect(image().style.transform).toContain("scale(1.25)");
+
+    await fireEvent.click(screen.getByLabelText("缩小"));
+    expect(container.querySelector(".preview-zoom")?.textContent).toBe("100%");
+
+    await fireEvent.click(screen.getByLabelText("向左旋转"));
+    expect(image().style.transform).toContain("rotate(270deg)");
+
+    // 键盘：+ 放大、0 适应（同时复位旋转）、R 旋转
+    const shell = container.querySelector<HTMLElement>(".preview-shell")!;
+    await fireEvent.keyDown(shell, { key: "+" });
+    expect(container.querySelector(".preview-zoom")?.textContent).toBe("125%");
+    await fireEvent.keyDown(shell, { key: "0" });
+    expect(container.querySelector(".preview-zoom")?.textContent).toBe("100%");
+    expect(image().style.transform).toContain("rotate(0deg)");
+    await fireEvent.keyDown(shell, { key: "r" });
+    expect(image().style.transform).toContain("rotate(90deg)");
+  });
+
+  it("scales the image with the mouse wheel", async () => {
+    const { container } = renderModal({
+      preview: state({ kind: "image", objectUrl: "blob:preview" }),
+    });
+
+    await fireEvent.wheel(container.querySelector(".preview-image")!, {
+      deltaY: -120,
+    });
+    expect(container.querySelector(".preview-zoom")?.textContent).toBe("125%");
+
+    await fireEvent.wheel(container.querySelector(".preview-image")!, {
+      deltaY: 120,
+    });
+    expect(container.querySelector(".preview-zoom")?.textContent).toBe("100%");
+  });
+
+  it("only shows the zoom bar for images", () => {
+    const { unmount } = renderModal({
+      preview: state({ kind: "text", text: "body" }),
+    });
+    expect(document.querySelector(".preview-zoom-bar")).toBeNull();
+    unmount();
+
+    renderModal({ preview: state({ kind: "image", objectUrl: "blob:x" }) });
+    expect(document.querySelector(".preview-zoom-bar")).not.toBeNull();
+  });
+
+  it("only shows the floating arrows for multi-file previews", async () => {
     const { unmount } = renderModal({ total: 1 });
-    expect(screen.queryByText("下一张")).toBeNull();
+    expect(screen.queryByLabelText("下一张")).toBeNull();
+    expect(screen.getByText("单张")).toBeInTheDocument();
     unmount();
 
     const multi = renderModal({
@@ -118,12 +191,8 @@ describe("FilePreviewModal.vue", () => {
       canGoNext: false,
     });
     expect(screen.getByText("2 / 3")).toBeInTheDocument();
-    await fireEvent.click(screen.getByText("上一张"));
+    await fireEvent.click(screen.getByLabelText("上一张"));
     expect(multi.emitted()["prev"]).toHaveLength(1);
-    // 已到末尾时「下一张」禁用
-    expect(
-      (screen.getByText("下一张").closest("button") as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
+    expect(screen.getByLabelText("下一张")).toBeDisabled();
   });
 });
