@@ -55,10 +55,13 @@
       </FileDetailsContent>
     </template>
 
-    <div v-else class="desktop-details-empty">
-      <IconInfoCircle :size="28" />
-      <p>选中文件或文件夹后，这里会显示详细信息</p>
-    </div>
+    <EmptyState
+      v-else
+      :icon="IconInfoCircle"
+      compact
+      title="未选择任何条目"
+      hint="选中文件或文件夹后，这里会显示详细信息"
+    />
   </aside>
 </template>
 
@@ -78,6 +81,7 @@ import {
 import type { FileInfo } from "../../types";
 import { filesService } from "../../services/files.service";
 import { isImageFile } from "../../utils/filePresentation";
+import EmptyState from "../common/EmptyState.vue";
 import FileDetailsContent from "./FileDetailsContent.vue";
 
 /**
@@ -134,16 +138,8 @@ const previewUrl = computed(() => {
   overflow-y: auto;
 }
 
-.desktop-details-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
+.desktop-details :deep(.empty-state) {
   margin: auto;
-  padding: 1rem;
-  text-align: center;
-  color: var(--vf-text-subtle);
-  font-size: 0.82rem;
 }
 
 /* 主操作（预览/打开）与危险操作横跨两列，形成清晰的主次 */

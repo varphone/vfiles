@@ -78,6 +78,23 @@ describe("localizeApiError", () => {
   });
 });
 
+describe("extractErrorPayload nested shapes", () => {
+  it("reads { error: { code, message } } bodies from gateways", () => {
+    expect(
+      extractErrorPayload({
+        error: { code: "INTERNAL_ERROR", message: "服务器内部错误" },
+      }),
+    ).toEqual({ code: "INTERNAL_ERROR", message: "服务器内部错误" });
+  });
+
+  it("ignores non-string messages instead of coercing objects", () => {
+    // message 不是字符串时不应把对象当成文案（否则会渲染成 [object Object]）
+    expect(
+      extractErrorPayload({ message: { nested: true } as unknown as string }),
+    ).toBeNull();
+  });
+});
+
 describe("extractErrorPayload", () => {
   it("reads the standard error body and the data-wrapped form", () => {
     expect(

@@ -124,12 +124,18 @@ export function extractErrorPayload(data: unknown): ApiErrorPayload | null {
       ? (record.data as Record<string, unknown>)
       : record;
 
+  // 兼容三种形态：`{code,message}`、`{data:{code,message}}`、`{error:{code,message}}`
+  const nested =
+    inner.error && typeof inner.error === "object"
+      ? (inner.error as Record<string, unknown>)
+      : inner;
+
   const payload: ApiErrorPayload = {};
-  if (typeof inner.code === "string") payload.code = inner.code;
-  if (typeof inner.message === "string") payload.message = inner.message;
-  else if (typeof inner.error === "string") payload.message = inner.error;
-  if (inner.details && typeof inner.details === "object") {
-    payload.details = inner.details as ApiErrorDetails;
+  if (typeof nested.code === "string") payload.code = nested.code;
+  if (typeof nested.message === "string") payload.message = nested.message;
+  else if (typeof nested.error === "string") payload.message = nested.error;
+  if (nested.details && typeof nested.details === "object") {
+    payload.details = nested.details as ApiErrorDetails;
   }
 
   return payload.code || payload.message ? payload : null;

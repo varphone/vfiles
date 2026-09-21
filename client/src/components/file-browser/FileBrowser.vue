@@ -141,62 +141,74 @@
                 :variant="viewMode === 'grid' ? 'grid' : 'list'"
               />
 
-              <div v-else-if="error" class="notification is-danger is-light">
-                <IconAlertCircle :size="20" class="mr-2" />
-                {{ error }}
-                <div class="mt-2">
+              <EmptyState
+                v-else-if="error"
+                :icon="IconAlertCircle"
+                tone="error"
+                title="加载失败"
+                :hint="error"
+              >
+                <template #actions>
                   <button
-                    class="button is-small is-danger is-light"
+                    class="vf-ghost-button"
                     :class="{ 'is-loading': loading }"
                     :disabled="loading"
                     @click="refresh"
                   >
-                    <IconRefresh :size="16" class="mr-1" />
-                    重试
+                    <IconRefresh :size="16" />
+                    <span>重试</span>
                   </button>
-                </div>
-              </div>
+                </template>
+              </EmptyState>
 
-              <div
+              <EmptyState
                 v-else-if="!searchActive && files.length === 0"
-                class="browser-empty"
+                :icon="IconFolderOpen"
+                title="此文件夹为空"
+                hint="拖拽文件到这里，或使用下面的按钮上传"
               >
-                <IconFolderOpen :size="56" class="browser-empty-icon" />
-                <p class="browser-empty-title">此文件夹为空</p>
-                <p class="browser-empty-hint">
-                  拖拽文件到这里，或使用下面的按钮上传
-                </p>
-                <div class="browser-empty-actions">
+                <template #actions>
                   <button
-                    class="button is-link is-small"
+                    class="vf-ghost-button is-primary"
                     @click="showUploader = true"
                   >
                     <IconUpload :size="16" />
                     <span>上传文件</span>
                   </button>
                   <button
-                    class="button is-small"
+                    class="vf-ghost-button"
                     @click="promptCreateDirectory(currentPath || '')"
                   >
                     <IconFolderPlus :size="16" />
                     <span>新建文件夹</span>
                   </button>
-                </div>
-              </div>
+                </template>
+              </EmptyState>
 
-              <div
+              <EmptyState
                 v-else-if="searchActive && searchResults.length === 0"
-                class="browser-empty"
+                :icon="IconSearch"
+                title="没有找到匹配的文件"
+                :hint="
+                  searchMode === 'content'
+                    ? '换个关键字，或改用文件名搜索（内容搜索只匹配文件内容）'
+                    : '换个关键字，或检查是否限制了搜索范围'
+                "
               >
-                <IconSearch :size="48" class="browser-empty-icon" />
-                <p class="browser-empty-title">没有找到匹配的文件</p>
-                <p class="browser-empty-hint">换个关键字，或清空搜索条件</p>
-                <div class="browser-empty-actions">
-                  <button class="button is-small" @click="clearSearch">
-                    清空搜索
+                <template #actions>
+                  <button
+                    v-if="searchMode === 'content'"
+                    class="vf-ghost-button is-primary"
+                    @click="switchToNameSearch"
+                  >
+                    <IconFileSearch :size="16" />
+                    <span>改为文件名搜索</span>
                   </button>
-                </div>
-              </div>
+                  <button class="vf-ghost-button" @click="clearSearch">
+                    <span>清空搜索</span>
+                  </button>
+                </template>
+              </EmptyState>
 
               <template v-else>
                 <div v-if="searchActive" class="desktop-list-meta">
@@ -359,14 +371,12 @@
           </div>
         </div>
 
-        <div
+        <EmptyState
           v-else-if="!searchActive && files.length === 0"
-          class="browser-empty"
-        >
-          <IconFolderOpen :size="56" class="browser-empty-icon" />
-          <p class="browser-empty-title">此文件夹为空</p>
-          <p class="browser-empty-hint">点击右下角按钮上传文件</p>
-        </div>
+          :icon="IconFolderOpen"
+          title="此文件夹为空"
+          hint="点击右下角按钮上传文件"
+        />
 
         <div v-else-if="searchActive" class="file-list">
           <p class="has-text-grey is-size-7 mb-2">
@@ -374,9 +384,19 @@
               searchMode === "content" ? "内容" : "文件名"
             }}）
           </p>
-          <div v-if="searchResults.length === 0" class="has-text-centered py-6">
-            <p class="has-text-grey">没有找到匹配的文件</p>
-          </div>
+          <EmptyState
+            v-if="searchResults.length === 0"
+            :icon="IconSearch"
+            compact
+            title="没有找到匹配的文件"
+            hint="换个关键字，或清空搜索条件"
+          >
+            <template #actions>
+              <button class="vf-ghost-button" @click="clearSearch">
+                <span>清空搜索</span>
+              </button>
+            </template>
+          </EmptyState>
           <FileGrid
             v-if="viewMode === 'grid' && visibleSearchResults.length"
             :files="visibleSearchResults"
@@ -767,6 +787,7 @@ import {
   IconFolderPlus,
   IconAlertCircle,
   IconSearch,
+  IconFileSearch,
   IconRefresh,
   IconUpload,
   IconEye,
@@ -793,6 +814,7 @@ import UploadDropOverlay from "./UploadDropOverlay.vue";
 import FileDetailsContent from "./FileDetailsContent.vue";
 import DirectoryTree from "./DirectoryTree.vue";
 import SidebarOverview from "./SidebarOverview.vue";
+import EmptyState from "../common/EmptyState.vue";
 import FileGrid from "./FileGrid.vue";
 import MobileSearchBar from "./MobileSearchBar.vue";
 import DesktopCommandBar from "./DesktopCommandBar.vue";
@@ -1937,6 +1959,12 @@ function openRowContextMenu(file: FileInfo) {
   const x = rect ? rect.right - 8 : 0;
   const y = rect ? rect.bottom : 0;
   handleContextMenu({ file, x, y });
+}
+
+/** 内容搜索无结果时，一键改用文件名搜索（保留关键字与范围）。 */
+function switchToNameSearch() {
+  searchContent.value = false;
+  void runDesktopSearch();
 }
 
 function handleContextMenu(payload: { file: FileInfo; x: number; y: number }) {

@@ -167,14 +167,29 @@ class ApiService {
 
     if (data && typeof data === "object") {
       const record = data as Record<string, unknown>;
-      if (typeof record.message === "string" && record.message) {
+      if (typeof record.message === "string" && record.message.trim()) {
         return record.message;
       }
-      if (typeof record.error === "string" && record.error) {
+      if (typeof record.error === "string" && record.error.trim()) {
         return record.error;
+      }
+      // 嵌套形态（网关/代理常见）：{ error: { message } }
+      if (record.error && typeof record.error === "object") {
+        const nested = record.error as Record<string, unknown>;
+        if (typeof nested.message === "string" && nested.message.trim()) {
+          return nested.message;
+        }
+      }
+      // data 包裹形态
+      if (record.data && typeof record.data === "object") {
+        const wrapped = record.data as Record<string, unknown>;
+        if (typeof wrapped.message === "string" && wrapped.message.trim()) {
+          return wrapped.message;
+        }
       }
     }
 
+    // 兜底必须是字符串：非字符串会被 Error 构造成 "[object Object]"
     return "请求失败";
   }
 

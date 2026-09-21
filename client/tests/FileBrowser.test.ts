@@ -1,6 +1,8 @@
 import { fireEvent, waitFor, within } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { nextTick } from "vue";
 import { renderWithProviders } from "./renderWithProviders";
+import { useAuthStore } from "../src/stores/auth.store";
 import FileBrowser from "../src/components/file-browser/FileBrowser.vue";
 
 type PageOpts = { commit?: string; limit?: number; offset?: number };
@@ -835,6 +837,102 @@ describe("FileBrowser.vue action column", () => {
     expect(container.querySelector(".file-list-actions-header")).not.toBeNull();
     const row = container.querySelector("tr.desktop-file-row")!;
     expect(row.querySelectorAll("td").length).toBe(6);
+  });
+});
+
+describe("FileBrowser.vue empty and error states", () => {
+  it("shows a designed empty state with upload and new-folder actions", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([]);
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("此文件夹为空");
+
+    // 列表区域可能随后再渲染一次，统一用 waitFor 重新查询当前 DOM
+    await waitFor(() =>
+      expect(
+        container.querySelector(".empty-state .empty-state-illustration svg"),
+      ).not.toBeNull(),
+    );
+    const labels = Array.from(
+      container.querySelectorAll(".empty-state-actions button"),
+    ).map((button) => button.textContent?.trim());
+    expect(labels).toEqual(["上传文件", "新建文件夹"]);
+  });
+
+  it("wraps a load failure in the error state with retry", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockRejectedValue(new Error("网络不可用"));
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("加载失败");
+
+    await waitFor(() =>
+      expect(container.querySelector(".empty-state.is-error")).not.toBeNull(),
+    );
+    const state = container.querySelector(".empty-state.is-error")!;
+    expect(state.textContent).toContain("网络不可用");
+    expect(state.textContent).toContain("重试");
+  });
+
+  it("offers switching to name search when content search finds nothing", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([]);
+    searchFilesMock.mockResolvedValue([]);
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("此文件夹为空");
+
+    // 该用例需要服务端开启内容搜索能力
+    const auth = useAuthStore();
+    auth.features = {
+      authEnabled: true,
+      multiUser: false,
+      emailLogin: false,
+      searchContent: true,
+      shareEnabled: true,
+      historyEnabled: true,
+      ftpEnabled: false,
+    };
+    await nextTick();
+
+    await fireEvent.click(container.querySelector(".desktop-search-toggle")!);
+    await waitFor(() =>
+      expect(container.querySelector(".desktop-search-filters")).not.toBeNull(),
+    );
+    const contentToggle = container.querySelector<HTMLInputElement>(
+      ".desktop-search-filters input[type='checkbox']",
+    )!;
+    expect(contentToggle.disabled).toBe(false);
+    await fireEvent.click(contentToggle);
+
+    // 勾选内容搜索后占位文案会变化，这里按 class 取输入框
+    const input = container.querySelector<HTMLInputElement>(
+      ".desktop-search-control",
+    )!;
+    await fireEvent.update(input, "不存在的关键字");
+    // 搜索框用 keyup.enter 触发（keydown 不生效）
+    await fireEvent.keyUp(input, { key: "Enter" });
+
+    await findByText("没有找到匹配的文件");
+    await waitFor(() =>
+      expect(
+        container.querySelector(".empty-state-hint")?.textContent ?? "",
+      ).toContain("内容搜索"),
+    );
+
+    const switchButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(
+        ".empty-state-actions button",
+      ),
+    ).find((button) => button.textContent?.includes("改为文件名搜索"));
+    expect(switchButton).toBeTruthy();
+
+    await fireEvent.click(switchButton!);
+    // 切换后回到文件名搜索，不再显示内容搜索的替代按钮
+    await waitFor(() =>
+      expect(container.textContent).not.toContain("改为文件名搜索"),
+    );
   });
 });
 
