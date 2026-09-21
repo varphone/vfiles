@@ -16,7 +16,7 @@ use crate::{
     error::{ApiError, ApiJson, ApiResult, ErrorResponse},
     middleware::client_ip_from_headers,
 };
-use vfiles_domain::{DomainError, UserRepo};
+use vfiles_domain::{DomainError, NewAuditLog, UserRepo};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -60,6 +60,14 @@ pub async fn login(
             login_identifier,
             block.retry_after_secs
         );
+        crate::audit::record(
+            &state,
+            &headers,
+            NewAuditLog::failure(crate::audit::action::LOGIN_FAILURE)
+                .user(None, login_identifier.clone())
+                .detail("登录尝试过于频繁，已被限流"),
+        )
+        .await;
         return Ok(login_rate_limited_response(block.retry_after_secs));
     }
 
@@ -83,13 +91,32 @@ pub async fn login(
                 .login_attempt_limiter
                 .record_failure(&login_rate_limit, &login_key);
             tracing::warn!("Rejected login attempt for {}", login_identifier);
+            crate::audit::record(
+                &state,
+                &headers,
+                NewAuditLog::failure(crate::audit::action::LOGIN_FAILURE)
+                    .user(None, login_identifier.clone())
+                    .detail("用户名或密码不正确"),
+            )
+            .await;
             return Err(ApiError::Domain(DomainError::InvalidCredentials));
         }
         Err(err) => return Err(ApiError::Domain(err)),
     };
+    // 审计需要 userId，先取出再转换响应 DTO
+    let actor_user_id = response.user.id;
     let response_dto: LoginResponseDto = response.into();
 
     tracing::info!("Login successful for user: {}", response_dto.user.username);
+
+    crate::audit::record(
+        &state,
+        &headers,
+        NewAuditLog::success(crate::audit::action::LOGIN_SUCCESS)
+            .user(Some(actor_user_id), response_dto.user.username.clone())
+            .detail("登录成功"),
+    )
+    .await;
 
     // Set session cookie
     let cookie =

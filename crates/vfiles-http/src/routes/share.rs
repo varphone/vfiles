@@ -17,7 +17,7 @@ use crate::{
     routes::authenticated_request_context,
 };
 use axum_extra::extract::cookie::CookieJar;
-use vfiles_domain::{DomainError, EntryKind};
+use vfiles_domain::{DomainError, EntryKind, NewAuditLog};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -50,6 +50,7 @@ fn build_archive_response(filename: &str, bytes: Vec<u8>) -> Result<Response, Ap
 
 async fn create_share(
     State(state): State<AppState>,
+    headers: HeaderMap,
     jar: CookieJar,
     ApiJson(req): ApiJson<CreateShareRequest>,
 ) -> Result<Json<CreateShareResponse>, ApiError> {
@@ -91,6 +92,19 @@ async fn create_share(
         .share_service
         .create_share(&ctx.namespace_id, &entry_path, expires_at, &user_id)
         .await?;
+
+    crate::audit::record_for(
+        &state,
+        &headers,
+        &ctx,
+        NewAuditLog::success(crate::audit::action::SHARE_CREATE)
+            .target(entry_path.as_str())
+            .detail(match expires_at {
+                Some(value) => format!("创建分享链接（有效期至 {value}）"),
+                None => "创建分享链接（永久有效）".to_string(),
+            }),
+    )
+    .await;
 
     let mut share_url = state.config.http.public_base_url.clone();
     share_url.set_path(&format!("/s/{}", code));
@@ -173,6 +187,16 @@ pub async fn download_share(
     let share = state.share_service.access_share(&code).await?;
     let entry = state.entry_repo.find_by_id(&share.entry_id).await?;
 
+    // 分享下载可能是匿名访问，这里只记录分享码与目标路径
+    crate::audit::record(
+        &state,
+        &headers,
+        NewAuditLog::success(crate::audit::action::SHARE_DOWNLOAD)
+            .target(format!("{}|{}", code, entry.path_norm.as_str()))
+            .detail("通过分享链接下载"),
+    )
+    .await;
+
     match entry.entry_type {
         EntryKind::File => {
             let version = share.entry_version_id.map(|value| value.to_string());
@@ -203,6 +227,7 @@ pub async fn download_share(
 
 async fn disable_share(
     State(state): State<AppState>,
+    headers: HeaderMap,
     jar: CookieJar,
     Path(code): Path<String>,
 ) -> Result<StatusCode, ApiError> {
@@ -220,6 +245,16 @@ async fn disable_share(
     );
 
     state.share_service.disable_share(&code, &user_id).await?;
+
+    crate::audit::record_for(
+        &state,
+        &headers,
+        &ctx,
+        NewAuditLog::success(crate::audit::action::SHARE_DISABLE)
+            .target(code.clone())
+            .detail("停止分享"),
+    )
+    .await;
 
     Ok(StatusCode::NO_CONTENT)
 }

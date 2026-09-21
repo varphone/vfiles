@@ -94,6 +94,57 @@
     - `type` 可选：`all` / `file` / `directory`
     - `limit` / `offset` 可选
 
+## 审计日志（只读）
+
+`GET /api/audit/logs`（需要管理员角色）按时间倒序返回审计记录，
+支持筛选与分页；`GET /api/audit/actions` 返回出现过的动作标识（用于筛选下拉）。
+
+查询参数（全部可选）：
+
+| 参数 | 说明 |
+| --- | --- |
+| `keyword` | 模糊匹配用户名或 IP |
+| `action` | 精确匹配动作，如 `file.upload` |
+| `result` | `success` / `failure` |
+| `since` / `until` | RFC3339 时间范围（`since` 含、`until` 不含） |
+| `limit` / `offset` | 分页，`limit` 默认 50、上限 200 |
+
+响应：
+
+```json
+{
+  "items": [
+    {
+      "id": "…",
+      "created_at": "2026-09-22T01:03:11Z",
+      "user_id": "…",
+      "username": "admin",
+      "action": "file.download",
+      "result": "success",
+      "target": "审计.txt",
+      "ip": "203.0.113.7",
+      "device": "Windows · Chrome",
+      "user_agent": "Mozilla/5.0 …",
+      "detail": "下载文件"
+    }
+  ],
+  "total": 7,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+**只读保证**：接口只提供 `GET`，`DELETE`/`PUT` 会返回 `405`（未注册路由）；
+数据库层另有触发器，任何直接的 `UPDATE` / `DELETE` 语句都会被拒绝，
+因此审计记录无法修改或删除。`username` 为冗余快照，用户改名或删除后历史仍可读。
+
+已记录的动作：
+
+- 认证：`login.success`、`login.failure`（含限流拒绝）
+- 文件：`file.upload`、`file.download`、`file.delete`、`file.move`
+- 分享：`share.create`、`share.disable`、`share.download`
+- 用户管理：`user.create`、`user.update`、`user.sessions_revoke`
+
 ## 分享链接管理
 
 创建分享（`POST /api/share/shares`）时 `expires_at` 可省略或用 `null`——

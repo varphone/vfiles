@@ -364,9 +364,9 @@ impl ConfigLoader {
 
         let ftp_enabled = ftp.enabled;
         // 单文件上限同时用于特性矩阵（前端提示与预校验）与请求限制
-        let max_file_size_bytes = Self::resolve_max_file_size_bytes(
-            Self::env_parse::<u64>(&["VFILES_MAX_FILE_SIZE_MB"])?,
-        );
+        let max_file_size_bytes = Self::resolve_max_file_size_bytes(Self::env_parse::<u64>(&[
+            "VFILES_MAX_FILE_SIZE_MB",
+        ])?);
         let config = AppConfig {
             http: HttpConfig {
                 host,

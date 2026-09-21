@@ -288,6 +288,174 @@ pub struct ShareWithEntry {
     pub entry_kind: EntryKind,
 }
 
+/// 审计日志条目：只追加，用于事后追溯（数据库层禁止修改/删除）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuditLog {
+    pub id: String,
+    pub created_at: time::OffsetDateTime,
+    /// 匿名操作（如登录失败）为 `None`。
+    pub user_id: Option<UserId>,
+    /// 冗余的用户名快照：用户改名/删除后历史仍可读。
+    pub username: String,
+    /// 动作标识，例如 `login.success`、`file.upload`、`file.download`。
+    pub action: String,
+    pub result: AuditResult,
+    /// 操作对象（路径、分享码等）。
+    pub target: Option<String>,
+    pub ip: Option<String>,
+    pub user_agent: Option<String>,
+    /// 服务端解析出的设备/浏览器描述（用于展示与筛选）。
+    pub device: Option<String>,
+    /// 失败原因或附加说明。
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum AuditResult {
+    #[default]
+    Success,
+    Failure,
+}
+
+impl AuditResult {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failure => "failure",
+        }
+    }
+
+    pub fn from_sql(value: &str) -> Self {
+        match value {
+            "failure" => Self::Failure,
+            _ => Self::Success,
+        }
+    }
+}
+
+/// 审计日志写入参数：由各业务动作填充。
+#[derive(Debug, Clone, Default)]
+pub struct NewAuditLog {
+    pub user_id: Option<UserId>,
+    pub username: String,
+    pub action: String,
+    pub result: AuditResult,
+    pub target: Option<String>,
+    pub ip: Option<String>,
+    pub user_agent: Option<String>,
+    pub device: Option<String>,
+    pub detail: Option<String>,
+}
+
+impl NewAuditLog {
+    pub fn success(action: impl Into<String>) -> Self {
+        Self {
+            action: action.into(),
+            result: AuditResult::Success,
+            ..Default::default()
+        }
+    }
+
+    pub fn failure(action: impl Into<String>) -> Self {
+        Self {
+            action: action.into(),
+            result: AuditResult::Failure,
+            ..Default::default()
+        }
+    }
+
+    pub fn user(mut self, user_id: Option<UserId>, username: impl Into<String>) -> Self {
+        self.user_id = user_id;
+        self.username = username.into();
+        self
+    }
+
+    pub fn target(mut self, target: impl Into<String>) -> Self {
+        self.target = Some(target.into());
+        self
+    }
+
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    pub fn request(mut self, ip: Option<String>, user_agent: Option<String>) -> Self {
+        self.device = user_agent.as_deref().map(describe_device);
+        self.ip = ip;
+        self.user_agent = user_agent;
+        self
+    }
+}
+
+/// 把 User-Agent 归类为粗粒度描述（如「桌面 · Chrome」「移动 · Safari」）。
+///
+/// 只做展示与筛选所需的最小解析，不追求完整的 UA 库。
+pub fn describe_device(user_agent: &str) -> String {
+    let ua = user_agent.to_ascii_lowercase();
+    if ua.trim().is_empty() {
+        return "未知设备".to_string();
+    }
+
+    let platform = if ua.contains("iphone") || ua.contains("ipod") {
+        "iPhone"
+    } else if ua.contains("ipad") {
+        "iPad"
+    } else if ua.contains("android") {
+        "Android"
+    } else if ua.contains("windows") {
+        "Windows"
+    } else if ua.contains("macintosh") || ua.contains("mac os x") {
+        "macOS"
+    } else if ua.contains("linux") {
+        "Linux"
+    } else {
+        "未知平台"
+    };
+
+    let client = if ua.contains("edg/") {
+        "Edge"
+    } else if ua.contains("opr/") || ua.contains("opera") {
+        "Opera"
+    } else if ua.contains("chrome") || ua.contains("crios") {
+        "Chrome"
+    } else if ua.contains("firefox") || ua.contains("fxios") {
+        "Firefox"
+    } else if ua.contains("safari") {
+        "Safari"
+    } else if ua.contains("curl") {
+        "curl"
+    } else if ua.contains("python") {
+        "Python"
+    } else {
+        "未知客户端"
+    };
+
+    format!("{platform} · {client}")
+}
+
+/// 审计日志查询条件（全部可选，取交集）。
+#[derive(Debug, Clone, Default)]
+pub struct AuditLogQuery {
+    /// 用户名或 IP 的模糊匹配。
+    pub keyword: Option<String>,
+    pub action: Option<String>,
+    pub result: Option<AuditResult>,
+    /// 起始时间（含）。
+    pub since: Option<time::OffsetDateTime>,
+    /// 结束时间（不含）。
+    pub until: Option<time::OffsetDateTime>,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+/// 审计日志查询结果。
+#[derive(Debug, Clone)]
+pub struct AuditLogPage {
+    pub items: Vec<AuditLog>,
+    pub total: u64,
+}
+
 // Value objects
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NormalizedPath(String);

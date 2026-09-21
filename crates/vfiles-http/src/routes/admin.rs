@@ -92,7 +92,7 @@ fn can_manage_user(actor_role: Role, target_role: Role, requested_role: Option<R
     actor_role.can_access_admin_panel()
 }
 
-async fn require_admin(state: &AppState, jar: &CookieJar) -> ApiResult<AuthUser> {
+pub(crate) async fn require_admin(state: &AppState, jar: &CookieJar) -> ApiResult<AuthUser> {
     if state.admin_service.is_none() {
         return Err(ApiError::forbidden("Admin access not available"));
     }
@@ -116,6 +116,26 @@ async fn require_admin(state: &AppState, jar: &CookieJar) -> ApiResult<AuthUser>
     }
 
     Ok(auth_user)
+}
+
+/// 管理动作的审计记录：actor 为执行操作的管理员。
+async fn record_admin_action(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    actor: &AuthUser,
+    action: &str,
+    target: String,
+    detail: String,
+) {
+    crate::audit::record(
+        state,
+        headers,
+        NewAuditLog::success(action)
+            .user(Some(actor.id), actor.username.to_string())
+            .target(target)
+            .detail(detail),
+    )
+    .await;
 }
 
 async fn list_users(
@@ -149,6 +169,7 @@ async fn list_users(
 }
 
 async fn create_user(
+    headers: axum::http::HeaderMap,
     State(state): State<AppState>,
     jar: CookieJar,
     ApiJson(req): ApiJson<CreateUserRequest>,
@@ -173,7 +194,19 @@ async fn create_user(
         role,
     };
 
+    let created_username = create_req.username.clone();
     let user_id = admin_service.create_user(create_req).await?;
+
+    record_admin_action(
+        &state,
+        &headers,
+        &actor,
+        crate::audit::action::USER_CREATE,
+        created_username.clone(),
+        format!("创建用户 {created_username}（角色 {}）", role),
+    )
+    .await;
+
     Ok(Json(CreateUserResponse {
         user_id: user_id.to_string(),
     }))
@@ -200,6 +233,7 @@ async fn get_user(
 }
 
 async fn update_user(
+    headers: axum::http::HeaderMap,
     State(state): State<AppState>,
     jar: CookieJar,
     Path(user_id): Path<String>,
@@ -236,11 +270,28 @@ async fn update_user(
         email: req.email,
     };
 
+    let target_username = current_user.username.to_string();
+    let change = format!(
+        "role={:?} disabled={:?} email={:?}",
+        update_req.role, update_req.disabled, update_req.email
+    );
     admin_service.update_user(&user_id, update_req).await?;
+
+    record_admin_action(
+        &state,
+        &headers,
+        &actor,
+        crate::audit::action::USER_UPDATE,
+        target_username.clone(),
+        format!("更新用户 {target_username}：{change}"),
+    )
+    .await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn revoke_user_sessions(
+    headers: axum::http::HeaderMap,
     State(state): State<AppState>,
     jar: CookieJar,
     Path(user_id): Path<String>,
@@ -264,7 +315,19 @@ async fn revoke_user_sessions(
         ));
     }
 
+    let target_username = current_user.username.to_string();
     admin_service.revoke_user_sessions(&user_id).await?;
+
+    record_admin_action(
+        &state,
+        &headers,
+        &actor,
+        crate::audit::action::USER_SESSIONS_REVOKE,
+        target_username.clone(),
+        format!("强制下线用户 {target_username}"),
+    )
+    .await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 

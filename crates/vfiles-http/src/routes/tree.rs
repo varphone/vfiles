@@ -14,7 +14,7 @@ use crate::{
     error::{ApiError, ApiJson, ApiResult},
     routes::protected_request_context,
 };
-use vfiles_domain::{DomainError, NamespaceId, NormalizedPath, SnapshotId};
+use vfiles_domain::{DomainError, NamespaceId, NewAuditLog, NormalizedPath, SnapshotId};
 
 #[derive(Debug, Default, serde::Deserialize)]
 struct TreeQuery {
@@ -51,6 +51,7 @@ pub fn router() -> Router<AppState> {
 
 pub async fn move_entry(
     axum::extract::State(state): axum::extract::State<AppState>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     ApiJson(req): ApiJson<MoveEntryRequest>,
 ) -> ApiResult<StatusCode> {
@@ -83,12 +84,27 @@ pub async fn move_entry(
         )
         .await?;
 
+    crate::audit::record_for(
+        &state,
+        &headers,
+        &ctx,
+        NewAuditLog::success(crate::audit::action::FILE_MOVE)
+            .target(format!(
+                "{} → {}",
+                source_path.as_str(),
+                destination_path.as_str()
+            ))
+            .detail("移动条目"),
+    )
+    .await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn delete_entry(
     Query(query): Query<DeleteQuery>,
     axum::extract::State(state): axum::extract::State<AppState>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
 ) -> ApiResult<StatusCode> {
     let ctx = protected_request_context(&state, &jar).await?;
@@ -118,6 +134,16 @@ async fn delete_entry(
             &ctx.actor_user_id,
         )
         .await?;
+
+    crate::audit::record_for(
+        &state,
+        &headers,
+        &ctx,
+        NewAuditLog::success(crate::audit::action::FILE_DELETE)
+            .target(normalized_path.as_str())
+            .detail("删除条目"),
+    )
+    .await;
 
     Ok(StatusCode::NO_CONTENT)
 }

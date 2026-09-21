@@ -7,7 +7,7 @@ use vfiles_domain::{
     ChangeType, Entry, EntryKind, EntryVersion, FeatureMatrix, LoginResponse, Snapshot, User,
 };
 
-fn format_timestamp(value: OffsetDateTime) -> String {
+pub(crate) fn format_timestamp(value: OffsetDateTime) -> String {
     value.format(&Rfc3339).unwrap_or_else(|_| value.to_string())
 }
 

@@ -14,7 +14,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use serde::Deserialize;
-use vfiles_domain::DomainError;
+use vfiles_domain::{DomainError, NewAuditLog};
 
 #[derive(Debug, Deserialize)]
 struct DownloadQuery {
@@ -70,6 +70,16 @@ async fn download_file(
         .open_file(&ctx.namespace_id, &path, query.commit.as_deref())
         .await?;
 
+    crate::audit::record_for(
+        &state,
+        &headers,
+        &ctx,
+        NewAuditLog::success(crate::audit::action::FILE_DOWNLOAD)
+            .target(path.as_str())
+            .detail("下载文件"),
+    )
+    .await;
+
     streaming_file_response(
         file.reader,
         &headers,
@@ -82,6 +92,7 @@ async fn download_file(
 
 async fn download_folder(
     State(state): State<AppState>,
+    headers: HeaderMap,
     jar: CookieJar,
     Query(query): Query<DownloadQuery>,
 ) -> ApiResult<Response> {
@@ -96,6 +107,16 @@ async fn download_folder(
         .workspace_service
         .download_directory_archive(&ctx.namespace_id, &path, query.commit.as_deref())
         .await?;
+
+    crate::audit::record_for(
+        &state,
+        &headers,
+        &ctx,
+        NewAuditLog::success(crate::audit::action::FILE_DOWNLOAD)
+            .target(path.as_str())
+            .detail("下载目录（打包）"),
+    )
+    .await;
 
     build_archive_response(&archive.filename, archive.bytes)
 }

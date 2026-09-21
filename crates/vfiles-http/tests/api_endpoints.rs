@@ -271,6 +271,9 @@ impl TestApp {
             namespace_repo: Arc::new(namespace_repo),
             entry_repo: Arc::new(entry_repo),
             favorite_repo: Arc::new(vfiles_infra_sqlite::SqliteFavoriteRepo::new(pool.clone())),
+            audit_service: vfiles_app::AuditService::new(
+                vfiles_infra_sqlite::SqliteAuditLogRepo::new(pool.clone()),
+            ),
             snapshot_repo: Arc::new(snapshot_repo),
             blob_store: Arc::new(blob_store),
             upload_store: Arc::new(upload_store),
@@ -2394,6 +2397,146 @@ async fn share_creation_uses_configured_public_base_url() {
     assert_eq!(
         share_payload["share_url"],
         Value::String(format!("http://example.test:4242/s/{}", code))
+    );
+}
+
+/// 审计日志：登录/上传/下载都会被记录，只有管理员可读，且接口不提供修改入口。
+#[tokio::test]
+async fn audit_log_records_key_actions_and_is_admin_only() {
+    let app = TestApp::new().await;
+
+    // 登录（管理员）→ 上传 → 下载
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+    app.upload_version("docs", "审计.txt", b"audit\n", "seed")
+        .await;
+
+    let download = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/download?path=docs/审计.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(download.status(), StatusCode::OK);
+
+    // 非管理员不可访问
+    app.register_user("auditor", "viewer@example.com", "viewer-password")
+        .await;
+    let viewer_cookie = app.login_cookie("auditor", "viewer-password").await;
+    let forbidden = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/audit/logs")
+                .body(Body::empty())
+                .expect("request should build"),
+            &viewer_cookie,
+        )
+        .await;
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+
+    // 管理员可读，并包含三类动作
+    let list = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/audit/logs?limit=200")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(list.status(), StatusCode::OK);
+    let payload = response_json(list).await;
+    let items = payload["items"]
+        .as_array()
+        .expect("audit items should be an array");
+    let actions: Vec<&str> = items
+        .iter()
+        .filter_map(|item| item["action"].as_str())
+        .collect();
+    assert!(
+        actions.contains(&"login.success"),
+        "应记录登录成功: {actions:?}"
+    );
+    assert!(actions.contains(&"file.upload"), "应记录上传: {actions:?}");
+    assert!(
+        actions.contains(&"file.download"),
+        "应记录下载: {actions:?}"
+    );
+
+    let download_entry = items
+        .iter()
+        .find(|item| item["action"] == "file.download")
+        .expect("download entry should exist");
+    assert_eq!(download_entry["target"], "docs/审计.txt");
+    assert_eq!(download_entry["result"], "success");
+    assert_eq!(download_entry["username"], "admin");
+
+    // 失败登录同样入库
+    let failed = app
+        .json_request(
+            Method::POST,
+            "/api/auth/login",
+            json!({ "username_or_email": "admin", "password": "wrong-password" }),
+        )
+        .await;
+    assert_eq!(failed.status(), StatusCode::UNAUTHORIZED);
+
+    let after = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/audit/logs?result=failure")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let failed_payload = response_json(after).await;
+    let failed_items = failed_payload["items"]
+        .as_array()
+        .expect("audit items should be an array");
+    assert_eq!(
+        failed_items.len(),
+        1,
+        "应只有一条失败记录: {failed_payload:?}"
+    );
+    assert_eq!(failed_items[0]["action"], "login.failure");
+    assert_eq!(failed_items[0]["username"], "admin");
+
+    // 动作列表接口用于前端筛选
+    let actions_response = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/audit/actions")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let action_names = response_json(actions_response).await;
+    let action_names = action_names.as_array().expect("actions should be an array");
+    assert!(
+        action_names.iter().any(|value| value == "file.upload"),
+        "动作列表应包含 file.upload: {action_names:?}"
+    );
+
+    // 只读接口：不存在删除/修改入口
+    let delete_attempt = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/audit/logs")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert!(
+        delete_attempt.status() == StatusCode::METHOD_NOT_ALLOWED
+            || delete_attempt.status() == StatusCode::NOT_FOUND,
+        "审计日志不应提供删除入口，实际状态: {}",
+        delete_attempt.status()
     );
 }
 

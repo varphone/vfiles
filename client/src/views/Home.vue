@@ -144,6 +144,15 @@
                     </router-link>
 
                     <router-link
+                      v-if="auth.enabled && auth.user?.role === 'admin'"
+                      class="dropdown-item"
+                      to="/admin/audit"
+                      @click="closeAccountMenus"
+                    >
+                      审计日志
+                    </router-link>
+
+                    <router-link
                       v-if="auth.enabled && !auth.user"
                       class="dropdown-item"
                       to="/login"

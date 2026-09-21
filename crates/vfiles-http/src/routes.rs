@@ -11,6 +11,7 @@ use vfiles_app::NamespaceService;
 use vfiles_domain::{AuthUser, DomainError, NamespaceId, UserId};
 
 pub mod admin;
+pub mod audit;
 pub mod auth;
 pub mod content;
 pub mod download;
@@ -31,6 +32,8 @@ pub mod upload;
 pub(crate) struct RequestContext {
     pub namespace_id: NamespaceId,
     pub actor_user_id: UserId,
+    /// 已认证用户的用户名（用于审计日志快照）；未启用认证时为 `None`。
+    pub username: Option<String>,
 }
 
 pub(crate) async fn request_context(
@@ -123,10 +126,14 @@ async fn request_context_from_auth_user(
         .as_ref()
         .map(|auth_user| auth_user.id)
         .unwrap_or(state.default_actor_user_id);
+    let username = auth_user
+        .as_ref()
+        .map(|auth_user| auth_user.username.to_string());
 
     Ok(RequestContext {
         namespace_id,
         actor_user_id,
+        username,
     })
 }
 
@@ -151,6 +158,7 @@ pub fn api_router() -> Router<AppState> {
         .nest("/download", download::router())
         .nest("/share", share::router())
         .nest("/admin", admin::router())
+        .nest("/audit", audit::router())
         .route("/health", get(health::health_check))
         .route("/ready", get(health::readiness_check))
 }

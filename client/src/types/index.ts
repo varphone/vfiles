@@ -35,6 +35,38 @@ export interface CategoryUsage {
   file_count: number;
 }
 
+/** 审计日志条目（GET /api/audit/logs，只读）。 */
+export interface AuditLogEntry {
+  id: string;
+  created_at: string;
+  user_id: string | null;
+  username: string;
+  action: string;
+  result: "success" | "failure";
+  target: string | null;
+  ip: string | null;
+  device: string | null;
+  user_agent: string | null;
+  detail: string | null;
+}
+
+export interface AuditLogPage {
+  items: AuditLogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AuditLogQueryParams {
+  keyword?: string;
+  action?: string;
+  result?: "success" | "failure" | "";
+  since?: string;
+  until?: string;
+  limit?: number;
+  offset?: number;
+}
+
 /** 分享链接（GET /api/share/shares）。 */
 export interface ShareLink {
   id: string;

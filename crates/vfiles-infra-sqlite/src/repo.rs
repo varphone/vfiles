@@ -1905,6 +1905,186 @@ impl FavoriteRepo for SqliteFavoriteRepo {
 }
 
 #[derive(Debug)]
+/// 审计日志仓储：只追加、只查询。表的触发器会拒绝任何 UPDATE/DELETE。
+#[derive(Clone)]
+pub struct SqliteAuditLogRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteAuditLogRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct AuditLogRow {
+    id: String,
+    created_at: String,
+    user_id: Option<String>,
+    username: String,
+    action: String,
+    result: String,
+    target: Option<String>,
+    ip: Option<String>,
+    user_agent: Option<String>,
+    device: Option<String>,
+    detail: Option<String>,
+}
+
+fn parse_audit_row(row: AuditLogRow) -> DomainResult<AuditLog> {
+    let created_at = parse_timestamp(&row.created_at)?;
+    let user_id = match row.user_id {
+        Some(raw) => Some(UserId::from_uuid(uuid::Uuid::parse_str(&raw).map_err(
+            |e| DomainError::Internal {
+                message: format!("Invalid audit user id: {e}"),
+            },
+        )?)),
+        None => None,
+    };
+
+    Ok(AuditLog {
+        id: row.id,
+        created_at,
+        user_id,
+        username: row.username,
+        action: row.action,
+        result: AuditResult::from_sql(&row.result),
+        target: row.target,
+        ip: row.ip,
+        user_agent: row.user_agent,
+        device: row.device,
+        detail: row.detail,
+    })
+}
+
+#[async_trait::async_trait]
+impl AuditLogRepo for SqliteAuditLogRepo {
+    async fn append(&self, entry: &NewAuditLog) -> DomainResult<()> {
+        let created_at = time::OffsetDateTime::now_utc();
+
+        sqlx::query(
+            r#"
+            INSERT INTO audit_logs (
+                id, created_at, user_id, username, action, result,
+                target, ip, user_agent, device, detail
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(created_at)
+        .bind(entry.user_id.as_ref().map(|id| id.to_string()))
+        .bind(&entry.username)
+        .bind(&entry.action)
+        .bind(entry.result.as_str())
+        .bind(&entry.target)
+        .bind(&entry.ip)
+        .bind(&entry.user_agent)
+        .bind(&entry.device)
+        .bind(&entry.detail)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to append audit log: {e}"),
+        })?;
+
+        Ok(())
+    }
+
+    async fn list(&self, query: &AuditLogQuery) -> DomainResult<AuditLogPage> {
+        // 条件与绑定值保持一致顺序，供 count 与分页查询复用
+        let keyword = query
+            .keyword
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("%{value}%"));
+        let action = query
+            .action
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let result = query.result.map(|value| value.as_str().to_string());
+        let since = query.since;
+        let until = query.until;
+
+        // sqlx 要求 SQL 为静态字符串（避免拼接注入），因此两处各写一遍完整语句
+        let total: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*) FROM audit_logs
+            WHERE (?1 IS NULL OR username LIKE ?1 OR ip LIKE ?1)
+              AND (?2 IS NULL OR action = ?2)
+              AND (?3 IS NULL OR result = ?3)
+              AND (?4 IS NULL OR created_at >= ?4)
+              AND (?5 IS NULL OR created_at < ?5)
+            "#,
+        )
+        .bind(keyword.as_deref())
+        .bind(action.as_deref())
+        .bind(result.as_deref())
+        .bind(since)
+        .bind(until)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to count audit logs: {e}"),
+        })?;
+
+        let limit = query.limit.clamp(1, 500) as i64;
+        let offset = query.offset as i64;
+
+        let rows: Vec<AuditLogRow> = sqlx::query_as(
+            r#"
+            SELECT id, created_at, user_id, username, action, result,
+                   target, ip, user_agent, device, detail
+            FROM audit_logs
+            WHERE (?1 IS NULL OR username LIKE ?1 OR ip LIKE ?1)
+              AND (?2 IS NULL OR action = ?2)
+              AND (?3 IS NULL OR result = ?3)
+              AND (?4 IS NULL OR created_at >= ?4)
+              AND (?5 IS NULL OR created_at < ?5)
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?6 OFFSET ?7
+            "#,
+        )
+        .bind(keyword.as_deref())
+        .bind(action.as_deref())
+        .bind(result.as_deref())
+        .bind(since)
+        .bind(until)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list audit logs: {e}"),
+        })?;
+
+        let items = rows
+            .into_iter()
+            .map(parse_audit_row)
+            .collect::<DomainResult<Vec<_>>>()?;
+
+        Ok(AuditLogPage {
+            items,
+            total: total.max(0) as u64,
+        })
+    }
+
+    async fn distinct_actions(&self) -> DomainResult<Vec<String>> {
+        let actions: Vec<String> =
+            sqlx::query_scalar("SELECT DISTINCT action FROM audit_logs ORDER BY action ASC")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to list audit actions: {e}"),
+                })?;
+
+        Ok(actions)
+    }
+}
+
 pub struct SqliteSnapshotRepo {
     pool: SqlitePool,
 }
@@ -4428,6 +4608,199 @@ mod snapshot_repo_tests {
         assert_eq!(snapshot_nos, (1..=task_count as u32).collect::<Vec<_>>());
 
         cleanup_db(pool, db_path).await;
+    }
+}
+
+#[cfg(test)]
+mod audit_log_tests {
+    use super::*;
+    use crate::{SqliteMigrations, SqlitePoolFactory};
+    use camino::Utf8PathBuf;
+
+    async fn setup() -> (Utf8PathBuf, SqlitePool, SqliteAuditLogRepo) {
+        let db_path = Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("vfiles-audit-test-{}.db", uuid::Uuid::new_v4())),
+        )
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+        let repo = SqliteAuditLogRepo::new(pool.clone());
+        (db_path, pool, repo)
+    }
+
+    fn sample(action: &str, username: &str) -> NewAuditLog {
+        NewAuditLog::success(action).user(None, username).request(
+            Some("203.0.113.7".to_string()),
+            Some("Mozilla/5.0".to_string()),
+        )
+    }
+
+    /// 数据库触发器必须拒绝修改与删除（「只读、不可删除、不可修改」的硬保证）。
+    #[tokio::test]
+    async fn audit_logs_cannot_be_updated_or_deleted() {
+        let (db_path, pool, repo) = setup().await;
+        repo.append(&sample("login.success", "alice"))
+            .await
+            .expect("append should succeed");
+
+        let update = sqlx::query("UPDATE audit_logs SET username = 'mallory'")
+            .execute(&pool)
+            .await;
+        assert!(update.is_err(), "UPDATE 必须被触发器拒绝");
+
+        let delete = sqlx::query("DELETE FROM audit_logs").execute(&pool).await;
+        assert!(delete.is_err(), "DELETE 必须被触发器拒绝");
+
+        let page = repo
+            .list(&AuditLogQuery {
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .expect("list should succeed");
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].username, "alice", "原记录不应被改动");
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn list_filters_by_keyword_action_result_and_time() {
+        let (db_path, pool, repo) = setup().await;
+        repo.append(&sample("login.success", "alice"))
+            .await
+            .unwrap();
+        repo.append(&sample("file.upload", "bob")).await.unwrap();
+        repo.append(
+            &NewAuditLog::failure("login.failure")
+                .user(None, "carol")
+                .request(Some("198.51.100.9".to_string()), None),
+        )
+        .await
+        .unwrap();
+
+        // 关键字命中用户名或 IP
+        let by_user = repo
+            .list(&AuditLogQuery {
+                keyword: Some("bob".to_string()),
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(by_user.total, 1);
+        assert_eq!(by_user.items[0].action, "file.upload");
+
+        let by_ip = repo
+            .list(&AuditLogQuery {
+                keyword: Some("198.51.100".to_string()),
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(by_ip.total, 1);
+        assert_eq!(by_ip.items[0].username, "carol");
+
+        // 动作与结果筛选
+        let by_action = repo
+            .list(&AuditLogQuery {
+                action: Some("login.success".to_string()),
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(by_action.total, 1);
+
+        let failures = repo
+            .list(&AuditLogQuery {
+                result: Some(AuditResult::Failure),
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(failures.total, 1);
+        assert_eq!(failures.items[0].result, AuditResult::Failure);
+
+        // 时间范围：since 设为未来则查不到
+        let future = repo
+            .list(&AuditLogQuery {
+                since: Some(time::OffsetDateTime::now_utc() + time::Duration::hours(1)),
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(future.total, 0);
+
+        // 分页：倒序返回，limit/offset 生效
+        let first_page = repo
+            .list(&AuditLogQuery {
+                limit: 2,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(first_page.total, 3);
+        assert_eq!(first_page.items.len(), 2);
+
+        let second_page = repo
+            .list(&AuditLogQuery {
+                limit: 2,
+                offset: 2,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(second_page.items.len(), 1);
+
+        let actions = repo.distinct_actions().await.unwrap();
+        assert_eq!(
+            actions,
+            vec![
+                "file.upload".to_string(),
+                "login.failure".to_string(),
+                "login.success".to_string()
+            ]
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn device_is_described_from_user_agent() {
+        let (db_path, pool, repo) = setup().await;
+        repo.append(
+            &NewAuditLog::success("login.success")
+                .user(None, "alice")
+                .request(
+                    Some("203.0.113.7".to_string()),
+                    Some("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1".to_string()),
+                ),
+        )
+        .await
+        .unwrap();
+
+        let page = repo
+            .list(&AuditLogQuery {
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(page.items[0].device.as_deref(), Some("iPhone · Safari"));
+        assert_eq!(page.items[0].ip.as_deref(), Some("203.0.113.7"));
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
     }
 }
 

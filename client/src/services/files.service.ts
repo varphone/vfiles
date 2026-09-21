@@ -2,6 +2,8 @@ import { apiService } from "./api.service";
 import { fetchWithRetry } from "./fetch-retry";
 import { extractErrorPayload, localizeApiError } from "../utils/apiErrors";
 import type {
+  AuditLogPage,
+  AuditLogQueryParams,
   ContentMatch,
   FavoriteEntry,
   FileInfo,
@@ -377,6 +379,36 @@ export const filesService = {
         ? payload.recent_files
         : [],
     };
+  },
+
+  /**
+   * 审计日志（仅管理员可读；服务端只提供查询，没有修改/删除接口）。
+   */
+  async listAuditLogs(params: AuditLogQueryParams = {}): Promise<AuditLogPage> {
+    // 注意：apiService.get(url, params) 的第二参数就是查询参数本身（不是 axios 配置）
+    const response = await apiService.get<AuditLogPage>("/audit/logs", {
+      keyword: params.keyword || undefined,
+      action: params.action || undefined,
+      result: params.result || undefined,
+      since: params.since || undefined,
+      until: params.until || undefined,
+      limit: params.limit,
+      offset: params.offset,
+    });
+    const payload = (response as any)?.data ?? response;
+    return {
+      items: Array.isArray(payload?.items) ? payload.items : [],
+      total: Number(payload?.total ?? 0),
+      limit: Number(payload?.limit ?? 0),
+      offset: Number(payload?.offset ?? 0),
+    };
+  },
+
+  /** 审计日志中出现过的动作（用于筛选下拉）。 */
+  async listAuditActions(): Promise<string[]> {
+    const response = await apiService.get<string[]>("/audit/actions");
+    const payload = (response as any)?.data ?? response;
+    return Array.isArray(payload) ? payload : [];
   },
 
   /** 列出当前用户创建的分享链接（含被分享条目的名称/路径/类型）。 */

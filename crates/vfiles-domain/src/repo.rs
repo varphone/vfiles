@@ -234,6 +234,19 @@ pub trait FavoriteRepo {
     async fn contains(&self, namespace_id: &NamespaceId, entry_id: &EntryId) -> DomainResult<bool>;
 }
 
+/// 审计日志仓储：只提供追加与查询，刻意不提供更新/删除。
+#[async_trait::async_trait]
+pub trait AuditLogRepo {
+    /// 追加一条日志（数据库触发器保证不可修改/删除）。
+    async fn append(&self, entry: &NewAuditLog) -> DomainResult<()>;
+
+    /// 按条件分页查询（按时间倒序）。
+    async fn list(&self, query: &AuditLogQuery) -> DomainResult<AuditLogPage>;
+
+    /// 可选的动作列表（用于前端筛选下拉）。
+    async fn distinct_actions(&self) -> DomainResult<Vec<String>>;
+}
+
 #[async_trait::async_trait]
 pub trait SnapshotRepo {
     async fn create_snapshot(

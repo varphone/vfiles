@@ -19,7 +19,8 @@ use vfiles_ftp::{
 use vfiles_http::{AppState, FrontendAssets, build_router, middleware::LoginAttemptLimiter};
 use vfiles_infra_fs::FsStorageBootstrap;
 use vfiles_infra_sqlite::{
-    SqliteFavoriteRepo, SqliteHealthProbe, SqliteMigrations, SqlitePoolFactory, repo::*,
+    SqliteAuditLogRepo, SqliteFavoriteRepo, SqliteHealthProbe, SqliteMigrations, SqlitePoolFactory,
+    repo::*,
 };
 
 #[derive(Debug, Parser)]
@@ -1123,6 +1124,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         namespace_repo: Arc::new(namespace_repo),
         entry_repo: Arc::clone(&entry_repo_arc),
         favorite_repo: std::sync::Arc::new(favorite_repo),
+        audit_service: vfiles_app::AuditService::new(SqliteAuditLogRepo::new(pool.clone())),
         snapshot_repo: Arc::clone(&snapshot_repo_arc),
         blob_store: Arc::clone(&blob_store_arc),
         upload_store: std::sync::Arc::new(upload_store),

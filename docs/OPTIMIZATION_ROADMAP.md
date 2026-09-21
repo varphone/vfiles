@@ -1960,6 +1960,43 @@
 - 测试：`FileDetailsPanel` 新增 4 例（摘要内容、列表上限与剩余数量、批量事件、
   单条回退），`FileItem` 新增 1 例（复选框与选中态同步），前端 55 文件 / 373 用例通过。
 
+### 3.5 审计日志（round 100，功能，用户请求）
+
+- 需求：记录用户登录、上传、下载等重要操作，包含访问 IP、设备类型，用于追溯；
+  **只读、不可删除、不可修改**。
+- 实现：
+  1. **迁移 0004**：`audit_logs` 表（时间、user_id + username 快照、action、result、
+     target、ip、user_agent、device、detail）+ 三个索引；两个触发器
+     `audit_logs_block_update` / `audit_logs_block_delete` 对任何 UPDATE/DELETE 抛错，
+     从数据库层保证只追加；
+  2. **领域**：`AuditLog` / `NewAuditLog`（builder）/ `AuditResult` / `AuditLogQuery` /
+     `AuditLogPage`，以及 `AuditLogRepo`（只有 `append` / `list` / `distinct_actions`，
+     刻意不提供修改与删除）；`describe_device()` 把 UA 归类为「平台 · 客户端」；
+  3. **应用**：`AuditService`，写入「尽力而为」（失败只告警，不影响登录/上传等主流程）；
+  4. **HTTP**：`crates/vfiles-http/src/audit.rs` 统一填 IP（`x-forwarded-for` 等）与 UA；
+     在登录（成功/失败/限流）、上传（分片完成与直传）、下载（文件与目录打包）、
+     分享下载、删除、移动、创建/停止分享、用户创建/更新/强制下线处埋点；
+     `GET /api/audit/logs` 与 `/api/audit/actions` 仅管理员（复用 `require_admin`）；
+  5. **前端**：新增 `/admin/audit` 页面（只读声明、关键字/动作/结果筛选、分页、
+     时间/用户/动作/对象/结果/IP/设备列），账号菜单新增「审计日志」入口。
+- **验证中发现并修复的两个真实问题**：
+  1. `apiService.get(url, params)` 的第二参数就是查询参数，首版按 axios 习惯写成
+     `{ params: {...} }`，导致筛选条件根本没发给服务端（页面永远显示全部记录）；
+     浏览器验证当场暴露，随后补了断言「必须以扁平参数调用」的回归用例；
+  2. 分片上传的完成接口最初把用户写死为空，上传记录显示「匿名」；
+     改为取请求上下文（带用户名快照）后正确记为 `admin`。
+- 验证：
+  - **Rust**：仓储用例断言 `UPDATE`/`DELETE` 被触发器拒绝且原记录不变；
+     筛选（关键字/IP/动作/结果/时间/分页）与 UA 解析（iPhone · Safari）；
+     接口用例覆盖「登录/上传/下载被记录」「非管理员 403」「DELETE 返回 405」；
+  - **浏览器**（1440×900，伪造 `x-forwarded-for` 与 Chrome UA）：审计页显示
+     「共 7 条记录」，动作 下载/上传/登录成功/登录失败，用户 `admin`、
+     IP `203.0.113.7`、设备「Windows · Chrome」、对象「审计.txt / audit-upload.txt」、
+     结果「成功/失败」；按结果筛选「失败」后只剩 2 条登录失败记录；
+     `DELETE`/`PUT /api/audit/logs` 均返回 405；无控制台错误（除刻意制造的 401/405）。
+- 测试：Rust 新增 3 个仓储用例 + 1 个接口用例；前端新增 `AuditLogs` 6 例与
+  服务层 2 例（扁平参数回归、空响应归一化），前端 56 文件 / 379 用例、19 个 Rust 目标全绿。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）

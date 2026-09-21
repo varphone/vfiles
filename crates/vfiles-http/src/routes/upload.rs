@@ -15,7 +15,7 @@ use crate::{
     error::{ApiError, ApiJson, ApiResult},
     routes::protected_request_context,
 };
-use vfiles_domain::{DomainError, NormalizedPath, UploadId};
+use vfiles_domain::{DomainError, NewAuditLog, NormalizedPath, UploadId};
 
 #[derive(Debug, Deserialize)]
 struct CompleteUploadRequest {
@@ -162,6 +162,7 @@ async fn upload_chunk(
 
 async fn complete_upload(
     jar: CookieJar,
+    headers: axum::http::HeaderMap,
     axum::extract::Path(upload_id_str): axum::extract::Path<String>,
     axum::extract::State(state): axum::extract::State<AppState>,
     req: Option<Json<CompleteUploadRequest>>,
@@ -176,6 +177,8 @@ async fn complete_upload(
         })?;
 
     ensure_upload_owner(&state, &jar, &upload_id).await?;
+    // 取上下文用于审计（带用户名快照）
+    let ctx = crate::routes::protected_request_context(&state, &jar).await?;
 
     tracing::info!("Completing upload session: {}", upload_id);
     let message = req.and_then(|Json(body)| body.message);
@@ -184,6 +187,19 @@ async fn complete_upload(
         .complete_upload(&upload_id, None, message.as_deref())
         .await?;
     tracing::info!("Upload session {} completed successfully", upload_id);
+
+    crate::audit::record_for(
+        &state,
+        &headers,
+        &ctx,
+        NewAuditLog::success(crate::audit::action::FILE_UPLOAD)
+            .target(completed.entry.path_norm.as_str())
+            .detail(format!(
+                "上传文件（{} 字节）",
+                completed.version.size_bytes.as_u64()
+            )),
+    )
+    .await;
 
     Ok(Json(serde_json::json!({
         "upload_id": upload_id.to_string(),
@@ -196,6 +212,7 @@ async fn complete_upload(
 async fn upload_file(
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
+    headers: axum::http::HeaderMap,
     multipart: Multipart,
 ) -> ApiResult<Json<serde_json::Value>> {
     let ctx = protected_request_context(&state, &jar).await?;
@@ -207,6 +224,29 @@ async fn upload_file(
 
     let result = process_single_upload(&state, &ctx, multipart, temp_path.as_std_path()).await;
     let _ = tokio::fs::remove_file(temp_path.as_std_path()).await;
+
+    // 成功时才记录（失败原因由错误处理链路返回给客户端）
+    if let Ok(Json(payload)) = &result {
+        let path = payload
+            .get("path")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let size = payload
+            .get("size")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0);
+        crate::audit::record_for(
+            &state,
+            &headers,
+            &ctx,
+            NewAuditLog::success(crate::audit::action::FILE_UPLOAD)
+                .target(path)
+                .detail(format!("上传文件（{size} 字节）")),
+        )
+        .await;
+    }
+
     result
 }
 
