@@ -56,6 +56,14 @@ export const useAppStore = defineStore("app", () => {
     unreadNotifications.value = 0;
   }
 
+  /** 从历史里移除单条（toast 若还在也一并移除）。 */
+  function removeNotificationFromHistory(id: number) {
+    notificationHistory.value = notificationHistory.value.filter(
+      (item) => item.id !== id,
+    );
+    removeNotification(id);
+  }
+
   /** 清空通知历史。 */
   function clearNotificationHistory() {
     notificationHistory.value = [];
@@ -102,6 +110,7 @@ export const useAppStore = defineStore("app", () => {
     notificationHistory,
     unreadNotifications,
     markNotificationsRead,
+    removeNotificationFromHistory,
     clearNotificationHistory,
     createDirectoryRequests,
     requestCreateDirectory,

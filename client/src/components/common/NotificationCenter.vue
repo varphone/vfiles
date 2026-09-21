@@ -40,6 +40,26 @@
           </button>
         </header>
 
+        <div
+          v-if="app.notificationHistory.length > 0"
+          class="notification-center-filters"
+          role="tablist"
+          aria-label="按类型筛选通知"
+        >
+          <button
+            v-for="filter in filters"
+            :key="filter.value"
+            class="notification-center-filter"
+            :class="{ 'is-active': activeFilter === filter.value }"
+            type="button"
+            role="tab"
+            :aria-selected="activeFilter === filter.value ? 'true' : 'false'"
+            @click="activeFilter = filter.value"
+          >
+            {{ filter.label }}
+          </button>
+        </div>
+
         <p
           v-if="app.notificationHistory.length === 0"
           class="notification-center-empty"
@@ -47,9 +67,16 @@
           暂无通知
         </p>
 
+        <p
+          v-else-if="visibleHistory.length === 0"
+          class="notification-center-empty"
+        >
+          没有{{ activeFilterLabel }}通知
+        </p>
+
         <ul v-else class="notification-center-list">
           <li
-            v-for="item in app.notificationHistory"
+            v-for="item in visibleHistory"
             :key="item.id"
             class="notification-center-item"
             :class="`is-${item.type}`"
@@ -69,6 +96,15 @@
                 {{ formatRelativeDate(new Date(item.createdAt).toISOString()) }}
               </p>
             </div>
+            <button
+              class="notification-center-remove"
+              type="button"
+              :aria-label="`移除通知：${item.message}`"
+              :title="`移除通知：${item.message}`"
+              @click="app.removeNotificationFromHistory(item.id)"
+            >
+              <IconX :size="14" />
+            </button>
           </li>
         </ul>
       </div>
@@ -84,6 +120,7 @@ import {
   IconBell,
   IconCircleCheck,
   IconInfoCircle,
+  IconX,
 } from "@tabler/icons-vue";
 import { useAppStore } from "../../stores/app.store";
 import { formatRelativeDate } from "../../utils/filePresentation";
@@ -97,6 +134,30 @@ import { formatRelativeDate } from "../../utils/filePresentation";
 const app = useAppStore();
 const open = ref(false);
 const rootRef = ref<HTMLElement | null>(null);
+
+type NotificationFilter = "all" | "success" | "error" | "warning" | "info";
+
+const filters: { value: NotificationFilter; label: string }[] = [
+  { value: "all", label: "全部" },
+  { value: "success", label: "成功" },
+  { value: "error", label: "失败" },
+  { value: "warning", label: "警告" },
+  { value: "info", label: "信息" },
+];
+
+const activeFilter = ref<NotificationFilter>("all");
+
+const visibleHistory = computed(() =>
+  activeFilter.value === "all"
+    ? app.notificationHistory
+    : app.notificationHistory.filter(
+        (item) => item.type === activeFilter.value,
+      ),
+);
+
+const activeFilterLabel = computed(
+  () => filters.find((item) => item.value === activeFilter.value)?.label ?? "",
+);
 
 const bellTitle = computed(() =>
   app.unreadNotifications > 0
@@ -198,6 +259,63 @@ onBeforeUnmount(() => {
 
 .notification-center-clear:hover {
   text-decoration: underline;
+}
+
+.notification-center-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  padding: 0.3rem 0.45rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+}
+
+.notification-center-filter {
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: 999px;
+  background: var(--vf-surface);
+  color: var(--vf-text-muted);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.notification-center-filter:hover {
+  background: var(--vf-surface-hover);
+}
+
+.notification-center-filter.is-active {
+  border-color: var(--vf-accent);
+  background: var(--vf-accent-soft);
+  color: var(--vf-accent-strong);
+  font-weight: 600;
+}
+
+/* 单条移除：hover 时出现，避免平时过于喧闹 */
+.notification-center-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--vf-radius-sm);
+  background: transparent;
+  color: var(--vf-text-subtle);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.notification-center-item:hover .notification-center-remove,
+.notification-center-remove:focus-visible {
+  opacity: 1;
+}
+
+.notification-center-remove:hover {
+  background: var(--vf-surface-hover);
+  color: var(--vf-danger-text);
 }
 
 .notification-center-empty {
