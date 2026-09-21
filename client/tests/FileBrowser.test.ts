@@ -905,6 +905,7 @@ describe("FileBrowser.vue empty and error states", () => {
       shareEnabled: true,
       historyEnabled: true,
       ftpEnabled: false,
+      maxFileSizeBytes: 4 * 1024 * 1024 * 1024,
     };
     await nextTick();
 

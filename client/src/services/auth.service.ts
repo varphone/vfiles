@@ -38,6 +38,8 @@ export interface SessionFeatures {
   historyEnabled: boolean;
   /** 是否启用 FTP 批量导入（决定上传对话框是否展示连接信息）。 */
   ftpEnabled: boolean;
+  /** 单文件大小上限（字节）；0 或未提供表示未知。 */
+  maxFileSizeBytes: number;
 }
 
 export interface SessionBootstrapPayload {
@@ -80,6 +82,9 @@ type RustSessionFeatures = {
   historyEnabled?: boolean;
   ftp_enabled?: boolean;
   ftpEnabled?: boolean;
+  /** 服务端 snake_case 字段。 */
+  max_file_size_bytes?: number;
+  maxFileSizeBytes?: number;
 };
 
 type RustSessionBootstrapResponse = {
@@ -194,6 +199,9 @@ function normalizeSessionFeatures(
       features?.historyEnabled ?? features?.history_enabled,
     ),
     ftpEnabled: Boolean(features?.ftpEnabled ?? features?.ftp_enabled),
+    maxFileSizeBytes: Number(
+      features?.maxFileSizeBytes ?? features?.max_file_size_bytes ?? 0,
+    ),
   };
 }
 

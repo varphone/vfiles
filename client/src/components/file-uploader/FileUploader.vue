@@ -2,6 +2,11 @@
   <div class="file-uploader">
     <DropZone :initial-pick="initialPick" @files="addFiles" />
 
+    <p v-if="maxFileSizeLabel" class="upload-limit-hint">
+      <IconInfoCircle :size="14" />
+      <span>单文件最大 {{ maxFileSizeLabel }}，超出的文件不会开始上传。</span>
+    </p>
+
     <!-- 大批量导入走 FTP 更合适：仅在服务端启用时展示 -->
     <FtpImportHint v-if="ftpEnabled" :target-path="targetPath" />
 
@@ -80,8 +85,14 @@ import { ref, computed } from "vue";
 import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 import { filesService } from "../../services/files.service";
-import { IconBan, IconChecklist, IconRefresh } from "@tabler/icons-vue";
+import {
+  IconBan,
+  IconChecklist,
+  IconInfoCircle,
+  IconRefresh,
+} from "@tabler/icons-vue";
 import ProgressBar from "../common/ProgressBar.vue";
+import { formatSize } from "../../utils/filePresentation";
 import DropZone from "./DropZone.vue";
 import FtpImportHint from "./FtpImportHint.vue";
 import UploadQueue, { type UploadQueueItemView } from "./UploadQueue.vue";
@@ -149,15 +160,33 @@ function defaultUploadMessage(file: File): string {
   return `上传 ${file.name}`;
 }
 
+/** 服务端单文件上限（字节）；0 表示未知。 */
+const maxFileSizeBytes = computed(() =>
+  Number(auth.features?.maxFileSizeBytes ?? 0),
+);
+const maxFileSizeLabel = computed(() =>
+  maxFileSizeBytes.value > 0 ? formatSize(maxFileSizeBytes.value) : "",
+);
+
+/** 超过上限的文件不入队，直接以失败态展示原因（与主流网盘的前置校验一致）。 */
+function isOversized(file: File): boolean {
+  return maxFileSizeBytes.value > 0 && file.size > maxFileSizeBytes.value;
+}
+
 function addFiles(files: File[]) {
-  const added: UploadItem[] = files.map((f) => ({
-    id: nextId++,
-    file: f,
-    message: defaultUploadMessage(f),
-    status: "queued",
-    percent: null,
-    relativePath: (f as any).webkitRelativePath || "",
-  }));
+  const oversizeError = `文件过大，已超过上限（最大 ${maxFileSizeLabel.value}）`;
+  const added: UploadItem[] = files.map((f) => {
+    const oversized = isOversized(f);
+    return {
+      id: nextId++,
+      file: f,
+      message: defaultUploadMessage(f),
+      status: oversized ? "error" : "queued",
+      percent: null,
+      error: oversized ? oversizeError : undefined,
+      relativePath: (f as any).webkitRelativePath || "",
+    };
+  });
   queue.value = [...queue.value, ...added];
 }
 
@@ -185,6 +214,12 @@ function retryItem(id: number) {
   const item = queue.value.find((x) => x.id === id);
   if (!item) return;
   if (item.status !== "error" && item.status !== "canceled") return;
+  if (isOversized(item.file)) {
+    // 上限问题重试也不会成功，保持失败态
+    item.status = "error";
+    item.error = `文件过大，已超过上限（最大 ${maxFileSizeLabel.value}）`;
+    return;
+  }
   item.status = "queued";
   item.error = undefined;
   item.percent = null;
@@ -276,13 +311,14 @@ async function startUpload() {
     }
   }
 
-  // 仅在全部成功（无 error）时触发上层刷新并关闭
+  // 有成功项就通知上层刷新并关闭（失败/超限项留在队列里，可再次重试）
   const hasError = queue.value.some((x) => x.status === "error");
   const hasSuccess = queue.value.some((x) => x.status === "done");
-  if (hasSuccess && !hasError) {
+  if (hasSuccess) {
+    queue.value = queue.value.filter((x) => x.status !== "done");
     emit("upload");
-    queue.value = [];
-  } else if (hasError) {
+  }
+  if (hasError) {
     appStore.error("部分文件上传失败，请检查列表");
   }
 }
@@ -301,6 +337,15 @@ defineExpose({
 </script>
 
 <style scoped>
+.upload-limit-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.6rem 0 0;
+  color: var(--vf-text-subtle);
+  font-size: 0.76rem;
+}
+
 .upload-queue-section {
   display: flex;
   flex-direction: column;

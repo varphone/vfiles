@@ -95,6 +95,8 @@ pub struct FeatureMatrixDto {
     pub history_enabled: bool,
     /// FTP 批量导入是否启用（前端据此展示连接信息）。
     pub ftp_enabled: bool,
+    /// 单文件大小上限（字节）。
+    pub max_file_size_bytes: u64,
 }
 
 impl From<FeatureMatrix> for FeatureMatrixDto {
@@ -107,6 +109,7 @@ impl From<FeatureMatrix> for FeatureMatrixDto {
             share_enabled: matrix.share_enabled,
             history_enabled: matrix.history_enabled,
             ftp_enabled: matrix.ftp_enabled,
+            max_file_size_bytes: matrix.max_file_size_bytes,
         }
     }
 }

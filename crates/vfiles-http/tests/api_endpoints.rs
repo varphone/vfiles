@@ -622,6 +622,7 @@ fn default_features() -> FeatureMatrix {
         share_enabled: true,
         history_enabled: true,
         ftp_enabled: false,
+        max_file_size_bytes: 4 * 1024 * 1024 * 1024,
     }
 }
 

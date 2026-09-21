@@ -51,6 +51,7 @@ function setFeatures(ftpEnabled: boolean) {
     searchContent: false,
     shareEnabled: true,
     historyEnabled: true,
+    maxFileSizeBytes: 4 * 1024 * 1024 * 1024,
     ftpEnabled,
   };
 }

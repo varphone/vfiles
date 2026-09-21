@@ -363,6 +363,10 @@ impl ConfigLoader {
         };
 
         let ftp_enabled = ftp.enabled;
+        // 单文件上限同时用于特性矩阵（前端提示与预校验）与请求限制
+        let max_file_size_bytes = Self::resolve_max_file_size_bytes(
+            Self::env_parse::<u64>(&["VFILES_MAX_FILE_SIZE_MB"])?,
+        );
         let config = AppConfig {
             http: HttpConfig {
                 host,
@@ -402,8 +406,8 @@ impl ConfigLoader {
             },
             limits: LimitsConfig {
                 max_upload_size_bytes: 4_u64 * 1024 * 1024 * 1024, // 4096MB
-                max_file_size_bytes: 4_u64 * 1024 * 1024 * 1024,   // 4096MB
-                upload_chunk_size_bytes: 5 * 1024 * 1024,          // 5MB
+                max_file_size_bytes,
+                upload_chunk_size_bytes: 5 * 1024 * 1024, // 5MB
                 rate_limit_requests_per_minute: 60,
                 thumbnail_cache_max_entries,
                 thumbnail_cache_max_bytes,
@@ -426,10 +430,18 @@ impl ConfigLoader {
                 share_enabled: true,
                 history_enabled: true,
                 ftp_enabled,
+                max_file_size_bytes,
             },
         };
         Self::validate(&config)?;
         Ok(config)
+    }
+
+    /// 单文件上限：`VFILES_MAX_FILE_SIZE_MB`（MB）覆盖默认 4096MB，至少 1MB。
+    fn resolve_max_file_size_bytes(env_mb: Option<u64>) -> u64 {
+        const DEFAULT_MB: u64 = 4096;
+        let mb = env_mb.unwrap_or(DEFAULT_MB).max(1);
+        mb.saturating_mul(1024 * 1024)
     }
 
     /// 解析 FTP 开关：默认开启，但认证关闭时无法安全提供 FTP。
@@ -763,6 +775,23 @@ mod tests {
         assert_eq!(
             config.maintenance.snapshot_keep, 0,
             "默认不裁剪快照，避免静默丢失历史"
+        );
+    }
+
+    #[test]
+    fn test_max_file_size_limit_resolution() {
+        assert_eq!(
+            ConfigLoader::resolve_max_file_size_bytes(None),
+            4096 * 1024 * 1024
+        );
+        assert_eq!(
+            ConfigLoader::resolve_max_file_size_bytes(Some(64)),
+            64 * 1024 * 1024
+        );
+        // 0 或异常小的值按 1MB 兜底，避免把服务锁死
+        assert_eq!(
+            ConfigLoader::resolve_max_file_size_bytes(Some(0)),
+            1024 * 1024
         );
     }
 

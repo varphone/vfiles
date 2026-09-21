@@ -122,6 +122,8 @@ pub struct FeatureMatrix {
     pub history_enabled: bool,
     /// 是否启用 FTP(S) 批量导入（前端据此展示连接信息入口）。
     pub ftp_enabled: bool,
+    /// 单文件大小上限（字节）；前端据此提示并在选择文件时先做一次校验。
+    pub max_file_size_bytes: u64,
 }
 
 impl FeatureMatrix {
