@@ -25,6 +25,7 @@ pub struct AppConfig {
     pub search: SearchConfig,
     pub limits: LimitsConfig,
     pub maintenance: MaintenanceConfig,
+    pub ftp: FtpConfig,
     pub features: FeatureMatrix,
 }
 
@@ -94,6 +95,37 @@ pub struct MailConfig {
 pub struct SearchConfig {
     pub enabled: bool,
     pub max_results: usize,
+}
+
+/// FTP 批量导入配置。
+///
+/// 默认关闭：FTP 是明文协议，需要运维显式开启（并推荐同时配置 FTPS）。
+#[derive(Debug, Clone)]
+pub struct FtpConfig {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+    /// 被动模式端口段（含两端）。
+    pub passive_ports: (u16, u16),
+    /// 对外通告的被动地址（NAT/端口映射场景），支持 IP 或域名。
+    pub passive_host: Option<String>,
+    pub max_connections: u32,
+    pub idle_timeout_seconds: u64,
+    /// 允许登录的角色（空表示不限制）。
+    pub allowed_roles: Vec<String>,
+    pub tls_cert: Option<String>,
+    pub tls_key: Option<String>,
+    pub tls_required: bool,
+    /// 快照提交策略：`batch`（默认）/ `per-file` / `off`。
+    pub snapshot_mode: String,
+    /// `batch` 模式下每累积多少个文件提交一次快照。
+    pub snapshot_flush_files: u32,
+}
+
+impl FtpConfig {
+    pub fn bind_address(&self) -> String {
+        format!("{}:{}", self.host, self.port)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -292,6 +324,40 @@ impl ConfigLoader {
         let thumbnail_avif =
             Self::env_parse_bool(&["VFILES_THUMBNAIL_AVIF", "THUMBNAIL_AVIF"])?.unwrap_or(false);
 
+        let ftp = FtpConfig {
+            enabled: Self::env_parse_bool(&["VFILES_FTP_ENABLED", "FTP_ENABLED"])?.unwrap_or(false),
+            host: Self::env_string(&["VFILES_FTP_HOST"]).unwrap_or_else(|| "0.0.0.0".to_string()),
+            port: Self::env_parse::<u16>(&["VFILES_FTP_PORT"])?.unwrap_or(2121),
+            passive_ports: {
+                let raw = Self::env_string(&["VFILES_FTP_PASSIVE_PORTS"])
+                    .unwrap_or_else(|| "50000-50100".to_string());
+                Self::parse_port_range(&raw)?
+            },
+            passive_host: Self::env_string(&["VFILES_FTP_PASSIVE_HOST"]),
+            max_connections: Self::env_parse::<u32>(&["VFILES_FTP_MAX_CONNECTIONS"])?
+                .unwrap_or(8)
+                .max(1),
+            idle_timeout_seconds: Self::env_parse::<u64>(&["VFILES_FTP_IDLE_TIMEOUT_SECONDS"])?
+                .unwrap_or(300)
+                .max(30),
+            allowed_roles: Self::env_string(&["VFILES_FTP_ALLOWED_ROLES"])
+                .unwrap_or_else(|| "admin,manager".to_string())
+                .split(',')
+                .map(|value| value.trim().to_ascii_lowercase())
+                .filter(|value| !value.is_empty())
+                .collect(),
+            tls_cert: Self::env_string(&["VFILES_FTP_TLS_CERT"]),
+            tls_key: Self::env_string(&["VFILES_FTP_TLS_KEY"]),
+            tls_required: Self::env_parse_bool(&["VFILES_FTP_TLS_REQUIRED"])?.unwrap_or(false),
+            snapshot_mode: Self::env_string(&["VFILES_FTP_SNAPSHOT_MODE"])
+                .unwrap_or_else(|| "batch".to_string())
+                .to_ascii_lowercase(),
+            snapshot_flush_files: Self::env_parse::<u32>(&["VFILES_FTP_SNAPSHOT_FLUSH_FILES"])?
+                .unwrap_or(200)
+                .max(1),
+        };
+
+        let ftp_enabled = ftp.enabled;
         let config = AppConfig {
             http: HttpConfig {
                 host,
@@ -346,6 +412,7 @@ impl ConfigLoader {
                 snapshot_keep: maintenance_snapshot_keep,
                 snapshot_max_age_days: maintenance_snapshot_max_age_days,
             },
+            ftp,
             features: FeatureMatrix {
                 auth_enabled,
                 multi_user: true,
@@ -353,10 +420,32 @@ impl ConfigLoader {
                 search_content: search_content_enabled,
                 share_enabled: true,
                 history_enabled: true,
+                ftp_enabled,
             },
         };
         Self::validate(&config)?;
         Ok(config)
+    }
+
+    /// 解析 `50000-50100` 形式的端口段。
+    fn parse_port_range(raw: &str) -> Result<(u16, u16), ConfigError> {
+        let (start, end) = raw.split_once('-').ok_or_else(|| {
+            ConfigError::LoadError(format!(
+                "VFILES_FTP_PASSIVE_PORTS 需要 `起始-结束` 形式，实际: {raw}"
+            ))
+        })?;
+        let start = start.trim().parse::<u16>().map_err(|err| {
+            ConfigError::LoadError(format!("VFILES_FTP_PASSIVE_PORTS 起始端口非法: {err}"))
+        })?;
+        let end = end.trim().parse::<u16>().map_err(|err| {
+            ConfigError::LoadError(format!("VFILES_FTP_PASSIVE_PORTS 结束端口非法: {err}"))
+        })?;
+        if start == 0 || end == 0 || end < start {
+            return Err(ConfigError::LoadError(format!(
+                "VFILES_FTP_PASSIVE_PORTS 区间非法: {raw}"
+            )));
+        }
+        Ok((start, end))
     }
 
     pub fn validate(config: &AppConfig) -> Result<(), ConfigError> {
@@ -366,6 +455,44 @@ impl ConfigLoader {
         if config.storage.root.as_str().is_empty() {
             return Err(ConfigError::InvalidStorageRoot);
         }
+
+        if config.ftp.enabled {
+            if config.ftp.port == 0 {
+                return Err(ConfigError::LoadError(
+                    "VFILES_FTP_PORT 不能为 0".to_string(),
+                ));
+            }
+            if config.ftp.port == config.http.port {
+                return Err(ConfigError::LoadError(
+                    "VFILES_FTP_PORT 不能与 VFILES_HTTP_PORT 相同".to_string(),
+                ));
+            }
+            if (config.ftp.tls_cert.is_some()) != (config.ftp.tls_key.is_some()) {
+                return Err(ConfigError::LoadError(
+                    "FTPS 需要同时配置 VFILES_FTP_TLS_CERT 与 VFILES_FTP_TLS_KEY".to_string(),
+                ));
+            }
+            if config.ftp.tls_required && config.ftp.tls_cert.is_none() {
+                return Err(ConfigError::LoadError(
+                    "VFILES_FTP_TLS_REQUIRED=true 需要配置证书与私钥".to_string(),
+                ));
+            }
+            if !matches!(
+                config.ftp.snapshot_mode.as_str(),
+                "batch" | "per-file" | "off"
+            ) {
+                return Err(ConfigError::LoadError(format!(
+                    "VFILES_FTP_SNAPSHOT_MODE 只能是 batch/per-file/off，实际: {}",
+                    config.ftp.snapshot_mode
+                )));
+            }
+            if !config.auth.enabled {
+                return Err(ConfigError::LoadError(
+                    "启用 FTP 需要开启认证（VFILES_AUTH_ENABLED=true）".to_string(),
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -487,6 +614,76 @@ mod tests {
         assert!(config.auth.login_rate_limit.enabled);
         assert_eq!(config.auth.login_rate_limit.window_ms, 300_000);
         assert_eq!(config.auth.login_rate_limit.max_attempts, 10);
+    }
+
+    #[test]
+    fn test_ftp_defaults_are_disabled_and_sane() {
+        let config = ConfigLoader::load().unwrap();
+
+        assert!(!config.ftp.enabled, "FTP 默认必须关闭（明文协议）");
+        assert_eq!(config.ftp.port, 2121);
+        assert_eq!(config.ftp.passive_ports, (50_000, 50_100));
+        assert_eq!(config.ftp.allowed_roles, vec!["admin", "manager"]);
+        assert_eq!(config.ftp.snapshot_mode, "batch");
+        assert_eq!(config.ftp.snapshot_flush_files, 200);
+        assert!(!config.ftp.tls_required);
+        assert!(config.ftp.tls_cert.is_none());
+    }
+
+    #[test]
+    fn test_ftp_passive_range_parsing() {
+        assert_eq!(
+            ConfigLoader::parse_port_range("50000-50100").unwrap(),
+            (50_000, 50_100)
+        );
+        assert_eq!(
+            ConfigLoader::parse_port_range(" 21000 - 21010 ").unwrap(),
+            (21_000, 21_010)
+        );
+        assert_eq!(
+            ConfigLoader::parse_port_range("2121-2121").unwrap(),
+            (2121, 2121)
+        );
+
+        assert!(ConfigLoader::parse_port_range("50000").is_err(), "缺少区间");
+        assert!(
+            ConfigLoader::parse_port_range("50100-50000").is_err(),
+            "起止倒置"
+        );
+        assert!(ConfigLoader::parse_port_range("0-100").is_err(), "0 非法");
+        assert!(ConfigLoader::parse_port_range("a-b").is_err(), "非数字");
+    }
+
+    #[test]
+    fn test_ftp_validation_rules() {
+        fn config_with_ftp(ftp: FtpConfig, http_port: u16, auth_enabled: bool) -> AppConfig {
+            let mut config = ConfigLoader::load().unwrap();
+            config.http.port = http_port;
+            config.auth.enabled = auth_enabled;
+            config.ftp = ftp;
+            config
+        }
+
+        let mut ftp = ConfigLoader::load().unwrap().ftp;
+        ftp.enabled = true;
+        // 端口与 HTTP 冲突
+        assert!(ConfigLoader::validate(&config_with_ftp(ftp.clone(), 2121, true)).is_err());
+        // 未开启认证
+        assert!(ConfigLoader::validate(&config_with_ftp(ftp.clone(), 3000, false)).is_err());
+        // 只配置证书不配置私钥
+        let mut half_tls = ftp.clone();
+        half_tls.tls_cert = Some("/etc/vfiles/cert.pem".to_string());
+        assert!(ConfigLoader::validate(&config_with_ftp(half_tls, 3000, true)).is_err());
+        // 要求 FTPS 但没有证书
+        let mut required = ftp.clone();
+        required.tls_required = true;
+        assert!(ConfigLoader::validate(&config_with_ftp(required, 3000, true)).is_err());
+        // 非法快照策略
+        let mut bad_mode = ftp.clone();
+        bad_mode.snapshot_mode = "sometimes".to_string();
+        assert!(ConfigLoader::validate(&config_with_ftp(bad_mode, 3000, true)).is_err());
+        // 合法配置
+        assert!(ConfigLoader::validate(&config_with_ftp(ftp, 3000, true)).is_ok());
     }
 
     #[test]

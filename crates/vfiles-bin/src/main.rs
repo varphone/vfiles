@@ -10,6 +10,10 @@ use vfiles_app::{
 };
 use vfiles_config::{ConfigLoader, MIN_MAINTENANCE_INTERVAL_SECONDS, MaintenanceConfig};
 use vfiles_domain::*;
+use vfiles_ftp::{
+    BackendDeps, FtpApplication, FtpSettings, RoleFilter, VfilesAuthenticator,
+    VfilesUserDetailProvider,
+};
 use vfiles_http::{AppState, FrontendAssets, build_router, middleware::LoginAttemptLimiter};
 use vfiles_infra_fs::FsStorageBootstrap;
 use vfiles_infra_sqlite::{
@@ -940,6 +944,40 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         .enabled
         .then(|| MaintenanceSchedule::from_config(&config.maintenance));
 
+    // FTP 与 HTTP 共用同一份限流器与统计实例（计数、封禁策略一致）
+    let ingest_stats = Arc::new(vfiles_app::IngestStats::new());
+    let login_attempt_limiter = Arc::new(LoginAttemptLimiter::new());
+
+    // FTP 需要与 HTTP 相同的仓储视图：这里先建立共享 Arc，AppState 与 FTP 各持一份
+    let entry_repo_arc: Arc<dyn EntryRepo + Send + Sync> = Arc::new(entry_repo.clone());
+    let snapshot_repo_arc: Arc<dyn SnapshotRepo + Send + Sync> = Arc::new(snapshot_repo.clone());
+    let blob_store_arc: Arc<dyn BlobStore + Send + Sync> = Arc::new(blob_store.clone());
+    let user_repo_arc: Arc<dyn UserRepo + Send + Sync> = Arc::new(user_repo.clone());
+
+    // FTP 的导入批次需要独立的 WorkspaceService 组合（与 HTTP 的实例共享底层仓储）
+    let ftp_workspace = Arc::new(WorkspaceService::new(
+        entry_repo.clone(),
+        snapshot_repo.clone(),
+        blob_store.clone(),
+        upload_store.clone(),
+    ));
+
+    let ftp_runtime = build_ftp_runtime(
+        &config,
+        FtpRuntimeDeps {
+            auth_service: auth_service.clone(),
+            workspace: Arc::clone(&ftp_workspace),
+            entry_repo: Arc::clone(&entry_repo_arc),
+            snapshot_repo: Arc::clone(&snapshot_repo_arc),
+            blob_store: Arc::clone(&blob_store_arc),
+            user_repo: Arc::clone(&user_repo_arc),
+            // SqliteNamespaceRepo 不派生 Clone，这里用同一个连接池重建
+            namespace_repo: Arc::new(SqliteNamespaceRepo::new(pool.clone())),
+            login_attempt_limiter: Arc::clone(&login_attempt_limiter),
+            stats: Arc::clone(&ingest_stats),
+        },
+    )?;
+
     // Create app state
     let app_state = AppState {
         health_service,
@@ -952,13 +990,14 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         workspace_service,
         upload_service,
         db_pool: pool.clone(),
-        namespace_repo: std::sync::Arc::new(namespace_repo),
-        entry_repo: std::sync::Arc::new(entry_repo),
+        namespace_repo: Arc::new(namespace_repo),
+        entry_repo: Arc::clone(&entry_repo_arc),
         favorite_repo: std::sync::Arc::new(favorite_repo),
-        snapshot_repo: std::sync::Arc::new(snapshot_repo),
-        blob_store: Arc::new(blob_store),
+        snapshot_repo: Arc::clone(&snapshot_repo_arc),
+        blob_store: Arc::clone(&blob_store_arc),
         upload_store: std::sync::Arc::new(upload_store),
-        login_attempt_limiter: Arc::new(LoginAttemptLimiter::new()),
+        login_attempt_limiter: Arc::clone(&login_attempt_limiter),
+        ingest_stats: Arc::clone(&ingest_stats),
         share_download_limiter: Arc::new(vfiles_http::FixedWindowLimiter::new()),
         default_namespace_id,
         default_actor_user_id,
@@ -1000,12 +1039,46 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         }
     };
 
+    // HTTP 与 FTP 共享同一个停机信号：任意一个收到 SIGTERM/SIGINT 都开始优雅停机
+    let (service_shutdown_tx, service_shutdown_rx) = tokio::sync::watch::channel(false);
+
+    let ftp_handle = match ftp_runtime {
+        Some((settings, application)) => {
+            let handle =
+                vfiles_ftp::spawn_ftp_server(settings, application, service_shutdown_rx.clone())
+                    .await?;
+            tracing::info!("FTP 批量导入已启用: {}", handle.local_addr());
+            Some(handle)
+        }
+        None => {
+            tracing::debug!("FTP 未启用（VFILES_FTP_ENABLED=false）");
+            None
+        }
+    };
+
+    // 把 ctrl-c/SIGTERM 转发为共享停机信号
+    {
+        let shutdown_tx = service_shutdown_tx.clone();
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            let _ = shutdown_tx.send(true);
+        });
+    }
+
     tracing::info!("VFiles server started successfully!");
+    let mut http_shutdown = service_shutdown_rx.clone();
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            // 收到信号或 FTP 侧触发停机时都结束 HTTP 服务
+            let _ = http_shutdown.changed().await;
+        })
         .await?;
 
-    // 收到 SIGTERM/SIGINT 后先停止接收新请求，再停止维护任务，最后关闭连接池。
+    // 收到 SIGTERM/SIGINT 后先停止接收新请求，再停止 FTP 与维护任务，最后关闭连接池。
+    let _ = service_shutdown_tx.send(true);
+    if let Some(handle) = ftp_handle {
+        handle.wait().await;
+    }
     tracing::info!("Shutdown signal received; stopping maintenance and closing database pool");
     let _ = maintenance_shutdown_tx.send(true);
     if let Some(task) = maintenance_task
@@ -1112,6 +1185,129 @@ async fn run_maintenance_tick(service: &Maintenance, schedule: &MaintenanceSched
             tracing::warn!(error = %err, "Periodic maintenance failed; retrying next interval");
         }
     }
+}
+
+/// 构建 FTP 运行时所需的依赖。
+struct FtpRuntimeDeps {
+    auth_service: AuthService,
+    workspace: Arc<vfiles_app::DefaultWorkspaceService>,
+    entry_repo: Arc<dyn EntryRepo + Send + Sync>,
+    snapshot_repo: Arc<dyn SnapshotRepo + Send + Sync>,
+    blob_store: Arc<dyn BlobStore + Send + Sync>,
+    user_repo: Arc<dyn UserRepo + Send + Sync>,
+    namespace_repo: Arc<dyn NamespaceRepo + Send + Sync>,
+    login_attempt_limiter: Arc<LoginAttemptLimiter>,
+    stats: Arc<vfiles_app::IngestStats>,
+}
+
+/// 按配置装配 FTP 服务；未启用时返回 `None`。
+fn build_ftp_runtime(
+    config: &vfiles_config::AppConfig,
+    deps: FtpRuntimeDeps,
+) -> anyhow::Result<Option<(FtpSettings, FtpApplication)>> {
+    if !config.ftp.enabled {
+        return Ok(None);
+    }
+
+    if !config.auth.enabled {
+        // 配置校验已覆盖；这里再做一次防御，避免出现「无认证可写」的 FTP
+        bail!("启用 FTP 需要开启认证（VFILES_AUTH_ENABLED=true）");
+    }
+
+    let bind = config
+        .ftp
+        .bind_address()
+        .parse::<std::net::SocketAddr>()
+        .map_err(|err| {
+            anyhow!(
+                "VFILES_FTP_HOST/PORT 非法（{}）: {err}",
+                config.ftp.bind_address()
+            )
+        })?;
+
+    let roles = match config.ftp.allowed_roles.as_slice() {
+        [] => RoleFilter::all(),
+        allowed => {
+            let parsed: Vec<Role> = allowed
+                .iter()
+                .filter_map(|value| match value.as_str() {
+                    "admin" => Some(Role::Admin),
+                    "manager" => Some(Role::Manager),
+                    "user" => Some(Role::User),
+                    other => {
+                        tracing::warn!(role = other, "忽略未知的 FTP 允许角色");
+                        None
+                    }
+                })
+                .collect();
+            if parsed.is_empty() {
+                RoleFilter::all()
+            } else {
+                RoleFilter::new(parsed)
+            }
+        }
+    };
+
+    let snapshot_mode = match config.ftp.snapshot_mode.as_str() {
+        "per-file" => vfiles_app::SnapshotMode::PerFile,
+        "off" => vfiles_app::SnapshotMode::Off,
+        _ => vfiles_app::SnapshotMode::Batch,
+    };
+
+    let settings = FtpSettings {
+        bind,
+        passive_ports: config.ftp.passive_ports,
+        passive_host: config.ftp.passive_host.clone(),
+        greeting: "VFiles FTP 批量导入",
+        idle_timeout_secs: config.ftp.idle_timeout_seconds,
+        tls_cert: config.ftp.tls_cert.clone(),
+        tls_key: config.ftp.tls_key.clone(),
+        tls_required: config.ftp.tls_required,
+    };
+
+    if config.ftp.tls_cert.is_none() {
+        tracing::warn!(
+            "FTP 未启用 TLS，凭据与数据为明文；建议仅在可信内网使用或配置 VFILES_FTP_TLS_CERT/KEY"
+        );
+    }
+
+    let namespaces = vfiles_app::NamespaceService::new(Arc::clone(&deps.namespace_repo));
+    let authenticator = Arc::new(VfilesAuthenticator::new(
+        Arc::new(deps.auth_service),
+        roles.clone(),
+        deps.login_attempt_limiter,
+        vfiles_app::RateLimitPolicy {
+            enabled: config.auth.login_rate_limit.enabled,
+            window_ms: config.auth.login_rate_limit.window_ms,
+            max_attempts: config.auth.login_rate_limit.max_attempts,
+        },
+        Arc::clone(&deps.stats),
+    ));
+    let user_detail_provider = Arc::new(VfilesUserDetailProvider::new(
+        deps.user_repo,
+        namespaces,
+        roles,
+    ));
+
+    let backend = BackendDeps {
+        workspace: deps.workspace,
+        entry_repo: deps.entry_repo,
+        snapshot_repo: deps.snapshot_repo,
+        blob_store: deps.blob_store,
+        stats: deps.stats,
+        max_file_size_bytes: Some(config.limits.max_file_size_bytes),
+        snapshot_mode,
+        flush_threshold: config.ftp.snapshot_flush_files as usize,
+    };
+
+    Ok(Some((
+        settings,
+        FtpApplication {
+            backend,
+            authenticator,
+            user_detail_provider,
+        },
+    )))
 }
 
 async fn shutdown_signal() {

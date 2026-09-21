@@ -93,6 +93,8 @@ pub struct FeatureMatrixDto {
     pub search_content: bool,
     pub share_enabled: bool,
     pub history_enabled: bool,
+    /// FTP 批量导入是否启用（前端据此展示连接信息）。
+    pub ftp_enabled: bool,
 }
 
 impl From<FeatureMatrix> for FeatureMatrixDto {
@@ -104,6 +106,7 @@ impl From<FeatureMatrix> for FeatureMatrixDto {
             search_content: matrix.search_content,
             share_enabled: matrix.share_enabled,
             history_enabled: matrix.history_enabled,
+            ftp_enabled: matrix.ftp_enabled,
         }
     }
 }

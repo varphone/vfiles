@@ -9,6 +9,7 @@ use crate::{
     error::ApiResult,
     routes::thumbnail::{ThumbnailStatsSnapshot, stats_snapshot},
 };
+use vfiles_app::IngestStatsSnapshot;
 use vfiles_infra_sqlite::SqliteHealthProbe;
 
 #[derive(Serialize)]
@@ -17,6 +18,8 @@ pub struct HealthResponse {
     pub timestamp: String,
     /// 缩略图计数：解码失败、格式跳过、缓存命中与回收量，便于排障与容量评估。
     pub thumbnail: ThumbnailStatsSnapshot,
+    /// FTP 批量导入计数：会话、登录、上传/下载字节与快照提交量。
+    pub ftp: IngestStatsSnapshot,
 }
 
 #[derive(Serialize)]
@@ -33,15 +36,16 @@ pub struct HealthCheck {
     pub message: Option<String>,
 }
 
-pub async fn health_check() -> Json<HealthResponse> {
+pub async fn health_check(State(state): State<AppState>) -> ApiResult<Json<HealthResponse>> {
     tracing::debug!("Health check requested");
-    Json(HealthResponse {
+    Ok(Json(HealthResponse {
         status: "ok".to_string(),
         timestamp: OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
-            .unwrap(),
+            .unwrap_or_default(),
         thumbnail: stats_snapshot(),
-    })
+        ftp: state.ingest_stats.snapshot(),
+    }))
 }
 
 pub async fn readiness_check(State(state): State<AppState>) -> ApiResult<Json<ReadinessResponse>> {

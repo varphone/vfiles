@@ -14,6 +14,7 @@ path = "src/main.rs"
 vfiles-app = { path = "../vfiles-app" }
 vfiles-config = { path = "../vfiles-config" }
 vfiles-domain = { path = "../vfiles-domain" }
+vfiles-ftp = { path = "../vfiles-ftp" }
 vfiles-http = { path = "../vfiles-http" }
 vfiles-infra-fs = { path = "../vfiles-infra-fs" }
 vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }

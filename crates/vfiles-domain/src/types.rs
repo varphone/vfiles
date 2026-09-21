@@ -120,6 +120,8 @@ pub struct FeatureMatrix {
     pub search_content: bool,
     pub share_enabled: bool,
     pub history_enabled: bool,
+    /// 是否启用 FTP(S) 批量导入（前端据此展示连接信息入口）。
+    pub ftp_enabled: bool,
 }
 
 impl FeatureMatrix {

@@ -275,6 +275,7 @@ impl TestApp {
             blob_store: Arc::new(blob_store),
             upload_store: Arc::new(upload_store),
             login_attempt_limiter: Arc::new(LoginAttemptLimiter::new()),
+            ingest_stats: Arc::new(vfiles_app::IngestStats::new()),
             share_download_limiter: Arc::new(vfiles_http::FixedWindowLimiter::new()),
             default_namespace_id,
             default_actor_user_id: admin_user_id,
@@ -620,6 +621,7 @@ fn default_features() -> FeatureMatrix {
         search_content: false,
         share_enabled: true,
         history_enabled: true,
+        ftp_enabled: false,
     }
 }
 
@@ -2984,6 +2986,66 @@ async fn paged_search_keeps_content_matches_across_pages() {
             .all(|(path, score)| path == "needle-name.txt" || *score < 1.0),
         "内容命中的得分应低于文件名命中: {seen:?}"
     );
+}
+
+/// FTP 连接信息：需要登录，返回配置但不含任何密钥。
+#[tokio::test]
+async fn ftp_info_reports_configuration_for_authenticated_users() {
+    let app = TestApp::new().await;
+
+    let anonymous = app
+        .request(
+            Request::builder()
+                .uri("/api/files/ftp-info")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(
+        anonymous.status(),
+        StatusCode::UNAUTHORIZED,
+        "未登录不应泄露 FTP 连接信息"
+    );
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/ftp-info")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let payload = response_json(response).await;
+    assert_eq!(payload["enabled"], Value::from(false), "默认关闭 FTP");
+    assert_eq!(payload["port"], Value::from(2121));
+    assert_eq!(payload["passive_ports"]["start"], Value::from(50000));
+    assert_eq!(payload["passive_ports"]["end"], Value::from(50100));
+    assert_eq!(payload["tls"]["enabled"], Value::from(false));
+    // 关闭时不返回连接示例
+    assert_eq!(payload["example_command"], Value::Null);
+}
+
+/// 健康检查包含 FTP 计数块（默认全 0）。
+#[tokio::test]
+async fn health_reports_ftp_counters() {
+    let app = TestApp::new().await;
+
+    let response = app
+        .request(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let payload = response_json(response).await;
+    assert_eq!(payload["ftp"]["active_sessions"], Value::from(0));
+    assert_eq!(payload["ftp"]["files_uploaded"], Value::from(0));
+    assert_eq!(payload["ftp"]["bytes_uploaded"], Value::from(0));
 }
 
 /// 目录列表只返回**直接子条目**：嵌套目录的后代不能出现在父目录的列表里。

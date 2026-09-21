@@ -61,6 +61,8 @@ pub struct AppState {
     pub blob_store: Arc<dyn BlobStore + Send + Sync>,
     pub upload_store: Arc<dyn UploadStore + Send + Sync>,
     pub login_attempt_limiter: Arc<LoginAttemptLimiter>,
+    /// FTP 批量导入的运行计数（由 bin 装配注入，HTTP 与 FTP 共用同一实例）。
+    pub ingest_stats: Arc<vfiles_app::IngestStats>,
     pub share_download_limiter: Arc<FixedWindowLimiter>,
     pub default_namespace_id: NamespaceId,
     pub default_actor_user_id: UserId,
