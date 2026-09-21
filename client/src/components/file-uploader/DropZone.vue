@@ -50,8 +50,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, ref, watch } from "vue";
 import { IconCloudUpload, IconFile, IconFolder } from "@tabler/icons-vue";
+
+/**
+ * `initialPick`：从工具栏「上传文件 / 上传文件夹」进入时，挂载后直接打开对应选择器，
+ * 让用户少点一次（主流网盘的上传下拉也是这个行为）。
+ */
+const props = withDefaults(
+  defineProps<{
+    initialPick?: "files" | "directory" | null;
+  }>(),
+  { initialPick: null },
+);
 
 const emit = defineEmits<{
   (e: "files", files: File[]): void;
@@ -60,6 +71,26 @@ const emit = defineEmits<{
 const fileInput = ref<HTMLInputElement | null>(null);
 const directoryInput = ref<HTMLInputElement | null>(null);
 const isDragging = ref(false);
+
+/**
+ * 用 watch 而不是 onMounted：上传对话框的内容是常驻挂载的（Modal 只切换显示），
+ * 因此「打开对话框时想弹哪个选择器」必须按属性变化触发；父组件在关闭时会把
+ * `initialPick` 置回 null，所以每次打开都能再次触发。
+ */
+watch(
+  () => props.initialPick,
+  (pick) => {
+    if (!pick) return;
+    void nextTick().then(() => {
+      if (pick === "directory") {
+        directoryInput.value?.click();
+      } else {
+        fileInput.value?.click();
+      }
+    });
+  },
+  { immediate: true },
+);
 
 function onDragOver() {
   isDragging.value = true;

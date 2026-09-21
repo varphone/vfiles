@@ -1,6 +1,6 @@
 <template>
   <div class="file-uploader">
-    <DropZone @files="addFiles" />
+    <DropZone :initial-pick="initialPick" @files="addFiles" />
 
     <!-- 大批量导入走 FTP 更合适：仅在服务端启用时展示 -->
     <FtpImportHint v-if="ftpEnabled" :target-path="targetPath" />
@@ -42,6 +42,8 @@ const ftpEnabled = computed(() => Boolean(auth.features?.ftpEnabled));
 
 const props = defineProps<{
   targetPath: string;
+  /** 打开上传对话框时直接弹出的选择器（来自工具栏的上传菜单）。 */
+  initialPick?: "files" | "directory" | null;
 }>();
 
 type UploadStatus = "queued" | "uploading" | "done" | "error" | "canceled";

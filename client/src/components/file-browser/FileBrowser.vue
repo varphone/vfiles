@@ -62,7 +62,8 @@
             @refresh="refresh"
             @toggle-details="fileView.toggleDetails()"
             @toggle-batch="toggleBatchMode"
-            @upload="showUploader = true"
+            @upload-files="openUploader('files')"
+            @upload-folder="openUploader('directory')"
             @create-folder="createDirectoryHere"
             @search="runDesktopSearch"
             @clear="clearDesktopSearch"
@@ -170,7 +171,7 @@
                 <template #actions>
                   <button
                     class="vf-ghost-button is-primary"
-                    @click="showUploader = true"
+                    @click="openUploader('files')"
                   >
                     <IconUpload :size="16" />
                     <span>上传文件</span>
@@ -558,11 +559,12 @@
       :show="showUploader"
       title="上传文件"
       :mobile-compact="true"
-      @close="showUploader = false"
+      @close="closeUploader"
     >
       <FileUploader
         ref="fileUploaderRef"
         :target-path="filesStore.currentPath"
+        :initial-pick="uploaderPick"
         @upload="handleUpload"
         @close="showUploader = false"
       />
@@ -882,6 +884,21 @@ function updateIsWideScreen() {
 }
 
 const showUploader = ref(false);
+/**
+ * 打开上传对话框时直接弹出的选择器：
+ * 工具栏「上传」主按钮 → 文件；「上传文件夹」菜单项 → 目录；其它入口不自动弹出。
+ */
+const uploaderPick = ref<"files" | "directory" | null>(null);
+
+function openUploader(pick: "files" | "directory" | null = null) {
+  uploaderPick.value = pick;
+  showUploader.value = true;
+}
+
+function closeUploader() {
+  showUploader.value = false;
+  uploaderPick.value = null;
+}
 const showDetailsDialog = ref(false);
 /** 正在内联重命名的条目路径（空字符串表示没有）。 */
 const renamingPath = ref("");
@@ -1789,9 +1806,8 @@ async function handleUpload() {
 }
 
 defineExpose({
-  openUploader: () => {
-    showUploader.value = true;
-  },
+  // 移动端底栏的「上传」：直接弹出文件选择器（与工具栏主按钮一致）
+  openUploader: () => openUploader("files"),
   refresh,
   goBack,
   goRoot,

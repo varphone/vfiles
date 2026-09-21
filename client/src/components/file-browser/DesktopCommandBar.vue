@@ -78,19 +78,73 @@
         class="vf-ghost-button upload-indicator"
         type="button"
         :title="uploadIndicator.title"
-        @click="emit('upload')"
+        @click="emit('upload-files')"
       >
         <span class="upload-indicator-dot" aria-hidden="true"></span>
         <span>{{ uploadIndicator.label }}</span>
       </button>
 
-      <button
-        class="vf-primary-button desktop-primary-action"
-        @click="emit('upload')"
+      <div
+        ref="uploadMenuRef"
+        class="dropdown is-right desktop-upload-split"
+        :class="{ 'is-active': uploadMenuOpen }"
       >
-        <IconUpload :size="16" />
-        <span>上传</span>
-      </button>
+        <div class="desktop-upload-group">
+          <button
+            class="vf-primary-button desktop-primary-action"
+            type="button"
+            title="上传文件"
+            @click="emit('upload-files')"
+          >
+            <IconUpload :size="16" />
+            <span>上传</span>
+          </button>
+          <button
+            class="vf-primary-button desktop-upload-caret"
+            type="button"
+            :aria-expanded="uploadMenuOpen ? 'true' : 'false'"
+            aria-haspopup="true"
+            aria-label="更多上传方式"
+            title="更多上传方式"
+            @click="toggleUploadMenu"
+          >
+            <IconChevronDown :size="14" />
+          </button>
+        </div>
+
+        <div class="dropdown-menu desktop-upload-menu" role="menu">
+          <div class="dropdown-content">
+            <button
+              class="dropdown-item desktop-upload-item"
+              type="button"
+              role="menuitem"
+              @click="chooseUpload('files')"
+            >
+              <IconFileUpload :size="16" />
+              <span>上传文件</span>
+            </button>
+            <button
+              class="dropdown-item desktop-upload-item"
+              type="button"
+              role="menuitem"
+              @click="chooseUpload('directory')"
+            >
+              <IconFolderUp :size="16" />
+              <span>上传文件夹</span>
+            </button>
+            <hr class="dropdown-divider" />
+            <button
+              class="dropdown-item desktop-upload-item"
+              type="button"
+              role="menuitem"
+              @click="chooseCreateFolder"
+            >
+              <IconFolderPlus :size="16" />
+              <span>新建文件夹</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div v-if="searchError" class="notification is-danger is-light">
@@ -101,11 +155,15 @@
 </template>
 
 <script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import {
   IconAlertCircle,
   IconArrowLeft,
   IconChecklist,
+  IconChevronDown,
+  IconFileUpload,
   IconFolderPlus,
+  IconFolderUp,
   IconLayoutSidebarRight,
   IconRefresh,
   IconUpload,
@@ -153,12 +211,61 @@ withDefaults(
   },
 );
 
+const uploadMenuOpen = ref(false);
+const uploadMenuRef = ref<HTMLElement | null>(null);
+
+function toggleUploadMenu() {
+  uploadMenuOpen.value = !uploadMenuOpen.value;
+}
+
+/** 选择上传方式：主按钮与菜单项都走同一事件，由父组件决定是否自动弹出选择器。 */
+function chooseUpload(kind: "files" | "directory") {
+  uploadMenuOpen.value = false;
+  if (kind === "directory") {
+    emit("upload-folder");
+  } else {
+    emit("upload-files");
+  }
+}
+
+function chooseCreateFolder() {
+  uploadMenuOpen.value = false;
+  emit("create-folder");
+}
+
+/** 点击菜单外部或按 Esc 收起 */
+function onDocumentPointer(event: MouseEvent | TouchEvent) {
+  if (!uploadMenuOpen.value) return;
+  const target = event.target as Node | null;
+  if (target && uploadMenuRef.value?.contains(target)) return;
+  uploadMenuOpen.value = false;
+}
+
+function onDocumentKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" && uploadMenuOpen.value) {
+    uploadMenuOpen.value = false;
+  }
+}
+
+onMounted(() => {
+  document.addEventListener("click", onDocumentPointer, true);
+  document.addEventListener("touchstart", onDocumentPointer, true);
+  document.addEventListener("keydown", onDocumentKeydown);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("click", onDocumentPointer, true);
+  document.removeEventListener("touchstart", onDocumentPointer, true);
+  document.removeEventListener("keydown", onDocumentKeydown);
+});
+
 const emit = defineEmits<{
   (e: "go-up"): void;
   (e: "refresh"): void;
   (e: "toggle-details"): void;
   (e: "toggle-batch"): void;
-  (e: "upload"): void;
+  (e: "upload-files"): void;
+  (e: "upload-folder"): void;
   (e: "create-folder"): void;
   (e: "search"): void;
   (e: "clear"): void;
@@ -193,6 +300,59 @@ const emit = defineEmits<{
 .desktop-primary-action {
   margin-left: 0.25rem;
   flex: 0 0 auto;
+}
+
+/* 上传：分裂按钮（主按钮 + 下拉箭头），下拉里包含「上传文件夹」等次级方式 */
+.desktop-upload-split {
+  flex: 0 0 auto;
+}
+
+.desktop-upload-group {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.desktop-upload-group .desktop-primary-action {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.desktop-upload-caret {
+  margin-left: 1px;
+  padding: 0 0.4rem;
+  min-height: 2rem;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.desktop-upload-menu {
+  min-width: 11rem;
+  margin-top: 0.35rem;
+  padding: 0.25rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius);
+  background: var(--vf-surface);
+  box-shadow: var(--vf-shadow-menu);
+}
+
+.desktop-upload-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border: none;
+  border-radius: var(--vf-radius-sm);
+  background: transparent;
+  color: var(--vf-text);
+  font-size: 0.84rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.desktop-upload-item:hover {
+  background: var(--vf-surface-hover);
+  color: var(--vf-text-strong);
 }
 
 /* 新建文件夹：文字按钮，放在上传左侧（搜索框自适应收缩，工具栏保持单行） */
