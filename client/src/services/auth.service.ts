@@ -36,6 +36,8 @@ export interface SessionFeatures {
   searchContent: boolean;
   shareEnabled: boolean;
   historyEnabled: boolean;
+  /** 是否启用 FTP 批量导入（决定上传对话框是否展示连接信息）。 */
+  ftpEnabled: boolean;
 }
 
 export interface SessionBootstrapPayload {
@@ -76,6 +78,8 @@ type RustSessionFeatures = {
   shareEnabled?: boolean;
   history_enabled?: boolean;
   historyEnabled?: boolean;
+  ftp_enabled?: boolean;
+  ftpEnabled?: boolean;
 };
 
 type RustSessionBootstrapResponse = {
@@ -184,13 +188,12 @@ function normalizeSessionFeatures(
     authEnabled: Boolean(features?.authEnabled ?? features?.auth_enabled),
     multiUser: Boolean(features?.multiUser ?? features?.multi_user),
     emailLogin: Boolean(features?.emailLogin ?? features?.email_login),
-    searchContent: Boolean(
-      features?.searchContent ?? features?.search_content,
-    ),
+    searchContent: Boolean(features?.searchContent ?? features?.search_content),
     shareEnabled: Boolean(features?.shareEnabled ?? features?.share_enabled),
     historyEnabled: Boolean(
       features?.historyEnabled ?? features?.history_enabled,
     ),
+    ftpEnabled: Boolean(features?.ftpEnabled ?? features?.ftp_enabled),
   };
 }
 

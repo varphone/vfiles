@@ -2,6 +2,9 @@
   <div class="file-uploader">
     <DropZone @files="addFiles" />
 
+    <!-- 大批量导入走 FTP 更合适：仅在服务端启用时展示 -->
+    <FtpImportHint v-if="ftpEnabled" :target-path="targetPath" />
+
     <div v-if="queue.length > 0" class="mt-4">
       <p class="is-size-6 has-text-weight-semibold mb-3">
         已选择 {{ queue.length }} 个文件
@@ -22,8 +25,10 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { useAppStore } from "../../stores/app.store";
+import { useAuthStore } from "../../stores/auth.store";
 import { filesService } from "../../services/files.service";
 import DropZone from "./DropZone.vue";
+import FtpImportHint from "./FtpImportHint.vue";
 import UploadQueue, { type UploadQueueItemView } from "./UploadQueue.vue";
 
 const emit = defineEmits<{
@@ -32,6 +37,8 @@ const emit = defineEmits<{
 }>();
 
 const appStore = useAppStore();
+const auth = useAuthStore();
+const ftpEnabled = computed(() => Boolean(auth.features?.ftpEnabled));
 
 const props = defineProps<{
   targetPath: string;

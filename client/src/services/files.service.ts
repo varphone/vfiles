@@ -280,6 +280,36 @@ export const filesService = {
    * 获取文件列表
    */
   /** 收藏列表（路径 + 名称 + 类型）。 */
+  /**
+   * FTP 连接信息（仅登录后可用，且服务端未启用时 `enabled=false`）。
+   *
+   * 不含任何口令；前端只用于展示连接地址与示例命令。
+   */
+  async getFtpInfo(): Promise<{
+    enabled: boolean;
+    host: string;
+    port: number;
+    passive_ports?: { start: number; end: number };
+    tls: { enabled: boolean; required: boolean };
+    example_command?: string | null;
+    path_mapping?: string;
+  }> {
+    const response = await apiService.get<{
+      enabled: boolean;
+      host: string;
+      port: number;
+      passive_ports?: { start: number; end: number };
+      tls: { enabled: boolean; required: boolean };
+      example_command?: string | null;
+      path_mapping?: string;
+    }>("/files/ftp-info");
+    const payload = (response as any)?.data ?? response;
+    if (!payload || typeof payload.port !== "number") {
+      throw new Error("加载 FTP 连接信息失败");
+    }
+    return payload;
+  },
+
   async getFavorites(): Promise<FavoriteEntry[]> {
     const response = await apiService.get<{ items: FavoriteEntry[] }>(
       "/files/favorites",
