@@ -38,7 +38,7 @@
         <label v-else class="mr-2 desktop-row-check" @click.stop @dblclick.stop>
           <input
             type="checkbox"
-            :checked="false"
+            :checked="selected"
             @change="toggleSelected"
             :aria-label="`选择 ${file.name}`"
             tabindex="-1"

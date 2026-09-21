@@ -131,3 +131,77 @@ describe("FileDetailsPanel.vue", () => {
     expect(screen.getByText("更新示例")).toBeInTheDocument();
   });
 });
+
+describe("FileDetailsPanel.vue multi-selection", () => {
+  const selection = [
+    file({ name: "a.txt", path: "a.txt", size_bytes: 1024 }),
+    file({ name: "b.txt", path: "b.txt", size_bytes: 2048 }),
+    file({ name: "文档", path: "文档", kind: "directory" }),
+  ];
+
+  it("summarises the selection instead of a single item", () => {
+    const { container } = render(FileDetailsPanel as any, {
+      props: { item: selection[0], selection },
+    });
+
+    expect(
+      container.querySelector(".details-selection-title")?.textContent?.trim(),
+    ).toBe("已选择 3 项");
+    const meta = container.querySelector(
+      ".details-selection-meta",
+    )?.textContent;
+    expect(meta).toContain("3.0 KB");
+    expect(meta).toContain("1 个目录");
+    // 列出前几个条目名称
+    expect(
+      Array.from(container.querySelectorAll(".details-selection-name")).map(
+        (el) => el.textContent?.trim(),
+      ),
+    ).toEqual(["a.txt", "b.txt", "文档"]);
+    // 不再展示单条详情的字段
+    expect(container.querySelector(".details-rows")).toBeNull();
+  });
+
+  it("caps the preview list and counts the rest", () => {
+    const many = Array.from({ length: 8 }, (_, index) =>
+      file({ name: `f${index}.txt`, path: `f${index}.txt`, size_bytes: 100 }),
+    );
+    const { container } = render(FileDetailsPanel as any, {
+      props: { item: many[0], selection: many },
+    });
+
+    expect(container.querySelectorAll(".details-selection-row")).toHaveLength(
+      5,
+    );
+    expect(
+      container.querySelector(".details-selection-more")?.textContent?.trim(),
+    ).toBe("还有 3 项");
+  });
+
+  it("emits the batch actions from the summary", async () => {
+    const { emitted } = render(FileDetailsPanel as any, {
+      props: { item: selection[0], selection },
+    });
+
+    await fireEvent.click(screen.getByText("下载全部"));
+    await fireEvent.click(screen.getByText("移动"));
+    await fireEvent.click(screen.getByText("全选"));
+    await fireEvent.click(screen.getByText("清空选择"));
+    await fireEvent.click(screen.getByText("删除全部"));
+
+    expect(emitted()["download-selection"]).toHaveLength(1);
+    expect(emitted()["move-selection"]).toHaveLength(1);
+    expect(emitted()["select-all"]).toHaveLength(1);
+    expect(emitted()["clear-selection"]).toHaveLength(1);
+    expect(emitted()["delete-selection"]).toHaveLength(1);
+  });
+
+  it("falls back to the single item view for one selected entry", () => {
+    const { container } = render(FileDetailsPanel as any, {
+      props: { item: selection[0], selection: [selection[0]] },
+    });
+
+    expect(container.querySelector(".details-selection")).toBeNull();
+    expect(container.querySelector(".details-rows")).not.toBeNull();
+  });
+});

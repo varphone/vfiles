@@ -320,11 +320,17 @@
             v-if="detailsVisible"
             :item="detailItem"
             :commit="browseCommit"
+            :selection="selectedItems"
             @close="fileView.toggleDetails()"
             @preview="handlePreview"
             @open-folder="handleOpenFolder"
             @download="handleDownload"
             @share="handleShare"
+            @download-selection="batchDownload"
+            @move-selection="batchMove"
+            @delete-selection="batchDelete"
+            @select-all="selectAllVisible"
+            @clear-selection="clearSelection"
             @view-history="handleViewHistory"
             @rename="handleRenameEntry"
             :renaming-path="renamingPath"
@@ -1034,6 +1040,11 @@ const detailsVisible = computed(
 /** 移动端搜索筛选面板（默认收起，保持顶部只有一行搜索框）。 */
 const mobileSearchFiltersOpen = ref(false);
 const detailItem = computed<FileInfo | undefined>(() => findActiveItem());
+
+/** 当前批量选中的条目（保持列表顺序），用于详情面板的多选摘要。 */
+const selectedItems = computed<FileInfo[]>(() =>
+  activeList.value.filter((file) => selectedPaths.value.has(file.path)),
+);
 
 /**
  * 整窗拖放上传：把桌面文件直接拖进浏览器。

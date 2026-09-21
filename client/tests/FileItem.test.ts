@@ -46,6 +46,30 @@ describe("FileItem.vue row actions", () => {
     expect(events[0][0].y).toBeGreaterThanOrEqual(0);
   });
 
+  it("keeps the hover checkbox in sync with the selection", async () => {
+    const { container, rerender } = render(FileItem as any, {
+      props: {
+        file: file(),
+        desktop: true,
+        selectMode: false,
+        selected: false,
+      },
+    });
+
+    // 未选中：hover 出现的复选框
+    const hover = container.querySelector<HTMLInputElement>(
+      ".desktop-row-check input",
+    )!;
+    expect(hover.checked).toBe(false);
+
+    // 选中后：复选框常驻并反映选中态（此前写死 :checked="false"，看起来永远没勾上）
+    await rerender({ selected: true });
+    const persistent = container.querySelector<HTMLInputElement>(
+      'input[type="checkbox"]',
+    )!;
+    expect(persistent.checked).toBe(true);
+  });
+
   it("offers a hover checkbox outside batch mode", async () => {
     const { container, emitted } = render(FileItem as any, {
       props: { file: file(), desktop: true, selectMode: false },
