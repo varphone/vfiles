@@ -35,7 +35,9 @@ use vfiles_infra_sqlite::{
 };
 
 pub use frontend::FrontendAssets;
-pub use middleware::{FixedWindowLimiter, LoginAttemptLimiter};
+pub use middleware::{
+    FixedWindowLimiter, LoginAttemptLimiter, RateLimitPolicy, login_rate_limit_policy,
+};
 
 #[derive(Clone)]
 pub struct AppState {

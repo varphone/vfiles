@@ -2397,31 +2397,44 @@ impl BlobStore for FsBlobStore {
         let mut total_size = 0_u64;
         let mut buffer = [0_u8; 64 * 1024];
 
-        loop {
-            let read = reader
-                .read(&mut buffer)
-                .await
-                .map_err(|e| DomainError::Internal {
-                    message: format!("Failed to read blob stream: {}", e),
-                })?;
-            if read == 0 {
-                break;
+        // 读取/写入中途失败（例如客户端断开）必须删除临时文件，否则会一直留在
+        // tmp/ 里。把复制过程收敛为一个结果，失败时统一清理后再返回错误。
+        let copy_result: Result<(), DomainError> = async {
+            loop {
+                let read = reader
+                    .read(&mut buffer)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to read blob stream: {}", e),
+                    })?;
+                if read == 0 {
+                    break;
+                }
+
+                hasher.update(&buffer[..read]);
+                total_size += read as u64;
+                temp_file
+                    .write_all(&buffer[..read])
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to write blob temp file: {}", e),
+                    })?;
             }
 
-            hasher.update(&buffer[..read]);
-            total_size += read as u64;
-            temp_file
-                .write_all(&buffer[..read])
-                .await
-                .map_err(|e| DomainError::Internal {
-                    message: format!("Failed to write blob temp file: {}", e),
-                })?;
-        }
+            temp_file.flush().await.map_err(|e| DomainError::Internal {
+                message: format!("Failed to flush blob temp file: {}", e),
+            })?;
 
-        temp_file.flush().await.map_err(|e| DomainError::Internal {
-            message: format!("Failed to flush blob temp file: {}", e),
-        })?;
+            Ok(())
+        }
+        .await;
+
         drop(temp_file);
+
+        if let Err(err) = copy_result {
+            let _ = fs::remove_file(&temp_path).await;
+            return Err(err);
+        }
 
         let hash_hex = hex::encode(hasher.finalize());
         let content_hash = ContentHash::new(&hash_hex).map_err(|_| DomainError::Internal {
@@ -4045,6 +4058,77 @@ impl AdminRepo for SqliteAdminRepo {
                 message: format!("Failed to reset user password: {}", e),
             })?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod blob_stream_tests {
+    use super::*;
+    use crate::{SqliteMigrations, SqlitePoolFactory};
+    use camino::Utf8PathBuf;
+
+    /// 回归：流中断时必须删除临时文件（FTP/批量导入中断后 tmp/ 不应堆积）。
+    struct FailingReader {
+        emitted: bool,
+    }
+
+    impl tokio::io::AsyncRead for FailingReader {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            if self.emitted {
+                return std::task::Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "client went away",
+                )));
+            }
+            self.emitted = true;
+            buf.put_slice(b"partial");
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn store_blob_stream_removes_temp_file_on_read_error() {
+        // 与本文件其它用例一致：使用系统临时目录 + 随机后缀（crate 无 tempfile 依赖）
+        let storage_root = Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("vfiles-blob-stream-{}", uuid::Uuid::new_v4())),
+        )
+        .expect("temp path should be valid utf-8");
+        tokio::fs::create_dir_all(&storage_root)
+            .await
+            .expect("temp dir should be created");
+
+        let pool = SqlitePoolFactory::connect(storage_root.join("vfiles.db").as_path())
+            .await
+            .expect("pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should succeed");
+        let store = FsBlobStore::new(pool, storage_root.join("blobs"));
+
+        let result = store
+            .store_blob_stream(Box::new(FailingReader { emitted: false }), None)
+            .await;
+        assert!(result.is_err(), "读取失败应返回错误，实际: {result:?}");
+
+        let mut leftovers = Vec::new();
+        // 临时文件位于 blob 根目录下的 tmp/（FsBlobStore::base_path.join("tmp")）
+        let mut dir = tokio::fs::read_dir(storage_root.join("blobs").join("tmp"))
+            .await
+            .expect("tmp dir should exist");
+        while let Some(entry) = dir.next_entry().await.expect("dir entry") {
+            leftovers.push(entry.file_name().to_string_lossy().to_string());
+        }
+
+        let _ = tokio::fs::remove_dir_all(&storage_root).await;
+
+        assert!(
+            leftovers.is_empty(),
+            "中断后不应残留临时文件，实际: {leftovers:?}"
+        );
     }
 }
 

@@ -9,6 +9,7 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use serde_json::json;
 
+use crate::middleware::login_rate_limit_policy;
 use crate::{
     AppState,
     dto::{LoginResponseDto, UserDto},
@@ -48,10 +49,11 @@ pub async fn login(
 ) -> ApiResult<Response> {
     let login_identifier = req.username_or_email.clone();
     let login_key = login_rate_limit_key(&headers, &login_identifier);
+    let login_rate_limit = login_rate_limit_policy(&state.config.auth.login_rate_limit);
 
     if let Some(block) = state
         .login_attempt_limiter
-        .check(&state.config.auth.login_rate_limit, &login_key)
+        .check(&login_rate_limit, &login_key)
     {
         tracing::warn!(
             "Blocked login attempt for {} due to repeated failures; retry after {}s",
@@ -79,7 +81,7 @@ pub async fn login(
         Err(DomainError::InvalidCredentials) => {
             state
                 .login_attempt_limiter
-                .record_failure(&state.config.auth.login_rate_limit, &login_key);
+                .record_failure(&login_rate_limit, &login_key);
             tracing::warn!("Rejected login attempt for {}", login_identifier);
             return Err(ApiError::Domain(DomainError::InvalidCredentials));
         }

@@ -7,6 +7,7 @@ use crate::{
     AppState,
     error::{ApiError, ApiResult},
 };
+use vfiles_app::NamespaceService;
 use vfiles_domain::{AuthUser, DomainError, NamespaceId, UserId};
 
 pub mod admin;
@@ -128,26 +129,16 @@ async fn request_context_from_auth_user(
     })
 }
 
+/// 取用户默认命名空间（不存在则创建）。
+///
+/// 实现已下沉到 `vfiles_app::NamespaceService`，FTP 认证后走同一逻辑；
+/// 这里只做一次 `Arc<dyn NamespaceRepo>` 的适配与错误转换。
 async fn ensure_default_namespace(state: &AppState, owner_id: &UserId) -> ApiResult<NamespaceId> {
-    match state.namespace_repo.find_default_for_owner(owner_id).await {
-        Ok(namespace_id) => Ok(namespace_id),
-        Err(DomainError::NotFound { .. }) => {
-            match state
-                .namespace_repo
-                .create_default(owner_id, "default")
-                .await
-            {
-                Ok(namespace_id) => Ok(namespace_id),
-                Err(DomainError::Conflict { .. }) => state
-                    .namespace_repo
-                    .find_default_for_owner(owner_id)
-                    .await
-                    .map_err(ApiError::Domain),
-                Err(err) => Err(ApiError::Domain(err)),
-            }
-        }
-        Err(err) => Err(ApiError::Domain(err)),
-    }
+    let service = NamespaceService::new(state.namespace_repo.clone());
+    service
+        .ensure_default_for_owner(owner_id)
+        .await
+        .map_err(ApiError::Domain)
 }
 
 pub fn api_router() -> Router<AppState> {

@@ -1,10 +1,10 @@
-use std::{collections::HashMap, io::Write};
+use std::{collections::HashMap, io::Write, sync::Arc};
 
 use tokio::io::AsyncReadExt;
 use vfiles_domain::*;
 use vfiles_infra_sqlite::{SqliteSessionRepo, SqliteUserRepo};
 
-fn normalize_message(message: Option<&str>) -> Option<String> {
+pub(crate) fn normalize_message(message: Option<&str>) -> Option<String> {
     message.and_then(|value| {
         let trimmed = value.trim();
         if trimmed.is_empty() {
@@ -15,7 +15,7 @@ fn normalize_message(message: Option<&str>) -> Option<String> {
     })
 }
 
-fn validate_filename(filename: &str) -> DomainResult<()> {
+pub(crate) fn validate_filename(filename: &str) -> DomainResult<()> {
     if filename.is_empty()
         || filename.contains('/')
         || filename.contains('\\')
@@ -30,7 +30,7 @@ fn validate_filename(filename: &str) -> DomainResult<()> {
     Ok(())
 }
 
-fn uploaded_file_path(
+pub(crate) fn uploaded_file_path(
     target_path: &NormalizedPath,
     filename: &str,
 ) -> DomainResult<NormalizedPath> {
@@ -69,7 +69,7 @@ fn preview_kind(mime_type: Option<&str>) -> Option<String> {
     }
 }
 
-fn guess_mime_type(filename: &str) -> Option<String> {
+pub(crate) fn guess_mime_type(filename: &str) -> Option<String> {
     mime_guess::from_path(filename)
         .first_raw()
         .map(|value| value.to_string())
@@ -121,7 +121,7 @@ fn synthetic_snapshot_entry_id(snapshot_id: &SnapshotId, path: &NormalizedPath) 
 }
 
 #[derive(Debug, Clone)]
-struct PendingSnapshotEntry {
+pub(crate) struct PendingSnapshotEntry {
     entry_id: EntryId,
     entry_path: NormalizedPath,
     entry_kind: EntryKind,
@@ -391,7 +391,7 @@ fn snapshot_change_type(entry_kind: EntryKind, version: Option<&EntryVersion>) -
         })
 }
 
-async fn collect_snapshot_state<E>(
+pub(crate) async fn collect_snapshot_state<E>(
     entry_repo: &E,
     namespace_id: &NamespaceId,
     extra_entries: Vec<PendingSnapshotEntry>,
@@ -436,7 +436,7 @@ where
     Ok(snapshot_entries)
 }
 
-async fn ensure_directory_path<E>(
+pub(crate) async fn ensure_directory_path<E>(
     entry_repo: &E,
     namespace_id: &NamespaceId,
     directory_path: &NormalizedPath,
@@ -524,7 +524,7 @@ fn path_matches_scope(path: &NormalizedPath, scope: &NormalizedPath) -> bool {
             .starts_with(&format!("{}/", scope.as_str().trim_end_matches('/')))
 }
 
-async fn finalize_mutation<S>(
+pub(crate) async fn finalize_mutation<S>(
     snapshot_repo: &S,
     namespace_id: &NamespaceId,
     message: Option<&str>,
@@ -553,6 +553,49 @@ where
         warnings,
         applied_at,
     })
+}
+
+/// 命名空间解析：按用户取默认命名空间，不存在则创建。
+///
+/// HTTP（多用户模式）与 FTP 认证后都需要这段逻辑，故放在应用层共用；
+/// 完整逻辑见 `ensure_default_namespace`。
+#[derive(Clone)]
+pub struct NamespaceService {
+    namespace_repo: Arc<dyn NamespaceRepo + Send + Sync>,
+}
+
+impl std::fmt::Debug for NamespaceService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NamespaceService").finish_non_exhaustive()
+    }
+}
+
+impl NamespaceService {
+    pub fn new(namespace_repo: Arc<dyn NamespaceRepo + Send + Sync>) -> Self {
+        Self { namespace_repo }
+    }
+
+    /// 取该用户的默认命名空间；不存在时创建（并发创建视为成功）。
+    pub async fn ensure_default_for_owner(&self, owner_id: &UserId) -> DomainResult<NamespaceId> {
+        match self.namespace_repo.find_default_for_owner(owner_id).await {
+            Ok(namespace_id) => Ok(namespace_id),
+            Err(DomainError::NotFound { .. }) => {
+                match self
+                    .namespace_repo
+                    .create_default(owner_id, "default")
+                    .await
+                {
+                    Ok(namespace_id) => Ok(namespace_id),
+                    // 并发下另一个请求可能已经创建成功
+                    Err(DomainError::Conflict { .. }) => {
+                        self.namespace_repo.find_default_for_owner(owner_id).await
+                    }
+                    Err(err) => Err(err),
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
 }
 
 // Services
@@ -944,42 +987,10 @@ impl AuthService {
     }
 
     pub async fn login(&self, req: LoginRequest) -> DomainResult<LoginResponse> {
-        // Try to find user by username or email. Invalid identifier formats are
-        // reported as invalid credentials so login failures do not reveal which
-        // half of the identifier guessed incorrectly.
-        let user = if req.username_or_email.contains('@') {
-            let email = EmailAddress::new(&req.username_or_email)
-                .map_err(|_| DomainError::InvalidCredentials)?;
-            match self.user_repo.find_by_email(&email).await {
-                Ok(user) => user,
-                Err(DomainError::NotFound { .. }) => return Err(DomainError::InvalidCredentials),
-                Err(err) => return Err(err),
-            }
-        } else {
-            let username = Username::new(&req.username_or_email)
-                .map_err(|_| DomainError::InvalidCredentials)?;
-            match self.user_repo.find_by_username(&username).await {
-                Ok(user) => user,
-                Err(DomainError::NotFound { .. }) => return Err(DomainError::InvalidCredentials),
-                Err(err) => return Err(err),
-            }
-        };
-
-        if user.disabled {
-            return Err(DomainError::InvalidCredentials);
-        }
-
-        if !self.verify_password(&req.password, &user.password_hash)? {
-            return Err(DomainError::InvalidCredentials);
-        }
-
-        // Transparently migrate legacy SHA-256 password hashes after a
-        // successful login. Failures must not block the login.
-        if !user.password_hash.starts_with("$argon2")
-            && let Ok(new_hash) = self.hash_password(&req.password)
-        {
-            let _ = self.user_repo.update_password(&user.id, &new_hash).await;
-        }
+        // 标识/口令校验（含旧哈希透明升级）与 FTP 认证共用同一实现
+        let user = self
+            .verify_credentials(&req.username_or_email, &req.password)
+            .await?;
 
         // Create session
         let now = time::OffsetDateTime::now_utc();
@@ -1015,6 +1026,52 @@ impl AuthService {
             session,
             token,
         })
+    }
+
+    /// 仅校验用户名/口令并返回用户，不创建会话。
+    ///
+    /// HTTP 登录与 FTP 认证共用这段逻辑（含禁用校验、旧 SHA-256 哈希透明升级），
+    /// 避免两处实现出现安全差异。
+    pub async fn verify_credentials(
+        &self,
+        username_or_email: &str,
+        password: &str,
+    ) -> DomainResult<User> {
+        // 无效标识与口令错误返回同一个错误，避免泄露「用户名是否存在」
+        let user = if username_or_email.contains('@') {
+            let email = EmailAddress::new(username_or_email)
+                .map_err(|_| DomainError::InvalidCredentials)?;
+            match self.user_repo.find_by_email(&email).await {
+                Ok(user) => user,
+                Err(DomainError::NotFound { .. }) => return Err(DomainError::InvalidCredentials),
+                Err(err) => return Err(err),
+            }
+        } else {
+            let username =
+                Username::new(username_or_email).map_err(|_| DomainError::InvalidCredentials)?;
+            match self.user_repo.find_by_username(&username).await {
+                Ok(user) => user,
+                Err(DomainError::NotFound { .. }) => return Err(DomainError::InvalidCredentials),
+                Err(err) => return Err(err),
+            }
+        };
+
+        if user.disabled {
+            return Err(DomainError::InvalidCredentials);
+        }
+
+        if !self.verify_password(password, &user.password_hash)? {
+            return Err(DomainError::InvalidCredentials);
+        }
+
+        // 旧 SHA-256 哈希在成功校验后透明升级；失败不得影响本次登录
+        if !user.password_hash.starts_with("$argon2")
+            && let Ok(new_hash) = self.hash_password(password)
+        {
+            let _ = self.user_repo.update_password(&user.id, &new_hash).await;
+        }
+
+        Ok(user)
     }
 
     pub async fn authenticate_session(&self, token: &str) -> DomainResult<AuthUser> {
