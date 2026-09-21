@@ -127,6 +127,31 @@ const summary = computed(() => {
   flex-wrap: wrap;
 }
 
+/* 窄屏：筛选 chip 单行横向滚动，避免换行挤压结果列表 */
+@media screen and (max-width: 700px) {
+  .search-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35rem;
+  }
+
+  .search-toolbar-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.15rem;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .search-toolbar-chips::-webkit-scrollbar {
+    display: none;
+  }
+
+  .search-toolbar-chips .search-chip {
+    flex: 0 0 auto;
+  }
+}
+
 .search-chip {
   gap: 0.3rem;
   min-height: 1.75rem;

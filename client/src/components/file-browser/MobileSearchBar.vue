@@ -162,6 +162,17 @@ const emit = defineEmits<{
 </script>
 
 <style scoped>
+/* 移动端搜索栏吸顶：滚动结果时搜索框与筛选始终可达（主流移动端行为） */
+.mobile-search-toolbar {
+  position: sticky;
+  top: calc(var(--bulma-navbar-height, 3.25rem) + env(safe-area-inset-top));
+  z-index: 20;
+  padding: 0.5rem 0.4rem;
+  margin: 0 -0.4rem;
+  background: var(--vf-surface);
+  border-bottom: 1px solid var(--vf-border-weak);
+}
+
 .mobile-search-row {
   display: flex;
   align-items: center;
