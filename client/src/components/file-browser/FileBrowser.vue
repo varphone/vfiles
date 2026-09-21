@@ -2119,14 +2119,37 @@ function moveActiveRow(key: string, shift: boolean) {
   void nextTick().then(() => scrollActiveIntoView(next.path));
 }
 
-/** 一屏能显示多少行：按已渲染行高推断，兜底 10 行。 */
+/**
+ * 一屏能移动多少个条目：列表按「可视行数」，网格按「可视行数 × 列数」。
+ *
+ * 依赖真实布局（行/卡片高度与容器高度），无布局环境（如 jsdom）兜底 10。
+ */
 function pageStep(): number {
   if (typeof document === "undefined") return 10;
   const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
+  if (!shell) return 10;
+
+  if (viewMode.value === "grid") {
+    const cards = Array.from(
+      document.querySelectorAll<HTMLElement>(".file-grid .file-card"),
+    );
+    if (cards.length === 0) return 10;
+    const columns = columnsFromElements(cards);
+    // 行高优先取同列相邻两行的间距；只有一行时退回卡片高度 + 间距
+    const cardTop = cards[0].getBoundingClientRect().top;
+    const nextRow = cards[columns];
+    const rowHeight = nextRow
+      ? nextRow.getBoundingClientRect().top - cardTop
+      : cards[0].getBoundingClientRect().height + 12;
+    if (rowHeight <= 0) return 10;
+    const visibleRows = Math.max(1, Math.floor(shell.clientHeight / rowHeight));
+    return Math.max(1, visibleRows * columns);
+  }
+
   const rows = Array.from(
     document.querySelectorAll<HTMLElement>("tr.desktop-file-row, .file-item"),
   );
-  if (!shell || rows.length < 2) return 10;
+  if (rows.length < 2) return 10;
   const rowHeight =
     rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top;
   if (rowHeight <= 0) return 10;

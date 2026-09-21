@@ -1674,3 +1674,77 @@ describe("FileBrowser.vue keyboard navigation extras", () => {
     );
   });
 });
+
+describe("FileBrowser.vue grid paging", () => {
+  function gridFiles(count: number) {
+    return Array.from({ length: count }, (_, index) => ({
+      id: `g${index}`,
+      name: `文件-${String(index).padStart(3, "0")}.txt`,
+      path: `文件-${String(index).padStart(3, "0")}.txt`,
+      kind: "file" as const,
+      size_bytes: 10,
+      created_at: "2026-04-10T00:00:00.000Z",
+      updated_at: "2026-04-10T00:00:00.000Z",
+    }));
+  }
+
+  it("moves a full row with arrows and a page with PageDown", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(gridFiles(30));
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("文件-000.txt");
+
+    // 切到网格视图
+    const { useFileViewStore } = await import("../src/stores/fileView.store");
+    useFileViewStore().setMode("grid");
+    await waitFor(() =>
+      expect(container.querySelectorAll(".file-card").length).toBeGreaterThan(
+        3,
+      ),
+    );
+
+    // jsdom 无布局：手动构造 3 列、行高 200、可视高度 600 的布局
+    const cards = Array.from(
+      container.querySelectorAll<HTMLElement>(".file-card"),
+    );
+    const columns = 3;
+    const rowHeight = 200;
+    const shell = container.querySelector<HTMLElement>(".desktop-list-shell")!;
+    cards.forEach((card, index) => {
+      const row = Math.floor(index / columns);
+      Object.defineProperty(card, "offsetTop", { value: row * rowHeight });
+      card.getBoundingClientRect = () =>
+        ({
+          top: row * rowHeight,
+          height: rowHeight - 20,
+          bottom: row * rowHeight + rowHeight - 20,
+          left: 0,
+          right: 100,
+          width: 100,
+          x: 0,
+          y: row * rowHeight,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    });
+    Object.defineProperty(shell, "clientHeight", { value: 600 });
+
+    const activeIndex = () =>
+      cards.findIndex(
+        (card) =>
+          card.classList.contains("file-card--active") ||
+          card.classList.contains("file-card--selected"),
+      );
+
+    await fireEvent.keyDown(document, { key: "Home" });
+    await waitFor(() => expect(activeIndex()).toBe(0));
+
+    // ↓ 按整行移动（3 列）
+    await fireEvent.keyDown(document, { key: "ArrowDown" });
+    await waitFor(() => expect(activeIndex()).toBe(columns));
+
+    // PageDown 按「可视行数 × 列数」= 3 行 × 3 列 = 9
+    await fireEvent.keyDown(document, { key: "PageDown" });
+    await waitFor(() => expect(activeIndex()).toBe(columns + 9));
+  });
+});
