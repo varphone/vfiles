@@ -14,6 +14,22 @@
 
         <div class="shares-header-actions">
           <button
+            v-if="expiredShares.length > 0"
+            class="vf-ghost-button is-danger"
+            type="button"
+            :disabled="clearingExpired || loading"
+            @click="clearExpired"
+          >
+            <IconTrash :size="15" />
+            <span>
+              {{
+                clearingExpired
+                  ? `清理中 ${clearedCount}/${expiredShares.length}`
+                  : `清理过期链接（${expiredShares.length}）`
+              }}
+            </span>
+          </button>
+          <button
             class="vf-ghost-button"
             type="button"
             :disabled="loading"
@@ -67,9 +83,38 @@
         </template>
       </EmptyState>
 
-      <ul v-else class="shares-list">
+      <div v-if="shares.length > 0" class="shares-filters">
+        <button
+          v-for="chip in filterChips"
+          :key="chip.key"
+          class="vf-ghost-button shares-filter"
+          :class="{ 'is-active': statusFilter === chip.key }"
+          type="button"
+          :aria-pressed="statusFilter === chip.key ? 'true' : 'false'"
+          @click="statusFilter = chip.key"
+        >
+          <component :is="chip.icon" :size="14" />
+          <span>{{ chip.label }}</span>
+          <span class="shares-filter-count">{{ chip.count }}</span>
+        </button>
+      </div>
+
+      <EmptyState
+        v-if="shares.length > 0 && visibleShares.length === 0"
+        :icon="IconFilter"
+        :title="emptyFilterTitle"
+        hint="换一个筛选条件即可看到其它链接"
+      >
+        <template #actions>
+          <button class="vf-ghost-button" @click="statusFilter = 'all'">
+            <span>查看全部</span>
+          </button>
+        </template>
+      </EmptyState>
+
+      <ul v-else-if="shares.length > 0" class="shares-list">
         <li
-          v-for="share in shares"
+          v-for="share in visibleShares"
           :key="share.id"
           class="shares-row"
           :class="{ 'is-expired': isExpired(share) }"
@@ -152,6 +197,10 @@ import { useRouter } from "vue-router";
 import {
   IconAlertCircle,
   IconCheck,
+  IconCircleCheck,
+  IconClockOff,
+  IconEye,
+  IconFilter,
   IconCopy,
   IconExternalLink,
   IconFolderOpen,
@@ -201,6 +250,109 @@ function isExpired(share: ShareLink): boolean {
 const activeShares = computed(() =>
   shares.value.filter((share) => !isExpired(share)),
 );
+
+const expiredShares = computed(() =>
+  shares.value.filter((share) => isExpired(share)),
+);
+
+const visitedShares = computed(() =>
+  shares.value.filter((share) => share.access_count > 0),
+);
+
+/** 列表筛选：全部 / 有效 / 已过期 / 已被访问。 */
+type StatusFilter = "all" | "active" | "expired" | "visited";
+const statusFilter = ref<StatusFilter>("all");
+
+const filterChips = computed(() => [
+  {
+    key: "all" as const,
+    label: "全部",
+    icon: IconLink,
+    count: shares.value.length,
+  },
+  {
+    key: "active" as const,
+    label: "有效",
+    icon: IconCircleCheck,
+    count: activeShares.value.length,
+  },
+  {
+    key: "expired" as const,
+    label: "已过期",
+    icon: IconClockOff,
+    count: expiredShares.value.length,
+  },
+  {
+    key: "visited" as const,
+    label: "已被访问",
+    icon: IconEye,
+    count: visitedShares.value.length,
+  },
+]);
+
+const visibleShares = computed(() => {
+  switch (statusFilter.value) {
+    case "active":
+      return activeShares.value;
+    case "expired":
+      return expiredShares.value;
+    case "visited":
+      return visitedShares.value;
+    default:
+      return shares.value;
+  }
+});
+
+const emptyFilterTitle = computed(() => {
+  switch (statusFilter.value) {
+    case "active":
+      return "没有有效的分享链接";
+    case "expired":
+      return "没有已过期的链接";
+    case "visited":
+      return "还没有被访问过的链接";
+    default:
+      return "没有匹配的分享链接";
+  }
+});
+
+/** 批量停止所有已过期链接（仍会逐个调用接口，并显示进度）。 */
+const clearingExpired = ref(false);
+const clearedCount = ref(0);
+
+async function clearExpired() {
+  const targets = expiredShares.value;
+  if (targets.length === 0 || clearingExpired.value) return;
+
+  const ok = await confirmDialog({
+    title: "清理过期链接",
+    message: `确定要停止 ${targets.length} 个已过期的分享链接吗？\n（过期链接已无法访问，停止后从列表移除）`,
+    confirmText: "全部停止",
+    danger: true,
+  });
+  if (!ok) return;
+
+  clearingExpired.value = true;
+  clearedCount.value = 0;
+  let failed = 0;
+
+  for (const share of targets) {
+    try {
+      await filesService.disableShare(share.code);
+      shares.value = shares.value.filter((item) => item.code !== share.code);
+      clearedCount.value += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+
+  clearingExpired.value = false;
+  if (failed > 0) {
+    app.error(`有 ${failed} 个链接未能停止，请重试`);
+  } else {
+    app.success(`已清理 ${clearedCount.value} 个过期链接`);
+  }
+}
 
 function iconSource(share: ShareLink): FileIconSource {
   return { name: share.entry_name, kind: share.entry_kind };
@@ -366,6 +518,32 @@ onMounted(() => {
   to {
     background-position: -200% 0;
   }
+}
+
+/* 状态筛选 chips：全部 / 有效 / 已过期 / 已被访问 */
+.shares-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  padding: 0.65rem 0 0;
+}
+
+.shares-filter {
+  gap: 0.3rem;
+  min-height: 1.75rem;
+  padding: 0 0.55rem;
+  font-size: 0.78rem;
+}
+
+.shares-filter-count {
+  color: var(--vf-text-subtle);
+  font-size: 0.72rem;
+}
+
+.shares-filter.is-active .shares-filter-count {
+  color: currentColor;
+  opacity: 0.75;
 }
 
 .shares-list {

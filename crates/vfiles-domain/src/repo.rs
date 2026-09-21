@@ -359,7 +359,11 @@ pub trait ShareRepo {
         expires_at: Option<time::OffsetDateTime>,
         created_by: &UserId,
     ) -> DomainResult<ShareId>;
+    /// 按分享码查询**有效**分享（已过期/已停用视为不存在），用于匿名访问。
     async fn find_share_by_code(&self, code: &str) -> DomainResult<Share>;
+
+    /// 按分享码查询分享，忽略过期时间（仅用于所有者操作，例如停止一个已过期的链接）。
+    async fn find_share_by_code_including_expired(&self, code: &str) -> DomainResult<Share>;
     async fn find_shares_by_entry(&self, entry_id: &EntryId) -> DomainResult<Vec<Share>>;
     async fn find_shares_by_user(&self, user_id: &UserId) -> DomainResult<Vec<Share>>;
 

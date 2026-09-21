@@ -9,6 +9,21 @@ vi.mock("../src/services/api.service", () => ({
 
 import { filesService } from "../src/services/files.service";
 
+describe("filesService share endpoints", () => {
+  it("stops a share via /share/shares/{code}", async () => {
+    const { apiService } = await import("../src/services/api.service");
+    const deleteMock = vi.fn(async () => ({}));
+    (apiService as any).delete = deleteMock;
+
+    const { filesService: service } =
+      await import("../src/services/files.service");
+    await service.disableShare("abc123");
+
+    // 写成 /shares/{code} 会命中前端回退并返回 200，服务端不会真正停用链接
+    expect(deleteMock).toHaveBeenCalledWith("/share/shares/abc123");
+  });
+});
+
 describe("filesService.listAuditLogs", () => {
   it("passes filters as query params (not an axios config object)", async () => {
     getMock.mockResolvedValue({

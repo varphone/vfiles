@@ -420,7 +420,9 @@ export const filesService = {
 
   /** 停用（删除）分享链接。 */
   async disableShare(code: string): Promise<void> {
-    await apiService.delete(`/shares/${encodeURIComponent(code)}`);
+    // 分享路由挂在 /api/share 下：写成 /shares/{code} 会落到前端回退并返回 200，
+    // 看起来「成功」但服务端并未停用链接
+    await apiService.delete(`/share/shares/${encodeURIComponent(code)}`);
   },
 
   async getFiles(path: string = "", commit?: string): Promise<FileInfo[]> {

@@ -4145,6 +4145,29 @@ impl ShareRepo for SqliteShareRepo {
         Ok(shares)
     }
 
+    async fn find_share_by_code_including_expired(&self, code: &str) -> DomainResult<Share> {
+        let row: ShareRow = sqlx::query_as(
+            r#"
+            SELECT
+                id, namespace_id, entry_id, entry_version_id, code, expires_at,
+                created_by, created_at, access_count, last_accessed_at, disabled_at
+            FROM shares
+            WHERE code = ? AND disabled_at IS NULL
+            "#,
+        )
+        .bind(code)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to find share: {}", e),
+        })?
+        .ok_or_else(|| DomainError::NotFound {
+            resource: "share".to_string(),
+        })?;
+
+        parse_share_row(row)
+    }
+
     async fn record_share_access(&self, share_id: &ShareId) -> DomainResult<()> {
         let now = time::OffsetDateTime::now_utc();
 

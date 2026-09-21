@@ -3166,7 +3166,11 @@ where
     }
 
     pub async fn disable_share(&self, code: &str, user_id: &UserId) -> DomainResult<()> {
-        let share = self.share_repo.find_share_by_code(code).await?;
+        // 所有者操作：已过期的链接也必须能找到并停用（否则无法清理过期分享）
+        let share = self
+            .share_repo
+            .find_share_by_code_including_expired(code)
+            .await?;
 
         // Check if user owns this share
         if share.created_by != *user_id {

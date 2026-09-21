@@ -2400,6 +2400,74 @@ async fn share_creation_uses_configured_public_base_url() {
     );
 }
 
+/// 已过期的分享，所有者仍然可以停止（否则过期链接无法清理）。
+#[tokio::test]
+async fn expired_share_can_still_be_disabled_by_owner() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "过期.txt", b"expired\n", "seed")
+        .await;
+
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+    let created = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/share/shares",
+            json!({ "path": "docs/过期.txt", "expires_at": "2020-01-01T00:00:00Z" }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(created.status(), StatusCode::OK);
+    let code = response_json(created).await["code"]
+        .as_str()
+        .expect("share code")
+        .to_string();
+
+    // 匿名访问已过期链接应被拒绝
+    let access = app
+        .request(
+            Request::builder()
+                .uri(format!("/api/share/shares/{code}"))
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(access.status(), StatusCode::NOT_FOUND);
+
+    // 但所有者可以停止它
+    let disabled = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/share/shares/{code}"))
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(
+        disabled.status(),
+        StatusCode::NO_CONTENT,
+        "过期链接也应能被所有者停止"
+    );
+
+    // 停止后不再出现在列表里
+    let list = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/share/shares")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let payload = response_json(list).await;
+    assert_eq!(
+        payload.as_array().map(Vec::len),
+        Some(0),
+        "停止后列表应为空: {payload:?}"
+    );
+}
+
 /// 审计日志：登录/上传/下载都会被记录，只有管理员可读，且接口不提供修改入口。
 #[tokio::test]
 async fn audit_log_records_key_actions_and_is_admin_only() {
