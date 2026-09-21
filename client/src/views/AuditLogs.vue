@@ -157,9 +157,11 @@
         </template>
       </EmptyState>
 
-      <div v-else-if="loading && items.length === 0" class="audit-skeleton">
-        <div v-for="row in 4" :key="row" class="audit-skeleton-row"></div>
-      </div>
+      <SkeletonList
+        v-else-if="loading && items.length === 0"
+        :rows="4"
+        label="加载审计日志"
+      />
 
       <EmptyState
         v-else-if="items.length === 0"
@@ -276,6 +278,7 @@ import {
   IconSearch,
 } from "@tabler/icons-vue";
 import EmptyState from "../components/common/EmptyState.vue";
+import SkeletonList from "../components/common/SkeletonList.vue";
 import { filesService } from "../services/files.service";
 import { formatRelativeDate } from "../utils/filePresentation";
 import type { AuditLogEntry } from "../types";
@@ -596,26 +599,6 @@ onMounted(() => {
   min-height: 1.9rem;
   padding: 0 0.55rem;
   font-size: 0.78rem;
-}
-
-.audit-skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 1rem 0;
-}
-
-.audit-skeleton-row {
-  height: 2.2rem;
-  border-radius: var(--vf-radius-sm);
-  background: linear-gradient(
-    90deg,
-    var(--vf-skeleton-base) 0%,
-    var(--vf-skeleton-shine) 50%,
-    var(--vf-skeleton-base) 100%
-  );
-  background-size: 200% 100%;
-  animation: audit-shimmer 1.2s ease-in-out infinite;
 }
 
 @keyframes audit-shimmer {

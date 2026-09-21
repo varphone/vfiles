@@ -2,8 +2,7 @@
   <section class="sidebar-overview" aria-label="工作区概览">
     <div v-if="loading && !overview" class="sidebar-overview-block">
       <p class="sidebar-overview-title">存储用量</p>
-      <div class="sidebar-skeleton-line"></div>
-      <div class="sidebar-skeleton-line is-short"></div>
+      <SkeletonList variant="lines" :rows="3" label="加载工作区概览" />
     </div>
 
     <div v-else-if="error" class="sidebar-overview-block">
@@ -127,6 +126,7 @@ import type {
 } from "../../types";
 import { IconStarFilled } from "@tabler/icons-vue";
 import { formatRelativeDate, formatSize } from "../../utils/filePresentation";
+import SkeletonList from "../common/SkeletonList.vue";
 import FileTypeIcon from "./FileTypeIcon.vue";
 
 /**
@@ -479,13 +479,6 @@ watch(
 
 .sidebar-favorite-remove:hover {
   background: var(--vf-surface-hover);
-}
-
-.sidebar-skeleton-line {
-  height: 0.7rem;
-  margin-bottom: 0.35rem;
-  border-radius: 4px;
-  background: var(--vf-skeleton-base);
 }
 
 .sidebar-skeleton-line.is-short {

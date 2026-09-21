@@ -24,10 +24,7 @@
 
     <div class="history-layout" :class="{ 'has-detail': detailOpen }">
       <section class="history-list-pane" aria-label="版本列表">
-        <div v-if="loading" class="history-state">
-          <div class="spinner mb-3"></div>
-          <p class="history-state-text">加载历史记录中...</p>
-        </div>
+        <SkeletonList v-if="loading" :rows="5" label="加载历史记录" />
 
         <EmptyState
           v-else-if="error"
@@ -110,10 +107,12 @@
           </header>
 
           <div class="history-detail-body">
-            <div v-if="diff.loading" class="history-state">
-              <div class="spinner mb-3"></div>
-              <p class="history-state-text">加载 diff 中...</p>
-            </div>
+            <SkeletonList
+              v-if="diff.loading"
+              variant="lines"
+              :rows="8"
+              label="加载版本对比"
+            />
 
             <p v-else-if="diff.error" class="history-inline-note is-warning">
               <IconAlertTriangle :size="14" />
@@ -266,6 +265,7 @@ import {
   IconRefresh,
 } from "@tabler/icons-vue";
 import EmptyState from "../common/EmptyState.vue";
+import SkeletonList from "../common/SkeletonList.vue";
 import { filesService } from "../../services/files.service";
 import { useAppStore } from "../../stores/app.store";
 import { confirmDialog } from "../../composables/dialog";

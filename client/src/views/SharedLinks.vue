@@ -65,9 +65,11 @@
         </template>
       </EmptyState>
 
-      <div v-else-if="loading && shares.length === 0" class="shares-skeleton">
-        <div v-for="row in 3" :key="row" class="shares-skeleton-row"></div>
-      </div>
+      <SkeletonList
+        v-else-if="loading && shares.length === 0"
+        :rows="3"
+        label="加载分享链接"
+      />
 
       <EmptyState
         v-else-if="shares.length === 0"
@@ -210,6 +212,7 @@ import {
   IconTrash,
 } from "@tabler/icons-vue";
 import EmptyState from "../components/common/EmptyState.vue";
+import SkeletonList from "../components/common/SkeletonList.vue";
 import FileTypeIcon from "../components/file-browser/FileTypeIcon.vue";
 import { filesService } from "../services/files.service";
 import { copyText } from "../utils/clipboard";
@@ -492,26 +495,6 @@ onMounted(() => {
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
   font-size: 0.78rem;
-}
-
-.shares-skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 1rem 0;
-}
-
-.shares-skeleton-row {
-  height: 2.6rem;
-  border-radius: var(--vf-radius-sm);
-  background: linear-gradient(
-    90deg,
-    var(--vf-skeleton-base) 0%,
-    var(--vf-skeleton-shine) 50%,
-    var(--vf-skeleton-base) 100%
-  );
-  background-size: 200% 100%;
-  animation: shares-shimmer 1.2s ease-in-out infinite;
 }
 
 @keyframes shares-shimmer {

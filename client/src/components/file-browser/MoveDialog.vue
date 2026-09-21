@@ -59,10 +59,12 @@
         </div>
 
         <div class="move-dialog-browser">
-          <div v-if="loading" class="move-dialog-state">
-            <div class="spinner mb-2"></div>
-            <span>加载目录中...</span>
-          </div>
+          <SkeletonList
+            v-if="loading"
+            variant="folders"
+            :rows="4"
+            label="加载目录"
+          />
 
           <EmptyState
             v-else-if="error"
@@ -161,6 +163,7 @@ import {
 } from "@tabler/icons-vue";
 import Modal from "../common/Modal.vue";
 import EmptyState from "../common/EmptyState.vue";
+import SkeletonList from "../common/SkeletonList.vue";
 import FileTypeIcon from "./FileTypeIcon.vue";
 import { filesService } from "../../services/files.service";
 import type { FileInfo } from "../../types";

@@ -92,9 +92,11 @@
         </template>
       </EmptyState>
 
-      <div v-else-if="loading && users.length === 0" class="admin-skeleton">
-        <div v-for="row in 4" :key="row" class="admin-skeleton-row"></div>
-      </div>
+      <SkeletonList
+        v-else-if="loading && users.length === 0"
+        :rows="4"
+        label="加载用户列表"
+      />
 
       <EmptyState
         v-else-if="users.length === 0"
@@ -279,6 +281,7 @@ import { useAppStore } from "../stores/app.store";
 import { confirmDialog } from "../composables/dialog";
 import { useAuthStore } from "../stores/auth.store";
 import EmptyState from "../components/common/EmptyState.vue";
+import SkeletonList from "../components/common/SkeletonList.vue";
 import { formatRelativeDate } from "../utils/filePresentation";
 
 const app = useAppStore();
@@ -608,26 +611,6 @@ onMounted(() => {
   background: var(--vf-warning-soft);
   color: var(--vf-text);
   font-size: 0.78rem;
-}
-
-.admin-skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 1rem 0;
-}
-
-.admin-skeleton-row {
-  height: 2.2rem;
-  border-radius: var(--vf-radius-sm);
-  background: linear-gradient(
-    90deg,
-    var(--vf-skeleton-base) 0%,
-    var(--vf-skeleton-shine) 50%,
-    var(--vf-skeleton-base) 100%
-  );
-  background-size: 200% 100%;
-  animation: admin-shimmer 1.2s ease-in-out infinite;
 }
 
 @keyframes admin-shimmer {

@@ -35,10 +35,17 @@ function renderModal(props: Record<string, unknown> = {}) {
 }
 
 describe("FilePreviewModal.vue", () => {
-  it("shows the loading state", () => {
-    renderModal({ preview: state({ loading: true }) });
+  it("shows a skeleton while loading", () => {
+    const { container } = renderModal({ preview: state({ loading: true }) });
 
-    expect(screen.getByText("加载预览中...")).toBeInTheDocument();
+    // 加载态统一使用骨架（结构内容用骨架而不是 spinner）
+    const skeleton = container.querySelector('[role="status"]')!;
+    expect(skeleton).not.toBeNull();
+    expect(skeleton.getAttribute("aria-busy")).toBe("true");
+    expect(skeleton.getAttribute("aria-label")).toContain("加载预览");
+    expect(container.querySelectorAll(".skeleton-row").length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("shows the error with a retry action that reports the path", async () => {

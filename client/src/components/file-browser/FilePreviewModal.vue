@@ -78,10 +78,12 @@
 
       <!-- 预览区 -->
       <div class="preview-viewer">
-        <div v-if="preview.loading" class="preview-state">
-          <div class="spinner mb-2"></div>
-          <p class="preview-state-text">加载预览中...</p>
-        </div>
+        <SkeletonList
+          v-if="preview.loading"
+          :variant="isImage ? 'rows' : 'lines'"
+          :rows="isImage ? 3 : 10"
+          :label="`加载预览 ${filename}`"
+        />
 
         <EmptyState
           v-else-if="preview.error"
@@ -283,6 +285,7 @@ import {
 } from "@tabler/icons-vue";
 import Modal from "../common/Modal.vue";
 import EmptyState from "../common/EmptyState.vue";
+import SkeletonList from "../common/SkeletonList.vue";
 import FileTypeIcon from "./FileTypeIcon.vue";
 import { formatSize } from "../../utils/filePresentation";
 import type { PreviewState } from "../../composables/useFilePreview";
