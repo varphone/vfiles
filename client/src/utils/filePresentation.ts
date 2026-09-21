@@ -170,7 +170,12 @@ export function isImageFile(file: FileInfo): boolean {
   return IMAGE_EXTENSIONS.has(getExtension(file.name));
 }
 
-export function fileIconKind(file: FileInfo): FileIconKind {
+/** 图标分类只需要「名称 + 类型（+ 可选 MIME）」，放宽入参便于复用。 */
+export type FileIconSource = Pick<FileInfo, "name" | "kind"> & {
+  mime_type?: string | null;
+};
+
+export function fileIconKind(file: FileIconSource): FileIconKind {
   if (file.kind === "directory") return "folder";
 
   // 同上：代码类扩展名优先，避免 .ts 被当作视频

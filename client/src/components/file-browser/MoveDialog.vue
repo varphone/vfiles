@@ -6,112 +6,142 @@
     @close="emit('close')"
   >
     <div class="move-dialog">
-      <div class="move-dialog-summary">
-        <div class="move-dialog-summary-title">
-          待移动 {{ items.length }} 项
-        </div>
-        <div class="move-dialog-summary-list">
-          <span
-            v-for="item in previewItems"
-            :key="item.path"
-            class="move-dialog-chip"
+      <!-- 待移动条目：紧凑一行，避免把已知信息做成大盒子 -->
+      <div class="move-dialog-items">
+        <span class="move-dialog-items-icon" aria-hidden="true">
+          <FileTypeIcon v-if="singleItem" :file="singleItem" :size="18" />
+          <IconFolders v-else :size="18" />
+        </span>
+        <span class="move-dialog-items-name" :title="itemsLabel">
+          {{ itemsLabel }}
+        </span>
+        <span v-if="hiddenItemCount > 0" class="move-dialog-items-more">
+          共 {{ items.length }} 项
+        </span>
+      </div>
+
+      <!-- 目标选择器：面包屑 + 子目录列表 -->
+      <div class="move-dialog-picker">
+        <div class="move-dialog-path">
+          <button
+            class="vf-icon-button move-dialog-up"
+            type="button"
+            title="上一级"
+            aria-label="上一级"
+            :disabled="loading || !browserPath"
+            @click="goUp"
           >
-            {{ item.name }}
-          </span>
-          <span v-if="hiddenItemCount > 0" class="move-dialog-chip is-muted">
-            还有 {{ hiddenItemCount }} 项
-          </span>
-        </div>
-      </div>
-
-      <div class="move-dialog-toolbar">
-        <button class="button is-small is-light" @click="goRoot" :disabled="loading">
-          根目录
-        </button>
-        <button
-          class="button is-small is-light"
-          @click="goUp"
-          :disabled="loading || !browserPath"
-        >
-          上一级
-        </button>
-      </div>
-
-      <div class="move-dialog-target">
-        <div class="move-dialog-target-label">当前目标目录</div>
-        <div class="move-dialog-target-value">{{ currentPathLabel }}</div>
-      </div>
-
-      <div v-if="breadcrumbs.length" class="move-dialog-breadcrumbs">
-        <button class="move-dialog-crumb" @click="goRoot">根目录</button>
-        <template v-for="crumb in breadcrumbs" :key="crumb.path">
-          <span class="move-dialog-crumb-sep">/</span>
-          <button class="move-dialog-crumb" @click="openDirectory(crumb.path)">
-            {{ crumb.name }}
+            <IconArrowUp :size="16" />
           </button>
-        </template>
-      </div>
 
-      <p class="move-dialog-hint">只显示目录；不可作为目标的目录会直接置灰。</p>
+          <nav class="move-dialog-crumbs" aria-label="目标目录">
+            <button
+              class="move-dialog-crumb"
+              :class="{ 'is-current': !browserPath }"
+              type="button"
+              @click="goRoot"
+            >
+              <IconHome :size="14" />
+              <span>根目录</span>
+            </button>
+            <template v-for="crumb in breadcrumbs" :key="crumb.path">
+              <span class="move-dialog-crumb-sep" aria-hidden="true">/</span>
+              <button
+                class="move-dialog-crumb"
+                :class="{ 'is-current': crumb.path === browserPath }"
+                type="button"
+                @click="openDirectory(crumb.path)"
+              >
+                {{ crumb.name }}
+              </button>
+            </template>
+          </nav>
+        </div>
 
-      <div v-if="error" class="notification is-danger is-light">
-        {{ error }}
-      </div>
+        <div class="move-dialog-browser">
+          <div v-if="loading" class="move-dialog-state">
+            <div class="spinner mb-2"></div>
+            <span>加载目录中...</span>
+          </div>
 
-      <div
-        class="move-dialog-target-status"
-        :class="validationMessages.length ? 'is-warning' : 'is-ready'"
-      >
-        <template v-if="validationMessages.length">
-          <div class="move-dialog-target-status-title">当前目录暂不可作为目标</div>
-          <ul class="move-dialog-target-status-list">
-            <li v-for="message in validationMessages" :key="message">
-              {{ message }}
+          <EmptyState
+            v-else-if="error"
+            :icon="IconAlertCircle"
+            tone="error"
+            compact
+            title="目录加载失败"
+            :hint="error"
+          >
+            <template #actions>
+              <button
+                class="vf-ghost-button"
+                @click="loadDirectories(browserPath)"
+              >
+                <span>重试</span>
+              </button>
+            </template>
+          </EmptyState>
+
+          <EmptyState
+            v-else-if="directories.length === 0"
+            :icon="IconFolderOff"
+            compact
+            title="此处没有子文件夹"
+            hint="可以直接移动到当前目录"
+          />
+
+          <ul v-else class="move-dialog-list">
+            <li v-for="directory in directories" :key="directory.path">
+              <button
+                class="move-dialog-row"
+                type="button"
+                :class="{ 'is-disabled': isDirectoryDisabled(directory.path) }"
+                :disabled="isDirectoryDisabled(directory.path)"
+                :title="
+                  directoryDisabledReason(directory.path) || directory.path
+                "
+                @click="openDirectory(directory.path)"
+              >
+                <IconFolder :size="18" class="move-dialog-row-icon" />
+                <span class="move-dialog-row-name">{{ directory.name }}</span>
+                <span
+                  v-if="directoryDisabledReason(directory.path)"
+                  class="move-dialog-row-note"
+                >
+                  待移动目录
+                </span>
+                <IconChevronRight
+                  v-else
+                  :size="16"
+                  class="move-dialog-row-chevron"
+                />
+              </button>
             </li>
           </ul>
-        </template>
-        <template v-else>
-          <div class="move-dialog-target-status-title">当前目录可作为目标</div>
-          <p class="move-dialog-target-status-text">
-            确认后会把所选项目移动到这里。
-          </p>
-        </template>
-      </div>
-
-      <div class="move-dialog-browser">
-        <div v-if="loading" class="move-dialog-state has-text-grey">加载目录中...</div>
-        <div v-else-if="directories.length === 0" class="move-dialog-state has-text-grey">
-          当前目录下没有可继续进入的子目录。
         </div>
-        <button
-          v-for="directory in directories"
-          :key="directory.path"
-          class="move-dialog-directory"
-          :class="{ 'is-disabled': isDirectoryDisabled(directory.path) }"
-          :disabled="isDirectoryDisabled(directory.path)"
-          @click="openDirectory(directory.path)"
-        >
-          <span class="move-dialog-directory-name">{{ directory.name }}</span>
-          <span class="move-dialog-directory-path">/{{ directory.path }}</span>
-          <span
-            v-if="directoryDisabledReason(directory.path)"
-            class="move-dialog-directory-note"
-          >
-            {{ directoryDisabledReason(directory.path) }}
-          </span>
-        </button>
+
+        <!-- 仅在当前目录不可用时提示一行，而不是常驻状态卡片 -->
+        <p v-if="validationMessages.length" class="move-dialog-warning">
+          <IconAlertTriangle :size="14" class="move-dialog-warning-icon" />
+          <span>{{ validationMessages.join("；") }}</span>
+        </p>
       </div>
     </div>
 
     <template #footer>
-      <button class="button" @click="emit('close')">取消</button>
+      <button class="vf-ghost-button" @click="emit('close')">取消</button>
       <button
-        class="button is-primary"
+        class="vf-ghost-button is-primary"
         :class="{ 'is-loading': confirmLoading }"
         :disabled="!canConfirm"
+        :title="
+          validationMessages.length
+            ? validationMessages.join('；')
+            : `移动到${targetLabel}`
+        "
         @click="emit('confirm', browserPath)"
       >
-        移动到当前目录
+        <span>{{ confirmLabel }}</span>
       </button>
     </template>
   </Modal>
@@ -119,7 +149,19 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import {
+  IconAlertCircle,
+  IconAlertTriangle,
+  IconArrowUp,
+  IconChevronRight,
+  IconFolder,
+  IconFolderOff,
+  IconFolders,
+  IconHome,
+} from "@tabler/icons-vue";
 import Modal from "../common/Modal.vue";
+import EmptyState from "../common/EmptyState.vue";
+import FileTypeIcon from "./FileTypeIcon.vue";
 import { filesService } from "../../services/files.service";
 import type { FileInfo } from "../../types";
 
@@ -160,14 +202,35 @@ const dialogTitle = computed(() => {
   return `移动 ${props.items.length} 个项目`;
 });
 
-const previewItems = computed(() => props.items.slice(0, 4));
-const hiddenItemCount = computed(() => Math.max(0, props.items.length - previewItems.value.length));
-const currentPathLabel = computed(() => (browserPath.value ? `/${browserPath.value}` : "/"));
+const singleItem = computed(() =>
+  props.items.length === 1 ? props.items[0] : undefined,
+);
+const previewItems = computed(() => props.items.slice(0, 3));
+const hiddenItemCount = computed(() =>
+  Math.max(0, props.items.length - previewItems.value.length),
+);
+const itemsLabel = computed(() => {
+  const names = previewItems.value.map((item) => item.name).join("、");
+  return hiddenItemCount.value > 0 ? `${names}…` : names;
+});
+
+const targetLabel = computed(() =>
+  breadcrumbs.value.length
+    ? `「${breadcrumbs.value[breadcrumbs.value.length - 1]?.name}」`
+    : "根目录",
+);
+const confirmLabel = computed(() =>
+  validationMessages.value.length
+    ? "移动到当前目录"
+    : `移动到${targetLabel.value}`,
+);
+
 const directories = computed(() => {
   return browserEntries.value
     .filter((entry) => entry.kind === "directory")
     .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
 });
+
 const breadcrumbs = computed<BreadcrumbItem[]>(() => {
   const parts = browserPath.value.split("/").filter(Boolean);
   const items: BreadcrumbItem[] = [];
@@ -186,12 +249,15 @@ const validationMessages = computed(() => {
 
   const issues = new Set<string>();
   const usedTargets = new Set<string>();
-  const existingPaths = new Set(browserEntries.value.map((entry) => entry.path));
+  const existingPaths = new Set(
+    browserEntries.value.map((entry) => entry.path),
+  );
 
   for (const item of props.items) {
     if (
       item.kind === "directory" &&
-      (browserPath.value === item.path || browserPath.value.startsWith(`${item.path}/`))
+      (browserPath.value === item.path ||
+        browserPath.value.startsWith(`${item.path}/`))
     ) {
       issues.add(`“${item.name}”不能移动到自身或其子目录`);
       continue;
@@ -220,7 +286,11 @@ const validationMessages = computed(() => {
 });
 
 const canConfirm = computed(() => {
-  return !loading.value && !props.confirmLoading && validationMessages.value.length === 0;
+  return (
+    !loading.value &&
+    !props.confirmLoading &&
+    validationMessages.value.length === 0
+  );
 });
 
 watch(
@@ -261,7 +331,9 @@ function buildTargetPath(name: string): string {
 
 function isDirectoryDisabled(path: string): boolean {
   return props.items.some(
-    (item) => item.kind === "directory" && (path === item.path || path.startsWith(`${item.path}/`)),
+    (item) =>
+      item.kind === "directory" &&
+      (path === item.path || path.startsWith(`${item.path}/`)),
   );
 }
 
@@ -293,217 +365,201 @@ async function goUp() {
 .move-dialog {
   display: flex;
   flex-direction: column;
-  gap: 0.9rem;
+  gap: 0.85rem;
   min-width: min(560px, 100%);
 }
 
-.move-dialog-summary {
-  padding: 0.8rem 0.9rem;
-  border-radius: 14px;
-  background: var(--vf-surface-muted);
-  border: 1px solid var(--vf-border-soft);
-}
-
-.move-dialog-summary-title {
-  margin-bottom: 0.55rem;
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--vf-text-muted);
-  text-transform: uppercase;
-}
-
-.move-dialog-summary-list {
+/* 待移动条目：一行摘要 */
+.move-dialog-items {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 0.45rem;
+  min-width: 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-surface-sunken);
 }
 
-.move-dialog-chip {
+.move-dialog-items-icon {
   display: inline-flex;
-  align-items: center;
-  max-width: 100%;
-  padding: 0.32rem 0.6rem;
-  border-radius: 999px;
-  background: var(--vf-surface-translucent-strong);
-  border: 1px solid var(--vf-border-soft);
-  color: var(--vf-text-strong);
-  font-size: 0.82rem;
-  line-height: 1.2;
+  flex: 0 0 auto;
+  color: var(--vf-accent-strong);
 }
 
-.move-dialog-chip.is-muted {
-  color: var(--vf-text-muted);
-}
-
-.move-dialog-toolbar {
-  display: flex;
-  gap: 0.55rem;
-  flex-wrap: wrap;
-}
-
-.move-dialog-target {
-  padding: 0.75rem 0.9rem;
-  border-radius: 14px;
-  background: var(--vf-surface-translucent);
-  border: 1px solid var(--vf-border-soft);
-}
-
-.move-dialog-target-label {
-  font-size: 0.74rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--vf-text-muted);
-}
-
-.move-dialog-target-value {
-  margin-top: 0.32rem;
-  color: var(--vf-text-strong);
+.move-dialog-items-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.84rem;
   font-weight: 600;
-  word-break: break-word;
+  color: var(--vf-text-strong);
 }
 
-.move-dialog-breadcrumbs {
+.move-dialog-items-more {
+  flex: 0 0 auto;
+  color: var(--vf-text-subtle);
+  font-size: 0.76rem;
+}
+
+/* 目标选择器：路径 + 列表合成一个面板 */
+.move-dialog-picker {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 0;
+}
+
+.move-dialog-path {
+  display: flex;
   align-items: center;
-  gap: 0.2rem;
+  gap: 0.4rem;
+  min-width: 0;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-surface);
+}
+
+.move-dialog-up {
+  flex: 0 0 auto;
+}
+
+.move-dialog-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 
 .move-dialog-crumb {
-  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 0 0 auto;
+  padding: 0.15rem 0.35rem;
   border: none;
+  border-radius: var(--vf-radius-sm);
   background: transparent;
-  color: var(--vf-accent);
+  color: var(--vf-text-muted);
+  font-size: 0.82rem;
   cursor: pointer;
-  font-size: 0.88rem;
 }
 
 .move-dialog-crumb:hover {
-  color: var(--vf-accent-strong);
-  text-decoration: underline;
-}
-
-.move-dialog-crumb-sep {
-  color: var(--vf-text-subtle);
-}
-
-.move-dialog-hint {
-  margin: -0.1rem 0 0;
-  color: var(--vf-text-muted);
-  font-size: 0.82rem;
-}
-
-.move-dialog-target-status {
-  padding: 0.78rem 0.9rem;
-  border-radius: 14px;
-  border: 1px solid var(--vf-border-soft);
-}
-
-.move-dialog-target-status.is-ready {
-  background: var(--vf-success-soft);
-  border-color: var(--vf-success-line);
-}
-
-.move-dialog-target-status.is-warning {
-  background: var(--vf-warning-soft);
-  border-color: var(--vf-warning-line);
-}
-
-.move-dialog-target-status-title {
+  background: var(--vf-surface-hover);
   color: var(--vf-text-strong);
-  font-weight: 700;
 }
 
-.move-dialog-target-status-text {
-  margin: 0.32rem 0 0;
-  color: var(--vf-text-muted);
-  font-size: 0.84rem;
-}
-
-.move-dialog-target-status-list {
-  margin: 0.35rem 0 0;
-  padding-left: 1.15rem;
-  color: var(--vf-warning-text);
-  font-size: 0.84rem;
-}
-
-.move-dialog-browser {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  min-height: 240px;
-  max-height: min(52vh, 420px);
-  overflow: auto;
-  padding: 0.35rem;
-  border-radius: 16px;
-  background: var(--vf-surface-stripe);
-  border: 1px solid var(--vf-border-soft);
-}
-
-.move-dialog-directory {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.18rem;
-  width: 100%;
-  padding: 0.8rem 0.9rem;
-  border: 1px solid var(--vf-border-soft);
-  border-radius: 14px;
-  background: var(--vf-surface-translucent-strong);
-  cursor: pointer;
-  text-align: left;
-}
-
-.move-dialog-directory:hover {
-  border-color: var(--vf-accent-line);
-  background: var(--vf-accent-soft);
-}
-
-.move-dialog-directory.is-disabled {
-  cursor: not-allowed;
-  opacity: 0.62;
-  background: var(--vf-surface-soft);
-}
-
-.move-dialog-directory.is-disabled:hover {
-  border-color: var(--vf-border-soft);
-  background: var(--vf-surface-soft);
-}
-
-.move-dialog-directory-name {
+.move-dialog-crumb.is-current {
   color: var(--vf-text-strong);
   font-weight: 600;
 }
 
-.move-dialog-directory-path {
-  color: var(--vf-text-muted);
-  font-size: 0.8rem;
+.move-dialog-crumb-sep {
+  flex: 0 0 auto;
+  color: var(--vf-border);
 }
 
-.move-dialog-directory-note {
-  margin-top: 0.15rem;
-  color: var(--vf-warning-text);
-  font-size: 0.76rem;
+.move-dialog-browser {
+  min-height: 12rem;
+  max-height: min(46vh, 22rem);
+  overflow-y: auto;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-surface);
 }
 
 .move-dialog-state {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  min-height: 200px;
-  text-align: center;
-  padding: 1rem;
+  padding: 1.5rem;
+  color: var(--vf-text-muted);
+  font-size: 0.82rem;
 }
 
-@media screen and (max-width: 768px) {
-  .move-dialog {
-    min-width: 0;
-  }
+.move-dialog-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+}
 
-  .move-dialog-browser {
-    max-height: 46vh;
-  }
+.move-dialog-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.55rem;
+  border: none;
+  border-radius: var(--vf-radius-sm);
+  background: transparent;
+  color: var(--vf-text);
+  font-size: 0.86rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.move-dialog-row:hover:not(:disabled) {
+  background: var(--vf-surface-hover);
+}
+
+.move-dialog-row.is-disabled,
+.move-dialog-row:disabled {
+  color: var(--vf-text-subtle);
+  cursor: default;
+}
+
+.move-dialog-row-icon {
+  flex: 0 0 auto;
+  color: var(--vf-accent-strong);
+}
+
+.move-dialog-row.is-disabled .move-dialog-row-icon {
+  color: var(--vf-text-subtle);
+}
+
+.move-dialog-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.move-dialog-row-note {
+  flex: 0 0 auto;
+  color: var(--vf-text-subtle);
+  font-size: 0.74rem;
+}
+
+.move-dialog-row-chevron {
+  flex: 0 0 auto;
+  color: var(--vf-text-subtle);
+}
+
+.move-dialog-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--vf-warning-line);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-warning-soft);
+  color: var(--vf-text);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.move-dialog-warning-icon {
+  flex: 0 0 auto;
+  margin-top: 0.1rem;
+  color: var(--vf-warning-text);
 }
 </style>

@@ -16,8 +16,11 @@ import {
   IconPhoto,
   IconVideo,
 } from "@tabler/icons-vue";
-import type { FileInfo } from "../../types";
-import { fileIconKind, type FileIconKind } from "../../utils/filePresentation";
+import {
+  fileIconKind,
+  type FileIconKind,
+  type FileIconSource,
+} from "../../utils/filePresentation";
 
 /**
  * 文件类型图标（列表、网格、详细信息面板共用）。
@@ -27,7 +30,7 @@ import { fileIconKind, type FileIconKind } from "../../utils/filePresentation";
  */
 const props = withDefaults(
   defineProps<{
-    file: FileInfo;
+    file: FileIconSource;
     size?: number;
     strokeWidth?: number;
   }>(),

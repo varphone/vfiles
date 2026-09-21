@@ -854,10 +854,12 @@ describe("FileBrowser.vue empty and error states", () => {
         container.querySelector(".empty-state .empty-state-illustration svg"),
       ).not.toBeNull(),
     );
-    const labels = Array.from(
-      container.querySelectorAll(".empty-state-actions button"),
-    ).map((button) => button.textContent?.trim());
-    expect(labels).toEqual(["上传文件", "新建文件夹"]);
+    await waitFor(() => {
+      const labels = Array.from(
+        container.querySelectorAll(".empty-state-actions button"),
+      ).map((button) => button.textContent?.trim());
+      expect(labels).toEqual(["上传文件", "新建文件夹"]);
+    });
   });
 
   it("wraps a load failure in the error state with retry", async () => {
