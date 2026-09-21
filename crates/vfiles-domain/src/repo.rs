@@ -56,6 +56,51 @@ pub struct NamespaceStats {
     pub total_bytes: u64,
 }
 
+/// 按类型聚合的占用统计，用于侧栏「存储用量」的占比条。
+///
+/// 分类依据是当前版本的 MIME 类型（缺失时归入 `Other`），与主流网盘的
+/// 「文档 / 图片 / 视频 / 音频 / 其它」分组保持一致。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FileCategory {
+    Document,
+    Image,
+    Video,
+    Audio,
+    Other,
+}
+
+impl FileCategory {
+    /// 稳定标识：用于 API 字段与前端样式类名。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FileCategory::Document => "document",
+            FileCategory::Image => "image",
+            FileCategory::Video => "video",
+            FileCategory::Audio => "audio",
+            FileCategory::Other => "other",
+        }
+    }
+
+    /// 从数据库返回的分类名解析（未知值归入 `Other`）。
+    pub fn from_sql(value: &str) -> Self {
+        match value {
+            "document" => FileCategory::Document,
+            "image" => FileCategory::Image,
+            "video" => FileCategory::Video,
+            "audio" => FileCategory::Audio,
+            _ => FileCategory::Other,
+        }
+    }
+}
+
+/// 单个分类的占用。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CategoryUsage {
+    pub category: FileCategory,
+    pub bytes: u64,
+    pub file_count: u64,
+}
+
 #[async_trait::async_trait]
 pub trait NamespaceRepo {
     async fn create_default(&self, owner_id: &UserId, slug: &str) -> DomainResult<NamespaceId>;
@@ -87,6 +132,12 @@ pub trait EntryRepo {
 
     /// 命名空间内的条目统计（文件数、目录数、总字节数），用 SQL 聚合避免全量拉取。
     async fn stats(&self, namespace_id: &NamespaceId) -> DomainResult<NamespaceStats>;
+
+    /// 按文件类型聚合的占用（只统计文件、只算当前版本）。
+    async fn stats_by_category(
+        &self,
+        namespace_id: &NamespaceId,
+    ) -> DomainResult<Vec<CategoryUsage>>;
 
     /// 最近更新的文件（按版本创建时间倒序），用于侧栏「最近」。
     async fn recent_files(

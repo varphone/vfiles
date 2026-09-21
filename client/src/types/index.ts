@@ -21,10 +21,26 @@ export interface FavoriteEntry {
 }
 
 /** 侧栏聚合数据（`GET /api/files/overview`）。 */
+/** 存储占用的分类：与后端 FileCategory 对应。 */
+export type StorageCategory =
+  | "document"
+  | "image"
+  | "video"
+  | "audio"
+  | "other";
+
+export interface CategoryUsage {
+  category: StorageCategory;
+  bytes: number;
+  file_count: number;
+}
+
 export interface WorkspaceOverview {
   file_count: number;
   directory_count: number;
   total_bytes: number;
+  /** 按类型聚合的占用（按字节倒序）；服务端未提供时为空数组。 */
+  categories: CategoryUsage[];
   recent_files: RecentFile[];
 }
 

@@ -24,6 +24,43 @@
           {{ overview.file_count }} 文件 · {{ overview.directory_count }} 目录
         </span>
       </p>
+
+      <!-- 分类占比条：与主流网盘一致，先给整体构成，再列出各类占用 -->
+      <div
+        class="storage-bar"
+        role="img"
+        :aria-label="storageBarLabel"
+        :title="storageBarLabel"
+      >
+        <span
+          v-for="segment in storageSegments"
+          :key="segment.category"
+          class="storage-bar-segment"
+          :class="`is-${segment.category}`"
+          :style="{ width: `${segment.percent}%` }"
+        ></span>
+        <span
+          v-if="storageSegments.length === 0"
+          class="storage-bar-segment is-empty"
+        ></span>
+      </div>
+
+      <ul v-if="storageSegments.length > 0" class="storage-legend">
+        <li
+          v-for="segment in storageSegments"
+          :key="segment.category"
+          class="storage-legend-item"
+          :title="`${segment.label} · ${segment.count} 个文件`"
+        >
+          <span
+            class="storage-legend-dot"
+            :class="`is-${segment.category}`"
+            aria-hidden="true"
+          ></span>
+          <span class="storage-legend-label">{{ segment.label }}</span>
+          <span class="storage-legend-size">{{ segment.sizeLabel }}</span>
+        </li>
+      </ul>
     </div>
 
     <div v-if="favorites.length > 0" class="sidebar-overview-block">
@@ -82,7 +119,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { filesService } from "../../services/files.service";
-import type { FavoriteEntry, RecentFile, WorkspaceOverview } from "../../types";
+import type {
+  FavoriteEntry,
+  RecentFile,
+  StorageCategory,
+  WorkspaceOverview,
+} from "../../types";
 import { IconStarFilled } from "@tabler/icons-vue";
 import { formatRelativeDate, formatSize } from "../../utils/filePresentation";
 import FileTypeIcon from "./FileTypeIcon.vue";
@@ -116,6 +158,53 @@ const error = ref("");
 const formattedSize = computed(() =>
   formatSize(overview.value?.total_bytes ?? 0),
 );
+
+/** 分类展示名与顺序（与主流网盘的用量分组一致）。 */
+const CATEGORY_LABELS: { key: StorageCategory; label: string }[] = [
+  { key: "document", label: "文档" },
+  { key: "image", label: "图片" },
+  { key: "video", label: "视频" },
+  { key: "audio", label: "音频" },
+  { key: "other", label: "其它" },
+];
+
+/**
+ * 占比条分段：宽度按字节占比计算，忽略空分类。
+ *
+ * 最小宽度 2% 保证极小分类仍然可见（否则 1 字节的文件在几 GB 里会消失）。
+ */
+const storageSegments = computed(() => {
+  const categories = overview.value?.categories ?? [];
+  const total = categories.reduce((sum, item) => sum + item.bytes, 0);
+  if (total <= 0) return [];
+
+  return CATEGORY_LABELS.map(({ key, label }) => {
+    const usage = categories.find((item) => item.category === key);
+    if (!usage || usage.bytes <= 0) return null;
+    return {
+      category: key,
+      label,
+      bytes: usage.bytes,
+      count: usage.file_count,
+      sizeLabel: formatSize(usage.bytes),
+      percent: Math.max(2, (usage.bytes / total) * 100),
+    };
+  })
+    .filter((segment): segment is NonNullable<typeof segment> =>
+      Boolean(segment),
+    )
+    .sort((left, right) => right.bytes - left.bytes);
+});
+
+/** 无障碍与悬停提示：把构成说清楚。 */
+const storageBarLabel = computed(() => {
+  const segments = storageSegments.value;
+  if (segments.length === 0) return "暂无文件占用";
+  const parts = segments.map(
+    (segment) => `${segment.label} ${segment.sizeLabel}`,
+  );
+  return `存储构成：${parts.join("，")}`;
+});
 
 /** 最近文件只需要图标与类型，这里补一个最小可用的 FileInfo。 */
 function recentAsFileInfo(file: RecentFile) {
@@ -223,6 +312,90 @@ watch(
 .sidebar-overview-counts {
   font-size: 0.76rem;
   color: var(--vf-text-muted);
+}
+
+/* 分类占比条：细分段 + 圆角，与主流网盘的「存储空间」条一致 */
+.storage-bar {
+  display: flex;
+  gap: 2px;
+  height: 0.4rem;
+  margin-top: 0.55rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--vf-surface-sunken);
+}
+
+.storage-bar-segment {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+.storage-bar-segment.is-empty {
+  width: 100%;
+  border-radius: 999px;
+  background: var(--vf-border-weak);
+}
+
+.storage-bar-segment.is-document,
+.storage-legend-dot.is-document {
+  background: var(--vf-chart-document);
+}
+
+.storage-bar-segment.is-image,
+.storage-legend-dot.is-image {
+  background: var(--vf-chart-image);
+}
+
+.storage-bar-segment.is-video,
+.storage-legend-dot.is-video {
+  background: var(--vf-chart-video);
+}
+
+.storage-bar-segment.is-audio,
+.storage-legend-dot.is-audio {
+  background: var(--vf-chart-audio);
+}
+
+.storage-bar-segment.is-other,
+.storage-legend-dot.is-other {
+  background: var(--vf-chart-other);
+}
+
+.storage-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0.5rem 0 0;
+  list-style: none;
+}
+
+.storage-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.74rem;
+  color: var(--vf-text-muted);
+}
+
+.storage-legend-dot {
+  flex: 0 0 auto;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 2px;
+}
+
+.storage-legend-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-legend-size {
+  flex: 0 0 auto;
+  color: var(--vf-text-subtle);
 }
 
 .sidebar-overview-error {

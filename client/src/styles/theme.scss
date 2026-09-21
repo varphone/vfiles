@@ -26,6 +26,13 @@
   --vf-accent-tint: rgba(47, 109, 182, 0.1);
   --vf-focus-ring: rgba(50, 115, 220, 0.2);
 
+  /* 存储占比条的分类配色（对齐主流网盘的用量分组：文档/图片/视频/音频/其它） */
+  --vf-chart-document: #2f6db6;
+  --vf-chart-image: #2f9e6f;
+  --vf-chart-video: #8a5bd6;
+  --vf-chart-audio: #d98324;
+  --vf-chart-other: #9aa7b8;
+
   /* 面板 / 卡片 / 列表底色 */
   --vf-surface: #ffffff;
   --vf-app-bar: #ffffff;
@@ -125,6 +132,13 @@
   --vf-accent-text: hsl(210, 68%, 74%);
   --vf-accent-soft: hsla(210, 68%, 62%, 0.14);
   --vf-accent-soft-strong: hsla(210, 68%, 62%, 0.28);
+
+  /* 存储占比条的分类配色（深色主题下提高明度保证对比度） */
+  --vf-chart-document: #6aa9ee;
+  --vf-chart-image: #4fc48c;
+  --vf-chart-video: #a98beb;
+  --vf-chart-audio: #eaa54f;
+  --vf-chart-other: #7d8b9c;
   --vf-accent-tint: hsla(210, 68%, 62%, 0.18);
   --vf-focus-ring: hsla(210, 68%, 62%, 0.35);
 

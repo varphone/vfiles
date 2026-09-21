@@ -2988,6 +2988,89 @@ async fn paged_search_keeps_content_matches_across_pages() {
     );
 }
 
+/// 概览按类型聚合占用：文档 / 图片分别统计字节数，其它类型归入 other。
+#[tokio::test]
+async fn overview_reports_storage_usage_by_category() {
+    let app = TestApp::new().await;
+
+    // doc: text/plain、图片: png、未知类型: .bin（无 MIME 推断 → other）
+    app.upload_version("", "notes.txt", b"0123456789", "seed")
+        .await;
+    app.upload_version("", "shot.png", &[0u8; 30], "seed").await;
+    app.upload_version("", "blob.bin", &[0u8; 5], "seed").await;
+    app.upload_version("", "second.md", b"abcdefgh", "seed")
+        .await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/overview")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let payload = response_json(response).await;
+    assert_eq!(payload["total_bytes"], Value::from(53));
+
+    let categories = payload["categories"]
+        .as_array()
+        .expect("categories should be an array")
+        .clone();
+    let find = |name: &str| {
+        categories
+            .iter()
+            .find(|item| item["category"].as_str() == Some(name))
+            .cloned()
+    };
+
+    let document = find("document").expect("document category should exist");
+    assert_eq!(document["bytes"], Value::from(18), "txt + md");
+    assert_eq!(document["file_count"], Value::from(2));
+
+    let image = find("image").expect("image category should exist");
+    assert_eq!(image["bytes"], Value::from(30));
+    assert_eq!(image["file_count"], Value::from(1));
+
+    let other = find("other").expect("other category should exist");
+    assert_eq!(other["bytes"], Value::from(5));
+
+    // 分类按字节数倒序
+    let order: Vec<&str> = categories
+        .iter()
+        .map(|item| item["category"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        order.first(),
+        Some(&"image"),
+        "占用最大的分类应排在最前: {order:?}"
+    );
+}
+
+/// 空命名空间的概览不应报错，分类为空数组。
+#[tokio::test]
+async fn overview_on_empty_namespace_has_no_categories() {
+    let app = TestApp::new().await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/overview")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let payload = response_json(response).await;
+
+    assert_eq!(payload["file_count"], Value::from(0));
+    assert_eq!(
+        payload["categories"],
+        Value::Array(Vec::new()),
+        "空命名空间应返回空数组而不是缺字段"
+    );
+}
+
 /// FTP 连接信息：需要登录，返回配置但不含任何密钥。
 #[tokio::test]
 async fn ftp_info_reports_configuration_for_authenticated_users() {

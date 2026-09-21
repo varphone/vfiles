@@ -1025,6 +1025,71 @@ impl EntryRepo for SqliteEntryRepo {
         })
     }
 
+    async fn stats_by_category(
+        &self,
+        namespace_id: &NamespaceId,
+    ) -> DomainResult<Vec<CategoryUsage>> {
+        #[derive(sqlx::FromRow)]
+        struct CategoryRow {
+            category: String,
+            bytes: i64,
+            file_count: i64,
+        }
+
+        // 分类规则与主流网盘一致：按当前版本的 MIME 前缀归类，
+        // 文档包含文本、PDF 与 Office 系列；缺失类型归入 other。
+        let rows: Vec<CategoryRow> = sqlx::query_as(
+            r#"
+            SELECT
+                CASE
+                    WHEN ev.content_type LIKE 'image/%' THEN 'image'
+                    WHEN ev.content_type LIKE 'video/%' THEN 'video'
+                    WHEN ev.content_type LIKE 'audio/%' THEN 'audio'
+                    WHEN ev.content_type LIKE 'text/%'
+                      OR ev.content_type IN (
+                            'application/pdf',
+                            'application/json',
+                            'application/xml',
+                            'application/rtf',
+                            'application/msword',
+                            'application/vnd.ms-excel',
+                            'application/vnd.ms-powerpoint'
+                      )
+                      OR ev.content_type LIKE 'application/vnd.openxmlformats%'
+                      OR ev.content_type LIKE 'application/vnd.oasis%'
+                      THEN 'document'
+                    ELSE 'other'
+                END AS category,
+                COALESCE(SUM(ev.size), 0) AS bytes,
+                COUNT(*) AS file_count
+            FROM entries e
+            JOIN entry_versions ev ON ev.entry_id = e.id
+            WHERE e.namespace_id = ?
+              AND e.kind = 'file'
+              AND ev.version = (
+                    SELECT MAX(version) FROM entry_versions WHERE entry_id = e.id
+              )
+            GROUP BY category
+            ORDER BY bytes DESC
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to load category stats: {e}"),
+        })?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| CategoryUsage {
+                category: FileCategory::from_sql(&row.category),
+                bytes: row.bytes.max(0) as u64,
+                file_count: row.file_count.max(0) as u64,
+            })
+            .collect())
+    }
+
     async fn recent_files(
         &self,
         namespace_id: &NamespaceId,

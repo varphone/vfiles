@@ -96,6 +96,27 @@
 
 ## 侧栏聚合与收藏
 
+`GET /api/files/overview`（需要登录）返回条目统计、**按类型聚合的占用**与最近文件：
+
+```json
+{
+  "file_count": 6,
+  "directory_count": 3,
+  "total_bytes": 54168,
+  "categories": [
+    { "category": "video", "bytes": 40000, "file_count": 1 },
+    { "category": "other", "bytes": 9000, "file_count": 1 },
+    { "category": "document", "bytes": 4209, "file_count": 2 },
+    { "category": "image", "bytes": 959, "file_count": 2 }
+  ],
+  "recent_files": [ ... ]
+}
+```
+
+`categories` 的分类取值：`document`（文本 / PDF / Office）、`image`、`video`、`audio`、`other`
+（MIME 缺失或其它），按字节数倒序排列，只统计文件的当前版本。分类聚合失败时该字段返回空数组，
+不影响总数与最近文件。
+
 - `GET /api/files/overview`
   - 返回 `file_count`、`directory_count`、`total_bytes` 与 `recent_files`（最近 8 条），
     用于侧栏「存储用量 / 最近更新」

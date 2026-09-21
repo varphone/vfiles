@@ -18,11 +18,22 @@ pub struct RecentFileDto {
     pub updated_at: String,
 }
 
+/// 按类型聚合的占用（侧栏占比条使用）。
+#[derive(Debug, Serialize)]
+pub struct CategoryUsageDto {
+    /// `document` / `image` / `video` / `audio` / `other`
+    pub category: String,
+    pub bytes: u64,
+    pub file_count: u64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct OverviewDto {
     pub file_count: u64,
     pub directory_count: u64,
     pub total_bytes: u64,
+    /// 按类型聚合的占用，按字节数倒序；空命名空间为空数组。
+    pub categories: Vec<CategoryUsageDto>,
     pub recent_files: Vec<RecentFileDto>,
 }
 
@@ -38,6 +49,12 @@ pub async fn overview(
 
     // 统计走 SQL 聚合，避免把整棵目录树拉进内存
     let stats = state.entry_repo.stats(&ctx.namespace_id).await?;
+    // 分类占比是辅助信息：失败不影响总量与最近文件
+    let categories = state
+        .entry_repo
+        .stats_by_category(&ctx.namespace_id)
+        .await
+        .unwrap_or_default();
     let recent = state
         .entry_repo
         .recent_files(&ctx.namespace_id, RECENT_FILE_LIMIT)
@@ -91,6 +108,14 @@ pub async fn overview(
         file_count: stats.file_count,
         directory_count: stats.directory_count,
         total_bytes: stats.total_bytes,
+        categories: categories
+            .into_iter()
+            .map(|usage| CategoryUsageDto {
+                category: usage.category.as_str().to_string(),
+                bytes: usage.bytes,
+                file_count: usage.file_count,
+            })
+            .collect(),
         recent_files,
     }))
 }

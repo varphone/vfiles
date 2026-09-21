@@ -37,6 +37,110 @@ function overview(overrides: Record<string, unknown> = {}) {
   };
 }
 
+describe("SidebarOverview.vue storage breakdown", () => {
+  beforeEach(() => {
+    getOverviewMock.mockReset();
+    getFavoritesMock.mockReset();
+    getFavoritesMock.mockResolvedValue([]);
+  });
+
+  it("renders a proportional bar and legend for the categories", async () => {
+    getOverviewMock.mockResolvedValue(
+      overview({
+        total_bytes: 1000,
+        categories: [
+          { category: "image", bytes: 600, file_count: 1 },
+          { category: "document", bytes: 300, file_count: 2 },
+          { category: "other", bytes: 100, file_count: 1 },
+        ],
+      }),
+    );
+
+    const { container } = render(SidebarOverview as any);
+    await waitFor(() =>
+      expect(container.querySelector(".storage-bar")).not.toBeNull(),
+    );
+
+    const widths = Array.from(
+      container.querySelectorAll<HTMLElement>(".storage-bar-segment"),
+    ).map((el) => el.style.width);
+    expect(widths).toEqual(["60%", "30%", "10%"]);
+
+    const legend = Array.from(
+      container.querySelectorAll(".storage-legend-item"),
+    ).map((el) => ({
+      label: el.querySelector(".storage-legend-label")?.textContent?.trim(),
+      size: el.querySelector(".storage-legend-size")?.textContent?.trim(),
+    }));
+    expect(legend).toEqual([
+      { label: "图片", size: "600.0 B" },
+      { label: "文档", size: "300.0 B" },
+      { label: "其它", size: "100.0 B" },
+    ]);
+
+    // 无障碍标签把构成说清楚
+    const bar = container.querySelector(".storage-bar")!;
+    expect(bar.getAttribute("aria-label")).toContain("存储构成");
+    expect(bar.getAttribute("aria-label")).toContain("图片");
+  });
+
+  it("keeps a minimal width so tiny categories stay visible", async () => {
+    getOverviewMock.mockResolvedValue(
+      overview({
+        total_bytes: 1_000_000_000,
+        categories: [
+          { category: "video", bytes: 999_999_000, file_count: 1 },
+          { category: "audio", bytes: 1000, file_count: 1 },
+        ],
+      }),
+    );
+
+    const { container } = render(SidebarOverview as any);
+    await waitFor(() =>
+      expect(container.querySelector(".storage-bar")).not.toBeNull(),
+    );
+
+    const widths = Array.from(
+      container.querySelectorAll<HTMLElement>(".storage-bar-segment"),
+    ).map((el) => el.style.width);
+    expect(widths[1]).toBe("2%");
+  });
+
+  it("shows a neutral track when there is no usage yet", async () => {
+    getOverviewMock.mockResolvedValue(
+      overview({ total_bytes: 0, file_count: 0, categories: [] }),
+    );
+
+    const { container } = render(SidebarOverview as any);
+    await waitFor(() =>
+      expect(container.querySelector(".storage-bar")).not.toBeNull(),
+    );
+
+    expect(
+      container.querySelectorAll(".storage-bar-segment.is-empty"),
+    ).toHaveLength(1);
+    expect(container.querySelector(".storage-legend")).toBeNull();
+  });
+
+  it("tolerates an older server without the categories field", async () => {
+    getOverviewMock.mockResolvedValue({
+      file_count: 1,
+      directory_count: 0,
+      total_bytes: 10,
+      recent_files: [],
+    });
+
+    const { container } = render(SidebarOverview as any);
+    await waitFor(() =>
+      expect(container.querySelector(".storage-bar")).not.toBeNull(),
+    );
+
+    expect(
+      container.querySelectorAll(".storage-bar-segment.is-empty"),
+    ).toHaveLength(1);
+  });
+});
+
 describe("SidebarOverview.vue", () => {
   beforeEach(() => {
     getOverviewMock.mockReset();

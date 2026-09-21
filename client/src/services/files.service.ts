@@ -6,6 +6,7 @@ import type {
   FavoriteEntry,
   FileInfo,
   FileHistory,
+  StorageCategory,
   WorkspaceOverview,
 } from "../types";
 
@@ -363,6 +364,14 @@ export const filesService = {
       file_count: Number(payload.file_count ?? 0),
       directory_count: Number(payload.directory_count ?? 0),
       total_bytes: Number(payload.total_bytes ?? 0),
+      // 分类聚合是辅助信息：旧服务端没有该字段时按空数组处理
+      categories: Array.isArray(payload.categories)
+        ? payload.categories.map((item: Record<string, unknown>) => ({
+            category: String(item.category ?? "other") as StorageCategory,
+            bytes: Number(item.bytes ?? 0),
+            file_count: Number(item.file_count ?? 0),
+          }))
+        : [],
       recent_files: Array.isArray(payload.recent_files)
         ? payload.recent_files
         : [],

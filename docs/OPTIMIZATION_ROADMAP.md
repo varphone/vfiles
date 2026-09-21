@@ -1542,6 +1542,29 @@
 - 测试：`FileDetailsContent` 新增 3 例（缩略图与失败回退、关闭按钮与事件、位置字段），
   `FileDetailsPanel` 新增 2 例（仅图片请求缩略图且带 size=320、关闭事件）。
 
+### 2.88 界面迭代（第 2 轮）：侧栏存储用量占比条（round 81，视觉）
+
+- 目标：主流网盘的侧栏都会给出「存储空间」的分类构成，VFiles 之前只有一个数字。
+- 改动：
+  1. **领域层**：新增 `FileCategory`（document / image / video / audio / other）与 `CategoryUsage`，
+     `EntryRepo` 增加 `stats_by_category`；
+  2. **仓储层**：SQL 单次聚合，按当前版本的 `entry_versions.content_type` 前缀归类
+     （文档含 text/*、PDF、JSON/XML、Office 与 ODF 系列），返回「字节数 + 文件数」并按字节倒序。
+     实现时先写成了 `ev.mime_type`，SQLite 报列不存在 → 路由按设计降级为空数组，
+     测试立刻暴露（`document category should exist`），改为正确的 `content_type`；
+  3. **HTTP**：`GET /api/files/overview` 增加 `categories` 字段（分类失败不影响总数与最近文件）；
+  4. **前端**：侧栏「存储用量」下方新增**分段占比条 + 图例**（颜色、标签、各项大小、悬停显示文件数），
+     极小分类保留 2% 最小宽度，空工作区显示灰轨道；新增 5 组 `--vf-chart-*` 颜色令牌（浅色/深色各一套）。
+- 验证：
+  - 接口（真实服务，混合内容）：`total_bytes: 54168`，
+    `categories: [video 40000/1, other 9000/1, document 4209/2, image 959/2]`；
+  - 浏览器（浅色 + 深色，1440px）：占比条宽 208px，四段宽度 73.84% / 16.62% / 7.77% / 2%（图片被夹到最小值），
+    颜色分别取 `--vf-chart-video/other/document/image`（深色主题自动换用高对比度配色）；
+    图例为「视频 39.1 KB / 其它 8.8 KB / 文档 4.1 KB / 图片 959.0 B」，
+    无障碍标签为「存储构成：视频 39.1 KB，其它 8.8 KB，文档 4.1 KB，图片 959.0 B」；两个主题均无控制台报错。
+- 测试：Rust 新增 2 个接口用例（分类字节数与倒序、空命名空间返回空数组），
+  前端新增 4 个侧栏用例（占比与图例、最小宽度、空轨道、旧服务端缺字段兼容）。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）
