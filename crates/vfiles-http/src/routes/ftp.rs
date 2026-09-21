@@ -48,14 +48,18 @@ pub async fn ftp_info(
 ) -> ApiResult<Json<FtpInfoResponse>> {
     // 仅登录用户可读：连接信息（含主机名/端口）不应匿名暴露
     let _ = super::require_auth_user(&state, &jar).await?;
-    let ftp = &state.config.ftp;
+    Ok(Json(build_ftp_info(&state.config)))
+}
+
+/// 由配置构造响应体（纯函数，便于直接测试启用/关闭两种形态）。
+pub(crate) fn build_ftp_info(config: &vfiles_config::AppConfig) -> FtpInfoResponse {
+    let ftp = &config.ftp;
     // 对外通告的地址优先（NAT 场景），否则回退到 public_base_url 的主机名
     let host = ftp
         .passive_host
         .clone()
         .or_else(|| {
-            state
-                .config
+            config
                 .http
                 .public_base_url
                 .host_str()
@@ -77,7 +81,7 @@ pub async fn ftp_info(
         None
     };
 
-    Ok(Json(FtpInfoResponse {
+    FtpInfoResponse {
         enabled: ftp.enabled,
         host,
         port: ftp.port,
@@ -91,5 +95,64 @@ pub async fn ftp_info(
         },
         example_command,
         path_mapping: "登录后 / 即该用户的命名空间根目录".to_string(),
-    }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config() -> vfiles_config::AppConfig {
+        vfiles_config::ConfigLoader::load().expect("config should load")
+    }
+
+    #[test]
+    fn reports_enabled_default_configuration() {
+        let config = config();
+        let info = build_ftp_info(&config);
+
+        assert!(info.enabled, "FTP 默认开启");
+        assert_eq!(info.port, 2121);
+        assert_eq!(info.passive_ports.start, 50_000);
+        assert_eq!(info.passive_ports.end, 50_100);
+        assert!(!info.tls.enabled);
+        assert!(info.example_command.is_some(), "开启时给出示例命令");
+        assert!(
+            !info
+                .example_command
+                .unwrap_or_default()
+                .contains("--ftp-ssl"),
+            "未启用 TLS 时示例命令不应带 --ftp-ssl"
+        );
+    }
+
+    #[test]
+    fn reports_disabled_configuration_without_example() {
+        let mut config = config();
+        config.ftp.enabled = false;
+        let info = build_ftp_info(&config);
+
+        assert!(!info.enabled);
+        assert!(info.example_command.is_none(), "关闭时不给出连接示例");
+    }
+
+    #[test]
+    fn uses_passive_host_and_tls_flags_when_configured() {
+        let mut config = config();
+        config.ftp.passive_host = Some("files.example.com".to_string());
+        config.ftp.tls_cert = Some("/etc/vfiles/cert.pem".to_string());
+        config.ftp.tls_key = Some("/etc/vfiles/key.pem".to_string());
+        config.ftp.tls_required = true;
+        let info = build_ftp_info(&config);
+
+        assert_eq!(info.host, "files.example.com");
+        assert!(info.tls.enabled);
+        assert!(info.tls.required);
+        assert!(
+            info.example_command
+                .unwrap_or_default()
+                .contains("--ftp-ssl"),
+            "启用 TLS 时示例命令应带 --ftp-ssl"
+        );
+    }
 }

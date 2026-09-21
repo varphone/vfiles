@@ -38,8 +38,8 @@ VFILES_AUTH_COOKIE_SECRET=replace-with-a-random-secret-at-least-32-chars
 # 功能开关（默认关闭；开启后前端会同步解锁对应入口）
 VFILES_FEATURES_SEARCH_CONTENT=false
 
-# FTP(S) 批量导入（默认关闭，见「FTP 批量导入」一节）
-VFILES_FTP_ENABLED=false
+# FTP(S) 批量导入（默认开启；仅在需要彻底关闭时设为 false）
+VFILES_FTP_ENABLED=true
 VFILES_FTP_HOST=0.0.0.0
 VFILES_FTP_PORT=2121
 VFILES_FTP_PASSIVE_PORTS=50000-50100
@@ -67,9 +67,10 @@ RUST_LOG=info
 - 仍兼容读取旧别名 `PUBLIC_BASE_URL`、`CORS_ORIGIN`、`HTTP_COOKIE_SECURE`、`AUTH_SECRET`、`ENABLE_AUTH`、`AUTH_ALLOW_REGISTER`，但新部署不建议继续使用旧名字。
 - `VFILES_FEATURES_SEARCH_CONTENT` 控制**全文（内容）搜索**：默认关闭，因为它需要逐个读取并扫描文件内容，代价明显高于文件名搜索。开启后 `/api/session/bootstrap` 会把 `features.search_content` 置为 `true`，前端「高级搜索 → 全文搜索」才会解锁；服务端仍会对未开启时携带 `search_content=true` 的请求返回 403。
 - 上传限额、分块大小、会话 TTL 等参数当前仍使用程序内建默认值，尚未开放成环境变量。
-- `VFILES_FTP_*` 一组变量控制批量导入：`VFILES_FTP_ENABLED` 默认 `false`（FTP 是明文协议，
-  必须显式开启），开启时若 `VFILES_AUTH_ENABLED=false` 会被配置校验直接拒绝，避免出现
-  「无需认证即可写入」的导入通道；其余参数见下文「FTP 批量导入」。
+- `VFILES_FTP_*` 一组变量控制批量导入：`VFILES_FTP_ENABLED` **默认 `true`**（认证开启时），
+  因此默认部署就会在 `2121` 端口提供批量导入；若 `VFILES_AUTH_ENABLED=false`，则不显式设置时
+  FTP 会自动停用并打告警（显式写 `true` 会直接报配置错误），避免出现「无需认证即可写入」的通道。
+  不需要该功能时请显式设置 `VFILES_FTP_ENABLED=false`。其余参数见下文「FTP 批量导入」。
 
 ## 构建与启动
 
@@ -238,6 +239,7 @@ RUST_LOG=vfiles_http=warn ./vfiles serve  # 只看 HTTP 层告警
 
 面向「一次导入几百到几万个文件」的场景：与其在浏览器里逐个上传，不如让运维/用户用
 FileZilla、WinSCP、`lftp`、`curl` 等客户端直接连到 VFiles 的 FTP 端口，递归上传整个目录。
+该功能**默认开启**（`VFILES_FTP_ENABLED=true`）；如不需要，请显式设为 `false`。
 
 ```
 VFILES_FTP_ENABLED=true
@@ -275,6 +277,43 @@ VFILES_FTP_SNAPSHOT_FLUSH_FILES=200         # batch 模式下每累积多少个�
   的文件会被拒绝，临时文件也会清理。
 - FTP 的实际监听地址、端口、被动端口段与 TLS 状态会随 `/api/files/ftp-info` 返回，
   并显示在网页「上传」对话框的「用 FTP 批量导入」卡片里。
+- **启动失败不会拖垮站点**：FTP 端口被占用时只记录错误日志并继续提供 HTTP 服务。
+- 若数据已经在服务器本地（例如从旧系统迁移），也可以完全不开 FTP，
+  直接用下面的 `vfiles import` 命令导入。
+
+#### 服务端目录导入：`vfiles import`
+
+在服务器本地执行，不经过网络，适合首次全量灌数据：
+
+```bash
+# 预览（只统计，不写入）
+vfiles import /srv/legacy-files --target archive --dry-run
+
+# 导入到 admin 的命名空间 /archive 下
+vfiles import /srv/legacy-files --target archive --owner admin
+
+# 每 500 个文件提交一次快照；用 --force 可强制生成新版本
+vfiles import /srv/legacy-files --flush-files 500
+vfiles import /srv/legacy-files --force
+```
+
+参数说明：
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `<SOURCE>` | 必填 | 源目录（服务器本地路径） |
+| `--target` | 根目录 | 命名空间内的目标目录 |
+| `--owner` | 默认命名空间所有者 | 归属用户（决定写入哪个命名空间） |
+| `--snapshot-mode` | `batch` | `batch` / `per-file` / `off` |
+| `--flush-files` | `200` | batch 模式下每多少个文件提交一次快照 |
+| `--force` | 否 | 即使内容未变化也生成新版本（默认跳过未变更文件） |
+| `--dry-run` | 否 | 只统计不写入 |
+| `--max-file-size-bytes` | 服务端 limits | 单文件大小上限 |
+| `--exclude-hidden` | 否 | 跳过以 `.` 开头的文件 |
+
+行为要点：目录结构原样保留（包含空目录）；符号链接一律跳过（避免导入源目录之外的内容）；
+内容未变化的文件默认跳过，因此**重复执行是幂等的**；有失败项时以非零退出码结束，
+便于脚本判断。
 
 ### 健康检查与缩略图计数
 

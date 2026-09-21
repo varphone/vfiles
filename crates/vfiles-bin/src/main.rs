@@ -1,3 +1,5 @@
+mod import_cmd;
+
 use anyhow::{anyhow, bail};
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
@@ -41,6 +43,8 @@ enum Commands {
         #[command(subcommand)]
         command: UserCommands,
     },
+    /// Import a local directory into a user's namespace
+    Import(ImportArgs),
     /// Run health checks
     Check,
     /// Maintenance tasks
@@ -76,6 +80,36 @@ struct PruneSnapshotsArgs {
     /// Only purge blobs created more than this many seconds ago
     #[arg(long, default_value_t = 3600)]
     grace_seconds: u64,
+}
+
+#[derive(Debug, Args, Clone)]
+struct ImportArgs {
+    /// 源目录（服务器上的本地路径）
+    source: PathBuf,
+    /// 目标目录（命名空间内路径，默认根目录）
+    #[arg(long, default_value = "")]
+    target: String,
+    /// 归属用户（默认取默认命名空间的所有者）
+    #[arg(long)]
+    owner: Option<String>,
+    /// 快照策略：batch / per-file / off
+    #[arg(long, default_value = "batch")]
+    snapshot_mode: String,
+    /// batch 模式下每多少个文件提交一次快照
+    #[arg(long, default_value_t = 200)]
+    flush_files: usize,
+    /// 即使内容未变化也生成新版本
+    #[arg(long)]
+    force: bool,
+    /// 只统计不写入
+    #[arg(long)]
+    dry_run: bool,
+    /// 单文件大小上限（字节），默认使用服务端 limits 配置
+    #[arg(long)]
+    max_file_size_bytes: Option<u64>,
+    /// 跳过以 . 开头的隐藏文件
+    #[arg(long)]
+    exclude_hidden: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -222,6 +256,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::User { command } => {
             run_user_command(command).await?;
+        }
+        Commands::Import(args) => {
+            run_import_command(args).await?;
         }
         Commands::Check => {
             run_check().await?;
@@ -676,6 +713,98 @@ fn resolve_password_hash_input(
     }
 }
 
+/// `vfiles import`：把本地目录导入到某个用户的命名空间。
+///
+/// 复用 `ImportBatch`，因此大批量导入只按阈值提交快照；整个流程不开放网络端口。
+async fn run_import_command(args: ImportArgs) -> anyhow::Result<()> {
+    let config = ConfigLoader::load()?;
+    ConfigLoader::validate(&config)?;
+    let paths = vfiles_config::AppPaths::from_config(&config.storage);
+
+    let pool = SqlitePoolFactory::connect(&paths.database).await?;
+    // 与 serve 一致：老库可能缺少新表，导入前补齐迁移
+    SqliteMigrations::run(&pool).await?;
+
+    let user_repo: Arc<dyn UserRepo + Send + Sync> = Arc::new(SqliteUserRepo::new(pool.clone()));
+    let namespace_repo: Arc<dyn NamespaceRepo + Send + Sync> =
+        Arc::new(SqliteNamespaceRepo::new(pool.clone()));
+    let entry_repo: Arc<dyn EntryRepo + Send + Sync> = Arc::new(SqliteEntryRepo::new(pool.clone()));
+    let snapshot_repo: Arc<dyn SnapshotRepo + Send + Sync> =
+        Arc::new(SqliteSnapshotRepo::new(pool.clone()));
+    let blob_store: Arc<dyn BlobStore + Send + Sync> =
+        Arc::new(FsBlobStore::new(pool.clone(), paths.blobs.clone()));
+
+    let upload_store = FsUploadStore::new(paths.uploads.clone());
+    let workspace = Arc::new(vfiles_app::DefaultWorkspaceService::new(
+        SqliteEntryRepo::new(pool.clone()),
+        SqliteSnapshotRepo::new(pool.clone()),
+        FsBlobStore::new(pool.clone(), paths.blobs.clone()),
+        upload_store,
+    ));
+
+    let owner = match args.owner.clone() {
+        Some(owner) => owner,
+        None => {
+            import_cmd::resolve_default_owner(user_repo.as_ref(), namespace_repo.as_ref())
+                .await?
+                .1
+        }
+    };
+
+    let snapshot_mode = match args.snapshot_mode.as_str() {
+        "batch" => vfiles_app::SnapshotMode::Batch,
+        "per-file" => vfiles_app::SnapshotMode::PerFile,
+        "off" => vfiles_app::SnapshotMode::Off,
+        other => bail!("未知的快照策略: {other}（可选 batch / per-file / off）"),
+    };
+
+    let options = import_cmd::ImportOptions {
+        source: args.source.clone(),
+        target: args.target.clone(),
+        owner: owner.clone(),
+        snapshot_mode,
+        flush_files: args.flush_files.max(1),
+        skip_unchanged: !args.force,
+        dry_run: args.dry_run,
+        max_file_size_bytes: Some(
+            args.max_file_size_bytes
+                .unwrap_or(config.limits.max_file_size_bytes),
+        ),
+        include_hidden: !args.exclude_hidden,
+    };
+
+    tracing::info!(source = %args.source.display(), owner = %owner, "开始导入本地目录");
+
+    let report = import_cmd::run_import(
+        import_cmd::ImportDeps {
+            workspace,
+            entry_repo,
+            snapshot_repo,
+            blob_store,
+            user_repo,
+            namespace_repo,
+        },
+        options,
+    )
+    .await?;
+
+    // 有失败项时以非零退出码结束，便于脚本判断
+    if report.has_errors() {
+        bail!("导入完成，但有 {} 项失败", report.errors.len());
+    }
+
+    if args.dry_run {
+        tracing::info!(
+            files = report.files,
+            directories = report.directories,
+            bytes = report.bytes,
+            "预览完成（未写入数据）"
+        );
+    }
+
+    Ok(())
+}
+
 async fn run_check() -> anyhow::Result<()> {
     tracing::info!("Running health checks...");
     let config = ConfigLoader::load()?;
@@ -1044,14 +1173,28 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
 
     let ftp_handle = match ftp_runtime {
         Some((settings, application)) => {
-            let handle =
-                vfiles_ftp::spawn_ftp_server(settings, application, service_shutdown_rx.clone())
-                    .await?;
-            tracing::info!("FTP 批量导入已启用: {}", handle.local_addr());
-            Some(handle)
+            // FTP 默认开启：启动失败（例如端口被占用）不能让整个站点起不来，
+            // 这里降级为错误日志并继续提供 HTTP 服务。
+            let bind = settings.bind;
+            match vfiles_ftp::spawn_ftp_server(settings, application, service_shutdown_rx.clone())
+                .await
+            {
+                Ok(handle) => {
+                    tracing::info!("FTP 批量导入已启用: {}", handle.local_addr());
+                    Some(handle)
+                }
+                Err(err) => {
+                    tracing::error!(
+                        %bind,
+                        error = %err,
+                        "FTP 批量导入启动失败，已跳过；HTTP 服务继续运行（可设置 VFILES_FTP_ENABLED=false 消除该错误）"
+                    );
+                    None
+                }
+            }
         }
         None => {
-            tracing::debug!("FTP 未启用（VFILES_FTP_ENABLED=false）");
+            tracing::debug!("FTP 未启用（VFILES_FTP_ENABLED=false 或认证已关闭）");
             None
         }
     };

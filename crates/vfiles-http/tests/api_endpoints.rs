@@ -3018,13 +3018,23 @@ async fn ftp_info_reports_configuration_for_authenticated_users() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let payload = response_json(response).await;
-    assert_eq!(payload["enabled"], Value::from(false), "默认关闭 FTP");
+    assert_eq!(payload["enabled"], Value::from(true), "FTP 默认开启");
     assert_eq!(payload["port"], Value::from(2121));
     assert_eq!(payload["passive_ports"]["start"], Value::from(50000));
     assert_eq!(payload["passive_ports"]["end"], Value::from(50100));
     assert_eq!(payload["tls"]["enabled"], Value::from(false));
-    // 关闭时不返回连接示例
-    assert_eq!(payload["example_command"], Value::Null);
+    assert!(
+        payload["example_command"].is_string(),
+        "开启时应给出连接示例"
+    );
+    // 不泄露口令
+    assert!(
+        !serde_json::to_string(&payload)
+            .unwrap_or_default()
+            .to_lowercase()
+            .contains("password"),
+        "响应不应包含任何口令字段"
+    );
 }
 
 /// 健康检查包含 FTP 计数块（默认全 0）。

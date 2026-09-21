@@ -324,8 +324,13 @@ impl ConfigLoader {
         let thumbnail_avif =
             Self::env_parse_bool(&["VFILES_THUMBNAIL_AVIF", "THUMBNAIL_AVIF"])?.unwrap_or(false);
 
+        // FTP 默认开启（客户端批量导入最常用的通道）；认证关闭时无法安全提供 FTP，
+        // 因此下面的 ftp_enabled 计算会把「默认开启」在无认证场景下降级为关闭。
+        let ftp_enabled_raw = Self::env_parse_bool(&["VFILES_FTP_ENABLED", "FTP_ENABLED"])?;
+        let ftp_enabled = Self::resolve_ftp_enabled(ftp_enabled_raw, auth_enabled)?;
+
         let ftp = FtpConfig {
-            enabled: Self::env_parse_bool(&["VFILES_FTP_ENABLED", "FTP_ENABLED"])?.unwrap_or(false),
+            enabled: ftp_enabled,
             host: Self::env_string(&["VFILES_FTP_HOST"]).unwrap_or_else(|| "0.0.0.0".to_string()),
             port: Self::env_parse::<u16>(&["VFILES_FTP_PORT"])?.unwrap_or(2121),
             passive_ports: {
@@ -427,6 +432,32 @@ impl ConfigLoader {
         Ok(config)
     }
 
+    /// 解析 FTP 开关：默认开启，但认证关闭时无法安全提供 FTP。
+    ///
+    /// - 显式 `true` + 认证关闭 ⇒ 报错（用户明确要求，必须说明原因）；
+    /// - 未显式设置 + 认证关闭 ⇒ 自动停用并告警（不阻塞 `serve` 启动）；
+    /// - 其余情况按显式值处理，未设置时默认开启。
+    fn resolve_ftp_enabled(
+        explicit: Option<bool>,
+        auth_enabled: bool,
+    ) -> Result<bool, ConfigError> {
+        match (explicit, auth_enabled) {
+            (Some(false), _) => Ok(false),
+            (Some(true), false) => Err(ConfigError::LoadError(
+                "显式开启 FTP（VFILES_FTP_ENABLED=true）需要同时开启认证（VFILES_AUTH_ENABLED=true）：未认证的 FTP 允许任何人写入存储"
+                    .to_string(),
+            )),
+            (Some(true), true) => Ok(true),
+            (None, true) => Ok(true),
+            (None, false) => {
+                tracing::warn!(
+                    "认证已关闭（VFILES_AUTH_ENABLED=false），FTP 批量导入自动停用；如需使用请先开启认证"
+                );
+                Ok(false)
+            }
+        }
+    }
+
     /// 解析 `50000-50100` 形式的端口段。
     fn parse_port_range(raw: &str) -> Result<(u16, u16), ConfigError> {
         let (start, end) = raw.split_once('-').ok_or_else(|| {
@@ -486,6 +517,7 @@ impl ConfigLoader {
                     config.ftp.snapshot_mode
                 )));
             }
+            // 防御性检查：加载阶段已保证「认证关闭 ⇒ FTP 关闭」，这里防止后续改动绕过
             if !config.auth.enabled {
                 return Err(ConfigError::LoadError(
                     "启用 FTP 需要开启认证（VFILES_AUTH_ENABLED=true）".to_string(),
@@ -617,10 +649,13 @@ mod tests {
     }
 
     #[test]
-    fn test_ftp_defaults_are_disabled_and_sane() {
+    fn test_ftp_defaults_are_enabled_and_sane() {
         let config = ConfigLoader::load().unwrap();
 
-        assert!(!config.ftp.enabled, "FTP 默认必须关闭（明文协议）");
+        assert!(
+            config.ftp.enabled,
+            "FTP 默认开启（认证开启时），以便直接批量导入"
+        );
         assert_eq!(config.ftp.port, 2121);
         assert_eq!(config.ftp.passive_ports, (50_000, 50_100));
         assert_eq!(config.ftp.allowed_roles, vec!["admin", "manager"]);
@@ -652,6 +687,26 @@ mod tests {
         );
         assert!(ConfigLoader::parse_port_range("0-100").is_err(), "0 非法");
         assert!(ConfigLoader::parse_port_range("a-b").is_err(), "非数字");
+    }
+
+    /// 开关解析是纯函数，避免测试之间通过环境变量互相干扰。
+    #[test]
+    fn test_ftp_switch_resolution() {
+        // 默认（认证开启）⇒ 开启；显式关闭 ⇒ 关闭
+        assert!(ConfigLoader::resolve_ftp_enabled(None, true).unwrap());
+        assert!(!ConfigLoader::resolve_ftp_enabled(Some(false), true).unwrap());
+        assert!(!ConfigLoader::resolve_ftp_enabled(Some(false), false).unwrap());
+        // 显式开启 + 认证开启 ⇒ 开启
+        assert!(ConfigLoader::resolve_ftp_enabled(Some(true), true).unwrap());
+        // 认证关闭 + 未显式设置 ⇒ 自动停用（不阻塞 serve）
+        assert!(!ConfigLoader::resolve_ftp_enabled(None, false).unwrap());
+        // 认证关闭 + 显式开启 ⇒ 报错并说明原因
+        let err = ConfigLoader::resolve_ftp_enabled(Some(true), false)
+            .expect_err("explicit FTP with auth off must fail");
+        assert!(
+            err.to_string().contains("需要同时开启认证"),
+            "错误信息应说明原因，实际: {err}"
+        );
     }
 
     #[test]

@@ -31,5 +31,10 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+camino.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+
 [features]
 embed = ["vfiles-http/embed"]

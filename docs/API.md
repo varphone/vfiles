@@ -125,7 +125,8 @@
 }
 ```
 
-未启用 FTP 时 `enabled` 为 `false`，`example_command` 为 `null`。未登录访问返回 401。
+FTP 默认启用；显式关闭（`VFILES_FTP_ENABLED=false`）或认证关闭时 `enabled` 为 `false`，
+`example_command` 为 `null`。未登录访问返回 401。
 运行计数（会话数、上传/下载字节、快照提交量）在 `GET /api/health` 的 `ftp` 字段中。
 
 ## 分享
