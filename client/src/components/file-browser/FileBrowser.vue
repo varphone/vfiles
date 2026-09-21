@@ -357,10 +357,16 @@
             }}
           </span>
           <span v-if="selectedCount > 0">已选 {{ selectedCount }} 项</span>
-          <span class="desktop-status-shortcuts is-hidden-touch">
-            Ctrl/⌘+A 全选 · ↑↓ 移动 · Delete 删除 · F2 重命名 · Enter 打开 · Esc
-            退出
-          </span>
+          <button
+            class="desktop-status-shortcuts is-hidden-touch"
+            type="button"
+            title="查看全部键盘快捷键"
+            @click="showShortcuts = true"
+          >
+            <IconKeyboard :size="14" />
+            <span>Ctrl/⌘+A 全选 · ↑↓ 移动 · Delete 删除 · F2 重命名</span>
+            <span class="desktop-status-shortcuts-more">全部快捷键（?）</span>
+          </button>
         </div>
       </template>
 
@@ -772,6 +778,11 @@
       :target-label="dropTargetLabel"
     />
 
+    <KeyboardShortcutsDialog
+      :show="showShortcuts"
+      @close="showShortcuts = false"
+    />
+
     <FilePreviewModal
       :show="preview.open"
       :filename="previewFilename"
@@ -820,6 +831,7 @@ import {
   IconShare,
   IconTrash,
   IconInfoCircle,
+  IconKeyboard,
   IconStar,
   IconStarFilled,
 } from "@tabler/icons-vue";
@@ -829,6 +841,7 @@ import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 import { useFileViewStore } from "../../stores/fileView.store";
 import FileList from "./FileList.vue";
+import KeyboardShortcutsDialog from "./KeyboardShortcutsDialog.vue";
 import SearchResultToolbar from "./SearchResultToolbar.vue";
 import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
@@ -953,6 +966,7 @@ const favoritePaths = ref<Set<string>>(new Set());
 const detailsDialogFile = ref<FileInfo | null>(null);
 const showHistory = ref(false);
 const showShareDialog = ref(false);
+const showShortcuts = ref(false);
 const selectedFile = ref<FileInfo | null>(null);
 const fileUploaderRef = ref<InstanceType<typeof FileUploader> | null>(null);
 const expandedFilePath = ref<string>("");
@@ -1356,6 +1370,20 @@ onMounted(() => {
       if (e.key === "ArrowRight") {
         e.preventDefault();
         nextPreview();
+        return;
+      }
+    }
+
+    // ? 打开/关闭快捷键面板：打开时再按一次即可关闭（此时焦点可能在面板内）
+    if (e.key === "?") {
+      if (showShortcuts.value) {
+        e.preventDefault();
+        showShortcuts.value = false;
+        return;
+      }
+      if (!isTypingTarget(e.target)) {
+        e.preventDefault();
+        showShortcuts.value = true;
         return;
       }
     }
@@ -1927,6 +1955,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 function anyOverlayOpen(): boolean {
   return (
     preview.value.open ||
+    showShortcuts.value ||
     showUploader.value ||
     showHistory.value ||
     showShareDialog.value ||
@@ -2301,6 +2330,30 @@ function handleSortChange(field: SortField) {
   font-size: 0.78rem;
 }
 
+.desktop-status-shortcuts {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.35rem;
+  border: none;
+  border-radius: var(--vf-radius-sm);
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.desktop-status-shortcuts:hover,
+.desktop-status-shortcuts:focus-visible {
+  background: var(--vf-surface-hover);
+  color: var(--vf-text);
+}
+
+.desktop-status-shortcuts-more {
+  color: var(--vf-accent);
+}
+
+/* 提示靠右显示，保持状态栏左侧信息优先 */
 .desktop-status-shortcuts {
   margin-left: auto;
   color: var(--vf-text-subtle);

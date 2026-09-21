@@ -249,7 +249,9 @@ const previewUrl = computed(() => {
     var(--bulma-navbar-height, 3.25rem) + env(safe-area-inset-top) + 0.6rem
   );
   align-self: start;
-  max-height: calc(100vh - var(--bulma-navbar-height, 3.25rem) - 2rem);
+  /* 高度受内容区（grid 行）限制，而不是视口：
+     用视口高度会让面板越过内容区压住底部状态栏，挡住状态栏右侧的操作 */
+  max-height: 100%;
   overflow-y: auto;
 }
 

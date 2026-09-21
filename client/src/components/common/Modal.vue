@@ -20,23 +20,43 @@
 </template>
 
 <script setup lang="ts">
-withDefaults(
-  defineProps<{
-    show: boolean;
-    title: string;
-    mobileCompact?: boolean;
-    /** 需要横向空间的对话框（如两栏的版本历史）使用更宽的卡片。 */
-    wide?: boolean;
-  }>(),
-  {
-    mobileCompact: false,
-    wide: false,
-  },
-);
+import { onBeforeUnmount, onMounted, watch } from "vue";
+
+const props = defineProps<{
+  show: boolean;
+  title: string;
+  mobileCompact?: boolean;
+  /** 需要横向空间的对话框（如两栏的版本历史）使用更宽的卡片。 */
+  wide?: boolean;
+}>();
 
 const emit = defineEmits<{
   close: [];
 }>();
+
+/**
+ * Esc 关闭：主流对话框都支持。
+ *
+ * 注意只在 show 时监听，且输入框内的 Esc 由各输入自己处理（冒泡到这里时会一起关闭弹窗，
+ * 与浏览器/系统对话框行为一致）。
+ */
+function onKeydown(event: KeyboardEvent) {
+  if (event.key !== "Escape") return;
+  emit("close");
+}
+
+function bindKeydown(show: boolean) {
+  if (typeof document === "undefined") return;
+  if (show) {
+    document.addEventListener("keydown", onKeydown);
+  } else {
+    document.removeEventListener("keydown", onKeydown);
+  }
+}
+
+onMounted(() => bindKeydown(props.show));
+onBeforeUnmount(() => bindKeydown(false));
+watch(() => props.show, bindKeydown);
 
 function close() {
   emit("close");

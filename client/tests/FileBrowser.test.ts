@@ -1511,3 +1511,73 @@ describe("FileBrowser.vue preview retry", () => {
     });
   });
 });
+
+describe("FileBrowser.vue keyboard shortcuts help", () => {
+  function fileInfo(name: string) {
+    return {
+      id: name,
+      name,
+      path: name,
+      kind: "file" as const,
+      size_bytes: 12,
+      created_at: "2026-04-10T00:00:00.000Z",
+      updated_at: "2026-04-10T00:00:00.000Z",
+    };
+  }
+
+  it("opens the shortcut panel with ? and closes it again", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([fileInfo("a.txt")]);
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("a.txt");
+
+    expect(container.querySelector(".shortcuts")).toBeNull();
+
+    await fireEvent.keyDown(document, { key: "?" });
+    await waitFor(() =>
+      expect(container.querySelector(".shortcuts")).not.toBeNull(),
+    );
+    expect(
+      container.querySelector(".modal.is-active .modal-card-title")
+        ?.textContent,
+    ).toBe("键盘快捷键");
+
+    await fireEvent.keyDown(document, { key: "?" });
+    await waitFor(() =>
+      expect(container.querySelector(".shortcuts")).toBeNull(),
+    );
+  });
+
+  it("opens the panel from the status bar hint", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([fileInfo("a.txt")]);
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("a.txt");
+
+    const hint = container.querySelector<HTMLButtonElement>(
+      ".desktop-status-shortcuts",
+    );
+    expect(hint).not.toBeNull();
+    await fireEvent.click(hint!);
+    await waitFor(() =>
+      expect(container.querySelector(".shortcuts")).not.toBeNull(),
+    );
+  });
+
+  it("does not hijack ? while typing in a field", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([fileInfo("a.txt")]);
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("a.txt");
+
+    const input = container.querySelector<HTMLInputElement>(
+      ".desktop-search-control",
+    )!;
+    await fireEvent.keyDown(input, { key: "?" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(container.querySelector(".shortcuts")).toBeNull();
+  });
+});
