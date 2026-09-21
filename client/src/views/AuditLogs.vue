@@ -9,6 +9,7 @@
             <template v-if="items.length < total">
               · 当前显示 {{ items.length }} 条
             </template>
+            <template v-if="rangeLabel"> · {{ rangeLabel }}</template>
           </p>
         </div>
 
@@ -85,6 +86,43 @@
             <option value="failure">失败</option>
           </select>
         </div>
+
+        <div class="select is-small">
+          <select
+            v-model="range"
+            aria-label="按时间范围筛选"
+            @change="onRangeChange"
+          >
+            <option value="all">全部时间</option>
+            <option value="today">今天</option>
+            <option value="7d">近 7 天</option>
+            <option value="30d">近 30 天</option>
+            <option value="custom">自定义…</option>
+          </select>
+        </div>
+
+        <template v-if="range === 'custom'">
+          <label class="audit-date">
+            <span>从</span>
+            <input
+              v-model="customSince"
+              class="input is-small audit-date-input"
+              type="date"
+              aria-label="开始日期"
+              @change="applyFilters"
+            />
+          </label>
+          <label class="audit-date">
+            <span>到</span>
+            <input
+              v-model="customUntil"
+              class="input is-small audit-date-input"
+              type="date"
+              aria-label="结束日期"
+              @change="applyFilters"
+            />
+          </label>
+        </template>
 
         <button
           class="vf-ghost-button audit-apply"
@@ -262,9 +300,71 @@ const action = ref("");
 const result = ref<"" | "success" | "failure">("");
 const offset = ref(0);
 
-const hasFilters = computed(() =>
-  Boolean(keyword.value || action.value || result.value),
+/** 时间范围预设（主流审计界面常见选项）。 */
+type RangePreset = "all" | "today" | "7d" | "30d" | "custom";
+const range = ref<RangePreset>("all");
+const customSince = ref("");
+const customUntil = ref("");
+
+/** 范围起止：按本地时区计算；`until` 取次日 0 点，保证包含结束当天。 */
+function rangeBounds(): { since?: string; until?: string } {
+  const startOfDay = (date: Date) =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  if (range.value === "today") {
+    return { since: startOfDay(new Date()).toISOString() };
+  }
+  if (range.value === "7d" || range.value === "30d") {
+    const days = range.value === "7d" ? 7 : 30;
+    const from = startOfDay(new Date());
+    from.setDate(from.getDate() - (days - 1));
+    return { since: from.toISOString() };
+  }
+  if (range.value === "custom") {
+    const since = customSince.value
+      ? new Date(`${customSince.value}T00:00:00`).toISOString()
+      : undefined;
+    let until: string | undefined;
+    if (customUntil.value) {
+      const end = new Date(`${customUntil.value}T00:00:00`);
+      end.setDate(end.getDate() + 1);
+      until = end.toISOString();
+    }
+    return { since, until };
+  }
+  return {};
+}
+
+function onRangeChange() {
+  if (range.value === "custom" && !customSince.value) {
+    // 默认填最近 7 天，少一次手工输入
+    const from = new Date();
+    from.setDate(from.getDate() - 6);
+    customSince.value = from.toISOString().slice(0, 10);
+  }
+  applyFilters();
+}
+
+const hasFilters = computed(
+  () =>
+    Boolean(keyword.value || action.value || result.value) ||
+    range.value !== "all",
 );
+const rangeLabel = computed(() => {
+  switch (range.value) {
+    case "today":
+      return "今天";
+    case "7d":
+      return "近 7 天";
+    case "30d":
+      return "近 30 天";
+    case "custom":
+      return `${customSince.value || "最早"} ~ ${customUntil.value || "现在"}`;
+    default:
+      return "";
+  }
+});
+
 const pageNumber = computed(() => Math.floor(offset.value / pageSize) + 1);
 const pageCount = computed(() =>
   Math.max(1, Math.ceil(total.value / pageSize)),
@@ -305,6 +405,9 @@ const exportHref = computed(() => {
   if (keyword.value) params.set("keyword", keyword.value);
   if (action.value) params.set("action", action.value);
   if (result.value) params.set("result", result.value);
+  const bounds = rangeBounds();
+  if (bounds.since) params.set("since", bounds.since);
+  if (bounds.until) params.set("until", bounds.until);
   const query = params.toString();
   return `/api/audit/logs.csv${query ? `?${query}` : ""}`;
 });
@@ -322,6 +425,9 @@ function clearFilters() {
   keyword.value = "";
   action.value = "";
   result.value = "";
+  range.value = "all";
+  customSince.value = "";
+  customUntil.value = "";
   applyFilters();
 }
 
@@ -339,10 +445,13 @@ async function reload() {
   loading.value = true;
   error.value = null;
   try {
+    const bounds = rangeBounds();
     const page = await filesService.listAuditLogs({
       keyword: keyword.value,
       action: action.value,
       result: result.value,
+      since: bounds.since,
+      until: bounds.until,
       limit: pageSize,
       offset: offset.value,
     });
@@ -468,6 +577,19 @@ onMounted(() => {
 .audit-header-actions .vf-ghost-button.is-disabled {
   opacity: 0.5;
   pointer-events: none;
+}
+
+.audit-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--vf-text-muted);
+  font-size: 0.78rem;
+}
+
+.audit-date-input {
+  width: 8.5rem;
+  font-size: 0.78rem;
 }
 
 .audit-apply {

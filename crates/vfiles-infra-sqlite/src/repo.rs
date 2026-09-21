@@ -629,11 +629,26 @@ fn parse_user_id_opt(value: Option<&str>) -> DomainResult<Option<UserId>> {
 }
 
 fn parse_timestamp(value: &str) -> DomainResult<time::OffsetDateTime> {
-    time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).map_err(
-        |_| DomainError::Internal {
-            message: "Invalid timestamp".to_string(),
-        },
-    )
+    if let Ok(parsed) =
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+    {
+        return Ok(parsed);
+    }
+
+    // 兼容 SQLite `datetime('now')` 的 "YYYY-MM-DD HH:MM:SS"（按 UTC 解释）。
+    // 例如运维手工补写的数据；解析失败不应让整张表都读不出来。
+    let sqlite_format = time::format_description::parse_borrowed::<2>(
+        "[year]-[month]-[day] [hour]:[minute]:[second]",
+    );
+    if let Ok(format) = sqlite_format
+        && let Ok(primitive) = time::PrimitiveDateTime::parse(value, &format)
+    {
+        return Ok(primitive.assume_utc());
+    }
+
+    Err(DomainError::Internal {
+        message: format!("Invalid timestamp: {value}"),
+    })
 }
 
 fn parse_timestamp_opt(value: Option<&str>) -> DomainResult<Option<time::OffsetDateTime>> {
@@ -4793,6 +4808,45 @@ mod audit_log_tests {
                 "login.success".to_string()
             ]
         );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    /// 兼容 SQLite `datetime('now')` 格式的历史/手工数据（不能让整表读不出来）。
+    #[tokio::test]
+    async fn list_accepts_sqlite_datetime_format() {
+        let (db_path, pool, repo) = setup().await;
+        repo.append(&sample("login.success", "alice"))
+            .await
+            .unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO audit_logs (id, created_at, user_id, username, action, result)
+            VALUES ('legacy-1', '2026-01-02 03:04:05', NULL, 'legacy', 'login.success', 'success')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("insert legacy row");
+
+        let page = repo
+            .list(&AuditLogQuery {
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .expect("list should tolerate the sqlite datetime format");
+
+        assert_eq!(page.items.len(), 2, "两条记录都应可读");
+        let legacy = page
+            .items
+            .iter()
+            .find(|item| item.username == "legacy")
+            .expect("legacy row should be parsed");
+        assert_eq!(legacy.created_at.year(), 2026);
+        assert_eq!(legacy.created_at.hour(), 3);
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);

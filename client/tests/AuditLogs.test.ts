@@ -148,6 +148,97 @@ describe("AuditLogs.vue", () => {
     ).not.toBeNull();
   });
 
+  it("filters by time range presets and includes them in the export link", async () => {
+    const { container } = renderPage();
+    await waitFor(() =>
+      expect(container.querySelectorAll("tbody tr")).toHaveLength(1),
+    );
+    listLogsMock.mockClear();
+
+    await fireEvent.change(screen.getByLabelText("按时间范围筛选"), {
+      target: { value: "7d" },
+    });
+
+    await waitFor(() =>
+      expect(listLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ since: expect.any(String), offset: 0 }),
+      ),
+    );
+    // 「近 7 天」= 6 天前的本地 0 点
+    const lastCall = listLogsMock.mock.calls[
+      listLogsMock.mock.calls.length - 1
+    ] as [{ since: string }];
+    const since = lastCall[0].since;
+    const expected = new Date();
+    expected.setHours(0, 0, 0, 0);
+    expected.setDate(expected.getDate() - 6);
+    expect(new Date(since).getTime()).toBe(expected.getTime());
+    expect(container.querySelector(".audit-subtitle")?.textContent).toContain(
+      "近 7 天",
+    );
+
+    const href = container
+      .querySelector<HTMLAnchorElement>('a[href^="/api/audit/logs.csv"]')!
+      .getAttribute("href")!;
+    expect(href).toContain("since=");
+  });
+
+  it("supports a custom date range with an inclusive end date", async () => {
+    const { container } = renderPage();
+    await waitFor(() =>
+      expect(container.querySelectorAll("tbody tr")).toHaveLength(1),
+    );
+    listLogsMock.mockClear();
+
+    await fireEvent.change(screen.getByLabelText("按时间范围筛选"), {
+      target: { value: "custom" },
+    });
+    // 切换到自定义时默认填最近 7 天
+    expect(
+      container.querySelector<HTMLInputElement>('input[aria-label="开始日期"]')
+        ?.value,
+    ).not.toBe("");
+
+    // 切换后重新查询输入框：模板刚重渲染，旧引用可能已脱离 DOM
+    await waitFor(() =>
+      expect(
+        container.querySelector('input[aria-label="开始日期"]'),
+      ).not.toBeNull(),
+    );
+    await fireEvent.update(
+      container.querySelector('input[aria-label="开始日期"]')!,
+      "2026-09-01",
+    );
+    await fireEvent.update(
+      container.querySelector('input[aria-label="结束日期"]')!,
+      "2026-09-10",
+    );
+    // 日期输入只触发 input 事件，这里点「筛选」确定性地重新拉取
+    await fireEvent.click(screen.getByText("筛选"));
+
+    await waitFor(() =>
+      expect(listLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          since: new Date("2026-09-01T00:00:00").toISOString(),
+          until: new Date("2026-09-11T00:00:00").toISOString(),
+        }),
+      ),
+    );
+
+    // 清除筛选会重置回「全部时间」
+    await fireEvent.click(screen.getByText("清除筛选"));
+    await waitFor(() =>
+      expect(
+        container.querySelector<HTMLInputElement>(
+          'input[aria-label="开始日期"]',
+        ),
+      ).toBeNull(),
+    );
+    expect(
+      container.querySelector(".audit-subtitle")?.textContent ?? "",
+    ).not.toContain("近 7 天");
+  });
+
   it("offers a CSV export link carrying the current filters", async () => {
     const { container } = renderPage();
     await waitFor(() =>

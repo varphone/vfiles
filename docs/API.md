@@ -106,7 +106,7 @@
 | `keyword` | 模糊匹配用户名或 IP |
 | `action` | 精确匹配动作，如 `file.upload` |
 | `result` | `success` / `failure` |
-| `since` / `until` | RFC3339 时间范围（`since` 含、`until` 不含） |
+| `since` / `until` | RFC3339 时间范围（`since` 含、`until` 不含）；前端「今天 / 近 7 天 / 近 30 天 / 自定义」会换算成本地时区的起止时间 |
 | `limit` / `offset` | 分页，`limit` 默认 50、上限 200 |
 
 响应：
