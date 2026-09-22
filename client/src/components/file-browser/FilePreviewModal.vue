@@ -187,7 +187,7 @@
                 @click="emit('download')"
               >
                 <IconDownload :size="16" />
-                <span>下载文件</span>
+                <span>{{ downloadLabel }}</span>
               </button>
             </template>
           </EmptyState>
@@ -330,6 +330,11 @@ const dragOrigin = ref({ x: 0, y: 0 });
 const shellRef = ref<HTMLElement | null>(null);
 
 const isImage = computed(() => props.preview.kind === "image");
+
+// 降级行动文案随类型（r149 ✓ 目录 = 打包下载语义）
+const downloadLabel = computed(() =>
+  props.file?.kind === "directory" ? "下载目录" : "下载文件",
+);
 const zoomPercent = computed(() => Math.round(zoom.value));
 const sizeLabel = computed(() =>
   typeof props.file?.size_bytes === "number"
