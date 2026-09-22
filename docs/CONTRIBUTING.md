@@ -58,6 +58,7 @@ cd client && bun run fmt
 
 ## 提交前建议
 
+- `bun run check`：一键聚合（`lint` + `lint:styles` + `test`），提交前跑这一条即可。
 - `bun run lint:styles`：死样式扫描（零引用类、无动画引用的 keyframes、花括号不配平），
   对 transition 运行时类、`` `...${...}` `` 拼接前缀族与 highlight.js 类已内置豁免。
 - `bun run ui:sweep`：UI 截图回归（14 表面 × 双主题 = 28 张 PNG 证据集 + MANIFEST）。

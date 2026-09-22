@@ -2565,6 +2565,25 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.40 图表色板视觉评审 + check 聚合（round 36）
+
+- **图表色板评审**（唯一从未动过的视觉面，至此配色轴全部有数据/目检背书）：
+  造 5 类文件（文档/图片/视频/音频/其他）渲染完整存储条，双主题实测 + 目检
+  （`ui-r75/{light,dark}-storage.png`）：
+  | 类别 | 深色实测 | 判定 |
+  | --- | --- | --- |
+  | 视频 | `#A98BEB` 紫 | ✓ 分类惯用色（Google/OneDrive 同款做法） |
+  | 图片 | `#4FC48C` 绿 | ✓ 相邻可分 |
+  | 音频 | `#EAA54F` 琥珀 | ✓ |
+  | 文档 | `#6AA9EE`（浅色 `#2563eb`） | ✓ accent 家族 |
+  | 其它 | `#7D8B9C` 灰 | ✓ 中性收尾 |
+  段宽与占比一致（8B 段最宽 ✓）、图例点/文字对位、深浅两套各自可读 ——
+  **评审通过、零修复**（相邻区分度、系统色系协调、主流一致性三项均达标）。
+- **`bun run check` 聚合**：`lint` + `lint:styles` + `test` 一键（验收通过，62/434 全绿），
+  入 CONTRIBUTING「提交前建议」。
+- 过程注记（两条）：元素截图的选择器陷阱（`[class*=sidebar]` 先命中 19px 的侧栏开关 →
+  截出 19×19 废图，改精确 `.sidebar-overview`）；预览管线**第 6 次**图序错乱（内容识别为准）。
+
 ### 4.39 截图回归脚本固化（round 35）
 
 - 把 round 34 的 sweep 原型固化为 **`client/scripts/ui-sweep.mjs`**（`bun run ui:sweep`，
