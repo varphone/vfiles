@@ -58,6 +58,12 @@ cd client && bun run fmt
 
 ## 提交前建议
 
+**终版清单**（r99 收拢 ✓ 按序）：
+1. `bunx vue-tsc --noEmit` → 2. `bun run check`（lint + lint:styles + test）→
+3. `bun run build`（五门禁 = 1+2+3）→ 4. `bun run size:check`（预算 ✓）→
+5. 可选 `bun run ui:sweep`（视觉回归；**节律 = 每 10 轮** + 大改后）
+
+
 - 新样式取值先查 **[DESIGN_TOKENS.md](DESIGN_TOKENS.md)**（五维刻度 + 令牌表）。
 - 可见实例选择器（探件工具语，r75 升级版）：**Modal 藏而不卸** —— 可见判据 =
   `.modal.is-active` 作用域或 `offsetParent !== null` 过滤（裸 querySelector 会命中隐藏实例 ✗ 实测 N 次）。

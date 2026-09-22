@@ -305,7 +305,13 @@ async function main() {
   }
   await browser.close();
 
-  writeFileSync(join(OUT_DIR, "MANIFEST.txt"), shots.join("\n") + "\n");
+  // MANIFEST 元数据化（r99 ✓ 档案可溯源）
+  const meta = [
+    `# ui-sweep 档案 ${new Date().toISOString()}`,
+    `# 视口: 1440x900（桌面）+ iPhone 13（移动）；主题: light + dark；共 ${shots.length} 张`,
+    ...shots,
+  ];
+  writeFileSync(join(OUT_DIR, "MANIFEST.txt"), meta.join("\n") + "\n");
   log(`完成：${shots.length} 张 → ${OUT_DIR}（MANIFEST.txt 已写）`);
 }
 
