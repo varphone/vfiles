@@ -195,6 +195,11 @@ describe("VersionHistory.vue", () => {
         ".diff-line.is-add, .diff-line.is-del, .diff-line.is-ctx",
       ),
     ).not.toBeNull();
+    // 词级强调：-line 0 / +line 1 → 差异段仅 0 / 1
+    const words = Array.from(container.querySelectorAll(".diff-word")).map(
+      (w) => w.textContent,
+    );
+    expect(words).toEqual(expect.arrayContaining(["0", "1"]));
     expect(
       container.querySelector(".history-detail-label")?.textContent,
     ).toContain("版本对比");

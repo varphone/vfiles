@@ -140,7 +140,16 @@
                 <span class="diff-sign" aria-hidden="true">{{
                   line.sign
                 }}</span>
-                <span class="diff-code">{{ line.text || " " }}</span>
+                <span class="diff-code">
+                  <template v-if="line.emph && line.emph[1] > line.emph[0]">
+                    {{ line.text.slice(0, line.emph[0])
+                    }}<span class="diff-word">{{
+                      line.text.slice(line.emph[0], line.emph[1])
+                    }}</span
+                    >{{ line.text.slice(line.emph[1]) }}</template
+                  >
+                  <template v-else>{{ line.text || " " }}</template>
+                </span>
               </div>
             </div>
           </div>
@@ -333,6 +342,8 @@ interface DiffLine {
   text: string;
   oldNo?: number;
   newNo?: number;
+  /** 词级强调：差异段 [起, 止) 字符区间（改行对经公共前后缀推导） */
+  emph?: [number, number];
 }
 
 /** unified diff 解析为结构行（± 色带 + 符号槽 + 旧/新双列行号 + hunk/meta 弱化）。 */
@@ -346,7 +357,7 @@ const diffLines = computed<DiffLine[]>(() => {
     );
   let oldNo = 0;
   let newNo = 0;
-  return lines.map((line: string): DiffLine => {
+  const out = lines.map((line: string): DiffLine => {
     const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
     if (hunk) {
       oldNo = Number(hunk[1]);
@@ -377,6 +388,38 @@ const diffLines = computed<DiffLine[]>(() => {
       newNo: newNo++,
     };
   });
+
+  // 词级强调：相邻 −/＋ 组（典型"改行"）按序配对，标注公共前后缀之外的差异段。
+  for (let i = 0; i < out.length; i++) {
+    if (out[i].kind !== "del") continue;
+    const dels: number[] = [];
+    const adds: number[] = [];
+    let j = i;
+    while (j < out.length && out[j].kind === "del") dels.push(j++);
+    while (j < out.length && out[j].kind === "add") adds.push(j++);
+    const pairs = Math.min(dels.length, adds.length);
+    for (let t = 0; t < pairs; t++) {
+      const a = out[dels[t]].text;
+      const b = out[adds[t]].text;
+      let pre = 0;
+      while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+      let suf = 0;
+      while (
+        suf < a.length - pre &&
+        suf < b.length - pre &&
+        a[a.length - 1 - suf] === b[b.length - 1 - suf]
+      )
+        suf++;
+      const aEnd = a.length - suf;
+      const bEnd = b.length - suf;
+      if (aEnd > pre || bEnd > pre) {
+        out[dels[t]].emph = [pre, Math.max(aEnd, pre)];
+        out[adds[t]].emph = [pre, Math.max(bEnd, pre)];
+      }
+    }
+    i = j - 1;
+  }
+  return out;
 });
 
 type PreviewKind =
@@ -1055,6 +1098,25 @@ function loadMore() {
 .diff-line.is-del {
   background: var(--vf-danger-soft);
   color: var(--vf-danger-text);
+}
+
+.diff-word {
+  /* GitHub 式行内强调：彩底 + text-strong 深字（行色带已承载 ± 语义）。
+     彩底×彩字会双双掉档（实测浅 4.38 / 深 3.18 ✗），换深字后 ≥4.5 ✓。 */
+  font-weight: 600;
+  border-radius: 3px;
+  color: var(--vf-text-strong);
+  /* 叠 12% 黑膜：深色主题词底偏亮（白字 4.41 差一线），压暗后达标；
+     浅色主题 7.8 → ~6.5 仍在 AA 上 ✓ 双向安全。 */
+  background-image: linear-gradient(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.12));
+}
+
+.diff-line.is-add .diff-word {
+  background: var(--vf-success-line);
+}
+
+.diff-line.is-del .diff-word {
+  background: var(--vf-danger-line);
 }
 
 .diff-line.is-hunk {
