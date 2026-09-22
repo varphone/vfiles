@@ -2565,6 +2565,31 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.2 列表行状态语言 + 配色迁移收尾（round 2）
+
+- 复核发现两处**配色未随第 1 轮迁移**的真实问题：
+  1. Bulma 的 `$primary`/`$link` 仍是旧蓝 `#2f6db6` → 所有 Bulma 组件
+     （`.button.is-primary`、复选框选中态、链接）与新强调色 `#2563eb` 不一致；
+  2. `--vf-surface-hover` 浅色层还是旧蓝 `rgba(47,109,182,.06)`。
+  两者均已迁移；编译产物中旧蓝 `2f6db6` 残留为 **0**。
+- 列表行改用 M3 状态层数字 + Drive 圆角行面：
+  - 表格 `border-collapse: separate`（collapse 下单元格圆角不渲染）；
+  - **悬停 = accent-soft（浅 8% / 深 16%）**、**选中 = accent-soft-strong（浅 16% / 深 30%）**，
+    两态相差一倍、肉眼可分（改前 6% vs 8% 几乎无差别）；
+  - 悬停/选中行面 **8px 圆角**（首尾单元格圆角），普通行分隔保持直边；
+  - 网格卡片选中同步升到 accent-soft-strong，与列表一致。
+- 验证（真实浏览器 浅/深双主题实测计算色）：
+  | | 浅色 | 深色 |
+  | --- | --- | --- |
+  | 悬停 | rgba(37,99,235,.08) | rgba(75,122,231,.16) |
+  | 选中 | rgba(37,99,235,.16) | rgba(75,122,231,.30) |
+  | 悬停行面圆角 | 8px | 8px |
+  截图（`ui-r40/light-rows.png`）确认选中/悬停两态清晰、行面圆角正常。
+  测试：前端 62 文件 / 430 用例全绿（tsc/lint/prettier/构建通过）。
+- 本轮顺带发现（移交 round 3 修复）：列头 sticky 规则写在 FileBrowser 的 scoped 样式里，
+  但 `<thead>` 由子组件 `FileList.vue` 渲染 → scope 属性不匹配，**sticky 列头从未生效**
+  （实测 `position: relative`）。
+
 ### 4.1 控件语言与配色现代化（round 1）
 
 - 基线实测（1440×900）：按钮 32px、图标钮仅 **26.4px**、ghost 圆角 6px 而主按钮是胶囊（不一致）；

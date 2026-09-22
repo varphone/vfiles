@@ -2474,6 +2474,13 @@ function handleSortChange(field: SortField) {
   flex-direction: column;
 }
 
+/* 圆角行表面（M3/Drive 列表项语言）：collapse 模式下单元格圆角不渲染，
+   改为 separate + 0 间距；仅水平分隔线，视觉与 collapse 一致。 */
+.desktop-list-shell table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
 .desktop-pane-section + .desktop-pane-section {
   margin-top: 1rem;
 }

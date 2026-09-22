@@ -844,12 +844,34 @@ function share() {
   font-size: 0.8rem;
 }
 
+/* M3 状态层：悬停 8%（accent-soft）、选中 16%（accent-soft-strong），
+   两态相差一倍，肉眼可分；悬停/选中的行面用 8px 圆角（Drive 列表项语言）。 */
 .desktop-file-row:hover > td {
-  background: var(--vf-surface-hover);
+  background: var(--vf-accent-soft);
 }
 
 .desktop-file-row.is-row-selected > td {
-  background: var(--vf-accent-soft);
+  background: var(--vf-accent-soft-strong);
+}
+
+.desktop-file-row:hover > td:first-child {
+  border-top-left-radius: var(--vf-radius-sm);
+  border-bottom-left-radius: var(--vf-radius-sm);
+}
+
+.desktop-file-row:hover > td:last-child {
+  border-top-right-radius: var(--vf-radius-sm);
+  border-bottom-right-radius: var(--vf-radius-sm);
+}
+
+.desktop-file-row.is-row-selected > td:first-child {
+  border-top-left-radius: var(--vf-radius-sm);
+  border-bottom-left-radius: var(--vf-radius-sm);
+}
+
+.desktop-file-row.is-row-selected > td:last-child {
+  border-top-right-radius: var(--vf-radius-sm);
+  border-bottom-right-radius: var(--vf-radius-sm);
 }
 
 /* 名称单元格：为尾部「⋯」预留空间，并作为其定位参考 */

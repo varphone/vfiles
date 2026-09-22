@@ -369,18 +369,17 @@ const icon = computed(() => {
 });
 
 const thumbnailUrl = computed(() => {
+  const thumbImageRef = ref<HTMLImageElement | null>(null);
 
-const thumbImageRef = ref<HTMLImageElement | null>(null);
-
-// 命中缓存时 load 事件可能在挂载前就结束，这里补一次检查，避免缩略图一直透明
-watch(
-  [thumbImageRef, thumbnailUrl],
-  () => {
-    const image = thumbImageRef.value;
-    if (image?.complete && image.naturalWidth > 0) thumbLoaded.value = true;
-  },
-  { immediate: true, flush: "post" },
-);
+  // 命中缓存时 load 事件可能在挂载前就结束，这里补一次检查，避免缩略图一直透明
+  watch(
+    [thumbImageRef, thumbnailUrl],
+    () => {
+      const image = thumbImageRef.value;
+      if (image?.complete && image.naturalWidth > 0) thumbLoaded.value = true;
+    },
+    { immediate: true, flush: "post" },
+  );
   if (thumbFailed.value) return "";
   if (!isImageFile(props.file)) return "";
   return filesService.thumbnailUrl(props.file.path, {
@@ -568,7 +567,7 @@ onBeforeUnmount(() => {
 
 .file-card--selected {
   border-color: var(--vf-accent);
-  background: var(--vf-accent-soft);
+  background: var(--vf-accent-soft-strong);
 }
 
 .file-card-thumb {
