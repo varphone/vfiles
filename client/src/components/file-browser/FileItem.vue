@@ -99,6 +99,11 @@
         </template>
       </span>
 
+      <!-- 拖放目标提示：明确"移动到哪里"（文件名与该行相同，提示补充动作语义） -->
+      <span v-if="dragOver" class="desktop-drop-hint" aria-hidden="true">
+        移动到「{{ file.name }}」
+      </span>
+
       <span
         v-if="showLocation && locationLabel"
         class="desktop-name-location"

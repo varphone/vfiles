@@ -177,6 +177,11 @@
           <span v-else>{{ seg.text }}</span>
         </template>
       </div>
+
+      <!-- 拖放目标提示：右上角标注将移入的目录名（位于 v-if/v-else 名称链之外） -->
+      <span v-if="dragOver" class="desktop-drop-hint" aria-hidden="true">
+        移动到「{{ file.name }}」
+      </span>
       <div
         v-if="showLocation && locationLabel"
         class="file-card-location"

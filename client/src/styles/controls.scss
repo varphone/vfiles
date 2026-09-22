@@ -272,6 +272,27 @@
   box-shadow: 0 0 0 3px var(--vf-focus-ring);
 }
 
+/* 拖放目标提示 chip：列表行/网格卡片落点处显示"移动到「名称」"，
+   pointer-events:none 防止遮挡 drop 事件；absolute 定位避免行内回流。 */
+.desktop-drop-hint {
+  position: absolute;
+  right: 2.2rem;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 55%;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--vf-accent);
+  border-radius: var(--vf-radius-pill);
+  background: var(--vf-surface);
+  color: var(--vf-accent-text);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 /* Overlay 层次（M3 dark / GitHub dark 的 tonal elevation）：
    浮层背景用 surface-raised 比基准面抬升一档 + 发丝边框表达层次，
    阴影只做辅助；浅色下 raised 即白色，行为不变。 */

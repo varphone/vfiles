@@ -2565,6 +2565,25 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.14 拖放目标提示（round 13）
+
+- 交互（拖放体验第三块，rounds 10–12 之后）：高亮说明"哪里可以放"、源项变淡说明"什么在移动"，
+  还差"**会移到哪个目录**"——目录行众多且同名结构时，仅靠高亮难以确认目标。
+- 实现：`FileItem`（桌面行）与 `FileCard`（网格卡片）在 `dragOver` 时渲染共享 chip
+  **「移动到「目录名」」**（`controls.scss` 全局 `.desktop-drop-hint`：accent 描边 + surface 底 +
+  accent-text 字，absolute 右侧定位**不产生行内回流**，`pointer-events: none` 不遮挡 drop 事件；
+  右侧 2.2rem 起，避开行尾「⋯」按钮区域）。
+- 踩坑记录：初次把 chip 插进了 `v-if`/`v-else` 名称链**中间**——`v-else` 会配对到 chip 的
+  `v-if`，导致网格卡片名字只在拖动时才显示（编译不报错）。已移到名称链**之外**并加验证断言。
+- 验证（真实浏览器，合成 DragEvent）：
+  | 状态 | 行 | 卡片 |
+  | --- | --- | --- |
+  | 静止 | 无提示、名字可见 ✓ | 无提示、名字可见 ✓ |
+  | 拖入目录 | chip「移动到「项目」」+ drop 高亮 ✓ | 同 ✓ |
+  | 拖走/结束 | chip 消失 ✓ | 消失 ✓ 名字仍显示 ✓ |
+  移动端行未加（触屏拖动少且整行名称独占可见）；面包屑/树条目路径本身可见，不重复提示。
+  新增 1 个单测（提示出现/消失/名称不回归），前端 62 文件 / **432** 用例全绿，无控制台报错。
+
 ### 4.13 组件字面色值清查（round 12）
 
 - 背景：`theme.scss` 开头即约定「组件里的零散色值统一收敛到令牌」，历轮也修过漏网之鱼

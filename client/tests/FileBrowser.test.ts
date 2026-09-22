@@ -1971,3 +1971,52 @@ describe("FileBrowser.vue drag lift", () => {
     );
   });
 });
+
+describe("FileBrowser.vue drop hint", () => {
+  it("shows the target folder name while a directory is dragged over and hides it after", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([
+      {
+        id: "项目",
+        name: "项目",
+        path: "项目",
+        kind: "directory" as const,
+        size_bytes: 0,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+      {
+        id: "a.txt",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file" as const,
+        size_bytes: 10,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("项目");
+    // 静止状态：无提示、目录名可见
+    expect(container.querySelector(".desktop-drop-hint")).toBeNull();
+
+    const dirRow = container.querySelector('tr[data-vfiles-path="项目"]')!;
+    const fileRow = container.querySelector('tr[data-vfiles-path="a.txt"]')!;
+
+    fireEvent.dragOver(dirRow);
+    await waitFor(() =>
+      expect(
+        container.querySelector(".desktop-drop-hint")?.textContent,
+      ).toContain("移动到「项目」"),
+    );
+
+    fireEvent.dragLeave(dirRow);
+    fireEvent.dragEnd(fileRow);
+    await waitFor(() =>
+      expect(container.querySelector(".desktop-drop-hint")).toBeNull(),
+    );
+    // 名称不受提示影响，始终可见
+    expect(dirRow.textContent).toContain("项目");
+  });
+});
