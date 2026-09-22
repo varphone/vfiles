@@ -97,7 +97,7 @@ withDefaults(
 .auth-shell-subtitle {
   margin: 0.2rem 0 0;
   color: var(--vf-text-muted);
-  font-size: 0.85rem;
+  font-size: 0.875rem;
 }
 
 .auth-shell-card {
