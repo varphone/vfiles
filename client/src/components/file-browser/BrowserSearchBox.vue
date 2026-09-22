@@ -13,7 +13,9 @@
             emit('update:modelValue', ($event.target as HTMLInputElement).value)
           "
           @keyup.enter="emit('search')"
-          @keydown.esc.prevent="emit('clear')"
+          @keydown.esc.prevent="
+            open ? emit('update:open', false) : emit('clear')
+          "
           @keydown.down.prevent="emit('enter-results')"
         />
         <datalist id="vfiles-search-history-desktop">

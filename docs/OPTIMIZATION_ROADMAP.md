@@ -2565,6 +2565,21 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.69 高级搜索面板键盘走查（round 63）
+
+- 续 r62 兄弟面走查：面板 7 控件（combobox/复选/按钮）aria 基本在 ✓；
+  但 **Esc 层级语义破** ✗✗——面板开着时 Esc **一击双杀**（面板关 + 搜索清空，
+  实测 `panelOpen: false` + `inputVal: ""`）：主流 = **Esc 只关层面板、输入/搜索保留，
+  再按一次才清**（r30 弹层纪律同款）。
+- 修复：Esc 分支 `open ? emit('update:open', false) : emit('clear')`（layer-first ✓）。
+- **单测双态**（+1 → 435）：面板开 → `update:open false` 且**无** `clear` ✓。
+- 浏览器两段式终验：`esc#1(面板开)` → 面板关 + 输入保留「报告」✓；
+  `esc#2(面板关)` → 清空 ✓✓。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 736 ✓ 435 用例 ✓ 构建 ✓）。
+- 工具语积累注记：r62/63 连续两轮在"键盘动线 × 层级纪律"类缺口收获真缺陷——
+  **键盘动线审计法**（动线表 × 主流对照 × 层级语义）成体系 ✓ 可继续推广到
+  历史/预览/移动面板。
+
 ### 4.68 搜索框键盘动线补全（round 62）
 
 - 搜索结果面板键盘可达性深测（首次系统审）：结果行无 tabindex/role = **容器级键盘

@@ -123,4 +123,15 @@ describe("BrowserSearchBox.vue", () => {
     await fireEvent.keyDown(input, { key: "ArrowDown" });
     expect(emitted()["enter-results"]).toHaveLength(1);
   });
+
+  it("closes only the panel on Escape while it is open (r63 layering)", async () => {
+    // 层级纪律（r30 同款）：面板开着时 Esc 只关层面板，输入/搜索保留；
+    // 面板关着再按 Esc 才清空搜索。
+    const { emitted } = renderBox({ modelValue: "搜索", open: true });
+    const input = screen.getByPlaceholderText("搜索名称、扩展名或路径");
+
+    await fireEvent.keyDown(input, { key: "Escape" });
+    expect(emitted()["update:open"]?.[0]).toEqual([false]);
+    expect(emitted()["clear"]).toBeUndefined();
+  });
 });
