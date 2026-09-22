@@ -503,3 +503,9 @@ watch(
   }
 }
 </style>
+
+/* 非颜色区分（r153 ✓ WCAG 1.4.1 同 r152 式） */
+.sidebar-overview-retry:hover,
+.sidebar-overview-retry:focus-visible {
+  text-decoration: underline;
+}
