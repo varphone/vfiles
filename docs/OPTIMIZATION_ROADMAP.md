@@ -2565,6 +2565,19 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.73 通知族终审（round 67，验证轮）
+
+- 通知/Toast 族系统性终审（从未做过 ✓）三轴实测：
+  | 轴 | 实测 | 判定 |
+  | --- | --- | --- |
+  | **aria-live 播报** | 容器 `role="status"` + `aria-live="polite"` | ✓ **容器承担播报 = 正确姿势**（本体无需属性 ✓ 屏读经容器逐条播报 ✓） |
+  | **z 层级** | toast 容器 10000 > modal 1000 | ✓ snackbar 永在最上（M3 语义 ✓） |
+  | **时长** | 2507ms ≈ 2.5s | ✓（VS Code ~2s / GitHub ~3s 同档；M3 4-10s 为长消息指引） |
+  **结论：健康零缺陷**（诚实验证轮 docs-only ✓ r44/46/64 先例）。
+- 教材点记档：**aria-live 挂容器不挂条目**（条目动态生灭时容器 live region 才稳定
+  播报 ✓ 我方已是此姿势 ✓ 后续新增通知面沿用）。
+- 436 用例保持全绿。
+
 ### 4.72 触屏命中区审计与补全（round 66）
 
 - 审计法推广终站（移动面板）：**tap target 尺寸**数据化（基准 = iOS HIG 44pt /
