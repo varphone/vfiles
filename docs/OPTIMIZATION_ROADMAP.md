@@ -2565,6 +2565,21 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.70 历史对话框键盘动线终审（round 64，验证轮）
+
+- 键盘动线审计法推广第一站（r62/63 高产方法）：**历史对话框**——含嵌套层
+  （历史 × 恢复确认弹窗）正是层级纪律高危面：
+  | 检查项 | 实测 | 判定 |
+  | --- | --- | --- |
+  | **焦点困守**（Tab ×6） | `inModal: true`（焦点保持 BUTTON） | ✓ |
+  | **嵌套 Esc 层级**（确认叠历史） | `confirmStillOpen: **false**` + `historyStillOpen: **true**` | ✓✓ **只关确认层** |
+  **结论：健康零缺陷** —— r30/r63 的层纪律在嵌套 modal 栈处**已然成立**
+  （确认弹窗 Esc 不漏到历史层 ✓ 设计健全）。诚实验证轮 docs-only ✓
+  （非每轮都有缺陷，r44/46 先例）。
+- 方法推广余程（候选）：预览面板（r27 已有 Esc 关闭 ✓ 快速复核即可）、
+  移动面板、并排 diff 的 U/S 视图键（含快捷键表登记）。
+- 435 用例保持全绿。
+
 ### 4.69 高级搜索面板键盘走查（round 63）
 
 - 续 r62 兄弟面走查：面板 7 控件（combobox/复选/按钮）aria 基本在 ✓；
