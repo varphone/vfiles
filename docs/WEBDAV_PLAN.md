@@ -19,7 +19,8 @@
 | r102（已定案） | **OPTIONS / PROPFIND（Depth 0/1）/ GET / HEAD** | 只读四法 ✓ multistatus XML |
 | **r103（中段实件 ✓）** | OPTIONS **实装**（Allow + DAV:1 ✓ curl 可证）；auth 解码实 + multistatus XML 全实（4 单测 ✓）；PROPFIND = 501 诚实占位（待域接线） | `cargo test` 4 绿 |
 | **r104（三实件 + 谜案记）** | `auth::verify` 注入式（4 测试绿 ✓）；**PROPFIND 体全写**（find_by_path/find_children → multistatus ✓ Depth 0/1）；OPTIONS/405 契约实 | dispatch 501：**axum E0277 Handler 谜案**（最小 handler 二分 = 体内问题 ✓ debug_handler/官方 example 对照 = r105 一击破） |
-| r105 | Handler 谜案破 + PROPFIND 接线 + GET（版本链：`EntryVersion.blob_id` ✓ 形已清） | 附：per-user ns 映射（FTP UserDetailProvider 范本） |
+| **r105（谜案破 ✓ 接线完）** | **E0277 真因 = `&Request` 跨 await 非 Send**（debug_handler 全窗破案 ✓ 教科书 Send 修复式 = 同步提取拥有值 ✓）；**PROPFIND 接线完**（propfind_owned → multistatus ✓ Depth 0/1）；4 测试绿 | bin/config 挂载 = r106 机械段（build_ftp_runtime 同式清单 ✓） |
+| r106 | **bin 挂载 + curl/rclone e2e**（可浏览挂载实证）+ GET（`EntryVersion.blob_id` ✓ 形已清） | 附：per-user ns 映射 |
 | r106 | 写法五件（PUT/DELETE/MKCOL/MOVE/COPY）→ **读写全挂载** | 覆盖语义呼应 PROPOSAL_OVERWRITE_UPLOAD |
 | r103 | **PUT / DELETE / MKCOL / MOVE / COPY** | 写法五件 ✓ 覆盖语义呼应 PROPOSAL_OVERWRITE_UPLOAD |
 | 记档 | **LOCK/UNLOCK 不支持**（405） | macOS/Linux/rclone 挂载不受影响 ✓ Windows 映射依赖锁 → 后续评估 |

@@ -57,23 +57,21 @@ fn router(app: WebdavApplication) -> Router {
 ///
 /// href 形 = WebDAV 惯例（目录带尾斜杠 ✓）；mtime = `Entry.created_at`（记档：
 /// 版本级 mtime = r105 随版本链接入）；`deleted_at` 条目假定仓储层已滤（记档 ✓）。
-async fn propfind(req: &axum::extract::Request) -> Result<String, StatusCode> {
+/// PROPFIND（纯拥有参 ✓ `&Request` 跨 await = 非 Send ✗✗ E0277 真因——
+/// 同步段提取拥有值是教科书 Send 修复式 ✓ r105 破案记档）。
+async fn propfind_owned(
+    app: Option<WebdavApplication>,
+    path: String,
+    depth: String,
+) -> Result<String, StatusCode> {
     use vfiles_domain::repo::EntryRepo;
-    let app = req
-        .extensions()
-        .get::<WebdavApplication>()
-        .cloned()
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let depth = req
-        .headers()
-        .get("depth")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("1");
+    let app = app.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let depth = depth.as_str();
     if depth == "infinity" {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let uri_path = req.uri().path().trim_end_matches('/');
+    let uri_path = path.trim_end_matches('/');
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/');
     let path = vfiles_domain::types::NormalizedPath::new(if rel.is_empty() { "" } else { rel })
         .map_err(|_| StatusCode::BAD_REQUEST)?;
@@ -127,6 +125,7 @@ async fn propfind(req: &axum::extract::Request) -> Result<String, StatusCode> {
 }
 
 /// 方法分派（PROPFIND 等非标方法经 `any` 到达 ✓）。
+#[axum::debug_handler]
 async fn dav(req: axum::extract::Request) -> Response {
     match *req.method() {
         Method::OPTIONS => Response::builder()
@@ -136,13 +135,28 @@ async fn dav(req: axum::extract::Request) -> Response {
             .body(Body::empty())
             .unwrap(),
         // PROPFIND（Depth 0/1 ✓ 其余 Depth = 400 子集记档）。
-        // PROPFIND 域体已写（`propfind` fn ✓ find_by_path/find_children → multistatus）；
-        // 接线排期 = r105（E0277 Handler 谜案：dav 体内某型破 Send/'static 约束 ✗✗
-        // 最小 handler 二分已定案 = 体内问题 ✓ debug_handler/官方 example 对照一击破）。
-        ref m if m.as_str() == "PROPFIND" => Response::builder()
-            .status(StatusCode::NOT_IMPLEMENTED)
-            .body(Body::from("PROPFIND 域体已写、Handler 接线 r105"))
-            .unwrap(),
+        ref m if m.as_str() == "PROPFIND" => {
+            // 同步提取拥有值（&Request 跨 await = 非 Send ✗✗ E0277 真因 ✓ r105 破案）
+            let path_owned = req.uri().path().to_string();
+            let depth_owned = req
+                .headers()
+                .get("depth")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("1")
+                .to_string();
+            let app = req.extensions().get::<WebdavApplication>().cloned();
+            match propfind_owned(app, path_owned, depth_owned).await {
+                Ok(xml) => Response::builder()
+                    .status(StatusCode::MULTI_STATUS)
+                    .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+                    .body(Body::from(xml))
+                    .unwrap(),
+                Err(status) => Response::builder()
+                    .status(status)
+                    .body(Body::empty())
+                    .unwrap(),
+            }
+        },
         ref m if m == "LOCK" || m == "UNLOCK" => Response::builder()
             .status(StatusCode::METHOD_NOT_ALLOWED)
             .body(Body::empty())
