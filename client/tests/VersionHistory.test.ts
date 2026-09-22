@@ -200,6 +200,19 @@ describe("VersionHistory.vue", () => {
       (w) => w.textContent,
     );
     expect(words).toEqual(expect.arrayContaining(["0", "1"]));
+
+    // 并排视图：−/＋ 配对成行，左右单元格各有词级强调
+    await fireEvent.click(
+      within(container).getByRole("button", { name: "并排" }),
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".diff-split-row")).not.toBeNull(),
+    );
+    const cells = container.querySelectorAll(".diff-split-row .diff-cell");
+    expect(cells.length).toBeGreaterThanOrEqual(2);
+    expect(
+      container.querySelectorAll(".diff-split-row .diff-word").length,
+    ).toBe(2);
     expect(
       container.querySelector(".history-detail-label")?.textContent,
     ).toContain("版本对比");

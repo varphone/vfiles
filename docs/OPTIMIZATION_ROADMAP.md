@@ -2565,6 +2565,27 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.48 diff 侧并排视图（round 42，三部曲收官）
+
+- diff 进阶第三块：**统一 / 并排切换**（GitHub split toggle）。工具条两个 ghost 钮
+  （统一/并排，`is-active` 标识）；并排 = −/＋ 组按序**左右配对成行**、ctx 双侧共显、
+  meta/hunk 共显、空侧灰槽（`is-empty` = surface-sunken）。
+- 复用：`segments()` 抽取词级分段（unified 同步改用 ✓ 三处渲染共用一份逻辑）；
+  词强调选择器泛化 `.is-add/.is-del .diff-word`（行/单元格同享）；
+  单元格 ± 色带 = 同一套 success/danger-soft + text 配对。
+- **单测强化**：切并排 → `.diff-split-row` 存在、cells ≥2、`.diff-word` 恰 2 ✓。
+- 浏览器验证（改行+删行+加行混合夹具，双主题一致）：
+  | 左（旧） | 右（新） |
+  | --- | --- |
+  | meta `--- d375` | meta（共显）|
+  | del:第一行 | **add:第一行（已改）[词级]** |
+  | ctx:第二行 | ctx:第二行 |
+  | del:第三行 | **add:新加的 [词级]** |
+  截图 `ui-r81/{light,dark}-split.png` ✓；430 用例全绿、构建通过。
+- 过程注记：模板改造时收口映射错位（`history-detail-body` 的 `</div>` 被挪作 wrapper
+  收口 → `</template>` 提前意外）——用「区段开合行号清单」（awk 列 template/div）快速
+  定位并补平 ✓ 此法优于肉眼扫。
+
 ### 4.47 diff 词级高亮（round 41）
 
 - diff 进阶第二块：**行内词级强调**（GitHub 式）——改行对只点亮差异段。

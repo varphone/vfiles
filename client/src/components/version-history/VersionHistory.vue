@@ -124,32 +124,96 @@
               <span>{{ diff.error }}</span>
             </p>
 
-            <div v-else class="diff-block" role="group" aria-label="版本对比">
+            <div v-else class="diff-view">
+              <div class="diff-toolbar">
+                <button
+                  type="button"
+                  class="vf-ghost-button"
+                  :class="{ 'is-active': diffView === 'unified' }"
+                  @click="diffView = 'unified'"
+                >
+                  统一
+                </button>
+                <button
+                  type="button"
+                  class="vf-ghost-button"
+                  :class="{ 'is-active': diffView === 'split' }"
+                  @click="diffView = 'split'"
+                >
+                  并排
+                </button>
+              </div>
               <div
-                v-for="(line, i) in diffLines"
-                :key="i"
-                class="diff-line"
-                :class="`is-${line.kind}`"
+                v-show="diffView === 'unified'"
+                class="diff-block"
+                role="group"
+                aria-label="版本对比"
               >
-                <span class="diff-no" aria-hidden="true">{{
-                  line.oldNo ?? ""
-                }}</span>
-                <span class="diff-no" aria-hidden="true">{{
-                  line.newNo ?? ""
-                }}</span>
-                <span class="diff-sign" aria-hidden="true">{{
-                  line.sign
-                }}</span>
-                <span class="diff-code">
-                  <template v-if="line.emph && line.emph[1] > line.emph[0]">
-                    {{ line.text.slice(0, line.emph[0])
-                    }}<span class="diff-word">{{
-                      line.text.slice(line.emph[0], line.emph[1])
-                    }}</span
-                    >{{ line.text.slice(line.emph[1]) }}</template
+                <div
+                  v-for="(line, i) in diffLines"
+                  :key="i"
+                  class="diff-line"
+                  :class="`is-${line.kind}`"
+                >
+                  <span class="diff-no" aria-hidden="true">{{
+                    line.oldNo ?? ""
+                  }}</span>
+                  <span class="diff-no" aria-hidden="true">{{
+                    line.newNo ?? ""
+                  }}</span>
+                  <span class="diff-sign" aria-hidden="true">{{
+                    line.sign
+                  }}</span>
+                  <span class="diff-code">
+                    <span
+                      v-for="(seg, si) in segments(line)"
+                      :key="si"
+                      :class="seg.mark ? 'diff-word' : undefined"
+                      >{{ seg.text }}</span
+                    >
+                  </span>
+                </div>
+              </div>
+              <div
+                v-show="diffView === 'split'"
+                class="diff-split"
+                role="group"
+                aria-label="版本对比（并排）"
+              >
+                <div
+                  v-for="(row, ri) in diffSplitRows"
+                  :key="ri"
+                  class="diff-split-row"
+                >
+                  <span class="diff-no" aria-hidden="true">{{
+                    row.left?.oldNo ?? ""
+                  }}</span>
+                  <span
+                    class="diff-cell"
+                    :class="row.left ? `is-${row.left.kind}` : 'is-empty'"
                   >
-                  <template v-else>{{ line.text || " " }}</template>
-                </span>
+                    <span
+                      v-for="(seg, si) in segments(row.left)"
+                      :key="si"
+                      :class="seg.mark ? 'diff-word' : undefined"
+                      >{{ seg.text }}</span
+                    >
+                  </span>
+                  <span class="diff-no" aria-hidden="true">{{
+                    row.right?.newNo ?? ""
+                  }}</span>
+                  <span
+                    class="diff-cell"
+                    :class="row.right ? `is-${row.right.kind}` : 'is-empty'"
+                  >
+                    <span
+                      v-for="(seg, si) in segments(row.right)"
+                      :key="si"
+                      :class="seg.mark ? 'diff-word' : undefined"
+                      >{{ seg.text }}</span
+                    >
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -418,6 +482,43 @@ const diffLines = computed<DiffLine[]>(() => {
       }
     }
     i = j - 1;
+  }
+  return out;
+});
+
+const diffView = ref<"unified" | "split">("unified");
+
+/** 词级分段（unified/并排共用）：有强调段时切 3 段并滤空。 */
+function segments(line: DiffLine | undefined) {
+  if (!line) return [] as { text: string; mark: boolean }[];
+  if (line.emph && line.emph[1] > line.emph[0]) {
+    return [
+      { text: line.text.slice(0, line.emph[0]), mark: false },
+      { text: line.text.slice(line.emph[0], line.emph[1]), mark: true },
+      { text: line.text.slice(line.emph[1]), mark: false },
+    ].filter((seg) => seg.text.length > 0);
+  }
+  return [{ text: line.text || " ", mark: false }];
+}
+
+/** 并排视图行：ctx/hunk/meta 双侧共显，−/＋ 组按序左右配对。 */
+const diffSplitRows = computed(() => {
+  const out: { left?: DiffLine; right?: DiffLine }[] = [];
+  const lines = diffLines.value;
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.kind === "ctx" || line.kind === "meta" || line.kind === "hunk") {
+      out.push({ left: line, right: line });
+      i++;
+      continue;
+    }
+    const dels: DiffLine[] = [];
+    const adds: DiffLine[] = [];
+    while (i < lines.length && lines[i].kind === "del") dels.push(lines[i++]);
+    while (i < lines.length && lines[i].kind === "add") adds.push(lines[i++]);
+    const n = Math.max(dels.length, adds.length);
+    for (let t = 0; t < n; t++) out.push({ left: dels[t], right: adds[t] });
   }
   return out;
 });
@@ -1055,6 +1156,58 @@ function loadMore() {
   padding: 0.5rem 0 0.2rem;
 }
 
+.diff-toolbar {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  padding-bottom: 0.4rem;
+}
+
+.diff-split {
+  display: flex;
+  flex-direction: column;
+  max-height: 56vh;
+  overflow: auto;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.diff-split-row {
+  display: flex;
+  align-items: stretch;
+}
+
+.diff-cell {
+  flex: 1 1 50%;
+  min-width: 0;
+  padding: 0.1rem 0.5rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-left: 1px solid var(--vf-border-weak);
+}
+
+.diff-cell.is-empty {
+  background: var(--vf-surface-sunken);
+}
+
+.diff-cell.is-add {
+  background: var(--vf-success-soft);
+  color: var(--vf-success-text);
+}
+
+.diff-cell.is-del {
+  background: var(--vf-danger-soft);
+  color: var(--vf-danger-text);
+}
+
+.diff-cell.is-hunk,
+.diff-cell.is-meta {
+  color: var(--vf-text-muted);
+  font-size: 0.72rem;
+}
+
 .diff-block {
   display: flex;
   flex-direction: column;
@@ -1111,11 +1264,11 @@ function loadMore() {
   background-image: linear-gradient(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.12));
 }
 
-.diff-line.is-add .diff-word {
+.is-add .diff-word {
   background: var(--vf-success-line);
 }
 
-.diff-line.is-del .diff-word {
+.is-del .diff-word {
   background: var(--vf-danger-line);
 }
 
