@@ -4,6 +4,7 @@ import { nextTick } from "vue";
 import { renderWithProviders } from "./renderWithProviders";
 import { useAuthStore } from "../src/stores/auth.store";
 import FileBrowser from "../src/components/file-browser/FileBrowser.vue";
+import { confirmDialog } from "../src/composables/dialog";
 
 type PageOpts = { commit?: string; limit?: number; offset?: number };
 type PageResult = {
@@ -1819,5 +1820,121 @@ describe("FileBrowser.vue ownership transfer", () => {
         undefined,
       ),
     );
+  });
+});
+
+describe("FileBrowser.vue delete confirmation", () => {
+  function deleteFixture(name: string, kind: "file" | "directory" = "file") {
+    return {
+      id: name,
+      name,
+      path: name,
+      kind,
+      size_bytes: 10,
+      created_at: "2026-04-10T00:00:00.000Z",
+      updated_at: "2026-04-10T00:00:00.000Z",
+    };
+  }
+
+  function lastConfirmCall(): any {
+    return vi.mocked(confirmDialog).mock.calls[
+      vi.mocked(confirmDialog).mock.calls.length - 1
+    ][0];
+  }
+
+  async function openDeleteFromContextMenu(path: string, container: Element) {
+    const row = container.querySelector(
+      `tr.desktop-file-row[data-vfiles-path="${path}"]`,
+    );
+    expect(row, `row ${path} should exist`).not.toBeNull();
+    await fireEvent.contextMenu(row!);
+    const findDeleteItem = () =>
+      Array.from(document.querySelectorAll('[role="menuitem"]')).find((item) =>
+        item.textContent?.includes("删除"),
+      );
+    await waitFor(() => expect(findDeleteItem()).toBeDefined());
+    await fireEvent.click(findDeleteItem()!);
+  }
+
+  it("requires confirmation for a single file delete and cancels when declined", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([deleteFixture("单删.txt")]);
+    deleteFileMock.mockClear();
+    const confirmMock = vi.mocked(confirmDialog);
+    confirmMock.mockReset();
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("单删.txt");
+
+    // 拒绝确认 → 不应发出删除请求
+    confirmMock.mockResolvedValueOnce(false);
+    await openDeleteFromContextMenu("单删.txt", container);
+    await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(deleteFileMock).not.toHaveBeenCalled();
+
+    // 接受确认 → 才真正删除
+    confirmMock.mockResolvedValueOnce(true);
+    await openDeleteFromContextMenu("单删.txt", container);
+    await waitFor(() =>
+      expect(deleteFileMock).toHaveBeenCalledWith(
+        "单删.txt",
+        "删除文件: 单删.txt",
+      ),
+    );
+  });
+
+  it("warns that a directory delete includes its contents", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([deleteFixture("项目目录", "directory")]);
+    deleteFileMock.mockClear();
+    const confirmMock = vi.mocked(confirmDialog);
+    confirmMock.mockReset();
+    confirmMock.mockResolvedValueOnce(false);
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("项目目录");
+
+    await openDeleteFromContextMenu("项目目录", container);
+    await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+
+    const options = lastConfirmCall();
+    expect(options.title).toBe("删除目录");
+    expect(options.message).toContain("项目目录");
+    expect(options.message).toContain("全部内容");
+    expect(options.message).toContain("不可撤销");
+    expect(options.danger).toBe(true);
+    expect(options.confirmText).toBe("删除");
+    expect(deleteFileMock).not.toHaveBeenCalled();
+  });
+
+  it("asks before deleting via the details panel too", async () => {
+    setDetailsVisible(true);
+    getFilesMock.mockResolvedValue([deleteFixture("面板删除.txt")]);
+    deleteFileMock.mockClear();
+    const confirmMock = vi.mocked(confirmDialog);
+    confirmMock.mockReset();
+    confirmMock.mockResolvedValueOnce(false);
+
+    const { container } = renderWithProviders(FileBrowser as any);
+    // 详情面板开启时名称会出现两次（行 + 面板标题），按行存在来等加载完成
+    await waitFor(() =>
+      expect(
+        container.querySelector(
+          'tr.desktop-file-row[data-vfiles-path="面板删除.txt"]',
+        ),
+      ).not.toBeNull(),
+    );
+
+    // 详情面板操作区的删除按钮（同一套确认逻辑）
+    const buttons = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("button"),
+    ).filter((button) => button.textContent?.trim() === "删除");
+    expect(buttons.length).toBeGreaterThan(0);
+
+    await fireEvent.click(buttons[buttons.length - 1]!);
+    await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(deleteFileMock).not.toHaveBeenCalled();
   });
 });

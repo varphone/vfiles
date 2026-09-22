@@ -856,6 +856,7 @@ import { useAuthStore } from "../../stores/auth.store";
 import { useFileViewStore } from "../../stores/fileView.store";
 import FileList from "./FileList.vue";
 import KeyboardShortcutsDialog from "./KeyboardShortcutsDialog.vue";
+import { confirmDialog } from "../../composables/dialog";
 import TransferOwnershipDialog from "./TransferOwnershipDialog.vue";
 import SearchResultToolbar from "./SearchResultToolbar.vue";
 import FileDetailsPanel from "./FileDetailsPanel.vue";
@@ -1899,6 +1900,18 @@ function handleDownload(file: FileInfo) {
 }
 
 async function handleDelete(file: FileInfo) {
+  // 删除不可恢复（版本历史随条目级联删除），必须二次确认
+  const isDirectory = file.kind === "directory";
+  const ok = await confirmDialog({
+    title: isDirectory ? "删除目录" : "删除文件",
+    message: isDirectory
+      ? `确定要删除“${file.name}”吗？目录及其全部内容将被删除，且不可撤销。`
+      : `确定要删除“${file.name}”吗？删除后不可撤销。`,
+    confirmText: "删除",
+    danger: true,
+  });
+  if (!ok) return;
+
   try {
     await filesStore.deleteFile(
       file.path,
