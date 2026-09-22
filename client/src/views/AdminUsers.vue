@@ -897,7 +897,7 @@ onMounted(() => {
   }
 }
 
-@media screen and (max-width: 700px) {
+@media screen and (max-width: 768px) {
   .admin-page {
     padding: 0.75rem 0.5rem 2rem;
   }
