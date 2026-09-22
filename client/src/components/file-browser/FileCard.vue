@@ -632,10 +632,6 @@ onBeforeUnmount(() => {
   height: auto;
 }
 
-.file-card--shortcut .file-card-thumb {
-  background: var(--vf-accent-soft);
-}
-
 .file-card-check {
   position: absolute;
   top: 6px;

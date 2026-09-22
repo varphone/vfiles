@@ -476,15 +476,6 @@ async function goUp() {
   background: var(--vf-surface);
 }
 
-.move-dialog-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 1.5rem;
-  color: var(--vf-text-muted);
-  font-size: 0.82rem;
-}
-
 .move-dialog-list {
   display: flex;
   flex-direction: column;

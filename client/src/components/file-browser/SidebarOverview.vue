@@ -485,8 +485,4 @@ watch(
 .sidebar-favorite-remove:hover {
   background: var(--vf-surface-hover);
 }
-
-.sidebar-skeleton-line.is-short {
-  width: 60%;
-}
 </style>

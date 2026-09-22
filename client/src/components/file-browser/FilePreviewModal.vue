@@ -532,19 +532,6 @@ onBeforeUnmount(() => {
   padding: 0 2.4rem;
 }
 
-.preview-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 2rem;
-  color: var(--vf-text-muted);
-  font-size: 0.84rem;
-}
-
-.preview-state-text {
-  margin: 0;
-}
-
 .preview-image-stage {
   display: flex;
   align-items: center;

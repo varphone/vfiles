@@ -877,33 +877,6 @@ function loadMore() {
   padding: 0.7rem;
 }
 
-.history-detail-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.3rem;
-  flex: 1 1 auto;
-  min-height: 12rem;
-  padding: 1.4rem 1rem;
-  text-align: center;
-}
-
-.history-detail-empty-title {
-  margin: 0;
-  color: var(--vf-text);
-  font-size: 0.88rem;
-  font-weight: 600;
-}
-
-.history-detail-empty-hint {
-  margin: 0;
-  max-width: 18rem;
-  color: var(--vf-text-subtle);
-  font-size: 0.78rem;
-  line-height: 1.5;
-}
-
 .history-state {
   display: flex;
   flex-direction: column;
@@ -911,10 +884,6 @@ function loadMore() {
   justify-content: center;
   padding: 2rem 1rem;
   text-align: center;
-}
-
-.history-state-empty {
-  min-height: 10rem;
 }
 
 /* 保留说明：一行提示，不抢列表焦点 */
@@ -949,11 +918,6 @@ function loadMore() {
 
 .history-inline-note.is-warning {
   border-color: var(--vf-warning-line);
-}
-
-.history-state-icon {
-  color: var(--vf-text-subtle);
-  margin-bottom: 0.5rem;
 }
 
 .history-state-text {

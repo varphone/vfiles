@@ -243,13 +243,6 @@ onBeforeUnmount(() => {
   box-shadow: var(--vf-shadow-menu);
 }
 
-.path-bar-menu-item {
-  display: flex;
-  align-items: center;
-  border-radius: 6px;
-  font-size: 0.82rem;
-}
-
 @media screen and (max-width: 1023px) {
   .path-bar-segment {
     max-width: 9rem;

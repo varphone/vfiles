@@ -2565,6 +2565,24 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.16 死样式全仓扫描收尾（round 15）
+
+- 第 14 轮的引用扫描只覆盖了两个最大文件，本轮扩展到**全部 .vue 组件 + 测试/TS 源**：
+  共 **33 个候选**，逐个判别后——
+  - **误报保留**：Vue `<transition>` 运行时类 ×12（`fade-*`/`notification-*`/`slide-up-*`，
+    由 `name="fade"` 在运行时拼出）；动态拼接类 `is-${variant}`（SkeletonList 的 is-lines）、
+    `is-${category}`（存储段 is-audio/video/…）、`is-${status}`（上传 is-done/…）、
+    `file-skeleton--${variant}` —— 字面量不在源码里但真实生效。
+  - **真死删除（11 条规则 / 6 文件）**：
+    Breadcrumb `.path-bar-menu-item`、FileCard `.file-card--shortcut`、
+    FilePreviewModal `.preview-state*` ×2、MoveDialog `.move-dialog-state`、
+    VersionHistory `.history-detail-empty*` ×3 + `.history-state-empty` + `.history-state-icon`、
+    SidebarOverview `.sidebar-skeleton-line.is-short`（加载态早已改用共享 `SkeletonList`）。
+- 过程记录：首轮删除脚本因 FileCard 是后代选择器（`.file-card--shortcut .file-card-thumb`）
+  断言中断，后续文件未处理——修正选择器模式后补跑，避免了"删一半"的中间态进库。
+- 验证：删除后全仓 grep **零残留** ✓；vue-tsc/build/**432 用例**/lint 全绿 ✓。
+  被删规则均无引用（结构上不可能渲染），无视觉影响 ✓。
+
 ### 4.15 空状态审计与死样式清理（round 14）
 
 - 审计方法：实测四个空状态的度量（图标/标题/说明/内边距/间距）+ 跨文件引用扫描。
