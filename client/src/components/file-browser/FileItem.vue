@@ -888,6 +888,11 @@ function share() {
   background: var(--vf-accent-soft-strong);
 }
 
+/* 按压态（触屏无 hover）：比悬停高一档，与选中同级的即时反馈 */
+.desktop-file-row:active > td {
+  background: var(--vf-accent-soft-strong);
+}
+
 /* 拖放落点高亮压过 hover/选中底色（同特异性 → 靠后胜出），并随过渡渐入 */
 .desktop-file-row.drop-target > td {
   background: var(--vf-accent-soft);

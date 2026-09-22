@@ -576,6 +576,10 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 2px var(--vf-focus-ring);
 }
 
+.file-card:active {
+  background: var(--vf-accent-soft-strong);
+}
+
 /* 拖起态：源卡片半透明（同列表行） */
 .file-card.is-dragging {
   opacity: 0.55;

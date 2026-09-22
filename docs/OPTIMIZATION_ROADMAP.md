@@ -2565,6 +2565,23 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.46 触屏按压反馈补全（round 40）
+
+- 交互轴最后一块：`:active` 按压态盘点（8 处 CSS 伪类）——按钮族 ✓ 移动行 ✓，但
+  **桌面行 / 网格卡片 / 树条目缺失**（触屏按住无任何反馈，主流均有按压态）。
+- 修复（"按压 = 比悬停高一档"语言）：三处补 `:active` → `accent-soft-strong`（16%）
+  （移动行的既有 `.file-item:active` = surface-hover 6% 保留——移动族语言自洽 ✓）。
+- **验证用 CDP `forcePseudoState` 强制伪态**（客观测量，绕开触屏按压不可截的限制）：
+  | 目标 | idle | `:active` | 判定 |
+  | --- | --- | --- | --- |
+  | 桌面树条目 | 透明 | `rgba(37,99,235,.16)` | ✓ changed |
+  | 未选网格卡 | 白 | `rgba(37,99,235,.16)` | ✓ changed |
+  | 移动行 | 白 | `rgba(37,99,235,.06)`（既有语言） | ✓ changed |
+  （首测曾命中"已选中"卡片导致两态同值——须测未选目标 ✓；树为桌面专属、移动 missing ✓
+  逐步打印教训再立功。）
+- 里程碑留档：`bun run ui:sweep --out /tmp/ui-sweep-r40`（28 张，含去圆角后的行染色
+  与按压态系列）✓。`bun run check` 全绿（62/430）、构建通过。
+
 ### 4.45 行染色去圆角（用户反馈插曲，round 39 之后）
 
 - 症状（用户报告）：列表行悬停/选中背景**不应有圆角**——圆角在单元格矩形四角留白，

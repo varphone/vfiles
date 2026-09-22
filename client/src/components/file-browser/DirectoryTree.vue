@@ -294,6 +294,10 @@ function onDrop(path: string) {
   outline: 1px dashed var(--vf-accent);
 }
 
+.directory-tree-item:active {
+  background: var(--vf-accent-soft-strong);
+}
+
 /* 树条目没有行尾「⋯」按钮，chip 收紧右距 */
 .directory-tree-item .desktop-drop-hint {
   right: 0.35rem;
