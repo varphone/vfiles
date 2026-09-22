@@ -2565,6 +2565,20 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.89 插图族判档 + 工具语 32 条（round 83）
+
+- 图形语言最后面（空态插图）数据化审计：同屏双插图 **64×64 / 44×44 两制** →
+  **语境定性 = 有意双档** ✓：
+  | 实例 | 宿主 | 判定 |
+  | --- | --- | --- |
+  | 64×64（icon 34） | `is-default`「此文件夹为空」 | ✓ 主空态大档 |
+  | 44×44（icon 28） | `is-compact`「未选择任何条目」 | ✓ compact 提示档（r29 语义） |
+  比例 1.45× = 尺度阶梯 ✓；图标派极简语言（50% 圆 + surface-sunken tonal ✓ 族内
+  一致）；搜索空态无插图 = compact 设计 ✓。**判定：健康零修复**（验证轮 docs-only）。
+- **PROBE_IDIOMS 32 条**：#31 命令链一律 `&&`（r82 自纠）、#32 相对路径对 cwd
+  （本轮 `cd client` 后 `docs/` 找不着 ✗ 即犯）。
+- 438 用例保持全绿。
+
 ### 4.88 工具语汇编单页（round 82）
 
 - **`docs/PROBE_IDIOMS.md`**：82 轮实测事故沉淀 **30 条**可查表（四类：夹具与环境 /
