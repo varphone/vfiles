@@ -364,6 +364,16 @@
   }
 }
 
+/* 对话框页脚里的 Bulma 按钮（确认框等）对齐对话框按钮语言：
+   36px 高、胶囊、13px/500 —— 与 move/share/transfer 对话框的 vf-ghost-button 一致。 */
+.modal-card-foot .button:not(.is-static) {
+  min-height: 2.25rem;
+  padding: 0 0.85rem;
+  border-radius: var(--vf-radius-pill);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
 /* 触屏命中区不小于 40px（M3 / HIG） */
 @media (pointer: coarse) {
   .vf-icon-button {
@@ -373,7 +383,8 @@
 
   .vf-ghost-button,
   .vf-primary-button,
-  .button:not(.is-static) {
+  .button:not(.is-static),
+  .modal-card-foot .button:not(.is-static) {
     min-height: 2.5rem;
   }
 

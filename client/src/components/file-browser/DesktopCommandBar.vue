@@ -326,13 +326,10 @@ const emit = defineEmits<{
 }
 
 .desktop-upload-menu {
+  /* 只保留布局：框体（背景/边框/圆角/阴影）由内层 .dropdown-content 的
+     全局规则提供。此前包装层再画一套，造成双层边框、双阴影与 6/10px 圆角混用。 */
   min-width: 11rem;
   margin-top: 0.35rem;
-  padding: 0.25rem;
-  border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius);
-  background: var(--vf-surface);
-  box-shadow: var(--vf-shadow-menu);
 }
 
 .desktop-upload-item {

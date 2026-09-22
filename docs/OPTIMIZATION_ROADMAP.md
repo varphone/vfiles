@@ -2565,6 +2565,28 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.10 下拉与对话框按钮一致性（round 10，用户反馈）
+
+- 反馈：上传按钮旁的下拉菜单式样与其它下拉不同；对话框里的按钮式样不统一。
+- 实测定位（双组件度量对比）：
+  1. **上传菜单**：包装层 `.desktop-upload-menu` 自带一套框体（边框/圆角 10px/阴影/内边距），
+     内层 `.dropdown-content` 又有一套（6px 圆角 + 全局边框/阴影）→ **双层边框、双阴影、
+     6/10px 圆角混用**；修复：包装层只留 `min-width/margin-top`，框体统一交给
+     round 6 的全局 `.dropdown-content` 规则。
+  2. **排序菜单**：`.sort-menu-panel` 覆盖出 `--vf-border`（更深）+ 6px 内边距，
+     与上传/账号的 `border-weak` + `8px 0` 不同 → 删除覆盖项，继承全局规则。
+  3. **对话框按钮**：移动/分享/转移对话框用 `vf-ghost-button`（36px/胶囊/13.12px），
+     而确认框（DialogHost：删除确认、新建文件夹）用 Bulma `.button`（**40px/16px，
+     is-link 6px 圆角**）→ 新增 `.modal-card-foot .button` 规则对齐到 36px/胶囊/13.12px/500，
+     并在 `pointer: coarse` 块补充页脚选择器保证触屏 40px。
+- 复审（同一采集脚本）：
+  | 下拉 | 边框 | 圆角 | 内边距 |
+  | --- | --- | --- | --- |
+  | 上传 / 排序 / 账号 | **全部 border-weak** | **全部 6px** | **全部 8px 0** |
+  | 视图（面板型，有意区别） | border-weak | 6px | 12px |
+  对话框按钮全部 **36px / 999 胶囊 / 13.12px**（含删除确认与新建文件夹）；
+  触屏页脚按钮实测 **40px**；前端 62 文件 / 430 用例全绿，无控制台报错。
+
 ### 4.9 状态胶囊跨页统一 + 软背景对比实测（round 9）
 
 - 背景：第 8 轮把徽章统一留到"先造数据"，本轮补上——创建真实分享、令牌与禁用用户后，

@@ -204,11 +204,9 @@ onBeforeUnmount(() => {
 }
 
 .sort-menu-panel {
+  /* 背景/边框/阴影/内边距由 controls.scss 的 .dropdown-content 统一提供
+     （此前在此覆盖出更深的边框与 6px 内边距，与其它下拉不一致） */
   min-width: 170px;
-  padding: 6px;
-  background: var(--vf-surface-raised);
-  border: 1px solid var(--vf-border);
-  box-shadow: var(--vf-shadow-menu);
 }
 
 .sort-menu-label {
