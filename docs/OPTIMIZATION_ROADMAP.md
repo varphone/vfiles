@@ -2565,6 +2565,19 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.95 注册段浏览器线闭合（round 89，#35 套路首兑现）
+
+- **#35 套路兑现**：jsdom 三轮不稳的注册段 → **真机一击全证**（`.auth-mode` class 稳式
+  切 tab（#34 ✓）+ newbie/123 + `.auth-submit`）：
+  | 项 | 实测 | 判定 |
+  | --- | --- | --- |
+  | 行内错误 | **「密码至少 6 位」** | ✓ 注册分支真机触发 |
+  | `aria-invalid` | `"true"` | ✓ aria 链 |
+  | `aria-describedby` | `"auth-password-error"` | ✓ 链闭合 |
+- **注册校验证据链闭合**：源码分支 + 登录两段单测 + 本真机线 ✓ r87-88 两轮收窄债**全清**
+  （「收窄 ≠ 缺证」= 设计中的分线保障 ✓ 方法论注记）。
+- docs-only 轮；440 用例保持全绿。
+
 ### 4.94 稳式选择器 + 注册段收窄 + 三债清偿（round 88）
 
 - 注册段以**稳式选择器**回归（`getByRole('tab', { name: '注册' })` ✓ role 互斥零撞名）
