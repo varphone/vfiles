@@ -58,6 +58,7 @@ cd client && bun run fmt
 
 ## 提交前建议
 
+- 新样式取值先查 **[DESIGN_TOKENS.md](DESIGN_TOKENS.md)**（五维刻度 + 令牌表）。
 - **五门禁**（缺一即漏，round 43 教训：vitest 不做类型检查、check 不含构建）：
   `bunx vue-tsc --noEmit` → `bun run check`（lint + lint:styles + test）→ `bun run build`。
 - `bun run check`：一键聚合（`lint` + `lint:styles` + `test`），日常三合一。

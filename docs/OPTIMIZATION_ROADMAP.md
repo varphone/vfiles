@@ -2565,6 +2565,17 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.55 悬停态终审 + 设计令牌汇总页（round 49）
+
+- **悬停家族终审**（forcePseudoState `hover`）：ghost 按钮 0.06 tint ✓ 排序钮变蓝 ✓
+  名称链接深蓝 ✓ 树行 0.04 tint ✓ 未选行 surface-hover ✓ —— **全绿零缺陷**。
+  两个测量陷阱复踩记档：①首行默认选中（0.16 无增量是语义正确）须测未选目标；
+  ②hover 规则挂在 `.directory-tree-row`（行容器）而非 `.directory-tree-item`（内层）
+  —— **探针目标须核对规则挂载层**。
+- **`docs/DESIGN_TOKENS.md`**：48 轮校准的单页参考（颜色/形状/间距/排印/图标/状态层/
+  动效/约定 八节，全部真实值），CONTRIBUTING 链入 ✓ 新样式取值先查刻度。
+- 五门禁全绿（tsc ✓ lint 2 ✓ 死样式 732 ✓ 430 用例 ✓ 构建 ✓）。
+
 ### 4.54 图标规格梳理（round 48，视觉轴数据化三部曲收官）
 
 - 主观项数据化（r45 圆角/间距 → r47 排印 → **r48 图标**）：`:size`/`stroke-width`
