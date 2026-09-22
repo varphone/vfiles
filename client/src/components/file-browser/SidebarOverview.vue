@@ -88,7 +88,7 @@
               title="取消收藏"
               @click="removeFavorite(item)"
             >
-              <IconStarFilled :size="13" />
+              <IconStarFilled :size="14" />
             </button>
           </div>
         </li>

@@ -23,7 +23,7 @@
         @click.stop="toggle(row.path)"
       >
         <IconChevronRight
-          :size="13"
+          :size="14"
           class="breadcrumb-tree-chevron"
           :class="{ 'is-expanded': row.expanded }"
         />
