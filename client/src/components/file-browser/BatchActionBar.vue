@@ -108,8 +108,4 @@ const emit = defineEmits<{
   justify-content: flex-end;
   gap: 0.4rem;
 }
-
-.desktop-batch-actions .vf-ghost-button {
-  min-height: 1.9rem;
-}
 </style>

@@ -8,6 +8,14 @@
 - Bun
 - Git
 
+## 本地数据与测试夹具
+
+CLI（`vfiles import` 等）与服务器一样按 `VFILES_STORAGE_ROOT` / `VFILES_DATABASE_PATH`
+等环境变量定位存储；**未导出时会写入仓库默认的 `data/`（真实数据）**。造夹具/跑临时
+服务器时，请在**同一个 shell** 中先导出与该服务器一致的环境变量再执行任何 CLI。
+（2026-09 有一次漏导环境变量把夹具写进了真实库的事故，已清理；见
+OPTIMIZATION_ROADMAP §4.24。）
+
 ## 依赖安装
 
 ```bash
@@ -49,6 +57,9 @@ cd client && bun run fmt
   `client/src/components/common/ThemeToggle.vue`。
 
 ## 提交前建议
+
+- `bun run lint:styles`：死样式扫描（零引用类、无动画引用的 keyframes、花括号不配平），
+  对 transition 运行时类、`` `...${...}` `` 拼接前缀族与 highlight.js 类已内置豁免。
 
 1. 只提交和当前任务直接相关的改动。
 2. 如果改了 `client/package.json`，同步刷新 `client/bun.lockb`。

@@ -2565,6 +2565,21 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.27 批量操作条审计与开发约定落档（round 26）
+
+- **批量操作条（BatchActionBar）双主题实测**：
+  - 颜色**全对** ✓（round 17 红利：muted #566a7e/5.59、danger #cc0f35/5.7；深色 5.6/5+ ✓）；
+  - 框体设计自洽 ✓（`实底 surface + accent-soft 渐变叠加`——注释明确"避免半透明滚动透字"，
+    accent-soft-strong 边框 + shadow-menu；深色下色调可读 ✓）；
+  - **唯一偏差：7 个按钮全部 30px**（`.desktop-batch-actions .vf-ghost-button` 的
+    `min-height: 1.9rem` 覆盖）✗ —— 最后一批未对齐的控件尺寸。删除覆盖 → **36px 控件语言**
+    （实测 7/7 = 36px ✓）。
+- **开发约定落档（docs/CONTRIBUTING.md）**：
+  1. 「本地数据与测试夹具」：CLI 与服务器同 shell 导出 `VFILES_*` 再跑（防 round 23
+     漏环境变量写入真实库的事故复发，指向 §4.24）；
+  2. 「提交前建议」：`bun run lint:styles` 死样式扫描的用法与豁免说明（脚本首次文档化）。
+- 验证：批量按钮 7/7 = 36px ✓；433 用例全绿、tsc/build 通过。
+
 ### 4.26 登录页与预览/对话框头部的家族对齐（round 25）
 
 - 审计两个此前未覆盖的表面（登录页 = 首印象、预览面板内部），对照家族语言实测出五处偏差：
