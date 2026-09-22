@@ -19,7 +19,7 @@ interface PersistedViewPrefs {
   /** 桌面端是否显示右侧「详细信息」面板 */
   detailsVisible: boolean;
   /** 桌面列表列宽（像素） */
-  columnWidths: Record<ColumnWidthKey, number>;
+  columnWidths: Partial<Record<ColumnWidthKey, number>>;
 }
 
 const SORT_FIELDS: SortField[] = ["name", "size", "modified", "type"];
@@ -68,7 +68,7 @@ function clampColumnWidth(value: unknown, fallback: number): number {
 
 function readPersistedColumnWidths(
   raw: Partial<Record<ColumnWidthKey, unknown>> | undefined,
-): Record<ColumnWidthKey, number> {
+): Partial<Record<ColumnWidthKey, number>> {
   const widths = { ...DEFAULT_COLUMN_WIDTHS };
   if (!raw) return widths;
   for (const key of COLUMN_KEYS) {
@@ -85,7 +85,7 @@ function readPersisted(): PersistedViewPrefs {
     foldersFirst: DEFAULT_SORT_STATE.foldersFirst,
     thumbnailSize: DEFAULT_THUMBNAIL_SIZE,
     detailsVisible: true,
-    columnWidths: { ...DEFAULT_COLUMN_WIDTHS },
+    columnWidths: {},
   };
 
   if (typeof localStorage === "undefined") return fallback;
@@ -129,7 +129,7 @@ export const useFileViewStore = defineStore("fileView", () => {
   const thumbnailSize = ref(initial.thumbnailSize);
   const detailsVisible = ref(initial.detailsVisible);
   /** 桌面列表列宽（可拖拽，随视图偏好一起持久化）。 */
-  const columnWidths = ref<Record<ColumnWidthKey, number>>({
+  const columnWidths = ref<Partial<Record<ColumnWidthKey, number>>>({
     ...initial.columnWidths,
   });
 
@@ -170,10 +170,15 @@ export const useFileViewStore = defineStore("fileView", () => {
   /** 设置某一列宽度（自动夹在允许范围内）。 */
   function setColumnWidth(key: ColumnWidthKey, width: number) {
     if (!COLUMN_KEYS.includes(key)) return;
-    columnWidths.value = {
-      ...columnWidths.value,
-      [key]: clampColumnWidth(width, DEFAULT_COLUMN_WIDTHS[key]),
-    };
+    const clamped = clampColumnWidth(width, DEFAULT_COLUMN_WIDTHS[key]);
+    // 恢复默认 = 删除存储：名称列回到"自适应吸收余量"，其余列回落默认宽度。
+    const next = { ...columnWidths.value };
+    if (clamped === DEFAULT_COLUMN_WIDTHS[key]) {
+      delete next[key];
+    } else {
+      next[key] = clamped;
+    }
+    columnWidths.value = next;
   }
 
   /** 双击列边界时恢复该列默认宽度。 */

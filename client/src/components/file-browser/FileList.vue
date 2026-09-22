@@ -10,7 +10,7 @@
         <col
           v-for="column in columns"
           :key="column.field"
-          :style="{ width: `${columnWidth(column.field)}px` }"
+          :style="colWidthStyle(column.field)"
         />
         <col v-if="showActionColumn" class="file-list-col-actions" />
       </colgroup>
@@ -203,7 +203,7 @@ const props = withDefaults(
     /** 搜索结果里显示条目所在目录（主流网盘搜索结果的必要信息）。 */
     showLocation?: boolean;
     /** 列宽（像素）；缺省时使用默认宽度。 */
-    columnWidths?: Record<ColumnWidthKey, number>;
+    columnWidths?: Partial<Record<ColumnWidthKey, number>>;
     highlight?: string;
     selectMode: boolean;
     selectedPaths: Set<string>;
@@ -269,6 +269,15 @@ function isResizable(
     field === "type" ||
     field === "size"
   );
+}
+
+/**
+ * 列宽样式：名称列默认自适应（吸收表格余量，主流列表行为）；
+ * 其余列精确写死。用户调过名称列后才转为固定值（双击复位回到自适应）。
+ */
+function colWidthStyle(field: SortField | null | undefined) {
+  if (field === "name" && props.columnWidths?.name == null) return undefined;
+  return { width: `${columnWidth(field)}px` };
 }
 
 function columnWidth(field: SortField | null | undefined): number {

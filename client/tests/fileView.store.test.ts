@@ -113,7 +113,8 @@ describe("fileView store", () => {
 
   it("stores column widths with clamping and resets to defaults", () => {
     const store = useFileViewStore();
-    expect(store.columnWidths.name).toBe(DEFAULT_COLUMN_WIDTHS.name);
+    // 初始不存宽度：名称列走"自适应吸收余量"，其余列回落默认值渲染
+    expect(store.columnWidths.name).toBeUndefined();
 
     store.setColumnWidth("name", 400);
     expect(store.columnWidths.name).toBe(400);
@@ -124,8 +125,9 @@ describe("fileView store", () => {
     store.setColumnWidth("name", 5000);
     expect(store.columnWidths.name).toBe(640);
 
+    // 复位 = 清除存储（名称列回到自适应；其余列回落默认渲染）
     store.resetColumnWidth("name");
-    expect(store.columnWidths.name).toBe(DEFAULT_COLUMN_WIDTHS.name);
+    expect(store.columnWidths.name).toBeUndefined();
   });
 
   it("persists column widths and restores them", async () => {
