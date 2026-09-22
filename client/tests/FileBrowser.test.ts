@@ -2019,4 +2019,64 @@ describe("FileBrowser.vue drop hint", () => {
     // 名称不受提示影响，始终可见
     expect(dirRow.textContent).toContain("项目");
   });
+
+  it("shows a cursor-following drag chip while dragging", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([
+      {
+        id: "项目",
+        name: "项目",
+        path: "项目",
+        kind: "directory" as const,
+        size_bytes: 0,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+      {
+        id: "a.txt",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file" as const,
+        size_bytes: 3,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+    const { container } = renderWithProviders(FileBrowser as any);
+    await waitFor(() =>
+      expect(
+        container.querySelectorAll("tr.desktop-file-row").length,
+      ).toBeGreaterThan(0),
+    );
+    const fileRow = container.querySelectorAll(
+      "tr.desktop-file-row",
+    )[1] as HTMLElement;
+
+    fireEvent.dragStart(fileRow);
+    await waitFor(() => {
+      const chip = document.querySelector(".desktop-drag-chip");
+      expect(chip).not.toBeNull();
+      expect(chip!.textContent).toContain("移动");
+    });
+
+    // dragover 实时驱动位置（光标右下 14px 偏移）——
+    // jsdom 无 DragEvent 构造：用 MouseEvent 冒充 dragover（坐标 init 可用 ✓）
+    document.dispatchEvent(
+      new MouseEvent("dragover", {
+        clientX: 300,
+        clientY: 200,
+        bubbles: true,
+      }),
+    );
+    await waitFor(() => {
+      const chip = document.querySelector(".desktop-drag-chip") as HTMLElement;
+      expect(chip.style.left).toBe("314px");
+      expect(chip.style.top).toBe("214px");
+    });
+
+    fireEvent.dragEnd(fileRow);
+    await waitFor(() =>
+      expect(document.querySelector(".desktop-drag-chip")).toBeNull(),
+    );
+  });
 });

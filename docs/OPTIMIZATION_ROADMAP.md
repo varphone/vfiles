@@ -2565,6 +2565,22 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.63 光标跟随拖拽 chip（round 57）
+
+- r56 提案候选**当轮转正**：VS Code/macOS 式拖拽浮标——拖动时显示「移动 文件名」/
+  多选时「移动 N 项」，光标右下 14px 实时跟随（捕获阶段 `dragover` 驱动定位 =
+  位置更新非动画 ✓ 无需降级块），dragend 移除。
+- 实现：FileBrowser `Teleport to="body"` + `draggingFile` watch 挂/卸 document 监听 +
+  `onBeforeUnmount` 兜底清理；chip 样式 = 弹出家族（surface-raised + border-weak +
+  `--vf-radius-sm` + shadow-menu + 0.78rem/600）。
+- **单测**（+1 → 432）：dragstart → chip 现「移动」→ MouseEvent('dragover', 坐标) 驱动
+  位置断言（314/214 = 光标 +14）→ dragend 移除 ✓。
+  测试工程注记：**jsdom 无 DragEvent 构造**（`fireEvent.dragOver` 的通用事件不带
+  clientX）→ 用 `MouseEvent('dragover', {clientX…})` 冒充 ✓ 工具语 +1。
+- 浏览器实测：`移动 移动件.txt` @ 434/314px（光标 420,300 +14 ✓）visible ✓
+  dragend 后 `afterEnd: true` ✓。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 **733 类**（+1 = chip 类）✓ 432 用例 ✓ 构建 ✓）。
+
 ### 4.62 拖放动线矩阵终审（round 56，验证轮）
 
 - 拖放族（历史 bug 高发区）首次用现行工具语系统审：合成 DragEvent + dump 式判据

@@ -1,4 +1,18 @@
 <template>
+  <!-- 光标跟随拖拽 chip（VS Code/macOS 式）：拖动时显示条目名/多选数 -->
+  <Teleport to="body">
+    <div
+      v-if="draggingFile"
+      class="desktop-drag-chip"
+      :style="{
+        left: `${dragChipPos.x}px`,
+        top: `${dragChipPos.y}px`,
+      }"
+      aria-hidden="true"
+    >
+      {{ dragChipLabel }}
+    </div>
+  </Teleport>
   <div
     class="file-browser"
     @touchstart="onTouchStart"
@@ -1997,6 +2011,35 @@ function handleDragEnd() {
   draggingFile.value = null;
 }
 
+/** 光标跟随拖拽 chip：位置由捕获阶段 dragover 实时驱动（定位更新非动画 ✓ 无需降级）。 */
+const dragChipPos = ref({ x: -999, y: -999 });
+const dragChipLabel = computed(() => {
+  const file = draggingFile.value;
+  if (!file) return "";
+  const sel = selectedPaths.value;
+  if (sel instanceof Set && sel.size > 1 && sel.has(file.path)) {
+    return `移动 ${sel.size} 项`;
+  }
+  return `移动 ${file.name}`;
+});
+function moveDragChip(e: DragEvent) {
+  dragChipPos.value = { x: e.clientX + 14, y: e.clientY + 14 };
+}
+watch(draggingFile, (cur) => {
+  if (cur) {
+    document.addEventListener("dragover", moveDragChip, {
+      passive: true,
+      capture: true,
+    });
+  } else {
+    document.removeEventListener("dragover", moveDragChip, { capture: true });
+    dragChipPos.value = { x: -999, y: -999 };
+  }
+});
+onBeforeUnmount(() => {
+  document.removeEventListener("dragover", moveDragChip, { capture: true });
+});
+
 async function handleDropOnFolder(targetDir: string) {
   const file = draggingFile.value;
   draggingFile.value = null;
@@ -2628,5 +2671,19 @@ function handleSortChange(field: SortField) {
     width: 100%;
     justify-content: center;
   }
+}
+.desktop-drag-chip {
+  position: fixed;
+  z-index: 60;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-surface-raised);
+  box-shadow: var(--vf-shadow-menu);
+  color: var(--vf-text-strong);
+  font-size: 0.78rem;
+  font-weight: 600;
+  pointer-events: none;
+  white-space: nowrap;
 }
 </style>
