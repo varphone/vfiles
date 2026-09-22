@@ -50,6 +50,7 @@
             :pull-ready="pullReady"
             @search="runSearch"
             @clear="clearSearch"
+            @enter-results="enterSearchResults"
           />
 
           <div v-if="searchError" class="notification is-danger is-light">
@@ -2100,6 +2101,13 @@ onBeforeUnmount(() => {
 });
 
 const dropFlashPath = ref("");
+
+/** 搜索框 ↓ 键：进入结果列表首项（活动项模型，容器级 ↑↓ 随后自然接管 ✓） */
+function enterSearchResults() {
+  const first = searchResults.value[0];
+  if (!first) return;
+  desktopActivePath.value = first.path;
+}
 
 async function handleDropOnFolder(targetDir: string) {
   const file = draggingFile.value;

@@ -2565,6 +2565,23 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.68 搜索框键盘动线补全（round 62）
+
+- 搜索结果面板键盘可达性深测（首次系统审）：结果行无 tabindex/role = **容器级键盘
+  模型**（r11 设计 ✓ 非缺陷，活动项走 `desktopActivePath`）；工具钮 label 全 ✓；
+  但**搜索框动线两断点** ✗✗（主流全系标配的缺口）：
+  | 动线 | 改前 | 主流 |
+  | --- | --- | --- |
+  | **Esc（搜索框）** | 不清空 ✗ | 清/退出搜索 |
+  | **↓（搜索框）** | 焦点不入结果 ✗ | 进入结果首项 |
+- 修复：输入框 `@keydown.esc.prevent="emit('clear')"` + `@keydown.down.prevent=
+  "emit('enter-results')"` → FileBrowser `enterSearchResults()` 设 `desktopActivePath`
+  = 首结果（容器级 ↑↓ 随后自然接管 ✓）。
+- **单测**（扩展既有 BrowserSearchBox.test ✓ 零覆盖事故——write 工具被观测策略挡住
+  误覆盖险 ✓✓ 改 edit 扩展）：Esc→clear / ↓→enter-results ✓ **434 用例**（+1）。
+- 浏览器复验：`activeIsFirstResult: true`（首结果 搜索甲.txt）✓ `inputVal: ""`（清空）✓。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 736 ✓ 434 用例 ✓ 构建 ✓）。
+
 ### 4.67 落子回执动效（round 61）
 
 - chip 三部曲收尾动效：**drop 后目标短暂高亮消退**（Finder/Explorer 式回执 ✓

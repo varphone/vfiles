@@ -111,4 +111,16 @@ describe("BrowserSearchBox.vue", () => {
     await fireEvent.click(document.body);
     expect(emitted()["update:open"]?.[0]).toEqual([false]);
   });
+
+  it("emits clear on Escape and enter-results on ArrowDown (r62)", async () => {
+    const { emitted } = renderBox({ modelValue: "搜索" });
+    const input = screen.getByPlaceholderText("搜索名称、扩展名或路径");
+
+    // 搜索框动线（主流：Esc 清搜索 / ↓ 进入结果首项）
+    await fireEvent.keyDown(input, { key: "Escape" });
+    expect(emitted()["clear"]).toHaveLength(1);
+
+    await fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(emitted()["enter-results"]).toHaveLength(1);
+  });
 });

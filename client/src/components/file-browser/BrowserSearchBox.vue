@@ -13,6 +13,8 @@
             emit('update:modelValue', ($event.target as HTMLInputElement).value)
           "
           @keyup.enter="emit('search')"
+          @keydown.esc.prevent="emit('clear')"
+          @keydown.down.prevent="emit('enter-results')"
         />
         <datalist id="vfiles-search-history-desktop">
           <option v-for="item in history" :key="item" :value="item" />
@@ -146,6 +148,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: string): void;
+  /** 搜索框动线（r62）：Esc 清搜索 / ↓ 进入结果首项 */
+  (e: "enter-results"): void;
   (e: "update:open", value: boolean): void;
   (e: "update:content", value: boolean): void;
   (e: "update:type", value: SearchType): void;
