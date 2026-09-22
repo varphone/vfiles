@@ -44,6 +44,8 @@ pub struct CreateUserResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateUserRequest {
+    /// 改名（用于修复历史数据里的非法用户名）
+    pub username: Option<String>,
     pub role: Option<String>, // "admin", "manager" or "user"
     pub disabled: Option<bool>,
     pub email: Option<String>,
@@ -265,6 +267,7 @@ async fn update_user(
     }
 
     let update_req = vfiles_app::UpdateUserRequest {
+        username: req.username,
         role,
         disabled: req.disabled,
         email: req.email,

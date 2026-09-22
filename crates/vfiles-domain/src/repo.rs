@@ -414,6 +414,9 @@ pub trait AdminRepo {
         role: Role,
     ) -> DomainResult<UserId>;
     async fn update_user_role(&self, user_id: &UserId, role: Role) -> DomainResult<()>;
+    /// 修改用户名（用于修复历史数据里未通过校验的用户名）。
+    async fn update_user_username(&self, user_id: &UserId, username: &Username)
+    -> DomainResult<()>;
     async fn disable_user(&self, user_id: &UserId) -> DomainResult<()>;
     async fn enable_user(&self, user_id: &UserId) -> DomainResult<()>;
     async fn delete_user(&self, user_id: &UserId) -> DomainResult<()>;

@@ -2342,6 +2342,28 @@
 - 验证：新增 2 个前端用例（页头动作同时包含「刷新」「返回文件」；点「刷新」会重新拉取用户列表），
   前端 62 文件 / 427 用例通过。
 
+### 3.21 管理员账号恢复（round 116，功能+修复）
+
+- 需求：忘记管理员账号/密码时如何从后台查询与恢复。
+- 新增：`vfiles user reset-password`
+  （`--username` / `--user-id` 定位，`--password` / `--password-hash` / `--generate` 提供新密码，
+  默认撤销该用户全部会话，`--keep-sessions` 可保留）；会先打印账号信息（id/用户名/邮箱/角色/状态）
+  便于确认。`vfiles user update` 新增 `--username`（改名）。
+- **顺带修复的两个真实缺陷**（用非法用户名建首个管理员时暴露）：
+  1. **bootstrap 未校验用户名**：`vfiles user create --username root-admin` 会把含 `-` 的
+     用户名直接写入库；随后 `user_from_row` 解析失败 → `user list`、按名查找、登录全部报
+     `Internal error: Invalid username`，实例实际不可用。现在 bootstrap 与普通创建一样校验；
+  2. **读取不宽容**：历史行会让整表读取失败。新增 `Username::from_stored`（读取不校验），
+     使这类账号能被列出、重置密码与改名修复。
+- 验证（真实 CLI + 服务端鉴权）：
+  - 非法用户名建首个管理员 → 现在直接报 `Invalid username: Username contains invalid characters`；
+  - 注入历史坏账号后 `user list` 正常列出；`reset-password --username root-admin --password …`
+    成功重置并撤销会话；`user update <id> --username recoveredadmin` 修复后
+    **新密码登录 200**、错误密码 401；既有管理员原密码仍 200；
+  - `reset-password` 参数校验：密码过短 / 用户不存在 / 未提供新密码均给出明确错误。
+- 测试：`vfiles-infra-sqlite` 新增 1 个用例（历史非法用户名可列出、可宽容查找、可改名）；
+  19 个 Rust 目标与 clippy 全绿。文档新增 `docs/ADMIN_SETUP.md`「忘记管理员账号 / 密码」一节。
+
 ## 3. 后续迭代计划（按优先级）
 
 ### 3.1 静态资源预压缩（性能，高）

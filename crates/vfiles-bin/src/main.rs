@@ -134,6 +134,8 @@ enum UserCommands {
     Update(UserUpdateArgs),
     /// Delete a user by ID
     Delete(UserDeleteArgs),
+    /// Reset a user's password (recovery when locked out)
+    ResetPassword(UserResetPasswordArgs),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -200,6 +202,28 @@ struct UserCreateArgs {
 }
 
 #[derive(Debug, Args)]
+struct UserResetPasswordArgs {
+    /// 按用户名定位账号（与 --user-id 二选一；忘记账号时先用 user list 查）
+    #[arg(short, long)]
+    username: Option<String>,
+    /// 按用户 ID 定位账号
+    #[arg(long)]
+    user_id: Option<String>,
+    /// 新密码（至少 8 位）
+    #[arg(long, conflicts_with_all = ["password_hash", "generate"])]
+    password: Option<String>,
+    /// 直接提供已哈希的密码（供自动化使用）
+    #[arg(short, long, conflicts_with = "generate")]
+    password_hash: Option<String>,
+    /// 生成随机强密码并打印出来
+    #[arg(long)]
+    generate: bool,
+    /// 保留该用户已登录的会话（默认会全部下线）
+    #[arg(long)]
+    keep_sessions: bool,
+}
+
+#[derive(Debug, Args)]
 struct UserListArgs {
     #[arg(long, default_value_t = 1)]
     page: i64,
@@ -221,6 +245,9 @@ struct UserUpdateArgs {
     user_id: String,
     #[arg(long)]
     email: Option<String>,
+    /// 修改用户名（修复历史数据里未通过校验的用户名，例如带 `-` 的账号）
+    #[arg(short, long)]
+    username: Option<String>,
     #[arg(long, value_enum)]
     role: Option<UserRoleArg>,
     #[arg(long)]
@@ -524,6 +551,7 @@ async fn run_user_command(command: UserCommands) -> anyhow::Result<()> {
         UserCommands::Get(args) => run_user_get(args).await,
         UserCommands::Update(args) => run_user_update(args).await,
         UserCommands::Delete(args) => run_user_delete(args).await,
+        UserCommands::ResetPassword(args) => run_user_reset_password(args).await,
     }
 }
 
@@ -630,6 +658,105 @@ async fn run_user_get(args: UserGetArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 生成随机密码（不含易混淆字符，长度 20）。
+///
+/// 随机源用 `uuid::Uuid::new_v4()`（getrandom），并做拒绝采样避免取模偏置。
+fn generate_password() -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#%^&*-_";
+    const LENGTH: usize = 20;
+    let limit = 256 - (256 % ALPHABET.len());
+
+    let mut password = String::with_capacity(LENGTH);
+    'outer: for _ in 0..4 {
+        for byte in uuid::Uuid::new_v4().as_bytes() {
+            let value = *byte as usize;
+            if value >= limit {
+                continue;
+            }
+            password.push(ALPHABET[value % ALPHABET.len()] as char);
+            if password.len() == LENGTH {
+                break 'outer;
+            }
+        }
+    }
+    password
+}
+
+/// `vfiles user reset-password`：忘记密码时的离线恢复入口。
+///
+/// 会先打印账号信息（用户名 / 邮箱 / 角色 / 状态）便于确认，再重置密码；
+/// 默认让该用户所有会话失效，避免旧会话继续可用。
+async fn run_user_reset_password(args: UserResetPasswordArgs) -> anyhow::Result<()> {
+    let context = build_user_command_context().await?;
+
+    let user = match (args.username.as_deref(), args.user_id.as_deref()) {
+        (Some(username), None) => context
+            .admin_service
+            .find_user_by_username(username)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("user not found: {username}"))?,
+        (None, Some(raw_id)) => {
+            let user_id = parse_user_id(raw_id)?;
+            context.admin_service.find_user(&user_id).await?
+        }
+        (Some(_), Some(_)) => bail!("--username and --user-id cannot be used together"),
+        (None, None) => bail!("either --username or --user-id must be provided"),
+    };
+
+    // 先打印账号信息，便于确认「找到的是哪个管理员」
+    println!(
+        "user: id={} username={} email={} role={} disabled={}",
+        user.id,
+        user.username,
+        user.email.as_deref().unwrap_or("-"),
+        user.role,
+        user.disabled
+    );
+
+    let generated = args.generate;
+    // 明文密码（--generate 时随机生成）或已哈希密码，二选一
+    let plaintext = if generated {
+        Some(generate_password())
+    } else {
+        args.password.clone()
+    };
+    let password_hash = args.password_hash.clone();
+
+    if let Some(hash) = password_hash.as_deref() {
+        context
+            .admin_service
+            .set_password_hash(&user.id, hash)
+            .await?;
+    } else {
+        let password = plaintext
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("provide --password, --password-hash or --generate"))?;
+        context
+            .admin_service
+            .reset_password(&user.id, password)
+            .await?;
+    }
+
+    if !args.keep_sessions {
+        context.admin_service.revoke_user_sessions(&user.id).await?;
+    }
+
+    if let Some(password) = plaintext.as_deref().filter(|_| generated) {
+        println!("new_password={password}");
+    }
+    println!(
+        "Password reset for {} ({}); sessions {}",
+        user.username,
+        user.id,
+        if args.keep_sessions {
+            "kept"
+        } else {
+            "revoked"
+        }
+    );
+    Ok(())
+}
+
 async fn run_user_update(args: UserUpdateArgs) -> anyhow::Result<()> {
     let disabled = if args.enable {
         Some(false)
@@ -640,8 +767,8 @@ async fn run_user_update(args: UserUpdateArgs) -> anyhow::Result<()> {
     };
     let role = args.role.map(Into::into);
 
-    if args.email.is_none() && role.is_none() && disabled.is_none() {
-        bail!("no update requested; provide --email, --role, --enable or --disable");
+    if args.email.is_none() && role.is_none() && disabled.is_none() && args.username.is_none() {
+        bail!("no update requested; provide --username, --email, --role, --enable or --disable");
     }
 
     let context = build_user_command_context().await?;
@@ -654,6 +781,7 @@ async fn run_user_update(args: UserUpdateArgs) -> anyhow::Result<()> {
                 role,
                 disabled,
                 email: args.email,
+                username: args.username,
             },
         )
         .await?;

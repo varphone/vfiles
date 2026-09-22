@@ -64,9 +64,8 @@ fn user_from_row(row: UserRow) -> DomainResult<User> {
                 message: "Invalid UUID".to_string(),
             })?,
         ),
-        username: Username::new(&username).map_err(|_| DomainError::Internal {
-            message: "Invalid username".to_string(),
-        })?,
+        // 宽容解析：历史数据里可能有未校验过的用户名，读取不应因此整表失败
+        username: Username::from_stored(&username),
         email: parse_optional_email(email)?,
         password_hash,
         role,
@@ -4499,6 +4498,32 @@ impl AdminRepo for SqliteAdminRepo {
         Ok(id)
     }
 
+    async fn update_user_username(
+        &self,
+        user_id: &UserId,
+        username: &Username,
+    ) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query("UPDATE users SET username = ?, updated_at = ? WHERE id = ?")
+            .bind(username.as_str())
+            .bind(now)
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
+                    DomainError::Conflict {
+                        message: format!("Username already exists: {}", username.as_str()),
+                    }
+                }
+                other => DomainError::Internal {
+                    message: format!("Failed to update username: {other}"),
+                },
+            })?;
+
+        Ok(())
+    }
+
     async fn update_user_role(&self, user_id: &UserId, role: Role) -> DomainResult<()> {
         let now = time::OffsetDateTime::now_utc();
         let role_str = role_as_str(role);
@@ -5504,6 +5529,83 @@ mod entry_batch_cleanup_tests {
                 .await
                 .expect("find_all should succeed")
                 .is_empty()
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+}
+
+/// 历史数据兼容：旧版 bootstrap 可能写入未校验的用户名（例如含 `-`），
+/// 这些行必须仍能被列出与修复，否则整个实例的用户都会读不出来。
+#[cfg(test)]
+mod legacy_username_tests {
+    use super::*;
+    use crate::{SqliteMigrations, SqlitePoolFactory};
+    use camino::Utf8PathBuf;
+
+    async fn setup() -> (Utf8PathBuf, SqlitePool) {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-legacy-user-test-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+        (db_path, pool)
+    }
+
+    #[tokio::test]
+    async fn legacy_invalid_username_can_be_read_and_renamed() {
+        let (db_path, pool) = setup().await;
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let admin_repo = SqliteAdminRepo::new(pool.clone());
+
+        // 直接写入一条未校验的用户名，模拟旧版 bootstrap 产生的数据
+        let user_id = UserId::new();
+        sqlx::query(
+            "INSERT INTO users (id, username, email, password_hash, role, disabled) VALUES (?, ?, ?, ?, 'admin', 0)",
+        )
+        .bind(user_id.to_string())
+        .bind("root-admin")
+        .bind("root@example.com")
+        .bind("hash")
+        .execute(&pool)
+        .await
+        .expect("insert legacy user");
+
+        // 读取不应失败
+        let users = admin_repo.list_users(10, 0).await.expect("list users");
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].username.as_str(), "root-admin");
+
+        // 宽容查找能定位到它
+        let found = user_repo
+            .find_by_username(&Username::from_stored("root-admin"))
+            .await
+            .expect("find legacy user");
+        assert_eq!(found.id, user_id);
+
+        // 改名后即可用合法用户名正常查找
+        let fixed = Username::new("rootadmin").expect("valid username");
+        admin_repo
+            .update_user_username(&user_id, &fixed)
+            .await
+            .expect("rename user");
+        assert!(user_repo.find_by_username(&fixed).await.is_ok());
+
+        // 改成已存在的用户名会被拒绝
+        let duplicate = Username::new("rootadmin").unwrap();
+        assert!(
+            admin_repo
+                .update_user_username(&user_id, &duplicate)
+                .await
+                .is_ok(),
+            "改成自己原来的名字应无副作用"
         );
 
         pool.close().await;

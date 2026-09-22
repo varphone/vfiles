@@ -626,6 +626,10 @@ where
             });
         }
 
+        // 与普通创建一致地校验用户名：否则会写入读不出来的账号，实例直接不可用
+        Username::new(username)?;
+        EmailAddress::new(email)?;
+
         let user_id = self
             .user_repo
             .create_admin(username, email, password_hash)
@@ -3209,6 +3213,19 @@ pub struct AdminUserSummary {
     pub last_login: Option<time::OffsetDateTime>,
 }
 
+/// 用户实体 → 管理员视角摘要（列表与单查共用，避免字段漂移）。
+fn admin_user_summary(user: User) -> AdminUserSummary {
+    AdminUserSummary {
+        id: user.id,
+        username: user.username.as_str().to_string(),
+        email: user.email.as_ref().map(|email| email.as_str().to_string()),
+        role: user.role,
+        disabled: user.disabled,
+        created_at: user.created_at,
+        last_login: None, // TODO: implement last login tracking
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AdminUserList {
     pub users: Vec<AdminUserSummary>,
@@ -3230,6 +3247,8 @@ pub struct UpdateUserRequest {
     pub role: Option<Role>,
     pub disabled: Option<bool>,
     pub email: Option<String>,
+    /// 改名（修复历史数据里非法用户名时使用）。
+    pub username: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -3254,18 +3273,7 @@ where
         let users = self.admin_repo.list_users(page_size, offset).await?;
         let total_count = self.admin_repo.count_users().await?;
 
-        let user_summaries = users
-            .into_iter()
-            .map(|user| AdminUserSummary {
-                id: user.id,
-                username: user.username.as_str().to_string(),
-                email: user.email.as_ref().map(|email| email.as_str().to_string()),
-                role: user.role,
-                disabled: user.disabled,
-                created_at: user.created_at,
-                last_login: None, // TODO: implement last login tracking
-            })
-            .collect();
+        let user_summaries = users.into_iter().map(admin_user_summary).collect();
 
         Ok(AdminUserList {
             users: user_summaries,
@@ -3273,6 +3281,34 @@ where
             page,
             page_size,
         })
+    }
+
+    /// 按 ID 查用户（管理员视角，供 CLI 恢复流程展示账号信息）。
+    pub async fn find_user(&self, user_id: &UserId) -> DomainResult<AdminUserSummary> {
+        self.auth_service
+            .user_repo()
+            .find_by_id(user_id)
+            .await
+            .map(admin_user_summary)
+    }
+
+    /// 按用户名查用户（忘记账号时先用 `user list` 找到用户名，再据此定位）。
+    pub async fn find_user_by_username(
+        &self,
+        username: &str,
+    ) -> DomainResult<Option<AdminUserSummary>> {
+        // 历史数据里可能存在未通过校验的用户名；这类账号同样需要能被找到并修复
+        let username = Username::new(username).unwrap_or_else(|_| Username::from_stored(username));
+        match self
+            .auth_service
+            .user_repo()
+            .find_by_username(&username)
+            .await
+        {
+            Ok(user) => Ok(Some(admin_user_summary(user))),
+            Err(DomainError::NotFound { .. }) => Ok(None),
+            Err(err) => Err(err),
+        }
     }
 
     pub async fn create_user(&self, req: CreateUserRequest) -> DomainResult<UserId> {
@@ -3345,6 +3381,7 @@ where
             role,
             disabled,
             email,
+            username,
         } = req;
 
         // Check if user exists
@@ -3352,6 +3389,16 @@ where
 
         self.ensure_role_guardrails_on_update(&current_user, role, disabled)
             .await?;
+
+        // 改名：校验字符集，避免再次写入读不出来的账号
+        if let Some(raw_username) = normalize_message(username.as_deref()) {
+            let new_username = Username::new(&raw_username)?;
+            if current_user.username.as_str() != new_username.as_str() {
+                self.admin_repo
+                    .update_user_username(user_id, &new_username)
+                    .await?;
+            }
+        }
 
         if let Some(role) = role {
             self.admin_repo.update_user_role(user_id, role).await?;
@@ -3383,6 +3430,47 @@ where
         }
 
         Ok(())
+    }
+
+    /// 重置密码：使用与登录一致的哈希方案，并让该用户的所有会话失效。
+    ///
+    /// 忘记密码时的恢复路径（离线操作，不依赖邮件/SMTP）。
+    pub async fn reset_password(&self, user_id: &UserId, password: &str) -> DomainResult<()> {
+        if password.chars().count() < 8 {
+            return Err(DomainError::Validation {
+                message: "Password must be at least 8 characters".to_string(),
+            });
+        }
+
+        // 先确认用户存在（不存在的 id 直接 NotFound）
+        self.auth_service.user_repo().find_by_id(user_id).await?;
+
+        let hash = AuthService::hash_password_for_storage(password)?;
+        self.auth_service
+            .user_repo()
+            .update_password(user_id, &hash)
+            .await?;
+
+        Ok(())
+    }
+
+    /// 设置已经哈希好的密码（供自动化脚本使用）。
+    pub async fn set_password_hash(
+        &self,
+        user_id: &UserId,
+        password_hash: &str,
+    ) -> DomainResult<()> {
+        if password_hash.trim().is_empty() {
+            return Err(DomainError::Validation {
+                message: "Password hash must not be empty".to_string(),
+            });
+        }
+
+        self.auth_service.user_repo().find_by_id(user_id).await?;
+        self.auth_service
+            .user_repo()
+            .update_password(user_id, password_hash)
+            .await
     }
 
     pub async fn revoke_user_sessions(&self, user_id: &UserId) -> DomainResult<()> {

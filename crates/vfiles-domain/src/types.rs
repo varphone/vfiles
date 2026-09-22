@@ -604,6 +604,14 @@ impl Username {
         Ok(Self(name.to_string()))
     }
 
+    /// 从数据库读取时的宽容构造：**不校验**字符集。
+    ///
+    /// 早期版本的 bootstrap 流程可能写入了含 `-` 等字符的用户名，
+    /// 这些历史数据必须仍能被列出与修复，否则整个实例都会读不出用户。
+    pub fn from_stored(name: &str) -> Self {
+        Self(name.to_string())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

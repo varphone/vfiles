@@ -36,9 +36,16 @@
 # 更新邮箱 / 角色 / 启用状态
 ./target/release/vfiles user update <user-id> --email new@example.com --role manager --enable
 
+# 改名（修复历史数据里未通过校验的用户名，见「忘记管理员账号 / 密码」一节）
+./target/release/vfiles user update <user-id> --username newname
+
 # 删除用户
 ./target/release/vfiles user delete <user-id>
 ```
+
+> 所有 `user` 子命令都读写**配置里的同一个数据库**：默认是 `$VFILES_STORAGE_ROOT/vfiles.db`
+> （未设置时即运行目录下的 `data/vfiles.db`）。如果服务用了自定义路径，请带上
+> `VFILES_DATABASE_PATH=/path/to/vfiles.db` 再执行，否则会操作到另一个库。
 
 ## 完整初始化示例
 
@@ -56,6 +63,37 @@
 # 3. 启动服务
 RUST_LOG=info ./target/release/vfiles serve
 ```
+
+## 忘记管理员账号 / 密码
+
+密码只以 Argon2 哈希存储，**无法反推**，只能用下面的方式重置（不需要邮件 / SMTP，离线即可）：
+
+```bash
+# 1) 找到管理员账号（忘记用户名时）
+vfiles user list                       # 列出 id / username / email / role / disabled
+# 也可以直接查库（只读）：
+sqlite3 data/vfiles.db "SELECT username,email,role,disabled FROM users WHERE role='admin'"
+
+# 2) 重置密码（默认会让该用户已登录的会话全部失效）
+vfiles user reset-password --username admin --generate     # 生成随机强密码并打印 new_password=...
+# 或指定密码（至少 8 位）：
+vfiles user reset-password --username admin --password 'new-password-123'
+
+# 3) 用新密码登录
+curl -X POST http://127.0.0.1:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username_or_email":"admin","password":"new-password-123"}'
+```
+
+其他说明：
+
+- `--user-id <uuid>` 可替代 `--username`；`--keep-sessions` 保留已登录会话（默认全部下线）；
+- `--password-hash <hash>` 用于自动化脚本，直接写入已哈希的密码；
+- 若管理员数量为 0（例如误删），用 `vfiles user create --username admin --email … \
+  --password … --role admin` 会走「首个管理员」引导流程重新建立；
+- **用户名含 `-` 等非法字符的历史账号**：旧版本 bootstrap 未校验用户名，这类账号在读取时
+  会报 `Internal error: Invalid username`。新版已修复（读取兼容、创建校验），并支持修复：
+  `vfiles user update <user-id> --username admin2` 改成合法用户名后再 `reset-password` 即可登录。
 
 ## 常见问题
 
