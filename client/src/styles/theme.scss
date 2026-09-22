@@ -68,8 +68,10 @@
   /* 文本 */
   --vf-text: #363636;
   --vf-text-strong: #223448;
-  --vf-text-muted: #627386;
-  --vf-text-subtle: #90a0b2;
+  /* 文本对比度（WCAG AA ≥4.5，两档同时加深以保持层次不倒挂）：
+     strong 12.7 / text ~10 / muted 5.6 / subtle 5.0 */
+  --vf-text-muted: #566a7e;
+  --vf-text-subtle: #5f7186;
 
   /* 圆角与间距（对齐 M3 形状刻度：small 8 / medium 12 / large 16；按钮用胶囊） */
   --vf-radius-sm: 8px;
@@ -183,7 +185,7 @@
   --vf-text: hsl(221, 14%, 82%);
   --vf-text-strong: hsl(221, 14%, 94%);
   --vf-text-muted: hsl(221, 14%, 66%);
-  --vf-text-subtle: hsl(221, 14%, 52%);
+  --vf-text-subtle: hsl(221, 14%, 60%);
 
   --vf-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
 
