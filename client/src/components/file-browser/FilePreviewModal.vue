@@ -435,6 +435,10 @@ function onKeydown(event: KeyboardEvent) {
     fitToWindow();
   } else if (key === "r") {
     rotateBy(90);
+  } else if (key === "pageup") {
+    emit("prev");
+  } else if (key === "pagedown") {
+    emit("next");
   } else {
     return;
   }

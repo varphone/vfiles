@@ -2565,6 +2565,19 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.80 预览补充键 PageUp/PageDown（round 74）
+
+- 小件落地：预览翻页补 **PageUp/PageDown = 上一张/下一张**（Windows 照片查看器派别 ✓
+  与 ← → 同通道 `emit('prev'/'next')`）。**先探后补**（r71 双通道教训制度化 ✓）：
+  箭头翻页实测已工作（title「上一张（←）」承诺兑现 ✓ 各通道单一 ✓ 补键无双火险）；
+  onKeydown keys 架构事实 = +/=/−/0/r（grep 定案）→ 补 pageup/pagedown 两分支 ✓。
+- **快捷键表登记**（「预览与搜索」组补一行 ✓）；**单测**（既有键盘用例扩 PageUp/PageDown
+  → prev/next emit ✓ 12/12）——时序教训复用：监听器随 shellRef `flush: post` 挂载，
+  断言须候 tick（r65 同款 ✓）。
+- **终验**（中间页判据设计 ✓ 末页无信息教训）：`2/3 →PageDown→ 3/3 →PageUp→ 2/3`
+  双向翻页 ✓✓。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 736 ✓ 437 用例 ✓ 构建 ✓）。
+
 ### 4.79 文案语调统一评审（round 73）
 
 - 最后一轴（语言风格）四维数据化：标点 / 称呼 / 语气 / 结构 —— 全量空态三件套 +

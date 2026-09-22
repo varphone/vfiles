@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/vue";
+import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { describe, expect, it } from "vitest";
 import FilePreviewModal from "../src/components/file-browser/FilePreviewModal.vue";
 import type { PreviewState } from "../src/composables/useFilePreview";
@@ -129,10 +129,19 @@ describe("FilePreviewModal.vue", () => {
   });
 
   it("zooms, rotates and fits an image with buttons and keyboard", async () => {
-    const { container } = renderModal({
+    const { container, emitted } = renderModal({
       preview: state({ kind: "image", objectUrl: "blob:preview" }),
       file: { name: "图.png", path: "图.png", kind: "file" },
     });
+
+    // PageUp/PageDown = 上一张/下一张（r74 补充键，与 ← → 同通道 emit）。
+    // 监听器随 shellRef 挂载（flush: post）—— 断言须候 tick（r65 时序教训同款）
+    await waitFor(() => {
+      fireEvent.keyDown(window, { key: "PageUp" });
+      expect(emitted().prev).not.toBeUndefined();
+    });
+    await fireEvent.keyDown(window, { key: "PageDown" });
+    expect(emitted().next).toHaveLength(1);
 
     const image = () => container.querySelector<HTMLElement>(".preview-image")!;
     expect(container.querySelector(".preview-zoom")?.textContent).toBe("100%");
