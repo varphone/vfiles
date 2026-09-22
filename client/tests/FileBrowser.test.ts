@@ -1658,7 +1658,7 @@ describe("FileBrowser.vue keyboard navigation extras", () => {
     expect(container.querySelector(".desktop-status-typeahead")).toBeNull();
   });
 
-  it("moves by a page with PageDown and toggles selection with Space", async () => {
+  it("moves by a page with PageDown and toggles selection with Ctrl+Space", async () => {
     setDetailsVisible(false);
     getFilesMock.mockResolvedValue(files(30));
 
@@ -1675,15 +1675,22 @@ describe("FileBrowser.vue keyboard navigation extras", () => {
     await fireEvent.keyDown(document, { key: "PageUp" });
     await waitFor(() => expect(activePath(container)).toBe("文件-000.txt"));
 
-    // Space 选中高亮行并进入批量模式
-    await fireEvent.keyDown(document, { key: " " });
+    // Ctrl+Space 选中高亮行并进入批量模式（r124 ✓ 空格让位快速预览（云盘惯例））
+    // 自构造 KeyboardEvent（fireEvent 修饰键回显存疑 → dispatch 式稳）
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: " ", ctrlKey: true, bubbles: true }),
+    );
+    await nextTick();
     await waitFor(() =>
       expect(
         container.querySelector("tr.desktop-file-row.is-row-selected"),
       ).not.toBeNull(),
     );
     // 再按一次取消
-    await fireEvent.keyDown(document, { key: " " });
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: " ", ctrlKey: true, bubbles: true }),
+    );
+    await nextTick();
     await waitFor(() =>
       expect(
         container.querySelector("tr.desktop-file-row.is-row-selected"),

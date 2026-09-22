@@ -430,6 +430,13 @@ function onKeydown(event: KeyboardEvent) {
   // Esc 分层（r75 定稿）：**只有全屏层拦截**（全屏中 = 只退全屏 ✓ 捕获先行）；
   // 其余各层的 Esc 链由 FileBrowser「逐层退出」**单所有者**统一调度（定位前缀 →
   // 高级搜索 → 预览 → 批量 → 选择）——此处 stopPropagation 会掐断该链 ✗✗（实测）。
+  // 空格 = 关闭（Quick Look 开关式 ✓ 列表层空格开、预览层空格关）
+  if (event.key === " " || event.key === "Spacebar") {
+    if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select")) return;
+    event.preventDefault();
+    emit("close");
+    return;
+  }
   if (event.key === "Escape" && fullscreen.value) {
     event.preventDefault();
     event.stopPropagation();

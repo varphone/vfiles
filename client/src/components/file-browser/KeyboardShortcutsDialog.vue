@@ -74,7 +74,8 @@ const groups = [
   {
     title: "选择",
     items: [
-      { keys: "空格", description: "选中 / 取消选中当前高亮的条目" },
+      { keys: "空格", description: "快速预览当前高亮的条目（云盘惯例 ✓）" },
+      { keys: "Ctrl 空格", description: "选中 / 取消选中当前高亮的条目" },
       { keys: "Ctrl A", description: "全选当前视图（⌘+A 同效）" },
       { keys: "Ctrl 单击", description: "加选 / 取消单个条目" },
       { keys: "Shift 单击", description: "从上次选中项起连续选择" },

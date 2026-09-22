@@ -407,7 +407,7 @@
             @click="showShortcuts = true"
           >
             <IconKeyboard :size="14" />
-            <span>Ctrl/⌘+A 全选 · ↑↓ 移动 · Delete 删除 · F2 重命名</span>
+            <span>Ctrl/⌘+A 全选 · ↑↓ 移动 · 空格 预览 · Delete 删除 · F2 重命名</span>
             <span class="desktop-status-shortcuts-more">全部快捷键（?）</span>
           </button>
         </div>
@@ -1538,10 +1538,15 @@ onMounted(() => {
       return;
     }
 
-    // Space：切换活动行选中态
+    // Space：快速预览（云盘 web 惯例 ✓ Drive/OneDrive/Dropbox 同款；Finder Quick Look）
+    // Ctrl+Space：切换活动行选中态（原空格行为保留于此组合键）
     if (e.key === " " || e.key === "Spacebar") {
       e.preventDefault();
-      toggleActiveRowSelection();
+      if (e.ctrlKey || e.metaKey) {
+        toggleActiveRowSelection();
+      } else {
+        quickLook();
+      }
       return;
     }
 
@@ -1980,6 +1985,12 @@ async function handleCreateDirectory(file: FileInfo) {
 /** 在当前目录下新建文件夹（工具栏按钮 / 移动端入口）。 */
 async function createDirectoryHere() {
   await promptCreateDirectory(currentPath.value || "");
+}
+
+/** 快速预览（空格 ✓ 云盘 web 惯例 = Finder Quick Look 同款）：预览活动行。 */
+function quickLook() {
+  const active = findActiveItem();
+  if (active) openPreview(active.path);
 }
 
 /** 打开内联重命名（F2 / 右键菜单 / 行内按钮）；同时把该行设为活动行。 */

@@ -75,3 +75,4 @@
 | 51 | **`cmd \| tail` = SIGPIPE 假败**（BUILD_EXIT=101 非编译错 ✗ 免管道 `\>\/dev\/null && echo OK` 直验式） | r110'a |
 | 52 | **Rust 改动 = `cargo build` 前置**（check ≠ build ✗✗ target/debug 旧二进制 = 探针旧产物病型三犯（前端 build/Rust build 同族））；**spawn 模板 = `tokio::select!`**（shutdown 等待在 run 前 = run 永不执行 ✗ 骨架 bug 警） | r110'a |
 | 53 | **输出语义分层**（用户报 ✗ 调试注记/符号标记经 print 泄漏到命令输出 = 看似报错日志 ✗ 命令输出只载事实；注记归 commit/docs；回复用纯中文） | r113' |
+| 54 | **fireEvent 修饰键回显存疑**（jsdom `fireEvent.keyDown({ctrlKey:true})` 实际未置修饰位 ✗ 自构造 `new KeyboardEvent` + dispatch = 稳式（r77 同族）） | r124 |
