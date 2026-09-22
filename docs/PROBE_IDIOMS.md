@@ -74,3 +74,4 @@
 | 50 | **二分暂换当轮必还原**（`.fallback(hello)` 未换回 = **五轮 dispatch 全死码** ✗✗✗ 史诗盲区 ✓ 还原须 grep 验证；**dbg-eprintln = 断言级 debug 够不着时的一击破案式** | r105→110 |
 | 51 | **`cmd \| tail` = SIGPIPE 假败**（BUILD_EXIT=101 非编译错 ✗ 免管道 `\>\/dev\/null && echo OK` 直验式） | r110'a |
 | 52 | **Rust 改动 = `cargo build` 前置**（check ≠ build ✗✗ target/debug 旧二进制 = 探针旧产物病型三犯（前端 build/Rust build 同族））；**spawn 模板 = `tokio::select!`**（shutdown 等待在 run 前 = run 永不执行 ✗ 骨架 bug 警） | r110'a |
+| 53 | **输出语义分层**（用户报 ✗ 调试注记/符号标记经 print 泄漏到命令输出 = 看似报错日志 ✗ 命令输出只载事实；注记归 commit/docs；回复用纯中文） | r113' |
