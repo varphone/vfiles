@@ -1,12 +1,12 @@
 <template>
   <main class="vf-page-card">
-    <header class="vf-page-header">
-      <div>
+    <!-- 标准工具条（用户令 ✓ admin-header 同式 = 标题左 + **刷新/返回文件右上角** ✓） -->
+    <header class="system-info-header">
+      <div class="system-info-header-titles">
         <h1 class="vf-page-title">系统信息</h1>
         <p class="vf-page-subtitle">运行时与统计概览（仅管理员可见）</p>
       </div>
-      <!-- 标准工具条（用户令 ✓ 与 我的分享/审计/用户管理 同式 = 刷新 + 返回文件） -->
-      <div class="vf-page-actions">
+      <div class="system-info-header-actions">
         <button
           class="vf-ghost-button system-info-refresh"
           type="button"
@@ -99,6 +99,21 @@ onMounted(load);
 </script>
 
 <style scoped>
+/* 页头布局（admin-header 同式 ✓ 标题左 + 动作右上角 ✓ 用户令「与其他视图一样」） */
+.system-info-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.2rem;
+}
+
+.system-info-header-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
 
 
 .system-info-card {
