@@ -89,10 +89,9 @@ describe("useFileSelection", () => {
 
     selection.toggleSelect(a);
     expect(selection.selectedCount.value).toBe(1);
+    expect(selection.batchMode.value).toBe(true); // r142 ✓ 勾选即批量（源级语义）
     expect(setActivePath).toHaveBeenCalledWith("a.txt");
 
-    selection.toggleBatchMode();
-    expect(selection.batchMode.value).toBe(true);
     selection.toggleBatchMode();
     expect(selection.batchMode.value).toBe(false);
     expect(selection.selectedCount.value).toBe(0);

@@ -2585,8 +2585,13 @@
 - **r141 专项（多击未破 ✗ 止损记档）**：数据源查证 = FileBrowser→FileList→FileItem
   传参链 `selectedPaths`（useFileSelection）**同源** ✓ 与 selectedCount 同源 ✗✗ 但
   浏览器选中态真（行类 ✓）而计数器/batch 条全无——**jsdom 单测绿 vs 浏览器红 =
-  环境差异谜**（`check()` 事件流/双实例渲染分支嫌疑）→ **r142 埋点 trace**
-  （handleRowSelect/selectedCount computed 信号）。
+  环境差异谜**（`check()` 事件流/双实例渲染分支嫌疑）→ **r142 埋点 trace**（handleRowSelect/selectedCount computed 信号）。
+- **r142 续（破一半 ✗✗ 三层谜案升级）**：
+  | 证据 | 定案 |
+  | --- | --- |
+  | `__diag: undefined`（新码确在服务 ✓） | **handleRowSelect 未跑**：可见列表走**直调 toggleSelect 通道**（283/317 才挂 handleRowSelect）|
+  | 源级自启批量模式 + 断言随行为 ✓ | **语义补全保留**（勾选即批量 = 全通道生效 ✓ 单测护 ✓） |
+  | strip 仍 0 + 已选状态条无 | **第三层谜**：BatchActionBar/状态条**完全不渲染**（[class*=batch] 空 ✗）= v-if 外层父条件或组件渲染失败嫌疑 → **r143 专项**（strip 父块条件 + 渲染实况 devtools 级） |
 
 ### 4.116x 滚动记忆谜案（round 137，止损记档）
 

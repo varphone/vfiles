@@ -2281,7 +2281,6 @@ function anyOverlayOpen(): boolean {
  * （与主流网盘一致：勾选即进入选择态，不必先点工具栏按钮）。
  */
 function handleRowSelect(file: FileInfo) {
-  if (!batchMode.value) batchMode.value = true;
   toggleSelect(file);
 }
 
