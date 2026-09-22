@@ -181,6 +181,28 @@ onBeforeUnmount(() => {
   gap: 0.1rem;
 }
 
+/* 弹层定位：与 ViewOptions 一致（桌面左缘对齐向右展开；窄屏以搜索行为容器居中，
+   保证不被 .file-browser-box 的 overflow: hidden 裁掉）。 */
+.sort-menu.dropdown .dropdown-menu {
+  left: 0;
+  right: auto;
+  transform: none;
+}
+
+@media screen and (max-width: 1023px) {
+  .mobile-search-row .sort-menu.dropdown {
+    position: static;
+  }
+
+  .mobile-search-row .sort-menu.dropdown .dropdown-menu {
+    left: 0;
+    right: 0;
+    width: fit-content;
+    max-width: 100%;
+    margin-inline: auto;
+  }
+}
+
 .sort-menu-panel {
   min-width: 170px;
   padding: 6px;

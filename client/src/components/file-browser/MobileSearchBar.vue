@@ -174,17 +174,19 @@ const emit = defineEmits<{
 }
 
 .mobile-search-row {
+  /* 弹层（视图/排序）的定位容器：面板在行宽内居中，避免被外层裁切 */
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.3rem;
 }
 
-/* 搜索行里的视图/排序下拉需要浮在列表之上 */
-.mobile-search-row .dropdown-menu {
+/* 搜索行里的视图/排序下拉需要浮在列表之上（子组件元素需要 :deep() 才匹配得到） */
+.mobile-search-row :deep(.dropdown-menu) {
   z-index: 30;
 }
 
-.mobile-search-row .dropdown-menu .vf-ghost-button {
+.mobile-search-row :deep(.dropdown-menu .vf-ghost-button) {
   min-height: 1.75rem;
 }
 

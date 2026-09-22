@@ -120,6 +120,32 @@ onBeforeUnmount(() => {
   padding: 12px;
 }
 
+/* 弹层定位：
+   Bulma 的 .is-right 让面板右缘对齐触发器、向左展开；但「视图」按钮在命令栏左侧，
+   面板左缘会越过 .file-browser-box（overflow: hidden）被裁掉。
+   - 桌面：左缘对齐触发器、向右展开（按钮在命令栏左侧，右侧空间充足）；
+   - 窄屏（移动端搜索行）：以 .mobile-search-row 为定位容器、宽度内水平居中，
+     无论按钮在行内什么位置都不会被外层裁掉。 */
+.view-options.dropdown .dropdown-menu {
+  left: 0;
+  right: auto;
+  transform: none;
+}
+
+@media screen and (max-width: 1023px) {
+  .mobile-search-row .view-options.dropdown {
+    position: static;
+  }
+
+  .mobile-search-row .view-options.dropdown .dropdown-menu {
+    left: 0;
+    right: 0;
+    width: fit-content;
+    max-width: 100%;
+    margin-inline: auto;
+  }
+}
+
 .view-options-section {
   margin-bottom: 8px;
 }
