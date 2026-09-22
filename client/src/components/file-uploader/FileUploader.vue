@@ -391,7 +391,7 @@ defineExpose({
 .upload-queue-header-button {
   min-height: 1.85rem;
   padding: 0 0.55rem;
-  font-size: 0.77rem;
+  font-size: 0.78rem;
 }
 
 .upload-queue-overall {

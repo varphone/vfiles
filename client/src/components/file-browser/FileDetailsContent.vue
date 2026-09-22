@@ -182,7 +182,7 @@ watch(
 .details-name {
   font-size: 0.95rem;
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.4;
   color: var(--vf-text-strong);
   word-break: break-word;
 }

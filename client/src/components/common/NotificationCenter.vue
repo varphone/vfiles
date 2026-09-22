@@ -382,7 +382,7 @@ onBeforeUnmount(() => {
   margin: 0;
   color: var(--vf-text);
   font-size: 0.8rem;
-  line-height: 1.45;
+  line-height: 1.5;
   word-break: break-word;
 }
 

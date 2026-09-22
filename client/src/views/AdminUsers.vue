@@ -744,7 +744,7 @@ onMounted(() => {
 .admin-action {
   min-height: 1.8rem;
   padding: 0 0.55rem;
-  font-size: 0.77rem;
+  font-size: 0.78rem;
   white-space: nowrap;
 }
 

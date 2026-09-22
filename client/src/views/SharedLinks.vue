@@ -616,7 +616,7 @@ onMounted(() => {
 .shares-action {
   min-height: 1.8rem;
   padding: 0 0.5rem;
-  font-size: 0.77rem;
+  font-size: 0.78rem;
   white-space: nowrap;
 }
 
