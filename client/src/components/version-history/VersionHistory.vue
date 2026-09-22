@@ -131,6 +131,12 @@
                 class="diff-line"
                 :class="`is-${line.kind}`"
               >
+                <span class="diff-no" aria-hidden="true">{{
+                  line.oldNo ?? ""
+                }}</span>
+                <span class="diff-no" aria-hidden="true">{{
+                  line.newNo ?? ""
+                }}</span>
                 <span class="diff-sign" aria-hidden="true">{{
                   line.sign
                 }}</span>
@@ -321,29 +327,56 @@ const diff = ref({
   text: "",
 });
 
-/** unified diff 解析为结构行（主流 diff 语言：± 色带 + 行首符号 + hunk/meta 弱化）。 */
-const diffLines = computed(() => {
+interface DiffLine {
+  kind: "meta" | "hunk" | "add" | "del" | "ctx";
+  sign: string;
+  text: string;
+  oldNo?: number;
+  newNo?: number;
+}
+
+/** unified diff 解析为结构行（± 色带 + 符号槽 + 旧/新双列行号 + hunk/meta 弱化）。 */
+const diffLines = computed<DiffLine[]>(() => {
   const raw = diff.value.text ?? "";
-  return raw
+  const lines = raw
     .split("\n")
     .filter(
       (line: string, i: number, arr: string[]) =>
         !(i === arr.length - 1 && line === ""),
-    )
-    .map((line: string) => {
-      if (line.startsWith("@@")) return { kind: "hunk", sign: "", text: line };
-      if (line.startsWith("+++") || line.startsWith("---"))
-        return { kind: "meta", sign: "", text: line };
-      if (line.startsWith("+"))
-        return { kind: "add", sign: "+", text: line.slice(1) };
-      if (line.startsWith("-"))
-        return { kind: "del", sign: "−", text: line.slice(1) };
+    );
+  let oldNo = 0;
+  let newNo = 0;
+  return lines.map((line: string): DiffLine => {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunk) {
+      oldNo = Number(hunk[1]);
+      newNo = Number(hunk[2]);
+      return { kind: "hunk", sign: "", text: line };
+    }
+    if (line.startsWith("+++") || line.startsWith("---"))
+      return { kind: "meta", sign: "", text: line };
+    if (line.startsWith("+"))
       return {
-        kind: "ctx",
-        sign: " ",
-        text: line.startsWith(" ") ? line.slice(1) : line,
+        kind: "add",
+        sign: "+",
+        text: line.slice(1),
+        newNo: newNo++,
       };
-    });
+    if (line.startsWith("-"))
+      return {
+        kind: "del",
+        sign: "−",
+        text: line.slice(1),
+        oldNo: oldNo++,
+      };
+    return {
+      kind: "ctx",
+      sign: " ",
+      text: line.startsWith(" ") ? line.slice(1) : line,
+      oldNo: oldNo++,
+      newNo: newNo++,
+    };
+  });
 });
 
 type PreviewKind =
@@ -996,6 +1029,14 @@ function loadMore() {
   padding: 0.1rem 0.5rem;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.diff-no {
+  flex: 0 0 2.2rem;
+  text-align: right;
+  color: var(--vf-text-subtle);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
 }
 
 .diff-sign {

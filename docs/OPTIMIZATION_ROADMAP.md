@@ -2565,6 +2565,23 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.42 diff 行号槽（round 38）
+
+- 在 round 37 的行结构地基上做 diff 进阶第一块：**旧/新双列行号**（GitHub/Drive 标配）。
+- 实现：`@@ -a,b +c,d @@` 正则推导 hunk 起点 → add 推新列、del 推旧列、ctx 双列同推
+  （unified diff 语义：add 无旧号、del 无新号 ✓）；渲染 `2.2rem` 右对齐 `tabular-nums`
+  弱化色槽（`--vf-text-subtle`，`user-select: none`）+ 符号槽不变。
+- 验证（UI 上传造版本 → 对比，双主题逐行转储）：
+  | 行类 | 旧列 | 新列 | 内容 |
+  | --- | --- | --- | --- |
+  | meta ×2 | — | — | `--- empty` / `+++ cd4a…` |
+  | hunk | — | — | `@@ -0,0 …` |
+  | add ×4 | — | **1/2/3/4** ✓ 连续递增 | 第一…四行 |
+  双主题一致 ✓、截图 `ui-r77/diff-dark.png` ✓；434 用例全绿（结构断言继续守护解析器）。
+- **锚点教训（第 3 次，固化为流程）**：改 .vue 前必须取 **prettier 格式化后的真实文本**
+  做锚点（本轮两处锚点因 prettier 折行失配、断言中止未写盘 ✓ 读现实块后一次落地）。
+  流程：`sed` 打印目标块 → 按打印文本构造 old → 断言写盘。
+
 ### 4.41 版本对比（diff）视图重构（round 37）
 
 - 审计**最后一个从未看过的表面**：历史对话框「对比」——发现**视觉语言完全缺失** ✗✗：
