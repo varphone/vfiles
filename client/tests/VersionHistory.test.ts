@@ -203,7 +203,7 @@ describe("VersionHistory.vue", () => {
 
     // 并排视图：−/＋ 配对成行，左右单元格各有词级强调
     await fireEvent.click(
-      within(container).getByRole("button", { name: "并排" }),
+      within(container as HTMLElement).getByRole("button", { name: "并排" }),
     );
     await waitFor(() =>
       expect(container.querySelector(".diff-split-row")).not.toBeNull(),

@@ -2565,6 +2565,23 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.49 移动端骨架形状语义对齐（round 43，布局轴收官）
+
+- 收最后一个布局挂账：移动端空态/骨架形状语义复核。**骨架用 CDP 路由延迟抓真实加载态**
+  （`page.route` 延迟 `files/list` 1.5s → 500ms 采样 ✓ 比注入可靠）。
+- 审计结果（双主题一致）：
+  | 项 | 实测 | 判定 |
+  | --- | --- | --- |
+  | **骨架行高 vs 真实行高** | **48 vs 87px** | ✗ 形状语义失配（加载→内容跳变 45%） |
+  | 移动空态（可见态） | pad 52px/16px、插图 50% 圆、title/hint + 文案 | ✓ 家族合规零问题 |
+- 修复：`.file-skeleton-row` 移动断点（≤1023px）`min-height: 5.45rem`（≈87px，
+  rem 随缩放）→ 实测 skel 87 = real 87 ✓ 零跳变。桌面 3rem（48px）不动（本就同高 ✓）。
+- **附带清欠**：round 42 收尾漏跑 `vue-tsc`，`within(container)` 类型错潜入（vitest 不做
+  类型检查、430 用例照常绿 ✗）→ 已补 cast 并记教训：**五门禁 = vue-tsc + check(3) + build**，
+  缺一即漏。
+- 采样教训复现记：`querySelector` 会命中**隐藏的移动对话框空态**（visibility 过滤 ✓
+  `offsetParent !== null`）；骨架采样必须早于延迟窗口到货（waitForSelector('.file-item') 到货后采真实行 ✓）。
+
 ### 4.48 diff 侧并排视图（round 42，三部曲收官）
 
 - diff 进阶第三块：**统一 / 并排切换**（GitHub split toggle）。工具条两个 ghost 钮

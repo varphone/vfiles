@@ -91,10 +91,18 @@ import { cardMinWidth } from "../../stores/fileView.store";
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  /* 与真实列表行同高（48px）：此前 42px → 加载完成瞬间 6px/行 的布局跳动 */
+  /* 与真实桌面列表行同高（48px）：此前 42px → 加载完成瞬间 6px/行 的布局跳动 */
   min-height: 3rem;
   padding: 0.6rem 0.35rem;
   border-bottom: 1px solid var(--vf-border-weak);
+}
+
+/* 移动端行更高（.file-item 实测 87px）：骨架行须同高，
+   否则加载→内容跳变 45%（形状语义失配，round 43 实测）。 */
+@media screen and (max-width: 1023px) {
+  .file-skeleton-row {
+    min-height: 5.45rem;
+  }
 }
 
 .file-skeleton-row:last-child {
