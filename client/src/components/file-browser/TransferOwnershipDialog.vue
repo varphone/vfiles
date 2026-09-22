@@ -21,6 +21,7 @@
           <IconSearch :size="16" class="transfer-search-icon" />
           <input
             id="transfer-target"
+            aria-required="true"
             v-model.trim="keyword"
             class="input is-small transfer-search-input"
             type="search"

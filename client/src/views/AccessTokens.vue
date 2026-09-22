@@ -150,6 +150,7 @@
              aria-invalid 标错 + aria-describedby 指错误文案 id -->
         <input
           id="token-name"
+          aria-required="true"
           v-model.trim="form.name"
           class="input is-small"
           type="text"

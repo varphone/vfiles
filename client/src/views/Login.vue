@@ -40,6 +40,7 @@
             <IconUser :size="16" class="auth-input-icon" />
             <input
               id="auth-username"
+              aria-required="true"
               v-model.trim="username"
               class="input auth-input"
               type="text"
@@ -85,6 +86,7 @@
             <IconLock :size="16" class="auth-input-icon" />
             <input
               id="auth-password"
+              aria-required="true"
               v-model="password"
               class="input auth-input"
               type="password"
@@ -141,6 +143,7 @@
             <IconMail :size="16" class="auth-input-icon" />
             <input
               id="auth-email-login"
+              aria-required="true"
               v-model.trim="emailLogin"
               class="input auth-input"
               type="email"
