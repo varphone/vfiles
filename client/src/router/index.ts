@@ -10,16 +10,19 @@ const router = createRouter({
     },
     {
       path: "/login",
+      meta: { title: "登录" },
       name: "login",
       component: () => import("../views/Login.vue"),
     },
     {
       path: "/forgot-password",
+      meta: { title: "找回密码" },
       name: "forgot-password",
       component: () => import("../views/ForgotPassword.vue"),
     },
     {
       path: "/reset-password",
+      meta: { title: "重置密码" },
       name: "reset-password",
       component: () => import("../views/ResetPassword.vue"),
     },
@@ -31,11 +34,13 @@ const router = createRouter({
     },
     {
       path: "/shares",
+      meta: { title: "我的分享" },
       name: "shared-links",
       component: () => import("../views/SharedLinks.vue"),
     },
     {
       path: "/settings/tokens",
+      meta: { title: "访问令牌" },
       name: "access-tokens",
       component: () => import("../views/AccessTokens.vue"),
     },
@@ -63,6 +68,7 @@ router.afterEach((to) => {
 router.addRoute({
   path: "/:catchAll(.*)",
   name: "not-found",
+  meta: { title: "页面不存在" },
   component: () => import("../views/NotFound.vue"),
 });
 
