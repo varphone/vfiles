@@ -38,7 +38,17 @@ const FOCUSABLE =
 function focusFirst() {
   const card = cardRef.value;
   if (!card) return;
-  const first = card.querySelector<HTMLElement>(FOCUSABLE);
+  // 初始焦点语义（r132 ✓ 主流对话框规范）：
+  // ① `data-autofocus` 显式指定优先；② body 首个可聚焦（表单输入天然获焦）；
+  // ③ **跳过头部关闭钮**（避免 Enter 误关 ✗ 破坏性对话框默认焦中性钮 = 后续语义级）。
+  const marked = card.querySelector<HTMLElement>("[data-autofocus]");
+  if (marked) {
+    marked.focus();
+    return;
+  }
+  const body = card.querySelector<HTMLElement>(".modal-card-body");
+  const first = (body?.querySelector<HTMLElement>(FOCUSABLE) ??
+    card.querySelector<HTMLElement>(FOCUSABLE + ':not(.delete)')) as HTMLElement | null;
   (first ?? card).focus();
 }
 

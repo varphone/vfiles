@@ -31,8 +31,10 @@ describe("Modal.vue focus trap (r131)", () => {
       const active = document.activeElement as HTMLElement | null;
       expect(active?.closest(".modal-card")).not.toBeNull();
     });
-    // DOM 序首个可聚焦 = 头部关闭按钮；Shift+Tab 环绕到末尾（footer 确定）
-    const close = document.activeElement as HTMLElement;
+    // 环绕验证：DOM 序首个可聚焦 = 头部关闭按钮（初始焦点刻意跳过它 ✓ r132），
+    // 手动聚焦后 Shift+Tab 应环绕到末尾（footer 确定）
+    const close = document.querySelector(".modal-card-head .delete") as HTMLElement;
+    close.focus();
     await fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
     await nextTick();
     const active = document.activeElement as HTMLElement | null;
