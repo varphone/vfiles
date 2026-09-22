@@ -640,7 +640,9 @@ onBeforeUnmount(() => {
   display: inline-flex;
   padding: 4px;
   border-radius: 6px;
+  /* 半透明令牌须配毛玻璃：勾选块浮在缩略图（含照片）上 */
   background: var(--vf-surface-translucent);
+  backdrop-filter: blur(8px);
   box-shadow: var(--vf-shadow-sm);
 }
 
@@ -659,7 +661,9 @@ onBeforeUnmount(() => {
   height: 26px;
   border: none;
   border-radius: 6px;
+  /* 悬浮于缩略图之上：半透明须配毛玻璃 */
   background: var(--vf-surface-translucent);
+  backdrop-filter: blur(8px);
   color: var(--vf-text);
   cursor: pointer;
   opacity: 0;

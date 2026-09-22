@@ -2565,7 +2565,32 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
-### 4.29 表头悬停透底修复（用户反馈，round 28）
+### 4.30 半透明令牌误用清查（round 28）
+
+- 由 §4.29 用户 bug（半透明 tint 被当独立背景）引出的**同类风险全仓清查**：
+  70 处 tint/软底背景 → 交叉脚本定位（同一规则块含 `position: sticky|fixed|absolute`）
+  出 **4 处浮层风险**：
+  | 浮层 | 悬浮于 | 判定 |
+  | --- | --- | --- |
+  | `.file-actions`（移动浮动操作栏） | 行内容 | ✓ 有意毛玻璃（`backdrop-filter: blur(8px)` + 强 translucent）保留 |
+  | `.preview-arrow`（预览翻页） | **图片** | ✗ 半透明无 blur = 纯透底 |
+  | `.file-card-check`（缩略图勾选块） | **缩略图** | ✗ 同上 |
+  | `.file-card-menu-trigger`（悬停 ⋯） | **缩略图** | ✗ 同上 |
+  | `.app-bar-bell-badge`（未读角标） | 不透明顶栏 | ✓ 叠色语义正确（round 12 已验） |
+- 修复：**玻璃令牌必须配毛玻璃** —— 后三者补 `backdrop-filter: blur(8px)`，
+  与 `.file-actions` 同语言（主流翻页箭头/勾选块 = 玻璃胶囊 ✓）。
+- 验证（真实浏览器，含条件渲染态）：
+  | 浮层 | backdrop-filter |
+  | --- | --- |
+  | `.file-card-check`（Ctrl+A 选择态渲染） | **blur(8px)** ✓ |
+  | `.file-card-menu-trigger` | **blur(8px)** ✓ |
+  | `.preview-arrow` | **blur(8px)** ✓ |
+  | `.file-actions` | **blur(8px)** ✓ |
+  探针注记：`.file-card-check` 是条件渲染（无选择态时 DOM 不存在），首次测得 null
+  是"无元素"而非"无样式"。433 用例全绿、lint 通过。
+  另修正 §4.29 标注为"用户反馈插曲"（与 §4.10 体例一致）。
+
+### 4.29 表头悬停透底修复（用户反馈插曲，位于 round 27 之后）
 
 - 症状（用户报告）：桌面文件列表**表头悬停时背景变透明**，能看见滚动到其下方的文件行。
 - 根因：`FileList.vue` 的 `thead th:hover { background: var(--vf-surface-hover) }` ——

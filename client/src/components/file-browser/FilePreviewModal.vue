@@ -610,7 +610,10 @@ onBeforeUnmount(() => {
   height: 2.4rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: 50%;
+  /* 半透明令牌须配毛玻璃（同 .file-actions 语言）：箭头浮在图片上，
+     否则就是"透底"而不是"玻璃"。 */
   background: var(--vf-surface-translucent-strong);
+  backdrop-filter: blur(8px);
   color: var(--vf-text);
   cursor: pointer;
   z-index: 2;
