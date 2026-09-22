@@ -10,6 +10,8 @@ export type FileViewMode = "list" | "grid";
 
 const STORAGE_KEY = "vfiles:file-browser:view";
 
+export type ListDensity = "comfortable" | "compact";
+
 interface PersistedViewPrefs {
   mode: FileViewMode;
   sortField: SortField;
@@ -18,6 +20,8 @@ interface PersistedViewPrefs {
   thumbnailSize: number;
   /** 桌面端是否显示右侧「详细信息」面板 */
   detailsVisible: boolean;
+  /** 列表密度（r126 ✓ 主流（Notion/Linear）舒适/紧凑切换） */
+  density: ListDensity;
 }
 
 const SORT_FIELDS: SortField[] = ["name", "size", "modified", "type"];
@@ -52,7 +56,8 @@ function readPersisted(): PersistedViewPrefs {
     foldersFirst: DEFAULT_SORT_STATE.foldersFirst,
     thumbnailSize: DEFAULT_THUMBNAIL_SIZE,
     detailsVisible: true,
-  };
+      density: "comfortable",
+};
 
   if (typeof localStorage === "undefined") return fallback;
 
@@ -78,7 +83,8 @@ function readPersisted(): PersistedViewPrefs {
         typeof parsed.detailsVisible === "boolean"
           ? parsed.detailsVisible
           : fallback.detailsVisible,
-    };
+          density: parsed.density === "compact" ? "compact" : "comfortable",
+};
   } catch {
     return fallback;
   }
@@ -93,6 +99,7 @@ export const useFileViewStore = defineStore("fileView", () => {
   const foldersFirst = ref(initial.foldersFirst);
   const thumbnailSize = ref(initial.thumbnailSize);
   const detailsVisible = ref(initial.detailsVisible);
+  const density = ref<ListDensity>(initial.density);
 
   function persist() {
     if (typeof localStorage === "undefined") return;
@@ -104,6 +111,7 @@ export const useFileViewStore = defineStore("fileView", () => {
         foldersFirst: foldersFirst.value,
         thumbnailSize: thumbnailSize.value,
         detailsVisible: detailsVisible.value,
+        density: density.value,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch {
@@ -119,6 +127,7 @@ export const useFileViewStore = defineStore("fileView", () => {
       foldersFirst,
       thumbnailSize,
       detailsVisible,
+      density,
     ],
     persist,
     {
@@ -128,6 +137,10 @@ export const useFileViewStore = defineStore("fileView", () => {
 
   function setMode(next: FileViewMode) {
     if (VIEW_MODES.includes(next)) mode.value = next;
+  }
+
+  function setDensity(next: ListDensity) {
+    density.value = next;
   }
 
   function toggleMode() {
@@ -173,6 +186,8 @@ export const useFileViewStore = defineStore("fileView", () => {
     detailsVisible,
     setDetailsVisible,
     toggleDetails,
+    density,
+    setDensity,
     setMode,
     toggleMode,
     setSortField,

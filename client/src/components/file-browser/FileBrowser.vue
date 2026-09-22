@@ -174,7 +174,7 @@
               @delete="batchDelete"
             />
 
-            <div class="desktop-list-shell">
+            <div class="desktop-list-shell" :class="{ 'is-density-compact': fileView.density === 'compact' }">
               <FileSkeleton
                 v-if="loading"
                 :variant="viewMode === 'grid' ? 'grid' : 'list'"

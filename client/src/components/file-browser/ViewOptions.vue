@@ -48,6 +48,35 @@
           </div>
         </div>
 
+        <template v-if="view.mode === 'list'">
+          <hr class="dropdown-divider" />
+          <div class="view-options-section">
+            <p class="view-options-label">行密度</p>
+            <div class="view-options-segment" role="group" aria-label="行密度">
+              <button
+                class="vf-ghost-button view-options-segment-button"
+                :class="{ 'is-active': view.density === 'comfortable' }"
+                type="button"
+                title="舒适行高"
+                :aria-pressed="view.density === 'comfortable' ? 'true' : 'false'"
+                @click="view.setDensity('comfortable')"
+              >
+                <span>舒适</span>
+              </button>
+              <button
+                class="vf-ghost-button view-options-segment-button"
+                :class="{ 'is-active': view.density === 'compact' }"
+                type="button"
+                title="紧凑行高"
+                :aria-pressed="view.density === 'compact' ? 'true' : 'false'"
+                @click="view.setDensity('compact')"
+              >
+                <span>紧凑</span>
+              </button>
+            </div>
+          </div>
+        </template>
+
         <template v-if="view.mode === 'grid'">
           <hr class="dropdown-divider" />
           <div class="view-options-section">

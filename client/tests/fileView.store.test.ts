@@ -123,4 +123,15 @@ describe("cardMinWidth", () => {
     expect(cardMinWidth(200)).toBe(270);
     expect(cardMinWidth(100)).toBe(135);
   });
+
+
+  it("persists list density (r126)", async () => {
+    localStorage.setItem(STORAGE_KEY, "{}");
+    const store = useFileViewStore();
+    expect(store.density).toBe("comfortable");
+    store.setDensity("compact");
+    await nextTick();
+    const raw = localStorage.getItem("vfiles:file-browser:view");
+    expect(raw).toContain('"density":"compact"');
+  });
 });
