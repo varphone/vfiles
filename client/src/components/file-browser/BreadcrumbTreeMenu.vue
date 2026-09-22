@@ -177,7 +177,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 0.1rem;
-  border-radius: 6px;
+  border-radius: var(--vf-radius-sm);
 }
 
 .breadcrumb-tree-row.is-active .breadcrumb-tree-item {
@@ -216,7 +216,7 @@ onMounted(() => {
   height: 1.7rem;
   padding: 0 0.4rem 0 0;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--vf-radius-sm);
   background: transparent;
   color: var(--vf-text);
   font-size: 0.82rem;

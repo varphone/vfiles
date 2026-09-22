@@ -643,7 +643,7 @@ onBeforeUnmount(() => {
   z-index: 2;
   display: inline-flex;
   padding: 4px;
-  border-radius: 6px;
+  border-radius: var(--vf-radius-sm);
   /* 半透明令牌须配毛玻璃：勾选块浮在缩略图（含照片）上 */
   background: var(--vf-surface-translucent);
   backdrop-filter: blur(8px);
@@ -664,7 +664,7 @@ onBeforeUnmount(() => {
   width: 26px;
   height: 26px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--vf-radius-sm);
   /* 悬浮于缩略图之上：半透明须配毛玻璃 */
   background: var(--vf-surface-translucent);
   backdrop-filter: blur(8px);
@@ -693,7 +693,7 @@ onBeforeUnmount(() => {
   min-width: 160px;
   padding: 4px;
   border: 1px solid var(--vf-border);
-  border-radius: 8px;
+  border-radius: var(--vf-radius-sm);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-menu);
   z-index: 30;
@@ -706,7 +706,7 @@ onBeforeUnmount(() => {
   width: 100%;
   padding: 7px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--vf-radius-sm);
   background: transparent;
   color: var(--vf-text);
   font-size: 0.8rem;

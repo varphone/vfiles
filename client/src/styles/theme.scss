@@ -101,6 +101,8 @@
   --vf-text-subtle: #5f7186;
 
   /* 圆角与间距（对齐 M3 形状刻度：small 8 / medium 12 / large 16；按钮用胶囊） */
+  /* 内联标记档（词级强调/小 chip）：圆角语义四档 xs/sm/md/lg + pill */
+  --vf-radius-xs: 4px;
   --vf-radius-sm: 8px;
   --vf-radius: 10px;
   --vf-radius-lg: 14px;

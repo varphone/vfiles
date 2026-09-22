@@ -79,7 +79,7 @@ body,
 
 ::-webkit-scrollbar-thumb {
   background: var(--vf-scrollbar-thumb);
-  border-radius: 4px;
+  border-radius: var(--vf-radius-xs);
 }
 
 ::-webkit-scrollbar-thumb:hover {

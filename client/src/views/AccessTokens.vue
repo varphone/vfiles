@@ -431,7 +431,7 @@ onMounted(async () => {
 
 .tokens-subtitle code {
   padding: 0 0.25rem;
-  border-radius: 4px;
+  border-radius: var(--vf-radius-xs);
   background: var(--vf-surface-sunken);
   font-size: 0.76rem;
 }
@@ -485,7 +485,7 @@ onMounted(async () => {
 
 .tokens-prefix {
   padding: 0.05rem 0.3rem;
-  border-radius: 4px;
+  border-radius: var(--vf-radius-xs);
   background: var(--vf-surface-sunken);
   font-size: 0.76rem;
 }

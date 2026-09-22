@@ -73,7 +73,7 @@ withDefaults(
 .skeleton-block {
   position: relative;
   overflow: hidden;
-  border-radius: 6px;
+  border-radius: var(--vf-radius-sm);
   background: var(--vf-skeleton-base);
 }
 

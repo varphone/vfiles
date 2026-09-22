@@ -119,7 +119,7 @@ onBeforeUnmount(() => {
 .theme-toggle-item {
   display: flex;
   align-items: center;
-  border-radius: 6px;
+  border-radius: var(--vf-radius-sm);
   color: var(--vf-text);
   background: transparent;
 }

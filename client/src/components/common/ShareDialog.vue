@@ -381,7 +381,7 @@ async function stopSharing() {
   align-items: center;
   gap: 0.3rem;
   padding: 0.2rem 0.5rem;
-  border-radius: 999px;
+  border-radius: var(--vf-radius-pill);
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
   font-size: 0.76rem;

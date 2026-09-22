@@ -115,7 +115,7 @@ import { cardMinWidth } from "../../stores/fileView.store";
   gap: 0.5rem;
   padding: 0.6rem;
   border: 1px solid var(--vf-border-weak);
-  border-radius: 10px;
+  border-radius: var(--vf-radius);
   /* 与真实卡片同高（200px）：消除加载完成瞬间的布局跳动 */
   min-height: 12.5rem;
 }
@@ -123,7 +123,7 @@ import { cardMinWidth } from "../../stores/fileView.store";
 .skeleton-block {
   position: relative;
   overflow: hidden;
-  border-radius: 6px;
+  border-radius: var(--vf-radius-sm);
   background: var(--vf-skeleton-base);
 }
 
@@ -183,6 +183,6 @@ import { cardMinWidth } from "../../stores/fileView.store";
 
 .file-skeleton-thumb {
   height: 96px;
-  border-radius: 8px;
+  border-radius: var(--vf-radius-sm);
 }
 </style>

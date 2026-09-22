@@ -11,7 +11,7 @@
   padding: 0.85rem 1rem;
   overflow: auto;
   border: 1px solid var(--vf-border-weak);
-  border-radius: 10px;
+  border-radius: var(--vf-radius);
   background: var(--vf-code-bg);
   color: var(--vf-code-text);
 }
@@ -115,7 +115,7 @@
   padding: 0.85rem 1rem;
   overflow: auto;
   border: 1px solid var(--vf-border-weak);
-  border-radius: 10px;
+  border-radius: var(--vf-radius);
   background: var(--vf-code-bg);
   color: var(--vf-code-text);
 }

@@ -330,20 +330,20 @@ watch(
   gap: 2px;
   height: 0.4rem;
   margin-top: 0.55rem;
-  border-radius: 999px;
+  border-radius: var(--vf-radius-pill);
   overflow: hidden;
   background: var(--vf-surface-sunken);
 }
 
 .storage-bar-segment {
   height: 100%;
-  border-radius: 999px;
+  border-radius: var(--vf-radius-pill);
   transition: width 0.2s var(--vf-motion-standard);
 }
 
 .storage-bar-segment.is-empty {
   width: 100%;
-  border-radius: 999px;
+  border-radius: var(--vf-radius-pill);
   background: var(--vf-border-weak);
 }
 

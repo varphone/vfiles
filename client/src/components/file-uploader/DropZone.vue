@@ -127,7 +127,7 @@ function onDirectorySelect(event: Event) {
 <style scoped>
 .drop-zone {
   border: 2px dashed var(--vf-border);
-  border-radius: 8px;
+  border-radius: var(--vf-radius-sm);
   padding: 0.75rem 1rem;
   transition: all 0.3s;
   background: var(--vf-surface-sunken);

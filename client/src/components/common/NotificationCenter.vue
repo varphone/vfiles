@@ -211,7 +211,7 @@ onBeforeUnmount(() => {
   min-width: 1rem;
   height: 1rem;
   padding: 0 0.2rem;
-  border-radius: 999px;
+  border-radius: var(--vf-radius-pill);
   /* 语义配对（round 7 双主题 AA 验证）：原 danger-text 底 + 白字在深色下仅 ≈2.2:1；
      用 soft 底 / text 字并加强调色描边与字重，保持醒目且达标 */
   background: var(--vf-danger-soft);
@@ -278,7 +278,7 @@ onBeforeUnmount(() => {
 .notification-center-filter {
   padding: 0.1rem 0.45rem;
   border: 1px solid var(--vf-border-weak);
-  border-radius: 999px;
+  border-radius: var(--vf-radius-pill);
   background: var(--vf-surface);
   color: var(--vf-text-muted);
   font-size: 0.72rem;

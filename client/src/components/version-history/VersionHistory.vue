@@ -1257,7 +1257,7 @@ function loadMore() {
   /* GitHub 式行内强调：彩底 + text-strong 深字（行色带已承载 ± 语义）。
      彩底×彩字会双双掉档（实测浅 4.38 / 深 3.18 ✗），换深字后 ≥4.5 ✓。 */
   font-weight: 600;
-  border-radius: 3px;
+  border-radius: var(--vf-radius-xs);
   color: var(--vf-text-strong);
   /* 叠 12% 黑膜：深色主题词底偏亮（白字 4.41 差一线），压暗后达标；
      浅色主题 7.8 → ~6.5 仍在 AA 上 ✓ 双向安全。 */

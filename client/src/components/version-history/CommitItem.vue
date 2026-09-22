@@ -196,7 +196,7 @@ const versionLabel = computed(() => {
 .history-version {
   flex: 0 0 auto;
   padding: 0.05rem 0.4rem;
-  border-radius: 999px;
+  border-radius: var(--vf-radius-pill);
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
   font-size: 0.72rem;
@@ -211,7 +211,7 @@ const versionLabel = computed(() => {
 .history-tag {
   flex: 0 0 auto;
   padding: 0.05rem 0.35rem;
-  border-radius: 4px;
+  border-radius: var(--vf-radius-xs);
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
   font-size: 0.7rem;

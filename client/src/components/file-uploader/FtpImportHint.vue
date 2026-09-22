@@ -337,7 +337,7 @@ watch(
 .ftp-import-source {
   margin-left: 0.3rem;
   padding: 0 0.25rem;
-  border-radius: 3px;
+  border-radius: var(--vf-radius-xs);
   background: var(--vf-surface);
   color: var(--vf-text-subtle);
   font-size: 0.68rem;

@@ -997,7 +997,7 @@ function share() {
   justify-content: center;
   width: 48px;
   height: 48px;
-  border-radius: 8px;
+  border-radius: var(--vf-radius-sm);
   background: transparent;
   color: inherit;
 }
@@ -1094,7 +1094,7 @@ function share() {
   background: transparent;
   color: var(--vf-text);
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--vf-radius-sm);
   transition: all 0.15s;
   font-size: 0.7rem;
   min-width: 3rem;

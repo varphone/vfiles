@@ -260,7 +260,7 @@ onBeforeUnmount(() => {
   /* 与工具栏其它弹层（视图/排序/上传）同一框体语言：
      border-weak、6px 圆角、12px 内边距、raised 背景、菜单阴影 */
   padding: 0.75rem;
-  border-radius: 6px;
+  border-radius: var(--vf-radius-sm);
   border: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-raised);
   box-shadow: var(--vf-shadow-menu);
@@ -313,7 +313,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 0.42rem;
-  padding: 0.38rem 0.72rem;
+  padding: 0.4rem 0.72rem;
   border-radius: var(--vf-radius-pill);
   border: 1px solid var(--vf-border);
   background: var(--vf-surface-sunken);
