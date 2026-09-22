@@ -40,7 +40,7 @@
           type="button"
           @click="emit('view-version', commit.hash)"
         >
-          <IconEye :size="15" />
+          <IconEye :size="16" />
           <span>预览</span>
         </button>
         <button
@@ -48,7 +48,7 @@
           type="button"
           @click="emit('view-diff', commit.hash, commit.parent?.[0])"
         >
-          <IconArrowsDiff :size="15" />
+          <IconArrowsDiff :size="16" />
           <span>对比</span>
         </button>
         <button
@@ -56,7 +56,7 @@
           type="button"
           @click="emit('download-version', commit.hash)"
         >
-          <IconDownload :size="15" />
+          <IconDownload :size="16" />
           <span>下载</span>
         </button>
         <button
@@ -66,7 +66,7 @@
           :disabled="restoringHash === commit.hash"
           @click="emit('restore-version', commit.hash)"
         >
-          <IconRestore :size="15" />
+          <IconRestore :size="16" />
           <span>{{ restoringHash === commit.hash ? "恢复中…" : "恢复" }}</span>
         </button>
         <span v-else class="history-current-hint">这是当前版本</span>

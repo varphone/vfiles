@@ -15,7 +15,7 @@
 
         <div class="admin-header-actions">
           <div class="admin-search">
-            <IconSearch :size="15" class="admin-search-icon" />
+            <IconSearch :size="16" class="admin-search-icon" />
             <input
               v-model.trim="searchQuery"
               class="input is-small admin-search-input"
@@ -41,11 +41,11 @@
             :disabled="loading"
             @click="reload"
           >
-            <IconRefresh :size="15" :class="{ 'is-spinning': loading }" />
+            <IconRefresh :size="16" :class="{ 'is-spinning': loading }" />
             <span>刷新</span>
           </button>
           <button class="vf-ghost-button" type="button" @click="goFiles">
-            <IconFolderOpen :size="15" />
+            <IconFolderOpen :size="16" />
             <span>返回文件</span>
           </button>
         </div>
@@ -90,7 +90,7 @@
       >
         <template #actions>
           <button class="vf-ghost-button is-primary" @click="reload">
-            <IconRefresh :size="15" />
+            <IconRefresh :size="16" />
             <span>重试</span>
           </button>
         </template>

@@ -41,7 +41,7 @@
         >
           <template #actions>
             <button class="vf-ghost-button is-primary" @click="loadHistory">
-              <IconRefresh :size="15" />
+              <IconRefresh :size="16" />
               <span>重试</span>
             </button>
           </template>
@@ -247,7 +247,7 @@
                 type="button"
                 @click="downloadVersion(preview.hash)"
               >
-                <IconDownload :size="15" />
+                <IconDownload :size="16" />
                 <span>下载此版本</span>
               </button>
               <button
@@ -346,7 +346,7 @@
                     class="vf-ghost-button is-primary"
                     @click="downloadVersion(preview.hash)"
                   >
-                    <IconDownload :size="15" />
+                    <IconDownload :size="16" />
                     <span>下载此版本</span>
                   </button>
                 </template>

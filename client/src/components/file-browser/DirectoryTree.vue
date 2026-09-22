@@ -52,7 +52,7 @@
             :aria-current="row.path === currentPath ? 'true' : undefined"
             @click="emit('navigate', row.path)"
           >
-            <IconFolder :size="15" class="directory-tree-icon" />
+            <IconFolder :size="16" class="directory-tree-icon" />
             <span class="directory-tree-name">{{ row.name }}</span>
           </button>
 

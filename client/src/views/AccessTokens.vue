@@ -16,7 +16,7 @@
             type="button"
             @click="openCreate"
           >
-            <IconPlus :size="15" />
+            <IconPlus :size="16" />
             <span>新建令牌</span>
           </button>
           <button
@@ -25,11 +25,11 @@
             :disabled="loading"
             @click="reload"
           >
-            <IconRefresh :size="15" />
+            <IconRefresh :size="16" />
             <span>刷新</span>
           </button>
           <button class="vf-ghost-button" type="button" @click="goFiles">
-            <IconFolder :size="15" />
+            <IconFolder :size="16" />
             <span>返回文件</span>
           </button>
         </div>
@@ -51,7 +51,7 @@
       >
         <template #actions>
           <button class="vf-ghost-button is-primary" @click="reload">
-            <IconRefresh :size="15" />
+            <IconRefresh :size="16" />
             <span>重试</span>
           </button>
         </template>
@@ -71,7 +71,7 @@
       >
         <template #actions>
           <button class="vf-ghost-button is-primary" @click="openCreate">
-            <IconPlus :size="15" />
+            <IconPlus :size="16" />
             <span>新建令牌</span>
           </button>
         </template>
@@ -191,7 +191,7 @@
           :disabled="creating || !form.name"
           @click="submitCreate"
         >
-          <IconKey :size="15" />
+          <IconKey :size="16" />
           <span>{{ creating ? "创建中…" : "创建" }}</span>
         </button>
       </template>
@@ -205,7 +205,7 @@
     >
       <div class="tokens-created">
         <p class="tokens-created-hint">
-          <IconAlertTriangle :size="15" />
+          <IconAlertTriangle :size="16" />
           <span>这是唯一一次显示明文，关闭后就看不到了。</span>
         </p>
         <div class="tokens-created-row">
@@ -223,7 +223,7 @@
             type="button"
             @click="copyPlaintext"
           >
-            <IconCopy :size="15" />
+            <IconCopy :size="16" />
             <span>{{ copied ? "已复制" : "复制" }}</span>
           </button>
         </div>

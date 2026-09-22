@@ -82,7 +82,7 @@
           class="ftp-import-warning"
           role="note"
         >
-          <IconAlertTriangle :size="15" class="ftp-import-warning-icon" />
+          <IconAlertTriangle :size="16" class="ftp-import-warning-icon" />
           <span>
             上面是仅本机可访问的地址；其它机器上的客户端请改用服务器的内网/公网
             IP 或域名，也可让管理员设置

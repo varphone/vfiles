@@ -79,7 +79,7 @@
             type="button"
             @click="openLink"
           >
-            <IconExternalLink :size="15" />
+            <IconExternalLink :size="16" />
             <span>打开链接</span>
           </button>
           <button
@@ -88,19 +88,19 @@
             :disabled="stopping"
             @click="stopSharing"
           >
-            <IconTrash :size="15" />
+            <IconTrash :size="16" />
             <span>{{ stopping ? "停止中…" : "停止分享" }}</span>
           </button>
         </div>
 
         <p v-if="copied" class="share-copy-feedback">
-          <IconCheck :size="15" />
+          <IconCheck :size="16" />
           <span>链接已复制到剪贴板，可以直接发送给对方</span>
         </p>
       </div>
 
       <p v-if="error" class="share-error" role="alert">
-        <IconAlertCircle :size="15" class="share-error-icon" />
+        <IconAlertCircle :size="16" class="share-error-icon" />
         <span>{{ error }}</span>
       </p>
     </div>

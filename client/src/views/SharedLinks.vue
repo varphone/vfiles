@@ -20,7 +20,7 @@
             :disabled="clearingExpired || loading"
             @click="clearExpired"
           >
-            <IconTrash :size="15" />
+            <IconTrash :size="16" />
             <span>
               {{
                 clearingExpired
@@ -35,11 +35,11 @@
             :disabled="loading"
             @click="reload"
           >
-            <IconRefresh :size="15" :class="{ 'is-spinning': loading }" />
+            <IconRefresh :size="16" :class="{ 'is-spinning': loading }" />
             <span>刷新</span>
           </button>
           <button class="vf-ghost-button" type="button" @click="goFiles">
-            <IconFolderOpen :size="15" />
+            <IconFolderOpen :size="16" />
             <span>返回文件</span>
           </button>
         </div>
@@ -59,7 +59,7 @@
       >
         <template #actions>
           <button class="vf-ghost-button is-primary" @click="reload">
-            <IconRefresh :size="15" />
+            <IconRefresh :size="16" />
             <span>重试</span>
           </button>
         </template>
@@ -79,7 +79,7 @@
       >
         <template #actions>
           <button class="vf-ghost-button is-primary" @click="goFiles">
-            <IconFolderOpen :size="15" />
+            <IconFolderOpen :size="16" />
             <span>去选择文件</span>
           </button>
         </template>
@@ -166,8 +166,8 @@
               type="button"
               @click="copyLink(share)"
             >
-              <IconCheck v-if="copiedCode === share.code" :size="15" />
-              <IconCopy v-else :size="15" />
+              <IconCheck v-if="copiedCode === share.code" :size="16" />
+              <IconCopy v-else :size="16" />
               <span>{{ copiedCode === share.code ? "已复制" : "复制" }}</span>
             </button>
             <button
@@ -175,7 +175,7 @@
               type="button"
               @click="openLink(share)"
             >
-              <IconExternalLink :size="15" />
+              <IconExternalLink :size="16" />
               <span>打开</span>
             </button>
             <button
@@ -184,7 +184,7 @@
               :disabled="disablingCode === share.code"
               @click="stopSharing(share)"
             >
-              <IconTrash :size="15" />
+              <IconTrash :size="16" />
               <span>{{
                 disablingCode === share.code ? "停止中…" : "停止"
               }}</span>

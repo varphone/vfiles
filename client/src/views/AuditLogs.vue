@@ -22,7 +22,7 @@
             download
             title="按当前筛选条件导出 CSV（只读导出）"
           >
-            <IconDownload :size="15" />
+            <IconDownload :size="16" />
             <span>导出 CSV</span>
           </a>
           <button
@@ -31,11 +31,11 @@
             :disabled="loading"
             @click="reload"
           >
-            <IconRefresh :size="15" :class="{ 'is-spinning': loading }" />
+            <IconRefresh :size="16" :class="{ 'is-spinning': loading }" />
             <span>刷新</span>
           </button>
           <button class="vf-ghost-button" type="button" @click="goFiles">
-            <IconFolderOpen :size="15" />
+            <IconFolderOpen :size="16" />
             <span>返回文件</span>
           </button>
         </div>
@@ -98,7 +98,7 @@
 
       <div class="audit-filters">
         <div class="audit-search">
-          <IconSearch :size="15" class="audit-search-icon" />
+          <IconSearch :size="16" class="audit-search-icon" />
           <input
             v-model.trim="keyword"
             class="input is-small audit-search-input"
@@ -176,7 +176,7 @@
           type="button"
           @click="applyFilters"
         >
-          <IconFilter :size="15" />
+          <IconFilter :size="16" />
           <span>筛选</span>
         </button>
         <button
@@ -198,7 +198,7 @@
       >
         <template #actions>
           <button class="vf-ghost-button is-primary" @click="reload">
-            <IconRefresh :size="15" />
+            <IconRefresh :size="16" />
             <span>重试</span>
           </button>
         </template>

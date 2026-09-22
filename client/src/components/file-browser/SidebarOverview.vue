@@ -78,7 +78,7 @@
               :title="item.path"
               @click="emit('open-favorite', item)"
             >
-              <FileTypeIcon :file="favoriteAsFileInfo(item)" :size="15" />
+              <FileTypeIcon :file="favoriteAsFileInfo(item)" :size="16" />
               <span class="sidebar-recent-name">{{ item.name }}</span>
             </button>
             <button
@@ -108,7 +108,7 @@
             :title="file.path"
             @click="emit('open-file', file)"
           >
-            <FileTypeIcon :file="recentAsFileInfo(file)" :size="15" />
+            <FileTypeIcon :file="recentAsFileInfo(file)" :size="16" />
             <span class="sidebar-recent-name">{{ file.name }}</span>
             <span class="sidebar-recent-time">{{
               formatRelativeDate(file.updated_at)

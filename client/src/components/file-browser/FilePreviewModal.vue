@@ -31,7 +31,7 @@
             :title="copyState === 'failed' ? '复制失败' : '复制文件内容'"
             @click="emit('copy')"
           >
-            <IconCopy :size="15" />
+            <IconCopy :size="16" />
             <span>{{
               copyState === "done"
                 ? "已复制"
@@ -48,7 +48,7 @@
             title="打开所在文件夹"
             @click="emit('reveal')"
           >
-            <IconFolderOpen :size="15" />
+            <IconFolderOpen :size="16" />
             <span>所在文件夹</span>
           </button>
 
@@ -59,7 +59,7 @@
             title="下载"
             @click="emit('download')"
           >
-            <IconDownload :size="15" />
+            <IconDownload :size="16" />
             <span>下载</span>
           </button>
 

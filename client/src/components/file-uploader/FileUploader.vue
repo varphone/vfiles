@@ -33,7 +33,7 @@
             type="button"
             @click="retryFailed"
           >
-            <IconRefresh :size="15" />
+            <IconRefresh :size="16" />
             <span>重试失败项</span>
           </button>
           <button
@@ -42,7 +42,7 @@
             type="button"
             @click="clearCompleted"
           >
-            <IconChecklist :size="15" />
+            <IconChecklist :size="16" />
             <span>清除已完成</span>
           </button>
           <button
@@ -51,7 +51,7 @@
             type="button"
             @click="cancelAll"
           >
-            <IconBan :size="15" />
+            <IconBan :size="16" />
             <span>全部取消</span>
           </button>
         </div>

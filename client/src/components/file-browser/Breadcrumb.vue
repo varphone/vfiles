@@ -19,7 +19,7 @@
           @dragleave="onDragLeave(crumb.path)"
           @drop.prevent="onDrop(crumb.path)"
         >
-          <IconHome v-if="index === 0" :size="15" class="path-bar-icon" />
+          <IconHome v-if="index === 0" :size="16" class="path-bar-icon" />
           <span>{{ crumb.name }}</span>
         </a>
 

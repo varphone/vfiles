@@ -6,7 +6,7 @@
   >
     <component
       :is="icon"
-      :size="15"
+      :size="16"
       class="auth-notice-icon"
       aria-hidden="true"
     />

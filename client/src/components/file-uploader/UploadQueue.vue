@@ -33,7 +33,7 @@
               :title="item.status === 'uploading' ? '取消上传' : '从队列移除'"
               @click="emit('cancel', item.id)"
             >
-              <IconX :size="15" />
+              <IconX :size="16" />
               <span>取消</span>
             </button>
             <template v-else>
@@ -44,7 +44,7 @@
                 title="重新加入队列"
                 @click="emit('retry', item.id)"
               >
-                <IconRefresh :size="15" />
+                <IconRefresh :size="16" />
                 <span>重试</span>
               </button>
               <button
@@ -54,7 +54,7 @@
                 aria-label="从列表移除"
                 @click="emit('remove', item.id)"
               >
-                <IconTrash :size="15" />
+                <IconTrash :size="16" />
               </button>
             </template>
           </div>

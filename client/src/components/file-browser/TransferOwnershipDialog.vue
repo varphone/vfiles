@@ -18,7 +18,7 @@
       <div class="transfer-field">
         <label class="transfer-label" for="transfer-target">接收用户</label>
         <div class="transfer-search">
-          <IconSearch :size="15" class="transfer-search-icon" />
+          <IconSearch :size="16" class="transfer-search-icon" />
           <input
             id="transfer-target"
             v-model.trim="keyword"
