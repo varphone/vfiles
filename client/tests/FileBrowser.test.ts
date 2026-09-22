@@ -778,6 +778,11 @@ describe("FileBrowser.vue action column", () => {
     expect(labels).toEqual(
       expect.arrayContaining(["下载", "重命名", "移动", "删除"]),
     );
+    // 加速键标注（r121-122 ✓ Finder/Explorer 菜单标配：重命名=F2、删除=Del）
+    const accels = Array.from(
+      document.querySelectorAll(".vfiles-context-menu__accel"),
+    ).map((el) => el.textContent?.trim());
+    expect(accels).toEqual(expect.arrayContaining(["F2", "Del"]));
   });
 
   it("reveals the batch action bar as soon as a row checkbox is ticked", async () => {

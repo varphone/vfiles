@@ -2569,7 +2569,7 @@
 
 - **加速键标注**（Finder/Explorer/VSCode 右键菜单标配 ✓ 对照补缺）：ContextMenu
   加 `shortcut` 字段 + 右侧 kbd 样式；已标「重命名 F2」（删除项键名形不同按错续记
-  待补）。label 加类名提取（测试稳式 ✓ 加速键文本不混入断言）。
+  待补 → r122 补齐：删除=Del、打开=Enter ✓ 单行式 regex 实形教训）。label 加类名提取（测试稳式 ✓ 加速键文本不混入断言）。
 - **节律 sweep 留档**（r100 后断档 21 轮 ✗✓ 视觉改动多（看板/WebDAV 卡/排序/图标
   归一/骨架）→ r121 双主题 28 张留档 /tmp/ui-sweep-r121 ✓）。
 - **rclone 台架**：环境未装（`RCLONE_NOT_INSTALLED` ✓ 记档待用户环境验）。

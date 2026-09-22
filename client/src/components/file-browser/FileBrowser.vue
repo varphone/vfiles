@@ -1400,7 +1400,7 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
 
   const items: ContextMenuItem[] = [];
   if (isDirectory) {
-    items.push({ key: "open", label: "打开", icon: IconFolderOpen });
+    items.push({ key: "open", label: "打开", icon: IconFolderOpen, shortcut: "Enter" });
     items.push({
       key: "create-directory",
       label: "在此新建子目录",
@@ -1426,7 +1426,7 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
   });
   items.push({ key: "download", label: "下载", icon: IconDownload });
   items.push({ key: "share", label: "分享", icon: IconShare });
-  items.push({ key: "delete", label: "删除", icon: IconTrash, danger: true });
+  items.push({ key: "delete", label: "删除", icon: IconTrash, danger: true, shortcut: "Del" });
   return items;
 });
 
