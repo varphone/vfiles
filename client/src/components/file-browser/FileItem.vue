@@ -1195,8 +1195,3 @@ function share() {
   }
 }
 </style>
-
-/* 紧凑密度（r126 ✓ 行高 48→38、内距压缩 ✓ 主流（Notion/Linear）同款） */
-.desktop-list-shell.is-density-compact .desktop-file-row > td {
-  height: 2.375rem;
-}

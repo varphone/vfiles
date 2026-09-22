@@ -489,3 +489,13 @@ mark.has-background-warning-light {
 .vf-th-sort-icon {
   opacity: 0.55;
 }
+
+/* 紧凑密度（r126 ✓ r136 修正：行高在 tr 上（td 是被撑起的 used value ✗）；
+   跨组件规则入全局（scoped 限定不跨宿主边界 ✗）） */
+.desktop-list-shell.is-density-compact .desktop-file-row {
+  height: 2.375rem;
+}
+
+.desktop-list-shell.is-density-compact .file-skeleton {
+  min-height: 2.375rem;
+}

@@ -186,7 +186,3 @@ import { cardMinWidth } from "../../stores/fileView.store";
   border-radius: var(--vf-radius-sm);
 }
 </style>
-
-.desktop-list-shell.is-density-compact .file-skeleton {
-  min-height: 2.375rem;
-}
