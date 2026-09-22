@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint:styles": "node scripts/check-dead-styles.mjs"
+    "lint:styles": "node scripts/check-dead-styles.mjs",
+    "ui:sweep": "node scripts/ui-sweep.mjs"
   },
   "dependencies": {
     "@tabler/icons-vue": "^3.44.0",

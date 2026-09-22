@@ -2565,6 +2565,24 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.39 截图回归脚本固化（round 35）
+
+- 把 round 34 的 sweep 原型固化为 **`client/scripts/ui-sweep.mjs`**（`bun run ui:sweep`，
+  可配 `--out DIR` / `--keep`），沿用 round 22 死样式扫描的"工具化防回归"模式：
+  1. **round 23 事故的纪律内建**：mktemp 存储库 + 显式 `VFILES_*` 环境的 CLI/服务器
+     + 结束自动清理 —— 工具层面杜绝写入仓库 `data/`；
+  2. 内建历轮教训：铃铛在主文件页截（工具页顶栏无铃铛）、历史改名用唯一名（防撞名）、
+     逐步日志（防崩溃丢结果）；
+  3. playwright 解析回退链（client → /tmp/vf-shot → 安装提示），零 lockfile 变更。
+- **端到端验收**（`bun run ui:sweep -- --out /tmp/ui-sweep-verify`）：
+  | 检查项 | 结果 |
+  | --- | --- |
+  | 产出 | **28 张 PNG + MANIFEST.txt** ✓ |
+  | `data/` mtime 前后 | **未变** ✓ |
+  | 临时环境 | 自动清理 ✓ |
+  | 残留进程 | 0 ✓ |
+- 用法已入 CONTRIBUTING「提交前建议」；lint 基线保持 2 个既有告警，434 用例全绿。
+
 ### 4.38 双主题整页视觉回归（round 34）
 
 - 30 余轮度量驱动修复后的"新眼睛"全表面扫描：**28 张截图**（14 表面 × 双主题）——

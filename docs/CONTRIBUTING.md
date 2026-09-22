@@ -60,6 +60,9 @@ cd client && bun run fmt
 
 - `bun run lint:styles`：死样式扫描（零引用类、无动画引用的 keyframes、花括号不配平），
   对 transition 运行时类、`` `...${...}` `` 拼接前缀族与 highlight.js 类已内置豁免。
+- `bun run ui:sweep`：UI 截图回归（14 表面 × 双主题 = 28 张 PNG 证据集 + MANIFEST）。
+  自带临时库/服务器/夹具/清理全生命周期（显式 `VFILES_*` 环境，**绝不触碰仓库 `data/`**）；
+  可选 `--out DIR` 指定输出、`--keep` 保留临时环境调试。依赖 playwright（未安装时给出提示）。
 
 1. 只提交和当前任务直接相关的改动。
 2. 如果改了 `client/package.json`，同步刷新 `client/bun.lockb`。
