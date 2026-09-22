@@ -2565,6 +2565,27 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.13 组件字面色值清查（round 12）
+
+- 背景：`theme.scss` 开头即约定「组件里的零散色值统一收敛到令牌」，历轮也修过漏网之鱼
+  （Bulma `$primary` 的 #2f6db6、hover 的 rgba(47,109,182)）。本轮全量清查
+  （theme.scss/code-theme.scss 之外的 `#hex/rgb/hsl` 字面值）：**共 10 处**。
+- 分类与修复：
+  | 位置 | 判定 | 处理 |
+  | --- | --- | --- |
+  | 历史版本徽章、移动端按钮 ×3（Home） | 填充面白字 | → `var(--vf-on-accent)`（语义源头，round 1 令牌） |
+  | **通知铃铛未读角标**（`danger-text` 底 + 白字） | **真缺陷**：深色 danger-text 为浅粉，白字 ≈2.2:1 | → `danger-soft` 底 + `danger-text` 字 + 加粗 + `danger` 描边（round 7 验证过的语义配对，保持醒目） |
+  | 访问令牌页 ×2 | `var(令牌, 字面回退)` | 删回退值（theme.scss 必载） |
+  | Loading 白环 | 注释明确「深色遮罩之上保持白」 | **有据可依的例外**，保留 |
+  | bulma.scss `$primary/$link` | 令牌源头 | 允许 |
+- 验证（真实浏览器双主题实测角标对比度）：
+  | 主题 | 改前 | 改后 |
+  | --- | --- | --- |
+  | 浅色 | （白字/粉底 ~5） | **5.01** ✓（rgb(204,15,53) on rgb(254,236,240)） |
+  | 深色 | **≈2.2 ✗** | **5.92** ✓（浅粉字 on soft 粉底） |
+  组件内 `#hex` 字面值清零（除 Loading 的注释例外）；431 用例全绿、无控制台报错；
+  另核实新登录**不会自动展开**通知面板（对截图疑点做了排除）。
+
 ### 4.12 拖起态反馈（round 11）
 
 - 交互（延续第 10 轮拖放反馈）：主流文件管理器拖动时**源项会半透明**（Explorer/Drive 的

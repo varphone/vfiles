@@ -212,8 +212,12 @@ onBeforeUnmount(() => {
   height: 1rem;
   padding: 0 0.2rem;
   border-radius: 999px;
-  background: var(--vf-danger-text);
-  color: #fff;
+  /* 语义配对（round 7 双主题 AA 验证）：原 danger-text 底 + 白字在深色下仅 ≈2.2:1；
+     用 soft 底 / text 字并加强调色描边与字重，保持醒目且达标 */
+  background: var(--vf-danger-soft);
+  color: var(--vf-danger-text);
+  border: 1px solid var(--vf-danger);
+  font-weight: 700;
   font-size: 0.62rem;
   line-height: 1rem;
   text-align: center;

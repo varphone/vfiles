@@ -1006,7 +1006,7 @@ async function renameSelected() {
   height: 1.5rem;
   border-radius: 50%;
   background: var(--vf-accent);
-  color: #ffffff;
+  color: var(--vf-on-accent);
   font-size: 0.74rem;
   font-weight: 700;
 }
@@ -1149,12 +1149,12 @@ async function renameSelected() {
 
 .mobile-action-buttons .button.is-link {
   background: var(--vf-accent);
-  color: #ffffff;
+  color: var(--vf-on-accent);
 }
 
 .mobile-action-buttons .button.is-link:hover {
   background: var(--vf-accent-strong);
-  color: #ffffff;
+  color: var(--vf-on-accent);
 }
 
 .mobile-action-buttons {

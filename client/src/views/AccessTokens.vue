@@ -495,12 +495,12 @@ onMounted(async () => {
 }
 
 .tokens-status.is-active {
-  background: var(--vf-success-soft, rgba(35, 134, 54, 0.12));
+  background: var(--vf-success-soft);
   color: var(--vf-success-text);
 }
 
 .tokens-status.is-expired {
-  background: var(--vf-warning-soft, rgba(154, 103, 0, 0.12));
+  background: var(--vf-warning-soft);
   color: var(--vf-warning-text);
 }
 
