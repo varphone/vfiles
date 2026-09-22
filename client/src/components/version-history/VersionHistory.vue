@@ -124,7 +124,19 @@
               <span>{{ diff.error }}</span>
             </p>
 
-            <pre v-else class="diff-text">{{ diff.text }}</pre>
+            <div v-else class="diff-block" role="group" aria-label="版本对比">
+              <div
+                v-for="(line, i) in diffLines"
+                :key="i"
+                class="diff-line"
+                :class="`is-${line.kind}`"
+              >
+                <span class="diff-sign" aria-hidden="true">{{
+                  line.sign
+                }}</span>
+                <span class="diff-code">{{ line.text || " " }}</span>
+              </div>
+            </div>
           </div>
         </template>
 
@@ -307,6 +319,31 @@ const diff = ref({
   hash: "",
   parent: "" as string | undefined,
   text: "",
+});
+
+/** unified diff 解析为结构行（主流 diff 语言：± 色带 + 行首符号 + hunk/meta 弱化）。 */
+const diffLines = computed(() => {
+  const raw = diff.value.text ?? "";
+  return raw
+    .split("\n")
+    .filter(
+      (line: string, i: number, arr: string[]) =>
+        !(i === arr.length - 1 && line === ""),
+    )
+    .map((line: string) => {
+      if (line.startsWith("@@")) return { kind: "hunk", sign: "", text: line };
+      if (line.startsWith("+++") || line.startsWith("---"))
+        return { kind: "meta", sign: "", text: line };
+      if (line.startsWith("+"))
+        return { kind: "add", sign: "+", text: line.slice(1) };
+      if (line.startsWith("-"))
+        return { kind: "del", sign: "−", text: line.slice(1) };
+      return {
+        kind: "ctx",
+        sign: " ",
+        text: line.startsWith(" ") ? line.slice(1) : line,
+      };
+    });
 });
 
 type PreviewKind =
@@ -942,16 +979,52 @@ function loadMore() {
   padding: 0.5rem 0 0.2rem;
 }
 
-.diff-text {
-  margin: 0;
-  padding: 0.6rem;
+.diff-block {
+  display: flex;
+  flex-direction: column;
+  max-height: 56vh;
+  overflow: auto;
+  border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
-  background: var(--vf-code-bg, var(--vf-surface-sunken));
-  color: var(--vf-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.78rem;
-  line-height: 1.5;
+}
+
+.diff-line {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.1rem 0.5rem;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.diff-sign {
+  flex: 0 0 1.1rem;
+  text-align: center;
+  user-select: none;
+  font-weight: 600;
+}
+
+/* ± 色带用 round-7 双主题 AA 配对（soft 底 + text 字） */
+.diff-line.is-add {
+  background: var(--vf-success-soft);
+  color: var(--vf-success-text);
+}
+
+.diff-line.is-del {
+  background: var(--vf-danger-soft);
+  color: var(--vf-danger-text);
+}
+
+.diff-line.is-hunk {
+  background: var(--vf-surface-sunken);
+  color: var(--vf-text-muted);
+  font-size: 0.72rem;
+}
+
+.diff-line.is-meta {
+  color: var(--vf-text-subtle);
+  font-size: 0.72rem;
 }
 
 .preview-code,

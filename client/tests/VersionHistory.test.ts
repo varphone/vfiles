@@ -187,8 +187,14 @@ describe("VersionHistory.vue", () => {
       within(secondRow).getByRole("button", { name: "对比" }),
     );
     await waitFor(() =>
-      expect(container.querySelector(".diff-text")).not.toBeNull(),
+      expect(container.querySelector(".diff-block")).not.toBeNull(),
     );
+    // 结构化逐行渲染（unified diff 解析为 ± 色带行）
+    expect(
+      container.querySelector(
+        ".diff-line.is-add, .diff-line.is-del, .diff-line.is-ctx",
+      ),
+    ).not.toBeNull();
     expect(
       container.querySelector(".history-detail-label")?.textContent,
     ).toContain("版本对比");
@@ -198,7 +204,7 @@ describe("VersionHistory.vue", () => {
       within(secondRow).getByRole("button", { name: "预览" }),
     );
     await waitFor(() =>
-      expect(container.querySelector(".diff-text")).toBeNull(),
+      expect(container.querySelector(".diff-block")).toBeNull(),
     );
     expect(
       container.querySelector(".history-detail-label")?.textContent,

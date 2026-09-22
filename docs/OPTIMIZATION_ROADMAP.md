@@ -2565,6 +2565,29 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.41 版本对比（diff）视图重构（round 37）
+
+- 审计**最后一个从未看过的表面**：历史对话框「对比」——发现**视觉语言完全缺失** ✗✗：
+  `VersionHistory.vue` 的 `<pre class="diff-text">{{ diff.text }}</pre>` 把**原始
+  unified diff 补丁文本**（`--- empty / +++ <hash> / @@ … @@ / ±行`）直接倾倒进等宽块
+  （`preKids: []` 零行结构），与主流（GitHub/Drive 的逐行 ± 色带 + 行首符号槽）差距悬殊。
+- 重构为**主流逐行结构化渲染**：
+  - 解析 unified diff → `meta / hunk / add / del / ctx` 五类结构行（computed `diffLines`）；
+  - 渲染：行首符号槽（`+`/`−`/空）+ **± 色带 = round-7 双主题 AA 软底/文字配对**
+    （success-soft/text、danger-soft/text）+ hunk 用 surface-sunken/文字弱化 + meta 弱化；
+  - `.diff-block`：monospace、8px 圆角、发丝边、**56vh 独立滚动**。
+- 验证（UI 上传造 v2 → 对比；接口层写内容是 multipart 上传管线，`PUT …/content` 405）：
+  | 行类 | 深色 | 浅色 | 样例 |
+  | --- | --- | --- | --- |
+  | `is-add` | **7.55** ✓ | 6.12 ✓ | `+第一行` |
+  | `is-hunk` | 5.82 ✓ | 6.12 ✓ | `@@ -0,0 +1,3` |
+  | `is-meta` | 5.54 ✓ | ✓ | `--- empty` |
+  全部 ≥4.5 AA ✓；截图 `ui-r76/{light,dark}-diff.png` ✓；
+  单测**随行为更新并强化**（断言 `.diff-block` + `.diff-line.is-*` 结构 = 守护解析器），
+  434 用例全绿。
+- 过程注记：`diff` 是 `ref`（脚本内 `.value` ✓ 模板自动解包）；删除 `.diff-text` 死样式
+  保持 lint:styles 绿 ✓。
+
 ### 4.40 图表色板视觉评审 + check 聚合（round 36）
 
 - **图表色板评审**（唯一从未动过的视觉面，至此配色轴全部有数据/目检背书）：
