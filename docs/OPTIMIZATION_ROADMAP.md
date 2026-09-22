@@ -2565,6 +2565,24 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.25 树目录落点提示（round 24）
+
+- 补完拖放故事（rounds 10–13）的最后一块：列表行/网格卡片已有「移动到「名称」」chip，
+  **树条目只有高亮没有目标标识**。复用全局 `.desktop-drop-hint`（round 13 语言），
+  在 `DirectoryTree` 的条目内按 `dragOverPath` 渲染 chip（树无行尾「⋯」，右距收紧 0.35rem）。
+- **顺带解开 round 10 的遗留谜团**：当时树的 `is-drag-over` "没触发"被略过——真因是
+  **探针竞态**（非应用 bug）：`onDragOver` 有 `if (!props.dragging) return;` 守卫，
+  而 `dragging` prop 要等 Vue 下一拍更新，dragstart 与 dragover 同拍派发时守卫拦下；
+  真实拖拽事件跨时间轴无此问题。探针在 dragstart 后等 250ms 再派发 dragover 即稳定复现。
+- 验证（真实浏览器 + 单测）：
+  | 检查项 | 实测 |
+  | --- | --- |
+  | 拖入树条目 | chip「移动到「项目库」」+ `is-drag-over` 高亮 ✓ |
+  | 拖走 | chip 消失 ✓ |
+  | 控制台 | 零报错 ✓ |
+  新增单测（`DirectoryTree.test.ts`：`dragging` prop + dragOver/dragLeave 生命周期），
+  前端 62 文件 / **433** 用例全绿。至此拖放四要素齐备：落点高亮 / 源项变淡 / 目标标识（行、卡、树）/ 完成 toast。
+
 ### 4.24 操作反馈文案上下文化（round 23）
 
 - 交互轮：拖放移动的反馈链路实测**已存在**（toast + 铃铛 + 列表刷新 ✓），但对照主流

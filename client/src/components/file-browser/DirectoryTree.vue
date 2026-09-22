@@ -51,6 +51,15 @@
             <IconFolder :size="15" class="directory-tree-icon" />
             <span class="directory-tree-name">{{ row.name }}</span>
           </button>
+
+          <!-- 拖放目标提示：与列表行/网格卡片一致（round 13 语言） -->
+          <span
+            v-if="dragOverPath === row.path"
+            class="desktop-drop-hint"
+            aria-hidden="true"
+          >
+            移动到「{{ row.name }}」
+          </span>
         </div>
 
         <p v-if="rows.length === 0" class="directory-tree-hint">
@@ -283,6 +292,11 @@ function onDrop(path: string) {
 .directory-tree-item.is-drag-over {
   background: var(--vf-accent-soft);
   outline: 1px dashed var(--vf-accent);
+}
+
+/* 树条目没有行尾「⋯」按钮，chip 收紧右距 */
+.directory-tree-item .desktop-drop-hint {
+  right: 0.35rem;
 }
 
 .directory-tree-twisty {

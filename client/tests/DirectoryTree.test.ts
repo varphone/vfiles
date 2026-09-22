@@ -189,3 +189,32 @@ describe("DirectoryTree.vue", () => {
     expect(idle.emitted()["drop-on-folder"]).toBeUndefined();
   });
 });
+
+describe("DirectoryTree.vue drop hint", () => {
+  beforeEach(() => {
+    getFilesPageMock.mockReset();
+    installTree();
+  });
+
+  it("shows the target folder name while dragging over a row and hides it on leave", async () => {
+    renderTree({ dragging: true });
+
+    await waitFor(() => {
+      expect(screen.getByText("docs")).toBeInTheDocument();
+    });
+    const item = screen.getByText("docs").closest(".directory-tree-item")!;
+
+    fireEvent.dragOver(item);
+    await waitFor(() =>
+      expect(item.querySelector(".desktop-drop-hint")?.textContent).toContain(
+        "移动到「docs」",
+      ),
+    );
+    expect(item.classList.contains("is-drag-over")).toBe(true);
+
+    fireEvent.dragLeave(item);
+    await waitFor(() =>
+      expect(item.querySelector(".desktop-drop-hint")).toBeNull(),
+    );
+  });
+});
