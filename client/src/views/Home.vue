@@ -1020,7 +1020,7 @@ async function renameSelected() {
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 2000;
+  z-index: 900;
   background: var(--vf-app-bar);
   border-top: 1px solid var(--vf-border-weak);
   box-shadow: none;

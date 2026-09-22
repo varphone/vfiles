@@ -280,7 +280,7 @@ onBeforeUnmount(() => {
   right: 0;
   width: max-content;
   max-width: min(calc(100vw - 2rem), 28rem);
-  z-index: 25;
+  z-index: 30;
   opacity: 1;
   isolation: isolate;
   /* 背景/阴影继承 .desktop-search-panel（raised + 菜单阴影，与其它弹层一致） */
