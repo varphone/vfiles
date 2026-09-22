@@ -112,7 +112,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         })
     };
     let app = WebdavApplication {
-        namespace_id: namespace_id.clone(),
+        namespaces: namespaces.clone(),
         entry_repo: entry_repo.clone() as Arc<dyn EntryRepo + Send + Sync>,
         verify,
         locks: Arc::new(vfiles_webdav::LockTable::new()),

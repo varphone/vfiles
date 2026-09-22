@@ -1,16 +1,23 @@
 <template>
   <main class="vf-page-card">
     <header class="vf-page-header">
-      <h1 class="vf-page-title">系统信息</h1>
-      <p class="vf-page-subtitle">运行时与统计概览（仅管理员可见）</p>
+      <div>
+        <h1 class="vf-page-title">系统信息</h1>
+        <p class="vf-page-subtitle">运行时与统计概览（仅管理员可见）</p>
+      </div>
+      <!-- 标准工具条（用户令 ✓ 与 我的分享/审计/用户管理 同式 = 刷新 + 返回文件） -->
+      <div class="vf-page-actions">
+        <button
+          class="vf-ghost-button system-info-refresh"
+          type="button"
+          :disabled="loading"
+          @click="load"
+        >
+          刷新
+        </button>
+        <RouterLink class="vf-ghost-button" to="/">返回文件</RouterLink>
+      </div>
     </header>
-
-    <!-- 管理页互链（主流管理区式 ✓ 零导航债） -->
-    <p class="system-info-links">
-      <RouterLink to="/admin/users">‹ 返回用户管理</RouterLink>
-      <RouterLink to="/admin/audit">‹ 返回审计日志</RouterLink>
-      <RouterLink to="/system-info" class="is-current">‹ 系统信息</RouterLink>
-    </p>
 
     <!-- 系统卡（新端点 ✓ 零依赖段） -->
     <section class="system-info-card" aria-label="系统信息">
@@ -71,29 +78,28 @@ const uptimeLabel = computed(() => {
   return h > 0 ? `${h} 小时 ${m} 分` : `${m} 分 ${s % 60} 秒`;
 });
 
-onMounted(async () => {
-  const [sys, users] = await Promise.all([
-    authService.systemInfo(),
-    authService.listUsers(),
-  ]);
-  if (sys.success && sys.data) info.value = sys.data;
-  else if (!sys.success) app.error(sys.error || "加载系统信息失败");
-  if (users.success && users.data) userTotal.value = users.data.total_count ?? null;
-});
+const loading = ref(false);
+
+async function load() {
+  loading.value = true;
+  try {
+    const [sys, users] = await Promise.all([
+      authService.systemInfo(),
+      authService.listUsers(),
+    ]);
+    if (sys.success && sys.data) info.value = sys.data;
+    else if (!sys.success) app.error(sys.error || "加载系统信息失败");
+    if (users.success && users.data) userTotal.value = users.data.total_count ?? null;
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(load);
 </script>
 
 <style scoped>
-.system-info-links {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 1.2rem;
-  font-size: 0.82rem;
-}
 
-.system-info-links .is-current {
-  font-weight: 600;
-  color: var(--vf-accent-text);
-}
 
 .system-info-card {
   margin-bottom: 1.2rem;

@@ -39,8 +39,8 @@ describe("SystemInfo.vue (r106 看板)", () => {
     expect(screen.getByText("存储与用量")).toBeInTheDocument();
     // 用户统计（listUsers total_count ✓）
     await waitFor(() => expect(screen.getByText("2")).toBeInTheDocument());
-    // 管理页互链（零导航债 ✓）
-    expect(screen.getByText("‹ 返回用户管理")).toBeInTheDocument();
-    expect(screen.getByText("‹ 返回审计日志")).toBeInTheDocument();
+    // 标准工具条（用户令 ✓ 刷新 + 返回文件 ✓ 与 我的分享/审计 同式）
+    expect(screen.getByText("刷新")).toBeInTheDocument();
+    expect(screen.getByText("返回文件")).toBeInTheDocument();
   });
 });

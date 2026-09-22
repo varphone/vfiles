@@ -35,7 +35,9 @@ pub struct WebdavSettings {
 /// - `entry_repo`：PROPFIND 数据源（find_by_path / find_children ✓）。
 #[derive(Clone)]
 pub struct WebdavApplication {
-    pub namespace_id: vfiles_domain::types::NamespaceId,
+    /// per-user 命名空间服务（r109e ✓ `ensure_default_for_owner` 映射真身 ✓
+    /// 语义 = FTP UserDetailProvider 同链 ✓ 多用户隔离 ✓）。
+    pub namespaces: vfiles_app::NamespaceService,
     pub entry_repo: Arc<dyn vfiles_domain::repo::EntryRepo + Send + Sync>,
     /// Basic 凭据校验回调（r106 安全段 ✓ 挡匿名/坏格式/无效凭据 = 401；回 User = 审计链 ✓）。
     pub verify: crate::auth::VerifyFn,
@@ -60,6 +62,7 @@ fn if_token(header: &str) -> Option<String> {
 async fn lock_op(
     app: Option<WebdavApplication>,
     user: Option<vfiles_domain::types::User>,
+    ns: Option<vfiles_domain::types::NamespaceId>,
     uri_path: String,
 ) -> Response {
     let Some(app) = app else {
@@ -68,8 +71,12 @@ async fn lock_op(
     let Some(user) = user else {
         return www_authenticate();
     };
+    let Some(ns) = ns else {
+        return internal_error();
+    };
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/').to_string();
-    match app.locks.lock(&rel, user.username.as_str()) {
+    let lock_key = format!("{ns}:{rel}");
+    match app.locks.lock(&lock_key, user.username.as_str()) {
         Some(entry) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
@@ -90,10 +97,14 @@ async fn lock_op(
 /// UNLOCK（r109a ✓ `Lock-Token` 头匹配解 ✓ 不匹配 = 409 ✓ **纯拥有参**（#46 纪律））。
 async fn unlock_op(
     app: Option<WebdavApplication>,
+    ns: Option<vfiles_domain::types::NamespaceId>,
     uri_path: String,
     token_raw: Option<String>,
 ) -> Response {
     let Some(app) = app else {
+        return internal_error();
+    };
+    let Some(ns) = ns else {
         return internal_error();
     };
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/').to_string();
@@ -111,7 +122,8 @@ async fn unlock_op(
             .body(Body::empty())
             .unwrap();
     };
-    match app.locks.unlock(&rel, &token) {
+    let lock_key = format!("{ns}:{rel}");
+    match app.locks.unlock(&lock_key, &token) {
         Some(_) => Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(Body::empty())
@@ -141,6 +153,7 @@ enum WriteOp {
 async fn write_op(
     app: Option<WebdavApplication>,
     user: Option<vfiles_domain::types::User>,
+    ns: Option<vfiles_domain::types::NamespaceId>,
     uri_path: String,
     dest_raw: Option<String>,
     if_header: Option<String>,
@@ -158,9 +171,12 @@ async fn write_op(
     let Some(user) = user else {
         return www_authenticate();
     };
+    let Some(ns) = ns else {
+        return internal_error();
+    };
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/');
     // 写锁校验（r109a ✓）：被锁路径无 If token = 423 Locked（RFC 4918 §6 ✓）
-    if let Some(entry) = app.locks.blocked(rel) {
+    if let Some(entry) = app.locks.blocked(&format!("{ns}:{rel}")) {
         // If 头 token 匹配 = 放行（简式 ✓ 复杂式 = 412 记档）
         let has_token = if_header
             .as_deref()
@@ -183,7 +199,6 @@ async fn write_op(
                 .unwrap()
         }
     };
-    let ns = app.namespace_id.clone();
     let uid = user.id.clone();
     let result = match op {
         WriteOp::Mkcol => app.write.mkcol(&ns, &path, &uid).await,
@@ -263,11 +278,13 @@ fn router(app: WebdavApplication) -> Router {
 /// 同步段提取拥有值是教科书 Send 修复式 ✓ r105 破案记档）。
 async fn propfind_owned(
     app: Option<WebdavApplication>,
+    ns: Option<vfiles_domain::types::NamespaceId>,
     path: String,
     depth: String,
 ) -> Result<String, StatusCode> {
     use vfiles_domain::repo::EntryRepo;
     let app = app.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let ns = ns.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let depth = depth.as_str();
     if depth == "infinity" {
         return Err(StatusCode::BAD_REQUEST);
@@ -295,7 +312,7 @@ async fn propfind_owned(
     } else {
         let entry = app
             .entry_repo
-            .find_by_path(&app.namespace_id, &path)
+            .find_by_path(&ns, &path)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let Some(entry) = entry else {
@@ -312,7 +329,7 @@ async fn propfind_owned(
     if depth == "1" {
         let children = app
             .entry_repo
-            .find_children(&app.namespace_id, &path)
+            .find_children(&ns, &path)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         for child in children {
@@ -357,8 +374,17 @@ async fn dav(mut req: axum::extract::Request) -> Response {
         let Some(user) = (app_ref.verify)(u, pw).await else {
             return www_authenticate();
         };
-        // 审计链贯通（写分支用 user.id ✓ 记入 MutationResult）
+        // per-user ns 动态映射（r109e ✓ ensure_default_for_owner ✓ 多用户隔离）
+        let ns = match app_ref
+            .namespaces
+            .ensure_default_for_owner(&user.id)
+            .await
+        {
+            Ok(ns) => ns,
+            Err(_) => return internal_error(),
+        };
         req.extensions_mut().insert(user);
+        req.extensions_mut().insert(ns);
     }
     match *req.method() {
         Method::OPTIONS => Response::builder()
@@ -378,7 +404,11 @@ async fn dav(mut req: axum::extract::Request) -> Response {
                 .unwrap_or("1")
                 .to_string();
             let app = req.extensions().get::<WebdavApplication>().cloned();
-            match propfind_owned(app, path_owned, depth_owned).await {
+            let ns_owned = req
+                .extensions()
+                .get::<vfiles_domain::types::NamespaceId>()
+                .cloned();
+            match propfind_owned(app, ns_owned, path_owned, depth_owned).await {
                 Ok(xml) => Response::builder()
                     .status(StatusCode::MULTI_STATUS)
                     .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
@@ -401,10 +431,14 @@ async fn dav(mut req: axum::extract::Request) -> Response {
                 .get("lock-token")
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
+            let ns_owned = req
+                .extensions()
+                .get::<vfiles_domain::types::NamespaceId>()
+                .cloned();
             if m.as_str() == "LOCK" {
-                lock_op(app_owned, user_owned, uri_owned).await
+                lock_op(app_owned, user_owned, ns_owned, uri_owned).await
             } else {
-                unlock_op(app_owned, uri_owned, token_owned).await
+                unlock_op(app_owned, ns_owned, uri_owned, token_owned).await
             }
         }
         // 写法（r108' ✓ MKCOL/DELETE/MOVE 实装；PUT = r109'（分片链）；COPY = 501 记档）。
@@ -423,12 +457,16 @@ async fn dav(mut req: axum::extract::Request) -> Response {
                 .get("if")
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
+            let ns_owned = req
+                .extensions()
+                .get::<vfiles_domain::types::NamespaceId>()
+                .cloned();
             let op = match m.as_str() {
                 "MKCOL" => WriteOp::Mkcol,
                 "DELETE" => WriteOp::Delete,
                 _ => WriteOp::Move,
             };
-            write_op(app_owned, user_owned, uri_owned, dest_owned, if_owned, op).await
+            write_op(app_owned, user_owned, ns_owned, uri_owned, dest_owned, if_owned, op).await
         }
         ref m if m.as_str() == "COPY" => Response::builder()
             .status(StatusCode::NOT_IMPLEMENTED)
