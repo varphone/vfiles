@@ -1,10 +1,10 @@
 <template>
   <div class="audit-page">
-    <div class="audit-card">
+    <div class="audit-card vf-page-card">
       <header class="audit-header">
         <div class="audit-header-titles">
-          <h1 class="audit-title">审计日志</h1>
-          <p class="audit-subtitle">
+          <h1 class="audit-title vf-page-title">审计日志</h1>
+          <p class="audit-subtitle vf-page-subtitle">
             共 {{ total }} 条记录
             <template v-if="items.length < total">
               · 当前显示 {{ items.length }} 条
@@ -579,16 +579,6 @@ onMounted(() => {
   padding: 1.25rem 1rem 3rem;
 }
 
-.audit-card {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 1.1rem 1.2rem 1.3rem;
-  border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-lg);
-  background: var(--vf-surface);
-  box-shadow: var(--vf-shadow-card);
-}
-
 .audit-header {
   display: flex;
   align-items: flex-start;
@@ -597,19 +587,6 @@ onMounted(() => {
   flex-wrap: wrap;
   padding-bottom: 0.8rem;
   border-bottom: 1px solid var(--vf-border-weak);
-}
-
-.audit-title {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: var(--vf-text-strong);
-}
-
-.audit-subtitle {
-  margin: 0.15rem 0 0;
-  color: var(--vf-text-muted);
-  font-size: 0.8rem;
 }
 
 .audit-header-actions {

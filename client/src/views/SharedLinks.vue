@@ -1,10 +1,10 @@
 <template>
   <div class="shares-page">
-    <div class="shares-card">
+    <div class="shares-card vf-page-card">
       <header class="shares-header">
         <div class="shares-header-titles">
-          <h1 class="shares-title">我的分享</h1>
-          <p class="shares-subtitle">
+          <h1 class="shares-title vf-page-title">我的分享</h1>
+          <p class="shares-subtitle vf-page-subtitle">
             共 {{ shares.length }} 个链接
             <template v-if="activeShares.length !== shares.length">
               · 有效 {{ activeShares.length }} 个
@@ -444,16 +444,6 @@ onMounted(() => {
   padding: 1.25rem 1rem 3rem;
 }
 
-.shares-card {
-  max-width: 1000px;
-  margin: 0 auto;
-  padding: 1.1rem 1.2rem 1.3rem;
-  border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-lg);
-  background: var(--vf-surface);
-  box-shadow: var(--vf-shadow-card);
-}
-
 .shares-header {
   display: flex;
   align-items: flex-start;
@@ -462,19 +452,6 @@ onMounted(() => {
   flex-wrap: wrap;
   padding-bottom: 0.8rem;
   border-bottom: 1px solid var(--vf-border-weak);
-}
-
-.shares-title {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: var(--vf-text-strong);
-}
-
-.shares-subtitle {
-  margin: 0.15rem 0 0;
-  color: var(--vf-text-muted);
-  font-size: 0.8rem;
 }
 
 .shares-header-actions {

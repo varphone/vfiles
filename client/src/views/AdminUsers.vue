@@ -1,11 +1,11 @@
 <template>
   <div class="admin-page">
-    <div class="admin-card">
+    <div class="admin-card vf-page-card">
       <!-- 页头：标题 + 概览 + 搜索/刷新（与文件浏览器的卡片语言一致） -->
       <header class="admin-header">
         <div class="admin-header-titles">
-          <h1 class="admin-title">用户管理</h1>
-          <p class="admin-subtitle">
+          <h1 class="admin-title vf-page-title">用户管理</h1>
+          <p class="admin-subtitle vf-page-subtitle">
             共 {{ users.length }} 位用户
             <template v-if="filteredUsers.length !== users.length">
               · 当前显示 {{ filteredUsers.length }} 位
@@ -513,16 +513,6 @@ onMounted(() => {
   padding: 1.25rem 1rem 3rem;
 }
 
-.admin-card {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 1.1rem 1.2rem 1.3rem;
-  border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-lg);
-  background: var(--vf-surface);
-  box-shadow: var(--vf-shadow-card);
-}
-
 .admin-header {
   display: flex;
   align-items: flex-start;
@@ -531,19 +521,6 @@ onMounted(() => {
   flex-wrap: wrap;
   padding-bottom: 0.8rem;
   border-bottom: 1px solid var(--vf-border-weak);
-}
-
-.admin-title {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: var(--vf-text-strong);
-}
-
-.admin-subtitle {
-  margin: 0.15rem 0 0;
-  color: var(--vf-text-muted);
-  font-size: 0.8rem;
 }
 
 .admin-header-actions {

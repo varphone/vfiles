@@ -2565,6 +2565,22 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.4 工具页共享外壳（round 4）
+
+- 数据驱动审计（浏览器实测四页卡片的计算样式）发现分歧：
+  | 页面 | 圆角 | 内边距 | 标题字重 | 最大宽 |
+  | --- | --- | --- | --- | --- |
+  | 分享 / 审计 / 用户管理 | 14px | 1.1/1.2/1.3rem | 700 | 1000 / 1200 / 1100 |
+  | **访问令牌** | **10px** | **1/1.25/1.5rem** | **600** | 1040 |
+- 修复方式（去重而非各页各改）：在 `controls.scss` 新增共享类
+  **`.vf-page-card` / `.vf-page-title` / `.vf-page-subtitle`**，四页挂类并删除各自的
+  重复 CSS；同时统一最大宽度为 **1200px**（表格页呼吸一致）。
+- 复审实测（重建前端后）：四页 **完全一致** —— 圆角 14px、内边距 17.6/19.2/20.8px、
+  标题 18.4px/700、宽度 1200px（`四页完全一致: True`）；文件浏览器保持自身外壳
+  （14px 圆角与工具页一致，1280px 全宽为设计取舍）。
+- 验证：浅/深双主题截图（`ui-r42/tokens-*.png`、`audit-*.png`）无破版、无控制台报错；
+  前端 62 文件 / 430 用例全绿（tsc/lint/prettier/构建通过）。
+
 ### 4.3 sticky 列头修复 + M3 入场动效（round 3）
 
 - **修复 sticky 列头从未生效**（round 2 验证中发现的既有缺陷）：`.desktop-list-shell thead th`

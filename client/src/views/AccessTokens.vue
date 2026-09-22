@@ -1,10 +1,10 @@
 <template>
   <div class="tokens-page">
-    <div class="tokens-card">
+    <div class="tokens-card vf-page-card">
       <header class="tokens-header">
         <div class="tokens-header-titles">
-          <h1 class="tokens-title">访问令牌</h1>
-          <p class="tokens-subtitle">
+          <h1 class="tokens-title vf-page-title">访问令牌</h1>
+          <p class="tokens-subtitle vf-page-subtitle">
             给 CLI、构建系统等程序使用的 API 凭证，用
             <code>Authorization: Bearer &lt;token&gt;</code> 调用接口
           </p>
@@ -416,15 +416,6 @@ onMounted(async () => {
   padding: 1.25rem;
 }
 
-.tokens-card {
-  width: min(1040px, 100%);
-  padding: 1rem 1.25rem 1.5rem;
-  border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius);
-  background: var(--vf-surface);
-  box-shadow: var(--vf-shadow-card);
-}
-
 .tokens-header {
   display: flex;
   align-items: flex-start;
@@ -433,19 +424,6 @@ onMounted(async () => {
   flex-wrap: wrap;
   padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--vf-border-weak);
-}
-
-.tokens-title {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 600;
-  color: var(--vf-text-strong);
-}
-
-.tokens-subtitle {
-  margin: 0.2rem 0 0;
-  color: var(--vf-text-muted);
-  font-size: 0.8rem;
 }
 
 .tokens-subtitle code {
