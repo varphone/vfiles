@@ -29,7 +29,7 @@ router.beforeEach(async (to) => {
     await authStore.fetchMe();
   }
 
-  const publicRoutes = new Set(["login", "forgot-password", "reset-password"]);
+  const publicRoutes = new Set(["login", "forgot-password", "reset-password", "not-found"]);
 
   // 未启用认证：不做拦截
   if (!authStore.enabled) {
