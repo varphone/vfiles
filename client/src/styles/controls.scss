@@ -496,6 +496,14 @@ mark.has-background-warning-light {
   height: 2.375rem;
 }
 
+/* 触屏下紧凑行高提到 44px（r159 ✓ 命中区冲突修正：38px < HIG 44pt ✗
+   主流对齐 = 触屏列表行高不缩破命中区） */
+@media (pointer: coarse) {
+  .desktop-list-shell.is-density-compact .desktop-file-row {
+    height: 2.75rem;
+  }
+}
+
 .desktop-list-shell.is-density-compact .file-skeleton {
   min-height: 2.375rem;
 }
