@@ -2565,6 +2565,20 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.60 transition 降级映射表（round 54，reduced-motion 二部收官）
+
+- 映射表第二式：**transition × 降级**。关键区分（有据）：
+  - **动效类**（`transform`/`width`/`all` 含位移或布局动画）→ 必须降级（前庭风险 ✓）；
+  - **色/透明/阴影淡入**（color/bg/opacity/box-shadow）→ **豁免**（无位移 = 低风险 ✓
+    GitHub 等主流亦保留 hover 淡入）。
+- 盘点：动效类过渡 6 项（transform ×5 + width ×1，`all` 1 项含动效可能）分布于
+  **7 文件**，其中 FilePreviewModal 已有守卫（r53）✓ **7 文件缺失** ✗✗
+  （DropZone / FtpImportHint / DirectoryTree / FileItem / SidebarOverview /
+  BrowserSearchBox / BreadcrumbTreeMenu）——均补 r53 家族降级块 ✓。
+- **reduced-motion 二部终态**：动画表（r53）+ 过渡表（r54）**全绿** ✓ ——
+  可访问性轴的动效降级至此全覆盖。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 732 ✓ 431 用例 ✓ 构建 ✓）。
+
 ### 4.59 reduced-motion 动画清单补全 + 可见实例工具语（round 53）
 
 - **动画 × 降级守卫映射表**（全量）：

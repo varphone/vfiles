@@ -240,4 +240,16 @@ onMounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* reduced-motion：transform/width/all 过渡含位移或布局动画，降级为瞬时
+   （色/透明/阴影类淡入不在此列 = 无位移风险）。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 </style>
