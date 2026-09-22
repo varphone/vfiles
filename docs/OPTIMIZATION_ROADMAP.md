@@ -2565,6 +2565,16 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.61 覆盖上传交互提案 + reduced-motion 约定入档（round 55）
+
+- **产品面提案**（r41/r51 遗留决策项 → 可决策文档）：`docs/PROPOSAL_OVERWRITE_UPLOAD.md`
+  ——主流四家对比（Drive/Dropbox/OneDrive/Box）+ 我方差异化「**替换 = 生成新版本，
+  历史永不丢失**」（Box 同路 ✓ 版本控制原生语义）+ 阶段一（覆盖上传）完整交互草案
+  （冲突对话框三选项/批量模式/版本消息/移动端抽屉）+ 阶段二（编辑器）暂不立项建议
+  + **4 个决策点待定夺**（A 是否做 / B 默认主行动 / C 备注框 / D 编辑器立项）。
+- **DESIGN_TOKENS 约定节补 reduced-motion 条目**（r53/54 两表结论固化 ✓ + 可见实例
+  工具语并入）。
+
 ### 4.60 transition 降级映射表（round 54，reduced-motion 二部收官）
 
 - 映射表第二式：**transition × 降级**。关键区分（有据）：

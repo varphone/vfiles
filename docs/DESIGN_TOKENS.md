@@ -83,4 +83,8 @@
 2. 新增样式取值先查本页刻度（离散档优先于随手值）；
 3. 交互件尺寸语言：控件 36px 药丸 / 主行动 40px / chips 32px（M3）；
 4. 提交前跑**五门禁**：`bunx vue-tsc --noEmit` → `bun run check` → `bun run build`；
-5. 状态审计工具语：`DOM.querySelectorAll` + `CSS.forcePseudoState`（强制 hover/press/focus）。
+5. 状态审计工具语：`DOM.querySelectorAll` + `CSS.forcePseudoState`（强制 hover/press/focus）；
+   条件渲染目标须 `offsetParent !== null` 过滤 + 目标专属文本锚。
+6. **reduced-motion 约定**（r53/54 二部全绿）：循环动画（spin/shimmer/pulse）与
+   **动效类过渡**（transform/width/all）必须有降级块（`animation-duration: 0.01ms +
+   iteration 1 + transition-duration: 0.01ms`）；色/透明/阴影淡入**豁免**（无位移风险）。
