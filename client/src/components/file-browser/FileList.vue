@@ -9,7 +9,7 @@
       </colgroup>
       <thead>
         <tr>
-          <th class="is-narrow">
+          <th scope="col" class="is-narrow">
             <label v-if="selectMode" class="file-list-select-all" @click.stop>
               <input
                 type="checkbox"
@@ -20,7 +20,7 @@
               />
             </label>
           </th>
-          <th
+          <th scope="col"
             v-for="column in columns"
             :key="column.field"
             :class="[column.narrow ? 'is-narrow' : '', column.align || '']"
@@ -47,7 +47,7 @@
               />
             </button>
           </th>
-          <th
+          <th scope="col"
             v-if="showActionColumn"
             class="is-narrow has-text-right file-list-actions-header"
           >

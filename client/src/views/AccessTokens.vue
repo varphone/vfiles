@@ -81,13 +81,13 @@
         <table class="tokens-table">
           <thead>
             <tr>
-              <th>名称</th>
-              <th>令牌</th>
-              <th>创建时间</th>
-              <th>最近使用</th>
-              <th>有效期</th>
-              <th>状态</th>
-              <th class="tokens-actions-head">操作</th>
+              <th scope="col">名称</th>
+              <th scope="col">令牌</th>
+              <th scope="col">创建时间</th>
+              <th scope="col">最近使用</th>
+              <th scope="col">有效期</th>
+              <th scope="col">状态</th>
+              <th scope="col" class="tokens-actions-head">操作</th>
             </tr>
           </thead>
           <tbody>

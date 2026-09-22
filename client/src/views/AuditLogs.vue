@@ -231,13 +231,13 @@
         <table class="table is-fullwidth is-hoverable audit-table">
           <thead>
             <tr>
-              <th class="is-narrow">时间</th>
-              <th class="is-narrow">用户</th>
-              <th class="is-narrow">动作</th>
-              <th>对象</th>
-              <th class="is-narrow">结果</th>
-              <th class="is-narrow">IP</th>
-              <th class="is-narrow">设备</th>
+              <th scope="col" class="is-narrow">时间</th>
+              <th scope="col" class="is-narrow">用户</th>
+              <th scope="col" class="is-narrow">动作</th>
+              <th scope="col">对象</th>
+              <th scope="col" class="is-narrow">结果</th>
+              <th scope="col" class="is-narrow">IP</th>
+              <th scope="col" class="is-narrow">设备</th>
             </tr>
           </thead>
           <tbody>
