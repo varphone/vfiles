@@ -2430,7 +2430,8 @@ function handleSortChange(field: SortField) {
     scrollbar-gutter: stable;
   }
 
-  .desktop-list-shell thead th {
+  /* thead 由子组件 FileList.vue 渲染，需 :deep() 才能匹配到 th（此前规则从未生效） */
+  .desktop-list-shell :deep(thead th) {
     position: sticky;
     top: 0;
     z-index: 1;

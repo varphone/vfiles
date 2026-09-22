@@ -272,6 +272,49 @@
   box-shadow: 0 0 0 3px var(--vf-focus-ring);
 }
 
+/* 入场动效（M3 emphasized：cubic-bezier(0.2, 0, 0, 1)）：
+   下拉菜单从上方轻移+微缩放淡入，对话框从下方轻移+微缩放淡入；
+   display:none → block 会在每次打开时重新触发动画。 */
+@keyframes vf-menu-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+
+@keyframes vf-modal-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+}
+
+.dropdown.is-active > .dropdown-menu {
+  animation: vf-menu-enter 0.18s cubic-bezier(0.2, 0, 0, 1) both;
+  transform-origin: top left;
+}
+
+.dropdown.is-right.is-active > .dropdown-menu {
+  transform-origin: top right;
+}
+
+/* 行/卡片右键菜单同样使用入场动效（元素每次挂载时触发） */
+.vfiles-context-menu {
+  animation: vf-menu-enter 0.16s cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.modal.is-active .modal-card {
+  animation: vf-modal-enter 0.2s cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dropdown.is-active > .dropdown-menu,
+  .modal.is-active .modal-card,
+  .vfiles-context-menu {
+    animation: none;
+  }
+}
+
 /* 触屏命中区不小于 40px（M3 / HIG） */
 @media (pointer: coarse) {
   .vf-icon-button {

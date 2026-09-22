@@ -2565,6 +2565,29 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.3 sticky 列头修复 + M3 入场动效（round 3）
+
+- **修复 sticky 列头从未生效**（round 2 验证中发现的既有缺陷）：`.desktop-list-shell thead th`
+  规则写在 `FileBrowser.vue` 的 scoped 样式里，而 `<thead>` 由子组件 `FileList.vue` 渲染
+  → th 没有 FileBrowser 的 scope 属性，选择器匹配不到，实测 `position: relative`。
+  改为 `:deep(thead th)` 后实测 `position: sticky`。
+- **入场动效（M3 emphasized `cubic-bezier(0.2, 0, 0, 1)`）**：
+  - 下拉菜单（视图/排序/上传/通知等所有 `.dropdown-menu`）：上方 4px 轻移 + 0.97 缩放淡入 0.18s，
+    展开方向决定 transform-origin（左锚点 top left / 右锚点 top right）；
+  - 行与卡片右键菜单：同族动效 0.16s（元素每次挂载触发）；
+  - 对话框 `.modal-card`：下方 10px 轻移 + 0.98 缩放淡入 0.2s；
+  - `prefers-reduced-motion: reduce` 下全部关闭。
+- 验证（真实浏览器，40 个文件的长列表）：
+  | 检查项 | 实测 |
+  | --- | --- |
+  | sticky 列头 | `position: sticky`（修复前 relative）；滚动 700px 后 `thTop == shellTop == 191`（pinned ✓） |
+  | 下拉动效 | `vf-menu-enter 0.18s cubic-bezier(0.2,0,0,1)` ✓ |
+  | 右键菜单 | `vf-menu-enter 0.16s`（网格卡片菜单含全部 10 项含「删除」✓） |
+  | 对话框 | `vf-modal-enter 0.2s cubic-bezier(0.2,0,0,1)` ✓ |
+  | reduced-motion | `animationName: none` ✓ |
+  | 功能回归 | 网格切换 ✓、取消对话框后 `is-active` 消失 ✓、无控制台报错 ✓ |
+- 测试：前端 62 文件 / 430 用例全绿（tsc/lint/prettier/构建通过）。
+
 ### 4.2 列表行状态语言 + 配色迁移收尾（round 2）
 
 - 复核发现两处**配色未随第 1 轮迁移**的真实问题：
