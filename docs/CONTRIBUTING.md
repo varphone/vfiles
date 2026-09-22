@@ -59,8 +59,12 @@ cd client && bun run fmt
 ## 提交前建议
 
 **终版清单**（r99 收拢 ✓ 按序）：
-1. `bunx vue-tsc --noEmit` → 2. `bun run check`（lint + lint:styles + test）→
-3. `bun run build`（五门禁 = 1+2+3）→ 4. `bun run size:check`（预算 ✓）→
+**前端门禁**：1. `bunx vue-tsc --noEmit` → 2. `bun run check`（lint + lint:styles + test）→
+3. `bun run build`（前端三门禁 = 1+2+3）→ 4. `bun run size:check`（预算 ✓）→
+**Rust 门禁**（改 crates 必跑）：5. `cargo build --bin vfiles`（#52：check ≠ build ✗ 产物陈旧险）→
+6. `cargo test` → 7. `cargo test -p vfiles-webdav --features e2e`（WebDAV 改动）→
+**管道纪律**（#48 ✗✗ 门禁假绿险）：**`set -o pipefail`** 或免管道（`cmd > /dev/null && echo OK`）；
+`| head/tail` = SIGPIPE 假败（#51 ✗）
 5. 可选 `bun run ui:sweep`（视觉回归；**节律 = 每 10 轮** + 大改后）
 
 
