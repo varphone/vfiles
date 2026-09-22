@@ -2427,6 +2427,9 @@ function handleSortChange(field: SortField) {
        列头用 sticky 常驻，与主流网盘一致 */
     overflow: auto;
     scrollbar-gutter: stable;
+    /* sticky 表头的滚动缓冲（38px 表头高）：scrollIntoView/键盘导航停在表头下方，
+       否则向上导航时活动行会被吸进表头（实测藏于表头下 38px）。 */
+    scroll-padding-top: 2.375rem;
   }
 
   /* thead 由子组件 FileList.vue 渲染，需 :deep() 才能匹配到 th（此前规则从未生效） */

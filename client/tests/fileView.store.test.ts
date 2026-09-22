@@ -4,6 +4,7 @@ import { nextTick } from "vue";
 import {
   DEFAULT_COLUMN_WIDTHS,
   useFileViewStore,
+  cardMinWidth,
 } from "../src/stores/fileView.store";
 
 const STORAGE_KEY = "vfiles:file-browser:view";
@@ -151,5 +152,13 @@ describe("fileView store", () => {
     const store = useFileViewStore();
     expect(store.mode).toBe("list");
     expect(store.sortField).toBe("name");
+  });
+});
+
+describe("cardMinWidth", () => {
+  it("derives the grid min column width from the thumbnail size", () => {
+    expect(cardMinWidth(144)).toBe(194);
+    expect(cardMinWidth(200)).toBe(270);
+    expect(cardMinWidth(100)).toBe(135);
   });
 });

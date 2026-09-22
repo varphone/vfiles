@@ -2565,6 +2565,23 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.36 键盘导航 × sticky 表头滚动缓冲（round 32）
+
+- 近期三连用户反馈都在表格区（悬停透底 / 拖拽失灵 / 列宽膨胀）——本轮**主动扫
+  下一个高危点**：`scrollIntoView({block:'nearest'})` 的键盘导航与 sticky 表头的冲突。
+- **复现**（40 文件列表，↓25 次再 ↑15 次）：活动行顶 **195 < 表头底 233** =
+  **藏进表头 38px** ✗✗ —— 用户按 ↑ 选中行直接消失在表头后面（经典 sticky+scroll 缺陷）。
+  向下导航无此问题（`nearest` 贴底缘 ✓）。
+- 修复：滚动容器 `.desktop-list-shell` 加 **`scroll-padding-top: 2.375rem`**（= 表头实测
+  高 38px，rem 随缩放）——`scrollIntoView` 会停在缓冲线之下（sticky 表头的规范解）。
+- 验证（同一复现路径）：
+  | 场景 | 行顶 / 表头底 | 藏表头？ |
+  | --- | --- | --- |
+  | 向上导航（↓25 ↑15） | **233 / 233**（恰好停在表头下缘） | **false** ✓ |
+  | 向下导航 | — | false ✓ 无回归 |
+- 顺手补 `cardMinWidth` 单测（3 断言：144→194、200→270、100→135）。
+  前端 **62 文件 / 434 用例**全绿、tsc/build 通过。
+
 ### 4.35 列宽默认态修复（用户反馈插曲，位于 round 31 之后）
 
 - 症状（用户报告）：**修改时间/类型/大小等列默认变得很宽、全乱套**。
