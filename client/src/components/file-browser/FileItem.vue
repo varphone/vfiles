@@ -2,6 +2,7 @@
   <!-- Desktop: <tr> root so table layout enforces column alignment natively -->
   <tr
     v-if="desktop"
+    :aria-selected="selected ? 'true' : undefined"
     class="desktop-file-row"
     :data-vfiles-path="file.path"
     :class="{
