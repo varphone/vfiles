@@ -2571,7 +2571,9 @@
   （真空白 ✗ 主流必备）。
 - 补**三兜底**：`app.config.errorHandler`（Vue 树内）+ `window.error` +
   `unhandledrejection`——统一收口（console 留痕 + `__VF_ERROR_COUNT` 计数（探针可测 ✓））。
-- TODO(r178)：生产上报端点 + 友好提示 toast（崩而不白屏的用户面）。
+- **r178 用户面兑现**：错误边界内 toast「界面出现异常，操作未受影响，可继续使用」
+  （**3 秒防刷**（崩溃风暴只弹一条 ✗✗）+ 惰性 store 动态导入（未激活静默 ✓
+  边界自身不可再错 ✓））；TODO(r179)：生产上报端点。
 - 448 全绿 + build ✓（测试注：handler 轻件、tsc 护 ✓ 单测后续并入）。
 
 ### 4.145x 404 兜底页（round 176，路由面补全）

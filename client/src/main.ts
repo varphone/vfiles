@@ -92,12 +92,26 @@ app.use(router);
 
 
 // 全局错误边界（r177 ✓ 主流兜底：崩而不白屏、收口可记可报）
+let lastBoundaryToast = 0;
 const errorBoundary = (source: string, error: unknown) => {
   // eslint-disable-next-line no-console
   console.error(`[vfiles:${source}]`, error);
   const g = window as unknown as { __VF_ERROR_COUNT?: number };
   g.__VF_ERROR_COUNT = (g.__VF_ERROR_COUNT ?? 0) + 1;
-  // TODO(r178)：生产上报端点 + 友好提示 toast（app store 注入时机评估）
+  // 用户面提示（r178 ✓ 崩而不白屏）：3 秒防刷（崩溃风暴只弹一条 ✗✗）
+  const now = Date.now();
+  if (now - lastBoundaryToast > 3000) {
+    lastBoundaryToast = now;
+    try {
+      // 惰性取 store（pinia 激活后生效 ✓ 未激活静默 ✓）
+      void import("./stores/app.store").then(({ useAppStore }) => {
+        useAppStore().error("界面出现异常，操作未受影响，可继续使用");
+      });
+    } catch {
+      // store 不可用时静默（错误边界自身不可再错 ✗）
+    }
+  }
+  // TODO(r179)：生产上报端点
 };
 app.config.errorHandler = (err) => errorBoundary("vue", err);
 window.addEventListener("error", (e) => errorBoundary("window", e.error ?? e.message));
