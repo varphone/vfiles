@@ -64,7 +64,20 @@
 - `--vf-motion-exit: cubic-bezier(0.3, 0, 1, 1)`（Accelerate 离场）；
 - **loading/shimmer 一律 `linear`**（M3 规范）；时长惯例：120ms 微反馈 / 150ms 状态 / 200ms+ 结构。
 
-## 8. 约定
+## 8. 组件语言速查（family 参数，round 5 起校准）
+
+| 组件族 | 参数 |
+| --- | --- |
+| 控件（按钮/分段） | 36px 高药丸（`vf-*` 三档按钮 × ghost/primary/icon） |
+| 主行动按钮 | 40px 高（搜索/上传 CTA） |
+| chips / 徽章 | 32px 高（M3）；状态徽章小号 pill |
+| 弹出浮层 | surface-raised + border-weak + 8px + shadow-menu；玻璃态须 `blur(8px)` + 半透明令牌 |
+| 卡片 | 14px 圆角 + border-weak + shadow-card；内边距 1.1/1.2/1.3rem 三档 |
+| 列表行 | 桌面 48px / 移动 87px（骨架同高 ✓ r43/44 实测） |
+| 网格卡 | `--file-card-min = round(缩略图 × 1.35)`（144 → 194px）+ gap 14px |
+| 页面框架 | `.vf-page-card / .vf-page-title / .vf-page-subtitle` + `.vf-status-pill` |
+
+## 9. 约定
 
 1. `--vf-*` 字面值**只出现在声明处**，组件一律引用变量；
 2. 新增样式取值先查本页刻度（离散档优先于随手值）；
