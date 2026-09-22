@@ -25,7 +25,11 @@
         >
           <component :is="item.icon" :size="16" />
         </span>
-        <span>{{ item.label }}</span>
+        <span class="vfiles-context-menu__label">{{ item.label }}</span>
+        <!-- 加速键标注（r121 ✓ Finder/Explorer/VSCode 菜单标配） -->
+        <span v-if="item.shortcut" class="vfiles-context-menu__accel" aria-hidden="true">
+          {{ item.shortcut }}
+        </span>
       </button>
     </div>
   </Teleport>
@@ -38,6 +42,8 @@ import type { Component } from "vue";
 export interface ContextMenuItem {
   key: string;
   label: string;
+  /** 加速键标注（如 F2 / Del ✓ 与真实键绑定一致才标） */
+  shortcut?: string;
   icon?: Component;
   danger?: boolean;
   disabled?: boolean;
@@ -151,3 +157,10 @@ onBeforeUnmount(closeListeners);
   display: inline-flex;
 }
 </style>
+
+.vfiles-context-menu__accel {
+  margin-left: auto;
+  padding-left: 1.2rem;
+  color: var(--vf-text-muted);
+  font-size: 0.72rem;
+}

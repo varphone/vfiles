@@ -1417,7 +1417,7 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
     label: isFavorite ? "取消收藏" : "加入收藏",
     icon: isFavorite ? IconStarFilled : IconStar,
   });
-  items.push({ key: "rename", label: "重命名", icon: IconPencil });
+  items.push({ key: "rename", label: "重命名", icon: IconPencil, shortcut: "F2" });
   items.push({ key: "move", label: "移动", icon: IconArrowsDiff });
   items.push({
     key: "transfer",

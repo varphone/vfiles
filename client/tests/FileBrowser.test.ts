@@ -772,7 +772,9 @@ describe("FileBrowser.vue action column", () => {
     // 菜单里应包含下载/重命名/移动等常用操作
     const labels = Array.from(
       document.querySelectorAll(".vfiles-context-menu [role='menuitem']"),
-    ).map((item) => item.textContent?.trim());
+    ).map((item) =>
+      item.querySelector(".vfiles-context-menu__label")?.textContent?.trim(),
+    );
     expect(labels).toEqual(
       expect.arrayContaining(["下载", "重命名", "移动", "删除"]),
     );
