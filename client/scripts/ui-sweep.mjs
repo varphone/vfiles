@@ -154,6 +154,13 @@ async function main() {
   const { chromium, devices } = await loadPlaywright();
   const browser = await chromium.launch();
   const shots = [];
+  // 程序化 dblclick：物理双击曾因选中时复选框插入位移而第二击落空（已修行内位移，
+  // 但工具层面仍用事件派发求稳——应用处理器对合成事件与物理事件等价响应 ✓ 实测）。
+  const doubleClick = async (locator) => {
+    await locator.evaluate((el) =>
+      el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
+    );
+  };
   const snap = async (page, name) => {
     const path = join(OUT_DIR, `${name}.png`);
     await page.screenshot({ path });
@@ -179,7 +186,7 @@ async function main() {
     await page.waitForSelector(".file-browser-box", { timeout: 10000 });
     await page.waitForTimeout(900);
     await snap(page, `${theme}-2-list`);
-    await page.locator('tr[data-vfiles-path="项目库"]').dblclick();
+    await doubleClick(page.locator('tr[data-vfiles-path="项目库"]'));
     await page.waitForTimeout(700);
     await page.evaluate(() =>
       document
@@ -198,25 +205,33 @@ async function main() {
     await page.keyboard.press("Escape");
     await page.mouse.click(700, 620);
     await page.waitForTimeout(300);
-    await page.locator('tr[data-vfiles-path="项目库/代码.js"]').dblclick();
+    await doubleClick(page.locator('tr[data-vfiles-path="项目库/代码.js"]'));
     await page.waitForTimeout(1200);
     await snap(page, `${theme}-5-preview-code`);
     await page.keyboard.press("Escape");
     await page.waitForTimeout(400);
     // 历史（唯一命名的两次改名，绝不撞名）
-    for (const name of ["唯一A.tmp", "文档-副本.txt"]) {
-      await page
-        .locator("tr.desktop-file-row")
-        .first()
-        .click({ button: "right" });
-      await page.waitForSelector(".vfiles-context-menu");
-      await page.click(
-        '.vfiles-context-menu [role="menuitem"]:has-text("重命名")',
-      );
-      await page.waitForSelector(".rename-input", { timeout: 4000 });
-      await page.fill(".rename-input", name);
-      await page.keyboard.press("Enter");
-      await page.waitForTimeout(900);
+    // 成对路径（from → to）：每次改名后路径即变，固定路径会在第二击落空；
+    // 脆弱步骤 try/catch 隔离：单步失败不再拖垮整个 sweep。
+    for (const [from, to] of [
+      ["项目库/说明.md", "唯一A.tmp"],
+      ["项目库/唯一A.tmp", "文档-副本.txt"],
+    ]) {
+      try {
+        await page
+          .locator(`tr[data-vfiles-path="${from}"]`)
+          .click({ button: "right" });
+        await page.waitForSelector(".vfiles-context-menu");
+        await page.click(
+          '.vfiles-context-menu [role="menuitem"]:has-text("重命名")',
+        );
+        await page.waitForSelector(".rename-input", { timeout: 4000 });
+        await page.fill(".rename-input", to);
+        await page.keyboard.press("Enter");
+        await page.waitForTimeout(900);
+      } catch (e) {
+        console.log(`[ui-sweep] ✗ 改名(${from}): ${String(e).slice(0, 80)}`);
+      }
     }
     const hb = await page.$('button:has-text("历史版本")');
     if (hb) {

@@ -91,7 +91,9 @@ describe("FileItem.vue row actions", () => {
     });
 
     const label = container.querySelector("label");
-    expect(label?.className).not.toContain("desktop-row-check");
+    // 统一槽位语义：始终 desktop-row-check，批量/选中态追加 is-visible（常驻不位移）
+    expect(label?.className).toContain("desktop-row-check");
+    expect(label?.className).toContain("is-visible");
     const checkbox = container.querySelector(
       'input[type="checkbox"]',
     ) as HTMLInputElement;

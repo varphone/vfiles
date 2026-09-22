@@ -25,10 +25,11 @@
   >
     <td class="is-narrow">
       <div class="is-flex is-align-items-center">
-        <!-- 复选框：批量模式下常驻，其余情况 hover/选中时出现，方便像网盘一样直接勾选 -->
+        <!-- 复选框槽位常驻（opacity 显隐）：显隐切换不得引起行内位移
+             （曾致物理双击第二击落空 = 双击打开目录失效） -->
         <label
-          v-if="selectMode || selected"
-          class="mr-2"
+          class="mr-2 desktop-row-check"
+          :class="{ 'is-visible': selectMode || selected }"
           @click.stop
           @dblclick.stop
         >
@@ -36,16 +37,8 @@
             type="checkbox"
             :checked="selected"
             @change="toggleSelected"
-            aria-label="选择"
-          />
-        </label>
-        <label v-else class="mr-2 desktop-row-check" @click.stop @dblclick.stop>
-          <input
-            type="checkbox"
-            :checked="selected"
-            @change="toggleSelected"
             :aria-label="`选择 ${file.name}`"
-            tabindex="-1"
+            :tabindex="selectMode || selected ? 0 : -1"
           />
         </label>
 
@@ -946,6 +939,11 @@ function share() {
 .desktop-row-check {
   opacity: 0;
   transition: opacity 0.12s var(--vf-motion-standard);
+}
+
+.desktop-file-row:hover .desktop-row-check,
+.desktop-row-check.is-visible {
+  opacity: 1;
 }
 
 .desktop-file-row:hover .desktop-row-check,
