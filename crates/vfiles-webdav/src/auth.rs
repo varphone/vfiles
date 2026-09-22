@@ -16,8 +16,16 @@ pub struct WebdavAuthenticator {
 
 /// 校验回调型（r106 安全段 ✓ bin 侧接 `AuthService::verify_credentials`）。
 pub type VerifyFn = std::sync::Arc<
-    dyn Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>>
-        + Send
+    dyn Fn(
+            String,
+            String,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Option<vfiles_domain::types::User>,
+                    > + Send,
+            >,
+        > + Send
         + Sync,
 >;
 

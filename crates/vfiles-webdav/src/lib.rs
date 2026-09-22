@@ -9,8 +9,12 @@
 //! 依赖锁 → 记档待后续轮次评估）。写法五件（PUT/DELETE/MKCOL/MOVE/COPY）= r103。
 
 mod auth;
+mod write;
+
+pub use write::WebdavWriteOps;
 mod response;
 mod server;
 
 pub use auth::WebdavAuthenticator;
+pub use auth::VerifyFn;
 pub use server::{WebdavApplication, WebdavSettings, run_webdav_server, spawn_webdav_server};
