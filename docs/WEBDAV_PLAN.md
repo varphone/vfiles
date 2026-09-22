@@ -16,7 +16,9 @@
 | auth 门 | ✅ dispatch 顶部（Basic → verify → 401 + WWW-Authenticate ✓ OPTIONS 豁免 ✓） |
 | 默认开启 | ✅ **用户令兑现**（`enabled: true` ✓ auth 强制防御 ✓ 真服务日志确证 ✓） |
 | 边界/错误语义 | ✅ Depth infinity = 400 ✓ If 复杂式 = 412 记档 ✓ 锁冲突 = 423 ✓ token 不配 = 409 ✓ |
-| **台架缺口注** | ⚠️ **rclone/Windows 客户端台架** = 待装验（curl 三断言已证栈级 ✓）；bin put_file 转发 = 下段一击（签名全清 ✓） |
+| **GET 流式化** | ✅ **r201-02 收口**（`get_stream` 直通 + ReaderStream ✓ **10MB sha256 一致性证** ✓ 内存爆除） |
+| COPY | ⚠️ **r210 排期**（无后端 copy API ✗ 深域件 = **blob 复用 + entry 复制 + 审计链**三件 ✗✗ 量 = 2 轮+；rclone GET+PUT 不依赖 ✓ 优先级中） |
+| **台架缺口注** | ⚠️ **rclone/Windows 客户端台架** = 待装验（curl 六法链已证栈级 ✓）；bin put_file 转发 = r110'c 已接（init_upload+complete_from_stream ✓） |
 
 ## 0.5 GET 流式化（r201 ✓ 商业级硬伤修 ✗ 大文件内存爆）
 
