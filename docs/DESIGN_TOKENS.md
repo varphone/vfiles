@@ -94,7 +94,20 @@
 | 网格卡 | `--file-card-min = round(缩略图 × 1.35)`（144 → 194px）+ gap 14px |
 | 页面框架 | `.vf-page-card / .vf-page-title / .vf-page-subtitle` + `.vf-status-pill` |
 
-## 9. 语言风格（文案四维，round 73 评审定档）
+## 9. 响应式断点（4 档定档，round 91 归一）
+
+| 断点 | 语义 | 锚 |
+| --- | --- | --- |
+| `max-width: 480px` | 手机窄屏排版 | 常见手机档 |
+| `max-width: 768px` | 平板/窄栏折叠 | **Bulma tablet 锚** |
+| `min-width: 900px`（配对 899） | **历史分栏专属**（有意档 ✓） | 分栏可读宽 |
+| `min-width: 1024px`（配对 1023） | 桌面 | **Bulma desktop 锚** |
+
+语义查询（非断点 ✓ 照用）：`prefers-reduced-motion` / `hover: none` /
+`pointer: coarse`。**新增断点先查此表**（r91 前 8 值散乱 → 归一 4 档 ✓ 760/700/520
+三散值并档）。
+
+## 10. 语言风格（文案四维，round 73 评审定档）
 
 1. **标点**：句末**不加句号**（中文 UI 惯例 ✓）；补充从句用逗号；
    行内引用用「」（如「预览」或「对比」）。

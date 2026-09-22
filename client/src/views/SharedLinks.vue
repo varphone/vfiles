@@ -630,7 +630,7 @@ onMounted(() => {
   }
 }
 
-@media screen and (max-width: 760px) {
+@media screen and (max-width: 768px) {
   .shares-page {
     padding: 0.75rem 0.5rem 2rem;
   }

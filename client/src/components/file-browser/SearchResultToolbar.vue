@@ -128,7 +128,7 @@ const summary = computed(() => {
 }
 
 /* 窄屏：筛选 chip 单行横向滚动，避免换行挤压结果列表 */
-@media screen and (max-width: 700px) {
+@media screen and (max-width: 768px) {
   .search-toolbar {
     flex-direction: column;
     align-items: stretch;

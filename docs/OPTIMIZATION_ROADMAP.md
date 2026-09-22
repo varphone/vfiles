@@ -2565,6 +2565,17 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.97 响应式断点归一（round 91，响应轴收官）
+
+- 扫**真空白轴**：media query 全量频率 —— 语义查询（reduced-motion ×19 /
+  hover:none / pointer:coarse）✓ 零问题；**宽度断点 8 值散乱** ✗✗
+  （1024/900/899/768/760/700/520/480 + 两对近邻分叉）。
+- **语境定性**：900/899 = 历史分栏**有意档**（保留注档 ✓）；**三散值并档**——
+  520（快捷键表）→480、760（工具页 ×2）→768、700（搜索工具条）→768 ✓。
+- **刻度定档 4 档**（DESIGN_TOKENS §9）：480 手机 / **768 Bulma tablet 锚** /
+  900 分栏专属 / **1024 Bulma desktop 锚** ✓；新增断点先查此表。
+- 五门禁全绿（440 用例 ✓）。
+
 ### 4.96 十轮增量小节（round 90）+ 节律 sweep 留档
 
 - **r81–r89 增量**（"审计收口 + 流程纪律"主题阶段）：

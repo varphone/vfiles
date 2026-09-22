@@ -175,7 +175,7 @@ const groups = [
   line-height: 1.5;
 }
 
-@media screen and (max-width: 520px) {
+@media screen and (max-width: 480px) {
   .shortcuts-row {
     flex-direction: column;
     gap: 0.15rem;
