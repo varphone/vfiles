@@ -26,6 +26,7 @@ pub struct AppConfig {
     pub limits: LimitsConfig,
     pub maintenance: MaintenanceConfig,
     pub ftp: FtpConfig,
+    pub webdav: WebdavConfig,
     pub features: FeatureMatrix,
 }
 
@@ -120,6 +121,76 @@ pub struct FtpConfig {
     pub snapshot_mode: String,
     /// `batch` 模式下每累积多少个文件提交一次快照。
     pub snapshot_flush_files: u32,
+}
+
+/// WebDAV（r109b ✓ 用户令「默认开启」✓ 与 FtpConfig 同构极简）。
+///
+/// **默认开启**（`enabled: true` ⚠️ 依用户令）+ **auth 强制防御**（未开认证即 Err ✓
+/// 默认开也安全 ✓ 语义差 = FTP `(None,false)→false`；WebDAV `(None,false)→Err` ✓）。
+/// per-user ns / bin 挂载 / PUT = r109c 预注明。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebdavConfig {
+    /// **默认开启**（用户令 ✓ 显式 `VFILES_WEBDAV_ENABLED=false` 可关）。
+    #[serde(default = "webdav_default_enabled")]
+    pub enabled: bool,
+    #[serde(default = "webdav_default_host")]
+    pub host: String,
+    #[serde(default = "webdav_default_port")]
+    pub port: u16,
+}
+
+fn webdav_default_enabled() -> bool {
+    true
+}
+
+fn webdav_default_host() -> String {
+    "0.0.0.0".to_string()
+}
+
+fn webdav_default_port() -> u16 {
+    18080
+}
+
+impl WebdavConfig {
+    pub fn bind_address(&self) -> String {
+        format!("{}:{}", self.host, self.port)
+    }
+}
+
+fn webdav_from_env(
+    explicit: Option<bool>,
+    auth_enabled: bool,
+) -> Result<WebdavConfig, ConfigError> {
+    let enabled = resolve_webdav_enabled(explicit, auth_enabled)?;
+    let host = std::env::var("VFILES_WEBDAV_HOST")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "0.0.0.0".to_string());
+    let port = std::env::var("VFILES_WEBDAV_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(18080);
+    Ok(WebdavConfig { enabled, host, port })
+}
+
+/// WebDAV 开关解析（r109b ✓ 对称 resolve_ftp_enabled 六分支 + **语义差**：
+/// `(None, false)` = FTP 软停 ✗ WebDAV = **Err**（用户令「默认开启」+ auth 强制 =
+/// 双保 ✓ 关 auth 必须显式关 WebDAV（VFILES_WEBDAV_ENABLED=false））。
+fn resolve_webdav_enabled(
+    explicit: Option<bool>,
+    auth_enabled: bool,
+) -> Result<bool, ConfigError> {
+    match (explicit, auth_enabled) {
+        (Some(false), _) => Ok(false),
+        (Some(true), false) => Err(ConfigError::LoadError(
+            "显式开启 WebDAV（VFILES_WEBDAV_ENABLED=true）需要同时开启认证（VFILES_AUTH_ENABLED=true）：未认证的 WebDAV 允许任何人读写存储".to_string(),
+        )),
+        (Some(true), true) => Ok(true),
+        (None, true) => Ok(true),
+        (None, false) => Err(ConfigError::LoadError(
+            "WebDAV 默认开启（用户令 ✓）需要认证：请开启 VFILES_AUTH_ENABLED=true，或显式关闭 WebDAV（VFILES_WEBDAV_ENABLED=false）".to_string(),
+        )),
+    }
 }
 
 impl FtpConfig {
@@ -327,6 +398,8 @@ impl ConfigLoader {
         // FTP 默认开启（客户端批量导入最常用的通道）；认证关闭时无法安全提供 FTP，
         // 因此下面的 ftp_enabled 计算会把「默认开启」在无认证场景下降级为关闭。
         let ftp_enabled_raw = Self::env_parse_bool(&["VFILES_FTP_ENABLED", "FTP_ENABLED"])?;
+        let webdav_enabled_raw =
+            Self::env_parse_bool(&["VFILES_WEBDAV_ENABLED", "WEBDAV_ENABLED"])?;
         let ftp_enabled = Self::resolve_ftp_enabled(ftp_enabled_raw, auth_enabled)?;
 
         let ftp = FtpConfig {
@@ -422,6 +495,7 @@ impl ConfigLoader {
                 snapshot_max_age_days: maintenance_snapshot_max_age_days,
             },
             ftp,
+            webdav: webdav_from_env(webdav_enabled_raw, auth_enabled)?,
             features: FeatureMatrix {
                 auth_enabled,
                 multi_user: true,
@@ -898,5 +972,25 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&temp_dir).expect("temp dir should be removed");
+    }
+}
+
+#[cfg(test)]
+mod webdav_enabled_semantics {
+    use super::resolve_webdav_enabled;
+
+    #[test]
+    fn default_on_requires_auth_per_user_directive() {
+        // (None, false) = **Err**（用户令「默认开启」+ auth 强制 = 双保 ✓
+        // 语义差 = FTP `(None,false)→false` 软停 ✗ WebDAV 严格 ✓）
+        assert!(resolve_webdav_enabled(None, false).is_err());
+        assert!(resolve_webdav_enabled(None, true).is_ok());
+    }
+
+    #[test]
+    fn explicit_off_and_explicit_on_forms() {
+        assert_eq!(resolve_webdav_enabled(Some(false), false).unwrap(), false);
+        assert!(resolve_webdav_enabled(Some(true), false).is_err());
+        assert!(resolve_webdav_enabled(Some(true), true).is_ok());
     }
 }

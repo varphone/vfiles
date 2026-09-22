@@ -23,7 +23,8 @@
 | **r106（安全段 ✓ 债清）** | **dispatch 顶部安全门**（Basic→verify 回调→401+WWW-Authenticate ✓ OPTIONS 豁免（RFC 无泄露））；`VerifyFn` 型 = bin 接 `verify_credentials` ✓ | 首版门藏 PROPFIND 分支 = GET 裸奔洞自察上移 ✓ |
 | **r108'（写面三件 ✓ 商业级一段）** | **MKCOL/DELETE/MOVE 实装**（`WebdavWriteOps` dyn-trait ✓ 审计链 user_id ✓ VerifyFn 升级回 User ✓）；MOVE `Destination` 解析（纯函数单测 ✓ 挂载点 = root 记档）；**PUT** = init_upload 链 → r109'；**COPY** = 501 记档（rclone GET+PUT 不依赖 ✓） | 5 测试绿 ✓ **#46**：write_op(&req) 坑二号 ✗ 纯拥有参式贯彻 |
 | **r109a（锁核 ✓ 完成）** | **LOCK/UNLOCK 实装**（内存锁表 ✓ `opaquelocktoken:` 零依赖铸造 ✓ exclusive/depth0 ✓ lockdiscovery §14.13 ✓）；**写操作 423 校验**（`If` token 放行 ✓ 多重式拒 412 记档 ✓）| 9 测试绿 ✓ **#46 三号实录**（lock_op(&req) 同坑 → 纯拥有参式 = **编码模板纪律**）|
-| **r109b 商业级配套** | per-user ns（FTP UserDetailProvider 范本）+ **默认开启 config**（auth 强制防御 = FTP bail! 同款）+ PUT（init_upload 链）+ **bin 挂载 + curl/rclone e2e**（r107 遗留 ✓ 可浏览挂载实证） | |
+| **r109b（config 段 ✓ 默认开令兑现）** | **`WebdavConfig`（enabled 默认 true ⚠️ 用户令）**+ `resolve_webdav_enabled` 六分支（**语义差** = `(None,false)→Err`（FTP 软停 ✗ WebDAV 严格 = 默认开+auth 强制双保 ✓））+ env 三键 + std env 直取（零猜式 ✓）| 18 config 测试绿 ✓ **#49**：`ftp,` 简写字段 = grep 冒号盲区（三轮假"零 literal"）+ **#14 三犯**（错误窗连环截 ✗ 无窗直读式立）|
+| **r109c 商业级收尾** | per-user ns（UserDetailProvider 同链 ✓ ns 映射一击内）+ PUT（init_upload 链）+ **bin 挂载 + curl/rclone e2e**（r107 遗留 ✓ 可浏览挂载实证） | |
 | **r110' 验收台架** | 边界/错误语义 RFC 全检 + curl/rclone/Windows 台架 + 商业级清单 | |
 | r107（挂载段遗留） | bin 挂载 + curl/rclone e2e + GET（`EntryVersion.blob_id` ✓ 形已清） | 并入 r110' 台架 ✓ |
 | 记档 | **LOCK/UNLOCK 不支持**（405） | macOS/Linux/rclone 挂载不受影响 ✓ Windows 映射依赖锁 → 后续评估 |
