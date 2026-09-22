@@ -143,7 +143,58 @@ fn internal_error() -> Response {
 }
 
 /// PUT（r110'b ✓ 纯拥有参（#46 纪律）✓ 覆盖语义 = 后端版本化（呼应 PROPOSAL ✓））。
-/// PUT（r110'b ✓ **纯拥有参**（#46 四号破案 ✗✗✗ 借不跨 await 强化））。
+/// GET/HEAD（r110'c ✓ 纯拥有参（#46）✓ HEAD = 同头无体 ✓）。
+async fn get_op(
+    app: Option<WebdavApplication>,
+    user: Option<vfiles_domain::types::User>,
+    ns: Option<vfiles_domain::types::NamespaceId>,
+    uri_owned: String,
+    is_head: bool,
+) -> Response {
+    let Some(app) = app else {
+        return internal_error();
+    };
+    let Some(_user) = user else {
+        return www_authenticate();
+    };
+    let Some(ns) = ns else {
+        return internal_error();
+    };
+    let rel = uri_owned.trim_start_matches('/').trim_end_matches('/').to_string();
+    let path = match vfiles_domain::types::NormalizedPath::new(&rel) {
+        Ok(p) => p,
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::empty())
+                .unwrap()
+        }
+    };
+    match app.write.get_file(&ns, &path).await {
+        Ok(Some((bytes, mime))) => {
+            let len = bytes.len();
+            let mut builder = Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, mime)
+                .header(header::CONTENT_LENGTH, len.to_string());
+            if is_head {
+                builder.body(Body::empty()).unwrap()
+            } else {
+                builder.body(Body::from(bytes)).unwrap()
+            }
+        }
+        Ok(None) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::empty())
+            .unwrap(),
+        Err(_) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(Body::empty())
+            .unwrap(),
+    }
+}
+
+/// PUT（r110'b ✓ 纯拥有参（#46 四号破案））。
 async fn put_op(
     app: Option<WebdavApplication>,
     user: Option<vfiles_domain::types::User>,
@@ -457,6 +508,19 @@ async fn dav(mut req: axum::extract::Request) -> Response {
             .body(Body::empty())
             .unwrap(),
         // PROPFIND（Depth 0/1 ✓ 其余 Depth = 400 子集记档）。
+        // GET/HEAD（r110'c ✓ 读面终件）。
+        ref m if m.as_str() == "GET" || m.as_str() == "HEAD" => {
+            // 纯拥有参（#46）：调用侧同步提取。
+            let is_head = m.as_str() == "HEAD";
+            let app_owned = req.extensions().get::<WebdavApplication>().cloned();
+            let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
+            let ns_owned = req
+                .extensions()
+                .get::<vfiles_domain::types::NamespaceId>()
+                .cloned();
+            let uri_owned = req.uri().path().to_string();
+            get_op(app_owned, user_owned, ns_owned, uri_owned, is_head).await
+        }
         ref m if m.as_str() == "PROPFIND" => {
             // 同步提取拥有值（&Request 跨 await = 非 Send ✗✗ E0277 真因 ✓ r105 破案）
             let path_owned = req.uri().path().to_string();

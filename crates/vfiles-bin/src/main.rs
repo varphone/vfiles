@@ -1245,6 +1245,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         vfiles_app::NamespaceService::new(Arc::new(SqliteNamespaceRepo::new(pool.clone()))),
         Arc::clone(&entry_repo_arc),
         Arc::clone(&ftp_workspace),
+        upload_service.clone(),
     );
 
     // Create app state
@@ -1520,6 +1521,12 @@ struct FtpRuntimeDeps {
 /// WebDAV 写门面 → workspace service 转发（r110'a ✓ bin 侧具体型 ✓ crate 免耦合）。
 struct WebdavWrite {
     workspace: std::sync::Arc<vfiles_app::DefaultWorkspaceService>,
+    upload: vfiles_app::UploadService<
+        vfiles_infra_sqlite::SqliteEntryRepo,
+        vfiles_infra_sqlite::SqliteSnapshotRepo,
+        vfiles_infra_sqlite::FsBlobStore,
+        vfiles_infra_sqlite::FsUploadStore,
+    >,
 }
 
 #[async_trait::async_trait]
@@ -1547,6 +1554,61 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
             .await
             .map(|_| ())
     }
+    async fn get_file(
+        &self,
+        ns: &vfiles_domain::NamespaceId,
+        path: &vfiles_domain::NormalizedPath,
+    ) -> vfiles_domain::DomainResult<Option<(Vec<u8>, String)>> {
+        use tokio::io::AsyncReadExt;
+        let file = match self.workspace.open_file(ns, path, None).await {
+            Ok(f) => f,
+            Err(vfiles_domain::DomainError::NotFound { .. }) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        let mut reader = file.reader;
+        let mut buf = Vec::with_capacity(file.size_bytes as usize);
+        reader.read_to_end(&mut buf).await.map_err(|err| {
+            vfiles_domain::DomainError::Validation {
+                message: format!("读取文件内容失败：{err}"),
+            }
+        })?;
+        let mime = file.mime_type.unwrap_or_else(|| "application/octet-stream".to_string());
+        Ok(Some((buf, mime)))
+    }
+    async fn put_file(
+        &self,
+        ns: &vfiles_domain::NamespaceId,
+        path: &vfiles_domain::NormalizedPath,
+        data: Vec<u8>,
+        uid: &vfiles_domain::UserId,
+    ) -> vfiles_domain::DomainResult<()> {
+        // init_upload 语义：target_path = 父目录 + filename = 文件名（r110'c 修正：此前
+        // 误传完整路径导致文件被建成目录条目）。
+        let full = path.as_str();
+        let (parent_str, filename) = match full.rsplit_once('/') {
+            Some((dir, name)) => (dir.to_string(), name.to_string()),
+            None => (String::new(), full.to_string()),
+        };
+        let filename = if filename.is_empty() { "upload".to_string() } else { filename };
+        let parent = vfiles_domain::NormalizedPath::new(&parent_str).map_err(|err| {
+            vfiles_domain::DomainError::Validation {
+                message: format!("路径非法：{err}"),
+            }
+        })?;
+        let session = self
+            .upload
+            .init_upload(ns, &parent, &filename, data.len() as u64, None, None, uid)
+            .await?;
+        self.upload
+            .complete_upload_from_stream(
+                &session.upload_id,
+                None,
+                Some("WebDAV PUT"),
+                Box::new(std::io::Cursor::new(data)),
+            )
+            .await?;
+        Ok(())
+    }
     async fn delete_entry(
         &self,
         ns: &vfiles_domain::NamespaceId,
@@ -1571,6 +1633,12 @@ fn build_webdav_runtime(
     namespaces: vfiles_app::NamespaceService,
     entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
     workspace: std::sync::Arc<vfiles_app::DefaultWorkspaceService>,
+    upload: vfiles_app::UploadService<
+        vfiles_infra_sqlite::SqliteEntryRepo,
+        vfiles_infra_sqlite::SqliteSnapshotRepo,
+        vfiles_infra_sqlite::FsBlobStore,
+        vfiles_infra_sqlite::FsUploadStore,
+    >,
 ) -> Option<(vfiles_webdav::WebdavSettings, vfiles_webdav::WebdavApplication)> {
     if !enabled {
         return None;
@@ -1587,7 +1655,7 @@ fn build_webdav_runtime(
         entry_repo,
         verify,
         locks: std::sync::Arc::new(vfiles_webdav::LockTable::new()),
-        write: std::sync::Arc::new(WebdavWrite { workspace }),
+        write: std::sync::Arc::new(WebdavWrite { workspace, upload }),
     };
     Some((vfiles_webdav::WebdavSettings { bind }, app))
 }

@@ -15,6 +15,13 @@ use vfiles_domain::DomainResult;
 pub trait WebdavWriteOps: Send + Sync {
     /// PUT（r110'b ✓ 商业级写面终件）：流式直传（`init_upload` + `complete_upload_from_stream` ✓
     /// 免分片循环（小文件直传 ✓ 大文件 = HTTP 上传管线同源 ✓）。
+    /// GET（r110'c ✓ 读面终件）：全量读（Vec 简式 ✓ 流式 = 后续优化记）。
+    /// None = 路径不存在（调用方 404 ✓）。
+    async fn get_file(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+    ) -> DomainResult<Option<(Vec<u8>, String)>>;
     async fn put_file(
         &self,
         namespace_id: &NamespaceId,

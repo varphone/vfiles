@@ -34,6 +34,13 @@ struct NoopWrite;
 
 #[async_trait::async_trait]
 impl WebdavWriteOps for NoopWrite {
+    async fn get_file(
+        &self,
+        _ns: &vfiles_domain::types::NamespaceId,
+        _path: &NormalizedPath,
+    ) -> vfiles_domain::DomainResult<Option<(Vec<u8>, String)>> {
+        Ok(None)
+    }
     async fn put_file(
         &self,
         _ns: &vfiles_domain::types::NamespaceId,
