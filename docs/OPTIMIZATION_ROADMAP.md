@@ -2592,6 +2592,12 @@
   | `__diag: undefined`（新码确在服务 ✓） | **handleRowSelect 未跑**：可见列表走**直调 toggleSelect 通道**（283/317 才挂 handleRowSelect）|
   | 源级自启批量模式 + 断言随行为 ✓ | **语义补全保留**（勾选即批量 = 全通道生效 ✓ 单测护 ✓） |
   | strip 仍 0 + 已选状态条无 | **第三层谜**：BatchActionBar/状态条**完全不渲染**（[class*=batch] 空 ✗）= v-if 外层父条件或组件渲染失败嫌疑 → **r143 专项**（strip 父块条件 + 渲染实况 devtools 级） |
+- **r143 决定性采样（两层破 + change 链终层排期）**：
+  | 铁证 | 定案 |
+  | --- | --- |
+  | 采样 `[batch=false, count=0, size=0, strip=0, is-row-selected=1]` | **选择集 size 0**（勾选链从未生效）+ 行类 = **混类误导** |
+  | FileList 66 行 selected 含「活动行」分支 | **selected 类 = 选中 ∪ 活动行**（有意弱高亮 ✓ 记档不修 = 命名债注）——r140-142「行选中生效」全为**活动行高亮误读** |
+  | jsdom 勾选绿 vs 浏览器 size 0 | **change 链真断**（toggleSelected→emit→…→toggleSelect 未达）→ **r144 终极**（toggleSelected 埋点） |
 
 ### 4.116x 滚动记忆谜案（round 137，止损记档）
 

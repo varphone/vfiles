@@ -2284,6 +2284,7 @@ function handleRowSelect(file: FileInfo) {
   toggleSelect(file);
 }
 
+
 function findActiveItem(): FileInfo | undefined {
   const list = searchActive.value
     ? sortedSearchResults.value
