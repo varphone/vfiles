@@ -301,6 +301,20 @@ async function main() {
     await pm.locator('button:has-text("更多")').first().click();
     await pm.waitForTimeout(500);
     await snap(pm, `${theme}-14-mobile-more`);
+
+    // dialog-over-bar 帧（r95/r100 排期债兑现 ✓ 底栏样张终捕）——
+    // 两击式（新建 →「新建文件夹」✓ 第二击 = **aria-label 稳式**（title/aria 非文本 ✗✗ hasText 永不中 = r101 崩因））
+    // try/catch 隔离（r35 式 ✓ 脆弱帧单败不拖垮全 sweep）
+    try {
+      // 第一击 = **aria 稳式**（hasText "新建" 坑二连 ✗✗ 底栏钮 aria-label 非文本）
+      await pm.locator('.mobile-action-buttons button[aria-label="新建文件夹"]').first().click();
+      await pm.waitForTimeout(450);
+      await pm.locator('button[aria-label="新建文件夹"]').first().click();
+      await pm.waitForTimeout(500);
+      await snap(pm, `${theme}-15-dialog-over-bar`);
+    } catch (e) {
+      console.log(`[ui-sweep] ✗ dialog 帧（${theme}）: ${String(e).slice(0, 80)}`);
+    }
     await pm.close();
   }
   await browser.close();
