@@ -340,9 +340,9 @@
             <p
               v-for="m in file.matches"
               :key="m.line"
-              class="is-size-7 has-text-grey"
+              class="is-size-7 vf-text-muted"
             >
-              <span class="has-text-grey-light mr-2">{{ m.line }}:</span>
+              <span class="vf-text-subtle mr-2">{{ m.line }}:</span>
               <template v-for="(seg, i) in splitHighlight(m.text)" :key="i">
                 <mark v-if="seg.match" class="has-background-warning-light">{{
                   seg.text

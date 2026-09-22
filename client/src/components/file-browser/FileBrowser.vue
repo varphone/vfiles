@@ -293,7 +293,7 @@
                 <div
                   v-if="hasMore"
                   ref="loadMoreSentinel"
-                  class="desktop-load-more has-text-centered has-text-grey is-size-7 py-3"
+                  class="desktop-load-more has-text-centered vf-text-muted is-size-7 py-3"
                 >
                   <span v-if="searchLoadingMore || filesStore.loadingMoreFiles"
                     >正在加载更多...</span
@@ -485,7 +485,7 @@
           <div
             v-if="isMobile && hasMore"
             ref="loadMoreSentinel"
-            class="has-text-centered has-text-grey is-size-7 py-2"
+            class="has-text-centered vf-text-muted is-size-7 py-2"
           >
             <template v-if="searchLoadingMore || filesStore.loadingMoreFiles"
               >正在加载更多...</template
@@ -561,7 +561,7 @@
           <div
             v-if="isMobile && hasMore"
             ref="loadMoreSentinel"
-            class="has-text-centered has-text-grey is-size-7 py-2"
+            class="has-text-centered vf-text-muted is-size-7 py-2"
           >
             <template v-if="searchLoadingMore || filesStore.loadingMoreFiles"
               >正在加载更多...</template
@@ -661,7 +661,7 @@
         <hr />
 
         <h3 class="title is-6">重命名当前目录</h3>
-        <p v-if="!currentPath" class="has-text-grey is-size-7">
+        <p v-if="!currentPath" class="vf-text-muted is-size-7">
           根目录不可重命名
         </p>
         <div class="field has-addons">
@@ -689,7 +689,7 @@
         <hr />
 
         <h3 class="title is-6">删除当前目录</h3>
-        <p v-if="!currentPath" class="has-text-grey is-size-7">
+        <p v-if="!currentPath" class="vf-text-muted is-size-7">
           根目录不可删除
         </p>
         <button

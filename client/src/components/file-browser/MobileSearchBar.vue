@@ -2,7 +2,7 @@
   <div class="mobile-search-toolbar">
     <div
       v-if="pullIndicatorVisible"
-      class="has-text-centered is-size-7 has-text-grey mb-2"
+      class="has-text-centered is-size-7 vf-text-muted mb-2"
     >
       <span v-if="pullRefreshing">刷新中...</span>
       <span v-else-if="pullReady">释放刷新</span>

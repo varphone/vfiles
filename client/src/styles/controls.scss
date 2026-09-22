@@ -304,6 +304,16 @@
 
 /* 右键菜单与通知面板由各自组件 scoped 声明同名令牌（全局规则会被 scoped 覆盖） */
 
+/* 语义文本色工具类（替代 Bulma 的 has-text-grey* —— 它们是系统外的字面灰，
+   浅色下 has-text-grey 4.29:1、grey-light 2.0:1 均不达 AA）。 */
+.vf-text-muted {
+  color: var(--vf-text-muted);
+}
+
+.vf-text-subtle {
+  color: var(--vf-text-subtle);
+}
+
 /* 状态胶囊（分享/令牌/审计动作标签共用）：字号、内边距、圆角一处定义；
    颜色/底色仍由各页的语义态（is-active/success/…）声明。 */
 .vf-status-pill {

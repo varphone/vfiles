@@ -120,7 +120,7 @@
                 <div class="dropdown-menu" role="menu">
                   <div class="dropdown-content">
                     <div class="dropdown-item">
-                      <p class="has-text-grey is-size-7 mb-1">账号</p>
+                      <p class="vf-text-muted is-size-7 mb-1">账号</p>
                       <p class="is-size-7 mb-0">{{ desktopProfileLabel }}</p>
                     </div>
 
@@ -324,7 +324,7 @@
                   <code class="is-size-7">{{ historyHashShort }}</code>
                   <span
                     v-if="historyDateShort"
-                    class="is-size-7 has-text-grey-light ml-2"
+                    class="is-size-7 vf-text-subtle ml-2"
                     >{{ historyDateShort }}</span
                   >
                 </div>
@@ -361,7 +361,7 @@
 
               <!-- 批量模式 -->
               <div v-else class="mobile-batch-panel">
-                <div class="is-size-7 has-text-grey mr-2 mobile-batch-count">
+                <div class="is-size-7 vf-text-muted mr-2 mobile-batch-count">
                   已选 {{ selectedCount }}
                 </div>
                 <div class="mobile-batch-actions">
@@ -1114,7 +1114,8 @@ async function renameSelected() {
   display: flex;
   flex-wrap: nowrap;
   width: 100%;
-  gap: 0.15rem;
+  /* M3/HIG：相邻触控目标间距 ≥8px（原 2.4px 过紧，几乎相贴） */
+  gap: 0.5rem;
 }
 
 .mobile-action-buttons .button {
