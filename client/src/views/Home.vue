@@ -978,7 +978,8 @@ async function renameSelected() {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  height: 2rem;
+  /* 与顶栏其它控件一致（36px）：此前 32px 是栏内最后一个高度异类 */
+  height: 2.25rem;
   padding: 0 0.6rem 0 0.25rem;
   border: 1px solid transparent;
   border-radius: var(--vf-radius-pill);
@@ -1292,7 +1293,8 @@ async function renameSelected() {
     width: 100%;
     justify-content: flex-start;
     gap: 0.5rem;
-    height: 2.2rem;
+    /* 触屏菜单行命中区 ≥40px（原 2.2rem = 35.2px） */
+    height: 2.5rem;
     padding-left: 0.35rem;
     font-size: 0.9rem;
   }
