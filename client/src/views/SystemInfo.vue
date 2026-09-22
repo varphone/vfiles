@@ -19,6 +19,13 @@
       </div>
     </header>
 
+    <!-- 首载骨架（r117 ✓ 与管理视图体系一致（SkeletonList 首载）） -->
+    <SkeletonList
+      v-if="loading && !info"
+      :rows="4"
+      label="加载系统信息"
+    />
+
     <!-- 系统卡（新端点 ✓ 零依赖段） -->
     <section class="system-info-card" aria-label="系统信息">
       <h2 class="system-info-card-title">系统</h2>
@@ -34,6 +41,7 @@
       </dl>
     </section>
 
+    <template v-if="!loading || info">
     <!-- WebDAV 接入卡（r115 ✓ 通用文件管理生态接入指引 = 商业产品同款（坚果云/Box 式）） -->
     <section class="system-info-card" aria-label="WebDAV 接入">
       <h2 class="system-info-card-title">WebDAV 接入</h2>
@@ -74,6 +82,7 @@
         <dd>{{ userTotal ?? "—" }}</dd>
       </dl>
     </section>
+    </template>
   </main>
 </template>
 
@@ -81,6 +90,7 @@
 import { computed, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 import SidebarOverview from "../components/file-browser/SidebarOverview.vue";
+import SkeletonList from "../components/common/SkeletonList.vue";
 import { authService } from "../services/auth.service";
 import { useAppStore } from "../stores/app.store";
 
