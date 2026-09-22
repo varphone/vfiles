@@ -18,6 +18,8 @@ vi.mock("../src/services/auth.service", async () => {
           arch: "x86_64",
           uptime_secs: 3661,
           started_at: "2026-09-22T19:20:00Z",
+          webdav_enabled: true,
+          webdav_bind: "0.0.0.0:18080",
         },
       })),
       listUsers: vi.fn(async () => ({
@@ -39,8 +41,11 @@ describe("SystemInfo.vue (r106 看板)", () => {
     expect(screen.getByText("存储与用量")).toBeInTheDocument();
     // 用户统计（listUsers total_count ✓）
     await waitFor(() => expect(screen.getByText("2")).toBeInTheDocument());
-    // 标准工具条（用户令 ✓ 刷新 + 返回文件 ✓ 与 我的分享/审计 同式）
+    // 标准工具条（刷新 + 返回文件）
     expect(screen.getByText("刷新")).toBeInTheDocument();
     expect(screen.getByText("返回文件")).toBeInTheDocument();
+    // WebDAV 接入卡（r115 ✓ 端点与挂载指引）
+    expect(screen.getByText("WebDAV 接入")).toBeInTheDocument();
+    expect(screen.getByText("端点地址", { selector: "dt" })).toBeInTheDocument();
   });
 });

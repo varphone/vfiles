@@ -316,6 +316,8 @@ class AuthService {
       arch: string;
       uptime_secs: number;
       started_at: string;
+      webdav_enabled: boolean;
+      webdav_bind: string;
     }>
   > {
     try {

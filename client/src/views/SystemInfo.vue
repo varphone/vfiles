@@ -34,6 +34,32 @@
       </dl>
     </section>
 
+    <!-- WebDAV 接入卡（r115 ✓ 通用文件管理生态接入指引 = 商业产品同款（坚果云/Box 式）） -->
+    <section class="system-info-card" aria-label="WebDAV 接入">
+      <h2 class="system-info-card-title">WebDAV 接入</h2>
+      <template v-if="info?.webdav_enabled">
+        <dl class="system-info-list">
+          <dt>端点地址</dt>
+          <dd class="system-info-mono">{{ webdavEndpoint }}</dd>
+          <dt>协议方法</dt>
+          <dd>PROPFIND / GET / HEAD / PUT / MKCOL / DELETE / MOVE / LOCK / UNLOCK</dd>
+        </dl>
+        <p class="system-info-hint">
+          在 Finder「连接服务器」、rclone、Cyberduck 或 Windows 映射网络驱动器中输入端点地址，
+          使用本站账号登录即可挂载读写。用户名密码即本站凭据。
+        </p>
+        <details class="system-info-details">
+          <summary>客户端挂载示例</summary>
+          <pre class="system-info-mono">rclone config  # type: webdav, url: {{ webdavEndpoint }}
+# macOS Finder：菜单「前往 → 连接服务器」输入端点地址
+# Windows：资源管理器「映射网络驱动器」输入端点地址</pre>
+        </details>
+      </template>
+      <p v-else class="system-info-hint">
+        WebDAV 未启用。设置 VFILES_WEBDAV_ENABLED=true 并开启认证后可挂载。
+      </p>
+    </section>
+
     <!-- 存储概览卡（组件级复用 ✓ 零数据层依赖 ✓ 自取数据） -->
     <section class="system-info-card" aria-label="存储概览">
       <h2 class="system-info-card-title">存储与用量</h2>
@@ -65,8 +91,17 @@ const info = ref<{
   arch: string;
   uptime_secs: number;
   started_at: string;
+  webdav_enabled: boolean;
+  webdav_bind: string;
 } | null>(null);
 const userTotal = ref<number | null>(null);
+
+const webdavEndpoint = computed(() => {
+  const bind = info.value?.webdav_bind || "";
+  const [host, port] = bind.split(":");
+  const hostLabel = host === "0.0.0.0" ? window.location.hostname : host;
+  return `http://${hostLabel}:${port || ""}/`;
+});
 
 const runtimeLabel = computed(() =>
   info.value ? `${info.value.os}/${info.value.arch}` : "—",
@@ -147,5 +182,27 @@ onMounted(load);
   margin: 0;
   color: var(--vf-text);
   font-variant-numeric: tabular-nums;
+}
+
+.system-info-mono {
+  font-family: var(--vf-font-mono, monospace);
+  word-break: break-all;
+}
+
+.system-info-hint {
+  margin-top: 0.8rem;
+  color: var(--vf-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.system-info-details {
+  margin-top: 0.7rem;
+  font-size: 0.8rem;
+}
+
+.system-info-details summary {
+  cursor: pointer;
+  color: var(--vf-accent-text);
 }
 </style>

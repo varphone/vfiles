@@ -64,6 +64,8 @@ pub struct SystemInfoResponse {
     pub arch: String,
     pub uptime_secs: u64,
     pub started_at: String,
+    pub webdav_enabled: bool,
+    pub webdav_bind: String,
 }
 
 fn process_start() -> std::time::Instant {
@@ -78,6 +80,12 @@ async fn system_info(
 ) -> ApiResult<Json<SystemInfoResponse>> {
     let _actor = require_admin(&state, &jar).await?;
     let uptime = process_start().elapsed().as_secs();
+    // WebDAV 接入信息（管理员看板 ✓ 与 config 层一致（r109b））。
+    let (webdav_enabled, webdav_bind) =
+        match vfiles_config::ConfigLoader::load().map(|c| c.webdav) {
+            Ok(webdav) => (webdav.enabled, webdav.bind_address()),
+            Err(_) => (false, String::new()),
+        };
     Ok(Json(SystemInfoResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
         os: std::env::consts::OS.to_string(),
@@ -86,6 +94,8 @@ async fn system_info(
         started_at: time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_default(),
+        webdav_enabled,
+        webdav_bind,
     }))
 }
 
