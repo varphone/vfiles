@@ -2565,6 +2565,25 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.62 拖放动线矩阵终审（round 56，验证轮）
+
+- 拖放族（历史 bug 高发区）首次用现行工具语系统审：合成 DragEvent + dump 式判据
+  （输出原始 className，不猜）+ 状态矩阵：
+  | 项 | 实测 | 判定 |
+  | --- | --- | --- |
+  | 源行暗化 | `is-dragging > td { opacity: .55 }` | ✓（规则挂 **td**） |
+  | 行/树落点高亮 | `drop-target` / `is-drag-over`（内层 item） | ✓ |
+  | dragend 清理 | 类复原 | ✓ |
+  | 收藏落点 | 空态无列表容器（合理） | ✓ |
+  **结论：拖放族健康零缺陷**（两轮测量判据修正后）。
+- **测量陷阱清单 +2**（工具语扩充）：①**规则挂载层**——`is-dragging` 挂 `> td` 而非
+  `tr`（同 r49 树行/item 层级陷阱），探针须读规则实文定层；②**类名先查实文**——
+  我凭记忆判据 `drag-chip` 且疑"回归丢失"，git 考古（`git log -S`）证**历史上从未
+  存在**（r24 做的是落点 drop-hint）✓ 无回归。
+- **提案候选记档**：光标跟随拖拽 chip（主流增强，如「移动移动件.txt → …」浮标）——
+  本就不在既有族内，可并入 PROPOSAL 系列另议。
+- docs-only 验证轮；431 用例保持全绿。
+
 ### 4.61 覆盖上传交互提案 + reduced-motion 约定入档（round 55）
 
 - **产品面提案**（r41/r51 遗留决策项 → 可决策文档）：`docs/PROPOSAL_OVERWRITE_UPLOAD.md`
