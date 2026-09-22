@@ -1008,6 +1008,16 @@ function flushScrollRestore() {
   });
 }
 
+// 目录级动态标题（r147 ✓ W3C 标准：浏览位置进标题）
+watch(
+  currentPath,
+  (path) => {
+    const dir = path.split("/").filter(Boolean).pop();
+    document.title = dir ? `${dir} - VFiles` : "VFiles - 文件管理系统";
+  },
+  { immediate: true },
+);
+
 // 事件驱动式（r138 ✓ 上轮计划兑现）：挂钩 navigateTo 单点（不依赖 watch 触发时序）
 // + 重试式恢复（渲染竞态防 ✗ 双 rAF 后校验补设）。
 

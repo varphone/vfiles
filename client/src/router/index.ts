@@ -25,6 +25,7 @@ const router = createRouter({
     },
     {
       path: "/admin/audit",
+      meta: { title: "审计日志" },
       name: "audit-logs",
       component: () => import("../views/AuditLogs.vue"),
     },
@@ -40,15 +41,23 @@ const router = createRouter({
     },
     {
       path: "/system-info",
+      meta: { title: "系统信息" },
       name: "system-info",
       component: () => import("../views/SystemInfo.vue"),
     },
     {
       path: "/admin/users",
+      meta: { title: "用户管理" },
       name: "admin-users",
       component: () => import("../views/AdminUsers.vue"),
     },
   ],
+});
+
+// 动态页面标题（r147 ✓ W3C 页面标题标准：页面唯一可辨标题）
+router.afterEach((to) => {
+  const base = "VFiles";
+  document.title = to.meta?.title ? `${to.meta.title} - ${base}` : `${base} - 文件管理系统`;
 });
 
 export default router;

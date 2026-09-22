@@ -2189,4 +2189,12 @@ describe("FileBrowser.vue drop hint", () => {
       expect(document.querySelector(".desktop-drag-chip")).toBeNull(),
     );
   });
+
+
+  it("sets a dynamic document title (r147)", async () => {
+    renderWithProviders(FileBrowser as any);
+    await nextTick();
+    // 根目录标题 = 产品默认（immediate watch ✓ 渲染即设、无需行渲染）
+    expect(document.title).toContain("VFiles");
+  });
 });
