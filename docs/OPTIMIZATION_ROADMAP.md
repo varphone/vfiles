@@ -2582,6 +2582,11 @@
   selectedPaths）→ **r141 专项修**（传参链对齐）。
 - 过程注：cookie secret 长度 <32 = fixture 静默失败（逐段 exit 诊断破 ✓ 测试基建
   参数验可后补）。截图 /tmp/vf-shot/accept-r140/ ✓。
+- **r141 专项（多击未破 ✗ 止损记档）**：数据源查证 = FileBrowser→FileList→FileItem
+  传参链 `selectedPaths`（useFileSelection）**同源** ✓ 与 selectedCount 同源 ✗✗ 但
+  浏览器选中态真（行类 ✓）而计数器/batch 条全无——**jsdom 单测绿 vs 浏览器红 =
+  环境差异谜**（`check()` 事件流/双实例渲染分支嫌疑）→ **r142 埋点 trace**
+  （handleRowSelect/selectedCount computed 信号）。
 
 ### 4.116x 滚动记忆谜案（round 137，止损记档）
 
