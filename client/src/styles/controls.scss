@@ -304,6 +304,13 @@
 
 /* 右键菜单与通知面板由各自组件 scoped 声明同名令牌（全局规则会被 scoped 覆盖） */
 
+/* 搜索命中高亮：Bulma 的 has-background-warning-light 在深色下是刺眼的浅色块
+   （黑字 + 淡桃色），统一到 warning-soft（双主题各自协调），文字随语境。 */
+mark.has-background-warning-light {
+  background: var(--vf-warning-soft) !important;
+  color: inherit;
+}
+
 /* 语义文本色工具类（替代 Bulma 的 has-text-grey* —— 它们是系统外的字面灰，
    浅色下 has-text-grey 4.29:1、grey-light 2.0:1 均不达 AA）。 */
 .vf-text-muted {

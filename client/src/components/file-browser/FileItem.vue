@@ -262,7 +262,7 @@
     v-else
     class="file-item box"
     :class="{
-      'has-background-light': selected,
+      'is-row-selected': selected,
       'is-expanded': showActions,
       'drop-target': dragOver,
       'is-dragging': dragging,
@@ -791,6 +791,11 @@ function share() {
 /* 移动端列表：扁平行 + 细分隔线（主流网盘移动端不用卡片阴影） */
 .file-item.is-dragging {
   opacity: 0.55;
+}
+
+/* 移动行选中态与桌面行/网格卡片一致（round 2 语言：16% 强调底色） */
+.file-item.is-row-selected {
+  background: var(--vf-accent-soft-strong);
 }
 
 .file-item {

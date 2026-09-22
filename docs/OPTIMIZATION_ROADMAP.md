@@ -2565,6 +2565,36 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.18 Bulma 语义色全面对齐令牌（round 17）
+
+- 深挖第 16 轮"类名逃过字面清查"的线索，对 Bulma 语义类做双主题实测，发现**三层问题**：
+  1. **Bulma 1.0 的语义色不随主题变**（浅/深声明同值，hsl 通道设计），且与 `--vf-*`
+     是两套颜色：is-danger 按钮是**粉红** `#f14668` 家族（30 处）而我们的红是 `#cc0f35`，
+     is-success 薄荷绿 vs 我们的深绿，is-info 天蓝 vs blue-600；
+  2. **真实 AA 失败**（浅色）：`has-text-warning` 对白 **1.75 ✗**（搜索框提示文字！）、
+     `has-text-danger` **2.8 ✗**（下载错误文字）；
+  3. **深色下搜索高亮是刺眼浅色块**（`has-background-warning-light` = 淡桃底 + 黑字，
+     与深色主题格格不入）；移动行选中态还在用 Bulma `has-background-light`（与桌面/网格
+     的 accent-soft-strong 不一致）。
+- 修复（利用 Bulma 的 h/s/l 通道派生设计，每色 4 个变量全家跟随）：
+  - `theme.scss` 浅/深色块各覆盖 **danger/success/warning/info 的 4 个通道变量**
+    （h/s/l + invert-l），整体对齐 `--vf-*`：浅色 danger `#cc0f35`+白、success 深绿+白、
+    warning 深琥珀+白、info blue-600+白；深色按我们"语义色变浅"的哲学（348/86/61、
+    160/55/60、35/85/72 配深字，info 蓝-600+白）；
+  - `controls.scss` 覆盖 mark 高亮 → `--vf-warning-soft` + 文字随语境；
+  - 移动行选中 → `is-row-selected` + accent-soft-strong（与 round 2 语言一致）。
+- 验证（真实浏览器双主题，合成探针元素实测）：
+  | 浅色 | 实测填充 | 对比度 | | 深色 | 对比度 |
+  | --- | --- | --- | --- | --- | --- |
+  | is-danger | #cc0f35 = 令牌 ✓ | **5.7** ✓ | | is-danger | 5.82 ✓ |
+  | is-success | 深绿家族 ✓ | **5.44** ✓ | | is-success | 11.22 ✓ |
+  | is-warning / has-text-warning | #7c4a03 = 令牌 ✓ | **7.54** ✓（原 1.75） | | has-text-warning | 11.08 ✓ |
+  | is-info | blue-600 ✓ | **5.17** ✓ | | is-info 白字 | 6.67 ✓（round-1 家族） |
+  | has-text-danger | #cc0f35 ✓ | **5.7** ✓（原 2.8） | | has-text-danger | 5.02 ✓ |
+  mark：浅色 warning-soft 淡琥珀 / 深色 dim 琥珀（刺眼块消除）✓；
+  移动选中 `rgba(37,99,235,.16)` ✓（注意：行有 0.15s 过渡，探针须延迟测量）；
+  432 用例全绿、无控制台报错。至此 Bulma 语义层与我们的令牌**同源**。
+
 ### 4.17 移动端操作条与文本灰令牌（round 16）
 
 - 首次覆盖移动布局（本目标此前以桌面为主）。审计（iPhone 13 视口实测）结论：

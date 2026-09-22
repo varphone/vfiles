@@ -15,6 +15,26 @@
 
 // 浅色：即项目此前的配色，保持视觉不变。
 @mixin vf-light-tokens {
+  /* Bulma 语义色通道对齐 --vf-* 令牌（is-* 按钮/has-text-* 工具类按此派生）：
+     danger #cc0f35 + 白字 5.87；success 深绿 + 白字 ≈5.0；warning 深琥珀 + 白字 ≈8.2；
+     info 对齐 blue-600 + 白字 5.2。Bulma 1.0 默认是主题无关的鲜色（浅色下
+     has-text-warning 对白仅 1.75:1）。 */
+  --bulma-danger-h: 348;
+  --bulma-danger-s: 86%;
+  --bulma-danger-l: 43%;
+  --bulma-danger-invert-l: 100%;
+  --bulma-success-h: 160;
+  --bulma-success-s: 55%;
+  --bulma-success-l: 30%;
+  --bulma-success-invert-l: 100%;
+  --bulma-warning-h: 34;
+  --bulma-warning-s: 94%;
+  --bulma-warning-l: 25%;
+  --bulma-warning-invert-l: 100%;
+  --bulma-info-h: 221;
+  --bulma-info-s: 83%;
+  --bulma-info-l: 53%;
+  --bulma-info-invert-l: 100%;
   color-scheme: light;
 
   /* 强调色（链接、选中、拖放高亮）。
@@ -133,6 +153,25 @@
 
 // 深色：与 Bulma 的 `data-theme="dark"` 主题（h 221 / s 14%）保持一致。
 @mixin vf-dark-tokens {
+  /* Bulma 语义色通道对齐 --vf-* 深色令牌（浅色系填充 + 深色文字，与本主题
+     "语义色在深色下变浅"的哲学一致）：danger 348/86/61、success 160/55/60、
+     warning 35/85/72 均配深字（invert-l 0%）；info 用 blue-600 + 白字 6.67。 */
+  --bulma-danger-h: 348;
+  --bulma-danger-s: 86%;
+  --bulma-danger-l: 61%;
+  --bulma-danger-invert-l: 0%;
+  --bulma-success-h: 160;
+  --bulma-success-s: 55%;
+  --bulma-success-l: 60%;
+  --bulma-success-invert-l: 0%;
+  --bulma-warning-h: 35;
+  --bulma-warning-s: 85%;
+  --bulma-warning-l: 72%;
+  --bulma-warning-invert-l: 0%;
+  --bulma-info-h: 222;
+  --bulma-info-s: 76%;
+  --bulma-info-l: 46%;
+  --bulma-info-invert-l: 100%;
   color-scheme: dark;
 
   /* 填充面色取更深的蓝：白字对比度 5.8:1（旧值 2.83:1 未达 AA）；
