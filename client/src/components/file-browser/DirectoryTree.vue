@@ -20,7 +20,10 @@
           :key="row.path"
           :data-vfiles-path="row.path"
           class="directory-tree-item"
-          :class="{ 'is-drag-over': dragOverPath === row.path }"
+          :class="{
+            'is-drop-confirmed': dropFlashPath === row.path,
+            'is-drag-over': dragOverPath === row.path,
+          }"
           @dragover.prevent="onDragOver(row.path)"
           @dragleave="onDragLeave(row.path)"
           @drop.prevent="onDrop(row.path)"
@@ -250,10 +253,17 @@ function onDragLeave(path: string) {
   if (dragOverPath.value === path) dragOverPath.value = "";
 }
 
+const dropFlashPath = ref("");
+
 function onDrop(path: string) {
   dragOverPath.value = "";
   if (!props.dragging) return;
   emit("drop-on-folder", path);
+  // 落子回执：目标节点短暂高亮
+  dropFlashPath.value = path;
+  window.setTimeout(() => {
+    if (dropFlashPath.value === path) dropFlashPath.value = "";
+  }, 650);
 }
 </script>
 
@@ -390,6 +400,23 @@ function onDrop(path: string) {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* 落子回执（Finder/Explorer 式）：drop 后目标短暂高亮消退。
+   reduced-motion 由既有家族降级块覆盖（animation-duration 0.01ms ✓ 无需另设）。 */
+.is-drop-confirmed,
+.is-drop-confirmed > td {
+  animation: vf-drop-flash 0.65s var(--vf-motion-standard);
+}
+
+@keyframes vf-drop-flash {
+  from {
+    background: var(--vf-accent-soft-strong);
+  }
+
+  to {
+    background: transparent;
   }
 }
 </style>

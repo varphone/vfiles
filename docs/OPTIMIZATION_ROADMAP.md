@@ -2565,6 +2565,24 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.67 落子回执动效（round 61）
+
+- chip 三部曲收尾动效：**drop 后目标短暂高亮消退**（Finder/Explorer 式回执 ✓
+  `is-drop-confirmed` = `vf-drop-flash` 0.65s（accent-soft-strong → 透明）；reduced-motion
+  由既有家族降级块覆盖 ✓）。
+- **架构教训（本轮最大价值）**：首版把 flash 态放 FileItem 组件内 ✗✗ 实测 **drop 成功
+  → move API → 列表重取 → FileItem remount → 本地状态清零 = 650ms 回执被重渲染吃掉**
+  （flash-trace 三采样全 0 而 toast 已出 ✓ 破案关键）。正解 = **状态上移父层**
+  （FileBrowser `dropFlashPath` + `flashPath` prop 穿 FileList → FileItem `flash` ✓
+  父层不 remount ✓ 终测 `t175: 1` 活现 + 825ms 清 ✓✓）。树条目 flash 留容器组件内
+  （目录行是 DOM 节点由容器态驱动 ✓ 无 remount 险）。
+- 测试改造：渲染层断言 `flash: true` → `is-drop-confirmed` ✓（433 = +1 ✓）。
+- **锚点工程固化 +1**：同一绑定在 FileBrowser 出现 **6 次**（FileList ×3 + FileGrid ×3）
+  ——盲替换会污染他组件；**行号锚 + 自底向上插入**精确打击 ✓（工具语：多站点同文案
+  用行号锚）。另：FileList props = withDefaults 接口式，options 式默认值会静默成
+  "默认值对象"（tsc 以 TS2339 揪出 ✓ prop 类型须单独声明）。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 736 ✓ 433 用例 ✓ 构建 ✓）。
+
 ### 4.66 十轮增量小节（round 60）+ 节律 sweep 留档
 
 - **r51–r59 增量**（继 r50 半世纪小节后的九轮）：

@@ -278,6 +278,7 @@
                   :show-location="searchActive"
                   :select-mode="batchMode"
                   :selected-paths="selectedPaths"
+                  :flash-path="dropFlashPath"
                   :expanded-path="expandedFilePath"
                   :active-path="desktopActivePath"
                   :desktop="true"
@@ -477,6 +478,7 @@
             :highlight="searchQuery"
             :select-mode="batchMode"
             :selected-paths="selectedPaths"
+            :flash-path="dropFlashPath"
             :expanded-path="expandedFilePath"
             :show-action-column="!detailsVisible"
             @click="handleItemClick"
@@ -554,6 +556,7 @@
             :files="visibleFiles"
             :select-mode="batchMode"
             :selected-paths="selectedPaths"
+            :flash-path="dropFlashPath"
             :expanded-path="expandedFilePath"
             @click="handleItemClick"
             @download="handleDownload"
@@ -2096,10 +2099,17 @@ onBeforeUnmount(() => {
   document.removeEventListener("dragover", moveDragChip, { capture: true });
 });
 
+const dropFlashPath = ref("");
+
 async function handleDropOnFolder(targetDir: string) {
   const file = draggingFile.value;
   draggingFile.value = null;
   if (!file) return;
+  // 落子回执（Finder/Explorer 式）：目标行 650ms 高亮消退（父层持态 ✓ 跨 remount）
+  dropFlashPath.value = targetDir;
+  window.setTimeout(() => {
+    if (dropFlashPath.value === targetDir) dropFlashPath.value = "";
+  }, 650);
   // 校验（自身/子目录、未变化、重名）由 useMoveDialog 内的 planMoveOperations 统一处理
   await moveEntryToDirectory(file, targetDir);
 }

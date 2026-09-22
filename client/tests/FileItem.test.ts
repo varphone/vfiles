@@ -130,4 +130,20 @@ describe("FileItem.vue mobile row meta", () => {
     expect(commit?.textContent?.trim()).toBe("更新说明");
     expect(container.querySelector(".file-commit .tag")).toBeNull();
   });
+
+  it("renders the drop confirmation flash from the parent-held flash prop", () => {
+    // 回执态由父层持态（flash prop）：remount 后仍存活 ✓ 渲染层断言
+    const { container } = render(FileItem as any, {
+      props: {
+        file: file({ kind: "directory" }),
+        desktop: true,
+        dragging: true,
+        flash: true,
+      },
+    });
+    const row = container.querySelector(
+      "tr.desktop-file-row, .file-item",
+    ) as HTMLElement;
+    expect(row.className).toContain("is-drop-confirmed");
+  });
 });

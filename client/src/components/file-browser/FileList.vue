@@ -62,6 +62,7 @@
           :file="file"
           :highlight="highlight"
           :select-mode="selectMode"
+          :flash="flashPath === file.path"
           :selected="
             selectedPaths.has(file.path) ||
             (!selectMode && activePath === file.path)
@@ -101,6 +102,7 @@
       :file="file"
       :highlight="highlight"
       :select-mode="selectMode"
+      :flash="flashPath === file.path"
       :selected="selectedPaths.has(file.path)"
       :expanded="expandedPath === file.path"
       @click="emit('click', file)"
@@ -169,6 +171,8 @@ const props = withDefaults(
     renamingPath?: string;
     /** 是否显示「操作」列；详情面板可见时可关掉，避免与面板里的操作重复。 */
     showActionColumn?: boolean;
+    /** 落子回执路径（父层持态 ✓ 跨 remount） */
+    flashPath?: string;
     /** 搜索结果里显示条目所在目录（主流网盘搜索结果的必要信息）。 */
     showLocation?: boolean;
     /** 列宽（像素）；缺省时使用默认宽度。 */
@@ -183,6 +187,7 @@ const props = withDefaults(
   }>(),
   {
     showActionColumn: true,
+    flashPath: "",
     showLocation: false,
     renamingPath: "",
     highlight: "",

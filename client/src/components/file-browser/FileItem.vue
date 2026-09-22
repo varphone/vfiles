@@ -8,6 +8,7 @@
       'drop-target': dragOver,
       'is-row-selected': selected,
       'is-dragging': dragging,
+      'is-drop-confirmed': flash,
     }"
     draggable
     @click="handleClick"
@@ -259,6 +260,7 @@
       'is-expanded': showActions,
       'drop-target': dragOver,
       'is-dragging': dragging,
+      'is-drop-confirmed': flash,
     }"
     draggable
     @click="handleClick"
@@ -446,6 +448,8 @@ const props = defineProps<{
   highlight?: string;
   selectMode?: boolean;
   selected?: boolean;
+  /** 落子回执（父层持态）：drop 后 650ms 内为 true（跨 remount 存活 ✓） */
+  flash?: boolean;
   expanded?: boolean;
   desktop?: boolean;
   /** 是否处于内联重命名状态 */
@@ -714,6 +718,8 @@ function handleDragLeave() {
 function handleDrop() {
   dragOver.value = false;
   if (props.file.kind !== "directory") return;
+  // 落子回执由父层持态（flash prop）：move 成功会重渲染本行（remount），
+  // 组件本地状态会被清零 ✗（实测教训）——状态上移父层跨 remount 存活 ✓
   emit("dropOnFolder", props.file.path);
 }
 
@@ -1169,6 +1175,23 @@ function share() {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* 落子回执（Finder/Explorer 式）：drop 后目标短暂高亮消退。
+   reduced-motion 由既有家族降级块覆盖（animation-duration 0.01ms ✓ 无需另设）。 */
+.is-drop-confirmed,
+.is-drop-confirmed > td {
+  animation: vf-drop-flash 0.65s var(--vf-motion-standard);
+}
+
+@keyframes vf-drop-flash {
+  from {
+    background: var(--vf-accent-soft-strong);
+  }
+
+  to {
+    background: transparent;
   }
 }
 </style>
