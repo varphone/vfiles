@@ -54,6 +54,7 @@ const groups = [
         keys: "PageUp PageDown",
         description: "预览中 上一张 / 下一张（与 ← → 同）",
       },
+      { keys: "F", description: "预览中 切换全屏（Esc 全屏中先退全屏）" },
     ],
   },
   {

@@ -59,6 +59,8 @@ cd client && bun run fmt
 ## 提交前建议
 
 - 新样式取值先查 **[DESIGN_TOKENS.md](DESIGN_TOKENS.md)**（五维刻度 + 令牌表）。
+- 可见实例选择器（探件工具语，r75 升级版）：**Modal 藏而不卸** —— 可见判据 =
+  `.modal.is-active` 作用域或 `offsetParent !== null` 过滤（裸 querySelector 会命中隐藏实例 ✗ 实测 N 次）。
 - 可见实例选择器（探针工具语）：查条件渲染目标**必须过滤 `offsetParent !== null`**
   （隐藏的 EmptyState/嵌套 modal 曾反复污染测量）；多层 modal 用**目标专属文本锚**
   （如确认弹窗按标题「恢复历史版本」定位）而非 `.modal.is-active` 通配。

@@ -2565,6 +2565,23 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.81 全屏键 F 与 Esc 单所有者链定稿（round 75）
+
+- 双缺口探针定案：**F 键**缺失（主流图查看器标配）+ **全屏中 Esc 层级破**（真机风险 =
+  浏览器原生退全屏 + Modal 同响关预览**双杀** ✗ r63 同款）。
+- **架构定稿（本轮最大价值）**：FileBrowser 1438 行原有
+  **「Escape 逐层退出」单所有者链**（定位前缀 → 高级搜索 → 预览 → 批量 → 选择 ✓
+  窗口级）——首版我在预览里拦**全量** Esc + stopPropagation ✗✗ **掐断该链**
+  （批量退出测试当场揭发 ✗ 隔离复现 ✓ 真破）。定稿：
+  **只有全屏层捕获拦截**（全屏中 = 只退全屏）；其余各层 Esc 交还单所有者链调度 ✓。
+- F 键 = `toggleFullscreen` 通用切换 ✓ 快捷键表登记（含「Esc 全屏中先退全屏」注）✓。
+- **三步终验**（可见性判据 ✓）：`f` → 全屏开+预览在 ✓ `Esc`（全屏）→ 只退全屏 ✓
+  `Esc` → 预览关闭 ✓✓ 全链定稿。
+- **判据教训第 N 次记**（强化可见实例工具语）：Modal **藏而不卸** → `querySelector`
+  仍命中 ✗ **可见判据 = `.modal.is-active` 作用域或 `offsetParent` 过滤**（写入
+  CONTRIBUTING 工具语升级版 ✓）。
+- 437 用例全绿（批量 Esc 用例自愈 ✓）；五门禁 ✓。
+
 ### 4.80 预览补充键 PageUp/PageDown（round 74）
 
 - 小件落地：预览翻页补 **PageUp/PageDown = 上一张/下一张**（Windows 照片查看器派别 ✓

@@ -418,7 +418,6 @@ function onFullscreenChange() {
 
 /** 图片类快捷键：+/- 缩放、0 适应、R 旋转；其余交给父级/Modal 处理。 */
 function onKeydown(event: KeyboardEvent) {
-  if (!isImage.value) return;
   const t = event.target as HTMLElement | null;
   if (
     t &&
@@ -426,6 +425,23 @@ function onKeydown(event: KeyboardEvent) {
   ) {
     return;
   }
+  // 层级纪律（r75）：全屏中 Esc **只退全屏**（捕获阶段抢先拦截 ✓ 不关预览——
+  // 真机上浏览器原生退全屏 + Modal 同响会双杀 ✗ r63 同款）；f = 全屏切换（通用键）。
+  // Esc 分层（r75 定稿）：**只有全屏层拦截**（全屏中 = 只退全屏 ✓ 捕获先行）；
+  // 其余各层的 Esc 链由 FileBrowser「逐层退出」**单所有者**统一调度（定位前缀 →
+  // 高级搜索 → 预览 → 批量 → 选择）——此处 stopPropagation 会掐断该链 ✗✗（实测）。
+  if (event.key === "Escape" && fullscreen.value) {
+    event.preventDefault();
+    event.stopPropagation();
+    void toggleFullscreen();
+    return;
+  }
+  if (event.key.toLowerCase() === "f") {
+    event.preventDefault();
+    void toggleFullscreen();
+    return;
+  }
+  if (!isImage.value) return;
   const key = event.key.toLowerCase();
   if (key === "+" || key === "=") {
     zoomBy(1);
@@ -463,8 +479,8 @@ watch(
   shellRef,
   (el, _prev, onCleanup) => {
     if (!el) return;
-    window.addEventListener("keydown", onKeydown);
-    onCleanup(() => window.removeEventListener("keydown", onKeydown));
+    window.addEventListener("keydown", onKeydown, true);
+    onCleanup(() => window.removeEventListener("keydown", onKeydown, true));
   },
   { flush: "post" },
 );
