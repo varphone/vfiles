@@ -466,6 +466,12 @@ onMounted(async () => {
   cursor: pointer;
 }
 
+/* 非颜色区分（r152 ✓ WCAG 1.4.1）：hover/焦点带下划线（GitHub/Discord 式） */
+.auth-link-button:hover,
+.auth-link-button:focus-visible {
+  text-decoration: underline;
+}
+
 .auth-link-button:hover,
 .auth-link-button:focus-visible {
   text-decoration: underline;
