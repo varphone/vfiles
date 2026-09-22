@@ -81,12 +81,13 @@ export const useAppStore = defineStore("app", () => {
     showNotification("success", message);
   }
 
+  // 时长分级（r123 ✓ 主流惯例：成功/信息 3s、警告 6s、错误 8s（需读完））
   function error(message: string) {
-    showNotification("error", message, 5000);
+    showNotification("error", message, 8000);
   }
 
   function warning(message: string) {
-    showNotification("warning", message);
+    showNotification("warning", message, 6000);
   }
 
   function info(message: string) {
