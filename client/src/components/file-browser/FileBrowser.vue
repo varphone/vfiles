@@ -951,6 +951,37 @@ const fileView = useFileViewStore();
 const { files, loading, error, currentPath, browseCommit } =
   storeToRefs(filesStore);
 
+let pendingScrollRestore: number | null = null;
+// 滚动位置记忆（r129 ✓ 云盘主流标配：进出目录返回时保持阅读位）
+const scrollMemory = new Map<string, number>();
+const MAX_SCROLL_MEMORY = 50;
+
+watch(currentPath, (next, prev) => {
+  const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
+  if (prev && shell) {
+    scrollMemory.set(prev, shell.scrollTop);
+    // 防泄漏：FIFO 裁剪
+    if (scrollMemory.size > MAX_SCROLL_MEMORY) {
+      const oldest = scrollMemory.keys().next().value;
+      if (oldest !== undefined) scrollMemory.delete(oldest);
+    }
+  }
+  pendingScrollRestore = next ? scrollMemory.get(next) ?? null : null;
+});
+
+// 列表渲染完成后恢复（loading 收尾时机 ✓ 过早会被 clamp 到 0）
+watch(loading, (isLoading) => {
+  if (isLoading || pendingScrollRestore == null) return;
+  const restore = pendingScrollRestore;
+  pendingScrollRestore = null;
+  void nextTick(() => {
+    const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
+    if (shell) shell.scrollTop = restore;
+  });
+});
+
+
+
 const sortState = computed<SortState>(() => ({
   field: fileView.sortField,
   direction: fileView.sortDirection,
