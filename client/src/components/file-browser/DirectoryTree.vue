@@ -276,6 +276,8 @@ function onDrop(path: string) {
   display: flex;
   align-items: center;
   border-radius: var(--vf-radius-sm);
+  /* 落点高亮（is-drag-over）渐入 */
+  transition: background-color 0.15s ease;
 }
 
 .directory-tree-item.is-drag-over {

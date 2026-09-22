@@ -31,6 +31,8 @@ import DialogHost from "./components/common/DialogHost.vue";
   outline: 2px dashed var(--vf-accent);
   outline-offset: -2px;
   background-color: var(--vf-accent-soft) !important;
+  /* 放置目标渐入（与移动端行、网格卡片的 0.15s 过渡一致） */
+  transition: background-color 0.15s ease;
 }
 
 html,

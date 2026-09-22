@@ -835,6 +835,8 @@ function share() {
 
 .desktop-file-row > td {
   vertical-align: middle;
+  /* 悬停/选中/落点高亮都在 td 背景上：统一 0.15s 渐入（移动端行与网格卡片已有） */
+  transition: background-color 0.15s ease;
 }
 
 /* 次要信息用低对比度颜色，让名称成为视觉焦点 */
@@ -852,6 +854,11 @@ function share() {
 
 .desktop-file-row.is-row-selected > td {
   background: var(--vf-accent-soft-strong);
+}
+
+/* 拖放落点高亮压过 hover/选中底色（同特异性 → 靠后胜出），并随过渡渐入 */
+.desktop-file-row.drop-target > td {
+  background: var(--vf-accent-soft);
 }
 
 .desktop-file-row:hover > td:first-child {

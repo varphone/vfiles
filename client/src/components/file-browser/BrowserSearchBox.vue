@@ -257,10 +257,13 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
-  padding: 0.72rem;
-  border-radius: var(--vf-radius);
-  border: 1px solid var(--explorer-panel-border, var(--vf-border));
-  background: var(--explorer-panel-bg, var(--vf-surface));
+  /* 与工具栏其它弹层（视图/排序/上传）同一框体语言：
+     border-weak、6px 圆角、12px 内边距、raised 背景、菜单阴影 */
+  padding: 0.75rem;
+  border-radius: 6px;
+  border: 1px solid var(--vf-border-weak);
+  background: var(--vf-surface-raised);
+  box-shadow: var(--vf-shadow-menu);
 }
 
 .desktop-search-panel--dropdown {
@@ -271,10 +274,9 @@ onBeforeUnmount(() => {
   width: max-content;
   max-width: min(calc(100vw - 2rem), 28rem);
   z-index: 25;
-  background: var(--vf-surface);
   opacity: 1;
   isolation: isolate;
-  box-shadow: var(--vf-shadow-lg);
+  /* 背景/阴影继承 .desktop-search-panel（raised + 菜单阴影，与其它弹层一致） */
 }
 
 .desktop-search-panel--dropdown::after {
