@@ -2058,6 +2058,14 @@ describe("FileBrowser.vue drop hint", () => {
       expect(hud!.textContent).toContain("定位");
       expect(hud!.textContent).toContain("丙");
     });
+    // 中央浮动 HUD（r78 Finder 式回执 ✓ 与状态栏并存）
+    await waitFor(() => {
+      const pill = container.ownerDocument.querySelector(
+        ".desktop-typeahead-hud",
+      );
+      expect(pill).not.toBeNull();
+      expect(pill!.textContent!.trim()).toBe("丙");
+    });
     const active = container.querySelector('tr[data-vfiles-path="丙丁戊.txt"]');
     expect(active).not.toBeNull();
   });

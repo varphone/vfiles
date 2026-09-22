@@ -1,6 +1,14 @@
 <template>
   <!-- 光标跟随拖拽 chip（VS Code/macOS 式）：拖动时显示条目名/多选数 -->
   <Teleport to="body">
+    <!-- 定位前缀中央浮动 HUD（Finder 式醒目回执 r78 ✓ 与状态栏语境并存分工） -->
+    <div
+      v-if="typeAheadPrefix"
+      class="desktop-typeahead-hud"
+      aria-hidden="true"
+    >
+      {{ typeAheadPrefix }}
+    </div>
     <div
       v-if="draggingFile"
       class="desktop-drag-chip"
@@ -2754,6 +2762,25 @@ function handleSortChange(field: SortField) {
     justify-content: center;
   }
 }
+.desktop-typeahead-hud {
+  position: fixed;
+  top: 42vh;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  padding: 0.55rem 1.1rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius);
+  background: var(--vf-surface-raised);
+  box-shadow: var(--vf-shadow-menu);
+  color: var(--vf-text-strong);
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  transition: opacity 0.12s var(--vf-motion-standard);
+}
+
 .desktop-drag-chip.is-invalid {
   background: var(--vf-danger-soft-strong);
   border-color: var(--vf-danger-line);

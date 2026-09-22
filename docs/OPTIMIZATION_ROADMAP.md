@@ -2565,6 +2565,21 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.84 中央浮动 HUD（round 78，三轮一主题收官）
+
+- Finder 式醒目回执落地：定位前缀时**视口中央浮动 pill**（弹出家族 = raised +
+  border-weak + `--vf-radius` + shadow-menu + **24px/600** 大字 ✓ `pointer-events: none`
+  ✓ 120ms 透明度过渡（非动效类 = 降级豁免 ✓ 无新 keyframes））；与状态栏
+  「定位：X」**并存分工**（浮动 = 即时回执 / 状态栏 = 语境常驻 ✓）。
+- **双证**：jsdom 单测（r77 测试扩断言 ✓ `ownerDocument` 查 Teleport 目标 ✓
+  可见实例工具语应用 ✓ 438 全绿）+ 浏览器 dispatch 版实测：
+  `text 丙 / centerX 720 = 1440/2 精确居中 / yMid 406 / 字号 24px` ✓✓。
+- **工具语 +1（关键局限）**：Playwright `keyboard.type()` 对 **CJK 走 `insertText`
+  （不产生 keydown）** ✗✗ —— 浏览器探针里 CJK 键入永不触发 keydown 型处理
+  （r76/77 探针"失败"之谜终解 ✓）；需键盘事件时用
+  `document.dispatchEvent(new KeyboardEvent('keydown', { key: '字' }))` ✓。
+- 死样式 737 类（+1 pill ✓）；五门禁全绿（438 用例 ✓）。
+
 ### 4.83 定位前缀 HUD：勘误 + 测试保障轮（round 77）
 
 - **勘误（推翻 r76 一结论）**：r76 记「定位前缀无 HUD 设计」——**错** ✗✓ 状态栏
