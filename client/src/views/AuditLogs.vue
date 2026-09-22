@@ -731,12 +731,6 @@ onMounted(() => {
   font-size: 0.78rem;
 }
 
-@keyframes audit-shimmer {
-  to {
-    background-position: -200% 0;
-  }
-}
-
 .audit-table-wrap {
   margin-top: 0.5rem;
   overflow-x: auto;

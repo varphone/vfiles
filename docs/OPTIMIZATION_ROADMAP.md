@@ -2565,6 +2565,23 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.22 窄桌面响应式与骨架屏深色复核（round 21）
+
+- **宽对话框 × 窄桌面**（1024/1100/1280 × 720 三档实测，历史/移动/预览三个对话框）：
+  **全部合规** —— 历史对话框 922→960px（`max-width: 90vw` 钳制在 1024 恰好生效）✓、
+  标准对话框固定 640px ✓；三档 × 三框**零横向溢出、零溢出元素** ✓。
+  移动端历史 = 行内视图（`actionMode`，非对话框）✓ 结构合理。
+- **骨架屏 shimmer 深色复核**（"渐变里的白色字面量"假设）——**被证伪**：
+  `SkeletonList`/`FileSkeleton` 渐变均用 `var(--vf-skeleton-shine)`、
+  `BatchActionBar` 用 `var(--vf-accent-soft)`，**零字面量**；`--vf-skeleton-shine`
+  双主题自适应（浅 `rgba(255,255,255,.65)` 白高光 / 深实测 `#abb1bf38` 灰蓝微光，
+  与 border-weak 色系一致）✓；`SkeletonList` 有 `prefers-reduced-motion` 守卫 ✓。
+- **死样式第 3 批**：`@keyframes audit-shimmer` **零引用**（仅自身定义）→ 删除。
+- 排坑记录：删除正则 `[^}]*` 在嵌套 `to {...}` 的内层 `}` 提前收尾，留下孤儿外层 `}`
+  → 构建失败（tsc/测试不解析样式故先行通过）→ 精确修复后重建验证。教训：删嵌套
+  CSS 块用非贪婪配平而非字符类。
+- 验证：删除后零残留 ✓；tsc/build/**432 用例**/lint 全绿 ✓。
+
 ### 4.21 顶栏节奏审计与账户按钮对齐（round 20）
 
 - 布局轮：实测顶栏逐项间距与高度、并闭环 round 16 推迟的"操作条分隔线"项。
