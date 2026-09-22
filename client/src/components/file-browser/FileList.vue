@@ -1,17 +1,10 @@
 <template>
   <div v-if="desktop" class="table-container">
-    <table
-      class="table is-fullwidth is-hoverable is-narrow file-list-table"
-      :class="{ 'is-resizing': resizingColumn !== null }"
-    >
-      <!-- 列宽由 store 持久化，拖拽时只改这一处 -->
+    <table class="table is-fullwidth is-hoverable is-narrow file-list-table">
+      <!-- 内容自适应（table-layout: auto）：数据列随内容定宽，名称列吸收剩余空间 -->
       <colgroup>
         <col class="file-list-col-check" />
-        <col
-          v-for="column in columns"
-          :key="column.field"
-          :style="colWidthStyle(column.field)"
-        />
+        <col v-for="column in columns" :key="column.field" />
         <col v-if="showActionColumn" class="file-list-col-actions" />
       </colgroup>
       <thead>
@@ -53,25 +46,6 @@
                 aria-hidden="true"
               />
             </button>
-
-            <!-- 列宽拖拽手柄：双击回到默认宽度，键盘 ←/→ 微调 -->
-            <span
-              class="file-list-resizer"
-              :class="{ 'is-active': resizingColumn === column.field }"
-              role="separator"
-              tabindex="0"
-              :aria-label="`调整「${column.label}」列宽`"
-              :aria-orientation="'vertical'"
-              :title="`拖动调整「${column.label}」列宽（双击恢复默认）`"
-              @mousedown.stop.prevent="startResize(column.field, $event)"
-              @touchstart.stop.prevent="startResize(column.field, $event)"
-              @dblclick.stop.prevent="resetWidth(column.field)"
-              @keydown.left.prevent="nudgeWidth(column.field, -16)"
-              @keydown.right.prevent="nudgeWidth(column.field, 16)"
-              @keydown.home.prevent="resetWidth(column.field)"
-            >
-              <span class="file-list-resizer-line" aria-hidden="true"></span>
-            </span>
           </th>
           <th
             v-if="showActionColumn"
@@ -153,12 +127,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, toRefs } from "vue";
+import { computed, toRefs } from "vue";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-vue";
-import {
-  DEFAULT_COLUMN_WIDTHS,
-  type ColumnWidthKey,
-} from "../../stores/fileView.store";
 import type { FileInfo } from "../../types";
 import {
   SORT_FIELD_LABELS,
@@ -182,7 +152,6 @@ const emit = defineEmits<{
   (e: "open-folder", file: FileInfo): void;
   (e: "create-directory", file: FileInfo): void;
   (e: "sort-change", field: SortField): void;
-  (e: "resize-column", field: ColumnWidthKey, width: number): void;
   (e: "toggle-select-all"): void;
   (
     e: "modifier-select",
@@ -203,7 +172,6 @@ const props = withDefaults(
     /** 搜索结果里显示条目所在目录（主流网盘搜索结果的必要信息）。 */
     showLocation?: boolean;
     /** 列宽（像素）；缺省时使用默认宽度。 */
-    columnWidths?: Partial<Record<ColumnWidthKey, number>>;
     highlight?: string;
     selectMode: boolean;
     selectedPaths: Set<string>;
@@ -216,7 +184,6 @@ const props = withDefaults(
   {
     showActionColumn: true,
     showLocation: false,
-    columnWidths: undefined,
     renamingPath: "",
     highlight: "",
     expandedPath: "",
@@ -259,84 +226,6 @@ const columns: SortColumn[] = [
   },
 ];
 
-/** 只有可排序的列参与拖拽（与 store 的 ColumnWidthKey 一致）。 */
-function isResizable(
-  field: SortField | null | undefined,
-): field is ColumnWidthKey {
-  return (
-    field === "name" ||
-    field === "modified" ||
-    field === "type" ||
-    field === "size"
-  );
-}
-
-/**
- * 列宽样式：名称列默认自适应（吸收表格余量，主流列表行为）；
- * 其余列精确写死。用户调过名称列后才转为固定值（双击复位回到自适应）。
- */
-function colWidthStyle(field: SortField | null | undefined) {
-  if (field === "name" && props.columnWidths?.name == null) return undefined;
-  return { width: `${columnWidth(field)}px` };
-}
-
-function columnWidth(field: SortField | null | undefined): number {
-  if (!isResizable(field)) return 0;
-  return props.columnWidths?.[field] ?? DEFAULT_COLUMN_WIDTHS[field];
-}
-
-function resetWidth(field: SortField | null | undefined) {
-  if (!isResizable(field)) return;
-  emit("resize-column", field, DEFAULT_COLUMN_WIDTHS[field]);
-}
-
-function nudgeWidth(field: SortField | null | undefined, delta: number) {
-  if (!isResizable(field)) return;
-  emit("resize-column", field, columnWidth(field) + delta);
-}
-
-const resizingColumn = ref<SortField | null>(null);
-let resizeStartX = 0;
-let resizeStartWidth = 0;
-
-function startResize(
-  field: SortField | null | undefined,
-  event: MouseEvent | TouchEvent,
-) {
-  if (!isResizable(field)) return;
-  resizingColumn.value = field;
-  resizeStartX = "touches" in event ? event.touches[0].clientX : event.clientX;
-  resizeStartWidth = columnWidth(field);
-
-  if ("touches" in event) {
-    window.addEventListener("touchmove", onResizeMove, { passive: false });
-    window.addEventListener("touchend", stopResize, { once: true });
-  } else {
-    window.addEventListener("mousemove", onResizeMove);
-    window.addEventListener("mouseup", stopResize, { once: true });
-  }
-}
-
-function onResizeMove(event: MouseEvent | TouchEvent) {
-  const field = resizingColumn.value;
-  if (!isResizable(field)) return;
-  if ("touches" in event) event.preventDefault();
-  const clientX =
-    "touches" in event
-      ? event.touches[0]?.clientX
-      : (event as MouseEvent).clientX;
-  if (typeof clientX !== "number") return;
-  emit("resize-column", field, resizeStartWidth + (clientX - resizeStartX));
-}
-
-function stopResize() {
-  resizingColumn.value = null;
-  window.removeEventListener("mousemove", onResizeMove);
-  window.removeEventListener("touchmove", onResizeMove);
-}
-
-onBeforeUnmount(stopResize);
-
 /** 快捷项（`.`/`..`）不参与“全选”，与批量操作的范围保持一致。 */
 const selectableFiles = computed(() => files.value.filter(Boolean));
 
@@ -357,22 +246,10 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
 </script>
 
 <style scoped>
-/* 勾选/操作列定宽：fixed 布局下 auto 列会被挤没（实测 2–8px），
-   定宽后可调列（名称/时间/类型/大小）的拖拽宽度才稳定生效。 */
-.file-list-col-check {
-  width: 40px;
-}
-
-.file-list-col-actions {
-  width: 96px;
-}
-
 /* 主流网盘风格：无斑马纹、细分隔线、粘性表头 */
 .file-list-table {
-  /* fixed 布局让 <col> 宽度成为权威值：auto 布局会把名称列撑满表格、
-     吸收掉拖拽调宽（用户反馈"分割线拖动不正常"的根因）。
-     无宽度的勾选/操作列自动分摊余量。 */
-  table-layout: fixed;
+  /* 内容自适应（用户反馈定稿）：数据列随内容定宽（操作列内容完整显示），
+     名称列由 auto 布局自动吸收剩余空间。 */
   background: transparent;
   margin-bottom: 0;
 }
@@ -445,40 +322,6 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
 
 .file-list-table thead th:hover .file-list-sort {
   color: var(--vf-text-strong);
-}
-
-/* 列宽拖拽手柄：贴住列右边界，平时只显示细线 */
-.file-list-resizer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  /* 手柄整体留在本列内：跨到下一列会被相邻 th 抢走命中区域（点击/双击失效） */
-  justify-content: flex-end;
-  width: 9px;
-  height: 100%;
-  cursor: col-resize;
-  touch-action: none;
-}
-
-.file-list-resizer-line {
-  width: 1px;
-  height: 60%;
-  background: var(--vf-border);
-  transition: background 0.12s ease;
-}
-
-.file-list-resizer:hover .file-list-resizer-line,
-.file-list-resizer:focus-visible .file-list-resizer-line,
-.file-list-resizer.is-active .file-list-resizer-line {
-  width: 2px;
-  background: var(--vf-accent);
-}
-
-.file-list-table.is-resizing {
-  cursor: col-resize;
 }
 
 .file-list-select-all {

@@ -2565,6 +2565,31 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.43 列宽回退内容自适应 + 移除拖拽调宽（用户反馈插曲，round 38 之后）
+
+- 症状（用户报告，二次）：列宽仍不正确；**操作列显示时内容放不下**；拖拽调宽"根本没法
+  真正调宽"。**用户定稿方案**：回退旧实现（内容自适应），名称列自动填充剩余；
+  拖拽调宽功能直接移除。
+- 执行：
+  1. `table-layout: fixed → auto`（**注意：上一修复漏拆了这一行**，本轮补正）；
+  2. **整体移除拖拽调宽**（手柄/监听/键盘微调/复位 + `columnWidths` store 全套
+     （类型/钳制/持久化/方法）+ FileBrowser 绑定 + 4 个相关测试）；
+  3. 顺带修复拆除过程的正则残损：`.file-list-table..file-list-select-all` 双点选择器
+     （lightningcss minify 报 `Delim('.')` 拒绝构建 ✗）与悬挂注释。
+- 验收（真实浏览器，关详情面板让操作列现身）：
+  | 列 | 宽 | 判定 |
+  | --- | --- | --- |
+  | 勾选 | 66 | ✓ |
+  | **名称** | **242** | ✓ 自动吸收剩余 |
+  | 修改时间 / 类型 / 大小 | **74 / 65 / 48** | ✓ 真实内容宽 |
+  | **操作** | **217** | ✓ 表头/单元格**不裁切**、菜单按钮可见 |
+  另：`layout: auto` ✓、`resizersInDom: 0` ✓、排序可用 ✓、零报错 ✓；
+  430 用例全绿（434−4 个功能移除用例）、`bun run check` 与构建通过。
+- 事故记录（严重，已恢复）：/tmp 夹具再次被宿主清理后，一次**空环境 `serve`** 疑似
+  短暂指向仓库 `data/` —— 已杀游离进程 + `PRAGMA integrity_check = ok` ✓ 无残留
+  wal/journal ✓ **数据无损**。教训固化：**服务器/夹具与探针必须单命令起停**（跨调用会被
+  清理）；fixture CLI 与服务器同 shell 导出环境（§4.24 再次应验）。
+
 ### 4.42 diff 行号槽（round 38）
 
 - 在 round 37 的行结构地基上做 diff 进阶第一块：**旧/新双列行号**（GitHub/Drive 标配）。
