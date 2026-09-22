@@ -971,27 +971,29 @@ function flushScrollRestore() {
   if (pendingScrollRestore == null) return;
   const restore = pendingScrollRestore;
   pendingScrollRestore = null;
+  const apply = () => {
+    const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
+    if (shell) shell.scrollTop = restore;
+  };
+  // 渲染竞态防（r138 二修）：固定时点补设输给渲染竞态 ✗ → **重试校验循环**
+  // （每 100ms 校验补设 × 6 次（600ms 窗）✓ 列表渲染完成后即稳定）
+  let attempts = 0;
+  const timer = setInterval(() => {
+    attempts += 1;
+    if (attempts > 6) {
+      clearInterval(timer);
+      return;
+    }
+    const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
+    if (shell && Math.abs(shell.scrollTop - restore) > 5) shell.scrollTop = restore;
+  }, 100);
   requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
-      if (shell) shell.scrollTop = restore;
-    });
+    requestAnimationFrame(apply);
   });
 }
 
-watch(
-  () => currentPath.value,
-  (next, prev) => {
-    if (prev) stashScroll(prev);
-    pendingScrollRestore = scrollMemory.get(next) ?? null;
-    void nextTick().then(flushScrollRestore);
-  },
-  { flush: "sync" },
-);
-
-watch(loading, (isLoading) => {
-  if (!isLoading) flushScrollRestore();
-});
+// 事件驱动式（r138 ✓ 上轮计划兑现）：挂钩 navigateTo 单点（不依赖 watch 触发时序）
+// + 重试式恢复（渲染竞态防 ✗ 双 rAF 后校验补设）。
 
 const sortState = computed<SortState>(() => ({
   field: fileView.sortField,
@@ -1147,7 +1149,7 @@ function handleFavoritesChanged(entries: { path: string }[]) {
 function handleOpenFavorite(entry: { path: string; kind: string }) {
   if (searchActive.value) clearSearch();
   if (entry.kind === "directory") {
-    filesStore.navigateTo(entry.path);
+    navigateTo(entry.path);
     return;
   }
   handleOpenRecentFile(entry);
@@ -1175,13 +1177,13 @@ function handleOpenRecentFile(file: { path: string }) {
   const parent = file.path.includes("/")
     ? file.path.slice(0, file.path.lastIndexOf("/"))
     : "";
-  filesStore.navigateTo(parent);
+  navigateTo(parent);
   desktopActivePath.value = file.path;
 }
 
 function handleTreeNavigate(path: string) {
   if (searchActive.value) clearSearch();
-  filesStore.navigateTo(path);
+  navigateTo(path);
 }
 
 /**
@@ -1678,8 +1680,12 @@ onBeforeUnmount(() => {
 });
 
 function navigateTo(path: string) {
+  const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
+  if (shell) stashScroll(currentPath.value);
+  pendingScrollRestore = scrollMemory.get(path) ?? null;
   expandedFilePath.value = "";
   filesStore.navigateTo(path);
+  void nextTick().then(flushScrollRestore);
 }
 
 /** 面包屑跳转：处于搜索结果时先退出搜索，再进入目标目录。 */
