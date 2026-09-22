@@ -14,7 +14,6 @@ use axum::{
     body::Body,
     http::{header, Method, StatusCode},
     response::Response,
-    routing::any,
     Router,
 };
 
@@ -173,7 +172,7 @@ async fn get_op(
     match app.write.get_file(&ns, &path).await {
         Ok(Some((bytes, mime))) => {
             let len = bytes.len();
-            let mut builder = Response::builder()
+            let builder = Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, mime)
                 .header(header::CONTENT_LENGTH, len.to_string());
@@ -256,7 +255,6 @@ async fn write_op(
     if_header: Option<String>,
     op: WriteOp,
 ) -> Response {
-    use vfiles_domain::repo::EntryRepo as _;
     use vfiles_domain::types::NormalizedPath;
 
     let Some(app) = app else {
@@ -379,7 +377,6 @@ async fn propfind_owned(
     path: String,
     depth: String,
 ) -> Result<String, StatusCode> {
-    use vfiles_domain::repo::EntryRepo;
     let app = app.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let ns = ns.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let depth = depth.as_str();

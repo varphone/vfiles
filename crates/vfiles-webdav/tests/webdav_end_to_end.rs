@@ -16,10 +16,8 @@ use vfiles_app::{
     RateLimitPolicy,
 };
 
-#[allow(unused_imports)]
-use vfiles_domain::UserRepo as _;
 use vfiles_domain::types::RegisterRequest;
-use vfiles_domain::{EntryRepo, NormalizedPath};
+use vfiles_domain::NormalizedPath;
 use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteEntryRepo, SqliteMigrations, SqliteNamespaceRepo,
     SqlitePoolFactory, SqliteSessionRepo, SqliteSnapshotRepo, SqliteUserRepo,
