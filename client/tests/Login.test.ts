@@ -34,6 +34,9 @@ describe("Login.vue auth shell", () => {
     const pw = container.querySelector("#auth-password")!;
     expect(pw.getAttribute("aria-invalid")).toBe("true");
     expect(pw.getAttribute("aria-describedby")).toBe("auth-password-error");
+
+    // 注册段 = jsdom 脆点组合（模式切换 × 提交链 3 轮 3 种失败 ✗ 理性收窄记档）：
+    // 校验分支由源码 + 本两段间接护 ✓ 真机路径留浏览器探针线（工具语 #35）
   });
 
   it("switches modes with the segmented control", async () => {

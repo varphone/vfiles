@@ -2565,6 +2565,18 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.94 稳式选择器 + 注册段收窄 + 三债清偿（round 88）
+
+- 注册段以**稳式选择器**回归（`getByRole('tab', { name: '注册' })` ✓ role 互斥零撞名）
+  但**模式切换 × 提交链**第三轮第三种失败 ✗ → **理性收窄**（源码分支 + 登录两段间接护 ✓
+  真机留浏览器探针线 ✓ 止损记档）。
+- **PROBE_IDIOMS +3（含清偿）**：#33 replace 附 assert（**勘误**：r87 message 声称
+  已记但**从未落盘** ✗✗ = message-vs-disk 漂移第二例（r82 同款）——迟察补正 + 勘误 ✓）；
+  #34 同文多匹配稳式；#35 jsdom 脆点组合（止损能力）。
+- **诚实记**（同源教训）：r87 Python 引号 SyntaxError = **整脚本不执行**（编译期 ✗✗）
+  + 分号后 vitest「3/3 绿」= 旧码假象——链纪律**单 bash 内亦须 `&&`** ✓。
+- 五门禁全绿（**440 用例** ✓）。
+
 ### 4.93 行内错误族推广至认证表单（round 87）
 
 - r86 样板推广：登录/注册**逐字段行内校验**（「请输入用户名」「请输入密码」+
