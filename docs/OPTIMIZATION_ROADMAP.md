@@ -2565,6 +2565,22 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.58 diff 恢复入口 + 插图族评审（round 52）
+
+- **恢复入口（GitHub 式增量交互）**：对比工具条（统一/并排共享）加「恢复此版本」
+  ghost 钮 → 复用卡片恢复流（同确认弹窗/同 toast/同 `restoreFileVersion`）。
+  **接线证据 = 单测铁证**：独立用例「restore entry in the compare toolbar shares the
+  confirm flow」——点对比 → diff 开 → 点恢复 → `confirmDialog` 被调 +
+  `restoreMock("notes.txt", PREVIOUS, "恢复历史版本")` ✓（431 用例 = +1 ✓）。
+- 测试工程注记：**勿与卡片恢复用例混跑**（恢复会刷新历史 → 行节点失效 → 后续点击
+  丢失，实测踩中后拆独立用例 ✓）。
+- **插图族评审**：EmptyState 为中央实现（`.empty-state-illustration` 50% 圆 + 图标 ✓
+  r43 已测几何）——家族集中式合规出身 ✓ 判定达标。浏览器可见实例取证本轮反复受
+  范围化陷阱所阻（隐藏实例/多 modal 层叠，第 3-4 次同类）→ 以中央实现 + 既有实测
+  为判，**诚实记档**：浏览器取证法对条件渲染目标需目标专属的可见性锚（后续轮次
+  可沉淀「可见实例选择器」工具语）。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 732 ✓ **431 用例** ✓ 构建 ✓）。
+
 ### 4.57 恢复版本动线终审 + 产品认知修正（round 51，验证轮）
 
 - 从未深测的交互流：**历史「恢复此版本」**全动线实测（v1/v2 import 夹具 → UI 恢复）：

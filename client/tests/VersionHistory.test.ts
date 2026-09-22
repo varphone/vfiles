@@ -201,6 +201,13 @@ describe("VersionHistory.vue", () => {
     );
     expect(words).toEqual(expect.arrayContaining(["0", "1"]));
 
+    // 恢复入口（对比工具条，r52）：复用卡片恢复流
+    expect(
+      within(container as HTMLElement).getByRole("button", {
+        name: "恢复此版本",
+      }),
+    ).toBeTruthy();
+
     // 并排视图：−/＋ 配对成行，左右单元格各有词级强调
     await fireEvent.click(
       within(container as HTMLElement).getByRole("button", { name: "并排" }),
@@ -243,6 +250,38 @@ describe("VersionHistory.vue", () => {
       within(secondRow).getByRole("button", { name: "恢复" }),
     );
 
+    await waitFor(() =>
+      expect(restoreMock).toHaveBeenCalledWith(
+        "notes.txt",
+        PREVIOUS,
+        "恢复历史版本",
+      ),
+    );
+    expect(confirmDialog).toHaveBeenCalled();
+  });
+
+  it("restore entry in the compare toolbar shares the confirm flow", async () => {
+    const { container } = renderHistory();
+    await waitFor(() =>
+      expect(container.querySelectorAll(".history-row").length).toBe(2),
+    );
+    const { confirmDialog } = await import("../src/composables/dialog");
+
+    // 全新渲染独立跑（卡片恢复会刷新历史 → 行节点失效，勿混跑）
+    const secondRow = container.querySelectorAll(
+      ".history-row",
+    )[1] as HTMLElement;
+    await fireEvent.click(
+      within(secondRow).getByRole("button", { name: "对比" }),
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".diff-block")).not.toBeNull(),
+    );
+    await fireEvent.click(
+      within(container as HTMLElement).getByRole("button", {
+        name: "恢复此版本",
+      }),
+    );
     await waitFor(() =>
       expect(restoreMock).toHaveBeenCalledWith(
         "notes.txt",

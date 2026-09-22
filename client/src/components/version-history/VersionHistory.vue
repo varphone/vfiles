@@ -142,6 +142,14 @@
                 >
                   并排
                 </button>
+                <button
+                  type="button"
+                  class="vf-ghost-button"
+                  title="恢复到此版本（生成新提交）"
+                  @click="restoreVersion(diff.hash)"
+                >
+                  恢复此版本
+                </button>
               </div>
               <div
                 v-show="diffView === 'unified'"
