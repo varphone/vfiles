@@ -8,10 +8,21 @@
 
 use base64::Engine;
 
-/// 已认证会话（用户名 + TODO(r104) 命名空间上下文）。
+/// 已认证会话（用户名 ✓ per-user 命名空间映射 = r105 TODO（FTP UserDetailProvider 范本））。
 #[derive(Debug, Clone)]
 pub struct WebdavAuthenticator {
     pub username: String,
+}
+
+/// 注入式校验（r104 实件）：Basic 头 → `verify_credentials` → 用户名。
+///
+/// 语义 = Web/FTP 完全一致（禁用校验/哈希透明升级内含 ✓）。
+pub async fn verify<C: Fn(&str, &str) -> F, F: std::future::Future<Output = Option<String>>>(
+    header: Option<&str>,
+    check: C,
+) -> Option<String> {
+    let (username, password) = basic_credentials(header?)?;
+    check(&username, &password).await
 }
 
 /// 解码 `Authorization: Basic <base64>` → `(username, password)`。
