@@ -273,7 +273,16 @@
               compact
               title="预览失败"
               :hint="preview.error"
-            />
+            >
+              <template #actions>
+                <button
+                  class="vf-ghost-button is-primary"
+                  @click="viewVersion(preview.hash)"
+                >
+                  重试
+                </button>
+              </template>
+            </EmptyState>
 
             <template v-else>
               <figure v-if="preview.kind === 'image'" class="image">
