@@ -13,7 +13,8 @@
     "test:coverage": "vitest run --coverage",
     "lint:styles": "node scripts/check-dead-styles.mjs",
     "ui:sweep": "node scripts/ui-sweep.mjs",
-    "check": "bun run lint && bun run lint:styles && bun run test"
+    "check": "bun run lint && bun run lint:styles && bun run test",
+    "size:check": "node scripts/check-size.mjs"
   },
   "dependencies": {
     "@tabler/icons-vue": "^3.44.0",

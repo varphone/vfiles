@@ -2565,6 +2565,18 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.99 bundle 预算守护（round 93，性能轴开辟）
+
+- 又一**真空白轴**：性能预算——build 一直报 1.3MB/226KB br 但**零增长守卫** ✗✗。
+- **`bun run size:check`**：`scripts/check-size.mjs` 对 dist **独立复算** raw/br/gz
+  （node:zlib 内建 ✓ 不依赖 precompress 输出解析 ✓ 健壮式）→ 对
+  `size-budgets.json`（1303/226/293 KB ±8%）比对 → 超限 **exit 1** ✓。
+- **双路径验证**（守护语义实证而非假设 ✓）：真实构建 = 1315.0/229.4/298.1 KB 全内 ✓；
+  `SIZE_BUDGET_SCALE=0.5` = 三行超限 + exit 1 ✓✓。
+- 记档：DESIGN_TOKENS §10 性能预算 + CONTRIBUTING 提交前清单 ✓；
+  预算纪律 = **精简或上调并说明** ✓。
+- 五门禁全绿（440 用例 ✓）。
+
 ### 4.98 断点归一变化区复核（round 92，零回归收尾）
 
 - 归一收尾验证：三处并档各产生**行为变化区**（旧断点与新断点之间 = 回归藏身处 ✓）→
