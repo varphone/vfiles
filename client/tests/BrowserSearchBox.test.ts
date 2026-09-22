@@ -112,6 +112,15 @@ describe("BrowserSearchBox.vue", () => {
     expect(emitted()["update:open"]?.[0]).toEqual([false]);
   });
 
+  it("labels the input for screen readers (r68)", () => {
+    // placeholder 不是 label（屏读不播报）→ aria-label 与占位符同步
+    renderBox();
+    const input = screen.getByPlaceholderText(
+      "搜索名称、扩展名或路径",
+    ) as HTMLInputElement;
+    expect(input.getAttribute("aria-label")).toBe("搜索名称、扩展名或路径");
+  });
+
   it("emits clear on Escape and enter-results on ArrowDown (r62)", async () => {
     const { emitted } = renderBox({ modelValue: "搜索" });
     const input = screen.getByPlaceholderText("搜索名称、扩展名或路径");

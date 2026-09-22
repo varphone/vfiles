@@ -2565,6 +2565,22 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.74 表单族终审（round 68）
+
+- 可访问性收官轴：**表单 label 关联/错误态 aria** 多表面遍历（登录/重命名/移动对话框/
+  令牌表单）：
+  | 表面 | 结果 |
+  | --- | --- |
+  | 登录 ×2 / 重命名 ×3 / 令牌 ×2 | ✓ labelled |
+  | **搜索输入框** | ✗ **`labelled: false`**（placeholder ≠ label ✓ 屏读不播报） |
+- **修复**：`:aria-label="placeholder"`（与占位符同步 = 语义准确 ✓ **同一组件多处
+  渲染 = 修一处全修**）；单测断言（+1 → 437）。
+- 复验：`labelled-after: [{labelled: true, aria: "搜索名称、扩展名或路径"}]` ✓。
+- **挂账（下一步候选）**：**错误态 aria 系统性缺失**（`aria-describedby`/`aria-invalid`
+  全 null）——登录/令牌/重命名的错误文案未与控件关联（主流 = describedby 指错误文案
+  + invalid ✓）涉多组件，列为独立轮次。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 736 ✓ 437 用例 ✓ 构建 ✓）。
+
 ### 4.73 通知族终审（round 67，验证轮）
 
 - 通知/Toast 族系统性终审（从未做过 ✓）三轴实测：

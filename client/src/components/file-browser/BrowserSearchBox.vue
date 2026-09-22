@@ -8,6 +8,7 @@
           class="input is-small desktop-search-control"
           type="text"
           :placeholder="placeholder"
+          :aria-label="placeholder"
           list="vfiles-search-history-desktop"
           @input="
             emit('update:modelValue', ($event.target as HTMLInputElement).value)
