@@ -957,10 +957,23 @@ const scrollMemory = new Map<string, number>();
 const MAX_SCROLL_MEMORY = 50;
 let pendingScrollRestore: number | null = null;
 
+// 滚动快照（r139 终修 ✓ 瞬时读 scrollTop 输给点击竞态 ✗ → scroll 事件持续追踪式）
+let lastScrollTop = 0;
+if (typeof document !== "undefined") {
+  document.addEventListener(
+    "scroll",
+    (event) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.classList?.contains("desktop-list-shell")) {
+        lastScrollTop = target.scrollTop;
+      }
+    },
+    true,
+  );
+}
+
 function stashScroll(path: string) {
-  const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
-  if (!shell) return;
-  scrollMemory.set(path, shell.scrollTop);
+  scrollMemory.set(path, lastScrollTop);
   if (scrollMemory.size > MAX_SCROLL_MEMORY) {
     const oldest = scrollMemory.keys().next().value;
     if (oldest !== undefined) scrollMemory.delete(oldest);
@@ -973,7 +986,10 @@ function flushScrollRestore() {
   pendingScrollRestore = null;
   const apply = () => {
     const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
-    if (shell) shell.scrollTop = restore;
+    if (shell) {
+      shell.scrollTop = restore;
+      lastScrollTop = restore;
+    }
   };
   // 渲染竞态防（r138 二修）：固定时点补设输给渲染竞态 ✗ → **重试校验循环**
   // （每 100ms 校验补设 × 6 次（600ms 窗）✓ 列表渲染完成后即稳定）
@@ -1680,8 +1696,7 @@ onBeforeUnmount(() => {
 });
 
 function navigateTo(path: string) {
-  const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
-  if (shell) stashScroll(currentPath.value);
+  stashScroll(currentPath.value);
   pendingScrollRestore = scrollMemory.get(path) ?? null;
   expandedFilePath.value = "";
   filesStore.navigateTo(path);
