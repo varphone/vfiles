@@ -252,6 +252,14 @@ function onDrop(path: string) {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* 必须可压缩并占据剩余高度：
+     flex 子项的自动最小高度是「内容最小尺寸」，目录多时整棵树会按内容撑高、
+     顶出侧栏盖住状态栏，内部滚动条也不会出现（scrollHeight == clientHeight）。
+     覆盖该自动最小值后 .directory-tree-scroll 才能真正裁剪并滚动；
+     同时给 10rem 地板，矮窗口下不被下方概览挤没。 */
+  flex: 1 1 auto;
+  min-height: 10rem;
+  overflow: hidden;
   border-right: 1px solid var(--vf-border-weak);
   background: var(--vf-surface);
 }

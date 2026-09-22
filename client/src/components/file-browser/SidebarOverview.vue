@@ -281,6 +281,11 @@ watch(
 <style scoped>
 .sidebar-overview {
   flex: 0 0 auto;
+  /* 最高只占「侧栏高度 - 目录树最小高度(10rem)」：
+     矮窗口下不再把树挤没或顶出侧栏，超出时概览自身滚动。 */
+  min-height: 0;
+  max-height: calc(100% - 10rem);
+  overflow-y: auto;
   border-top: 1px solid var(--vf-border-weak);
   padding: 0.6rem 0.75rem 0.75rem;
 }

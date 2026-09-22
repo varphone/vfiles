@@ -2622,6 +2622,8 @@ function handleSortChange(field: SortField) {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  /* 防御：任何意外内容都在侧栏内裁剪，不得盖到状态栏 */
+  overflow: hidden;
 }
 
 .desktop-content-layout.has-tree.has-details {
