@@ -5,8 +5,11 @@
   >
     <div class="modal-background" @click="close"></div>
     <div
+      ref="cardRef"
       class="modal-card"
       :class="{ 'is-mobile-compact': mobileCompact, 'is-wide': wide }"
+      tabindex="-1"
+      @keydown.tab="trapTab"
     >
       <header class="modal-card-head">
         <p class="modal-card-title">{{ title }}</p>
@@ -23,7 +26,38 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, watch } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+
+// 焦点管理（r131 ✓ W3C 对话框模式：移入/Tab 循环/归还）
+const cardRef = ref<HTMLElement | null>(null);
+let previousActive: HTMLElement | null = null;
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function focusFirst() {
+  const card = cardRef.value;
+  if (!card) return;
+  const first = card.querySelector<HTMLElement>(FOCUSABLE);
+  (first ?? card).focus();
+}
+
+function trapTab(event: KeyboardEvent) {
+  const card = cardRef.value;
+  if (!card) return;
+  // 可聚焦集 = FOCUSABLE 直筛（jsdom offsetParent 恒空 ✗ 不作可见性判据 ✓）
+  const items = Array.from(card.querySelectorAll<HTMLElement>(FOCUSABLE));
+  if (items.length === 0) return;
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
 
 const props = defineProps<{
   show: boolean;
@@ -61,6 +95,20 @@ function bindKeydown(show: boolean) {
     document.removeEventListener("keydown", onKeydown);
   }
 }
+
+watch(
+  () => props.show,
+  (visible) => {
+    if (visible) {
+      previousActive = document.activeElement as HTMLElement | null;
+      void nextTick().then(focusFirst);
+    } else if (previousActive) {
+      previousActive.focus();
+      previousActive = null;
+    }
+  },
+  { immediate: true },
+);
 
 onMounted(() => bindKeydown(props.show));
 onBeforeUnmount(() => bindKeydown(false));
