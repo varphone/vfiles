@@ -57,6 +57,15 @@ router.beforeEach(async (to) => {
     return { name: "home" };
   }
 
+  // 管理页可见性守卫（r185 ✓ 公开表×全路由交叉核抓获 ×2 缺口）：
+  // 审计日志/系统信息 = admin-only（菜单 v-if 同语义 ✓ 直址访问亦须拦 ✗）
+  if (
+    (to.name === "audit-logs" || to.name === "system-info") &&
+    authStore.user?.role !== "admin"
+  ) {
+    return { name: "home" };
+  }
+
   return true;
 });
 
