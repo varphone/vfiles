@@ -2565,6 +2565,25 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.33 代码高亮与浮层语义色终检（round 30）
+
+- 三项长期挂账的审计一次闭环（**全部合规、零修复**——本轮价值 = 首次给出数据）：
+  1. **`code-theme.scss` 首次对比度审计**（此前一直以"有意配色"豁免）：
+     造含注释/字符串/关键字/数字/类名的 JS 文件进文本预览，逐 token 实测对代码底色——
+     | token | 浅色（底 rgb(246,248,250)） | 深色（底 rgb(21,24,30)） |
+     | --- | --- | --- |
+     | comment（经典风险点） | **4.52** ✓ | **5.06** ✓ |
+     | string | 12.03 ✓ | 11.57 ✓ |
+     | keyword | 5.03 ✓ | 7.05 ✓ |
+     | number | 7.13 ✓ | 9.14 ✓ |
+     | title | 4.74 ✓ | 9.13 ✓ |
+     **双主题全 AA** ✓ —— "有意配色"的豁免实至名归（现首次有数据背书）。
+  2. **语义色在深色 overlay 上的终检**（round 17 后挂账）：右键菜单（raised
+     `rgb(39,44,52)` = 18%）全部条目对比度 **≥5.74**（删除 danger 5.74 ✓）✓ AA。
+  3. **真图上的玻璃箭头目检**（round 28 补 blur 后未在真图目检）：造 4×4 PNG 真图
+     进预览 —— 图片加载 ✓、箭头 `blur(8px)` ✓、截图 `ui-r69/arrow-over-image.png` ✓。
+- 433 用例全绿、lint 通过。
+
 ### 4.32 fixed 布局回归核查 + SkeletonList 宿主对齐（round 29）
 
 - **① 列宽修复（§4.31）的回归核查**：`table-layout: fixed` 的高危副作用 = 长文本不再
