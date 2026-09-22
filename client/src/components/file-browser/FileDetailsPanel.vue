@@ -291,7 +291,7 @@ const previewUrl = computed(() => {
 
 .details-selection-title {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--vf-text-strong);
 }
@@ -299,7 +299,7 @@ const previewUrl = computed(() => {
 .details-selection-meta {
   margin: 0.15rem 0 0;
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .details-selection-list {
@@ -320,7 +320,7 @@ const previewUrl = computed(() => {
   gap: 0.4rem;
   min-width: 0;
   color: var(--vf-text);
-  font-size: 0.82rem;
+  font-size: 0.875rem;
 }
 
 .details-selection-name {
@@ -332,7 +332,7 @@ const previewUrl = computed(() => {
 
 .details-selection-more {
   color: var(--vf-text-subtle);
-  font-size: 0.76rem;
+  font-size: 0.8rem;
 }
 
 .details-selection-actions {

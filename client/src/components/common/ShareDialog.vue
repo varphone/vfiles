@@ -305,7 +305,7 @@ async function stopSharing() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.86rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--vf-text-strong);
 }
@@ -315,7 +315,7 @@ async function stopSharing() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   color: var(--vf-text-subtle);
 }
 
@@ -326,14 +326,14 @@ async function stopSharing() {
 }
 
 .share-label {
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--vf-text-muted);
 }
 
 .share-hint {
   margin: 0;
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   color: var(--vf-text-subtle);
 }
 
@@ -351,7 +351,7 @@ async function stopSharing() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.82rem;
+  font-size: 0.875rem;
 }
 
 .share-copy {
@@ -379,14 +379,14 @@ async function stopSharing() {
   border-radius: var(--vf-radius-pill);
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
-  font-size: 0.76rem;
+  font-size: 0.8rem;
 }
 
 .share-open,
 .share-stop {
   min-height: 1.85rem;
   padding: 0 0.55rem;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .share-copy-feedback {

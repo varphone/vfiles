@@ -474,7 +474,7 @@ onMounted(() => {
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 /* 状态筛选 chips：全部 / 有效 / 已过期 / 已被访问 */
@@ -490,12 +490,12 @@ onMounted(() => {
   gap: 0.3rem;
   min-height: 1.75rem;
   padding: 0 0.55rem;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .shares-filter-count {
   color: var(--vf-text-subtle);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .shares-filter.is-active .shares-filter-count {
@@ -561,7 +561,7 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.86rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--vf-text-strong);
 }
@@ -571,7 +571,7 @@ onMounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--vf-text-subtle);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 .shares-row-meta {
@@ -601,7 +601,7 @@ onMounted(() => {
 }
 
 .shares-link-input {
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .shares-row-actions {
@@ -616,7 +616,7 @@ onMounted(() => {
 .shares-action {
   min-height: 1.8rem;
   padding: 0 0.5rem;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   white-space: nowrap;
 }
 

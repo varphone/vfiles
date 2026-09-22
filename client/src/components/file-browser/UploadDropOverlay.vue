@@ -72,7 +72,7 @@ defineProps<{
 }
 
 .upload-drop-hint {
-  font-size: 0.84rem;
+  font-size: 0.875rem;
   color: var(--vf-text-muted);
 }
 

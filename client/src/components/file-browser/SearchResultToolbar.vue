@@ -156,12 +156,12 @@ const summary = computed(() => {
   gap: 0.3rem;
   min-height: 1.75rem;
   padding: 0 0.5rem;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .search-chip-count {
   color: var(--vf-text-subtle);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .search-chip.is-active .search-chip-count {

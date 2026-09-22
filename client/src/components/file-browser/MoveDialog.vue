@@ -396,7 +396,7 @@ async function goUp() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.84rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--vf-text-strong);
 }
@@ -404,7 +404,7 @@ async function goUp() {
 .move-dialog-items-more {
   flex: 0 0 auto;
   color: var(--vf-text-subtle);
-  font-size: 0.76rem;
+  font-size: 0.8rem;
 }
 
 /* 目标选择器：路径 + 列表合成一个面板 */
@@ -449,7 +449,7 @@ async function goUp() {
   border-radius: var(--vf-radius-sm);
   background: transparent;
   color: var(--vf-text-muted);
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   cursor: pointer;
 }
 
@@ -495,7 +495,7 @@ async function goUp() {
   border-radius: var(--vf-radius-sm);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.86rem;
+  font-size: 0.875rem;
   text-align: left;
   cursor: pointer;
 }
@@ -530,7 +530,7 @@ async function goUp() {
 .move-dialog-row-note {
   flex: 0 0 auto;
   color: var(--vf-text-subtle);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 .move-dialog-row-chevron {
@@ -548,7 +548,7 @@ async function goUp() {
   border-radius: var(--vf-radius-sm);
   background: var(--vf-warning-soft);
   color: var(--vf-text);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   line-height: 1.5;
 }
 

@@ -342,7 +342,7 @@ const emit = defineEmits<{
   border-radius: var(--vf-radius-sm);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.84rem;
+  font-size: 0.875rem;
   text-align: left;
   cursor: pointer;
 }
@@ -366,7 +366,7 @@ const emit = defineEmits<{
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   color: var(--vf-text-muted);
 }
 

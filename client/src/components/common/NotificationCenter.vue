@@ -248,7 +248,7 @@ onBeforeUnmount(() => {
 }
 
 .notification-center-title {
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--vf-text-strong);
 }
@@ -258,7 +258,7 @@ onBeforeUnmount(() => {
   border: none;
   background: none;
   color: var(--vf-accent);
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   cursor: pointer;
 }
 
@@ -281,7 +281,7 @@ onBeforeUnmount(() => {
   border-radius: var(--vf-radius-pill);
   background: var(--vf-surface);
   color: var(--vf-text-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 
@@ -389,6 +389,6 @@ onBeforeUnmount(() => {
 .notification-center-time {
   margin: 0.1rem 0 0;
   color: var(--vf-text-subtle);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 </style>

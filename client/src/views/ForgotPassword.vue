@@ -91,7 +91,7 @@ async function submit() {
 
 .auth-label {
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   font-weight: 600;
 }
 
@@ -112,14 +112,14 @@ async function submit() {
 
 .auth-input {
   padding-left: 2rem;
-  font-size: 0.86rem;
+  font-size: 0.875rem;
 }
 
 .auth-submit {
   justify-content: center;
   width: 100%;
   min-height: 2.35rem;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 
 .auth-links {

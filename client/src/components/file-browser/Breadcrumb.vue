@@ -192,7 +192,7 @@ onBeforeUnmount(() => {
   padding: 3px 8px;
   border-radius: var(--vf-radius-sm);
   color: var(--vf-text-strong);
-  font-size: 0.9rem;
+  font-size: 0.875rem;
   font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
@@ -246,7 +246,7 @@ onBeforeUnmount(() => {
 @media screen and (max-width: 1023px) {
   .path-bar-segment {
     max-width: 9rem;
-    font-size: 0.82rem;
+    font-size: 0.875rem;
   }
 }
 </style>

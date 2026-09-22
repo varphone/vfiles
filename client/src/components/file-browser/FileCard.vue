@@ -748,7 +748,7 @@ onBeforeUnmount(() => {
   gap: 0.15rem;
   max-width: 100%;
   color: var(--vf-text-subtle);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .file-card-location-text {
@@ -759,7 +759,7 @@ onBeforeUnmount(() => {
 }
 
 .file-card-name {
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   line-height: 1.3;
   color: var(--vf-text);
   overflow: hidden;
@@ -775,7 +775,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: var(--vf-text-subtle);
   overflow: hidden;
   text-overflow: ellipsis;

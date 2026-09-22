@@ -377,7 +377,7 @@ onMounted(async () => {
   border-radius: var(--vf-radius-sm);
   background: transparent;
   color: var(--vf-text-muted);
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   cursor: pointer;
 }
 
@@ -406,7 +406,7 @@ onMounted(async () => {
 
 .auth-label {
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   font-weight: 600;
 }
 
@@ -449,7 +449,7 @@ onMounted(async () => {
   width: 100%;
   /* 与控件语言一致（ghost 36px / 0.82rem） */
   min-height: 2.25rem;
-  font-size: 0.82rem;
+  font-size: 0.875rem;
 }
 
 .auth-links {
@@ -480,7 +480,7 @@ onMounted(async () => {
 .auth-hint {
   margin: 0;
   color: var(--vf-text-subtle);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   line-height: 1.5;
 }
 .auth-field-error {

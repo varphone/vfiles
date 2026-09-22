@@ -119,7 +119,7 @@ withDefaults(
 .auth-shell-card-desc {
   margin: 0 0 1rem;
   color: var(--vf-text-muted);
-  font-size: 0.84rem;
+  font-size: 0.875rem;
   line-height: 1.5;
 }
 

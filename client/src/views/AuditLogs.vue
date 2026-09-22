@@ -606,7 +606,7 @@ onMounted(() => {
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 /* 概览条：总量/失败 + Top 用户/动作，点击即筛选 */
@@ -620,7 +620,7 @@ onMounted(() => {
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface-sunken);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .audit-summary-totals {
@@ -639,7 +639,7 @@ onMounted(() => {
   border: none;
   background: none;
   color: var(--vf-danger-text);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   cursor: pointer;
 }
 
@@ -657,7 +657,7 @@ onMounted(() => {
 
 .audit-summary-label {
   color: var(--vf-text-subtle);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 .audit-summary-chip {
@@ -669,7 +669,7 @@ onMounted(() => {
 
 .audit-summary-count {
   color: var(--vf-text-subtle);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .audit-filters {
@@ -717,18 +717,18 @@ onMounted(() => {
   align-items: center;
   gap: 0.25rem;
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .audit-date-input {
   width: 8.5rem;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .audit-apply {
   min-height: 1.9rem;
   padding: 0 0.55rem;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .audit-table-wrap {
@@ -737,13 +737,13 @@ onMounted(() => {
 }
 
 .audit-table {
-  font-size: 0.82rem;
+  font-size: 0.875rem;
 }
 
 .audit-table thead th {
   border-bottom: 1px solid var(--vf-border-weak);
   color: var(--vf-text-muted);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -785,7 +785,7 @@ onMounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--vf-text-subtle);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .audit-result {
@@ -838,7 +838,7 @@ onMounted(() => {
 
 .audit-pager-info {
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .is-spinning {

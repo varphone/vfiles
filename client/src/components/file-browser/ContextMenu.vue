@@ -131,7 +131,7 @@ onBeforeUnmount(closeListeners);
   border-radius: var(--vf-radius-sm);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   text-align: left;
   cursor: pointer;
 }
@@ -162,5 +162,5 @@ onBeforeUnmount(closeListeners);
   margin-left: auto;
   padding-left: 1.2rem;
   color: var(--vf-text-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }

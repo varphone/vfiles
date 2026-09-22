@@ -211,7 +211,7 @@ onBeforeUnmount(() => {
 
 .sort-menu-label {
   padding: 4px 8px;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--vf-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;

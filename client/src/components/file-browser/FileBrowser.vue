@@ -2698,7 +2698,7 @@ function handleSortChange(field: SortField) {
 .desktop-list-meta {
   margin-bottom: 0.7rem;
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 /* 状态栏退化为一行低调的说明文字 */
@@ -2710,7 +2710,7 @@ function handleSortChange(field: SortField) {
   padding: 0.55rem 1.1rem;
   border-top: 1px solid var(--vf-border-weak);
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .desktop-status-shortcuts {
@@ -2767,7 +2767,7 @@ function handleSortChange(field: SortField) {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   color: var(--vf-text-muted);
 }
 
@@ -2897,7 +2897,7 @@ function handleSortChange(field: SortField) {
   background: var(--vf-surface-raised);
   box-shadow: var(--vf-shadow-menu);
   color: var(--vf-text-strong);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   font-weight: 600;
   pointer-events: none;
   white-space: nowrap;

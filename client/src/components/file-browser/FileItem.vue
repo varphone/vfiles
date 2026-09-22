@@ -829,7 +829,7 @@ function share() {
   width: 100%;
   max-width: 22rem;
   height: 1.9rem;
-  font-size: 0.84rem;
+  font-size: 0.875rem;
 }
 
 .desktop-name-text {
@@ -912,7 +912,7 @@ function share() {
   max-width: 100%;
   margin-top: 0.1rem;
   color: var(--vf-text-subtle);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   line-height: 1.3;
 }
 
@@ -1023,7 +1023,7 @@ function share() {
 .file-info-date,
 .file-info-sep {
   color: var(--vf-text-subtle);
-  font-size: 0.76rem;
+  font-size: 0.8rem;
 }
 
 .file-info-sep {
@@ -1037,7 +1037,7 @@ function share() {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--vf-text-muted);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 .file-info {
@@ -1103,7 +1103,7 @@ function share() {
   cursor: pointer;
   border-radius: var(--vf-radius-sm);
   transition: all 0.15s;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   min-width: 3rem;
 }
 

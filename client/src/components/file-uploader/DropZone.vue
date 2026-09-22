@@ -162,7 +162,7 @@ function onDirectorySelect(event: Event) {
 }
 
 .drop-zone-text {
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 
 @media screen and (max-width: 768px) {

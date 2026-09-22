@@ -134,7 +134,7 @@ function remove(id: number) {
 .toast-message {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 0.84rem;
+  font-size: 0.875rem;
   line-height: 1.4;
   word-break: break-word;
 }

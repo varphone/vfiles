@@ -173,7 +173,7 @@ onMounted(load);
 .system-info-card-title {
   margin-bottom: 0.8rem;
   color: var(--vf-text-strong);
-  font-size: 0.9rem;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -181,7 +181,7 @@ onMounted(load);
   display: grid;
   grid-template-columns: 6.5rem 1fr;
   gap: 0.5rem 0.75rem;
-  font-size: 0.82rem;
+  font-size: 0.875rem;
 }
 
 .system-info-list dt {

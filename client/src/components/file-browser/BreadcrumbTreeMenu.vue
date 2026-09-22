@@ -219,7 +219,7 @@ onMounted(() => {
   border-radius: var(--vf-radius-sm);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   text-align: left;
   cursor: pointer;
 }

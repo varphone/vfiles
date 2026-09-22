@@ -247,7 +247,7 @@ watch(
   border: none;
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.86rem;
+  font-size: 0.875rem;
   font-weight: 600;
   text-align: left;
   cursor: pointer;
@@ -265,7 +265,7 @@ watch(
 .ftp-import-toggle-hint {
   flex: 1 1 auto;
   color: var(--vf-text-subtle);
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   font-weight: 400;
 }
 
@@ -288,7 +288,7 @@ watch(
   align-items: center;
   padding: 0.75rem;
   color: var(--vf-text-muted);
-  font-size: 0.82rem;
+  font-size: 0.875rem;
 }
 
 .ftp-import-facts {
@@ -307,7 +307,7 @@ watch(
 
 .ftp-import-fact dt {
   color: var(--vf-text-subtle);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .ftp-import-fact dd {
@@ -316,7 +316,7 @@ watch(
   gap: 0.35rem;
   margin: 0;
   min-width: 0;
-  font-size: 0.82rem;
+  font-size: 0.875rem;
 }
 
 .ftp-import-value {
@@ -331,7 +331,7 @@ watch(
   flex: 0 0 auto;
   min-height: 1.6rem;
   padding: 0 0.4rem;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .ftp-import-source {
@@ -354,7 +354,7 @@ watch(
   border-radius: var(--vf-radius-sm);
   background: var(--vf-warning-soft);
   color: var(--vf-text);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   line-height: 1.5;
 }
 
@@ -367,7 +367,7 @@ watch(
 .ftp-import-note {
   margin: 0 0 0.4rem;
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   line-height: 1.5;
 }
 

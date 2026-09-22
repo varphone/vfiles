@@ -448,7 +448,7 @@ onMounted(async () => {
   padding: 0 0.25rem;
   border-radius: var(--vf-radius-xs);
   background: var(--vf-surface-sunken);
-  font-size: 0.76rem;
+  font-size: 0.8rem;
 }
 
 .tokens-header-actions {
@@ -463,7 +463,7 @@ onMounted(async () => {
   gap: 0.35rem;
   margin: 0.75rem 0 0.25rem;
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .tokens-table-wrap {
@@ -474,14 +474,14 @@ onMounted(async () => {
 .tokens-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.82rem;
+  font-size: 0.875rem;
 }
 
 .tokens-table th {
   padding: 0.45rem 0.5rem;
   border-bottom: 1px solid var(--vf-border-weak);
   color: var(--vf-text-subtle);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   font-weight: 600;
   text-align: left;
   white-space: nowrap;
@@ -502,7 +502,7 @@ onMounted(async () => {
   padding: 0.05rem 0.3rem;
   border-radius: var(--vf-radius-xs);
   background: var(--vf-surface-sunken);
-  font-size: 0.76rem;
+  font-size: 0.8rem;
 }
 
 .tokens-muted {
@@ -539,7 +539,7 @@ onMounted(async () => {
 
 .tokens-usage-title {
   margin: 0 0 0.35rem;
-  font-size: 0.86rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--vf-text-strong);
 }
@@ -551,7 +551,7 @@ onMounted(async () => {
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface-sunken);
   color: var(--vf-text);
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   line-height: 1.5;
   overflow-x: auto;
   white-space: pre;
@@ -566,7 +566,7 @@ onMounted(async () => {
 
 .tokens-label {
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   font-weight: 600;
 }
 
@@ -600,6 +600,6 @@ onMounted(async () => {
 
 .tokens-created-input {
   font-family: var(--vf-font-mono, monospace);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 </style>

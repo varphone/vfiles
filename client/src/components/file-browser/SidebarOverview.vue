@@ -300,7 +300,7 @@ watch(
 }
 
 .sidebar-overview-title {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--vf-text-subtle);
@@ -320,7 +320,7 @@ watch(
 }
 
 .sidebar-overview-counts {
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   color: var(--vf-text-muted);
 }
 
@@ -384,7 +384,7 @@ watch(
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   color: var(--vf-text-muted);
 }
 
@@ -409,7 +409,7 @@ watch(
 }
 
 .sidebar-overview-error {
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   color: var(--vf-text-muted);
 }
 
@@ -438,7 +438,7 @@ watch(
   border-radius: var(--vf-radius-sm);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   text-align: left;
   cursor: pointer;
 }
@@ -458,7 +458,7 @@ watch(
 
 .sidebar-recent-time {
   flex: 0 0 auto;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: var(--vf-text-subtle);
 }
 

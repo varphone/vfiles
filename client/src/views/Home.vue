@@ -976,7 +976,7 @@ async function renameSelected() {
   min-width: 5.5rem;
   padding: 0 0.5rem;
   text-align: center;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--vf-text);
   white-space: nowrap;
@@ -995,7 +995,7 @@ async function renameSelected() {
   border-radius: var(--vf-radius-pill);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   cursor: pointer;
   transition:
     background-color 0.15s var(--vf-motion-standard),
@@ -1017,7 +1017,7 @@ async function renameSelected() {
   border-radius: 50%;
   background: var(--vf-accent);
   color: var(--vf-on-accent);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   font-weight: 700;
 }
 
@@ -1306,7 +1306,7 @@ async function renameSelected() {
     /* 触屏菜单行命中区 ≥40px（原 2.2rem = 35.2px） */
     height: 2.5rem;
     padding-left: 0.35rem;
-    font-size: 0.9rem;
+    font-size: 0.875rem;
   }
 
   .app-top-bar .navbar-menu.is-active :deep(.theme-toggle-label) {

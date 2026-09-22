@@ -1025,7 +1025,7 @@ function loadMore() {
 }
 
 .history-summary-hash {
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   color: var(--vf-text-muted);
 }
 
@@ -1093,7 +1093,7 @@ function loadMore() {
 .history-detail-label {
   margin: 0;
   color: var(--vf-text-subtle);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -1104,7 +1104,7 @@ function loadMore() {
   gap: 0.4rem;
   margin: 0.15rem 0 0;
   color: var(--vf-text-strong);
-  font-size: 0.86rem;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -1148,7 +1148,7 @@ function loadMore() {
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   line-height: 1.5;
 }
 
@@ -1163,7 +1163,7 @@ function loadMore() {
   border-radius: var(--vf-radius-sm);
   background: var(--vf-warning-soft);
   color: var(--vf-text);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   line-height: 1.5;
 }
 
@@ -1174,7 +1174,7 @@ function loadMore() {
 .history-state-text {
   margin: 0;
   color: var(--vf-text-muted);
-  font-size: 0.84rem;
+  font-size: 0.875rem;
 }
 
 .history-more {
@@ -1198,7 +1198,7 @@ function loadMore() {
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .diff-split-row {
@@ -1232,7 +1232,7 @@ function loadMore() {
 .diff-cell.is-hunk,
 .diff-cell.is-meta {
   color: var(--vf-text-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .diff-block {
@@ -1243,7 +1243,7 @@ function loadMore() {
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .diff-line {
@@ -1302,18 +1302,18 @@ function loadMore() {
 .diff-line.is-hunk {
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .diff-line.is-meta {
   color: var(--vf-text-subtle);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .preview-code,
 .preview-text {
   margin: 0;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;

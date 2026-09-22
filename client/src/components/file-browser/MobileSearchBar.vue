@@ -210,7 +210,7 @@ const emit = defineEmits<{
   padding: 0.6rem;
   border-radius: var(--vf-radius);
   background: var(--vf-surface-sunken);
-  font-size: 0.82rem;
+  font-size: 0.875rem;
 }
 
 .mobile-filter-item {

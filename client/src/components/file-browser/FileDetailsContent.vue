@@ -178,7 +178,7 @@ watch(
 }
 
 .details-name {
-  font-size: 0.95rem;
+  font-size: 0.875rem;
   font-weight: 600;
   line-height: 1.4;
   color: var(--vf-text-strong);
@@ -187,7 +187,7 @@ watch(
 
 .details-path {
   margin-top: 0.15rem;
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   color: var(--vf-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -209,7 +209,7 @@ watch(
 
 .details-section-title {
   margin: 0;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   color: var(--vf-text-subtle);
@@ -232,13 +232,13 @@ watch(
 }
 
 .details-row dt {
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   color: var(--vf-text-subtle);
 }
 
 .details-row dd {
   margin: 0;
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   color: var(--vf-text);
   word-break: break-word;
 }

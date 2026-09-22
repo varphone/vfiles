@@ -130,7 +130,7 @@ const groups = [
 
 .shortcuts-group-title {
   margin: 0 0 0.4rem;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--vf-text-subtle);
@@ -165,14 +165,14 @@ const groups = [
   background: var(--vf-surface-sunken);
   color: var(--vf-text-strong);
   font-family: inherit;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   white-space: nowrap;
 }
 
 .shortcuts-desc {
   margin: 0;
   color: var(--vf-text);
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   line-height: 1.5;
 }
 
