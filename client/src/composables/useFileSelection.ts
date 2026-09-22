@@ -54,8 +54,7 @@ export function useFileSelection(deps: FileSelectionDeps) {
   }
 
   function toggleSelect(file: FileInfo) {
-    // 勾选即批量模式（r142 破案 ✓ 源级语义 = 全通道生效（直调通道绕过 handleRowSelect
-    // 致批量条不现 ✗✗ 三轮谜案终结））
+    // 勾选即批量模式（r142 ✓）
     if (!batchMode.value) batchMode.value = true;
     deps.setActivePath(file.path);
     lastSelectedPath.value = file.path;

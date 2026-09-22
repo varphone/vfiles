@@ -76,3 +76,4 @@
 | 52 | **Rust 改动 = `cargo build` 前置**（check ≠ build ✗✗ target/debug 旧二进制 = 探针旧产物病型三犯（前端 build/Rust build 同族））；**spawn 模板 = `tokio::select!`**（shutdown 等待在 run 前 = run 永不执行 ✗ 骨架 bug 警） | r110'a |
 | 53 | **输出语义分层**（用户报 ✗ 调试注记/符号标记经 print 泄漏到命令输出 = 看似报错日志 ✗ 命令输出只载事实；注记归 commit/docs；回复用纯中文） | r113' |
 | 54 | **fireEvent 修饰键回显存疑**（jsdom `fireEvent.keyDown({ctrlKey:true})` 实际未置修饰位 ✗ 自构造 `new KeyboardEvent` + dispatch = 稳式（r77 同族）） | r124 |
+| 55 | **playwright `check()` 对 Vue 受控 checkbox 不触发 change 链**（五轮误报史诗 ✗✗✗ 稳式 = `input.click()` 单发（自带 change ✓ click+dispatch 双发 = 奇偶抵消）；**混类/工具-框架交互**为探针两大深水区） | r137→144 |

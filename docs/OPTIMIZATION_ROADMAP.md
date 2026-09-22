@@ -2598,6 +2598,13 @@
   | 采样 `[batch=false, count=0, size=0, strip=0, is-row-selected=1]` | **选择集 size 0**（勾选链从未生效）+ 行类 = **混类误导** |
   | FileList 66 行 selected 含「活动行」分支 | **selected 类 = 选中 ∪ 活动行**（有意弱高亮 ✓ 记档不修 = 命名债注）——r140-142「行选中生效」全为**活动行高亮误读** |
   | jsdom 勾选绿 vs 浏览器 size 0 | **change 链真断**（toggleSelected→emit→…→toggleSelect 未达）→ **r144 终极**（toggleSelected 埋点） |
+- **r144 终极破案（五轮谜案全终结 ✨）**：三环埋点（E1 FileItem 发射 / E2 FileList 转发 /
+  E3 集合写入）+ 手动 dispatch = **全链通**（E1→E2→E3 ✓ strip 出 ✓）——**功能自始至终
+  正常**，五轮误报唯一真凶 = **playwright `check()` 对 Vue 受控 checkbox（`:checked` 绑定）
+  不触发 change 链** ✗✗ → 稳式 = **`input.click()` 单发**（click 自带 change ✓
+  click+dispatch 双发 = 奇偶抵消（「已选 0 项」实录 ✓））。
+- **教训五连环总结**（r137-144 探针史诗）：落点真触发元素 ✗ 标题信号被覆盖 ✗ 瞬时读
+  竞态 ✗ 混类误读 ✗ **工具-框架交互陷阱** ✗✗✗ → **#55 工具语立**。
 
 ### 4.116x 滚动记忆谜案（round 137，止损记档）
 
