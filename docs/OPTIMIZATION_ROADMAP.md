@@ -2565,6 +2565,32 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.23 死样式扫描脚本固化（round 22）
+
+- 三批人工清理（rounds 14/15/21）+ round 21 的孤儿 `}` 事故 → 固化为
+  **`client/scripts/check-dead-styles.mjs`**（`bun run lint:styles`），检查三类：
+  1. **死类**：样式定义但全仓库（模板/脚本/测试）零引用；
+  2. **死 keyframes**：定义但无 `animation(-name)` 引用；
+  3. **花括号不配平**：样式块 `{`/`}` 计数不等（round 21 事故的护栏）。
+- 误报豁免（§4.16 方法论 + 新发现）：
+  - Vue `<Transition name="X">` 运行时类（**仅当 `name=` 真实存在**才豁免其后缀族）；
+  - 模板/脚本里 `` `...${...}` `` 与 `'prefix' + x` 拼接类的**前缀族**（is-${...} 等）；
+  - **highlight.js 运行时类**（`hljs-*` 前缀 + `function_`/`class_`，代码块语法高亮由
+    JS 生成、源码无字面量）；
+  - 样式注释（`/* */` 与 `//`）需剥离——bulma.scss 注释里的 `bulma.min.css` 曾误报 `.min`；
+  - `ALLOW` 文档化保留集（当前为空）。
+- **脚本首跑即回本，真发现 ×6**（人工三批全漏）：
+  - `@keyframes admin-shimmer`（AdminUsers）、`@keyframes shares-shimmer`（SharedLinks）
+    —— 死 keyframes 类此前从未被查过；
+  - **`fade-*` ×4（App.vue）** —— round 15 曾按"transition 运行时类"豁免，**实为误判**：
+    全仓根本没有 `<Transition name="fade">`；脚本要求 `name=` 存在才豁免，反向纠错了人工结论。
+  均以**配平删除**（round 21 教训）移除。
+- 验证：
+  - 当前代码库 **通过**（722 个类、9 组 keyframes、transition 豁免 2 组（notification/slide-up 真实）、
+    动态前缀豁免 5 个）；
+  - **负向测试 4/4 检出**（植入死类 ×2、死 keyframes ×1、孤儿 `}` 不配平 ×1 → exit 1）→ 还原后通过；
+  - lint/tsc/build/**432 用例**全绿。用法：`bun run lint:styles`（独立于默认 lint，按需/CI 挂载）。
+
 ### 4.22 窄桌面响应式与骨架屏深色复核（round 21）
 
 - **宽对话框 × 窄桌面**（1024/1100/1280 × 720 三档实测，历史/移动/预览三个对话框）：

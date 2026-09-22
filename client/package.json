@@ -10,7 +10,8 @@
     "fmt": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "lint:styles": "node scripts/check-dead-styles.mjs"
   },
   "dependencies": {
     "@tabler/icons-vue": "^3.44.0",

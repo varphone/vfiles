@@ -603,12 +603,6 @@ onMounted(() => {
   font-size: 0.78rem;
 }
 
-@keyframes admin-shimmer {
-  to {
-    background-position: -200% 0;
-  }
-}
-
 .admin-table-wrap {
   margin-top: 0.6rem;
   overflow-x: auto;

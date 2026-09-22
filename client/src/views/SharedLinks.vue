@@ -477,12 +477,6 @@ onMounted(() => {
   font-size: 0.78rem;
 }
 
-@keyframes shares-shimmer {
-  to {
-    background-position: -200% 0;
-  }
-}
-
 /* 状态筛选 chips：全部 / 有效 / 已过期 / 已被访问 */
 .shares-filters {
   display: flex;
