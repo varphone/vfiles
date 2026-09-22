@@ -49,7 +49,7 @@ describe("FileUploader.vue upload size limit", () => {
   it("shows the server-side per-file limit", async () => {
     renderUploader(2 * 1024 * 1024);
 
-    expect(await screen.findByText(/单文件最大 2\.0 MB/)).toBeInTheDocument();
+    expect(await screen.findByText(/单文件最大 2 MB/)).toBeInTheDocument();
   });
 
   it("marks oversized files as failed without uploading them", async () => {

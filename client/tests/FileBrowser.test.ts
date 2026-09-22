@@ -1297,7 +1297,7 @@ describe("FileBrowser.vue details dialog", () => {
       );
     });
     const dialog = container.ownerDocument.querySelector(".modal.is-active");
-    expect(dialog?.textContent).toContain("4.0 KB");
+    expect(dialog?.textContent).toContain("4 KB");
     expect(dialog?.textContent).toContain("文本文档");
   });
 });

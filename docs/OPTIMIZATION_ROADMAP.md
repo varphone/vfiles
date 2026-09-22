@@ -2565,6 +2565,19 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.96x 显示格式归一 + size 怪形修复（round 96）
+
+- **显示格式轴**（第四真空白轮 ✓）：日期**三处实现**（中央 + VersionHistory/ShareDialog
+  私有同款副本 ✗）+ 大小**双实现**（formatSize vs apiErrors 复制体（注释自陈"保持一致"✗））
+  → **全归 `filePresentation` 单源** ✓。
+- **归一升格 = 修中央缺陷** ✗✓：formatSize 恒一位小数（**全站怪形「3.0 B」「101.0 B」**
+  ✗✗）vs 复制体整数友好 = **语义分叉非巧合** → `parseFloat(toFixed(1))` 整数智能
+  （主流式：100 MB / 4 KB ✓）；6 测试文件字面随行为更新 + 1 正则内嵌 `\.0`
+  逃过批改（**#37 候选：字面批改对转义正则漏网** ✗✓ 定点补）。
+- **戏剧坑**：VersionHistory **本地同名 formatDate**——首改把函数体改成**自调 = 无限递归**
+  ✗✗（10 红 = 栈溢出 ✓ TS2440 冲突报揭发）→ 删本地副本留中央 import ✓。
+- 440 用例全绿（62 文件 ✓）+ size:check 在预算 ✓。
+
 ### 4.95x 底栏层级静态取证 + 探针路线转轨（round 95）
 
 - r94 待办注收口：移动行菜单探针**三败止损**（r94×2 + r95 ✓ #36 脆点域确认 ✓

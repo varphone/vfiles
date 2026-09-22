@@ -90,7 +90,7 @@ export function formatSize(bytes: number | undefined): string {
     sizes.length - 1,
     Math.floor(Math.log(value) / Math.log(k)),
   );
-  return `${(value / Math.pow(k, index)).toFixed(1)} ${sizes[index]}`;
+  return `${parseFloat((value / Math.pow(k, index)).toFixed(1))} ${sizes[index]}`;
 }
 
 /** 下载进度文案，如 " 42% (1.0 KB/2.4 KB)"。 */

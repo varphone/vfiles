@@ -116,7 +116,7 @@ describe("useDownloadQueue", () => {
 
   it("formats progress as percent and transferred size", () => {
     const queue = useDownloadQueue(ref(undefined));
-    expect(queue.formatProgress(512, 1024)).toBe(" 50% (512.0 B/1.0 KB)");
+    expect(queue.formatProgress(512, 1024)).toBe(" 50% (512 B/1 KB)");
   });
 
   it("retries a failed item and completes it", async () => {

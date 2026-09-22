@@ -47,7 +47,7 @@ describe("FileGrid.vue", () => {
 
     expect(screen.getByText("photo.png")).toBeInTheDocument();
     expect(screen.getByText("docs")).toBeInTheDocument();
-    expect(screen.getByText("2.0 KB")).toBeInTheDocument();
+    expect(screen.getByText("2 KB")).toBeInTheDocument();
     // 图片走服务端缩略图接口，且带上请求尺寸。
     const image = container.querySelector<HTMLImageElement>(
       ".file-card-thumb-image",

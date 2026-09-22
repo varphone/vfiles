@@ -77,7 +77,7 @@ describe("FileDetailsPanel.vue", () => {
     expect(screen.getByText("main.ts")).toBeInTheDocument();
     expect(screen.getByText("/src/main.ts")).toBeInTheDocument();
     expect(screen.getByText("代码文件")).toBeInTheDocument();
-    expect(screen.getByText("2.0 KB")).toBeInTheDocument();
+    expect(screen.getByText("2 KB")).toBeInTheDocument();
     expect(screen.getByText("修改时间")).toBeInTheDocument();
     expect(screen.getByText("创建时间")).toBeInTheDocument();
   });
@@ -150,7 +150,7 @@ describe("FileDetailsPanel.vue multi-selection", () => {
     const meta = container.querySelector(
       ".details-selection-meta",
     )?.textContent;
-    expect(meta).toContain("3.0 KB");
+    expect(meta).toContain("3 KB");
     expect(meta).toContain("1 个目录");
     // 列出前几个条目名称
     expect(

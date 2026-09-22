@@ -361,6 +361,7 @@
 
 <script setup lang="ts">
 import { ref, onBeforeUnmount, computed, watch } from "vue";
+import { formatDate } from "../../utils/filePresentation";
 import {
   IconAlertCircle,
   IconAlertTriangle,
@@ -646,21 +647,6 @@ async function loadHistory() {
     if (reqId !== historyRequestId) return;
     loading.value = false;
   }
-}
-
-function formatDate(date: string): string {
-  const parsed = new Date(date);
-  if (Number.isNaN(parsed.getTime())) {
-    return date || "--";
-  }
-
-  return parsed.toLocaleString("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function getExtension(p: string): string {

@@ -122,6 +122,7 @@
 </template>
 
 <script setup lang="ts">
+import { formatDate } from "../../utils/filePresentation";
 import { computed, nextTick, ref, watch } from "vue";
 import {
   IconAlertCircle,
@@ -182,13 +183,7 @@ const expiresAtFormatted = computed(() => {
   if (!expiresAt.value) return "";
   const date = new Date(expiresAt.value);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatDate(date.toISOString());
 });
 
 // 关闭后重置：下次打开是干净的表单，避免沿用上一次的链接

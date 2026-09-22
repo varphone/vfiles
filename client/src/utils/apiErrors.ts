@@ -1,3 +1,4 @@
+import { formatSize } from "./filePresentation";
 /**
  * API 错误文案本地化。
  *
@@ -83,7 +84,7 @@ export function localizeApiError(
     // 上传超限：附上人类可读的上限
     const limit = payload?.details?.limit_bytes;
     if (code === "FILE_TOO_LARGE" && typeof limit === "number" && limit > 0) {
-      return `${localized}（最大 ${formatBytes(limit)}）`;
+      return `${localized}（最大 ${formatSize(limit)}）`;
     }
 
     // 校验失败：指出具体字段（英文原因不直接展示，避免中英混杂）
@@ -99,19 +100,6 @@ export function localizeApiError(
   // 未知错误码：优先展示服务端文案（可能是面向用户的自定义消息）
   const message = payload?.message?.trim();
   return message || fallback;
-}
-
-/** 服务端上限等字节数的人类可读格式（与界面其它位置保持一致）。 */
-function formatBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const rounded = unit === 0 ? value : Math.round(value * 10) / 10;
-  return `${rounded} ${units[unit]}`;
 }
 
 /** 从 axios 抛出的错误里取出错误负载（兼容 `data` 包裹与旧格式）。 */

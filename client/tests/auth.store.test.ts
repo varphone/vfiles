@@ -3,7 +3,11 @@ import { createPinia, setActivePinia } from "pinia";
 import { useAuthStore } from "../src/stores/auth.store";
 
 const { registerMock, loginMock } = vi.hoisted(() => ({
-  registerMock: vi.fn(async () => ({ id: "u1", username: "alice", role: "user" })),
+  registerMock: vi.fn(async () => ({
+    id: "u1",
+    username: "alice",
+    role: "user",
+  })),
   loginMock: vi.fn(async () => ({
     user: { id: "u1", username: "alice", role: "user" },
     token: "session-token",

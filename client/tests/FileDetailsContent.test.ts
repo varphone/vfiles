@@ -26,7 +26,7 @@ describe("FileDetailsContent.vue", () => {
     expect(screen.getByText("main.ts")).toBeInTheDocument();
     expect(screen.getByText("/src/main.ts")).toBeInTheDocument();
     expect(screen.getByText("代码文件")).toBeInTheDocument();
-    expect(screen.getByText("2.0 KB")).toBeInTheDocument();
+    expect(screen.getByText("2 KB")).toBeInTheDocument();
     expect(screen.getByText("修改时间")).toBeInTheDocument();
     expect(screen.getByText("创建时间")).toBeInTheDocument();
   });

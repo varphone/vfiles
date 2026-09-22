@@ -73,9 +73,9 @@ describe("SidebarOverview.vue storage breakdown", () => {
       size: el.querySelector(".storage-legend-size")?.textContent?.trim(),
     }));
     expect(legend).toEqual([
-      { label: "图片", size: "600.0 B" },
-      { label: "文档", size: "300.0 B" },
-      { label: "其它", size: "100.0 B" },
+      { label: "图片", size: "600 B" },
+      { label: "文档", size: "300 B" },
+      { label: "其它", size: "100 B" },
     ]);
 
     // 无障碍标签把构成说清楚
@@ -154,7 +154,7 @@ describe("SidebarOverview.vue", () => {
   it("renders storage usage and recent files", async () => {
     render(SidebarOverview as any);
 
-    expect(await screen.findByText("2.0 KB")).toBeInTheDocument();
+    expect(await screen.findByText("2 KB")).toBeInTheDocument();
     expect(screen.getByText("3 文件 · 2 目录")).toBeInTheDocument();
     expect(screen.getByText("最近更新")).toBeInTheDocument();
     expect(screen.getByText("report.md")).toBeInTheDocument();
@@ -224,7 +224,7 @@ describe("SidebarOverview.vue", () => {
 
     render(SidebarOverview as any);
 
-    expect(await screen.findByText("2.0 KB")).toBeInTheDocument();
+    expect(await screen.findByText("2 KB")).toBeInTheDocument();
     expect(screen.getByText("report.md")).toBeInTheDocument();
     expect(screen.queryByText(/服务器内部错误/)).toBeNull();
     expect(screen.queryByText("收藏")).toBeNull();
