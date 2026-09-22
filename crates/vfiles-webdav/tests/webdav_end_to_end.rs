@@ -18,6 +18,7 @@ use vfiles_app::{
 
 #[allow(unused_imports)]
 use vfiles_domain::UserRepo as _;
+use vfiles_domain::types::RegisterRequest;
 use vfiles_domain::{EntryRepo, NormalizedPath};
 use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteEntryRepo, SqliteMigrations, SqliteNamespaceRepo,
@@ -83,7 +84,11 @@ async fn options_advertises_and_propfind_needs_auth() {
         86_400_u64,
     ));
     let user = auth
-        .register(vfiles_app::RegisterRequest {})
+        .register(RegisterRequest {
+            username: USERNAME.to_string(),
+            email: Some("dav@example.com".to_string()),
+            password: PASSWORD.to_string(),
+        })
         .await
         .expect("register");
     // per-user 默认命名空间（`ensure_default_for_owner` = **ns 映射真身** ✓ r109d 形明）
@@ -92,10 +97,10 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .expect("ns");
     let workspace = Arc::new(DefaultWorkspaceService::new(
-        Arc::clone(&entry_repo),
-        Arc::clone(&snapshot_repo),
-        Arc::clone(&blob_store),
-        Arc::clone(&upload_store),
+        SqliteEntryRepo::new(pool.clone()),
+        SqliteSnapshotRepo::new(pool.clone()),
+        FsBlobStore::new(pool.clone(), root.join("blobs2")),
+        FsUploadStore::new(root.join("uploads2")),
     ));
     let _ = workspace; // 写面桩 ✓ 读面 = entry_repo 直供
 
@@ -128,6 +133,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
+    eprintln!("[dbg] OPTIONS headers = {:?}", resp.headers());
     assert!(resp
         .headers()
         .get("allow")

@@ -71,3 +71,4 @@
 | 47 | **判据 grep 词边界**（`error` 撞 crate 名 "quick-error" ✗ `^error`/`\\berror\\b` 式 ✓ 判词链反写二号） | r106 |
 | 48 | **管道掩错 = 门禁假绿险**（`tsc \\| head` = head exit 0 ✗✗✗ 历轮静默过含险 ✓ **`set -o pipefail` 强制** + TSC_EXIT 真绿验记式） | r106 |
 | 49 | **grep 锚形盲区**（简写字段 `ftp,` 无冒号 ✗✗ `grep ftp:` 假"零命中"烧三轮 ✗✓ 锚须含简写形/错误区**无窗直读**（#14 三犯连环截教训） | r109b |
+| 50 | **二分暂换当轮必还原**（`.fallback(hello)` 未换回 = **五轮 dispatch 全死码** ✗✗✗ 史诗盲区 ✓ 还原须 grep 验证；**dbg-eprintln = 断言级 debug 够不着时的一击破案式** | r105→110 |

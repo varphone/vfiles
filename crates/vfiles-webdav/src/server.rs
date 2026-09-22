@@ -248,14 +248,10 @@ fn www_authenticate() -> Response {
 /// WebDAV 能力宣告（无锁 ✓ 子集 ✓）。
 const ALLOW: &str = "OPTIONS, PROPFIND, GET, HEAD";
 
-async fn hello() -> &'static str {
-    "ok"
-}
-
 fn router(app: WebdavApplication) -> Router {
     use axum::Extension;
     Router::new()
-        .fallback(hello)
+        .fallback(dav)
         .layer(Extension(app))
 }
 
@@ -287,25 +283,32 @@ async fn propfind_owned(
             .unwrap_or_default()
     };
     let mut items = Vec::new();
-    let entry = app
-        .entry_repo
-        .find_by_path(&app.namespace_id, &path)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let Some(entry) = entry else {
-        return Err(StatusCode::NOT_FOUND);
-    };
-    items.push(crate::response::PropResponse {
-        href: if rel.is_empty() {
-            "/".to_string()
-        } else {
-            format!("/{rel}/")
-        },
-        displayname: entry.name.clone(),
-        is_collection: true, // 根/目录（PROPFIND 目标按目录处置 ✓）
-        getlastmodified: mtime_fmt(entry.created_at),
-        getcontentlength: None,
-    });
+    if rel.is_empty() {
+        // 根特判（RFC 4918 ✓ 空命名空间无 root Entry 行 ✗ 合成根响应 ✓）
+        items.push(crate::response::PropResponse {
+            href: "/".to_string(),
+            displayname: "/".to_string(),
+            is_collection: true,
+            getlastmodified: mtime_fmt(time::OffsetDateTime::now_utc()),
+            getcontentlength: None,
+        });
+    } else {
+        let entry = app
+            .entry_repo
+            .find_by_path(&app.namespace_id, &path)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let Some(entry) = entry else {
+            return Err(StatusCode::NOT_FOUND);
+        };
+        items.push(crate::response::PropResponse {
+            href: format!("/{rel}/"),
+            displayname: entry.name.clone(),
+            is_collection: true,
+            getlastmodified: mtime_fmt(entry.created_at),
+            getcontentlength: None,
+        });
+    }
     if depth == "1" {
         let children = app
             .entry_repo
