@@ -4,7 +4,11 @@
     v-if="desktop"
     class="desktop-file-row"
     :data-vfiles-path="file.path"
-    :class="{ 'drop-target': dragOver, 'is-row-selected': selected }"
+    :class="{
+      'drop-target': dragOver,
+      'is-row-selected': selected,
+      'is-dragging': dragging,
+    }"
     draggable
     @click="handleClick"
     @dblclick="handleActivate"
@@ -256,6 +260,7 @@
       'has-background-light': selected,
       'is-expanded': showActions,
       'drop-target': dragOver,
+      'is-dragging': dragging,
     }"
     draggable
     @click="handleClick"
@@ -483,6 +488,8 @@ const emit = defineEmits<{
 }>();
 
 const dragOver = ref(false);
+/** 拖起态：源行/卡片半透明（主流文件管理器的 drag lift 反馈） */
+const dragging = ref(false);
 const rowMenuButton = ref<HTMLButtonElement | null>(null);
 /** 本行的菜单是否已打开（仅用于 aria-expanded）。 */
 const menuOpen = ref(false);
@@ -686,11 +693,13 @@ onBeforeUnmount(clearLongPress);
 function handleDragStart(event: DragEvent) {
   event.dataTransfer?.setData("text/plain", props.file.path);
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+  dragging.value = true;
   emit("dragStart", props.file);
 }
 
 function handleDragEnd() {
   dragOver.value = false;
+  dragging.value = false;
   emit("dragEnd");
 }
 
@@ -775,9 +784,15 @@ function share() {
 
 <style scoped>
 /* 移动端列表：扁平行 + 细分隔线（主流网盘移动端不用卡片阴影） */
+.file-item.is-dragging {
+  opacity: 0.55;
+}
+
 .file-item {
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    opacity 0.15s ease;
   margin-bottom: 0 !important;
   border-radius: 0 !important;
   box-shadow: none !important;
@@ -835,8 +850,15 @@ function share() {
 
 .desktop-file-row > td {
   vertical-align: middle;
-  /* 悬停/选中/落点高亮都在 td 背景上：统一 0.15s 渐入（移动端行与网格卡片已有） */
-  transition: background-color 0.15s ease;
+  /* 悬停/选中/落点高亮都在 td 背景上；拖起时源行半透明 —— 统一 0.15s 渐入 */
+  transition:
+    background-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+/* 拖起态（drag lift）：源项半透明，与目标高亮共同表达"拖动中" */
+.desktop-file-row.is-dragging > td {
+  opacity: 0.55;
 }
 
 /* 次要信息用低对比度颜色，让名称成为视觉焦点 */

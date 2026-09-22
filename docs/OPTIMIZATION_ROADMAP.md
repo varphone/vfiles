@@ -2565,6 +2565,21 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.12 拖起态反馈（round 11）
+
+- 交互（延续第 10 轮拖放反馈）：主流文件管理器拖动时**源项会半透明**（Explorer/Drive 的
+  drag lift），此前只有目标侧高亮、源项毫无反馈。
+- 实现：`FileItem`（桌面行 + 移动行两个模板）与 `FileCard` 各自维护 `dragging` 本地状态，
+  `dragstart` 置位、`dragend` 复位，类 `.is-dragging` → `opacity: 0.55`，
+  并把 opacity 并入既有的 `0.15s` 过渡（背景/边框/透明度一起渐入渐出）；
+  目录树行不作为拖拽源（不可拖出），故不加。
+- 验证（真实浏览器，合成 DragEvent）：
+  | 对象 | 拖动中 | dragend 后 |
+  | --- | --- | --- |
+  | 列表行 td | `is-dragging` ✓ opacity **0.55** ✓ | 类移除 ✓ opacity **1** ✓ |
+  | 网格卡片 | `is-dragging` ✓ opacity **0.55** ✓ | 类移除 ✓ opacity **1** ✓ |
+  无控制台报错；新增 1 个单测（dragStart 置位/dragend 复位），前端 62 文件 / **431** 用例全绿。
+
 ### 4.11 拖拽落点反馈 + 高级搜索面板对齐（round 10）
 
 - **拖拽落点反馈**（交互）：

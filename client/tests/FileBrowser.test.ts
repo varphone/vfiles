@@ -1938,3 +1938,36 @@ describe("FileBrowser.vue delete confirmation", () => {
     expect(deleteFileMock).not.toHaveBeenCalled();
   });
 });
+
+describe("FileBrowser.vue drag lift", () => {
+  it("dims the source row while dragging and restores it on dragend", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([
+      {
+        id: "drag-me.txt",
+        name: "drag-me.txt",
+        path: "drag-me.txt",
+        kind: "file" as const,
+        size_bytes: 10,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("drag-me.txt");
+
+    const row = container.querySelector('tr[data-vfiles-path="drag-me.txt"]')!;
+    expect(row.classList.contains("is-dragging")).toBe(false);
+
+    fireEvent.dragStart(row);
+    await waitFor(() =>
+      expect(row.classList.contains("is-dragging")).toBe(true),
+    );
+
+    fireEvent.dragEnd(row);
+    await waitFor(() =>
+      expect(row.classList.contains("is-dragging")).toBe(false),
+    );
+  });
+});

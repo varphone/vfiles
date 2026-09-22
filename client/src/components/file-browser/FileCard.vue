@@ -7,6 +7,7 @@
       'file-card--active': active,
       'file-card--grid': true,
       'drop-target': dragOver,
+      'is-dragging': dragging,
     }"
     :style="{ '--file-card-thumb-size': `${thumbnailSize}px` }"
     :title="file.name"
@@ -340,6 +341,8 @@ const thumbFailed = ref(false);
 const thumbLoaded = ref(false);
 
 const dragOver = ref(false);
+/** 拖起态：源卡片半透明（同列表行） */
+const dragging = ref(false);
 
 const isDirectoryEntry = computed(() => props.file.kind === "directory");
 
@@ -470,11 +473,13 @@ onBeforeUnmount(clearLongPress);
 function handleDragStart(event: DragEvent) {
   event.dataTransfer?.setData("text/plain", props.file.path);
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+  dragging.value = true;
   emit("drag-start", props.file);
 }
 
 function handleDragEnd() {
   dragOver.value = false;
+  dragging.value = false;
   emit("drag-end");
 }
 
@@ -551,7 +556,8 @@ onBeforeUnmount(() => {
   transition:
     box-shadow 0.15s ease,
     border-color 0.15s ease,
-    transform 0.15s ease;
+    transform 0.15s ease,
+    opacity 0.15s ease;
 }
 
 .file-card:hover {
@@ -563,6 +569,11 @@ onBeforeUnmount(() => {
 .file-card--active {
   border-color: var(--vf-accent);
   box-shadow: 0 0 0 2px var(--vf-focus-ring);
+}
+
+/* 拖起态：源卡片半透明（同列表行） */
+.file-card.is-dragging {
+  opacity: 0.55;
 }
 
 .file-card--selected {
