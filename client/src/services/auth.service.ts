@@ -27,6 +27,10 @@ export interface AdminUserCapabilities {
 export interface AdminUsersPayload {
   users: AdminUser[];
   capabilities: AdminUserCapabilities;
+  /** 后端分页响应含总数（r106 补型 ✓ 看板用户统计用） */
+  total_count?: number;
+  page?: number;
+  page_size?: number;
 }
 
 export interface SessionFeatures {
@@ -284,7 +288,10 @@ class AuthService {
       });
       return { success: true };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : "重置密码失败" };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "重置密码失败",
+      };
     }
   }
 
@@ -294,7 +301,31 @@ class AuthService {
       await apiService.delete(`/admin/users/${encodedUserId}`);
       return { success: true };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : "删除用户失败" };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "删除用户失败",
+      };
+    }
+  }
+
+  /** 系统信息（管理端 ✓ r106 看板系统卡数据源）。 */
+  async systemInfo(): Promise<
+    ApiResponse<{
+      version: string;
+      os: string;
+      arch: string;
+      uptime_secs: number;
+      started_at: string;
+    }>
+  > {
+    try {
+      const response = await apiService.get<unknown>("/admin/system-info");
+      return { success: true, data: response as never };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "加载系统信息失败",
+      };
     }
   }
 

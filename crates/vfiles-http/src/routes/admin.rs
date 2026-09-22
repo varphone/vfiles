@@ -56,8 +56,42 @@ pub struct ResetPasswordRequest {
     pub new_password: String,
 }
 
+/// 系统信息（r106 看板 ✓ 管理员专属 ✓ 零依赖段：版本/运行时/uptime）。
+#[derive(Debug, Serialize)]
+pub struct SystemInfoResponse {
+    pub version: String,
+    pub os: String,
+    pub arch: String,
+    pub uptime_secs: u64,
+    pub started_at: String,
+}
+
+fn process_start() -> std::time::Instant {
+    use std::sync::OnceLock;
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    *START.get_or_init(std::time::Instant::now)
+}
+
+async fn system_info(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> ApiResult<Json<SystemInfoResponse>> {
+    let _actor = require_admin(&state, &jar).await?;
+    let uptime = process_start().elapsed().as_secs();
+    Ok(Json(SystemInfoResponse {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        uptime_secs: uptime,
+        started_at: time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default(),
+    }))
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/system-info", get(system_info))
         .route("/users", get(list_users))
         .route("/users", post(create_user))
         .route("/users/{user_id}", get(get_user))

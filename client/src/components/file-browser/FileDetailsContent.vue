@@ -49,9 +49,7 @@
           <dt>大小</dt>
           <dd>
             {{
-              file.kind === "directory"
-                ? "—"
-                : formatSize(file.size_bytes || 0)
+              file.kind === "directory" ? "—" : formatSize(file.size_bytes || 0)
             }}
           </dd>
         </div>

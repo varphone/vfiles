@@ -39,6 +39,11 @@ const router = createRouter({
       component: () => import("../views/AccessTokens.vue"),
     },
     {
+      path: "/system-info",
+      name: "system-info",
+      component: () => import("../views/SystemInfo.vue"),
+    },
+    {
       path: "/admin/users",
       name: "admin-users",
       component: () => import("../views/AdminUsers.vue"),
