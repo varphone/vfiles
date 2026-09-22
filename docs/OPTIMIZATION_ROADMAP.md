@@ -2565,6 +2565,28 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.31 列宽拖拽修复（用户反馈插曲，位于 round 28 之后）
+
+- 症状（用户报告）：拖动表头分割线调列宽不正常。
+- 逐层实证（真实鼠标事件）：
+  1. **接线正常**：拖 +60px → `<col>` 的 inline style 320px → 380px（精确）✓
+  2. **根因 = `table-layout: auto` 吸收宽度变化**：auto 布局把名称列撑满表格
+     （渲染 506px vs style 320px），拖拽数值全被吸收 → 视觉零变化。
+- 修复：
+  1. `.file-list-table` 加 **`table-layout: fixed`**（`<col>` 宽度成为权威值；
+     余量规则 = 列宽总和小于表宽时按比例分配、超出时精确生效 + 容器横滚——
+     这是 CSS 规范行为，与主流一致）；
+  2. fixed 布局暴露的次生问题：**勾选/操作列（auto）被挤到 2–8px** ✗
+     → 定宽 `.file-list-col-check { width: 40px }` / `.file-list-col-actions { width: 96px }`。
+- 验证（真实鼠标拖拽，单元格 rect 无歧义测量）：
+  | 状态 | cells（勾选/名称/时间/类型/大小） | 勾选框 |
+  | --- | --- | --- |
+  | idle | [41, 330, 154, 134, 99] | ✓ 可见 |
+  | 拖拽 +80 | [40, **400**, 150, 130, 96]（**精确 +80**） | ✓ |
+  | 双击复位 | [41, 330, 154, 134, 99]（**完全回到 idle**） | ✓ |
+  键盘 ←/→ 微调 ±16 ✓（实测 320→352）；窄屏（1024）列表容器 `overflow: auto`
+  横向滚动 ✓ 页面不溢出 ✓（Drive 同款行为）。433 用例全绿、lint 通过。
+
 ### 4.30 半透明令牌误用清查（round 28）
 
 - 由 §4.29 用户 bug（半透明 tint 被当独立背景）引出的**同类风险全仓清查**：

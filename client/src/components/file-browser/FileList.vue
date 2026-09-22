@@ -348,8 +348,22 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
 </script>
 
 <style scoped>
+/* 勾选/操作列定宽：fixed 布局下 auto 列会被挤没（实测 2–8px），
+   定宽后可调列（名称/时间/类型/大小）的拖拽宽度才稳定生效。 */
+.file-list-col-check {
+  width: 40px;
+}
+
+.file-list-col-actions {
+  width: 96px;
+}
+
 /* 主流网盘风格：无斑马纹、细分隔线、粘性表头 */
 .file-list-table {
+  /* fixed 布局让 <col> 宽度成为权威值：auto 布局会把名称列撑满表格、
+     吸收掉拖拽调宽（用户反馈"分割线拖动不正常"的根因）。
+     无宽度的勾选/操作列自动分摊余量。 */
+  table-layout: fixed;
   background: transparent;
   margin-bottom: 0;
 }
