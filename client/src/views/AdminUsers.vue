@@ -255,6 +255,25 @@
                   >
                     强制下线
                   </button>
+                  <!-- r107' 用户管理完善：重置密码 + 删除（后端早备 ✓ 前端补动作） -->
+                  <button
+                    class="vf-ghost-button admin-action"
+                    type="button"
+                    :disabled="loading || !canManageUser(u)"
+                    @click="openResetPassword(u)"
+                  >
+                    重置密码
+                  </button>
+                  <button
+                    class="vf-ghost-button is-danger admin-action"
+                    type="button"
+                    :disabled="
+                      loading || auth.user?.id === u.id || !canManageUser(u)
+                    "
+                    @click="removeUser(u)"
+                  >
+                    删除
+                  </button>
                 </div>
               </td>
             </tr>
@@ -263,6 +282,30 @@
       </div>
     </div>
   </div>
+  <!-- r107'：重置密码 Modal（一次输入 ✓ 语义：新密码即时生效） -->
+  <Modal :show="!!resetTarget" title="重置密码" @close="resetTarget = null">
+    <p class="admin-reset-hint">
+      为「{{ resetTarget?.username }}」设置新密码（至少 6 位）：
+    </p>
+    <input
+      v-model="resetInput"
+      class="input"
+      type="text"
+      placeholder="输入新密码（可见，便于转告）"
+      aria-label="新密码"
+      @keyup.enter="submitResetPassword"
+    />
+    <template #footer>
+      <button class="vf-ghost-button" @click="resetTarget = null">取消</button>
+      <button
+        class="vf-ghost-button is-primary"
+        :disabled="resetBusy || resetInput.length < 6"
+        @click="submitResetPassword"
+      >
+        重置密码
+      </button>
+    </template>
+  </Modal>
 </template>
 
 <script setup lang="ts">
@@ -286,6 +329,7 @@ import {
 import { useAppStore } from "../stores/app.store";
 import { confirmDialog } from "../composables/dialog";
 import { useAuthStore } from "../stores/auth.store";
+import Modal from "../components/common/Modal.vue";
 import EmptyState from "../components/common/EmptyState.vue";
 import SkeletonList from "../components/common/SkeletonList.vue";
 import { formatRelativeDate } from "../utils/filePresentation";
@@ -478,6 +522,52 @@ async function toggleDisabled(u: AdminUser) {
     app.error(e instanceof Error ? e.message : "更新状态失败");
   } finally {
     loading.value = false;
+  }
+}
+
+/** r107'：重置密码（Modal 一次输入 ✓ 新密码直接下发后端）。 */
+const resetTarget = ref<AdminUser | null>(null);
+const resetInput = ref("");
+const resetBusy = ref(false);
+
+function openResetPassword(u: AdminUser) {
+  resetTarget.value = u;
+  resetInput.value = "";
+}
+
+async function submitResetPassword() {
+  if (!resetTarget.value || resetInput.value.length < 6) return;
+  resetBusy.value = true;
+  try {
+    const res = await authService.resetUserPassword(
+      resetTarget.value.id,
+      resetInput.value,
+    );
+    if (!res.success) throw new Error(res.error || "重置密码失败");
+    app.success(`已重置「${resetTarget.value.username}」的密码`);
+    resetTarget.value = null;
+  } catch (e) {
+    app.error(e instanceof Error ? e.message : "重置密码失败");
+  } finally {
+    resetBusy.value = false;
+  }
+}
+
+/** r107'：删除用户（确认流 ✓ 不能删己 ✓）。 */
+async function removeUser(u: AdminUser) {
+  const ok = await confirmDialog({
+    title: "删除用户",
+    message: `确定删除「${u.username}」？该操作不可撤销。`,
+    confirmText: "删除",
+  });
+  if (!ok) return;
+  try {
+    const res = await authService.deleteUser(u.id);
+    if (!res.success) throw new Error(res.error || "删除用户失败");
+    app.success(`已删除「${u.username}」`);
+    await reload();
+  } catch (e) {
+    app.error(e instanceof Error ? e.message : "删除用户失败");
   }
 }
 

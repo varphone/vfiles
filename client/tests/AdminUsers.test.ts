@@ -28,6 +28,8 @@ vi.mock("../src/services/auth.service", async () => {
   return {
     authService: {
       ...actual.authService,
+      resetUserPassword: vi.fn(async () => ({ success: true })),
+      deleteUser: vi.fn(async () => ({ success: true })),
       listUsers: vi.fn(async () => ({
         success: true,
         data: { users: mockUsers },
@@ -150,5 +152,36 @@ describe("AdminUsers.vue header actions", () => {
 
     await fireEvent.click(getByText("刷新"));
     await waitFor(() => expect(listUsers).toHaveBeenCalledTimes(2));
+  });
+
+  it("resets a user password through the modal (r107')", async () => {
+    renderWithProviders(AdminUsers);
+    await waitFor(() => expect(screen.getByText("alice")).toBeInTheDocument());
+    // 稳式（#34 ✓ 行钮 admin-action / Modal 钮 is-primary 同文双匹配 ✗）
+    await fireEvent.click(
+      screen.getByText("重置密码", { selector: "button.admin-action" }),
+    );
+    const input = await screen.findByLabelText("新密码");
+    await fireEvent.update(input, "abcdef123");
+    const { authService } = await import("../src/services/auth.service");
+    await fireEvent.click(
+      screen.getByText("重置密码", { selector: "button.is-primary" }),
+    );
+    await waitFor(() =>
+      expect(authService.resetUserPassword).toHaveBeenCalledWith(
+        "u1",
+        "abcdef123",
+      ),
+    );
+  });
+
+  it("deletes a user behind confirmation (r107')", async () => {
+    renderWithProviders(AdminUsers);
+    await waitFor(() => expect(screen.getByText("alice")).toBeInTheDocument());
+    await fireEvent.click(screen.getByText("删除"));
+    const { authService } = await import("../src/services/auth.service");
+    await waitFor(() =>
+      expect(authService.deleteUser).toHaveBeenCalledWith("u1"),
+    );
   });
 });

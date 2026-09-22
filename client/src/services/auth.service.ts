@@ -273,6 +273,31 @@ class AuthService {
   }
 
   // Admin APIs
+  /** 重置用户密码（管理端 ✓ 后端 /users/:id/reset-password 备 ✓ r107' 补前端）。 */
+  async resetUserPassword(
+    encodedUserId: string,
+    newPassword: string,
+  ): Promise<ApiResponse<unknown>> {
+    try {
+      await apiService.post(`/admin/users/${encodedUserId}/reset-password`, {
+        new_password: newPassword,
+      });
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : "重置密码失败" };
+    }
+  }
+
+  /** 删除用户（管理端 ✓ 后端 DELETE /users/:id 备 ✓ r107' 补前端）。 */
+  async deleteUser(encodedUserId: string): Promise<ApiResponse<unknown>> {
+    try {
+      await apiService.delete(`/admin/users/${encodedUserId}`);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : "删除用户失败" };
+    }
+  }
+
   async listUsers(): Promise<ApiResponse<AdminUsersPayload>> {
     try {
       const response = await apiService.get<unknown>("/admin/users");
