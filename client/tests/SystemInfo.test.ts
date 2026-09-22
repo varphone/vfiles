@@ -40,7 +40,7 @@ describe("SystemInfo.vue (r106 看板)", () => {
     // 用户统计（listUsers total_count ✓）
     await waitFor(() => expect(screen.getByText("2")).toBeInTheDocument());
     // 管理页互链（零导航债 ✓）
-    expect(screen.getByText("用户管理")).toBeInTheDocument();
-    expect(screen.getByText("审计日志")).toBeInTheDocument();
+    expect(screen.getByText("‹ 返回用户管理")).toBeInTheDocument();
+    expect(screen.getByText("‹ 返回审计日志")).toBeInTheDocument();
   });
 });

@@ -7,9 +7,9 @@
 
     <!-- 管理页互链（主流管理区式 ✓ 零导航债） -->
     <p class="system-info-links">
-      <RouterLink to="/admin/users">用户管理</RouterLink>
-      <RouterLink to="/admin/audit">审计日志</RouterLink>
-      <RouterLink to="/system-info" class="is-current">系统信息</RouterLink>
+      <RouterLink to="/admin/users">‹ 返回用户管理</RouterLink>
+      <RouterLink to="/admin/audit">‹ 返回审计日志</RouterLink>
+      <RouterLink to="/system-info" class="is-current">‹ 系统信息</RouterLink>
     </p>
 
     <!-- 系统卡（新端点 ✓ 零依赖段） -->

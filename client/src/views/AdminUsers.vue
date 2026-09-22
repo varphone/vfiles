@@ -2,6 +2,12 @@
   <div class="admin-page">
     <div class="admin-card vf-page-card">
       <!-- 页头：标题 + 概览 + 搜索/刷新（与文件浏览器的卡片语言一致） -->
+      <!-- 管理页互链（r106' 补齐 ✓ SystemInfo 同式） -->
+      <p class="system-info-links">
+        <RouterLink to="/admin/users" class="is-current">‹ 用户管理</RouterLink>
+        <RouterLink to="/admin/audit">‹ 返回审计日志</RouterLink>
+        <RouterLink to="/system-info">‹ 返回系统信息</RouterLink>
+      </p>
       <header class="admin-header">
         <div class="admin-header-titles">
           <h1 class="admin-title vf-page-title">用户管理</h1>
@@ -872,5 +878,17 @@ onMounted(() => {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.system-info-links {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.2rem;
+  font-size: 0.82rem;
+}
+
+.system-info-links .is-current {
+  font-weight: 600;
+  color: var(--vf-accent-text);
 }
 </style>

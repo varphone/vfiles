@@ -165,6 +165,16 @@
                       审计日志
                     </router-link>
 
+                    <!-- 系统信息（admin-only ✓ r106' 用户报"没入口"修复 = 主入口 ✓） -->
+                    <router-link
+                      v-if="auth.enabled && auth.user?.role === 'admin'"
+                      class="dropdown-item"
+                      to="/system-info"
+                      @click="closeAccountMenus"
+                    >
+                      系统信息
+                    </router-link>
+
                     <router-link
                       v-if="auth.enabled && !auth.user"
                       class="dropdown-item"
