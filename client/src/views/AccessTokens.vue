@@ -146,6 +146,8 @@
     <Modal :show="createOpen" title="新建访问令牌" @close="closeCreate">
       <div class="tokens-form">
         <label class="tokens-label" for="token-name">名称</label>
+        <!-- 字段级 aria 链（r68 约定兑现示范 ✓ 行内错误 ↔ 控件关联）：
+             aria-invalid 标错 + aria-describedby 指错误文案 id -->
         <input
           id="token-name"
           v-model.trim="form.name"
@@ -153,6 +155,8 @@
           type="text"
           maxlength="64"
           placeholder="例如：CI 构建、备份脚本"
+          :aria-invalid="createError ? 'true' : undefined"
+          :aria-describedby="createError ? 'token-name-error' : undefined"
           @keyup.enter="submitCreate"
         />
 
@@ -169,7 +173,12 @@
           </select>
         </div>
 
-        <p v-if="createError" class="tokens-error" role="alert">
+        <p
+          id="token-name-error"
+          v-if="createError"
+          class="tokens-error"
+          role="alert"
+        >
           {{ createError }}
         </p>
       </div>
@@ -325,7 +334,11 @@ function closeCreate() {
 }
 
 async function submitCreate() {
-  if (!form.value.name) return;
+  // 空名 = 行内错误（r86 ✗✓ 原为静默 return = 点「创建」零反馈）+ aria 链联动
+  if (!form.value.name) {
+    createError.value = "请输入令牌名称";
+    return;
+  }
   creating.value = true;
   createError.value = "";
   try {

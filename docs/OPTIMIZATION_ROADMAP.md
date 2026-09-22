@@ -2565,6 +2565,17 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.92 行内错误 + 字段级 aria 链（round 86）
+
+- 表单交互子轴深化：原计划补 aria 链 → 探出**更大缺口** ✗✗：空名提交
+  `if (!form.name) return;` = **静默零反馈**（点「创建」= 什么都没发生 = UX 盲点）。
+- **示范式修**（令牌表单）：空名 → 行内错误「请输入令牌名称」（r73 语言节祈使式 ✓）+
+  **字段级 aria 链兑现 r68 约定**：`#token-name-error`（role=alert）↔ input
+  `aria-invalid="true"` + `aria-describedby` ✓ = 后续表单的样板注释 ✓。
+- **单测**（8/8 文件 ✓ 全套 **439** = +1）：校验路径断言（API 未调 ✓ 错误文案 ✓
+  两 aria 属性 ✓）。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 741 ✓ 439 用例 ✓ 构建 ✓）。
+
 ### 4.91 交互轴完备性矩阵（round 85，**双轴完备里程碑**）
 
 - 矩阵第二式：**交互轴 8 子轴**全有实测/测试背书：

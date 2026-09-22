@@ -137,6 +137,29 @@ describe("AccessTokens.vue", () => {
     );
   });
 
+  it("wires the inline error to the field with aria (r86)", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByText("CI 构建")).toBeInTheDocument(),
+    );
+
+    // 空名提交 = 行内错误（原静默零反馈 ✗）走校验路径
+    await fireEvent.click(screen.getByText("新建令牌"));
+    await fireEvent.click(screen.getByText("创建"));
+    await waitFor(() =>
+      expect(screen.getByText("请输入令牌名称")).toBeInTheDocument(),
+    );
+    expect(createTokenMock).not.toHaveBeenCalled();
+
+    // 字段级 aria 链（r68 约定兑现）：错误文案 id ↔ input 的 invalid/describedby
+    await waitFor(() => {
+      expect(document.querySelector("#token-name-error")).not.toBeNull();
+    });
+    const input = document.querySelector("#token-name")!;
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(input.getAttribute("aria-describedby")).toBe("token-name-error");
+  });
+
   it("passes the selected expiry when creating", async () => {
     createTokenMock.mockResolvedValue({ token, plaintext: "vfat_x" });
     renderPage();
