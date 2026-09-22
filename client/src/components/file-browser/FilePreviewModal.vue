@@ -701,4 +701,16 @@ onBeforeUnmount(() => {
     transform: rotate(360deg);
   }
 }
+
+/* reduced-motion：循环动画降级为静态指示（M3: static loading indicators），
+   本文件动画族 spin 0.8s */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 </style>

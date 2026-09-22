@@ -2565,6 +2565,21 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.59 reduced-motion 动画清单补全 + 可见实例工具语（round 53）
+
+- **动画 × 降级守卫映射表**（全量）：
+  | 动画族 | 守卫（改前） |
+  | --- | --- |
+  | upload-pulse ×2 / shimmer ×2 / menu·modal-enter | ✓ |
+  | **spin（预览）/ spin（Loading）/ audit-spin / shares-spin / admin-spin** | ✗✗ **×5 缺失** |
+  spin/shimmer 类循环动画恰是 reduced-motion 最需降级的（前庭敏感 ✓ M3 规范明文
+  "static loading indicators"）。**5 文件补降级块**（scoped 全局：循环停 + 过渡瞬时），
+  映射表终态全绿 ✓。
+- **可见实例选择器工具语**（r52 痛点沉淀）入 CONTRIBUTING：条件渲染目标必须
+  `offsetParent !== null` 过滤；多层 modal 用目标专属文本锚（如「恢复历史版本」标题）
+  而非 `.modal.is-active` 通配。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 732 ✓ 431 用例 ✓ 构建 ✓）。
+
 ### 4.58 diff 恢复入口 + 插图族评审（round 52）
 
 - **恢复入口（GitHub 式增量交互）**：对比工具条（统一/并排共享）加「恢复此版本」
