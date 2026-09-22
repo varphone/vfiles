@@ -224,7 +224,8 @@ onBeforeUnmount(() => {
   padding: 0.25rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius);
-  background: var(--vf-surface);
+  /* 浮层色调抬升（同 ContextMenu）：深色下高于基准面一档 */
+  background: var(--vf-surface-raised);
   box-shadow: var(--vf-shadow-menu);
 }
 

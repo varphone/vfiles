@@ -110,7 +110,8 @@ onBeforeUnmount(closeListeners);
   padding: 4px;
   border: 1px solid var(--vf-border);
   border-radius: 8px;
-  background: var(--vf-surface);
+  /* 浮层色调抬升：深色下比基准面高一档（M3 dark / GitHub dark 的 tonal elevation） */
+  background: var(--vf-surface-raised);
   box-shadow: var(--vf-shadow-menu);
 }
 

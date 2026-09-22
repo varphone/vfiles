@@ -272,6 +272,17 @@
   box-shadow: 0 0 0 3px var(--vf-focus-ring);
 }
 
+/* Overlay 层次（M3 dark / GitHub dark 的 tonal elevation）：
+   浮层背景用 surface-raised 比基准面抬升一档 + 发丝边框表达层次，
+   阴影只做辅助；浅色下 raised 即白色，行为不变。 */
+.dropdown-content {
+  background: var(--vf-surface-raised);
+  border: 1px solid var(--vf-border-weak);
+  box-shadow: var(--vf-shadow-menu);
+}
+
+/* 右键菜单与通知面板由各自组件 scoped 声明同名令牌（全局规则会被 scoped 覆盖） */
+
 /* 页面卡片与页头（分享/审计/用户管理/访问令牌等工具页共享外壳）：
    一处定义圆角/内边距/标题字级/最大宽度，各页只需挂类名。 */
 .vf-page-card {

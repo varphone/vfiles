@@ -2565,6 +2565,29 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.6 深色主题 tonal elevation（round 6）
+
+- 现代深色规范（M3 dark / GitHub dark / Linear）用**色调抬升 + 发丝边框**表达浮层层次，
+  阴影只做辅助。审计（浏览器实测深/浅双主题各 overlay 的计算色）发现深色问题：
+  | 浮层 | 改前背景（深色） | 问题 |
+  | --- | --- | --- |
+  | 视图下拉面板 | 10%（**比基准 12% 更暗**） | 浮层"凹陷"，还带 Bulma 白色光晕阴影 |
+  | 右键菜单 / 通知面板 | 12%（**与基准同色**） | 层次全靠 0.5 黑重阴影 |
+- 改动：
+  1. `--vf-surface-raised` 深色 **15% → 18%**（比基准面高一整档），
+     `--vf-shadow-menu` 深色 **0.5 → 0.4**（边框接管层次）；
+  2. `.dropdown-content`（视图/排序/上传/账号/铃铛等所有下拉）全局接
+     `surface-raised + 发丝边框 + shadow-menu`；
+  3. 右键菜单（`ContextMenu.vue`）与通知面板（`NotificationCenter.vue`）在各自组件内
+     改用 `surface-raised`（全局规则会被 scoped 覆盖——审计中发现，改为组件内声明）。
+- 验证（重建后复审计算色）：
+  | 主题 | base | toast | dropdown | 右键菜单 | 通知面板 |
+  | --- | --- | --- | --- | --- | --- |
+  | 浅色 | 白 | 白 | 白 | 白 | 白（**零回归**） |
+  | 深色 | 12% rgb(26,29,35) | **18% rgb(39,44,52)** | **18%** | **18%** | **18%** |
+  深色截图（`ui-r44/dark-elevation.png`）确认通知面板明显浮于基准面之上、发丝边框清晰；
+  430 用例全绿、无控制台报错。
+
 ### 4.5 搜索框主流化（round 5）
 
 - 现状（第 1 轮基线）：工具栏搜索输入 **32px**——比 36px 按钮还小，而 Drive/Dropbox 把搜索做成
