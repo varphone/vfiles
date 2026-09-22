@@ -72,3 +72,5 @@
 | 48 | **管道掩错 = 门禁假绿险**（`tsc \\| head` = head exit 0 ✗✗✗ 历轮静默过含险 ✓ **`set -o pipefail` 强制** + TSC_EXIT 真绿验记式） | r106 |
 | 49 | **grep 锚形盲区**（简写字段 `ftp,` 无冒号 ✗✗ `grep ftp:` 假"零命中"烧三轮 ✗✓ 锚须含简写形/错误区**无窗直读**（#14 三犯连环截教训） | r109b |
 | 50 | **二分暂换当轮必还原**（`.fallback(hello)` 未换回 = **五轮 dispatch 全死码** ✗✗✗ 史诗盲区 ✓ 还原须 grep 验证；**dbg-eprintln = 断言级 debug 够不着时的一击破案式** | r105→110 |
+| 51 | **`cmd \| tail` = SIGPIPE 假败**（BUILD_EXIT=101 非编译错 ✗ 免管道 `\>\/dev\/null && echo OK` 直验式） | r110'a |
+| 52 | **Rust 改动 = `cargo build` 前置**（check ≠ build ✗✗ target/debug 旧二进制 = 探针旧产物病型三犯（前端 build/Rust build 同族））；**spawn 模板 = `tokio::select!`**（shutdown 等待在 run 前 = run 永不执行 ✗ 骨架 bug 警） | r110'a |

@@ -1237,6 +1237,16 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         },
     )?;
 
+    // WebDAV（r110'a ✓ 用户令「默认开启」+ auth 防御（config 层 r109b ✓））
+    let webdav_runtime = build_webdav_runtime(
+        config.webdav.enabled,
+        config.webdav.bind_address(),
+        auth_service.clone(),
+        vfiles_app::NamespaceService::new(Arc::new(SqliteNamespaceRepo::new(pool.clone()))),
+        Arc::clone(&entry_repo_arc),
+        Arc::clone(&ftp_workspace),
+    );
+
     // Create app state
     let app_state = AppState {
         health_service,
@@ -1311,6 +1321,29 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
 
     // HTTP 与 FTP 共享同一个停机信号：任意一个收到 SIGTERM/SIGINT 都开始优雅停机
     let (service_shutdown_tx, service_shutdown_rx) = tokio::sync::watch::channel(false);
+
+    // WebDAV spawn（r110'a ✓ 降级式 = FTP 同款韧性（端口占用不拖垮站点 ✓））
+    let webdav_handle = match webdav_runtime {
+        Some((settings, application)) => {
+            let bind = settings.bind.clone();
+            match vfiles_webdav::spawn_webdav_server(
+                settings,
+                application,
+                service_shutdown_rx.clone(),
+            ) {
+                Ok(()) => {
+                    tracing::info!("WebDAV 已启用（默认开启 ✓）: {bind}");
+                    Some(())
+                }
+                Err(err) => {
+                    tracing::error!(%bind, error = %err, "WebDAV 启动失败，继续提供其余服务");
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+    let _ = webdav_handle;
 
     let ftp_handle = match ftp_runtime {
         Some((settings, application)) => {
@@ -1482,6 +1515,81 @@ struct FtpRuntimeDeps {
     namespace_repo: Arc<dyn NamespaceRepo + Send + Sync>,
     login_attempt_limiter: Arc<LoginAttemptLimiter>,
     stats: Arc<vfiles_app::IngestStats>,
+}
+
+/// WebDAV 写门面 → workspace service 转发（r110'a ✓ bin 侧具体型 ✓ crate 免耦合）。
+struct WebdavWrite {
+    workspace: std::sync::Arc<vfiles_app::DefaultWorkspaceService>,
+}
+
+#[async_trait::async_trait]
+impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
+    async fn mkcol(
+        &self,
+        ns: &vfiles_domain::NamespaceId,
+        path: &vfiles_domain::NormalizedPath,
+        uid: &vfiles_domain::UserId,
+    ) -> vfiles_domain::DomainResult<()> {
+        self.workspace
+            .create_directory(ns, path, Some("WebDAV MKCOL"), uid)
+            .await
+            .map(|_| ())
+    }
+    async fn move_entry(
+        &self,
+        ns: &vfiles_domain::NamespaceId,
+        from: &vfiles_domain::NormalizedPath,
+        to: &vfiles_domain::NormalizedPath,
+        uid: &vfiles_domain::UserId,
+    ) -> vfiles_domain::DomainResult<()> {
+        self.workspace
+            .move_entries(ns, std::slice::from_ref(from), to, Some("WebDAV MOVE"), uid)
+            .await
+            .map(|_| ())
+    }
+    async fn delete_entry(
+        &self,
+        ns: &vfiles_domain::NamespaceId,
+        path: &vfiles_domain::NormalizedPath,
+        uid: &vfiles_domain::UserId,
+    ) -> vfiles_domain::DomainResult<()> {
+        self.workspace
+            .delete_entries(ns, std::slice::from_ref(path), Some("WebDAV DELETE"), uid)
+            .await
+            .map(|_| ())
+    }
+}
+
+/// 按配置装配 WebDAV（r110'a ✓ 用户令「默认开启」✓ config 层 auth 防御已守（r109b））。
+///
+/// 依赖 = FTP runtime 同族（AuthService/entry_repo/namespaces ✓ e2e 路线形明 ✓）。
+#[allow(clippy::too_many_arguments)]
+fn build_webdav_runtime(
+    enabled: bool,
+    bind: String,
+    auth_service: vfiles_app::AuthService,
+    namespaces: vfiles_app::NamespaceService,
+    entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
+    workspace: std::sync::Arc<vfiles_app::DefaultWorkspaceService>,
+) -> Option<(vfiles_webdav::WebdavSettings, vfiles_webdav::WebdavApplication)> {
+    if !enabled {
+        return None;
+    }
+    let verify: vfiles_webdav::VerifyFn = {
+        let auth = std::sync::Arc::new(auth_service.clone());
+        std::sync::Arc::new(move |u: String, pw: String| {
+            let auth = std::sync::Arc::clone(&auth);
+            Box::pin(async move { auth.verify_credentials(&u, &pw).await.ok() })
+        })
+    };
+    let app = vfiles_webdav::WebdavApplication {
+        namespaces,
+        entry_repo,
+        verify,
+        locks: std::sync::Arc::new(vfiles_webdav::LockTable::new()),
+        write: std::sync::Arc::new(WebdavWrite { workspace }),
+    };
+    Some((vfiles_webdav::WebdavSettings { bind }, app))
 }
 
 /// 按配置装配 FTP 服务；未启用时返回 `None`。

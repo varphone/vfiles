@@ -14,7 +14,9 @@ path = "src/main.rs"
 vfiles-app = { path = "../vfiles-app" }
 vfiles-config = { path = "../vfiles-config" }
 vfiles-domain = { path = "../vfiles-domain" }
+async-trait.workspace = true
 vfiles-ftp = { path = "../vfiles-ftp" }
+vfiles-webdav = { path = "../vfiles-webdav" }
 vfiles-http = { path = "../vfiles-http" }
 vfiles-infra-fs = { path = "../vfiles-infra-fs" }
 vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }

@@ -497,11 +497,14 @@ pub async fn run_webdav_server(
 pub fn spawn_webdav_server(
     settings: WebdavSettings,
     app: WebdavApplication,
-    shutdown: tokio::sync::oneshot::Receiver<()>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
+    // select 并发（r110'a 破案 ✓ **顺序 bug = run 永不执行**（r103 骨架 ✗✗✗ 盲区五轮））
     tokio::spawn(async move {
-        let _ = shutdown.await;
-        let _ = run_webdav_server(settings, app).await;
+        tokio::select! {
+            _ = run_webdav_server(settings, app) => {}
+            _ = shutdown.wait_for(|stop| *stop) => {}
+        }
     });
     Ok(())
 }
