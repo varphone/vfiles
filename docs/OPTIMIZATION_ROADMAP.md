@@ -2565,6 +2565,27 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.24 操作反馈文案上下文化（round 23）
+
+- 交互轮：拖放移动的反馈链路实测**已存在**（toast + 铃铛 + 列表刷新 ✓），但对照主流
+  （Drive 的 "Moved『x』to『y』"）**toast 缺上下文**——不知道是哪个文件、去了哪里。
+- 四处成功 toast 上下文化（`useMoveDialog.ts` / `FileBrowser.vue`）：
+  | 操作 | 改前 | 改后（实测捕获） |
+  | --- | --- | --- |
+  | 移动（拖放/对话框共用） | 目录/文件移动成功 | **已移动「移动件.txt」到「目标目录」** |
+  | 重命名 | 目录/文件重命名成功 | **已重命名为「终验.bin」** |
+  | 删除 | 目录/文件删除成功 | **已删除「终验.bin」** |
+  | 收藏 | 已加入/取消收藏 | **已取消收藏「归档目录」** |
+  批量移动 = `已移动 N 个项目到「目标目录」`；目标名取规范化目标路径末段，根目录 → 「根目录」。
+  测试无文案断言 → 432 用例不变全绿 ✓。
+- **过程事故（完整披露）**：一次 `vfiles import` 在新 shell 中**丢失了 VFILES_* 环境变量**，
+  误将 `移动件.txt`/`目标目录` 写入**用户真实存储**（repo `data/`，admin/default 命名空间）。
+  发现后：sqlite 查 `entries` 表定位 2 行 → 删除（`entry_versions` 有 ON DELETE CASCADE 自清）
+  → 复核 COUNT=0、`vfiles check` 全绿 ✓。残留 2 个孤儿 blob（内容寻址、无引用、无害，
+  `maintenance` 可回收）。教训：fixture 操作必须与服务器同 shell 导出环境变量后再跑 CLI。
+- 另两条探针教训：toast 选择器须含 `.notification`（Bulma 结构），以及逐步打印防止
+  崩溃丢中间结果（本轮重犯一次后改用逐步日志）。
+
 ### 4.23 死样式扫描脚本固化（round 22）
 
 - 三批人工清理（rounds 14/15/21）+ round 21 的孤儿 `}` 事故 → 固化为

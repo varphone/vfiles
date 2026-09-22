@@ -1078,7 +1078,9 @@ async function toggleFavorite(file: FileInfo) {
       ? await filesService.removeFavorite(file.path)
       : await filesService.addFavorite(file.path);
     handleFavoritesChanged(entries);
-    appStore.success(isFavorite ? "已取消收藏" : "已加入收藏");
+    appStore.success(
+      isFavorite ? `已取消收藏「${file.name}」` : `已收藏「${file.name}」`,
+    );
   } catch (err) {
     appStore.error(err instanceof Error ? err.message : "收藏操作失败");
   }
@@ -1923,9 +1925,7 @@ async function handleDelete(file: FileInfo) {
     if (searchActive.value) {
       await doSearch(false);
     }
-    appStore.success(
-      file.kind === "directory" ? "目录删除成功" : "文件删除成功",
-    );
+    appStore.success(`已删除「${file.name}」`);
   } catch (err) {
     appStore.error(err instanceof Error ? err.message : "删除失败");
   }
@@ -1970,7 +1970,7 @@ async function commitRenameEntry(file: FileInfo, rawName: string) {
       desktopActivePath.value = to;
     }
     appStore.success(
-      file.kind === "directory" ? "目录重命名成功" : "重命名成功",
+      `已重命名为「${to.split("/").filter(Boolean).pop() ?? to}」`,
     );
     await refreshAfterMutation();
   } catch (err) {

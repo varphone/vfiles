@@ -90,12 +90,13 @@ export function useMoveDialog(deps: MoveDialogDeps) {
         }
       }
 
+      // Drive 式反馈：toast 带对象与目标（"已移动「x」到「y」"）
+      const targetName =
+        normalizedTargetDir.split("/").filter(Boolean).pop() ?? "根目录";
       const successMessage =
         items.length === 1
-          ? items[0]?.kind === "directory"
-            ? "目录移动成功"
-            : "文件移动成功"
-          : `已移动 ${items.length} 个项目`;
+          ? `已移动「${items[0]?.name ?? items[0]?.path}」到「${targetName}」`
+          : `已移动 ${items.length} 个项目到「${targetName}」`;
 
       if (items.length > 1) {
         deps.clearSelection();
