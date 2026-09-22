@@ -2,6 +2,11 @@
   <div
     class="file-skeleton"
     :class="`file-skeleton--${variant}`"
+    :style="
+      variant === 'grid' && thumbnailSize
+        ? { '--file-card-min': `${cardMinWidth(thumbnailSize)}px` }
+        : undefined
+    "
     role="status"
     aria-busy="true"
     aria-live="polite"
@@ -44,6 +49,8 @@ const props = withDefaults(
   defineProps<{
     variant?: "list" | "grid";
     count?: number;
+    /** 缩略图尺寸（与 FileCard 同源）：推导 --file-card-min，使网格骨架与真实网格同几何。 */
+    thumbnailSize?: number;
   }>(),
   {
     variant: "list",
@@ -54,6 +61,7 @@ const props = withDefaults(
 const skeletonCount = computed(
   () => props.count ?? (props.variant === "grid" ? 8 : 6),
 );
+import { cardMinWidth } from "../../stores/fileView.store";
 </script>
 
 <style scoped>
@@ -69,7 +77,12 @@ const skeletonCount = computed(
 
 .file-skeleton--grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  /* 与真实网格（FileGrid）同变量：--file-card-min 变化时列几何保持一致，
+     否则窄容器下列数分叉（170px vs 190px）→ 加载完成布局跳动。 */
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(var(--file-card-min, 190px), 1fr)
+  );
   gap: 14px;
 }
 

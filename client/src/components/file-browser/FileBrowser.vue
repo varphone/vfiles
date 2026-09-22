@@ -140,6 +140,7 @@
               <FileSkeleton
                 v-if="loading"
                 :variant="viewMode === 'grid' ? 'grid' : 'list'"
+                :thumbnail-size="fileView.thumbnailSize"
               />
 
               <EmptyState
@@ -379,6 +380,7 @@
         <FileSkeleton
           v-if="loading"
           :variant="viewMode === 'grid' ? 'grid' : 'list'"
+          :thumbnail-size="fileView.thumbnailSize"
         />
 
         <div v-else-if="error" class="notification is-danger is-light">

@@ -28,6 +28,11 @@ const MIN_THUMBNAIL_SIZE = 96;
 const MAX_THUMBNAIL_SIZE = 240;
 const DEFAULT_THUMBNAIL_SIZE = 144;
 
+/** 网格卡片最小列宽（--file-card-min）：网格与骨架屏共用，保证加载态几何一致。 */
+export function cardMinWidth(thumbnailSize: number): number {
+  return Math.round(thumbnailSize * 1.35);
+}
+
 function clampThumbnailSize(value: unknown): number {
   const num = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(num)) return DEFAULT_THUMBNAIL_SIZE;

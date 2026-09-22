@@ -2565,6 +2565,22 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.34 网格骨架几何对齐 + 表单同族复核（round 31）
+
+- **① 网格骨架列几何**（round 27 的高度对齐遗留的列宽尾巴）：
+  - 真实网格 = `minmax(var(--file-card-min, 190px), 1fr)`，而 `--file-card-min =
+    round(thumbnailSize × 1.35)` **只设在 FileGrid 根上**（默认 144 → **194px**）；
+  - 骨架 = 硬编码 `minmax(170px)` ✗✗ —— 默认就 170≠194，**缩略图尺寸变化时列数都会分叉**
+    （如 380px 容器：真实 1 列 / 骨架 2 列）→ 跳动。
+  - 修复：公式抽为共享 **`cardMinWidth()`**（fileView.store 导出，双端共用防漂移），
+    FileSkeleton 增加 `thumbnailSize` prop 自设同名变量（FileBrowser 两处传值）。
+  - 验证：骨架与真实网格 **`--file-card-min` 同为 194px ✓、gap 同 14px ✓、列数同为 2 ✓**
+    （残余 2px 为加载期滚动条槽位的容器瞬时差，与列宽参数无关）。
+- **② 注册/找回表单同族复核**：三模式（登录/注册/找回）**全合规** ✓ ——
+  字段高 59px 均匀、输入 35px/14px/400、标签 12.48px/600、提交按钮 36px/13.12px/500
+  （AuthShell + 共享 auth 类 ✓ 无分歧）。
+- 433 用例全绿、tsc/build 通过。
+
 ### 4.33 代码高亮与浮层语义色终检（round 30）
 
 - 三项长期挂账的审计一次闭环（**全部合规、零修复**——本轮价值 = 首次给出数据）：

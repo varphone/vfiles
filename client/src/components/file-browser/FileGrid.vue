@@ -1,7 +1,7 @@
 <template>
   <div
     class="file-grid"
-    :style="{ '--file-card-min': `${Math.round(thumbnailSize * 1.35)}px` }"
+    :style="{ '--file-card-min': `${cardMinWidth(thumbnailSize)}px` }"
   >
     <FileCard
       v-for="file in cards"
@@ -110,6 +110,7 @@ const cards = computed(() =>
     (file) => !(file as FileInfo & { uiRole?: string }).uiRole,
   ),
 );
+import { cardMinWidth } from "../../stores/fileView.store";
 </script>
 
 <style scoped>
