@@ -97,6 +97,9 @@ function close() {
   display: flex;
   align-items: center;
   gap: 0;
+  /* 覆盖 Bulma 默认（32px 内边距 / 12px 圆角）：对齐对话框家族节奏 */
+  padding: 1.25rem 1.5rem;
+  border-radius: var(--vf-radius-lg) var(--vf-radius-lg) 0 0;
 }
 
 .modal-card-title {

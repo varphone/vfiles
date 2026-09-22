@@ -394,7 +394,7 @@ onMounted(async () => {
 
 .auth-input {
   padding-left: 2rem;
-  font-size: 0.86rem;
+  font-size: 0.875rem;
 }
 
 .auth-code-row {
@@ -412,8 +412,9 @@ onMounted(async () => {
 .auth-submit {
   justify-content: center;
   width: 100%;
-  min-height: 2.35rem;
-  font-size: 0.9rem;
+  /* 与控件语言一致（ghost 36px / 0.82rem） */
+  min-height: 2.25rem;
+  font-size: 0.82rem;
 }
 
 .auth-links {

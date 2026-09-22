@@ -580,6 +580,7 @@ onBeforeUnmount(() => {
 }
 
 .preview-text {
+  border-radius: var(--vf-radius-sm);
   max-height: 62vh;
   overflow: auto;
   white-space: pre-wrap;

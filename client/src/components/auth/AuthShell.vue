@@ -101,7 +101,8 @@ withDefaults(
 }
 
 .auth-shell-card {
-  padding: 1.3rem 1.25rem 1.4rem;
+  /* 与卡片家族节奏一致（round 4） */
+  padding: 1.1rem 1.2rem 1.3rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-lg);
   background: var(--vf-surface);
