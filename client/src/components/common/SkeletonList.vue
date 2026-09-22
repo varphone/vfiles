@@ -11,6 +11,7 @@
       v-for="index in rows"
       :key="index"
       class="skeleton-row"
+      :style="rowHeight ? { minHeight: rowHeight } : undefined"
       aria-hidden="true"
     >
       <template v-if="variant === 'folders'">
@@ -47,8 +48,10 @@ withDefaults(
     rows?: number;
     variant?: "rows" | "folders" | "lines";
     label?: string;
+    /** 单行骨架高度：与宿主真实行高一致，消除加载完成瞬间的布局跳动。 */
+    rowHeight?: string;
   }>(),
-  { rows: 4, variant: "rows", label: "加载中" },
+  { rows: 4, variant: "rows", label: "加载中", rowHeight: undefined },
 );
 </script>
 

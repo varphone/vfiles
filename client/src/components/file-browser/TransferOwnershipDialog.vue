@@ -30,6 +30,7 @@
         </div>
 
         <SkeletonList
+          row-height="40px"
           v-if="loading"
           variant="folders"
           :rows="3"

@@ -2,7 +2,12 @@
   <section class="sidebar-overview" aria-label="工作区概览">
     <div v-if="loading && !overview" class="sidebar-overview-block">
       <p class="sidebar-overview-title">存储用量</p>
-      <SkeletonList variant="lines" :rows="3" label="加载工作区概览" />
+      <SkeletonList
+        variant="lines"
+        :rows="5"
+        row-height="50px"
+        label="加载工作区概览"
+      />
     </div>
 
     <div v-else-if="error" class="sidebar-overview-block">

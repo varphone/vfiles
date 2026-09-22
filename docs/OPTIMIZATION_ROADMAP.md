@@ -2565,6 +2565,25 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.32 fixed 布局回归核查 + SkeletonList 宿主对齐（round 29）
+
+- **① 列宽修复（§4.31）的回归核查**：`table-layout: fixed` 的高危副作用 = 长文本不再
+  被 auto 布局撑开。实测 47 字长文件名：名称单元格 330px / 文本盒 288px，
+  `text-overflow: ellipsis` + `nowrap` + `overflow: hidden` ✓ 行/表零溢出 ✓
+  —— **截断行为全合规**，fixed 化无回归。
+- **② SkeletonList 行高对齐宿主**（round 27 遗留项）：骨架行统一 22px，而各宿主真实行
+  高差异巨大（1.7–5× 跳动）：
+  | 宿主 | 真实行 | 骨架（改前） | 跳动 |
+  | --- | --- | --- | --- |
+  | 版本历史提交卡 | **111px** | 22 | ✗✗✗ |
+  | 侧栏概览最近行 | **50px** | 22 | ✗✗ |
+  | 转移所有权用户行 | **40px** | 22 | ✗ |
+  | 移动对话框目录行 | **38px** | 22 | ✗ |
+- 修复：`SkeletonList` 增加 **`rowHeight` prop**（`min-height` 绑定到 `.skeleton-row`），
+  四宿主传实测值；侧栏 `rows` 3→5（骨架总量贴近真实面板）。
+- 验证（延迟各宿主 API 逐个抓取加载态）：sidebar **50** ✓、history **111** ✓、
+  transfer **40** ✓、move **38** ✓ —— **4/4 精确命中** ✓。433 用例全绿、lint 通过。
+
 ### 4.31 列宽拖拽修复（用户反馈插曲，位于 round 28 之后）
 
 - 症状（用户报告）：拖动表头分割线调列宽不正常。

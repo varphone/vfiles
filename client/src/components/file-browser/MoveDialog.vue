@@ -60,6 +60,7 @@
 
         <div class="move-dialog-browser">
           <SkeletonList
+            row-height="38px"
             v-if="loading"
             variant="folders"
             :rows="4"

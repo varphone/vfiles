@@ -24,7 +24,12 @@
 
     <div class="history-layout" :class="{ 'has-detail': detailOpen }">
       <section class="history-list-pane" aria-label="版本列表">
-        <SkeletonList v-if="loading" :rows="5" label="加载历史记录" />
+        <SkeletonList
+          v-if="loading"
+          :rows="5"
+          row-height="111px"
+          label="加载历史记录"
+        />
 
         <EmptyState
           v-else-if="error"
