@@ -2565,6 +2565,17 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.90 完备性总评 + elevation 轴收官（round 84）
+
+- **视觉体系完备性矩阵**（DESIGN_TOKENS 卷首 §0）：12 轴全有数据背书——颜色 / 形状 /
+  间距 / 排印 / 图标 / **阴影** / 状态层 / 动效 / 语言 / 图形 / 组件参数 / 可访问性 ✓
+  （各附定档轮 ✓）。
+- **elevation 轴收官**（唯一未审计 token 族）：token 化 22/24 ✓（menu 12 / card 7 /
+  sm 2 / md 1 + 语义环 3 + none 6 ✓ `accent-soft` 环变体 = 有意（非 focus 用途）记档）；
+  **双死 token 归零** ✗✓：`--vf-shadow-lg` + `--vf-shadow-color` 各双主题定义
+  **零使用**（违反 theme.scss 自身「按需增补」约定 ✓ 已删 ×4 定义）。
+- 五门禁全绿（tsc ✓ 死样式 741 ✓ 438 用例 ✓ 构建 ✓）。
+
 ### 4.89 插图族判档 + 工具语 32 条（round 83）
 
 - 图形语言最后面（空态插图）数据化审计：同屏双插图 **64×64 / 44×44 两制** →
