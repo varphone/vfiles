@@ -1,0 +1,17 @@
+[package]
+name = "vfiles-webdav"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+base64.workspace = true
+time.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tracing.workspace = true
+vfiles-app = { path = "../vfiles-app" }
+vfiles-domain = { path = "../vfiles-domain" }
