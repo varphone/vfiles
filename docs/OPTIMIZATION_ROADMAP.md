@@ -2565,6 +2565,17 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.45 行染色去圆角（用户反馈插曲，round 39 之后）
+
+- 症状（用户报告）：列表行悬停/选中背景**不应有圆角**——圆角在单元格矩形四角留白，
+  出现 4 个小白区，视觉反而零乱。
+- 修复：删除 round 2 引入的 4 组首尾单元格圆角规则（`:first-child`/`:last-child`
+  × hover/selected），行染色**满铺**（GitHub/Explorer 同款）；同步更正两处过时注释
+  （圆角语义废弃、`border-collapse: separate` 的真实理由 = sticky 表头 + 满铺行染色）。
+- 验证（真实浏览器）：悬停行与选中行的 5 个 td **border-radius 全部 0px** ✓
+  四角白区消失 ✓ 截图 `ui-r79/rows-square.png` ✓；`bun run check` 全绿（62/430）、构建通过。
+- 注：网格卡片/树条目/菜单条目的圆角保留（用户仅指列表行；卡片圆角无四角露底问题）。
+
 ### 4.44 动效曲线统一（M3 easing 收尾，round 39）
 
 - 交互轴收尾：全仓过渡曲线审计（实测 **21 处 `ease`**、5 linear、2 ease-out、2 ease-in-out、

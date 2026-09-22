@@ -879,7 +879,7 @@ function share() {
 }
 
 /* M3 状态层：悬停 8%（accent-soft）、选中 16%（accent-soft-strong），
-   两态相差一倍，肉眼可分；悬停/选中的行面用 8px 圆角（Drive 列表项语言）。 */
+   两态相差一倍，肉眼可分；行面**满铺无圆角**（用户反馈：圆角在单元格四角留白显零乱）。 */
 .desktop-file-row:hover > td {
   background: var(--vf-accent-soft);
 }
@@ -891,26 +891,6 @@ function share() {
 /* 拖放落点高亮压过 hover/选中底色（同特异性 → 靠后胜出），并随过渡渐入 */
 .desktop-file-row.drop-target > td {
   background: var(--vf-accent-soft);
-}
-
-.desktop-file-row:hover > td:first-child {
-  border-top-left-radius: var(--vf-radius-sm);
-  border-bottom-left-radius: var(--vf-radius-sm);
-}
-
-.desktop-file-row:hover > td:last-child {
-  border-top-right-radius: var(--vf-radius-sm);
-  border-bottom-right-radius: var(--vf-radius-sm);
-}
-
-.desktop-file-row.is-row-selected > td:first-child {
-  border-top-left-radius: var(--vf-radius-sm);
-  border-bottom-left-radius: var(--vf-radius-sm);
-}
-
-.desktop-file-row.is-row-selected > td:last-child {
-  border-top-right-radius: var(--vf-radius-sm);
-  border-bottom-right-radius: var(--vf-radius-sm);
 }
 
 /* 名称单元格：为尾部「⋯」预留空间，并作为其定位参考 */
