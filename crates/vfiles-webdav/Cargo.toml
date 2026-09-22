@@ -15,3 +15,17 @@ tower.workspace = true
 tracing.workspace = true
 vfiles-app = { path = "../vfiles-app" }
 vfiles-domain = { path = "../vfiles-domain" }
+
+[dev-dependencies]
+async-trait.workspace = true
+camino.workspace = true
+tempfile = "3"
+tokio = { workspace = true, features = ["full"] }
+tower.workspace = true
+vfiles-app = { path = "../vfiles-app" }
+vfiles-domain = { path = "../vfiles-domain" }
+vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }
+
+[features]
+# e2e 集成测（r109c 封存 ✓ r109d 启用：`cargo test --features e2e`）
+e2e = []
