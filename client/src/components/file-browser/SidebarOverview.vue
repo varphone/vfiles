@@ -392,7 +392,7 @@ watch(
   flex: 0 0 auto;
   width: 0.5rem;
   height: 0.5rem;
-  border-radius: 2px;
+  border-radius: var(--vf-radius-xs);
 }
 
 .storage-legend-label {
