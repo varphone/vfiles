@@ -963,11 +963,6 @@ async function renameSelected() {
   border-color: var(--vf-danger);
 }
 
-.app-bar-history-button {
-  width: 1.65rem;
-  height: 1.65rem;
-}
-
 .app-bar-history-label {
   min-width: 5.5rem;
   padding: 0 0.5rem;

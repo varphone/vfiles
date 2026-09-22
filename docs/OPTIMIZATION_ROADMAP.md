@@ -2559,3 +2559,35 @@
 - `[x]` 校验/冲突/上传超限改为结构化 `details`（`field`/`reason`/`limit_bytes`），
   客户端按字段名与上限本地化（round 59，见 §2.66）。
 - `[x]` 统一请求体解析失败为同一种错误信封（`ApiJson` 提取器，round 60，见 §2.67）。
+
+## 4. 界面外观 / 配色 / 布局 / 交互迭代（第二轮）
+
+以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
+微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
+
+### 4.1 控件语言与配色现代化（round 1）
+
+- 基线实测（1440×900）：按钮 32px、图标钮仅 **26.4px**、ghost 圆角 6px 而主按钮是胶囊（不一致）；
+  强调色 #2f6db6 偏灰蓝；**深色主题白色按钮文字对比度仅 2.83:1（未达 WCAG AA 4.5）**；
+  无任何可见键盘焦点环、无按压反馈。
+- 改动（对照 M3/Fluent2/Drive/Dropbox）：
+  1. **尺寸**：控件 36px（2.25rem），`pointer: coarse` 触屏 **40px** 命中区（M3/HIG 下限）；
+     顶栏历史步进按钮去掉 26.4px 覆盖，统一到控件语言；
+  2. **形状**：ghost / 主按钮 / 图标按钮 / 中性 `.button` 统一**胶囊**（M3、Drive、Dropbox 工具栏语言）；
+     表单控件 8px（M3 small，6→8）；输入框焦点统一 M3 式 halo（`0 0 0 3px --vf-focus-ring`）；
+  3. **状态层与焦点**（M3）：新增 `--vf-surface-pressed` 按压层（ghost/图标按钮 `:active`）、
+     全部可交互控件统一 `:focus-visible` **2px accent-text 实线环 + 2px 偏移**；
+  4. **配色**：浅色强调色 #2f6db6 → **#2563eb**（Drive #0B57D0 / Dropbox #0061FF / GitHub #1F6FEB 家族，
+     白字 5.17:1 ✓），hover #1d4ed8、链接文本 #1e40af；**深色填充面取更深的蓝 #1c52ce，
+     白字对比度 2.83 → 6.67:1（修复 AA 违规）**，深色链接用 hsl(217 84% 74%)；新增 `--vf-on-accent` 配对；
+     图表「文档」分类色同步。
+- 验证（真实浏览器，浅/深双主题 + iPhone 13 触屏）：
+  | 指标 | 改前 | 改后 |
+  | --- | --- | --- |
+  | 按钮高度 | 32px（图标钮 26.4px） | 36px（触屏 40px ✓ 实测） |
+  | 按钮圆角 | ghost 6px / 主按钮胶囊 | 统一胶囊 ✓ |
+  | 焦点环 | 无 | 2px 实线环（浅色 rgb(30,64,175) / 深色 rgb(133,176,244)）✓ |
+  | 白字对比度 | 浅 5.27 / **深 2.83 ✗** | 浅 **5.17** ✓ / 深 **6.67** ✓ |
+  | 强调色 | #2f6db6 | #2563eb（深色填充面 #1c52ce） |
+  主题一致性另经 DOM 计算色核验（浅色 navbar/卡片 rgb(255,255,255)、深色 rgb(20,22,26)/rgb(26,29,35)）。
+- 测试：前端 62 文件 / 430 用例全绿（`vue-tsc`/`eslint`/`prettier`/构建通过）。

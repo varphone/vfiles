@@ -8,11 +8,12 @@
   align-items: center;
   justify-content: center;
   gap: 0.35rem;
-  width: 2rem;
-  height: 2rem;
+  /* 对齐 M3 / Drive 的控件尺寸：36px（触屏 40px 命中区） */
+  width: 2.25rem;
+  height: 2.25rem;
   padding: 0;
   border: none;
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-pill);
   background: transparent;
   color: var(--vf-text-muted);
   cursor: pointer;
@@ -25,6 +26,10 @@
 .vf-icon-button:focus-visible {
   background: var(--vf-surface-hover);
   color: var(--vf-text-strong);
+}
+
+.vf-icon-button:active:not(:disabled) {
+  background: var(--vf-surface-pressed);
 }
 
 .vf-icon-button:disabled {
@@ -66,10 +71,11 @@
   align-items: center;
   justify-content: center;
   gap: 0.35rem;
-  min-height: 2rem;
-  padding: 0 0.7rem;
+  min-height: 2.25rem;
+  padding: 0 0.85rem;
   border: none;
-  border-radius: var(--vf-radius-sm);
+  /* 胶囊按钮（M3 / Drive / Dropbox 工具栏语言） */
+  border-radius: var(--vf-radius-pill);
   background: transparent;
   color: var(--vf-text-muted);
   font-size: 0.82rem;
@@ -86,6 +92,10 @@
   color: var(--vf-text-strong);
 }
 
+.vf-ghost-button:active:not(:disabled) {
+  background: var(--vf-surface-pressed);
+}
+
 .vf-ghost-button:disabled {
   opacity: 0.45;
   cursor: default;
@@ -99,13 +109,17 @@
 /* 主操作：用于「预览 / 打开」等首选动作，视觉上强于普通 ghost 按钮 */
 .vf-ghost-button.is-primary {
   background: var(--vf-accent);
-  color: #fff;
+  color: var(--vf-on-accent);
 }
 
 .vf-ghost-button.is-primary:hover:not(:disabled),
 .vf-ghost-button.is-primary:focus-visible {
   background: var(--vf-accent-strong);
-  color: #fff;
+  color: var(--vf-on-accent);
+}
+
+.vf-ghost-button.is-primary:active:not(:disabled) {
+  background: var(--vf-accent-strong);
 }
 
 .vf-ghost-button.is-danger {
@@ -136,8 +150,10 @@
 ) {
   background-color: transparent;
   border-color: var(--vf-border);
+  border-radius: var(--vf-radius-pill);
   color: var(--vf-text);
   box-shadow: none;
+  min-height: 2.25rem;
 }
 
 .button:not(
@@ -210,12 +226,12 @@
   align-items: center;
   justify-content: center;
   gap: 0.35rem;
-  min-height: 2rem;
-  padding: 0 0.95rem;
+  min-height: 2.25rem;
+  padding: 0 1rem;
   border: none;
   border-radius: var(--vf-radius-pill);
   background: var(--vf-accent);
-  color: #ffffff;
+  color: var(--vf-on-accent);
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
@@ -225,6 +241,49 @@
 .vf-primary-button:hover:not(:disabled),
 .vf-primary-button:focus-visible {
   background: var(--vf-accent-strong);
+}
+
+.vf-primary-button:active:not(:disabled) {
+  background: var(--vf-accent-strong);
+}
+
+/* 焦点可见环（M3：2px 指示环 + halo；这里用 accent-text 实线环 + 偏移），
+   所有可交互控件共用一套键盘焦点语言。 */
+.vf-icon-button:focus-visible,
+.vf-ghost-button:focus-visible,
+.vf-primary-button:focus-visible,
+.button:focus-visible,
+.button.is-ghost:focus-visible {
+  outline: 2px solid var(--vf-accent-text);
+  outline-offset: 2px;
+}
+
+/* 表单控件：8px 圆角（M3 small）+ M3 式焦点 halo */
+.input,
+.select select,
+.textarea {
+  border-radius: var(--vf-radius-sm);
+}
+
+.input:focus,
+.select select:focus,
+.textarea:focus {
+  border-color: var(--vf-accent);
+  box-shadow: 0 0 0 3px var(--vf-focus-ring);
+}
+
+/* 触屏命中区不小于 40px（M3 / HIG） */
+@media (pointer: coarse) {
+  .vf-icon-button {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .vf-ghost-button,
+  .vf-primary-button,
+  .button:not(.is-static) {
+    min-height: 2.5rem;
+  }
 }
 
 .vf-primary-button:disabled {

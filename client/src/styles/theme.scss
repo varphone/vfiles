@@ -17,17 +17,23 @@
 @mixin vf-light-tokens {
   color-scheme: light;
 
-  /* 强调色（链接、选中、拖放高亮） */
-  --vf-accent: #2f6db6;
-  --vf-accent-strong: #184d9b;
-  --vf-accent-text: #2b4d75;
-  --vf-accent-soft: rgba(47, 109, 182, 0.08);
-  --vf-accent-soft-strong: rgba(47, 109, 182, 0.16);
-  --vf-accent-tint: rgba(47, 109, 182, 0.1);
-  --vf-focus-ring: rgba(50, 115, 220, 0.2);
+  /* 强调色（链接、选中、拖放高亮）。
+     参考 Drive（#0B57D0）/ Dropbox（#0061FF）/ GitHub（#1F6FEB）的鲜明蓝，
+     取 blue-600 家族：填充面白字对比度 5.2:1（AA ✓），链接用更深的 accent-text。 */
+  --vf-accent: #2563eb;
+  --vf-accent-strong: #1d4ed8;
+  --vf-accent-text: #1e40af;
+  --vf-accent-soft: rgba(37, 99, 235, 0.08);
+  --vf-accent-soft-strong: rgba(37, 99, 235, 0.16);
+  --vf-accent-tint: rgba(37, 99, 235, 0.1);
+  --vf-focus-ring: rgba(37, 99, 235, 0.3);
+  /* 填充面上的文字（M3 的 on-container 配对） */
+  --vf-on-accent: #ffffff;
+  /* 按压状态层（M3 pressed 12%） */
+  --vf-surface-pressed: rgba(37, 99, 235, 0.14);
 
   /* 存储占比条的分类配色（对齐主流网盘的用量分组：文档/图片/视频/音频/其它） */
-  --vf-chart-document: #2f6db6;
+  --vf-chart-document: #2563eb;
   --vf-chart-image: #2f9e6f;
   --vf-chart-video: #8a5bd6;
   --vf-chart-audio: #d98324;
@@ -65,8 +71,8 @@
   --vf-text-muted: #627386;
   --vf-text-subtle: #90a0b2;
 
-  /* 圆角与间距（与主流云盘一致的克制尺度） */
-  --vf-radius-sm: 6px;
+  /* 圆角与间距（对齐 M3 形状刻度：small 8 / medium 12 / large 16；按钮用胶囊） */
+  --vf-radius-sm: 8px;
   --vf-radius: 10px;
   --vf-radius-lg: 14px;
   --vf-radius-pill: 999px;
@@ -127,20 +133,24 @@
 @mixin vf-dark-tokens {
   color-scheme: dark;
 
-  --vf-accent: hsl(210, 68%, 62%);
-  --vf-accent-strong: hsl(210, 68%, 74%);
-  --vf-accent-text: hsl(210, 68%, 74%);
-  --vf-accent-soft: hsla(210, 68%, 62%, 0.14);
-  --vf-accent-soft-strong: hsla(210, 68%, 62%, 0.28);
+  /* 填充面色取更深的蓝：白字对比度 5.8:1（旧值 2.83:1 未达 AA）；
+     文本/链接仍用高明度保证深色背景上的可读性。 */
+  --vf-accent: hsl(222, 76%, 46%);
+  --vf-accent-strong: hsl(222, 78%, 40%);
+  --vf-accent-text: hsl(217, 84%, 74%);
+  --vf-accent-soft: hsla(222, 76%, 60%, 0.16);
+  --vf-accent-soft-strong: hsla(222, 76%, 60%, 0.3);
 
   /* 存储占比条的分类配色（深色主题下提高明度保证对比度） */
   --vf-chart-document: #6aa9ee;
+  --vf-on-accent: #ffffff;
+  --vf-surface-pressed: hsla(222, 76%, 66%, 0.22);
   --vf-chart-image: #4fc48c;
   --vf-chart-video: #a98beb;
   --vf-chart-audio: #eaa54f;
   --vf-chart-other: #7d8b9c;
-  --vf-accent-tint: hsla(210, 68%, 62%, 0.18);
-  --vf-focus-ring: hsla(210, 68%, 62%, 0.35);
+  --vf-accent-tint: hsla(222, 76%, 66%, 0.2);
+  --vf-focus-ring: hsla(222, 76%, 66%, 0.4);
 
   --vf-surface: hsl(221, 14%, 12%);
   --vf-app-bar: hsl(221, 14%, 11%);
@@ -152,7 +162,7 @@
   --vf-surface-overlay: hsla(221, 14%, 15%, 0.72);
   --vf-surface-muted: hsla(221, 14%, 16%, 0.9);
   --vf-surface-soft: hsla(221, 14%, 18%, 0.92);
-  --vf-surface-hover: hsla(210, 68%, 62%, 0.12);
+  --vf-surface-hover: hsla(222, 76%, 66%, 0.14);
 
   --vf-shell-bg: linear-gradient(
     180deg,
@@ -191,7 +201,7 @@
   --vf-warning-soft: hsla(35, 80%, 62%, 0.16);
   --vf-warning-text: hsl(35, 85%, 72%);
   --vf-warning-line: hsla(35, 80%, 62%, 0.45);
-  --vf-accent-line: hsla(210, 68%, 62%, 0.6);
+  --vf-accent-line: hsla(222, 76%, 62%, 0.65);
 
   --vf-code-bg: hsl(221, 16%, 10%);
   --vf-code-text: hsl(221, 14%, 84%);
