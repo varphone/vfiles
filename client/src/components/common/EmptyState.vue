@@ -1,5 +1,9 @@
 <template>
-  <div class="empty-state" :class="[`is-${tone}`, { 'is-compact': compact }]">
+  <div
+    class="empty-state"
+    :class="[`is-${tone}`, { 'is-compact': compact }]"
+    :role="tone === 'error' ? 'alert' : undefined"
+  >
     <!-- 插画底座：给图标一个柔和的圆形底色，避免大片留白显得像缺内容 -->
     <span class="empty-state-illustration" aria-hidden="true">
       <component :is="icon" :size="illustrationSize" :stroke-width="1.4" />

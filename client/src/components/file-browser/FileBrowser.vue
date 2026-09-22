@@ -53,7 +53,11 @@
             @enter-results="enterSearchResults"
           />
 
-          <div v-if="searchError" class="notification is-danger is-light">
+          <div
+            v-if="searchError"
+            class="notification is-danger is-light"
+            role="alert"
+          >
             <IconAlertCircle :size="20" class="mr-2" />
             {{ searchError }}
           </div>
@@ -93,7 +97,11 @@
             @update:search-scope-current="searchScopeCurrent = $event"
           />
 
-          <div v-if="searchError" class="notification is-danger is-light mb-3">
+          <div
+            v-if="searchError"
+            class="notification is-danger is-light mb-3"
+            role="alert"
+          >
             <IconAlertCircle :size="20" class="mr-2" />
             {{ searchError }}
           </div>
