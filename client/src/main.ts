@@ -111,7 +111,17 @@ const errorBoundary = (source: string, error: unknown) => {
       // store 不可用时静默（错误边界自身不可再错 ✗）
     }
   }
-  // TODO(r179)：生产上报端点
+  // 生产上报（r179 ✓ fire-and-forget + keepalive（页面卸载亦达））
+  try {
+    void fetch("/api/client-errors", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source, message: String(error).slice(0, 500) }),
+      keepalive: true,
+    }).catch(() => undefined);
+  } catch {
+    // 上报失败不影响用户面
+  }
 };
 app.config.errorHandler = (err) => errorBoundary("vue", err);
 window.addEventListener("error", (e) => errorBoundary("window", e.error ?? e.message));

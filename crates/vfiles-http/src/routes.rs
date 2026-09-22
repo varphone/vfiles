@@ -11,6 +11,7 @@ use vfiles_app::NamespaceService;
 use vfiles_domain::{AuthUser, DomainError, NamespaceId, UserId};
 
 pub mod admin;
+pub mod client_error;
 pub mod audit;
 pub mod auth;
 pub mod content;
@@ -200,6 +201,7 @@ pub fn api_router() -> Router<AppState> {
         .nest("/audit", audit::router())
         // 访问令牌是用户级资源，放在 /api/tokens 而不是 /api/files 下
         .merge(tokens::router())
+        .merge(crate::routes::client_error::router())
         .route("/health", get(health::health_check))
         .route("/ready", get(health::readiness_check))
 }
