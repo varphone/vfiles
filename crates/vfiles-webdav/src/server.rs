@@ -37,6 +37,17 @@ pub struct WebdavSettings {
 pub struct WebdavApplication {
     pub namespace_id: vfiles_domain::types::NamespaceId,
     pub entry_repo: Arc<dyn vfiles_domain::repo::EntryRepo + Send + Sync>,
+    /// Basic 凭据校验回调（r106 安全段 ✓ 挡匿名/坏格式/无效凭据 = 401）。
+    pub verify: crate::auth::VerifyFn,
+}
+
+/// 401 + `WWW-Authenticate: Basic`（RFC 4918 §20.1 ✓）。
+fn www_authenticate() -> Response {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header(header::WWW_AUTHENTICATE, "Basic realm=\"vfiles-webdav\"")
+        .body(Body::empty())
+        .unwrap()
 }
 
 /// WebDAV 能力宣告（无锁 ✓ 子集 ✓）。
@@ -127,6 +138,28 @@ async fn propfind_owned(
 /// 方法分派（PROPFIND 等非标方法经 `any` 到达 ✓）。
 #[axum::debug_handler]
 async fn dav(req: axum::extract::Request) -> Response {
+    // 安全门（r106 ✓ dispatch 顶部全门）：OPTIONS 豁免（能力宣告无泄露 ✓ RFC 语义）
+    // 其余方法 = Basic → verify 回调 → 401。
+    if *req.method() != Method::OPTIONS {
+        let app = req.extensions().get::<WebdavApplication>().cloned();
+        let Some(app_ref) = app.as_ref() else {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::empty())
+                .unwrap();
+        };
+        let cred = req
+            .headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::auth::basic_credentials);
+        let Some((u, pw)) = cred else {
+            return www_authenticate();
+        };
+        if (app_ref.verify)(u, pw).await.is_none() {
+            return www_authenticate();
+        }
+    }
     match *req.method() {
         Method::OPTIONS => Response::builder()
             .status(StatusCode::OK)

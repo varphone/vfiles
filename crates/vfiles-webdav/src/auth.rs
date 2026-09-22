@@ -14,6 +14,13 @@ pub struct WebdavAuthenticator {
     pub username: String,
 }
 
+/// 校验回调型（r106 安全段 ✓ bin 侧接 `AuthService::verify_credentials`）。
+pub type VerifyFn = std::sync::Arc<
+    dyn Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// 注入式校验（r104 实件）：Basic 头 → `verify_credentials` → 用户名。
 ///
 /// 语义 = Web/FTP 完全一致（禁用校验/哈希透明升级内含 ✓）。
