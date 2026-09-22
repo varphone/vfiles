@@ -2020,6 +2020,48 @@ describe("FileBrowser.vue drop hint", () => {
     expect(dirRow.textContent).toContain("项目");
   });
 
+  it("shows the type-ahead HUD while locating by name prefix (r77)", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([
+      {
+        id: "甲乙.txt",
+        name: "甲乙.txt",
+        path: "甲乙.txt",
+        kind: "file" as const,
+        size_bytes: 1,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+      {
+        id: "丙丁戊.txt",
+        name: "丙丁戊.txt",
+        path: "丙丁戊.txt",
+        kind: "file" as const,
+        size_bytes: 1,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+    const { container } = renderWithProviders(FileBrowser as any);
+    await waitFor(() =>
+      expect(
+        container.querySelectorAll("tr.desktop-file-row").length,
+      ).toBeGreaterThan(0),
+    );
+
+    // 可打印字符 → 名称前缀定位 + 状态栏 HUD（此前零测试护持 ✗）
+    // 挂点 = document（onDocKeydown ✓ 工具语：window ≠ document 别想当然）
+    await fireEvent.keyDown(document, { key: "丙" });
+    await waitFor(() => {
+      const hud = container.querySelector(".desktop-status-typeahead");
+      expect(hud).not.toBeNull();
+      expect(hud!.textContent).toContain("定位");
+      expect(hud!.textContent).toContain("丙");
+    });
+    const active = container.querySelector('tr[data-vfiles-path="丙丁戊.txt"]');
+    expect(active).not.toBeNull();
+  });
+
   it("shows a cursor-following drag chip while dragging", async () => {
     setDetailsVisible(false);
     getFilesMock.mockResolvedValue([

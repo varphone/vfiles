@@ -2565,6 +2565,18 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.83 定位前缀 HUD：勘误 + 测试保障轮（round 77）
+
+- **勘误（推翻 r76 一结论）**：r76 记「定位前缀无 HUD 设计」——**错** ✗✓ 状态栏
+  **「定位：X」HUD 早已存在**（FileBrowser 389-390 ✓ `v-if="typeAheadPrefix"` 语义正确 ✓
+  无条件状态条容器内）。r76 误判三重因：探针焦点落在 checkbox（可打印字符进输入 ✗
+  未触发定位）、叶子文本判据糙、以"未捕捉到"当"不存在"✗。
+- **真缺口 = 零测试护持** ✗（行为码健在但无一测）→ 补**确定性单测**（胜探针 ✓）：
+  `keyDown(document, { key: "丙" })` → HUD 显「定位：丙」+ 目标行断言 ✓ 1 passed ✓。
+- **工具语 +1**：**window ≠ document 别想当然**——handler 挂 `document`
+  （`onDocKeydown` ✓ grep 挂点对准再发事件 ✓ 首测 window 无效实证）。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 736 ✓ **438 用例**（+1）✓ 构建 ✓）。
+
 ### 4.82 Esc 五层链全链走查（round 76，证据矩阵收口）
 
 - r75 定稿单所有者链后的语义走查。**叠满五层逐层剥离**探针两实信 + 两判据糙点：
