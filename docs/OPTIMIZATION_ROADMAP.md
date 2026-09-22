@@ -2565,6 +2565,20 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.98 断点归一变化区复核（round 92，零回归收尾）
+
+- 归一收尾验证：三处并档各产生**行为变化区**（旧断点与新断点之间 = 回归藏身处 ✓）→
+  **危险视口逐一实测**（横向溢出判据 ✓）：
+  | 变化区 | 视口 | 实测 | 判定 |
+  | --- | --- | --- | --- |
+  | 快捷键表（520→480 取消窄排区） | 500px | `overflowX: false`（card 450） | ✓ |
+  | 搜索工具条（700→768 折叠新区） | 730px | `overflowX: false` | ✓ |
+  | Audit 页（760→768 窄排新区） | 730px | `overflowX: false` | ✓ |
+  **三区全净、归一零回归** ✓（截图 ×3 留证 `ui-r92/` ✓）。
+- 方法注记：**并档验证必测变化区**（新旧断点之间的视口 = 唯一能暴露回归的带 ✓
+  工具语候选）。
+- docs-only 轮；440 用例保持全绿。
+
 ### 4.97 响应式断点归一（round 91，响应轴收官）
 
 - 扫**真空白轴**：media query 全量频率 —— 语义查询（reduced-motion ×19 /
