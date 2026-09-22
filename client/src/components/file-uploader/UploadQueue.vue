@@ -200,7 +200,7 @@ function onMessageInput(id: number, event: Event) {
 .upload-queue-icon {
   display: inline-flex;
   flex: 0 0 auto;
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
 }
 
 .upload-queue-row.is-error .upload-queue-icon,

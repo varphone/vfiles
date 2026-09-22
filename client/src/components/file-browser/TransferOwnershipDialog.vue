@@ -325,7 +325,7 @@ defineExpose({
 
 .transfer-target.is-selected {
   background: var(--vf-accent-soft);
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
   font-weight: 600;
 }
 
@@ -338,7 +338,7 @@ defineExpose({
   height: 1.6rem;
   border-radius: 50%;
   background: var(--vf-accent-soft);
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
   font-size: 0.76rem;
   font-weight: 600;
 }

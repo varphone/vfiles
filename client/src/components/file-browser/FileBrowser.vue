@@ -2515,7 +2515,7 @@ function handleSortChange(field: SortField) {
 .desktop-nav-item:hover:not(:disabled),
 .desktop-nav-item.is-active {
   background: var(--explorer-accent-soft);
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
 }
 
 .desktop-nav-item.is-empty,

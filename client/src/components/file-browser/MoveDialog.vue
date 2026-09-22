@@ -387,7 +387,7 @@ async function goUp() {
 .move-dialog-items-icon {
   display: inline-flex;
   flex: 0 0 auto;
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
 }
 
 .move-dialog-items-name {
@@ -520,7 +520,7 @@ async function goUp() {
 
 .move-dialog-row-icon {
   flex: 0 0 auto;
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
 }
 
 .move-dialog-row.is-disabled .move-dialog-row-icon {

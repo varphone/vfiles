@@ -272,13 +272,13 @@ const versionLabel = computed(() => {
 }
 
 .history-action.is-accent {
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
   background: var(--vf-accent-soft);
 }
 
 .history-action.is-accent:hover:not(:disabled) {
   background: var(--vf-accent-soft-strong);
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
 }
 
 .history-current-hint {

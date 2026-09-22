@@ -181,7 +181,7 @@ onMounted(() => {
 }
 
 .breadcrumb-tree-row.is-active .breadcrumb-tree-item {
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
   font-weight: 600;
 }
 

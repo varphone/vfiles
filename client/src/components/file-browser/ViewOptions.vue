@@ -155,7 +155,7 @@ onBeforeUnmount(() => {
    若写成后代选择器会把面板里的显示方式按钮一起点亮，导致激活态看起来不对。 */
 .view-options.dropdown.is-active > .dropdown-trigger .vf-ghost-button {
   background: var(--vf-accent-soft);
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
 }
 
 /* 显示方式：分段控件，激活项用强调色浅底 */

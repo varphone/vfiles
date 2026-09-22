@@ -823,7 +823,7 @@ function share() {
 
 .desktop-name-link:hover,
 .desktop-name-link:focus-visible {
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
   text-decoration: underline;
   text-underline-offset: 0.15em;
 }

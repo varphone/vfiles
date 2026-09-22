@@ -644,7 +644,7 @@ onMounted(() => {
   height: 1.7rem;
   border-radius: 50%;
   background: var(--vf-accent-soft);
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
   font-size: 0.78rem;
   font-weight: 600;
 }

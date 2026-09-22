@@ -538,7 +538,7 @@ onMounted(() => {
   display: inline-flex;
   flex: 0 0 auto;
   margin-top: 0.1rem;
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
 }
 
 .shares-row.is-expired .shares-icon {

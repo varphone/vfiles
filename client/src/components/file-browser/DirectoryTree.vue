@@ -334,7 +334,7 @@ function onDrop(path: string) {
 
 .directory-tree-row.is-active {
   background: var(--vf-accent-soft);
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
   font-weight: 600;
 }
 

@@ -486,7 +486,7 @@ onBeforeUnmount(() => {
 
 .preview-toolbar-icon {
   flex: 0 0 auto;
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
 }
 
 .preview-toolbar-name {

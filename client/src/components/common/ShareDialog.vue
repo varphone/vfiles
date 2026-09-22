@@ -298,7 +298,7 @@ async function stopSharing() {
 .share-item-icon {
   display: inline-flex;
   flex: 0 0 auto;
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
 }
 
 .share-item-titles {

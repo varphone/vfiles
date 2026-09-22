@@ -234,7 +234,7 @@ onBeforeUnmount(() => {
 }
 
 .sort-menu-item.is-active {
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
   font-weight: 600;
 }
 </style>

@@ -352,7 +352,7 @@ onMounted(async () => {
 
 .auth-mode.is-active {
   background: var(--vf-surface);
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
   font-weight: 600;
   box-shadow: var(--vf-shadow-card);
 }

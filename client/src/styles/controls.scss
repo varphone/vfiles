@@ -39,7 +39,7 @@
 
 .vf-icon-button.is-active {
   background: var(--vf-accent-soft);
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
 }
 
 /* Bulma 的 is-ghost（行内操作图标）统一为次要文字色，hover 才变强调色 */
@@ -51,7 +51,7 @@
 .button.is-ghost:hover:not([disabled]),
 .button.is-ghost:focus-visible {
   background-color: var(--vf-surface-hover);
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
   text-decoration: none;
 }
 
@@ -103,7 +103,7 @@
 
 .vf-ghost-button.is-active {
   background: var(--vf-accent-soft);
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
 }
 
 /* 主操作：用于「预览 / 打开」等首选动作，视觉上强于普通 ghost 按钮 */

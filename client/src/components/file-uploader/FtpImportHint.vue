@@ -254,7 +254,7 @@ watch(
 }
 
 .ftp-import-toggle-icon {
-  color: var(--vf-accent-strong);
+  color: var(--vf-accent-text);
   flex: 0 0 auto;
 }
 
