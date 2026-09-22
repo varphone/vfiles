@@ -2565,6 +2565,23 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.71 并排 diff 视图键 U/S（round 65）
+
+- 挂账四轮的小件落地：对比打开时 **U/S 键切换 统一/并排**（窗口级监听随
+  `diff.open` 挂卸 + `onBeforeUnmount` 兜底；输入态不抢键 ✓ 层级纪律 ✓）；
+  按钮 `title` 提示键位（「统一视图（U）」/「并排视图（S）」）；**快捷键表登记**
+  新组「版本对比」（KeyboardShortcutsDialog ✓ 测试组标题断言随行为更新 ✓）。
+- **单测**（U/S 切换用例 +2 → 436）；**时序脆弱教训**（新工具语）：`summarises` 用例
+  原为「waitFor 等元素出现即读文本」✗——我加 watcher 改变首渲染时机后读到暂存的
+  '0 个版本' ✗ [DBG] 埋点证 `reqId 2 2` 守卫过、赋值已执行 ✓ = **测试须 waitFor
+  数据内容而非元素存在** ✓ 已稳健化。
+- 浏览器实测：`s` → split 启、unified 隐 ✓ `u` → unified 复显 ✓（探针判据留 DOM
+  残留假象 = v-show 双渲染 ✓ 以可见性判 ✓ 记工具语）。esc-recheck 探针糙（焦点在
+  body）——r64 已证 modal 内 Esc 健康 ✓ 不重复结论。
+- 过程记：prettier 整目录跑再次误格式化 `auth.store.test.ts`（r61 同款 ✗✗）
+  → 已还原；**教训升级：prettier 只跑改动文件**（写入流程纪律）。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 736 ✓ 436 用例 ✓ 构建 ✓）。
+
 ### 4.70 历史对话框键盘动线终审（round 64，验证轮）
 
 - 键盘动线审计法推广第一站（r62/63 高产方法）：**历史对话框**——含嵌套层

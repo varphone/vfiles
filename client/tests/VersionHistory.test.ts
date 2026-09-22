@@ -79,12 +79,14 @@ describe("VersionHistory.vue", () => {
   it("summarises the version count and current version", async () => {
     const { container } = renderHistory();
 
-    await waitFor(() =>
-      expect(container.querySelector(".history-summary")).not.toBeNull(),
-    );
+    // 等数据到位再断言（只等元素出现会在首渲染空档读到暂存值 ✗ 时序脆弱教训）
+    await waitFor(() => {
+      const summary =
+        container.querySelector(".history-summary")?.textContent ?? "";
+      expect(summary).toContain("6");
+    });
     const summary =
       container.querySelector(".history-summary")?.textContent ?? "";
-    expect(summary).toContain("6");
     expect(summary).toContain("个版本");
     expect(summary).toContain("1196ff62");
     expect(container.querySelector(".history-summary-hash")).toHaveAttribute(
@@ -258,6 +260,33 @@ describe("VersionHistory.vue", () => {
       ),
     );
     expect(confirmDialog).toHaveBeenCalled();
+  });
+
+  it("switches unified/split view with the U and S keys (r65)", async () => {
+    const { container } = renderHistory();
+    await waitFor(() =>
+      expect(container.querySelectorAll(".history-row").length).toBe(2),
+    );
+    const secondRow = container.querySelectorAll(
+      ".history-row",
+    )[1] as HTMLElement;
+    await fireEvent.click(
+      within(secondRow).getByRole("button", { name: "对比" }),
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".diff-block")).not.toBeNull(),
+    );
+
+    await fireEvent.keyDown(window, { key: "s" });
+    await waitFor(() =>
+      expect(container.querySelector(".diff-split-row")).not.toBeNull(),
+    );
+    await fireEvent.keyDown(window, { key: "u" });
+    await waitFor(() =>
+      expect(
+        container.querySelector(".diff-block:not([style*='display: none'])"),
+      ).not.toBeNull(),
+    );
   });
 
   it("restore entry in the compare toolbar shares the confirm flow", async () => {

@@ -13,7 +13,7 @@ describe("KeyboardShortcutsDialog.vue", () => {
     const titles = Array.from(
       container.querySelectorAll(".shortcuts-group-title"),
     ).map((el) => el.textContent?.trim());
-    expect(titles).toEqual(["导航", "选择", "操作", "预览与搜索"]);
+    expect(titles).toEqual(["版本对比", "导航", "选择", "操作", "预览与搜索"]);
 
     const keys = Array.from(container.querySelectorAll(".shortcuts-keys")).map(
       (el) =>

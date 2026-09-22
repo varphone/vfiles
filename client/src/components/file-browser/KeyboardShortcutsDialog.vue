@@ -47,6 +47,12 @@ const emit = defineEmits<{ (e: "close"): void }>();
 
 const groups = [
   {
+    title: "版本对比",
+    items: [
+      { keys: "U S", description: "切换 统一 / 并排 视图（对比打开时）" },
+    ],
+  },
+  {
     title: "导航",
     items: [
       { keys: "↑ ↓ ← →", description: "移动高亮行（网格中 ↑↓ 按整行移动）" },

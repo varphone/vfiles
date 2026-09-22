@@ -130,6 +130,7 @@
                   type="button"
                   class="vf-ghost-button"
                   :class="{ 'is-active': diffView === 'unified' }"
+                  title="统一视图（U）"
                   @click="diffView = 'unified'"
                 >
                   统一
@@ -138,6 +139,7 @@
                   type="button"
                   class="vf-ghost-button"
                   :class="{ 'is-active': diffView === 'split' }"
+                  title="并排视图（S）"
                   @click="diffView = 'split'"
                 >
                   并排
@@ -581,6 +583,28 @@ const selectedHash = computed(() =>
       ? preview.value.hash
       : "",
 );
+/** 对比视图键（r65）：U/S 切换 统一/并排（输入态不抢键 ✓ 层级纪律 ✓） */
+function onDiffViewKey(e: KeyboardEvent) {
+  const t = e.target as HTMLElement | null;
+  if (
+    t &&
+    (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
+  ) {
+    return;
+  }
+  if (!diff.value.open) return;
+  if (e.key === "u" || e.key === "U") diffView.value = "unified";
+  if (e.key === "s" || e.key === "S") diffView.value = "split";
+}
+watch(
+  () => diff.value.open,
+  (open) => {
+    if (open) window.addEventListener("keydown", onDiffViewKey);
+    else window.removeEventListener("keydown", onDiffViewKey);
+  },
+);
+onBeforeUnmount(() => window.removeEventListener("keydown", onDiffViewKey));
+
 const detailOpen = computed(() => diff.value.open || preview.value.open);
 
 /** 移动端/窄屏：收起详情面板，回到纯列表。 */
