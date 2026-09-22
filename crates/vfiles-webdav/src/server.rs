@@ -41,6 +41,93 @@ pub struct WebdavApplication {
     pub verify: crate::auth::VerifyFn,
     /// 写门面（r108' ✓ MKCOL/MOVE/DELETE）。
     pub write: Arc<dyn crate::write::WebdavWriteOps + Send + Sync>,
+    /// 排他写锁表（r109a ✓ LOCK/UNLOCK + 写操作 423 校验）。
+    pub locks: Arc<crate::lock::LockTable>,
+}
+
+/// `If` 头 token 提取（纯函数 ✓ 单测；复杂式（多重/嵌套）= None → 调用方 412 记档 ✓）。
+fn if_token(header: &str) -> Option<String> {
+    // 多重/嵌套（AND/OR）= 拒（调用方 412 记档 ✓ 简式 = 单 token 放行 ✓）
+    if header.matches("opaquelocktoken:").count() > 1 {
+        return None;
+    }
+    let start = header.find("opaquelocktoken:")?;
+    let end = header[start..].find('>').map(|i| start + i)?;
+    Some(header[start..end].to_string())
+}
+
+/// LOCK（r109a ✓ exclusive write / depth 0 ✓ 已锁 = 423 ✓ **纯拥有参**（#46 纪律））。
+async fn lock_op(
+    app: Option<WebdavApplication>,
+    user: Option<vfiles_domain::types::User>,
+    uri_path: String,
+) -> Response {
+    let Some(app) = app else {
+        return internal_error();
+    };
+    let Some(user) = user else {
+        return www_authenticate();
+    };
+    let rel = uri_path.trim_start_matches('/').trim_end_matches('/').to_string();
+    match app.locks.lock(&rel, user.username.as_str()) {
+        Some(entry) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+            .header("Lock-Token", format!("<{}>", entry.token))
+            .body(Body::from(crate::response::lock_response(
+                &entry.token,
+                &entry.owner,
+                &entry.path,
+            )))
+            .unwrap(),
+        None => Response::builder()
+            .status(StatusCode::LOCKED)
+            .body(Body::empty())
+            .unwrap(),
+    }
+}
+
+/// UNLOCK（r109a ✓ `Lock-Token` 头匹配解 ✓ 不匹配 = 409 ✓ **纯拥有参**（#46 纪律））。
+async fn unlock_op(
+    app: Option<WebdavApplication>,
+    uri_path: String,
+    token_raw: Option<String>,
+) -> Response {
+    let Some(app) = app else {
+        return internal_error();
+    };
+    let rel = uri_path.trim_start_matches('/').trim_end_matches('/').to_string();
+    let token = token_raw.and_then(|v| {
+        let trimmed = v.trim().trim_start_matches('<').trim_end_matches('>');
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
+    let Some(token) = token else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::empty())
+            .unwrap();
+    };
+    match app.locks.unlock(&rel, &token) {
+        Some(_) => Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .body(Body::empty())
+            .unwrap(),
+        None => Response::builder()
+            .status(StatusCode::CONFLICT)
+            .body(Body::empty())
+            .unwrap(),
+    }
+}
+
+fn internal_error() -> Response {
+    Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(Body::empty())
+        .unwrap()
 }
 
 /// 写操作三型（r108' ✓）。
@@ -56,6 +143,7 @@ async fn write_op(
     user: Option<vfiles_domain::types::User>,
     uri_path: String,
     dest_raw: Option<String>,
+    if_header: Option<String>,
     op: WriteOp,
 ) -> Response {
     use vfiles_domain::repo::EntryRepo as _;
@@ -71,6 +159,21 @@ async fn write_op(
         return www_authenticate();
     };
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/');
+    // 写锁校验（r109a ✓）：被锁路径无 If token = 423 Locked（RFC 4918 §6 ✓）
+    if let Some(entry) = app.locks.blocked(rel) {
+        // If 头 token 匹配 = 放行（简式 ✓ 复杂式 = 412 记档）
+        let has_token = if_header
+            .as_deref()
+            .and_then(if_token)
+            .map(|t| t == entry.token)
+            .unwrap_or(false);
+        if !has_token {
+            return Response::builder()
+                .status(StatusCode::LOCKED)
+                .body(Body::empty())
+                .unwrap();
+        }
+    }
     let path = match NormalizedPath::new(rel) {
         Ok(p) => p,
         Err(_) => {
@@ -284,10 +387,23 @@ async fn dav(mut req: axum::extract::Request) -> Response {
                     .unwrap(),
             }
         },
-        ref m if m == "LOCK" || m == "UNLOCK" => Response::builder()
-            .status(StatusCode::METHOD_NOT_ALLOWED)
-            .body(Body::empty())
-            .unwrap(),
+        // LOCK/UNLOCK（r109a ✓ 商业级核心件 = Windows 映射依赖）。
+        // 纯拥有参（#46 三号实录强化 ✗✗ 借用不跨 await = 编码模板纪律）。
+        ref m if m.as_str() == "LOCK" || m.as_str() == "UNLOCK" => {
+            let app_owned = req.extensions().get::<WebdavApplication>().cloned();
+            let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
+            let uri_owned = req.uri().path().to_string();
+            let token_owned = req
+                .headers()
+                .get("lock-token")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            if m.as_str() == "LOCK" {
+                lock_op(app_owned, user_owned, uri_owned).await
+            } else {
+                unlock_op(app_owned, uri_owned, token_owned).await
+            }
+        }
         // 写法（r108' ✓ MKCOL/DELETE/MOVE 实装；PUT = r109'（分片链）；COPY = 501 记档）。
         // 同步提取拥有值（借用不跨 await ✓ #46）。
         ref m if m.as_str() == "MKCOL" || m.as_str() == "DELETE" || m.as_str() == "MOVE" => {
@@ -299,12 +415,17 @@ async fn dav(mut req: axum::extract::Request) -> Response {
                 .get("destination")
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
+            let if_owned = req
+                .headers()
+                .get("if")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
             let op = match m.as_str() {
                 "MKCOL" => WriteOp::Mkcol,
                 "DELETE" => WriteOp::Delete,
                 _ => WriteOp::Move,
             };
-            write_op(app_owned, user_owned, uri_owned, dest_owned, op).await
+            write_op(app_owned, user_owned, uri_owned, dest_owned, if_owned, op).await
         }
         ref m if m.as_str() == "COPY" => Response::builder()
             .status(StatusCode::NOT_IMPLEMENTED)
@@ -366,5 +487,20 @@ mod write_tests {
         );
         assert_eq!(destination_path("/sub/x"), Some("sub/x"));
         assert_eq!(destination_path("no-leading-slash"), None);
+    }
+}
+
+#[cfg(test)]
+mod if_token_tests {
+    use super::if_token;
+
+    #[test]
+    fn extracts_opaque_token_and_rejects_nested() {
+        assert_eq!(
+            if_token("(<opaquelocktoken:abc123>)"),
+            Some("opaquelocktoken:abc123".into())
+        );
+        assert_eq!(if_token("(<opaquelocktoken:a> AND <opaquelocktoken:b>)"), None);
+        assert_eq!(if_token("<Not-a-lock-token>"), None);
     }
 }

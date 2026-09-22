@@ -22,7 +22,8 @@
 | **r105（谜案破 ✓ 接线完）** | **E0277 真因 = `&Request` 跨 await 非 Send**（debug_handler 全窗破案 ✓ 教科书 Send 修复式 = 同步提取拥有值 ✓）；**PROPFIND 接线完**（propfind_owned → multistatus ✓ Depth 0/1）；4 测试绿 | bin/config 挂载 = r106 机械段（build_ftp_runtime 同式清单 ✓） |
 | **r106（安全段 ✓ 债清）** | **dispatch 顶部安全门**（Basic→verify 回调→401+WWW-Authenticate ✓ OPTIONS 豁免（RFC 无泄露））；`VerifyFn` 型 = bin 接 `verify_credentials` ✓ | 首版门藏 PROPFIND 分支 = GET 裸奔洞自察上移 ✓ |
 | **r108'（写面三件 ✓ 商业级一段）** | **MKCOL/DELETE/MOVE 实装**（`WebdavWriteOps` dyn-trait ✓ 审计链 user_id ✓ VerifyFn 升级回 User ✓）；MOVE `Destination` 解析（纯函数单测 ✓ 挂载点 = root 记档）；**PUT** = init_upload 链 → r109'；**COPY** = 501 记档（rclone GET+PUT 不依赖 ✓） | 5 测试绿 ✓ **#46**：write_op(&req) 坑二号 ✗ 纯拥有参式贯彻 |
-| **r109' 商业级核心** | **LOCK/UNLOCK**（Windows 映射依赖 ✓ 必做）+ per-user ns + **默认开启 config**（auth 强制防御 = FTP bail! 同款）+ PUT（init_upload 链） | |
+| **r109a（锁核 ✓ 完成）** | **LOCK/UNLOCK 实装**（内存锁表 ✓ `opaquelocktoken:` 零依赖铸造 ✓ exclusive/depth0 ✓ lockdiscovery §14.13 ✓）；**写操作 423 校验**（`If` token 放行 ✓ 多重式拒 412 记档 ✓）| 9 测试绿 ✓ **#46 三号实录**（lock_op(&req) 同坑 → 纯拥有参式 = **编码模板纪律**）|
+| **r109b 商业级配套** | per-user ns（FTP UserDetailProvider 范本）+ **默认开启 config**（auth 强制防御 = FTP bail! 同款）+ PUT（init_upload 链）+ **bin 挂载 + curl/rclone e2e**（r107 遗留 ✓ 可浏览挂载实证） | |
 | **r110' 验收台架** | 边界/错误语义 RFC 全检 + curl/rclone/Windows 台架 + 商业级清单 | |
 | r107（挂载段遗留） | bin 挂载 + curl/rclone e2e + GET（`EntryVersion.blob_id` ✓ 形已清） | 并入 r110' 台架 ✓ |
 | 记档 | **LOCK/UNLOCK 不支持**（405） | macOS/Linux/rclone 挂载不受影响 ✓ Windows 映射依赖锁 → 后续评估 |

@@ -9,9 +9,11 @@
 //! 依赖锁 → 记档待后续轮次评估）。写法五件（PUT/DELETE/MKCOL/MOVE/COPY）= r103。
 
 mod auth;
+mod lock;
 mod write;
 
 pub use write::WebdavWriteOps;
+pub use lock::LockTable;
 mod response;
 mod server;
 

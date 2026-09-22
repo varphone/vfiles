@@ -67,6 +67,6 @@
 | 43 | **grep 全树必限 src**（`target/` 编译产物 = 脏源（impl BackendDeps 落到二进制 ✗）；定点 sed 优于全树 grep） | r102 |
 | 44 | **grep 模式 `-` 开头 = 被当 flag**（`-->` 报「未识别的选项」✗✓ 用 `-e` 或前缀通配）；**判词链反写自查**（二分对而 echo 反 ✗） | r104 |
 | 45 | **grep 前证文件存在**（多文件 grep 对缺失文件静默 ✗✗「零命中」≠「无此功能」——admin.service.ts 缺失误判为零命中） | r107' |
-| 46 | **借用不跨 await**（r105 教训强制纪律：调用侧同步提取拥有值 = 纯拥有参式 ✗ write_op(&req) 同坑二号实录） | r108' |
+| 46 | **借用不跨 await = 编码模板纪律**（r105/108'/109a **三号实录** ✗✗✗ async handler 参数一律纯拥有（调用侧同步提取）——写 handler 前自查模板） | r105→109a |
 | 47 | **判据 grep 词边界**（`error` 撞 crate 名 "quick-error" ✗ `^error`/`\\berror\\b` 式 ✓ 判词链反写二号） | r106 |
 | 48 | **管道掩错 = 门禁假绿险**（`tsc \\| head` = head exit 0 ✗✗✗ 历轮静默过含险 ✓ **`set -o pipefail` 强制** + TSC_EXIT 真绿验记式） | r106 |

@@ -48,6 +48,25 @@ pub fn multistatus(items: &[PropResponse]) -> String {
     out
 }
 
+/// LOCK 响应体（lockdiscovery ✓ RFC 4918 §14.13 子集：exclusive write / depth 0 ✓）。
+pub fn lock_response(token: &str, owner: &str, path: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<D:prop xmlns:D="DAV:"><D:lockdiscovery><D:activelock>
+<D:locktype><D:write/></D:locktype>
+<D:lockscope><D:exclusive/></D:lockscope>
+<D:depth>0</D:depth>
+<D:owner>{owner}</D:owner>
+<D:href>{href}</D:href>
+<D:locktoken><D:href>{token}</D:href></D:locktoken>
+<D:timeout>Infinite</D:timeout>
+</D:activelock></D:lockdiscovery></D:prop>"#,
+        owner = escape_xml(owner),
+        href = escape_xml(&format!("/{path}")),
+        token = escape_xml(token),
+    )
+}
+
 /// XML 转义（& < > " ' ✓ href/displayname 注入安全）。
 fn escape_xml(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
