@@ -2565,6 +2565,28 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.76 十轮增量小节（round 70）+ 节律 sweep 留档
+
+- **r61–r69 增量**：
+  | 轮 | 主题 | 轴 |
+  | --- | --- | --- |
+  | 61 | 落子回执动效（remount 吃态 → 父层持态架构教训） | 交互 |
+  | 62 | 搜索框键盘动线补全（Esc/↓ 主流断点 ×2） | 交互/可访问性 |
+  | 63 | 高级搜索面板 Esc 层级纪律 | 交互/可访问性 |
+  | 64 | 历史对话框键盘终审（健康零缺陷） | 验证 |
+  | 65 | 并排 diff U/S 视图键 + 快捷键表（时序断言工具语） | 交互 |
+  | 66 | 触屏命中区 44px（pointer:coarse 族级） | 可访问性 |
+  | 67 | 通知族终审（aria-live 容器式 = 教材点） | 验证 |
+  | 68 | 表单族终审 + 搜索框 label | 可访问性 |
+  | 69 | 错误横幅 aria 接线（AuthNotice 预付惊喜） | 可访问性 |
+  **主题分布**：可访问性 4 / 交互 3 / 验证 2 —— **可访问性轴本阶段成主线**
+  （键盘动线 × 屏读语义双线收官 ✓）。
+- **方法论资产**（本阶段最大收获）：键盘动线审计法（动线表 × 主流对照 × 层级语义）、
+  pointer:coarse 判定、aria-live 容器式、waitFor 内容断言、类名实文/git 考古。
+- **节律 sweep 留档**（r70）：28 张双主题全表面 ✓（含 drop 回执、U/S 键态、触屏命中区、
+  aria 全链等新成果）。
+- 累计：**437 用例 / 62 文件**、五门禁、三护栏（dead-styles / ui:sweep / DESIGN_TOKENS）。
+
 ### 4.75 错误横幅 aria 接线（round 69）
 
 - r68 挂账执行（性质修正 ✗✓）：错误模型 = **toast/banner 级**（无行内字段错误 →
