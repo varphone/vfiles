@@ -166,7 +166,7 @@ const emit = defineEmits<{
 .mobile-search-toolbar {
   position: sticky;
   top: calc(var(--bulma-navbar-height, 3.25rem) + env(safe-area-inset-top));
-  z-index: 20;
+  z-index: 30;
   padding: 0.5rem 0.4rem;
   margin: 0 -0.4rem;
   background: var(--vf-surface);
