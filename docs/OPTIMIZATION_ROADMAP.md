@@ -2565,6 +2565,23 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.72 触屏命中区审计与补全（round 66）
+
+- 审计法推广终站（移动面板）：**tap target 尺寸**数据化（基准 = iOS HIG 44pt /
+  M3 48dp）。实测 9 个移动控件命中区：
+  | 组 | 改前 | 判定 |
+  | --- | --- | --- |
+  | 底栏 ×6 | 48×44（首钮**宽 33**） | ✗ 1 处窄 |
+  | 搜索区 ×4 | **43×40 / 28×40**（vf-icon/vf-ghost 钮） | ✗✗ 5 处不达标（28px 真机难点） |
+- **修复**：`@media (pointer: coarse)` 下 family 级 **min 44×44**（视觉尺寸不变、
+  命中区扩大 ✓ 主流做法）——`button.vf-icon-button / button.vf-ghost-button /
+  .mobile-action-buttons .button`。**`pointer: coarse` = 真实触屏信号**（优于宽度
+  断点 ✓ 手机/平板/触屏本全中，桌面鼠标不受影响 ✓ 记工具语）。
+- **双侧终验**：触屏 9 钮 `all [44×9]`、minSide 44 ✓；桌面图标钮 minSide **36** 不变 ✓
+  （中间态曾 7/9——2 个 `vf-ghost-button` 未被首版选择器覆盖 ✗ dump 类名补靶 ✓
+  "类名先查实文"工具语再立功）。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 736 ✓ 436 用例 ✓ 构建 ✓）。
+
 ### 4.71 并排 diff 视图键 U/S（round 65）
 
 - 挂账四轮的小件落地：对比打开时 **U/S 键切换 统一/并排**（窗口级监听随

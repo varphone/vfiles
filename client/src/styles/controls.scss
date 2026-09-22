@@ -272,6 +272,18 @@
   box-shadow: 0 0 0 3px var(--vf-focus-ring);
 }
 
+/* 触屏命中区（iOS HIG 44pt / M3 48dp）：视觉尺寸不变、命中区最小 44px。
+   `pointer: coarse` = 真实触屏设备信号（优于宽度断点 ✓ 手机/平板/触屏本全中）。
+   实测前：移动搜索图标钮 28-43px、底栏首钮 33px 窄边 ✗ 真机难点。 */
+@media (pointer: coarse) {
+  button.vf-icon-button,
+  button.vf-ghost-button,
+  .mobile-action-buttons .button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 /* 菜单条目语言（与右键菜单一致）：Bulma .dropdown-item 原为 14px / 6px 48px 16px / 0 圆角，
    与 .vfiles-context-menu 条目（13.12px / 8px 10px / 6px 圆角）分叉。 */
 /* 选择器须含 a/button（与 Bulma 的 a.dropdown-item 同特异度、靠后胜出，
