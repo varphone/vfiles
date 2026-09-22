@@ -416,9 +416,9 @@ mark.has-background-warning-light {
   transform-origin: top right;
 }
 
-/* 行/卡片右键菜单同样使用入场动效（元素每次挂载时触发） */
+/* 行/卡片右键菜单同样使用入场动效（元素每次挂载时触发；r128 ✓ 与 dropdown 同速归一） */
 .vfiles-context-menu {
-  animation: vf-menu-enter 0.16s cubic-bezier(0.2, 0, 0, 1) both;
+  animation: vf-menu-enter 0.18s cubic-bezier(0.2, 0, 0, 1) both;
 }
 
 .modal.is-active .modal-card {

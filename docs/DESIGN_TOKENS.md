@@ -111,7 +111,20 @@ diff 行评论（提案）· rclone/Windows 台架（待用户环境）。
 - `--vf-motion-exit: cubic-bezier(0.3, 0, 1, 1)`（Accelerate 离场）；
 - **loading/shimmer 一律 `linear`**（M3 规范）；时长惯例：120ms 微反馈 / 150ms 状态 / 200ms+ 结构。
 
-## 8. 组件语言速查（family 参数，round 5 起校准）
+## 8. 动效时长档位（round 128 审计记档）
+
+| 档 | 值 | 用途 |
+| --- | --- | --- |
+| 淡入/微移 | 120ms | 透明度/小位移过渡 |
+| 菜单入场 | 180ms | dropdown + 右键菜单（同速归一 ✓）|
+| 弹窗入场 | 200ms | modal-card |
+| 持续动画 | 600-1300ms | 骨架 shimmer / spinner |
+| reduced-motion | 0.01ms !important | 禁用技巧（标准手法 ✓ 勿"归一"）|
+
+缓动走 token（--vf-motion-standard/exit ✓）；**时长分层有意**（轻→重 ✓），
+新增动效先查此表。
+
+## 8.1 组件语言速查（family 参数，round 5 起校准）
 
 | 组件族 | 参数 |
 | --- | --- |
