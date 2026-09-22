@@ -2565,6 +2565,27 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.77 预览键盘缩放：五连侦查链与 ref 死绑定终修（round 71）
+
+- 审计目标：预览面板缩放/翻页键盘（+/-/0/r = 主流图像查看器标配）。**终果 =
+  全键位真缺陷确诊并修复**，侦查链五层（教科书素材）：
+  1. **夹具坏图**：base64 经 shell 传递失效（0 字节 ✗）→ 探针假阴性首轮；
+     工具语：**二进制夹具用 node 写盘 + 字节数校验** ✓；
+  2. **isImage 疑云**：按钮缩放 ✓ vs 键盘哑 → 守卫假阴性嫌疑，埋点证处理器**从未被调**；
+  3. **焦点被夺**：`activeElement = BODY` —— Bulma Modal 自带初始聚焦管理 ✗
+     shell 级 @keydown 够不着（r27 的 `nextTick(focus)` 时机亦扑空）；
+  4. **watch 不触发**：改挂载信号方案后仍哑 → 埋点零输出 = 监听器**从未注册**；
+  5. **终根 = `ref="shellRef"` 从未绑定** ✗✗✗ —— `shellRef.value` 永远 null：
+     r27 的 focus() **从头就是死代码**（401 行拖拽边界逻辑同殃）→
+     **补一行 `ref="shellRef"` 激活全部** ✓。
+- **架构定论**：键盘接线**窗口级监听**（r62/65 同款范式）——免疫焦点争夺 ✓；
+  元素级 @keydown 移除（曾与窗口级**双通道触发** = 每键 zoomBy ×2 ✗ 既有键盘用例
+  "zooms, rotates and fits" 翻倍断言失败揭发 ✓ 去重后 437 全绿）。
+- **终验**（真实直接按键路径）：`+` → 125% ✓ `0` → 复位 ✓ `r` → 90° 旋转矩阵 ✓
+  （focus 停 BODY 无碍 = 窗口级免疫 ✓）。
+- 工具语 +2：二进制夹具 node 写盘校验、**ref 模板绑定必查**（声明≠绑定 = 永 null）。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 736 ✓ 437 用例 ✓ 构建 ✓）。
+
 ### 4.76 十轮增量小节（round 70）+ 节律 sweep 留档
 
 - **r61–r69 增量**：

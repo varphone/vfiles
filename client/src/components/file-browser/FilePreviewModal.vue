@@ -1,10 +1,10 @@
 <template>
   <Modal :show="show" title="预览" mobile-compact @close="emit('close')">
     <div
+      ref="shellRef"
       class="preview-shell"
       :class="{ 'is-fullscreen': fullscreen }"
       tabindex="-1"
-      @keydown="onKeydown"
     >
       <!-- 顶部工具条：左侧文件信息，右侧操作（与主流网盘的预览器一致） -->
       <div class="preview-toolbar" role="toolbar" aria-label="预览操作">
@@ -260,14 +260,7 @@
 </template>
 
 <script setup lang="ts">
-import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  ref,
-  watch,
-} from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   IconAlertCircle,
   IconArrowsMaximize,
@@ -426,6 +419,13 @@ function onFullscreenChange() {
 /** 图片类快捷键：+/- 缩放、0 适应、R 旋转；其余交给父级/Modal 处理。 */
 function onKeydown(event: KeyboardEvent) {
   if (!isImage.value) return;
+  const t = event.target as HTMLElement | null;
+  if (
+    t &&
+    (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
+  ) {
+    return;
+  }
   const key = event.key.toLowerCase();
   if (key === "+" || key === "=") {
     zoomBy(1);
@@ -443,13 +443,27 @@ function onKeydown(event: KeyboardEvent) {
 
 onMounted(() => {
   document.addEventListener("fullscreenchange", onFullscreenChange);
-  void nextTick(() => shellRef.value?.focus());
+  // 焦点引导（r71 修复）：shell 随数据到位才渲染（v-if）→ 挂载时机不可猜
+  // （单次 nextTick/有限帧重试均实测扑空）→ **watch ref 到位即聚焦**（挂载信号 ✓）。
+  // 焦点不达 = 键盘键位（+/-/0/r）全哑（实测确诊）。
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener("fullscreenchange", onFullscreenChange);
   stopDrag();
 });
+
+// 键盘接线（r71 收口）：Modal 自带初始聚焦会夺回焦点 ✗ shell 级 @keydown 常够不着
+// ——改**窗口级监听**（r62/65 同款范式）随 shell 挂卸；元素级保留双保险 ✓
+watch(
+  shellRef,
+  (el, _prev, onCleanup) => {
+    if (!el) return;
+    window.addEventListener("keydown", onKeydown);
+    onCleanup(() => window.removeEventListener("keydown", onKeydown));
+  },
+  { flush: "post" },
+);
 </script>
 
 <style scoped>
