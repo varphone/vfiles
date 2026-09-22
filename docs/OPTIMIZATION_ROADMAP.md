@@ -2565,6 +2565,17 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.95x 底栏层级静态取证 + 探针路线转轨（round 95）
+
+- r94 待办注收口：移动行菜单探针**三败止损**（r94×2 + r95 ✓ #36 脆点域确认 ✓
+  三败止损规则兑现）→ **路线转轨**：
+  1. **900 档静态可证**：CSSOM 声明级序 = modal `z-index: 1000` > chrome `900` ✓✓
+     （= 修复目标纪律的声明级证据 ✓ 推理定档升格为静态证）；
+  2. **真机样张 = r100 sweep 移动帧顺访**（常驻覆盖自然捕捉 dialog-over-bar 瞬间 ✓
+     停摆探针 → 排期产物 ✓）。
+- PROBE_IDIOMS **#36**：移动行操作菜单定位链 = 浏览器探针脆点 ✓。
+- docs-only 轮；440 用例保持全绿。
+
 ### 4.99 bundle 预算守护（round 93，性能轴开辟）
 
 - 又一**真空白轴**：性能预算——build 一直报 1.3MB/226KB br 但**零增长守卫** ✗✗。
