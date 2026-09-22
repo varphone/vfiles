@@ -64,6 +64,7 @@ cd client && bun run fmt
 - 可见实例选择器（探针工具语）：查条件渲染目标**必须过滤 `offsetParent !== null`**
   （隐藏的 EmptyState/嵌套 modal 曾反复污染测量）；多层 modal 用**目标专属文本锚**
   （如确认弹窗按标题「恢复历史版本」定位）而非 `.modal.is-active` 通配。
+- **探针/流程纪律总表**：[PROBE_IDIOMS.md](PROBE_IDIOMS.md)（30 条 ✓ 探针受阻先翻此表）。
 - **五门禁**（缺一即漏，round 43 教训：vitest 不做类型检查、check 不含构建）：
   `bunx vue-tsc --noEmit` → `bun run check`（lint + lint:styles + test）→ `bun run build`。
 - `bun run check`：一键聚合（`lint` + `lint:styles` + `test`），日常三合一。

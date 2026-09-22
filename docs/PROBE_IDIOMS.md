@@ -1,0 +1,54 @@
+# 探针与流程工具语（PROBE IDIOMS）
+
+> 82 轮实测事故沉淀的可查表（每条附来源轮次）。「先查后写、判据可见、证据确定」
+> 三原则的具体化。探针受阻时先翻此表。
+
+## A. 夹具与环境
+
+| # | 工具语 | 来源 |
+| --- | --- | --- |
+| 1 | fixture CLI/服务器**同 shell 导出 `VFILES_*`**（裸跑会写进仓库 `data/` ✗ 事故级） | r23 |
+| 2 | 服务器/夹具/探针**单命令起停**（跨工具调用 `/tmp` 会被宿主清理 ✗ 多次） | r31/r38 |
+| 3 | 二进制夹具用 **node 写盘 + 字节数校验**（shell 传 base64 会损 ✗ 坏图假阴性） | r71 |
+| 4 | CJK 测试内容**避开撞名**（唯一命名 / 成对 from→to 路径跟进） | r35 |
+| 5 | `keyboard.press('字符')` 无效（要键名）；中文键入用 `type()` 或**下条** | r76 |
+
+## B. 浏览器探针
+
+| # | 工具语 | 来源 |
+| --- | --- | --- |
+| 6 | **CJK `keyboard.type()` 走 `insertText`、不产生 keydown** ✗✗ → 处理器永不会触发 → 用 `document.dispatchEvent(new KeyboardEvent('keydown', { key: '字' }))` | r78（破案钥匙） |
+| 7 | **可见实例判据**：Modal **藏而不卸** → 裸 `querySelector` 命中隐藏实例 → **`offsetParent !== null` 过滤 / `.modal.is-active` 作用域** | r43 起 N 次 |
+| 8 | **规则挂载层先查**（`is-dragging` 挂 `> td` 非 tr；hover 挂 `.directory-tree-row` 非 item）→ 探针目标对层 | r49/r56 |
+| 9 | **类名先查实文**；疑回归先 `git log -S` 考古再定性（drag-chip"丢失"虚惊） | r56 |
+| 10 | `grep` 歧义：`key`/`title` 等通用变量名撞语义 → **上下文核查**（`(匿名)` 筛选键虚惊） | r81 |
+| 11 | **window ≠ document 挂点**（grep `addEventListener`/`@keydown` 对准再发事件） | r77 |
+| 12 | 事件目标类名/dump：**输出原始 className 不猜判据**（dump 式证据） | r56 |
+| 13 | 判据设计走**中间态/非默认**（末页 PageDown 无信息盲点 ✗；选中行无悬停增量 ✓ 语义对） | r74/r40 |
+| 14 | `head -N` 截断会吞目标行（分批/放宽 ✗ 多次） | r81 等 |
+
+## C. jsdom / 单测
+
+| # | 工具语 | 来源 |
+| --- | --- | --- |
+| 15 | jsdom 无 `DragEvent` 构造 → `MouseEvent('dragover', {clientX…})` 冒充 | r57 |
+| 16 | jsdom 无 `elementFromPoint` → 桩 `document.elementFromPoint = () => el` | r58 |
+| 17 | **waitFor 等内容而非元素存在**（首渲染暂存值假阴 ✗） | r65 |
+| 18 | `flush: post` 监听器晚于同步断言 → **断言候 tick** | r65/74 |
+| 19 | 回常态桩**不能桩回拖拽行自身**（= 仍禁止态 ✗）→ 桩 `document.body` | r59 |
+| 20 | 单测失败先**隔离跑**（判污染 vs 真破 ✓ r65/75 皆靠它定性） | r65 |
+
+## D. 编辑与流程
+
+| # | 工具语 | 来源 |
+| --- | --- | --- |
+| 21 | **改 .vue 前 sed 打印 prettier 格式化后实文**构造锚点（折行失配 ×N ✗ 原子断言防半态 ✓） | r38 起 |
+| 22 | 多站点同文案用**行号锚 + 自底向上插入**（6 处同绑定盲换会污染他组件） | r61 |
+| 23 | 模板改造收口错位 → **区段开合行号清单**（awk 列 tag）定位补平 | r42 |
+| 24 | **`ref` 声明 ≠ 绑定**：grep `ref="名"` 确认模板绑定（永 null = 死代码 ✗ r27 至 r71） | r71 |
+| 25 | **prettier 只跑改动文件**（整目录跑 = 无关文件误格式化 ×2 ✗） | r61/65 |
+| 26 | `withDefaults` 接口式 props：options 式默认值静默成"默认值对象"（tsc TS2339 揪出） | r61 |
+| 27 | **五门禁缺一即漏**：`vue-tsc` + `check`（lint/lint:styles/test）+ `build`（vitest 不做类型检查 ✓ check 不含构建 ✓） | r43 |
+| 28 | **表漂移守护式断言**（键位改动忘登记 → 测试揭发 ✓ 文档-代码同步新形态） | r81 |
+| 29 | 疑似功能丢失先查**设计语义分层**（「还没有」vs「暂无」非分叉 ✓ 别急着"统一"） | r73 |
+| 30 | 行为码健在 ≠ 有保障：**零测试即缺口**（HUD 勘误轮教训 ✓ 补测优先于补功能） | r77 |

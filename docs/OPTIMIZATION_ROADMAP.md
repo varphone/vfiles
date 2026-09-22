@@ -2565,6 +2565,20 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.88 工具语汇编单页（round 82）
+
+- **`docs/PROBE_IDIOMS.md`**：82 轮实测事故沉淀 **30 条**可查表（四类：夹具与环境 /
+  浏览器探针 / jsdom 单测 / 编辑与流程 ✓ 每条附来源轮次 ✓）——「先查后写、判据可见、
+  证据确定」三原则具体化，**探针受阻先翻此表** ✓。
+- 高价值条目摘录：CJK `type()` 无 keydown（r78 破案钥匙）、可见实例判据（N 次）、
+  ref 声明≠绑定（r27 死代码 44 轮才现）、五门禁、waitFor 内容断言、
+  表漂移守护式断言（r81 新形态）。
+- CONTRIBUTING 链入 ✓（工具语从散落路线图 → 独立可查表 ✓ 沉淀形态升级）。
+- **流程自纠记**：首提交 `1f7bf15` 的 python 断言失配但换行分隔让 git 照跑 ✗✗ =
+  message 声称了未落盘内容——**命令链一律 `&&`**（断言败即停 ✓）+ amend 修正 ✓
+  （工具语 #31 候补：提交脚本的链式纪律）。
+- docs-only 轮；438 用例保持全绿。
+
 ### 4.87 快捷键表双向终审（round 81）
 
 - 文档-代码漂移审计：**表 21 条 ↔ 实际键位分支**两向对照。
