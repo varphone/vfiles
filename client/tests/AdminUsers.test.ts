@@ -184,4 +184,16 @@ describe("AdminUsers.vue header actions", () => {
       expect(authService.deleteUser).toHaveBeenCalledWith("u1"),
     );
   });
+
+
+  it("sorts users by column header (r118)", async () => {
+    renderWithProviders(AdminUsers);
+    await waitFor(() => expect(screen.getByText("alice")).toBeInTheDocument());
+    const header = screen.getByTitle("按用户名排序");
+    expect(header.closest("th")).toHaveAttribute("aria-sort", "none");
+    await fireEvent.click(header);
+    expect(header.closest("th")).toHaveAttribute("aria-sort", "ascending");
+    await fireEvent.click(header);
+    expect(header.closest("th")).toHaveAttribute("aria-sort", "descending");
+  });
 });

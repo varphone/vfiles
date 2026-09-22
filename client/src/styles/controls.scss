@@ -468,3 +468,24 @@ mark.has-background-warning-light {
   opacity: 0.5;
   cursor: default;
 }
+
+/* 表头排序族（r118 ✓ 主流管理表标配（列头点击排序）✓ FileList 同式抽公共） */
+.vf-th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.vf-th-sort:hover {
+  color: var(--vf-text-strong);
+}
+
+.vf-th-sort-icon {
+  opacity: 0.55;
+}

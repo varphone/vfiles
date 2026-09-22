@@ -126,16 +126,34 @@
         <table class="table is-fullwidth is-hoverable admin-table">
           <thead>
             <tr>
-              <th>用户名</th>
+              <th :aria-sort="ariaSortFor('username')">
+                <button class="vf-th-sort" type="button" title="按用户名排序" @click="toggleSort('username')">
+                  <span>用户名</span>
+                  <IconChevronUp v-if="sortField === 'username' && sortDirection === 'asc'" :size="14" class="vf-th-sort-icon" aria-hidden="true" />
+                  <IconChevronDown v-else-if="sortField === 'username'" :size="14" class="vf-th-sort-icon" aria-hidden="true" />
+                </button>
+              </th>
               <th>邮箱</th>
-              <th class="is-narrow">角色</th>
+              <th class="is-narrow" :aria-sort="ariaSortFor('role')">
+                <button class="vf-th-sort" type="button" title="按角色排序" @click="toggleSort('role')">
+                  <span>角色</span>
+                  <IconChevronUp v-if="sortField === 'role' && sortDirection === 'asc'" :size="14" class="vf-th-sort-icon" aria-hidden="true" />
+                  <IconChevronDown v-else-if="sortField === 'role'" :size="14" class="vf-th-sort-icon" aria-hidden="true" />
+                </button>
+              </th>
               <th class="is-narrow">状态</th>
-              <th class="is-narrow">创建时间</th>
+              <th class="is-narrow" :aria-sort="ariaSortFor('createdAt')">
+                <button class="vf-th-sort" type="button" title="按创建时间排序" @click="toggleSort('createdAt')">
+                  <span>创建时间</span>
+                  <IconChevronUp v-if="sortField === 'createdAt' && sortDirection === 'asc'" :size="14" class="vf-th-sort-icon" aria-hidden="true" />
+                  <IconChevronDown v-else-if="sortField === 'createdAt'" :size="14" class="vf-th-sort-icon" aria-hidden="true" />
+                </button>
+              </th>
               <th class="admin-actions-header">操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="u in filteredUsers" :key="u.id">
+            <tr v-for="u in sortedUsers" :key="u.id">
               <td>
                 <div class="admin-user">
                   <span class="admin-avatar" aria-hidden="true">
@@ -320,6 +338,8 @@ import {
   IconSearch,
   IconUsers,
   IconX,
+  IconChevronUp,
+  IconChevronDown,
 } from "@tabler/icons-vue";
 import {
   authService,
@@ -336,6 +356,35 @@ import { formatRelativeDate } from "../utils/filePresentation";
 
 const app = useAppStore();
 const auth = useAuthStore();
+
+// 表头排序（r118 ✓ 主流管理表标配 ✓ FileList 同式）
+type AdminSortField = "username" | "role" | "createdAt";
+const sortField = ref<AdminSortField>("createdAt");
+const sortDirection = ref<"asc" | "desc">("desc");
+
+function toggleSort(field: AdminSortField) {
+  if (sortField.value === field) {
+    sortDirection.value = sortDirection.value === "asc" ? "desc" : "asc";
+  } else {
+    sortField.value = field;
+    sortDirection.value = "asc";
+  }
+}
+
+function ariaSortFor(field: AdminSortField) {
+  if (sortField.value !== field) return "none";
+  return sortDirection.value === "asc" ? "ascending" : "descending";
+}
+
+const sortedUsers = computed(() => {
+  const list = [...filteredUsers.value];
+  const dir = sortDirection.value === "asc" ? 1 : -1;
+  return list.sort((a, b) => {
+    const va = String(a[sortField.value] ?? "");
+    const vb = String(b[sortField.value] ?? "");
+    return va.localeCompare(vb, "zh-Hans-CN") * dir;
+  });
+});
 const router = useRouter();
 
 /** 与「我的分享」「审计日志」一致：返回文件浏览器。 */
