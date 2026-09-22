@@ -867,6 +867,7 @@ import {
   computed,
   watch,
   nextTick,
+  defineAsyncComponent,
 } from "vue";
 import { storeToRefs } from "pinia";
 import {
@@ -902,7 +903,7 @@ import TransferOwnershipDialog from "./TransferOwnershipDialog.vue";
 import SearchResultToolbar from "./SearchResultToolbar.vue";
 import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
-import FilePreviewModal from "./FilePreviewModal.vue";
+const FilePreviewModal = defineAsyncComponent(() => import("./FilePreviewModal.vue"));
 import UploadDropOverlay from "./UploadDropOverlay.vue";
 import FileDetailsContent from "./FileDetailsContent.vue";
 import DirectoryTree from "./DirectoryTree.vue";
