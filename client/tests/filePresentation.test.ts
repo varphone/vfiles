@@ -75,4 +75,18 @@ describe("file kind classification", () => {
     expect(fileKindLabel(file({ name: "notes.md" }))).toBe("文本文档");
     expect(fileKindLabel(file({ name: "whatever.bin" }))).toBe("BIN 文件");
   });
+
+
+  it("handles midnight boundary correctly (r181)", () => {
+    // 跨午夜 2 分钟差：日历日已变 = 应判「昨天」
+    const now = new Date("2026-03-10T00:01:00");
+    const nearMidnight = new Date("2026-03-09T23:59:00");
+    expect(formatRelativeDate(nearMidnight.toISOString(), now)).toContain("昨天");
+  });
+
+  it("handles year boundary correctly (r181)", () => {
+    const now = new Date("2026-01-02T10:00:00");
+    const newYear = new Date("2025-12-31T22:00:00");
+    expect(formatRelativeDate(newYear.toISOString(), now)).toContain("天前");
+  });
 });
