@@ -2565,6 +2565,17 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.85 HUD 超时淡出质感（round 79）
+
+- 微质感收尾：HUD 超时消失原为 `v-if` **瞬逝**（粗糙 ✗ 主流 = 200-300ms 淡出）——
+  补 `<Transition name="vf-hud">` 包裹（enter/leave 0.2s 透明度过渡 ✓ 降级豁免类
+  （r53/54 族块覆盖））。
+- **机制验证红利**：dead-style 扫描器 **transition 豁免 3 组**（+1 = vf-hud ✓
+  Transition name 豁免链路正确识别 ✓✓）；741 类（+4 豁免类）。
+- **全周期实测**（dispatch 键盘事件 ✓ r78 工具语）：`appearsAt150ms: true →
+  goneAfter2s3: true` ✓ 出现→超时→淡出→卸载全链（2.3s 窗含 0.2s leave ✓）。
+- 五门禁全绿（438 用例 ✓）。
+
 ### 4.84 中央浮动 HUD（round 78，三轮一主题收官）
 
 - Finder 式醒目回执落地：定位前缀时**视口中央浮动 pill**（弹出家族 = raised +

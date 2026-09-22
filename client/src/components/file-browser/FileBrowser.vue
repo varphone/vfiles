@@ -1,14 +1,17 @@
 <template>
   <!-- 光标跟随拖拽 chip（VS Code/macOS 式）：拖动时显示条目名/多选数 -->
   <Teleport to="body">
-    <!-- 定位前缀中央浮动 HUD（Finder 式醒目回执 r78 ✓ 与状态栏语境并存分工） -->
-    <div
-      v-if="typeAheadPrefix"
-      class="desktop-typeahead-hud"
-      aria-hidden="true"
-    >
-      {{ typeAheadPrefix }}
-    </div>
+    <!-- 定位前缀中央浮动 HUD（Finder 式醒目回执 r78 ✓ 与状态栏语境并存分工）。
+         Transition 包裹 = 超时淡出质感（r79 ✓ 否则 v-if 瞬逝粗糙 ✗） -->
+    <Transition name="vf-hud">
+      <div
+        v-if="typeAheadPrefix"
+        class="desktop-typeahead-hud"
+        aria-hidden="true"
+      >
+        {{ typeAheadPrefix }}
+      </div>
+    </Transition>
     <div
       v-if="draggingFile"
       class="desktop-drag-chip"
@@ -2762,6 +2765,16 @@ function handleSortChange(field: SortField) {
     justify-content: center;
   }
 }
+.vf-hud-enter-active,
+.vf-hud-leave-active {
+  transition: opacity 0.2s var(--vf-motion-standard);
+}
+
+.vf-hud-enter-from,
+.vf-hud-leave-to {
+  opacity: 0;
+}
+
 .desktop-typeahead-hud {
   position: fixed;
   top: 42vh;
