@@ -249,7 +249,7 @@
                 <span class="audit-user">{{ entry.username || "匿名" }}</span>
               </td>
               <td class="is-narrow">
-                <span class="audit-action">{{
+                <span class="audit-action vf-status-pill">{{
                   actionLabel(entry.action)
                 }}</span>
               </td>
@@ -769,13 +769,8 @@ onMounted(() => {
 }
 
 .audit-action {
-  display: inline-block;
-  padding: 0.1rem 0.4rem;
-  border-radius: 999px;
   background: var(--vf-surface-sunken);
   color: var(--vf-text);
-  font-size: 0.74rem;
-  white-space: nowrap;
 }
 
 .audit-target {

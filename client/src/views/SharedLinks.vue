@@ -136,7 +136,10 @@
             </div>
 
             <div class="shares-row-meta">
-              <span class="shares-badge" :class="statusClass(share)">
+              <span
+                class="shares-badge vf-status-pill"
+                :class="statusClass(share)"
+              >
                 {{ statusLabel(share) }}
               </span>
               <span>访问 {{ share.access_count }} 次</span>
@@ -584,12 +587,6 @@ onMounted(() => {
   flex-wrap: wrap;
   color: var(--vf-text-muted);
   font-size: 0.75rem;
-}
-
-.shares-badge {
-  padding: 0.1rem 0.4rem;
-  border-radius: 999px;
-  font-size: 0.72rem;
 }
 
 .shares-badge.is-active {

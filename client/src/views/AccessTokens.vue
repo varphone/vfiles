@@ -108,7 +108,10 @@
               </td>
               <td class="tokens-muted">{{ expiryLabel(token) }}</td>
               <td>
-                <span class="tokens-status" :class="statusClass(token)">
+                <span
+                  class="tokens-status vf-status-pill"
+                  :class="statusClass(token)"
+                >
                   {{ statusLabel(token) }}
                 </span>
               </td>
@@ -489,14 +492,6 @@ onMounted(async () => {
 
 .tokens-muted {
   color: var(--vf-text-subtle);
-}
-
-.tokens-status {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.05rem 0.4rem;
-  border-radius: 999px;
-  font-size: 0.74rem;
 }
 
 .tokens-status.is-active {

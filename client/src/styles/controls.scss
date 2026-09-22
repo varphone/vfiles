@@ -283,6 +283,18 @@
 
 /* 右键菜单与通知面板由各自组件 scoped 声明同名令牌（全局规则会被 scoped 覆盖） */
 
+/* 状态胶囊（分享/令牌/审计动作标签共用）：字号、内边距、圆角一处定义；
+   颜色/底色仍由各页的语义态（is-active/success/…）声明。 */
+.vf-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--vf-radius-pill);
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
 /* 页面卡片与页头（分享/审计/用户管理/访问令牌等工具页共享外壳）：
    一处定义圆角/内边距/标题字级/最大宽度，各页只需挂类名。 */
 .vf-page-card {
