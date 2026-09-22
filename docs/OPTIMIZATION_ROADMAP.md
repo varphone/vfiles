@@ -2565,6 +2565,25 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.5 搜索框主流化（round 5）
+
+- 现状（第 1 轮基线）：工具栏搜索输入 **32px**——比 36px 按钮还小，而 Drive/Dropbox 把搜索做成
+  页面里最大的控件（40–48px、浅灰填充、胶囊形）；宽度上限 416px 偏保守。
+- 改动：
+  1. 桌面搜索输入 **2rem → 2.5rem（40px）**、字号 14px，sunken 胶囊填充与 M3 焦点 halo 保留；
+  2. 搜索框上限 **416px → 480px**（basis 18rem → 20rem），仍随剩余空间弹性伸缩；
+  3. 右侧附着式按钮组随行拉伸到 40px——修复 `.desktop-search-toggle` 固定 36px
+     （`vf-icon-button` 的显式 height 阻止 stretch）导致的 2px 高低差；
+  4. 触屏（`pointer: coarse`）全局输入 `.input/.select/.textarea` **40px** 命中区。
+- 验证（真实浏览器）：
+  | 视口 | 输入框 | 搜索框宽 | 附着按钮 | 溢出检查 |
+  | --- | --- | --- | --- | --- |
+  | 1440×900 | **40px** | 480px | 40/40 对齐 ✓ | 工具栏/页面均不溢出 ✓ |
+  | 1280×900 | **40px** | 480px | 40/40 对齐 ✓ | 同上 ✓ |
+  | iPhone 13（coarse） | **40px** | — | — | ✓ |
+  焦点态：`box-shadow rgba(37,99,235,.29) 0 0 0 ~3px` halo + accent 边框（第 1 轮的焦点语言保留 ✓）；
+  截图 `ui-r43/desktop-search-final.png`；430 用例全绿、无控制台报错。
+
 ### 4.4 工具页共享外壳（round 4）
 
 - 数据驱动审计（浏览器实测四页卡片的计算样式）发现分歧：

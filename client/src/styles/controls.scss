@@ -353,6 +353,12 @@
   .button:not(.is-static) {
     min-height: 2.5rem;
   }
+
+  .input,
+  .select select,
+  .textarea {
+    min-height: 2.5rem;
+  }
 }
 
 .vf-primary-button:disabled {

@@ -188,9 +188,10 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 3;
   margin-left: auto;
-  flex: 1 1 18rem;
+  flex: 1 1 20rem;
   min-width: 8rem;
-  max-width: 26rem;
+  /* 主流网盘把搜索做成页面里最大的控件：上限 480px（Drive/Dropbox 量级） */
+  max-width: 30rem;
 }
 
 .desktop-search-inline {
@@ -204,9 +205,10 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-/* 搜索输入做成主流云盘的胶囊搜索框 */
+/* 搜索输入做成主流云盘的胶囊搜索框：40px 高于 36px 按钮（搜索是首要控件） */
 .desktop-search-control {
-  min-height: 2rem;
+  min-height: 2.5rem;
+  font-size: 0.875rem;
   border-radius: var(--vf-radius-pill);
   border-color: transparent;
   background: var(--vf-surface-sunken);
@@ -237,6 +239,9 @@ onBeforeUnmount(() => {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
   width: auto;
+  /* 覆盖 .vf-icon-button 的固定高度：随行拉伸到 40px，与左侧「搜索」按钮对齐 */
+  height: auto;
+  align-self: stretch;
   border-radius: 0 var(--vf-radius-sm) var(--vf-radius-sm) 0;
 }
 
