@@ -937,10 +937,6 @@ async function renameSelected() {
   }
 }
 
-.hero {
-  margin-bottom: 0;
-}
-
 .app-top-bar {
   padding-top: env(safe-area-inset-top);
   background: var(--vf-app-bar);
@@ -1064,11 +1060,6 @@ async function renameSelected() {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-}
-
-.mobile-search-field {
-  width: 100%;
-  min-width: 0;
 }
 
 .mobile-batch-panel {

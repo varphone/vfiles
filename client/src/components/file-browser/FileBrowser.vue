@@ -2375,12 +2375,9 @@ function handleSortChange(field: SortField) {
 <style scoped>
 .file-browser {
   /* 指向全局设计令牌，随明暗主题切换 */
-  --explorer-accent: var(--vf-accent);
-  --explorer-accent-soft: var(--vf-accent-tint);
-  --explorer-panel-bg: var(--vf-surface-translucent);
+  /* 唯一仍被引用的 explorer 令牌（搜索面板 ::after 分隔线）；
+     其余 accent/panel-bg/shell-bg/list-bg 消费者已在历轮重构中移除，令牌随之清理。 */
   --explorer-panel-border: var(--vf-border);
-  --explorer-shell-bg: var(--vf-shell-bg);
-  --explorer-list-bg: var(--vf-surface-translucent);
   margin: 0 auto;
   padding: 0;
 }
@@ -2463,13 +2460,6 @@ function handleSortChange(field: SortField) {
   min-width: 0;
 }
 
-.desktop-content-pane {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
 .desktop-list-shell {
   display: flex;
   flex-direction: column;
@@ -2480,48 +2470,6 @@ function handleSortChange(field: SortField) {
 .desktop-list-shell table {
   border-collapse: separate;
   border-spacing: 0;
-}
-
-.desktop-pane-section + .desktop-pane-section {
-  margin-top: 1rem;
-}
-
-.desktop-pane-heading {
-  margin: 0 0 0.65rem;
-  font-size: 0.74rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--vf-text-muted);
-}
-
-.desktop-nav-item {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 0.7rem 0.8rem;
-  border: none;
-  border-radius: 12px;
-  background: transparent;
-  color: var(--vf-text-strong);
-  cursor: pointer;
-  transition:
-    background-color 0.16s ease,
-    color 0.16s ease;
-  text-align: left;
-}
-
-.desktop-nav-item:hover:not(:disabled),
-.desktop-nav-item.is-active {
-  background: var(--explorer-accent-soft);
-  color: var(--vf-accent-text);
-}
-
-.desktop-nav-item.is-empty,
-.desktop-nav-item:disabled {
-  color: var(--vf-text-subtle);
-  cursor: default;
 }
 
 .desktop-list-meta {
@@ -2642,38 +2590,6 @@ function handleSortChange(field: SortField) {
   grid-template-columns: minmax(0, 1fr) 280px;
 }
 
-/* 空状态：图标 + 标题 + 说明 + 操作 */
-.browser-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 3.5rem 1rem;
-  text-align: center;
-}
-
-.browser-empty-icon {
-  color: var(--vf-text-subtle);
-  margin-bottom: 0.35rem;
-}
-
-.browser-empty-title {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--vf-text-strong);
-}
-
-.browser-empty-hint {
-  font-size: 0.82rem;
-  color: var(--vf-text-muted);
-}
-
-.browser-empty-actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
-}
-
 @media screen and (max-width: 1023px) {
   .file-browser {
     padding: 0;
@@ -2689,10 +2605,6 @@ function handleSortChange(field: SortField) {
 
   .file-browser-toolbar {
     padding: 0.55rem 0.9rem;
-  }
-
-  .breadcrumb-actions .buttons {
-    flex-wrap: nowrap;
   }
 
   .level {

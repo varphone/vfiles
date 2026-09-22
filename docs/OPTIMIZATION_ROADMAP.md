@@ -2565,6 +2565,24 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.15 空状态审计与死样式清理（round 14）
+
+- 审计方法：实测四个空状态的度量（图标/标题/说明/内边距/间距）+ 跨文件引用扫描。
+- **空状态已统一的确认**（此前没有数据支撑）：文件浏览器空目录、分享、令牌、搜索无结果
+  **全部走共享 `EmptyState`，指标逐项一致** —— 图标 34px、标题 15.2px/600、说明 13.12px、
+  内边距 52px/16px、间距 4.8px；`.browser-empty*` 自定义实现早已退役但**样式没删**。
+- 死样式清理（全仓库引用扫描确认零引用后删除，共 **12 条规则**）：
+  - FileBrowser：`.browser-empty` 家族 ×5（含注释）、`.desktop-nav-item` ×3、
+    `.desktop-pane-section + …`、`.desktop-pane-heading`、`.desktop-content-pane`、
+    `@media` 内的 `.breadcrumb-actions .buttons`；
+  - Home：`.hero`（Bulma 覆盖但无 hero 元素）、`.mobile-search-field`（搜索已迁到 MobileSearchBar）。
+- 孤儿令牌清理：`--explorer-*` 六个令牌中 **5 个消费者为 0**（历轮重构拆掉后遗留——
+  round 10 拆了 panel-bg、本轮拆了 accent-soft），仅保留仍被搜索面板 `::after` 引用的
+  `--explorer-panel-border`（并补注释说明）。
+- 验证：删除后全仓库 grep 零残留 ✓；视觉回归（真实浏览器）——列表 2 行、工具栏、面包屑、
+  目录树、详情面板、空目录 EmptyState「此文件夹为空」全部正常渲染，无控制台报错 ✓；
+  tsc/build/**432 用例**全绿 ✓。
+
 ### 4.14 拖放目标提示（round 13）
 
 - 交互（拖放体验第三块，rounds 10–12 之后）：高亮说明"哪里可以放"、源项变淡说明"什么在移动"，
