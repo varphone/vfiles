@@ -22,6 +22,9 @@ describe("KeyboardShortcutsDialog.vue", () => {
         ),
     );
     expect(keys).toContainEqual(["Ctrl", "A"]);
+    // 表漂移防护（r81）：r62/63 补的搜索框键位须在表内
+    expect(keys).toContainEqual(["↓"]);
+    expect(keys).toContainEqual(["Esc"]);
     expect(keys).toContainEqual(["Shift", "F10"]);
     expect(keys).toContainEqual(["F2"]);
   });

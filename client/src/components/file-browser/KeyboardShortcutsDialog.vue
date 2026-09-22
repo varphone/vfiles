@@ -94,7 +94,18 @@ const groups = [
     title: "预览与搜索",
     items: [
       { keys: "← →", description: "预览中切换上一个 / 下一个文件" },
-      { keys: "+ - 0 R", description: "预览图片时缩放、复位、旋转" },
+      {
+        keys: "+ - 0 R",
+        description: "预览图片时缩放（含 = 别名）、复位、旋转",
+      },
+      {
+        keys: "↓",
+        description: "搜索框内：进入结果首项（r62 补登 ✓ 表漂移修复）",
+      },
+      {
+        keys: "Esc",
+        description: "搜索框内：关高级面板 / 再按清搜索（两段式）",
+      },
       { keys: "?", description: "打开 / 关闭本快捷键面板" },
     ],
   },
