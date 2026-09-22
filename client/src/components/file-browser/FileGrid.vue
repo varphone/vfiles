@@ -1,6 +1,7 @@
 <template>
   <div
     class="file-grid"
+    :class="{ 'is-density-compact': view.density === 'compact' }"
     :style="{ '--file-card-min': `${cardMinWidth(thumbnailSize)}px` }"
   >
     <FileCard
@@ -41,6 +42,7 @@
 </template>
 
 <script setup lang="ts">
+import { useFileViewStore } from "../../stores/fileView.store";
 import { computed, toRefs } from "vue";
 import type { FileInfo } from "../../types";
 import FileCard from "./FileCard.vue";
@@ -111,6 +113,8 @@ const cards = computed(() =>
   ),
 );
 import { cardMinWidth } from "../../stores/fileView.store";
+
+const view = useFileViewStore();
 </script>
 
 <style scoped>
@@ -122,5 +126,10 @@ import { cardMinWidth } from "../../stores/fileView.store";
   );
   gap: 14px;
   padding: 4px 2px 12px;
+}
+
+.file-grid.is-density-compact {
+  gap: 8px;
+  padding: 2px 0 10px;
 }
 </style>

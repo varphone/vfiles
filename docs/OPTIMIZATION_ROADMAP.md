@@ -2575,6 +2575,9 @@
   文件自定义 mock ✓ 用 setItem("{}") 构造初态（既有式））；persist 为 post-watch
   （断言须 nextTick ✓）。
 - 445 全绿（+1 密度持久化断言）+ build ✓。
+- **r127 网格密度同步**（密度轴补全）：紧凑网格 = gap 14→8px + 内距压缩 ✓
+  FileGrid 直读 store ✓（小注：style 替换曾致规则块错位（padding 漂进新规则 + 缺分号
+  ✗ CssSyntaxError 拦截）；store 模块名漏 `.store` 后缀按错修 ✓）。
 
 ### 4.108x 空格快速预览（round 124，标志性交互对照）
 
