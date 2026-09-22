@@ -35,7 +35,7 @@ describe("formatRelativeDate", () => {
   });
 
   it("keeps missing or invalid values readable", () => {
-    expect(formatRelativeDate(undefined, NOW)).toBe("--");
+    expect(formatRelativeDate(undefined, NOW)).toBe("—");
     expect(formatRelativeDate("not-a-date", NOW)).toBe("not-a-date");
   });
 });

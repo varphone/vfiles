@@ -586,7 +586,7 @@ const desktopFileDateTitle = computed(() => {
 });
 
 const desktopFileSizeLabel = computed(() => {
-  if (props.file.kind === "directory") return "--";
+  if (props.file.kind === "directory") return "—";
   return formatSize(props.file.size_bytes || 0);
 });
 

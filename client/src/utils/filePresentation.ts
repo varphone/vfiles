@@ -101,9 +101,9 @@ export function formatDownloadProgress(loaded: number, total: number): string {
 }
 
 export function formatDate(date: string | undefined): string {
-  if (!date) return "--";
+  if (!date) return "—";
   const parsed = new Date(date);
-  if (Number.isNaN(parsed.getTime())) return date || "--";
+  if (Number.isNaN(parsed.getTime())) return date || "—";
 
   return parsed.toLocaleString("zh-CN", {
     year: "numeric",
@@ -122,9 +122,9 @@ export function formatRelativeDate(
   date: string | undefined,
   now: Date = new Date(),
 ): string {
-  if (!date) return "--";
+  if (!date) return "—";
   const parsed = new Date(date);
-  if (Number.isNaN(parsed.getTime())) return date || "--";
+  if (Number.isNaN(parsed.getTime())) return date || "—";
 
   const startOfDay = (value: Date) =>
     new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();

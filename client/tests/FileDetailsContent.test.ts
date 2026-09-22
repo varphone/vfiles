@@ -39,7 +39,7 @@ describe("FileDetailsContent.vue", () => {
     });
 
     expect(screen.getByText("文件夹")).toBeInTheDocument();
-    expect(screen.getByText("--")).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
     expect(screen.queryByText("最近提交")).toBeNull();
   });
 

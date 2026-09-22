@@ -50,7 +50,7 @@
           <dd>
             {{
               file.kind === "directory"
-                ? "--"
+                ? "—"
                 : formatSize(file.size_bytes || 0)
             }}
           </dd>

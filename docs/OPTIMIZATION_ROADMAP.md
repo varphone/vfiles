@@ -2565,6 +2565,17 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.97x 空值占位归一 + 语义表（round 97，显示格式轴收官）
+
+- 残件扫尾：占位符 `--`（ASCII 双连字符 ×6）vs `—`（em-dash ×4）**双符分叉** ✗ →
+  **归一 em-dash**（排印主流 = GitHub/Drive ✓ 双连字符 = ASCII 时代替代 ✗）✓
+  改后残留 grep = **0**（#37 践行 ✓）。
+- **空值显示语义表**（记档）：`—` = 表格/元数据 不适用/未知；`""`（`|| ""` ×30）=
+  可选字段空（模板示「长期」等语境文案 ✓）；双连字符**废止** ✓。
+- **测试轨迹**（+#39 工具语）：**FAIL 行须连文件读**（it 名 grep 落错文件 ✗✗）；
+  **assert 表达期望勿妄值**（`n >= 2` 妄断中止了正确编辑 ✗✓ 实为 1 处字面）。
+- 440 用例全绿 + size:check 在预算 ✓。
+
 ### 4.96x 显示格式归一 + size 怪形修复（round 96）
 
 - **显示格式轴**（第四真空白轮 ✓）：日期**三处实现**（中央 + VersionHistory/ShareDialog
