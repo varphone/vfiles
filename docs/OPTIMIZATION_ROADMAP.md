@@ -2565,6 +2565,23 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.19 次级面板框体收尾（round 18）
+
+- 对弹层/卡片家族之外的次级面板做最后一轮框体审计（真实浏览器双主题实测）：
+  | 面板 | 实测 | 判定 |
+  | --- | --- | --- |
+  | 历史对话框内部（`.version-history`/`.history-summary*`） | 扁平行、无框 | ✓ 合规（对话框本身是 round 3/10 家族框） |
+  | 上传队列（`.upload-queue*`） | 扁平行 | ✓ 合规 |
+  | 移动搜索条（`.mobile-search-toolbar`）/ 操作条 | 扁平工具条 | ✓ 合规 |
+  | **下载队列（Bulma `.box`）** | **12px 圆角 / 20px 内边距 / Bulma 阴影 / 无边框** | **✗ 唯一异类** |
+- 修复：`DownloadQueuePanel` 原本完全没有样式块（纯 Bulma `.box` 默认），补 scoped 样式
+  对齐**卡片家族**（round 4 语言）：14px 圆角 + `border-weak` 发丝边 + `shadow-card`
+  + 1.1/1.2/1.3rem 内边距节奏。
+- 验证（双主题实测）：浅色 白底 / `rgb(238,241,245)` / **14px** / shadow-card /
+  **17.6/19.2/20.8px** ✓；深色 `rgb(26,29,35)` / 14% 发丝线 / 14px / shadow-card ✓。
+  排坑：探针首次用 `.box` 兜底选择器先匹配到了外层 `file-browser-box`（pad 0 是它的），
+  按元素身份复核后确认队列卡片四项全部生效。432 用例全绿、无控制台报错。
+
 ### 4.18 Bulma 语义色全面对齐令牌（round 17）
 
 - 深挖第 16 轮"类名逃过字面清查"的线索，对 Bulma 语义类做双主题实测，发现**三层问题**：

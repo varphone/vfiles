@@ -176,3 +176,15 @@ function downloadPercent(item: DownloadQueueItem): number {
   return Math.min(100, Math.floor((loaded / total) * 100));
 }
 </script>
+
+<style scoped>
+/* 下载队列 = 状态卡片：对齐卡片家族语言（round 4 页面外壳）。
+   Bulma .box 自带 12px 圆角、20px 内边距与 box 阴影，与家族
+   （14px 圆角 / 发丝边框 / 阴影卡片 / 1.1-1.3rem 节奏）不一致，这里覆盖之。 */
+.box {
+  padding: 1.1rem 1.2rem 1.3rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-lg);
+  box-shadow: var(--vf-shadow-card);
+}
+</style>
