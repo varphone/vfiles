@@ -18,6 +18,7 @@
         <div
           v-for="row in rows"
           :key="row.path"
+          :data-vfiles-path="row.path"
           class="directory-tree-item"
           :class="{ 'is-drag-over': dragOverPath === row.path }"
           @dragover.prevent="onDragOver(row.path)"

@@ -2079,11 +2079,23 @@ describe("FileBrowser.vue drop hint", () => {
       expect(chip.className).toContain("is-over-target");
     });
 
-    // 离开落点（桩回文件行）→ 回「移动 …」
-    const fileRowOnly = container.querySelectorAll(
-      "tr.desktop-file-row",
-    )[1] as HTMLElement;
-    (document as any).elementFromPoint = () => fileRowOnly;
+    // 非法目标（拖自身行）→ 禁止态
+    (document as any).elementFromPoint = () => fileRow;
+    document.dispatchEvent(
+      new MouseEvent("dragover", {
+        clientX: 300,
+        clientY: 200,
+        bubbles: true,
+      }),
+    );
+    await waitFor(() => {
+      const chip = document.querySelector(".desktop-drag-chip") as HTMLElement;
+      expect(chip.textContent).toContain("不能放到这里");
+      expect(chip.className).toContain("is-invalid");
+    });
+
+    // 离开落点（桩到空白 body）→ 回「移动 …」（桩回拖拽行自身 = 仍是禁止态 ✗ 教训）
+    (document as any).elementFromPoint = () => document.body;
     document.dispatchEvent(
       new MouseEvent("dragover", {
         clientX: 300,

@@ -4,7 +4,10 @@
     <div
       v-if="draggingFile"
       class="desktop-drag-chip"
-      :class="{ 'is-over-target': dragChipTarget }"
+      :class="{
+        'is-over-target': dragChipTarget,
+        'is-invalid': dragChipInvalid,
+      }"
       :style="{
         left: `${dragChipPos.x}px`,
         top: `${dragChipPos.y}px`,
@@ -2015,9 +2018,11 @@ function handleDragEnd() {
 /** 光标跟随拖拽 chip：位置由捕获阶段 dragover 实时驱动（定位更新非动画 ✓ 无需降级）。 */
 const dragChipPos = ref({ x: -999, y: -999 });
 const dragChipTarget = ref<string | null>(null);
+const dragChipInvalid = ref(false);
 const dragChipLabel = computed(() => {
   const file = draggingFile.value;
   if (!file) return "";
+  if (dragChipInvalid.value) return "不能放到这里";
   if (dragChipTarget.value) return `放入 ${dragChipTarget.value}`;
   const sel = selectedPaths.value;
   if (sel instanceof Set && sel.size > 1 && sel.has(file.path)) {
@@ -2033,12 +2038,33 @@ function moveDragChip(e: DragEvent) {
   const row = el?.closest("tr[data-vfiles-path]") as HTMLElement | null;
   const rowIsDir = row?.querySelector("a.desktop-name-link") != null;
   const target = tree ?? (rowIsDir ? row : null);
+  const targetPath =
+    target?.getAttribute("data-vfiles-path") ??
+    row?.getAttribute("data-vfiles-path") ??
+    "";
+  const draggedPath = draggingFile.value?.path ?? "";
+  // 拖自身任何行 = 禁止（先于目录目标判定）
   if (
-    !target ||
-    (row &&
-      !tree &&
-      row.getAttribute("data-vfiles-path") === draggingFile.value?.path)
+    row &&
+    draggedPath &&
+    row.getAttribute("data-vfiles-path") === draggedPath
   ) {
+    dragChipTarget.value = null;
+    dragChipInvalid.value = true;
+    return;
+  }
+  // 非法目标（拖自身 / 自身子目录）→ 禁止态（useMoveDialog 落子校验的前置预示）
+  if (
+    target &&
+    draggedPath &&
+    (targetPath === draggedPath || targetPath.startsWith(`${draggedPath}/`))
+  ) {
+    dragChipTarget.value = null;
+    dragChipInvalid.value = true;
+    return;
+  }
+  dragChipInvalid.value = false;
+  if (!target) {
     dragChipTarget.value = null;
     return;
   }
@@ -2063,6 +2089,7 @@ watch(draggingFile, (cur) => {
     document.removeEventListener("dragover", moveDragChip, { capture: true });
     dragChipPos.value = { x: -999, y: -999 };
     dragChipTarget.value = null;
+    dragChipInvalid.value = false;
   }
 });
 onBeforeUnmount(() => {
@@ -2701,6 +2728,11 @@ function handleSortChange(field: SortField) {
     justify-content: center;
   }
 }
+.desktop-drag-chip.is-invalid {
+  background: var(--vf-danger-soft-strong);
+  border-color: var(--vf-danger-line);
+}
+
 .desktop-drag-chip.is-over-target {
   background: var(--vf-accent-soft-strong);
   border-color: var(--vf-accent);

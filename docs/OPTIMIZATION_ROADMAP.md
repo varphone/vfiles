@@ -2565,6 +2565,21 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.65 三态拖拽 chip（round 59，chip 三部收官）
+
+- chip 第三段：**非法目标禁止态**——拖自身行/自身子目录 →「不能放到这里」+
+  `is-invalid`（danger-soft-strong 底 + danger-line 边 ✓）= useMoveDialog 落子校验的
+  **前置预示**。三态语义：`移动 X`（空白）/ `放入 目标名`（有效目录）/
+  `不能放到这里`（自身/子目录）。
+- 判据精细化（测试驱动）：**拖自身任何行 = 禁止**（优先于目录目标判定 ✓ 文件行自身
+  也禁）；树条目补 `:data-vfiles-path="row.path"`（一行 ✓ 子目录判据全覆盖）。
+- **单测**（同用例三态断言 ✓ 432 全绿）；测试教训 +1：「回常态」桩**不能桩回拖拽行
+  自身**（= 仍禁止态 ✗ 实测踩中）→ 桩 `document.body` ✓。
+- 浏览器三态终验：`不能放到这里 [禁]` / `放入 目标目录 [落点]` / `移动 移动件.txt` ✓
+  全对。诚实记档：树子目录禁止案例未在浏览器直验（树默认折叠、元素未渲染），
+  与行案例共用同一判据代码路径 ✓。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 735（+1 is-invalid）✓ 432 用例 ✓ 构建 ✓）。
+
 ### 4.64 两段式拖拽 chip（round 58）
 
 - chip 进阶第二步（主流增强）：**悬停有效落点 →「放入 目标名」+ accent 强调**
