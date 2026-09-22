@@ -242,18 +242,21 @@
                 <div class="dropdown-content">
                   <a
                     class="dropdown-item"
+                    :class="{ 'is-current': actionMode === 'nav' }"
                     href="#"
                     @click.prevent="setActionMode('nav')"
                     >导航</a
                   >
                   <a
                     class="dropdown-item"
+                    :class="{ 'is-current': actionMode === 'history' }"
                     href="#"
                     @click.prevent="setActionMode('history')"
                     >历史</a
                   >
                   <a
                     class="dropdown-item"
+                    :class="{ 'is-current': actionMode === 'batch' }"
                     href="#"
                     @click.prevent="setActionMode('batch')"
                     >批量</a

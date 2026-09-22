@@ -574,8 +574,9 @@ onMounted(() => {
 
 .admin-filter {
   gap: 0.3rem;
-  min-height: 1.75rem;
-  padding: 0 0.55rem;
+  /* M3 filter chip 高度 32px（原 28px） */
+  min-height: 2rem;
+  padding: 0 0.6rem;
   font-size: 0.78rem;
 }
 

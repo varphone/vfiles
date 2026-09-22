@@ -168,8 +168,9 @@ onBeforeUnmount(() => {
 }
 
 .view-options-segment-button {
-  min-height: 1.75rem;
-  padding: 0 0.6rem;
+  /* 与控件语言一致（ghost 36px）：此前 28px 明显小于相邻按钮 */
+  min-height: 2.25rem;
+  padding: 0 0.85rem;
   font-size: 0.78rem;
 }
 

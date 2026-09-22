@@ -272,6 +272,13 @@
   box-shadow: 0 0 0 3px var(--vf-focus-ring);
 }
 
+/* 菜单中的当前项（如移动「更多」菜单的 当前模式）：tint + 字重标识状态 */
+.dropdown-item.is-current {
+  background: var(--vf-accent-soft);
+  color: var(--vf-accent-text);
+  font-weight: 600;
+}
+
 /* 拖放目标提示 chip：列表行/网格卡片落点处显示"移动到「名称」"，
    pointer-events:none 防止遮挡 drop 事件；absolute 定位避免行内回流。 */
 .desktop-drop-hint {

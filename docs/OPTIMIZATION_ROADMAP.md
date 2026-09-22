@@ -2565,6 +2565,27 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.20 分段控件与模式切换细化（round 19）
+
+- 参照 **M3 分段控件 / filter chip 规格**审计三处分段形态：
+  | 形态 | 改前 | 判定 |
+  | --- | --- | --- |
+  | 视图面板 列表/网格 分段按钮 | **28px** 高 | ✗ 小于 M3 下限 32，更小于我们 36px 控件语言 |
+  | 用户页角色筛选 chip | **28px** 高 | ✗ M3 filter chip = 32px |
+  | 移动「更多」菜单（导航/历史/批量） | 无当前模式标识 | ✗ 状态不可见 |
+  分段按钮的 0.15s 背景/文字过渡已存在 ✓（round 1 语言）。
+- 修复：分段按钮 **28 → 36px**（对齐 ghost 控件语言）+ padding 0.85rem 节奏；
+  筛选 chip **28 → 32px**（M3 chip）；`controls.scss` 新增 **`.dropdown-item.is-current`**
+  （accent-soft 底 + accent-text 字 + 600 字重），移动「更多」菜单三项按 `actionMode`
+  标注当前模式。
+- 验证（真实浏览器，含状态切换）：
+  | 检查项 | 实测 |
+  | --- | --- |
+  | 分段按钮 | 列表/网格 均 **36px**、`padding 0 13.6px`、过渡 0.15s ✓ |
+  | 筛选 chip（造 2 用户后渲染） | 全部2 / 管理员1 / 普通用户1 均 **32px** ✓ |
+  | 菜单当前态 | 初始「导航」`is-current`（accent-soft/accent-text）✓；切到批量后「批量」跟随 ✓ |
+  432 用例全绿、无控制台报错。（筛选条在单用户时不渲染——数据门控，属设计。）
+
 ### 4.19 次级面板框体收尾（round 18）
 
 - 对弹层/卡片家族之外的次级面板做最后一轮框体审计（真实浏览器双主题实测）：
