@@ -272,6 +272,18 @@
   box-shadow: 0 0 0 3px var(--vf-focus-ring);
 }
 
+/* 菜单条目语言（与右键菜单一致）：Bulma .dropdown-item 原为 14px / 6px 48px 16px / 0 圆角，
+   与 .vfiles-context-menu 条目（13.12px / 8px 10px / 6px 圆角）分叉。 */
+/* 选择器须含 a/button（与 Bulma 的 a.dropdown-item 同特异度、靠后胜出，
+   否则其 padding-right: 3em 会盖掉统一内边距）。 */
+a.dropdown-item,
+button.dropdown-item,
+.dropdown-item {
+  font-size: 0.82rem;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--vf-radius-sm);
+}
+
 /* 菜单中的当前项（如移动「更多」菜单的 当前模式）：tint + 字重标识状态 */
 .dropdown-item.is-current {
   background: var(--vf-accent-soft);

@@ -55,6 +55,7 @@ const props = withDefaults(
   {
     variant: "list",
     count: undefined,
+    thumbnailSize: undefined,
   },
 );
 

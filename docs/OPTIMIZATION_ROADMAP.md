@@ -2565,6 +2565,31 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.37 历史对话框比例细化 + 菜单条目语言统一（round 33）
+
+- **① 历史对话框两栏比例**（布局最后一项挂账）：
+  - 原 `1.1fr / 1fr` = **52% / 48%**（实测 462/420）—— 提交列表是**导航**、详情是**内容**，
+    主流版本浏览器 = 导航窄（≈33%）/ 内容宽（≈67%）✗ 列表过宽、详情局促；
+  - 详情栏 `overflow-y: visible` ✗ 长 diff 会撑高对话框（主流 = 双栏各自滚动）。
+  - 修复：`minmax(16rem, 0.5fr) / 1fr`（实测 **294 / 588 = 33% / 67%** ✓）；
+    详情栏 `overflow-y: auto; min-height: 0`（独立滚动 ✓）；双栏 `max-height: min(64vh,560px)`
+    统一（列表原本已有 ✓）。
+- **② 菜单条目语言统一**（`.dropdown-item` vs 右键菜单条目）：
+  | | 桌面右键（改前即基准） | 「更多」/账号（改前） | 改后（实测两菜单） |
+  | --- | --- | --- | --- |
+  | 字号 | 13.12px | **14px** ✗ | **13.12px** ✓ |
+  | 内边距 | 8px 10px | **6px 48px 6px 16px** ✗ | **8px 10px** ✓ |
+  | 条目圆角 | 6px | **0** ✗ | **8px**（`--vf-radius-sm` 令牌）✓ |
+  - **特异性陷阱**（值得记）：Bulma 的 `a.dropdown-item, button.dropdown-item`（0,1,1）
+    含 `padding-right: 3em`，压过 `.dropdown-item`（0,1,0）——「更多」三项是 `<a>` 而账号是
+    `<div>`，同类不同命；选择器列表补上 `a/button` 同特异度、靠后胜出 ✓。
+    （教训：比对 cssText 时勿截断 —— 我一度把规则截到 90 字符漏看了 padding-right。）
+  - 右键菜单容器/条目圆角并入 `--vf-radius-sm` 令牌（原硬编码 8/6px）。
+- 候选排除记录：拖拽边缘自动滚动**不做**（Chromium 对原生 HTML5 拖拽自带容器边缘滚动，
+  自建会双重滚动）。
+- 顺手补齐 round 31 `thumbnailSize` prop 的默认值（lint `require-default-prop` 归还
+  2 个既有告警）。434 用例全绿、tsc/build 通过。
+
 ### 4.36 键盘导航 × sticky 表头滚动缓冲（round 32）
 
 - 近期三连用户反馈都在表格区（悬停透底 / 拖拽失灵 / 列宽膨胀）——本轮**主动扫

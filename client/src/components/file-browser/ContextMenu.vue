@@ -109,7 +109,7 @@ onBeforeUnmount(closeListeners);
   min-width: 184px;
   padding: 4px;
   border: 1px solid var(--vf-border);
-  border-radius: 8px;
+  border-radius: var(--vf-radius-sm);
   /* 浮层色调抬升：深色下比基准面高一档（M3 dark / GitHub dark 的 tonal elevation） */
   background: var(--vf-surface-raised);
   box-shadow: var(--vf-shadow-menu);
@@ -122,7 +122,7 @@ onBeforeUnmount(closeListeners);
   width: 100%;
   padding: 8px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--vf-radius-sm);
   background: transparent;
   color: var(--vf-text);
   font-size: 0.82rem;

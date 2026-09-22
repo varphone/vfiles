@@ -797,7 +797,9 @@ function loadMore() {
 
 @media screen and (min-width: 900px) {
   .history-layout {
-    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    /* 主流版本浏览器比例：提交列表是导航（≈33%），详情是内容（≈67%）。
+       原 1.1fr/1fr（52/48）列表过宽、详情局促。 */
+    grid-template-columns: minmax(16rem, 0.5fr) minmax(0, 1fr);
   }
 }
 
@@ -809,6 +811,9 @@ function loadMore() {
 }
 
 .history-detail-pane {
+  /* 长 diff 独立滚动（主流 diff 浏览器行为）：原 visible 会撑高对话框 */
+  overflow-y: auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   min-width: 0;
