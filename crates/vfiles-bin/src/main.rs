@@ -1554,26 +1554,27 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
             .await
             .map(|_| ())
     }
-    async fn get_file(
+    async fn get_stream(
         &self,
         ns: &vfiles_domain::NamespaceId,
         path: &vfiles_domain::NormalizedPath,
-    ) -> vfiles_domain::DomainResult<Option<(Vec<u8>, String)>> {
-        use tokio::io::AsyncReadExt;
+    ) -> vfiles_domain::DomainResult<
+        Option<(
+            Box<dyn vfiles_domain::ReadSeek + Send + Unpin>,
+            String,
+            u64,
+        )>,
+    > {
+        // 流式直通（r201 ✓ reader 不落内存 ✓ open_file 同链）
         let file = match self.workspace.open_file(ns, path, None).await {
             Ok(f) => f,
             Err(vfiles_domain::DomainError::NotFound { .. }) => return Ok(None),
             Err(err) => return Err(err),
         };
-        let mut reader = file.reader;
-        let mut buf = Vec::with_capacity(file.size_bytes as usize);
-        reader.read_to_end(&mut buf).await.map_err(|err| {
-            vfiles_domain::DomainError::Validation {
-                message: format!("读取文件内容失败：{err}"),
-            }
-        })?;
-        let mime = file.mime_type.unwrap_or_else(|| "application/octet-stream".to_string());
-        Ok(Some((buf, mime)))
+        let mime = file
+            .mime_type
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        Ok(Some((file.reader, mime, file.size_bytes)))
     }
     async fn put_file(
         &self,

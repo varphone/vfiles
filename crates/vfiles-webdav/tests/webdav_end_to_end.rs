@@ -17,7 +17,7 @@ use vfiles_app::{
 };
 
 use vfiles_domain::types::RegisterRequest;
-use vfiles_domain::NormalizedPath;
+use vfiles_domain::{EntryRepo, NormalizedPath};
 use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteEntryRepo, SqliteMigrations, SqliteNamespaceRepo,
     SqlitePoolFactory, SqliteSessionRepo, SqliteSnapshotRepo, SqliteUserRepo,
@@ -32,11 +32,17 @@ struct NoopWrite;
 
 #[async_trait::async_trait]
 impl WebdavWriteOps for NoopWrite {
-    async fn get_file(
+    async fn get_stream(
         &self,
         _ns: &vfiles_domain::types::NamespaceId,
         _path: &NormalizedPath,
-    ) -> vfiles_domain::DomainResult<Option<(Vec<u8>, String)>> {
+    ) -> vfiles_domain::DomainResult<
+        Option<(
+            Box<dyn vfiles_domain::ReadSeek + Send + Unpin>,
+            String,
+            u64,
+        )>,
+    > {
         Ok(None)
     }
     async fn put_file(

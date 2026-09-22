@@ -18,6 +18,15 @@
 | 边界/错误语义 | ✅ Depth infinity = 400 ✓ If 复杂式 = 412 记档 ✓ 锁冲突 = 423 ✓ token 不配 = 409 ✓ |
 | **台架缺口注** | ⚠️ **rclone/Windows 客户端台架** = 待装验（curl 三断言已证栈级 ✓）；bin put_file 转发 = 下段一击（签名全清 ✓） |
 
+## 0.5 GET 流式化（r201 ✓ 商业级硬伤修 ✗ 大文件内存爆）
+
+| 件 | 实装 |
+| --- | --- |
+| trait | `get_file(Vec)` → **`get_stream(ReadSeek, mime, size)`** ✓ |
+| 服务 | **`open_file.reader` 直通**（底层 `get_blob_stream` 流式 API ✓ r103 已备） |
+| 响应 | `tokio_util::io::ReaderStream` → `Body::from_stream`（tokio-util `io` feature ✓） |
+| 实证 | **curl GET 200 / 19 bytes / 内容一致** ✓（免管道四 OK 链 ✓） |
+
 ## 1. 架构定案（r102 侦察实录）
 
 | 面 | 定案 | 依据 |

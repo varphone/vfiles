@@ -169,17 +169,18 @@ async fn get_op(
                 .unwrap()
         }
     };
-    match app.write.get_file(&ns, &path).await {
-        Ok(Some((bytes, mime))) => {
-            let len = bytes.len();
+    match app.write.get_stream(&ns, &path).await {
+        Ok(Some((reader, mime, size))) => {
+            // 流式响应（r201 ✓ 大文件不入内存 ✗ ReaderStream → Body）
             let builder = Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, mime)
-                .header(header::CONTENT_LENGTH, len.to_string());
+                .header(header::CONTENT_LENGTH, size.to_string());
             if is_head {
                 builder.body(Body::empty()).unwrap()
             } else {
-                builder.body(Body::from(bytes)).unwrap()
+                let stream = tokio_util::io::ReaderStream::new(reader);
+                builder.body(Body::from_stream(stream)).unwrap()
             }
         }
         Ok(None) => Response::builder()
