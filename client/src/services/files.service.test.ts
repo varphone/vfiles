@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getMock, postMock, putBinaryWithProgressMock, postFormNativeMock } = vi.hoisted(() => ({
-  getMock: vi.fn(),
-  postMock: vi.fn(),
-  putBinaryWithProgressMock: vi.fn(),
-  postFormNativeMock: vi.fn(),
-}));
+const { getMock, postMock, putBinaryWithProgressMock, postFormNativeMock } =
+  vi.hoisted(() => ({
+    getMock: vi.fn(),
+    postMock: vi.fn(),
+    putBinaryWithProgressMock: vi.fn(),
+    postFormNativeMock: vi.fn(),
+  }));
 
 vi.mock("./api.service", () => ({
   apiService: {
@@ -234,9 +235,7 @@ describe("filesService.createShareLink", () => {
       chunk_size: 4,
       total_chunks: 1,
     });
-    postFormNativeMock.mockRejectedValue(
-      new Error("网络错误，请检查连接"),
-    );
+    postFormNativeMock.mockRejectedValue(new Error("网络错误，请检查连接"));
 
     class MockFileReader {
       result: ArrayBuffer | string | null = null;
@@ -297,11 +296,16 @@ describe("filesService.createShareLink", () => {
 
     const loadedValues: number[] = [];
 
-    await filesService.uploadFile(new File(["data"], "archive.tar.gz"), "", "上传文件", {
-      onProgress: ({ loaded }) => {
-        loadedValues.push(loaded);
+    await filesService.uploadFile(
+      new File(["data"], "archive.tar.gz"),
+      "",
+      "上传文件",
+      {
+        onProgress: ({ loaded }) => {
+          loadedValues.push(loaded);
+        },
       },
-    });
+    );
 
     expect(putBinaryWithProgressMock).toHaveBeenCalledTimes(2);
     expect(loadedValues).toEqual([0, 2, 2, 4, 4]);
@@ -326,7 +330,11 @@ describe("filesService.createShareLink", () => {
     );
 
     expect(putBinaryWithProgressMock).toHaveBeenCalledTimes(2);
-    expect((putBinaryWithProgressMock.mock.calls[0]?.[1] as ArrayBuffer).byteLength).toBe(3);
-    expect((putBinaryWithProgressMock.mock.calls[1]?.[1] as ArrayBuffer).byteLength).toBe(2);
+    expect(
+      (putBinaryWithProgressMock.mock.calls[0]?.[1] as ArrayBuffer).byteLength,
+    ).toBe(3);
+    expect(
+      (putBinaryWithProgressMock.mock.calls[1]?.[1] as ArrayBuffer).byteLength,
+    ).toBe(2);
   });
 });

@@ -286,7 +286,7 @@ function onDrop(path: string) {
   align-items: center;
   border-radius: var(--vf-radius-sm);
   /* 落点高亮（is-drag-over）渐入 */
-  transition: background-color 0.15s ease;
+  transition: background-color 0.15s var(--vf-motion-standard);
 }
 
 .directory-tree-item.is-drag-over {
@@ -314,7 +314,7 @@ function onDrop(path: string) {
 }
 
 .directory-tree-chevron {
-  transition: transform 0.15s ease;
+  transition: transform 0.15s var(--vf-motion-standard);
 }
 
 .directory-tree-chevron.is-expanded {

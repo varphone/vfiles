@@ -559,10 +559,10 @@ onBeforeUnmount(() => {
   cursor: pointer;
   overflow: visible;
   transition:
-    box-shadow 0.15s ease,
-    border-color 0.15s ease,
-    transform 0.15s ease,
-    opacity 0.15s ease;
+    box-shadow 0.15s var(--vf-motion-standard),
+    border-color 0.15s var(--vf-motion-standard),
+    transform 0.15s var(--vf-motion-standard),
+    opacity 0.15s var(--vf-motion-standard);
 }
 
 .file-card:hover {
@@ -611,7 +611,7 @@ onBeforeUnmount(() => {
   object-fit: cover;
   /* 加载完成后淡入（配合骨架占位） */
   opacity: 0;
-  transition: opacity 0.18s ease-out;
+  transition: opacity 0.18s var(--vf-motion-standard);
   object-position: center;
 }
 
@@ -667,7 +667,7 @@ onBeforeUnmount(() => {
   color: var(--vf-text);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity 0.12s var(--vf-motion-standard);
   box-shadow: var(--vf-shadow-sm);
 }
 

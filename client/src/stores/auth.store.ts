@@ -18,7 +18,9 @@ export const useAuthStore = defineStore("auth", () => {
   const loading = ref(false);
   const error = ref<string | null>(null);
 
-  function applySessionBootstrap(bootstrap: SessionBootstrapPayload | null): void {
+  function applySessionBootstrap(
+    bootstrap: SessionBootstrapPayload | null,
+  ): void {
     capabilities.value = bootstrap?.capabilities ?? [];
     activeWorkspace.value = bootstrap?.activeWorkspace ?? null;
     features.value = bootstrap?.features ?? null;

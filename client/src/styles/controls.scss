@@ -18,8 +18,8 @@
   color: var(--vf-text-muted);
   cursor: pointer;
   transition:
-    background-color 0.15s ease,
-    color 0.15s ease;
+    background-color 0.15s var(--vf-motion-standard),
+    color 0.15s var(--vf-motion-standard);
 }
 
 .vf-icon-button:hover:not(:disabled),
@@ -82,8 +82,8 @@
   font-weight: 500;
   cursor: pointer;
   transition:
-    background-color 0.15s ease,
-    color 0.15s ease;
+    background-color 0.15s var(--vf-motion-standard),
+    color 0.15s var(--vf-motion-standard);
 }
 
 .vf-ghost-button:hover:not(:disabled),
@@ -235,7 +235,7 @@
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  transition: background-color 0.15s var(--vf-motion-standard);
 }
 
 .vf-primary-button:hover:not(:disabled),

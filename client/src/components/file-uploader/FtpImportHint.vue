@@ -271,7 +271,7 @@ watch(
 
 .ftp-import-caret {
   color: var(--vf-text-muted);
-  transition: transform 0.15s ease;
+  transition: transform 0.15s var(--vf-motion-standard);
 }
 
 .ftp-import-caret.is-open {

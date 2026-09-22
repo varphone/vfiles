@@ -13,6 +13,13 @@
 //!
 //! 切换方式见 `src/stores/theme.store.ts`。
 
+/* 动效令牌（M3 easing）：Standard == Emphasized = cubic-bezier(0.2, 0, 0, 1)
+   —— 状态过渡（hover/press/toggle）与入场共用；loading/shimmer 用 linear（M3 规范）。 */
+:root {
+  --vf-motion-standard: cubic-bezier(0.2, 0, 0, 1);
+  --vf-motion-exit: cubic-bezier(0.3, 0, 1, 1);
+}
+
 // 浅色：即项目此前的配色，保持视觉不变。
 @mixin vf-light-tokens {
   /* Bulma 语义色通道对齐 --vf-* 令牌（is-* 按钮/has-text-* 工具类按此派生）：

@@ -171,8 +171,8 @@ const versionLabel = computed(() => {
   border-radius: var(--vf-radius);
   background: var(--vf-surface);
   transition:
-    border-color 0.15s ease,
-    background 0.15s ease;
+    border-color 0.15s var(--vf-motion-standard),
+    background 0.15s var(--vf-motion-standard);
 }
 
 .history-row:hover .history-card,

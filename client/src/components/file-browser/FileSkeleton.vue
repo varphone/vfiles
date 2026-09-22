@@ -131,7 +131,7 @@ import { cardMinWidth } from "../../stores/fileView.store";
     var(--vf-skeleton-shine),
     transparent
   );
-  animation: file-skeleton-shimmer 1.3s infinite;
+  animation: file-skeleton-shimmer 1.3s linear infinite;
 }
 
 @keyframes file-skeleton-shimmer {

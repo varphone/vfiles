@@ -544,7 +544,7 @@ onBeforeUnmount(() => {
 .preview-image {
   max-width: 100%;
   max-height: 62vh;
-  transition: transform 0.12s ease-out;
+  transition: transform 0.12s var(--vf-motion-standard);
   user-select: none;
 }
 

@@ -2565,6 +2565,25 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.44 动效曲线统一（M3 easing 收尾，round 39）
+
+- 交互轴收尾：全仓过渡曲线审计（实测 **21 处 `ease`**、5 linear、2 ease-out、2 ease-in-out、
+  3 处已是 M3 曲线）。**M3 权威值**（[M3 motion 规范镜像](https://github.com/MiniMax-AI/skills/blob/main/skills/android-native-dev/references/motion-system.md)）：
+  | 曲线 | 值 | 用途 |
+  | --- | --- | --- |
+  | **Standard == Emphasized** | `cubic-bezier(0.2, 0, 0, 1)` | 状态过渡（hover/press/toggle）与入场 |
+  | Accelerate | `cubic-bezier(0.3, 0, 1, 1)` | 离场 |
+  | linear | — | **loading / shimmer / 进度**（M3 规范） |
+  round-3 选的"emphasized"恰是 Standard 同值 ✓ 无需改语义、只需归一命名。
+- 实施：
+  1. `theme.scss` 新增动效令牌 **`--vf-motion-standard`** / **`--vf-motion-exit`**（一处定义）；
+  2. **15 个文件**的 `ease`/`ease-out`/`ease-in-out` → `var(--vf-motion-standard)`；
+  3. 2 处 shimmer 显式 **`linear`**（原为默认 ease ✗ M3 要求 loading 线性）。
+- 验证：行 td / 工具栏按钮实测 `cubic-bezier(0.2, 0, 0, 1)` + 0.15s ✓ 令牌 ✓；
+  shimmer 源级 `1.3s linear infinite` ✓（注入法测 scoped 样式得到 0s 假象——
+  注入 DOM 不带组件 scope 属性，改以源码/产物为准 ✓ 既有教训复用）；
+  `bun run check` 全绿（62/430）、构建通过。
+
 ### 4.43 列宽回退内容自适应 + 移除拖拽调宽（用户反馈插曲，round 38 之后）
 
 - 症状（用户报告，二次）：列宽仍不正确；**操作列显示时内容放不下**；拖拽调宽"根本没法

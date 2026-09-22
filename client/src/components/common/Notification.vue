@@ -147,8 +147,8 @@ function remove(id: number) {
 .notification-enter-active,
 .notification-leave-active {
   transition:
-    opacity 0.25s ease,
-    transform 0.25s ease;
+    opacity 0.25s var(--vf-motion-standard),
+    transform 0.25s var(--vf-motion-standard);
 }
 
 .notification-enter-from {

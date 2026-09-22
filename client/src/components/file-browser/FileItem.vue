@@ -801,8 +801,8 @@ function share() {
 .file-item {
   cursor: pointer;
   transition:
-    background-color 0.15s ease,
-    opacity 0.15s ease;
+    background-color 0.15s var(--vf-motion-standard),
+    opacity 0.15s var(--vf-motion-standard);
   margin-bottom: 0 !important;
   border-radius: 0 !important;
   box-shadow: none !important;
@@ -862,8 +862,8 @@ function share() {
   vertical-align: middle;
   /* 悬停/选中/落点高亮都在 td 背景上；拖起时源行半透明 —— 统一 0.15s 渐入 */
   transition:
-    background-color 0.15s ease,
-    opacity 0.15s ease;
+    background-color 0.15s var(--vf-motion-standard),
+    opacity 0.15s var(--vf-motion-standard);
 }
 
 /* 拖起态（drag lift）：源项半透明，与目标高亮共同表达"拖动中" */
@@ -948,7 +948,7 @@ function share() {
   width: 1.75rem;
   height: 1.75rem;
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity 0.12s var(--vf-motion-standard);
 }
 
 .desktop-file-row:hover .desktop-row-menu,
@@ -960,7 +960,7 @@ function share() {
 /* hover 才出现的复选框：批量模式下由 FileItem 直接渲染常驻版本 */
 .desktop-row-check {
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity 0.12s var(--vf-motion-standard);
 }
 
 .desktop-file-row:hover .desktop-row-check,
@@ -981,7 +981,7 @@ function share() {
   flex-wrap: nowrap;
   justify-content: flex-end;
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity 0.12s var(--vf-motion-standard);
 }
 
 .desktop-file-row:hover .desktop-action-buttons,
@@ -1138,7 +1138,7 @@ function share() {
 /* 动画 */
 .slide-up-enter-active,
 .slide-up-leave-active {
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--vf-motion-standard);
 }
 
 .slide-up-enter-from,

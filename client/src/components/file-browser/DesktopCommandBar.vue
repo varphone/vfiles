@@ -375,7 +375,7 @@ const emit = defineEmits<{
   height: 0.45rem;
   border-radius: 50%;
   background: var(--vf-accent);
-  animation: upload-indicator-pulse 1.2s ease-in-out infinite;
+  animation: upload-indicator-pulse 1.2s var(--vf-motion-standard) infinite;
 }
 
 @keyframes upload-indicator-pulse {

@@ -89,7 +89,7 @@ withDefaults(
     var(--vf-skeleton-shine),
     transparent
   );
-  animation: skeleton-shimmer 1.3s infinite;
+  animation: skeleton-shimmer 1.3s linear infinite;
 }
 
 @keyframes skeleton-shimmer {

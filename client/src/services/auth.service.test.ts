@@ -65,23 +65,21 @@ describe("authService admin compatibility", () => {
   });
 
   it("falls back to the legacy admin users endpoint on 404", async () => {
-    getMock
-      .mockRejectedValueOnce({ status: 404 })
-      .mockResolvedValueOnce({
-        success: true,
-        data: {
-          users: [
-            {
-              id: "u2",
-              username: "bob",
-              email: "bob@example.com",
-              role: "admin",
-              disabled: false,
-              createdAt: "2026-01-02T00:00:00Z",
-            },
-          ],
-        },
-      });
+    getMock.mockRejectedValueOnce({ status: 404 }).mockResolvedValueOnce({
+      success: true,
+      data: {
+        users: [
+          {
+            id: "u2",
+            username: "bob",
+            email: "bob@example.com",
+            role: "admin",
+            disabled: false,
+            createdAt: "2026-01-02T00:00:00Z",
+          },
+        ],
+      },
+    });
 
     const result = await authService.listUsers();
 

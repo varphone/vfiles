@@ -988,8 +988,8 @@ async function renameSelected() {
   font-size: 0.82rem;
   cursor: pointer;
   transition:
-    background-color 0.15s ease,
-    border-color 0.15s ease;
+    background-color 0.15s var(--vf-motion-standard),
+    border-color 0.15s var(--vf-motion-standard);
 }
 
 .app-bar-account:hover,

@@ -338,7 +338,7 @@ watch(
 .storage-bar-segment {
   height: 100%;
   border-radius: 999px;
-  transition: width 0.2s ease;
+  transition: width 0.2s var(--vf-motion-standard);
 }
 
 .storage-bar-segment.is-empty {

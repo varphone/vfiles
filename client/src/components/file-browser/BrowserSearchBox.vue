@@ -246,7 +246,7 @@ onBeforeUnmount(() => {
 }
 
 .desktop-search-toggle svg {
-  transition: transform 0.18s ease;
+  transition: transform 0.18s var(--vf-motion-standard);
 }
 
 .desktop-search-toggle.is-open svg {

@@ -200,7 +200,7 @@ onMounted(() => {
 }
 
 .breadcrumb-tree-chevron {
-  transition: transform 0.15s ease;
+  transition: transform 0.15s var(--vf-motion-standard);
 }
 
 .breadcrumb-tree-chevron.is-expanded {
