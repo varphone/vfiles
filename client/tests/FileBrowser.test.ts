@@ -2061,6 +2061,40 @@ describe("FileBrowser.vue drop hint", () => {
 
     // dragover 实时驱动位置（光标右下 14px 偏移）——
     // jsdom 无 DragEvent 构造：用 MouseEvent 冒充 dragover（坐标 init 可用 ✓）
+    // jsdom 无 elementFromPoint：桩到目录行 → 两段式 chip 切「放入 目标名」
+    const dirRow = Array.from(
+      container.querySelectorAll("tr.desktop-file-row"),
+    ).find((r) => r.querySelector("a.desktop-name-link")) as HTMLElement;
+    (document as any).elementFromPoint = () => dirRow;
+    document.dispatchEvent(
+      new MouseEvent("dragover", {
+        clientX: 300,
+        clientY: 200,
+        bubbles: true,
+      }),
+    );
+    await waitFor(() => {
+      const chip = document.querySelector(".desktop-drag-chip") as HTMLElement;
+      expect(chip.textContent).toContain("放入");
+      expect(chip.className).toContain("is-over-target");
+    });
+
+    // 离开落点（桩回文件行）→ 回「移动 …」
+    const fileRowOnly = container.querySelectorAll(
+      "tr.desktop-file-row",
+    )[1] as HTMLElement;
+    (document as any).elementFromPoint = () => fileRowOnly;
+    document.dispatchEvent(
+      new MouseEvent("dragover", {
+        clientX: 300,
+        clientY: 200,
+        bubbles: true,
+      }),
+    );
+    await waitFor(() => {
+      const chip = document.querySelector(".desktop-drag-chip") as HTMLElement;
+      expect(chip.textContent).toContain("移动");
+    });
     document.dispatchEvent(
       new MouseEvent("dragover", {
         clientX: 300,

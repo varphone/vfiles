@@ -4,6 +4,7 @@
     <div
       v-if="draggingFile"
       class="desktop-drag-chip"
+      :class="{ 'is-over-target': dragChipTarget }"
       :style="{
         left: `${dragChipPos.x}px`,
         top: `${dragChipPos.y}px`,
@@ -2013,9 +2014,11 @@ function handleDragEnd() {
 
 /** 光标跟随拖拽 chip：位置由捕获阶段 dragover 实时驱动（定位更新非动画 ✓ 无需降级）。 */
 const dragChipPos = ref({ x: -999, y: -999 });
+const dragChipTarget = ref<string | null>(null);
 const dragChipLabel = computed(() => {
   const file = draggingFile.value;
   if (!file) return "";
+  if (dragChipTarget.value) return `放入 ${dragChipTarget.value}`;
   const sel = selectedPaths.value;
   if (sel instanceof Set && sel.size > 1 && sel.has(file.path)) {
     return `移动 ${sel.size} 项`;
@@ -2024,6 +2027,31 @@ const dragChipLabel = computed(() => {
 });
 function moveDragChip(e: DragEvent) {
   dragChipPos.value = { x: e.clientX + 14, y: e.clientY + 14 };
+  // 两段式：命中有效落点（树条目 / 目录行——目录行带名称链接 ✓）→「放入 目标名」
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const tree = el?.closest(".directory-tree-item") as HTMLElement | null;
+  const row = el?.closest("tr[data-vfiles-path]") as HTMLElement | null;
+  const rowIsDir = row?.querySelector("a.desktop-name-link") != null;
+  const target = tree ?? (rowIsDir ? row : null);
+  if (
+    !target ||
+    (row &&
+      !tree &&
+      row.getAttribute("data-vfiles-path") === draggingFile.value?.path)
+  ) {
+    dragChipTarget.value = null;
+    return;
+  }
+  dragChipTarget.value =
+    (
+      target.querySelector(".desktop-name-text, [class*=tree-name]")
+        ?.textContent ??
+      target.textContent ??
+      ""
+    )
+      .trim()
+      .split("\n")[0]
+      .slice(0, 24) || null;
 }
 watch(draggingFile, (cur) => {
   if (cur) {
@@ -2034,6 +2062,7 @@ watch(draggingFile, (cur) => {
   } else {
     document.removeEventListener("dragover", moveDragChip, { capture: true });
     dragChipPos.value = { x: -999, y: -999 };
+    dragChipTarget.value = null;
   }
 });
 onBeforeUnmount(() => {
@@ -2672,6 +2701,11 @@ function handleSortChange(field: SortField) {
     justify-content: center;
   }
 }
+.desktop-drag-chip.is-over-target {
+  background: var(--vf-accent-soft-strong);
+  border-color: var(--vf-accent);
+}
+
 .desktop-drag-chip {
   position: fixed;
   z-index: 60;

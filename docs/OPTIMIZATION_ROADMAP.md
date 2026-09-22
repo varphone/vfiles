@@ -2565,6 +2565,19 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.64 两段式拖拽 chip（round 58）
+
+- chip 进阶第二步（主流增强）：**悬停有效落点 →「放入 目标名」+ accent 强调**
+  （`is-over-target` = accent-soft-strong 底 + accent 边 ✓），离开回「移动 文件名/N 项」。
+- 目标检测 = **`elementFromPoint` 纯委托**（chip 层自足，零侵入 FileItem/DirectoryTree
+  ✓ 命中判据：树条目 / **目录行 = 带 `a.desktop-name-link` 的行**（目录专属链接 ✓）；
+  拖自身行不高亮）。
+- **单测**（同用例扩展）：桩 `document.elementFromPoint`（**jsdom 无此 API** ✓ 工具语 +1）
+  到目录行 → 断言「放入」+ `is-over-target`；桩回文件行 → 回「移动」✓ 57/57 过。
+- 浏览器实测两段：落点 `放入 目标目录` + `accent: true`；空白 `移动 移动件.txt` +
+  `accent: false` ✓。
+- 五门禁全绿（tsc ✓ eslint 2 ✓ 死样式 **734 类**（+1）✓ 432 用例 ✓ 构建 ✓）。
+
 ### 4.63 光标跟随拖拽 chip（round 57）
 
 - r56 提案候选**当轮转正**：VS Code/macOS 式拖拽浮标——拖动时显示「移动 文件名」/
