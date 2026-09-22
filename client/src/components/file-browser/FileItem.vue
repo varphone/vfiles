@@ -104,7 +104,7 @@
         class="desktop-name-location"
         :title="locationLabel"
       >
-        <IconFolder :size="12" />
+        <IconFolder :size="14" />
         <span class="desktop-name-location-text">{{ locationLabel }}</span>
       </span>
 

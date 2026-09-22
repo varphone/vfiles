@@ -24,7 +24,7 @@
 
     <div class="drop-zone-content">
       <div class="drop-zone-left">
-        <IconCloudUpload :size="24" class="icon-upload" />
+        <IconCloudUpload :size="22" class="icon-upload" />
         <span class="drop-zone-text">拖拽文件或目录到此处</span>
       </div>
       <div class="drop-zone-buttons">
