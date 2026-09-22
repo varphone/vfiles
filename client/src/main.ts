@@ -90,4 +90,17 @@ if (typeof window !== "undefined") {
 app.use(pinia);
 app.use(router);
 
+
+// 全局错误边界（r177 ✓ 主流兜底：崩而不白屏、收口可记可报）
+const errorBoundary = (source: string, error: unknown) => {
+  // eslint-disable-next-line no-console
+  console.error(`[vfiles:${source}]`, error);
+  const g = window as unknown as { __VF_ERROR_COUNT?: number };
+  g.__VF_ERROR_COUNT = (g.__VF_ERROR_COUNT ?? 0) + 1;
+  // TODO(r178)：生产上报端点 + 友好提示 toast（app store 注入时机评估）
+};
+app.config.errorHandler = (err) => errorBoundary("vue", err);
+window.addEventListener("error", (e) => errorBoundary("window", e.error ?? e.message));
+window.addEventListener("unhandledrejection", (e) => errorBoundary("promise", e.reason));
+
 app.mount("#app");
