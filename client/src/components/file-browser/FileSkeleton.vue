@@ -77,6 +77,8 @@ const skeletonCount = computed(
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  /* 与真实列表行同高（48px）：此前 42px → 加载完成瞬间 6px/行 的布局跳动 */
+  min-height: 3rem;
   padding: 0.6rem 0.35rem;
   border-bottom: 1px solid var(--vf-border-weak);
 }
@@ -92,6 +94,8 @@ const skeletonCount = computed(
   padding: 0.6rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: 10px;
+  /* 与真实卡片同高（200px）：消除加载完成瞬间的布局跳动 */
+  min-height: 12.5rem;
 }
 
 .skeleton-block {

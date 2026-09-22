@@ -2565,6 +2565,25 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.28 骨架屏与真实内容尺寸对齐（round 27）
+
+- 防布局跳动（CLS）审计：骨架屏独立实现，行高/卡高从未与真实内容对齐过。
+  用**路由延迟制造真实加载态**实测（Playwright 拦截 `files` 接口延迟 2.5s 后逐帧采样）：
+  | 形态 | 骨架 | 真实 | 跳动 |
+  | --- | --- | --- | --- |
+  | 列表行 | **42px** | **48px** | ✗ 每行 6px |
+  | 网格卡 | **156px** | **200px** | ✗ 每卡 44px |
+- 修复（`FileSkeleton.vue`）：`.file-skeleton-row` 加 `min-height: 3rem`（= 真实行高 48px）；
+  `.file-skeleton-card` 加 `min-height: 12.5rem`（= 真实卡高 200px，min-height 兜底、
+  与内部块比例无关）。复测：**列表 48 == 48 ✓ 网格 200 == 200 ✓ 零跳动**。
+- 过程教训（两条，均已成探针常识）：
+  1. **Playwright glob 的 `*` 不跨 `/`** —— `**/api/files*` 漏匹配 `/files/list`，
+     导致此前多次"骨架没出现"结论**全部无效**（拦截根本没生效）；改用 handler 内
+     `url.includes('/files')` 判断才真正延迟；
+  2. 多组件都有 `skeleton-*` 类，选择器先后命中别的组件（SkeletonList 行 22px 误当
+     FileSkeleton 行）——量尺寸必须用**无歧义单一选择器**。
+- 验证：433 用例全绿、tsc/build 通过。
+
 ### 4.27 批量操作条审计与开发约定落档（round 26）
 
 - **批量操作条（BatchActionBar）双主题实测**：
