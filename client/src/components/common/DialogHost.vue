@@ -22,7 +22,14 @@
     </template>
 
     <template #footer>
-      <button class="button" type="button" @click="cancel">
+      <!-- 确认类对话框默认焦点 = 中性钮（r133 ✓ 防 Enter 误确认）；
+           prompt 类焦点走 body 输入（自然获焦 ✓） -->
+      <button
+        class="button"
+        type="button"
+        :data-autofocus="dialog?.kind === 'confirm' ? '' : undefined"
+        @click="cancel"
+      >
         {{ dialog?.cancelText ?? "取消" }}
       </button>
       <button

@@ -2576,7 +2576,8 @@
   jsdom offsetParent 判据失效。**447 全绿（+2）** + build ✓。
 - **r132 初始焦点语义**（主流对话框规范对照）：焦点序 = `data-autofocus` 显式指定
   → body 首个可聚焦 → **跳过头部关闭钮**（Enter 误关险 ✗）；破坏性对话框默认焦
-  中性钮 = 语义级后续项。447 全绿 + build ✓。
+  中性钮 = 语义级后续项 → **r133 兑现**：confirm 类 `data-autofocus` 挂取消钮（防
+  Enter 误确认 ✓）prompt 类走 body 输入自然获焦 ✓ 447 全绿 + build ✓。
 
 ### 4.111x 全动线验收（round 130，13×10 轮验收）
 
