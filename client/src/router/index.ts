@@ -60,4 +60,10 @@ router.afterEach((to) => {
   document.title = to.meta?.title ? `${to.meta.title} - ${base}` : `${base} - 文件管理系统`;
 });
 
+router.addRoute({
+  path: "/:catchAll(.*)",
+  name: "not-found",
+  component: () => import("../views/NotFound.vue"),
+});
+
 export default router;
