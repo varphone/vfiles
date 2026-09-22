@@ -2565,6 +2565,21 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.29 表头悬停透底修复（用户反馈，round 28）
+
+- 症状（用户报告）：桌面文件列表**表头悬停时背景变透明**，能看见滚动到其下方的文件行。
+- 根因：`FileList.vue` 的 `thead th:hover { background: var(--vf-surface-hover) }` ——
+  `surface-hover` 是 **6% 半透明 tint**（深色 14% 同理），本意是**叠在实底上的行悬停色**；
+  悬停时它换掉了 round 3 sticky 表头规则的**不透明** `--vf-surface` → 表头透明、内容透出。
+- 修复：表头悬停改用**不透明** `--vf-surface-sunken`（浅 rgb(245,248,252) / 深 rgb(37,41,49)，
+  主流列头悬停 = 浅灰实底）；行悬停的 tint 用法不动（叠色语义正确）。
+- 验证（真实浏览器，40 文件列表滚动 400px 后悬停表头）：
+  | 主题 | 悬停背景 | alpha |
+  | --- | --- | --- |
+  | 浅色 | rgb(245,248,252) 实底 ✓ | **无** ✓ |
+  | 深色 | rgb(37,41,49) 实底 ✓ | **无** ✓ |
+  433 用例全绿、lint 通过。
+
 ### 4.28 骨架屏与真实内容尺寸对齐（round 27）
 
 - 防布局跳动（CLS）审计：骨架屏独立实现，行高/卡高从未与真实内容对齐过。

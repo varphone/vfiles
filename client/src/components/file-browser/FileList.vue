@@ -415,7 +415,9 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
 }
 
 .file-list-table thead th:hover {
-  background: var(--vf-surface-hover);
+  /* 必须用不透明底：surface-hover 是半透明 tint（行悬停叠色用），
+     换给 sticky 表头会让滚动内容透出（用户反馈的"表头悬停变透明"）。 */
+  background: var(--vf-surface-sunken);
 }
 
 .file-list-table thead th:hover .file-list-sort {
