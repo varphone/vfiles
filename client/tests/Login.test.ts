@@ -17,6 +17,25 @@ describe("Login.vue", () => {
 });
 
 describe("Login.vue auth shell", () => {
+  it("shows inline field errors with the aria chain (r86 family)", async () => {
+    const { getByText, container } = renderWithProviders(Login);
+
+    // 空提交 → 行内错误（原 toast 静默拦 ✗）+ aria 链
+    await fireEvent.click(container.querySelector(".auth-submit")!);
+    await waitFor(() => expect(getByText("请输入用户名")).toBeInTheDocument());
+    const input = container.querySelector("#auth-username")!;
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(input.getAttribute("aria-describedby")).toBe("auth-username-error");
+
+    // 密码字段同款（登录模式内确定性 ✓ 免切模式链）
+    await fireEvent.update(container.querySelector("#auth-username")!, "u");
+    await fireEvent.click(container.querySelector(".auth-submit")!);
+    await waitFor(() => expect(getByText("请输入密码")).toBeInTheDocument());
+    const pw = container.querySelector("#auth-password")!;
+    expect(pw.getAttribute("aria-invalid")).toBe("true");
+    expect(pw.getAttribute("aria-describedby")).toBe("auth-password-error");
+  });
+
   it("switches modes with the segmented control", async () => {
     const { findByText, getByRole, queryByPlaceholderText } =
       renderWithProviders(Login);

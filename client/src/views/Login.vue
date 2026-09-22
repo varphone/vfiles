@@ -45,9 +45,22 @@
               type="text"
               autocomplete="username"
               placeholder="3-32 位，字母数字-_"
+              :aria-invalid="fieldErrors.username ? 'true' : undefined"
+              :aria-describedby="
+                fieldErrors.username ? 'auth-username-error' : undefined
+              "
               :disabled="auth.loading"
             />
           </div>
+          <!-- 行内错误 + 字段级 aria 链（r86 样板族推广 ✓） -->
+          <p
+            v-if="fieldErrors.username"
+            id="auth-username-error"
+            class="auth-field-error"
+            role="alert"
+          >
+            {{ fieldErrors.username }}
+          </p>
         </div>
 
         <div v-if="mode === 'register'" class="auth-field">
@@ -79,9 +92,21 @@
                 mode === 'login' ? 'current-password' : 'new-password'
               "
               placeholder="至少 6 位"
+              :aria-invalid="fieldErrors.password ? 'true' : undefined"
+              :aria-describedby="
+                fieldErrors.password ? 'auth-password-error' : undefined
+              "
               :disabled="auth.loading"
             />
           </div>
+          <p
+            v-if="fieldErrors.password"
+            id="auth-password-error"
+            class="auth-field-error"
+            role="alert"
+          >
+            {{ fieldErrors.password }}
+          </p>
         </div>
 
         <button
@@ -226,11 +251,18 @@ function goForgotPassword() {
   router.push({ name: "forgot-password" });
 }
 
+const fieldErrors = ref<{ username?: string; password?: string }>({});
+
 async function submit() {
-  if (!username.value || !password.value) {
-    app.error("请输入用户名和密码");
-    return;
+  // 行内校验（r86 样板族推广）：必填 + 注册密码 ≥6（服务端同规则 ✓ 前端先行）
+  fieldErrors.value = {};
+  if (!username.value) fieldErrors.value.username = "请输入用户名";
+  if (!password.value) {
+    fieldErrors.value.password = "请输入密码";
+  } else if (mode.value === "register" && password.value.length < 6) {
+    fieldErrors.value.password = "密码至少 6 位";
   }
+  if (Object.keys(fieldErrors.value).length > 0) return;
 
   try {
     if (mode.value === "login") {
@@ -441,5 +473,11 @@ onMounted(async () => {
   color: var(--vf-text-subtle);
   font-size: 0.78rem;
   line-height: 1.5;
+}
+.auth-field-error {
+  margin: 0.3rem 0 0;
+  color: var(--vf-danger-text);
+  font-size: 0.75rem;
+  line-height: 1.4;
 }
 </style>

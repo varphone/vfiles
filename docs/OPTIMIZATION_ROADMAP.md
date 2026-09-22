@@ -2565,6 +2565,18 @@
 以最新的商业与开源同类应用为参照（Google Drive 的 [M3 形状刻度](https://m3.material.io/styles/shape/corner-radius-scale) 与状态层/焦点指示、
 微软 [Fluent 2 形状规范](https://fluent2.microsoft.design/shapes/#forms)、Dropbox/GitHub 的鲜明品牌蓝与胶囊按钮）。
 
+### 4.93 行内错误族推广至认证表单（round 87）
+
+- r86 样板推广：登录/注册**逐字段行内校验**（「请输入用户名」「请输入密码」+
+  注册「密码至少 6 位」= 与服务端同规则前置 ✓ 语言节祈使式 ✓）+ **双字段 aria 链**
+  （invalid/describedby ↔ role=alert 段 ✓）；校验类 toast 退居（服务端错误保留 toast ✓）。
+- **单测**（3/3 文件 ✓ 全套 **440** = +1）：登录模式内**两段确定性**（用户名空 /
+  密码空 → 文案 + 双 aria 断言 ✓）；注册段**诚实收窄**（分段切换「注册」与提交钮
+  同文双匹配链不稳 ✗ 记档待后续 selector 工具语化）。
+- **PROBE_IDIOMS #33**：**replace 不验证 = 静默失败**（本轮即犯两次 ✗✓ 一切替换附
+  assert）。
+- 五门禁全绿（440 用例 ✓）。
+
 ### 4.92 行内错误 + 字段级 aria 链（round 86）
 
 - 表单交互子轴深化：原计划补 aria 链 → 探出**更大缺口** ✗✗：空名提交
