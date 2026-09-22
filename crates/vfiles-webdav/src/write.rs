@@ -13,6 +13,15 @@ use vfiles_domain::DomainResult;
 
 #[async_trait]
 pub trait WebdavWriteOps: Send + Sync {
+    /// PUT（r110'b ✓ 商业级写面终件）：流式直传（`init_upload` + `complete_upload_from_stream` ✓
+    /// 免分片循环（小文件直传 ✓ 大文件 = HTTP 上传管线同源 ✓）。
+    async fn put_file(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        data: Vec<u8>,
+        user_id: &UserId,
+    ) -> DomainResult<()>;
     async fn mkcol(
         &self,
         namespace_id: &NamespaceId,

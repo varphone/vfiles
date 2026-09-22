@@ -142,6 +142,52 @@ fn internal_error() -> Response {
         .unwrap()
 }
 
+/// PUT（r110'b ✓ 纯拥有参（#46 纪律）✓ 覆盖语义 = 后端版本化（呼应 PROPOSAL ✓））。
+/// PUT（r110'b ✓ **纯拥有参**（#46 四号破案 ✗✗✗ 借不跨 await 强化））。
+async fn put_op(
+    app: Option<WebdavApplication>,
+    user: Option<vfiles_domain::types::User>,
+    ns: Option<vfiles_domain::types::NamespaceId>,
+    uri_owned: String,
+    put_body: Option<Vec<u8>>,
+) -> Response {
+    let Some(app) = app else {
+        return internal_error();
+    };
+    let Some(user) = user else {
+        return www_authenticate();
+    };
+    let Some(ns) = ns else {
+        return internal_error();
+    };
+    let Some(body_owned) = put_body else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::empty())
+            .unwrap();
+    };
+    let rel = uri_owned.trim_start_matches('/').trim_end_matches('/').to_string();
+    let path = match vfiles_domain::types::NormalizedPath::new(&rel) {
+        Ok(p) => p,
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::empty())
+                .unwrap()
+        }
+    };
+    match app.write.put_file(&ns, &path, body_owned, &user.id).await {
+        Ok(()) => Response::builder()
+            .status(StatusCode::CREATED)
+            .body(Body::empty())
+            .unwrap(),
+        Err(_) => Response::builder()
+            .status(StatusCode::CONFLICT)
+            .body(Body::empty())
+            .unwrap(),
+    }
+}
+
 /// 写操作三型（r108' ✓）。
 enum WriteOp {
     Mkcol,
@@ -353,6 +399,23 @@ async fn propfind_owned(
 /// 方法分派（PROPFIND 等非标方法经 `any` 到达 ✓）。
 #[axum::debug_handler]
 async fn dav(mut req: axum::extract::Request) -> Response {
+    // PUT body 预读（E0507 破案 ✓ `into_body` 需所有权 ✗ &Request ✗ = **match 前同步段**
+    // 拆 owned body ✓ #46 纯拥有纪律贯彻）。
+    // PUT body 预读（E0507 破案 ✓ 两步拆（#46 贯彻）：同步 take → owned to_bytes ✓）
+    let put_body: Option<Vec<u8>> = if req.method() == axum::http::Method::PUT {
+        let body_taken = std::mem::take(req.body_mut());
+        match axum::body::to_bytes(body_taken, usize::MAX).await {
+            Ok(b) => Some(b.to_vec()),
+            Err(_) => {
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(Body::empty())
+                    .unwrap()
+            }
+        }
+    } else {
+        None
+    };
     // 安全门（r106 ✓ dispatch 顶部全门）：OPTIONS 豁免（能力宣告无泄露 ✓ RFC 语义）
     // 其余方法 = Basic → verify 回调 → 401。
     if *req.method() != Method::OPTIONS {
@@ -472,10 +535,19 @@ async fn dav(mut req: axum::extract::Request) -> Response {
             .status(StatusCode::NOT_IMPLEMENTED)
             .body(Body::from("COPY 无后端 copy API（rclone 用 GET+PUT 不依赖 ✓ 记档）"))
             .unwrap(),
-        ref m if m.as_str() == "PUT" => Response::builder()
-            .status(StatusCode::NOT_IMPLEMENTED)
-            .body(Body::from("PUT = init_upload 链（r109' ✓ 与覆盖上传提案语义联动）"))
-            .unwrap(),
+        // PUT（r110'b ✓ 商业级写面终件 = 流式直传）。
+        // PUT（r110'b ✓ 商业级写面终件 = 流式直传）。
+        // 纯拥有参（#46 四号 ✗✗✗ 调用侧同步提取）。
+        ref m if m.as_str() == "PUT" => {
+            let app_owned = req.extensions().get::<WebdavApplication>().cloned();
+            let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
+            let ns_owned = req
+                .extensions()
+                .get::<vfiles_domain::types::NamespaceId>()
+                .cloned();
+            let uri_owned = req.uri().path().to_string();
+            put_op(app_owned, user_owned, ns_owned, uri_owned, put_body).await
+        }
         _ => Response::builder()
             .status(StatusCode::METHOD_NOT_ALLOWED)
             .body(Body::empty())

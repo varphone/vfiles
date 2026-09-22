@@ -3,6 +3,21 @@
 > 状态：**r102 架构定案 + crate 骨架**（本文件 = 实施契约 ✓ r103 = server 全写）。
 > 目标：挂载入 Finder / Windows 映射驱动器 / rclone / Cyberduck / davfs2 通用生态。
 
+## 0. 商业级清单定稿（r110'b ✓ 含缺口诚实注）
+
+| 项 | 状态 | 注 |
+| --- | --- | --- |
+| OPTIONS / PROPFIND（Depth 0/1）/ GET / HEAD | ✅ **实装 + 真服务证**（curl 207 ✓） | GET = 版本链（`EntryVersion.blob_id` 形清 ✓ 接线待接） |
+| MKCOL / DELETE / MOVE | ✅ 实装（`WebdavWriteOps` ✓ 审计链 user_id ✓） | |
+| **PUT** | ✅ **链实装**（`init_upload` + `complete_upload_from_stream` 流式直完 ✓） | bin 侧 `put_file` 转发 = 下段（签名已清 ✓） |
+| COPY | ⚠️ **501 记档** | 无后端 copy API ✓ rclone GET+PUT 不依赖 ✓ |
+| LOCK / UNLOCK | ✅ 实装（exclusive / depth 0 ✓ `ns:path` 隔离 ✓） | timeout = Infinite 记档；shared lock = 不支持（405 ✓） |
+| per-user ns | ✅ **实装**（`ensure_default_for_owner` ✓ 多用户隔离 ✓） |
+| auth 门 | ✅ dispatch 顶部（Basic → verify → 401 + WWW-Authenticate ✓ OPTIONS 豁免 ✓） |
+| 默认开启 | ✅ **用户令兑现**（`enabled: true` ✓ auth 强制防御 ✓ 真服务日志确证 ✓） |
+| 边界/错误语义 | ✅ Depth infinity = 400 ✓ If 复杂式 = 412 记档 ✓ 锁冲突 = 423 ✓ token 不配 = 409 ✓ |
+| **台架缺口注** | ⚠️ **rclone/Windows 客户端台架** = 待装验（curl 三断言已证栈级 ✓）；bin put_file 转发 = 下段一击（签名全清 ✓） |
+
 ## 1. 架构定案（r102 侦察实录）
 
 | 面 | 定案 | 依据 |
