@@ -27,6 +27,9 @@ pub struct AppConfig {
     pub maintenance: MaintenanceConfig,
     pub ftp: FtpConfig,
     pub webdav: WebdavConfig,
+    /// S3 兼容 API（round 2 ✗ 新协议面 = **默认关显式启用**（`VFILES_S3_ENABLED=true`）✗
+    /// 无键 = 运行时随机生成 + warn 打印（零配置试用 ✓ 生产 env 固定 ✓）。
+    pub s3: S3Config,
     pub features: FeatureMatrix,
 }
 
@@ -166,6 +169,37 @@ fn webdav_default_mount() -> String {
     "/dav".to_string()
 }
 
+/// S3 兼容 API 配置（对称 webdav env 形 ✓）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct S3Config {
+    /// **默认关**（新协议面 = 显式启用原则 ✗ r2 交付注：`VFILES_S3_ENABLED=true` 开）。
+    #[serde(default = "s3_default_enabled")]
+    pub enabled: bool,
+    /// 专用端口（path-style 与前端根语义冲突 ✗ MinIO 9000 惯例）。
+    #[serde(default = "s3_default_port")]
+    pub port: u16,
+    /// Access Key（空 = 运行时随机 + warn 打印）。
+    #[serde(default)]
+    pub access_key: String,
+    /// Secret Key（空 = 同上成对随机）。
+    #[serde(default)]
+    pub secret_key: String,
+}
+
+fn s3_default_enabled() -> bool {
+    false
+}
+
+fn s3_default_port() -> u16 {
+    9000
+}
+
+impl S3Config {
+    pub fn bind_address(&self) -> String {
+        format!("0.0.0.0:{}", self.port)
+    }
+}
+
 impl WebdavConfig {
     pub fn bind_address(&self) -> String {
         format!("{}:{}", self.host, self.port)
@@ -196,6 +230,21 @@ fn webdav_from_env(
 /// WebDAV 开关解析（r109b ✓ 对称 resolve_ftp_enabled 六分支 + **语义差**：
 /// `(None, false)` = FTP 软停 ✗ WebDAV = **Err**（用户令「默认开启」+ auth 强制 =
 /// 双保 ✓ 关 auth 必须显式关 WebDAV（VFILES_WEBDAV_ENABLED=false））。
+/// S3 env 读取（对称式 ✗ 四变量：enabled/port/access/secret ✗ 空键 = runtime 随机判定）。
+fn s3_from_env() -> Result<S3Config, ConfigError> {
+    let enabled = std::env::var("VFILES_S3_ENABLED")
+        .ok()
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    let port = std::env::var("VFILES_S3_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(9000);
+    let access_key = std::env::var("VFILES_S3_ACCESS_KEY").unwrap_or_default();
+    let secret_key = std::env::var("VFILES_S3_SECRET_KEY").unwrap_or_default();
+    Ok(S3Config { enabled, port, access_key, secret_key })
+}
+
 fn resolve_webdav_enabled(
     explicit: Option<bool>,
     auth_enabled: bool,
@@ -537,6 +586,7 @@ impl ConfigLoader {
             },
             ftp,
             webdav: webdav_from_env(webdav_enabled_raw, auth_enabled)?,
+            s3: s3_from_env()?,
             features: FeatureMatrix {
                 auth_enabled,
                 multi_user: true,
@@ -769,6 +819,9 @@ mod tests {
     fn test_config_load() {
         let config = ConfigLoader::load().unwrap();
         assert_eq!(config.http.port, 3000);
+        // r2: S3 新面默认关 + 专用端口 9000（显式 VFILES_S3_ENABLED 启用）
+        assert!(!config.s3.enabled, "S3 默认关（新协议面显式启用原则）");
+        assert_eq!(config.s3.port, 9000);
         assert!(config.auth.enabled);
         assert!(config.auth.login_rate_limit.enabled);
         assert_eq!(config.auth.login_rate_limit.window_ms, 300_000);

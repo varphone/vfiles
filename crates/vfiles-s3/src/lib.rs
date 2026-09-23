@@ -150,6 +150,20 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let path = norm(&input.key).map_err(dom_err)?;
+        // ETag = current_version_id hex 引号（r1 设计、r2 补赋值 ✗ 与 WebDAV derive_etag
+        // 跨协议同式 ✗ find + open 双查 = r1 注记的已知容忍）
+        let entry = self
+            .entry_repo
+            .find_by_path(&self.namespace, &path)
+            .await
+            .map_err(dom_err)?
+            .ok_or_else(|| s3s::s3_error!(NoSuchKey, "No such key"))?;
+        // None vid = 首版本未定形?Entries 恒有 vid（versions 链必建）✗ None → 空串防呆
+        // Strong 变体序列化自附引号 ✗ 存裸 hex 防双引（etag.rs:19-24 + 编译器式）
+        let etag = entry
+            .current_version_id
+            .map(|v| v.to_string().replace('-', ""))
+            .unwrap_or_default();
         let file = self
             .workspace
             .open_file(&self.namespace, &path, None)
@@ -165,6 +179,7 @@ impl S3 for VfilesS3 {
         out.content_length = Some(file.size_bytes as i64);
         out.content_type = file.mime_type;
         out.accept_ranges = Some("bytes".to_string());
+        out.e_tag = Some(s3s::dto::ETag::Strong(etag));
         ok(out)
     }
 
@@ -177,6 +192,18 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let path = norm(&input.key).map_err(dom_err)?;
+        // ETag 同 get（HEAD 头客户端同需 ✗ r2 补）
+        let entry = self
+            .entry_repo
+            .find_by_path(&self.namespace, &path)
+            .await
+            .map_err(dom_err)?
+            .ok_or_else(|| s3s::s3_error!(NoSuchKey, "No such key"))?;
+        // Strong 变体序列化自附引号 ✗ 存裸 hex 防双引（etag.rs:19-24 + 编译器式）
+        let etag = entry
+            .current_version_id
+            .map(|v| v.to_string().replace('-', ""))
+            .unwrap_or_default();
         let file = self
             .workspace
             .open_file(&self.namespace, &path, None)
@@ -186,6 +213,7 @@ impl S3 for VfilesS3 {
         out.content_length = Some(file.size_bytes as i64);
         out.content_type = file.mime_type;
         out.accept_ranges = Some("bytes".to_string());
+        out.e_tag = Some(s3s::dto::ETag::Strong(etag));
         ok(out)
     }
 

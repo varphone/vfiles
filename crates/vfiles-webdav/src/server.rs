@@ -1697,6 +1697,7 @@ mod decode_tests {
     }
 }
 
+#[cfg(test)]
 mod href_tests {
     use crate::server::{child_prefix, entry_href};
     
@@ -1716,6 +1717,7 @@ mod href_tests {
     }
 }
 
+#[cfg(test)]
 mod if_token_tests {
     use crate::server::if_token;
     

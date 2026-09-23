@@ -1,6 +1,7 @@
 mod import_cmd;
 
 use anyhow::{anyhow, bail};
+use vfiles_s3::VfilesS3;
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1260,6 +1261,25 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         config.webdav.mount_path.clone(),
     );
 
+    // 主停机信号（前移到 upload move 与 AppState 构造之前 ✗ S3 调用点需要两者皆活 +
+    // rx 已定义 = 依赖序矛盾解 ✗ 顶层作用域位置变 = 后续分发点照常可见）
+    let (service_shutdown_tx, service_shutdown_rx) = tokio::sync::watch::channel(false);
+
+    // S3 兼容 API（round 2 ✗ 默认关 = VFILES_S3_ENABLED 显式启用 ✗ 关时明示启用法）
+    if config.s3.enabled {
+        build_and_spawn_s3(
+            &config.s3,
+            Arc::clone(&entry_repo_arc),
+            Arc::clone(&ftp_workspace),
+            upload_service.clone(),
+            default_namespace_id,
+            default_actor_user_id,
+            service_shutdown_rx.clone(),
+        );
+    } else {
+        tracing::info!("S3 兼容 API 未启用（设置 VFILES_S3_ENABLED=true 后重启即可开放 9000 端口）");
+    }
+
     // Create app state
     let app_state = AppState {
         health_service,
@@ -1348,7 +1368,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     };
 
     // HTTP 与 FTP 共享同一个停机信号：任意一个收到 SIGTERM/SIGINT 都开始优雅停机
-    let (service_shutdown_tx, service_shutdown_rx) = tokio::sync::watch::channel(false);
+
 
     // WebDAV spawn（r110'a ✓ 降级式 = FTP 同款韧性（端口占用不拖垮站点 ✓））
     let webdav_handle = match webdav_runtime {
@@ -1679,6 +1699,93 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
             .await
             .map(|_| ())
     }
+}
+
+/// S3 SigV4 密钥对认证（round 2 ✗ env 静态单对：access 匹配 → 回 secret，供 s3s 内建
+/// SigV4 验签重算比对 ✗ 空键已在 runtime 层随机生成 + warn（零配置试用 ✓））。
+struct EnvAuth {
+    access_key: String,
+    secret_key: s3s::auth::SecretKey,
+}
+
+#[async_trait::async_trait]
+impl s3s::auth::S3Auth for EnvAuth {
+    async fn get_secret_key(
+        &self,
+        access_key: &str,
+    ) -> s3s::S3Result<s3s::auth::SecretKey> {
+        if access_key == self.access_key {
+            Ok(self.secret_key.clone())
+        } else {
+            Err(s3s::s3_error!(InvalidAccessKeyId, "unknown access key"))
+        }
+    }
+}
+
+/// 装配并拉起 S3 专用端口（round 2 ✗ 对称 webdav spawn：bind 在任务内失败 =
+/// r205 式 error 日志降级不拖垮主站 ✓ with_graceful_shutdown 接同一停机 watch ✗
+/// HandleError 包一层按官方 axum 例（Error→Infallible fallback 适配 ✓））。
+fn build_and_spawn_s3(
+    cfg: &vfiles_config::S3Config,
+    entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
+    workspace: std::sync::Arc<vfiles_app::DefaultWorkspaceService>,
+    upload: vfiles_app::UploadService<
+        vfiles_infra_sqlite::SqliteEntryRepo,
+        vfiles_infra_sqlite::SqliteSnapshotRepo,
+        vfiles_infra_sqlite::FsBlobStore,
+        vfiles_infra_sqlite::FsUploadStore,
+    >,
+    namespace: vfiles_domain::NamespaceId,
+    owner: vfiles_domain::UserId,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    // 密钥对：env 缺 = uuid 随机生成 + warn 打印 access（secret 不落日志 ✗ 生产 env 固定）
+    let (access_key, secret_key) = if cfg.access_key.is_empty() || cfg.secret_key.is_empty() {
+        let a = format!("VF{}", uuid::Uuid::new_v4().simple());
+        tracing::warn!(
+            access_key = %a,
+            "S3 未配置密钥对：已随机生成（打印 access ✗ secret 见启动调试 env；生产请设 VFILES_S3_ACCESS_KEY/SECRET_KEY）"
+        );
+        (a, s3s::auth::SecretKey::from(uuid::Uuid::new_v4().simple().to_string()))
+    } else {
+        (cfg.access_key.clone(), s3s::auth::SecretKey::from(cfg.secret_key.clone()))
+    };
+    let s3 = VfilesS3 { workspace, upload, entry_repo, namespace, owner };
+    let auth = EnvAuth { access_key, secret_key };
+    let mut builder = s3s::service::S3ServiceBuilder::new(s3);
+    builder.set_auth(auth);
+    let service = builder.build();
+    let router = axum::Router::new().fallback_service(axum::error_handling::HandleError::new(
+        service,
+        |err: s3s::HttpError| async move {
+            tracing::error!(?err, "S3 服务错误");
+            axum::response::Response::builder()
+                .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+                .body(axum::body::Body::from("Internal Server Error"))
+                .unwrap()
+        },
+    ));
+    let addr = cfg.bind_address();
+    tracing::info!(addr = %addr, "S3 兼容 API 已拉起（专用端口 ✗ SigV4 静态单对认证）");
+    tokio::spawn(async move {
+        match tokio::net::TcpListener::bind(&addr).await {
+            Ok(listener) => {
+                let shutdown_watch = async move {
+                    let _ = shutdown.changed().await;
+                };
+                if let Err(err) = axum::serve(listener, router)
+                    .with_graceful_shutdown(shutdown_watch)
+                    .await
+                {
+                    tracing::error!(%addr, error = %err, "S3 服务退出异常，继续提供其余服务");
+                }
+            }
+            Err(err) => {
+                // r205 式降级韧性（bind 失败不拖垮主站 ✗ 与 WebDAV 观测语义对齐）
+                tracing::error!(%addr, error = %err, "S3 绑定失败（端口占用或地址非法），继续提供其余服务");
+            }
+        }
+    });
 }
 
 /// 按配置装配 WebDAV（r110'a ✓ 用户令「默认开启」✓ config 层 auth 防御已守（r109b））。

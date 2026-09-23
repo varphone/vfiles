@@ -17,6 +17,7 @@ vfiles-domain = { path = "../vfiles-domain" }
 async-trait.workspace = true
 vfiles-ftp = { path = "../vfiles-ftp" }
 vfiles-webdav = { path = "../vfiles-webdav" }
+vfiles-s3 = { path = "../vfiles-s3" }
 vfiles-http = { path = "../vfiles-http" }
 vfiles-infra-fs = { path = "../vfiles-infra-fs" }
 vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }
@@ -32,6 +33,7 @@ tracing-log.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+s3s = "0.16"
 
 [dev-dependencies]
 camino.workspace = true
