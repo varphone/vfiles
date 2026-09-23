@@ -1,4 +1,19 @@
-# S3 兼容 API（… r33 fetch-owner → r34 桶生命周期 → **r35 版本列表**）
+# S3 兼容 API（… r34 桶生命周期 → r35 版本列表 → **r36 versionId 定向 + 版本控制配置**）
+
+## 状态（r36 末 · versioning 故事收口 ✗ 当前版删除诚实拒绝）
+
+- **实装**：
+  | 项 | 内容 |
+  | --- | --- |
+  | `versionId` 定向读 | `Get/Head ?versionId=` → `resolve_version`（`find_version` + 归属校验 ✗ 不存在/跨键 = `NoSuchVersion`）；etag/时间取该版本 ✗ `raw_commit` 透传 `open_file` = **正文/mime/size 同版本**（复用既有版本解析链） |
+  | 响应头 | `x-amz-version-id` 恒回（本系统 ETag ≡ version id hex） |
+  | `versionId` 定向删 | 新增 `EntryRepo::delete_version`（桩默认 false）；**非最新版删该行**；**最新版 → `InvalidRequest` 明示"需删除标记，未实现"**（诚实拒因，不静默错删） |
+  | 版本控制配置 | `GetBucketVersioning` → **`Enabled`**（每次写都产生版本 = 事实）；`PutBucketVersioning(Enabled)` 接受；**`Suspended`/未指定 → `InvalidArgument`**（无法取消版本化，明示）；`S3Router` 手写委托 |
+- **真机验收（真 SDK，12 项）**：3 版全列 · 定向读旧内容/旧 ETag/响应 versionId · 垃圾 id→`NoSuchVersion` ·
+  定向删非最新→ok 且列表剩 2 · 已删 id→`NoSuchVersion` · 最新版删→`InvalidRequest` 且对象仍在 ·
+  get=Enabled · put Enabled=ok · put Suspended=拒。
+- **回归**：自写探针 **24/24** · 真 SDK **48/48**（+versionId/版本配置 1 项）· clippy 0 警告。
+- **仍债**：**删除标记**（当前版删除已明示拒因）· region 校验（有意不做）。
 
 ## 状态（r35 末 · `ListObjectVersions` = 版本历史可见）
 

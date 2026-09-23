@@ -1294,6 +1294,17 @@ impl EntryRepo for SqliteEntryRepo {
             .collect()
     }
 
+    async fn delete_version(&self, version_id: &VersionId) -> DomainResult<bool> {
+        let res = sqlx::query("DELETE FROM entry_versions WHERE id = ?")
+            .bind(version_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to delete version: {}", e),
+            })?;
+        Ok(res.rows_affected() > 0)
+    }
+
     async fn files_with_meta_page(
         &self,
         namespace_id: &NamespaceId,

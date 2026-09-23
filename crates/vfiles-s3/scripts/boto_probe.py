@@ -55,7 +55,7 @@ def main():
     loc = s3.get_bucket_location(Bucket="default").get("LocationConstraint")
     ver = s3.get_bucket_versioning(Bucket="default")
     check("boto HeadBucket / location / versioning",
-          hb and hb404 and loc == "us-east-1" and ver.get("Status") is None,
+          hb and hb404 and loc == "us-east-1" and ver.get("Status") == "Enabled",
           f"head={hb} 404={hb404} loc={loc} ver={ver.get('Status')}")
 
     blob = b"0123456789abcdef"
@@ -304,6 +304,43 @@ def main():
           len(got) == 2 and len({(v['Key'], v['VersionId']) for v in got}) == 2,
           len(got))
     s3.delete_object(Bucket="default", Key="boto-ver/a.txt")
+
+    # ── versionId 定向读/删 + 版本控制配置（r36）──
+    vk = "boto-vid/a.txt"
+    for vb in [b"one", b"two", b"three"]:
+        s3.put_object(Bucket="default", Key=vk, Body=vb)
+    vl = s3.list_object_versions(Bucket="default", Prefix="boto-vid/")["Versions"]
+    oldv = [v for v in vl if not v["IsLatest"]][0]
+    g = s3.get_object(Bucket="default", Key=vk, VersionId=oldv["VersionId"])
+    curv = [v for v in vl if v["IsLatest"]][0]
+    vid_ok = (
+        len(vl) == 3
+        and g["ETag"] == oldv["ETag"]
+        and g.get("VersionId") == oldv["VersionId"]
+        and g["Body"].read() == b"two"
+        and curv.get("VersionId") == curv.get("ETag", "").strip('"')
+    )
+    def vcode(fn):
+        try:
+            fn()
+            return "ok"
+        except ClientError as e:
+            return e.response["Error"]["Code"]
+    oldv1 = [v for v in vl if not v["IsLatest"] and v["VersionId"] != oldv["VersionId"]][0]
+    del_ok = vcode(lambda: s3.delete_object(Bucket="default", Key=vk,
+                                            VersionId=oldv1["VersionId"])) == "ok"
+    del_cur = vcode(lambda: s3.delete_object(Bucket="default", Key=vk,
+                                             VersionId=curv["VersionId"])) == "InvalidRequest"
+    bad_ok = vcode(lambda: s3.get_object(Bucket="default", Key=vk, VersionId="deadbeef")) == "NoSuchVersion"
+    vcfg = s3.get_bucket_versioning(Bucket="default").get("Status") == "Enabled"
+    put_ok = vcode(lambda: s3.put_bucket_versioning(
+        Bucket="default", VersioningConfiguration={"Status": "Enabled"})) == "ok"
+    sus = vcode(lambda: s3.put_bucket_versioning(
+        Bucket="default", VersioningConfiguration={"Status": "Suspended"})) == "InvalidArgument"
+    check("boto versionId targeting + versioning config",
+          vid_ok and del_ok and del_cur and bad_ok and vcfg and put_ok and sus,
+          f"vid={vid_ok} del={del_ok} cur={del_cur} bad={bad_ok} cfg={vcfg} put={put_ok} sus={sus}")
+    s3.delete_object(Bucket="default", Key=vk)
 
     # ── 桶生命周期（r34）──
     def bcode(fn):

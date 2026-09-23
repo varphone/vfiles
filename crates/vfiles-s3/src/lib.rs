@@ -22,18 +22,20 @@
 use async_trait::async_trait;
 use s3s::dto::{
     AbortMultipartUploadInput, AbortMultipartUploadOutput, Bucket, BucketLocationConstraint,
-    CommonPrefix, CompleteMultipartUploadInput, CompleteMultipartUploadOutput, CopyObjectInput,
-    CopyObjectOutput, CopyObjectResult, CopyPartResult, CreateBucketInput, CreateBucketOutput,
-    CreateMultipartUploadInput, CreateMultipartUploadOutput, DeleteBucketInput, DeleteBucketOutput,
-    DeleteObjectInput, DeleteObjectOutput, DeleteObjectsInput, DeleteObjectsOutput, DeletedObject,
-    ETagCondition, Error as S3DeleteError, GetBucketLocationInput, GetBucketLocationOutput,
+    BucketVersioningStatus, CommonPrefix, CompleteMultipartUploadInput,
+    CompleteMultipartUploadOutput, CopyObjectInput, CopyObjectOutput, CopyObjectResult,
+    CopyPartResult, CreateBucketInput, CreateBucketOutput, CreateMultipartUploadInput,
+    CreateMultipartUploadOutput, DeleteBucketInput, DeleteBucketOutput, DeleteObjectInput,
+    DeleteObjectOutput, DeleteObjectsInput, DeleteObjectsOutput, DeletedObject, ETagCondition,
+    Error as S3DeleteError, GetBucketLocationInput, GetBucketLocationOutput,
     GetBucketVersioningInput, GetBucketVersioningOutput, GetObjectInput, GetObjectOutput,
     HeadBucketInput, HeadBucketOutput, HeadObjectInput, HeadObjectOutput, ListBucketsInput,
     ListBucketsOutput, ListMultipartUploadsInput, ListMultipartUploadsOutput,
     ListObjectVersionsInput, ListObjectVersionsOutput, ListObjectsInput, ListObjectsOutput,
     ListObjectsV2Input, ListObjectsV2Output, ListPartsInput, ListPartsOutput, MultipartUpload,
-    Object, ObjectVersion, Owner, Part, PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp,
-    UploadPartCopyInput, UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
+    Object, ObjectVersion, Owner, Part, PutBucketVersioningInput, PutBucketVersioningOutput,
+    PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp, UploadPartCopyInput,
+    UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
 use tokio::io::AsyncReadExt;
@@ -711,6 +713,39 @@ impl VfilesS3 {
             .map(|v| v.to_string().replace('-', "")))
     }
 
+    /// 目标版本（`versionId` ✗ 无 → 最新）：返回 `(etag, last_modified, 透传给 open_file 的 commit)`。
+    async fn resolve_version(
+        &self,
+        entry: &vfiles_domain::Entry,
+        version_id: Option<&str>,
+    ) -> S3Result<(String, Timestamp, Option<String>)> {
+        let Some(vid) = version_id else {
+            let etag = entry
+                .current_version_id
+                .map(|v| v.to_string().replace('-', ""))
+                .unwrap_or_default();
+            return Ok((etag, Timestamp::from(entry.created_at), None));
+        };
+        let version_id = vfiles_domain::VersionId::from_string(vid)
+            .map_err(|_| s3s::s3_error!(NoSuchVersion, "no such version"))?;
+        let ev = self
+            .entry_repo
+            .find_version(&version_id)
+            .await
+            .map_err(|_| s3s::s3_error!(NoSuchVersion, "no such version"))?;
+        if ev.entry_id != entry.id {
+            return Err(s3s::s3_error!(
+                NoSuchVersion,
+                "version does not belong to this key"
+            ));
+        }
+        Ok((
+            ev.id.to_string().replace('-', ""),
+            Timestamp::from(ev.created_at),
+            Some(vid.to_string()),
+        ))
+    }
+
     /// 变更类操作门控：命中只读凭证 → `AccessDenied`。
     fn require_write(&self, creds: Option<&s3s::auth::Credentials>) -> S3Result<()> {
         if let Some(c) = creds
@@ -923,7 +958,7 @@ impl S3 for VfilesS3 {
                 .await
                 .map_err(dom_err)?;
             let mut vs: Vec<&vfiles_domain::types::EntryVersion> = entry_versions.iter().collect();
-            vs.sort_by(|a, b| b.version_no.cmp(&a.version_no)); // 新版本在前（AWS 同形）
+            vs.sort_by_key(|e| std::cmp::Reverse(e.version_no)); // 新版本在前（AWS 同形）
             for ev in vs {
                 let vid = ev.id.to_string().replace('-', "");
                 if skipping {
@@ -1026,7 +1061,41 @@ impl S3 for VfilesS3 {
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
-        ok(GetBucketVersioningOutput::default())
+        // 本实现每次写入都产生版本 = 恒为 Enabled（与 AWS 同形应答）
+        ok(GetBucketVersioningOutput {
+            status: Some(BucketVersioningStatus::from(
+                BucketVersioningStatus::ENABLED.to_string(),
+            )),
+            ..Default::default()
+        })
+    }
+
+    /// 设版本控制状态（恒 Enabled ✗ Suspended/未指定 = 本实现无法满足，诚实拒绝）。
+    async fn put_bucket_versioning(
+        &self,
+        req: S3Request<PutBucketVersioningInput>,
+    ) -> S3Result<S3Response<PutBucketVersioningOutput>> {
+        let input = req.input;
+        self.require_write(req.credentials.as_ref())?;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        match input
+            .versioning_configuration
+            .status
+            .as_ref()
+            .map(|s| s.as_str())
+        {
+            Some("Enabled") => ok(PutBucketVersioningOutput::default()),
+            Some(_) => Err(s3s::s3_error!(
+                InvalidArgument,
+                "this gateway versions every write; only Enabled is supported"
+            )),
+            None => Err(s3s::s3_error!(
+                InvalidArgument,
+                "versioning status must be specified"
+            )),
+        }
     }
 
     async fn list_objects(
@@ -1096,11 +1165,10 @@ impl S3 for VfilesS3 {
             .map_err(dom_err)?
             .ok_or_else(|| s3s::s3_error!(NoSuchKey, "No such key"))?;
         // Strong 变体序列化自附引号 ✗ 存裸 hex 防双引（etag.rs:19-24）
-        let etag = entry
-            .current_version_id
-            .map(|v| v.to_string().replace('-', ""))
-            .unwrap_or_default();
-        let last_modified = Timestamp::from(entry.created_at);
+        // `versionId` 定向：etag/时间取该版本 ✗ raw_commit 透传 = 正文/mime/size 同版本
+        let (etag, last_modified, raw_commit) = self
+            .resolve_version(&entry, input.version_id.as_deref())
+            .await?;
         // 读条件（命中 304 即不读正文 = 缓存路径省 IO）
         check_get_conditions(
             &etag,
@@ -1112,7 +1180,7 @@ impl S3 for VfilesS3 {
         )?;
         let file = self
             .workspace
-            .open_file(&self.namespace, &path, None)
+            .open_file(&self.namespace, &path, raw_commit.as_deref())
             .await
             .map_err(dom_err)?;
         let mut data = Vec::with_capacity(file.size_bytes as usize);
@@ -1138,9 +1206,11 @@ impl S3 for VfilesS3 {
             content_type: file.mime_type,
             accept_ranges: Some("bytes".to_string()),
             content_range,
-            e_tag: Some(s3s::dto::ETag::Strong(etag)),
+            e_tag: Some(s3s::dto::ETag::Strong(etag.clone())),
             last_modified: Some(last_modified),
             metadata,
+            // 版本化桶恒回版本 id（本系统 ETag ≡ version id hex）
+            version_id: (!etag.is_empty()).then_some(etag),
             ..Default::default()
         };
         ok(out)
@@ -1161,11 +1231,10 @@ impl S3 for VfilesS3 {
             .await
             .map_err(dom_err)?
             .ok_or_else(|| s3s::s3_error!(NoSuchKey, "No such key"))?;
-        let etag = entry
-            .current_version_id
-            .map(|v| v.to_string().replace('-', ""))
-            .unwrap_or_default();
-        let last_modified = Timestamp::from(entry.created_at);
+        // `versionId` 定向：etag/时间取该版本 ✗ raw_commit 透传 = 正文/mime/size 同版本
+        let (etag, last_modified, raw_commit) = self
+            .resolve_version(&entry, input.version_id.as_deref())
+            .await?;
         // 读条件（命中 304 即不读正文 = 缓存路径省 IO）
         check_get_conditions(
             &etag,
@@ -1177,7 +1246,7 @@ impl S3 for VfilesS3 {
         )?;
         let file = self
             .workspace
-            .open_file(&self.namespace, &path, None)
+            .open_file(&self.namespace, &path, raw_commit.as_deref())
             .await
             .map_err(dom_err)?;
         let size = file.size_bytes;
@@ -1195,9 +1264,11 @@ impl S3 for VfilesS3 {
             content_type: file.mime_type,
             accept_ranges: Some("bytes".to_string()),
             content_range,
-            e_tag: Some(s3s::dto::ETag::Strong(etag)),
+            e_tag: Some(s3s::dto::ETag::Strong(etag.clone())),
             last_modified: Some(last_modified),
             metadata,
+            // 版本化桶恒回版本 id（本系统 ETag ≡ version id hex）
+            version_id: (!etag.is_empty()).then_some(etag),
             ..Default::default()
         };
         ok(out)
@@ -1614,6 +1685,41 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let path = norm(&input.key).map_err(dom_err)?;
+        // `versionId` 定向删（非最新版 → 删该行；最新版需删除标记 ✗ 本实现诚实拒绝）
+        if let Some(vid) = input.version_id.clone() {
+            let entry = self
+                .entry_at(&path)
+                .await?
+                .ok_or_else(|| s3s::s3_error!(NoSuchKey, "No such key"))?;
+            let version_id = vfiles_domain::VersionId::from_string(&vid)
+                .map_err(|_| s3s::s3_error!(NoSuchVersion, "no such version"))?;
+            let ev = self
+                .entry_repo
+                .find_version(&version_id)
+                .await
+                .map_err(|_| s3s::s3_error!(NoSuchVersion, "no such version"))?;
+            if ev.entry_id != entry.id {
+                return Err(s3s::s3_error!(
+                    NoSuchVersion,
+                    "version does not belong to this key"
+                ));
+            }
+            if entry.current_version_id == Some(ev.id) {
+                return Err(s3s::s3_error!(
+                    InvalidRequest,
+                    "deleting the current version requires delete markers, which are not implemented"
+                ));
+            }
+            if !self
+                .entry_repo
+                .delete_version(&version_id)
+                .await
+                .map_err(dom_err)?
+            {
+                return Err(s3s::s3_error!(NoSuchVersion, "no such version"));
+            }
+            return ok(DeleteObjectOutput::default());
+        }
         // 条件删（`If-Match` ✗ 不存在/不符即 412）
         let cur = self.etag_at(&path).await?;
         check_dest_conditions(cur.as_deref(), input.if_match.as_ref(), None)?;
@@ -2272,6 +2378,15 @@ impl S3 for S3Router {
     ) -> S3Result<S3Response<ListObjectVersionsOutput>> {
         self.pick(req.credentials.as_ref())
             .list_object_versions(req)
+            .await
+    }
+
+    async fn put_bucket_versioning(
+        &self,
+        req: S3Request<PutBucketVersioningInput>,
+    ) -> S3Result<S3Response<PutBucketVersioningOutput>> {
+        self.pick(req.credentials.as_ref())
+            .put_bucket_versioning(req)
             .await
     }
 

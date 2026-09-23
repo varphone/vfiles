@@ -310,6 +310,10 @@ pub trait EntryRepo {
         cursor: Option<&str>,
     ) -> DomainResult<Vec<EntryVersion>>;
     async fn find_version(&self, version_id: &VersionId) -> DomainResult<EntryVersion>;
+    /// 删除单个版本（S3 `DeleteObject ?versionId=` ✗ 桩默认返回 false = 拒绝）。
+    async fn delete_version(&self, _version_id: &VersionId) -> DomainResult<bool> {
+        Ok(false)
+    }
     /// 批量获取版本，避免目录列举时的 N+1 查询；不存在的 id 会被跳过。
     async fn find_versions(&self, version_ids: &[VersionId]) -> DomainResult<Vec<EntryVersion>>;
     /// 批量获取多条条目的全部版本（用于删除前的引用计数汇总）。
