@@ -6,6 +6,7 @@
 - `GetObject` / `HeadObject` 在删除标记晚于当前对象版本时隐藏对象；显式指定对象版本仍可读取。`ListObjects` / `ListObjectsV2` 也过滤当前标记遮蔽的对象。
 - `ListObjectVersions` 合并文件 key 与仅存在删除标记的 key 做游标分页；每个 key 的对象版本和删除标记按时间倒序混排计算 `IsLatest`，分页上限包含两类条目。
 - `DeleteObject?versionId=<marker>` 和 `DeleteObjects` 的版本定向删除可移除对应标记；普通批量删除在事务内批量创建标记，返回 marker 标志和版本 ID。
+- `GetObject` / `HeadObject?versionId=<marker>` 返回 `405 MethodNotAllowed` 与 `x-amz-delete-marker: true`；普通对象列表用每页批量查询过滤当前标记，避免逐 key 的数据库往返。
 - **仍待补齐**：删除并发与对象写入的统一排序序号、并发写入/删除的原子性，以及真实 S3 客户端验证。
 
 ## 当前工作树补充（CompleteMultipartUpload 选择分片）

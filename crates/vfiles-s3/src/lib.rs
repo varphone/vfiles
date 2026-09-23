@@ -122,6 +122,20 @@ fn ok<T>(output: T) -> S3Result<S3Response<T>> {
     Ok(S3Response::new(output))
 }
 
+fn delete_marker_read_error() -> s3s::S3Error {
+    let mut error = s3s::S3Error::with_message(
+        s3s::S3ErrorCode::MethodNotAllowed,
+        "the specified version is a delete marker",
+    );
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        "x-amz-delete-marker",
+        http::HeaderValue::from_static("true"),
+    );
+    error.set_headers(headers);
+    error
+}
+
 /// DomainErr → S3 错（NotFound/NoSuchKey / 其余 InternalError ✗ 消息带因）。
 fn dom_err(e: vfiles_domain::DomainError) -> s3s::S3Error {
     match e {
@@ -954,18 +968,18 @@ impl VfilesS3 {
     }
 
     async fn filter_current_delete_markers(&self, page: &mut Page) -> S3Result<()> {
-        let mut visible = Vec::with_capacity(page.contents.len());
-        for object in page.contents.drain(..) {
-            let Some(key) = object.key.as_deref() else {
-                visible.push(object);
-                continue;
-            };
-            let path = norm(key).map_err(dom_err)?;
-            if !self.has_current_delete_marker(&path).await? {
-                visible.push(object);
-            }
-        }
-        page.contents = visible;
+        let keys: Vec<_> = page
+            .contents
+            .iter()
+            .filter_map(|object| object.key.clone())
+            .collect();
+        let hidden = self
+            .delete_markers
+            .current_hidden_keys(&self.namespace, &keys)
+            .await
+            .map_err(dom_err)?;
+        page.contents
+            .retain(|object| object.key.as_ref().is_none_or(|key| !hidden.contains(key)));
         Ok(())
     }
 
@@ -1749,6 +1763,15 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let path = norm(&input.key).map_err(dom_err)?;
+        if let Some(version_id) = input.version_id.as_deref()
+            && self
+                .delete_markers
+                .contains_version(&self.namespace, path.as_str(), version_id)
+                .await
+                .map_err(dom_err)?
+        {
+            return Err(delete_marker_read_error());
+        }
         if input.version_id.is_none() && self.has_current_delete_marker(&path).await? {
             return Err(s3s::s3_error!(NoSuchKey, "No such key"));
         }
@@ -1822,6 +1845,15 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let path = norm(&input.key).map_err(dom_err)?;
+        if let Some(version_id) = input.version_id.as_deref()
+            && self
+                .delete_markers
+                .contains_version(&self.namespace, path.as_str(), version_id)
+                .await
+                .map_err(dom_err)?
+        {
+            return Err(delete_marker_read_error());
+        }
         if input.version_id.is_none() && self.has_current_delete_marker(&path).await? {
             return Err(s3s::s3_error!(NoSuchKey, "No such key"));
         }
@@ -3005,6 +3037,19 @@ mod tests {
             .expect("test operation should succeed");
         assert_eq!(read_back, bytes);
         assert_eq!(finish_md5(&digest), md5_hex(bytes));
+    }
+
+    #[test]
+    fn reading_a_delete_marker_returns_method_not_allowed_header() {
+        let error = delete_marker_read_error();
+        assert_eq!(*error.code(), s3s::S3ErrorCode::MethodNotAllowed);
+        assert_eq!(
+            error
+                .headers()
+                .and_then(|headers| headers.get("x-amz-delete-marker"))
+                .and_then(|value| value.to_str().ok()),
+            Some("true")
+        );
     }
 
     fn meta(key: &str, size: u64) -> ObjMeta {

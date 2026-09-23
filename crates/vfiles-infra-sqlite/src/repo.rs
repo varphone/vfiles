@@ -834,6 +834,73 @@ impl SqliteS3DeleteMarkerRepo {
         ))
     }
 
+    pub async fn contains_version(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        object_key: &str,
+        version_id: &str,
+    ) -> Result<bool, vfiles_domain::DomainError> {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM s3_delete_markers WHERE namespace_id = ? AND object_key = ? AND version_id = ?)",
+        )
+        .bind(namespace_id.to_string())
+        .bind(object_key)
+        .bind(version_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to look up S3 delete marker version: {e}"),
+        })?;
+        Ok(exists)
+    }
+
+    pub async fn current_hidden_keys(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        object_keys: &[String],
+    ) -> Result<std::collections::HashSet<String>, vfiles_domain::DomainError> {
+        let mut hidden = std::collections::HashSet::new();
+        for chunk in object_keys.chunks(400) {
+            let mut query = sqlx::QueryBuilder::new("WITH requested(object_key) AS (");
+            query.push_values(chunk, |mut row, key| {
+                row.push_bind(key);
+            });
+            query.push(
+                r#")
+                SELECT m.object_key
+                FROM requested r
+                JOIN s3_delete_markers m
+                  ON m.namespace_id = "#,
+            );
+            query.push_bind(namespace_id.to_string());
+            query.push(
+                r#" AND m.object_key = r.object_key
+                   AND m.rowid = (
+                       SELECT newest.rowid FROM s3_delete_markers newest
+                       WHERE newest.namespace_id = m.namespace_id
+                         AND newest.object_key = m.object_key
+                       ORDER BY newest.created_at DESC, newest.rowid DESC LIMIT 1
+                   )
+                LEFT JOIN entries e
+                  ON e.namespace_id = m.namespace_id AND e.path = m.object_key AND e.kind = 'file'
+                LEFT JOIN entry_versions v ON v.id = (
+                    SELECT current.id FROM entry_versions current
+                    WHERE current.entry_id = e.id ORDER BY current.version DESC LIMIT 1
+                )
+                WHERE v.created_at IS NULL OR m.created_at >= v.created_at"#,
+            );
+            let rows = query
+                .build_query_scalar::<String>()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| vfiles_domain::DomainError::Internal {
+                    message: format!("Failed to filter current S3 delete markers: {e}"),
+                })?;
+            hidden.extend(rows);
+        }
+        Ok(hidden)
+    }
+
     pub async fn keys_page(
         &self,
         namespace_id: &vfiles_domain::NamespaceId,
@@ -965,15 +1032,16 @@ mod s3_delete_marker_tests {
             .execute(&pool)
             .await
             .expect("test namespace should be inserted");
+        let z_entry_id = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO entries (id, namespace_id, path, kind) VALUES (?, ?, ?, 'file')")
-            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&z_entry_id)
             .bind(namespace.to_string())
             .bind("folder/z.txt")
             .execute(&pool)
             .await
             .expect("test object entry should be inserted");
 
-        let repo = SqliteS3DeleteMarkerRepo::new(pool);
+        let repo = SqliteS3DeleteMarkerRepo::new(pool.clone());
         let version_id = uuid::Uuid::new_v4().to_string();
         let created_at = time::OffsetDateTime::now_utc();
         repo.create(
@@ -1034,6 +1102,33 @@ mod s3_delete_marker_tests {
             .await
             .expect("combined key continuation should succeed");
         assert_eq!(second_page, ["folder/z.txt"]);
+        let z_marker_id = uuid::Uuid::new_v4().to_string();
+        repo.create(
+            &namespace,
+            "folder/z.txt",
+            &owner,
+            &z_marker_id,
+            created_at + time::Duration::seconds(1),
+        )
+        .await
+        .expect("marker on a live key should be created");
+        sqlx::query("INSERT INTO entry_versions (id, entry_id, version, size, created_at, created_by) VALUES (?, ?, 1, 12, ?, ?)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(z_entry_id)
+            .bind(created_at + time::Duration::seconds(2))
+            .bind(owner.to_string())
+            .execute(&pool)
+            .await
+            .expect("newer object version should be inserted");
+        let hidden = repo
+            .current_hidden_keys(
+                &namespace,
+                &["folder/object.txt".to_string(), "folder/z.txt".to_string()],
+            )
+            .await
+            .expect("batched visibility lookup should succeed");
+        assert!(hidden.contains("folder/object.txt"));
+        assert!(!hidden.contains("folder/z.txt"));
         assert!(
             repo.latest(&namespace, "folder/object.txt")
                 .await
