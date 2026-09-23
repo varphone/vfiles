@@ -174,23 +174,36 @@ fn preferred_precompression(accept_encoding: Option<&str>) -> Option<Precompress
     None
 }
 
-/// 是否接受某个编码（支持 `*` 通配，并忽略 `q=0`）。
+/// 是否接受某个编码。明确列出的编码优先于通配符，合法 q 范围为 0..=1。
 fn accepts_encoding(header: &str, encoding: &str) -> bool {
-    header.split(',').any(|part| {
+    fn quality(part: &str) -> Option<f32> {
         let mut pieces = part.trim().split(';');
-        let name = pieces.next().unwrap_or("").trim();
-        if name != encoding && name != "*" {
-            return false;
+        pieces.next()?;
+        let mut quality = 1.0;
+        for parameter in pieces {
+            let (key, value) = parameter.trim().split_once('=')?;
+            if key.trim().eq_ignore_ascii_case("q") {
+                quality = value.trim().parse::<f32>().ok()?;
+                if !(0.0..=1.0).contains(&quality) {
+                    return None;
+                }
+            }
         }
+        Some(quality)
+    }
 
-        let rejected = pieces.any(|parameter| {
-            let mut kv = parameter.trim().splitn(2, '=');
-            let key = kv.next().unwrap_or("").trim();
-            let value = kv.next().unwrap_or("").trim();
-            key == "q" && value.parse::<f32>().map(|q| q <= 0.0).unwrap_or(false)
-        });
-        !rejected
-    })
+    let mut wildcard_quality = None;
+    for part in header.split(',') {
+        let trimmed = part.trim();
+        let name = trimmed.split(';').next().unwrap_or("").trim();
+        if name == encoding {
+            return quality(trimmed).is_some_and(|q| q > 0.0);
+        }
+        if name == "*" {
+            wildcard_quality = quality(trimmed);
+        }
+    }
+    wildcard_quality.is_some_and(|q| q > 0.0)
 }
 
 fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
@@ -267,7 +280,11 @@ fn serve_embedded_file(
     encoding: Option<Precompressed>,
 ) -> Option<Response> {
     let file = EMBEDDED_FRONTEND.get_file(path)?;
-    Some(static_file_response(file.contents().to_vec(), hint, encoding))
+    Some(static_file_response(
+        file.contents().to_vec(),
+        hint,
+        encoding,
+    ))
 }
 
 fn static_file_response(
@@ -318,6 +335,10 @@ mod tests {
         assert!(!accepts_encoding("gzip", "br"));
         assert!(!accepts_encoding("br;q=0", "br"));
         assert!(accepts_encoding("br;q=0.5", "br"));
+        assert!(!accepts_encoding("br;q=0, *", "br"));
+        assert!(accepts_encoding("gzip;q=0, *;q=0.5", "br"));
+        assert!(!accepts_encoding("br;q=1.5", "br"));
+        assert!(!accepts_encoding("br;q=bogus", "br"));
         assert!(!accepts_encoding("identity", "gzip"));
     }
 
@@ -329,6 +350,10 @@ mod tests {
         );
         assert_eq!(
             preferred_precompression(Some("gzip")),
+            Some(Precompressed::Gzip)
+        );
+        assert_eq!(
+            preferred_precompression(Some("br;q=0, *;q=0.5")),
             Some(Precompressed::Gzip)
         );
         assert_eq!(preferred_precompression(Some("identity")), None);
