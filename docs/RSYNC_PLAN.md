@@ -1,4 +1,29 @@
-# rsync 协议 daemon（r9 列 → r10 取 → r11 下载 delta → r12 push → r13 认证 → **r14 收端 delta**）
+# rsync 协议 daemon（r9 列 → r10 取 → r11/14 delta → r12 push → r13 认证 → **r15 `--delete` 镜像**）
+
+## 状态（r15 末 · `--delete` 镜像落地 + 后端 trait 化）
+
+- **`--delete` 实装**（`--delete` / `--delete-before/during/delay/after/excluded` / `--del`）：
+  1. 识别 args 后**先读 filter list**（客户端 `receiver_wants_list=true` 才会发 ✗ 规则本版忽略）
+  2. 收 flist → 传文件（收端 delta 不变）
+  3. **镜像**：`backend.list(base, recursive)` 列目标 → 名字不在源集合者 = extra → 一次
+     `backend.delete(extras)`（`delete_entries` 处理目录后代）
+  4. `--delete` 无 `-r` → 记 warn 跳过（避免过度删除）
+- **架构重构**：三个闭包（list/read/write）→ **`RsyncBackend` trait**（`async_trait`：
+  `list`/`read`/`write`/`delete` 四法）✗ `handle_conn<S, B: RsyncBackend>` 签名收敛，后续加能力
+  不再堆泛型；bin 侧 `RepoBackend` 装配 domain 链，测试侧 `FakeBackend`（内存表）。
+- **真机验收**：
+  | 场景 | 结果 |
+  | --- | --- |
+  | 推 3 项 → 删本地 1 项 → **无 `--delete`** 重推 | 目标 `b.txt` **保留**（对照） ✓ |
+  | 同状态 **加 `--delete`** 重推 | `b.txt` **消失** + 拉回 `diff -r` **MIRROR IDENTICAL** ✓ |
+  | 删整个 `sub/` 后 `--delete` | `sub/` 整树消失 ✓ |
+  | 兄弟前缀 `del2/` 隔离 | 未受影响 ✓ |
+  | 子路径 `del2/inner/` 内删除 | 只动 `inner/`，`del2/keep.txt` 不动 ✓ |
+  | 回归：推/取 delta | 推 1,024 literal / 1,047,552 matched；取同数字 + 重建正确 ✓ |
+- **门禁**：`cargo test -p vfiles-rsync` **20/20**（trait 化后 `FakeBackend` 全绿）× workspace 全绿 ×
+  clippy 归零 × fmt × build。
+- **债**：filter/exclude 规则未解析（`--exclude` + `--delete-excluded` 语义不完整）· `--delete` 无 `-r`
+  时跳过 · 不比较 mtime/size · 符号链接/设备 · 空目录不落地 · basis 全量入内存。
 
 ## 状态（r14 末 · 收端 delta 落地 = 双向增量，推 3MiB 改 1KB 只传 1.7KB）
 

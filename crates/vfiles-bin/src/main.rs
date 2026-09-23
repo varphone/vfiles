@@ -1838,6 +1838,102 @@ type RsyncUploadService = vfiles_app::UploadService<
     vfiles_infra_sqlite::FsUploadStore,
 >;
 
+/// rsync 数据后端（domain 链装配 ✗ 下载/上传/删除三面同源）。
+struct RepoBackend {
+    repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
+    workspace: std::sync::Arc<vfiles_app::DefaultWorkspaceService>,
+    upload: RsyncUploadService,
+    namespace: vfiles_domain::NamespaceId,
+    owner: vfiles_domain::UserId,
+}
+
+#[async_trait::async_trait]
+impl vfiles_rsync::RsyncBackend for RepoBackend {
+    async fn list(
+        &self,
+        req: vfiles_rsync::ListRequest,
+    ) -> Result<Vec<vfiles_rsync::FlatEntry>, String> {
+        vfiles_rsync::collect_flat(&*self.repo, &self.namespace, &req).await
+    }
+
+    async fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+        let np = vfiles_domain::NormalizedPath::new(path).map_err(|e| e.to_string())?;
+        let content = self
+            .workspace
+            .read_file_bytes(&self.namespace, &np, None)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(content.bytes)
+    }
+
+    async fn write(&self, path: String, data: Vec<u8>) -> Result<(), String> {
+        let (parent_str, filename) = match path.rsplit_once('/') {
+            Some((d, n)) => (d.to_string(), n.to_string()),
+            None => (String::new(), path.clone()),
+        };
+        let filename = if filename.is_empty() {
+            "upload".to_string()
+        } else {
+            filename
+        };
+        let parent = vfiles_domain::NormalizedPath::new(&parent_str).map_err(|e| e.to_string())?;
+        let session = self
+            .upload
+            .init_upload(
+                &self.namespace,
+                &parent,
+                &filename,
+                data.len() as u64,
+                None,
+                None,
+                &self.owner,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        self.upload
+            .complete_upload_from_stream(
+                &session.upload_id,
+                None,
+                Some("rsync push"),
+                Box::new(std::io::Cursor::new(data)),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    async fn delete(&self, paths: Vec<String>) -> Result<(), String> {
+        // 先点查存在性（delete_entries 任一缺失即整体 NotFound ✗ 与 S3 同坑）
+        let mut existing = Vec::new();
+        for p in &paths {
+            let Ok(np) = vfiles_domain::NormalizedPath::new(p) else {
+                continue;
+            };
+            match self.repo.find_by_path(&self.namespace, &np).await {
+                Ok(Some(_)) => existing.push(np),
+                Ok(None) => {}
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        if existing.is_empty() {
+            return Ok(());
+        }
+        match self
+            .workspace
+            .delete_entries(
+                &self.namespace,
+                &existing,
+                Some("rsync --delete"),
+                &self.owner,
+            )
+            .await
+        {
+            Ok(_) | Err(vfiles_domain::DomainError::NotFound { .. }) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
 fn build_and_spawn_rsync(
     cfg: &vfiles_config::RsyncConfig,
     entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
@@ -1871,70 +1967,18 @@ fn build_and_spawn_rsync(
                                 let auth = auth.clone();
                                 let ns = namespace;
                                 tokio::spawn(async move {
+                                    let backend = RepoBackend {
+                                        repo,
+                                        workspace: ws,
+                                        upload,
+                                        namespace: ns,
+                                        owner,
+                                    };
                                     let res = vfiles_rsync::handle_conn(
                                         stream,
                                         &module,
                                         auth,
-                                        move |req| {
-                                            let repo = std::sync::Arc::clone(&repo);
-                                            async move {
-                                                vfiles_rsync::collect_flat(&*repo, &ns, &req).await
-                                            }
-                                        },
-                                        move |path: &str| {
-                                            let ws = std::sync::Arc::clone(&ws);
-                                            let path = path.to_string();
-                                            async move {
-                                                let np = vfiles_domain::NormalizedPath::new(&path)
-                                                    .map_err(|e| e.to_string())?;
-                                                let content = ws
-                                                    .read_file_bytes(&ns, &np, None)
-                                                    .await
-                                                    .map_err(|e| e.to_string())?;
-                                                Ok(content.bytes)
-                                            }
-                                        },
-                                        move |path: String, data: Vec<u8>| {
-                                            let upload = upload.clone();
-                                            async move {
-                                                let (parent_str, filename) =
-                                                    match path.rsplit_once('/') {
-                                                        Some((d, n)) => (d.to_string(), n.to_string()),
-                                                        None => (String::new(), path.clone()),
-                                                    };
-                                                let filename = if filename.is_empty() {
-                                                    "upload".to_string()
-                                                } else {
-                                                    filename
-                                                };
-                                                let parent = vfiles_domain::NormalizedPath::new(
-                                                    &parent_str,
-                                                )
-                                                .map_err(|e| e.to_string())?;
-                                                let session = upload
-                                                    .init_upload(
-                                                        &ns,
-                                                        &parent,
-                                                        &filename,
-                                                        data.len() as u64,
-                                                        None,
-                                                        None,
-                                                        &owner,
-                                                    )
-                                                    .await
-                                                    .map_err(|e| e.to_string())?;
-                                                upload
-                                                    .complete_upload_from_stream(
-                                                        &session.upload_id,
-                                                        None,
-                                                        Some("rsync push"),
-                                                        Box::new(std::io::Cursor::new(data)),
-                                                    )
-                                                    .await
-                                                    .map_err(|e| e.to_string())?;
-                                                Ok(())
-                                            }
-                                        },
+                                        &backend,
                                     )
                                     .await;
                                     if let Err(err) = res {

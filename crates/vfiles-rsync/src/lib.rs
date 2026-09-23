@@ -19,7 +19,6 @@
 //! 6. 收尾对答 = 3×NDX_DONE + 5×varlong30(3) 统计；随后读最后一个 NDX_DONE 问候
 //! 7. 递归 = 单 flist 全量（**不置 CF_INC_RECURSE** ✗ 避开增量递归面），嵌套名 = 全相对路径
 
-use std::future::Future;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use vfiles_domain::{EntryKind, NamespaceId};
 
@@ -447,6 +446,8 @@ struct ParsedArgs {
     recursive: bool,
     compress: bool,
     list_only: bool,
+    /// `--delete*`（镜像：删目标端源端没有的条目）。
+    delete: bool,
     /// `-e` 选项值 = 官方 `client_info`（行为能力串，决定 compat_flags）。
     client_info: String,
     paths: Vec<String>,
@@ -468,6 +469,8 @@ fn parse_args(segs: &[String]) -> ParsedArgs {
                 "list-only" => a.list_only = true,
                 "recursive" => a.recursive = true,
                 "no-r" => a.recursive = false,
+                "delete" | "delete-before" | "delete-during" | "delete-delay" | "delete-after"
+                | "delete-excluded" | "del" => a.delete = true,
                 _ => {}
             }
             continue;
@@ -1137,26 +1140,29 @@ where
 
 // ─────────────────────────── L1 状态机 ───────────────────────────
 
-/// 处理一条 rsync daemon 连接（协议 30 ✗ sender 面：列清单 + 整文件下载）。
-///
-/// - `list`：sender 模式解析完 args 后调用一次，返回该请求的条目流。
-/// - `read_file`：接收端请求某条目内容时按 `FlatEntry.fs_path` 调用（可多次）。
-pub async fn handle_conn<S, F, Fut, R, RFut, W, WFut>(
+/// rsync 连接的数据后端（下载取数 / 上传落库 / `--delete` 删条目 ✗ bin 装配 domain 链）。
+#[async_trait::async_trait]
+pub trait RsyncBackend: Send + Sync {
+    /// 枚举请求路径下的条目（`.` 必须首条 ✗ 下载面）。
+    async fn list(&self, req: ListRequest) -> Result<Vec<FlatEntry>, String>;
+    /// 按命名空间路径读文件内容（下载 / 收端 delta basis / `--delete` 存在性）。
+    async fn read(&self, path: &str) -> Result<Vec<u8>, String>;
+    /// 按命名空间路径写入文件（push）。
+    async fn write(&self, path: String, data: Vec<u8>) -> Result<(), String>;
+    /// 删除命名空间路径（`--delete` 镜像 ✗ 目录含后代）。
+    async fn delete(&self, paths: Vec<String>) -> Result<(), String>;
+}
+
+/// 处理一条 rsync daemon 连接（协议 30 ✗ 双向：下载/上传/增量/认证）。
+pub async fn handle_conn<S, B>(
     stream: S,
     module: &str,
     auth: AuthConfig,
-    list: F,
-    read_file: R,
-    write_file: W,
+    backend: &B,
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    F: FnOnce(ListRequest) -> Fut,
-    Fut: Future<Output = Result<Vec<FlatEntry>, String>>,
-    R: Fn(&str) -> RFut,
-    RFut: Future<Output = Result<Vec<u8>, String>>,
-    W: Fn(String, Vec<u8>) -> WFut,
-    WFut: Future<Output = Result<(), String>>,
+    B: RsyncBackend,
 {
     let mut rw = BufReader::new(stream);
 
@@ -1279,7 +1285,7 @@ where
             recursive: args.recursive,
             path: module_path(&args.paths, module),
         };
-        let mut entries = match list(req).await {
+        let mut entries = match backend.list(req).await {
             Ok(entries) => entries,
             Err(err) => {
                 tracing::warn!(error = %err, "rsync：列举失败，回空清单");
@@ -1378,7 +1384,7 @@ where
 
                 let entry = entries.get(ndx as usize);
                 let fs_path = entry.map(|e| e.fs_path.clone()).unwrap_or_default();
-                match read_file(&fs_path).await {
+                match backend.read(&fs_path).await {
                     Ok(data) => {
                         // count>0 = 有 basis → 真 delta（弱 sum1 滚动 + 强 sum2 前缀匹配）；
                         // 否则整文件 literal（无 basis 的常规路径）
@@ -1424,8 +1430,25 @@ where
         let _ = read_ndx(&mut rw, &mut pending, &mut rp.0, &mut rp.1).await?;
         Ok(())
     } else {
-        // ── push：客户端为 sender、本端为接收端（整文件接收 ✗ sum_head 全零不请求 delta）──
+        // ── push：客户端为 sender、本端为接收端 ──
         let base = module_path(&args.paths, module);
+        // `--delete*` → 客户端会先发 filter list（receiver_wants_list=true ✗ 规则本版忽略）
+        if args.delete {
+            loop {
+                let b = data_take(&mut rw, &mut pending, 4).await?;
+                let len = i32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+                if len == 0 {
+                    break;
+                }
+                if !(0..=64 * 1024).contains(&len) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "rsync: 非法 filter 规则长度（push）",
+                    ));
+                }
+                let _rule = data_take(&mut rw, &mut pending, len as usize).await?;
+            }
+        }
         let mut entries = recv_file_list(&mut rw, &mut pending, negotiated).await?;
         sort_flist(&mut entries);
         let mut rp = (-1i32, 1i32); // read_ndx 差分态
@@ -1442,7 +1465,7 @@ where
                 format!("{base}/{}", e.name)
             };
             // 取本地现有内容作 basis（存在 → 发块校验和请求真 delta；否则整文件）
-            let basis = read_file(&full).await.unwrap_or_default();
+            let basis = backend.read(&full).await.unwrap_or_default();
             let s2len: usize = 16;
             let (count, blength, remainder, block_bytes) = if basis.is_empty() {
                 (0i32, 0i32, 0i32, Vec::new())
@@ -1504,7 +1527,7 @@ where
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             // 文件校验和（协商 md5 = 16B；读走以推进流）
             let _file_sum = data_take(&mut rw, &mut pending, 16).await?;
-            match write_file(full.clone(), data).await {
+            match backend.write(full.clone(), data).await {
                 Ok(()) => transferred += 1,
                 Err(err) => tracing::warn!(path = %full, error = %err, "rsync push：写入失败"),
             }
@@ -1522,7 +1545,40 @@ where
                 break;
             }
         }
-        tracing::info!(files = transferred, "rsync push 完成");
+        // `--delete`：删目标端源端没有的条目（镜像 ✗ 递归才有意义；目录删含后代）
+        if args.delete {
+            if !args.recursive {
+                tracing::warn!("rsync：--delete 需配合 -r（本次跳过删除）");
+            } else {
+                let src_names: std::collections::HashSet<&str> =
+                    entries.iter().map(|e| e.name.as_str()).collect();
+                match backend
+                    .list(ListRequest {
+                        recursive: true,
+                        path: base.clone(),
+                    })
+                    .await
+                {
+                    Ok(dest) => {
+                        let extras: Vec<String> = dest
+                            .iter()
+                            .filter(|d| d.name != "." && !src_names.contains(d.name.as_str()))
+                            .map(|d| d.fs_path.clone())
+                            .filter(|p| !p.is_empty())
+                            .collect();
+                        if !extras.is_empty() {
+                            let n = extras.len();
+                            match backend.delete(extras).await {
+                                Ok(()) => tracing::info!(removed = n, "rsync --delete 完成"),
+                                Err(e) => tracing::warn!(error = %e, "rsync --delete 失败"),
+                            }
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, "rsync --delete 列举目标失败"),
+                }
+            }
+        }
+        tracing::info!(files = transferred, delete = args.delete, "rsync push 完成");
         Ok(())
     }
 }
@@ -1662,6 +1718,43 @@ async fn walk(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 测试后端（内存文件表 ✗ 零 domain 依赖）。
+    struct FakeBackend {
+        entries: Vec<FlatEntry>,
+        files: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+    }
+
+    impl FakeBackend {
+        fn new(entries: Vec<FlatEntry>, files: Vec<(String, Vec<u8>)>) -> Self {
+            Self {
+                entries,
+                files: std::sync::Mutex::new(files.into_iter().collect()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RsyncBackend for FakeBackend {
+        async fn list(&self, _req: ListRequest) -> Result<Vec<FlatEntry>, String> {
+            Ok(self.entries.clone())
+        }
+        async fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+            self.files
+                .lock()
+                .unwrap()
+                .get(path)
+                .cloned()
+                .ok_or_else(|| "not found".to_string())
+        }
+        async fn write(&self, path: String, data: Vec<u8>) -> Result<(), String> {
+            self.files.lock().unwrap().insert(path, data);
+            Ok(())
+        }
+        async fn delete(&self, _paths: Vec<String>) -> Result<(), String> {
+            Ok(())
+        }
+    }
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
@@ -1826,16 +1919,10 @@ mod tests {
     async fn module_list_and_unknown_module() {
         let (client, server) = tokio::io::duplex(4096);
         tokio::spawn(async move {
-            handle_conn(
-                server,
-                "files",
-                AuthConfig::default(),
-                |_| async { Ok(Vec::new()) },
-                |_p: &str| async { Ok(Vec::new()) },
-                |_p: String, _d: Vec<u8>| async { Ok(()) },
-            )
-            .await
-            .unwrap()
+            let backend = FakeBackend::new(Vec::new(), Vec::new());
+            handle_conn(server, "files", AuthConfig::default(), &backend)
+                .await
+                .unwrap()
         });
         let mut c = BufReader::new(client);
         let mut line = String::new();
@@ -1876,19 +1963,10 @@ mod tests {
         let (client, server) = tokio::io::duplex(64 * 1024);
         let server_entries = entries.clone();
         tokio::spawn(async move {
-            handle_conn(
-                server,
-                "files",
-                AuthConfig::default(),
-                move |_req| {
-                    let e = server_entries.clone();
-                    async move { Ok(e) }
-                },
-                |_p: &str| async { Ok(Vec::new()) },
-                |_p: String, _d: Vec<u8>| async { Ok(()) },
-            )
-            .await
-            .unwrap()
+            let backend = FakeBackend::new(server_entries, Vec::new());
+            handle_conn(server, "files", AuthConfig::default(), &backend)
+                .await
+                .unwrap()
         });
         let mut c = BufReader::new(client);
         // banner + 选模块
@@ -2014,22 +2092,11 @@ mod tests {
         let server_entries = entries.clone();
         let server_content = content.clone();
         tokio::spawn(async move {
-            handle_conn(
-                server,
-                "files",
-                AuthConfig::default(),
-                move |_req| {
-                    let e = server_entries.clone();
-                    async move { Ok(e) }
-                },
-                move |_p: &str| {
-                    let d = server_content.clone();
-                    async move { Ok(d) }
-                },
-                |_p: String, _d: Vec<u8>| async { Ok(()) },
-            )
-            .await
-            .unwrap()
+            let backend =
+                FakeBackend::new(server_entries, vec![("tiny.txt".into(), server_content)]);
+            handle_conn(server, "files", AuthConfig::default(), &backend)
+                .await
+                .unwrap()
         });
         let mut c = BufReader::new(client);
         c.get_mut()
