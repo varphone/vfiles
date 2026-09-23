@@ -1,4 +1,26 @@
-# S3 兼容 API（… r15 multipart 完整性 → r16 ListMultipartUploads → **r19 UploadPartCopy**）
+# S3 兼容 API（… r16 multipart 收口 → r19 UploadPartCopy → **r20 SQL 逐页列表**）
+
+## 状态（r20 末 · 列表 SQL 逐页 = 不物化整桶）
+
+- **实装**：
+  | 项 | 内容 |
+  | --- | --- |
+  | `EntryRepo::files_with_meta_page` | 新仓储方法（默认 = `files_with_meta` 过滤切片 ✗ 桩零破）；**SQLite 覆写 = 一条 SQL** `WHERE kind='file' AND path > ? ORDER BY path LIMIT ?`（BINARY 排序 = Rust `str` Ord 一致） |
+  | `ListCollector` | **流式收集器**（按 key 升序喂入 ✗ 与存储解耦）：prefix 过滤 → delimiter 连续同组去重 → `after` 独占续页 → 收 `max+1` 判截断；`prefix_upper_bound` 越过即停扫 |
+  | `list_page` | 1000/批拉取 ✗ 收满即停（`max_keys=1` 只取 1~2 行）→ **内存 = O(max_keys) 而非 O(桶)** |
+  | 续页游标 | 直接从 `after` 之后扫原始 key（滚出条目单调不减 → 不丢条目不重复；代码附论证） |
+- **等价性保证**：`build_entries`+`paginate` 降为 `#[cfg(test)]` **参考实现** ✗ 新单测对 6 组 prefix × 2 组
+  delimiter × `max=3` **逐页走全**，断言与参考实现 key 序列**完全一致且无重复**。
+- **真机验收（500 对象 ×10 目录）**：
+  | 场景 | 结果 |
+  | --- | --- |
+  | `PageSize=100` 分页 | 5 页 / 500 key **无重无漏** + 字典序升序 ✓ |
+  | `delimiter=/` | 10 个 CommonPrefixes ✓ |
+  | V1 `MaxKeys=120` | `IsTruncated` + `NextMarker` + marker 续页 ✓ |
+  | `StartAfter` | 严格大于所给 key ✓ |
+  | `MaxKeys=1` 单键续页 | **500 次走全 500 key（1.9s）** ✓ |
+- **回归**：自写探针 **24/24** · 真 SDK **30/30**（+V1 marker / StartAfter / 单键续页）。
+- **仍债**：访问键绑用户 · region 校验 · `copy_source_if_*` 条件头。
 
 ## 状态（r19 末 · 分片复制落地 = 大对象跨键拷贝路径）
 

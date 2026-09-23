@@ -209,6 +209,25 @@ pub trait EntryRepo {
         Ok(out)
     }
 
+    /// 文件按 path 升序的**一页**（`after` 独占 ✗ S3 列表分页 = 不透支内存）。
+    /// 默认回退 = `find_all` 过滤排序切片；infra 覆写 = SQL `path > ? ORDER BY path LIMIT ?`。
+    async fn files_with_meta_page(
+        &self,
+        namespace_id: &NamespaceId,
+        after: Option<&str>,
+        limit: u32,
+    ) -> DomainResult<Vec<crate::types::EntryChildMeta>> {
+        let mut all: Vec<crate::types::EntryChildMeta> = self
+            .files_with_meta(namespace_id)
+            .await?
+            .into_iter()
+            .filter(|m| after.is_none_or(|a| m.entry.path_norm.as_str() > a))
+            .collect();
+        all.sort_by(|a, b| a.entry.path_norm.as_str().cmp(b.entry.path_norm.as_str()));
+        all.truncate(limit as usize);
+        Ok(all)
+    }
+
     async fn find_children(
         &self,
         namespace_id: &NamespaceId,

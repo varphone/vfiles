@@ -192,6 +192,28 @@ def main():
     sc = s3.list_objects_v2(Bucket="default", Prefix="boto-scale/", Delimiter="/")
     scps = sorted(p["Prefix"] for p in sc.get("CommonPrefixes", []))
     check("boto scale delimiter 4 prefixes", len(scps) == 4, scps)
+    # V1 marker 分页 + StartAfter + 单键续页走全（r20 SQL 逐页）
+    v1 = s3.list_objects(Bucket="default", Prefix="boto-scale/", MaxKeys=50)
+    v1b = s3.list_objects(Bucket="default", Prefix="boto-scale/", MaxKeys=50,
+                          Marker=v1.get("NextMarker", ""))
+    check("boto V1 marker paging", v1["IsTruncated"] and len(v1b.get("Contents", [])) == 50,
+          v1.get("NextMarker"))
+    sa = s3.list_objects_v2(Bucket="default", Prefix="boto-scale/",
+                            StartAfter="boto-scale/d1/f29.txt", MaxKeys=5)
+    check("boto StartAfter", all(c["Key"] > "boto-scale/d1/f29.txt"
+                                for c in sa.get("Contents", [])),
+          [c["Key"] for c in sa.get("Contents", [])])
+    n, tok, guard = 0, None, 0
+    while guard < 500:
+        guard += 1
+        r = (s3.list_objects_v2(Bucket="default", Prefix="boto-scale/", MaxKeys=1,
+                                ContinuationToken=tok) if tok
+             else s3.list_objects_v2(Bucket="default", Prefix="boto-scale/", MaxKeys=1))
+        n += len(r.get("Contents", []))
+        if not r["IsTruncated"]:
+            break
+        tok = r["NextContinuationToken"]
+    check("boto single-key continuation walks all", n == 120, f"{n} keys in {guard} pages")
     for k in range(4):
         for j in range(30):
             s3.delete_object(Bucket="default", Key=f"boto-scale/d{k}/f{j:02d}.txt")

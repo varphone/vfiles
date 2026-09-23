@@ -82,30 +82,170 @@ struct ObjMeta {
     etag: String,
 }
 
-/// 默认 ns 全部**文件** key（目录不产出对象 ✓ = S3 语义），带 size/mtime/ETag。
+fn obj_meta(m: vfiles_domain::types::EntryChildMeta) -> ObjMeta {
+    ObjMeta {
+        key: m.entry.path_norm.as_str().to_string(),
+        size: m.size_bytes.unwrap_or(0),
+        last_modified: Timestamp::from(m.entry.created_at),
+        etag: m
+            .entry
+            .current_version_id
+            .map(|v| v.to_string().replace('-', ""))
+            .unwrap_or_default(),
+    }
+}
+
+/// prefix 的字典序上界（末字节 +1 ✗ 越过即可停扫 = 不做全桶扫描）。
+fn prefix_upper_bound(prefix: &str) -> Option<String> {
+    let mut bytes = prefix.as_bytes().to_vec();
+    while let Some(b) = bytes.pop() {
+        if b < 0xFF {
+            bytes.push(b + 1);
+            return String::from_utf8(bytes).ok();
+        }
+    }
+    None
+}
+
+/// 流式列表收集器（按 key 升序喂入 ✗ 与存储解耦 = 单测可喂内存序列）。
 ///
-/// r13：`files_with_meta` **一条 SQL** 取全（此前逐目录递归 = 目录数条查询 ✗ 大桶 N+1）。
-async fn collect_objects(
+/// 语义与 `build_entries` + `paginate` 等价（r20 起取代全量物化）：
+/// prefix 过滤 → delimiter 折叠（连续同组去重）→ `after` 独占续页 → 收 `max+1` 判截断。
+struct ListCollector<'a> {
+    prefix: &'a str,
+    delimiter: Option<&'a str>,
+    after: Option<&'a str>,
+    max: usize,
+    last_prefix: Option<String>,
+    entries: Vec<Listed>,
+    done: bool,
+}
+
+impl<'a> ListCollector<'a> {
+    fn new(
+        prefix: &'a str,
+        delimiter: Option<&'a str>,
+        after: Option<&'a str>,
+        max: usize,
+    ) -> Self {
+        Self {
+            prefix,
+            delimiter: delimiter.filter(|d| !d.is_empty()),
+            after,
+            max,
+            last_prefix: None,
+            entries: Vec::new(),
+            done: false,
+        }
+    }
+
+    /// 喂入一个对象；返回 `false` = 已收满（外层可停止翻页）。
+    fn push(&mut self, o: ObjMeta) -> bool {
+        if self.done {
+            return false;
+        }
+        if !o.key.starts_with(self.prefix) {
+            // 越过 prefix 区间 → 后续不可能再命中
+            if let Some(u) = prefix_upper_bound(self.prefix)
+                && o.key.as_str() >= u.as_str()
+            {
+                self.done = true;
+            }
+            return !self.done;
+        }
+        let listed = match self.delimiter {
+            Some(d) => {
+                let rest = &o.key[self.prefix.len()..];
+                match rest.find(d) {
+                    Some(idx) => {
+                        let p = format!("{}{}{}", self.prefix, &rest[..idx], d);
+                        if self.last_prefix.as_deref() == Some(p.as_str()) {
+                            return true;
+                        }
+                        self.last_prefix = Some(p.clone());
+                        Listed::Prefix(p)
+                    }
+                    None => {
+                        self.last_prefix = None;
+                        Listed::Object(o)
+                    }
+                }
+            }
+            None => {
+                self.last_prefix = None;
+                Listed::Object(o)
+            }
+        };
+        if let Some(a) = self.after
+            && listed.key() <= a
+        {
+            return true;
+        }
+        self.entries.push(listed);
+        if self.entries.len() > self.max {
+            self.done = true;
+        }
+        !self.done
+    }
+
+    fn finish(mut self) -> (Vec<Listed>, bool) {
+        let truncated = self.entries.len() > self.max;
+        self.entries.truncate(self.max);
+        (self.entries, truncated)
+    }
+}
+
+/// 一页列表（SQL 分页拉取 ✗ **不物化整桶**）：返回 `(条目, 是否截断)`。
+async fn list_page(
     repo: &std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
     ns: &vfiles_domain::NamespaceId,
-) -> vfiles_domain::DomainResult<Vec<ObjMeta>> {
-    let mut out: Vec<ObjMeta> = repo
-        .files_with_meta(ns)
-        .await?
-        .into_iter()
-        .map(|m| ObjMeta {
-            key: m.entry.path_norm.as_str().to_string(),
-            size: m.size_bytes.unwrap_or(0),
-            last_modified: Timestamp::from(m.entry.created_at),
-            etag: m
-                .entry
-                .current_version_id
-                .map(|v| v.to_string().replace('-', ""))
-                .unwrap_or_default(),
-        })
-        .collect();
-    out.sort_by(|a, b| a.key.cmp(&b.key));
-    Ok(out)
+    prefix: &str,
+    delimiter: Option<&str>,
+    after: Option<&str>,
+    max: usize,
+) -> vfiles_domain::DomainResult<(Vec<Listed>, bool)> {
+    const BATCH: u32 = 1000;
+    let mut c = ListCollector::new(prefix, delimiter, after, max);
+    // 续页游标：滚出条目单调不减 → 直接从 `after` 之后扫原始 key（不丢条目，见 r20 论证）
+    let mut cursor: Option<String> = after.map(|a| a.to_string());
+    while !c.done {
+        let batch = repo
+            .files_with_meta_page(ns, cursor.as_deref(), BATCH)
+            .await?;
+        if batch.is_empty() {
+            break;
+        }
+        for m in batch {
+            cursor = Some(m.entry.path_norm.as_str().to_string());
+            if !c.push(obj_meta(m)) {
+                break;
+            }
+        }
+    }
+    Ok(c.finish())
+}
+
+/// 收集结果 → `Page`（`next` = 本页末条 key ✗ 与应用 `after` 独占语义配对）。
+fn page_from(entries: Vec<Listed>, truncated: bool) -> Page {
+    let next = truncated
+        .then(|| entries.last().map(|e| e.key().to_string()))
+        .flatten();
+    let mut contents = Vec::new();
+    let mut prefixes = Vec::new();
+    for e in entries {
+        match e {
+            Listed::Object(o) => contents.push(object_dto(&o)),
+            Listed::Prefix(p) => prefixes.push(CommonPrefix {
+                prefix: Some(p.clone()),
+            }),
+        }
+    }
+    Page {
+        contents,
+        prefixes,
+        truncated,
+        next,
+    }
 }
 
 fn object_dto(o: &ObjMeta) -> Object {
@@ -135,6 +275,8 @@ impl Listed {
 }
 
 /// 过滤 + delimiter 折叠 + 排序（common prefix 去重后与对象统一按 key 升序）。
+/// 参考实现（仅单测用 ✗ 生产走 `ListCollector` 流式）。
+#[cfg(test)]
 fn build_entries(all: &[ObjMeta], prefix: &str, delimiter: Option<&str>) -> Vec<Listed> {
     use std::collections::BTreeSet;
     let mut prefixes: BTreeSet<String> = BTreeSet::new();
@@ -165,6 +307,7 @@ struct Page {
     next: Option<String>,
 }
 
+#[cfg(test)]
 fn paginate(entries: Vec<Listed>, after: Option<&str>, max: usize) -> Page {
     let start = after
         .map(|a| {
@@ -350,11 +493,17 @@ impl S3 for VfilesS3 {
             .clone()
             .or_else(|| input.start_after.clone());
 
-        let all = collect_objects(&self.entry_repo, &self.namespace)
-            .await
-            .map_err(dom_err)?;
-        let entries = build_entries(&all, &prefix, delimiter.as_deref());
-        let page = paginate(entries, after.as_deref(), max);
+        let (entries, truncated) = list_page(
+            &self.entry_repo,
+            &self.namespace,
+            &prefix,
+            delimiter.as_deref(),
+            after.as_deref(),
+            max,
+        )
+        .await
+        .map_err(dom_err)?;
+        let page = page_from(entries, truncated);
 
         let out = ListObjectsV2Output {
             name: Some(input.bucket),
@@ -385,11 +534,17 @@ impl S3 for VfilesS3 {
         let delimiter = non_empty(input.delimiter.clone());
         let marker = input.marker.clone();
 
-        let all = collect_objects(&self.entry_repo, &self.namespace)
-            .await
-            .map_err(dom_err)?;
-        let entries = build_entries(&all, &prefix, delimiter.as_deref());
-        let page = paginate(entries, marker.as_deref(), max);
+        let (entries, truncated) = list_page(
+            &self.entry_repo,
+            &self.namespace,
+            &prefix,
+            delimiter.as_deref(),
+            marker.as_deref(),
+            max,
+        )
+        .await
+        .map_err(dom_err)?;
+        let page = page_from(entries, truncated);
 
         let out = ListObjectsOutput {
             name: Some(input.bucket),
@@ -1183,6 +1338,65 @@ mod tests {
             meta("dir/y", 4),
             meta("dir/sub/z", 5),
         ]
+    }
+
+    /// 流式分页（SQL 逐页）与参考实现（全量折叠 + 切片）**逐页走全等价**。
+    #[test]
+    fn streaming_pagination_walks_all_without_gaps() {
+        fn stream(
+            all: &[ObjMeta],
+            prefix: &str,
+            delim: Option<&str>,
+            after: Option<&str>,
+            max: usize,
+        ) -> (Vec<String>, bool) {
+            let mut c = ListCollector::new(prefix, delim, after, max);
+            for o in all {
+                if !c.push(o.clone()) {
+                    break;
+                }
+            }
+            let (e, t) = c.finish();
+            (e.iter().map(|x| x.key().to_string()).collect(), t)
+        }
+
+        let mut all: Vec<ObjMeta> = Vec::new();
+        for i in 0..37u64 {
+            all.push(meta(&format!("d{}/f{:02}.txt", i % 4, i), i));
+        }
+        // `d0/a/x` 造更深一层（`d0/` 折叠不变）；`d4` 与 `zz`
+        all.push(meta("d0/a/x", 1));
+        all.push(meta("d4", 1));
+        all.push(meta("zz", 1));
+        all.sort_by(|a, b| a.key.cmp(&b.key));
+        all.dedup_by(|a, b| a.key == b.key);
+
+        for prefix in ["", "a", "d0/", "d1/", "zz", "d"] {
+            for delim in [None, Some("/")] {
+                let reference: Vec<String> = build_entries(&all, prefix, delim)
+                    .iter()
+                    .map(|e| e.key().to_string())
+                    .collect();
+                let mut seen: Vec<String> = Vec::new();
+                let mut cursor: Option<String> = None;
+                for _ in 0..500 {
+                    let (keys, truncated) = stream(&all, prefix, delim, cursor.as_deref(), 3);
+                    for k in &keys {
+                        assert!(!seen.contains(k), "重复 key: {k}");
+                    }
+                    let last = keys.last().cloned();
+                    seen.extend(keys);
+                    if !truncated {
+                        break;
+                    }
+                    cursor = last;
+                }
+                assert_eq!(
+                    seen, reference,
+                    "prefix={prefix:?} delim={delim:?} 分页走全应与参考一致"
+                );
+            }
+        }
     }
 
     /// `x-amz-copy-source-range` 解析（闭区间 / 开尾 / 后缀 / 越界）。

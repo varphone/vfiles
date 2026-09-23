@@ -1271,6 +1271,90 @@ impl EntryRepo for SqliteEntryRepo {
             .collect()
     }
 
+    async fn files_with_meta_page(
+        &self,
+        namespace_id: &NamespaceId,
+        after: Option<&str>,
+        limit: u32,
+    ) -> DomainResult<Vec<vfiles_domain::types::EntryChildMeta>> {
+        // 与 files_with_meta 同列同排序 ✗ 只加 `path > ?` + LIMIT（BINARY 排序 = Rust `str` Ord 一致）
+        let rows: Vec<(
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+            Option<i64>,
+        )> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id,
+                (
+                    SELECT ev.size
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS size_b,
+                (
+                    SELECT ev.content_type
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS mime_t,
+                (
+                    SELECT ev.source_mtime
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS src_mtime
+            FROM entries e
+            WHERE e.namespace_id = ?
+              AND e.kind = 'file'
+              AND e.path > ?
+            ORDER BY e.path
+            LIMIT ?
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(after.unwrap_or(""))
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to page files with meta: {}", e),
+        })?;
+        rows.into_iter()
+            .map(|(a, b, c, d, e2, f, g, size, mime, src_mtime)| {
+                let entry = parse_entry_row((a, b, c, d, e2, f, g))?;
+                Ok(vfiles_domain::types::EntryChildMeta {
+                    entry,
+                    size_bytes: size.map(|v| v as u64),
+                    mime_type: mime,
+                    source_mtime: src_mtime,
+                })
+            })
+            .collect()
+    }
+
     async fn find_all(&self, namespace_id: &NamespaceId) -> DomainResult<Vec<Entry>> {
         let rows: Vec<EntryRow> = sqlx::query_as(
             r#"
