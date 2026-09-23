@@ -7,6 +7,11 @@ use vfiles_infra_sqlite::{
     SqliteUserRepo,
 };
 
+struct CopySourceIndex {
+    children: HashMap<String, Vec<Entry>>,
+    properties: HashMap<EntryId, Vec<(String, String)>>,
+}
+
 pub(crate) fn normalize_message(message: Option<&str>) -> Option<String> {
     message.and_then(|value| {
         let trimmed = value.trim();
@@ -2347,13 +2352,42 @@ where
                 message: "Destination parent is not a collection".to_string(),
             });
         }
+        let source_entries = if depth_infinity && src_entry.entry_type == EntryKind::Directory {
+            self.entry_repo.find_subtree(namespace_id, source).await?
+        } else {
+            vec![src_entry.clone()]
+        };
+        let source_entry_ids = source_entries
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>();
+        let source_properties = self
+            .entry_repo
+            .list_entry_properties(&source_entry_ids)
+            .await?;
+        let mut source_children = HashMap::<String, Vec<Entry>>::new();
+        for entry in source_entries {
+            if entry.id == src_entry.id {
+                continue;
+            }
+            if let Some((parent, _)) = entry.path_norm.as_str().rsplit_once('/') {
+                source_children
+                    .entry(parent.to_string())
+                    .or_default()
+                    .push(entry);
+            }
+        }
+        let source_index = CopySourceIndex {
+            children: source_children,
+            properties: source_properties,
+        };
         self.recursive_copy(
             namespace_id,
             &src_entry,
             destination,
             message,
             user_id,
-            depth_infinity,
+            &source_index,
         )
         .await
     }
@@ -2366,13 +2400,20 @@ where
         target: &NormalizedPath,
         message: Option<&str>,
         user_id: &UserId,
-        copy_children: bool,
+        source_index: &CopySourceIndex,
     ) -> DomainResult<()> {
         let kind = src_entry.entry_type;
         let new_id = self
             .entry_repo
             .create_entry(namespace_id, target, kind, user_id)
             .await?;
+        if let Some(properties) = source_index.properties.get(&src_entry.id) {
+            for (name, value) in properties {
+                self.entry_repo
+                    .set_entry_property(&new_id, name, value)
+                    .await?;
+            }
+        }
         if matches!(src_entry.entry_type, EntryKind::File) {
             let vid =
                 src_entry
@@ -2397,20 +2438,16 @@ where
             self.entry_repo
                 .update_current_version(&new_id, &nv.id)
                 .await?;
-        } else if copy_children {
-            let children = self
-                .entry_repo
-                .find_children(namespace_id, &src_entry.path_norm)
-                .await?;
+        } else if let Some(children) = source_index.children.get(src_entry.path_norm.as_str()) {
             for child in children {
                 let child_target = join_path(target, &child.name)?;
                 Box::pin(self.recursive_copy(
                     namespace_id,
-                    &child,
+                    child,
                     &child_target,
                     message,
                     user_id,
-                    copy_children,
+                    source_index,
                 ))
                 .await?;
             }
@@ -5132,6 +5169,7 @@ mod tests {
         let context = TestContext::new().await;
         let source = TestContext::path("source");
         let source_child = TestContext::path("source/child.txt");
+        let nested_directory = TestContext::path("source/nested");
 
         context
             .workspace_service
@@ -5144,8 +5182,48 @@ mod tests {
             .await
             .expect("source collection should be created");
         context
+            .workspace_service
+            .create_directory(
+                &context.namespace_id,
+                &nested_directory,
+                Some("create nested copy source"),
+                &context.user_id,
+            )
+            .await
+            .expect("nested source collection should be created");
+        context
             .upload_file(&source, "child.txt", b"child", "create child")
             .await;
+        context
+            .upload_file(
+                &nested_directory,
+                "nested.txt",
+                b"nested",
+                "create nested child",
+            )
+            .await;
+        let source_entry = context
+            .entry_repo
+            .find_by_path(&context.namespace_id, &source)
+            .await
+            .expect("source lookup should succeed")
+            .expect("source collection should exist");
+        context
+            .entry_repo
+            .set_entry_property(&source_entry.id, "urn:example\u{1f}color", "blue")
+            .await
+            .expect("source collection property should be saved");
+        let source_child_entry = context
+            .entry_repo
+            .find_by_path(&context.namespace_id, &source_child)
+            .await
+            .expect("source child lookup should succeed")
+            .expect("source child should exist");
+        context
+            .entry_repo
+            .set_entry_property(&source_child_entry.id, "urn:example\u{1f}label", "child")
+            .await
+            .expect("source child property should be saved");
 
         context
             .workspace_service
@@ -5179,6 +5257,33 @@ mod tests {
                 .expect("shallow child lookup should succeed")
                 .is_none()
         );
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(
+                    &context.namespace_id,
+                    &TestContext::path("shallow-copy/nested")
+                )
+                .await
+                .expect("shallow nested collection lookup should succeed")
+                .is_none()
+        );
+        let shallow_entry = context
+            .entry_repo
+            .find_by_path(&context.namespace_id, &TestContext::path("shallow-copy"))
+            .await
+            .expect("shallow root lookup should succeed")
+            .expect("shallow root should exist");
+        let shallow_properties = context
+            .entry_repo
+            .list_entry_properties(std::slice::from_ref(&shallow_entry.id))
+            .await
+            .expect("shallow properties should load");
+        assert!(
+            shallow_properties[&shallow_entry.id]
+                .iter()
+                .any(|(name, value)| name == "urn:example\u{1f}color" && value == "blue")
+        );
 
         context
             .workspace_service
@@ -5203,6 +5308,36 @@ mod tests {
                 .await
                 .expect("recursive child lookup should succeed")
                 .is_some()
+        );
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(
+                    &context.namespace_id,
+                    &TestContext::path("recursive-copy/nested/nested.txt")
+                )
+                .await
+                .expect("nested copied child lookup should succeed")
+                .is_some()
+        );
+        let copied_child = context
+            .entry_repo
+            .find_by_path(
+                &context.namespace_id,
+                &TestContext::path("recursive-copy/child.txt"),
+            )
+            .await
+            .expect("copied child lookup should succeed")
+            .expect("copied child should exist");
+        let copied_child_properties = context
+            .entry_repo
+            .list_entry_properties(std::slice::from_ref(&copied_child.id))
+            .await
+            .expect("copied child properties should load");
+        assert!(
+            copied_child_properties[&copied_child.id]
+                .iter()
+                .any(|(name, value)| name == "urn:example\u{1f}label" && value == "child")
         );
         assert!(
             context
