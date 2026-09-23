@@ -2723,6 +2723,31 @@ where
             .collect())
     }
 
+    /// 分页列出命名空间下进行中的 S3 multipart 会话。
+    pub async fn list_upload_sessions_page(
+        &self,
+        namespace_id: &NamespaceId,
+        prefix: &str,
+        delimiter: Option<&str>,
+        after_key: Option<&str>,
+        after_upload_id: Option<&str>,
+        limit: u32,
+    ) -> DomainResult<Vec<vfiles_domain::UploadSessionListItem>>
+    where
+        U: Sync,
+    {
+        self.upload_store
+            .list_upload_sessions_page(
+                namespace_id,
+                prefix,
+                delimiter,
+                after_key,
+                after_upload_id,
+                limit,
+            )
+            .await
+    }
+
     /// 读单个分片内容（S3 `ListParts` ETag / 完成校验用）。
     pub async fn read_upload_part(
         &self,

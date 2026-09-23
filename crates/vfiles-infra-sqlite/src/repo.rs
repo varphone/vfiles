@@ -3892,6 +3892,56 @@ impl UploadStore for FsUploadStore {
         Ok(out)
     }
 
+    async fn list_upload_sessions_page(
+        &self,
+        namespace_id: &NamespaceId,
+        prefix: &str,
+        delimiter: Option<&str>,
+        after_key: Option<&str>,
+        after_upload_id: Option<&str>,
+        limit: u32,
+    ) -> DomainResult<Vec<vfiles_domain::UploadSessionListItem>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut candidates: std::collections::BTreeMap<
+            (String, String),
+            vfiles_domain::UploadSessionListItem,
+        > = std::collections::BTreeMap::new();
+        let mut rd = match fs::read_dir(&self.base_path).await {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => {
+                return Err(DomainError::Internal {
+                    message: format!("Failed to read upload dir: {}", e),
+                });
+            }
+        };
+        while let Some(entry) = rd.next_entry().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to read upload dir entry: {}", e),
+        })? {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Ok(uuid) = uuid::Uuid::parse_str(&name) else {
+                continue;
+            };
+            let upload_id = UploadId::from_uuid(uuid);
+            let Ok(session) = self.get_upload_session(&upload_id).await else {
+                continue;
+            };
+            vfiles_domain::retain_upload_session_page_item(
+                session,
+                namespace_id,
+                prefix,
+                delimiter,
+                after_key,
+                after_upload_id,
+                limit,
+                &mut candidates,
+            );
+        }
+        Ok(candidates.into_values().collect())
+    }
+
     async fn set_upload_custom_metadata(
         &self,
         upload_id: &UploadId,

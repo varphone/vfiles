@@ -2049,59 +2049,41 @@ impl S3 for VfilesS3 {
         }
         let prefix = input.prefix.clone().unwrap_or_default();
         let max = input.max_uploads.unwrap_or(1000).clamp(1, 1000) as usize;
-        let sessions = self
+        let delim = input.delimiter.clone();
+        let items = self
             .upload
-            .list_upload_sessions(&self.namespace)
+            .list_upload_sessions_page(
+                &self.namespace,
+                &prefix,
+                delim.as_deref(),
+                input.key_marker.as_deref(),
+                input.upload_id_marker.as_deref(),
+                (max + 1) as u32,
+            )
             .await
             .map_err(dom_err)?;
-        let mut items: Vec<(String, String, Timestamp)> = sessions
+        let mut combined: Vec<(String, Option<MultipartUpload>)> = items
             .into_iter()
-            .filter(|s| s.state == vfiles_domain::UploadState::Receiving)
-            .filter_map(|s| {
-                let key = if s.target_path_norm.as_str().is_empty() {
-                    s.filename.clone()
-                } else {
-                    format!("{}/{}", s.target_path_norm.as_str(), s.filename)
-                };
-                key.starts_with(&prefix)
-                    .then(|| (key, s.id.to_string(), Timestamp::from(s.created_at)))
+            .map(|item| match item {
+                vfiles_domain::UploadSessionListItem::CommonPrefix(prefix) => (prefix, None),
+                vfiles_domain::UploadSessionListItem::Upload(session) => {
+                    let key = if session.target_path_norm.as_str().is_empty() {
+                        session.filename.clone()
+                    } else {
+                        format!("{}/{}", session.target_path_norm.as_str(), session.filename)
+                    };
+                    (
+                        key.clone(),
+                        Some(MultipartUpload {
+                            key: Some(key),
+                            upload_id: Some(session.id.to_string()),
+                            initiated: Some(Timestamp::from(session.created_at)),
+                            ..Default::default()
+                        }),
+                    )
+                }
             })
             .collect();
-        // 续页游标（key-marker + upload-id-marker ✗ 同 key 多会话时用 id 定序）
-        let after_key = input.key_marker.clone();
-        let after_uid = input.upload_id_marker.clone();
-        items.retain(|(k, id, _)| match (&after_key, &after_uid) {
-            (Some(km), Some(um)) => {
-                k.as_str() > km.as_str() || (k == km && id.as_str() > um.as_str())
-            }
-            (Some(km), None) => k.as_str() > km.as_str(),
-            _ => true,
-        });
-        items.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-
-        let delim = input.delimiter.clone();
-        let mut combined: Vec<(String, Option<MultipartUpload>)> = Vec::new();
-        for (key, id, created) in items {
-            if let Some(d) = &delim {
-                let rest = &key[prefix.len()..];
-                if let Some(pos) = rest.find(d.as_str()) {
-                    let cp = format!("{}{}{}", prefix, &rest[..pos], d);
-                    if !combined.iter().any(|(c, _)| c == &cp) {
-                        combined.push((cp, None));
-                    }
-                    continue;
-                }
-            }
-            combined.push((
-                key.clone(),
-                Some(MultipartUpload {
-                    key: Some(key),
-                    upload_id: Some(id),
-                    initiated: Some(created),
-                    ..Default::default()
-                }),
-            ));
-        }
         let truncated = combined.len() > max;
         combined.truncate(max);
         let last = combined.last();

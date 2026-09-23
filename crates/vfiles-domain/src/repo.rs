@@ -478,6 +478,35 @@ pub trait UploadStore {
     ) -> DomainResult<Option<Vec<u8>>>;
     /// 列出全部上传会话（S3 `ListMultipartUploads` ✗ 损坏目录跳过）。
     async fn list_upload_sessions(&self) -> DomainResult<Vec<UploadSession>>;
+    /// 按 S3 的 key/upload-id 顺序列出 multipart 项。文件系统后端一次扫描目录，
+    /// 仅保留页大小的结果，避免为每一页重复扫描全部会话。
+    async fn list_upload_sessions_page(
+        &self,
+        namespace_id: &NamespaceId,
+        prefix: &str,
+        delimiter: Option<&str>,
+        after_key: Option<&str>,
+        after_upload_id: Option<&str>,
+        limit: u32,
+    ) -> DomainResult<Vec<UploadSessionListItem>> {
+        let sessions = self
+            .list_upload_sessions()
+            .await?;
+        let mut candidates = std::collections::BTreeMap::new();
+        for session in sessions {
+            retain_upload_session_page_item(
+                session,
+                namespace_id,
+                prefix,
+                delimiter,
+                after_key,
+                after_upload_id,
+                limit,
+                &mut candidates,
+            );
+        }
+        Ok(candidates.into_values().collect())
+    }
     /// 写会话自定义元数据（S3 `x-amz-meta-*` 于 CreateMultipartUpload 传入 ✗ 完成时落到条目）。
     async fn set_upload_custom_metadata(
         &self,
@@ -492,6 +521,78 @@ pub trait UploadStore {
     async fn complete_upload_session(&self, upload_id: &UploadId) -> DomainResult<()>;
     async fn cancel_upload_session(&self, upload_id: &UploadId) -> DomainResult<()>;
     async fn cleanup_expired_sessions(&self) -> DomainResult<i64>;
+}
+
+#[derive(Debug, Clone)]
+pub enum UploadSessionListItem {
+    Upload(UploadSession),
+    CommonPrefix(String),
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn retain_upload_session_page_item(
+    session: UploadSession,
+    namespace_id: &NamespaceId,
+    prefix: &str,
+    delimiter: Option<&str>,
+    after_key: Option<&str>,
+    after_upload_id: Option<&str>,
+    limit: u32,
+    candidates: &mut std::collections::BTreeMap<(String, String), UploadSessionListItem>,
+) {
+    if limit == 0
+        || session.namespace_id != *namespace_id
+        || session.state != UploadState::Receiving
+    {
+        return;
+    }
+    let key = if session.target_path_norm.as_str().is_empty() {
+        session.filename.clone()
+    } else {
+        format!("{}/{}", session.target_path_norm.as_str(), session.filename)
+    };
+    if !key.starts_with(prefix) {
+        return;
+    }
+    let id = session.id.to_string();
+    let item_key = if let Some(delimiter) = delimiter.filter(|d| !d.is_empty()) {
+        let rest = &key[prefix.len()..];
+        if let Some(position) = rest.find(delimiter) {
+            let common_prefix = format!("{}{}{}", prefix, &rest[..position], delimiter);
+            if after_key.is_some_and(|marker| common_prefix.as_str() <= marker) {
+                return;
+            }
+            candidates.insert(
+                (common_prefix.clone(), String::new()),
+                UploadSessionListItem::CommonPrefix(common_prefix),
+            );
+            None
+        } else {
+            let after = match (after_key, after_upload_id) {
+                (Some(k), Some(upload_id)) => {
+                    key.as_str() > k || (key.as_str() == k && id.as_str() > upload_id)
+                }
+                (Some(k), None) => key.as_str() > k,
+                _ => true,
+            };
+            after.then_some((key, id))
+        }
+    } else {
+        let after = match (after_key, after_upload_id) {
+            (Some(k), Some(upload_id)) => {
+                key.as_str() > k || (key.as_str() == k && id.as_str() > upload_id)
+            }
+            (Some(k), None) => key.as_str() > k,
+            _ => true,
+        };
+        after.then_some((key, id))
+    };
+    if let Some((key, id)) = item_key {
+        candidates.insert((key, id), UploadSessionListItem::Upload(session));
+    }
+    if candidates.len() > limit as usize {
+        candidates.pop_last();
+    }
 }
 
 #[async_trait::async_trait]
