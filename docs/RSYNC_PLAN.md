@@ -1,4 +1,29 @@
-# rsync 协议 daemon（r2 选型 → … → r9 列清单 RC0 → **r10 整文件下载 RC0 + 内容 SHA-256 全对** ✗ 真 delta r11）
+# rsync 协议 daemon（r2 选型 → r9 列清单 → r10 整文件下载 → **r11 真 delta** ✗ push r12）
+
+## 状态（r11 末 · 真 delta 落地 = 增量重建逐字节正确 ✗ 弱 sum1 + 强 sum2 全实证）
+
+- **实装**（`crates/vfiles-rsync/src/lib.rs`）：`BlockSum{sum1,sum2,len}`（接收端块校验和不再丢弃）
+  → `build_delta_tokens`（弱滚动命中 → 强校验确认 → 匹配 token `-(idx+1)`；未命中段 literal
+  `int32(len)+data`；`int32(0)` 终结）· `checksum1_signed`（**signed char** 滚动）·
+  `md5_seeded`（块强校验和 = `MD5(seed_le‖块)` 前 s2length 字节）· `emit_literal`（≤CHUNK_SIZE 分块）。
+- **校验和两式辨析（真机实证 ✗ 入档 `golden/delta_checksum_r11.md`）**：
+  | 用途 | 公式 |
+  | --- | --- |
+  | 块强校验和（delta 匹配） | `MD5(seed_le ‖ block)` 前 `s2length` 字节（首轮 s2length=2） |
+  | 整文件校验和（收尾） | `MD5(内容)` **无 seed**（streaming `sum_update` 路径） |
+  弱校验和 = `(s1 & 0xffff) | (s2 << 16)`，`s1=Σ(i8)b`、`s2=Σs1` ✗ `0x760cfeda` 逐位命中。
+- **真机验收（`--stats` 数字 = delta 证据）**：
+  | 场景（2,254,652B CSV） | Literal | Matched |
+  | --- | --- | --- |
+  | 首轮（无 basis） | 2,254,652 | 0 |
+  | 改 1000B 后 `-I` | **2,992** | **2,251,660（99.87%）** |
+  | 再跑 `-I`（内容同） | **0** | **2,254,652（100%）** |
+  | 递归树 4 文件改 500B `-I` | **1,448** | **70,688,460** |
+  → 落地内容 **SHA-256 全部 = blobs 表**（delta 重建逐字节正确 ✓）。
+- **门禁**：`cargo test -p vfiles-rsync` **16/16**（新增：真机校验和逐位 golden、全匹配 token 流、
+  部分匹配 literal/匹配混合）× workspace 全绿 × clippy 归零 × fmt 干净 × bin build 绿。
+- **r12 清单**：收端 push（复用 upload 链）→ secrets 认证 → 大文件流式（现全量入内存）→
+  `--checksum`/压缩面。
 
 ## 状态（r10 末 · 整文件下载落地 = rsync 从"能列"到"能取" ✗ 真机内容校验全绿）
 

@@ -638,6 +638,137 @@ pub fn md5_digest(data: &[u8]) -> [u8; 16] {
     digest
 }
 
+/// 块强校验和（真机实证 r5：`MD5(seed_le ‖ 块)` 前缀 `s2length` 字节 ✗ `get_checksum2`
+/// 的 `proper_seed_order` 分支）。整文件校验和走 [`md5_digest`]（无 seed）✗ 两者不同。
+fn md5_seeded(seed: u32, data: &[u8]) -> [u8; 16] {
+    use md5::{Digest, Md5};
+    let mut h = Md5::new();
+    h.update(seed.to_le_bytes());
+    h.update(data);
+    let out = h.finalize();
+    let mut digest = [0u8; 16];
+    digest.copy_from_slice(&out);
+    digest
+}
+
+/// 接收端块校验和（弱 `sum1` + 强 `sum2` 前缀 + 块长）。
+#[derive(Debug, Clone)]
+pub struct BlockSum {
+    pub sum1: u32,
+    pub sum2: Vec<u8>,
+    pub len: u32,
+}
+
+/// `schar` 语义的单字节符号扩展（rsync `get_checksum1` 用 **signed char** ✗ 真机实证）。
+#[inline]
+fn signed_byte(b: u8) -> u32 {
+    (b as i8) as i32 as u32
+}
+
+/// 弱滚动校验和（rsync `get_checksum1` 的 `CHAR_OFFSET=0` 形式，逐步累加等价于其展开式）。
+/// 返回 `(s1, s2)`；公开值 = `(s1 & 0xffff) | (s2 << 16)`。
+fn checksum1_signed(data: &[u8]) -> (u32, u32) {
+    let mut s1: u32 = 0;
+    let mut s2: u32 = 0;
+    for &b in data {
+        s1 = s1.wrapping_add(signed_byte(b));
+        s2 = s2.wrapping_add(s1);
+    }
+    (s1, s2)
+}
+
+/// literal 段写出（每 ≤`CHUNK_SIZE` 一块 `int32(len)+data` ✗ 与 `simple_send_token` 同形）。
+fn emit_literal(out: &mut Vec<u8>, data: &[u8]) {
+    for chunk in data.chunks(CHUNK_SIZE) {
+        out.extend_from_slice(&(chunk.len() as i32).to_le_bytes());
+        out.extend_from_slice(chunk);
+    }
+}
+
+/// delta token 流（flist 块校验和 vs 本文件内容）：滚动弱校验和命中 → 强校验和确认 →
+/// 发匹配 token `-(idx+1)`；未命中区段作 literal 发送；末尾 `int32(0)` 终结。
+///
+/// 算法照 rsync `match.c:hash_search`（signed char 滚动 + 末尾短块 `end` 边界）。
+pub fn build_delta_tokens(
+    data: &[u8],
+    blocks: &[BlockSum],
+    blength: u32,
+    seed: u32,
+    s2length: usize,
+) -> Vec<u8> {
+    use std::collections::HashMap;
+    let mut out = Vec::new();
+    let len = data.len();
+    let b = blength as usize;
+    if blocks.is_empty() || b == 0 || len == 0 {
+        emit_literal(&mut out, data);
+        out.extend_from_slice(&0i32.to_le_bytes());
+        return out;
+    }
+    // 弱校验和 → 候选块（先弱后强 = 官方同序）
+    let mut index: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, blk) in blocks.iter().enumerate() {
+        index.entry(blk.sum1).or_default().push(i);
+    }
+    let last_len = blocks[blocks.len() - 1].len as usize;
+    let end = (len + 1).saturating_sub(last_len);
+    let mut offset = 0usize;
+    let mut last_match = 0usize;
+    let mut k = b.min(len);
+    let (mut s1, mut s2) = checksum1_signed(&data[..k]);
+    loop {
+        let weak = (s1 & 0xffff) | (s2 << 16);
+        let mut hit: Option<usize> = None;
+        if let Some(cands) = index.get(&weak) {
+            for &i in cands {
+                if blocks[i].len as usize != k || blocks[i].sum2.len() < s2length {
+                    continue;
+                }
+                let strong = md5_seeded(seed, &data[offset..offset + k]);
+                if strong[..s2length] == blocks[i].sum2[..s2length] {
+                    hit = Some(i);
+                    break;
+                }
+            }
+        }
+        if let Some(i) = hit {
+            if offset > last_match {
+                emit_literal(&mut out, &data[last_match..offset]);
+            }
+            out.extend_from_slice(&(-(i as i32 + 1)).to_le_bytes());
+            offset += blocks[i].len as usize;
+            last_match = offset;
+            if offset >= len {
+                break;
+            }
+            k = b.min(len - offset);
+            let (a, c) = checksum1_signed(&data[offset..offset + k]);
+            s1 = a;
+            s2 = c;
+            continue;
+        }
+        if offset + 1 >= end {
+            break;
+        }
+        // 滚动：去首字节、加尾字节（signed char 语义 ✗ 与官方逐位同）
+        let more = offset + k < len;
+        s1 = s1.wrapping_sub(signed_byte(data[offset]));
+        s2 = s2.wrapping_sub((k as u32).wrapping_mul(signed_byte(data[offset])));
+        if more {
+            s1 = s1.wrapping_add(signed_byte(data[offset + k]));
+            s2 = s2.wrapping_add(s1);
+        } else {
+            k -= 1;
+        }
+        offset += 1;
+    }
+    if len > last_match {
+        emit_literal(&mut out, &data[last_match..len]);
+    }
+    out.extend_from_slice(&0i32.to_le_bytes());
+    out
+}
+
 /// 写一条 mux MSG_DATA 帧（大 payload 自动分片 ≤ 64KB/帧）。
 async fn write_msg<S>(rw: &mut BufReader<S>, payload: &[u8]) -> std::io::Result<()>
 where
@@ -807,7 +938,7 @@ where
 
         // 仅 ITEM_TRANSFER 才读接收端 sum_head + 块校验和（官方 send_files 同分支顺序）
         let transferring = iflags & ITEM_TRANSFER != 0;
-        let (count, blength, s2length, remainder) = if transferring {
+        let (count, blength, s2length, remainder, blocks) = if transferring {
             let c = data_int(&mut rw, &mut pending).await?;
             let bl = data_int(&mut rw, &mut pending).await?;
             let s2 = data_int(&mut rw, &mut pending).await?;
@@ -818,14 +949,25 @@ where
                     "rsync: 非法 sum_head",
                 ));
             }
-            // 块校验和读后即弃（全 literal 发送对 count>0 亦合法；真 delta = 后续轮）
-            for _ in 0..c {
-                let _sum1 = data_int(&mut rw, &mut pending).await?;
-                let _sum2 = data_take(&mut rw, &mut pending, s2 as usize).await?;
+            // 块校验和（弱 sum1 int32 + 强 sum2 s2length ✗ 真 delta 匹配用）
+            let mut blocks = Vec::with_capacity(c as usize);
+            for i in 0..c {
+                let sum1 = data_int(&mut rw, &mut pending).await? as u32;
+                let sum2 = data_take(&mut rw, &mut pending, s2 as usize).await?;
+                let blen = if i == c - 1 && rem != 0 {
+                    rem as u32
+                } else {
+                    bl as u32
+                };
+                blocks.push(BlockSum {
+                    sum1,
+                    sum2,
+                    len: blen,
+                });
             }
-            (c, bl, s2, rem)
+            (c, bl, s2, rem, blocks)
         } else {
-            (0, 0, 0, 0)
+            (0, 0, 0, 0, Vec::new())
         };
 
         // 回显 ndx+attrs（+ sum_head 回显）与数据
@@ -849,12 +991,22 @@ where
             let fs_path = entry.map(|e| e.fs_path.clone()).unwrap_or_default();
             match read_file(&fs_path).await {
                 Ok(data) => {
-                    for chunk in data.chunks(CHUNK_SIZE) {
-                        out.extend_from_slice(&(chunk.len() as i32).to_le_bytes());
-                        out.extend_from_slice(chunk);
+                    // count>0 = 有 basis → 真 delta（弱 sum1 滚动 + 强 sum2 前缀匹配）；
+                    // 否则整文件 literal（无 basis 的常规路径）
+                    if blocks.is_empty() || blength <= 0 {
+                        emit_literal(&mut out, &data);
+                        out.extend_from_slice(&0i32.to_le_bytes()); // token 终结
+                    } else {
+                        let tokens = build_delta_tokens(
+                            &data,
+                            &blocks,
+                            blength as u32,
+                            seed,
+                            s2length as usize,
+                        );
+                        out.extend_from_slice(&tokens);
                     }
-                    out.extend_from_slice(&0i32.to_le_bytes()); // token 终结
-                    out.extend_from_slice(&md5_digest(&data)); // 文件校验和
+                    out.extend_from_slice(&md5_digest(&data)); // 文件校验和（无 seed ✗ 真机实证）
                 }
                 Err(err) => {
                     tracing::warn!(path = %fs_path, error = %err, "rsync：文件读取失败，回 MSG_NO_SEND");
@@ -1486,5 +1638,88 @@ mod tests {
                 0x7f, 0x72
             ]
         );
+    }
+
+    /// 弱/强校验和与真机转录逐位同（官方 daemon md5 + 200000B 模式文件第 0 块）。
+    #[test]
+    fn rolling_and_seeded_md5_match_reference_capture() {
+        let pat: Vec<u8> = (0..700).map(|i| ((i * 7 + 3) % 256) as u8).collect();
+        let (s1, s2) = checksum1_signed(&pat);
+        assert_eq!((s1 & 0xffff) | (s2 << 16), 0x760c_feda, "真机块 0 弱校验和");
+        let seed = u32::from_le_bytes([0x76, 0x9d, 0x58, 0x67]);
+        assert_eq!(
+            &md5_seeded(seed, &pat)[..2],
+            &[0x25, 0x91],
+            "真机块 0 强校验和前缀（MD5(seed‖block)）"
+        );
+    }
+
+    fn blocks_of(basis: &[u8], blength: u32, seed: u32, s2len: usize) -> Vec<BlockSum> {
+        let b = blength as usize;
+        let count = basis.len().div_ceil(b);
+        (0..count)
+            .map(|i| {
+                let start = i * b;
+                let end = (start + b).min(basis.len());
+                let chunk = &basis[start..end];
+                let (s1, s2) = checksum1_signed(chunk);
+                BlockSum {
+                    sum1: (s1 & 0xffff) | (s2 << 16),
+                    sum2: md5_seeded(seed, chunk)[..s2len].to_vec(),
+                    len: (end - start) as u32,
+                }
+            })
+            .collect()
+    }
+
+    /// 同一 basis → 全匹配（token 流无 literal，仅匹配 token + 终结 0）。
+    #[test]
+    fn delta_full_match_for_identical_content() {
+        let seed = 0x6718_9d76u32;
+        let data: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
+        let blength = 700u32;
+        let blocks = blocks_of(&data, blength, seed, 16);
+        let tokens = build_delta_tokens(&data, &blocks, blength, seed, 16);
+        // 7 个满块 + 尾 100B 短块 = 8 个匹配 token，无 literal
+        let mut expect = Vec::new();
+        for i in 0..8i32 {
+            expect.extend_from_slice(&(-(i + 1)).to_le_bytes());
+        }
+        expect.extend_from_slice(&0i32.to_le_bytes());
+        assert_eq!(tokens, expect, "全匹配 = 8 token + 终结");
+    }
+
+    /// basis 中部改 300B → 前后块仍匹配、改动区作 literal。
+    #[test]
+    fn delta_partial_match_with_literal_run() {
+        let seed = 0x1122_3344u32;
+        let basis: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
+        let mut data = basis.clone();
+        for i in 1400..1700 {
+            data[i] = data[i].wrapping_add(1);
+        }
+        let blength = 700u32;
+        let blocks = blocks_of(&basis, blength, seed, 16);
+        let tokens = build_delta_tokens(&data, &blocks, blength, seed, 16);
+        // 至少有一个匹配 token（-1/-2/... 或后续）与 literal 长度 >0
+        let mut i = 0usize;
+        let mut literals = 0usize;
+        let mut matches = 0usize;
+        while i + 4 <= tokens.len() {
+            let v = i32::from_le_bytes([tokens[i], tokens[i + 1], tokens[i + 2], tokens[i + 3]]);
+            i += 4;
+            if v > 0 {
+                literals += v as usize;
+                i += v as usize;
+            } else if v == 0 {
+                break;
+            } else {
+                matches += 1;
+            }
+        }
+        assert!(matches >= 3, "改动区前后应有多个匹配：matches={matches}");
+        assert!(literals >= 300, "改动区 + 对齐余量应作 literal：{literals}");
+        // 完整解析到终结
+        assert_eq!(i, tokens.len(), "token 流自洽到终结");
     }
 }
