@@ -57,8 +57,7 @@ fn if_token(header: &str) -> Option<String> {
     }
 }
 
-/// Parse the supported untagged state-token form of RFC 4918 `If`.
-/// ETag and `Not` conditions remain unsupported and fail closed.
+/// Parse the untagged state-token form used by LOCK refresh requests.
 fn parse_if_token_lists(header: &str) -> Option<Vec<Vec<String>>> {
     let mut remaining = header.trim();
     let mut lists = Vec::new();
@@ -71,10 +70,7 @@ fn parse_if_token_lists(header: &str) -> Option<Vec<Vec<String>>> {
             let condition = conditions.strip_prefix('<')?;
             let end = condition.find('>')?;
             let token = &condition[..end];
-            if !token.starts_with("opaquelocktoken:")
-                || token.chars().any(char::is_whitespace)
-                || token.contains('<')
-            {
+            if !valid_state_token(token) {
                 return None;
             }
             tokens.push(token.to_string());
@@ -148,10 +144,7 @@ fn parse_if_lists(input: &mut &str) -> Option<Vec<Vec<IfCondition>>> {
             if let Some(rest) = conditions_input.strip_prefix('<') {
                 let end = rest.find('>')?;
                 let value = &rest[..end];
-                if !value.starts_with("opaquelocktoken:")
-                    || value.chars().any(char::is_whitespace)
-                    || value.contains('<')
-                {
+                if !valid_state_token(value) {
                     return None;
                 }
                 conditions.push(IfCondition::Token {
@@ -180,6 +173,67 @@ fn parse_if_lists(input: &mut &str) -> Option<Vec<Vec<IfCondition>>> {
         *input = after_open[close + 1..].trim_start();
     }
     (!lists.is_empty()).then_some(lists)
+}
+
+fn valid_state_token(value: &str) -> bool {
+    let Some((scheme, rest)) = value.split_once(':') else {
+        return false;
+    };
+    let mut scheme_bytes = scheme.bytes();
+    if !scheme_bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphabetic())
+        || !scheme_bytes
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+    {
+        return false;
+    }
+
+    let bytes = rest.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'%' {
+            if index + 2 >= bytes.len()
+                || !bytes[index + 1].is_ascii_hexdigit()
+                || !bytes[index + 2].is_ascii_hexdigit()
+            {
+                return false;
+            }
+            index += 3;
+            continue;
+        }
+        if !(byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'.'
+                    | b'_'
+                    | b'~'
+                    | b':'
+                    | b'/'
+                    | b'?'
+                    | b'#'
+                    | b'['
+                    | b']'
+                    | b'@'
+                    | b'!'
+                    | b'$'
+                    | b'&'
+                    | b'\''
+                    | b'('
+                    | b')'
+                    | b'*'
+                    | b'+'
+                    | b','
+                    | b';'
+                    | b'='
+            ))
+        {
+            return false;
+        }
+        index += 1;
+    }
+    true
 }
 
 fn valid_entity_tag(value: &str) -> bool {
@@ -2923,6 +2977,20 @@ mod if_token_tests {
                 None,
             ),
             Some(true)
+        );
+        assert_eq!(
+            untagged_if_matches(
+                "(<urn:example:extension-token>) (<opaquelocktoken:active>)",
+                Some(expected),
+                None,
+            ),
+            Some(true),
+            "an unknown valid state token in one alternative must not invalidate other lists"
+        );
+        assert_eq!(
+            untagged_if_matches("(<urn:example:extension-token>)", Some(expected), None),
+            Some(false),
+            "unknown state tokens do not match the active lock"
         );
         assert_eq!(
             untagged_if_matches("(<opaquelocktoken:other>)", Some(expected), None,),
