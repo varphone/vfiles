@@ -938,6 +938,12 @@ pub struct AuthService {
     user_repo: SqliteUserRepo,
     session_repo: SqliteSessionRepo,
     session_ttl_seconds: u64,
+    /// r9 热验缓存 ✗ key = SHA-256(cred)（原文零落盘 ✗）只存成功 + User clone +
+    /// TTL 30s（改密码 30s 窗记档 ✗ 禁用 = 命中时查 user.disabled 即时生效 ✓
+    /// 失败路径不缓存 = 爆破/timing 防护零损 ✓ Arc<Mutex> = Clone 后共享不分叉 ✓）。
+    verified_cache: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<[u8; 32], (User, std::time::Instant)>>,
+    >,
 }
 
 impl AuthService {
@@ -950,6 +956,9 @@ impl AuthService {
             user_repo,
             session_repo,
             session_ttl_seconds,
+            verified_cache: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
         }
     }
 
@@ -1029,11 +1038,31 @@ impl AuthService {
     ///
     /// HTTP 登录与 FTP 认证共用这段逻辑（含禁用校验、旧 SHA-256 哈希透明升级），
     /// 避免两处实现出现安全差异。
+    /// 凭据键（r9 ✗ 纯函数单测 ✓ SHA-256(username ∥ 0 ∥ password) 原文零存）。
+    fn cred_key(username_or_email: &str, password: &str) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(username_or_email.as_bytes());
+        hasher.update([0u8]);
+        hasher.update(password.as_bytes());
+        hasher.finalize().into()
+    }
+
     pub async fn verify_credentials(
         &self,
         username_or_email: &str,
         password: &str,
     ) -> DomainResult<User> {
+        // r9 热验缓存命中（TTL 30s ✗ disabled 每命中实时查 = 禁用即时生效 ✓）
+        {
+            let key = Self::cred_key(username_or_email, password);
+            let cache = self.verified_cache.lock().expect("auth cache poisoned");
+            if let Some((user, at)) = cache.get(&key) {
+                if at.elapsed().as_secs() < 30 && !user.disabled {
+                    return Ok(user.clone());
+                }
+            }
+        }
         // 无效标识与口令错误返回同一个错误，避免泄露「用户名是否存在」
         let user = if username_or_email.contains('@') {
             let email = EmailAddress::new(username_or_email)
@@ -1059,6 +1088,13 @@ impl AuthService {
 
         if !self.verify_password(password, &user.password_hash)? {
             return Err(DomainError::InvalidCredentials);
+        }
+        // r9 成功才入缓存 ✗ 顺手驱逐过期（O(n) 小 n ✓ 失败零缓存 = 爆破防护 ✓）
+        {
+            let key = Self::cred_key(username_or_email, password);
+            let mut cache = self.verified_cache.lock().expect("auth cache poisoned");
+            cache.retain(|_, (_, at)| at.elapsed().as_secs() < 30);
+            cache.insert(key, (user.clone(), std::time::Instant::now()));
         }
 
         // 旧 SHA-256 哈希在成功校验后透明升级；失败不得影响本次登录
@@ -1181,6 +1217,8 @@ impl Clone for AuthService {
             user_repo: self.user_repo.clone(),
             session_repo: self.session_repo.clone(),
             session_ttl_seconds: self.session_ttl_seconds,
+            // r9 Clone = Arc 共享缓存（新建空 = 分叉 ✗ 共享才免疫 clone 分叉 ✓）
+            verified_cache: self.verified_cache.clone(),
         }
     }
 }
@@ -4877,5 +4915,22 @@ mod maintenance_tests {
             .expect("blob file should open");
         file.set_modified(std::time::SystemTime::from(when))
             .expect("mtime should be set");
+    }
+}
+
+#[cfg(test)]
+mod cred_key_tests {
+    use super::AuthService;
+
+    #[test]
+    fn key_is_stable_and_distinguishing() {
+        // r9 凭据键守护：同凭据稳定 / 异凭据区分（原文零存 ✗ SHA-256）
+        let a = AuthService::cred_key("admin", "pw1");
+        let b = AuthService::cred_key("admin", "pw1");
+        let c = AuthService::cred_key("admin", "pw2");
+        let d = AuthService::cred_key("admim", "pw1");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a, d);
     }
 }

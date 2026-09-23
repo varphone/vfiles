@@ -86,7 +86,11 @@
 ✅ XML 选型 / PROPFIND 解析+404propstat+403 / children 双值+批量 / COPY 八式 /
 PROPPATCH 七式 / If+412 七式 / 审计八写点 / 声明面（Allow+DAV class）
 
-**P1 栈（r9 起按序）**：认证热验缓存（0.25s 真头）/ Overwrite T 完整覆盖 / 自定义
+**P1 进度**：
+- ✅ r9 **认证热验缓存**（SHA-256 cred key 原文零存 ✗ 只缓存成功（爆破防护零损 =
+  错密码双发 0.244/0.250s 实证 ✓）✗ disabled 每命中实时查 = 禁用即时 ✓ Clone = Arc
+  共享免疫分叉 ✓ **分层计时：0.328s → 1.6ms ≈ 200×** ✗ 改密码 30s 窗 = 记档权衡）
+- 剩余 P1：Overwrite T 完整覆盖 / 自定义
 属性 k/v / ETag+If-Match 面 / LOCK Timeout 有限 / getetag+creationdate 属性 /
 失败面审计表记 / HTTP 审计跨目标债
 
