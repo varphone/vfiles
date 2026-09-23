@@ -76,9 +76,9 @@ where
         // Phase1（r4）= 命令段 + file_list ✗ r3 到 OK 即完成模块选择面
         Ok(())
     } else {
-        rw.get_mut()
-            .write_all(b"@RSYNCD: ERROR Unknown module\n")
-            .await?;
+        // 官方形（r4 对照 ✗ P04 单行即关 = @ERROR: Unknown module '<name>' + 断言同步）
+        let line = format!("@ERROR: Unknown module '{}'\n", text);
+        rw.get_mut().write_all(line.as_bytes()).await?;
         rw.get_mut().flush().await?;
         Ok(())
     }
@@ -155,7 +155,7 @@ mod handshake_tests {
         r2.get_mut().write_all(b"nope\n").await.unwrap();
         l2.clear();
         r2.read_line(&mut l2).await.unwrap();
-        assert_eq!(l2, "@RSYNCD: ERROR Unknown module\n");
+        assert_eq!(l2, "@ERROR: Unknown module 'nope'\n", "官方 P04 单行形");
     }
 
     /// 版本解析：30/31 过、垃圾拒。

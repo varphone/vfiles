@@ -1,4 +1,25 @@
-# rsync 协议 daemon（round 2 选型 → **round 3 Phase0 探底** ✗ 状态见下）
+# rsync 协议 daemon（round 2 选型 → r3 Phase0 → r4 收尾金标准 → **r5 wire 转录全知** ✗ 状态见下）
+
+## 状态（r5 末 · strace 直挂 = 双端全字节 wire 转录到手 = 实装钥匙全齐）
+
+- **P04 官方形修兑现（r4 承诺）**：未知模块回 `@ERROR: Unknown module '<name>'` 单行即关
+  （与官方逐字节同形 ✗ 断言同步 ✗ 三黄金 0.00s 绿 ✗ 真 CLI 待重启复验 r6 开工一并）。
+- **wire 五层时序全解剖**（资产 = `golden/wire_anatomy_r5.md` 解剖图 + `golden/
+  client_strace_raw.txt` 34KB 原始双端转录 sha=968dc6cd… ✗ **#66 strace 直挂 -f 立法**） ✨：
+  1. 明文握手（banner 41B 版本+算法 → `GOLD\n` → `@RSYNCD: OK\n`）= **我们已同形 ✓**
+  2. **命令段真形** = `--server\0--sender\0-de.LsfxCIvu\0--list-only\0.\0GOLD/\0\0`（真 flag 簇
+     + 源 `.` + 模块内路径 + 双 NUL ✗ r4 python 模拟缺 flag 簇 = 对照差记档）
+  3. 协议确认层 = 服 `\201\376`(2B) → 客 `\x1E`(=30 单字节) + checksum 串 30B → 服
+     **`#` + 选定算法串 + `\n`**(35B = `#` 前缀 = 算法选定响应) + 4B `F\x19\x14g`
+  4. **flist 57B 铁证帧**：name = **1B 长度 + bytes 双锚**（`03 sub\0` / `05 a.txt\0` ✓
+     mtime/mode 段 = r6 按 rsync 源 flist.c 对齐解出）
+  5. 终结帧族（`01\0\0\07\0` / `04\0\0\07 FF×4` / `08\0\0\21X\0…` 双 fd mux 对话 = 收尾层 ✗
+     r6 精解对答）。
+- **r6 实装清单**（五层照转录实现 + 终极探针 = 真 `rsync --list-only rsync://…/files/` =
+  **RC0 列出 vfiles 文件**）：① args 解析（NUL 双尾 + flag 簇识别 `--list-only`/`--sender`）
+  ② `\x1E` + checksum 串回 `#…\n` ③ mux 帧写 + flist 编码（1B len+name、mtime/mode 源对齐）
+  ④ 终结帧对答 ⑤ vfiles 树 → 条目流（`collect_keys` 同族复用 ✗ mode 按 drwxr-xr-x/-rw-r--r-- 形）。
+- 纪律：#62 串行 / #63 硬超时 / #65 五钟 / **#66 strace 直挂 -f（timeout 包装全空一次的教训）**。
 
 ## 状态（r4 末 · 官方 daemon 黄金对照法全胜）
 
