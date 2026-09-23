@@ -699,6 +699,44 @@ impl VfilesS3 {
             .map(|v| v.to_string().replace('-', "")))
     }
 
+    /// 确认 multipart uploadId 属于当前凭证的命名空间、未过期且绑定请求中的 key。
+    async fn validate_multipart_target(
+        &self,
+        upload_id: &vfiles_domain::UploadId,
+        key: &str,
+    ) -> S3Result<()> {
+        let requested_path = norm(key)
+            .map_err(|_| s3s::s3_error!(NoSuchUpload, "upload id does not identify this object"))?;
+        let session =
+            self.upload
+                .get_upload_session(upload_id)
+                .await
+                .map_err(|error| match error {
+                    vfiles_domain::DomainError::NotFound { .. }
+                    | vfiles_domain::DomainError::UploadExpired => {
+                        s3s::s3_error!(NoSuchUpload, "upload does not exist or has expired")
+                    }
+                    other => dom_err(other),
+                })?;
+        let session_key = if session.target_path_norm.as_str().is_empty() {
+            session.filename.clone()
+        } else {
+            format!("{}/{}", session.target_path_norm.as_str(), session.filename)
+        };
+        if session.namespace_id != self.namespace
+            || session.owner_user_id != self.owner
+            || session_key != requested_path.as_str()
+            || session.state != vfiles_domain::UploadState::Receiving
+            || session.expires_at < time::OffsetDateTime::now_utc()
+        {
+            return Err(s3s::s3_error!(
+                NoSuchUpload,
+                "upload id does not identify this object"
+            ));
+        }
+        Ok(())
+    }
+
     /// 目标版本（`versionId` ✗ 无 → 最新）：返回 `(etag, last_modified, 透传给 open_file 的 commit)`。
     async fn resolve_version(
         &self,
@@ -1821,6 +1859,8 @@ impl S3 for VfilesS3 {
             ));
         }
         let upload_id = parse_upload_id(&input.upload_id)?;
+        self.validate_multipart_target(&upload_id, &input.key)
+            .await?;
         let data = read_body(input.body).await?;
         let etag = md5_hex(&data);
         self.upload
@@ -1853,6 +1893,8 @@ impl S3 for VfilesS3 {
             ));
         }
         let upload_id = parse_upload_id(&input.upload_id)?;
+        self.validate_multipart_target(&upload_id, &input.key)
+            .await?;
         let (src_bucket, src_key) = match &input.copy_source {
             s3s::dto::CopySource::Bucket { bucket, key, .. } => {
                 (bucket.to_string(), key.to_string())
@@ -1913,6 +1955,8 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let upload_id = parse_upload_id(&input.upload_id)?;
+        self.validate_multipart_target(&upload_id, &input.key)
+            .await?;
         let stored = self
             .upload
             .list_upload_parts(&upload_id)
@@ -2008,6 +2052,8 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let upload_id = parse_upload_id(&input.upload_id)?;
+        self.validate_multipart_target(&upload_id, &input.key)
+            .await?;
         match self.upload.cancel_upload(&upload_id).await {
             Ok(()) | Err(vfiles_domain::DomainError::NotFound { .. }) => {
                 ok(AbortMultipartUploadOutput::default())
@@ -2026,6 +2072,8 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let upload_id = parse_upload_id(&input.upload_id)?;
+        self.validate_multipart_target(&upload_id, &input.key)
+            .await?;
         let stored = self
             .upload
             .list_upload_parts(&upload_id)

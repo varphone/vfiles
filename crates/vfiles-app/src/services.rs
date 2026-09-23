@@ -2943,6 +2943,14 @@ where
         let parts = self.upload_store.get_upload_parts(upload_id).await?;
         Ok(upload_view_from_session(&upload, &parts))
     }
+
+    /// 读取上传会话实体，供协议适配层校验会话归属与目标路径。
+    pub async fn get_upload_session(
+        &self,
+        upload_id: &UploadId,
+    ) -> DomainResult<vfiles_domain::UploadSession> {
+        self.upload_store.get_upload_session(upload_id).await
+    }
 }
 
 #[derive(Debug, Clone)]
