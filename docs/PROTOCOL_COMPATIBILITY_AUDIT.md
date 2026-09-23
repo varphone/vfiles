@@ -8,6 +8,7 @@ checks, and record the commit that closes it.
 
 | ID | Protocol | Finding and evidence | Priority | State |
 | --- | --- | --- | --- | --- |
+| HTTP-001 | HTTP | CORS previously allowed only `Accept` and `Content-Type`, blocking browser preflight for Bearer auth and conditional/range downloads; successful responses also hid validators and range metadata from browser JavaScript. Explicit request and exposed response headers plus preflight/206 regression coverage are now in place. | P1 | Fixed in this cycle |
 | DAV-001 | WebDAV | `Overwrite` was parsed case-sensitively. RFC 4918 defines `T`/`F` as ABNF string literals, which are case-insensitive; a compliant lowercase `f` was rejected. Parser and request-level regression coverage added. | P1 | Fixed: `b8accb2` |
 | QA-001 | S3 | Independent-client probe: boto3/botocore 1.34.46 passed 50/50 operations; rclone 1.60.1-DEV passed bucket listing, upload, list, download, 11 MiB multipart upload/download byte comparison, and delete against `/s3`. | P1 | Verified for tested operations |
 | QA-002 | WebDAV | cadaver 0.24 passed authenticated OPTIONS, MKCOL, 11 MiB PUT, COPY, MOVE, PROPFIND listing, GET byte comparison, DELETE, and collection removal. rclone 1.60.1-DEV also passed MKCOL/PUT/list/GET. | P1 | Verified for tested operations; full litmus suite remains open |

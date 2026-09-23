@@ -1,5 +1,11 @@
 # VFiles 优化路线图（审计 + 迭代记录）
 
+### HTTP：允许浏览器跨源使用认证与条件下载
+
+- CORS 原先只允许 `Accept` / `Content-Type`，实际阻断了跨源 Bearer 认证、ETag 条件请求及 Range 下载预检；响应的 ETag、Last-Modified 和 Content-Range 也未向浏览器脚本开放。
+- 现在显式允许 `Authorization`、条件请求头及 Range 相关请求头，暴露下载校验器、范围元数据和 request id，并允许 HEAD。
+- 回归：预检验证 authorization/content-type/if-none-match/range 均获准；带 Origin 的 Range 请求返回 206，且浏览器可读 ETag、Last-Modified、Accept-Ranges、Content-Range。
+
 ### HTTP：拒绝单次 multipart 请求中的多个文件
 
 - multipart 处理器之前会覆盖临时文件内容，却累计所有文件段的大小，导致多个 `file` 字段被错误合并成一个上传。

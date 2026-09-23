@@ -178,12 +178,33 @@ fn build_cors_layer(config: &AppConfig) -> CorsLayer {
     let cors = CorsLayer::new()
         .allow_methods([
             Method::GET,
+            Method::HEAD,
             Method::POST,
             Method::PUT,
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([header::ACCEPT, header::CONTENT_TYPE]);
+        .allow_headers([
+            header::ACCEPT,
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::CONTENT_RANGE,
+            header::IF_MATCH,
+            header::IF_NONE_MATCH,
+            header::IF_MODIFIED_SINCE,
+            header::IF_UNMODIFIED_SINCE,
+            header::IF_RANGE,
+            header::RANGE,
+        ])
+        .expose_headers([
+            header::ACCEPT_RANGES,
+            header::CONTENT_DISPOSITION,
+            header::CONTENT_RANGE,
+            header::ETAG,
+            header::LAST_MODIFIED,
+            header::RETRY_AFTER,
+            header::HeaderName::from_static("x-request-id"),
+        ]);
 
     if config.http.cors_allow_any_origin {
         cors.allow_origin(Any)

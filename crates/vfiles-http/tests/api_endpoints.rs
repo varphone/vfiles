@@ -2404,7 +2404,10 @@ async fn cors_preflight_allows_configured_public_origin_with_credentials() {
                 .uri("/api/health")
                 .header(header::ORIGIN, "http://example.test:4242")
                 .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
-                .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "content-type")
+                .header(
+                    header::ACCESS_CONTROL_REQUEST_HEADERS,
+                    "authorization, content-type, if-none-match, range",
+                )
                 .body(Body::empty())
                 .expect("request should build"),
         )
@@ -2424,6 +2427,54 @@ async fn cors_preflight_allows_configured_public_origin_with_credentials() {
             .expect("allow-credentials should be present"),
         "true"
     );
+    let allowed_headers = allowed
+        .headers()
+        .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+        .expect("allow-headers should be present")
+        .to_str()
+        .expect("allow-headers should be valid text")
+        .split(',')
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    for requested_header in ["authorization", "content-type", "if-none-match", "range"] {
+        assert!(
+            allowed_headers
+                .iter()
+                .any(|header| header.eq_ignore_ascii_case(requested_header)),
+            "preflight should allow {requested_header}: {allowed_headers:?}"
+        );
+    }
+
+    app.upload_version("", "cors.txt", b"cors range payload", "CORS download")
+        .await;
+    let exposed = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=cors.txt")
+                .header(header::ORIGIN, "http://example.test:4242")
+                .header(header::RANGE, "bytes=0-3")
+                .body(Body::empty())
+                .expect("range request should build"),
+        )
+        .await;
+    assert_eq!(exposed.status(), StatusCode::PARTIAL_CONTENT);
+    let exposed_headers = exposed
+        .headers()
+        .get(header::ACCESS_CONTROL_EXPOSE_HEADERS)
+        .expect("expose-headers should be present")
+        .to_str()
+        .expect("expose-headers should be valid text")
+        .split(',')
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    for response_header in ["etag", "last-modified", "accept-ranges", "content-range"] {
+        assert!(
+            exposed_headers
+                .iter()
+                .any(|header| header.eq_ignore_ascii_case(response_header)),
+            "browser should be able to read {response_header}: {exposed_headers:?}"
+        );
+    }
 
     let blocked = app
         .request(
