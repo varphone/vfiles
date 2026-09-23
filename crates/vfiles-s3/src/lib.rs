@@ -31,8 +31,8 @@ use s3s::dto::{
     HeadObjectInput, HeadObjectOutput, ListBucketsInput, ListBucketsOutput,
     ListMultipartUploadsInput, ListMultipartUploadsOutput, ListObjectsInput, ListObjectsOutput,
     ListObjectsV2Input, ListObjectsV2Output, ListPartsInput, ListPartsOutput, MultipartUpload,
-    Object, Part, PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp, UploadPartCopyInput,
-    UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
+    Object, Owner, Part, PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp,
+    UploadPartCopyInput, UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
 use tokio::io::AsyncReadExt;
@@ -764,6 +764,16 @@ impl S3 for VfilesS3 {
         .await
         .map_err(dom_err)?;
         let mut page = page_from(entries, truncated);
+        // `fetch-owner=true` → 逐对象带 `Owner`（本部署内条目均属该命名空间属主）
+        if input.fetch_owner.unwrap_or(false) {
+            let owner = Owner {
+                id: Some(self.owner.to_string()),
+                display_name: None,
+            };
+            for o in &mut page.contents {
+                o.owner = Some(owner.clone());
+            }
+        }
         let encode = input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url");
         if encode {
             url_encode_page(&mut page);
@@ -856,6 +866,14 @@ impl S3 for VfilesS3 {
         .await
         .map_err(dom_err)?;
         let mut page = page_from(entries, truncated);
+        // V1 语义：恒带 `Owner`
+        let owner = Owner {
+            id: Some(self.owner.to_string()),
+            display_name: None,
+        };
+        for o in &mut page.contents {
+            o.owner = Some(owner.clone());
+        }
         if input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url") {
             url_encode_page(&mut page);
         }

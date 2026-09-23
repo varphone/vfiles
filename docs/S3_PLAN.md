@@ -1,4 +1,13 @@
-# S3 兼容 API（… r30 条件读 304 → r31 逐键时间/大小 → **r32 `encoding-type=url`**）
+# S3 兼容 API（… r31 逐键时间/大小 → r32 编码协商 → **r33 fetch-owner**）
+
+## 状态（r33 末 · 列表所有者信息 = 客户端工具可用）
+
+- **实装**：`ListObjectsV2` 的 **`fetch-owner=true`** → 逐对象带 `Owner{ID}`（本部署内条目均属该命名空间
+  属主 ✗ 不伪造 per-object 用户）；**V1 `ListObjects` 恒带 `Owner`**（AWS 同形）；与 `encoding-type` 可组合。
+- **真机验收（真 SDK，4 项）**：V2 默认**不带** `Owner` ✓ · V2 `fetch-owner` 带非空 `Owner.ID` ✓ ·
+  V1 恒带 ✓ · 与 `encoding-type=url` 组合 ✓。
+- **回归**：自写探针 **24/24** · 真 SDK **44/44**（+fetch-owner）。
+- **仍债**：`ListObjectVersions` / `PutBucketVersioning`（真版本控制）· region 校验（有意不做）。
 
 ## 状态（r32 末 · 列表编码协商 = 特殊字符键可用）
 

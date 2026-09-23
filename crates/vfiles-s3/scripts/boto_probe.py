@@ -284,6 +284,18 @@ def main():
     for mk in ["boto-meta/a.txt", "boto-meta/src.txt", "boto-meta/copy.txt", "boto-meta/repl.txt"]:
         s3.delete_object(Bucket="default", Key=mk)
 
+    # ── fetch-owner（V2 按需 / V1 恒带 ✗ r33）──
+    s3.put_object(Bucket="default", Key="boto-own/a.txt", Body=b"x")
+    plain_own = s3.list_objects_v2(Bucket="default", Prefix="boto-own/")
+    with_own = s3.list_objects_v2(Bucket="default", Prefix="boto-own/", FetchOwner=True)
+    v1_own = s3.list_objects(Bucket="default", Prefix="boto-own/")
+    check("boto fetch-owner (V2 on request, V1 always)",
+          all("Owner" not in o for o in plain_own.get("Contents", []))
+          and all(o.get("Owner", {}).get("ID") for o in with_own.get("Contents", []))
+          and all(o.get("Owner", {}).get("ID") for o in v1_own.get("Contents", [])),
+          with_own.get("Contents", [{}])[0].get("Owner"))
+    s3.delete_object(Bucket="default", Key="boto-own/a.txt")
+
     # ── encoding-type=url（r32）──
     for ek in ["boto-enc/a%20b.txt", "boto-enc/space key.txt"]:
         s3.put_object(Bucket="default", Key=ek, Body=b"x")
