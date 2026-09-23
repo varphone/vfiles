@@ -132,11 +132,15 @@ fn parse_if_lists(input: &mut &str) -> Option<Vec<Vec<IfCondition>>> {
         let mut conditions_input = after_open[..close].trim();
         let mut conditions = Vec::new();
         while !conditions_input.is_empty() {
-            let negated = if let Some(rest) = conditions_input.strip_prefix("Not") {
-                if rest.is_empty() || !rest.starts_with(char::is_whitespace) {
-                    return None;
-                }
-                conditions_input = rest.trim_start();
+            let negated = if conditions_input
+                .get(..3)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Not"))
+                && conditions_input
+                    .get(3..)
+                    .and_then(|rest| rest.chars().next())
+                    .is_some_and(char::is_whitespace)
+            {
+                conditions_input = conditions_input[3..].trim_start();
                 true
             } else {
                 false
@@ -3028,6 +3032,14 @@ mod if_token_tests {
             ),
             Some(true)
         );
+        for negation in ["Not", "not", "NOT", "nOt"] {
+            let header = format!("({negation} <urn:example:other> <opaquelocktoken:active>)");
+            assert_eq!(
+                untagged_if_matches(&header, Some(expected), None),
+                Some(true),
+                "Not keyword spelling {negation:?}"
+            );
+        }
         assert_eq!(
             untagged_if_matches(
                 "(Not <opaquelocktoken:active> <opaquelocktoken:active>)",

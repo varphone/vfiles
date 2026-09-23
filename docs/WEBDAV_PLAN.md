@@ -32,7 +32,7 @@
 - 新 LOCK 解析 RFC `lockinfo` XML，只接受 `exclusive` + `write`；shared 请求明确返回 405，不再被静默授予 exclusive 锁。
 - LOCK 的 `Depth` 若显式提供，只接受 `0`；不支持的 scope 返回 400。
 - 写请求支持 RFC 4918 `If` 条件列表：列表内按 AND 求值、列表间按 OR 求值；支持未标记与 URI-tagged 列表，tagged 列表按挂载路径分别映射到 COPY/MOVE 源和目标；有锁写请求必须在匹配资源的成功列表中提供匹配的正向锁 token；ETag 与 `Not` 条件按当前实体状态求值，即使资源未锁也会校验。
-- `If` 状态 token 接受任意合法 URI；未知 token 按“不匹配”参与条件求值，不会导致整个头部解析失败并屏蔽其它 OR 列表。
+- `If` 状态 token 接受任意合法 URI；未知 token 按“不匹配”参与条件求值，不会导致整个头部解析失败并屏蔽其它 OR 列表。`Not` 关键字按 ABNF 大小写不敏感解析。
 
 ## 0.5 GET 流式化（r201 ✓ 商业级硬伤修 ✗ 大文件内存爆）
 
