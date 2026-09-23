@@ -1,4 +1,21 @@
-# rsync 协议 daemon（r9 列 → r10 取 → r11 delta → **r12 push 双向闭环** ✗ 认证/收端 delta 待办）
+# rsync 协议 daemon（r9 列 → r10 取 → r11 delta → r12 push → **r13 secrets 认证 + 写门控**）
+
+## 状态（r13 末 · 认证 + 写门控落地 = 匿名写窗口关闭）
+
+- **实装**：
+  | 项 | 内容 |
+  | --- | --- |
+  | 认证 | rsync **secrets challenge-response**（`@RSYNCD: AUTHREQD <challenge>` → `<user> <base64(HASH(pass‖challenge))>`）：摘要协商 sha512/sha256/md5（banner 同步为 `sha512 sha256 md5`✗ 去掉未实现的 sha1/md4）；**无填充 base64**（真机转录取证 ✗ 带填充必失配）；常量时间比较 |
+  | 权限 | `auth users` 条目支持 `:ro` / `:rw` / `:deny`；`VFILES_RSYNC_WRITABLE`（默认 **false**）控制写 |
+  | 写门控 | 只读模块收到 push → 多路复用 `MSG_ERROR`（官方 `do_server_recv` 同形）`ERROR: module is read only` + 关闭 |
+  | 配置 | `VFILES_RSYNC_WRITABLE` / `VFILES_RSYNC_AUTH_USERS` / `VFILES_RSYNC_SECRETS_FILE`（已入 `.env.example`） |
+- **真机验收**：正确口令 list RC0 · 正确口令 push（alice `:rw`）RC0 → 拉回 `diff -r` **IDENTICAL** ·
+  错误口令 = `@ERROR: auth failed on module files` + RC5 · bob `:ro` 可 list 但 push 被拒（RC12）·
+  匿名 + `writable=false` push 被拒 · 匿名 + `writable=true` push 仍可（显式 opt-in 回归 OK）。
+- **门禁**：`cargo test -p vfiles-rsync` **19/19**（新增 sha512 响应真机转录 golden + verify 三态）·
+  workspace 全绿 · clippy 归零 · fmt · build。
+- **债**：收端无 delta · 不比较 mtime/size · 符号链接/设备/空目录不落地 · `--delete` 未支持 ·
+  per-user 授权粒度（现单模块级）。
 
 ## 状态（r12 末 · push 打通 = rsync 双向可用 ✗ 推→列→拉 `diff -r` 全同）
 

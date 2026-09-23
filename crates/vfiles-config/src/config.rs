@@ -209,6 +209,15 @@ pub struct RsyncConfig {
     /// 模块名（`rsync://host/<module>` 的 <module> ✗ 单模块 = 默认 ns 根）。
     #[serde(default = "rsync_default_module")]
     pub module: String,
+    /// 模块是否**可写**（r8 ✗ push 需显式开启；false = 只读、拒收 push）。
+    #[serde(default)]
+    pub writable: bool,
+    /// 允许的用户（逗号分隔 ✗ 空 = 匿名；支持 `user:ro` / `user:rw` / `user:deny`）。
+    #[serde(default)]
+    pub auth_users: String,
+    /// secrets 文件路径（`user:password` 每行一条 ✗ 与 auth_users 配套启用认证）。
+    #[serde(default)]
+    pub secrets_file: String,
 }
 
 fn rsync_default_enabled() -> bool {
@@ -259,7 +268,13 @@ fn webdav_from_env(
         std::env::var("VFILES_WEBDAV_PORT").ok(),
         std::env::var("VFILES_WEBDAV_MOUNT").ok(),
     );
-    Ok(WebdavConfig { enabled, host, port, embedded, mount_path })
+    Ok(WebdavConfig {
+        enabled,
+        host,
+        port,
+        embedded,
+        mount_path,
+    })
 }
 
 /// WebDAV 开关解析（r109b ✓ 对称 resolve_ftp_enabled 六分支 + **语义差**：
@@ -277,7 +292,12 @@ fn s3_from_env() -> Result<S3Config, ConfigError> {
         .unwrap_or(9000);
     let access_key = std::env::var("VFILES_S3_ACCESS_KEY").unwrap_or_default();
     let secret_key = std::env::var("VFILES_S3_SECRET_KEY").unwrap_or_default();
-    Ok(S3Config { enabled, port, access_key, secret_key })
+    Ok(S3Config {
+        enabled,
+        port,
+        access_key,
+        secret_key,
+    })
 }
 
 /// rsync env 读取（对称式 ✗ 三变量）。
@@ -295,13 +315,29 @@ fn rsync_from_env() -> Result<RsyncConfig, ConfigError> {
         .map(|m| m.trim_matches('/').to_string())
         .filter(|m| !m.is_empty())
         .unwrap_or_else(|| "files".to_string());
-    Ok(RsyncConfig { enabled, port, module })
+    let writable = std::env::var("VFILES_RSYNC_WRITABLE")
+        .ok()
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    let auth_users = std::env::var("VFILES_RSYNC_AUTH_USERS")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .unwrap_or_default();
+    let secrets_file = std::env::var("VFILES_RSYNC_SECRETS_FILE")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .unwrap_or_default();
+    Ok(RsyncConfig {
+        enabled,
+        port,
+        module,
+        writable,
+        auth_users,
+        secrets_file,
+    })
 }
 
-fn resolve_webdav_enabled(
-    explicit: Option<bool>,
-    auth_enabled: bool,
-) -> Result<bool, ConfigError> {
+fn resolve_webdav_enabled(explicit: Option<bool>, auth_enabled: bool) -> Result<bool, ConfigError> {
     match (explicit, auth_enabled) {
         (Some(false), _) => Ok(false),
         (Some(true), false) => Err(ConfigError::LoadError(
@@ -318,10 +354,7 @@ fn resolve_webdav_enabled(
 /// 共端口双轨判定（r-new ✓ 纯函数单测）：显式 PORT = 独立模式（现行为回退）/
 /// 未设 = 嵌入 ✗ mount 空串归一 `/dav`（**根挂载不支持 = 与前缀隔离方案核心一致** ✗
 /// 空前缀会撞前端 fallback 根语义 → 归一防御）。
-fn resolve_webdav_dual(
-    port_explicit: Option<String>,
-    mount: Option<String>,
-) -> (bool, String) {
+fn resolve_webdav_dual(port_explicit: Option<String>, mount: Option<String>) -> (bool, String) {
     let embedded = port_explicit.is_none();
     let mount_path = match mount.map(|m| m.trim().to_string()) {
         Some(m) if !m.is_empty() => {
@@ -877,7 +910,10 @@ mod tests {
         assert!(!config.s3.enabled, "S3 默认关（新协议面显式启用原则）");
         assert_eq!(config.s3.port, 9000);
         // r3: rsync 新面默认关 + 873 + 模块 files（显式 VFILES_RSYNC_ENABLED 启用）
-        assert!(!config.rsync.enabled, "rsync 默认关（新协议面显式启用原则）");
+        assert!(
+            !config.rsync.enabled,
+            "rsync 默认关（新协议面显式启用原则）"
+        );
         assert_eq!(config.rsync.port, 873);
         assert_eq!(config.rsync.module, "files");
         assert!(config.auth.enabled);
@@ -1154,10 +1190,7 @@ mod webdav_dual_tests {
     #[test]
     fn dual_track_modes() {
         // r-new 三式守护：未设 PORT=嵌入 /dav · 显式 PORT=独立回退 · mount 覆写与归一
-        assert_eq!(
-            resolve_webdav_dual(None, None),
-            (true, "/dav".to_string())
-        );
+        assert_eq!(resolve_webdav_dual(None, None), (true, "/dav".to_string()));
         assert_eq!(
             resolve_webdav_dual(Some("18080".into()), None),
             (false, "/dav".to_string())

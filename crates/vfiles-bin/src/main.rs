@@ -1753,6 +1753,45 @@ impl s3s::auth::S3Auth for EnvAuth {
 /// r9：数据源 = 默认命名空间条目树（与 WebDAV/S3 同源 `entry_repo`），按请求路径/递归深度
 /// 由 `vfiles_rsync::collect_flat` 枚举后交协议层编码。
 /// r10：文件内容经 `workspace.read_file_bytes` 读取（与 WebDAV/S3 同源 blob 链）。
+/// 装配 rsync daemon 认证（`auth users` 逗号清单 + `secrets file` 的 `user:password` 行）。
+fn load_rsync_auth(cfg: &vfiles_config::RsyncConfig) -> vfiles_rsync::AuthConfig {
+    let users: Vec<String> = cfg
+        .auth_users
+        .split(',')
+        .map(|u| u.trim().to_string())
+        .filter(|u| !u.is_empty())
+        .collect();
+    let mut secrets = std::collections::HashMap::new();
+    if !cfg.secrets_file.is_empty() {
+        match std::fs::read_to_string(&cfg.secrets_file) {
+            Ok(text) => {
+                for line in text.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('#') {
+                        continue;
+                    }
+                    if let Some((user, pass)) = line.split_once(':') {
+                        secrets.insert(user.trim().to_string(), pass.trim().to_string());
+                    }
+                }
+            }
+            Err(err) => tracing::error!(
+                path = %cfg.secrets_file,
+                error = %err,
+                "rsync secrets 文件读取失败（认证将全部拒绝）"
+            ),
+        }
+    }
+    if !users.is_empty() && secrets.is_empty() {
+        tracing::warn!("rsync 配置了 auth_users 但无可用 secrets（连接将全部认证失败）");
+    }
+    vfiles_rsync::AuthConfig {
+        users,
+        secrets,
+        writable: cfg.writable,
+    }
+}
+
 type RsyncUploadService = vfiles_app::UploadService<
     vfiles_infra_sqlite::SqliteEntryRepo,
     vfiles_infra_sqlite::SqliteSnapshotRepo,
@@ -1771,10 +1810,13 @@ fn build_and_spawn_rsync(
 ) {
     let addr = cfg.bind_address();
     let module = cfg.module.clone();
+    let auth = load_rsync_auth(cfg);
     tracing::info!(
         addr = %addr,
         module = %module,
-        "rsync daemon 已拉起（专用端口 ✗ 匿名只读单模块 ✗ 收端 push = 记档债）"
+        writable = auth.writable,
+        auth_users = auth.users.len(),
+        "rsync daemon 已拉起（push 门控 + secrets 认证 ✗ 空 auth_users = 匿名）"
     );
     tokio::spawn(async move {
         match tokio::net::TcpListener::bind(&addr).await {
@@ -1787,11 +1829,13 @@ fn build_and_spawn_rsync(
                                 let repo = std::sync::Arc::clone(&entry_repo);
                                 let ws = std::sync::Arc::clone(&workspace);
                                 let upload = upload.clone();
+                                let auth = auth.clone();
                                 let ns = namespace;
                                 tokio::spawn(async move {
                                     let res = vfiles_rsync::handle_conn(
                                         stream,
                                         &module,
+                                        auth,
                                         move |req| {
                                             let repo = std::sync::Arc::clone(&repo);
                                             async move {

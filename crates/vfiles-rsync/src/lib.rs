@@ -24,7 +24,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWrite
 use vfiles_domain::{EntryKind, NamespaceId};
 
 /// daemon banner（版本 + 算法串 ✗ 官方 `output_daemon_greeting` 形）。
-pub const PROTOCOL_LINE: &str = "@RSYNCD: 30.0 sha512 sha256 sha1 md5 md4\n";
+pub const PROTOCOL_LINE: &str = "@RSYNCD: 30.0 sha512 sha256 md5\n";
 /// 服务端校验和清单。**只列 `md5`** = 双方必收敛到 md5（照抄官方全清单会协商出 xxh128，
 /// 需 XXH3-128 实现 ✗ 见 `golden/download_wire_r9.md`：文件校验和 = `MD5(内容)` 无 seed）。
 const CHECKSUM_LIST: &str = "md5";
@@ -321,6 +321,123 @@ pub fn sort_flist(entries: &mut Vec<FlatEntry>) {
         }
     }
     *entries = sorted;
+}
+
+// ─────────────────────────── daemon 认证（secrets ✗ r8）───────────────────────────
+
+/// 本端支持的认证摘要（最强优先 ✗ 与 banner 一致）。
+const AUTH_DIGESTS: [&str; 3] = ["sha512", "sha256", "md5"];
+
+/// rsync daemon 认证配置（空 users = 匿名访问；writable 控制 push）。
+#[derive(Debug, Default, Clone)]
+pub struct AuthConfig {
+    /// `auth users` 条目（可带 `:ro` / `:rw` / `:deny`）。
+    pub users: Vec<String>,
+    /// user → password（来自 secrets 文件）。
+    pub secrets: std::collections::HashMap<String, String>,
+    /// 模块是否可写（false = 拒收 push）。
+    pub writable: bool,
+}
+
+impl AuthConfig {
+    /// 是否需要认证。
+    pub fn required(&self) -> bool {
+        !self.users.is_empty()
+    }
+
+    /// `user[:opts]` 拆分。
+    fn split_user(entry: &str) -> (&str, &str) {
+        match entry.split_once(':') {
+            Some((n, o)) => (n.trim(), o.trim()),
+            None => (entry.trim(), ""),
+        }
+    }
+
+    /// 校验用户 + 响应值 → `Some(该用户是否可写)`；`None` = 拒绝。
+    fn verify(&self, user: &str, response: &str, challenge: &str, digest: &str) -> Option<bool> {
+        let entry = self.users.iter().find(|e| Self::split_user(e).0 == user)?;
+        let (_, opts) = Self::split_user(entry);
+        if opts == "deny" {
+            return None;
+        }
+        let pass = self.secrets.get(user)?;
+        let expect = auth_response(pass, challenge, digest);
+        if !constant_time_eq(expect.as_bytes(), response.as_bytes()) {
+            return None;
+        }
+        Some(match opts {
+            "ro" => false,
+            "rw" => true,
+            _ => self.writable,
+        })
+    }
+}
+
+/// 响应值 = base64(HASH(password ‖ challenge))（authenticate.c `generate_hash`）。
+fn auth_response(password: &str, challenge: &str, digest: &str) -> String {
+    use base64::Engine;
+    let mut input = Vec::with_capacity(password.len() + challenge.len());
+    input.extend_from_slice(password.as_bytes());
+    input.extend_from_slice(challenge.as_bytes());
+    base64::engine::general_purpose::STANDARD_NO_PAD.encode(hash_bytes(digest, &input))
+}
+
+/// 摘要计算（sha512 / sha256 / md5 ✗ 其余回退 md5）。
+fn hash_bytes(digest: &str, data: &[u8]) -> Vec<u8> {
+    use sha2::{Digest, Sha256, Sha512};
+    match digest {
+        "sha512" => Sha512::digest(data).to_vec(),
+        "sha256" => Sha256::digest(data).to_vec(),
+        _ => md5_digest(data).to_vec(),
+    }
+}
+
+/// 常量时间字节比较（避免响应值计时侧信道）。
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// 从 greeting 行取客户端摘要清单（`@RSYNCD: 31.0 sha512 sha256 …`）。
+fn parse_auth_list(line: &str) -> Vec<String> {
+    let rest = line.trim().strip_prefix("@RSYNCD:").unwrap_or("").trim();
+    rest.split_whitespace()
+        .skip(1)
+        .map(|t| t.to_string())
+        .collect()
+}
+
+/// 双方最强交集（本端清单优先序）。
+fn pick_digest(client: &[String]) -> &'static str {
+    AUTH_DIGESTS
+        .iter()
+        .find(|d| client.iter().any(|c| c == *d))
+        .copied()
+        .unwrap_or("md5")
+}
+
+/// 随机 challenge（base64(24B urandom) ✗ 客户端仅回读该串，不回算）。
+fn gen_challenge() -> String {
+    use base64::Engine;
+    let mut buf = [0u8; 24];
+    if std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut buf))
+        .is_err()
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let seed = (now ^ ((std::process::id() as u128) << 40)).to_le_bytes();
+        buf[..16].copy_from_slice(&seed);
+    }
+    base64::engine::general_purpose::STANDARD_NO_PAD.encode(buf)
 }
 
 /// 客户端 args 解析结果。
@@ -945,6 +1062,7 @@ where
 pub async fn handle_conn<S, F, Fut, R, RFut, W, WFut>(
     stream: S,
     module: &str,
+    auth: AuthConfig,
     list: F,
     read_file: R,
     write_file: W,
@@ -992,6 +1110,30 @@ where
         write_raw(&mut rw, line.as_bytes()).await?;
         return Ok(());
     }
+    // 认证（secrets challenge-response ✗ 成功才 OK；失败按官方单行 @ERROR）
+    let mut writable = auth.writable;
+    if auth.required() {
+        let client_digests = parse_auth_list(&client_line);
+        let digest = pick_digest(&client_digests);
+        let challenge = gen_challenge();
+        let line = format!("@RSYNCD: AUTHREQD {challenge}\n");
+        write_raw(&mut rw, line.as_bytes()).await?;
+        let resp = read_raw_line(&mut rw).await?;
+        let resp = resp.trim_end_matches(['\n', '\r']);
+        let verified = match resp.split_once(' ') {
+            Some((user, response)) => auth.verify(user, response, &challenge, digest),
+            None => None,
+        };
+        match verified {
+            Some(w) => writable = w,
+            None => {
+                tracing::warn!("rsync：模块 {module} 认证失败");
+                let line = format!("@ERROR: auth failed on module {module}\n");
+                let _ = write_raw(&mut rw, line.as_bytes()).await;
+                return Ok(());
+            }
+        }
+    }
     write_raw(&mut rw, b"@RSYNCD: OK\n").await?;
 
     // ③ args（NUL 分隔、空段终结）
@@ -1019,6 +1161,17 @@ where
     }
     let seed = make_seed();
     write_raw(&mut rw, &seed.to_le_bytes()).await?;
+
+    // 只读模块拒收 push（官方 do_server_recv：multiplexed MSG_ERROR = tag 10）
+    if !args.is_sender && !writable {
+        tracing::warn!("rsync：模块只读，拒绝 push");
+        write_raw(
+            &mut rw,
+            &mux_frame_tagged(b"ERROR: module is read only\n", 3),
+        )
+        .await?;
+        return Ok(());
+    }
 
     // 解复用输入缓冲（sender/receiver 两径共用）
     let mut pending: Vec<u8> = Vec::new();
@@ -1576,6 +1729,7 @@ mod tests {
             handle_conn(
                 server,
                 "files",
+                AuthConfig::default(),
                 |_| async { Ok(Vec::new()) },
                 |_p: &str| async { Ok(Vec::new()) },
                 |_p: String, _d: Vec<u8>| async { Ok(()) },
@@ -1625,6 +1779,7 @@ mod tests {
             handle_conn(
                 server,
                 "files",
+                AuthConfig::default(),
                 move |_req| {
                     let e = server_entries.clone();
                     async move { Ok(e) }
@@ -1762,6 +1917,7 @@ mod tests {
             handle_conn(
                 server,
                 "files",
+                AuthConfig::default(),
                 move |_req| {
                     let e = server_entries.clone();
                     async move { Ok(e) }
@@ -1879,6 +2035,32 @@ mod tests {
                 0x7f, 0x72
             ]
         );
+    }
+
+    /// 认证响应值与真机转录逐字同（sha512 ✗ 客户端 `RSYNC_PASSWORD` 实测帧）。
+    #[test]
+    fn auth_response_matches_reference_capture() {
+        let challenge = "FljsugF4lOnqto/b1XkF+96pGFJKDjtu";
+        let resp = "ep/Gj2YdDH/fXg6glclLxU0ZqTxuYuPfDPAcfewF/2O2KIKYU3W5uCYuvEls8rdhnK2T7NH6akWymJ4lGzWFBw";
+        assert_eq!(
+            auth_response("s3cret", challenge, "sha512"),
+            resp,
+            "sha512 响应"
+        );
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert("alice".to_string(), "s3cret".to_string());
+        let auth = AuthConfig {
+            users: vec!["alice".to_string(), "bob:ro".to_string()],
+            secrets,
+            writable: true,
+        };
+        assert_eq!(
+            auth.verify("alice", resp, challenge, "sha512"),
+            Some(true),
+            "alice 可写"
+        );
+        assert_eq!(auth.verify("alice", "bogus", challenge, "sha512"), None);
+        assert_eq!(auth.verify("carol", resp, challenge, "sha512"), None);
     }
 
     /// wire 读端与写端互逆（varint / varlong ✗ push 收 flist 前置）。
