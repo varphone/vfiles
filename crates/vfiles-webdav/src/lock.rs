@@ -11,7 +11,7 @@ pub struct LockEntry {
     pub token: String,
     pub owner: String,
     pub path: String,
-    /// Unix seconds; `None` represents an infinite lock.
+    /// Unix milliseconds; `None` represents an infinite lock.
     pub expires_at: Option<i64>,
 }
 
@@ -27,12 +27,12 @@ impl LockTable {
     pub(crate) fn now() -> i64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+            .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
             .unwrap_or(0)
     }
 
     fn expires_at(ttl: Option<Duration>, now: i64) -> Option<i64> {
-        ttl.map(|duration| now.saturating_add(duration.as_secs().min(i64::MAX as u64) as i64))
+        ttl.map(|duration| now.saturating_add(duration.as_millis().min(i64::MAX as u128) as i64))
     }
 
     fn from_record(path: &str, lock: vfiles_domain::WebdavLock) -> LockEntry {
@@ -140,5 +140,14 @@ mod tests {
         );
         assert_eq!(LockTable::parse_timeout_header("Infinite"), None);
         assert_eq!(LockTable::parse_timeout_header("garbage"), None);
+    }
+
+    #[test]
+    fn expiration_preserves_subsecond_precision() {
+        assert_eq!(
+            LockTable::expires_at(Some(Duration::from_millis(250)), 1_000),
+            Some(1_250)
+        );
+        assert_eq!(LockTable::expires_at(None, 1_000), None);
     }
 }
