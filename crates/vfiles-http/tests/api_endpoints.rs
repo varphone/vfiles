@@ -996,6 +996,31 @@ async fn file_content_and_download_support_range_requests() {
         .to_owned();
     assert_eq!(response_bytes(content_partial).await.as_ref(), b"2345");
 
+    let head_response = app
+        .request_as_admin(
+            Request::builder()
+                .method("HEAD")
+                .uri("/api/files/content?path=docs/range.txt")
+                .body(Body::empty())
+                .expect("HEAD request should build"),
+        )
+        .await;
+    assert_eq!(head_response.status(), StatusCode::OK);
+    assert_eq!(
+        head_response.headers().get(header::CONTENT_LENGTH).unwrap(),
+        "10"
+    );
+    assert_eq!(
+        head_response
+            .headers()
+            .get(header::ETAG)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        etag
+    );
+    assert!(response_bytes(head_response).await.is_empty());
+
     let not_modified = app
         .request_as_admin(
             Request::builder()
