@@ -1,4 +1,26 @@
-# S3 兼容 API（… r23 multipart 元数据 → r24 条件复制 → **r25 桶级探测三式**）
+# S3 兼容 API（… r24 条件复制 → r25 桶级探测 → **r26 凭证→命名空间绑定**）
+
+## 状态（r26 末 · 多租户隔离 = 每凭证一个命名空间视图）
+
+- **实装**：
+  | 项 | 内容 |
+  | --- | --- |
+  | 配置 | `VFILES_S3_CREDENTIALS` 条目形扩为 **`access:secret[:命名空间slug][:ro]`**（第三段非 `ro/rw` 词即 slug；第四段为模式） |
+  | 解析 | 新 `NamespaceRepo::find_by_slug`（默认 `None` 桩零破；SQLite = `SELECT id, owner_user_id FROM namespaces WHERE slug=? ORDER BY created_at LIMIT 1`）✗ 取**属主**作 S3 owner |
+  | 分发 | 新增 **`S3Router`**（`default_service` + `by_key: access → VfilesS3`）✗ `impl S3 for S3Router` **逐方法委托**（19 个已实现操作 ✗ 现有服务逻辑**零改动** = 由构造保证正确性） |
+  | 兜底 | slug 不存在/解析失败 → **回落默认命名空间** + warn（不静默失败）；只读标记随绑定服务各自生效 |
+- **真机验收（真 SDK，真基建）**：DB 里 seed 第二个命名空间 `tenant2` → 8 项：
+  | 场景 | 结果 |
+  | --- | --- |
+  | 默认凭证写入 | 只见自己 1 项 ✓ |
+  | `tenant2` 凭证写入 | 只见自己 1 项 ✓ |
+  | `tenant2` 读默认命名空间对象 | `NoSuchKey` ✓ |
+  | 默认凭证读 tenant2 对象 | `NoSuchKey` ✓ |
+  | `tenant2` 只读键（`:tenant2:ro`） | 可读、写被拒 `AccessDenied` ✓ |
+  | 拒后 tenant2 仍只见自己 1 项 | ✓ |
+- **回归**：自写探针 **24/24** · 真 SDK **38/38**（无绑定参数）/ **40/40**（带绑定参数 ✗ 含隔离 + 只读组合）。
+- **仍债**：`ListObjectVersions`/`PutBucketVersioning`（真版本控制）· `S3Router` 每方法委托样板（19 段）·
+  region 校验（有意不做 = 兼容优先）。
 
 ## 状态（r25 末 · 桶级探测补齐 = 客户端连接检查不再报错）
 

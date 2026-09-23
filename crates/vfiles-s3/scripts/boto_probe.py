@@ -18,6 +18,9 @@ SECRET = sys.argv[3] if len(sys.argv) > 3 else "test-secret-123"
 ACCESS2 = sys.argv[4] if len(sys.argv) > 4 else ""
 SECRET2 = sys.argv[5] if len(sys.argv) > 5 else ""
 SECOND_RO = len(sys.argv) > 6 and sys.argv[6] not in ("", "0")
+# 可选：第 7/8 参 = 绑定到另一命名空间的凭证对（验多租户隔离 ✗ r26）
+NS_ACCESS = sys.argv[7] if len(sys.argv) > 7 else ""
+NS_SECRET = sys.argv[8] if len(sys.argv) > 8 else ""
 
 P = []
 
@@ -181,8 +184,17 @@ def main():
             "s3", endpoint_url=ENDPOINT, aws_access_key_id=ACCESS2,
             aws_secret_access_key=SECRET2, region_name="us-east-1",
             config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 1}))
-        s3.put_object(Bucket="default", Key="boto-r10/second.txt", Body=b"two")
-        read_ok = s3b.get_object(Bucket="default", Key="boto-r10/second.txt")["Body"].read() == b"two"
+        if NS_ACCESS and NS_SECRET:
+            writer = boto3.client(
+                "s3", endpoint_url=ENDPOINT, aws_access_key_id=NS_ACCESS,
+                aws_secret_access_key=NS_SECRET, region_name="us-east-1",
+                config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 1}))
+            probe_key = "boto-ns2/second.txt"
+        else:
+            writer = s3
+            probe_key = "boto-r10/second.txt"
+        writer.put_object(Bucket="default", Key=probe_key, Body=b"two")
+        read_ok = s3b.get_object(Bucket="default", Key=probe_key)["Body"].read() == b"two"
         try:
             boto3.client(
                 "s3", endpoint_url=ENDPOINT, aws_access_key_id="definitely-unknown",
@@ -195,7 +207,7 @@ def main():
         if SECOND_RO:
             # 只读键（`access:secret:ro`）→ 读可用、写被拒（r21）
             try:
-                s3b.put_object(Bucket="default", Key="boto-r10/nope.txt", Body=b"x")
+                s3b.put_object(Bucket="default", Key=f"{probe_key}.nope", Body=b"x")
                 ro_enforced = False
             except ClientError as e:
                 ro_enforced = e.response["Error"]["Code"] in ("AccessDenied", "AccessDeniedException")
@@ -203,13 +215,13 @@ def main():
                   read_ok and ro_enforced and unknown_rejected,
                   f"read={read_ok} denied={ro_enforced} unknown={unknown_rejected}")
         else:
-            s3b.put_object(Bucket="default", Key="boto-r10/second.txt", Body=b"two")
-            write_ok = s3b.get_object(Bucket="default", Key="boto-r10/second.txt")["Body"].read() == b"two"
+            s3b.put_object(Bucket="default", Key=probe_key, Body=b"two")
+            write_ok = s3b.get_object(Bucket="default", Key=probe_key)["Body"].read() == b"two"
             check("boto second credential works + unknown rejected",
                   read_ok and write_ok and unknown_rejected,
                   f"read={read_ok} write={write_ok} unknown={unknown_rejected}")
-            s3b.delete_object(Bucket="default", Key="boto-r10/second.txt")
-        s3.delete_object(Bucket="default", Key="boto-r10/second.txt")
+            s3b.delete_object(Bucket="default", Key=probe_key)
+        writer.delete_object(Bucket="default", Key=probe_key)
 
     # ── 大桶分页（一条 SQL 取全 ✗ r13）──
     for k in range(4):
@@ -269,6 +281,29 @@ def main():
           s3.head_object(Bucket="default", Key="boto-meta/repl.txt")["Metadata"] == {"only": "one"})
     for mk in ["boto-meta/a.txt", "boto-meta/src.txt", "boto-meta/copy.txt", "boto-meta/repl.txt"]:
         s3.delete_object(Bucket="default", Key=mk)
+
+    # ── 凭证→命名空间绑定（多租户隔离 ✗ r26）──
+    if NS_ACCESS and NS_SECRET:
+        nsc = boto3.client(
+            "s3", endpoint_url=ENDPOINT, aws_access_key_id=NS_ACCESS,
+            aws_secret_access_key=NS_SECRET, region_name="us-east-1",
+            config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 1}))
+        s3.put_object(Bucket="default", Key="boto-ns/base.txt", Body=b"base")
+        nsc.put_object(Bucket="default", Key="boto-ns/tenant.txt", Body=b"tenant")
+        bl = sorted(o["Key"] for o in s3.list_objects_v2(
+            Bucket="default", Prefix="boto-ns/").get("Contents", []))
+        tl = sorted(o["Key"] for o in nsc.list_objects_v2(
+            Bucket="default", Prefix="boto-ns/").get("Contents", []))
+        iso = bl == ["boto-ns/base.txt"] and tl == ["boto-ns/tenant.txt"]
+        try:
+            nsc.get_object(Bucket="default", Key="boto-ns/base.txt")
+            cross = False
+        except ClientError as e:
+            cross = e.response["Error"]["Code"] == "NoSuchKey"
+        check("boto credential→namespace isolation", iso and cross,
+              f"base={bl} tenant={tl} cross404={cross}")
+        s3.delete_object(Bucket="default", Key="boto-ns/base.txt")
+        nsc.delete_object(Bucket="default", Key="boto-ns/tenant.txt")
 
     # ── 条件复制（x-amz-copy-source-if-* ✗ r24）──
     s3.put_object(Bucket="default", Key="boto-cond/src.txt", Body=b"c")

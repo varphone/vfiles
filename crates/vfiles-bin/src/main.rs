@@ -1270,12 +1270,14 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         build_and_spawn_s3(
             &config.s3,
             Arc::clone(&entry_repo_arc),
+            std::sync::Arc::new(vfiles_infra_sqlite::SqliteNamespaceRepo::new(pool.clone())),
             Arc::clone(&ftp_workspace),
             upload_service.clone(),
             default_namespace_id,
             default_actor_user_id,
             service_shutdown_rx.clone(),
-        );
+        )
+        .await;
     } else {
         tracing::info!(
             "S3 兼容 API 未启用（设置 VFILES_S3_ENABLED=true 后重启即可开放 9000 端口）"
@@ -1731,7 +1733,7 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
 /// S3 SigV4 密钥对认证（round 2 ✗ env 静态单对：access 匹配 → 回 secret，供 s3s 内建
 /// SigV4 验签重算比对 ✗ 空键已在 runtime 层随机生成 + warn（零配置试用 ✓））。
 struct EnvAuth {
-    keys: std::collections::HashMap<String, s3s::auth::SecretKey>,
+    keys: std::collections::HashMap<String, S3Cred>,
 }
 
 #[async_trait::async_trait]
@@ -1739,54 +1741,89 @@ impl s3s::auth::S3Auth for EnvAuth {
     async fn get_secret_key(&self, access_key: &str) -> s3s::S3Result<s3s::auth::SecretKey> {
         self.keys
             .get(access_key)
-            .cloned()
+            .map(|c| c.secret.clone())
             .ok_or_else(|| s3s::s3_error!(InvalidAccessKeyId, "unknown access key"))
     }
 }
 
-/// 装配 S3 凭证表（单对 `ACCESS_KEY/SECRET_KEY` + 多用 `CREDENTIALS=a:s,b:t`；
+/// 单个 S3 凭证的策略（密钥 + 可选命名空间绑定 + 只读）。
+struct S3Cred {
+    secret: s3s::auth::SecretKey,
+    /// 绑定的命名空间 slug（None = 默认命名空间）。
+    namespace: Option<String>,
+    readonly: bool,
+}
+
+/// 装配 S3 凭证表（单对 `ACCESS_KEY/SECRET_KEY` + 多用 `CREDENTIALS=a:s,b:s2:ro,c:s3:ns:d:s4:ns:ro`；
 /// 全空 = 随机生成一把并 warn 打印 access ✗ secret 不落日志）。
-fn load_s3_credentials(
-    cfg: &vfiles_config::S3Config,
-) -> (
-    std::collections::HashMap<String, s3s::auth::SecretKey>,
-    std::collections::HashSet<String>,
-) {
+fn load_s3_credentials(cfg: &vfiles_config::S3Config) -> std::collections::HashMap<String, S3Cred> {
     let mut keys = std::collections::HashMap::new();
-    let mut readonly = std::collections::HashSet::new();
+    fn cred(secret: String, namespace: Option<String>, readonly: bool) -> S3Cred {
+        S3Cred {
+            secret: s3s::auth::SecretKey::from(secret),
+            namespace,
+            readonly,
+        }
+    }
+    let add = |keys: &mut std::collections::HashMap<String, S3Cred>,
+               access: String,
+               secret: String,
+               namespace: Option<String>,
+               readonly: bool| {
+        keys.insert(access, cred(secret, namespace, readonly));
+    };
     if !cfg.access_key.is_empty() && !cfg.secret_key.is_empty() {
-        keys.insert(
+        add(
+            &mut keys,
             cfg.access_key.clone(),
-            s3s::auth::SecretKey::from(cfg.secret_key.clone()),
+            cfg.secret_key.clone(),
+            None,
+            false,
         );
     }
-    // 条目形：`access:secret`（读写）或 `access:secret:ro`（只读 ✗ 消费者/备份专用键）
+    // 条目形：`access:secret[:namespace][:ro|rw]`（第三段非模式词即命名空间 slug）
     for entry in cfg.credentials.split(',') {
         let entry = entry.trim();
         if entry.is_empty() {
             continue;
         }
-        let mut it = entry.split(':');
-        let (a, sec, mode) = (it.next(), it.next(), it.next());
-        match (a, sec) {
-            (Some(a), Some(sec)) if !a.trim().is_empty() && !sec.trim().is_empty() => {
-                let a = a.trim().to_string();
-                keys.insert(
-                    a.clone(),
-                    s3s::auth::SecretKey::from(sec.trim().to_string()),
-                );
-                match mode.map(|m| m.trim().to_ascii_lowercase()).as_deref() {
-                    Some("ro") | Some("readonly") | Some("read-only") => {
-                        readonly.insert(a);
-                    }
-                    Some("rw") | Some("readwrite") | Some("read-write") | None => {}
-                    Some(other) => {
-                        tracing::warn!(mode = %other, "S3 CREDENTIALS 模式未知（按读写处理）");
-                    }
-                }
-            }
-            _ => tracing::warn!("S3 CREDENTIALS 条目格式非法（应为 access:secret[:ro]），已跳过"),
+        let parts: Vec<&str> = entry.split(':').map(|p| p.trim()).collect();
+        if parts.len() < 2 || parts[0].is_empty() || parts[1].is_empty() {
+            tracing::warn!(
+                "S3 CREDENTIALS 条目格式非法（应为 access:secret[:namespace][:ro]），已跳过"
+            );
+            continue;
         }
+        let mode = |v: &str| {
+            matches!(
+                v.to_ascii_lowercase().as_str(),
+                "ro" | "readonly" | "read-only" | "rw" | "readwrite" | "read-write"
+            )
+        };
+        let readonly_mode = |v: &str| {
+            matches!(
+                v.to_ascii_lowercase().as_str(),
+                "ro" | "readonly" | "read-only"
+            )
+        };
+        let (namespace, readonly) = match parts.len() {
+            2 => (None, false),
+            3 if mode(parts[2]) => (None, readonly_mode(parts[2])),
+            3 => (Some(parts[2].to_string()), false),
+            _ => {
+                if !mode(parts[3]) {
+                    tracing::warn!(entry = %entry, "S3 CREDENTIALS 第四段非 ro/rw，按读写处理");
+                }
+                (Some(parts[2].to_string()), readonly_mode(parts[3]))
+            }
+        };
+        add(
+            &mut keys,
+            parts[0].to_string(),
+            parts[1].to_string(),
+            namespace,
+            readonly,
+        );
     }
     if keys.is_empty() {
         let a = format!("VF{}", uuid::Uuid::new_v4().simple());
@@ -1794,21 +1831,24 @@ fn load_s3_credentials(
             access_key = %a,
             "S3 未配置凭证：已随机生成（打印 access ✗ secret 见启动调试 env；生产请设 VFILES_S3_ACCESS_KEY/SECRET_KEY 或 VFILES_S3_CREDENTIALS）"
         );
-        keys.insert(
+        add(
+            &mut keys,
             a,
-            s3s::auth::SecretKey::from(uuid::Uuid::new_v4().simple().to_string()),
+            uuid::Uuid::new_v4().simple().to_string(),
+            None,
+            false,
         );
     }
-    (keys, readonly)
+    keys
 }
 
-/// 装配并拉起 rsync daemon 专用端口（round 3 ✗ RSYNC_PLAN：纯 TCP 直协议（无 axum）✗
-/// 协议件在 vfiles-rsync crate（duplex 黄金单测可打）✗ bind 失败 r205 式降级不拖垮主站 ✓
-/// accept loop 用 select 接停机 watch（shutdown → break + 关 listener））。
-///
-/// r9：数据源 = 默认命名空间条目树（与 WebDAV/S3 同源 `entry_repo`），按请求路径/递归深度
-/// 由 `vfiles_rsync::collect_flat` 枚举后交协议层编码。
-/// r10：文件内容经 `workspace.read_file_bytes` 读取（与 WebDAV/S3 同源 blob 链）。
+type RsyncUploadService = vfiles_app::UploadService<
+    vfiles_infra_sqlite::SqliteEntryRepo,
+    vfiles_infra_sqlite::SqliteSnapshotRepo,
+    vfiles_infra_sqlite::FsBlobStore,
+    vfiles_infra_sqlite::FsUploadStore,
+>;
+
 /// 装配 rsync daemon 认证（`auth users` 逗号清单 + `secrets file` 的 `user:password` 行）。
 fn load_rsync_auth(cfg: &vfiles_config::RsyncConfig) -> vfiles_rsync::AuthConfig {
     let users: Vec<String> = cfg
@@ -1847,13 +1887,6 @@ fn load_rsync_auth(cfg: &vfiles_config::RsyncConfig) -> vfiles_rsync::AuthConfig
         writable: cfg.writable,
     }
 }
-
-type RsyncUploadService = vfiles_app::UploadService<
-    vfiles_infra_sqlite::SqliteEntryRepo,
-    vfiles_infra_sqlite::SqliteSnapshotRepo,
-    vfiles_infra_sqlite::FsBlobStore,
-    vfiles_infra_sqlite::FsUploadStore,
->;
 
 /// rsync 数据后端（domain 链装配 ✗ 下载/上传/删除三面同源）。
 struct RepoBackend {
@@ -2082,9 +2115,12 @@ fn build_and_spawn_rsync(
 /// 装配并拉起 S3 专用端口（round 2 ✗ 对称 webdav spawn：bind 在任务内失败 =
 /// r205 式 error 日志降级不拖垮主站 ✓ with_graceful_shutdown 接同一停机 watch ✗
 /// HandleError 包一层按官方 axum 例（Error→Infallible fallback 适配 ✓））。
-fn build_and_spawn_s3(
+// 装配参数天然多（配置/条目仓储/命名空间仓储/工作区/上传/ns/owner/停机 ✗ 打包收益不抵样板）
+#[allow(clippy::too_many_arguments)]
+async fn build_and_spawn_s3(
     cfg: &vfiles_config::S3Config,
     entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
+    namespace_repo: std::sync::Arc<dyn vfiles_domain::NamespaceRepo + Send + Sync>,
     workspace: std::sync::Arc<vfiles_app::DefaultWorkspaceService>,
     upload: vfiles_app::UploadService<
         vfiles_infra_sqlite::SqliteEntryRepo,
@@ -2096,11 +2132,58 @@ fn build_and_spawn_s3(
     owner: vfiles_domain::UserId,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
-    // 凭证表（多客户端/轮换 + 只读键 ✗ 空 = 运行时随机 + warn）
-    let (keys, readonly_keys) = load_s3_credentials(cfg);
+    // 凭证表（多客户端/轮换 + 只读键 + 命名空间绑定 ✗ 空 = 运行时随机 + warn）
+    let keys = load_s3_credentials(cfg);
+    let cred_count = keys.len();
+    let default_readonly: std::collections::HashSet<String> = keys
+        .iter()
+        .filter(|(_, c)| c.readonly && c.namespace.is_none())
+        .map(|(k, _)| k.clone())
+        .collect();
+    // 每绑定命名空间起一个服务实例（共享 Arc ✗ 仅 namespace/owner 不同）= 多租户隔离
+    let mut by_key: std::collections::HashMap<String, Box<VfilesS3>> =
+        std::collections::HashMap::new();
+    for (access, cred) in &keys {
+        let Some(slug) = &cred.namespace else {
+            continue;
+        };
+        match namespace_repo.find_by_slug(slug).await {
+            Ok(Some((ns, ns_owner))) => {
+                let ro = cred.readonly;
+                by_key.insert(
+                    access.clone(),
+                    Box::new(VfilesS3 {
+                        workspace: workspace.clone(),
+                        upload: upload.clone(),
+                        entry_repo: entry_repo.clone(),
+                        namespace: ns,
+                        owner: ns_owner,
+                        readonly_keys: if ro {
+                            std::collections::HashSet::from([access.clone()])
+                        } else {
+                            std::collections::HashSet::new()
+                        },
+                    }),
+                );
+                tracing::info!(access_key = %access, slug = %slug, "S3 凭证已绑定命名空间");
+            }
+            Ok(None) => tracing::warn!(
+                access_key = %access,
+                slug = %slug,
+                "S3 凭证绑定的命名空间不存在（回落默认命名空间）"
+            ),
+            Err(e) => tracing::warn!(
+                access_key = %access,
+                slug = %slug,
+                error = %e,
+                "S3 命名空间解析失败（回落默认命名空间）"
+            ),
+        }
+    }
     tracing::info!(
-        credentials = keys.len(),
-        readonly = readonly_keys.len(),
+        credentials = cred_count,
+        readonly_default = default_readonly.len(),
+        bound_namespaces = by_key.len(),
         "S3 凭证表已装配"
     );
     let s3 = VfilesS3 {
@@ -2109,10 +2192,14 @@ fn build_and_spawn_s3(
         entry_repo,
         namespace,
         owner,
-        readonly_keys,
+        readonly_keys: default_readonly,
     };
     let auth = EnvAuth { keys };
-    let mut builder = s3s::service::S3ServiceBuilder::new(s3);
+    let router = vfiles_s3::S3Router {
+        default_service: Box::new(s3),
+        by_key,
+    };
+    let mut builder = s3s::service::S3ServiceBuilder::new(router);
     builder.set_auth(auth);
     let service = builder.build();
     let router = axum::Router::new().fallback_service(axum::error_handling::HandleError::new(

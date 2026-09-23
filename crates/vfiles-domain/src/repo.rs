@@ -126,6 +126,10 @@ pub trait NamespaceRepo {
     async fn create_default(&self, owner_id: &UserId, slug: &str) -> DomainResult<NamespaceId>;
     async fn find_default(&self) -> DomainResult<NamespaceId>;
     async fn find_default_for_owner(&self, owner_id: &UserId) -> DomainResult<NamespaceId>;
+    /// 按 slug 取 `(命名空间, 属主)`（S3 凭证→命名空间绑定 ✗ 取最早一个；无则 None）。
+    async fn find_by_slug(&self, _slug: &str) -> DomainResult<Option<(NamespaceId, UserId)>> {
+        Ok(None)
+    }
 }
 
 #[async_trait::async_trait]

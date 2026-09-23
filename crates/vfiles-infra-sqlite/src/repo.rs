@@ -325,6 +325,29 @@ impl NamespaceRepo for SqliteNamespaceRepo {
         Ok(id)
     }
 
+    async fn find_by_slug(&self, slug: &str) -> DomainResult<Option<(NamespaceId, UserId)>> {
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT id, owner_user_id FROM namespaces WHERE slug = ? \
+             ORDER BY created_at ASC, id ASC LIMIT 1",
+        )
+        .bind(slug)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to find namespace by slug: {}", e),
+        })?;
+        let Some((id, owner)) = row else {
+            return Ok(None);
+        };
+        let ns = NamespaceId::from_string(&id).map_err(|_| DomainError::Internal {
+            message: "Invalid namespace ID".to_string(),
+        })?;
+        let user = UserId::from_string(&owner).map_err(|_| DomainError::Internal {
+            message: "Invalid owner user ID".to_string(),
+        })?;
+        Ok(Some((ns, user)))
+    }
+
     async fn find_default(&self) -> DomainResult<NamespaceId> {
         let row: (String,) = sqlx::query_as(
             "SELECT id FROM namespaces WHERE slug = ? ORDER BY created_at ASC, id ASC LIMIT 1",
