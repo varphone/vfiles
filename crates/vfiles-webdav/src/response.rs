@@ -297,7 +297,7 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
 }
 
 /// LOCK 响应体（lockdiscovery ✓ RFC 4918 §14.13 子集：exclusive write / depth 0 ✓）。
-pub fn lock_response(token: &str, owner: &str, path: &str) -> String {
+pub fn lock_response(token: &str, owner: &str, path: &str, timeout: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <D:prop xmlns:D="DAV:"><D:lockdiscovery><D:activelock>
@@ -307,11 +307,12 @@ pub fn lock_response(token: &str, owner: &str, path: &str) -> String {
 <D:owner>{owner}</D:owner>
 <D:href>{href}</D:href>
 <D:locktoken><D:href>{token}</D:href></D:locktoken>
-<D:timeout>Infinite</D:timeout>
+<D:timeout>{timeout}</D:timeout>
 </D:activelock></D:lockdiscovery></D:prop>"#,
         owner = escape_xml(owner),
-        href = escape_xml(&format!("/{path}")),
+        href = escape_xml(path), // r-new 修双斜杠：caller 已传完整 href（含 mount ✗ 模板不自加 "/"）
         token = escape_xml(token),
+        timeout = escape_xml(timeout),
     )
 }
 

@@ -137,6 +137,13 @@ pub struct WebdavConfig {
     pub host: String,
     #[serde(default = "webdav_default_port")]
     pub port: u16,
+    /// 共端口模式（r-new ✗ 未显式设 `VFILES_WEBDAV_PORT` = 挂主端口 mount 路径 ✓
+    /// 显式设 PORT = 独立端口（现行为零回归回退））。
+    #[serde(default = "webdav_default_embedded")]
+    pub embedded: bool,
+    /// 嵌入挂载路径（standalone 时忽略 ✗ 默认 `/dav`，可空 = 根挂载高级项）。
+    #[serde(default = "webdav_default_mount")]
+    pub mount_path: String,
 }
 
 fn webdav_default_enabled() -> bool {
@@ -149,6 +156,14 @@ fn webdav_default_host() -> String {
 
 fn webdav_default_port() -> u16 {
     18080
+}
+
+fn webdav_default_embedded() -> bool {
+    true
+}
+
+fn webdav_default_mount() -> String {
+    "/dav".to_string()
 }
 
 impl WebdavConfig {
@@ -170,7 +185,12 @@ fn webdav_from_env(
         .ok()
         .and_then(|v| v.parse::<u16>().ok())
         .unwrap_or(18080);
-    Ok(WebdavConfig { enabled, host, port })
+    // 共端口双轨（r-new ✓ 纯函数判定 ✗ 单测三式）
+    let (embedded, mount_path) = resolve_webdav_dual(
+        std::env::var("VFILES_WEBDAV_PORT").ok(),
+        std::env::var("VFILES_WEBDAV_MOUNT").ok(),
+    );
+    Ok(WebdavConfig { enabled, host, port, embedded, mount_path })
 }
 
 /// WebDAV 开关解析（r109b ✓ 对称 resolve_ftp_enabled 六分支 + **语义差**：
@@ -191,6 +211,27 @@ fn resolve_webdav_enabled(
             "WebDAV 默认开启（用户令 ✓）需要认证：请开启 VFILES_AUTH_ENABLED=true，或显式关闭 WebDAV（VFILES_WEBDAV_ENABLED=false）".to_string(),
         )),
     }
+}
+
+/// 共端口双轨判定（r-new ✓ 纯函数单测）：显式 PORT = 独立模式（现行为回退）/
+/// 未设 = 嵌入 ✗ mount 空串归一 `/dav`（**根挂载不支持 = 与前缀隔离方案核心一致** ✗
+/// 空前缀会撞前端 fallback 根语义 → 归一防御）。
+fn resolve_webdav_dual(
+    port_explicit: Option<String>,
+    mount: Option<String>,
+) -> (bool, String) {
+    let embedded = port_explicit.is_none();
+    let mount_path = match mount.map(|m| m.trim().to_string()) {
+        Some(m) if !m.is_empty() => {
+            if m.starts_with('/') {
+                m
+            } else {
+                format!("/{m}")
+            }
+        }
+        _ => "/dav".to_string(),
+    };
+    (embedded, mount_path)
 }
 
 impl FtpConfig {
@@ -992,5 +1033,36 @@ mod webdav_enabled_semantics {
         assert_eq!(resolve_webdav_enabled(Some(false), false).unwrap(), false);
         assert!(resolve_webdav_enabled(Some(true), false).is_err());
         assert!(resolve_webdav_enabled(Some(true), true).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod webdav_dual_tests {
+    use super::resolve_webdav_dual;
+
+    #[test]
+    fn dual_track_modes() {
+        // r-new 三式守护：未设 PORT=嵌入 /dav · 显式 PORT=独立回退 · mount 覆写与归一
+        assert_eq!(
+            resolve_webdav_dual(None, None),
+            (true, "/dav".to_string())
+        );
+        assert_eq!(
+            resolve_webdav_dual(Some("18080".into()), None),
+            (false, "/dav".to_string())
+        );
+        assert_eq!(
+            resolve_webdav_dual(None, Some("/webdav".into())),
+            (true, "/webdav".to_string())
+        );
+        // 空/无前导斜杠 → 归一防御（根挂载不支持 ✗ 前缀隔离是方案核心）
+        assert_eq!(
+            resolve_webdav_dual(None, Some("".into())),
+            (true, "/dav".to_string())
+        );
+        assert_eq!(
+            resolve_webdav_dual(None, Some("dav2".into())),
+            (true, "/dav2".to_string())
+        );
     }
 }

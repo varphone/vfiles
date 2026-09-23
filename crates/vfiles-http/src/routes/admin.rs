@@ -66,6 +66,10 @@ pub struct SystemInfoResponse {
     pub started_at: String,
     pub webdav_enabled: bool,
     pub webdav_bind: String,
+    /// r-new 共端口模式（true = 挂主端口 mount ✗ false = 独立端口 bind）。
+    pub webdav_embedded: bool,
+    /// 嵌入挂载路径（standalone 忽略 ✗ 默认 /dav）。
+    pub webdav_mount: String,
 }
 
 fn process_start() -> std::time::Instant {
@@ -81,10 +85,10 @@ async fn system_info(
     let _actor = require_admin(&state, &jar).await?;
     let uptime = process_start().elapsed().as_secs();
     // WebDAV 接入信息（管理员看板 ✓ 与 config 层一致（r109b））。
-    let (webdav_enabled, webdav_bind) =
+    let (webdav_enabled, webdav_bind, webdav_embedded, webdav_mount) =
         match vfiles_config::ConfigLoader::load().map(|c| c.webdav) {
-            Ok(webdav) => (webdav.enabled, webdav.bind_address()),
-            Err(_) => (false, String::new()),
+            Ok(w) => (w.enabled, w.bind_address(), w.embedded, w.mount_path),
+            Err(_) => (false, String::new(), false, "/dav".to_string()),
         };
     Ok(Json(SystemInfoResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -96,6 +100,8 @@ async fn system_info(
             .unwrap_or_default(),
         webdav_enabled,
         webdav_bind,
+        webdav_embedded,
+        webdav_mount,
     }))
 }
 

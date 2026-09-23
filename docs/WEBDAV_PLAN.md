@@ -33,7 +33,7 @@
 
 | 面 | 定案 | 依据 |
 | --- | --- | --- |
-| 形态 | **独立 crate `vfiles-webdav`**（与 vfiles-ftp 协议族并列 ✓ 独立端口/开关 ✓ env 对称 `VFILES_WEBDAV_ENABLED/PORT`） | bin 挂载式 = `spawn_ftp_server` 同构 |
+| 形态 | **独立 crate `vfiles-webdav`** + ✅ **共端口双轨（r-new）**：默认嵌入主端口 `/dav`（`nest_service` 异 state 挂入 ✗ nest 自剥前缀 ✓ 显式路由优先 fallback ✓）/ 显式 `VFILES_WEBDAV_PORT` = 独立端口现行为零回归回退（`VFILES_WEBDAV_MOUNT` 可改挂载点，空归一 `/dav` ✗ 根挂载不支持 = 方案核心冲突防御） | spike:axum0.8 `into_service` 一次过 ✓ |
 | HTTP 栈 | **axum + tower**（PROPFIND 等非标方法 → `any` 路由 ✓） | vfiles-http 同栈 ✓ |
 | auth | **`AuthService::verify_credentials(username, &password)` 复用**（Basic 头 ✓ 与 Web/FTP 完全一致） | vfiles-ftp/src/auth.rs 范本 |
 | 存储 | **`BackendDeps`**（`entry_repo`/`snapshot_repo`/`blob_store`/`workspace` ✓ PROPFIND=entry 查询、GET=blob 读） | vfiles-ftp/src/backend.rs:90 |

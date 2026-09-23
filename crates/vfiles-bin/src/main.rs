@@ -1256,6 +1256,8 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
                 tokio::spawn(async move { svc.record(entry).await });
             }))
         },
+        config.webdav.embedded,
+        config.webdav.mount_path.clone(),
     );
 
     // Create app state
@@ -1298,7 +1300,22 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
 
     // Build router
     tracing::debug!("Building HTTP router...");
-    let app = build_router(app_state);
+    let mut app = build_router(app_state);
+    // 共端口装配（r-new ✓ S1 实证：axum 0.8 nest_service + into_service 原生可用 ✗
+    // 异 state 挂入、nest 自动剥前缀 = handlers 零改 ✓ 显式路由优先于 fallback ✓）
+    if let Some((_, webdav_app)) = webdav_runtime.clone() {
+        if !webdav_app.mount_prefix.is_empty() {
+            let mount = webdav_app.mount_prefix.clone();
+            tracing::info!(
+                mount = %mount,
+                "WebDAV 已挂载（共端口模式 ✓ 主端口同时提供 HTTP API + WebDAV + 前端）"
+            );
+            app = app.nest_service(
+                &mount,
+                vfiles_webdav::router_for_e2e(webdav_app).into_service(),
+            );
+        }
+    }
 
     // Start server
     let addr = format!("{}:{}", config.http.host, config.http.port);
@@ -1336,20 +1353,29 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     // WebDAV spawn（r110'a ✓ 降级式 = FTP 同款韧性（端口占用不拖垮站点 ✓））
     let webdav_handle = match webdav_runtime {
         Some((settings, application)) => {
-            let bind = settings.bind.clone();
-            match vfiles_webdav::spawn_webdav_server(
-                settings,
-                application,
-                service_shutdown_rx.clone(),
-            ) {
-                Ok(()) => {
-                    // 调度式文案（r205 ✓ bind 成功以「监听就绪」为权威 ✗ "已启用"曾在 bind 失败时误导）
-                    tracing::info!("WebDAV 监听任务已调度: {bind}（成功确认行 = 「WebDAV 监听就绪」）");
-                    Some(())
-                }
-                Err(err) => {
-                    tracing::error!(%bind, error = %err, "WebDAV 启动失败，继续提供其余服务");
-                    None
+            if !application.mount_prefix.is_empty() {
+                // 共端口模式（r-new ✓ 挂载日志在装配处 ✗ 不再独立监听 = 无 bind 面）
+                tracing::info!(
+                    mount = %application.mount_prefix,
+                    "WebDAV 共端口模式：跳过独立监听（就绪以主端口「已挂载」行为准）"
+                );
+                None
+            } else {
+                let bind = settings.bind.clone();
+                match vfiles_webdav::spawn_webdav_server(
+                    settings,
+                    application,
+                    service_shutdown_rx.clone(),
+                ) {
+                    Ok(()) => {
+                        // 调度式文案（r205 ✓ bind 成功以「监听就绪」为权威 ✗ "已启用"曾在 bind 失败时误导）
+                        tracing::info!("WebDAV 监听任务已调度: {bind}（成功确认行 = 「WebDAV 监听就绪」）");
+                        Some(())
+                    }
+                    Err(err) => {
+                        tracing::error!(%bind, error = %err, "WebDAV 启动失败，继续提供其余服务");
+                        None
+                    }
                 }
             }
         }
@@ -1675,6 +1701,8 @@ fn build_webdav_runtime(
     audit: Option<
         std::sync::Arc<dyn Fn(vfiles_domain::types::NewAuditLog) + Send + Sync>,
     >,
+    embedded: bool,
+    mount_path: String,
 ) -> Option<(vfiles_webdav::WebdavSettings, vfiles_webdav::WebdavApplication)> {
     if !enabled {
         return None;
@@ -1693,6 +1721,8 @@ fn build_webdav_runtime(
         verify,
         locks: std::sync::Arc::new(vfiles_webdav::LockTable::new()),
         write: std::sync::Arc::new(WebdavWrite { workspace, upload }),
+        // r-new 共端口：嵌入 = mount（/dav 等）/ 独立 = ""（现行为零回归 ✗ 1337 按此分流）
+        mount_prefix: if embedded { mount_path } else { String::new() },
     };
     Some((vfiles_webdav::WebdavSettings { bind }, app))
 }

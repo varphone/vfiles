@@ -144,6 +144,7 @@ async fn options_advertises_and_propfind_needs_auth() {
     };
     let app = WebdavApplication {
         audit: None,
+        mount_prefix: String::new(), // e2e 直连 router（不经 nest ✗ "" = 独立语义零前缀）
         namespaces: namespaces.clone(),
         entry_repo: entry_repo.clone() as Arc<dyn EntryRepo + Send + Sync>,
         verify,

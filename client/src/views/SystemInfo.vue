@@ -103,10 +103,17 @@ const info = ref<{
   started_at: string;
   webdav_enabled: boolean;
   webdav_bind: string;
+  webdav_embedded: boolean;
+  webdav_mount: string;
 } | null>(null);
 const userTotal = ref<number | null>(null);
 
 const webdavEndpoint = computed(() => {
+  // r-new 双模式：嵌入 = 当前页协议/主机 + mount（location.host 含端口 ✗ 0.0.0.0 免疫 ✓）
+  if (info.value?.webdav_embedded) {
+    const mount = (info.value?.webdav_mount || "/dav").replace(/\/+$/, "");
+    return `${window.location.protocol}//${window.location.host}${mount}/`;
+  }
   const bind = info.value?.webdav_bind || "";
   const [host, port] = bind.split(":");
   const hostLabel = host === "0.0.0.0" ? window.location.hostname : host;

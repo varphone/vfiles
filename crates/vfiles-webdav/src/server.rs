@@ -44,6 +44,9 @@ pub struct WebdavApplication {
     pub write: Arc<dyn crate::write::WebdavWriteOps + Send + Sync>,
     /// 审计闭包（r5 ✓ 零泛型下渗 ✗ None = 不记（宽松装配）；bin 捕 AuditService spawn ✓）。
     pub audit: Option<std::sync::Arc<dyn Fn(vfiles_domain::types::NewAuditLog) + Send + Sync>>,
+    /// r-new 共端口挂载前缀（"" = 独立端口现行为 ✗ "/dav" = 嵌入主端口：href 加前缀 /
+    /// Destination 剥前缀 / spawn 分支按此分流 ✓ 归一无尾斜杠）。
+    pub mount_prefix: String,
     /// 排他写锁表（r109a ✓ LOCK/UNLOCK + 写操作 423 校验）。
     pub locks: Arc<crate::lock::LockTable>,
 }
@@ -91,11 +94,13 @@ async fn lock_op(
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
             .header("Lock-Token", format!("<{}>", entry.token))
-            .header("Timeout", granted_header) // r15 授予值回显（Second-N 或 Infinite ✓）
+            .header("Timeout", granted_header.clone()) // r15 授予值回显（clone 供 XML 同源 ✗ move 后借防）
             .body(Body::from(crate::response::lock_response(
                 &entry.token,
                 &entry.owner,
-                &entry.path,
+                // r-new 顺手修：原传 entry.path = lock_key("ns:rel") 形错 ✗ 资源相对 rel + mount 前缀
+                &href_with_mount(&app.mount_prefix, &rel),
+                &granted_header,
             )))
             .unwrap(),
         None => Response::builder()
@@ -430,7 +435,10 @@ async fn write_op(
         WriteOp::Mkcol => app.write.mkcol(&ns, &path, &uid).await,
         WriteOp::Delete => app.write.delete_entry(&ns, &path, &uid).await,
         WriteOp::Move => {
-            let Some(dest_rel) = dest_raw.as_deref().and_then(destination_path) else {
+            let Some(dest_rel) = dest_raw
+                .as_deref()
+                .and_then(|d| destination_path(d, &app.mount_prefix))
+            else {
                 return Response::builder()
                     .status(StatusCode::BAD_REQUEST)
                     .body(Body::empty())
@@ -546,7 +554,20 @@ fn precondition_status(locked: bool, has_if: bool, token_ok: bool) -> Option<Sta
 ///
 /// 形 = `http://host/dav/a/b.txt` 或 `/dav/a/b.txt` → `a/b.txt`（去 scheme/host ✓
 /// 头必须路径带前导 `/` 否则 400（RFC 4918 §10.3）→ 本式返回 None 由调用方 400 ✓）。
-fn destination_path(dest: &str) -> Option<String> {
+/// href 前缀归一（r-new ✓ mount="" = 独立现行为零变 ✗ "/dav" = 嵌入加前缀；
+/// rel 幂等 trim 前导斜杠 → 空 rel = 根（mount+"/"））。
+fn href_with_mount(mount: &str, rel: &str) -> String {
+    let rel = rel.trim_start_matches('/');
+    if mount.is_empty() {
+        if rel.is_empty() { "/".to_string() } else { format!("/{rel}") }
+    } else if rel.is_empty() {
+        format!("{}/", mount.trim_end_matches('/'))
+    } else {
+        format!("{}/{}", mount.trim_end_matches('/'), rel)
+    }
+}
+
+fn destination_path(dest: &str, mount: &str) -> Option<String> {
     let path_part = if let Some(scheme_pos) = dest.find("://") {
         let after_scheme = &dest[scheme_pos + 3..];
         after_scheme.find('/').map(|i| &after_scheme[i..])?
@@ -557,7 +578,19 @@ fn destination_path(dest: &str) -> Option<String> {
         return None;
     }
     let trimmed = path_part.trim_end_matches('/');
-    Some(percent_decode(trimmed.trim_start_matches('/')))
+    let rel = percent_decode(trimmed.trim_start_matches('/'));
+    // r-new 嵌入模式剥挂载段（standalone mount="" =零变化 ✓）：dest 恰=mount → 根("")
+    if !mount.is_empty() {
+        let m = mount.trim_start_matches('/');
+        if rel == m {
+            return Some(String::new());
+        }
+        if let Some(rest) = rel.strip_prefix(&format!("{m}/")) {
+            return Some(rest.to_string());
+        }
+        return None; // 配置了 mount 而 dest 不带 = 外来路径 → 400（防御）
+    }
+    Some(rel)
 }
 
 /// 401 + `WWW-Authenticate: Basic`（RFC 4918 §20.1 ✓）。
@@ -628,7 +661,7 @@ async fn propfind_owned(
     if rel.is_empty() {
         // 根特判（RFC 4918 ✓ 空命名空间无 root Entry 行 ✗ 合成根响应 ✓）
         items.push(crate::response::PropResponse {
-            href: "/".to_string(),
+            href: href_with_mount(&app.mount_prefix, "/"),
             displayname: "/".to_string(),
             is_collection: true,
             getlastmodified: mtime_fmt(time::OffsetDateTime::now_utc()),
@@ -679,12 +712,13 @@ async fn propfind_owned(
             .current_version_id
             .as_ref()
             .map(|v| format!("\"{}\"", v.to_string().replace('-', "")));
+        let self_href = if is_dir {
+            format!("/{rel}/")
+        } else {
+            format!("/{rel}")
+        };
         items.push(crate::response::PropResponse {
-            href: if is_dir {
-                format!("/{rel}/")
-            } else {
-                format!("/{rel}")
-            },
+            href: href_with_mount(&app.mount_prefix, &self_href),
             displayname: entry.name.clone(),
             is_collection: is_dir,
             getlastmodified: mtime_fmt(entry.created_at),
@@ -720,7 +754,10 @@ async fn propfind_owned(
                 (meta.size_bytes, meta.mime_type)
             };
             items.push(crate::response::PropResponse {
-                href: entry_href(&child_prefix(rel), &child.name, is_dir),
+                href: href_with_mount(
+                    &app.mount_prefix,
+                    &entry_href(&child_prefix(rel), &child.name, is_dir),
+                ),
                 displayname: child.name,
                 is_collection: is_dir,
                 getlastmodified: mtime_fmt(child.created_at),
@@ -1197,7 +1234,10 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     detail: None,
                 });
             }
-            let xml = crate::response::proppatch_multistatus(path.as_str(), &results);
+            let xml = crate::response::proppatch_multistatus(
+                &href_with_mount(&app_ref.mount_prefix, path.as_str()),
+                &results,
+            );
             Response::builder()
                 .status(StatusCode::MULTI_STATUS)
                 .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
@@ -1212,11 +1252,12 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
             let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
             let uri_owned = percent_decode(req.uri().path());
-            let dest_hdr = req
+            // r-new：先取原文，解析延后到 app_ref 解包后（mount 需 app ✗ 作用域序修）
+            let dest_raw = req
                 .headers()
                 .get("destination")
                 .and_then(|v| v.to_str().ok())
-                .and_then(destination_path);
+                .map(str::to_string);
             let ns_owned = req
                 .extensions()
                 .get::<vfiles_domain::types::NamespaceId>()
@@ -1225,6 +1266,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 (Some(a), Some(u), Some(n)) => (a, u, n),
                 _ => return internal_error(),
             };
+            let dest_hdr = dest_raw.and_then(|d| destination_path(&d, &app_ref.mount_prefix));
             let dest_hdr = match dest_hdr {
                 Some(d) => d,
                 None => {
@@ -1402,7 +1444,10 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         req.extensions().get::<vfiles_domain::types::User>(),
                         req.extensions().get::<vfiles_domain::types::NamespaceId>(),
                     ) {
-                        if let Some(dest_rel) = dest_owned.as_deref().and_then(destination_path) {
+                        if let Some(dest_rel) = dest_owned
+                        .as_deref()
+                        .and_then(|d| destination_path(d, &app.mount_prefix))
+                    {
                             // r12 dest 即 target（WebDAV 完整目标路径 ✗ r11 曾 join 目录
                             // = 违 RFC 二义 → 服务参数化后臂层同步简化 ✓ 同名目录覆盖打通）
                             if let Ok(target) = vfiles_domain::types::NormalizedPath::new(&dest_rel)
@@ -1618,11 +1663,18 @@ mod write_tests {
     fn parses_destination_absolute_and_relative() {
         // 挂载点 = root（`/` ✓ 客户端 base 自配）；`/dav/` 前缀样 = 语义错配已正
         assert_eq!(
-            destination_path("http://host/a/b.txt"),
+            destination_path("http://host/a/b.txt", ""),
             Some("a/b.txt".to_string())
         );
-        assert_eq!(destination_path("/sub/x"), Some("sub/x".to_string()));
-        assert_eq!(destination_path("no-leading-slash"), None);
+        assert_eq!(destination_path("/sub/x", ""), Some("sub/x".to_string()));
+        assert_eq!(destination_path("no-leading-slash", ""), None);
+        // r-new 嵌入形（mount 剥离三式 ✗ 与独立形并存守护断言）
+        assert_eq!(
+            destination_path("http://host/dav/a/b.txt", "/dav"),
+            Some("a/b.txt".to_string())
+        );
+        assert_eq!(destination_path("/dav", "/dav"), Some(String::new()));
+        assert_eq!(destination_path("/other/x", "/dav"), None);
     }
 }
 
