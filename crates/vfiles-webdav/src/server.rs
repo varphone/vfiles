@@ -2689,9 +2689,17 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .get("if")
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
-            // r10 Overwrite 语义（RFC 缺省 = T ✗ 只有显式 "F" 才是 false）
-            let overwrite =
-                req.headers().get("overwrite").and_then(|v| v.to_str().ok()) != Some("F");
+            // RFC 4918 §10.6: only T/F are valid, with T as the default.
+            let overwrite = match req.headers().get("overwrite").and_then(|v| v.to_str().ok()) {
+                None | Some("T") => true,
+                Some("F") => false,
+                Some(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            };
             let mut depth_values = req.headers().get_all("depth").iter();
             let depth_infinity = match (depth_values.next(), depth_values.next()) {
                 (None, None) => true,
