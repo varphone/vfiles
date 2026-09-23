@@ -20,9 +20,15 @@ pub(crate) enum RangeRequest {
 }
 
 pub(crate) fn parse_range(headers: &HeaderMap, total_size: u64) -> RangeRequest {
-    let Some(raw_value) = headers.get(header::RANGE) else {
+    let mut range_values = headers.get_all(header::RANGE).iter();
+    let Some(raw_value) = range_values.next() else {
         return RangeRequest::Full;
     };
+    // Multiple field lines form a multi-range request. Since multipart range
+    // responses are not implemented, ignore the entire Range header set.
+    if range_values.next().is_some() {
+        return RangeRequest::Full;
+    }
     let Ok(raw_value) = raw_value.to_str() else {
         return RangeRequest::Full;
     };
@@ -433,6 +439,15 @@ mod tests {
                 "range value {value:?}"
             );
         }
+    }
+
+    #[test]
+    fn repeated_range_fields_are_ignored_as_multi_range_requests() {
+        let mut headers = HeaderMap::new();
+        headers.append(header::RANGE, HeaderValue::from_static("bytes=0-0"));
+        headers.append(header::RANGE, HeaderValue::from_static("bytes=2-2"));
+
+        assert_eq!(parse_range(&headers, 10), RangeRequest::Full);
     }
 
     #[test]
