@@ -1,5 +1,12 @@
 # rsync 协议 daemon（… r19 `-a` 修复 → r20 size-only/window → **r21 filter 规则 flags 形修复**）
 
+## 当前工作树补充（push 接收校验）
+
+- 收端在写入前验证重建长度与 flist 文件长度一致，并校验协商 MD5；校验失败时拒绝该连接，
+  不再静默写入损坏内容。
+- token 负索引、literal 长度和 basis 区间使用有界/溢出检查，避免畸形 token 导致整数溢出或 panic。
+- 收端仍将 token 流和 basis 放入内存；大文件 push 的流式重建仍待完成。
+
 ## 状态（r21 末 · `--filter=P/H` 类规则保护修复 ✗ 真机抓出的静默失保）
 
 - **实修 bug**：wire 上规则形如 **`-r <pattern>`**（`get_rule_prefix` = `<+|-><flags…><space><pattern>`

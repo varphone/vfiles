@@ -1314,26 +1314,38 @@ pub fn apply_tokens(
         }
         if t > 0 {
             let len = t as usize;
-            if i + len > tokens.len() {
+            let Some(end) = i.checked_add(len) else {
+                return Err("literal 长度溢出".to_string());
+            };
+            if end > tokens.len() {
                 return Err("literal 越界".to_string());
             }
-            out.extend_from_slice(&tokens[i..i + len]);
-            i += len;
+            out.extend_from_slice(&tokens[i..end]);
+            i = end;
         } else {
-            let idx = (-t - 1) as usize;
-            if b == 0 || idx >= count.max(0) as usize {
+            let idx = t.unsigned_abs().saturating_sub(1) as usize;
+            let block_count = usize::try_from(count).unwrap_or(0);
+            if b == 0 || idx >= block_count {
                 return Err("匹配索引越界".to_string());
             }
-            let start = idx * b;
-            let len = if idx == count as usize - 1 && remainder != 0 {
+            let start = idx
+                .checked_mul(b)
+                .ok_or_else(|| "basis 偏移溢出".to_string())?;
+            let len = if idx == block_count - 1 && remainder != 0 {
+                if remainder as usize > b {
+                    return Err("basis 末块长度非法".to_string());
+                }
                 remainder as usize
             } else {
                 b
             };
-            if start + len > basis.len() {
+            let end = start
+                .checked_add(len)
+                .ok_or_else(|| "basis 范围溢出".to_string())?;
+            if end > basis.len() {
                 return Err("basis 越界".to_string());
             }
-            out.extend_from_slice(&basis[start..start + len]);
+            out.extend_from_slice(&basis[start..end]);
         }
     }
     Err("token 流未终结".to_string())
@@ -1983,6 +1995,7 @@ where
             }
             // 收 token 流（原样缓冲）→ `apply_tokens` 重建（literal + basis 块匹配）
             let mut token_buf = Vec::new();
+            let mut reconstructed_size = 0u64;
             loop {
                 let t = data_int(&mut rw, &mut pending).await?;
                 token_buf.extend_from_slice(&t.to_le_bytes());
@@ -1990,9 +2003,59 @@ where
                     break;
                 }
                 if t > 0 {
-                    let chunk = data_take(&mut rw, &mut pending, t as usize).await?;
+                    let literal_size = t as u64;
+                    reconstructed_size = reconstructed_size
+                        .checked_add(literal_size)
+                        .filter(|size| *size <= e.size)
+                        .ok_or_else(|| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "rsync push: literal token 超过文件列表长度",
+                            )
+                        })?;
+                    let chunk = data_take(&mut rw, &mut pending, literal_size as usize).await?;
                     token_buf.extend_from_slice(&chunk);
+                } else {
+                    let block_count = usize::try_from(count).unwrap_or(0);
+                    let block_index = t.unsigned_abs().saturating_sub(1) as usize;
+                    let block_size = usize::try_from(blength).unwrap_or(0);
+                    if block_index >= block_count || block_size == 0 {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "rsync push: basis token 索引非法",
+                        ));
+                    }
+                    let matched_size = if block_index == block_count - 1 && remainder > 0 {
+                        let last = usize::try_from(remainder).unwrap_or(usize::MAX);
+                        if last > block_size {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "rsync push: basis 末块长度非法",
+                            ));
+                        }
+                        last
+                    } else {
+                        block_size
+                    } as u64;
+                    reconstructed_size = reconstructed_size
+                        .checked_add(matched_size)
+                        .filter(|size| *size <= e.size)
+                        .ok_or_else(|| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "rsync push: basis token 超过文件列表长度",
+                            )
+                        })?;
                 }
+            }
+            if reconstructed_size != e.size {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "rsync push: token 长度 {} 与文件列表长度 {} 不符",
+                        reconstructed_size, e.size
+                    ),
+                ));
             }
             let data = apply_tokens(
                 &token_buf,
@@ -2002,8 +2065,24 @@ where
                 remainder.max(0) as u32,
             )
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            // 文件校验和（协商 md5 = 16B；读走以推进流）
-            let _file_sum = data_take(&mut rw, &mut pending, 16).await?;
+            // 校验重建长度与协商的整文件 MD5；不能把损坏的 delta 静默写入存储。
+            if data.len() as u64 != e.size {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "rsync push: 重建长度 {} 与文件列表长度 {} 不符",
+                        data.len(),
+                        e.size
+                    ),
+                ));
+            }
+            let file_sum = data_take(&mut rw, &mut pending, 16).await?;
+            if file_sum.as_slice() != md5_digest(&data) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "rsync push: 文件 MD5 校验失败",
+                ));
+            }
             match backend.write(full.clone(), data, e.mtime).await {
                 Ok(()) => transferred += 1,
                 Err(err) => tracing::warn!(path = %full, error = %err, "rsync push：写入失败"),
