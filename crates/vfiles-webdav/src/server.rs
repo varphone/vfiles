@@ -415,7 +415,11 @@ async fn write_op(
     };
     match result {
         Ok(()) => Response::builder()
-            .status(StatusCode::CREATED)
+            // r11 分码顺修（RFC：DELETE = 204 ✗ 原三 op 全 201 = 违背顺手修 ✓）
+            .status(match &op {
+                WriteOp::Delete => StatusCode::NO_CONTENT,
+                WriteOp::Mkcol | WriteOp::Move => StatusCode::CREATED,
+            })
             .body(Body::empty())
             .unwrap(),
         Err(err) => {
@@ -1177,7 +1181,91 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     .get("user-agent")
                     .and_then(|v| v.to_str().ok())
                     .map(str::to_string);
+                // r11 MOVE Overwrite（臂层式 ✗ 零签名变 ✓ extensions 重取 = 不碰已 move 变量）
+                let mut move_overwrite_204 = false;
+                if matches!(op, WriteOp::Move) {
+                    let overwrite = req
+                        .headers()
+                        .get("overwrite")
+                        .and_then(|v| v.to_str().ok())
+                        != Some("F");
+                    if let (Some(app), Some(u), Some(ns_ext)) = (
+                        req.extensions().get::<WebdavApplication>(),
+                        req.extensions().get::<vfiles_domain::types::User>(),
+                        req.extensions().get::<vfiles_domain::types::NamespaceId>(),
+                    ) {
+                        if let Some(dest_rel) = dest_owned.as_deref().and_then(destination_path) {
+                            // target = dest 是已存在目录 → join(dest, basename(src))（move 母版语义小复刻）
+                            let src_abs = percent_decode(req.uri().path());
+                            let basename = src_abs
+                                .trim_end_matches('/')
+                                .rsplit('/')
+                                .next()
+                                .unwrap_or_default();
+                            let dest_entry = app
+                                .entry_repo
+                                .find_by_path(
+                                    ns_ext,
+                                    &vfiles_domain::types::NormalizedPath::new(&dest_rel)
+                                        .unwrap_or_else(|_| {
+                                            vfiles_domain::types::NormalizedPath::new("").unwrap()
+                                        }),
+                                )
+                                .await
+                                .ok()
+                                .flatten();
+                            let dest_is_dir = matches!(
+                                dest_entry.as_ref().map(|e| e.entry_type.clone()),
+                                Some(vfiles_domain::types::EntryKind::Directory)
+                            );
+                            let target_rel = if dest_is_dir {
+                                if dest_rel.is_empty() {
+                                    basename.to_string()
+                                } else {
+                                    format!("{}/{}", dest_rel.trim_end_matches('/'), basename)
+                                }
+                            } else {
+                                dest_rel.clone()
+                            };
+                            if let Ok(target) = vfiles_domain::types::NormalizedPath::new(&target_rel)
+                            {
+                                let target_exists = app
+                                    .entry_repo
+                                    .find_by_path(ns_ext, &target)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .is_some();
+                                if target_exists {
+                                    if !overwrite {
+                                        // Overwrite: F + 目标存在 → 412（同 COPY r10 语义）
+                                        return Response::builder()
+                                            .status(StatusCode::PRECONDITION_FAILED)
+                                            .body(Body::empty())
+                                            .unwrap();
+                                    }
+                                    // T = 删旧（write.delete_entry = delete_entries 全链 = 递归 + blob release ✓）
+                                    if let Err(err) = app.write.delete_entry(ns_ext, &target, &u.id).await
+                                    {
+                                        tracing::error!(error = %err, "MOVE 覆盖删旧失败");
+                                        return internal_error();
+                                    }
+                                    move_overwrite_204 = true;
+                                }
+                            }
+                        }
+                    }
+                }
                 let resp = write_op(app_owned, user_owned, ns_owned, uri_owned, dest_owned, if_owned, op).await;
+                // r11 覆盖成功 204（RFC §9.9.3 ✗ 新建保持 201）——外层改写避免 move 后外尾用旧绑
+                let resp = if move_overwrite_204 && resp.status() == StatusCode::CREATED {
+                    Response::builder()
+                        .status(StatusCode::NO_CONTENT)
+                        .body(Body::empty())
+                        .unwrap()
+                } else {
+                    resp
+                };
                 if resp.status().is_success() {
                     if let (Some(app), Some(u)) = (
                         req.extensions().get::<WebdavApplication>(),
