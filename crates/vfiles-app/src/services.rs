@@ -2253,6 +2253,30 @@ where
         user_id: &UserId,
         overwrite: bool,
     ) -> DomainResult<()> {
+        self.copy_entries_with_depth(
+            namespace_id,
+            source,
+            destination,
+            message,
+            user_id,
+            overwrite,
+            true,
+        )
+        .await
+    }
+
+    /// Copy a resource and optionally recurse through collection members.
+    #[allow(clippy::too_many_arguments)] // Mirrors the workspace mutation context and COPY options.
+    pub async fn copy_entries_with_depth(
+        &self,
+        namespace_id: &NamespaceId,
+        source: &NormalizedPath,
+        destination: &NormalizedPath,
+        message: Option<&str>,
+        user_id: &UserId,
+        overwrite: bool,
+        depth_infinity: bool,
+    ) -> DomainResult<()> {
         if source.as_str() == destination.as_str() {
             return Err(DomainError::Conflict {
                 message: "Cannot copy a resource onto itself".to_string(),
@@ -2323,8 +2347,15 @@ where
                 message: "Destination parent is not a collection".to_string(),
             });
         }
-        self.recursive_copy(namespace_id, &src_entry, destination, message, user_id)
-            .await
+        self.recursive_copy(
+            namespace_id,
+            &src_entry,
+            destination,
+            message,
+            user_id,
+            depth_infinity,
+        )
+        .await
     }
 
     /// 递归复制子树（dir = 建目录逐层下钻 ✗ file = 建 entry + version 复用同 blob）。
@@ -2335,6 +2366,7 @@ where
         target: &NormalizedPath,
         message: Option<&str>,
         user_id: &UserId,
+        copy_children: bool,
     ) -> DomainResult<()> {
         let kind = src_entry.entry_type;
         let new_id = self
@@ -2365,7 +2397,7 @@ where
             self.entry_repo
                 .update_current_version(&new_id, &nv.id)
                 .await?;
-        } else {
+        } else if copy_children {
             let children = self
                 .entry_repo
                 .find_children(namespace_id, &src_entry.path_norm)
@@ -2378,6 +2410,7 @@ where
                     &child_target,
                     message,
                     user_id,
+                    copy_children,
                 ))
                 .await?;
             }
@@ -5092,6 +5125,93 @@ mod tests {
             .await
             .expect("destination bytes should be readable");
         assert_eq!(bytes, b"source bytes");
+    }
+
+    #[tokio::test]
+    async fn copy_depth_zero_copies_only_the_collection_root() {
+        let context = TestContext::new().await;
+        let source = TestContext::path("source");
+        let source_child = TestContext::path("source/child.txt");
+
+        context
+            .workspace_service
+            .create_directory(
+                &context.namespace_id,
+                &source,
+                Some("create copy source"),
+                &context.user_id,
+            )
+            .await
+            .expect("source collection should be created");
+        context
+            .upload_file(&source, "child.txt", b"child", "create child")
+            .await;
+
+        context
+            .workspace_service
+            .copy_entries_with_depth(
+                &context.namespace_id,
+                &source,
+                &TestContext::path("shallow-copy"),
+                Some("depth zero copy"),
+                &context.user_id,
+                false,
+                false,
+            )
+            .await
+            .expect("depth-zero copy should succeed");
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &TestContext::path("shallow-copy"))
+                .await
+                .expect("shallow root lookup should succeed")
+                .is_some()
+        );
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(
+                    &context.namespace_id,
+                    &TestContext::path("shallow-copy/child.txt")
+                )
+                .await
+                .expect("shallow child lookup should succeed")
+                .is_none()
+        );
+
+        context
+            .workspace_service
+            .copy_entries_with_depth(
+                &context.namespace_id,
+                &source,
+                &TestContext::path("recursive-copy"),
+                Some("infinite copy"),
+                &context.user_id,
+                false,
+                true,
+            )
+            .await
+            .expect("infinity copy should succeed");
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(
+                    &context.namespace_id,
+                    &TestContext::path("recursive-copy/child.txt")
+                )
+                .await
+                .expect("recursive child lookup should succeed")
+                .is_some()
+        );
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &source_child)
+                .await
+                .expect("source child lookup should succeed")
+                .is_some()
+        );
     }
 }
 

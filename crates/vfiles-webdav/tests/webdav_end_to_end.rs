@@ -83,6 +83,7 @@ impl WebdavWriteOps for NoopWrite {
         _destination: &NormalizedPath,
         _user_id: &vfiles_domain::UserId,
         _overwrite: bool,
+        _depth_infinity: bool,
     ) -> vfiles_domain::DomainResult<()> {
         Ok(())
     }
@@ -429,6 +430,38 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .unwrap();
     assert_eq!(invalid_proppatch_encoding.status(), 400);
+
+    let shallow_copy = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("COPY")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("destination", "/copy-depth-zero.txt")
+                .header("depth", "0")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(shallow_copy.status(), 201);
+
+    let unsupported_copy_depth = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("COPY")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("destination", "/copy-depth-one.txt")
+                .header("depth", "1")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unsupported_copy_depth.status(), 400);
 
     let resp = router
         .clone()

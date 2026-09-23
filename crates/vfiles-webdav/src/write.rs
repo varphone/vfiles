@@ -43,6 +43,7 @@ pub trait WebdavWriteOps: Send + Sync {
         destination: &NormalizedPath,
         user_id: &UserId,
         overwrite: bool,
+        depth_infinity: bool,
     ) -> DomainResult<()>;
 
     async fn move_entry(

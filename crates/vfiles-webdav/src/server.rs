@@ -2625,6 +2625,26 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             // r10 Overwrite 语义（RFC 缺省 = T ✗ 只有显式 "F" 才是 false）
             let overwrite =
                 req.headers().get("overwrite").and_then(|v| v.to_str().ok()) != Some("F");
+            let mut depth_values = req.headers().get_all("depth").iter();
+            let depth_infinity = match (depth_values.next(), depth_values.next()) {
+                (None, None) => true,
+                (Some(value), None)
+                    if value
+                        .to_str()
+                        .is_ok_and(|value| value.trim().eq_ignore_ascii_case("infinity")) =>
+                {
+                    true
+                }
+                (Some(value), None) if value.to_str().is_ok_and(|value| value.trim() == "0") => {
+                    false
+                }
+                _ => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            };
             // 源路径裁前导斜杠（PROPFIND 同式 ✗ 真因：new 不收前导 / ✗ 诊断日志定案 ✓）
             let src_rel = uri_owned.trim_start_matches('/').to_string();
             // COPY writes/replaces the destination subtree; source is read-only.
@@ -2677,7 +2697,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             }
             match app_ref
                 .write
-                .copy_entry(&ns, &path, &dest_path, &user.id, overwrite)
+                .copy_entry(&ns, &path, &dest_path, &user.id, overwrite, depth_infinity)
                 .await
             {
                 Ok(()) => {

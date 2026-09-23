@@ -1652,16 +1652,18 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
         destination: &vfiles_domain::NormalizedPath,
         user_id: &vfiles_domain::UserId,
         overwrite: bool,
+        depth_infinity: bool,
     ) -> vfiles_domain::DomainResult<()> {
         // r5 薄转发 ✗ 树逻辑在 services.copy_entries（blob 复用 + 递归 + r10 覆盖链 ✓）
         self.workspace
-            .copy_entries(
+            .copy_entries_with_depth(
                 ns,
                 source,
                 destination,
                 Some("WebDAV COPY"),
                 user_id,
                 overwrite,
+                depth_infinity,
             )
             .await
     }
