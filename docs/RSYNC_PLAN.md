@@ -2,6 +2,9 @@
 
 ## 当前工作树补充（push 接收校验）
 
+- rsync daemon 默认启用（`VFILES_RSYNC_ENABLED=false` 可关闭）；默认只读，写入仍由
+  `VFILES_RSYNC_WRITABLE=true` 显式开启。空用户列表时保持匿名访问行为。
+
 - 收端在写入前验证重建长度与 flist 文件长度一致，并校验协商 MD5；校验失败时拒绝该连接，
   不再静默写入损坏内容。
 - token 负索引、literal 长度和 basis 区间使用有界/溢出检查，避免畸形 token 导致整数溢出或 panic。
@@ -423,7 +426,7 @@
 | 形态 | **daemon 配置形**（`rsync://host/module` ✗ module = 默认 ns 顶层命名空间?r3 定：单 module `files` =默认 ns ✓） |
 | 方向 r3 首版 | **只读拉**（list + download ✗ 备份场景 = rsync 从 vfiles 拉 ✓ 最常见）+ 推送 = r4（接收端写链复用 upload 链） |
 | 认证 | 同 S3 env 单对 r2 先例（`VFILES_RSYNC_*`）或匿名只读（r3 按需定） |
-| 端口 | **873 默认**（`VFILES_RSYNC_PORT`，env 关 =默认关显式启用同 S3 先例）✗ TCP 直协议 ≠ HTTP 栈 =独立 runtime 形（tokio::net::TcpListener 自处理 ✗ 无 axum） |
+| 端口 | **873 默认**（`VFILES_RSYNC_PORT`；daemon 默认启用，可用 `VFILES_RSYNC_ENABLED=false` 关闭）✗ TCP 直协议 ≠ HTTP 栈 =独立 runtime 形（tokio::net::TcpListener 自处理 ✗ 无 axum） |
 | 与内容哈希 | vfiles 已有版本链/内容寻址 = **delta 校验和天然契合**（rsync 强项 =增量 ✗ 我们的哈希是现成地基） |
 
 ## r3 工作分解（预告）

@@ -6,6 +6,8 @@
   前缀优先，未匹配请求中带 SigV4 Authorization 或 `X-Amz-Algorithm=AWS4-HMAC-SHA256` 的交给 S3，
   普通路径仍落到前端静态资源。`VFILES_S3_PORT` 仅独立监听模式使用。
 - 默认仍为独立端口模式；WebDAV 自身的 `VFILES_WEBDAV_EMBEDDED` 配置行为不变。
+- S3 现在默认启用；`VFILES_S3_ENABLED=false` 可关闭。端口默认 9000，共端口模式由
+  `VFILES_S3_EMBEDDED=true` 显式选择。生产部署应设置固定 Access/Secret 凭证。
 
 ## 当前工作树补充（PUT/COPY 流式与 multipart 列表内存）
 
@@ -459,7 +461,7 @@
 | 端口 | **专用 9000**（`VFILES_S3_PORT`） | path-style `/bucket/key` 与前端根语义冲突 ✗ MinIO 惯例直觉 ✓ |
 | 桶 | 单虚拟 **`default`**，严格语义（他桶 → NoSuchBucket 404 XML） | 客户端列桶自配对（ListBuckets=[default] ✓） |
 | 认证 | **SigV4 静态单对**（`VFILES_S3_ACCESS_KEY/SECRET_KEY`，缺省 uuid 随机 + warn 打印 access，secret 不落日志） | s3s 内建验签 + `EnvAuth` 十五行自写（SimpleAuth 也 pub 可换） |
-| 启用 | **默认关**，`VFILES_S3_ENABLED=true` 显式开 | 新协议面显式启用原则（关时日志明示启用法） |
+| 启用 | **默认开**，`VFILES_S3_ENABLED=false` 显式关 | 零配置 listener 可用；生产应设置固定凭证 |
 | 实现 | crate `vfiles-s3`：`VfilesS3` 六方法 override（trait 114 全默认 NotImplemented） | 薄组装 ✗ 写面 = WebDAV 同源 app 层链（init+complete/Cursor） |
 | key 映射 | 默认 ns 根相对路径（`collect_keys` 递归展平；排序截 1000） | 树 = flat keys |
 | ETag | **version-id hex 裸值 + `ETag::Strong` 包裹**（to_http_header 自附引号） | **与 WebDAV derive_etag 跨协议同式** ✗ 引号单所有者 = s3s header 层 |
@@ -486,7 +488,7 @@
 ## 启用与接入
 
 ```bash
-export VFILES_S3_ENABLED=true          # 默认关 ✗ 显式开
+export VFILES_S3_ENABLED=true          # 默认开；生产建议显式固定配置
 export VFILES_S3_ACCESS_KEY=AKIAVFILES0001   # 缺省 = 随机 + warn
 export VFILES_S3_SECRET_KEY=...              # 缺省 = 随机
 # endpoint = http://<host>:9000   bucket = default   path-style

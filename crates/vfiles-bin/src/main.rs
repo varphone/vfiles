@@ -1265,7 +1265,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     // rx 已定义 = 依赖序矛盾解 ✗ 顶层作用域位置变 = 后续分发点照常可见）
     let (service_shutdown_tx, service_shutdown_rx) = tokio::sync::watch::channel(false);
 
-    // S3 兼容 API（round 2 ✗ 默认关 = VFILES_S3_ENABLED 显式启用 ✗ 关时明示启用法）
+    // S3 兼容 API（默认启用 ✗ VFILES_S3_ENABLED=false 可关闭）
     let embedded_s3 = if config.s3.enabled {
         let service = build_s3_service(
             &config.s3,
@@ -1285,11 +1285,11 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
             None
         }
     } else {
-        tracing::info!("S3 兼容 API 未启用（设置 VFILES_S3_ENABLED=true 后重启即可开放服务）");
+        tracing::info!("S3 兼容 API 已按配置关闭（VFILES_S3_ENABLED=false）");
         None
     };
 
-    // rsync daemon（round 3 ✗ 默认关 = VFILES_RSYNC_ENABLED 显式启用 ✗ 关时明示启用法）
+    // rsync daemon（默认启用、只读 ✗ VFILES_RSYNC_ENABLED=false 可关闭）
     if config.rsync.enabled {
         build_and_spawn_rsync(
             &config.rsync,
@@ -1301,9 +1301,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
             service_shutdown_rx.clone(),
         );
     } else {
-        tracing::info!(
-            "rsync daemon 未启用（设置 VFILES_RSYNC_ENABLED=true 后重启即可开放 873 端口）"
-        );
+        tracing::info!("rsync daemon 已按配置关闭（VFILES_RSYNC_ENABLED=false）");
     }
 
     // Create app state
