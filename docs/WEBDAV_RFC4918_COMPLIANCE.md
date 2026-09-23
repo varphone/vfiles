@@ -27,7 +27,7 @@
 | Depth 头 | ✅ | 0/1 ✓ infinity 见上 | P1 |
 | If 头（锁条件） | ✅ **r7 七式实证** | lock-token 形解析 + **423/412 分码**（RFC §9.10.6 ✓）+ 三臂缺口补齐（PUT/COPY/PROPPATCH 此前零锁检 = 锁摆设 ×3 ✗ 源/目标双查 ✓）**If-Match/ETag 面 = P1 记债**（无 ETag 面）| P1 ETag |
 | 412 Precondition | ✅ **r7** | 有 If 不匹配 = 412 / 无 If 锁住 = 423 分码纯函数 + 单测 ×5 ✓ | - |
-| Timeout 头（LOCK） | ❌ | 只 Infinite（Second-N 不解析 ✗ 客户端常发）| P1 |
+| Timeout 头（LOCK） | ✅ **r15 七式实证** | `Second-N` 解析（多值取首个可解析 ✓ 纯函数单测）+ 响应回显（Second-N/Infinite）+ **惰性过期**（blocked/lock/unlock 三路径 ✗ 到期释放 201 实证 ✓ 过期 unlock 409 / 重锁 200 接管 ✓ 零后台任务 ✓）| - |
 | 423 Locked | ✅ | ✓ | - |
 | 405 Method Not Allowed | ✅ | default 分支 ✓ | - |
 | 401 + WWW-Authenticate | ✅ r106 | ✓（失败 WARN 日志 r205）| - |
@@ -101,7 +101,9 @@ PROPPATCH 七式 / If+412 七式 / 审计八写点 / 声明面（Allow+DAV class
 - ✅ r13 **ETag+If-Match / LOCK Timeout / 属性面 getetag/creationdate/owner / 失败面审计表记 / HTTP 审计跨目标债（原自定义条已清）属性 k/v**（七式实证 ✓ 属性持久化全语义）+ ⚠️ **r12 http 判定勘误**
   （move_route 测试真形 = to 完整路径 → tree 传 Path ✗ 4306 = 唯一 container ✓
   **测试真形定案纪律** ✗ 判定类须有测试/实证背书）
-- 剩余 P1：自定义
+**P1 进度（r13-r15 三清 ✗ 清单现状）**：
+- ✅ r13 自定义属性 k/v（七式）→ ✅ r14 ETag+If-Match（九式）→ ✅ r15 LOCK Timeout（七式）
+- 剩余 P1：creationdate+owner 属性 / 失败面审计表记 / HTTP 审计跨目标债
 属性 k/v / ETag+If-Match 面 / LOCK Timeout 有限 / getetag+creationdate 属性 /
 失败面审计表记 / HTTP 审计跨目标债
 

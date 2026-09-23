@@ -65,6 +65,7 @@ async fn lock_op(
     user: Option<vfiles_domain::types::User>,
     ns: Option<vfiles_domain::types::NamespaceId>,
     uri_path: String,
+    timeout_owned: Option<String>,
 ) -> Response {
     let Some(app) = app else {
         return internal_error();
@@ -77,11 +78,20 @@ async fn lock_op(
     };
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/').to_string();
     let lock_key = format!("{ns}:{rel}");
-    match app.locks.lock(&lock_key, user.username.as_str()) {
+    // r15 Timeout（Second-N 解析 ✗ None = Infinite/缺省 = 永久（RFC 缺省语义 ✓））
+    let ttl = timeout_owned
+        .as_deref()
+        .and_then(crate::lock::LockTable::parse_timeout_header);
+    let granted_header = match ttl {
+        Some(d) => format!("Second-{}", d.as_secs()),
+        None => "Infinite".to_string(),
+    };
+    match app.locks.lock(&lock_key, user.username.as_str(), ttl) {
         Some(entry) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
             .header("Lock-Token", format!("<{}>", entry.token))
+            .header("Timeout", granted_header) // r15 授予值回显（Second-N 或 Infinite ✓）
             .body(Body::from(crate::response::lock_response(
                 &entry.token,
                 &entry.owner,
@@ -934,7 +944,17 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .get::<vfiles_domain::types::NamespaceId>()
                 .cloned();
             let resp = if m.as_str() == "LOCK" {
-                lock_op(app_owned, user_owned, ns_owned, uri_owned).await
+                lock_op(
+                    app_owned,
+                    user_owned,
+                    ns_owned,
+                    uri_owned,
+                    req.headers()
+                        .get("timeout")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string),
+                )
+                .await
             } else {
                 unlock_op(app_owned, ns_owned, uri_owned, token_owned).await
             };
