@@ -118,7 +118,7 @@ pub(crate) async fn streaming_file_response(
         .map_err(|e| ApiError::Internal(format!("Invalid content type header: {}", e)))?;
     let accept_ranges = HeaderValue::from_static("bytes");
     let range_is_current = if request_headers.contains_key(header::IF_RANGE) {
-        etag.is_some_and(|etag| if_range_matches(request_headers, etag))
+        if_range_matches(request_headers, etag, modified_at)
     } else {
         true
     };
@@ -264,16 +264,28 @@ fn weak_etag_eq(candidate: &str, current_etag: &str) -> bool {
     candidate == current_etag
 }
 
-fn if_range_matches(headers: &HeaderMap, current_etag: &str) -> bool {
+fn if_range_matches(
+    headers: &HeaderMap,
+    current_etag: Option<&str>,
+    modified_at: Option<time::OffsetDateTime>,
+) -> bool {
     let Some(value) = headers
         .get(header::IF_RANGE)
         .and_then(|value| value.to_str().ok())
     else {
         return true;
     };
-    // If-Range requires a strong entity-tag comparison. Date validators are not
-    // emitted by this endpoint, so they cannot authorize a partial response.
-    value.trim() == current_etag && !value.trim().starts_with("W/")
+    let value = value.trim();
+    if value.starts_with('"') || value.starts_with("W/") {
+        return current_etag.is_some_and(|etag| value == etag && !value.starts_with("W/"));
+    }
+
+    let (Some(modified_at), Ok(date)) = (modified_at, httpdate::parse_http_date(value)) else {
+        return false;
+    };
+    let modified_seconds = modified_at.unix_timestamp();
+    modified_seconds >= 0
+        && SystemTime::UNIX_EPOCH + Duration::from_secs(modified_seconds as u64) <= date
 }
 
 fn insert_content_length(headers: &mut axum::http::HeaderMap, size_bytes: u64) -> ApiResult<()> {
