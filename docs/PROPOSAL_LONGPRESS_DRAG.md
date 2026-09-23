@@ -1,6 +1,6 @@
 # 提案：移动端长按拖拽（交互草案）
 
-> 状态：**待产品决策**（round 98 出稿）。与 PROPOSAL_OVERWRITE_UPLOAD / 平移钳制
+> 状态：**✅ 已决策 → 实现 F（长按多选）/ E 不做**（用户拍板 ✗ B+ = 移动唯一多选路径 ✓）。原稿（round 98）。与 PROPOSAL_OVERWRITE_UPLOAD / 平移钳制
 > 同列（决策总览见 PROPOSAL_INDEX.md）。
 
 ## 1. 现状
