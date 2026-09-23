@@ -1603,6 +1603,134 @@ pub fn build_delta_tokens(
     out
 }
 
+/// 流式构造 sender delta：仅保留一个块窗口与待发 literal 缓冲，避免同时驻留源文件和
+/// 完整 token 副本。返回的 token 字节仍需暂存至协议发送阶段。
+async fn build_delta_tokens_stream(
+    reader: &mut (dyn AsyncRead + Send + Unpin),
+    len: u64,
+    blocks: &[BlockSum],
+    blength: u32,
+    seed: u32,
+    s2length: usize,
+) -> std::io::Result<(Vec<u8>, [u8; 16])> {
+    use md5::{Digest, Md5};
+    use std::collections::{HashMap, VecDeque};
+
+    let mut input = tokio::io::BufReader::with_capacity(64 * 1024, reader);
+    let mut digest = Md5::new();
+    let mut tokens = Vec::new();
+    let mut literal = Vec::with_capacity(CHUNK_SIZE);
+    let emit_pending = |tokens: &mut Vec<u8>, literal: &mut Vec<u8>| {
+        if !literal.is_empty() {
+            emit_literal(tokens, literal);
+            literal.clear();
+        }
+    };
+    let block_len = blength as usize;
+
+    if blocks.is_empty() || block_len == 0 || len == 0 {
+        let mut remaining = len;
+        let mut buffer = vec![0u8; CHUNK_SIZE];
+        while remaining > 0 {
+            let amount = remaining.min(buffer.len() as u64) as usize;
+            input.read_exact(&mut buffer[..amount]).await?;
+            digest.update(&buffer[..amount]);
+            tokens.extend_from_slice(&(amount as i32).to_le_bytes());
+            tokens.extend_from_slice(&buffer[..amount]);
+            remaining -= amount as u64;
+        }
+        tokens.extend_from_slice(&0i32.to_le_bytes());
+        return Ok((tokens, digest.finalize().into()));
+    }
+
+    let mut index: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, block) in blocks.iter().enumerate() {
+        index.entry(block.sum1).or_default().push(i);
+    }
+    let last_len = blocks[blocks.len() - 1].len as usize;
+    let end = len.saturating_add(1).saturating_sub(last_len as u64);
+    let mut offset = 0u64;
+    let mut window_len = block_len.min(usize::try_from(len).unwrap_or(usize::MAX));
+    let mut window = VecDeque::with_capacity(block_len);
+    let mut byte = [0u8; 1];
+    for _ in 0..window_len {
+        input.read_exact(&mut byte).await?;
+        digest.update(byte);
+        window.push_back(byte[0]);
+    }
+    let initial: Vec<u8> = window.iter().copied().collect();
+    let (mut s1, mut s2) = checksum1_signed(&initial);
+
+    loop {
+        let weak = (s1 & 0xffff) | (s2 << 16);
+        let mut hit: Option<usize> = None;
+        if let Some(candidates) = index.get(&weak) {
+            for &i in candidates {
+                if blocks[i].len as usize != window_len || blocks[i].sum2.len() < s2length {
+                    continue;
+                }
+                let candidate: Vec<u8> = window.iter().copied().collect();
+                let strong = md5_seeded(seed, &candidate);
+                if strong[..s2length] == blocks[i].sum2[..s2length] {
+                    hit = Some(i);
+                    break;
+                }
+            }
+        }
+
+        if let Some(i) = hit {
+            emit_pending(&mut tokens, &mut literal);
+            tokens.extend_from_slice(&(-(i as i32 + 1)).to_le_bytes());
+            let matched_len = blocks[i].len as usize;
+            for _ in 0..matched_len {
+                window.pop_front();
+            }
+            offset += matched_len as u64;
+            if offset >= len {
+                break;
+            }
+            window_len = block_len.min(usize::try_from(len - offset).unwrap_or(usize::MAX));
+            while window.len() < window_len {
+                input.read_exact(&mut byte).await?;
+                digest.update(byte);
+                window.push_back(byte[0]);
+            }
+            let current: Vec<u8> = window.iter().copied().collect();
+            (s1, s2) = checksum1_signed(&current);
+            continue;
+        }
+
+        if offset + 1 >= end {
+            break;
+        }
+        let removed = window.pop_front().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "rsync: 空 delta 窗口")
+        })?;
+        literal.push(removed);
+        if literal.len() == CHUNK_SIZE {
+            emit_pending(&mut tokens, &mut literal);
+        }
+        let more = offset + (window_len as u64) < len;
+        s1 = s1.wrapping_sub(signed_byte(removed));
+        s2 = s2.wrapping_sub((window_len as u32).wrapping_mul(signed_byte(removed)));
+        if more {
+            input.read_exact(&mut byte).await?;
+            digest.update(byte);
+            window.push_back(byte[0]);
+            s1 = s1.wrapping_add(signed_byte(byte[0]));
+            s2 = s2.wrapping_add(s1);
+        } else {
+            window_len -= 1;
+        }
+        offset += 1;
+    }
+
+    literal.extend(window);
+    emit_pending(&mut tokens, &mut literal);
+    tokens.extend_from_slice(&0i32.to_le_bytes());
+    Ok((tokens, digest.finalize().into()))
+}
+
 /// 写一条 mux MSG_DATA 帧（大 payload 自动分片 ≤ 64KB/帧）。
 async fn write_msg<S>(rw: &mut BufReader<S>, payload: &[u8]) -> std::io::Result<()>
 where
@@ -1914,7 +2042,12 @@ where
                 let bl = data_int(&mut rw, &mut pending).await?;
                 let s2 = data_int(&mut rw, &mut pending).await?;
                 let rem = data_int(&mut rw, &mut pending).await?;
-                if !(0..=16 * 1024 * 1024).contains(&c) || !(0..=64).contains(&s2) {
+                if !(0..=1_000_000).contains(&c)
+                    || !(0..=64).contains(&s2)
+                    || bl > 16 * 1024 * 1024
+                    || rem < 0
+                    || (c > 0 && (bl <= 0 || rem >= bl))
+                {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         "rsync: 非法 sum_head",
@@ -1983,20 +2116,38 @@ where
                         }
                     }
                 } else {
-                    match backend.read(&fs_path).await {
-                        Ok(data) => {
-                            file_digest = Some(md5_digest(&data));
-                            // 有 basis 时保留 delta 匹配；basis 和源文件目前仍需缓冲。
-                            delta_tokens = Some(build_delta_tokens(
-                                &data,
-                                &blocks,
-                                blength as u32,
-                                seed,
-                                s2length as usize,
-                            ));
+                    match backend.open(&fs_path).await {
+                        Ok(Some((mut reader, size))) => match build_delta_tokens_stream(
+                            reader.as_mut(),
+                            size,
+                            &blocks,
+                            blength as u32,
+                            seed,
+                            s2length as usize,
+                        )
+                        .await
+                        {
+                            Ok((tokens, digest)) => {
+                                delta_tokens = Some(tokens);
+                                file_digest = Some(digest);
+                            }
+                            Err(err) => {
+                                tracing::warn!(path = %fs_path, error = %err, "rsync：文件读取失败，回 MSG_NO_SEND");
+                                let mut msg = Vec::new();
+                                msg.extend_from_slice(&(ndx as i32).to_le_bytes());
+                                write_msg(&mut rw, &mux_frame_tagged(&msg, MSG_NO_SEND)).await?;
+                                continue;
+                            }
+                        },
+                        Ok(None) => {
+                            tracing::warn!(path = %fs_path, "rsync：文件不存在，回 MSG_NO_SEND");
+                            let mut msg = Vec::new();
+                            msg.extend_from_slice(&(ndx as i32).to_le_bytes());
+                            write_msg(&mut rw, &mux_frame_tagged(&msg, MSG_NO_SEND)).await?;
+                            continue;
                         }
                         Err(err) => {
-                            tracing::warn!(path = %fs_path, error = %err, "rsync：文件读取失败，回 MSG_NO_SEND");
+                            tracing::warn!(path = %fs_path, error = %err, "rsync：文件打开失败，回 MSG_NO_SEND");
                             let mut msg = Vec::new();
                             msg.extend_from_slice(&(ndx as i32).to_le_bytes());
                             write_msg(&mut rw, &mux_frame_tagged(&msg, MSG_NO_SEND)).await?;
