@@ -1333,6 +1333,7 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let path = norm(&input.key).map_err(dom_err)?;
+        let expected_md5 = decode_content_md5(input.content_md5.as_deref())?;
         // parent/filename 拆（WebDAV put_file 同式 ✗ init=父+名）
         // 条件写（`If-Match` / `If-None-Match` ✗ S3 现代并发控制）
         let cur = self.etag_at(&path).await?;
@@ -1379,18 +1380,20 @@ impl S3 for VfilesS3 {
         let reader = stream_reader(blob);
         let result = if input.content_length.is_some() {
             self.upload
-                .complete_upload_from_stream(
+                .complete_upload_from_stream_with_md5(
                     &session.upload_id,
                     None,
+                    expected_md5,
                     Some("S3 PUT"),
                     Box::new(reader),
                 )
                 .await
         } else {
             self.upload
-                .complete_upload_from_stream_unknown_size(
+                .complete_upload_from_stream_unknown_size_with_md5(
                     &session.upload_id,
                     None,
+                    expected_md5,
                     Some("S3 PUT"),
                     Box::new(reader),
                 )
@@ -1402,7 +1405,12 @@ impl S3 for VfilesS3 {
                 if let Err(cancel_error) = self.upload.cancel_upload(&session.upload_id).await {
                     tracing::warn!(error = %cancel_error, upload_id = %session.upload_id, "S3：清理失败 PUT 会话失败");
                 }
-                return Err(dom_err(error));
+                return Err(match error {
+                    vfiles_domain::DomainError::BlobChecksumMismatch => {
+                        s3s::s3_error!(BadDigest, "Content-MD5 did not match the uploaded object")
+                    }
+                    other => dom_err(other),
+                });
             }
         };
         let etag = result.version.id.to_string().replace('-', "");

@@ -208,8 +208,10 @@ impl ImportBatch {
             Some(limit) => Box::new(reader.take(limit.saturating_add(1))),
             None => reader,
         };
-        let (blob_id, content_hash, blob_created, stored_size) =
-            self.blob_store.store_blob_stream(reader, None).await?;
+        let (blob_id, content_hash, blob_created, stored_size) = self
+            .blob_store
+            .store_blob_stream(reader, None, None)
+            .await?;
 
         if let Some(limit) = max_bytes
             && stored_size > limit

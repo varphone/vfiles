@@ -2685,7 +2685,7 @@ where
         }
 
         let upload_stream = self.upload_store.assemble_upload_stream(upload_id).await?;
-        self.commit_upload_stream(session, upload_stream, expected_sha256, message, true)
+        self.commit_upload_stream(session, upload_stream, expected_sha256, None, message, true)
             .await
     }
 
@@ -2696,13 +2696,38 @@ where
         message: Option<&str>,
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadCompleteResponse> {
+        self.complete_upload_from_stream_with_md5(
+            upload_id,
+            expected_sha256,
+            None,
+            message,
+            upload_stream,
+        )
+        .await
+    }
+
+    pub async fn complete_upload_from_stream_with_md5(
+        &self,
+        upload_id: &UploadId,
+        expected_sha256: Option<&str>,
+        expected_md5: Option<[u8; 16]>,
+        message: Option<&str>,
+        upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    ) -> DomainResult<UploadCompleteResponse> {
         let session = self.upload_store.get_upload_session(upload_id).await?;
         if session.expires_at < time::OffsetDateTime::now_utc() {
             return Err(DomainError::UploadExpired);
         }
 
-        self.commit_upload_stream(session, upload_stream, expected_sha256, message, true)
-            .await
+        self.commit_upload_stream(
+            session,
+            upload_stream,
+            expected_sha256,
+            expected_md5,
+            message,
+            true,
+        )
+        .await
     }
 
     /// 完成总长度未知的流式上传（S3 chunked PUT 等传输场景）。
@@ -2713,13 +2738,38 @@ where
         message: Option<&str>,
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadCompleteResponse> {
+        self.complete_upload_from_stream_unknown_size_with_md5(
+            upload_id,
+            expected_sha256,
+            None,
+            message,
+            upload_stream,
+        )
+        .await
+    }
+
+    pub async fn complete_upload_from_stream_unknown_size_with_md5(
+        &self,
+        upload_id: &UploadId,
+        expected_sha256: Option<&str>,
+        expected_md5: Option<[u8; 16]>,
+        message: Option<&str>,
+        upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    ) -> DomainResult<UploadCompleteResponse> {
         let session = self.upload_store.get_upload_session(upload_id).await?;
         if session.expires_at < time::OffsetDateTime::now_utc() {
             return Err(DomainError::UploadExpired);
         }
 
-        self.commit_upload_stream(session, upload_stream, expected_sha256, message, false)
-            .await
+        self.commit_upload_stream(
+            session,
+            upload_stream,
+            expected_sha256,
+            expected_md5,
+            message,
+            false,
+        )
+        .await
     }
 
     /// S3 multipart：开启**未知总大小**的上传会话（`declared_size=0` / `total_chunks=0` ✗
@@ -2755,7 +2805,7 @@ where
             return Err(DomainError::UploadExpired);
         }
         let upload_stream = self.upload_store.assemble_upload_stream(upload_id).await?;
-        self.commit_upload_stream(session, upload_stream, None, message, false)
+        self.commit_upload_stream(session, upload_stream, None, None, message, false)
             .await
     }
 
@@ -2843,12 +2893,13 @@ where
         session: UploadSession,
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         expected_sha256: Option<&str>,
+        expected_md5: Option<[u8; 16]>,
         message: Option<&str>,
         enforce_size: bool,
     ) -> DomainResult<UploadCompleteResponse> {
         let (blob_id, content_hash, created_blob, stored_size) = self
             .blob_store
-            .store_blob_stream(upload_stream, expected_sha256)
+            .store_blob_stream(upload_stream, expected_sha256, expected_md5)
             .await?;
 
         if enforce_size && stored_size != session.declared_size.as_u64() {

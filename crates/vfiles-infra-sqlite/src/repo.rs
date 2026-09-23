@@ -3239,7 +3239,10 @@ impl BlobStore for FsBlobStore {
         &self,
         mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         expected_sha256: Option<&str>,
+        expected_md5: Option<[u8; 16]>,
     ) -> DomainResult<(BlobId, ContentHash, bool, u64)> {
+        use md5::{Digest as Md5Digest, Md5};
+
         let temp_dir = self.base_path.join("tmp");
         fs::create_dir_all(&temp_dir)
             .await
@@ -3254,6 +3257,7 @@ impl BlobStore for FsBlobStore {
                     message: format!("Failed to create blob temp file: {}", e),
                 })?;
         let mut hasher = Sha256::new();
+        let mut md5 = <Md5 as Md5Digest>::new();
         let mut total_size = 0_u64;
         let mut buffer = [0_u8; 64 * 1024];
 
@@ -3272,6 +3276,7 @@ impl BlobStore for FsBlobStore {
                 }
 
                 hasher.update(&buffer[..read]);
+                Md5Digest::update(&mut md5, &buffer[..read]);
                 total_size += read as u64;
                 temp_file
                     .write_all(&buffer[..read])
@@ -3294,6 +3299,12 @@ impl BlobStore for FsBlobStore {
         if let Err(err) = copy_result {
             let _ = fs::remove_file(&temp_path).await;
             return Err(err);
+        }
+
+        let digest: [u8; 16] = Md5Digest::finalize(md5).into();
+        if expected_md5.is_some_and(|expected| expected != digest) {
+            let _ = fs::remove_file(&temp_path).await;
+            return Err(DomainError::BlobChecksumMismatch);
         }
 
         let hash_hex = hex::encode(hasher.finalize());
@@ -5314,7 +5325,7 @@ mod blob_stream_tests {
         let store = FsBlobStore::new(pool, storage_root.join("blobs"));
 
         let result = store
-            .store_blob_stream(Box::new(FailingReader { emitted: false }), None)
+            .store_blob_stream(Box::new(FailingReader { emitted: false }), None, None)
             .await;
         assert!(result.is_err(), "读取失败应返回错误，实际: {result:?}");
 

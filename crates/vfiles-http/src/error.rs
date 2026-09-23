@@ -219,6 +219,12 @@ impl IntoResponse for ApiError {
                 "Upload part checksum does not match".to_string(),
                 None,
             ),
+            ApiError::Domain(DomainError::BlobChecksumMismatch) => (
+                StatusCode::BAD_REQUEST,
+                "BLOB_CHECKSUM_MISMATCH".to_string(),
+                "Blob checksum does not match".to_string(),
+                None,
+            ),
             ApiError::Domain(DomainError::UploadConflict) => (
                 StatusCode::CONFLICT,
                 "UPLOAD_CONFLICT".to_string(),

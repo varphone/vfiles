@@ -419,6 +419,7 @@ pub trait BlobStore {
         &self,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         expected_sha256: Option<&str>,
+        expected_md5: Option<[u8; 16]>,
     ) -> DomainResult<(BlobId, ContentHash, bool, u64)>;
     async fn get_blob(&self, blob_id: &BlobId) -> DomainResult<Option<Vec<u8>>>;
     async fn get_blob_stream(
