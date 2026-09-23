@@ -96,6 +96,15 @@ pub(crate) async fn streaming_file_response(
     etag: Option<&str>,
     modified_at: Option<time::OffsetDateTime>,
 ) -> ApiResult<Response> {
+    if request_headers.contains_key(header::IF_MATCH) && !if_match(request_headers, etag) {
+        return precondition_failed(etag, modified_at);
+    }
+    if !request_headers.contains_key(header::IF_MATCH)
+        && modified_at
+            .is_some_and(|modified_at| if_unmodified_since_failed(request_headers, modified_at))
+    {
+        return precondition_failed(etag, modified_at);
+    }
     if let Some(etag) = etag
         && if_none_match(request_headers, etag)
     {
@@ -189,6 +198,17 @@ pub(crate) async fn streaming_file_response(
     }
 }
 
+fn precondition_failed(
+    etag: Option<&str>,
+    modified_at: Option<time::OffsetDateTime>,
+) -> ApiResult<Response> {
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::PRECONDITION_FAILED;
+    insert_etag(response.headers_mut(), etag)?;
+    insert_last_modified(response.headers_mut(), modified_at)?;
+    Ok(response)
+}
+
 fn insert_etag(headers: &mut HeaderMap, etag: Option<&str>) -> ApiResult<()> {
     if let Some(etag) = etag {
         let value = HeaderValue::from_str(etag)
@@ -230,6 +250,22 @@ fn if_modified_since(headers: &HeaderMap, modified_at: time::OffsetDateTime) -> 
     modified <= since
 }
 
+fn if_unmodified_since_failed(headers: &HeaderMap, modified_at: time::OffsetDateTime) -> bool {
+    let Some(date) = headers
+        .get(header::IF_UNMODIFIED_SINCE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| httpdate::parse_http_date(value).ok())
+    else {
+        return false;
+    };
+    let modified_seconds = modified_at.unix_timestamp();
+    if modified_seconds < 0 {
+        return false;
+    }
+    let modified = SystemTime::UNIX_EPOCH + Duration::from_secs(modified_seconds as u64);
+    modified > date
+}
+
 fn if_none_match(headers: &HeaderMap, current_etag: &str) -> bool {
     headers
         .get_all(header::IF_NONE_MATCH)
@@ -238,20 +274,39 @@ fn if_none_match(headers: &HeaderMap, current_etag: &str) -> bool {
         .any(|value| if_none_match_value(value, current_etag))
 }
 
+fn if_match(headers: &HeaderMap, current_etag: Option<&str>) -> bool {
+    headers
+        .get_all(header::IF_MATCH)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .any(|value| {
+            any_etag_candidate(value, |candidate| {
+                candidate == "*"
+                    || (!candidate.starts_with("W/") && current_etag == Some(candidate))
+            })
+        })
+}
+
 fn if_none_match_value(value: &str, current_etag: &str) -> bool {
+    any_etag_candidate(value, |candidate| {
+        etag_candidate_matches(candidate, current_etag)
+    })
+}
+
+fn any_etag_candidate(value: &str, mut matches: impl FnMut(&str) -> bool) -> bool {
     let mut start = 0;
     let mut in_quotes = false;
     for (index, byte) in value.bytes().enumerate() {
         if byte == b'"' {
             in_quotes = !in_quotes;
         } else if byte == b',' && !in_quotes {
-            if etag_candidate_matches(&value[start..index], current_etag) {
+            if matches(value[start..index].trim()) {
                 return true;
             }
             start = index + 1;
         }
     }
-    etag_candidate_matches(&value[start..], current_etag)
+    matches(value[start..].trim())
 }
 
 fn etag_candidate_matches(candidate: &str, current_etag: &str) -> bool {
@@ -385,5 +440,41 @@ mod tests {
         );
 
         assert!(if_none_match(&headers, "\"current\""));
+    }
+
+    #[test]
+    fn if_match_uses_strong_comparison_and_accepts_existing_resource_wildcard() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_MATCH,
+            HeaderValue::from_static("\"older\", W/\"current\""),
+        );
+        assert!(!if_match(&headers, Some("\"current\"")));
+
+        headers.insert(
+            header::IF_MATCH,
+            HeaderValue::from_static("\"older,version\", \"current\""),
+        );
+        assert!(if_match(&headers, Some("\"current\"")));
+
+        headers.insert(header::IF_MATCH, HeaderValue::from_static("*"));
+        assert!(if_match(&headers, None));
+    }
+
+    #[test]
+    fn if_unmodified_since_fails_only_when_the_representation_is_newer() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_UNMODIFIED_SINCE,
+            HeaderValue::from_static("Thu, 01 Jan 1970 00:00:05 GMT"),
+        );
+        let modified = time::OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(10);
+        assert!(if_unmodified_since_failed(&headers, modified));
+
+        headers.insert(
+            header::IF_UNMODIFIED_SINCE,
+            HeaderValue::from_static("Thu, 01 Jan 1970 00:00:10 GMT"),
+        );
+        assert!(!if_unmodified_since_failed(&headers, modified));
     }
 }

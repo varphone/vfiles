@@ -996,6 +996,92 @@ async fn file_content_and_download_support_range_requests() {
         .to_owned();
     assert_eq!(response_bytes(content_partial).await.as_ref(), b"2345");
 
+    let matching_if_match = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range.txt")
+                .header(header::IF_MATCH, &etag)
+                .body(Body::empty())
+                .expect("If-Match request should build"),
+        )
+        .await;
+    assert_eq!(matching_if_match.status(), StatusCode::OK);
+    assert_eq!(
+        response_bytes(matching_if_match).await.as_ref(),
+        b"0123456789"
+    );
+
+    let wildcard_if_match = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range.txt")
+                .header(header::IF_MATCH, "*")
+                .body(Body::empty())
+                .expect("wildcard If-Match request should build"),
+        )
+        .await;
+    assert_eq!(wildcard_if_match.status(), StatusCode::OK);
+
+    let stale_if_match = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range.txt")
+                .header(header::IF_MATCH, "\"stale\"")
+                .body(Body::empty())
+                .expect("stale If-Match request should build"),
+        )
+        .await;
+    assert_eq!(stale_if_match.status(), StatusCode::PRECONDITION_FAILED);
+    assert_eq!(
+        stale_if_match
+            .headers()
+            .get(header::ETAG)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        etag
+    );
+
+    let weak_if_match = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range.txt")
+                .header(header::IF_MATCH, format!("W/{etag}"))
+                .body(Body::empty())
+                .expect("weak If-Match request should build"),
+        )
+        .await;
+    assert_eq!(weak_if_match.status(), StatusCode::PRECONDITION_FAILED);
+
+    let stale_if_unmodified_since = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range.txt")
+                .header(header::IF_UNMODIFIED_SINCE, "Thu, 01 Jan 1970 00:00:00 GMT")
+                .body(Body::empty())
+                .expect("If-Unmodified-Since request should build"),
+        )
+        .await;
+    assert_eq!(
+        stale_if_unmodified_since.status(),
+        StatusCode::PRECONDITION_FAILED
+    );
+
+    let if_match_precedes_if_unmodified_since = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range.txt")
+                .header(header::IF_MATCH, &etag)
+                .header(header::IF_UNMODIFIED_SINCE, "Thu, 01 Jan 1970 00:00:00 GMT")
+                .body(Body::empty())
+                .expect("conditional precedence request should build"),
+        )
+        .await;
+    assert_eq!(
+        if_match_precedes_if_unmodified_since.status(),
+        StatusCode::OK
+    );
+
     let head_response = app
         .request_as_admin(
             Request::builder()
