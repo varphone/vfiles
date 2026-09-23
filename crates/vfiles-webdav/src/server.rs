@@ -89,34 +89,63 @@ fn parse_if_token_lists(header: &str) -> Option<Vec<Vec<String>>> {
     (!lists.is_empty()).then_some(lists)
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum IfCondition {
     Token { value: String, negated: bool },
     EntityTag { value: String, negated: bool },
 }
 
-/// Parse the untagged RFC 4918 If form. Conditions within one list are ANDed;
-/// separate lists are alternatives. URI-tagged lists are handled separately
-/// by resource-aware callers and are rejected here rather than misapplied.
-fn parse_untagged_if(header: &str) -> Option<Vec<Vec<IfCondition>>> {
+#[derive(Debug, PartialEq, Eq)]
+enum IfHeader {
+    Untagged(Vec<Vec<IfCondition>>),
+    Tagged(Vec<(String, Vec<Vec<IfCondition>>)>),
+}
+
+/// Parse either RFC 4918 `If` form. Conditions within a list are ANDed and
+/// lists associated with the same resource are alternatives.
+fn parse_if_header(header: &str) -> Option<IfHeader> {
     let mut remaining = header.trim();
-    let mut lists = Vec::new();
+    if remaining.starts_with('(') {
+        let lists = parse_if_lists(&mut remaining)?;
+        return remaining.is_empty().then_some(IfHeader::Untagged(lists));
+    }
+
+    let mut tagged = Vec::new();
     while !remaining.is_empty() {
-        remaining = remaining.strip_prefix('(')?;
-        let close = remaining.find(')')?;
-        let mut input = remaining[..close].trim();
+        remaining = remaining.strip_prefix('<')?;
+        let end = remaining.find('>')?;
+        let resource_tag = remaining[..end].to_string();
+        if resource_tag.is_empty() || resource_tag.chars().any(char::is_whitespace) {
+            return None;
+        }
+        remaining = remaining[end + 1..].trim_start();
+        if !remaining.starts_with('(') {
+            return None;
+        }
+        let lists = parse_if_lists(&mut remaining)?;
+        tagged.push((resource_tag, lists));
+    }
+    (!tagged.is_empty()).then_some(IfHeader::Tagged(tagged))
+}
+
+fn parse_if_lists(input: &mut &str) -> Option<Vec<Vec<IfCondition>>> {
+    let mut lists = Vec::new();
+    while input.starts_with('(') {
+        let after_open = input.strip_prefix('(')?;
+        let close = after_open.find(')')?;
+        let mut conditions_input = after_open[..close].trim();
         let mut conditions = Vec::new();
-        while !input.is_empty() {
-            let negated = if let Some(rest) = input.strip_prefix("Not") {
+        while !conditions_input.is_empty() {
+            let negated = if let Some(rest) = conditions_input.strip_prefix("Not") {
                 if rest.is_empty() || !rest.starts_with(char::is_whitespace) {
                     return None;
                 }
-                input = rest.trim_start();
+                conditions_input = rest.trim_start();
                 true
             } else {
                 false
             };
-            if let Some(rest) = input.strip_prefix('<') {
+            if let Some(rest) = conditions_input.strip_prefix('<') {
                 let end = rest.find('>')?;
                 let value = &rest[..end];
                 if !value.starts_with("opaquelocktoken:")
@@ -129,9 +158,9 @@ fn parse_untagged_if(header: &str) -> Option<Vec<Vec<IfCondition>>> {
                     value: value.to_string(),
                     negated,
                 });
-                input = rest[end + 1..].trim_start();
+                conditions_input = rest[end + 1..].trim_start();
             } else {
-                let rest = input.strip_prefix('[')?;
+                let rest = conditions_input.strip_prefix('[')?;
                 let end = rest.find(']')?;
                 let value = &rest[..end];
                 if value != value.trim() || !valid_entity_tag(value) {
@@ -141,14 +170,14 @@ fn parse_untagged_if(header: &str) -> Option<Vec<Vec<IfCondition>>> {
                     value: value.to_string(),
                     negated,
                 });
-                input = rest[end + 1..].trim_start();
+                conditions_input = rest[end + 1..].trim_start();
             }
         }
         if conditions.is_empty() {
             return None;
         }
         lists.push(conditions);
-        remaining = remaining[close + 1..].trim_start();
+        *input = after_open[close + 1..].trim_start();
     }
     (!lists.is_empty()).then_some(lists)
 }
@@ -168,8 +197,18 @@ fn untagged_if_matches(
     active_lock_token: Option<&str>,
     etag: Option<&str>,
 ) -> Option<bool> {
-    let lists = parse_untagged_if(header)?;
-    Some(lists.iter().any(|conditions| {
+    let IfHeader::Untagged(lists) = parse_if_header(header)? else {
+        return None;
+    };
+    Some(if_lists_match(&lists, active_lock_token, etag))
+}
+
+fn if_lists_match(
+    lists: &[Vec<IfCondition>],
+    active_lock_token: Option<&str>,
+    etag: Option<&str>,
+) -> bool {
+    lists.iter().any(|conditions| {
         let mut has_positive_lock_token = false;
         let conditions_match = conditions.iter().all(|condition| match condition {
             IfCondition::Token { value, negated } => {
@@ -187,7 +226,61 @@ fn untagged_if_matches(
             }
         });
         conditions_match && active_lock_token.is_none_or(|_| has_positive_lock_token)
-    }))
+    })
+}
+
+fn resource_tag_matches(tag: &str, rel: &str, mount_prefix: &str) -> bool {
+    if tag.contains('#') {
+        return false;
+    }
+    let Ok(uri) = axum::http::Uri::try_from(tag) else {
+        return false;
+    };
+    if uri.query().is_some() {
+        return false;
+    }
+    let Some(path) = uri.path().strip_prefix('/') else {
+        return false;
+    };
+    let path = percent_decode(path);
+    let mounted_prefix = mount_prefix.trim_matches('/');
+    let path = if mounted_prefix.is_empty() {
+        path.as_str()
+    } else if path == mounted_prefix {
+        ""
+    } else if let Some(rest) = path.strip_prefix(mounted_prefix) {
+        let Some(rest) = rest.strip_prefix('/') else {
+            return false;
+        };
+        rest
+    } else {
+        return false;
+    };
+    path.trim_end_matches('/') == rel.trim_matches('/')
+}
+
+fn if_header_matches_resource(
+    header: &str,
+    rel: &str,
+    mount_prefix: &str,
+    active_lock_token: Option<&str>,
+    etag: Option<&str>,
+) -> Option<bool> {
+    match parse_if_header(header)? {
+        IfHeader::Untagged(lists) => Some(if_lists_match(&lists, active_lock_token, etag)),
+        IfHeader::Tagged(tagged) => {
+            let matching_lists: Vec<_> = tagged
+                .iter()
+                .filter(|(tag, _)| resource_tag_matches(tag, rel, mount_prefix))
+                .flat_map(|(_, lists)| lists.iter().cloned())
+                .collect();
+            Some(if matching_lists.is_empty() {
+                active_lock_token.is_none()
+            } else {
+                if_lists_match(&matching_lists, active_lock_token, etag)
+            })
+        }
+    }
 }
 
 /// LOCK（r109a ✓ exclusive write / depth 0 ✓ 已锁 = 423 ✓ **纯拥有参**（#46 纪律））。
@@ -604,8 +697,10 @@ async fn write_precondition(
         } else {
             None
         };
-        if untagged_if_matches(
+        if if_header_matches_resource(
             header,
+            rel,
+            &app.mount_prefix,
             lock.as_ref().map(|entry| entry.token.as_str()),
             etag.as_deref(),
         ) != Some(true)
@@ -1817,6 +1912,14 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         .as_deref()
                         .and_then(|d| destination_path(d, &app.mount_prefix))
                     {
+                        if let Some(status) =
+                            write_precondition(app, ns_ext, &dest_rel, if_owned.as_deref()).await
+                        {
+                            return Response::builder()
+                                .status(status)
+                                .body(Body::empty())
+                                .unwrap();
+                        }
                         // r12 dest 即 target（WebDAV 完整目标路径 ✗ r11 曾 join 目录
                         // = 违 RFC 二义 → 服务参数化后臂层同步简化 ✓ 同名目录覆盖打通）
                         if let Ok(target) = vfiles_domain::types::NormalizedPath::new(&dest_rel) {
@@ -2192,6 +2295,53 @@ mod if_token_tests {
         );
         assert_eq!(
             untagged_if_matches("([\"old\"])", None, Some("\"v1\"")),
+            Some(false)
+        );
+    }
+}
+
+#[cfg(test)]
+mod tagged_if_tests {
+    use super::if_header_matches_resource;
+
+    #[test]
+    fn applies_tagged_lists_to_their_own_source_and_destination() {
+        let header = "<http://example.test/dav/source> (<opaquelocktoken:src>) </dav/dest> (<opaquelocktoken:dst> [\"dest-v1\"])";
+        assert_eq!(
+            if_header_matches_resource(header, "source", "/dav", Some("opaquelocktoken:src"), None,),
+            Some(true)
+        );
+        assert_eq!(
+            if_header_matches_resource(
+                header,
+                "dest",
+                "/dav",
+                Some("opaquelocktoken:dst"),
+                Some("\"dest-v1\""),
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            if_header_matches_resource(
+                header,
+                "dest",
+                "/dav",
+                Some("opaquelocktoken:dst"),
+                Some("\"dest-v2\""),
+            ),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn unrelated_tags_do_not_authorize_a_locked_resource() {
+        let header = "</dav/source> (<opaquelocktoken:src>)";
+        assert_eq!(
+            if_header_matches_resource(header, "dest", "/dav", None, None),
+            Some(true)
+        );
+        assert_eq!(
+            if_header_matches_resource(header, "dest", "/dav", Some("opaquelocktoken:dst"), None,),
             Some(false)
         );
     }

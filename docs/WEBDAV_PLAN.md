@@ -31,7 +31,7 @@
 - 空体 LOCK 识别为 refresh：从 `If` 头取唯一 `opaquelocktoken`，仅刷新同路径上仍有效的锁；成功返回原 token 与 lockdiscovery，失效 token 返回 412。
 - 新 LOCK 解析 RFC `lockinfo` XML，只接受 `exclusive` + `write`；shared 请求明确返回 405，不再被静默授予 exclusive 锁。
 - LOCK 的 `Depth` 若显式提供，只接受 `0`；不支持的 scope 返回 400。
-- 写请求支持未标记 `If` 条件列表：列表内按 AND 求值、列表间按 OR 求值；有锁写请求必须在成功列表中提供匹配的正向锁 token；ETag 与 `Not` 条件按当前实体状态求值，即使资源未锁也会校验。URI-tagged 列表仍拒绝为 412，因为源/目标资源标签需要按各自资源分别解析。
+- 写请求支持 RFC 4918 `If` 条件列表：列表内按 AND 求值、列表间按 OR 求值；支持未标记与 URI-tagged 列表，tagged 列表按挂载路径分别映射到 COPY/MOVE 源和目标；有锁写请求必须在匹配资源的成功列表中提供匹配的正向锁 token；ETag 与 `Not` 条件按当前实体状态求值，即使资源未锁也会校验。
 
 ## 0.5 GET 流式化（r201 ✓ 商业级硬伤修 ✗ 大文件内存爆）
 

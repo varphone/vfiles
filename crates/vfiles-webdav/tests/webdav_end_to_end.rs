@@ -277,6 +277,21 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(wrong_token.status(), 412);
 
+    let tagged_list_token = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if", format!("</persist.txt> ({lock_token})"))
+                .body(axum::body::Body::from("authorized by resource-tagged list"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(tagged_list_token.status(), 201);
+
     let alternative_list_token = router
         .oneshot(
             axum::http::Request::builder()
