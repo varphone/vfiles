@@ -183,14 +183,21 @@ async fn get_op(
                 builder.body(Body::from_stream(stream)).unwrap()
             }
         }
-        Ok(None) => Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::empty())
-            .unwrap(),
-        Err(_) => Response::builder()
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
-            .body(Body::empty())
-            .unwrap(),
+        Ok(None) => {
+            // r207 观测补 ✗ 此前静默（用户"无法打开文件"无从定位 → 带路径日志）
+            tracing::warn!(path = %rel, "WebDAV GET 404：路径不存在或不在当前命名空间");
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::empty())
+                .unwrap()
+        }
+        Err(err) => {
+            tracing::error!(path = %rel, error = %err, "WebDAV GET 读取失败（存储/版本链错误）");
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::empty())
+                .unwrap()
+        }
     }
 }
 
@@ -232,10 +239,13 @@ async fn put_op(
             .status(StatusCode::CREATED)
             .body(Body::empty())
             .unwrap(),
-        Err(_) => Response::builder()
-            .status(StatusCode::CONFLICT)
-            .body(Body::empty())
-            .unwrap(),
+        Err(err) => {
+            tracing::warn!(path = %rel, error = %err, "WebDAV PUT 失败（409）");
+            Response::builder()
+                .status(StatusCode::CONFLICT)
+                .body(Body::empty())
+                .unwrap()
+        }
     }
 }
 
@@ -322,10 +332,13 @@ async fn write_op(
             .status(StatusCode::CREATED)
             .body(Body::empty())
             .unwrap(),
-        Err(_) => Response::builder()
-            .status(StatusCode::CONFLICT)
-            .body(Body::empty())
-            .unwrap(),
+        Err(err) => {
+            tracing::warn!(path = %rel, op = "mkcol|delete|move", error = %err, "WebDAV 写操作失败（409）");
+            Response::builder()
+                .status(StatusCode::CONFLICT)
+                .body(Body::empty())
+                .unwrap()
+        }
     }
 }
 
