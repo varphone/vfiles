@@ -468,10 +468,21 @@ async fn propfind_owned(
         let Some(entry) = entry else {
             return Err(StatusCode::NOT_FOUND);
         };
+        // r209 真因修复 ✗✗ 此前硬编码 is_collection: true = **文件被报成目录** →
+        // gvfs 把文件当目录反复 PROPFIND、永不 GET = 用户"打不开文件"完整因果链
+        // （列表 children 判对、查自身判错）；href 尾斜杠同错（gvfs 探了 png/ 实证）
+        let is_dir = matches!(
+            entry.entry_type,
+            vfiles_domain::types::EntryKind::Directory
+        );
         items.push(crate::response::PropResponse {
-            href: format!("/{rel}/"),
+            href: if is_dir {
+                format!("/{rel}/")
+            } else {
+                format!("/{rel}")
+            },
             displayname: entry.name.clone(),
-            is_collection: true,
+            is_collection: is_dir,
             getlastmodified: mtime_fmt(entry.created_at),
             getcontentlength: None,
         });
