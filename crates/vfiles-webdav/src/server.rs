@@ -1912,6 +1912,47 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         .as_deref()
                         .and_then(|d| destination_path(d, &app.mount_prefix))
                     {
+                        let source_rel = percent_decode(req.uri().path())
+                            .trim_start_matches('/')
+                            .trim_end_matches('/')
+                            .to_string();
+                        if let Some(status) =
+                            write_precondition(app, ns_ext, &source_rel, if_owned.as_deref()).await
+                        {
+                            return Response::builder()
+                                .status(status)
+                                .body(Body::empty())
+                                .unwrap();
+                        }
+                        let source = match vfiles_domain::types::NormalizedPath::new(&source_rel) {
+                            Ok(source) => source,
+                            Err(_) => {
+                                return Response::builder()
+                                    .status(StatusCode::BAD_REQUEST)
+                                    .body(Body::empty())
+                                    .unwrap();
+                            }
+                        };
+                        if dest_rel == source_rel || dest_rel.starts_with(&format!("{source_rel}/"))
+                        {
+                            return Response::builder()
+                                .status(StatusCode::CONFLICT)
+                                .body(Body::empty())
+                                .unwrap();
+                        }
+                        match app.entry_repo.find_by_path(ns_ext, &source).await {
+                            Ok(Some(_)) => {}
+                            Ok(None) => {
+                                return Response::builder()
+                                    .status(StatusCode::NOT_FOUND)
+                                    .body(Body::empty())
+                                    .unwrap();
+                            }
+                            Err(error) => {
+                                tracing::error!(%error, source = %source_rel, "MOVE 覆盖前读取源失败");
+                                return internal_error();
+                            }
+                        }
                         if let Some(status) =
                             write_precondition(app, ns_ext, &dest_rel, if_owned.as_deref()).await
                         {

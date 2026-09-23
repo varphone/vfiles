@@ -25,7 +25,9 @@ const USERNAME: &str = "davuser";
 const PASSWORD: &str = "dav-password-1234";
 
 /// 测试写门面桩（e2e 覆盖读面 ✓ 写面 = r108' 单测已护 ✓ 桩实现空转）。
-struct NoopWrite;
+struct NoopWrite {
+    deletes: Arc<std::sync::atomic::AtomicUsize>,
+}
 
 #[async_trait::async_trait]
 impl WebdavWriteOps for NoopWrite {
@@ -81,6 +83,8 @@ impl WebdavWriteOps for NoopWrite {
         _path: &NormalizedPath,
         _uid: &vfiles_domain::types::UserId,
     ) -> vfiles_domain::DomainResult<()> {
+        self.deletes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 }
@@ -112,10 +116,22 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .expect("register");
     // per-user 默认命名空间（`ensure_default_for_owner` = **ns 映射真身** ✓ r109d 形明）
-    let _namespace_id = namespaces
+    let namespace_id = namespaces
         .ensure_default_for_owner(&user.id)
         .await
         .expect("ns");
+    for path in ["persist.txt", "target.txt"] {
+        entry_repo
+            .create_entry(
+                &namespace_id,
+                &NormalizedPath::new(path).expect("valid fixture path"),
+                vfiles_domain::types::EntryKind::File,
+                &user.id,
+            )
+            .await
+            .expect("create fixture entry");
+    }
+    let deletes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let workspace = Arc::new(DefaultWorkspaceService::new(
         SqliteEntryRepo::new(pool.clone()),
         SqliteSnapshotRepo::new(pool.clone()),
@@ -140,7 +156,9 @@ async fn options_advertises_and_propfind_needs_auth() {
         locks: Arc::new(vfiles_webdav::LockTable::new(Arc::new(
             SqliteWebdavLockRepo::new(pool.clone()),
         ))),
-        write: Arc::new(NoopWrite),
+        write: Arc::new(NoopWrite {
+            deletes: Arc::clone(&deletes),
+        }),
     };
     let router = vfiles_webdav::router_for_e2e(app.clone());
     let restarted_router = vfiles_webdav::router_for_e2e(WebdavApplication {
@@ -293,6 +311,7 @@ async fn options_advertises_and_propfind_needs_auth() {
     assert_eq!(tagged_list_token.status(), 201);
 
     let alternative_list_token = router
+        .clone()
         .oneshot(
             axum::http::Request::builder()
                 .method("PUT")
@@ -305,5 +324,28 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .unwrap();
     assert_eq!(alternative_list_token.status(), 201);
+
+    let rejected_move = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method("MOVE")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("destination", "/target.txt")
+                .header(
+                    "if",
+                    "</persist.txt> (<opaquelocktoken:wrong>) </target.txt> (Not <opaquelocktoken:wrong>)",
+                )
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected_move.status(), 412);
+    assert_eq!(
+        deletes.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "MOVE must reject a stale source condition before deleting its destination"
+    );
     let _ = user;
 }
