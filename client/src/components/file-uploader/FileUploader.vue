@@ -85,6 +85,8 @@ import { ref, computed } from "vue";
 import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 import { filesService } from "../../services/files.service";
+import { choiceDialog } from "../../composables/dialog";
+import { keepBothName } from "../../utils/uploadNaming";
 import {
   IconBan,
   IconChecklist,
@@ -110,9 +112,20 @@ const props = defineProps<{
   targetPath: string;
   /** 打开上传对话框时直接弹出的选择器（来自工具栏的上传菜单）。 */
   initialPick?: "files" | "directory" | null;
+  /** A 决策：目标目录既存名（同名预判数据源 ✗ 同名=直接生成新版本实测，确认面在前端）。 */
+  existingNames?: Set<string>;
 }>();
 
 type UploadStatus = "queued" | "uploading" | "done" | "error" | "canceled";
+/** A 决策冲突选择（模块级命名类型 ✗ typeof 变量会被控制流窄化成初值 = 教训位）。 */
+type ConflictChoice =
+  | "ask"
+  | "replace"
+  | "keep"
+  | "replaceAll"
+  | "keepAll"
+  | "cancel";
+
 type UploadItem = {
   id: number;
   file: File;
@@ -272,10 +285,81 @@ async function startUpload() {
   if (!hasQueued.value) return;
   if (uploading.value) return;
 
+  // ── A 决策会话态：占名集 / 冲突决策记忆（聚合钮后不再弹 ✗ C = 自动消息无输入框）──
+  const sessionNames = new Set<string>();
+  let bulkChoice: ConflictChoice = "ask";
+  let replacedCount = 0;
+
+  function countRemainingConflicts(): number {
+    const pool = new Set<string>([
+      ...(props.existingNames ?? []),
+      ...sessionNames,
+    ]);
+    return queue.value.filter(
+      (x) => x.status === "queued" && pool.has(x.file.name),
+    ).length;
+  }
+
+  async function askConflict(
+    name: string,
+    taken: ReadonlySet<string>,
+  ): Promise<ConflictChoice> {
+    const kept = keepBothName(name, taken);
+    const remaining = Math.max(countRemainingConflicts() - 1, 0);
+    const picked = await choiceDialog({
+      title: "名称已被占用",
+      message:
+        `目标位置已存在「${name}」。该文件已有版本历史，继续将生成新版本，` +
+        `旧版本可随时在「历史版本」中恢复。` +
+        `（保留两个将把新文件命名为「${kept}」）`,
+      actions: [
+        { value: "replace", label: "替换（生成新版本）", primary: true },
+        { value: "keep", label: "保留两个" },
+        ...(remaining > 0
+          ? [
+              { value: "replaceAll", label: `全部替换（剩余 ${remaining} 项）` },
+              { value: "keepAll", label: "全部保留两个" },
+            ]
+          : []),
+        { value: "cancel", label: "取消" },
+      ],
+    });
+    const choice = (picked ?? "cancel") as ConflictChoice; // choiceDialog 返回宽 string → 断言收窄
+    if (choice === "replaceAll" || choice === "keepAll") bulkChoice = choice;
+    return choice;
+  }
+
   // 顺序上传（保持行为简单可控）
   while (true) {
     const next = queue.value.find((x) => x.status === "queued");
     if (!next) break;
+
+    // ── A 决策：同名预判 → 冲突对话框（后端实测同名 = 直接生成新版本 ✗ 确认面全在前端）──
+    const taken = new Set<string>([
+      ...(props.existingNames ?? []),
+      ...sessionNames,
+    ]);
+    if (taken.has(next.file.name)) {
+      let choice: ConflictChoice = bulkChoice; // 显式注解（字面窄化防护 ✗ TS let 推断）
+      if (choice === "ask") {
+        choice = await askConflict(next.file.name, taken);
+      }
+      if (choice === "replace" || choice === "replaceAll") {
+        next.message = `上传替换：${next.file.name}`; // C 决策：自动生成消息（无输入框）
+        replacedCount += 1;
+      } else if (choice === "keep" || choice === "keepAll") {
+        const newName = keepBothName(next.file.name, taken);
+        next.file = new File([next.file], newName, {
+          type: next.file.type,
+          lastModified: next.file.lastModified,
+        });
+        sessionNames.add(newName);
+      } else {
+        next.status = "canceled"; // 取消 = 跳过（留队可重试 ✗ DownloadQueue 风格）
+        next.abort = undefined;
+        continue;
+      }
+    }
 
     const abort = new AbortController();
     next.abort = abort;
@@ -299,6 +383,7 @@ async function startUpload() {
       next.status = "done";
       next.abort = undefined;
       next.percent = 100;
+      sessionNames.add(next.file.name); // 本次占名（队列内后续同名亦可预判 ✗）
     } catch (err: any) {
       const isAbort = abort.signal.aborted || err?.name === "CanceledError";
       next.status = isAbort ? "canceled" : "error";
@@ -320,6 +405,14 @@ async function startUpload() {
   }
   if (hasError) {
     appStore.error("部分文件上传失败，请检查列表");
+  }
+  if (replacedCount > 0) {
+    // B 决策话术（提案 §4.3 ✗ 「已替换并生成新版本」与恢复话术成族）
+    appStore.success(
+      replacedCount > 1
+        ? `已替换并生成新版本（${replacedCount} 项）`
+        : "已替换并生成新版本",
+    );
   }
 }
 

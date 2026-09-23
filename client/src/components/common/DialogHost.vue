@@ -7,6 +7,20 @@
   >
     <template v-if="dialog">
       <p class="dialog-message">{{ dialog.message }}</p>
+      <!-- choice 模式（A 冲突对话框 ✗ 动作循环钮：primary = accent 主行动） -->
+      <div v-if="dialog.kind === 'choice' && dialog.actions?.length" class="dialog-actions">
+        <button
+          v-for="(action, index) in dialog.actions"
+          :key="action.value"
+          type="button"
+          class="button"
+          :class="{ 'is-primary': action.primary }"
+          :data-autofocus="index === 0 ? '' : undefined"
+          @click="choose(action.value)"
+        >
+          {{ action.label }}
+        </button>
+      </div>
       <div v-if="dialog.kind === 'prompt'" class="field mt-4">
         <div class="control">
           <input
@@ -54,6 +68,9 @@ import {
 } from "../../composables/dialog";
 
 const inputValue = ref("");
+function choose(value: string) {
+  resolveDialog(value);
+}
 const inputRef = ref<HTMLInputElement | null>(null);
 
 watch(dialog, async (request: DialogRequest | null) => {
@@ -66,11 +83,16 @@ watch(dialog, async (request: DialogRequest | null) => {
 });
 
 function cancel() {
-  resolveDialog(dialog.value?.kind === "prompt" ? null : false);
+  resolveDialog(
+    dialog.value?.kind === "prompt" || dialog.value?.kind === "choice"
+      ? null
+      : false,
+  );
 }
 
 function accept() {
   if (!dialog.value) return;
+  if (dialog.value.kind === "choice") return; // 动作钮自行 resolve（无表单提交）
   resolveDialog(dialog.value.kind === "prompt" ? inputValue.value : true);
 }
 </script>

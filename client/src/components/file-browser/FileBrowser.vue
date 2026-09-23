@@ -631,6 +631,7 @@
     >
       <FileUploader
         ref="fileUploaderRef"
+        :existing-names="uploadExistingNames"
         :target-path="filesStore.currentPath"
         :initial-pick="uploaderPick"
         @upload="handleUpload"
@@ -1137,6 +1138,10 @@ async function submitTransfer(
 }
 const selectedFile = ref<FileInfo | null>(null);
 const fileUploaderRef = ref<InstanceType<typeof FileUploader> | null>(null);
+/** A 决策：同名预判集合（目录既存名 ✗ 上传前冲突检测数据源）。 */
+const uploadExistingNames = computed(
+  () => new Set(files.value.map((f) => f.name)),
+);
 const expandedFilePath = ref<string>("");
 
 const {
