@@ -1,4 +1,21 @@
-# rsync 协议 daemon（round 2 选型 → r3 Phase0 → r4 收尾金标准 → **r5 wire 转录全知** ✗ 状态见下）
+# rsync 协议 daemon（round 2 选型 → r3 Phase0 → r4 收尾金标准 → r5 wire 全知 → **r6 帧三字段解** ✗ 状态见下）
+
+## 状态（r6 末 · P04 真 CLI 完胜 + 57B 帧三字段反推解 = mtime 权威通道待 r7）
+
+- **P04 三重兑现终验（r4 承诺 + r5 修 + r6 CLI）** ✨：`rsync --list-only …/nope/` 输出 =
+  `@ERROR: Unknown module 'nope'` + 客户端 code5 行 =**与官方 r5 记录逐字同**（我方从三行
+  （多一句 didn't-get）→ 两行 = 形差清零 ✓）+ P01 = RC0（`files          \t` 收尾金标准保持
+  ✓）✗ 门禁：rsync 3 测 0.00s、BUILD=0、前置逐断言 #60 ✓。
+- **57B flist 帧三字段反推解**（资产 = `golden/frame_layout_r6.md`）：**name = 1B 长度+bytes
+  +\0（三锚 01/03/05 独立证实）· mode = u32 LE（双命中与 ls 值一致）· size = u16（双命中）**
+  ✓✓ 头部 `35 00 00 07 A0 19` = mux/flist 头层。
+- **mtime 未解（差一层）**：epoch u32/u64/±1天/float 全扫零命中 ✗ 帧中 `6a 51 86 b3` 与
+  epoch 字节 `6a b3 86 51` **中间两对交错**（疑 16 位半段重排/varint 变形）✗ **双网络源失**：
+  GitHub raw 30s 超时、manpage 反爬壳（312 词无正文）✗ → **r7 权威通道 = GitHub blob 行号页**
+  （flist.c L1841/L3204 send/read_file_entry 段）。
+- **r7 清单**：mtime 权威解 → 五层实装（args 解析 / `\x1E`+checksum `#` 回 / mux+flist 编码 /
+  终结帧对答 / 树→条目流）→ 终极探针 `rsync --list-only rsync://…/files/` = **RC0 列 vfiles
+  文件** → 然后 delta（r8）。
 
 ## 状态（r5 末 · strace 直挂 = 双端全字节 wire 转录到手 = 实装钥匙全齐）
 
