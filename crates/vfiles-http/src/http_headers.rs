@@ -46,15 +46,14 @@ pub(crate) fn parse_range(headers: &HeaderMap, total_size: u64) -> RangeRequest 
         return RangeRequest::Full;
     };
 
-    if total_size == 0 {
-        return RangeRequest::Unsatisfiable;
-    }
-
     if start_raw.is_empty() {
         let Ok(suffix_len) = end_raw.parse::<u64>() else {
             return RangeRequest::Full;
         };
         if suffix_len == 0 {
+            return RangeRequest::Unsatisfiable;
+        }
+        if total_size == 0 {
             return RangeRequest::Unsatisfiable;
         }
         let start = total_size.saturating_sub(suffix_len);
@@ -67,12 +66,8 @@ pub(crate) fn parse_range(headers: &HeaderMap, total_size: u64) -> RangeRequest 
     let Ok(start) = start_raw.parse::<u64>() else {
         return RangeRequest::Full;
     };
-    if start >= total_size {
-        return RangeRequest::Unsatisfiable;
-    }
-
-    let end = if end_raw.is_empty() {
-        total_size - 1
+    let requested_end = if end_raw.is_empty() {
+        None
     } else {
         let Ok(end) = end_raw.parse::<u64>() else {
             return RangeRequest::Full;
@@ -80,8 +75,12 @@ pub(crate) fn parse_range(headers: &HeaderMap, total_size: u64) -> RangeRequest 
         if end < start {
             return RangeRequest::Full;
         }
-        end.min(total_size - 1)
+        Some(end)
     };
+    if total_size == 0 || start >= total_size {
+        return RangeRequest::Unsatisfiable;
+    }
+    let end = requested_end.unwrap_or(total_size - 1).min(total_size - 1);
 
     RangeRequest::Partial { start, end }
 }
@@ -514,6 +513,23 @@ mod tests {
                 "range value {value:?}"
             );
         }
+    }
+
+    #[test]
+    fn malformed_ranges_are_ignored_even_for_empty_representations() {
+        for value in ["bytes=x-y", "bytes=-x", "bytes=0-x"] {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::RANGE, HeaderValue::from_str(value).unwrap());
+            assert_eq!(
+                parse_range(&headers, 0),
+                RangeRequest::Full,
+                "malformed range {value:?} should be ignored consistently"
+            );
+        }
+
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, HeaderValue::from_static("bytes=0-0"));
+        assert_eq!(parse_range(&headers, 0), RangeRequest::Unsatisfiable);
     }
 
     #[test]
