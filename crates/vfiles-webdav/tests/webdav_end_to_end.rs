@@ -53,11 +53,11 @@ impl WebdavWriteOps for NoopWrite {
     }
     async fn put_file(
         &self,
-        _ns: &vfiles_domain::types::NamespaceId,
-        _path: &NormalizedPath,
+        ns: &vfiles_domain::types::NamespaceId,
+        path: &NormalizedPath,
         mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         _uid: &vfiles_domain::types::UserId,
-    ) -> vfiles_domain::DomainResult<()> {
+    ) -> vfiles_domain::DomainResult<bool> {
         use tokio::io::AsyncReadExt;
         let mut data = Vec::new();
         reader.read_to_end(&mut data).await.map_err(|error| {
@@ -66,7 +66,7 @@ impl WebdavWriteOps for NoopWrite {
             }
         })?;
         self.put_bodies.lock().unwrap().push(data);
-        Ok(())
+        Ok(self.entry_repo.find_by_path(ns, path).await?.is_none())
     }
     async fn mkcol(
         &self,
@@ -1150,6 +1150,34 @@ async fn options_advertises_and_propfind_needs_auth() {
             b"authorized by alternative list".to_vec(),
         ]
     );
+
+    let replaced_put = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/space%20%23%3F%E6%B1%89.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::from("replace existing resource"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replaced_put.status(), 200);
+
+    let created_put = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/new-resource.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::from("new resource"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created_put.status(), 201);
 
     let rejected_move = router
         .clone()

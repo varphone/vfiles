@@ -1176,8 +1176,12 @@ async fn put_op(
             .unwrap();
     }
     match result {
-        Ok(()) => Response::builder()
-            .status(StatusCode::CREATED)
+        Ok(created) => Response::builder()
+            .status(if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            })
             .body(Body::empty())
             .unwrap(),
         Err(err) => {

@@ -1735,7 +1735,7 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
         path: &vfiles_domain::NormalizedPath,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         uid: &vfiles_domain::UserId,
-    ) -> vfiles_domain::DomainResult<()> {
+    ) -> vfiles_domain::DomainResult<bool> {
         // init_upload 语义：target_path = 父目录 + filename = 文件名（r110'c 修正：此前
         // 误传完整路径导致文件被建成目录条目）。
         let full = path.as_str();
@@ -1757,7 +1757,7 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
             .upload
             .init_stream_upload_unknown_size(ns, &parent, &filename, None, uid)
             .await?;
-        if let Err(error) = self
+        let completed = match self
             .upload
             .complete_upload_from_stream_unknown_size(
                 &session.upload_id,
@@ -1767,16 +1767,22 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
             )
             .await
         {
-            if let Err(cleanup_error) = self.upload.cancel_upload(&session.upload_id).await {
-                tracing::warn!(
-                    upload_id = %session.upload_id,
-                    error = %cleanup_error,
-                    "Failed to clean up failed WebDAV PUT upload session"
-                );
+            Ok(completed) => completed,
+            Err(error) => {
+                if let Err(cleanup_error) = self.upload.cancel_upload(&session.upload_id).await {
+                    tracing::warn!(
+                        upload_id = %session.upload_id,
+                        error = %cleanup_error,
+                        "Failed to clean up failed WebDAV PUT upload session"
+                    );
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
-        Ok(())
+        };
+        Ok(completed.mutation.changed_entries.iter().any(|change| {
+            change.path == path.as_str()
+                && change.change_type == vfiles_domain::types::ChangeType::Added
+        }))
     }
     async fn delete_entry(
         &self,
