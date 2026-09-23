@@ -283,6 +283,24 @@ def main():
     for mk in ["boto-meta/a.txt", "boto-meta/src.txt", "boto-meta/copy.txt", "boto-meta/repl.txt"]:
         s3.delete_object(Bucket="default", Key=mk)
 
+    # ── 批量删的逐键时间/大小条件（r31）──
+    for bk in ["boto-dc2/a", "boto-dc2/b", "boto-dc2/c"]:
+        s3.put_object(Bucket="default", Key=bk, Body=b"12345")
+    dh = s3.head_object(Bucket="default", Key="boto-dc2/a")
+    dr = s3.delete_objects(Bucket="default", Delete={"Objects": [
+        {"Key": "boto-dc2/a", "LastModifiedTime": dh["LastModified"], "Size": dh["ContentLength"]},
+        {"Key": "boto-dc2/b", "Size": dh["ContentLength"] + 1},
+        {"Key": "boto-dc2/c", "LastModifiedTime": dh["LastModified"].replace(year=dh["LastModified"].year - 1)},
+    ]})
+    ddel = sorted(d["Key"] for d in dr.get("Deleted", []))
+    derr = {e["Key"]: e["Code"] for e in dr.get("Errors", [])}
+    check("boto DeleteObjects per-key time/size conditions",
+          ddel == ["boto-dc2/a"] and derr == {"boto-dc2/b": "PreconditionFailed",
+                                             "boto-dc2/c": "PreconditionFailed"},
+          f"deleted={ddel} errors={derr}")
+    for bk in ["boto-dc2/b", "boto-dc2/c"]:
+        s3.delete_object(Bucket="default", Key=bk)
+
     # ── 条件读（If-None-Match → 304 ✗ r30）──
     s3.put_object(Bucket="default", Key="boto-getc/a.txt", Body=b"hello")
     gh = s3.head_object(Bucket="default", Key="boto-getc/a.txt")

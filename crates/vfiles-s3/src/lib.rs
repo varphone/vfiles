@@ -504,6 +504,13 @@ fn check_get_conditions(
     Ok(())
 }
 
+/// 秒级时间相等（客户端往返的 `LastModifiedTime` 只到秒 ✗ 与库内高精度时间不可直接比）。
+fn same_second(a: &Timestamp, b: &Timestamp) -> bool {
+    let fmt = s3s::dto::TimestampFormat::HttpDate;
+    let (mut ba, mut bb) = (Vec::new(), Vec::new());
+    a.format(fmt, &mut ba).is_ok() && b.format(fmt, &mut bb).is_ok() && ba == bb
+}
+
 /// 目标条目条件（`If-Match` / `If-None-Match` ✗ 缺失 = 视为不存在）→ 不满足 `PreconditionFailed`。
 fn check_dest_conditions(
     dest_etag: Option<&str>,
@@ -1166,13 +1173,25 @@ impl S3 for VfilesS3 {
         let mut existing: Vec<vfiles_domain::NormalizedPath> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut per_key_err: Vec<Option<String>> = vec![None; keys.len()];
-        // 逐键条件（`ETag` ✗ r29 并发删；不满足只拒该键 = `Errors` 一项，不拖累整批）
+        // 逐键条件（`ETag` / `LastModifiedTime` / `Size` ✗ r29/r31 并发删；不满足只拒该键）
         let want_etag: Vec<Option<String>> = input
             .delete
             .objects
             .iter()
             .map(|o| o.e_tag.as_ref().map(|e| e.value().to_string()))
             .collect();
+        let want_mtime: Vec<Option<Timestamp>> = input
+            .delete
+            .objects
+            .iter()
+            .map(|o| o.last_modified_time.clone())
+            .collect();
+        let want_size: Vec<Option<i64>> = input.delete.objects.iter().map(|o| o.size).collect();
+        // 父目录 → 子项 meta 缓存（`size` 条件需要版本大小 ✗ 避免逐键重复查询）
+        let mut size_cache: std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, u64>,
+        > = std::collections::HashMap::new();
         for (i, k) in keys.iter().enumerate() {
             match norm(k) {
                 Ok(p) if !p.as_str().is_empty() => {
@@ -1183,6 +1202,44 @@ impl S3 for VfilesS3 {
                                     .current_version_id
                                     .map(|v| v.to_string().replace('-', ""));
                                 if cur.as_deref() != Some(want.as_str()) {
+                                    per_key_err[i] = Some("PreconditionFailed".to_string());
+                                    continue;
+                                }
+                            }
+                            if let Some(want) = &want_mtime[i]
+                                && !same_second(&Timestamp::from(entry.created_at), want)
+                            {
+                                per_key_err[i] = Some("PreconditionFailed".to_string());
+                                continue;
+                            }
+                            if let Some(want) = want_size[i] {
+                                let (parent_str, _) =
+                                    p.as_str().rsplit_once('/').unwrap_or(("", p.as_str()));
+                                let sizes = match size_cache.get(parent_str) {
+                                    Some(m) => m.clone(),
+                                    None => {
+                                        let parent = vfiles_domain::NormalizedPath::new(parent_str)
+                                            .map_err(|e| {
+                                                s3s::s3_error!(InvalidArgument, "{}", e)
+                                            })?;
+                                        let m: std::collections::HashMap<String, u64> = self
+                                            .entry_repo
+                                            .children_with_meta(&self.namespace, &parent)
+                                            .await
+                                            .map_err(dom_err)?
+                                            .into_iter()
+                                            .map(|c| {
+                                                (
+                                                    c.entry.path_norm.as_str().to_string(),
+                                                    c.size_bytes.unwrap_or(0),
+                                                )
+                                            })
+                                            .collect();
+                                        size_cache.insert(parent_str.to_string(), m.clone());
+                                        m
+                                    }
+                                };
+                                if sizes.get(p.as_str()).copied() != Some(want as u64) {
                                     per_key_err[i] = Some("PreconditionFailed".to_string());
                                     continue;
                                 }
@@ -1231,7 +1288,7 @@ impl S3 for VfilesS3 {
                 let (code, text) = if msg == "PreconditionFailed" {
                     (
                         "PreconditionFailed".to_string(),
-                        "the object's etag does not match".to_string(),
+                        "a precondition on this object failed".to_string(),
                     )
                 } else {
                     ("InvalidArgument".to_string(), msg.clone())
