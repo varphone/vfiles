@@ -330,7 +330,8 @@ def main():
     del_ok = vcode(lambda: s3.delete_object(Bucket="default", Key=vk,
                                             VersionId=oldv1["VersionId"])) == "ok"
     del_cur = vcode(lambda: s3.delete_object(Bucket="default", Key=vk,
-                                             VersionId=curv["VersionId"])) == "InvalidRequest"
+                                             VersionId=curv["VersionId"])) == "ok"
+    revealed = s3.get_object(Bucket="default", Key=vk)["Body"].read() == b"two"
     bad_ok = vcode(lambda: s3.get_object(Bucket="default", Key=vk, VersionId="deadbeef")) == "NoSuchVersion"
     vcfg = s3.get_bucket_versioning(Bucket="default").get("Status") == "Enabled"
     put_ok = vcode(lambda: s3.put_bucket_versioning(
@@ -338,8 +339,50 @@ def main():
     sus = vcode(lambda: s3.put_bucket_versioning(
         Bucket="default", VersioningConfiguration={"Status": "Suspended"})) == "InvalidArgument"
     check("boto versionId targeting + versioning config",
-          vid_ok and del_ok and del_cur and bad_ok and vcfg and put_ok and sus,
-          f"vid={vid_ok} del={del_ok} cur={del_cur} bad={bad_ok} cfg={vcfg} put={put_ok} sus={sus}")
+          vid_ok and del_ok and del_cur and revealed and bad_ok and vcfg and put_ok and sus,
+          f"vid={vid_ok} del={del_ok} cur={del_cur} revealed={revealed} bad={bad_ok} cfg={vcfg} put={put_ok} sus={sus}")
+    marker_delete = s3.delete_object(Bucket="default", Key=vk)
+    marker_id = marker_delete.get("VersionId")
+    marker_hidden = vcode(lambda: s3.get_object(Bucket="default", Key=vk)) == "NoSuchKey"
+    marker_latest = marker_read = marker_restored = False
+    if marker_id:
+        latest = s3.list_object_versions(Bucket="default", Prefix=vk)
+        marker_latest = any(
+            marker.get("VersionId") == marker_id and marker.get("IsLatest")
+            for marker in latest.get("DeleteMarkers", [])
+        )
+        try:
+            s3.get_object(Bucket="default", Key=vk, VersionId=marker_id)
+        except ClientError as e:
+            marker_read = (
+                e.response["ResponseMetadata"]["HTTPStatusCode"] == 405
+                and e.response["ResponseMetadata"]["HTTPHeaders"].get("x-amz-delete-marker") == "true"
+            )
+        s3.delete_object(Bucket="default", Key=vk, VersionId=marker_id)
+        marker_restored = s3.get_object(Bucket="default", Key=vk)["Body"].read() == b"two"
+    check("boto delete marker list/read/unmark semantics",
+          bool(marker_id) and marker_latest and marker_hidden and marker_read and marker_restored,
+          f"id={bool(marker_id)} latest={marker_latest} hidden={marker_hidden} read={marker_read} restored={marker_restored}")
+
+    missing_marker = s3.delete_objects(Bucket="default", Delete={
+        "Objects": [{"Key": "boto-vid/never-existed.txt"}], "Quiet": False,
+    }).get("Deleted", [{}])[0]
+    missing_marker_id = missing_marker.get("DeleteMarkerVersionId")
+    listed_missing_marker = any(
+        marker.get("Key") == "boto-vid/never-existed.txt"
+        and marker.get("VersionId") == missing_marker_id
+        and marker.get("IsLatest")
+        for marker in s3.list_object_versions(Bucket="default", Prefix="boto-vid/").get("DeleteMarkers", [])
+    )
+    unmarked = s3.delete_objects(Bucket="default", Delete={
+        "Objects": [{"Key": "boto-vid/never-existed.txt", "VersionId": missing_marker_id}],
+        "Quiet": False,
+    }).get("Deleted", [{}])[0]
+    check("boto DeleteObjects missing-key marker create/list/remove",
+          missing_marker.get("DeleteMarker") is True and bool(missing_marker_id)
+          and listed_missing_marker and unmarked.get("DeleteMarker") is True
+          and unmarked.get("VersionId") == missing_marker_id,
+          f"create={missing_marker} unmark={unmarked}")
     s3.delete_object(Bucket="default", Key=vk)
 
     # ── 桶生命周期（r34）──

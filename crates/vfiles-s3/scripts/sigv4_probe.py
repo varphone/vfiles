@@ -151,9 +151,71 @@ def main():
     cl = hdrs.get("Content-Length") or hdrs.get("content-length")
     check("6 HEAD CL", st == 200 and cl is not None, f"{st} cl={cl}")
 
-    st, _, _ = request("DELETE", "/default/" + key)
-    st2, _, _ = request("DELETE", "/default/" + key)
-    check("7 DELETE idempotent 204", st == 204 and st2 == 204, f"{st}/{st2}")
+    st, _, marker_headers = request("DELETE", "/default/" + key)
+    marker_vid = marker_headers.get("x-amz-version-id") or marker_headers.get("X-Amz-Version-Id")
+    stget, marker_body, _ = request("GET", "/default/" + key)
+    stlist, objects_body, _ = request("GET", "/default", query=q({"list-type": "2", "prefix": key}))
+    stversions, versions_body, _ = request(
+        "GET", "/default", query=q({"versions": "", "prefix": key})
+    )
+    marker_row = re.search(
+        rb"<DeleteMarker>.*?<IsLatest>true</IsLatest>.*?<Key>" + re.escape(key.encode())
+        + rb"</Key>.*?<VersionId>(.*?)</VersionId>",
+        versions_body,
+        re.S,
+    )
+    stpage1, page1_body, _ = request(
+        "GET", "/default", query=q({"versions": "", "prefix": key, "max-keys": "1"})
+    )
+    next_key = re.search(rb"<NextKeyMarker>(.*?)</NextKeyMarker>", page1_body)
+    next_vid = re.search(rb"<NextVersionIdMarker>(.*?)</NextVersionIdMarker>", page1_body)
+    stpage2, page2_body, _ = request(
+        "GET", "/default", query=q({
+            "versions": "", "prefix": key, "max-keys": "1",
+            "key-marker": next_key.group(1).decode() if next_key else "",
+            "version-id-marker": next_vid.group(1).decode() if next_vid else "",
+        })
+    ) if next_key and next_vid else (0, b"", {})
+    stmarker, _, marker_get_headers = request(
+        "GET", "/default/" + key, query=q({"versionId": marker_vid or ""})
+    ) if marker_vid else (0, b"", {})
+    marker_read_header = marker_get_headers.get("x-amz-delete-marker") or marker_get_headers.get("X-Amz-Delete-Marker")
+    stheadmarker, _, marker_head_headers = request(
+        "HEAD", "/default/" + key, query=q({"versionId": marker_vid or ""})
+    ) if marker_vid else (0, b"", {})
+    marker_head_header = marker_head_headers.get("x-amz-delete-marker") or marker_head_headers.get("X-Amz-Delete-Marker")
+    stunmark, _, _ = request("DELETE", "/default/" + key, query=q({"versionId": marker_vid or ""})) if marker_vid else (0, b"", {})
+    strestore, restored_body, _ = request("GET", "/default/" + key)
+    check("7 DELETE creates marker, hides key, lists latest marker, and restores version",
+          st == 204 and bool(marker_vid) and stget == 404
+          and b"<Code>NoSuchKey</Code>" in marker_body
+          and stlist == 200 and not keys_of(objects_body)
+          and stversions == 200 and marker_row is not None
+          and marker_row.group(1).decode() == marker_vid
+          and stpage1 == 200 and b"<DeleteMarker>" in page1_body
+          and stpage2 == 200 and b"<Version>" in page2_body
+          and stmarker == 405 and marker_read_header == "true"
+          and stheadmarker == 405 and marker_head_header == "true"
+          and stunmark == 204 and strestore == 200 and restored_body == b"content-v2-longer",
+          f"status={st}/{stget}/{stlist}/{stversions}/{stmarker}/{stunmark}/{strestore} marker={marker_vid}")
+    st_latest_list, latest_list_body, _ = request(
+        "GET", "/default", query=q({"versions": "", "prefix": key})
+    )
+    current_vid = re.search(
+        rb"<Version>.*?<IsLatest>true</IsLatest>.*?<Key>" + re.escape(key.encode())
+        + rb"</Key>.*?<VersionId>(.*?)</VersionId>",
+        latest_list_body,
+        re.S,
+    )
+    st_del_current, _, _ = request(
+        "DELETE", "/default/" + key,
+        query=q({"versionId": current_vid.group(1).decode() if current_vid else ""}),
+    ) if current_vid else (0, b"", {})
+    st_fallback, fallback_body, _ = request("GET", "/default/" + key)
+    check("7b permanently deleting current data version reveals previous version",
+          st_latest_list == 200 and current_vid is not None
+          and st_del_current == 204 and st_fallback == 200 and fallback_body == b"content-v1",
+          f"{st_latest_list}/{st_del_current}/{st_fallback} body={fallback_body!r}")
 
     st, body, _ = request("GET", "/wrongbucket/x.txt")
     check("8 NoSuchBucket", st == 404 and b"NoSuchBucket" in body, st)
@@ -227,7 +289,7 @@ def main():
     uid = m.group(1).decode() if m else ""
     check("17 CreateMultipartUpload returns UploadId", st == 200 and bool(uid), f"{st} uid={uid[:8]}")
 
-    p1, p2 = b"A" * 700, b"B" * 500
+    p1, p2 = b"A" * (5 * 1024 * 1024), b"B" * 500
     st1, _, h1 = request("PUT", base + "/" + mp_key, query=q({"partNumber": "1", "uploadId": uid}), body=p1)
     st2, _, h2 = request("PUT", base + "/" + mp_key, query=q({"partNumber": "2", "uploadId": uid}), body=p2)
     e1 = h1.get("ETag") or h1.get("etag")
@@ -313,6 +375,26 @@ def main():
     check("22 DeleteObjects removed matching key only",
           st == 200 and keys_of(lbody) == [del_keys[0].encode()], keys_of(lbody))
 
+    st, markers_body, _ = request("GET", base, query=q({"versions": "", "prefix": "probe4/"}))
+    listed_markers = re.findall(
+        rb"<DeleteMarker>.*?<Key>(.*?)</Key>.*?<VersionId>(.*?)</VersionId>",
+        markers_body,
+        re.S,
+    )
+    marker_map = {k.decode(): v.decode() for k, v in listed_markers}
+    dxml = ("<Delete><Object><Key>probe4/missing.txt</Key><VersionId>"
+            + marker_map.get("probe4/missing.txt", "") + "</VersionId></Object></Delete>").encode()
+    dmd5 = base64.b64encode(hashlib.md5(dxml).digest()).decode()
+    st_delmarker, delmarker_body, _ = request(
+        "POST", base, query=q({"delete": ""}), body=dxml,
+        extra_headers={"content-type": "application/xml", "content-md5": dmd5},
+    ) if marker_map.get("probe4/missing.txt") else (0, b"", {})
+    check("23 DeleteObjects creates and version-deletes missing-key markers",
+          st == 200 and bool(marker_map.get("probe4/missing.txt"))
+          and st_delmarker == 200 and b"<DeleteMarker>true</DeleteMarker>" in delmarker_body
+          and b"<Error>" not in delmarker_body,
+          f"{st}/{st_delmarker} markers={len(marker_map)}")
+
     # ── r10 服务端复制（CopyObject ✗ PUT + x-amz-copy-source）──
     cblob = b"copy-src-bytes"
     request("PUT", base + "/probe5/src.bin", body=cblob,
@@ -322,7 +404,7 @@ def main():
     st2, gbody, gh = request("GET", base + "/probe5/dst.bin")
     ct = gh.get("Content-Type") or gh.get("content-type")
     copy_etag = '"' + hashlib.md5(cblob).hexdigest() + '"'
-    check("23 CopyObject bytes + ContentType",
+    check("24 CopyObject bytes + ContentType",
           st == 200 and st2 == 200 and gbody == cblob and ct == "application/x-thing"
           and copy_etag.encode() in copy_body
           and (gh.get("ETag") or gh.get("etag")) == copy_etag,
