@@ -13,6 +13,10 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 ENDPOINT = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:9000"
+ACCESS = sys.argv[2] if len(sys.argv) > 2 else "test-access"
+SECRET = sys.argv[3] if len(sys.argv) > 3 else "test-secret-123"
+ACCESS2 = sys.argv[4] if len(sys.argv) > 4 else ""
+SECRET2 = sys.argv[5] if len(sys.argv) > 5 else ""
 
 P = []
 
@@ -24,8 +28,8 @@ def main():
     s3 = boto3.client(
         "s3",
         endpoint_url=ENDPOINT,
-        aws_access_key_id="test-access",
-        aws_secret_access_key="test-secret-123",
+        aws_access_key_id=ACCESS,
+        aws_secret_access_key=SECRET,
         region_name="us-east-1",
         config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 1}),
     )
@@ -131,6 +135,38 @@ def main():
         "Objects": [{"Key": "boto-r6/q.txt"}], "Quiet": True})
     check("boto DeleteObjects Quiet suppresses entries", len(rq.get("Deleted", [])) == 0)
     s3.delete_object(Bucket="default", Key="boto-r6/big.bin")
+
+    # ── 服务端复制 + 第二凭证（r10）──
+    cblob = b"copy-src-bytes" * 40
+    s3.put_object(Bucket="default", Key="boto-r10/src.bin", Body=cblob,
+                  ContentType="application/x-thing")
+    r = s3.copy_object(Bucket="default", Key="boto-r10/dst.bin",
+                       CopySource="default/boto-r10/src.bin")
+    g = s3.get_object(Bucket="default", Key="boto-r10/dst.bin")
+    check("boto CopyObject bytes + ContentType",
+          g["Body"].read() == cblob and g.get("ContentType") == "application/x-thing",
+          f"{g.get('ContentType')} etag={r.get('CopyObjectResult', {}).get('ETag')}")
+    s3.delete_object(Bucket="default", Key="boto-r10/src.bin")
+    s3.delete_object(Bucket="default", Key="boto-r10/dst.bin")
+    if ACCESS2:
+        s3b = boto3.client(
+            "s3", endpoint_url=ENDPOINT, aws_access_key_id=ACCESS2,
+            aws_secret_access_key=SECRET2, region_name="us-east-1",
+            config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 1}))
+        s3b.put_object(Bucket="default", Key="boto-r10/second.txt", Body=b"two")
+        ok2 = s3b.get_object(Bucket="default", Key="boto-r10/second.txt")["Body"].read() == b"two"
+        try:
+            boto3.client(
+                "s3", endpoint_url=ENDPOINT, aws_access_key_id="definitely-unknown",
+                aws_secret_access_key="x", region_name="us-east-1",
+                config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 1})
+            ).list_buckets()
+            unknown_rejected = False
+        except ClientError:
+            unknown_rejected = True
+        check("boto second credential works + unknown rejected", ok2 and unknown_rejected,
+              f"ok2={ok2} rejected={unknown_rejected}")
+        s3b.delete_object(Bucket="default", Key="boto-r10/second.txt")
 
     passed = sum(1 for x in P if x)
     print(f"== boto3 {passed}/{len(P)} PASS ==")

@@ -1,4 +1,19 @@
-# S3 兼容 API（r2 九式 → r3 列表八式 → r4 multipart → **r6 流式 PUT + 批量删**；探针 23/23 + 真 SDK 19/19）
+# S3 兼容 API（r2 九式 → … → r6 流式/批量删 → **r10 多凭证 + CopyObject + ContentType 贯通**）
+
+## 状态（r10 末 · 多凭证 / 服务端复制 / Content-Type 保真 ✗ 探针 24/24 + 真 SDK 21/21）
+
+- **新增/修复**：
+  | 项 | 内容 |
+  | --- | --- |
+  | **多凭证** | `VFILES_S3_CREDENTIALS=access:secret,...`（与单对 `ACCESS_KEY/SECRET_KEY` 并存）✗ `EnvAuth` 改为 `access → secret` 表；未知 key = `InvalidAccessKeyId` 403 |
+  | **`CopyObject`** | 同桶 `PUT` + `x-amz-copy-source`（s3s 解析为 `CopySource::Bucket`）：读源字节 → 上传链落目标；`MetadataDirective=REPLACE` 用请求 ContentType，否则沿用源 MIME；返回 `CopyObjectResult{ETag, LastModified}` |
+  | **Content-Type 贯通（真 bug）** | 上传链此前**丢弃**客户端 `Content-Type`（`init_upload` `let _ = mime_type` + 提交时按扩展名猜 ✗ 实测 `application/x-thing` 变 `application/octet-stream`）→ 现 `UploadSession.mime_type` 全链贯通（domain 字段 + store 元数据 + 提交优先取声明值）✗ 同时惠及 WebDAV/HTTP 上传 |
+- **实证（双通道）**：
+  | 通道 | 结果 |
+  | --- | --- |
+  | `scripts/sigv4_probe.py` | **24/24**（新增 23 CopyObject 字节 + ContentType） |
+  | `scripts/boto_probe.py`（可选第 2 凭证参数） | **21/21**（新增 CopyObject + 第二凭证可用 + 未知凭证被拒） |
+- **仍债**：`ListMultipartUploads` · per-user 授权粒度（现访问键不绑定用户）· region 校验 · 大桶 SQL 分页 · part 哈希持久化。
 
 ## 状态（r6 末 · 大文件流式上传 + 批量删 = 客户端日常动线补齐）
 

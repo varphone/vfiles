@@ -187,6 +187,9 @@ pub struct S3Config {
     /// Secret Key（空 = 同上成对随机）。
     #[serde(default)]
     pub secret_key: String,
+    /// 额外汇率对（逗号分隔 `access:secret` ✗ 多客户端/轮换；与上面单对并存）。
+    #[serde(default)]
+    pub credentials: String,
 }
 
 fn s3_default_enabled() -> bool {
@@ -292,11 +295,16 @@ fn s3_from_env() -> Result<S3Config, ConfigError> {
         .unwrap_or(9000);
     let access_key = std::env::var("VFILES_S3_ACCESS_KEY").unwrap_or_default();
     let secret_key = std::env::var("VFILES_S3_SECRET_KEY").unwrap_or_default();
+    let credentials = std::env::var("VFILES_S3_CREDENTIALS")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .unwrap_or_default();
     Ok(S3Config {
         enabled,
         port,
         access_key,
         secret_key,
+        credentials,
     })
 }
 

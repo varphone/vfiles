@@ -1731,19 +1731,58 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
 /// S3 SigV4 密钥对认证（round 2 ✗ env 静态单对：access 匹配 → 回 secret，供 s3s 内建
 /// SigV4 验签重算比对 ✗ 空键已在 runtime 层随机生成 + warn（零配置试用 ✓））。
 struct EnvAuth {
-    access_key: String,
-    secret_key: s3s::auth::SecretKey,
+    keys: std::collections::HashMap<String, s3s::auth::SecretKey>,
 }
 
 #[async_trait::async_trait]
 impl s3s::auth::S3Auth for EnvAuth {
     async fn get_secret_key(&self, access_key: &str) -> s3s::S3Result<s3s::auth::SecretKey> {
-        if access_key == self.access_key {
-            Ok(self.secret_key.clone())
-        } else {
-            Err(s3s::s3_error!(InvalidAccessKeyId, "unknown access key"))
+        self.keys
+            .get(access_key)
+            .cloned()
+            .ok_or_else(|| s3s::s3_error!(InvalidAccessKeyId, "unknown access key"))
+    }
+}
+
+/// 装配 S3 凭证表（单对 `ACCESS_KEY/SECRET_KEY` + 多用 `CREDENTIALS=a:s,b:t`；
+/// 全空 = 随机生成一把并 warn 打印 access ✗ secret 不落日志）。
+fn load_s3_credentials(
+    cfg: &vfiles_config::S3Config,
+) -> std::collections::HashMap<String, s3s::auth::SecretKey> {
+    let mut keys = std::collections::HashMap::new();
+    if !cfg.access_key.is_empty() && !cfg.secret_key.is_empty() {
+        keys.insert(
+            cfg.access_key.clone(),
+            s3s::auth::SecretKey::from(cfg.secret_key.clone()),
+        );
+    }
+    for pair in cfg.credentials.split(',') {
+        let pair = pair.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        match pair.split_once(':') {
+            Some((a, s)) if !a.trim().is_empty() && !s.trim().is_empty() => {
+                keys.insert(
+                    a.trim().to_string(),
+                    s3s::auth::SecretKey::from(s.trim().to_string()),
+                );
+            }
+            _ => tracing::warn!("S3 CREDENTIALS 条目格式非法（应为 access:secret），已跳过"),
         }
     }
+    if keys.is_empty() {
+        let a = format!("VF{}", uuid::Uuid::new_v4().simple());
+        tracing::warn!(
+            access_key = %a,
+            "S3 未配置凭证：已随机生成（打印 access ✗ secret 见启动调试 env；生产请设 VFILES_S3_ACCESS_KEY/SECRET_KEY 或 VFILES_S3_CREDENTIALS）"
+        );
+        keys.insert(
+            a,
+            s3s::auth::SecretKey::from(uuid::Uuid::new_v4().simple().to_string()),
+        );
+    }
+    keys
 }
 
 /// 装配并拉起 rsync daemon 专用端口（round 3 ✗ RSYNC_PLAN：纯 TCP 直协议（无 axum）✗
@@ -1939,23 +1978,9 @@ fn build_and_spawn_s3(
     owner: vfiles_domain::UserId,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
-    // 密钥对：env 缺 = uuid 随机生成 + warn 打印 access（secret 不落日志 ✗ 生产 env 固定）
-    let (access_key, secret_key) = if cfg.access_key.is_empty() || cfg.secret_key.is_empty() {
-        let a = format!("VF{}", uuid::Uuid::new_v4().simple());
-        tracing::warn!(
-            access_key = %a,
-            "S3 未配置密钥对：已随机生成（打印 access ✗ secret 见启动调试 env；生产请设 VFILES_S3_ACCESS_KEY/SECRET_KEY）"
-        );
-        (
-            a,
-            s3s::auth::SecretKey::from(uuid::Uuid::new_v4().simple().to_string()),
-        )
-    } else {
-        (
-            cfg.access_key.clone(),
-            s3s::auth::SecretKey::from(cfg.secret_key.clone()),
-        )
-    };
+    // 凭证表（多客户端/轮换 ✗ 空 = 运行时随机 + warn）
+    let keys = load_s3_credentials(cfg);
+    tracing::info!(credentials = keys.len(), "S3 凭证表已装配");
     let s3 = VfilesS3 {
         workspace,
         upload,
@@ -1963,10 +1988,7 @@ fn build_and_spawn_s3(
         namespace,
         owner,
     };
-    let auth = EnvAuth {
-        access_key,
-        secret_key,
-    };
+    let auth = EnvAuth { keys };
     let mut builder = s3s::service::S3ServiceBuilder::new(s3);
     builder.set_auth(auth);
     let service = builder.build();

@@ -383,11 +383,14 @@ pub trait BlobStore {
 
 #[async_trait::async_trait]
 pub trait UploadStore {
+    // 会话创建参数天然多（命名空间/路径/名/MIME/大小/块大小/用户 ✗ 打包结构收益不抵样板）
+    #[allow(clippy::too_many_arguments)]
     async fn create_upload_session(
         &self,
         namespace_id: &NamespaceId,
         target_path: &NormalizedPath,
         filename: &str,
+        mime_type: Option<&str>,
         size_bytes: u64,
         chunk_size: u64,
         user_id: &UserId,

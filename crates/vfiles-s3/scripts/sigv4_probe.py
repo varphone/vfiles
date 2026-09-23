@@ -255,6 +255,20 @@ def main():
     st, lbody, _ = request("GET", base, query=q({"list-type": "2", "prefix": "probe4/"}))
     check("22 DeleteObjects removed keys", st == 200 and len(keys_of(lbody)) == 0, keys_of(lbody))
 
+    # ── r10 服务端复制（CopyObject ✗ PUT + x-amz-copy-source）──
+    cblob = b"copy-src-bytes"
+    request("PUT", base + "/probe5/src.bin", body=cblob,
+            extra_headers={"content-type": "application/x-thing"})
+    st, _, _ = request("PUT", base + "/probe5/dst.bin",
+                       extra_headers={"x-amz-copy-source": "/default/probe5/src.bin"})
+    st2, gbody, gh = request("GET", base + "/probe5/dst.bin")
+    ct = gh.get("Content-Type") or gh.get("content-type")
+    check("23 CopyObject bytes + ContentType",
+          st == 200 and st2 == 200 and gbody == cblob and ct == "application/x-thing",
+          f"{st}/{st2} ct={ct}")
+    request("DELETE", base + "/probe5/src.bin")
+    request("DELETE", base + "/probe5/dst.bin")
+
     # 清理
     for k, _ in seed:
         request("DELETE", base + "/" + k)

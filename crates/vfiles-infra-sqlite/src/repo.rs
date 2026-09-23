@@ -1016,7 +1016,8 @@ impl EntryRepo for SqliteEntryRepo {
     async fn list_entry_properties(
         &self,
         entry_ids: &[vfiles_domain::types::EntryId],
-    ) -> DomainResult<std::collections::HashMap<vfiles_domain::types::EntryId, Vec<(String, String)>>> {
+    ) -> DomainResult<std::collections::HashMap<vfiles_domain::types::EntryId, Vec<(String, String)>>>
+    {
         use sqlx::Row as _;
         use std::collections::HashMap;
         let mut out: HashMap<vfiles_domain::types::EntryId, Vec<(String, String)>> = HashMap::new();
@@ -3445,11 +3446,13 @@ impl Clone for FsUploadStore {
 
 #[async_trait::async_trait]
 impl UploadStore for FsUploadStore {
+    #[allow(clippy::too_many_arguments)]
     async fn create_upload_session(
         &self,
         namespace_id: &NamespaceId,
         target_path: &NormalizedPath,
         filename: &str,
+        mime_type: Option<&str>,
         size_bytes: u64,
         chunk_size: u64,
         user_id: &UserId,
@@ -3477,6 +3480,7 @@ impl UploadStore for FsUploadStore {
             "namespace_id": namespace_id.to_string(),
             "target_path": target_path.as_str(),
             "filename": filename,
+            "mime_type": mime_type,
             "size_bytes": size_bytes,
             "chunk_size": chunk_size,
             "total_chunks": total_chunks,
@@ -3533,6 +3537,7 @@ impl UploadStore for FsUploadStore {
                 message: "Invalid path".to_string(),
             })?,
             filename: metadata["filename"].as_str().unwrap_or("").to_string(),
+            mime_type: metadata["mime_type"].as_str().map(|v| v.to_string()),
             declared_size: ByteSize::new(metadata["size_bytes"].as_u64().unwrap_or(0)),
             chunk_size: metadata["chunk_size"].as_u64().unwrap_or(0),
             total_chunks: metadata["total_chunks"].as_u64().unwrap_or(0) as u32,

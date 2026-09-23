@@ -2548,7 +2548,6 @@ where
         requested_chunk_size: Option<u64>,
         user_id: &UserId,
     ) -> DomainResult<UploadSessionView> {
-        let _ = mime_type;
         validate_filename(filename)?;
 
         if size_bytes > 0 {
@@ -2580,6 +2579,7 @@ where
                 namespace_id,
                 target_path,
                 filename,
+                mime_type,
                 size_bytes,
                 chunk_size,
                 user_id,
@@ -2746,7 +2746,10 @@ where
                 .await?
         };
 
-        let mime_type = guess_mime_type(&session.filename);
+        let mime_type = session
+            .mime_type
+            .clone()
+            .or_else(|| guess_mime_type(&session.filename));
         let normalized_message = normalize_message(message);
         let version_result = self
             .entry_repo

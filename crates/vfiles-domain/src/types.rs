@@ -252,6 +252,8 @@ pub struct UploadSession {
     pub namespace_id: NamespaceId,
     pub target_path_norm: NormalizedPath,
     pub filename: String,
+    /// 客户端声明的 MIME（S3 `Content-Type` / WebDAV / HTTP 上传 ✗ 无则提交时按扩展名猜）。
+    pub mime_type: Option<String>,
     pub declared_size: ByteSize,
     pub chunk_size: u64,
     pub total_chunks: u32,

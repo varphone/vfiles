@@ -22,12 +22,13 @@
 use async_trait::async_trait;
 use s3s::dto::{
     AbortMultipartUploadInput, AbortMultipartUploadOutput, Bucket, CommonPrefix,
-    CompleteMultipartUploadInput, CompleteMultipartUploadOutput, CreateMultipartUploadInput,
-    CreateMultipartUploadOutput, DeleteObjectInput, DeleteObjectOutput, DeleteObjectsInput,
-    DeleteObjectsOutput, DeletedObject, Error as S3DeleteError, GetObjectInput, GetObjectOutput,
-    HeadObjectInput, HeadObjectOutput, ListBucketsOutput, ListObjectsInput, ListObjectsOutput,
-    ListObjectsV2Input, ListObjectsV2Output, ListPartsInput, ListPartsOutput, Object, Part,
-    PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp, UploadPartInput, UploadPartOutput,
+    CompleteMultipartUploadInput, CompleteMultipartUploadOutput, CopyObjectInput, CopyObjectOutput,
+    CopyObjectResult, CreateMultipartUploadInput, CreateMultipartUploadOutput, DeleteObjectInput,
+    DeleteObjectOutput, DeleteObjectsInput, DeleteObjectsOutput, DeletedObject,
+    Error as S3DeleteError, GetObjectInput, GetObjectOutput, HeadObjectInput, HeadObjectOutput,
+    ListBucketsOutput, ListObjectsInput, ListObjectsOutput, ListObjectsV2Input,
+    ListObjectsV2Output, ListPartsInput, ListPartsOutput, Object, Part, PutObjectInput,
+    PutObjectOutput, StreamingBlob, Timestamp, UploadPartInput, UploadPartOutput,
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
 use tokio::io::AsyncReadExt;
@@ -554,6 +555,90 @@ impl S3 for VfilesS3 {
         let out = PutObjectOutput {
             e_tag: Some(s3s::dto::ETag::Strong(etag)),
             size: Some(result.version.size_bytes.as_u64() as i64),
+            ..Default::default()
+        };
+        ok(out)
+    }
+
+    /// 服务端复制（`aws s3 cp s3://…/a s3://…/b` / rclone 同 remote copy 路径）。
+    ///
+    /// 同桶内读源字节 → 走上传链落目标（`MetadataDirective=REPLACE` 时用请求 ContentType，
+    /// 否则沿用源 MIME ✗ 版本历史在目标侧另起）。
+    async fn copy_object(
+        &self,
+        req: S3Request<CopyObjectInput>,
+    ) -> S3Result<S3Response<CopyObjectOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        let (src_bucket, src_key) = match &input.copy_source {
+            s3s::dto::CopySource::Bucket { bucket, key, .. } => {
+                (bucket.to_string(), key.to_string())
+            }
+            _ => {
+                return Err(s3s::s3_error!(
+                    InvalidArgument,
+                    "only <bucket>/<key> copy sources are supported"
+                ));
+            }
+        };
+        if src_bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "source bucket not found"));
+        }
+        let src_path = norm(&src_key).map_err(dom_err)?;
+        let content = self
+            .workspace
+            .read_file_bytes(&self.namespace, &src_path, None)
+            .await
+            .map_err(dom_err)?;
+        let replace = input
+            .metadata_directive
+            .clone()
+            .map(|m| std::borrow::Cow::from(m) == "REPLACE")
+            .unwrap_or(false);
+        let ctype = if replace {
+            input.content_type.clone()
+        } else {
+            content
+                .mime_type
+                .clone()
+                .or_else(|| input.content_type.clone())
+        };
+        let dst_path = norm(&input.key).map_err(dom_err)?;
+        let (parent_str, filename) = split_key(dst_path.as_str());
+        let parent = vfiles_domain::NormalizedPath::new(&parent_str)
+            .map_err(|e| s3s::s3_error!(InvalidArgument, "{}", e))?;
+        let session = self
+            .upload
+            .init_upload(
+                &self.namespace,
+                &parent,
+                &filename,
+                content.bytes.len() as u64,
+                ctype.as_deref(),
+                None,
+                &self.owner,
+            )
+            .await
+            .map_err(dom_err)?;
+        let result = self
+            .upload
+            .complete_upload_from_stream(
+                &session.upload_id,
+                None,
+                Some("S3 COPY"),
+                Box::new(std::io::Cursor::new(content.bytes)),
+            )
+            .await
+            .map_err(dom_err)?;
+        let etag = result.version.id.to_string().replace('-', "");
+        let out = CopyObjectOutput {
+            copy_object_result: Some(CopyObjectResult {
+                e_tag: Some(s3s::dto::ETag::Strong(etag)),
+                last_modified: Some(Timestamp::from(result.version.created_at)),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         ok(out)
