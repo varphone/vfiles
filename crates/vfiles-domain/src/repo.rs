@@ -464,6 +464,14 @@ pub trait UploadStore {
         data: &[u8],
         sha256: &str,
     ) -> DomainResult<()>;
+    async fn store_upload_part_stream(
+        &self,
+        upload_id: &UploadId,
+        part_index: u32,
+        expected_size: Option<u64>,
+        max_size: Option<u64>,
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    ) -> DomainResult<UploadPartReceipt>;
     async fn get_upload_parts(&self, upload_id: &UploadId) -> DomainResult<Vec<UploadPart>>;
     async fn assemble_upload_stream(
         &self,
@@ -489,9 +497,7 @@ pub trait UploadStore {
         after_upload_id: Option<&str>,
         limit: u32,
     ) -> DomainResult<Vec<UploadSessionListItem>> {
-        let sessions = self
-            .list_upload_sessions()
-            .await?;
+        let sessions = self.list_upload_sessions().await?;
         let mut candidates = std::collections::BTreeMap::new();
         for session in sessions {
             retain_upload_session_page_item(

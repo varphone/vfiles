@@ -397,18 +397,6 @@ fn resolve_range(
     }
 }
 
-/// 聚合 multipart 分片或服务端分片复制使用的请求体。
-async fn read_body(blob: Option<StreamingBlob>) -> S3Result<Vec<u8>> {
-    let blob = blob.unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
-    let mut data: Vec<u8> = Vec::new();
-    let mut stream = std::pin::pin!(blob);
-    while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-        let chunk = chunk.map_err(|e| s3s::s3_error!(InternalError, "body: {}", e))?;
-        data.extend_from_slice(&chunk);
-    }
-    Ok(data)
-}
-
 /// `StreamingBlob` → `AsyncRead`（流式直连 blob 存储 ✗ 大文件不再全量入内存）。
 fn stream_reader(blob: StreamingBlob) -> impl tokio::io::AsyncRead + Send + Unpin {
     use futures::TryStreamExt;
@@ -1861,14 +1849,22 @@ impl S3 for VfilesS3 {
         let upload_id = parse_upload_id(&input.upload_id)?;
         self.validate_multipart_target(&upload_id, &input.key)
             .await?;
-        let data = read_body(input.body).await?;
-        let etag = md5_hex(&data);
-        self.upload
-            .upload_part(&upload_id, (input.part_number - 1) as u32, &data)
+        let blob = input
+            .body
+            .unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
+        let receipt = self
+            .upload
+            .upload_part_from_stream(
+                &upload_id,
+                (input.part_number - 1) as u32,
+                None,
+                Some(5 * 1024 * 1024 * 1024),
+                Box::new(stream_reader(blob)),
+            )
             .await
             .map_err(dom_err)?;
         let out = UploadPartOutput {
-            e_tag: Some(s3s::dto::ETag::Strong(etag)),
+            e_tag: Some(s3s::dto::ETag::Strong(receipt.md5_hex)),
             ..Default::default()
         };
         ok(out)

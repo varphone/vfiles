@@ -2640,6 +2640,31 @@ where
         Ok(data.len() as u64)
     }
 
+    /// 流式接收上传分片，避免 S3 大分片在应用层聚合到内存。
+    pub async fn upload_part_from_stream(
+        &self,
+        upload_id: &UploadId,
+        part_index: u32,
+        expected_size: Option<u64>,
+        max_size: Option<u64>,
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    ) -> DomainResult<UploadPartReceipt> {
+        let session = self.upload_store.get_upload_session(upload_id).await?;
+        if session.expires_at < time::OffsetDateTime::now_utc() {
+            return Err(DomainError::UploadExpired);
+        }
+        if matches!(session.state, UploadState::Completed | UploadState::Failed) {
+            return Err(DomainError::UploadConflict);
+        }
+        if session.total_chunks > 0 && part_index >= session.total_chunks {
+            return Err(DomainError::UploadPartInvalid);
+        }
+
+        self.upload_store
+            .store_upload_part_stream(upload_id, part_index, expected_size, max_size, reader)
+            .await
+    }
+
     pub async fn complete_upload(
         &self,
         upload_id: &UploadId,

@@ -277,6 +277,13 @@ pub struct UploadPart {
     pub received_at: time::OffsetDateTime,
 }
 
+/// Receipt returned after a streamed upload part has been staged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UploadPartReceipt {
+    pub size_bytes: ByteSize,
+    pub md5_hex: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Share {
     pub id: ShareId,

@@ -5,10 +5,11 @@
 - S3 `PutObject` 无论 Content-Length 是否提供，都将请求体流式传给 blob 存储，不再因未知长度聚合整份对象；
   已知长度仍校验实际字节数，未知长度按实际流长提交。流错误或提交失败会清理上传会话。
 - 上传服务增加未知总长流式会话和提交入口，供 chunked PUT 等传输使用。
-- multipart `UploadPart` 仍将单个 part 聚合为内存 `Vec`，后续需扩展 part 存储接口以实现真正的大分片流式写入。
+- multipart `UploadPartCopy` 仍将源对象聚合到内存后再切片；后续应复用范围读取流，避免大对象复制时整对象驻留内存。
 - `CompleteMultipartUpload` 现在要求完整、严格递增的 partNumber/ETag 清单，必须与已存分片序列一致，并逐个校验分片 MD5 ETag。
 - UploadPart、UploadPartCopy、Complete、Abort、ListParts 都验证 uploadId 的 namespace/owner/key/state/expiry；错误 key 或跨所有者 ID 返回 `NoSuchUpload`，Abort 不再把不存在的会话伪装成成功。
 - `ListParts` 尊重 `part-number-marker` / `max-parts`（限制 1..=1000），仅读取当前页的 part 内容生成 ETag，并返回正确的截断标志与续页标记。
+- `UploadPart` 已改为固定 64 KiB 缓冲流式写入临时分片文件，再替换正式分片；写入过程中计算并回传 MD5 ETag，单分片上限为 5 GiB，不再把请求体整份装入内存。
 - `ListMultipartUploads` 由 `UploadStore` 一次扫描会话目录，按 key / upload id 保序，
   只保留 `max-uploads + 1` 个结果；delimiter 的 `CommonPrefixes` 在存储扫描中去重，
   避免原先把全部会话加载进内存，也避免逐页请求重复扫描目录。

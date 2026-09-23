@@ -3823,6 +3823,101 @@ impl UploadStore for FsUploadStore {
         Ok(())
     }
 
+    async fn store_upload_part_stream(
+        &self,
+        upload_id: &UploadId,
+        part_index: u32,
+        expected_size: Option<u64>,
+        max_size: Option<u64>,
+        mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    ) -> DomainResult<UploadPartReceipt> {
+        use md5::{Digest as Md5Digest, Md5};
+
+        let part_path = self.get_upload_path(upload_id, Some(part_index));
+        let temp_path = self.base_path.join(upload_id.to_string()).join(format!(
+            "part_{}.tmp-{}",
+            part_index,
+            uuid::Uuid::new_v4()
+        ));
+        let result = async {
+            let mut file =
+                fs::File::create(&temp_path)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to create temporary upload part: {e}"),
+                    })?;
+            let mut md5 = <Md5 as Md5Digest>::new();
+            let mut size = 0u64;
+            let mut buffer = [0u8; 64 * 1024];
+            loop {
+                let read = reader
+                    .read(&mut buffer)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to read upload part stream: {e}"),
+                    })?;
+                if read == 0 {
+                    break;
+                }
+                size = size
+                    .checked_add(read as u64)
+                    .ok_or(DomainError::UploadPartInvalid)?;
+                if expected_size.is_some_and(|expected| size > expected)
+                    || max_size.is_some_and(|max| size > max)
+                {
+                    return Err(DomainError::UploadPartInvalid);
+                }
+                Md5Digest::update(&mut md5, &buffer[..read]);
+                file.write_all(&buffer[..read])
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to write upload part: {e}"),
+                    })?;
+            }
+            if expected_size.is_some_and(|expected| size != expected) {
+                return Err(DomainError::UploadPartInvalid);
+            }
+            file.flush().await.map_err(|e| DomainError::Internal {
+                message: format!("Failed to flush upload part: {e}"),
+            })?;
+            drop(file);
+            #[cfg(windows)]
+            match fs::remove_file(&part_path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(DomainError::Internal {
+                        message: format!("Failed to replace existing upload part: {error}"),
+                    });
+                }
+            }
+            fs::rename(&temp_path, &part_path)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to finalize upload part: {e}"),
+                })?;
+
+            let actual_md5 = hex::encode(Md5Digest::finalize(md5));
+            let mut metadata = self.read_metadata(upload_id).await?;
+            metadata["updated_at"] = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to format upload update timestamp: {e}"),
+                })?
+                .into();
+            self.write_metadata(upload_id, &metadata).await?;
+            Ok(UploadPartReceipt {
+                size_bytes: ByteSize::new(size),
+                md5_hex: actual_md5,
+            })
+        }
+        .await;
+        if result.is_err() {
+            let _ = fs::remove_file(&temp_path).await;
+        }
+        result
+    }
+
     async fn get_upload_parts(&self, upload_id: &UploadId) -> DomainResult<Vec<UploadPart>> {
         let upload_dir = self.base_path.join(upload_id.to_string());
         let mut parts = Vec::new();
