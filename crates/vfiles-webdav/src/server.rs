@@ -247,11 +247,29 @@ async fn get_op(
 }
 
 /// PUT（r110'b ✓ 纯拥有参（#46 四号破案））。
+/// 写前置（r7 ✓ 锁查 + If 匹配 → 423/412 分码；None = 放行）。
+fn write_precondition(
+    app: &WebdavApplication,
+    ns: &vfiles_domain::types::NamespaceId,
+    rel: &str,
+    if_header: Option<&str>,
+) -> Option<StatusCode> {
+    let entry = app.locks.blocked(&format!("{ns}:{rel}"))?;
+    let token_ok = if_header
+        .and_then(if_token)
+        .map(|t| t == entry.token)
+        .unwrap_or(false);
+    let status = precondition_status(true, if_header.is_some(), token_ok)?;
+    tracing::debug!(rel = %rel, status = %status, "写锁前置拒绝（423/412）");
+    Some(status)
+}
+
 async fn put_op(
     app: Option<WebdavApplication>,
     user: Option<vfiles_domain::types::User>,
     ns: Option<vfiles_domain::types::NamespaceId>,
     uri_owned: String,
+    if_owned: Option<String>,
     put_body: Option<Vec<u8>>,
 ) -> Response {
     let Some(app) = app else {
@@ -270,6 +288,13 @@ async fn put_op(
             .unwrap();
     };
     let rel = uri_owned.trim_start_matches('/').trim_end_matches('/').to_string();
+    // r7 锁前置（PUT 此前零检查 ✗ 锁摆设缺口 ×1）
+    if let Some(status) = write_precondition(&app, &ns, &rel, if_owned.as_deref()) {
+        return Response::builder()
+            .status(status)
+            .body(Body::empty())
+            .unwrap();
+    }
     let path = match vfiles_domain::types::NormalizedPath::new(&rel) {
         Ok(p) => p,
         Err(_) => {
@@ -326,20 +351,12 @@ async fn write_op(
         return internal_error();
     };
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/');
-    // 写锁校验（r109a ✓）：被锁路径无 If token = 423 Locked（RFC 4918 §6 ✓）
-    if let Some(entry) = app.locks.blocked(&format!("{ns}:{rel}")) {
-        // If 头 token 匹配 = 放行（简式 ✓ 复杂式 = 412 记档）
-        let has_token = if_header
-            .as_deref()
-            .and_then(if_token)
-            .map(|t| t == entry.token)
-            .unwrap_or(false);
-        if !has_token {
-            return Response::builder()
-                .status(StatusCode::LOCKED)
-                .body(Body::empty())
-                .unwrap();
-        }
+    // 写锁校验（r109a 423 → r7 分码 ✗ 有 If 不匹配 = 412（RFC §9.10.6））
+    if let Some(status) = write_precondition(&app, &ns, rel, if_header.as_deref()) {
+        return Response::builder()
+            .status(status)
+            .body(Body::empty())
+            .unwrap();
     }
     let path = match NormalizedPath::new(rel) {
         Ok(p) => p,
@@ -426,6 +443,20 @@ fn child_prefix(rel: &str) -> String {
         String::new()
     } else {
         format!("{trimmed}/")
+    }
+}
+
+/// 锁前置分码（r7 ✓ RFC §4918 §9.10.6 纯函数）：
+/// - 无 If 头 + 资源锁住 → 423 Locked
+/// - 有 If 头但 token 不匹配 → **412 Precondition Failed**
+/// - If 匹配 / 未锁 → None（放行 ✓ 未锁忽略 If = 简式记档）
+fn precondition_status(locked: bool, has_if: bool, token_ok: bool) -> Option<StatusCode> {
+    if !locked || token_ok {
+        None
+    } else if has_if {
+        Some(StatusCode::PRECONDITION_FAILED)
+    } else {
+        Some(StatusCode::LOCKED)
     }
 }
 
@@ -823,6 +854,11 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 (Some(a), Some(u), Some(n)) => (a, u, n),
                 _ => return internal_error(),
             };
+            let if_owned = req
+                .headers()
+                .get("if")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
             let src_rel = uri_owned.trim_start_matches('/').to_string();
             let path = match vfiles_domain::types::NormalizedPath::new(&src_rel) {
                 Ok(p) => p,
@@ -833,6 +869,15 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         .unwrap();
                 }
             };
+            // r7 锁前置（PROPPATCH 此前零检查 ✗ 摆设缺口 ×3）
+            if let Some(status) =
+                write_precondition(&app_ref, &ns, path.as_str(), if_owned.as_deref())
+            {
+                return Response::builder()
+                    .status(status)
+                    .body(Body::empty())
+                    .unwrap();
+            }
             let ops = match crate::response::parse_propertyupdate(&body_owned) {
                 Ok(ops) => ops,
                 Err(()) => {
@@ -956,8 +1001,27 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         .unwrap();
                 }
             };
+            let if_owned = req
+                .headers()
+                .get("if")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
             // 源路径裁前导斜杠（PROPFIND 同式 ✗ 真因：new 不收前导 / ✗ 诊断日志定案 ✓）
             let src_rel = uri_owned.trim_start_matches('/').to_string();
+            // r7 锁前置：源 + 目标双查（COPY 此前零检查 ✗ 摆设缺口 ×2）
+            for check_rel in [
+                src_rel.as_str(),
+                dest_hdr.trim_matches('/'),
+            ] {
+                if let Some(status) =
+                    write_precondition(&app_ref, &ns, check_rel, if_owned.as_deref())
+                {
+                    return Response::builder()
+                        .status(status)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            }
             let path = match vfiles_domain::types::NormalizedPath::new(&src_rel) {
                 Ok(p) => p,
                 Err(err) => {
@@ -1047,7 +1111,18 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .get::<vfiles_domain::types::NamespaceId>()
                 .cloned();
             let uri_owned = percent_decode(req.uri().path());
-            put_op(app_owned, user_owned, ns_owned, uri_owned, put_body).await
+            put_op(
+                app_owned,
+                user_owned,
+                ns_owned,
+                uri_owned,
+                req.headers()
+                    .get("if")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string),
+                put_body,
+            )
+            .await
         }
         _ => Response::builder()
             .status(StatusCode::METHOD_NOT_ALLOWED)
@@ -1202,5 +1277,23 @@ mod range_tests {
             parse_byte_range("bytes=0-10", 0),
             ByteRange::NotApplicable
         ));
+    }
+}
+
+#[cfg(test)]
+mod precondition_tests {
+    use super::write_precondition;
+    use axum::http::StatusCode;
+    use crate::server::precondition_status;
+
+    #[test]
+    fn codes_per_rfc4918() {
+        // r7 分码守护（RFC §9.10.6）：无If锁住=423 / 有If不匹配=412 / 匹配或未锁=放行
+        assert_eq!(precondition_status(true, false, false), Some(StatusCode::LOCKED));
+        assert_eq!(precondition_status(true, true, false), Some(StatusCode::PRECONDITION_FAILED));
+        assert_eq!(precondition_status(true, true, true), None);
+        assert_eq!(precondition_status(false, false, false), None);
+        assert_eq!(precondition_status(false, true, false), None);
+        let _ = write_precondition; // 桥引用防空（单测走纯函数面）
     }
 }

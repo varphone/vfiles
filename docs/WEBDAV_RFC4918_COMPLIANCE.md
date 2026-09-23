@@ -25,8 +25,8 @@
 | 项 | 状态 | 备注 | 优先 |
 | --- | --- | --- | --- |
 | Depth 头 | ✅ | 0/1 ✓ infinity 见上 | P1 |
-| If 头（锁/条件） | ❌ | **条件请求零实现**（If-Match/If-None-Match/If ✗ 写并发安全核心）| **P0** |
-| 412 Precondition | ❌ | 随 If 头一起做 | **P0** |
+| If 头（锁条件） | ✅ **r7 七式实证** | lock-token 形解析 + **423/412 分码**（RFC §9.10.6 ✓）+ 三臂缺口补齐（PUT/COPY/PROPPATCH 此前零锁检 = 锁摆设 ×3 ✗ 源/目标双查 ✓）**If-Match/ETag 面 = P1 记债**（无 ETag 面）| P1 ETag |
+| 412 Precondition | ✅ **r7** | 有 If 不匹配 = 412 / 无 If 锁住 = 423 分码纯函数 + 单测 ×5 ✓ | - |
 | Timeout 头（LOCK） | ❌ | 只 Infinite（Second-N 不解析 ✗ 客户端常发）| P1 |
 | 423 Locked | ✅ | ✓ | - |
 | 405 Method Not Allowed | ✅ | default 分支 ✓ | - |
@@ -75,7 +75,7 @@
     copy 已接 = 结构就位 → 登录/管理/其余 WebDAV 写点批量接）← **P0 新债**
 5b. Overwrite T 完整覆盖（删旧 + blob release 链）← P1
 6. ~~PROPPATCH~~ ✅ r6（七式 + 审计 ✓）
-7. **If 头 + 412**（P0 并发安全）← 下轮首项
-8. **审计全线写入**（登录/管理/其余写点 → record 批量接）← P0（结构 COPY/PROPPATCH 已示范 ✓）
+7. ~~If 头 + 412~~ ✅ r7（七式 + 分码 + 三臂补锁检 ✓）
+8. **审计全线写入**（登录/管理/其余写点 → record 批量接）← **P0 末项** ← 下轮首项（结构双示范 ✓）
 
 > 记录纪律：每轮改协议面 = 同轮 curl 实证行入表；用户日志线索（gvfs/VLC）= 一等证据源。
