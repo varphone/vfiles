@@ -190,6 +190,9 @@ pub struct S3Config {
     /// 额外汇率对（逗号分隔 `access:secret` ✗ 多客户端/轮换；与上面单对并存）。
     #[serde(default)]
     pub credentials: String,
+    /// 期望签名区域（空 = 不校验 = 默认兼容优先 ✗ 设了即严校 `Authorization` scope region）。
+    #[serde(default)]
+    pub region: String,
 }
 
 fn s3_default_enabled() -> bool {
@@ -299,12 +302,17 @@ fn s3_from_env() -> Result<S3Config, ConfigError> {
         .ok()
         .map(|v| v.trim().to_string())
         .unwrap_or_default();
+    let region = std::env::var("VFILES_S3_REGION")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .unwrap_or_default();
     Ok(S3Config {
         enabled,
         port,
         access_key,
         secret_key,
         credentials,
+        region,
     })
 }
 

@@ -2198,6 +2198,7 @@ async fn build_and_spawn_s3(
     let router = vfiles_s3::S3Router {
         default_service: Box::new(s3),
         by_key,
+        expected_region: cfg.region.clone(),
     };
     let mut builder = s3s::service::S3ServiceBuilder::new(router);
     builder.set_auth(auth);

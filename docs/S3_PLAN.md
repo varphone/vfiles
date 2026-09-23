@@ -1,4 +1,15 @@
-# S3 兼容 API（… r34 桶生命周期 → r35 版本列表 → **r36 versionId 定向 + 版本控制配置**）
+# S3 兼容 API（… r34 桶生命周期 → r35 版本列表 → r36 versionId 定向 → **r37 区域校验**）
+
+## 状态（r37 末 · 区域校验（可选严校）= 单点覆盖全部操作）
+
+- **实装**：`VFILES_S3_REGION`（**空 = 不校验 = 兼容优先默认** ✗ 设了即严校）→ `S3Router::pick` 单点解析
+  `Authorization` Credential scope 第三段 region → 不符 → **`AuthorizationHeaderMalformed` 400**（AWS 同形
+  `region 'x' is wrong; expecting 'y'`）；`pick` 已泛型化 `&S3Request<T>` ✗ **22 处委托统一走此单点**
+  （含 `list_buckets` 与全部读写路径）。
+- **真机验收（真 SDK，4 项 · 服务端设 `VFILES_S3_REGION=us-east-1`）**：匹配区域 put/get/list 正常 ✓ ·
+  错区域 get→`AuthorizationHeaderMalformed` ✓ · 错区域 `list_buckets` 亦拒 ✓ · 错区域 put 亦拒 ✓。
+- **回归**：自写探针 **24/24** · 真 SDK **48/48**（严校开着全绿）✗ 此前所有历史轮次即"空 = 不校"回归。
+- **仍债**：删除标记（S3）· per-dir merge / 符号链接设备持久化 / basis 流式 / uid-gid 存储（rsync）。
 
 ## 状态（r36 末 · versioning 故事收口 ✗ 当前版删除诚实拒绝）
 

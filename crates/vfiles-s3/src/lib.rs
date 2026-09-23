@@ -2359,14 +2359,32 @@ mod tests {
 pub struct S3Router {
     pub default_service: Box<VfilesS3>,
     pub by_key: std::collections::HashMap<String, Box<VfilesS3>>,
+    /// 期望签名区域（空 = 不校验 ✗ 设了比对 `Authorization` Credential scope 的 region 段）。
+    pub expected_region: String,
 }
 
 impl S3Router {
-    fn pick(&self, creds: Option<&s3s::auth::Credentials>) -> &VfilesS3 {
-        creds
+    /// 按凭证选命名空间实例 + （可选）区域校验（单点 ✗ 覆盖全部委托）。
+    fn pick<T>(&self, req: &S3Request<T>) -> S3Result<&VfilesS3> {
+        if !self.expected_region.is_empty()
+            && let Some(az) = req.headers.get(axum::http::header::AUTHORIZATION)
+            && let Ok(auth) = az.to_str()
+        {
+            // Credential=<AK>/<date>/<region>/<service>/<aws4_request>
+            let region = auth.split('/').nth(2).unwrap_or_default();
+            if region != self.expected_region {
+                let msg = format!(
+                    "region '{}' is wrong; expecting '{}'",
+                    region, self.expected_region
+                );
+                return Err(s3s::s3_error!(AuthorizationHeaderMalformed, "{}", msg));
+            }
+        }
+        let creds = req.credentials.as_ref();
+        Ok(creds
             .and_then(|c| self.by_key.get(&c.access_key))
             .map(|b| b.as_ref())
-            .unwrap_or(self.default_service.as_ref())
+            .unwrap_or(self.default_service.as_ref()))
     }
 }
 
@@ -2376,18 +2394,14 @@ impl S3 for S3Router {
         &self,
         req: S3Request<ListObjectVersionsInput>,
     ) -> S3Result<S3Response<ListObjectVersionsOutput>> {
-        self.pick(req.credentials.as_ref())
-            .list_object_versions(req)
-            .await
+        self.pick(&req)?.list_object_versions(req).await
     }
 
     async fn put_bucket_versioning(
         &self,
         req: S3Request<PutBucketVersioningInput>,
     ) -> S3Result<S3Response<PutBucketVersioningOutput>> {
-        self.pick(req.credentials.as_ref())
-            .put_bucket_versioning(req)
-            .await
+        self.pick(&req)?.put_bucket_versioning(req).await
     }
 
     /// 桶清单对所有命名空间同形（唯一虚拟桶 ✗ `_req` 形故上面正则未捕获，手写委托）。
@@ -2395,7 +2409,7 @@ impl S3 for S3Router {
         &self,
         req: S3Request<ListBucketsInput>,
     ) -> S3Result<S3Response<ListBucketsOutput>> {
-        self.default_service.list_buckets(req).await
+        self.pick(&req)?.list_buckets(req).await
     }
 
     /// 桶生命周期（r34 后补的手写委托，与上面同因）。
@@ -2403,157 +2417,139 @@ impl S3 for S3Router {
         &self,
         req: S3Request<CreateBucketInput>,
     ) -> S3Result<S3Response<CreateBucketOutput>> {
-        self.pick(req.credentials.as_ref()).create_bucket(req).await
+        self.pick(&req)?.create_bucket(req).await
     }
 
     async fn delete_bucket(
         &self,
         req: S3Request<DeleteBucketInput>,
     ) -> S3Result<S3Response<DeleteBucketOutput>> {
-        self.pick(req.credentials.as_ref()).delete_bucket(req).await
+        self.pick(&req)?.delete_bucket(req).await
     }
 
     async fn list_objects_v2(
         &self,
         req: S3Request<ListObjectsV2Input>,
     ) -> S3Result<S3Response<ListObjectsV2Output>> {
-        self.pick(req.credentials.as_ref())
-            .list_objects_v2(req)
-            .await
+        self.pick(&req)?.list_objects_v2(req).await
     }
 
     async fn head_bucket(
         &self,
         req: S3Request<HeadBucketInput>,
     ) -> S3Result<S3Response<HeadBucketOutput>> {
-        self.pick(req.credentials.as_ref()).head_bucket(req).await
+        self.pick(&req)?.head_bucket(req).await
     }
 
     async fn get_bucket_location(
         &self,
         req: S3Request<GetBucketLocationInput>,
     ) -> S3Result<S3Response<GetBucketLocationOutput>> {
-        self.pick(req.credentials.as_ref())
-            .get_bucket_location(req)
-            .await
+        self.pick(&req)?.get_bucket_location(req).await
     }
 
     async fn get_bucket_versioning(
         &self,
         req: S3Request<GetBucketVersioningInput>,
     ) -> S3Result<S3Response<GetBucketVersioningOutput>> {
-        self.pick(req.credentials.as_ref())
-            .get_bucket_versioning(req)
-            .await
+        self.pick(&req)?.get_bucket_versioning(req).await
     }
 
     async fn list_objects(
         &self,
         req: S3Request<ListObjectsInput>,
     ) -> S3Result<S3Response<ListObjectsOutput>> {
-        self.pick(req.credentials.as_ref()).list_objects(req).await
+        self.pick(&req)?.list_objects(req).await
     }
 
     async fn get_object(
         &self,
         req: S3Request<GetObjectInput>,
     ) -> S3Result<S3Response<GetObjectOutput>> {
-        self.pick(req.credentials.as_ref()).get_object(req).await
+        self.pick(&req)?.get_object(req).await
     }
 
     async fn head_object(
         &self,
         req: S3Request<HeadObjectInput>,
     ) -> S3Result<S3Response<HeadObjectOutput>> {
-        self.pick(req.credentials.as_ref()).head_object(req).await
+        self.pick(&req)?.head_object(req).await
     }
 
     async fn put_object(
         &self,
         req: S3Request<PutObjectInput>,
     ) -> S3Result<S3Response<PutObjectOutput>> {
-        self.pick(req.credentials.as_ref()).put_object(req).await
+        self.pick(&req)?.put_object(req).await
     }
 
     async fn copy_object(
         &self,
         req: S3Request<CopyObjectInput>,
     ) -> S3Result<S3Response<CopyObjectOutput>> {
-        self.pick(req.credentials.as_ref()).copy_object(req).await
+        self.pick(&req)?.copy_object(req).await
     }
 
     async fn delete_objects(
         &self,
         req: S3Request<DeleteObjectsInput>,
     ) -> S3Result<S3Response<DeleteObjectsOutput>> {
-        self.pick(req.credentials.as_ref())
-            .delete_objects(req)
-            .await
+        self.pick(&req)?.delete_objects(req).await
     }
 
     async fn delete_object(
         &self,
         req: S3Request<DeleteObjectInput>,
     ) -> S3Result<S3Response<DeleteObjectOutput>> {
-        self.pick(req.credentials.as_ref()).delete_object(req).await
+        self.pick(&req)?.delete_object(req).await
     }
 
     async fn create_multipart_upload(
         &self,
         req: S3Request<CreateMultipartUploadInput>,
     ) -> S3Result<S3Response<CreateMultipartUploadOutput>> {
-        self.pick(req.credentials.as_ref())
-            .create_multipart_upload(req)
-            .await
+        self.pick(&req)?.create_multipart_upload(req).await
     }
 
     async fn upload_part(
         &self,
         req: S3Request<UploadPartInput>,
     ) -> S3Result<S3Response<UploadPartOutput>> {
-        self.pick(req.credentials.as_ref()).upload_part(req).await
+        self.pick(&req)?.upload_part(req).await
     }
 
     async fn upload_part_copy(
         &self,
         req: S3Request<UploadPartCopyInput>,
     ) -> S3Result<S3Response<UploadPartCopyOutput>> {
-        self.pick(req.credentials.as_ref())
-            .upload_part_copy(req)
-            .await
+        self.pick(&req)?.upload_part_copy(req).await
     }
 
     async fn complete_multipart_upload(
         &self,
         req: S3Request<CompleteMultipartUploadInput>,
     ) -> S3Result<S3Response<CompleteMultipartUploadOutput>> {
-        self.pick(req.credentials.as_ref())
-            .complete_multipart_upload(req)
-            .await
+        self.pick(&req)?.complete_multipart_upload(req).await
     }
 
     async fn abort_multipart_upload(
         &self,
         req: S3Request<AbortMultipartUploadInput>,
     ) -> S3Result<S3Response<AbortMultipartUploadOutput>> {
-        self.pick(req.credentials.as_ref())
-            .abort_multipart_upload(req)
-            .await
+        self.pick(&req)?.abort_multipart_upload(req).await
     }
 
     async fn list_parts(
         &self,
         req: S3Request<ListPartsInput>,
     ) -> S3Result<S3Response<ListPartsOutput>> {
-        self.pick(req.credentials.as_ref()).list_parts(req).await
+        self.pick(&req)?.list_parts(req).await
     }
 
     async fn list_multipart_uploads(
         &self,
         req: S3Request<ListMultipartUploadsInput>,
     ) -> S3Result<S3Response<ListMultipartUploadsOutput>> {
-        self.pick(req.credentials.as_ref())
-            .list_multipart_uploads(req)
-            .await
+        self.pick(&req)?.list_multipart_uploads(req).await
     }
 }
