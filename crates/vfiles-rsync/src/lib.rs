@@ -1417,6 +1417,50 @@ pub fn build_block_sums(
     (count as i32, remainder, out)
 }
 
+/// 从 seekable basis 流生成块校验和，不把整份旧文件读入内存。
+async fn build_block_sums_stream(
+    reader: &mut (dyn vfiles_domain::ReadSeek + Send + Unpin),
+    size: u64,
+    blength: u32,
+    seed: u32,
+    s2length: usize,
+) -> std::io::Result<(i32, u32, Vec<u8>, [u8; 16])> {
+    use md5::{Digest, Md5};
+
+    let block_size = blength as usize;
+    if block_size == 0 || size == 0 {
+        let digest: [u8; 16] = Md5::digest([]).into();
+        return Ok((0, 0, Vec::new(), digest));
+    }
+    let count = size.div_ceil(block_size as u64);
+    if count > 16 * 1024 * 1024 || count > i32::MAX as u64 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "rsync push: basis 块数超过协议上限",
+        ));
+    }
+    let count = count as usize;
+    let capacity = count
+        .checked_mul(4 + s2length)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "basis sums 太大"))?;
+    let mut sums = Vec::with_capacity(capacity);
+    let mut file_digest = Md5::new();
+    let mut chunk = vec![0u8; block_size];
+    let mut remaining = size;
+    for _ in 0..count {
+        let len = remaining.min(block_size as u64) as usize;
+        reader.read_exact(&mut chunk[..len]).await?;
+        file_digest.update(&chunk[..len]);
+        let (s1, s2) = checksum1_signed(&chunk[..len]);
+        let weak = (s1 & 0xffff) | (s2 << 16);
+        sums.extend_from_slice(&(weak as i32).to_le_bytes());
+        sums.extend_from_slice(&md5_seeded(seed, &chunk[..len])[..s2length]);
+        remaining -= len as u64;
+    }
+    let remainder = (size % block_size as u64) as u32;
+    Ok((count as i32, remainder, sums, file_digest.finalize().into()))
+}
+
 /// 应用 token 流重建文件（接收端 ✗ literal 段 + basis 块匹配）。
 ///
 /// token 编码：`>0` = 后随 n 字节 literal；`<0` = 匹配 basis 块 `idx = -t-1`；`0` = 终结。
@@ -2090,24 +2134,42 @@ where
                 tracing::debug!(path = %full, "rsync：size+mtime 一致，跳过");
                 continue;
             }
-            // 取本地现有内容作 basis（存在 → 发块校验和请求真 delta；否则整文件）
-            let basis = backend.read(&full).await.unwrap_or_default();
-            // `-c/--checksum`：整文件 MD5 一致 → 完全跳过（不请求 = 不传）
+            // basis 保持为 seekable 文件流：校验和逐块生成，匹配 token 时再 seek 读取，
+            // 避免把整个旧文件常驻内存。生成块表后 seek 回开头供后续随机块读取。
+            let (mut basis_reader, basis_size) = match backend.open(&full).await {
+                Ok(Some((reader, size))) => (Some(reader), size),
+                Ok(None) | Err(_) => (None, 0),
+            };
+            let s2len: usize = 16;
+            let (count, blength, remainder, block_bytes, basis_digest) = if basis_size == 0 {
+                (0i32, 0i32, 0i32, Vec::new(), md5_digest(&[]))
+            } else {
+                let basis_len = usize::try_from(basis_size).map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "basis 文件过大")
+                })?;
+                let bl = block_size(basis_len);
+                let Some(reader) = basis_reader.as_mut() else {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "rsync push: basis 无法重新打开",
+                    ));
+                };
+                let (c, rem, bytes, digest) =
+                    build_block_sums_stream(reader.as_mut(), basis_size, bl, seed, s2len).await?;
+                (c, bl as i32, rem as i32, bytes, digest)
+            };
+            // `-c/--checksum`：整文件 MD5 一致 → 完全跳过（不请求 = 不传）。
             if let Some(sum) = &e.file_sum
-                && !basis.is_empty()
-                && md5_digest(&basis).as_slice() == sum.as_slice()
+                && basis_size > 0
+                && basis_digest.as_slice() == sum.as_slice()
             {
                 tracing::debug!(path = %full, "rsync -c：校验和一致，跳过");
                 continue;
             }
-            let s2len: usize = 16;
-            let (count, blength, remainder, block_bytes) = if basis.is_empty() {
-                (0i32, 0i32, 0i32, Vec::new())
-            } else {
-                let bl = block_size(basis.len());
-                let (c, rem, bytes) = build_block_sums(&basis, bl, seed, s2len);
-                (c, bl as i32, rem as i32, bytes)
-            };
+            if let Some(reader) = basis_reader.as_mut() {
+                use tokio::io::{AsyncSeekExt, SeekFrom};
+                reader.seek(SeekFrom::Start(0)).await?;
+            }
             let mut req = Vec::new();
             write_ndx(i as i32, &mut wp.0, &mut wp.1, &mut req);
             req.extend_from_slice(&(ITEM_TRANSFER | ITEM_IS_NEW).to_le_bytes());
@@ -2211,7 +2273,7 @@ where
                                         "rsync push: basis 范围溢出",
                                     )
                                 })?;
-                            if basis_end > basis.len() {
+                            if basis_end as u64 > basis_size {
                                 return Err(std::io::Error::new(
                                     std::io::ErrorKind::InvalidData,
                                     "rsync push: basis token 越界",
@@ -2227,10 +2289,21 @@ where
                                         "rsync push: basis token 超过文件列表长度",
                                     )
                                 })?;
+                            let Some(basis_reader) = basis_reader.as_mut() else {
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "rsync push: basis token 但 basis 文件不可读",
+                                ));
+                            };
+                            use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
+                            basis_reader
+                                .seek(SeekFrom::Start(basis_start as u64))
+                                .await?;
+                            let mut matched = vec![0u8; matched_len];
+                            basis_reader.read_exact(&mut matched).await?;
                             use md5::Digest;
-                            let matched = &basis[basis_start..basis_end];
-                            digest.update(matched);
-                            stream_writer.write_all(matched).await?;
+                            digest.update(&matched);
+                            stream_writer.write_all(&matched).await?;
                         }
                     }
                     if reconstructed_size != e.size {

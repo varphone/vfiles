@@ -5,8 +5,9 @@
 - 收端在写入前验证重建长度与 flist 文件长度一致，并校验协商 MD5；校验失败时拒绝该连接，
   不再静默写入损坏内容。
 - token 负索引、literal 长度和 basis 区间使用有界/溢出检查，避免畸形 token 导致整数溢出或 panic。
-- token 流现在直接解码到最终文件缓冲，不再保留完整 token 副本；basis 与重建结果仍在内存，
-  大文件 push 的流式存储仍待完成。
+- push 收端的 basis 通过 seekable 流分块计算 checksum，并在匹配 token 时按偏移 seek 读取；
+  不再把旧文件整体读入内存。重建结果已直接流入上传存储，不保留整份重建缓冲。
+- token 流直接解码到最终文件流，不保留完整 token 副本；协议块 checksum 表仍按文件块数占用内存。
 
 ## 状态（r21 末 · `--filter=P/H` 类规则保护修复 ✗ 真机抓出的静默失保）
 
@@ -22,7 +23,7 @@
   | 修后 `--filter='P *.probe' --delete` | **`keep.probe` 存活** ✗ 非匹配的 `stray.txt`/`x.m` 正常删除 ✓ |
   | 对照：无 filter 同状态重推 | `keep.probe` 也被删（保护仅由规则生效） ✓ |
 - **门禁**：单测新增 flags 形解析 + pattern 含空格断言 × workspace 全绿 × clippy 0 × build。
-- **仍债**：per-dir merge（`:` 形，原始行已可 dump）· 符号链接/设备持久化 · basis 流式 · uid/gid 存储。
+- **仍债**：per-dir merge（`:` 形，原始行已可 dump）· 符号链接/设备持久化 · 源端 delta 构造仍缓冲源文件与 token 流 · uid/gid 存储。
 
 ## 状态（r20 末 · 快跳判定三档齐全 = 官方 `unchanged_file` 全语义）
 
