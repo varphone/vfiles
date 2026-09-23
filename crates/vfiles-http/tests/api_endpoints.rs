@@ -5339,6 +5339,50 @@ async fn incomplete_chunked_upload_returns_conflict_on_completion() {
 }
 
 #[tokio::test]
+async fn cancelled_raw_upload_removes_its_temporary_file() {
+    let app = TestApp::new().await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+    let (body_polled_tx, body_polled_rx) = tokio::sync::oneshot::channel();
+    let mut body_polled_tx = Some(body_polled_tx);
+    let body_stream = futures::stream::poll_fn(move |_| {
+        if let Some(sender) = body_polled_tx.take() {
+            let _ = sender.send(());
+        }
+        std::task::Poll::<Option<Result<axum::body::Bytes, std::io::Error>>>::Pending
+    });
+    let request = Request::builder()
+        .method(Method::PUT)
+        .uri("/api/files/upload?path=cancelled.txt")
+        .header(header::COOKIE, admin_cookie)
+        .body(Body::from_stream(body_stream))
+        .expect("request should build");
+    let request_task = tokio::spawn(app.app.clone().oneshot(request));
+
+    body_polled_rx
+        .await
+        .expect("request body should start streaming");
+    request_task.abort();
+    assert!(matches!(request_task.await, Err(error) if error.is_cancelled()));
+
+    let mut temp_files = tokio::fs::read_dir(app._temp_dir.path().join("tmp"))
+        .await
+        .expect("upload temp directory should exist");
+    while let Some(entry) = temp_files
+        .next_entry()
+        .await
+        .expect("upload temp directory should be readable")
+    {
+        assert!(
+            !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("put-upload-"),
+            "cancelled upload left a temporary file behind"
+        );
+    }
+}
+
+#[tokio::test]
 async fn upload_init_uses_server_default_chunk_size_when_client_omits_it() {
     let app = TestApp::new().await;
 

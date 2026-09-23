@@ -19,6 +19,24 @@ use vfiles_domain::{DomainError, NewAuditLog, NormalizedPath, UploadId};
 
 const UPLOAD_WRITE_BUFFER_BYTES: usize = 64 * 1024;
 
+struct TempUploadFile(std::path::PathBuf);
+
+impl TempUploadFile {
+    fn new(path: std::path::PathBuf) -> Self {
+        Self(path)
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for TempUploadFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct CompleteUploadRequest {
     message: Option<String>,
@@ -361,14 +379,20 @@ async fn put_upload_inner(
     tokio::fs::create_dir_all(&temp_dir).await.map_err(|err| {
         ApiError::Internal(format!("Failed to create upload temp directory: {}", err))
     })?;
-    let temp_path = temp_dir.join(format!("put-upload-{}.tmp", uuid::Uuid::new_v4()));
+    let temp_path = TempUploadFile::new(
+        temp_dir
+            .join(format!("put-upload-{}.tmp", uuid::Uuid::new_v4()))
+            .into(),
+    );
 
     // 流式写入临时文件，边写边校验上限
     let mut file_size: u64 = 0;
     let result: ApiResult<Json<serde_json::Value>> = async {
-        let temp_file = tokio::fs::File::create(&temp_path).await.map_err(|err| {
-            ApiError::Internal(format!("Failed to create upload temp file: {}", err))
-        })?;
+        let temp_file = tokio::fs::File::create(temp_path.path())
+            .await
+            .map_err(|err| {
+                ApiError::Internal(format!("Failed to create upload temp file: {}", err))
+            })?;
         let mut temp_file =
             tokio::io::BufWriter::with_capacity(UPLOAD_WRITE_BUFFER_BYTES, temp_file);
 
@@ -405,7 +429,7 @@ async fn put_upload_inner(
         finish_single_upload(
             &state,
             &ctx,
-            temp_path.as_std_path(),
+            temp_path.path(),
             &path,
             &filename,
             message,
@@ -415,7 +439,7 @@ async fn put_upload_inner(
     }
     .await;
 
-    let _ = tokio::fs::remove_file(temp_path.as_std_path()).await;
+    drop(temp_path);
 
     if let Ok(Json(payload)) = &result {
         let path = payload
@@ -448,10 +472,14 @@ async fn upload_file(
     tokio::fs::create_dir_all(&temp_dir).await.map_err(|err| {
         ApiError::Internal(format!("Failed to create upload temp directory: {}", err))
     })?;
-    let temp_path = temp_dir.join(format!("single-upload-{}.tmp", uuid::Uuid::new_v4()));
+    let temp_path = TempUploadFile::new(
+        temp_dir
+            .join(format!("single-upload-{}.tmp", uuid::Uuid::new_v4()))
+            .into(),
+    );
 
-    let result = process_single_upload(&state, &ctx, multipart, temp_path.as_std_path()).await;
-    let _ = tokio::fs::remove_file(temp_path.as_std_path()).await;
+    let result = process_single_upload(&state, &ctx, multipart, temp_path.path()).await;
+    drop(temp_path);
 
     // 成功时才记录（失败原因由错误处理链路返回给客户端）
     if let Ok(Json(payload)) = &result {
