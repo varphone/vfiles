@@ -509,6 +509,38 @@ fn path_matches_scope(path: &NormalizedPath, scope: &NormalizedPath) -> bool {
             .starts_with(&format!("{}/", scope.as_str().trim_end_matches('/')))
 }
 
+fn validate_snapshot_directory_scope(
+    path: &NormalizedPath,
+    snapshot_entries: &[SnapshotEntry],
+) -> DomainResult<()> {
+    if path.as_str().is_empty() {
+        return Ok(());
+    }
+    let mut visible_entries = snapshot_entries
+        .iter()
+        .filter(|entry| entry.change_type != ChangeType::Deleted);
+    if let Some(entry) = visible_entries
+        .clone()
+        .find(|entry| entry.entry_path == *path)
+    {
+        if entry.entry_kind != EntryKind::Directory {
+            return Err(DomainError::Validation {
+                message: "Path is not a directory".to_string(),
+            });
+        }
+    } else {
+        let prefix = format!("{}/", path.as_str());
+        let has_descendants =
+            visible_entries.any(|entry| entry.entry_path.as_str().starts_with(&prefix));
+        if !has_descendants {
+            return Err(DomainError::NotFound {
+                resource: "snapshot entry".to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn finalize_mutation(
     snapshot_repo: &(dyn SnapshotRepo + Send + Sync),
     namespace_id: &NamespaceId,
@@ -1452,6 +1484,37 @@ where
         Ok(scoped_entries)
     }
 
+    async fn validate_directory_scope(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+    ) -> DomainResult<()> {
+        if path.as_str().is_empty() {
+            return Ok(());
+        }
+        if let Some(entry) = self.entry_repo.find_by_path(namespace_id, path).await? {
+            return if entry.entry_type == EntryKind::Directory {
+                Ok(())
+            } else {
+                Err(DomainError::Validation {
+                    message: "Path is not a directory".to_string(),
+                })
+            };
+        }
+
+        let entries = collect_namespace_entries(&self.entry_repo, namespace_id).await?;
+        if entries
+            .iter()
+            .any(|entry| path_matches_scope(&entry.path_norm, path))
+        {
+            Ok(())
+        } else {
+            Err(DomainError::NotFound {
+                resource: "entry".to_string(),
+            })
+        }
+    }
+
     async fn collect_live_directory_files(
         &self,
         namespace_id: &NamespaceId,
@@ -1515,33 +1578,11 @@ where
         snapshot_id: &SnapshotId,
     ) -> DomainResult<Vec<(NormalizedPath, BlobId)>> {
         let snapshot_entries = self.snapshot_repo.get_snapshot_entries(snapshot_id).await?;
+        validate_snapshot_directory_scope(path, &snapshot_entries)?;
         let visible_entries = snapshot_entries
             .iter()
             .filter(|entry| entry.change_type != ChangeType::Deleted)
             .collect::<Vec<_>>();
-
-        if !path.as_str().is_empty() {
-            if let Some(entry) = visible_entries
-                .iter()
-                .find(|entry| entry.entry_path == *path)
-            {
-                if entry.entry_kind != EntryKind::Directory {
-                    return Err(DomainError::Validation {
-                        message: "Path is not a directory".to_string(),
-                    });
-                }
-            } else {
-                let prefix = format!("{}/", path.as_str());
-                let has_descendants = visible_entries
-                    .iter()
-                    .any(|entry| entry.entry_path.as_str().starts_with(&prefix));
-                if !has_descendants {
-                    return Err(DomainError::NotFound {
-                        resource: "snapshot entry".to_string(),
-                    });
-                }
-            }
-        }
 
         let mut files = visible_entries
             .into_iter()
@@ -1818,6 +1859,33 @@ where
             size_bytes,
             reader,
         })
+    }
+
+    /// Validate the selected directory archive target without reading blobs or building a ZIP.
+    /// Conditional requests use this to preserve path/revision errors while avoiding compression.
+    pub async fn validate_directory_archive_target(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        raw_commit: Option<&str>,
+    ) -> DomainResult<()> {
+        match self.resolve_requested_file_revision(raw_commit).await? {
+            RequestedFileRevision::Live => {
+                self.validate_directory_scope(namespace_id, path).await?;
+            }
+            RequestedFileRevision::Version(version_id) => {
+                self.entry_repo.find_version(&version_id).await?;
+                self.validate_directory_scope(namespace_id, path).await?;
+            }
+            RequestedFileRevision::Snapshot(snapshot_id) => {
+                let snapshot_entries = self
+                    .snapshot_repo
+                    .get_snapshot_entries(&snapshot_id)
+                    .await?;
+                validate_snapshot_directory_scope(path, &snapshot_entries)?;
+            }
+        }
+        Ok(())
     }
 
     async fn live_tree(

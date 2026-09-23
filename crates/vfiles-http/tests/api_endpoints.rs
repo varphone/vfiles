@@ -863,6 +863,17 @@ async fn chunked_upload_history_and_download_round_trip() {
             .is_empty()
     );
 
+    let missing_folder_conditional = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/download/folder?path=docs/missing")
+                .header(header::IF_NONE_MATCH, "*")
+                .body(Body::empty())
+                .expect("missing folder conditional request should build"),
+        )
+        .await;
+    assert_eq!(missing_folder_conditional.status(), StatusCode::NOT_FOUND);
+
     let mut file = archive
         .by_name("docs/note.txt")
         .expect("zip should contain uploaded file");
@@ -916,6 +927,20 @@ async fn chunked_upload_history_and_download_round_trip() {
         .expect("versioned zip entry should read");
     assert_eq!(versioned_extracted, b"hello from version one\n");
 
+    let existing_versioned_folder_not_modified = app
+        .request_as_admin(
+            Request::builder()
+                .uri(format!("/api/download/folder?path=docs&commit={version1}"))
+                .header(header::IF_NONE_MATCH, "*")
+                .body(Body::empty())
+                .expect("versioned folder conditional request should build"),
+        )
+        .await;
+    assert_eq!(
+        existing_versioned_folder_not_modified.status(),
+        StatusCode::NOT_MODIFIED
+    );
+
     let snapshot = app
         .json_request_as_admin(
             Method::POST,
@@ -928,6 +953,22 @@ async fn chunked_upload_history_and_download_round_trip() {
     let snapshot_id = snapshot_payload["id"]
         .as_str()
         .expect("snapshot id should be present");
+
+    let existing_snapshot_folder_not_modified = app
+        .request_as_admin(
+            Request::builder()
+                .uri(format!(
+                    "/api/download/folder?path=docs&commit={snapshot_id}"
+                ))
+                .header(header::IF_NONE_MATCH, "*")
+                .body(Body::empty())
+                .expect("snapshot folder conditional request should build"),
+        )
+        .await;
+    assert_eq!(
+        existing_snapshot_folder_not_modified.status(),
+        StatusCode::NOT_MODIFIED
+    );
 
     app.upload_version(
         "docs",

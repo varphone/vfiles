@@ -2488,7 +2488,8 @@
 - 原实现将整个 ZIP 累积到 `Vec<u8>`，目录总数据量会直接转化为同量级的服务进程内存占用；改为写入临时文件，完成后通过异步文件流返回。
 - 普通目录下载和分享目录下载统一复用文件流响应，保留 `Content-Length`、文件名与 Range/206 能力；响应体释放后，临时文件随文件句柄关闭清理。
 - ZIP 仍在响应开始前生成完毕，因此这一轮将峰值 RAM 从 O(归档大小) 降到固定读缓冲与压缩器工作内存，并把归档空间占用转移到系统临时目录；未改变首字节等待行为。
-- 回归：应用 / HTTP 集成验证 live、历史版本与快照 ZIP 可解包；HTTP 验证归档长度准确、Range 206 字节与完整 ZIP 前缀一致；`cargo test -p vfiles-app -p vfiles-http` 全绿。
+- `If-None-Match: *` 命中目录表示时先验证路径及 live/version/snapshot 修订，再返回 304；不读取 blob、不压缩，也不生成临时 ZIP。
+- 回归：应用 / HTTP 集成验证 live、历史版本与快照 ZIP 可解包；HTTP 验证归档长度准确、Range 206 字节与完整 ZIP 前缀一致，并覆盖目录缓存命中和不存在目录；`cargo test -p vfiles-app -p vfiles-http` 全绿。
 
 ## 3. 后续迭代计划（按优先级）
 

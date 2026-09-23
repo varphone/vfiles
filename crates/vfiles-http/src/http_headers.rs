@@ -106,6 +106,25 @@ pub(crate) struct StreamingFileOptions<'a> {
     pub(crate) modified_at: Option<time::OffsetDateTime>,
 }
 
+pub(crate) fn if_none_match_is_wildcard(headers: &HeaderMap) -> bool {
+    let mut values = headers.get_all(header::IF_NONE_MATCH).iter();
+    let Some(value) = values.next() else {
+        return false;
+    };
+    values.next().is_none() && value.to_str().is_ok_and(|value| value.trim() == "*")
+}
+
+pub(crate) fn not_modified_response(
+    etag: Option<&str>,
+    modified_at: Option<time::OffsetDateTime>,
+) -> ApiResult<Response> {
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::NOT_MODIFIED;
+    insert_etag(response.headers_mut(), etag)?;
+    insert_last_modified(response.headers_mut(), modified_at)?;
+    Ok(response)
+}
+
 pub(crate) async fn streaming_file_response(
     mut reader: Box<dyn ReadSeek + Send + Unpin>,
     options: StreamingFileOptions<'_>,
@@ -129,20 +148,12 @@ pub(crate) async fn streaming_file_response(
         return precondition_failed(etag, modified_at);
     }
     if if_none_match(request_headers, etag) {
-        let mut response = Response::new(Body::empty());
-        *response.status_mut() = StatusCode::NOT_MODIFIED;
-        insert_etag(response.headers_mut(), etag)?;
-        insert_last_modified(response.headers_mut(), modified_at)?;
-        return Ok(response);
+        return not_modified_response(etag, modified_at);
     }
     if !request_headers.contains_key(header::IF_NONE_MATCH)
         && modified_at.is_some_and(|modified_at| if_modified_since(request_headers, modified_at))
     {
-        let mut response = Response::new(Body::empty());
-        *response.status_mut() = StatusCode::NOT_MODIFIED;
-        insert_etag(response.headers_mut(), etag)?;
-        insert_last_modified(response.headers_mut(), modified_at)?;
-        return Ok(response);
+        return not_modified_response(etag, modified_at);
     }
 
     let content_type = HeaderValue::from_str(mime_type.unwrap_or("application/octet-stream"))

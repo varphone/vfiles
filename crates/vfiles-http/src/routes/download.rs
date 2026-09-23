@@ -1,13 +1,16 @@
 use crate::{
     AppState,
     error::{ApiError, ApiResult},
-    http_headers::{StreamingFileOptions, streaming_file_response},
+    http_headers::{
+        StreamingFileOptions, if_none_match_is_wildcard, not_modified_response,
+        streaming_file_response,
+    },
     routes::protected_request_context,
 };
 use axum::{
     Router,
     extract::{Query, State},
-    http::{HeaderMap, Method},
+    http::{HeaderMap, Method, header},
     response::Response,
     routing::get,
 };
@@ -90,6 +93,27 @@ async fn download_folder(
             message: "Invalid path format".to_string(),
         })
     })?;
+
+    if if_none_match_is_wildcard(&headers)
+        && !headers.contains_key(header::IF_MATCH)
+        && !headers.contains_key(header::IF_UNMODIFIED_SINCE)
+    {
+        state
+            .workspace_service
+            .validate_directory_archive_target(&ctx.namespace_id, &path, query.commit.as_deref())
+            .await?;
+        crate::audit::record_for(
+            &state,
+            &headers,
+            &ctx,
+            NewAuditLog::success(crate::audit::action::FILE_DOWNLOAD)
+                .target(path.as_str())
+                .detail("下载目录（条件命中，未生成归档）"),
+        )
+        .await;
+        return not_modified_response(None, None);
+    }
+
     let archive = state
         .workspace_service
         .download_directory_archive(&ctx.namespace_id, &path, query.commit.as_deref())
