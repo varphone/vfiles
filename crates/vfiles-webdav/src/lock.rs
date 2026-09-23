@@ -5,6 +5,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use vfiles_domain::{NamespaceId, WebdavLockRepo};
 
+const MAX_TIMEOUT_SECONDS: u64 = u32::MAX as u64;
+
 /// Active lock data used by protocol response generation.
 #[derive(Debug, Clone)]
 pub struct LockEntry {
@@ -156,13 +158,19 @@ impl LockTable {
     }
 
     /// Timeout header parser: the first valid `Second-N` alternative wins.
+    /// RFC 4918 caps the value at 2^32-1 seconds.
     pub fn parse_timeout_header(value: &str) -> Option<Duration> {
         for part in value.split(',') {
             let value = part.trim();
-            if let Some(seconds) = value.strip_prefix("Second-")
-                && let Ok(seconds) = seconds.trim().parse::<u64>()
+            if value
+                .get(..7)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Second-"))
             {
-                return Some(Duration::from_secs(seconds));
+                let digits = &value[7..];
+                if !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()) {
+                    let seconds = digits.parse::<u64>().unwrap_or(u64::MAX);
+                    return Some(Duration::from_secs(seconds.min(MAX_TIMEOUT_SECONDS)));
+                }
             }
         }
         None
@@ -182,6 +190,23 @@ mod tests {
         assert_eq!(
             LockTable::parse_timeout_header("Second-1, Infinite"),
             Some(Duration::from_secs(1))
+        );
+        assert_eq!(
+            LockTable::parse_timeout_header("sEcOnD-17"),
+            Some(Duration::from_secs(17))
+        );
+        assert_eq!(
+            LockTable::parse_timeout_header("Second-4294967296"),
+            Some(Duration::from_secs(u32::MAX as u64))
+        );
+        assert_eq!(
+            LockTable::parse_timeout_header("Second-184467440737095516160"),
+            Some(Duration::from_secs(u32::MAX as u64))
+        );
+        assert_eq!(
+            LockTable::parse_timeout_header("Second- 17"),
+            None,
+            "whitespace inside a TimeType is invalid"
         );
         assert_eq!(LockTable::parse_timeout_header("Infinite"), None);
         assert_eq!(LockTable::parse_timeout_header("garbage"), None);
