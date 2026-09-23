@@ -401,6 +401,35 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(repeated_depth.status(), 400);
 
+    let invalid_xml_encoding = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .body(axum::body::Body::from(vec![b'<', 0xff, b'>']))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_xml_encoding.status(), 400);
+
+    let invalid_proppatch_encoding = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPPATCH")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::from(vec![b'<', 0xff, b'>']))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_proppatch_encoding.status(), 400);
+
     let resp = router
         .clone()
         .oneshot(

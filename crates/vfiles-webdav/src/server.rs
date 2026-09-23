@@ -2106,7 +2106,15 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 // #46 同步 take 转 owned（await 前结束借 ✓）
                 let taken = std::mem::take(req.body_mut());
                 match axum::body::to_bytes(taken, MAX_DAV_XML_BODY_BYTES).await {
-                    Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+                    Ok(bytes) => match String::from_utf8(bytes.to_vec()) {
+                        Ok(body) => body,
+                        Err(_) => {
+                            return Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body(Body::empty())
+                                .unwrap();
+                        }
+                    },
                     Err(_) => {
                         return Response::builder()
                             .status(StatusCode::PAYLOAD_TOO_LARGE)
@@ -2280,7 +2288,15 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             let body_owned = {
                 let taken = std::mem::take(req.body_mut());
                 match axum::body::to_bytes(taken, MAX_DAV_XML_BODY_BYTES).await {
-                    Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+                    Ok(bytes) => match String::from_utf8(bytes.to_vec()) {
+                        Ok(body) => body,
+                        Err(_) => {
+                            return Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body(Body::empty())
+                                .unwrap();
+                        }
+                    },
                     Err(_) => {
                         return Response::builder()
                             .status(StatusCode::PAYLOAD_TOO_LARGE)
