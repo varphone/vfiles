@@ -696,16 +696,35 @@ async fn source_identity(
     backend: &VfilesS3,
     src_path: &vfiles_domain::NormalizedPath,
 ) -> S3Result<(String, Timestamp)> {
+    if backend.has_current_delete_marker(src_path).await? {
+        return Err(s3s::s3_error!(NoSuchKey, "source key is deleted"));
+    }
     let e = backend
         .entry_at(src_path)
         .await?
         .ok_or_else(|| s3s::s3_error!(NoSuchKey, "source key not found"))?;
-    Ok((
-        e.current_version_id
-            .map(|v| v.to_string().replace('-', ""))
-            .unwrap_or_default(),
-        Timestamp::from(e.created_at),
-    ))
+    let version_id = e
+        .current_version_id
+        .ok_or_else(|| s3s::s3_error!(NoSuchKey, "source key has no current version"))?;
+    let version = backend
+        .entry_repo
+        .find_version(&version_id)
+        .await
+        .map_err(dom_err)?;
+    if version.entry_id != e.id {
+        return Err(s3s::s3_error!(
+            NoSuchKey,
+            "source version does not match key"
+        ));
+    }
+    let version_id_text = version_id.to_string().replace('-', "");
+    let etags = backend.load_version_etags(&[e.id]).await?;
+    let etag = etags
+        .get(&e.id)
+        .and_then(|map| map.get(&version_id_text))
+        .cloned()
+        .unwrap_or(version_id_text);
+    Ok((etag, Timestamp::from(version.created_at)))
 }
 
 /// `x-amz-copy-source-range` 解析成半开区间，避免范围复制时分配内容副本。
@@ -1188,6 +1207,17 @@ impl VfilesS3 {
                     None,
                 ));
             };
+            let version = self
+                .entry_repo
+                .find_version(&version_id)
+                .await
+                .map_err(dom_err)?;
+            if version.entry_id != entry.id {
+                return Err(s3s::s3_error!(
+                    NoSuchKey,
+                    "current version does not match key"
+                ));
+            }
             let version_id_text = version_id.to_string().replace('-', "");
             let etags = self.load_version_etags(&[entry.id]).await?;
             let etag = etags
@@ -1198,7 +1228,7 @@ impl VfilesS3 {
             return Ok((
                 etag,
                 version_id_text,
-                Timestamp::from(entry.created_at),
+                Timestamp::from(version.created_at),
                 None,
             ));
         };

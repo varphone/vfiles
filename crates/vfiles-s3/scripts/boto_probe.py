@@ -8,6 +8,7 @@
 """
 import sys
 import datetime
+import time
 from urllib.parse import unquote
 
 import boto3
@@ -106,7 +107,9 @@ def main():
 
     # ── multipart（真实客户端大文件路径）──
     key = "boto-mp/big.bin"
-    chunks = [bytes([i]) * (1024 * 1024) for i in range(1, 5)]
+    # Every non-final completed part must meet S3's 5 MiB minimum.
+    chunks = [bytes([i]) * (5 * 1024 * 1024) for i in range(1, 4)]
+    chunks.append(bytes([4]) * (1024 * 1024))
     whole = b"".join(chunks)
     mpu = s3.create_multipart_upload(Bucket="default", Key=key, ContentType="application/octet-stream")
     uid = mpu["UploadId"]
@@ -309,16 +312,22 @@ def main():
     vk = "boto-vid/a.txt"
     for vb in [b"one", b"two", b"three"]:
         s3.put_object(Bucket="default", Key=vk, Body=vb)
+        if vb != b"three":
+            time.sleep(1.1)  # Make stale entry-created timestamps observable at HTTP-date precision.
     vl = s3.list_object_versions(Bucket="default", Prefix="boto-vid/")["Versions"]
     oldv = [v for v in vl if not v["IsLatest"]][0]
     g = s3.get_object(Bucket="default", Key=vk, VersionId=oldv["VersionId"])
     curv = [v for v in vl if v["IsLatest"]][0]
+    current_head = s3.head_object(Bucket="default", Key=vk)
     vid_ok = (
         len(vl) == 3
         and g["ETag"] == oldv["ETag"]
         and g.get("VersionId") == oldv["VersionId"]
         and g["Body"].read() == b"two"
-        and curv.get("VersionId") == curv.get("ETag", "").strip('"')
+        and int(g["LastModified"].timestamp()) == int(oldv["LastModified"].timestamp())
+        and curv.get("VersionId") == current_head.get("VersionId")
+        and curv.get("ETag") == current_head.get("ETag")
+        and int(curv["LastModified"].timestamp()) == int(current_head["LastModified"].timestamp())
     )
     def vcode(fn):
         try:
@@ -344,8 +353,11 @@ def main():
     marker_delete = s3.delete_object(Bucket="default", Key=vk)
     marker_id = marker_delete.get("VersionId")
     marker_hidden = vcode(lambda: s3.get_object(Bucket="default", Key=vk)) == "NoSuchKey"
-    marker_latest = marker_read = marker_restored = False
+    marker_copy_hidden = marker_latest = marker_read = marker_restored = False
     if marker_id:
+        marker_copy_hidden = vcode(lambda: s3.copy_object(
+            Bucket="default", Key="boto-vid/copy-of-deleted.txt",
+            CopySource=f"default/{vk}")) == "NoSuchKey"
         latest = s3.list_object_versions(Bucket="default", Prefix=vk)
         marker_latest = any(
             marker.get("VersionId") == marker_id and marker.get("IsLatest")
@@ -361,8 +373,9 @@ def main():
         s3.delete_object(Bucket="default", Key=vk, VersionId=marker_id)
         marker_restored = s3.get_object(Bucket="default", Key=vk)["Body"].read() == b"two"
     check("boto delete marker list/read/unmark semantics",
-          bool(marker_id) and marker_latest and marker_hidden and marker_read and marker_restored,
-          f"id={bool(marker_id)} latest={marker_latest} hidden={marker_hidden} read={marker_read} restored={marker_restored}")
+          bool(marker_id) and marker_latest and marker_hidden and marker_copy_hidden
+          and marker_read and marker_restored,
+          f"id={bool(marker_id)} latest={marker_latest} hidden={marker_hidden} copy_hidden={marker_copy_hidden} read={marker_read} restored={marker_restored}")
 
     missing_marker = s3.delete_objects(Bucket="default", Delete={
         "Objects": [{"Key": "boto-vid/never-existed.txt"}], "Quiet": False,
@@ -547,7 +560,7 @@ def main():
     muid = s3.create_multipart_upload(Bucket="default", Key="boto-mpu/meta.bin",
                                       Metadata=mmd)["UploadId"]
     mparts = []
-    for i, c in enumerate([b"a" * 1024, b"b" * 1024], 1):
+    for i, c in enumerate([b"a" * (5 * 1024 * 1024), b"b" * 1024], 1):
         r = s3.upload_part(Bucket="default", Key="boto-mpu/meta.bin", PartNumber=i,
                            UploadId=muid, Body=c)
         mparts.append({"ETag": r["ETag"], "PartNumber": i})
@@ -558,15 +571,15 @@ def main():
     s3.delete_object(Bucket="default", Key="boto-mpu/meta.bin")
 
     # ── UploadPartCopy（r19）──
-    cpsrc = bytes([i % 251 for i in range(262144)])
+    cpsrc = bytes(range(256)) * (10 * 1024 * 1024 // 256)
     s3.put_object(Bucket="default", Key="boto-upc/src.bin", Body=cpsrc)
     cuid = s3.create_multipart_upload(Bucket="default", Key="boto-upc/dst.bin")["UploadId"]
     c1 = s3.upload_part_copy(Bucket="default", Key="boto-upc/dst.bin", PartNumber=1,
                              UploadId=cuid, CopySource="default/boto-upc/src.bin",
-                             CopySourceRange="bytes=0-131071")["CopyPartResult"]["ETag"]
+                             CopySourceRange="bytes=0-5242879")["CopyPartResult"]["ETag"]
     c2 = s3.upload_part_copy(Bucket="default", Key="boto-upc/dst.bin", PartNumber=2,
                              UploadId=cuid, CopySource="default/boto-upc/src.bin",
-                             CopySourceRange="bytes=131072-")["CopyPartResult"]["ETag"]
+                             CopySourceRange="bytes=5242880-")["CopyPartResult"]["ETag"]
     s3.complete_multipart_upload(Bucket="default", Key="boto-upc/dst.bin", UploadId=cuid,
                                 MultipartUpload={"Parts": [{"ETag": c1, "PartNumber": 1},
                                                            {"ETag": c2, "PartNumber": 2}]})
