@@ -5816,6 +5816,21 @@ async fn paginated_directory_listing_reports_total_and_pages() {
     assert_eq!(payload["items"].as_array().map(Vec::len), Some(1));
     assert_eq!(payload["has_more"], Value::Bool(false));
 
+    // Offset 超过 SQL 接口的 u32 范围时不得回绕成一个很小的偏移量。
+    let oversized_offset = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=2&offset=4294967296")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(oversized_offset.status(), StatusCode::OK);
+    let payload = response_json(oversized_offset).await;
+    assert_eq!(payload["total"], Value::from(5));
+    assert_eq!(payload["items"].as_array().map(Vec::len), Some(0));
+    assert_eq!(payload["has_more"], Value::Bool(false));
+
     // limit 会被钳制到 1000，返回全部条目
     let clamped = app
         .request_as_admin(

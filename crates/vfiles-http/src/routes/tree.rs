@@ -273,7 +273,12 @@ async fn paginated_listing(
 
     let (items, total) = state
         .workspace_service
-        .live_children_page(namespace_id, path, limit as u32, offset as u32)
+        .live_children_page(
+            namespace_id,
+            path,
+            limit as u32,
+            u32::try_from(offset).unwrap_or(u32::MAX),
+        )
         .await?;
 
     let items: Vec<EntryDto> = items.into_iter().map(Into::into).collect();
