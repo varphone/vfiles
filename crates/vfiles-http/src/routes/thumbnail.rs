@@ -175,6 +175,22 @@ async fn get_file_thumbnail(
     })?;
     let size = query.size.unwrap_or(DEFAULT_SIZE).clamp(MIN_SIZE, MAX_SIZE);
 
+    // Negotiate before reading the source so rejected representations do no storage I/O.
+    let format = negotiate_thumbnail_format(
+        headers
+            .get(header::ACCEPT)
+            .and_then(|value| value.to_str().ok()),
+        state.config.limits.thumbnail_avif,
+    );
+    let Some(format) = format else {
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = StatusCode::NOT_ACCEPTABLE;
+        response
+            .headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("accept"));
+        return Ok(response);
+    };
+
     let file = state
         .workspace_service
         .read_file_bytes(&ctx.namespace_id, &path, query.commit.as_deref())
@@ -191,13 +207,7 @@ async fn get_file_thumbnail(
         return Ok(unsupported_response());
     }
 
-    // 按 Accept 协商输出格式：etag 与缓存文件都带上格式，避免切换格式命中旧内容
-    let format = negotiate_thumbnail_format(
-        headers
-            .get(header::ACCEPT)
-            .and_then(|value| value.to_str().ok()),
-        state.config.limits.thumbnail_avif,
-    );
+    // ETag 与缓存文件都带上格式，避免切换格式命中旧内容。
     let etag = format!("\"{}-{}-{}\"", file.blob_id, size, format.as_str());
     if is_not_modified(&headers, &etag) {
         return Ok(not_modified_response(&etag));
@@ -431,17 +441,18 @@ impl ThumbnailFormat {
 
 /// 从 `Accept` 头里挑一个可用的图片格式。
 ///
-/// 只认显式的 `image/avif`、`image/jpeg`（含 `q=0` 表示明确拒绝）与
-/// `image/*`、`*/*` 通配；找不到或全部被拒绝时回退 JPEG（兼容性最好）。
+/// 只认显式的 `image/avif`、`image/jpeg` 与 `image/*`、`*/*` 通配；
+/// 按 HTTP quality 和最具体的 media range 选择，所有可用格式都不接受时返回 `None`。
 pub(crate) fn negotiate_thumbnail_format(
     accept: Option<&str>,
     allow_avif: bool,
-) -> ThumbnailFormat {
+) -> Option<ThumbnailFormat> {
     let Some(accept) = accept else {
-        return ThumbnailFormat::Jpeg;
+        return Some(ThumbnailFormat::Jpeg);
     };
 
-    // 解析为 (media range, q)：q 缺省为 1，q=0 表示不接受
+    // Keep malformed q values at zero: treating them as the default q=1 can
+    // send a representation the client explicitly tried to exclude.
     let mut entries: Vec<(String, f32)> = Vec::new();
     for part in accept.split(',') {
         let mut segments = part.split(';');
@@ -456,27 +467,35 @@ pub(crate) fn negotiate_thumbnail_format(
         let mut quality = 1.0_f32;
         for parameter in segments {
             let parameter = parameter.trim();
-            if let Some(value) = parameter.strip_prefix("q=") {
-                quality = value.trim().parse().unwrap_or(1.0);
+            if let Some((name, value)) = parameter.split_once('=')
+                && name.trim().eq_ignore_ascii_case("q")
+            {
+                quality = parse_quality(value.trim()).unwrap_or(0.0);
             }
         }
         entries.push((media, quality));
     }
 
-    let explicit = |candidate: &str| -> bool {
+    let quality_for = |candidate: &str| -> f32 {
+        let specificity = |media: &str| match media {
+            value if value == candidate => 2,
+            "image/*" => 1,
+            "*/*" => 0,
+            _ => -1,
+        };
+        let best_specificity = entries
+            .iter()
+            .map(|(media, _)| specificity(media))
+            .max()
+            .unwrap_or(-1);
+        if best_specificity < 0 {
+            return 0.0;
+        }
         entries
             .iter()
-            .any(|(media, quality)| *quality > 0.0 && media == candidate)
-    };
-    let wildcard = |candidate: &str| -> bool {
-        entries.iter().any(|(media, quality)| {
-            *quality > 0.0 && (media == "image/*" || media == "*/*") && media != candidate
-        })
-    };
-    let rejected = |candidate: &str| -> bool {
-        entries
-            .iter()
-            .any(|(media, quality)| media == candidate && *quality <= 0.0)
+            .filter(|(media, _)| specificity(media) == best_specificity)
+            .map(|(_, quality)| *quality)
+            .fold(0.0_f32, f32::max)
     };
 
     // AVIF 编码开销远高于 JPEG（实测 384px 约 2.0s vs 0.004s），默认关闭，
@@ -486,21 +505,30 @@ pub(crate) fn negotiate_thumbnail_format(
         supported.insert(0, ("image/avif", ThumbnailFormat::Avif));
     }
 
-    // 显式列出的格式优先（例如只写 image/webp 的客户端不该拿到 AVIF）
-    for &(candidate, format) in &supported {
-        if explicit(candidate) && !rejected(candidate) {
-            return format;
+    let mut selected = None;
+    for (candidate, format) in supported {
+        let quality = quality_for(candidate);
+        if quality > 0.0 && selected.is_none_or(|(_, best_quality)| quality > best_quality) {
+            // Keep AVIF on equal quality by listing it before JPEG.
+            selected = Some((format, quality));
         }
     }
+    selected.map(|(format, _)| format)
+}
 
-    // 只有 */* 或 image/* 时才按「越小越好」挑格式
-    for &(candidate, format) in &supported {
-        if wildcard(candidate) && !rejected(candidate) {
-            return format;
-        }
+fn parse_quality(value: &str) -> Option<f32> {
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    if !matches!(whole, "0" | "1")
+        || (value.contains('.') && fraction.is_empty())
+        || fraction.len() > 3
+        || !fraction.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
     }
-
-    ThumbnailFormat::Jpeg
+    if whole == "1" && fraction.bytes().any(|digit| digit != b'0') {
+        return None;
+    }
+    value.parse().ok()
 }
 
 /// 按目标格式编码缩略图，输入是已经扁平化到白色背景的 RGB 图。
@@ -788,30 +816,55 @@ mod tests {
         // 开启 AVIF 时，浏览器典型 Accept 优先 AVIF
         assert_eq!(
             avif(Some("image/avif,image/webp,image/apng,image/*,*/*;q=0.8")),
-            ThumbnailFormat::Avif
+            Some(ThumbnailFormat::Avif)
         );
         // 未开启 AVIF 时即使客户端支持也回退 JPEG
         assert_eq!(
             no_avif(Some("image/avif,image/webp,image/apng,image/*,*/*;q=0.8")),
-            ThumbnailFormat::Jpeg
+            Some(ThumbnailFormat::Jpeg)
         );
-        // 只声明 WebP（没有通配）的客户端回退 JPEG：服务端不提供无损 WebP 输出
-        assert_eq!(avif(Some("image/webp,image/png")), ThumbnailFormat::Jpeg);
+        // 只声明未支持格式时，不返回未被接受的 JPEG 或 AVIF。
+        assert_eq!(avif(Some("image/webp,image/png")), None);
         // 声明了 WebP 但同时也接受 */* 时，可以给更小的 AVIF
-        assert_eq!(avif(Some("image/webp,*/*;q=0.5")), ThumbnailFormat::Avif);
+        assert_eq!(
+            avif(Some("image/webp,*/*;q=0.5")),
+            Some(ThumbnailFormat::Avif)
+        );
         // 老客户端只接受 JPEG
-        assert_eq!(avif(Some("image/jpeg,image/png")), ThumbnailFormat::Jpeg);
+        assert_eq!(
+            avif(Some("image/jpeg,image/png")),
+            Some(ThumbnailFormat::Jpeg)
+        );
         // 显式列出 PNG（不在支持列表）+ 通配时，显式声明优先于通配
-        assert_eq!(avif(Some("image/png,*/*;q=0.5")), ThumbnailFormat::Avif);
+        assert_eq!(
+            avif(Some("image/png,*/*;q=0.5")),
+            Some(ThumbnailFormat::Avif)
+        );
         // 明确拒绝 AVIF（q=0）时退回 JPEG
         assert_eq!(
             avif(Some("image/avif;q=0,image/jpeg")),
-            ThumbnailFormat::Jpeg
+            Some(ThumbnailFormat::Jpeg)
         );
-        // 通配与缺失都回退 JPEG
-        assert_eq!(avif(Some("*/*")), ThumbnailFormat::Avif);
-        assert_eq!(avif(None), ThumbnailFormat::Jpeg);
-        assert_eq!(avif(Some("text/html")), ThumbnailFormat::Jpeg);
+        assert_eq!(avif(Some("*/*")), Some(ThumbnailFormat::Avif));
+        assert_eq!(avif(None), Some(ThumbnailFormat::Jpeg));
+        assert_eq!(avif(Some("text/html")), None);
+        assert_eq!(avif(Some("image/avif;q=0,image/jpeg;q=0")), None);
+        assert_eq!(
+            avif(Some("image/avif;q=0.1,image/jpeg;q=1")),
+            Some(ThumbnailFormat::Jpeg)
+        );
+        assert_eq!(
+            avif(Some("image/avif;q=bogus,*/*;q=0.8")),
+            Some(ThumbnailFormat::Jpeg)
+        );
+        assert_eq!(
+            avif(Some("image/avif;Q=0.7,image/jpeg;q=0.6")),
+            Some(ThumbnailFormat::Avif)
+        );
+        assert_eq!(
+            avif(Some("image/avif;q=0.,image/jpeg;q=0.5")),
+            Some(ThumbnailFormat::Jpeg)
+        );
     }
 
     #[test]

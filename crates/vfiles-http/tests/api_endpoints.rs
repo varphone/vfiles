@@ -5171,7 +5171,6 @@ async fn thumbnail_returns_jpeg_and_varies_on_accept() {
 
     for accept in [
         "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        "image/webp,image/png",
         "image/jpeg,image/png",
     ] {
         let response = app
@@ -5208,6 +5207,18 @@ async fn thumbnail_returns_jpeg_and_varies_on_accept() {
         assert_eq!(vary, "accept", "响应必须声明 Vary，避免缓存串味");
         assert_eq!(&body[..2], &[0xFF, 0xD8], "应返回 JPEG 魔数");
     }
+
+    let rejected = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/thumbnail?path=photo.png&size=64")
+                .header(header::ACCEPT, "image/webp,image/png")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(rejected.status(), StatusCode::NOT_ACCEPTABLE);
+    assert_eq!(rejected.headers().get(header::VARY).unwrap(), "accept");
 }
 
 /// 一张 8×8 的 PNG 源图，供缩略图相关用例复用。
