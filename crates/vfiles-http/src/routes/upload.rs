@@ -17,6 +17,8 @@ use crate::{
 };
 use vfiles_domain::{DomainError, NewAuditLog, NormalizedPath, UploadId};
 
+const UPLOAD_WRITE_BUFFER_BYTES: usize = 64 * 1024;
+
 #[derive(Debug, Deserialize)]
 struct CompleteUploadRequest {
     message: Option<String>,
@@ -340,9 +342,11 @@ async fn put_upload_inner(
     // 流式写入临时文件，边写边校验上限
     let mut file_size: u64 = 0;
     let result: ApiResult<Json<serde_json::Value>> = async {
-        let mut temp_file = tokio::fs::File::create(&temp_path).await.map_err(|err| {
+        let temp_file = tokio::fs::File::create(&temp_path).await.map_err(|err| {
             ApiError::Internal(format!("Failed to create upload temp file: {}", err))
         })?;
+        let mut temp_file =
+            tokio::io::BufWriter::with_capacity(UPLOAD_WRITE_BUFFER_BYTES, temp_file);
 
         use futures::StreamExt;
         let mut body = request.into_body().into_data_stream();
@@ -366,6 +370,7 @@ async fn put_upload_inner(
         temp_file.flush().await.map_err(|err| {
             ApiError::Internal(format!("Failed to flush upload temp file: {}", err))
         })?;
+        drop(temp_file);
 
         let message = message
             .as_deref()
@@ -475,9 +480,11 @@ async fn process_single_upload(
             "file" => {
                 saw_file = true;
                 filename = field.file_name().map(str::to_string);
-                let mut temp_file = tokio::fs::File::create(temp_path).await.map_err(|err| {
+                let temp_file = tokio::fs::File::create(temp_path).await.map_err(|err| {
                     ApiError::Internal(format!("Failed to create upload temp file: {}", err))
                 })?;
+                let mut temp_file =
+                    tokio::io::BufWriter::with_capacity(UPLOAD_WRITE_BUFFER_BYTES, temp_file);
 
                 while let Some(chunk) = field.chunk().await.map_err(|err| {
                     ApiError::Domain(DomainError::Validation {
@@ -500,6 +507,7 @@ async fn process_single_upload(
                 temp_file.flush().await.map_err(|err| {
                     ApiError::Internal(format!("Failed to flush upload temp file: {}", err))
                 })?;
+                drop(temp_file);
             }
             "path" => {
                 let bytes = field.bytes().await.map_err(|_| {
