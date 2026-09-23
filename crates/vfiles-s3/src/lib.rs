@@ -1446,7 +1446,7 @@ impl S3 for VfilesS3 {
         )?;
         let content = self
             .workspace
-            .read_file_bytes(&self.namespace, &src_path, None)
+            .open_file(&self.namespace, &src_path, None)
             .await
             .map_err(dom_err)?;
         let replace = input
@@ -1479,7 +1479,7 @@ impl S3 for VfilesS3 {
                 &self.namespace,
                 &parent,
                 &filename,
-                content.bytes.len() as u64,
+                content.size_bytes,
                 ctype.as_deref(),
                 None,
                 &self.owner,
@@ -1492,10 +1492,18 @@ impl S3 for VfilesS3 {
                 &session.upload_id,
                 None,
                 Some("S3 COPY"),
-                Box::new(std::io::Cursor::new(content.bytes)),
+                Box::new(content.reader),
             )
-            .await
-            .map_err(dom_err)?;
+            .await;
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                if let Err(cancel_error) = self.upload.cancel_upload(&session.upload_id).await {
+                    tracing::warn!(error = %cancel_error, upload_id = %session.upload_id, "S3：清理失败 COPY 会话失败");
+                }
+                return Err(dom_err(error));
+            }
+        };
         let etag = result.version.id.to_string().replace('-', "");
         // 用户元数据：`REPLACE` = 取请求；否则（COPY）= 抄源条目
         let md = if replace {

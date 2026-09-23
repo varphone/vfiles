@@ -1,6 +1,6 @@
 # S3 兼容 API（… r34 桶生命周期 → r35 版本列表 → r36 versionId 定向 → **r37 区域校验**）
 
-## 当前工作树补充（PUT 流式与 multipart 列表内存）
+## 当前工作树补充（PUT/COPY 流式与 multipart 列表内存）
 
 - S3 `PutObject` 无论 Content-Length 是否提供，都将请求体流式传给 blob 存储，不再因未知长度聚合整份对象；
   已知长度仍校验实际字节数，未知长度按实际流长提交。流错误或提交失败会清理上传会话。
@@ -10,7 +10,7 @@
 - `ListParts` 尊重 `part-number-marker` / `max-parts`（限制 1..=1000），仅读取当前页的 part 内容生成 ETag，并返回正确的截断标志与续页标记。
 - `UploadPart` 已改为固定 64 KiB 缓冲流式写入临时分片文件，再替换正式分片；写入过程中计算并回传 MD5 ETag，单分片上限为 5 GiB，不再把请求体整份装入内存。
 - `UploadPartCopy` 通过可 seek 文件流复制全对象或 `bytes=start-end` / 开放结束 / 后缀范围；range 直接 seek + take 后流式写分片，无整对象副本，且限制 5 GiB。
-- `CopyObject` 仍将完整源对象聚合到内存；后续应改为流式上传，避免大对象服务端复制时整对象驻留内存。
+- `CopyObject` 直接把源文件可读流传入上传服务，已知源长度仍严格校验；提交失败时取消上传会话，避免大对象服务端复制整对象驻留内存。
 - `ListMultipartUploads` 由 `UploadStore` 一次扫描会话目录，按 key / upload id 保序，
   只保留 `max-uploads + 1` 个结果；delimiter 的 `CommonPrefixes` 在存储扫描中去重，
   避免原先把全部会话加载进内存，也避免逐页请求重复扫描目录。
