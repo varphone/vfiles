@@ -154,7 +154,9 @@ pub fn parse_propertyupdate(body: &str) -> Result<Vec<PropOp>, ()> {
                     if is_set {
                         ops.push(PropOp::Set {
                             name,
-                            value: child.text().unwrap_or_default().trim().to_string(),
+                            // Dead-property values are opaque to the server. Preserve
+                            // significant leading/trailing whitespace exactly.
+                            value: child.text().unwrap_or_default().to_string(),
                         });
                     } else {
                         ops.push(PropOp::Remove { name });
@@ -697,5 +699,18 @@ mod proppatch_tests {
 
         let xml = proppatch_multistatus("/f.txt", &[(ops[0].clone(), PropPatchStatus::Ok)]);
         assert!(xml.contains("<X:displayname xmlns:X=\"urn:example:props\"/>"));
+    }
+
+    #[test]
+    fn preserves_dead_property_text_whitespace() {
+        let body = "<D:propertyupdate xmlns:D=\"DAV:\" xmlns:X=\"urn:example:props\"><D:set><D:prop><X:label>  spaced value\n </X:label></D:prop></D:set></D:propertyupdate>";
+        let ops = parse_propertyupdate(body).expect("property update should parse");
+        assert_eq!(
+            ops,
+            vec![PropOp::Set {
+                name: property_key(Some("urn:example:props"), "label"),
+                value: "  spaced value\n ".to_string(),
+            }]
+        );
     }
 }
