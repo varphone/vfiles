@@ -244,9 +244,7 @@ fn insert_last_modified(
 }
 
 fn if_modified_since(headers: &HeaderMap, modified_at: time::OffsetDateTime) -> bool {
-    let Some(since) = headers
-        .get(header::IF_MODIFIED_SINCE)
-        .and_then(|value| value.to_str().ok())
+    let Some(since) = single_header(headers, header::IF_MODIFIED_SINCE)
         .and_then(|value| httpdate::parse_http_date(value).ok())
     else {
         return false;
@@ -260,9 +258,7 @@ fn if_modified_since(headers: &HeaderMap, modified_at: time::OffsetDateTime) -> 
 }
 
 fn if_unmodified_since_failed(headers: &HeaderMap, modified_at: time::OffsetDateTime) -> bool {
-    let Some(date) = headers
-        .get(header::IF_UNMODIFIED_SINCE)
-        .and_then(|value| value.to_str().ok())
+    let Some(date) = single_header(headers, header::IF_UNMODIFIED_SINCE)
         .and_then(|value| httpdate::parse_http_date(value).ok())
     else {
         return false;
@@ -281,6 +277,15 @@ fn if_none_match(headers: &HeaderMap, current_etag: &str) -> bool {
         .iter()
         .filter_map(|value| value.to_str().ok())
         .any(|value| if_none_match_value(value, current_etag))
+}
+
+fn single_header(headers: &HeaderMap, name: header::HeaderName) -> Option<&str> {
+    let mut values = headers.get_all(name).iter();
+    let value = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    value.to_str().ok()
 }
 
 fn if_match(headers: &HeaderMap, current_etag: Option<&str>) -> bool {
@@ -333,11 +338,11 @@ fn if_range_matches(
     current_etag: Option<&str>,
     modified_at: Option<time::OffsetDateTime>,
 ) -> bool {
-    let Some(value) = headers
-        .get(header::IF_RANGE)
-        .and_then(|value| value.to_str().ok())
-    else {
+    if !headers.contains_key(header::IF_RANGE) {
         return true;
+    }
+    let Some(value) = single_header(headers, header::IF_RANGE) else {
+        return false;
     };
     let value = value.trim();
     if value.starts_with('"') || value.starts_with("W/") {
@@ -349,7 +354,9 @@ fn if_range_matches(
     };
     let modified_seconds = modified_at.unix_timestamp();
     modified_seconds >= 0
-        && SystemTime::UNIX_EPOCH + Duration::from_secs(modified_seconds as u64) <= date
+        && date
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .is_ok_and(|date| date.as_secs() == modified_seconds as u64)
 }
 
 fn insert_content_length(headers: &mut axum::http::HeaderMap, size_bytes: u64) -> ApiResult<()> {
@@ -507,5 +514,48 @@ mod tests {
             HeaderValue::from_static("Thu, 01 Jan 1970 00:00:10 GMT"),
         );
         assert!(!if_unmodified_since_failed(&headers, modified));
+    }
+
+    #[test]
+    fn duplicate_date_preconditions_are_ignored() {
+        let modified = time::OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(10);
+        let mut headers = HeaderMap::new();
+        headers.append(
+            header::IF_MODIFIED_SINCE,
+            HeaderValue::from_static("Thu, 01 Jan 1970 00:00:20 GMT"),
+        );
+        headers.append(
+            header::IF_MODIFIED_SINCE,
+            HeaderValue::from_static("Thu, 01 Jan 1970 00:00:05 GMT"),
+        );
+        assert!(!if_modified_since(&headers, modified));
+
+        headers.remove(header::IF_MODIFIED_SINCE);
+        headers.append(
+            header::IF_UNMODIFIED_SINCE,
+            HeaderValue::from_static("Thu, 01 Jan 1970 00:00:05 GMT"),
+        );
+        headers.append(
+            header::IF_UNMODIFIED_SINCE,
+            HeaderValue::from_static("Thu, 01 Jan 1970 00:00:20 GMT"),
+        );
+        assert!(!if_unmodified_since_failed(&headers, modified));
+    }
+
+    #[test]
+    fn repeated_if_range_fields_cause_a_full_response() {
+        let mut headers = HeaderMap::new();
+        headers.append(header::IF_RANGE, HeaderValue::from_static("\"current\""));
+        headers.append(
+            header::IF_RANGE,
+            HeaderValue::from_static("Thu, 01 Jan 1970 00:00:20 GMT"),
+        );
+        let modified = time::OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(10);
+
+        assert!(!if_range_matches(
+            &headers,
+            Some("\"current\""),
+            Some(modified)
+        ));
     }
 }

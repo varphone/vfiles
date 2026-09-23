@@ -1186,6 +1186,22 @@ async fn file_content_and_download_support_range_requests() {
     assert_eq!(current_date_if_range.status(), StatusCode::PARTIAL_CONTENT);
     assert_eq!(response_bytes(current_date_if_range).await.as_ref(), b"01");
 
+    let future_date_if_range = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range.txt")
+                .header(header::RANGE, "bytes=0-1")
+                .header(header::IF_RANGE, "Sat, 01 Jan 2050 00:00:00 GMT")
+                .body(Body::empty())
+                .expect("future date If-Range request should build"),
+        )
+        .await;
+    assert_eq!(future_date_if_range.status(), StatusCode::OK);
+    assert_eq!(
+        response_bytes(future_date_if_range).await.as_ref(),
+        b"0123456789"
+    );
+
     let stale_date_if_range = app
         .request_as_admin(
             Request::builder()
