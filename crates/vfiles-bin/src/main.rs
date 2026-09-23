@@ -1288,7 +1288,9 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
             &config.rsync,
             Arc::clone(&entry_repo_arc),
             Arc::clone(&ftp_workspace),
+            upload_service.clone(),
             default_namespace_id,
+            default_actor_user_id,
             service_shutdown_rx.clone(),
         );
     } else {
@@ -1751,11 +1753,20 @@ impl s3s::auth::S3Auth for EnvAuth {
 /// r9：数据源 = 默认命名空间条目树（与 WebDAV/S3 同源 `entry_repo`），按请求路径/递归深度
 /// 由 `vfiles_rsync::collect_flat` 枚举后交协议层编码。
 /// r10：文件内容经 `workspace.read_file_bytes` 读取（与 WebDAV/S3 同源 blob 链）。
+type RsyncUploadService = vfiles_app::UploadService<
+    vfiles_infra_sqlite::SqliteEntryRepo,
+    vfiles_infra_sqlite::SqliteSnapshotRepo,
+    vfiles_infra_sqlite::FsBlobStore,
+    vfiles_infra_sqlite::FsUploadStore,
+>;
+
 fn build_and_spawn_rsync(
     cfg: &vfiles_config::RsyncConfig,
     entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
     workspace: std::sync::Arc<vfiles_app::DefaultWorkspaceService>,
+    upload: RsyncUploadService,
     namespace: vfiles_domain::NamespaceId,
+    owner: vfiles_domain::UserId,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     let addr = cfg.bind_address();
@@ -1775,6 +1786,7 @@ fn build_and_spawn_rsync(
                                 let module = module.clone();
                                 let repo = std::sync::Arc::clone(&entry_repo);
                                 let ws = std::sync::Arc::clone(&workspace);
+                                let upload = upload.clone();
                                 let ns = namespace;
                                 tokio::spawn(async move {
                                     let res = vfiles_rsync::handle_conn(
@@ -1797,6 +1809,47 @@ fn build_and_spawn_rsync(
                                                     .await
                                                     .map_err(|e| e.to_string())?;
                                                 Ok(content.bytes)
+                                            }
+                                        },
+                                        move |path: String, data: Vec<u8>| {
+                                            let upload = upload.clone();
+                                            async move {
+                                                let (parent_str, filename) =
+                                                    match path.rsplit_once('/') {
+                                                        Some((d, n)) => (d.to_string(), n.to_string()),
+                                                        None => (String::new(), path.clone()),
+                                                    };
+                                                let filename = if filename.is_empty() {
+                                                    "upload".to_string()
+                                                } else {
+                                                    filename
+                                                };
+                                                let parent = vfiles_domain::NormalizedPath::new(
+                                                    &parent_str,
+                                                )
+                                                .map_err(|e| e.to_string())?;
+                                                let session = upload
+                                                    .init_upload(
+                                                        &ns,
+                                                        &parent,
+                                                        &filename,
+                                                        data.len() as u64,
+                                                        None,
+                                                        None,
+                                                        &owner,
+                                                    )
+                                                    .await
+                                                    .map_err(|e| e.to_string())?;
+                                                upload
+                                                    .complete_upload_from_stream(
+                                                        &session.upload_id,
+                                                        None,
+                                                        Some("rsync push"),
+                                                        Box::new(std::io::Cursor::new(data)),
+                                                    )
+                                                    .await
+                                                    .map_err(|e| e.to_string())?;
+                                                Ok(())
                                             }
                                         },
                                     )

@@ -58,6 +58,8 @@ const NDX_DONE: i32 = -1;
 const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11;
 const ITEM_XNAME_FOLLOWS: u16 = 1 << 12;
 const ITEM_TRANSFER: u16 = 1 << 15;
+/// ITEM_IS_NEW（新文件标记 ✗ push 请求用）。
+const ITEM_IS_NEW: u16 = 1 << 13;
 /// MSG_NO_SEND（rsync.h msgcode ✗ 文件读取失败时通知接收端）。
 const MSG_NO_SEND: u8 = 102;
 /// 字面量分块（rsync.h `CHUNK_SIZE`）。
@@ -627,6 +629,159 @@ where
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// 从解复用流读 1 字节。
+async fn data_byte<S>(rw: &mut BufReader<S>, pending: &mut Vec<u8>) -> std::io::Result<u8>
+where
+    S: AsyncRead + Unpin,
+{
+    Ok(data_take(rw, pending, 1).await?[0])
+}
+
+/// `io.c:int_byte_extra` 表（varint/varlong 首字节的高位前缀长度）。
+fn int_byte_extra(ch: u8) -> usize {
+    match ch {
+        0x00..=0x7F => 0,
+        0x80..=0xBF => 1,
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        0xF8..=0xFB => 5,
+        _ => 6,
+    }
+}
+
+/// varint 读（io.c `read_varint` 移植 ✗ push 收 flist 用）。
+async fn data_varint<S>(rw: &mut BufReader<S>, pending: &mut Vec<u8>) -> std::io::Result<i32>
+where
+    S: AsyncRead + Unpin,
+{
+    let ch = data_byte(rw, pending).await?;
+    let extra = int_byte_extra(ch);
+    let mut b = [0u8; 5];
+    if extra > 0 {
+        let bytes = data_take(rw, pending, extra).await?;
+        b[..extra].copy_from_slice(&bytes);
+        let bit: u8 = 1u8 << (8 - extra);
+        b[extra] = ch & (bit - 1);
+    } else {
+        b[0] = ch;
+    }
+    Ok(i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+}
+
+/// varlong(min) 读（io.c `read_varlong` 移植）。
+async fn data_varlong<S>(
+    rw: &mut BufReader<S>,
+    pending: &mut Vec<u8>,
+    min: usize,
+) -> std::io::Result<i64>
+where
+    S: AsyncRead + Unpin,
+{
+    let b2 = data_take(rw, pending, min).await?;
+    let mut u = [0u8; 9];
+    u[..min - 1].copy_from_slice(&b2[1..min]);
+    let ctrl = b2[0];
+    let extra = int_byte_extra(ctrl);
+    if extra > 0 {
+        let bytes = data_take(rw, pending, extra).await?;
+        u[min - 1..min - 1 + extra].copy_from_slice(&bytes);
+        let bit: u8 = 1u8 << (8 - extra);
+        u[min - 1 + extra] = ctrl & (bit - 1);
+    } else {
+        u[min - 1] = ctrl;
+    }
+    let mut v = [0u8; 8];
+    v.copy_from_slice(&u[..8]);
+    Ok(i64::from_le_bytes(v))
+}
+
+/// 接收客户端发来的 flist（recv_file_entry 逐字段逆序 ✗ `lastname` 前缀压缩重建）。
+pub async fn recv_file_list<S>(
+    rw: &mut BufReader<S>,
+    pending: &mut Vec<u8>,
+    varint_flags: bool,
+) -> std::io::Result<Vec<FlatEntry>>
+where
+    S: AsyncRead + Unpin,
+{
+    let mut out = Vec::new();
+    let mut lastname = String::new();
+    let mut last_mode: u32 = 0;
+    let mut last_mtime: i64 = 0;
+    loop {
+        let x: u32 = if varint_flags {
+            data_varint(rw, pending).await? as u32
+        } else {
+            let b0 = data_byte(rw, pending).await? as u32;
+            if b0 == 0 {
+                0
+            } else if b0 & 0x04 != 0 {
+                b0 | ((data_byte(rw, pending).await? as u32) << 8)
+            } else {
+                b0
+            }
+        };
+        if x == 0 {
+            if varint_flags {
+                let _io_error = data_varint(rw, pending).await?;
+            }
+            break;
+        }
+        let l1 = if x & 0x20 != 0 {
+            data_byte(rw, pending).await? as usize
+        } else {
+            0
+        };
+        let l2 = if x & 0x40 != 0 {
+            data_varint(rw, pending).await? as usize
+        } else {
+            data_byte(rw, pending).await? as usize
+        };
+        let suffix = data_take(rw, pending, l2).await?;
+        let mut name_bytes = lastname
+            .as_bytes()
+            .get(..l1.min(lastname.len()))
+            .unwrap_or_default()
+            .to_vec();
+        name_bytes.extend_from_slice(&suffix);
+        let name = String::from_utf8_lossy(&name_bytes).into_owned();
+        lastname = name.clone();
+
+        let size = data_varlong(rw, pending, 3).await?.max(0) as u64;
+        let mtime = if x & 0x80 == 0 {
+            data_varlong(rw, pending, 4).await?
+        } else {
+            last_mtime
+        };
+        last_mtime = mtime;
+        if x & (1 << 13) != 0 {
+            let _nsec = data_varint(rw, pending).await?;
+        }
+        let mode = if x & 0x02 == 0 {
+            data_int(rw, pending).await? as u32
+        } else {
+            last_mode
+        };
+        last_mode = mode;
+        let file_type = mode & 0o170000;
+        if file_type == 0o120000 {
+            // 符号链接：读走 target（不请求传输 = 记档债）
+            let l = data_varint(rw, pending).await?.max(0) as usize;
+            let _target = data_take(rw, pending, l).await?;
+        }
+        out.push(FlatEntry {
+            name,
+            is_dir: file_type == 0o040000,
+            size,
+            mtime,
+            mode,
+            fs_path: String::new(),
+        });
+    }
+    Ok(out)
+}
+
 /// 文件内容 MD5（真机实证：rsync 整文件校验和 = `MD5(内容)`，**不含 seed** ✗ 见 golden r9）。
 pub fn md5_digest(data: &[u8]) -> [u8; 16] {
     use md5::{Digest, Md5};
@@ -787,11 +942,12 @@ where
 ///
 /// - `list`：sender 模式解析完 args 后调用一次，返回该请求的条目流。
 /// - `read_file`：接收端请求某条目内容时按 `FlatEntry.fs_path` 调用（可多次）。
-pub async fn handle_conn<S, F, Fut, R, RFut>(
+pub async fn handle_conn<S, F, Fut, R, RFut, W, WFut>(
     stream: S,
     module: &str,
     list: F,
     read_file: R,
+    write_file: W,
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -799,6 +955,8 @@ where
     Fut: Future<Output = Result<Vec<FlatEntry>, String>>,
     R: Fn(&str) -> RFut,
     RFut: Future<Output = Result<Vec<u8>, String>>,
+    W: Fn(String, Vec<u8>) -> WFut,
+    WFut: Future<Output = Result<(), String>>,
 {
     let mut rw = BufReader::new(stream);
 
@@ -840,12 +998,6 @@ where
     let segs = read_arg_segments(&mut rw).await?;
     let args = parse_args(&segs);
 
-    if !args.is_sender {
-        // 收端（push）尚未支持：模块只读。给出协议级错误后关闭。
-        tracing::warn!("rsync：收到 push 请求，但模块当前只读（未实现收端）");
-        return Ok(());
-    }
-
     // ④ setup_protocol：compat_flags → 协商字符串 → checksum_seed
     let compat = compute_compat(&args.client_info);
     let negotiated = compat & CF_VARINT_FLIST_FLAGS != 0;
@@ -868,172 +1020,258 @@ where
     let seed = make_seed();
     write_raw(&mut rw, &seed.to_le_bytes()).await?;
 
-    // ⑤ 多路复用输入开启：filter list（官方 recv_filter_list：int len + 规则，0 终结）
+    // 解复用输入缓冲（sender/receiver 两径共用）
     let mut pending: Vec<u8> = Vec::new();
-    loop {
-        let b = data_take(&mut rw, &mut pending, 4).await?;
-        let len = i32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-        if len == 0 {
-            break;
-        }
-        if !(0..=64 * 1024).contains(&len) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "rsync: 非法 filter 规则长度",
-            ));
-        }
-        let _rule = data_take(&mut rw, &mut pending, len as usize).await?;
-    }
-
-    // ⑥ flist：收集 → 按 rsync 序排序（ndx 对齐）→ 编码 → 发送
-    let req = ListRequest {
-        recursive: args.recursive,
-        path: module_path(&args.paths, module),
-    };
-    let mut entries = match list(req).await {
-        Ok(entries) => entries,
-        Err(err) => {
-            tracing::warn!(error = %err, "rsync：列举失败，回空清单");
-            vec![FlatEntry::dir(".", now_unix())]
-        }
-    };
-    sort_flist(&mut entries);
-    let flist = encode_flist(&entries, negotiated);
-    let total_size: u64 = entries.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
-    write_msg(&mut rw, &flist).await?;
-
-    // ⑦ send_files：读接收端请求（ndx + iflags[+basis/xname] + sum_head[+块校验和]）→
-    //    回显 + 全 literal 数据 + MD5；NDX_DONE 走相位机（3 入 → 2 出 + 终结）。
-    let mut phase = 0u32;
-    let mut rp = (-1i32, 1i32); // read_ndx 差分态
-    let mut wp = (-1i32, 1i32); // write_ndx 差分态
-    loop {
-        let ndx = read_ndx(&mut rw, &mut pending, &mut rp.0, &mut rp.1).await?;
-        if ndx == NDX_DONE {
-            phase += 1;
-            if phase > 2 {
+    if args.is_sender {
+        // ⑤ filter list（官方 recv_filter_list：int len + 规则，0 终结）
+        loop {
+            let b = data_take(&mut rw, &mut pending, 4).await?;
+            let len = i32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+            if len == 0 {
                 break;
             }
-            let mut out = Vec::new();
-            write_ndx(NDX_DONE, &mut wp.0, &mut wp.1, &mut out);
-            write_msg(&mut rw, &out).await?;
-            continue;
-        }
-        if ndx < 0 {
-            tracing::warn!(ndx = ndx, "rsync：未预期的负索引，结束会话");
-            break;
-        }
-
-        // 请求属性
-        let iflags = data_shortint(&mut rw, &mut pending).await?;
-        let mut basis_type = 0u8;
-        if iflags & ITEM_BASIS_TYPE_FOLLOWS != 0 {
-            basis_type = data_take(&mut rw, &mut pending, 1).await?[0];
-        }
-        let xname = if iflags & ITEM_XNAME_FOLLOWS != 0 {
-            data_vstring(&mut rw, &mut pending).await?
-        } else {
-            String::new()
-        };
-
-        // 仅 ITEM_TRANSFER 才读接收端 sum_head + 块校验和（官方 send_files 同分支顺序）
-        let transferring = iflags & ITEM_TRANSFER != 0;
-        let (count, blength, s2length, remainder, blocks) = if transferring {
-            let c = data_int(&mut rw, &mut pending).await?;
-            let bl = data_int(&mut rw, &mut pending).await?;
-            let s2 = data_int(&mut rw, &mut pending).await?;
-            let rem = data_int(&mut rw, &mut pending).await?;
-            if !(0..=16 * 1024 * 1024).contains(&c) || !(0..=64).contains(&s2) {
+            if !(0..=64 * 1024).contains(&len) {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    "rsync: 非法 sum_head",
+                    "rsync: 非法 filter 规则长度",
                 ));
             }
-            // 块校验和（弱 sum1 int32 + 强 sum2 s2length ✗ 真 delta 匹配用）
-            let mut blocks = Vec::with_capacity(c as usize);
-            for i in 0..c {
-                let sum1 = data_int(&mut rw, &mut pending).await? as u32;
-                let sum2 = data_take(&mut rw, &mut pending, s2 as usize).await?;
-                let blen = if i == c - 1 && rem != 0 {
-                    rem as u32
-                } else {
-                    bl as u32
-                };
-                blocks.push(BlockSum {
-                    sum1,
-                    sum2,
-                    len: blen,
-                });
-            }
-            (c, bl, s2, rem, blocks)
-        } else {
-            (0, 0, 0, 0, Vec::new())
+            let _rule = data_take(&mut rw, &mut pending, len as usize).await?;
+        }
+
+        // ⑥ flist：收集 → 按 rsync 序排序（ndx 对齐）→ 编码 → 发送
+        let req = ListRequest {
+            recursive: args.recursive,
+            path: module_path(&args.paths, module),
         };
+        let mut entries = match list(req).await {
+            Ok(entries) => entries,
+            Err(err) => {
+                tracing::warn!(error = %err, "rsync：列举失败，回空清单");
+                vec![FlatEntry::dir(".", now_unix())]
+            }
+        };
+        sort_flist(&mut entries);
+        let flist = encode_flist(&entries, negotiated);
+        let total_size: u64 = entries.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
+        write_msg(&mut rw, &flist).await?;
 
-        // 回显 ndx+attrs（+ sum_head 回显）与数据
-        let mut out = Vec::new();
-        write_ndx(ndx, &mut wp.0, &mut wp.1, &mut out);
-        out.extend_from_slice(&iflags.to_le_bytes());
-        if iflags & ITEM_BASIS_TYPE_FOLLOWS != 0 {
-            out.push(basis_type);
-        }
-        if iflags & ITEM_XNAME_FOLLOWS != 0 {
-            write_vstring(&xname, &mut out);
-        }
-
-        if transferring {
-            out.extend_from_slice(&count.to_le_bytes());
-            out.extend_from_slice(&blength.to_le_bytes());
-            out.extend_from_slice(&s2length.to_le_bytes());
-            out.extend_from_slice(&remainder.to_le_bytes());
-
-            let entry = entries.get(ndx as usize);
-            let fs_path = entry.map(|e| e.fs_path.clone()).unwrap_or_default();
-            match read_file(&fs_path).await {
-                Ok(data) => {
-                    // count>0 = 有 basis → 真 delta（弱 sum1 滚动 + 强 sum2 前缀匹配）；
-                    // 否则整文件 literal（无 basis 的常规路径）
-                    if blocks.is_empty() || blength <= 0 {
-                        emit_literal(&mut out, &data);
-                        out.extend_from_slice(&0i32.to_le_bytes()); // token 终结
-                    } else {
-                        let tokens = build_delta_tokens(
-                            &data,
-                            &blocks,
-                            blength as u32,
-                            seed,
-                            s2length as usize,
-                        );
-                        out.extend_from_slice(&tokens);
-                    }
-                    out.extend_from_slice(&md5_digest(&data)); // 文件校验和（无 seed ✗ 真机实证）
+        // ⑦ send_files：读接收端请求（ndx + iflags[+basis/xname] + sum_head[+块校验和]）→
+        //    回显 + 全 literal 数据 + MD5；NDX_DONE 走相位机（3 入 → 2 出 + 终结）。
+        let mut phase = 0u32;
+        let mut rp = (-1i32, 1i32); // read_ndx 差分态
+        let mut wp = (-1i32, 1i32); // write_ndx 差分态
+        loop {
+            let ndx = read_ndx(&mut rw, &mut pending, &mut rp.0, &mut rp.1).await?;
+            if ndx == NDX_DONE {
+                phase += 1;
+                if phase > 2 {
+                    break;
                 }
-                Err(err) => {
-                    tracing::warn!(path = %fs_path, error = %err, "rsync：文件读取失败，回 MSG_NO_SEND");
-                    let mut msg = Vec::new();
-                    msg.extend_from_slice(&(ndx as i32).to_le_bytes());
-                    write_msg(&mut rw, &mux_frame_tagged(&msg, MSG_NO_SEND)).await?;
-                    continue;
+                let mut out = Vec::new();
+                write_ndx(NDX_DONE, &mut wp.0, &mut wp.1, &mut out);
+                write_msg(&mut rw, &out).await?;
+                continue;
+            }
+            if ndx < 0 {
+                tracing::warn!(ndx = ndx, "rsync：未预期的负索引，结束会话");
+                break;
+            }
+
+            // 请求属性
+            let iflags = data_shortint(&mut rw, &mut pending).await?;
+            let mut basis_type = 0u8;
+            if iflags & ITEM_BASIS_TYPE_FOLLOWS != 0 {
+                basis_type = data_take(&mut rw, &mut pending, 1).await?[0];
+            }
+            let xname = if iflags & ITEM_XNAME_FOLLOWS != 0 {
+                data_vstring(&mut rw, &mut pending).await?
+            } else {
+                String::new()
+            };
+
+            // 仅 ITEM_TRANSFER 才读接收端 sum_head + 块校验和（官方 send_files 同分支顺序）
+            let transferring = iflags & ITEM_TRANSFER != 0;
+            let (count, blength, s2length, remainder, blocks) = if transferring {
+                let c = data_int(&mut rw, &mut pending).await?;
+                let bl = data_int(&mut rw, &mut pending).await?;
+                let s2 = data_int(&mut rw, &mut pending).await?;
+                let rem = data_int(&mut rw, &mut pending).await?;
+                if !(0..=16 * 1024 * 1024).contains(&c) || !(0..=64).contains(&s2) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "rsync: 非法 sum_head",
+                    ));
+                }
+                // 块校验和（弱 sum1 int32 + 强 sum2 s2length ✗ 真 delta 匹配用）
+                let mut blocks = Vec::with_capacity(c as usize);
+                for i in 0..c {
+                    let sum1 = data_int(&mut rw, &mut pending).await? as u32;
+                    let sum2 = data_take(&mut rw, &mut pending, s2 as usize).await?;
+                    let blen = if i == c - 1 && rem != 0 {
+                        rem as u32
+                    } else {
+                        bl as u32
+                    };
+                    blocks.push(BlockSum {
+                        sum1,
+                        sum2,
+                        len: blen,
+                    });
+                }
+                (c, bl, s2, rem, blocks)
+            } else {
+                (0, 0, 0, 0, Vec::new())
+            };
+
+            // 回显 ndx+attrs（+ sum_head 回显）与数据
+            let mut out = Vec::new();
+            write_ndx(ndx, &mut wp.0, &mut wp.1, &mut out);
+            out.extend_from_slice(&iflags.to_le_bytes());
+            if iflags & ITEM_BASIS_TYPE_FOLLOWS != 0 {
+                out.push(basis_type);
+            }
+            if iflags & ITEM_XNAME_FOLLOWS != 0 {
+                write_vstring(&xname, &mut out);
+            }
+
+            if transferring {
+                out.extend_from_slice(&count.to_le_bytes());
+                out.extend_from_slice(&blength.to_le_bytes());
+                out.extend_from_slice(&s2length.to_le_bytes());
+                out.extend_from_slice(&remainder.to_le_bytes());
+
+                let entry = entries.get(ndx as usize);
+                let fs_path = entry.map(|e| e.fs_path.clone()).unwrap_or_default();
+                match read_file(&fs_path).await {
+                    Ok(data) => {
+                        // count>0 = 有 basis → 真 delta（弱 sum1 滚动 + 强 sum2 前缀匹配）；
+                        // 否则整文件 literal（无 basis 的常规路径）
+                        if blocks.is_empty() || blength <= 0 {
+                            emit_literal(&mut out, &data);
+                            out.extend_from_slice(&0i32.to_le_bytes()); // token 终结
+                        } else {
+                            let tokens = build_delta_tokens(
+                                &data,
+                                &blocks,
+                                blength as u32,
+                                seed,
+                                s2length as usize,
+                            );
+                            out.extend_from_slice(&tokens);
+                        }
+                        out.extend_from_slice(&md5_digest(&data)); // 文件校验和（无 seed ✗ 真机实证）
+                    }
+                    Err(err) => {
+                        tracing::warn!(path = %fs_path, error = %err, "rsync：文件读取失败，回 MSG_NO_SEND");
+                        let mut msg = Vec::new();
+                        msg.extend_from_slice(&(ndx as i32).to_le_bytes());
+                        write_msg(&mut rw, &mux_frame_tagged(&msg, MSG_NO_SEND)).await?;
+                        continue;
+                    }
                 }
             }
+            write_msg(&mut rw, &out).await?;
         }
-        write_msg(&mut rw, &out).await?;
+        let mut done = Vec::new();
+        write_ndx(NDX_DONE, &mut wp.0, &mut wp.1, &mut done);
+        write_msg(&mut rw, &done).await?;
+
+        let mut stats = Vec::new();
+        write_varlong(3, 0, &mut stats); // total_read
+        write_varlong(3, flist.len() as i64, &mut stats); // total_written（近似）
+        write_varlong(3, total_size as i64, &mut stats);
+        write_varlong(3, 1, &mut stats); // flist_buildtime
+        write_varlong(3, 0, &mut stats); // flist_xfertime
+        write_msg(&mut rw, &stats).await?;
+
+        // 最后一个 NDX_DONE 问候（官方 read_final_goodbye 协议 30 分支）
+        let _ = read_ndx(&mut rw, &mut pending, &mut rp.0, &mut rp.1).await?;
+        Ok(())
+    } else {
+        // ── push：客户端为 sender、本端为接收端（整文件接收 ✗ sum_head 全零不请求 delta）──
+        let base = module_path(&args.paths, module);
+        let mut entries = recv_file_list(&mut rw, &mut pending, negotiated).await?;
+        sort_flist(&mut entries);
+        let mut rp = (-1i32, 1i32); // read_ndx 差分态
+        let mut wp = (-1i32, 1i32); // write_ndx 差分态
+        let mut transferred = 0usize;
+        let to = std::time::Duration::from_secs(15);
+        for (i, e) in entries.iter().enumerate() {
+            if e.is_dir || (e.mode & 0o170000) != 0o100000 || e.name == "." {
+                continue;
+            }
+            // 请求整文件（无 basis：count/blength/s2length/remainder 全零）
+            let mut req = Vec::new();
+            write_ndx(i as i32, &mut wp.0, &mut wp.1, &mut req);
+            req.extend_from_slice(&(ITEM_TRANSFER | ITEM_IS_NEW).to_le_bytes());
+            req.extend_from_slice(&[0u8; 16]);
+            write_msg(&mut rw, &req).await?;
+
+            // 应答：ndx 回显 + iflags + sum_head 回显
+            let ndx = match tokio::time::timeout(
+                to,
+                read_ndx(&mut rw, &mut pending, &mut rp.0, &mut rp.1),
+            )
+            .await
+            {
+                Ok(Ok(v)) => v,
+                _ => break,
+            };
+            if ndx != i as i32 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("rsync push: 索引错位 {ndx} != {i}"),
+                ));
+            }
+            let _iflags = data_shortint(&mut rw, &mut pending).await?;
+            for _ in 0..4 {
+                let _ = data_int(&mut rw, &mut pending).await?;
+            }
+            // token 流（count=0 → 客户端全 literal）
+            let mut data = Vec::new();
+            loop {
+                let t = data_int(&mut rw, &mut pending).await?;
+                if t == 0 {
+                    break;
+                }
+                if t < 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "rsync push: 非预期匹配 token（未提供 basis）",
+                    ));
+                }
+                let chunk = data_take(&mut rw, &mut pending, t as usize).await?;
+                data.extend_from_slice(&chunk);
+            }
+            // 文件校验和（协商 md5 = 16B；读走以推进流）
+            let _file_sum = data_take(&mut rw, &mut pending, 16).await?;
+            let full = if base.is_empty() {
+                e.name.clone()
+            } else {
+                format!("{base}/{}", e.name)
+            };
+            match write_file(full.clone(), data).await {
+                Ok(()) => transferred += 1,
+                Err(err) => tracing::warn!(path = %full, error = %err, "rsync push：写入失败"),
+            }
+        }
+        // 相位收尾（客户端 sender：2 答 + 终结；本端 4 出 / 3 入 ✗ 超时防挂）
+        for round in 0..4 {
+            let mut d = Vec::new();
+            write_ndx(NDX_DONE, &mut wp.0, &mut wp.1, &mut d);
+            write_msg(&mut rw, &d).await?;
+            if round < 3
+                && tokio::time::timeout(to, read_ndx(&mut rw, &mut pending, &mut rp.0, &mut rp.1))
+                    .await
+                    .is_err()
+            {
+                break;
+            }
+        }
+        tracing::info!(files = transferred, "rsync push 完成");
+        Ok(())
     }
-    let mut done = Vec::new();
-    write_ndx(NDX_DONE, &mut wp.0, &mut wp.1, &mut done);
-    write_msg(&mut rw, &done).await?;
-
-    let mut stats = Vec::new();
-    write_varlong(3, 0, &mut stats); // total_read
-    write_varlong(3, flist.len() as i64, &mut stats); // total_written（近似）
-    write_varlong(3, total_size as i64, &mut stats);
-    write_varlong(3, 1, &mut stats); // flist_buildtime
-    write_varlong(3, 0, &mut stats); // flist_xfertime
-    write_msg(&mut rw, &stats).await?;
-
-    // 最后一个 NDX_DONE 问候（官方 read_final_goodbye 协议 30 分支）
-    let _ = read_ndx(&mut rw, &mut pending, &mut rp.0, &mut rp.1).await?;
-    Ok(())
 }
 
 /// 带指定 msgcode 的 mux 帧（`[len3, MPLEX_BASE+code] + payload`）。
@@ -1340,6 +1578,7 @@ mod tests {
                 "files",
                 |_| async { Ok(Vec::new()) },
                 |_p: &str| async { Ok(Vec::new()) },
+                |_p: String, _d: Vec<u8>| async { Ok(()) },
             )
             .await
             .unwrap()
@@ -1391,6 +1630,7 @@ mod tests {
                     async move { Ok(e) }
                 },
                 |_p: &str| async { Ok(Vec::new()) },
+                |_p: String, _d: Vec<u8>| async { Ok(()) },
             )
             .await
             .unwrap()
@@ -1530,6 +1770,7 @@ mod tests {
                     let d = server_content.clone();
                     async move { Ok(d) }
                 },
+                |_p: String, _d: Vec<u8>| async { Ok(()) },
             )
             .await
             .unwrap()
@@ -1638,6 +1879,57 @@ mod tests {
                 0x7f, 0x72
             ]
         );
+    }
+
+    /// wire 读端与写端互逆（varint / varlong ✗ push 收 flist 前置）。
+    #[tokio::test]
+    async fn wire_readers_invert_writers() {
+        for v in [0i32, 1, 0x19, 0x9A, 0x1FE, 0x7FFF, 1 << 20] {
+            let mut enc = Vec::new();
+            write_varint(v, &mut enc);
+            let (mut c, srv) = tokio::io::duplex(64);
+            c.write_all(&mux_frame(&enc)).await.unwrap();
+            c.shutdown().await.unwrap();
+            let mut rw = BufReader::new(srv);
+            let mut pending = Vec::new();
+            assert_eq!(data_varint(&mut rw, &mut pending).await.unwrap(), v);
+        }
+        for v in [0i64, 6, 4096, 0x6AB3A68C, 0x1234567] {
+            let mut enc = Vec::new();
+            write_varlong(3, v, &mut enc);
+            let (mut c, srv) = tokio::io::duplex(64);
+            c.write_all(&mux_frame(&enc)).await.unwrap();
+            c.shutdown().await.unwrap();
+            let mut rw = BufReader::new(srv);
+            let mut pending = Vec::new();
+            assert_eq!(data_varlong(&mut rw, &mut pending, 3).await.unwrap(), v);
+        }
+    }
+
+    /// flist 编解码互逆（encode_flist → recv_file_list ✗ push 收端解码器）。
+    #[tokio::test]
+    async fn flist_encode_recv_roundtrip() {
+        let entries = vec![
+            FlatEntry::dir(".", 1),
+            FlatEntry::file("a.txt", 5, 2),
+            FlatEntry::dir("sub", 2),
+            FlatEntry::file("sub/b.txt", 7, 2),
+            FlatEntry::file("中文名.txt", 9, 3),
+        ];
+        let encoded = encode_flist(&entries, true);
+        let (mut c, srv) = tokio::io::duplex(64 * 1024);
+        c.write_all(&mux_frame(&encoded)).await.unwrap();
+        c.shutdown().await.unwrap();
+        let mut rw = BufReader::new(srv);
+        let mut pending = Vec::new();
+        let got = recv_file_list(&mut rw, &mut pending, true).await.unwrap();
+        assert_eq!(got.len(), entries.len(), "条目数");
+        for (a, b) in got.iter().zip(entries.iter()) {
+            assert_eq!(a.name, b.name, "名字");
+            assert_eq!(a.is_dir, b.is_dir, "目录位");
+            assert_eq!(a.size, b.size, "大小");
+            assert_eq!(a.mode, b.mode, "mode");
+        }
     }
 
     /// 弱/强校验和与真机转录逐位同（官方 daemon md5 + 200000B 模式文件第 0 块）。

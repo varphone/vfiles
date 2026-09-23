@@ -1,4 +1,30 @@
-# rsync 协议 daemon（r2 选型 → r9 列清单 → r10 整文件下载 → **r11 真 delta** ✗ push r12）
+# rsync 协议 daemon（r9 列 → r10 取 → r11 delta → **r12 push 双向闭环** ✗ 认证/收端 delta 待办）
+
+## 状态（r12 末 · push 打通 = rsync 双向可用 ✗ 推→列→拉 `diff -r` 全同）
+
+- **实装**（`crates/vfiles-rsync/src/lib.rs`）：
+  - `recv_file_list` = `recv_file_entry` 逆序解码（xflags varint → `lastname` 前缀压缩重建 →
+    length/mtime/mode/symlink ✗ `lastname`/`last_mode`/`last_mtime` 差分态）
+  - wire 读端 `data_varint`/`data_varlong`/`data_byte`/`int_byte_extra`（io.c 移植）
+  - `handle_conn` 第五参 **`write_file` 闭包**（bin 接 `UploadService`：init + complete_from_stream）
+  - `if args.is_sender { download } else { push }` 双径（push 不读 filter list、收 flist、发请求、
+    收 literal token 流 + MD5、超时防挂收尾）
+- **关键点**：push 的 **ndx = 排序后下标**（复用 `sort_flist` ✗ 不收端排序会请求错文件）；
+  请求 `sum_head` 全零 → 客户端**全 literal**（收端不做 delta）。
+- **真机验收（推 → 列 → 拉 → `diff -r`）**：
+  | 场景 | 结果 |
+  | --- | --- |
+  | `rsync -r /tmp/src/ …/files/push1/` | RC0 + 日志 `rsync push 完成 files=3` |
+  | 推后 `--list-only` | `. / a.txt / tiny.txt / sub`（tree 正确） |
+  | 推后拉回 + `diff -r /tmp/src` | **IDENTICAL** |
+  | 3MiB 随机 + 深嵌套 + UTF-8 名 → 拉回 `cmp` | 3/3 逐字节同 |
+  | 重复推送（幂等） | RC0 |
+  | 推后该文件下载 `-I`（r11 delta 回归） | Literal 1,768 / Matched 3,143,960 + 重建正确 |
+- **门禁**：`cargo test -p vfiles-rsync` **18/18**（新增 wire 读写互逆、flist 编解码互逆）·
+  workspace 全绿 · clippy 归零 · fmt · bin build。
+- **入档** `golden/push_wire_r12.md`（双径对照 + 解码序 + 请求/应答帧）。
+- **债（明确）**：收端**无 delta**（恒整文件）· 不比较 mtime/size（等价 `-I`）· 符号链接/设备/硬链接
+  不落地 · 空目录不创建 · **无认证（匿名可写）** · `--delete` 推送未支持。
 
 ## 状态（r11 末 · 真 delta 落地 = 增量重建逐字节正确 ✗ 弱 sum1 + 强 sum2 全实证）
 
