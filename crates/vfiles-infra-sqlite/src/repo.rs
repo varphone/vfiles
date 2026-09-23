@@ -2303,6 +2303,58 @@ impl EntryRepo for SqliteEntryRepo {
         Ok(())
     }
 
+    async fn move_entries_with_property_changes(
+        &self,
+        moves: &[(EntryId, NormalizedPath)],
+        entry_id: &EntryId,
+        changes: &[vfiles_domain::EntryPropertyChange],
+    ) -> DomainResult<()> {
+        let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to begin move and property patch transaction: {e}"),
+        })?;
+        for (id, new_path) in moves {
+            sqlx::query("UPDATE entries SET path = ? WHERE id = ?")
+                .bind(new_path.as_str())
+                .bind(id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| match e {
+                    sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
+                        DomainError::PathConflict {
+                            message: format!("Path already exists: {}", new_path.as_str()),
+                        }
+                    }
+                    _ => DomainError::Internal {
+                        message: format!("Failed to move entry: {e}"),
+                    },
+                })?;
+        }
+        for change in changes {
+            match change {
+                vfiles_domain::EntryPropertyChange::Set { name, value } => {
+                    sqlx::query("INSERT INTO entry_properties (entry_id, prop_name, prop_value, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(entry_id, prop_name) DO UPDATE SET prop_value = excluded.prop_value, updated_at = excluded.updated_at")
+                        .bind(entry_id.to_string()).bind(name).bind(value).execute(&mut *tx).await
+                        .map_err(|e| DomainError::Internal { message: format!("Failed to set entry property in move patch: {e}") })?;
+                }
+                vfiles_domain::EntryPropertyChange::Remove { name } => {
+                    sqlx::query(
+                        "DELETE FROM entry_properties WHERE entry_id = ? AND prop_name = ?",
+                    )
+                    .bind(entry_id.to_string())
+                    .bind(name)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to remove entry property in move patch: {e}"),
+                    })?;
+                }
+            }
+        }
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to commit move and property patch transaction: {e}"),
+        })
+    }
+
     async fn replace_subtree_and_move(
         &self,
         namespace_id: &NamespaceId,

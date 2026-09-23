@@ -382,6 +382,17 @@ pub trait EntryRepo {
     async fn move_entry(&self, entry_id: &EntryId, new_path: &NormalizedPath) -> DomainResult<()>;
     /// 批量更新路径，在单个事务内执行，避免逐个提交。
     async fn move_entries(&self, moves: &[(EntryId, NormalizedPath)]) -> DomainResult<()>;
+    async fn move_entries_with_property_changes(
+        &self,
+        moves: &[(EntryId, NormalizedPath)],
+        entry_id: &EntryId,
+        changes: &[EntryPropertyChange],
+    ) -> DomainResult<()> {
+        let _ = (moves, entry_id, changes);
+        Err(DomainError::Internal {
+            message: "Atomic move and property patches are not supported by this repository".into(),
+        })
+    }
     /// Atomically delete a replacement subtree and apply the source path updates.
     /// Blob reference accounting and snapshot creation remain application-layer work.
     async fn replace_subtree_and_move(

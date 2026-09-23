@@ -1693,6 +1693,19 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
             .await
             .map(|_| ())
     }
+    async fn move_entry_with_property_changes(
+        &self,
+        ns: &vfiles_domain::NamespaceId,
+        from: &vfiles_domain::NormalizedPath,
+        to: &vfiles_domain::NormalizedPath,
+        uid: &vfiles_domain::UserId,
+        changes: &[vfiles_domain::EntryPropertyChange],
+    ) -> vfiles_domain::DomainResult<()> {
+        self.workspace
+            .move_entry_with_property_changes(ns, from, to, Some("WebDAV PROPPATCH"), uid, changes)
+            .await
+            .map(|_| ())
+    }
     async fn get_stream(
         &self,
         ns: &vfiles_domain::NamespaceId,

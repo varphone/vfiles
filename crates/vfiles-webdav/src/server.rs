@@ -1595,20 +1595,27 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             });
 
             if let Some(index) = rename_index {
-                if ops.len() != 1 {
-                    // Rename uses a separate workspace transaction. Reject mixed
-                    // property patches as a unit until the stores share one transaction.
+                if let Some(failed_index) = ops.iter().position(|op| match op {
+                    crate::response::PropOp::Set { name, .. } => {
+                        crate::response::is_predefined_readonly(name)
+                    }
+                    crate::response::PropOp::Remove { name } => {
+                        crate::response::is_predefined_readonly(name)
+                            || crate::response::is_dav_property(name, "displayname")
+                    }
+                }) {
                     results.extend(ops.into_iter().enumerate().map(|(i, op)| {
-                        let status = if i == index {
-                            crate::response::PropPatchStatus::Conflict
-                        } else {
-                            crate::response::PropPatchStatus::FailedDependency
-                        };
-                        (op, status)
+                        (
+                            op,
+                            if i == failed_index {
+                                crate::response::PropPatchStatus::Forbidden
+                            } else {
+                                crate::response::PropPatchStatus::FailedDependency
+                            },
+                        )
                     }));
                 } else {
-                    let op = ops.into_iter().next().expect("one rename operation");
-                    let crate::response::PropOp::Set { value, .. } = &op else {
+                    let crate::response::PropOp::Set { value, .. } = &ops[index] else {
                         unreachable!("rename index refers to a set operation")
                     };
                     let valid_name = !value.is_empty()
@@ -1625,7 +1632,31 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         };
                         match vfiles_domain::types::NormalizedPath::new(&new_rel) {
                             Ok(dest) => {
-                                match app_ref.write.move_entry(&ns, &path, &dest, &user.id).await {
+                                let changes: Vec<vfiles_domain::EntryPropertyChange> = ops
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(i, _)| *i != index)
+                                    .map(|(_, op)| match op {
+                                        crate::response::PropOp::Set { name, value } => {
+                                            vfiles_domain::EntryPropertyChange::Set {
+                                                name: name.clone(),
+                                                value: value.clone(),
+                                            }
+                                        }
+                                        crate::response::PropOp::Remove { name } => {
+                                            vfiles_domain::EntryPropertyChange::Remove {
+                                                name: name.clone(),
+                                            }
+                                        }
+                                    })
+                                    .collect();
+                                match app_ref
+                                    .write
+                                    .move_entry_with_property_changes(
+                                        &ns, &path, &dest, &user.id, &changes,
+                                    )
+                                    .await
+                                {
                                     Ok(()) => crate::response::PropPatchStatus::Ok,
                                     Err(error) => {
                                         tracing::warn!(%error, "WebDAV PROPPATCH displayname 改名失败");
@@ -1636,7 +1667,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                             Err(_) => crate::response::PropPatchStatus::Forbidden,
                         }
                     };
-                    results.push((op, status));
+                    results.extend(ops.into_iter().map(|op| (op, status)));
                 }
             } else if let Some(failed_index) = ops.iter().position(|op| match op {
                 crate::response::PropOp::Set { name, .. } => {

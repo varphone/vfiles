@@ -27,6 +27,7 @@ const PASSWORD: &str = "dav-password-1234";
 /// 测试写门面桩（e2e 覆盖读面 ✓ 写面 = r108' 单测已护 ✓ 桩实现空转）。
 struct NoopWrite {
     deletes: Arc<std::sync::atomic::AtomicUsize>,
+    entry_repo: Arc<SqliteEntryRepo>,
 }
 
 #[async_trait::async_trait]
@@ -86,6 +87,25 @@ impl WebdavWriteOps for NoopWrite {
         _overwrite: bool,
     ) -> vfiles_domain::DomainResult<()> {
         Ok(())
+    }
+    async fn move_entry_with_property_changes(
+        &self,
+        ns: &vfiles_domain::NamespaceId,
+        from: &NormalizedPath,
+        to: &NormalizedPath,
+        _uid: &vfiles_domain::types::UserId,
+        changes: &[vfiles_domain::EntryPropertyChange],
+    ) -> vfiles_domain::DomainResult<()> {
+        let entry = self
+            .entry_repo
+            .find_by_path(ns, from)
+            .await?
+            .ok_or_else(|| vfiles_domain::DomainError::NotFound {
+                resource: from.as_str().to_string(),
+            })?;
+        self.entry_repo
+            .move_entries_with_property_changes(&[(entry.id, to.clone())], &entry.id, changes)
+            .await
     }
     async fn delete_entry(
         &self,
@@ -168,6 +188,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         ))),
         write: Arc::new(NoopWrite {
             deletes: Arc::clone(&deletes),
+            entry_repo: entry_repo.clone(),
         }),
     };
     let router = vfiles_webdav::router_for_e2e(app.clone());
@@ -408,15 +429,14 @@ async fn options_advertises_and_propfind_needs_auth() {
             .to_vec(),
     )
     .unwrap();
-    assert!(mixed_rename_body.contains("409 Conflict"));
-    assert!(mixed_rename_body.contains("424 Failed Dependency"));
+    assert!(mixed_rename_body.contains("200 OK"));
 
     let mixed_rename_check = router
         .clone()
         .oneshot(
             axum::http::Request::builder()
                 .method("PROPFIND")
-                .uri("/persist.txt")
+                .uri("/renamed.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("depth", "0")
                 .header("content-type", "application/xml")
@@ -434,8 +454,8 @@ async fn options_advertises_and_propfind_needs_auth() {
             .to_vec(),
     )
     .unwrap();
-    assert!(mixed_check_body.contains("<D:displayname>persist.txt</D:displayname>"));
-    assert!(mixed_check_body.contains("404 Not Found"));
+    assert!(mixed_check_body.contains("<D:displayname>renamed.txt</D:displayname>"));
+    assert!(mixed_check_body.contains("must not persist"));
 
     // A separate WebDAV application instance sees the same SQLite-backed lock.
     let lock_body = r#"<?xml version="1.0"?>

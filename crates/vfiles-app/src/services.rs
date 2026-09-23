@@ -2331,6 +2331,7 @@ where
             user_id,
             dest_as_container,
             false,
+            None,
         )
         .await
     }
@@ -2352,6 +2353,29 @@ where
             user_id,
             false,
             overwrite,
+            None,
+        )
+        .await
+    }
+
+    pub async fn move_entry_with_property_changes(
+        &self,
+        namespace_id: &NamespaceId,
+        source: &NormalizedPath,
+        destination: &NormalizedPath,
+        message: Option<&str>,
+        user_id: &UserId,
+        changes: &[vfiles_domain::EntryPropertyChange],
+    ) -> DomainResult<MutationResult> {
+        self.move_entries_with_overwrite(
+            namespace_id,
+            std::slice::from_ref(source),
+            destination,
+            message,
+            user_id,
+            false,
+            false,
+            Some(changes),
         )
         .await
     }
@@ -2366,6 +2390,7 @@ where
         user_id: &UserId,
         dest_as_container: bool,
         overwrite_destination: bool,
+        property_changes: Option<&[vfiles_domain::EntryPropertyChange]>,
     ) -> DomainResult<MutationResult> {
         if sources.is_empty() {
             return Err(DomainError::Validation {
@@ -2494,7 +2519,20 @@ where
                 .replace_subtree_and_move(namespace_id, destination, &moves)
                 .await?
         } else {
-            self.entry_repo.move_entries(&moves).await?;
+            if let Some(changes) = property_changes {
+                let source_id = moving_entries
+                    .iter()
+                    .find(|(entry, _)| entry.path_norm == sources[0])
+                    .map(|(entry, _)| entry.id)
+                    .ok_or_else(|| DomainError::Internal {
+                        message: "Moved source entry is missing".into(),
+                    })?;
+                self.entry_repo
+                    .move_entries_with_property_changes(&moves, &source_id, changes)
+                    .await?;
+            } else {
+                self.entry_repo.move_entries(&moves).await?;
+            }
             (Vec::new(), Vec::new())
         };
         let mut deleted_snapshot_entries = Vec::with_capacity(replaced_entries.len());
