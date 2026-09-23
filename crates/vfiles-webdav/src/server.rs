@@ -1185,9 +1185,9 @@ async fn put_op(
             .body(Body::empty())
             .unwrap(),
         Err(err) => {
-            tracing::warn!(path = %rel, error = %err, "WebDAV PUT 失败（409）");
+            tracing::warn!(path = %rel, error = %err, "WebDAV PUT 失败");
             Response::builder()
-                .status(StatusCode::CONFLICT)
+                .status(write_error_status(&err))
                 .body(Body::empty())
                 .unwrap()
         }
@@ -1295,13 +1295,43 @@ async fn write_op(
             {
                 StatusCode::PRECONDITION_FAILED
             } else {
-                StatusCode::CONFLICT
+                write_error_status(&err)
             };
             Response::builder()
                 .status(status)
                 .body(Body::empty())
                 .unwrap()
         }
+    }
+}
+
+fn write_error_status(error: &vfiles_domain::DomainError) -> StatusCode {
+    use vfiles_domain::DomainError;
+
+    match error {
+        DomainError::Validation { .. }
+        | DomainError::UploadPartInvalid
+        | DomainError::UploadPartChecksumMismatch
+        | DomainError::BlobChecksumMismatch => StatusCode::BAD_REQUEST,
+        DomainError::Conflict { .. }
+        | DomainError::PathConflict { .. }
+        | DomainError::UploadExpired
+        | DomainError::UploadConflict => StatusCode::CONFLICT,
+        DomainError::NotFound { .. }
+        | DomainError::EntryNotFound
+        | DomainError::VersionNotFound
+        | DomainError::SnapshotNotFound => StatusCode::NOT_FOUND,
+        DomainError::Unauthorized
+        | DomainError::Authentication { .. }
+        | DomainError::InvalidCredentials
+        | DomainError::SessionExpired
+        | DomainError::SessionRevoked => StatusCode::UNAUTHORIZED,
+        DomainError::Forbidden | DomainError::UserDisabled => StatusCode::FORBIDDEN,
+        DomainError::StorageQuotaExceeded => StatusCode::INSUFFICIENT_STORAGE,
+        DomainError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+        DomainError::NotImplemented { .. } => StatusCode::NOT_IMPLEMENTED,
+        DomainError::SearchIndexNotReady => StatusCode::SERVICE_UNAVAILABLE,
+        DomainError::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -3393,5 +3423,36 @@ mod etag_tests {
         let et = derive_etag(&v);
         assert!(et.starts_with('"') && et.ends_with('"'));
         assert_eq!(et.len(), 34);
+    }
+}
+
+#[cfg(test)]
+mod write_error_tests {
+    use super::write_error_status;
+    use axum::http::StatusCode;
+    use vfiles_domain::DomainError;
+
+    #[test]
+    fn maps_domain_write_failures_to_protocol_statuses() {
+        assert_eq!(
+            write_error_status(&DomainError::NotFound {
+                resource: "file".to_string()
+            }),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            write_error_status(&DomainError::Forbidden),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            write_error_status(&DomainError::StorageQuotaExceeded),
+            StatusCode::INSUFFICIENT_STORAGE
+        );
+        assert_eq!(
+            write_error_status(&DomainError::Internal {
+                message: "storage failure".to_string()
+            }),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 }
