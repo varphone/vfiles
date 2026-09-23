@@ -1100,7 +1100,10 @@ async fn propfind_owned(
             .entry_repo
             .list_entry_properties(&[entry.id])
             .await
-            .unwrap_or_default()
+            .map_err(|error| {
+                tracing::error!(%error, path = %rel, "WebDAV PROPFIND 属性读取失败");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?
             .remove(&entry.id)
             .unwrap_or_default();
         let getetag = entry
@@ -1149,7 +1152,10 @@ async fn propfind_owned(
             .entry_repo
             .list_entry_properties(&child_ids)
             .await
-            .unwrap_or_default();
+            .map_err(|error| {
+                tracing::error!(%error, "WebDAV PROPFIND 子项属性读取失败");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
         let version_ids: Vec<_> = metas
             .iter()
             .filter_map(|meta| meta.entry.current_version_id)

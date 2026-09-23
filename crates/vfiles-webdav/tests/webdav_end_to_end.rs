@@ -667,6 +667,7 @@ async fn options_advertises_and_propfind_needs_auth() {
     assert_eq!(alternative_list_token.status(), 201);
 
     let rejected_move = router
+        .clone()
         .oneshot(
             axum::http::Request::builder()
                 .method("MOVE")
@@ -688,5 +689,23 @@ async fn options_advertises_and_propfind_needs_auth() {
         0,
         "MOVE must reject a stale source condition before deleting its destination"
     );
+
+    sqlx::query("DROP TABLE entry_properties")
+        .execute(&pool)
+        .await
+        .expect("inject a property repository read failure");
+    let property_read_failure = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/renamed.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(property_read_failure.status(), 500);
     let _ = user;
 }
