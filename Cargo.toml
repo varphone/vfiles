@@ -4,12 +4,13 @@ members = [
     "crates/vfiles-config",
     "crates/vfiles-ftp",
     "crates/vfiles-webdav",
+    "crates/vfiles-s3",
     "crates/vfiles-domain",
     "crates/vfiles-app",
     "crates/vfiles-http",
     "crates/vfiles-infra-sqlite",
     "crates/vfiles-infra-fs",
-    "crates/vfiles-test-kit",
+    "crates/vfiles-test-kit", "crates/vfiles-s3",
 ]
 resolver = "3"
 
@@ -50,9 +51,7 @@ image = { version = "0.25", default-features = false, features = [
 ] }
 include_dir = "0.7"
 log = "0.4"
-mime = "0.3"
 mime_guess = "2.0"
-rand = "0.10"
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

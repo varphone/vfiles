@@ -2269,18 +2269,13 @@ where
             }
         }
 
-        let destination_entry = if destination.as_str().is_empty() {
+        let _destination_entry = if destination.as_str().is_empty() {
             None
         } else {
             self.entry_repo
                 .find_by_path(namespace_id, destination)
                 .await?
         };
-        let destination_is_directory = destination.as_str().is_empty()
-            || matches!(
-                destination_entry.as_ref().map(|entry| entry.entry_type),
-                Some(EntryKind::Directory)
-            );
 
         if sources.len() > 1 && !dest_as_container {
             return Err(DomainError::Validation {

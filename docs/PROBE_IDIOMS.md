@@ -81,4 +81,5 @@
 | 57 | **curl ASCII 全绿 ≠ 真实客户端可用**（href 合法性 + percent 语义只有真客户端暴露 ✗✗ 双斜杠/未解码 = 真实客户端丢条目或 404）+ **secret 长度<32 fixture 静默断链二犯**（≥34 保） | r204 |
 | 59 | **单层延迟测量误导归因**（HTTP 总时 = 认证 hash + 查询 + 流转 ✗✗ r3 把 6ms/文件归 open ✗ 实则 hash 主导；**分层法定案** = SQL 直测（sqlite timer）+ 总时差值；同族 = **门禁与服务同 job 的探针早发**（0.0001s = refused ≠ 代码错 → 等端口循环）| r4 |
 | 60 | **探针前置条件不自足**（多步链里 LOCK 漏认证 → 401 锁未建 → 后续全测「未锁放行」路径 ✗✗ 各码合法但目标零覆盖；**复杂链 = 每步断言前置态**（锁建成有 token/登录有 session ✗）+ 重复锚 ×2 用**函数区间锚**（#33 族稳式）| r7 |
+| 61 | **`cargo check` 与 `cargo fix --lib` 不编 `#[cfg(test)]`**（fix 按 lib 视角判 unused → **把 test mod 正在用的 import 删了** ✗✗✗ check 绿 = **test 面假绿**（本轮真翻车:href/if_token 三 use 被删 =13 编译错 ✗✗ 修复后引纪律 =**凡动 Rust 源必跑 `cargo check --tests` + `cargo test`**（与 #52 build 纪律并列）；同族: `grep -c` 零命中自退 1 ✗ 非 cargo 败（四验法互证 ✓）| r1 |
 | 58 | **残留进程跑 deleted 二进制**（`/proc/pid/exe -> (deleted)` = 旧码响应 ✗✗ 排障先核监听进程 exe 时间 vs 工作区二进制；**bind 静默类** = spawn Ok ≠ bind 成功，权威行须在 bind 后打） | r205 || 58 | **残留进程跑 deleted 二进制**（`/proc/pid/exe -> (deleted)` = 旧码响应 ✗✗ 排障先核监听进程 exe 时间 vs 工作区二进制；**bind 静默类** = spawn Ok ≠ bind 成功，权威行须在 bind 后打） | r205 |

@@ -1,0 +1,25 @@
+[package]
+name = "vfiles-s3"
+publish = ["crates-io"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+futures.workspace = true
+axum = { workspace = true, features = ["macros"] }
+http-body-util.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true, features = ["io"] }
+tracing.workspace = true
+vfiles-app = { path = "../vfiles-app" }
+vfiles-domain = { path = "../vfiles-domain" }
+vfiles-infra-fs = { path = "../vfiles-infra-fs" }
+vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }
+s3s = "0.16"
+
+[lints]
+workspace = true

@@ -831,7 +831,7 @@ static AUTH_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 
 /// 方法分派（PROPFIND 等非标方法经 `any` 到达 ✓）。
 #[axum::debug_handler]
-async fn dav(mut req: axum::extract::Request) -> Response {
+async fn dav(req: axum::extract::Request) -> Response {
     // 访问日志（r208 ✓ 主流服务器标配 ✗ 此前成功连接在 info 级全隐身 = 用户"看不到日志"）
     let method = req.method().to_string();
     let path = percent_decode(req.uri().path());
@@ -1698,7 +1698,8 @@ mod decode_tests {
 }
 
 mod href_tests {
-    use super::{child_prefix, entry_href};
+    use crate::server::{child_prefix, entry_href};
+    
 
     #[test]
     fn root_children_have_single_slash() {
@@ -1716,7 +1717,8 @@ mod href_tests {
 }
 
 mod if_token_tests {
-    use super::if_token;
+    use crate::server::if_token;
+    
 
     #[test]
     fn extracts_opaque_token_and_rejects_nested() {
