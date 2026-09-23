@@ -466,7 +466,7 @@
 | 启用 | **默认开**，`VFILES_S3_ENABLED=false` 显式关 | 零配置 listener 可用；生产应设置固定凭证 |
 | 实现 | crate `vfiles-s3`：`VfilesS3` 六方法 override（trait 114 全默认 NotImplemented） | 薄组装 ✗ 写面 = WebDAV 同源 app 层链（init+complete/Cursor） |
 | key 映射 | 默认 ns 根相对路径（`collect_keys` 递归展平；排序截 1000） | 树 = flat keys |
-| ETag | **version-id hex 裸值 + `ETag::Strong` 包裹**（to_http_header 自附引号） | **与 WebDAV derive_etag 跨协议同式** ✗ 引号单所有者 = s3s header 层 |
+| ETag | **单次 Put/Copy 使用 version-id hex；multipart 使用 AWS composite `MD5(part MD5s)-count`**，multipart ETag 按版本保存并由 GET/HEAD/List 共用 | `ETag::Strong` 负责 HTTP/XML 引号；单次 Put/Copy 的内容型 ETag 仍待完善 |
 | DELETE | 幂等 204（NotFound 吞） | S3 语义 |
 
 ## 九式实证（`crates/vfiles-s3/scripts/sigv4_probe.py` 入仓可复演）

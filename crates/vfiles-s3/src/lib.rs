@@ -5,8 +5,8 @@
 //! 认证 = SigV4（s3s 内建 ✗ env 静态凭证表支持只读策略与命名空间 slug 绑定；未设时随机
 //! 生成 + warn 打印 = 零配置试用）。
 //!
-//! 映射：key = 默认 ns 根下相对路径（tree 展开为 flat keys ✗ 版本链天然 = ETag =
-//! current_version_id hex 引号（与 WebDAV r14 同式 ✓ 跨协议一致））。
+//! 映射：key = 默认 ns 根下相对路径（tree 展开为 flat keys ✗ 单次 Put/Copy ETag 沿用
+//! current_version_id hex；multipart ETag 使用 AWS composite 形，并按版本持久化）。
 //!
 //! r3（本轮：列表面的商业级完备）：
 //! - `ListObjectsV2` **全语义**：prefix · delimiter→CommonPrefixes · continuation-token ·
@@ -92,16 +92,25 @@ struct ObjMeta {
     etag: String,
 }
 
-fn obj_meta(m: vfiles_domain::types::EntryChildMeta) -> ObjMeta {
+fn obj_meta(m: vfiles_domain::types::EntryChildMeta, properties: &[(String, String)]) -> ObjMeta {
+    let version_id = m.entry.current_version_id;
+    let version_text = version_id.map(|version| version.to_string().replace('-', ""));
+    let etag = version_text
+        .as_deref()
+        .and_then(|version| {
+            let name = format!("{S3_ETAG_PREFIX}{version}");
+            properties
+                .iter()
+                .find(|(property, _)| property == &name)
+                .map(|(_, value)| value.clone())
+        })
+        .or(version_text)
+        .unwrap_or_default();
     ObjMeta {
         key: m.entry.path_norm.as_str().to_string(),
         size: m.size_bytes.unwrap_or(0),
         last_modified: Timestamp::from(m.entry.created_at),
-        etag: m
-            .entry
-            .current_version_id
-            .map(|v| v.to_string().replace('-', ""))
-            .unwrap_or_default(),
+        etag,
     }
 }
 
@@ -212,9 +221,15 @@ async fn list_page(
         if batch.is_empty() {
             break;
         }
+        let ids: Vec<_> = batch.iter().map(|m| m.entry.id).collect();
+        let properties = repo.list_entry_properties(&ids).await?;
         for m in batch {
             cursor = Some(m.entry.path_norm.as_str().to_string());
-            if !c.push(obj_meta(m)) {
+            let entry_properties = properties
+                .get(&m.entry.id)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            if !c.push(obj_meta(m, entry_properties)) {
                 break;
             }
         }
@@ -447,11 +462,7 @@ impl futures::Stream for S3ReadStream {
                 }
             };
             let mut buf = tokio::io::ReadBuf::new(&mut this.buffer[..cap]);
-            match tokio::io::AsyncRead::poll_read(
-                std::pin::Pin::new(&mut **reader),
-                cx,
-                &mut buf,
-            ) {
+            match tokio::io::AsyncRead::poll_read(std::pin::Pin::new(&mut **reader), cx, &mut buf) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(err)) => return Poll::Ready(Some(Err(err))),
                 Poll::Ready(Ok(())) => buf.filled().len(),
@@ -809,6 +820,24 @@ impl std::fmt::Debug for VfilesS3 {
 
 /// S3 用户元数据（`x-amz-meta-*`）在 entry 属性表中的前缀（复用 0006 `entry_properties`）。
 const S3_META_PREFIX: &str = "s3-meta:";
+/// Per-version ETag overrides for multipart objects.
+const S3_ETAG_PREFIX: &str = "s3-etag:";
+
+fn version_etag_property(version_id: &vfiles_domain::VersionId) -> String {
+    format!(
+        "{S3_ETAG_PREFIX}{}",
+        version_id.to_string().replace('-', "")
+    )
+}
+
+fn multipart_etag(part_md5s: &[[u8; 16]]) -> String {
+    use md5::{Digest, Md5};
+    let mut digest = Md5::new();
+    for part_md5 in part_md5s {
+        digest.update(part_md5);
+    }
+    format!("{}-{}", hex::encode(digest.finalize()), part_md5s.len())
+}
 
 impl VfilesS3 {
     /// 读条目的 S3 用户元数据（`x-amz-meta-*` → 响应头）。
@@ -860,6 +889,47 @@ impl VfilesS3 {
         Ok(())
     }
 
+    async fn load_version_etags(
+        &self,
+        entry_ids: &[vfiles_domain::EntryId],
+    ) -> S3Result<
+        std::collections::HashMap<
+            vfiles_domain::EntryId,
+            std::collections::HashMap<String, String>,
+        >,
+    > {
+        let properties = self
+            .entry_repo
+            .list_entry_properties(entry_ids)
+            .await
+            .map_err(dom_err)?;
+        Ok(properties
+            .into_iter()
+            .map(|(entry_id, properties)| {
+                let etags = properties
+                    .into_iter()
+                    .filter_map(|(name, value)| {
+                        name.strip_prefix(S3_ETAG_PREFIX)
+                            .map(|version_id| (version_id.to_owned(), value))
+                    })
+                    .collect();
+                (entry_id, etags)
+            })
+            .collect())
+    }
+
+    async fn store_version_etag(
+        &self,
+        entry_id: &vfiles_domain::EntryId,
+        version_id: &vfiles_domain::VersionId,
+        etag: &str,
+    ) -> S3Result<()> {
+        self.entry_repo
+            .set_entry_property(entry_id, &version_etag_property(version_id), etag)
+            .await
+            .map_err(dom_err)
+    }
+
     /// 路径 → entry（元数据读写用 ✗ 不存在则 None）。
     async fn entry_at(
         &self,
@@ -871,13 +941,23 @@ impl VfilesS3 {
             .map_err(dom_err)
     }
 
-    /// 目标路径当前 ETag（`current_version_id` hex ✗ 不存在 = None）。
+    /// 目标路径当前 ETag（普通对象 = version id hex；multipart = composite ETag）。
     async fn etag_at(&self, path: &vfiles_domain::NormalizedPath) -> S3Result<Option<String>> {
-        Ok(self
-            .entry_at(path)
-            .await?
-            .and_then(|e| e.current_version_id)
-            .map(|v| v.to_string().replace('-', "")))
+        let Some(entry) = self.entry_at(path).await? else {
+            return Ok(None);
+        };
+        let Some(version_id) = entry.current_version_id else {
+            return Ok(None);
+        };
+        let version_id_text = version_id.to_string().replace('-', "");
+        let etags = self.load_version_etags(&[entry.id]).await?;
+        Ok(Some(
+            etags
+                .get(&entry.id)
+                .and_then(|map| map.get(&version_id_text))
+                .cloned()
+                .unwrap_or(version_id_text),
+        ))
     }
 
     /// 确认 multipart uploadId 属于当前凭证的命名空间、未过期且绑定请求中的 key。
@@ -918,18 +998,34 @@ impl VfilesS3 {
         Ok(())
     }
 
-    /// 目标版本（`versionId` ✗ 无 → 最新）：返回 `(etag, last_modified, 透传给 open_file 的 commit)`。
+    /// 目标版本（`versionId` 无 → 最新）：返回 `(etag, versionId, last_modified, commit)`。
     async fn resolve_version(
         &self,
         entry: &vfiles_domain::Entry,
         version_id: Option<&str>,
-    ) -> S3Result<(String, Timestamp, Option<String>)> {
+    ) -> S3Result<(String, String, Timestamp, Option<String>)> {
         let Some(vid) = version_id else {
-            let etag = entry
-                .current_version_id
-                .map(|v| v.to_string().replace('-', ""))
-                .unwrap_or_default();
-            return Ok((etag, Timestamp::from(entry.created_at), None));
+            let Some(version_id) = entry.current_version_id else {
+                return Ok((
+                    String::new(),
+                    String::new(),
+                    Timestamp::from(entry.created_at),
+                    None,
+                ));
+            };
+            let version_id_text = version_id.to_string().replace('-', "");
+            let etags = self.load_version_etags(&[entry.id]).await?;
+            let etag = etags
+                .get(&entry.id)
+                .and_then(|map| map.get(&version_id_text))
+                .cloned()
+                .unwrap_or_else(|| version_id_text.clone());
+            return Ok((
+                etag,
+                version_id_text,
+                Timestamp::from(entry.created_at),
+                None,
+            ));
         };
         let version_id = vfiles_domain::VersionId::from_string(vid)
             .map_err(|_| s3s::s3_error!(NoSuchVersion, "no such version"))?;
@@ -944,8 +1040,16 @@ impl VfilesS3 {
                 "version does not belong to this key"
             ));
         }
+        let version_id_text = ev.id.to_string().replace('-', "");
+        let etags = self.load_version_etags(&[entry.id]).await?;
+        let etag = etags
+            .get(&entry.id)
+            .and_then(|map| map.get(&version_id_text))
+            .cloned()
+            .unwrap_or_else(|| version_id_text.clone());
         Ok((
-            ev.id.to_string().replace('-', ""),
+            etag,
+            version_id_text,
             Timestamp::from(ev.created_at),
             Some(vid.to_string()),
         ))
@@ -1153,6 +1257,7 @@ impl S3 for VfilesS3 {
                     .or_default()
                     .push(version);
             }
+            let version_etags = self.load_version_etags(&entry_ids).await?;
             for m in page {
                 let key = m.entry.path_norm.as_str().to_string();
                 if !key.starts_with(&prefix) {
@@ -1190,6 +1295,11 @@ impl S3 for VfilesS3 {
                 entry_versions.sort_by_key(|e| std::cmp::Reverse(e.version_no)); // 新版本在前（AWS 同形）
                 for ev in entry_versions {
                     let vid = ev.id.to_string().replace('-', "");
+                    let etag = version_etags
+                        .get(&m.entry.id)
+                        .and_then(|map| map.get(&vid))
+                        .cloned()
+                        .unwrap_or_else(|| vid.clone());
                     if skipping {
                         if vid_marker.as_ref() == Some(&vid) {
                             skipping = false;
@@ -1210,7 +1320,7 @@ impl S3 for VfilesS3 {
                         is_latest: Some(m.entry.current_version_id == Some(ev.id)),
                         size: Some(ev.size_bytes.as_u64() as i64),
                         last_modified: Some(Timestamp::from(ev.created_at)),
-                        e_tag: Some(s3s::dto::ETag::Strong(vid.clone())),
+                        e_tag: Some(s3s::dto::ETag::Strong(etag)),
                         ..Default::default()
                     });
                     last_emitted = Some((key.clone(), vid));
@@ -1387,7 +1497,7 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let path = norm(&input.key).map_err(dom_err)?;
-        // ETag = current_version_id hex 引号（与 WebDAV derive_etag 跨协议同式）
+        // 单次 Put/Copy 沿用 version id ETag；multipart 版本从 s3-etag 属性恢复 composite ETag。
         let entry = self
             .entry_repo
             .find_by_path(&self.namespace, &path)
@@ -1396,7 +1506,7 @@ impl S3 for VfilesS3 {
             .ok_or_else(|| s3s::s3_error!(NoSuchKey, "No such key"))?;
         // Strong 变体序列化自附引号 ✗ 存裸 hex 防双引（etag.rs:19-24）
         // `versionId` 定向：etag/时间取该版本 ✗ raw_commit 透传 = 正文/mime/size 同版本
-        let (etag, last_modified, raw_commit) = self
+        let (etag, version_id, last_modified, raw_commit) = self
             .resolve_version(&entry, input.version_id.as_deref())
             .await?;
         // 读条件（命中 304 即不读正文 = 缓存路径省 IO）
@@ -1441,8 +1551,8 @@ impl S3 for VfilesS3 {
             e_tag: Some(s3s::dto::ETag::Strong(etag.clone())),
             last_modified: Some(last_modified),
             metadata,
-            // 版本化桶恒回版本 id（本系统 ETag ≡ version id hex）
-            version_id: (!etag.is_empty()).then_some(etag),
+            // versionId 与 ETag 独立：multipart 的 ETag 不等于版本 ID。
+            version_id: (!version_id.is_empty()).then_some(version_id),
             ..Default::default()
         };
         ok(out)
@@ -1464,7 +1574,7 @@ impl S3 for VfilesS3 {
             .map_err(dom_err)?
             .ok_or_else(|| s3s::s3_error!(NoSuchKey, "No such key"))?;
         // `versionId` 定向：etag/时间取该版本 ✗ raw_commit 透传 = 正文/mime/size 同版本
-        let (etag, last_modified, raw_commit) = self
+        let (etag, version_id, last_modified, raw_commit) = self
             .resolve_version(&entry, input.version_id.as_deref())
             .await?;
         // 读条件（命中 304 即不读正文 = 缓存路径省 IO）
@@ -1499,8 +1609,8 @@ impl S3 for VfilesS3 {
             e_tag: Some(s3s::dto::ETag::Strong(etag.clone())),
             last_modified: Some(last_modified),
             metadata,
-            // 版本化桶恒回版本 id（本系统 ETag ≡ version id hex）
-            version_id: (!etag.is_empty()).then_some(etag),
+            // versionId 与 ETag 独立：multipart 的 ETag 不等于版本 ID。
+            version_id: (!version_id.is_empty()).then_some(version_id),
             ..Default::default()
         };
         ok(out)
@@ -1997,6 +2107,10 @@ impl S3 for VfilesS3 {
             {
                 return Err(s3s::s3_error!(NoSuchVersion, "no such version"));
             }
+            self.entry_repo
+                .remove_entry_property(&entry.id, &version_etag_property(&version_id))
+                .await
+                .map_err(dom_err)?;
             return ok(DeleteObjectOutput::default());
         }
         // 条件删（`If-Match` ✗ 不存在/不符即 412）
@@ -2296,6 +2410,7 @@ impl S3 for VfilesS3 {
             ));
         }
         // 客户端必须回显每个 UploadPart 返回的 ETag，且值需与已存分片内容一致。
+        let mut part_md5s = Vec::with_capacity(listed.len());
         for (number, etag, md5, sha1, sha256, crc32, crc32c, crc64nvme) in listed {
             let part_index = (number - 1) as u32;
             let Some((reader, _size)) = self
@@ -2325,7 +2440,9 @@ impl S3 for VfilesS3 {
                     number
                 ));
             }
+            part_md5s.push(actual.md5);
         }
+        let etag = multipart_etag(&part_md5s);
         // 会话上存的 `x-amz-meta-*` 必须在完成**之前**读（完成会清掉会话目录）
         let custom = self
             .upload
@@ -2337,14 +2454,12 @@ impl S3 for VfilesS3 {
             .complete_multipart_upload(&upload_id, Some("S3 multipart"))
             .await
             .map_err(dom_err)?;
-        let etag = result.version.id.to_string().replace('-', "");
+        self.store_version_etag(&result.entry.id, &result.version.id, &etag)
+            .await?;
         // 会话上存的 `x-amz-meta-*` → 条目属性（完成即定稿 = 覆盖写语义）
-        let meta_path = norm(&input.key).map_err(dom_err)?;
-        if let Some(entry) = self.entry_at(&meta_path).await? {
-            let map: s3s::dto::Metadata = custom.into_iter().collect();
-            self.store_metadata(&entry.id, (!map.is_empty()).then_some(&map))
-                .await?;
-        }
+        let map: s3s::dto::Metadata = custom.into_iter().collect();
+        self.store_metadata(&result.entry.id, (!map.is_empty()).then_some(&map))
+            .await?;
         let location = format!("/{}/{}", input.bucket, input.key);
         let out = CompleteMultipartUploadOutput {
             bucket: Some(input.bucket),
@@ -2654,7 +2769,11 @@ mod tests {
         assert_eq!(copy_range_bounds("bytes=0-3", len).unwrap(), 0..4);
         assert_eq!(copy_range_bounds("bytes=5-", len).unwrap(), 5..10);
         assert_eq!(copy_range_bounds("bytes=-3", len).unwrap(), 7..10);
-        assert_eq!(copy_range_bounds("bytes=8-99", len).unwrap(), 8..10, "尾越界夹取");
+        assert_eq!(
+            copy_range_bounds("bytes=8-99", len).unwrap(),
+            8..10,
+            "尾越界夹取"
+        );
         assert!(copy_range_bounds("bytes=10-12", len).is_err(), "起点越界");
         assert!(copy_range_bounds("bytes=5-2", len).is_err(), "逆序");
         assert!(copy_range_bounds("0-3", len).is_err(), "缺 bytes= 前缀");
@@ -2749,6 +2868,24 @@ mod tests {
         let past = s3s::dto::Range::parse("bytes=200-").unwrap();
         assert!(resolve_range(Some(past), size).is_err(), "越界 = 416");
         assert_eq!(resolve_range(None, size).unwrap(), None);
+    }
+
+    #[test]
+    fn multipart_etag_uses_part_md5_digest_and_part_count() {
+        let part_md5s = [
+            hex::decode("5d41402abc4b2a76b9719d911017c592")
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            hex::decode("7d793037a0760186574b0282f2f435e7")
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        ];
+        assert_eq!(
+            multipart_etag(&part_md5s),
+            "065947336a2f2a95ba8899f3675c3be6-2"
+        );
     }
 }
 

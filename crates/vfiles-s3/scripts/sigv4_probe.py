@@ -218,10 +218,35 @@ def main():
     ).encode()
     st, body, _ = request("POST", base + "/" + mp_key, query=q({"uploadId": uid}), body=xml,
                           extra_headers={"content-type": "application/xml"})
-    ok_complete = st == 200 and b"<ETag>" in body
-    stg, gbody, _ = request("GET", base + "/" + mp_key)
+    complete_match = re.search(rb"<ETag>(.*?)</ETag>", body)
+    p1_md5, p2_md5 = hashlib.md5(p1).digest(), hashlib.md5(p2).digest()
+    expected_mp_etag = '"' + hashlib.md5(p1_md5 + p2_md5).hexdigest() + "-2\""
+    complete_etag = complete_match.group(1).decode() if complete_match else ""
+    ok_complete = st == 200 and complete_etag == expected_mp_etag
+    stg, gbody, get_headers = request("GET", base + "/" + mp_key)
+    get_etag = get_headers.get("ETag") or get_headers.get("etag")
+    stl, list_body, _ = request("GET", base, query=q({"list-type": "2", "prefix": mp_key}))
+    list_match = re.search(rb"<Contents>.*?<ETag>(.*?)</ETag>", list_body, re.S)
+    list_etag = list_match.group(1).decode() if list_match else ""
+    stv, versions_body, _ = request("GET", base, query=q({"versions": "", "prefix": mp_key}))
+    version_match = re.search(
+        rb"<Version>.*?<ETag>(.*?)</ETag>.*?<VersionId>(.*?)</VersionId>",
+        versions_body,
+        re.S,
+    )
+    listed_version_etag = version_match.group(1).decode() if version_match else ""
+    listed_version_id = version_match.group(2).decode() if version_match else ""
+    stvget, _, version_headers = request(
+        "GET", base + "/" + mp_key, query=q({"versionId": listed_version_id})
+    ) if listed_version_id else (0, b"", {})
+    version_get_etag = version_headers.get("ETag") or version_headers.get("etag")
     check("19 CompleteMultipartUpload assembles bytes",
-          ok_complete and stg == 200 and gbody == p1 + p2, f"{st} get={stg} bytes={len(gbody)}")
+          ok_complete and stg == 200 and gbody == p1 + p2
+          and get_etag == expected_mp_etag and stl == 200 and list_etag == expected_mp_etag
+          and stv == 200 and listed_version_etag == expected_mp_etag
+          and stvget == 200 and version_get_etag == expected_mp_etag,
+          f"{st} get={stg} list={stl} versions={stv}/{stvget} "
+          f"etag={get_etag}/{list_etag}/{listed_version_etag}/{version_get_etag}")
 
     mp_abort = "probe3/abort.bin"
     st, abody, _ = request("POST", base + "/" + mp_abort, query=q({"uploads": ""}))
