@@ -593,6 +593,7 @@ async fn propfind_owned(
     path: String,
     depth: String,
     body_owned: String,
+    user_owned: Option<vfiles_domain::types::User>,
 ) -> Result<String, StatusCode> {
     let app = app.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let ns = ns.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -615,6 +616,14 @@ async fn propfind_owned(
         t.format(&time::format_description::well_known::Rfc2822)
             .unwrap_or_default()
     };
+    // r16 owner（r109e 隔离下 ≡ 认证者恒等 = 零查询 ✓ 容错 ""）+ RFC3339 创建时间闭包
+    let owner_val = user_owned
+        .map(|u| u.username.as_str().to_string())
+        .unwrap_or_default();
+    let cdate_fmt = |t: time::OffsetDateTime| {
+        t.format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default()
+    };
     let mut items = Vec::new();
     if rel.is_empty() {
         // 根特判（RFC 4918 ✓ 空命名空间无 root Entry 行 ✗ 合成根响应 ✓）
@@ -627,6 +636,8 @@ async fn propfind_owned(
             getcontenttype: None,
             custom: Vec::new(),
             getetag: None,
+            creationdate: cdate_fmt(time::OffsetDateTime::now_utc()), // 根 = 合成（lastmod 同式 ✓ 记档）
+            owner: owner_val.clone(),
         });
     } else {
         let entry = app
@@ -681,6 +692,8 @@ async fn propfind_owned(
             getcontenttype,
             custom,
             getetag,
+            creationdate: cdate_fmt(entry.created_at),
+            owner: owner_val.clone(),
         });
     }
     if depth == "1" {
@@ -715,6 +728,8 @@ async fn propfind_owned(
                 getcontenttype,
                 custom: child_props.get(&child.id).cloned().unwrap_or_default(),
                 getetag: child.current_version_id.as_ref().map(|v| format!("\"{}\"", v.to_string().replace('-', ""))),
+                creationdate: cdate_fmt(child.created_at),
+                owner: owner_val.clone(),
             });
         }
     }
@@ -916,7 +931,17 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     Err(_) => String::new(),
                 }
             };
-            match propfind_owned(app, ns_owned, path_owned, depth_owned, body_owned).await {
+            match propfind_owned(
+                app,
+                ns_owned,
+                path_owned,
+                depth_owned,
+                body_owned,
+                req.extensions()
+                    .get::<vfiles_domain::types::User>()
+                    .cloned(),
+            )
+            .await {
                 Ok(xml) => Response::builder()
                     .status(StatusCode::MULTI_STATUS)
                     .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")

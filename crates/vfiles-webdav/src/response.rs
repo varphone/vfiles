@@ -7,12 +7,14 @@
 
 /// PROPFIND 请求体模式（RFC 4918 §9.1 ✗ r2 P0 协议精度）。
 /// 预定义只读属性集（r13 ✓ 除 displayname（改名语义）外 PROPPATCH set → 403）。
-pub const PREDEFINED_READONLY: [&str; 5] = [
+pub const PREDEFINED_READONLY: [&str; 7] = [
     "resourcetype",
     "getlastmodified",
     "getcontentlength",
     "getcontenttype",
     "getetag", // r14 服务生成 ✗ PROPPATCH set → 403
+    "creationdate", // r16 事实生成（建即定 ✗ 不可写）
+    "owner",        // r16 属主事实（r109e 隔离下 ≡ 认证者 ✗ 不可写）
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,18 +146,25 @@ pub struct PropResponse {
     /// r14 ETag（= current_version_id 派生 `"hex32"` ✗ r4 SQL 已查零新查询；
     /// None = 目录/无版本 → 与 length 同式跳过 ✓ 强 ETag 带引号 ✓）。
     pub getetag: Option<String>,
+    /// r16 创建时间（RFC 3339 ISO ✗ ≠ getlastmodified 的 RFC1123 ✓ 恒有 String）。
+    pub creationdate: String,
+    /// r16 属主（r109e per-user 隔离下 ≡ 认证用户名恒等 = 零查询白捡 ✓
+    /// 记档：未来共享 ns 语义需回查 namespaces.owner_user_id ✓ 真值源已在表 ✗ 0001:30）。
+    pub owner: String,
 }
 
 /// 构造 207 Multi-Status 文档（XML 转义 ✓ 集合无 getcontentlength ✓）。
 pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
     // r2 协议精度裁剪 ✗ 请求要什么给什么（All=全集 ✗ Names=交集+404 差集 ✗ PropName=只名）
-    const SUPPORTED: [&str; 6] = [
+    const SUPPORTED: [&str; 8] = [
         "displayname",
         "resourcetype",
         "getlastmodified",
         "getcontentlength",
         "getcontenttype",
         "getetag",
+        "creationdate",
+        "owner",
     ];
     let mut out = String::from(
         r#"<?xml version="1.0" encoding="utf-8"?>
@@ -224,6 +233,16 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
                         out.push_str(&escape_xml(et));
                         out.push_str("</D:getetag>");
                     }
+                }
+                "creationdate" if mode != &PropMode::PropName => {
+                    out.push_str("<D:creationdate>");
+                    out.push_str(&escape_xml(&item.creationdate));
+                    out.push_str("</D:creationdate>");
+                }
+                "owner" if mode != &PropMode::PropName => {
+                    out.push_str("<D:owner>");
+                    out.push_str(&escape_xml(&item.owner));
+                    out.push_str("</D:owner>");
                 }
                 // 其余 = propname 模式（只名无值）或占位（getcontentlength None 时跳过 ✓）
                 other => {
@@ -329,6 +348,8 @@ mod tests {
                 getcontenttype: None,
                 custom: Vec::new(),
                 getetag: None,
+                creationdate: "2026-09-23T00:00:00Z".into(),
+                owner: "tester".into(),
             },
             PropResponse {
                 href: "/dav/a&b.txt".into(),
@@ -339,6 +360,8 @@ mod tests {
                 getcontenttype: Some("text/plain".into()),
                 custom: Vec::new(),
                 getetag: None,
+                creationdate: "2026-09-23T00:00:00Z".into(),
+                owner: "tester".into(),
             },
         ], &PropMode::All);
         assert!(xml.contains("<D:collection/>"));
@@ -371,6 +394,8 @@ mod propmode_tests {
             getcontenttype: Some("text/plain".into()),
             custom: Vec::new(),
             getetag: None,
+            creationdate: "2026-09-23T00:00:00Z".into(),
+            owner: "tester".into(),
         }]
     }
 

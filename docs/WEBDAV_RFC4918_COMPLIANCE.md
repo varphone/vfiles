@@ -47,9 +47,9 @@
 | **getcontentlength children** | ❌ | 批量（P0 债 = r213 记档）| **P0** |
 | getcontenttype | ✅ **r3 顺车** | 单目标 + children 双位出 ✓ 检测/扩展名回退 ✓ | - |
 | getetag | ✅ **r14 九式实证** | = current_version_id 派生 `"hex32"`（r4 SQL 零新查询 ✓ 强 ETag 引号式 ✓ XML `&quot;` 转义合法 ✓ None = 目录跳过 ✓ 支持集 5→6 + readonly +1 ✓）| - |
-| creationdate | ❌ | entry.created_at 可出 | P2 |
+| creationdate | ✅ **r16 七式实证** | RFC 3339 ISO（≠ lastmod 的 RFC1123 ✓ 恒有值 ✓ 根 = 合成记档（lastmod 同式）✓ children 批量 ✓ readonly 不可写 ✓）| - |
 | lockdiscovery / supportedlock | ❌ | LOCK 属性面（随 P1 锁补全）| P1 |
-| owner / displayname 父链 | ❌ | 简式 owner = 认证用户名 | P2 |
+| owner | ✅ **r16** | **r109e 隔离恒等式**（ns owner ≡ 认证者 = 零查询白捡 ✓ 记档：共享 ns 启用时回查 namespaces.owner_user_id（真值源 0001:30 已在）✓ readonly 不可写 ✓）| - |
 
 ## 4. 结构/语义面
 
@@ -103,7 +103,8 @@ PROPPATCH 七式 / If+412 七式 / 审计八写点 / 声明面（Allow+DAV class
   **测试真形定案纪律** ✗ 判定类须有测试/实证背书）
 **P1 进度（r13-r15 三清 ✗ 清单现状）**：
 - ✅ r13 自定义属性 k/v（七式）→ ✅ r14 ETag+If-Match（九式）→ ✅ r15 LOCK Timeout（七式）
-- 剩余 P1：creationdate+owner 属性 / 失败面审计表记 / HTTP 审计跨目标债
+- ✅ r16 **creationdate + owner**（七式 + 恒等洞察 ✓ **属性面 P1 清**）
+- 剩余 P1：失败面审计表记 / HTTP 审计跨目标债（均 = 审计族，可并轮）
 属性 k/v / ETag+If-Match 面 / LOCK Timeout 有限 / getetag+creationdate 属性 /
 失败面审计表记 / HTTP 审计跨目标债
 
