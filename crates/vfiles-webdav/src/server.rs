@@ -662,7 +662,6 @@ async fn lock_refresh_op(
         Ok(Some(entry)) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
-            .header("Lock-Token", format!("<{}>", entry.token))
             .header("Timeout", granted_header.clone())
             .body(Body::from(crate::response::lock_response(
                 &entry.token,

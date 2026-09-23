@@ -1098,10 +1098,24 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .unwrap();
     assert_eq!(tagged_refresh.status(), 200);
-    assert_eq!(
-        tagged_refresh.headers().get("lock-token"),
-        Some(&axum::http::HeaderValue::from_str(&lock_token).unwrap())
+    assert!(
+        tagged_refresh.headers().get("lock-token").is_none(),
+        "successful LOCK refresh responses must not include Lock-Token"
     );
+    let refresh_xml = String::from_utf8(
+        axum::body::to_bytes(tagged_refresh.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    let refresh_doc = roxmltree::Document::parse(&refresh_xml).unwrap();
+    assert!(refresh_doc.descendants().any(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some("DAV:")
+            && node.tag_name().name() == "timeout"
+            && node.text() == Some("Second-900")
+    }));
 
     let mismatched_tag_refresh = restarted_router
         .clone()
