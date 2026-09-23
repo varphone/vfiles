@@ -463,6 +463,47 @@ fn check_copy_conditions(
     Ok(())
 }
 
+/// 读条件（`If-Match` / `If-None-Match` / `If-Modified-Since` / `If-Unmodified-Since` ✗ RFC 9110 §13）。
+///
+/// 命中"未修改" → `NotModified`（HTTP 304 ✗ 不读正文 = 缓存路径省 IO）；其余不符 → `PreconditionFailed`。
+fn check_get_conditions(
+    etag: &str,
+    last_modified: &Timestamp,
+    if_match: Option<&ETagCondition>,
+    if_none_match: Option<&ETagCondition>,
+    if_modified_since: Option<&Timestamp>,
+    if_unmodified_since: Option<&Timestamp>,
+) -> S3Result<()> {
+    let matches = |c: &ETagCondition| match c {
+        ETagCondition::Any => true,
+        ETagCondition::ETag(e) => e.value() == etag,
+    };
+    if let Some(c) = if_match
+        && !matches(c)
+    {
+        return Err(s3s::s3_error!(PreconditionFailed, "if-match failed"));
+    }
+    if let Some(t) = if_unmodified_since
+        && last_modified > t
+    {
+        return Err(s3s::s3_error!(
+            PreconditionFailed,
+            "if-unmodified-since failed"
+        ));
+    }
+    if let Some(c) = if_none_match
+        && matches(c)
+    {
+        return Err(s3s::s3_error!(NotModified, "if-none-match matched"));
+    }
+    if let Some(t) = if_modified_since
+        && last_modified <= t
+    {
+        return Err(s3s::s3_error!(NotModified, "not modified since"));
+    }
+    Ok(())
+}
+
 /// 目标条目条件（`If-Match` / `If-None-Match` ✗ 缺失 = 视为不存在）→ 不满足 `PreconditionFailed`。
 fn check_dest_conditions(
     dest_etag: Option<&str>,
@@ -801,6 +842,15 @@ impl S3 for VfilesS3 {
             .map(|v| v.to_string().replace('-', ""))
             .unwrap_or_default();
         let last_modified = Timestamp::from(entry.created_at);
+        // 读条件（命中 304 即不读正文 = 缓存路径省 IO）
+        check_get_conditions(
+            &etag,
+            &last_modified,
+            input.if_match.as_ref(),
+            input.if_none_match.as_ref(),
+            input.if_modified_since.as_ref(),
+            input.if_unmodified_since.as_ref(),
+        )?;
         let file = self
             .workspace
             .open_file(&self.namespace, &path, None)
@@ -857,6 +907,15 @@ impl S3 for VfilesS3 {
             .map(|v| v.to_string().replace('-', ""))
             .unwrap_or_default();
         let last_modified = Timestamp::from(entry.created_at);
+        // 读条件（命中 304 即不读正文 = 缓存路径省 IO）
+        check_get_conditions(
+            &etag,
+            &last_modified,
+            input.if_match.as_ref(),
+            input.if_none_match.as_ref(),
+            input.if_modified_since.as_ref(),
+            input.if_unmodified_since.as_ref(),
+        )?;
         let file = self
             .workspace
             .open_file(&self.namespace, &path, None)

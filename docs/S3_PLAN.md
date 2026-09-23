@@ -1,4 +1,20 @@
-# S3 兼容 API（… r26 命名空间绑定 → r28 条件写/删 → **r29 批量删逐键条件**）
+# S3 兼容 API（… r28 条件写/删 → r29 逐键条件 → **r30 条件读 304**）
+
+## 状态（r30 末 · 条件读 = HTTP 缓存语义）
+
+- **实装**：`check_get_conditions`（RFC 9110 §13 顺序：`If-Match` → `If-Unmodified-Since` →
+  `If-None-Match` → `If-Modified-Since`）接入 **`GetObject` / `HeadObject`**：
+  | 情况 | 响应 |
+  | --- | --- |
+  | `If-None-Match` 命中 / `If-Modified-Since` 未更新 | **`NotModified`（HTTP 304 ✗ 无正文 = 不读 blob，缓存路径省 IO）** |
+  | `If-Match` 不符 / `If-Unmodified-Since` 已更新 | `PreconditionFailed` 412 |
+  | 其余 | 200（Range 等其余语义不变） |
+- **真机验收（真 SDK，10 项）**：`If-None-Match` 命中 304 / 他值 200；`If-Match` 命中 200 / 不符 412；
+  `If-Modified-Since` 未来 304 / 过去 200；`If-Unmodified-Since` 过去 412 / 未来 200；
+  `HEAD` 条件同样 304；`Range` 回归 ✓。
+- **回归**：自写探针 **24/24** · 真 SDK **41/41**（+条件读）。
+- **仍债**：`ListObjectVersions` / `PutBucketVersioning`（真版本控制）· 逐键 `LastModifiedTime`/`Size` 条件 ·
+  region 校验（有意不做）。
 
 ## 状态（r29 末 · 批量删的逐键 ETag 条件 = 并发删安全）
 

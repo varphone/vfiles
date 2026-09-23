@@ -7,6 +7,7 @@
 用法：起服后 `python3 crates/vfiles-s3/scripts/boto_probe.py http://127.0.0.1:9000`
 """
 import sys
+import datetime
 
 import boto3
 from botocore.config import Config
@@ -281,6 +282,26 @@ def main():
           s3.head_object(Bucket="default", Key="boto-meta/repl.txt")["Metadata"] == {"only": "one"})
     for mk in ["boto-meta/a.txt", "boto-meta/src.txt", "boto-meta/copy.txt", "boto-meta/repl.txt"]:
         s3.delete_object(Bucket="default", Key=mk)
+
+    # ── 条件读（If-None-Match → 304 ✗ r30）──
+    s3.put_object(Bucket="default", Key="boto-getc/a.txt", Body=b"hello")
+    gh = s3.head_object(Bucket="default", Key="boto-getc/a.txt")
+    getc = 0
+    try:
+        s3.get_object(Bucket="default", Key="boto-getc/a.txt", IfNoneMatch=gh["ETag"])
+    except ClientError as e:
+        getc = 1 if e.response["Error"]["Code"] == "304" else 0
+    other = s3.get_object(Bucket="default", Key="boto-getc/a.txt",
+                          IfNoneMatch='"deadbeef"')["Body"].read() == b"hello"
+    unmod = 0
+    try:
+        s3.get_object(Bucket="default", Key="boto-getc/a.txt",
+                      IfModifiedSince=gh["LastModified"] + datetime.timedelta(minutes=5))
+    except ClientError as e:
+        unmod = 1 if e.response["Error"]["Code"] == "304" else 0
+    check("boto conditional GET (304 / 200)", getc == 1 and other and unmod == 1,
+          f"304={getc} other={other} unmod={unmod}")
+    s3.delete_object(Bucket="default", Key="boto-getc/a.txt")
 
     # ── 批量删的逐键条件（ETag ✗ r29）──
     for bk in ["boto-dc/a", "boto-dc/b"]:
