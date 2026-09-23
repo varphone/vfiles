@@ -1070,29 +1070,24 @@ async fn propfind_owned(
             active_lock: active_lock_prop(&app, &ns, rel).await?,
         });
     } else {
-        let entry = app
+        let meta = app
             .entry_repo
-            .find_by_path(&ns, &path)
+            .find_by_path_with_meta(&ns, &path)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let Some(entry) = entry else {
+        let Some(meta) = meta else {
             return Err(StatusCode::NOT_FOUND);
         };
+        let entry = meta.entry;
         // r209 真因修复 ✗✗ 此前硬编码 is_collection: true = **文件被报成目录** →
         // gvfs 把文件当目录反复 PROPFIND、永不 GET = 用户"打不开文件"完整因果链
         // （列表 children 判对、查自身判错）；href 尾斜杠同错（gvfs 探了 png/ 实证）
         let is_dir = matches!(entry.entry_type, vfiles_domain::types::EntryKind::Directory);
-        // r213 ✓ 文件大小必须给客户端（VLC/gvfs-FUSE 的 st_size 来自此属性 ✗ 缺失 =
-        // 播放器视文件为空 → "无法打开 MRL" 真因嫌疑 ✗ r105 记档债在此还清 ✓
-        // 单目标 = 1 次轻量 open ✓ children 批量 size = 下轮债（列表不阻塞 ✓）
-        // r3：单目标双值（size + mime ✗ getcontenttype P1 顺车 ✓）
+        // 按路径一次读取当前版本的 length/type 元数据；PROPFIND 不必打开内容流。
         let (getcontentlength, getcontenttype) = if is_dir {
             (None, None)
         } else {
-            match app.write.get_stream(&ns, &path).await {
-                Ok(Some((_reader, mime, size))) => (Some(size), Some(mime)),
-                _ => (None, None),
-            }
+            (meta.size_bytes, meta.mime_type)
         };
         // r13 自定义属性读（单目标 ✗ list 一次）
         let custom = app

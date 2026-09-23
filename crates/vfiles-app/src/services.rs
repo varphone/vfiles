@@ -4903,6 +4903,14 @@ mod tests {
         context
             .upload_file(&root, "target.txt", b"old target bytes", "target")
             .await;
+        let source_meta = context
+            .entry_repo
+            .find_by_path_with_meta(&context.namespace_id, &TestContext::path("source.txt"))
+            .await
+            .expect("source metadata query should succeed")
+            .expect("source should exist");
+        assert_eq!(source_meta.size_bytes, Some(b"source bytes".len() as u64));
+        assert_eq!(source_meta.mime_type.as_deref(), Some("text/plain"));
 
         let result = context
             .workspace_service

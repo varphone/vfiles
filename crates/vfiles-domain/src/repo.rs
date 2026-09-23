@@ -189,6 +189,21 @@ pub trait EntryRepo {
         namespace_id: &NamespaceId,
         path: &NormalizedPath,
     ) -> DomainResult<Option<Entry>>;
+    async fn find_by_path_with_meta(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+    ) -> DomainResult<Option<crate::types::EntryChildMeta>> {
+        Ok(self
+            .find_by_path(namespace_id, path)
+            .await?
+            .map(|entry| crate::types::EntryChildMeta {
+                entry,
+                size_bytes: None,
+                mime_type: None,
+                source_mtime: None,
+            }))
+    }
     /// r4 批量版子项（默认回退 = find_children 包装（零 meta ✓ 桩自动兼容）✗
     /// infra 覆写 = 一条 JOIN 消 N+1（children 每文件 open 的 6ms/个 → 索引点查）。
     /// r13 自定义属性 k/v（默认体 = 空/幂等 ✗ 桩零动 ✓ infra 覆写 = 0006 表）。

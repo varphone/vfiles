@@ -751,6 +751,19 @@ type EntryRow = (
     Option<String>,
 );
 
+type EntryChildMetaRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<i64>,
+    Option<String>,
+    Option<i64>,
+);
+
 fn parse_version_id_opt(value: Option<&str>) -> DomainResult<Option<VersionId>> {
     value
         .filter(|raw| !raw.is_empty())
@@ -1052,6 +1065,63 @@ impl EntryRepo for SqliteEntryRepo {
         })?;
 
         row.map(parse_entry_row).transpose()
+    }
+
+    async fn find_by_path_with_meta(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+    ) -> DomainResult<Option<vfiles_domain::types::EntryChildMeta>> {
+        let row: Option<EntryChildMetaRow> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id FROM entry_versions ev
+                    WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1
+                ) AS current_version_id,
+                (
+                    SELECT ev.size FROM entry_versions ev
+                    WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1
+                ) AS size_bytes,
+                (
+                    SELECT ev.content_type FROM entry_versions ev
+                    WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1
+                ) AS mime_type,
+                (
+                    SELECT ev.source_mtime FROM entry_versions ev
+                    WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1
+                ) AS source_mtime
+            FROM entries e
+            WHERE e.namespace_id = ? AND e.path = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(path.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to find entry with metadata: {}", e),
+        })?;
+
+        row.map(
+            |(id, ns, entry_path, kind, created, updated, version, size, mime, source_mtime)| {
+                let entry = parse_entry_row((id, ns, entry_path, kind, created, updated, version))?;
+                Ok(vfiles_domain::types::EntryChildMeta {
+                    entry,
+                    size_bytes: size.map(|size| size.max(0) as u64),
+                    mime_type: mime,
+                    source_mtime,
+                })
+            },
+        )
+        .transpose()
     }
 
     async fn find_children(
