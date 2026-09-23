@@ -869,6 +869,41 @@ async fn options_advertises_and_propfind_needs_auth() {
         .expect("lock token should be ASCII")
         .to_string();
 
+    let tagged_refresh = restarted_router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("If", format!("</persist.txt> ({lock_token})"))
+                .header("timeout", "Second-900")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(tagged_refresh.status(), 200);
+    assert_eq!(
+        tagged_refresh.headers().get("lock-token"),
+        Some(&axum::http::HeaderValue::from_str(&lock_token).unwrap())
+    );
+
+    let mismatched_tag_refresh = restarted_router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("If", format!("</other.txt> ({lock_token})"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mismatched_tag_refresh.status(), 412);
+
     let child_lock = router
         .clone()
         .oneshot(

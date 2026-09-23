@@ -45,46 +45,6 @@ pub struct WebdavApplication {
     pub locks: Arc<crate::lock::LockTable>,
 }
 
-/// 提取当前支持的单一未标记 `If` 状态 token（仅 LOCK refresh 使用）。
-///
-/// refresh 要求头中唯一的 token 明确对应当前资源；拒绝多 token 及 URI-tagged 条件。
-fn if_token(header: &str) -> Option<String> {
-    let lists = parse_if_token_lists(header)?;
-    if lists.len() == 1 && lists[0].len() == 1 {
-        lists.into_iter().next()?.into_iter().next()
-    } else {
-        None
-    }
-}
-
-/// Parse the untagged state-token form used by LOCK refresh requests.
-fn parse_if_token_lists(header: &str) -> Option<Vec<Vec<String>>> {
-    let mut remaining = header.trim();
-    let mut lists = Vec::new();
-    while !remaining.is_empty() {
-        remaining = remaining.strip_prefix('(')?;
-        let close = remaining.find(')')?;
-        let mut conditions = remaining[..close].trim();
-        let mut tokens = Vec::new();
-        while !conditions.is_empty() {
-            let condition = conditions.strip_prefix('<')?;
-            let end = condition.find('>')?;
-            let token = &condition[..end];
-            if !valid_state_token(token) {
-                return None;
-            }
-            tokens.push(token.to_string());
-            conditions = condition[end + 1..].trim_start();
-        }
-        if tokens.is_empty() {
-            return None;
-        }
-        lists.push(tokens);
-        remaining = remaining[close + 1..].trim_start();
-    }
-    (!lists.is_empty()).then_some(lists)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum IfCondition {
     Token { value: String, negated: bool },
@@ -561,7 +521,7 @@ async fn lock_refresh_op(
     app: Option<WebdavApplication>,
     ns: Option<vfiles_domain::types::NamespaceId>,
     uri_path: String,
-    token: Option<String>,
+    if_header: Option<String>,
     timeout_owned: Option<String>,
 ) -> Response {
     let Some(app) = app else {
@@ -570,7 +530,7 @@ async fn lock_refresh_op(
     let Some(ns) = ns else {
         return internal_error();
     };
-    let Some(token) = token else {
+    let Some(if_header) = if_header else {
         return Response::builder()
             .status(StatusCode::PRECONDITION_FAILED)
             .body(Body::empty())
@@ -580,13 +540,60 @@ async fn lock_refresh_op(
         .trim_start_matches('/')
         .trim_end_matches('/')
         .to_string();
+    let lock = match app.locks.blocked(&ns, &rel).await {
+        Ok(Some(lock)) => lock,
+        Ok(None) => {
+            return Response::builder()
+                .status(StatusCode::PRECONDITION_FAILED)
+                .body(Body::empty())
+                .unwrap();
+        }
+        Err(error) => {
+            tracing::error!(%error, "WebDAV LOCK 刷新读取锁失败");
+            return internal_error();
+        }
+    };
+    let etag = match vfiles_domain::types::NormalizedPath::new(&rel) {
+        Ok(path) => match app.entry_repo.find_by_path(&ns, &path).await {
+            Ok(entry) => entry
+                .and_then(|entry| entry.current_version_id)
+                .as_ref()
+                .map(derive_etag),
+            Err(error) => {
+                tracing::error!(%error, rel, "WebDAV If 条件读取实体标签失败");
+                return internal_error();
+            }
+        },
+        Err(_) => None,
+    };
+    match if_header_matches_resource(
+        &if_header,
+        &rel,
+        &app.mount_prefix,
+        Some(&lock.token),
+        etag.as_deref(),
+    ) {
+        Some(true) => {}
+        Some(false) => {
+            return Response::builder()
+                .status(StatusCode::PRECONDITION_FAILED)
+                .body(Body::empty())
+                .unwrap();
+        }
+        None => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::empty())
+                .unwrap();
+        }
+    }
     let ttl = timeout_owned
         .as_deref()
         .and_then(crate::lock::LockTable::parse_timeout_header);
     let granted_header = ttl
         .map(|d| format!("Second-{}", d.as_secs()))
         .unwrap_or_else(|| "Infinite".to_string());
-    match app.locks.refresh(&ns, &rel, &token, ttl).await {
+    match app.locks.refresh(&ns, &rel, &lock.token, ttl).await {
         Ok(Some(entry)) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
@@ -1981,11 +1988,11 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .get("lock-token")
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
-            let if_token_owned = req
+            let if_header_owned = req
                 .headers()
                 .get("if")
                 .and_then(|v| v.to_str().ok())
-                .and_then(if_token);
+                .map(str::to_string);
             let timeout_owned = req
                 .headers()
                 .get("timeout")
@@ -2015,7 +2022,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     app_owned,
                     ns_owned,
                     uri_owned,
-                    if_token_owned,
+                    if_header_owned,
                     timeout_owned,
                 )
                 .await
@@ -2956,20 +2963,7 @@ mod href_tests {
 
 #[cfg(test)]
 mod if_token_tests {
-    use crate::server::{if_token, untagged_if_matches};
-
-    #[test]
-    fn extracts_opaque_token_and_rejects_nested() {
-        assert_eq!(
-            if_token("(<opaquelocktoken:abc123>)"),
-            Some("opaquelocktoken:abc123".into())
-        );
-        assert_eq!(
-            if_token("(<opaquelocktoken:a> AND <opaquelocktoken:b>)"),
-            None
-        );
-        assert_eq!(if_token("<Not-a-lock-token>"), None);
-    }
+    use crate::server::untagged_if_matches;
 
     #[test]
     fn evaluates_untagged_lists_with_and_or_not_and_entity_tags() {

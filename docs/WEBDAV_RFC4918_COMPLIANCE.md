@@ -17,7 +17,7 @@
 | MOVE | ✅ **r11/r12 覆盖语义；原子替换补强** | 201 新建 / **412**（F+存在）/ **204**（T + 缺省=T）✓；Overwrite T 目标子树删除与源路径更新在 EntryRepo 单 SQLite 事务中提交，事务冲突回滚完整；提交后释放 blob 引用并记录删除/改名快照 | 客户端矩阵继续扩充 |
 | **COPY** | ✅ **r5 八式实证** | 递归子树 + blob 零字节复用（create_version upsert ref++ ✓）+ **审计落表** ✓；dst存在/自复制/自子树 = 409 ✓ dest缺 = 400 ✓ Allow 入 ✓ **Overwrite 全语义 ✅ r10**（T=删旧重建 204 ✓ F=412 ✓ 缺省=T ✓ 目录覆盖 204+旧消失 ✓ 审计 ✓）| - |
 | **PROPPATCH** | ✅ **r6 + 原子混合改名实证** | propertyupdate 按文档顺序解析；自定义属性按 namespace URI + local-name 持久化；SQLite 批量修改使用单事务，失败整批回滚；混合 displayname 改名和死属性修改在同一移动/属性事务中提交；只读属性返回 403，依赖项返回 424，移除不存在的属性成功 | - |
-| LOCK / UNLOCK | ✅ r109a | 无限期锁表 + 423 ✓；**Timeout 有限支持 / 锁刷新 = 缺** | P1 |
+| LOCK / UNLOCK | ✅ r109a | 持久化独占 write 锁 + 423 ✓；Timeout 与空体 LOCK refresh 支持未标记及匹配资源的 URI-tagged `If` 条件 | - |
 | POST | ➖ | RFC 无定义（405 ✓ 合规）| - |
 
 ## 2. 请求头/状态码面
