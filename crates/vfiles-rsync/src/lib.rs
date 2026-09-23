@@ -370,6 +370,25 @@ enum FilterItem {
     },
 }
 
+#[derive(Debug, Default)]
+struct ReceivedFilterList {
+    items: Vec<FilterItem>,
+    has_unsupported_rule: bool,
+}
+
+impl ReceivedFilterList {
+    fn push_line(&mut self, line: &str) {
+        match parse_filter_item(line) {
+            Some(item) => self.items.push(item),
+            None => self.has_unsupported_rule = true,
+        }
+    }
+
+    fn can_delete_safely(&self) -> bool {
+        !self.has_unsupported_rule
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DirMergeMode {
     Any,
@@ -451,20 +470,23 @@ fn parse_filter_item(line: &str) -> Option<FilterItem> {
     parse_rule(line).map(FilterItem::Rule)
 }
 
-fn parse_dir_merge_file(contents: &[u8], mode: DirMergeMode) -> Vec<DirMergeRule> {
-    String::from_utf8_lossy(contents)
-        .lines()
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .filter_map(|line| {
+fn parse_dir_merge_file(contents: &[u8], mode: DirMergeMode) -> Result<Vec<DirMergeRule>, String> {
+    let text = std::str::from_utf8(contents)
+        .map_err(|_| "per-directory filter file is not valid UTF-8".to_string())?;
+    text.lines()
+        .enumerate()
+        .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))
+        .map(|(index, line)| {
             if line == "!" {
-                return Some(DirMergeRule::ClearInherited);
+                return Ok(DirMergeRule::ClearInherited);
             }
             let parsed = match mode {
                 DirMergeMode::Any => parse_rule(line),
                 DirMergeMode::ExcludeOnly => parse_rule(&format!("- {line}")),
                 DirMergeMode::IncludeOnly => parse_rule(&format!("+ {line}")),
-            }?;
-            Some(DirMergeRule::Rule(parsed))
+            }
+            .ok_or_else(|| format!("invalid per-directory filter rule on line {}", index + 1))?;
+            Ok(DirMergeRule::Rule(parsed))
         })
         .collect()
 }
@@ -683,10 +705,9 @@ async fn load_dir_merge_rules(
                     "per-directory filter file {merged_path} exceeds {MAX_MERGE_FILE_SIZE} bytes"
                 ));
             }
-            loaded.insert(
-                (filter_index, directory.name.clone()),
-                parse_dir_merge_file(&contents, *mode),
-            );
+            let rules = parse_dir_merge_file(&contents, *mode)
+                .map_err(|error| format!("{merged_path}: {error}"))?;
+            loaded.insert((filter_index, directory.name.clone()), rules);
         }
     }
     Ok(loaded)
@@ -2503,7 +2524,7 @@ where
         // ── push：客户端为 sender、本端为接收端 ──
         let base = module_path(&args.paths, module);
         // `--delete*` → 客户端先发 filter list（receiver_wants_list=true）；规则用于**保护**不被删
-        let mut filter_items: Vec<FilterItem> = Vec::new();
+        let mut filter_list = ReceivedFilterList::default();
         if args.delete {
             loop {
                 let b = data_take(&mut rw, &mut pending, 4).await?;
@@ -2520,12 +2541,15 @@ where
                 let rule = data_take(&mut rw, &mut pending, len as usize).await?;
                 let text = String::from_utf8_lossy(&rule);
                 tracing::debug!(rule = %text, "FILTER-RULE");
-                match parse_filter_item(&text) {
-                    Some(item) => filter_items.push(item),
-                    None => tracing::debug!(rule = %text, "rsync: 跳过不支持的 filter 规则"),
+                filter_list.push_line(&text);
+                if filter_list.has_unsupported_rule {
+                    tracing::warn!(
+                        rule = %text,
+                        "rsync: --delete 收到不支持的 filter 规则；本次跳过删除"
+                    );
                 }
             }
-            tracing::debug!(rules = filter_items.len(), "rsync: 已解析 filter 规则");
+            tracing::debug!(rules = filter_list.items.len(), "rsync: 已解析 filter 规则");
         }
         let mut entries = recv_file_list(
             &mut rw,
@@ -2821,7 +2845,9 @@ where
         }
         // `--delete`：删目标端源端没有的条目（镜像 ✗ 递归才有意义；目录删含后代）
         if args.delete {
-            if !args.recursive {
+            if !filter_list.can_delete_safely() {
+                tracing::warn!("rsync --delete 收到未支持的 filter 规则；本次跳过删除");
+            } else if !args.recursive {
                 tracing::warn!("rsync：--delete 需配合 -r（本次跳过删除）");
             } else {
                 let src_names: std::collections::HashSet<&str> =
@@ -2834,7 +2860,7 @@ where
                     .await
                 {
                     Ok(dest) => {
-                        match load_dir_merge_rules(backend, &dest, &filter_items).await {
+                        match load_dir_merge_rules(backend, &dest, &filter_list.items).await {
                             Err(error) => tracing::warn!(
                                 error = %error,
                                 "rsync --delete 无法安全加载 per-directory filter；本次跳过删除"
@@ -2851,7 +2877,7 @@ where
                                 if !args.delete_excluded {
                                     for d in dest.iter().filter(|d| d.name != ".") {
                                         if is_excluded_with_merges(
-                                            &filter_items,
+                                            &filter_list.items,
                                             &merged_rules,
                                             &d.name,
                                             d.is_dir,
@@ -3879,11 +3905,13 @@ mod tests {
                 parse_dir_merge_file(
                     b"# root rules\n- keep.txt\n- /root-only\n",
                     DirMergeMode::Any,
-                ),
+                )
+                .expect("valid root merge rules"),
             ),
             (
                 (0, "sub".to_string()),
-                parse_dir_merge_file(b"+ keep.txt\n- /local-only\n", DirMergeMode::Any),
+                parse_dir_merge_file(b"+ keep.txt\n- /local-only\n", DirMergeMode::Any)
+                    .expect("valid child merge rules"),
             ),
         ]);
 
@@ -3955,8 +3983,10 @@ mod tests {
     fn dir_merge_modifiers_and_clear_rule_apply_only_to_this_merge_stack() {
         let filters =
             vec![parse_filter_item(": /.rsync-filter").expect("test operation should succeed")];
-        let inherited = parse_dir_merge_file(b"- keep.txt\n", DirMergeMode::Any);
-        let cleared_child = parse_dir_merge_file(b"!\n- deep.txt\n", DirMergeMode::Any);
+        let inherited =
+            parse_dir_merge_file(b"- keep.txt\n", DirMergeMode::Any).expect("valid inherited rule");
+        let cleared_child = parse_dir_merge_file(b"!\n- deep.txt\n", DirMergeMode::Any)
+            .expect("valid child clear rule");
         let merged = std::collections::HashMap::from([
             ((0, ".".to_string()), inherited.clone()),
             ((0, "sub".to_string()), cleared_child),
@@ -3977,11 +4007,12 @@ mod tests {
         let no_inherit_rules = std::collections::HashMap::from([
             (
                 (0, ".".to_string()),
-                parse_dir_merge_file(b"- keep.txt\n", DirMergeMode::Any),
+                parse_dir_merge_file(b"- keep.txt\n", DirMergeMode::Any).expect("valid root rule"),
             ),
             (
                 (0, "sub".to_string()),
-                parse_dir_merge_file(b"- child.txt\n", DirMergeMode::Any),
+                parse_dir_merge_file(b"- child.txt\n", DirMergeMode::Any)
+                    .expect("valid child rule"),
             ),
         ]);
         assert!(is_excluded_with_merges(
@@ -4009,11 +4040,26 @@ mod tests {
             false
         ));
 
-        let exclude_only = parse_dir_merge_file(b"*.cache\n", DirMergeMode::ExcludeOnly);
+        let exclude_only = parse_dir_merge_file(b"*.cache\n", DirMergeMode::ExcludeOnly)
+            .expect("valid exclude-only rule");
         assert!(matches!(
             exclude_only.as_slice(),
             [DirMergeRule::Rule(FilterRule { include: false, pattern, .. })] if pattern == "*.cache"
         ));
+    }
+
+    #[test]
+    fn unsupported_filter_rules_disable_delete_and_invalid_merge_fails_closed() {
+        let mut received = ReceivedFilterList::default();
+        received.push_line("- *.tmp");
+        assert!(received.can_delete_safely());
+        received.push_line("unsupported filter directive");
+        assert!(!received.can_delete_safely());
+
+        assert!(
+            parse_dir_merge_file(b"- keep.txt\ninvalid directive\n", DirMergeMode::Any).is_err()
+        );
+        assert!(parse_dir_merge_file(&[0xFF], DirMergeMode::Any).is_err());
     }
 
     /// 收端 delta 闭环：basis → 块校验和 → 发送端 token → `apply_tokens` 重建 == 新内容。
