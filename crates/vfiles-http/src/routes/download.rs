@@ -1,14 +1,13 @@
 use crate::{
     AppState,
     error::{ApiError, ApiResult},
-    http_headers::{attachment_header, streaming_file_response},
+    http_headers::streaming_file_response,
     routes::protected_request_context,
 };
 use axum::{
     Router,
-    body::Body,
     extract::{Query, State},
-    http::{HeaderMap, HeaderValue, header},
+    http::HeaderMap,
     response::Response,
     routing::get,
 };
@@ -26,25 +25,6 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(download_file))
         .route("/folder", get(download_folder))
-}
-
-fn build_archive_response(filename: &str, bytes: Vec<u8>) -> ApiResult<Response> {
-    let content_length = bytes.len();
-    let mut response = Response::new(Body::from(bytes));
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/zip"),
-    );
-    response
-        .headers_mut()
-        .insert(header::CONTENT_DISPOSITION, attachment_header(filename)?);
-    response.headers_mut().insert(
-        header::CONTENT_LENGTH,
-        HeaderValue::from_str(&content_length.to_string())
-            .map_err(|e| ApiError::Internal(format!("Invalid content length header: {}", e)))?,
-    );
-
-    Ok(response)
 }
 
 async fn download_file(
@@ -118,5 +98,12 @@ async fn download_folder(
     )
     .await;
 
-    build_archive_response(&archive.filename, archive.bytes)
+    streaming_file_response(
+        archive.reader,
+        &headers,
+        Some("application/zip"),
+        archive.size_bytes,
+        Some(&archive.filename),
+    )
+    .await
 }

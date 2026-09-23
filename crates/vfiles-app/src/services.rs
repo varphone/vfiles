@@ -1309,10 +1309,16 @@ pub struct FileContentBytes {
     pub bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
 pub struct DirectoryArchive {
     pub filename: String,
-    pub bytes: Vec<u8>,
+    pub size_bytes: u64,
+    pub reader: Box<dyn ReadSeek + Send + Unpin>,
+}
+
+enum ArchiveWriterMessage {
+    StartFile(String),
+    Data(Vec<u8>),
+    Finish,
 }
 
 #[derive(Debug, Clone)]
@@ -1551,59 +1557,107 @@ where
         archive_name: &str,
         requested_path: &NormalizedPath,
         files: Vec<(NormalizedPath, BlobId)>,
-    ) -> DomainResult<Vec<u8>> {
-        let mut cursor = std::io::Cursor::new(Vec::new());
-        {
-            let mut zip = zip::ZipWriter::new(&mut cursor);
+    ) -> DomainResult<(Box<dyn ReadSeek + Send + Unpin>, u64)> {
+        // Keep both archive bytes and deflate work off async worker threads. The bounded channel
+        // applies backpressure so a fast blob reader cannot queue an entire archive in memory.
+        let (writer_tx, mut writer_rx) = tokio::sync::mpsc::channel(2);
+        let writer = tokio::task::spawn_blocking(move || -> Result<std::fs::File, String> {
+            let output = tempfile::tempfile()
+                .map_err(|e| format!("Failed to create temporary archive: {e}"))?;
+            let mut zip = zip::ZipWriter::new(output);
             let options = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated);
-
-            for (full_path, blob_id) in files {
-                let mut reader = self
-                    .blob_store
-                    .get_blob_stream(&blob_id)
-                    .await?
-                    .ok_or_else(|| DomainError::NotFound {
-                        resource: "blob data".to_string(),
-                    })?;
-                let mut buffer = [0_u8; 64 * 1024];
-                let relative = relative_path_for_directory(requested_path, &full_path);
-                let zip_path = if relative.is_empty() {
-                    archive_name.to_string()
-                } else {
-                    format!("{}/{}", archive_name, relative)
-                };
-
-                zip.start_file(zip_path, options)
-                    .map_err(|e| DomainError::Internal {
-                        message: format!("Failed to create zip entry: {}", e),
-                    })?;
-
-                loop {
-                    let read =
-                        reader
-                            .read(&mut buffer)
-                            .await
-                            .map_err(|e| DomainError::Internal {
-                                message: format!("Failed to stream blob data: {}", e),
-                            })?;
-                    if read == 0 {
-                        break;
+            loop {
+                match writer_rx.blocking_recv() {
+                    Some(ArchiveWriterMessage::StartFile(path)) => {
+                        zip.start_file(path, options)
+                            .map_err(|e| format!("Failed to create zip entry: {e}"))?;
                     }
-
-                    zip.write_all(&buffer[..read])
-                        .map_err(|e| DomainError::Internal {
-                            message: format!("Failed to write zip entry: {}", e),
-                        })?;
+                    Some(ArchiveWriterMessage::Data(bytes)) => zip
+                        .write_all(&bytes)
+                        .map_err(|e| format!("Failed to write zip entry: {e}"))?,
+                    Some(ArchiveWriterMessage::Finish) => break,
+                    None => return Err("Archive input stream closed before finishing".to_string()),
                 }
             }
 
-            zip.finish().map_err(|e| DomainError::Internal {
-                message: format!("Failed to finalize zip archive: {}", e),
-            })?;
+            let mut output = zip
+                .finish()
+                .map_err(|e| format!("Failed to finalize zip archive: {e}"))?;
+            output
+                .flush()
+                .map_err(|e| format!("Failed to flush zip archive: {e}"))?;
+            Ok(output)
+        });
+
+        for (full_path, blob_id) in files {
+            let mut reader = self
+                .blob_store
+                .get_blob_stream(&blob_id)
+                .await?
+                .ok_or_else(|| DomainError::NotFound {
+                    resource: "blob data".to_string(),
+                })?;
+            let mut buffer = [0_u8; 64 * 1024];
+            let relative = relative_path_for_directory(requested_path, &full_path);
+            let zip_path = if relative.is_empty() {
+                archive_name.to_string()
+            } else {
+                format!("{}/{}", archive_name, relative)
+            };
+
+            writer_tx
+                .send(ArchiveWriterMessage::StartFile(zip_path))
+                .await
+                .map_err(|_| DomainError::Internal {
+                    message: "Archive writer stopped unexpectedly".to_string(),
+                })?;
+
+            loop {
+                let read = reader
+                    .read(&mut buffer)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to stream blob data: {}", e),
+                    })?;
+                if read == 0 {
+                    break;
+                }
+
+                writer_tx
+                    .send(ArchiveWriterMessage::Data(buffer[..read].to_vec()))
+                    .await
+                    .map_err(|_| DomainError::Internal {
+                        message: "Archive writer stopped unexpectedly".to_string(),
+                    })?;
+            }
         }
 
-        Ok(cursor.into_inner())
+        writer_tx
+            .send(ArchiveWriterMessage::Finish)
+            .await
+            .map_err(|_| DomainError::Internal {
+                message: "Archive writer stopped unexpectedly".to_string(),
+            })?;
+        drop(writer_tx);
+        let mut output = writer
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Archive writer task failed: {e}"),
+            })?
+            .map_err(|e| DomainError::Internal { message: e })?;
+        let size_bytes = output
+            .metadata()
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to stat temporary archive: {e}"),
+            })?
+            .len();
+        std::io::Seek::seek(&mut output, std::io::SeekFrom::Start(0)).map_err(|e| {
+            DomainError::Internal {
+                message: format!("Failed to rewind temporary archive: {e}"),
+            }
+        })?;
+        Ok((Box::new(tokio::fs::File::from_std(output)), size_bytes))
     }
 
     async fn resolve_file_blob(
@@ -1744,13 +1798,14 @@ where
                     .await?
             }
         };
-        let bytes = self
+        let (reader, size_bytes) = self
             .build_directory_archive(&archive_name, path, files)
             .await?;
 
         Ok(DirectoryArchive {
             filename: format!("{}.zip", archive_name),
-            bytes,
+            size_bytes,
+            reader,
         })
     }
 
@@ -4306,7 +4361,14 @@ mod tests {
             .download_directory_archive(&context.namespace_id, &docs, None)
             .await
             .expect("live directory archive should build");
-        let mut live_zip = zip::ZipArchive::new(std::io::Cursor::new(live_archive.bytes))
+        let mut live_archive_bytes = Vec::new();
+        let mut live_archive_reader = live_archive.reader;
+        live_archive_reader
+            .read_to_end(&mut live_archive_bytes)
+            .await
+            .expect("live archive stream should read");
+        assert_eq!(live_archive_bytes.len() as u64, live_archive.size_bytes);
+        let mut live_zip = zip::ZipArchive::new(std::io::Cursor::new(live_archive_bytes))
             .expect("live archive should open");
         let mut live_file = live_zip
             .by_name("docs/note.txt")
@@ -4326,8 +4388,14 @@ mod tests {
             )
             .await
             .expect("versioned directory archive should build");
+        let mut first_version_archive_bytes = Vec::new();
+        let mut first_version_archive_reader = first_version_archive.reader;
+        first_version_archive_reader
+            .read_to_end(&mut first_version_archive_bytes)
+            .await
+            .expect("versioned archive stream should read");
         let mut first_version_zip =
-            zip::ZipArchive::new(std::io::Cursor::new(first_version_archive.bytes))
+            zip::ZipArchive::new(std::io::Cursor::new(first_version_archive_bytes))
                 .expect("versioned archive should open");
         let mut first_version_file = first_version_zip
             .by_name("docs/note.txt")
@@ -4346,7 +4414,13 @@ mod tests {
             )
             .await
             .expect("snapshot directory archive should build");
-        let mut snapshot_zip = zip::ZipArchive::new(std::io::Cursor::new(snapshot_archive.bytes))
+        let mut snapshot_archive_bytes = Vec::new();
+        let mut snapshot_archive_reader = snapshot_archive.reader;
+        snapshot_archive_reader
+            .read_to_end(&mut snapshot_archive_bytes)
+            .await
+            .expect("snapshot archive stream should read");
+        let mut snapshot_zip = zip::ZipArchive::new(std::io::Cursor::new(snapshot_archive_bytes))
             .expect("snapshot archive should open");
         let mut snapshot_file = snapshot_zip
             .by_name("docs/note.txt")

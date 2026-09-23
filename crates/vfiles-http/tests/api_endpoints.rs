@@ -828,7 +828,18 @@ async fn chunked_upload_history_and_download_round_trip() {
         )
         .await;
     assert_eq!(folder_download.status(), StatusCode::OK);
+    assert_eq!(
+        folder_download.headers().get(header::CONTENT_TYPE),
+        Some(&HeaderValue::from_static("application/zip"))
+    );
+    let archive_size = folder_download
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok())
+        .expect("archive response should declare its length");
     let zip_bytes = response_bytes(folder_download).await;
+    assert_eq!(zip_bytes.len(), archive_size);
     let cursor = Cursor::new(zip_bytes.to_vec());
     let mut archive = zip::ZipArchive::new(cursor).expect("zip archive should open");
     assert_eq!(archive.len(), 1);
@@ -839,6 +850,28 @@ async fn chunked_upload_history_and_download_round_trip() {
     let mut extracted = Vec::new();
     std::io::Read::read_to_end(&mut file, &mut extracted).expect("zip entry should read");
     assert_eq!(extracted, b"hello from version two\n");
+
+    let ranged_folder_download = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/download/folder?path=docs")
+                .header(header::RANGE, "bytes=0-3")
+                .body(Body::empty())
+                .expect("range request should build"),
+        )
+        .await;
+    assert_eq!(ranged_folder_download.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        ranged_folder_download
+            .headers()
+            .get(header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok()),
+        Some(format!("bytes 0-3/{archive_size}").as_str())
+    );
+    assert_eq!(
+        response_bytes(ranged_folder_download).await.as_ref(),
+        &zip_bytes[..4]
+    );
 
     let versioned_folder_download = app
         .request_as_admin(

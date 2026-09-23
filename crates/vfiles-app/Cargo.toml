@@ -19,6 +19,7 @@ serde.workspace = true
 sha2.workspace = true
 similar.workspace = true
 time.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
@@ -27,4 +28,3 @@ zip.workspace = true
 [dev-dependencies]
 camino.workspace = true
 sqlx.workspace = true
-tempfile.workspace = true

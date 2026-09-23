@@ -12,7 +12,7 @@ use crate::{
     AppState,
     dto::{CreateShareRequest, CreateShareResponse, ShareDto},
     error::{ApiError, ApiJson},
-    http_headers::{attachment_header, streaming_file_response},
+    http_headers::streaming_file_response,
     middleware::client_ip_from_headers,
     routes::authenticated_request_context,
 };
@@ -26,26 +26,6 @@ pub fn router() -> Router<AppState> {
         .route("/shares/{code}/download", get(download_share))
         .route("/shares/{code}", get(access_share))
         .route("/shares/{code}", delete(disable_share))
-}
-
-fn build_archive_response(filename: &str, bytes: Vec<u8>) -> Result<Response, ApiError> {
-    let content_length = bytes.len();
-    let mut response = Response::new(axum::body::Body::from(bytes));
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_TYPE,
-        axum::http::HeaderValue::from_static("application/zip"),
-    );
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_DISPOSITION,
-        attachment_header(filename)?,
-    );
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_LENGTH,
-        axum::http::HeaderValue::from_str(&content_length.to_string())
-            .map_err(|e| ApiError::Internal(format!("Invalid content length header: {}", e)))?,
-    );
-
-    Ok(response)
 }
 
 async fn create_share(
@@ -220,7 +200,14 @@ pub async fn download_share(
                 .download_directory_archive(&share.namespace_id, &entry.path_norm, None)
                 .await?;
 
-            build_archive_response(&archive.filename, archive.bytes)
+            streaming_file_response(
+                archive.reader,
+                &headers,
+                Some("application/zip"),
+                archive.size_bytes,
+                Some(&archive.filename),
+            )
+            .await
         }
     }
 }
