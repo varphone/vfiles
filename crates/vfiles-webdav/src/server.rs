@@ -89,14 +89,105 @@ fn parse_if_token_lists(header: &str) -> Option<Vec<Vec<String>>> {
     (!lists.is_empty()).then_some(lists)
 }
 
-/// An untagged token-only condition list authorizes the current resource when
-/// it contains exactly that resource's active exclusive lock token.
-fn if_contains_token(header: &str, expected: &str) -> bool {
-    parse_if_token_lists(header).is_some_and(|lists| {
-        lists
-            .iter()
-            .any(|conditions| conditions.len() == 1 && conditions[0] == expected)
-    })
+#[derive(Debug, PartialEq, Eq)]
+enum IfCondition {
+    Token { value: String, negated: bool },
+    EntityTag { value: String, negated: bool },
+}
+
+/// Parse the untagged RFC 4918 If form. Conditions within one list are ANDed;
+/// separate lists are alternatives. URI-tagged lists are handled separately
+/// by resource-aware callers and are rejected here rather than misapplied.
+fn parse_untagged_if(header: &str) -> Option<Vec<Vec<IfCondition>>> {
+    let mut remaining = header.trim();
+    let mut lists = Vec::new();
+    while !remaining.is_empty() {
+        remaining = remaining.strip_prefix('(')?;
+        let close = remaining.find(')')?;
+        let mut input = remaining[..close].trim();
+        let mut conditions = Vec::new();
+        while !input.is_empty() {
+            let negated = if let Some(rest) = input.strip_prefix("Not") {
+                if rest.is_empty() || !rest.starts_with(char::is_whitespace) {
+                    return None;
+                }
+                input = rest.trim_start();
+                true
+            } else {
+                false
+            };
+            if let Some(rest) = input.strip_prefix('<') {
+                let end = rest.find('>')?;
+                let value = &rest[..end];
+                if !value.starts_with("opaquelocktoken:")
+                    || value.chars().any(char::is_whitespace)
+                    || value.contains('<')
+                {
+                    return None;
+                }
+                conditions.push(IfCondition::Token {
+                    value: value.to_string(),
+                    negated,
+                });
+                input = rest[end + 1..].trim_start();
+            } else {
+                let rest = input.strip_prefix('[')?;
+                let end = rest.find(']')?;
+                let value = &rest[..end];
+                if value != value.trim() || !valid_entity_tag(value) {
+                    return None;
+                }
+                conditions.push(IfCondition::EntityTag {
+                    value: value.to_string(),
+                    negated,
+                });
+                input = rest[end + 1..].trim_start();
+            }
+        }
+        if conditions.is_empty() {
+            return None;
+        }
+        lists.push(conditions);
+        remaining = remaining[close + 1..].trim_start();
+    }
+    (!lists.is_empty()).then_some(lists)
+}
+
+fn valid_entity_tag(value: &str) -> bool {
+    let opaque = value.strip_prefix("W/").unwrap_or(value);
+    opaque.len() >= 2
+        && opaque.starts_with('"')
+        && opaque.ends_with('"')
+        && !opaque[1..opaque.len() - 1]
+            .chars()
+            .any(|ch| ch == '"' || ch.is_control())
+}
+
+fn untagged_if_matches(
+    header: &str,
+    active_lock_token: Option<&str>,
+    etag: Option<&str>,
+) -> Option<bool> {
+    let lists = parse_untagged_if(header)?;
+    Some(lists.iter().any(|conditions| {
+        let mut has_positive_lock_token = false;
+        let conditions_match = conditions.iter().all(|condition| match condition {
+            IfCondition::Token { value, negated } => {
+                let matches = active_lock_token.is_some_and(|active| value == active);
+                if matches && !negated {
+                    has_positive_lock_token = true;
+                }
+                matches != *negated
+            }
+            IfCondition::EntityTag { value, negated } => {
+                let matches = etag.is_some_and(|current| {
+                    value.trim_start_matches("W/") == current.trim_start_matches("W/")
+                });
+                matches != *negated
+            }
+        });
+        conditions_match && active_lock_token.is_none_or(|_| has_positive_lock_token)
+    }))
 }
 
 /// LOCK（r109a ✓ exclusive write / depth 0 ✓ 已锁 = 423 ✓ **纯拥有参**（#46 纪律））。
@@ -491,18 +582,43 @@ async fn write_precondition(
     rel: &str,
     if_header: Option<&str>,
 ) -> Option<StatusCode> {
-    let entry = match app.locks.blocked(ns, rel).await {
-        Ok(Some(entry)) => entry,
-        Ok(None) => return None,
+    let lock = match app.locks.blocked(ns, rel).await {
+        Ok(entry) => entry,
         Err(error) => {
             tracing::error!(%error, rel, "WebDAV 写锁查询失败");
             return Some(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
-    let token_ok = if_header.is_some_and(|header| if_contains_token(header, &entry.token));
-    let status = precondition_status(true, if_header.is_some(), token_ok)?;
-    tracing::debug!(rel = %rel, status = %status, "写锁前置拒绝（423/412）");
-    Some(status)
+    if let Some(header) = if_header {
+        let etag = if let Ok(path) = vfiles_domain::types::NormalizedPath::new(rel) {
+            match app.entry_repo.find_by_path(ns, &path).await {
+                Ok(entry) => entry
+                    .and_then(|entry| entry.current_version_id)
+                    .as_ref()
+                    .map(derive_etag),
+                Err(error) => {
+                    tracing::error!(%error, rel, "WebDAV If 条件读取实体标签失败");
+                    return Some(StatusCode::INTERNAL_SERVER_ERROR);
+                }
+            }
+        } else {
+            None
+        };
+        if untagged_if_matches(
+            header,
+            lock.as_ref().map(|entry| entry.token.as_str()),
+            etag.as_deref(),
+        ) != Some(true)
+        {
+            tracing::debug!(rel = %rel, "WebDAV If 条件未匹配，返回 412");
+            return Some(StatusCode::PRECONDITION_FAILED);
+        }
+    }
+    if lock.is_some() && if_header.is_none() {
+        tracing::debug!(rel = %rel, "WebDAV 写请求缺少锁 token，返回 423");
+        return Some(StatusCode::LOCKED);
+    }
+    None
 }
 
 async fn put_op(
@@ -716,20 +832,6 @@ fn etag_satisfies(header: &str, etag: Option<&str>) -> bool {
     h.split(',')
         .map(|s| s.trim())
         .any(|part| part == et || part.trim_matches('"') == et.trim_matches('"'))
-}
-
-/// 锁前置分码（r7 ✓ RFC §4918 §9.10.6 纯函数）：
-/// - 无 If 头 + 资源锁住 → 423 Locked
-/// - 有 If 头但 token 不匹配 → **412 Precondition Failed**
-/// - If 匹配 / 未锁 → None（放行 ✓ 未锁忽略 If = 简式记档）
-fn precondition_status(locked: bool, has_if: bool, token_ok: bool) -> Option<StatusCode> {
-    if !locked || token_ok {
-        None
-    } else if has_if {
-        Some(StatusCode::PRECONDITION_FAILED)
-    } else {
-        Some(StatusCode::LOCKED)
-    }
 }
 
 /// `Destination` 头 → 相对路径（纯函数 ✓ 单测覆盖）。
@@ -2006,7 +2108,7 @@ mod href_tests {
 
 #[cfg(test)]
 mod if_token_tests {
-    use crate::server::{if_contains_token, if_token};
+    use crate::server::{if_token, untagged_if_matches};
 
     #[test]
     fn extracts_opaque_token_and_rejects_nested() {
@@ -2022,21 +2124,76 @@ mod if_token_tests {
     }
 
     #[test]
-    fn accepts_matching_token_in_an_alternative_untagged_list() {
+    fn evaluates_untagged_lists_with_and_or_not_and_entity_tags() {
         let expected = "opaquelocktoken:active";
-        assert!(if_contains_token(
-            "(<opaquelocktoken:other>) (<opaquelocktoken:active>)",
-            expected
-        ));
-        assert!(!if_contains_token("(<opaquelocktoken:other>)", expected));
-        assert!(!if_contains_token(
-            "(<opaquelocktoken:active> <opaquelocktoken:other>)",
-            expected
-        ));
-        assert!(!if_contains_token(
-            "</other-resource> (<opaquelocktoken:active>)",
-            expected
-        ));
+        assert_eq!(
+            untagged_if_matches(
+                "(<opaquelocktoken:other>) (<opaquelocktoken:active>)",
+                Some(expected),
+                None,
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            untagged_if_matches("(<opaquelocktoken:other>)", Some(expected), None,),
+            Some(false)
+        );
+        assert_eq!(
+            untagged_if_matches(
+                "(<opaquelocktoken:active> [\"v1\"])",
+                Some(expected),
+                Some("\"v1\""),
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            untagged_if_matches(
+                "(<opaquelocktoken:active> <opaquelocktoken:other>)",
+                Some(expected),
+                None,
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            untagged_if_matches(
+                "(<opaquelocktoken:active> [\"stale\"])",
+                Some(expected),
+                Some("\"v1\""),
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            untagged_if_matches(
+                "(Not <opaquelocktoken:other> <opaquelocktoken:active> [\"v1\"])",
+                Some(expected),
+                Some("\"v1\""),
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            untagged_if_matches(
+                "(Not <opaquelocktoken:active> <opaquelocktoken:active>)",
+                Some(expected),
+                None,
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            untagged_if_matches(
+                "</other-resource> (<opaquelocktoken:active>)",
+                Some(expected),
+                None,
+            ),
+            None
+        );
+        assert_eq!(
+            untagged_if_matches("([\"v1\"])", None, Some("\"v1\"")),
+            Some(true)
+        );
+        assert_eq!(
+            untagged_if_matches("([\"old\"])", None, Some("\"v1\"")),
+            Some(false)
+        );
     }
 }
 
@@ -2078,30 +2235,6 @@ mod range_tests {
             parse_byte_range("bytes=0-10", 0),
             ByteRange::NotApplicable
         ));
-    }
-}
-
-#[cfg(test)]
-mod precondition_tests {
-    use super::write_precondition;
-    use crate::server::precondition_status;
-    use axum::http::StatusCode;
-
-    #[test]
-    fn codes_per_rfc4918() {
-        // r7 分码守护（RFC §9.10.6）：无If锁住=423 / 有If不匹配=412 / 匹配或未锁=放行
-        assert_eq!(
-            precondition_status(true, false, false),
-            Some(StatusCode::LOCKED)
-        );
-        assert_eq!(
-            precondition_status(true, true, false),
-            Some(StatusCode::PRECONDITION_FAILED)
-        );
-        assert_eq!(precondition_status(true, true, true), None);
-        assert_eq!(precondition_status(false, false, false), None);
-        assert_eq!(precondition_status(false, true, false), None);
-        let _ = write_precondition; // 桥引用防空（单测走纯函数面）
     }
 }
 
