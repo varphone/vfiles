@@ -1163,6 +1163,21 @@ async fn propfind_owned(
             .into_iter()
             .map(|version| (version.id, version.created_at))
             .collect();
+        let child_paths: Vec<String> = metas
+            .iter()
+            .map(|meta| format!("{}{}", child_prefix(rel), meta.entry.name))
+            .collect();
+        let mut child_locks: std::collections::HashMap<_, _> = app
+            .locks
+            .blocked_many(&ns, &child_paths)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "WebDAV PROPFIND 批量锁查询失败");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?
+            .into_iter()
+            .map(|(path, lock)| (path, active_lock_value(lock)))
+            .collect();
         for meta in metas {
             let child = meta.entry;
             let child_rel = format!("{}{}", child_prefix(rel), child.name);
@@ -1195,7 +1210,7 @@ async fn propfind_owned(
                     .map(|v| format!("\"{}\"", v.to_string().replace('-', ""))),
                 creationdate: cdate_fmt(child.created_at),
                 owner: owner_val.clone(),
-                active_lock: active_lock_prop(&app, &ns, &child_rel).await?,
+                active_lock: child_locks.remove(&child_rel),
             });
         }
     }
@@ -1214,6 +1229,10 @@ async fn active_lock_prop(
     let Some(lock) = lock else {
         return Ok(None);
     };
+    Ok(Some(active_lock_value(lock)))
+}
+
+fn active_lock_value(lock: crate::lock::LockEntry) -> crate::response::ActiveLock {
     let timeout = match lock.expires_at {
         Some(expiry) => {
             let remaining_ms = expiry.saturating_sub(crate::lock::LockTable::now()).max(1);
@@ -1222,11 +1241,11 @@ async fn active_lock_prop(
         }
         None => "Infinite".to_string(),
     };
-    Ok(Some(crate::response::ActiveLock {
+    crate::response::ActiveLock {
         token: lock.token,
         owner: lock.owner,
         timeout,
-    }))
+    }
 }
 
 /// Range 解析（RFC 7233 简式 ✓ 纯函数单测）。

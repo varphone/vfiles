@@ -158,6 +158,20 @@ pub trait WebdavLockRepo: Send + Sync {
         path: &str,
         now: i64,
     ) -> DomainResult<Option<WebdavLock>>;
+    async fn find_active_many(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[String],
+        now: i64,
+    ) -> DomainResult<std::collections::HashMap<String, WebdavLock>> {
+        let mut locks = std::collections::HashMap::new();
+        for path in paths {
+            if let Some(lock) = self.find_active(namespace_id, path, now).await? {
+                locks.insert(path.clone(), lock);
+            }
+        }
+        Ok(locks)
+    }
     async fn refresh(
         &self,
         namespace_id: &NamespaceId,

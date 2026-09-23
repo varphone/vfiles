@@ -366,6 +366,47 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         }))
     }
 
+    async fn find_active_many(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[String],
+        now: i64,
+    ) -> DomainResult<std::collections::HashMap<String, WebdavLock>> {
+        let mut locks = std::collections::HashMap::new();
+        for chunk in paths.chunks(400) {
+            let mut query = sqlx::QueryBuilder::new(
+                "SELECT path, token, owner, expires_at FROM webdav_locks WHERE namespace_id = ",
+            );
+            query.push_bind(namespace_id.to_string());
+            query.push(" AND (expires_at IS NULL OR expires_at > ");
+            query.push_bind(now);
+            query.push(") AND path IN (");
+            let mut separated = query.separated(", ");
+            for path in chunk {
+                separated.push_bind(path);
+            }
+            separated.push_unseparated(")");
+            let rows = query
+                .build_query_as::<(String, String, String, Option<i64>)>()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to look up WebDAV locks: {e}"),
+                })?;
+            locks.extend(rows.into_iter().map(|(path, token, owner, expires_at)| {
+                (
+                    path,
+                    WebdavLock {
+                        token,
+                        owner,
+                        expires_at,
+                    },
+                )
+            }));
+        }
+        Ok(locks)
+    }
+
     async fn refresh(
         &self,
         namespace_id: &NamespaceId,

@@ -554,6 +554,59 @@ async fn options_advertises_and_propfind_needs_auth() {
         .expect("lock token should be ASCII")
         .to_string();
 
+    let child_lock = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/renamed.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("timeout", "Second-600")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(lock_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(child_lock.status(), 200);
+    let child_lock_token = child_lock
+        .headers()
+        .get("lock-token")
+        .expect("child LOCK should return its token")
+        .to_str()
+        .expect("child lock token should be ASCII")
+        .to_string();
+
+    let child_lock_props = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "1")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propfind xmlns:D="DAV:"><D:prop><D:lockdiscovery/></D:prop></D:propfind>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(child_lock_props.status(), 207);
+    let child_lock_xml = String::from_utf8(
+        axum::body::to_bytes(child_lock_props.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(
+        child_lock_xml.contains(&child_lock_token[1..child_lock_token.len() - 1]),
+        "depth-one PROPFIND should expose the locked child: {child_lock_xml}"
+    );
+
     let blocked_write = router
         .clone()
         .oneshot(

@@ -110,6 +110,20 @@ impl LockTable {
             .map(|lock| Self::from_record(path, lock)))
     }
 
+    pub async fn blocked_many(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[String],
+    ) -> vfiles_domain::DomainResult<std::collections::HashMap<String, LockEntry>> {
+        Ok(self
+            .repo
+            .find_active_many(namespace_id, paths, Self::now())
+            .await?
+            .into_iter()
+            .map(|(path, lock)| (path.clone(), Self::from_record(&path, lock)))
+            .collect())
+    }
+
     /// Timeout header parser: the first valid `Second-N` alternative wins.
     pub fn parse_timeout_header(value: &str) -> Option<Duration> {
         for part in value.split(',') {
