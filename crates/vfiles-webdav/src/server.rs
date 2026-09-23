@@ -303,6 +303,27 @@ fn if_header_matches_resource(
     }
 }
 
+fn tagged_if_matches_resource(
+    header: &str,
+    rel: &str,
+    mount_prefix: &str,
+    active_lock_token: &str,
+    etag: Option<&str>,
+) -> Option<bool> {
+    let IfHeader::Tagged(tagged) = parse_if_header(header)? else {
+        return Some(false);
+    };
+    let matching_lists: Vec<_> = tagged
+        .iter()
+        .filter(|(tag, _)| resource_tag_matches(tag, rel, mount_prefix))
+        .flat_map(|(_, lists)| lists.iter().cloned())
+        .collect();
+    Some(
+        !matching_lists.is_empty()
+            && if_lists_match(&matching_lists, Some(active_lock_token), etag),
+    )
+}
+
 #[derive(Debug, Clone, Default)]
 struct DestinationContext {
     authority: Option<String>,
@@ -968,6 +989,64 @@ async fn write_precondition(
     None
 }
 
+async fn write_subtree_precondition(
+    app: &WebdavApplication,
+    ns: &vfiles_domain::types::NamespaceId,
+    rel: &str,
+    if_header: Option<&str>,
+) -> Option<StatusCode> {
+    if let Some(status) = write_precondition(app, ns, rel, if_header).await {
+        return Some(status);
+    }
+    let locks = match app.locks.blocked_under_path(ns, rel).await {
+        Ok(locks) => locks,
+        Err(error) => {
+            tracing::error!(%error, rel, "WebDAV 子树锁查询失败");
+            return Some(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    for (locked_path, lock) in locks {
+        if locked_path == rel {
+            continue;
+        }
+        let Some(header) = if_header else {
+            tracing::debug!(path = %locked_path, "WebDAV 子树资源被锁且缺少 If token，返回 423");
+            return Some(StatusCode::LOCKED);
+        };
+        let etag = match vfiles_domain::types::NormalizedPath::new(&locked_path) {
+            Ok(path) => match app.entry_repo.find_by_path(ns, &path).await {
+                Ok(entry) => entry
+                    .and_then(|entry| entry.current_version_id)
+                    .as_ref()
+                    .map(derive_etag),
+                Err(error) => {
+                    tracing::error!(%error, path = %locked_path, "WebDAV 子树 If 条件读取 ETag 失败");
+                    return Some(StatusCode::INTERNAL_SERVER_ERROR);
+                }
+            },
+            Err(_) => None,
+        };
+        match tagged_if_matches_resource(
+            header,
+            &locked_path,
+            &app.mount_prefix,
+            &lock.token,
+            etag.as_deref(),
+        ) {
+            Some(true) => {}
+            Some(false) => {
+                tracing::debug!(path = %locked_path, "WebDAV 子树 If 条件未匹配，返回 412");
+                return Some(StatusCode::PRECONDITION_FAILED);
+            }
+            None => {
+                tracing::debug!(path = %locked_path, "WebDAV 子树 If 头语法无效，返回 400");
+                return Some(StatusCode::BAD_REQUEST);
+            }
+        }
+    }
+    None
+}
+
 async fn put_op(
     app: Option<WebdavApplication>,
     user: Option<vfiles_domain::types::User>,
@@ -1115,7 +1194,12 @@ async fn write_op(
     };
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/');
     // 写锁校验（r109a 423 → r7 分码 ✗ 有 If 不匹配 = 412（RFC §9.10.6））
-    if let Some(status) = write_precondition(&app, &ns, rel, if_header.as_deref()).await {
+    let precondition = if matches!(&op, WriteOp::Delete) {
+        write_subtree_precondition(&app, &ns, rel, if_header.as_deref()).await
+    } else {
+        write_precondition(&app, &ns, rel, if_header.as_deref()).await
+    };
+    if let Some(status) = precondition {
         return Response::builder()
             .status(status)
             .body(Body::empty())
@@ -2431,16 +2515,27 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 req.headers().get("overwrite").and_then(|v| v.to_str().ok()) != Some("F");
             // 源路径裁前导斜杠（PROPFIND 同式 ✗ 真因：new 不收前导 / ✗ 诊断日志定案 ✓）
             let src_rel = uri_owned.trim_start_matches('/').to_string();
-            // r7 锁前置：源 + 目标双查（COPY 此前零检查 ✗ 摆设缺口 ×2）
-            for check_rel in [src_rel.as_str(), dest_hdr.trim_matches('/')] {
-                if let Some(status) =
-                    write_precondition(&app_ref, &ns, check_rel, if_owned.as_deref()).await
-                {
-                    return Response::builder()
-                        .status(status)
-                        .body(Body::empty())
-                        .unwrap();
-                }
+            // COPY writes/replaces the destination subtree; source is read-only.
+            if let Some(status) =
+                write_precondition(&app_ref, &ns, &src_rel, if_owned.as_deref()).await
+            {
+                return Response::builder()
+                    .status(status)
+                    .body(Body::empty())
+                    .unwrap();
+            }
+            if let Some(status) = write_subtree_precondition(
+                &app_ref,
+                &ns,
+                dest_hdr.trim_matches('/'),
+                if_owned.as_deref(),
+            )
+            .await
+            {
+                return Response::builder()
+                    .status(status)
+                    .body(Body::empty())
+                    .unwrap();
             }
             let path = match vfiles_domain::types::NormalizedPath::new(&src_rel) {
                 Ok(p) => p,
@@ -2603,7 +2698,8 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         .trim_end_matches('/')
                         .to_string();
                     if let Some(status) =
-                        write_precondition(app, ns_ext, &source_rel, if_owned.as_deref()).await
+                        write_subtree_precondition(app, ns_ext, &source_rel, if_owned.as_deref())
+                            .await
                     {
                         return Response::builder()
                             .status(status)
@@ -2639,7 +2735,8 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         }
                     }
                     if let Some(status) =
-                        write_precondition(app, ns_ext, &dest_rel, if_owned.as_deref()).await
+                        write_subtree_precondition(app, ns_ext, &dest_rel, if_owned.as_deref())
+                            .await
                     {
                         return Response::builder()
                             .status(status)

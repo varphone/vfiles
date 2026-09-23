@@ -407,6 +407,48 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         Ok(locks)
     }
 
+    async fn find_active_under_path(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        now: i64,
+    ) -> DomainResult<std::collections::HashMap<String, WebdavLock>> {
+        let rows: Vec<(String, String, String, Option<i64>)> = sqlx::query_as(
+            r#"SELECT path, token, owner, expires_at
+               FROM webdav_locks
+               WHERE namespace_id = ?
+                 AND (expires_at IS NULL OR expires_at > ?)
+                 AND (
+                   ? = '' OR path = ? OR
+                   substr(path, 1, length(?) + 1) = ? || '/'
+                 )"#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(now)
+        .bind(path)
+        .bind(path)
+        .bind(path)
+        .bind(path)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to look up WebDAV subtree locks: {e}"),
+        })?;
+        Ok(rows
+            .into_iter()
+            .map(|(path, token, owner, expires_at)| {
+                (
+                    path,
+                    WebdavLock {
+                        token,
+                        owner,
+                        expires_at,
+                    },
+                )
+            })
+            .collect())
+    }
+
     async fn refresh(
         &self,
         namespace_id: &NamespaceId,
@@ -7934,6 +7976,36 @@ mod webdav_lock_repo_tests {
             .expect("namespace should be inserted");
 
         let repo = SqliteWebdavLockRepo::new(pool.clone());
+        for (path, token) in [
+            ("folder", "folder-token"),
+            ("folder/child.txt", "child-token"),
+            ("folder/nested/grandchild.txt", "grandchild-token"),
+            ("folderish/other.txt", "sibling-token"),
+        ] {
+            assert!(
+                repo.acquire(&namespace_id, path, token, "alice", None, 1_000)
+                    .await
+                    .expect("subtree fixture lock should be created")
+            );
+        }
+        let subtree_locks = repo
+            .find_active_under_path(&namespace_id, "folder", 1_000)
+            .await
+            .expect("subtree locks should be found");
+        let mut subtree_paths: Vec<_> = subtree_locks.keys().map(String::as_str).collect();
+        subtree_paths.sort_unstable();
+        assert_eq!(
+            subtree_paths,
+            ["folder", "folder/child.txt", "folder/nested/grandchild.txt"]
+        );
+        assert_eq!(
+            repo.find_active_under_path(&namespace_id, "", 1_000)
+                .await
+                .expect("root subtree locks should be found")
+                .len(),
+            4
+        );
+
         let (first, second) = tokio::join!(
             repo.acquire(&namespace_id, "a.txt", "token-a", "alice", None, 1_000),
             repo.acquire(&namespace_id, "a.txt", "token-b", "bob", None, 1_000),

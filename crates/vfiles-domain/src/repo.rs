@@ -172,6 +172,14 @@ pub trait WebdavLockRepo: Send + Sync {
         }
         Ok(locks)
     }
+    /// Find active locks on a resource and every descendant whose path has the
+    /// resource path as a slash-delimited prefix.
+    async fn find_active_under_path(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        now: i64,
+    ) -> DomainResult<std::collections::HashMap<String, WebdavLock>>;
     async fn refresh(
         &self,
         namespace_id: &NamespaceId,

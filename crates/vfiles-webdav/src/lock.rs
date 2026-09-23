@@ -124,6 +124,20 @@ impl LockTable {
             .collect())
     }
 
+    pub async fn blocked_under_path(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+    ) -> vfiles_domain::DomainResult<std::collections::HashMap<String, LockEntry>> {
+        Ok(self
+            .repo
+            .find_active_under_path(namespace_id, path, Self::now())
+            .await?
+            .into_iter()
+            .map(|(path, lock)| (path.clone(), Self::from_record(&path, lock)))
+            .collect())
+    }
+
     /// Timeout header parser: the first valid `Second-N` alternative wins.
     pub fn parse_timeout_header(value: &str) -> Option<Duration> {
         for part in value.split(',') {

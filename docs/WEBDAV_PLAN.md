@@ -35,6 +35,7 @@
 - `If` 状态 token 接受任意合法 URI；未知 token 按“不匹配”参与条件求值，不会导致整个头部解析失败并屏蔽其它 OR 列表。`Not` 关键字按 ABNF 大小写不敏感解析。
 - LOCK refresh 按同一套 `If` 条件解析执行，接受匹配当前资源的 URI-tagged 列表，并按实际资源的锁 token / ETag 求值。
 - PUT 现在从 Axum `Body` 转为 `StreamReader` 直通 `complete_upload_from_stream_unknown_size`；不再先用 `usize::MAX` 将整个请求体复制到内存。流式计数沿用 HTTP 的较小文件上限，超过时返回 413，并清理上传会话与 blob 临时文件。
+- DELETE、MOVE 源/目标与 COPY 覆盖目标会检查受影响子树中的活动锁；子项锁要求在 URI-tagged `If` 列表中按子项资源提交匹配 token，缺失返回 423、不匹配返回 412。
 
 ## 0.5 GET 流式化（r201 ✓ 商业级硬伤修 ✗ 大文件内存爆）
 

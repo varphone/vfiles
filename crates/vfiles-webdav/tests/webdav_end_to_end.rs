@@ -179,6 +179,24 @@ async fn options_advertises_and_propfind_needs_auth() {
             .await
             .expect("create fixture entry");
     }
+    entry_repo
+        .create_entry(
+            &namespace_id,
+            &NormalizedPath::new("locked-dir").expect("directory path"),
+            vfiles_domain::types::EntryKind::Directory,
+            &user.id,
+        )
+        .await
+        .expect("locked directory should be created");
+    entry_repo
+        .create_entry(
+            &namespace_id,
+            &NormalizedPath::new("locked-dir/child.txt").expect("child path"),
+            vfiles_domain::types::EntryKind::File,
+            &user.id,
+        )
+        .await
+        .expect("locked child should be created");
     let persist_path = NormalizedPath::new("persist.txt").expect("fixture path");
     let persist_entry = entry_repo
         .find_by_path(&namespace_id, &persist_path)
@@ -1097,6 +1115,63 @@ async fn options_advertises_and_propfind_needs_auth() {
         0,
         "MOVE must reject a stale source condition before deleting its destination"
     );
+
+    let nested_lock = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/locked-dir/child.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(lock_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(nested_lock.status(), 200);
+    let nested_lock_token = nested_lock
+        .headers()
+        .get("lock-token")
+        .expect("nested LOCK should return its token")
+        .to_str()
+        .expect("nested lock token should be ASCII")
+        .to_string();
+
+    let blocked_parent_delete = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("DELETE")
+                .uri("/locked-dir")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(blocked_parent_delete.status(), 423);
+    assert_eq!(deletes.load(std::sync::atomic::Ordering::Relaxed), 0);
+
+    let authorized_parent_delete = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("DELETE")
+                .uri("/locked-dir")
+                .header("authorization", format!("Basic {basic}"))
+                .header(
+                    "If",
+                    format!("</locked-dir/child.txt> ({nested_lock_token})"),
+                )
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(authorized_parent_delete.status(), 204);
+    assert_eq!(deletes.load(std::sync::atomic::Ordering::Relaxed), 1);
 
     sqlx::query("DROP TABLE entry_properties")
         .execute(&pool)
