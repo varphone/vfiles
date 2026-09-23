@@ -186,6 +186,27 @@ pub trait EntryRepo {
             .collect())
     }
 
+    /// 命名空间内**全部文件**（含 size/mime ✗ 按 path 升序）：S3 列表一次取全，
+    /// 默认回退 = find_all 过滤（零 meta），infra 覆写 = **一条 SQL** 消 N+1（大桶关键）。
+    async fn files_with_meta(
+        &self,
+        namespace_id: &NamespaceId,
+    ) -> DomainResult<Vec<crate::types::EntryChildMeta>> {
+        let mut out: Vec<crate::types::EntryChildMeta> = self
+            .find_all(namespace_id)
+            .await?
+            .into_iter()
+            .filter(|e| e.entry_type == EntryKind::File)
+            .map(|entry| crate::types::EntryChildMeta {
+                entry,
+                size_bytes: None,
+                mime_type: None,
+            })
+            .collect();
+        out.sort_by(|a, b| a.entry.path_norm.as_str().cmp(b.entry.path_norm.as_str()));
+        Ok(out)
+    }
+
     async fn find_children(
         &self,
         namespace_id: &NamespaceId,

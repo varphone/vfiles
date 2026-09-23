@@ -168,6 +168,22 @@ def main():
               f"ok2={ok2} rejected={unknown_rejected}")
         s3b.delete_object(Bucket="default", Key="boto-r10/second.txt")
 
+    # ── 大桶分页（一条 SQL 取全 ✗ r13）──
+    for k in range(4):
+        for j in range(30):
+            s3.put_object(Bucket="default", Key=f"boto-scale/d{k}/f{j:02d}.txt", Body=b"x")
+    pages = list(s3.get_paginator("list_objects_v2").paginate(
+        Bucket="default", Prefix="boto-scale/", PaginationConfig={"PageSize": 50}))
+    skeys = [c["Key"] for p in pages for c in p.get("Contents", [])]
+    check("boto scale pagination 120 no dup",
+          len(skeys) == 120 and len(set(skeys)) == 120, f"pages={len(pages)} keys={len(skeys)}")
+    sc = s3.list_objects_v2(Bucket="default", Prefix="boto-scale/", Delimiter="/")
+    scps = sorted(p["Prefix"] for p in sc.get("CommonPrefixes", []))
+    check("boto scale delimiter 4 prefixes", len(scps) == 4, scps)
+    for k in range(4):
+        for j in range(30):
+            s3.delete_object(Bucket="default", Key=f"boto-scale/d{k}/f{j:02d}.txt")
+
     passed = sum(1 for x in P if x)
     print(f"== boto3 {passed}/{len(P)} PASS ==")
     sys.exit(0 if passed == len(P) else 1)

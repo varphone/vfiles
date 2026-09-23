@@ -1,4 +1,24 @@
-# S3 兼容 API（r2 九式 → … → r6 流式/批量删 → **r10 多凭证 + CopyObject + ContentType 贯通**）
+# S3 兼容 API（r2 九式 → … → r10 多凭证/CopyObject → **r13 列表一条 SQL 消 N+1**）
+
+## 状态（r13 末 · 大桶列表可扩展 = 250 对象 11.7ms / 分页无重无漏）
+
+- **实装**：
+  | 项 | 内容 |
+  | --- | --- |
+  | `EntryRepo::files_with_meta` | 新仓储方法（默认 = `find_all` 过滤 ✗ 桩零破）；**SQLite 覆写 = 一条 SQL**（`entries WHERE kind='file'` + 最新版本 size/content_type 标量子查询 ✗ `children_with_meta` 同款列） |
+  | `collect_objects` | 由**逐目录递归**（目录数条查询 = N+1）改为**一次取全 + 内存排序** |
+- **实证**：
+  | 场景 | 结果 |
+  | --- | --- |
+  | 250 对象 ×10 目录 全列 | **11.7ms**（一条 SQL） |
+  | `max-keys=100` 分页 | 3 页 / 250 key **无重无漏** ✓ |
+  | `delimiter=/` | 10 个 CommonPrefixes ✓ |
+  | 字典序 | `f0,f1,f10…` = 路径升序 ✓ |
+  | 回归 | 自写探针 **24/24** · 真 SDK **22/22**（新增 120 对象分级分页 + 4 前缀 delimiter） |
+- **含义**：列表成本从「目录数」降到「一次查询」✗ 十万级对象的桶不再随目录数劣化；
+  真正的 SQL 级 prefix/续页（避免全量入内存）仍是后续债。
+- **仍债**：SQL 级 prefix/limit 分页（现全量入内存）· `ListMultipartUploads` · 访问键绑用户 ·
+  region 校验 · part 哈希持久化。
 
 ## 状态（r10 末 · 多凭证 / 服务端复制 / Content-Type 保真 ✗ 探针 24/24 + 真 SDK 21/21）
 

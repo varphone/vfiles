@@ -81,45 +81,30 @@ struct ObjMeta {
     etag: String,
 }
 
-/// 递归展平默认 ns 全部**文件** key（目录不产出对象 ✓ = S3 语义），带 size/mtime/ETag。
+/// 默认 ns 全部**文件** key（目录不产出对象 ✓ = S3 语义），带 size/mtime/ETag。
+///
+/// r13：`files_with_meta` **一条 SQL** 取全（此前逐目录递归 = 目录数条查询 ✗ 大桶 N+1）。
 async fn collect_objects(
     repo: &std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
     ns: &vfiles_domain::NamespaceId,
 ) -> vfiles_domain::DomainResult<Vec<ObjMeta>> {
-    let root = vfiles_domain::NormalizedPath::new("").map_err(|e| {
-        vfiles_domain::DomainError::Validation {
-            message: format!("root path: {e}"),
-        }
-    })?;
-    let mut out = Vec::new();
-    walk(repo, ns, &root, &mut out).await?;
+    let mut out: Vec<ObjMeta> = repo
+        .files_with_meta(ns)
+        .await?
+        .into_iter()
+        .map(|m| ObjMeta {
+            key: m.entry.path_norm.as_str().to_string(),
+            size: m.size_bytes.unwrap_or(0),
+            last_modified: Timestamp::from(m.entry.created_at),
+            etag: m
+                .entry
+                .current_version_id
+                .map(|v| v.to_string().replace('-', ""))
+                .unwrap_or_default(),
+        })
+        .collect();
     out.sort_by(|a, b| a.key.cmp(&b.key));
     Ok(out)
-}
-
-async fn walk(
-    repo: &std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
-    ns: &vfiles_domain::NamespaceId,
-    path: &vfiles_domain::NormalizedPath,
-    out: &mut Vec<ObjMeta>,
-) -> vfiles_domain::DomainResult<()> {
-    for m in repo.children_with_meta(ns, path).await? {
-        if matches!(m.entry.entry_type, vfiles_domain::EntryKind::Directory) {
-            Box::pin(walk(repo, ns, &m.entry.path_norm, out)).await?;
-        } else {
-            out.push(ObjMeta {
-                key: m.entry.path_norm.as_str().to_string(),
-                size: m.size_bytes.unwrap_or(0),
-                last_modified: Timestamp::from(m.entry.created_at),
-                etag: m
-                    .entry
-                    .current_version_id
-                    .map(|v| v.to_string().replace('-', ""))
-                    .unwrap_or_default(),
-            });
-        }
-    }
-    Ok(())
 }
 
 fn object_dto(o: &ObjMeta) -> Object {

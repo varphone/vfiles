@@ -1177,6 +1177,75 @@ impl EntryRepo for SqliteEntryRepo {
             .collect()
     }
 
+    async fn files_with_meta(
+        &self,
+        namespace_id: &NamespaceId,
+    ) -> DomainResult<Vec<vfiles_domain::types::EntryChildMeta>> {
+        // 一条 SQL 取全命名空间文件 + 最新版本 size/content_type（r13 ✗ 消 S3 列表 N+1）
+        let rows: Vec<(
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+        )> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id,
+                (
+                    SELECT ev.size
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS size_b,
+                (
+                    SELECT ev.content_type
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS mime_t
+            FROM entries e
+            WHERE e.namespace_id = ?
+              AND e.kind = 'file'
+            ORDER BY e.path
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list files with meta: {}", e),
+        })?;
+        rows.into_iter()
+            .map(|(a, b, c, d, e2, f, g, size, mime)| {
+                let entry = parse_entry_row((a, b, c, d, e2, f, g))?;
+                Ok(vfiles_domain::types::EntryChildMeta {
+                    entry,
+                    size_bytes: size.map(|v| v as u64),
+                    mime_type: mime,
+                })
+            })
+            .collect()
+    }
+
     async fn find_all(&self, namespace_id: &NamespaceId) -> DomainResult<Vec<Entry>> {
         let rows: Vec<EntryRow> = sqlx::query_as(
             r#"
