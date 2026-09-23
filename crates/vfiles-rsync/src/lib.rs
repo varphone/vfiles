@@ -356,6 +356,13 @@ struct FilterRule {
     pattern: String,
 }
 
+/// Received filter-list entry. `:` inserts the applicable per-directory rules at this position.
+#[derive(Debug, Clone)]
+enum FilterItem {
+    Rule(FilterRule),
+    DirMerge(String),
+}
+
 /// 解析序列化规则行（`+ pat/` / `- pat` ✗ 其余类型跳过）。
 fn parse_rule(line: &str) -> Option<FilterRule> {
     let line = line.trim_end_matches(['\n', '\r']);
@@ -384,6 +391,35 @@ fn parse_rule(line: &str) -> Option<FilterRule> {
         anchored: anchored || pattern.contains('/'),
         pattern,
     })
+}
+
+fn parse_filter_item(line: &str) -> Option<FilterItem> {
+    let line = line.trim_end_matches(['\n', '\r']);
+    if let Some(rest) = line.strip_prefix(':') {
+        let filename = rest
+            .split_once(' ')
+            .map(|(_, name)| name)
+            .unwrap_or(rest)
+            .trim();
+        let filename = filename.trim_start_matches('/');
+        if filename.is_empty()
+            || filename
+                .split('/')
+                .any(|component| component.is_empty() || component == "." || component == "..")
+        {
+            return None;
+        }
+        return Some(FilterItem::DirMerge(filename.to_string()));
+    }
+    parse_rule(line).map(FilterItem::Rule)
+}
+
+fn parse_dir_merge_file(contents: &[u8]) -> Vec<FilterRule> {
+    String::from_utf8_lossy(contents)
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(parse_rule)
+        .collect()
 }
 
 /// 通配匹配（rsync wildmatch 子集）：`*` 不跨 `/`、`**` 跨 `/`、`?` 单字符、`[..]` 字符类。
@@ -448,18 +484,140 @@ fn wildmatch(pattern: &str, text: &str) -> bool {
 }
 
 /// 首条命中规则定保护态（rsync `check_filter` 语义 ✗ 无命中 = 不保护）。
-fn is_excluded(rules: &[FilterRule], rel_path: &str, is_dir: bool) -> bool {
-    let base = rel_path.rsplit('/').next().unwrap_or(rel_path);
-    for r in rules {
-        if r.dir_only && !is_dir {
-            continue;
+fn rule_decision(
+    rule: &FilterRule,
+    rel_path: &str,
+    is_dir: bool,
+    scope: Option<&str>,
+) -> Option<bool> {
+    if rule.dir_only && !is_dir {
+        return None;
+    }
+    let scoped_path = if let Some(scope) = scope {
+        if scope == "." {
+            rel_path
+        } else {
+            let prefix = format!("{scope}/");
+            rel_path.strip_prefix(&prefix)?
         }
-        let target = if r.anchored { rel_path } else { base };
-        if wildmatch(&r.pattern, target) {
-            return !r.include;
+    } else {
+        rel_path
+    };
+    let base = scoped_path.rsplit('/').next().unwrap_or(scoped_path);
+    let target = if rule.anchored { scoped_path } else { base };
+    wildmatch(&rule.pattern, target).then_some(!rule.include)
+}
+
+#[cfg(test)]
+fn is_excluded(rules: &[FilterRule], rel_path: &str, is_dir: bool) -> bool {
+    rules
+        .iter()
+        .find_map(|rule| rule_decision(rule, rel_path, is_dir, None))
+        .unwrap_or(false)
+}
+
+fn parent_directories(rel_path: &str) -> Vec<String> {
+    let mut dirs = vec![".".to_string()];
+    let mut end = 0;
+    for (index, ch) in rel_path.char_indices() {
+        if ch == '/' {
+            if index > end {
+                dirs.push(rel_path[..index].to_string());
+            }
+            end = index + 1;
+        }
+    }
+    dirs
+}
+
+fn is_excluded_with_merges(
+    filters: &[FilterItem],
+    merged: &std::collections::HashMap<(usize, String), Vec<FilterRule>>,
+    rel_path: &str,
+    is_dir: bool,
+) -> bool {
+    let parents = parent_directories(rel_path);
+    for (index, filter) in filters.iter().enumerate() {
+        match filter {
+            FilterItem::Rule(rule) => {
+                if let Some(decision) = rule_decision(rule, rel_path, is_dir, None) {
+                    return decision;
+                }
+            }
+            FilterItem::DirMerge(_) => {
+                // A child directory's rules have priority over inherited parent rules.
+                for scope in parents.iter().rev() {
+                    if let Some(rules) = merged.get(&(index, scope.clone())) {
+                        for rule in rules {
+                            if let Some(decision) =
+                                rule_decision(rule, rel_path, is_dir, Some(scope))
+                            {
+                                return decision;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     false
+}
+
+fn filter_merge_path(directory: &str, filename: &str) -> String {
+    if directory == "." {
+        filename.to_string()
+    } else {
+        format!("{directory}/{filename}")
+    }
+}
+
+async fn load_dir_merge_rules(
+    backend: &dyn RsyncBackend,
+    destination: &[FlatEntry],
+    filters: &[FilterItem],
+) -> Result<std::collections::HashMap<(usize, String), Vec<FilterRule>>, String> {
+    const MAX_MERGE_FILE_SIZE: u64 = 1024 * 1024;
+    let by_name: std::collections::HashMap<&str, &FlatEntry> = destination
+        .iter()
+        .map(|entry| (entry.name.as_str(), entry))
+        .collect();
+    let mut loaded = std::collections::HashMap::new();
+
+    for (filter_index, filter) in filters.iter().enumerate() {
+        let FilterItem::DirMerge(filename) = filter else {
+            continue;
+        };
+        for directory in destination.iter().filter(|entry| entry.is_dir) {
+            let merged_path = filter_merge_path(&directory.name, filename);
+            let Some(file) = by_name.get(merged_path.as_str()) else {
+                continue;
+            };
+            if file.is_dir {
+                continue;
+            }
+            if file.size > MAX_MERGE_FILE_SIZE {
+                return Err(format!(
+                    "per-directory filter file {merged_path} exceeds {MAX_MERGE_FILE_SIZE} bytes"
+                ));
+            }
+            if file.fs_path.is_empty() {
+                return Err(format!(
+                    "per-directory filter file {merged_path} has no backend path"
+                ));
+            }
+            let contents = backend.read(&file.fs_path).await?;
+            if contents.len() as u64 > MAX_MERGE_FILE_SIZE {
+                return Err(format!(
+                    "per-directory filter file {merged_path} exceeds {MAX_MERGE_FILE_SIZE} bytes"
+                ));
+            }
+            loaded.insert(
+                (filter_index, directory.name.clone()),
+                parse_dir_merge_file(&contents),
+            );
+        }
+    }
+    Ok(loaded)
 }
 
 // ─────────────────────────── daemon 认证（secrets ✗ r8）───────────────────────────
@@ -2273,7 +2431,7 @@ where
         // ── push：客户端为 sender、本端为接收端 ──
         let base = module_path(&args.paths, module);
         // `--delete*` → 客户端先发 filter list（receiver_wants_list=true）；规则用于**保护**不被删
-        let mut filter_rules: Vec<FilterRule> = Vec::new();
+        let mut filter_items: Vec<FilterItem> = Vec::new();
         if args.delete {
             loop {
                 let b = data_take(&mut rw, &mut pending, 4).await?;
@@ -2290,12 +2448,12 @@ where
                 let rule = data_take(&mut rw, &mut pending, len as usize).await?;
                 let text = String::from_utf8_lossy(&rule);
                 tracing::debug!(rule = %text, "FILTER-RULE");
-                match parse_rule(&text) {
-                    Some(r) => filter_rules.push(r),
+                match parse_filter_item(&text) {
+                    Some(item) => filter_items.push(item),
                     None => tracing::debug!(rule = %text, "rsync: 跳过不支持的 filter 规则"),
                 }
             }
-            tracing::debug!(rules = filter_rules.len(), "rsync: 已解析 filter 规则");
+            tracing::debug!(rules = filter_items.len(), "rsync: 已解析 filter 规则");
         }
         let mut entries = recv_file_list(
             &mut rw,
@@ -2604,43 +2762,86 @@ where
                     .await
                 {
                     Ok(dest) => {
-                        // 保护：命中 exclude 的条目（含其子树）不删；`--delete-excluded` 时全删
-                        let mut protected_dirs: std::collections::HashSet<String> =
-                            std::collections::HashSet::new();
-                        let mut extras: Vec<String> = Vec::new();
-                        for d in dest.iter() {
-                            if d.name == "." {
-                                continue;
-                            }
-                            let mut anc_protected = false;
-                            let mut prefix = String::new();
-                            for comp in d.name.split('/') {
-                                if !prefix.is_empty() {
-                                    prefix.push('/');
+                        match load_dir_merge_rules(backend, &dest, &filter_items).await {
+                            Err(error) => tracing::warn!(
+                                error = %error,
+                                "rsync --delete 无法安全加载 per-directory filter；本次跳过删除"
+                            ),
+                            Ok(merged_rules) => {
+                                // 先完整求出受保护项，再传播到父目录。否则父目录先出现时
+                                // 会被递归删除，连后来识别出的受保护文件也一并删掉。
+                                let mut protected_names: std::collections::HashSet<String> =
+                                    std::collections::HashSet::new();
+                                let mut protected_dirs: std::collections::HashSet<String> =
+                                    std::collections::HashSet::new();
+                                let mut protected_subtrees: std::collections::HashSet<String> =
+                                    std::collections::HashSet::new();
+                                if !args.delete_excluded {
+                                    for d in dest.iter().filter(|d| d.name != ".") {
+                                        if is_excluded_with_merges(
+                                            &filter_items,
+                                            &merged_rules,
+                                            &d.name,
+                                            d.is_dir,
+                                        ) {
+                                            protected_names.insert(d.name.clone());
+                                            if d.is_dir {
+                                                protected_subtrees.insert(d.name.clone());
+                                            }
+                                            let parts: Vec<_> = d.name.split('/').collect();
+                                            let mut prefix = String::new();
+                                            for (index, part) in parts.iter().enumerate() {
+                                                if !prefix.is_empty() {
+                                                    prefix.push('/');
+                                                }
+                                                prefix.push_str(part);
+                                                if index + 1 < parts.len() || d.is_dir {
+                                                    protected_dirs.insert(prefix.clone());
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
-                                prefix.push_str(comp);
-                                if prefix != d.name && protected_dirs.contains(&prefix) {
-                                    anc_protected = true;
-                                    break;
+                                let mut extras: Vec<String> = Vec::new();
+                                for d in dest.iter() {
+                                    if d.name == "." {
+                                        continue;
+                                    }
+                                    let mut in_protected_subtree = false;
+                                    let mut prefix = String::new();
+                                    for comp in d.name.split('/') {
+                                        if !prefix.is_empty() {
+                                            prefix.push('/');
+                                        }
+                                        prefix.push_str(comp);
+                                        if prefix != d.name && protected_subtrees.contains(&prefix)
+                                        {
+                                            in_protected_subtree = true;
+                                            break;
+                                        }
+                                    }
+                                    let protected = protected_names.contains(&d.name)
+                                        || in_protected_subtree
+                                        || (d.is_dir && protected_dirs.contains(&d.name));
+                                    if protected {
+                                        continue;
+                                    }
+                                    if !src_names.contains(d.name.as_str()) && !d.fs_path.is_empty()
+                                    {
+                                        extras.push(d.fs_path.clone());
+                                    }
                                 }
-                            }
-                            let protected = !args.delete_excluded
-                                && (anc_protected || is_excluded(&filter_rules, &d.name, d.is_dir));
-                            if protected {
-                                if d.is_dir {
-                                    protected_dirs.insert(d.name.clone());
+                                if !extras.is_empty() {
+                                    let n = extras.len();
+                                    match backend.delete(extras).await {
+                                        Ok(()) => {
+                                            tracing::info!(removed = n, "rsync --delete 完成")
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(error = %e, "rsync --delete 失败")
+                                        }
+                                    }
                                 }
-                                continue;
-                            }
-                            if !src_names.contains(d.name.as_str()) && !d.fs_path.is_empty() {
-                                extras.push(d.fs_path.clone());
-                            }
-                        }
-                        if !extras.is_empty() {
-                            let n = extras.len();
-                            match backend.delete(extras).await {
-                                Ok(()) => tracing::info!(removed = n, "rsync --delete 完成"),
-                                Err(e) => tracing::warn!(error = %e, "rsync --delete 失败"),
                             }
                         }
                     }
@@ -3429,6 +3630,87 @@ mod tests {
             "锚定不匹配子路径"
         );
         assert!(!is_excluded(&rules, "other.txt", false), "无命中 = 不保护");
+    }
+
+    #[test]
+    fn dir_merge_rules_apply_in_scope_and_child_rules_override_parent() {
+        let merge = parse_filter_item(": /.rsync-filter").unwrap();
+        assert!(matches!(merge, FilterItem::DirMerge(ref name) if name == ".rsync-filter"));
+        assert!(parse_filter_item(": ../outside.rules").is_none());
+
+        let filters = vec![parse_filter_item(": /.rsync-filter").unwrap()];
+        let merged = std::collections::HashMap::from([
+            (
+                (0, ".".to_string()),
+                parse_dir_merge_file(b"# root rules\n- keep.txt\n- /root-only\n"),
+            ),
+            (
+                (0, "sub".to_string()),
+                parse_dir_merge_file(b"+ keep.txt\n- /local-only\n"),
+            ),
+        ]);
+
+        assert!(is_excluded_with_merges(
+            &filters, &merged, "keep.txt", false
+        ));
+        assert!(
+            !is_excluded_with_merges(&filters, &merged, "sub/keep.txt", false),
+            "子目录规则优先于继承的根规则"
+        );
+        assert!(is_excluded_with_merges(
+            &filters,
+            &merged,
+            "sub/local-only",
+            false
+        ));
+        assert!(
+            !is_excluded_with_merges(&filters, &merged, "sub/nested/local-only", false),
+            "per-dir 锚定规则只在 merge 文件所在目录匹配"
+        );
+        assert!(!is_excluded_with_merges(
+            &filters,
+            &merged,
+            "sub/root-only",
+            false
+        ));
+    }
+
+    #[tokio::test]
+    async fn dir_merge_files_load_from_existing_destination_tree() {
+        let directory = FlatEntry::dir(".", 0).with_fs_path("target");
+        let filter = FlatEntry::file(".rsync-filter", 12, 0).with_fs_path("target/.rsync-filter");
+        let child_dir = FlatEntry::dir("sub", 0).with_fs_path("target/sub");
+        let child_filter =
+            FlatEntry::file("sub/.rsync-filter", 11, 0).with_fs_path("target/sub/.rsync-filter");
+        let entries = vec![directory, filter, child_dir, child_filter];
+        let backend = FakeBackend::new(
+            entries.clone(),
+            vec![
+                ("target/.rsync-filter".into(), b"- root.txt\n".to_vec()),
+                (
+                    "target/sub/.rsync-filter".into(),
+                    b"+ root.txt\n- child.txt\n".to_vec(),
+                ),
+            ],
+        );
+        let filters = vec![parse_filter_item(": /.rsync-filter").unwrap()];
+        let merged = load_dir_merge_rules(&backend, &entries, &filters)
+            .await
+            .unwrap();
+
+        assert!(is_excluded_with_merges(
+            &filters, &merged, "root.txt", false
+        ));
+        assert!(
+            !is_excluded_with_merges(&filters, &merged, "sub/root.txt", false),
+            "子规则可反转继承自目标端根目录的规则"
+        );
+        assert!(is_excluded_with_merges(
+            &filters,
+            &merged,
+            "sub/child.txt",
+            false
+        ));
     }
 
     /// 收端 delta 闭环：basis → 块校验和 → 发送端 token → `apply_tokens` 重建 == 新内容。

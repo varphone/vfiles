@@ -13,6 +13,7 @@
 - pull 发送端按流滚动扫描源文件，仅保留一个块窗口；源文件不再与完整 token 流同时驻留内存。
 - token 流小于 8 MiB 留在内存，超出阈值溢写匿名临时文件，再以 64 KiB 帧缓冲发送；不把 token 文件重新读入内存。
 - 接收端 mux 流式读路径的 64 KiB scratch buffer 使用堆内存，避免 Tokio worker/default test stack 在解析 push flist 时溢出。
+- `--delete` 支持常见 `: /.rsync-filter` per-directory merge：按当前目录作用域载入目的端 merge 文件，`+` / `-` 规则可继承且子目录规则优先；merge 文件缺失视为空，超过 1 MiB 或读取失败时 fail-closed（本次不做删除）。受保护文件会阻止其父目录递归删除，同时允许删除同目录未保护的兄弟项。
 - 收端 token 流直接解码到最终文件流，不保留完整 token 副本；协议块 checksum 表仍按文件块数占用内存。
 
 ## 状态（r21 末 · `--filter=P/H` 类规则保护修复 ✗ 真机抓出的静默失保）
@@ -20,8 +21,8 @@
 - **实修 bug**：wire 上规则形如 **`-r <pattern>`**（`get_rule_prefix` = `<+|-><flags…><space><pattern>`
   ✗ flags = s/r/w/n/! 等）；旧解析只 `trim_start()` → pattern 变成 `"r *.probe"` → **永不匹配 →
   `--filter='P *.probe' --delete` 静默删掉本应保护的文件**（真机两轮对照抓到）。
-- **修法**：取**第一个空格之后**为 pattern（flags 全剥 ✗ pattern 内空格保留）；`:`（per-dir merge）仍跳过
-  （新增 `FILTER-RULE` 原始行日志 = 排障利器）。
+- **修法**：取**第一个空格之后**为 pattern（flags 全剥 ✗ pattern 内空格保留）；`:` per-dir merge
+  按目录读取目的端 merge 文件（新增 `FILTER-RULE` 原始行日志 = 排障利器）。
 - **真机验收（对照式）**：
   | 场景 | 结果 |
   | --- | --- |
@@ -29,7 +30,7 @@
   | 修后 `--filter='P *.probe' --delete` | **`keep.probe` 存活** ✗ 非匹配的 `stray.txt`/`x.m` 正常删除 ✓ |
   | 对照：无 filter 同状态重推 | `keep.probe` 也被删（保护仅由规则生效） ✓ |
 - **门禁**：单测新增 flags 形解析 + pattern 含空格断言 × workspace 全绿 × clippy 0 × build。
-- **仍债**：per-dir merge（`:` 形，原始行已可 dump）· 符号链接/设备持久化 · sender delta 在发送前需完整生成（大流使用临时文件）· uid/gid 存储。
+- **仍债**：完整 filter 语法（merge 修饰符、`!` 清除规则等）· 符号链接/设备持久化 · sender delta 在发送前需完整生成（大流使用临时文件）· uid/gid 存储。
 
 ## 状态（r20 末 · 快跳判定三档齐全 = 官方 `unchanged_file` 全语义）
 
