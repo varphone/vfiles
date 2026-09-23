@@ -743,6 +743,7 @@ async fn propfind_owned(
             getetag: None,
             creationdate: cdate_fmt(time::OffsetDateTime::now_utc()), // 根 = 合成（lastmod 同式 ✓ 记档）
             owner: owner_val.clone(),
+            active_lock: active_lock_prop(&app, &ns, rel),
         });
     } else {
         let entry = app
@@ -800,6 +801,7 @@ async fn propfind_owned(
             getetag,
             creationdate: cdate_fmt(entry.created_at),
             owner: owner_val.clone(),
+            active_lock: active_lock_prop(&app, &ns, rel),
         });
     }
     if depth == "1" {
@@ -819,6 +821,7 @@ async fn propfind_owned(
             .unwrap_or_default();
         for meta in metas {
             let child = meta.entry;
+            let child_rel = format!("{}{}", child_prefix(rel), child.name);
             let is_dir = matches!(child.entry_type, vfiles_domain::types::EntryKind::Directory);
             let (getcontentlength, getcontenttype) = if is_dir {
                 (None, None)
@@ -839,10 +842,34 @@ async fn propfind_owned(
                 getetag: child.current_version_id.as_ref().map(|v| format!("\"{}\"", v.to_string().replace('-', ""))),
                 creationdate: cdate_fmt(child.created_at),
                 owner: owner_val.clone(),
+                active_lock: active_lock_prop(&app, &ns, &child_rel),
             });
         }
     }
     Ok(crate::response::multistatus(&items, &mode))
+}
+
+fn active_lock_prop(
+    app: &WebdavApplication,
+    ns: &vfiles_domain::types::NamespaceId,
+    rel: &str,
+) -> Option<crate::response::ActiveLock> {
+    let lock = app.locks.blocked(&format!("{ns}:{rel}"))?;
+    let timeout = match lock.expires_at {
+        Some(expiry) => format!(
+            "Second-{}",
+            expiry
+                .saturating_duration_since(std::time::Instant::now())
+                .as_secs()
+                .max(1)
+        ),
+        None => "Infinite".to_string(),
+    };
+    Some(crate::response::ActiveLock {
+        token: lock.token,
+        owner: lock.owner,
+        timeout,
+    })
 }
 
 /// Range 解析（RFC 7233 简式 ✓ 纯函数单测）。
@@ -1262,7 +1289,12 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     }
                     crate::response::PropOp::Remove { name } => {
                         // r13 remove：自定义存在 → 删 200 / 不存在 → 403（r6 恒 403 升级）
-                        let removed = match app_ref
+                        let removed = if crate::response::PREDEFINED_READONLY
+                            .contains(&name.as_str())
+                        {
+                            false
+                        } else {
+                            match app_ref
                             .entry_repo
                             .find_by_path(&ns, &path)
                             .await
@@ -1287,6 +1319,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                                         .is_ok()
                             }
                             None => false,
+                            }
                         };
                         results.push((op, removed));
                     }

@@ -7,7 +7,7 @@
 
 /// PROPFIND 请求体模式（RFC 4918 §9.1 ✗ r2 P0 协议精度）。
 /// 预定义只读属性集（r13 ✓ 除 displayname（改名语义）外 PROPPATCH set → 403）。
-pub const PREDEFINED_READONLY: [&str; 7] = [
+pub const PREDEFINED_READONLY: [&str; 9] = [
     "resourcetype",
     "getlastmodified",
     "getcontentlength",
@@ -15,6 +15,8 @@ pub const PREDEFINED_READONLY: [&str; 7] = [
     "getetag", // r14 服务生成 ✗ PROPPATCH set → 403
     "creationdate", // r16 事实生成（建即定 ✗ 不可写）
     "owner",        // r16 属主事实（r109e 隔离下 ≡ 认证者 ✗ 不可写）
+    "supportedlock",
+    "lockdiscovery",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,12 +153,21 @@ pub struct PropResponse {
     /// r16 属主（r109e per-user 隔离下 ≡ 认证用户名恒等 = 零查询白捡 ✓
     /// 记档：未来共享 ns 语义需回查 namespaces.owner_user_id ✓ 真值源已在表 ✗ 0001:30）。
     pub owner: String,
+    /// 当前资源的活动排他写锁；无锁时仍返回空 lockdiscovery 属性。
+    pub active_lock: Option<ActiveLock>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActiveLock {
+    pub token: String,
+    pub owner: String,
+    pub timeout: String,
 }
 
 /// 构造 207 Multi-Status 文档（XML 转义 ✓ 集合无 getcontentlength ✓）。
 pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
     // r2 协议精度裁剪 ✗ 请求要什么给什么（All=全集 ✗ Names=交集+404 差集 ✗ PropName=只名）
-    const SUPPORTED: [&str; 8] = [
+    const SUPPORTED: [&str; 10] = [
         "displayname",
         "resourcetype",
         "getlastmodified",
@@ -165,6 +176,8 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
         "getetag",
         "creationdate",
         "owner",
+        "supportedlock",
+        "lockdiscovery",
     ];
     let mut out = String::from(
         r#"<?xml version="1.0" encoding="utf-8"?>
@@ -243,6 +256,22 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
                     out.push_str("<D:owner>");
                     out.push_str(&escape_xml(&item.owner));
                     out.push_str("</D:owner>");
+                }
+                "supportedlock" if mode != &PropMode::PropName => {
+                    out.push_str("<D:supportedlock><D:lockentry><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockentry></D:supportedlock>");
+                }
+                "lockdiscovery" if mode != &PropMode::PropName => {
+                    if let Some(lock) = &item.active_lock {
+                        out.push_str("<D:lockdiscovery><D:activelock><D:locktype><D:write/></D:locktype><D:lockscope><D:exclusive/></D:lockscope><D:depth>0</D:depth><D:owner>");
+                        out.push_str(&escape_xml(&lock.owner));
+                        out.push_str("</D:owner><D:timeout>");
+                        out.push_str(&escape_xml(&lock.timeout));
+                        out.push_str("</D:timeout><D:locktoken><D:href>");
+                        out.push_str(&escape_xml(&lock.token));
+                        out.push_str("</D:href></D:locktoken></D:activelock></D:lockdiscovery>");
+                    } else {
+                        out.push_str("<D:lockdiscovery/>");
+                    }
                 }
                 // 其余 = propname 模式（只名无值）或占位（getcontentlength None 时跳过 ✓）
                 other => {
@@ -351,6 +380,7 @@ mod tests {
                 getetag: None,
                 creationdate: "2026-09-23T00:00:00Z".into(),
                 owner: "tester".into(),
+                active_lock: None,
             },
             PropResponse {
                 href: "/dav/a&b.txt".into(),
@@ -363,6 +393,7 @@ mod tests {
                 getetag: None,
                 creationdate: "2026-09-23T00:00:00Z".into(),
                 owner: "tester".into(),
+                active_lock: None,
             },
         ], &PropMode::All);
         assert!(xml.contains("<D:collection/>"));
@@ -397,6 +428,7 @@ mod propmode_tests {
             getetag: None,
             creationdate: "2026-09-23T00:00:00Z".into(),
             owner: "tester".into(),
+            active_lock: None,
         }]
     }
 
