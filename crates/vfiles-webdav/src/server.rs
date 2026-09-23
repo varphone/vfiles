@@ -1003,6 +1003,21 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         vfiles_domain::types::AuditResult::Success,
                     );
                 }
+            } else if resp.status() == StatusCode::CONFLICT || resp.status().as_u16() >= 500 {
+                // r17 失败面审计表记（409/5xx → Failure ✗ 423/412 拒绝 = warn 覆盖范围注 ✓）
+                if let (Some(app), Some(u)) = (
+                    req.extensions().get::<WebdavApplication>(),
+                    req.extensions().get::<vfiles_domain::types::User>(),
+                ) {
+                    audit_write(
+                        app,
+                        if m.as_str() == "LOCK" { "webdav.lock" } else { "webdav.unlock" },
+                        percent_decode(req.uri().path()),
+                        u,
+                        req.headers().get("user-agent").and_then(|v| v.to_str().ok()),
+                        vfiles_domain::types::AuditResult::Failure,
+                    );
+                }
             }
             resp
         }
@@ -1315,6 +1330,20 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 }
                 Err(vfiles_domain::DomainError::Conflict { message }) => {
                     tracing::warn!(target = %dest_hdr, reason = %message, "WebDAV COPY 冲突（409）");
+                    // r17 失败面表记（409 → Failure ✓ 与 Success 对称）
+                    if let (Some(app), Some(u)) = (
+                        req.extensions().get::<WebdavApplication>(),
+                        req.extensions().get::<vfiles_domain::types::User>(),
+                    ) {
+                        audit_write(
+                            app,
+                            "webdav.copy",
+                            format!("{} -> {}", path.as_str(), dest_hdr),
+                            u,
+                            req.headers().get("user-agent").and_then(|v| v.to_str().ok()),
+                            vfiles_domain::types::AuditResult::Failure,
+                        );
+                    }
                     Response::builder()
                         .status(StatusCode::CONFLICT)
                         .body(Body::empty())
@@ -1429,6 +1458,21 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                             vfiles_domain::types::AuditResult::Success,
                         );
                     }
+                } else if resp.status() == StatusCode::CONFLICT || resp.status().as_u16() >= 500 {
+                    // r17 失败面审计表记（409/5xx → Failure ✗ 423/412 拒绝 = warn 覆盖范围注 ✓）
+                    if let (Some(app), Some(u)) = (
+                        req.extensions().get::<WebdavApplication>(),
+                        req.extensions().get::<vfiles_domain::types::User>(),
+                    ) {
+                        audit_write(
+                            app,
+                            audit_action,
+                            percent_decode(req.uri().path()),
+                            u,
+                            req.headers().get("user-agent").and_then(|v| v.to_str().ok()),
+                            vfiles_domain::types::AuditResult::Failure,
+                        );
+                    }
                 }
                 resp
             }
@@ -1498,6 +1542,21 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         req.extensions().get::<vfiles_domain::types::User>(),
                     ) {
                         audit_write(app, "webdav.put", percent_decode(req.uri().path()), u, ua.as_deref(), vfiles_domain::types::AuditResult::Success);
+                    }
+                } else if resp.status() == StatusCode::CONFLICT || resp.status().as_u16() >= 500 {
+                    // r17 失败面审计表记（409/5xx → Failure ✗ 423/412 拒绝 = warn 覆盖范围注 ✓）
+                    if let (Some(app), Some(u)) = (
+                        req.extensions().get::<WebdavApplication>(),
+                        req.extensions().get::<vfiles_domain::types::User>(),
+                    ) {
+                        audit_write(
+                            app,
+                            "webdav.put",
+                            percent_decode(req.uri().path()),
+                            u,
+                            req.headers().get("user-agent").and_then(|v| v.to_str().ok()),
+                            vfiles_domain::types::AuditResult::Failure,
+                        );
                     }
                 }
                 resp

@@ -104,7 +104,8 @@ PROPPATCH 七式 / If+412 七式 / 审计八写点 / 声明面（Allow+DAV class
 **P1 进度（r13-r15 三清 ✗ 清单现状）**：
 - ✅ r13 自定义属性 k/v（七式）→ ✅ r14 ETag+If-Match（九式）→ ✅ r15 LOCK Timeout（七式）
 - ✅ r16 **creationdate + owner**（七式 + 恒等洞察 ✓ **属性面 P1 清**）
-- 剩余 P1：失败面审计表记 / HTTP 审计跨目标债（均 = 审计族，可并轮）
+**🏆 P1 协议域全清（r17）**：失败面审计表记 ✅（409/5xx → Failure 落表实证 ✗ 423/412 = warn 覆盖注 ✗ PROPPATCH = 请求处理语义注）/ HTTP 审计 = **跨目标池**（非协议面）
+- 基线 P2/P3 = **零命中**（grep 权威）→ **RFC 4918 core 四面达成**（残余 = 范围外记档清单本表各处 ✗ 实证索引 = OPTIMIZATION 4.149-4.193）
 属性 k/v / ETag+If-Match 面 / LOCK Timeout 有限 / getetag+creationdate 属性 /
 失败面审计表记 / HTTP 审计跨目标债
 
