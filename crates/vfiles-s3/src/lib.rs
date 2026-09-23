@@ -21,10 +21,13 @@
 
 use async_trait::async_trait;
 use s3s::dto::{
-    Bucket, CommonPrefix, DeleteObjectInput, DeleteObjectOutput, GetObjectInput, GetObjectOutput,
-    HeadObjectInput, HeadObjectOutput, ListBucketsOutput, ListObjectsInput, ListObjectsOutput,
-    ListObjectsV2Input, ListObjectsV2Output, Object, PutObjectInput, PutObjectOutput,
-    StreamingBlob, Timestamp,
+    AbortMultipartUploadInput, AbortMultipartUploadOutput, Bucket, CommonPrefix,
+    CompleteMultipartUploadInput, CompleteMultipartUploadOutput, CreateMultipartUploadInput,
+    CreateMultipartUploadOutput, DeleteObjectInput, DeleteObjectOutput, GetObjectInput,
+    GetObjectOutput, HeadObjectInput, HeadObjectOutput, ListBucketsOutput, ListObjectsInput,
+    ListObjectsOutput, ListObjectsV2Input, ListObjectsV2Output, ListPartsInput, ListPartsOutput,
+    Object, Part, PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp, UploadPartInput,
+    UploadPartOutput,
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
 use tokio::io::AsyncReadExt;
@@ -236,6 +239,46 @@ fn resolve_range(
     }
 }
 
+/// 聚合请求体（PUT / UploadPart 共用 ✗ 流式直连 = 记档债）。
+async fn read_body(blob: Option<StreamingBlob>) -> S3Result<Vec<u8>> {
+    let blob = blob.unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
+    let mut data: Vec<u8> = Vec::new();
+    let mut stream = std::pin::pin!(blob);
+    while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+        let chunk = chunk.map_err(|e| s3s::s3_error!(InternalError, "body: {}", e))?;
+        data.extend_from_slice(&chunk);
+    }
+    Ok(data)
+}
+
+/// key → (父目录路径, 文件名)（与 WebDAV/S3 PUT 同式 ✗ 空名兜底 "upload"）。
+fn split_key(full: &str) -> (String, String) {
+    let (parent, filename) = match full.rsplit_once('/') {
+        Some((dir, name)) => (dir.to_string(), name.to_string()),
+        None => (String::new(), full.to_string()),
+    };
+    let filename = if filename.is_empty() {
+        "upload".to_string()
+    } else {
+        filename
+    };
+    (parent, filename)
+}
+
+/// S3 uploadId 字符串 → `UploadId`。
+fn parse_upload_id(s: &str) -> S3Result<vfiles_domain::UploadId> {
+    vfiles_domain::UploadId::from_string(s)
+        .map_err(|_| s3s::s3_error!(InvalidArgument, "invalid upload id"))
+}
+
+/// part 数据 MD5 十六进制（S3 `UploadPart` 返回的 ETag 形）。
+fn md5_hex(data: &[u8]) -> String {
+    use md5::{Digest, Md5};
+    let mut h = Md5::new();
+    h.update(data);
+    hex::encode(h.finalize())
+}
+
 impl std::fmt::Debug for VfilesS3 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // workspace/upload 等非 Debug ✗ 标准省内容式（-W missing-debug-implementations 清零）
@@ -442,27 +485,10 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         // r1 记档债：body 聚合（流式直连 = P2 ✗ 与 WebDAV 流式同级优化）
-        let blob = input
-            .body
-            .unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
-        let mut data: Vec<u8> = Vec::new();
-        let mut stream = std::pin::pin!(blob);
-        while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-            let chunk = chunk.map_err(|e| s3s::s3_error!(InternalError, "body: {}", e))?;
-            data.extend_from_slice(&chunk);
-        }
+        let data = read_body(input.body).await?;
         let path = norm(&input.key).map_err(dom_err)?;
         // parent/filename 拆（WebDAV put_file 同式 ✗ init=父+名）
-        let full = path.as_str();
-        let (parent_str, filename) = match full.rsplit_once('/') {
-            Some((dir, name)) => (dir.to_string(), name.to_string()),
-            None => (String::new(), full.to_string()),
-        };
-        let filename = if filename.is_empty() {
-            "upload".to_string()
-        } else {
-            filename
-        };
+        let (parent_str, filename) = split_key(path.as_str());
         let parent = vfiles_domain::NormalizedPath::new(&parent_str)
             .map_err(|e| s3s::s3_error!(InvalidArgument, "{}", e))?;
         let session = self
@@ -516,6 +542,167 @@ impl S3 for VfilesS3 {
             }
             Err(e) => Err(dom_err(e)),
         }
+    }
+
+    /// multipart 开启：建未知大小的上传会话，返回 uploadId（= 上传会话 id）。
+    async fn create_multipart_upload(
+        &self,
+        req: S3Request<CreateMultipartUploadInput>,
+    ) -> S3Result<S3Response<CreateMultipartUploadOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        let path = norm(&input.key).map_err(dom_err)?;
+        let (parent_str, filename) = split_key(path.as_str());
+        let parent = vfiles_domain::NormalizedPath::new(&parent_str)
+            .map_err(|e| s3s::s3_error!(InvalidArgument, "{}", e))?;
+        let view = self
+            .upload
+            .init_multipart_upload(
+                &self.namespace,
+                &parent,
+                &filename,
+                input.content_type.as_deref(),
+                &self.owner,
+            )
+            .await
+            .map_err(dom_err)?;
+        let out = CreateMultipartUploadOutput {
+            bucket: Some(input.bucket),
+            key: Some(input.key),
+            upload_id: Some(view.upload_id.to_string()),
+            ..Default::default()
+        };
+        ok(out)
+    }
+
+    /// 上传单个 part（partNumber 1..=10000 ✗ 内部索引 = partNumber-1，零基连续）。
+    async fn upload_part(
+        &self,
+        req: S3Request<UploadPartInput>,
+    ) -> S3Result<S3Response<UploadPartOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        if !(1..=10_000).contains(&input.part_number) {
+            return Err(s3s::s3_error!(
+                InvalidArgument,
+                "part number must be between 1 and 10000"
+            ));
+        }
+        let upload_id = parse_upload_id(&input.upload_id)?;
+        let data = read_body(input.body).await?;
+        let etag = md5_hex(&data);
+        self.upload
+            .upload_part(&upload_id, (input.part_number - 1) as u32, &data)
+            .await
+            .map_err(dom_err)?;
+        let out = UploadPartOutput {
+            e_tag: Some(s3s::dto::ETag::Strong(etag)),
+            ..Default::default()
+        };
+        ok(out)
+    }
+
+    /// 完成：校验列出 part 均已上传 → 拼接 → 落库（跳过量校验 ✗ 总大小未知）。
+    async fn complete_multipart_upload(
+        &self,
+        req: S3Request<CompleteMultipartUploadInput>,
+    ) -> S3Result<S3Response<CompleteMultipartUploadOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        let upload_id = parse_upload_id(&input.upload_id)?;
+        let stored = self
+            .upload
+            .list_upload_parts(&upload_id)
+            .await
+            .map_err(dom_err)?;
+        let have: std::collections::BTreeSet<i32> =
+            stored.iter().map(|p| p.part_index as i32 + 1).collect();
+        if let Some(mpu) = &input.multipart_upload {
+            for p in mpu.parts.iter().flatten() {
+                if let Some(n) = p.part_number
+                    && !have.contains(&n)
+                {
+                    return Err(s3s::s3_error!(InvalidPart, "part {} not uploaded", n));
+                }
+            }
+        }
+        if have.is_empty() {
+            return Err(s3s::s3_error!(InvalidPart, "no parts uploaded"));
+        }
+        let result = self
+            .upload
+            .complete_multipart_upload(&upload_id, Some("S3 multipart"))
+            .await
+            .map_err(dom_err)?;
+        let etag = result.version.id.to_string().replace('-', "");
+        let location = format!("/{}/{}", input.bucket, input.key);
+        let out = CompleteMultipartUploadOutput {
+            bucket: Some(input.bucket),
+            key: Some(input.key),
+            e_tag: Some(s3s::dto::ETag::Strong(etag)),
+            location: Some(location),
+            ..Default::default()
+        };
+        ok(out)
+    }
+
+    /// 中止：取消上传会话（幂等 ✗ 已取消/过期按成功处理由 app 层决定）。
+    async fn abort_multipart_upload(
+        &self,
+        req: S3Request<AbortMultipartUploadInput>,
+    ) -> S3Result<S3Response<AbortMultipartUploadOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        let upload_id = parse_upload_id(&input.upload_id)?;
+        match self.upload.cancel_upload(&upload_id).await {
+            Ok(()) | Err(vfiles_domain::DomainError::NotFound { .. }) => {
+                ok(AbortMultipartUploadOutput::default())
+            }
+            Err(e) => Err(dom_err(e)),
+        }
+    }
+
+    /// 列出已上传 part（partNumber = 内部索引+1 ✗ size 可读；part ETag 未持久化 = 记档债）。
+    async fn list_parts(
+        &self,
+        req: S3Request<ListPartsInput>,
+    ) -> S3Result<S3Response<ListPartsOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        let upload_id = parse_upload_id(&input.upload_id)?;
+        let stored = self
+            .upload
+            .list_upload_parts(&upload_id)
+            .await
+            .map_err(dom_err)?;
+        let parts: Vec<Part> = stored
+            .iter()
+            .map(|p| Part {
+                part_number: Some(p.part_index as i32 + 1),
+                size: Some(p.size_bytes.as_u64() as i64),
+                last_modified: Some(Timestamp::from(p.received_at)),
+                ..Default::default()
+            })
+            .collect();
+        let out = ListPartsOutput {
+            bucket: Some(input.bucket),
+            key: Some(input.key),
+            upload_id: Some(input.upload_id),
+            parts: Some(parts),
+            is_truncated: Some(false),
+            ..Default::default()
+        };
+        ok(out)
     }
 }
 

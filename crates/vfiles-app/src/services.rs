@@ -2126,7 +2126,10 @@ where
         }
         // 目标不得在源子树内（✗ 否则 dest 建进 src children = **无限自递归 core dump**
         // r5 实测抓获 ✗ move 同防照抄）
-        if destination.as_str().starts_with(&format!("{}/", source.as_str())) {
+        if destination
+            .as_str()
+            .starts_with(&format!("{}/", source.as_str()))
+        {
             return Err(DomainError::Conflict {
                 message: "Cannot copy a resource into its own subtree".to_string(),
             });
@@ -2177,14 +2180,16 @@ where
             .find_by_path(namespace_id, &dest_parent)
             .await?;
         let parent_ok = dest_parent.as_str().is_empty()
-            || matches!(parent_entry.as_ref().map(|e| e.entry_type), Some(EntryKind::Directory));
+            || matches!(
+                parent_entry.as_ref().map(|e| e.entry_type),
+                Some(EntryKind::Directory)
+            );
         if !parent_ok {
             return Err(DomainError::Conflict {
                 message: "Destination parent is not a collection".to_string(),
             });
         }
-        self
-            .recursive_copy(namespace_id, &src_entry, destination, message, user_id)
+        self.recursive_copy(namespace_id, &src_entry, destination, message, user_id)
             .await
     }
 
@@ -2203,11 +2208,13 @@ where
             .create_entry(namespace_id, target, kind, user_id)
             .await?;
         if matches!(src_entry.entry_type, EntryKind::File) {
-            let vid = src_entry.current_version_id.as_ref().ok_or_else(|| {
-                DomainError::Validation {
-                    message: "Source file has no version".to_string(),
-                }
-            })?;
+            let vid =
+                src_entry
+                    .current_version_id
+                    .as_ref()
+                    .ok_or_else(|| DomainError::Validation {
+                        message: "Source file has no version".to_string(),
+                    })?;
             let sv = self.entry_repo.find_version(vid).await?;
             let nv = self
                 .entry_repo
@@ -2231,8 +2238,14 @@ where
                 .await?;
             for child in children {
                 let child_target = join_path(target, &child.name)?;
-                Box::pin(self.recursive_copy(namespace_id, &child, &child_target, message, user_id))
-                    .await?;
+                Box::pin(self.recursive_copy(
+                    namespace_id,
+                    &child,
+                    &child_target,
+                    message,
+                    user_id,
+                ))
+                .await?;
             }
         }
         Ok(())
@@ -2618,7 +2631,7 @@ where
         }
 
         let upload_stream = self.upload_store.assemble_upload_stream(upload_id).await?;
-        self.commit_upload_stream(session, upload_stream, expected_sha256, message)
+        self.commit_upload_stream(session, upload_stream, expected_sha256, message, true)
             .await
     }
 
@@ -2634,8 +2647,53 @@ where
             return Err(DomainError::UploadExpired);
         }
 
-        self.commit_upload_stream(session, upload_stream, expected_sha256, message)
+        self.commit_upload_stream(session, upload_stream, expected_sha256, message, true)
             .await
+    }
+
+    /// S3 multipart：开启**未知总大小**的上传会话（`declared_size=0` / `total_chunks=0` ✗
+    /// part 按号存储、完成时按 0..n-1 顺序拼接）。part 号由 S3 层映射为 `partNumber-1`。
+    pub async fn init_multipart_upload(
+        &self,
+        namespace_id: &NamespaceId,
+        target_path: &NormalizedPath,
+        filename: &str,
+        mime_type: Option<&str>,
+        user_id: &UserId,
+    ) -> DomainResult<UploadSessionView> {
+        self.init_upload(
+            namespace_id,
+            target_path,
+            filename,
+            0,
+            mime_type,
+            Some(1),
+            user_id,
+        )
+        .await
+    }
+
+    /// S3 multipart：完成（**跳过量校验** ✗ 总大小在 CreateMultipartUpload 时未知）。
+    pub async fn complete_multipart_upload(
+        &self,
+        upload_id: &UploadId,
+        message: Option<&str>,
+    ) -> DomainResult<UploadCompleteResponse> {
+        let session = self.upload_store.get_upload_session(upload_id).await?;
+        if session.expires_at < time::OffsetDateTime::now_utc() {
+            return Err(DomainError::UploadExpired);
+        }
+        let upload_stream = self.upload_store.assemble_upload_stream(upload_id).await?;
+        self.commit_upload_stream(session, upload_stream, None, message, false)
+            .await
+    }
+
+    /// 列出已接收的 part（S3 `ListParts` / 完成校验用 ✗ 含 size）。
+    pub async fn list_upload_parts(
+        &self,
+        upload_id: &UploadId,
+    ) -> DomainResult<Vec<vfiles_domain::UploadPart>> {
+        self.upload_store.get_upload_parts(upload_id).await
     }
 
     async fn commit_upload_stream(
@@ -2644,13 +2702,14 @@ where
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         expected_sha256: Option<&str>,
         message: Option<&str>,
+        enforce_size: bool,
     ) -> DomainResult<UploadCompleteResponse> {
         let (blob_id, content_hash, created_blob, stored_size) = self
             .blob_store
             .store_blob_stream(upload_stream, expected_sha256)
             .await?;
 
-        if stored_size != session.declared_size.as_u64() {
+        if enforce_size && stored_size != session.declared_size.as_u64() {
             if created_blob {
                 let _ = self.blob_store.delete_blob(&blob_id).await;
             }

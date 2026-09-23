@@ -193,9 +193,45 @@ def main():
     lm = h.get("Last-Modified") or h.get("last-modified")
     check("16 HEAD Last-Modified", st == 200 and lm is not None, f"{st} lm={lm}")
 
+    # ── r4 multipart 四式 ──
+    mp_key = "probe3/mp.bin"
+    st, body, _ = request("POST", base + "/" + mp_key, query=q({"uploads": ""}))
+    m = re.search(rb"<UploadId>(.*?)</UploadId>", body)
+    uid = m.group(1).decode() if m else ""
+    check("17 CreateMultipartUpload returns UploadId", st == 200 and bool(uid), f"{st} uid={uid[:8]}")
+
+    p1, p2 = b"A" * 700, b"B" * 500
+    st1, _, h1 = request("PUT", base + "/" + mp_key, query=q({"partNumber": "1", "uploadId": uid}), body=p1)
+    st2, _, h2 = request("PUT", base + "/" + mp_key, query=q({"partNumber": "2", "uploadId": uid}), body=p2)
+    e1 = h1.get("ETag") or h1.get("etag")
+    e2 = h2.get("ETag") or h2.get("etag")
+    check("18 UploadPart returns ETag", st1 == 200 and st2 == 200 and bool(e1) and bool(e2), f"{st1}/{st2}")
+
+    xml = (
+        "<CompleteMultipartUpload>"
+        f"<Part><PartNumber>1</PartNumber><ETag>{e1}</ETag></Part>"
+        f"<Part><PartNumber>2</PartNumber><ETag>{e2}</ETag></Part>"
+        "</CompleteMultipartUpload>"
+    ).encode()
+    st, body, _ = request("POST", base + "/" + mp_key, query=q({"uploadId": uid}), body=xml,
+                          extra_headers={"content-type": "application/xml"})
+    ok_complete = st == 200 and b"<ETag>" in body
+    stg, gbody, _ = request("GET", base + "/" + mp_key)
+    check("19 CompleteMultipartUpload assembles bytes",
+          ok_complete and stg == 200 and gbody == p1 + p2, f"{st} get={stg} bytes={len(gbody)}")
+
+    mp_abort = "probe3/abort.bin"
+    st, abody, _ = request("POST", base + "/" + mp_abort, query=q({"uploads": ""}))
+    m2 = re.search(rb"<UploadId>(.*?)</UploadId>", abody)
+    uid2 = m2.group(1).decode() if m2 else ""
+    request("PUT", base + "/" + mp_abort, query=q({"partNumber": "1", "uploadId": uid2}), body=b"x" * 10)
+    st, _, _ = request("DELETE", base + "/" + mp_abort, query=q({"uploadId": uid2}))
+    check("20 AbortMultipartUpload 204", st == 204, st)
+
     # 清理
     for k, _ in seed:
         request("DELETE", base + "/" + k)
+    request("DELETE", base + "/" + mp_key)
 
     passed = sum(1 for x in P if x)
     print(f"== {passed}/{len(P)} PASS ==")

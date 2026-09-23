@@ -79,6 +79,31 @@ def main():
         s3.delete_object(Bucket="default", Key=k)
     check("boto delete", True)
 
+    # ── multipart（真实客户端大文件路径）──
+    key = "boto-mp/big.bin"
+    chunks = [bytes([i]) * (1024 * 1024) for i in range(1, 5)]
+    whole = b"".join(chunks)
+    mpu = s3.create_multipart_upload(Bucket="default", Key=key, ContentType="application/octet-stream")
+    uid = mpu["UploadId"]
+    check("boto mpu create", bool(uid), uid)
+    parts = []
+    for i, c in enumerate(chunks, start=1):
+        r = s3.upload_part(Bucket="default", Key=key, PartNumber=i, UploadId=uid, Body=c)
+        parts.append({"ETag": r["ETag"], "PartNumber": i})
+    check("boto mpu upload 4 parts", len(parts) == 4 and all(p["ETag"] for p in parts), parts[0]["ETag"])
+    lp = s3.list_parts(Bucket="default", Key=key, UploadId=uid)
+    check("boto mpu list_parts", len(lp.get("Parts", [])) == 4, [p["PartNumber"] for p in lp.get("Parts", [])])
+    s3.complete_multipart_upload(Bucket="default", Key=key, UploadId=uid, MultipartUpload={"Parts": parts})
+    g = s3.get_object(Bucket="default", Key=key)
+    body = g["Body"].read()
+    check("boto mpu complete assembles bytes", body == whole, f"{len(body)} vs {len(whole)}")
+    mpu2 = s3.create_multipart_upload(Bucket="default", Key="boto-mp/abort.bin")
+    uid2 = mpu2["UploadId"]
+    s3.upload_part(Bucket="default", Key="boto-mp/abort.bin", PartNumber=1, UploadId=uid2, Body=b"x" * 100)
+    s3.abort_multipart_upload(Bucket="default", Key="boto-mp/abort.bin", UploadId=uid2)
+    check("boto mpu abort", True)
+    s3.delete_object(Bucket="default", Key=key)
+
     passed = sum(1 for x in P if x)
     print(f"== boto3 {passed}/{len(P)} PASS ==")
     sys.exit(0 if passed == len(P) else 1)

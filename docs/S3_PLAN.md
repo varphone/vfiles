@@ -1,4 +1,27 @@
-# S3 兼容 API（r2 九式 9/9 → **r3 列表/元数据/Range 八式 + 真 AWS SDK 9/9**）
+# S3 兼容 API（r2 九式 → r3 列表八式 → **r4 multipart 四式**；自写探针 21/21 + 真 AWS SDK 14/14）
+
+## 状态（r4 末 · multipart 上传打通 = 大文件客户端路径可用）
+
+- **新增能力**（`crates/vfiles-s3/src/lib.rs` + `crates/vfiles-app/src/services.rs`）：
+  | 操作 | 映射 |
+  | --- | --- |
+  | `CreateMultipartUpload` | `UploadService::init_multipart_upload`（**未知总大小**会话：`declared_size=0`/`total_chunks=0`）→ 返回 uploadId = 上传会话 id |
+  | `UploadPart` | `upload_part(upload_id, partNumber-1, data)`（part 号 1..=10000 ✗ 内部零基）× 返回 **part MD5 ETag** |
+  | `CompleteMultipartUpload` | 校验列出 part 均已上传 → `assemble_upload_stream`（按 0..n-1 拼接）→ `complete_multipart_upload`（**跳过量校验** ✗ 总大小未知） |
+  | `AbortMultipartUpload` | `cancel_upload`（幂等） |
+  | `ListParts` | `list_upload_parts`（partNumber / size / last-modified） |
+- **app 层改动**：`commit_upload_stream` 增 `enforce_size: bool`（既有调用传 `true`）＋ 三个新方法
+  （`init_multipart_upload` / `complete_multipart_upload` / `list_upload_parts`）。复用既有
+  `upload_sessions`+分片文件存储，无新表。
+- **实证（入仓两通道）**：
+  | 通道 | 结果 |
+  | --- | --- |
+  | `scripts/sigv4_probe.py`（自写 SigV4） | **21/21**（r2 九式 + r3 八式 + r4 四式：create/upload/list_parts/complete+字节校验/abort） |
+  | `scripts/boto_probe.py`（**真 AWS SDK**） | **14/14**（9 列表/Range + 5 multipart：4×1MB 分片 → 拼接字节逐字同 → abort） |
+- **约束/债（记档）**：part 必须**零基连续**（跳号 = assemble UploadConflict；客户端常规 1..n 无碍）·
+  完成时**不校验 part ETag**、`ListParts` 不返回 ETag（part 哈希未持久化）· `ListMultipartUploads`
+  未实现 · 最终 ETag = 版本 id（非 AWS 复合形，但与 GET/HEAD 自洽）· put 流式直连 / per-user 凭证 /
+  region 校验 / 大桶 SQL 分页仍在债。
 
 ## 状态（r3 末 · 列表面商业级完备 = 自写探针 17/17 + boto3 9/9）
 

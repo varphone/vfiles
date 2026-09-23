@@ -9,6 +9,8 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+hex.workspace = true
+md-5.workspace = true
 futures.workspace = true
 axum = { workspace = true, features = ["macros"] }
 http-body-util.workspace = true
