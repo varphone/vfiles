@@ -20,11 +20,7 @@ pub type VerifyFn = std::sync::Arc<
             String,
             String,
         ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Option<vfiles_domain::types::User>,
-                    > + Send,
-            >,
+            Box<dyn std::future::Future<Output = Option<vfiles_domain::types::User>> + Send>,
         > + Send
         + Sync,
 >;

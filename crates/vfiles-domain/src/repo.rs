@@ -132,6 +132,49 @@ pub trait NamespaceRepo {
     }
 }
 
+/// A persisted WebDAV exclusive lock. `expires_at` is Unix seconds; `None` means infinite.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebdavLock {
+    pub token: String,
+    pub owner: String,
+    pub expires_at: Option<i64>,
+}
+
+/// Cross-process storage for WebDAV locks.
+#[async_trait::async_trait]
+pub trait WebdavLockRepo: Send + Sync {
+    async fn acquire(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        token: &str,
+        owner: &str,
+        expires_at: Option<i64>,
+        now: i64,
+    ) -> DomainResult<bool>;
+    async fn find_active(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        now: i64,
+    ) -> DomainResult<Option<WebdavLock>>;
+    async fn refresh(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        token: &str,
+        expires_at: Option<i64>,
+        now: i64,
+    ) -> DomainResult<Option<WebdavLock>>;
+    async fn release(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        token: &str,
+        now: i64,
+    ) -> DomainResult<bool>;
+}
+
 #[async_trait::async_trait]
 pub trait SystemSettingsRepo {
     async fn set_bootstrapped(&self) -> DomainResult<()>;

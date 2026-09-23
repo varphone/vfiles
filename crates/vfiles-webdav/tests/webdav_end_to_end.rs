@@ -11,16 +11,13 @@ use std::sync::Arc;
 
 use camino::Utf8PathBuf;
 use tower::ServiceExt;
-use vfiles_app::{
-    AuthService, DefaultWorkspaceService, IngestStats, LoginAttemptLimiter, NamespaceService,
-    RateLimitPolicy,
-};
+use vfiles_app::{AuthService, DefaultWorkspaceService, NamespaceService};
 
 use vfiles_domain::types::RegisterRequest;
 use vfiles_domain::{EntryRepo, NormalizedPath};
 use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteEntryRepo, SqliteMigrations, SqliteNamespaceRepo,
-    SqlitePoolFactory, SqliteSessionRepo, SqliteSnapshotRepo, SqliteUserRepo,
+    SqlitePoolFactory, SqliteSessionRepo, SqliteSnapshotRepo, SqliteUserRepo, SqliteWebdavLockRepo,
 };
 use vfiles_webdav::{WebdavApplication, WebdavWriteOps};
 
@@ -37,11 +34,7 @@ impl WebdavWriteOps for NoopWrite {
         _ns: &vfiles_domain::types::NamespaceId,
         _path: &NormalizedPath,
     ) -> vfiles_domain::DomainResult<
-        Option<(
-            Box<dyn vfiles_domain::ReadSeek + Send + Unpin>,
-            String,
-            u64,
-        )>,
+        Option<(Box<dyn vfiles_domain::ReadSeek + Send + Unpin>, String, u64)>,
     > {
         Ok(None)
     }
@@ -103,10 +96,6 @@ async fn options_advertises_and_propfind_needs_auth() {
     let entry_repo = Arc::new(SqliteEntryRepo::new(pool.clone()));
     let namespace_repo: Arc<dyn vfiles_domain::NamespaceRepo + Send + Sync> =
         Arc::new(SqliteNamespaceRepo::new(pool.clone()));
-    let user_repo = Arc::new(SqliteUserRepo::new(pool.clone()));
-    let snapshot_repo = Arc::new(SqliteSnapshotRepo::new(pool.clone()));
-    let blob_store = Arc::new(FsBlobStore::new(pool.clone(), root.join("blobs")));
-    let upload_store = Arc::new(FsUploadStore::new(root.join("uploads")));
     let namespaces = NamespaceService::new(namespace_repo.clone());
     let session_repo = SqliteSessionRepo::new(pool.clone());
     let auth = Arc::new(AuthService::new(
@@ -123,7 +112,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .expect("register");
     // per-user 默认命名空间（`ensure_default_for_owner` = **ns 映射真身** ✓ r109d 形明）
-    let namespace_id = namespaces
+    let _namespace_id = namespaces
         .ensure_default_for_owner(&user.id)
         .await
         .expect("ns");
@@ -148,13 +137,22 @@ async fn options_advertises_and_propfind_needs_auth() {
         namespaces: namespaces.clone(),
         entry_repo: entry_repo.clone() as Arc<dyn EntryRepo + Send + Sync>,
         verify,
-        locks: Arc::new(vfiles_webdav::LockTable::new()),
+        locks: Arc::new(vfiles_webdav::LockTable::new(Arc::new(
+            SqliteWebdavLockRepo::new(pool.clone()),
+        ))),
         write: Arc::new(NoopWrite),
     };
-    let router = vfiles_webdav::router_for_e2e(app);
+    let router = vfiles_webdav::router_for_e2e(app.clone());
+    let restarted_router = vfiles_webdav::router_for_e2e(WebdavApplication {
+        locks: Arc::new(vfiles_webdav::LockTable::new(Arc::new(
+            SqliteWebdavLockRepo::new(pool.clone()),
+        ))),
+        ..app
+    });
 
     // ① OPTIONS = 能力宣告（免认证 ✓ RFC 语义）
     let resp = router
+        .clone()
         .clone()
         .oneshot(
             axum::http::Request::builder()
@@ -167,13 +165,14 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     eprintln!("[dbg] OPTIONS headers = {:?}", resp.headers());
-    assert!(resp
-        .headers()
-        .get("allow")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .contains("PROPFIND"));
+    assert!(
+        resp.headers()
+            .get("allow")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("PROPFIND")
+    );
 
     // ② PROPFIND 无凭据 = 401（安全门 ✓）
     let resp = router
@@ -196,6 +195,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"))
     };
     let resp = router
+        .clone()
         .oneshot(
             axum::http::Request::builder()
                 .method("PROPFIND")
@@ -209,10 +209,49 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(resp.status(), 207);
     let body = String::from_utf8(
-        axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap().to_vec(),
+        axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
     )
     .unwrap();
     assert!(body.contains("multistatus"));
     assert!(body.contains("displayname"));
+
+    // A separate WebDAV application instance sees the same SQLite-backed lock.
+    let lock_body = r#"<?xml version="1.0"?>
+        <D:lockinfo xmlns:D="DAV:">
+          <D:lockscope><D:exclusive/></D:lockscope>
+          <D:locktype><D:write/></D:locktype>
+        </D:lockinfo>"#;
+    let lock = restarted_router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("timeout", "Second-600")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(lock_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(lock.status(), 200);
+
+    let blocked_write = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::from("must stay locked"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(blocked_write.status(), 423);
     let _ = user;
 }

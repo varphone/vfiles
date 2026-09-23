@@ -1,5 +1,11 @@
 # WebDAV 支持计划（RFC 4918 子集）
 
+## 锁持久化更新
+
+- exclusive write lock 已改为 SQLite 持久化，按命名空间与路径隔离；重启和同库多进程共享锁状态。
+- SQLite 单语句 upsert 保证并发获取互斥；过期锁可被接管，刷新/释放均需匹配令牌。
+- 验证覆盖独立应用实例间的锁可见性、写请求 423、并发单获锁及过期接管。
+
 > 状态：**r102 架构定案 + crate 骨架**（本文件 = 实施契约 ✓ r103 = server 全写）。
 > 目标：挂载入 Finder / Windows 映射驱动器 / rclone / Cyberduck / davfs2 通用生态。
 
@@ -11,7 +17,7 @@
 | MKCOL / DELETE / MOVE | ✅ 实装（`WebdavWriteOps` ✓ 审计链 user_id ✓） | |
 | **PUT** | ✅ **链实装**（`init_upload` + `complete_upload_from_stream` 流式直完 ✓） | bin 侧 `put_file` 转发 = 下段（签名已清 ✓） |
 | COPY | ✅ **实装**（Destination + Overwrite + 锁前置 + 审计；文件复用 blob，目录递归复制） | `copy_entries` 提供 overwrite 和目标父目录检查；需持续做 RFC/客户端兼容验收 |
-| LOCK / UNLOCK | ✅ 实装（exclusive / depth 0 ✓ `ns:path` 隔离 ✓；空体 LOCK refresh） | shared lock 明确 405；非 0 Depth 明确 400；超时支持 Second-N / Infinite |
+| LOCK / UNLOCK | ✅ 实装（exclusive / depth 0 ✓ SQLite 持久化并按 namespace/path 隔离 ✓；空体 LOCK refresh） | 并发获取原子化；过期锁可接管；shared lock 明确 405；超时支持 Second-N / Infinite |
 | per-user ns | ✅ **实装**（`ensure_default_for_owner` ✓ 多用户隔离 ✓） |
 | auth 门 | ✅ dispatch 顶部（Basic → verify → 401 + WWW-Authenticate ✓ OPTIONS 豁免 ✓） |
 | 默认开启 | ✅ **用户令兑现**（`enabled: true` ✓ auth 强制防御 ✓ 真服务日志确证 ✓） |

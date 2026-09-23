@@ -11,14 +11,14 @@ mod auth;
 mod lock;
 mod write;
 
-pub use write::WebdavWriteOps;
 pub use lock::LockTable;
+pub use write::WebdavWriteOps;
 mod response;
 mod server;
 
-pub use auth::WebdavAuthenticator;
 pub use auth::VerifyFn;
+pub use auth::WebdavAuthenticator;
 pub use server::{
-    WebdavApplication, WebdavSettings, run_webdav_server, router_for_tests as router_for_e2e,
+    WebdavApplication, WebdavSettings, router_for_tests as router_for_e2e, run_webdav_server,
     spawn_webdav_server,
 };

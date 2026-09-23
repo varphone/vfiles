@@ -8,8 +8,8 @@
 #![allow(dead_code)]
 
 use async_trait::async_trait;
-use vfiles_domain::types::{NamespaceId, NormalizedPath, UserId};
 use vfiles_domain::DomainResult;
+use vfiles_domain::types::{NamespaceId, NormalizedPath, UserId};
 
 #[async_trait]
 pub trait WebdavWriteOps: Send + Sync {
@@ -21,13 +21,7 @@ pub trait WebdavWriteOps: Send + Sync {
         &self,
         namespace_id: &NamespaceId,
         path: &NormalizedPath,
-    ) -> DomainResult<
-        Option<(
-            Box<dyn vfiles_domain::ReadSeek + Send + Unpin>,
-            String,
-            u64,
-        )>,
-    >;
+    ) -> DomainResult<Option<(Box<dyn vfiles_domain::ReadSeek + Send + Unpin>, String, u64)>>;
     async fn put_file(
         &self,
         namespace_id: &NamespaceId,

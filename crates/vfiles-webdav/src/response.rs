@@ -12,7 +12,7 @@ pub const PREDEFINED_READONLY: [&str; 9] = [
     "getlastmodified",
     "getcontentlength",
     "getcontenttype",
-    "getetag", // r14 服务生成 ✗ PROPPATCH set → 403
+    "getetag",      // r14 服务生成 ✗ PROPPATCH set → 403
     "creationdate", // r16 事实生成（建即定 ✗ 不可写）
     "owner",        // r16 属主事实（r109e 隔离下 ≡ 认证者 ✗ 不可写）
     "supportedlock",
@@ -53,7 +53,9 @@ pub fn parse_propertyupdate(body: &str) -> Result<Vec<PropOp>, ()> {
         match op.tag_name().name() {
             "set" | "remove" => {
                 let is_set = op.tag_name().name() == "set";
-                let prop = op.children().find(|n| n.is_element() && n.tag_name().name() == "prop");
+                let prop = op
+                    .children()
+                    .find(|n| n.is_element() && n.tag_name().name() == "prop");
                 let Some(prop) = prop else {
                     return Err(());
                 };
@@ -197,8 +199,7 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
                     .iter()
                     .map(|n| n.as_str())
                     .filter(|req| {
-                        !SUPPORTED.contains(req)
-                            && !item.custom.iter().any(|(cn, _)| cn == req)
+                        !SUPPORTED.contains(req) && !item.custom.iter().any(|(cn, _)| cn == req)
                     })
                     .collect();
                 (wanted, missing)
@@ -363,58 +364,61 @@ fn escape_xml(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::PropMode;
+    use super::*;
 
     #[test]
     fn builds_multistatus_with_collections_and_files() {
-        let xml = multistatus(&[
-            PropResponse {
-                href: "/dav/".into(),
-                displayname: "root".into(),
-                is_collection: true,
-                getlastmodified: "Mon, 22 Sep 2026 19:20:00 GMT".into(),
-                getcontentlength: None,
-                getcontenttype: None,
-                custom: Vec::new(),
-                getetag: None,
-                creationdate: "2026-09-23T00:00:00Z".into(),
-                owner: "tester".into(),
-                active_lock: None,
-            },
-            PropResponse {
-                href: "/dav/a&b.txt".into(),
-                displayname: "a&b <txt>".into(),
-                is_collection: false,
-                getlastmodified: "Mon, 22 Sep 2026 19:21:00 GMT".into(),
-                getcontentlength: Some(42),
-                getcontenttype: Some("text/plain".into()),
-                custom: Vec::new(),
-                getetag: None,
-                creationdate: "2026-09-23T00:00:00Z".into(),
-                owner: "tester".into(),
-                active_lock: None,
-            },
-        ], &PropMode::All);
+        let xml = multistatus(
+            &[
+                PropResponse {
+                    href: "/dav/".into(),
+                    displayname: "root".into(),
+                    is_collection: true,
+                    getlastmodified: "Mon, 22 Sep 2026 19:20:00 GMT".into(),
+                    getcontentlength: None,
+                    getcontenttype: None,
+                    custom: Vec::new(),
+                    getetag: None,
+                    creationdate: "2026-09-23T00:00:00Z".into(),
+                    owner: "tester".into(),
+                    active_lock: None,
+                },
+                PropResponse {
+                    href: "/dav/a&b.txt".into(),
+                    displayname: "a&b <txt>".into(),
+                    is_collection: false,
+                    getlastmodified: "Mon, 22 Sep 2026 19:21:00 GMT".into(),
+                    getcontentlength: Some(42),
+                    getcontenttype: Some("text/plain".into()),
+                    custom: Vec::new(),
+                    getetag: None,
+                    creationdate: "2026-09-23T00:00:00Z".into(),
+                    owner: "tester".into(),
+                    active_lock: None,
+                },
+            ],
+            &PropMode::All,
+        );
         assert!(xml.contains("<D:collection/>"));
         assert!(xml.contains("<D:getcontentlength>42</D:getcontentlength>"));
         assert!(xml.contains("a&amp;b &lt;txt&gt;"));
         assert!(xml.contains("/dav/a&amp;b.txt"));
-        assert!(!xml.contains("<D:getcontentlength>") || xml.matches("<D:getcontentlength>").count() == 1);
+        assert!(
+            !xml.contains("<D:getcontentlength>")
+                || xml.matches("<D:getcontentlength>").count() == 1
+        );
     }
 
     #[test]
     fn escapes_all_xml_metacharacters() {
-        assert_eq!(
-            escape_xml(r#"&<>"'"#),
-            "&amp;&lt;&gt;&quot;&apos;"
-        );
+        assert_eq!(escape_xml(r#"&<>"'"#), "&amp;&lt;&gt;&quot;&apos;");
     }
 }
 
 #[cfg(test)]
 mod propmode_tests {
-    use super::{parse_propfind_body, multistatus, PropMode, PropResponse};
+    use super::{PropMode, PropResponse, multistatus, parse_propfind_body};
 
     fn sample() -> Vec<PropResponse> {
         vec![PropResponse {
@@ -459,11 +463,14 @@ mod propmode_tests {
     #[test]
     fn trims_to_requested_and_404s_unknown() {
         // r2 协议精度守护 ✗ 只要 getcontentlength → 只出它 + 未支持属性进 404 块
-        let xml = multistatus(&sample(), &PropMode::Names(vec![
-            "getcontentlength".into(),
-            "displayname".into(),
-            "getlockdiscovery".into(), // r14 后 getetag 已支持 → 换真未支持名（404 机制守护断言保留）
-        ]));
+        let xml = multistatus(
+            &sample(),
+            &PropMode::Names(vec![
+                "getcontentlength".into(),
+                "displayname".into(),
+                "getlockdiscovery".into(), // r14 后 getetag 已支持 → 换真未支持名（404 机制守护断言保留）
+            ]),
+        );
         assert!(xml.contains("<D:getcontentlength>5</D:getcontentlength>"));
         assert!(xml.contains("<D:displayname>f.txt</D:displayname>"));
         assert!(!xml.contains("<D:getlastmodified>"), "未请求的不出现");
@@ -485,7 +492,7 @@ mod propmode_tests {
 
 #[cfg(test)]
 mod proppatch_tests {
-    use super::{parse_propertyupdate, proppatch_multistatus, PropOp};
+    use super::{PropOp, parse_propertyupdate, proppatch_multistatus};
 
     #[test]
     fn parses_set_and_remove_in_order() {
@@ -497,8 +504,13 @@ mod proppatch_tests {
         assert_eq!(
             ops,
             vec![
-                PropOp::Set { name: "displayname".into(), value: "新名字".into() },
-                PropOp::Remove { name: "getetag".into() },
+                PropOp::Set {
+                    name: "displayname".into(),
+                    value: "新名字".into()
+                },
+                PropOp::Remove {
+                    name: "getetag".into()
+                },
             ]
         );
     }
@@ -513,10 +525,25 @@ mod proppatch_tests {
 
     #[test]
     fn response_carries_per_op_status() {
-        let xml = proppatch_multistatus("/f.txt", &[
-            (PropOp::Set { name: "displayname".into(), value: "x".into() }, true),
-            (PropOp::Set { name: "getetag".into(), value: "y".into() }, false),
-        ]);
+        let xml = proppatch_multistatus(
+            "/f.txt",
+            &[
+                (
+                    PropOp::Set {
+                        name: "displayname".into(),
+                        value: "x".into(),
+                    },
+                    true,
+                ),
+                (
+                    PropOp::Set {
+                        name: "getetag".into(),
+                        value: "y".into(),
+                    },
+                    false,
+                ),
+            ],
+        );
         assert!(xml.contains("403 Forbidden"));
         assert!(xml.contains("200 OK"));
         assert!(xml.contains("<D:getetag/>"));

@@ -1259,6 +1259,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         },
         config.webdav.embedded,
         config.webdav.mount_path.clone(),
+        Arc::new(vfiles_infra_sqlite::SqliteWebdavLockRepo::new(pool.clone())),
     );
 
     // 主停机信号（前移到 upload move 与 AppState 构造之前 ✗ S3 调用点需要两者皆活 +
@@ -2380,6 +2381,7 @@ fn build_webdav_runtime(
     audit: Option<std::sync::Arc<dyn Fn(vfiles_domain::types::NewAuditLog) + Send + Sync>>,
     embedded: bool,
     mount_path: String,
+    lock_repo: std::sync::Arc<dyn vfiles_domain::WebdavLockRepo>,
 ) -> Option<(
     vfiles_webdav::WebdavSettings,
     vfiles_webdav::WebdavApplication,
@@ -2399,7 +2401,7 @@ fn build_webdav_runtime(
         namespaces,
         entry_repo,
         verify,
-        locks: std::sync::Arc::new(vfiles_webdav::LockTable::new()),
+        locks: std::sync::Arc::new(vfiles_webdav::LockTable::new(lock_repo)),
         write: std::sync::Arc::new(WebdavWrite { workspace, upload }),
         // r-new 共端口：嵌入 = mount（/dav 等）/ 独立 = ""（现行为零回归 ✗ 1337 按此分流）
         mount_prefix: if embedded { mount_path } else { String::new() },

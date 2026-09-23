@@ -296,6 +296,132 @@ pub struct SqliteNamespaceRepo {
     pool: SqlitePool,
 }
 
+#[derive(Debug, Clone)]
+pub struct SqliteWebdavLockRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteWebdavLockRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait::async_trait]
+impl WebdavLockRepo for SqliteWebdavLockRepo {
+    async fn acquire(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        token: &str,
+        owner: &str,
+        expires_at: Option<i64>,
+        now: i64,
+    ) -> DomainResult<bool> {
+        let result = sqlx::query(
+            r#"INSERT INTO webdav_locks (namespace_id, path, token, owner, expires_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(namespace_id, path) DO UPDATE SET
+                   token = excluded.token,
+                   owner = excluded.owner,
+                   expires_at = excluded.expires_at
+               WHERE webdav_locks.expires_at IS NOT NULL
+                 AND webdav_locks.expires_at <= ?"#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(path)
+        .bind(token)
+        .bind(owner)
+        .bind(expires_at)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to acquire WebDAV lock: {e}"),
+        })?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn find_active(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        now: i64,
+    ) -> DomainResult<Option<WebdavLock>> {
+        let row: Option<(String, String, Option<i64>)> = sqlx::query_as(
+            "SELECT token, owner, expires_at FROM webdav_locks WHERE namespace_id = ? AND path = ? AND (expires_at IS NULL OR expires_at > ?)",
+        )
+        .bind(namespace_id.to_string())
+        .bind(path)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to look up WebDAV lock: {e}"),
+        })?;
+        Ok(row.map(|(token, owner, expires_at)| WebdavLock {
+            token,
+            owner,
+            expires_at,
+        }))
+    }
+
+    async fn refresh(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        token: &str,
+        expires_at: Option<i64>,
+        now: i64,
+    ) -> DomainResult<Option<WebdavLock>> {
+        let row: Option<(String, String, Option<i64>)> = sqlx::query_as(
+            r#"UPDATE webdav_locks SET expires_at = ?
+               WHERE namespace_id = ? AND path = ? AND token = ?
+                 AND (expires_at IS NULL OR expires_at > ?)
+               RETURNING token, owner, expires_at"#,
+        )
+        .bind(expires_at)
+        .bind(namespace_id.to_string())
+        .bind(path)
+        .bind(token)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to refresh WebDAV lock: {e}"),
+        })?;
+        Ok(row.map(|(token, owner, expires_at)| WebdavLock {
+            token,
+            owner,
+            expires_at,
+        }))
+    }
+
+    async fn release(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        token: &str,
+        now: i64,
+    ) -> DomainResult<bool> {
+        let result = sqlx::query(
+            r#"DELETE FROM webdav_locks
+               WHERE namespace_id = ? AND path = ? AND token = ?
+                 AND (expires_at IS NULL OR expires_at > ?)"#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(path)
+        .bind(token)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to release WebDAV lock: {e}"),
+        })?;
+        Ok(result.rows_affected() > 0)
+    }
+}
+
 impl SqliteNamespaceRepo {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -6653,6 +6779,119 @@ impl AccessTokenRepo for SqliteAccessTokenRepo {
         })?;
 
         Ok(result.rows_affected() > 0)
+    }
+}
+
+#[cfg(test)]
+mod webdav_lock_repo_tests {
+    use super::*;
+    use crate::{SqliteMigrations, SqlitePoolFactory};
+    use camino::Utf8PathBuf;
+
+    #[tokio::test]
+    async fn lock_acquire_is_atomic_and_expired_locks_can_be_replaced() {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-webdav-lock-test-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_id = UserId::new();
+        let namespace_id = NamespaceId::new();
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, 'hash', 'user')",
+        )
+        .bind(user_id.to_string())
+        .bind(format!("lock-{}", uuid::Uuid::new_v4()))
+        .execute(&pool)
+        .await
+        .expect("user should be inserted");
+        sqlx::query("INSERT INTO namespaces (id, slug, owner_user_id) VALUES (?, 'default', ?)")
+            .bind(namespace_id.to_string())
+            .bind(user_id.to_string())
+            .execute(&pool)
+            .await
+            .expect("namespace should be inserted");
+
+        let repo = SqliteWebdavLockRepo::new(pool.clone());
+        let (first, second) = tokio::join!(
+            repo.acquire(&namespace_id, "a.txt", "token-a", "alice", None, 1_000),
+            repo.acquire(&namespace_id, "a.txt", "token-b", "bob", None, 1_000),
+        );
+        let acquired = [
+            first.expect("first acquire"),
+            second.expect("second acquire"),
+        ];
+        assert_eq!(acquired.iter().filter(|value| **value).count(), 1);
+
+        let active = repo
+            .find_active(&namespace_id, "a.txt", 1_000)
+            .await
+            .expect("active lock lookup")
+            .expect("one lock should be active");
+        assert!(
+            repo.refresh(&namespace_id, "a.txt", "wrong-token", Some(2_000), 1_000)
+                .await
+                .expect("wrong-token refresh")
+                .is_none()
+        );
+        let refreshed = repo
+            .refresh(&namespace_id, "a.txt", &active.token, Some(2_000), 1_000)
+            .await
+            .expect("matching refresh")
+            .expect("matching lock should refresh");
+        assert_eq!(refreshed.expires_at, Some(2_000));
+        assert!(
+            !repo
+                .release(&namespace_id, "a.txt", "wrong-token", 1_000)
+                .await
+                .expect("wrong-token release")
+        );
+        assert!(
+            repo.release(&namespace_id, "a.txt", &active.token, 1_000)
+                .await
+                .expect("matching release")
+        );
+
+        assert!(
+            repo.acquire(
+                &namespace_id,
+                "expired.txt",
+                "old-token",
+                "alice",
+                Some(10),
+                1,
+            )
+            .await
+            .expect("initial finite lock")
+        );
+        assert!(
+            repo.find_active(&namespace_id, "expired.txt", 10)
+                .await
+                .expect("expired lock lookup")
+                .is_none()
+        );
+        assert!(
+            repo.acquire(
+                &namespace_id,
+                "expired.txt",
+                "replacement-token",
+                "bob",
+                None,
+                10,
+            )
+            .await
+            .expect("expired lock takeover")
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
     }
 }
 

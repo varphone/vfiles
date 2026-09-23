@@ -5,10 +5,10 @@
 use std::sync::Arc;
 
 use axum::{
-    body::Body,
-    http::{header, Method, StatusCode},
-    response::Response,
     Router,
+    body::Body,
+    http::{Method, StatusCode, header},
+    response::Response,
 };
 
 use crate::response::PropResponse;
@@ -83,20 +83,34 @@ async fn lock_op(
     let Some(ns) = ns else {
         return internal_error();
     };
-    if depth_owned.as_deref().is_some_and(|depth| !depth.trim().eq_ignore_ascii_case("0")) {
-        return Response::builder().status(StatusCode::BAD_REQUEST).body(Body::empty()).unwrap();
+    if depth_owned
+        .as_deref()
+        .is_some_and(|depth| !depth.trim().eq_ignore_ascii_case("0"))
+    {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::empty())
+            .unwrap();
     }
     match parse_lockinfo(&lock_body) {
         Ok(LockScope::ExclusiveWrite) => {}
         Ok(LockScope::SharedWrite) => {
-            return Response::builder().status(StatusCode::METHOD_NOT_ALLOWED).body(Body::empty()).unwrap();
+            return Response::builder()
+                .status(StatusCode::METHOD_NOT_ALLOWED)
+                .body(Body::empty())
+                .unwrap();
         }
         Err(status) => {
-            return Response::builder().status(status).body(Body::empty()).unwrap();
+            return Response::builder()
+                .status(status)
+                .body(Body::empty())
+                .unwrap();
         }
     }
-    let rel = uri_path.trim_start_matches('/').trim_end_matches('/').to_string();
-    let lock_key = format!("{ns}:{rel}");
+    let rel = uri_path
+        .trim_start_matches('/')
+        .trim_end_matches('/')
+        .to_string();
     // r15 Timeout（Second-N 解析 ✗ None = Infinite/缺省 = 永久（RFC 缺省语义 ✓））
     let ttl = timeout_owned
         .as_deref()
@@ -105,8 +119,8 @@ async fn lock_op(
         Some(d) => format!("Second-{}", d.as_secs()),
         None => "Infinite".to_string(),
     };
-    match app.locks.lock(&lock_key, user.username.as_str(), ttl) {
-        Some(entry) => Response::builder()
+    match app.locks.lock(&ns, &rel, user.username.as_str(), ttl).await {
+        Ok(Some(entry)) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
             .header("Lock-Token", format!("<{}>", entry.token))
@@ -119,15 +133,22 @@ async fn lock_op(
                 &granted_header,
             )))
             .unwrap(),
-        None => Response::builder()
+        Ok(None) => Response::builder()
             .status(StatusCode::LOCKED)
             .body(Body::empty())
             .unwrap(),
+        Err(error) => {
+            tracing::error!(%error, "WebDAV LOCK 存储失败");
+            internal_error()
+        }
     }
 }
 
 #[derive(Clone, Copy)]
-enum LockScope { ExclusiveWrite, SharedWrite }
+enum LockScope {
+    ExclusiveWrite,
+    SharedWrite,
+}
 
 /// 只授予实现了真实语义的 exclusive write 锁；不得将 shared 请求静默升级。
 fn parse_lockinfo(body: &[u8]) -> Result<LockScope, StatusCode> {
@@ -137,12 +158,29 @@ fn parse_lockinfo(body: &[u8]) -> Result<LockScope, StatusCode> {
     if root.tag_name().namespace() != Some("DAV:") || root.tag_name().name() != "lockinfo" {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let scope = root.children().find(|n| n.is_element() && n.tag_name().namespace() == Some("DAV:") && n.tag_name().name() == "lockscope")
+    let scope = root
+        .children()
+        .find(|n| {
+            n.is_element()
+                && n.tag_name().namespace() == Some("DAV:")
+                && n.tag_name().name() == "lockscope"
+        })
         .ok_or(StatusCode::BAD_REQUEST)?;
-    let scope = scope.children().find(|n| n.is_element() && n.tag_name().namespace() == Some("DAV:")).ok_or(StatusCode::BAD_REQUEST)?;
-    let locktype = root.children().find(|n| n.is_element() && n.tag_name().namespace() == Some("DAV:") && n.tag_name().name() == "locktype")
+    let scope = scope
+        .children()
+        .find(|n| n.is_element() && n.tag_name().namespace() == Some("DAV:"))
         .ok_or(StatusCode::BAD_REQUEST)?;
-    if !locktype.children().any(|n| n.is_element() && n.tag_name().namespace() == Some("DAV:") && n.tag_name().name() == "write") {
+    let locktype = root
+        .children()
+        .find(|n| {
+            n.is_element()
+                && n.tag_name().namespace() == Some("DAV:")
+                && n.tag_name().name() == "locktype"
+        })
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    if !locktype.children().any(|n| {
+        n.is_element() && n.tag_name().namespace() == Some("DAV:") && n.tag_name().name() == "write"
+    }) {
         return Err(StatusCode::BAD_REQUEST);
     }
     match scope.tag_name().name() {
@@ -154,8 +192,11 @@ fn parse_lockinfo(body: &[u8]) -> Result<LockScope, StatusCode> {
 
 /// 空体 LOCK = RFC 4918 §9.10.2 锁刷新，必须携带 If 条件中的现存令牌。
 async fn lock_refresh_op(
-    app: Option<WebdavApplication>, ns: Option<vfiles_domain::types::NamespaceId>,
-    uri_path: String, token: Option<String>, timeout_owned: Option<String>,
+    app: Option<WebdavApplication>,
+    ns: Option<vfiles_domain::types::NamespaceId>,
+    uri_path: String,
+    token: Option<String>,
+    timeout_owned: Option<String>,
 ) -> Response {
     let Some(app) = app else {
         return internal_error();
@@ -164,21 +205,42 @@ async fn lock_refresh_op(
         return internal_error();
     };
     let Some(token) = token else {
-        return Response::builder().status(StatusCode::PRECONDITION_FAILED).body(Body::empty()).unwrap();
+        return Response::builder()
+            .status(StatusCode::PRECONDITION_FAILED)
+            .body(Body::empty())
+            .unwrap();
     };
-    let rel = uri_path.trim_start_matches('/').trim_end_matches('/').to_string();
-    let lock_key = format!("{ns}:{rel}");
-    let ttl = timeout_owned.as_deref().and_then(crate::lock::LockTable::parse_timeout_header);
-    let granted_header = ttl.map(|d| format!("Second-{}", d.as_secs())).unwrap_or_else(|| "Infinite".to_string());
-    match app.locks.refresh(&lock_key, &token, ttl) {
-        Some(entry) => Response::builder().status(StatusCode::OK)
+    let rel = uri_path
+        .trim_start_matches('/')
+        .trim_end_matches('/')
+        .to_string();
+    let ttl = timeout_owned
+        .as_deref()
+        .and_then(crate::lock::LockTable::parse_timeout_header);
+    let granted_header = ttl
+        .map(|d| format!("Second-{}", d.as_secs()))
+        .unwrap_or_else(|| "Infinite".to_string());
+    match app.locks.refresh(&ns, &rel, &token, ttl).await {
+        Ok(Some(entry)) => Response::builder()
+            .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
             .header("Lock-Token", format!("<{}>", entry.token))
             .header("Timeout", granted_header.clone())
             .body(Body::from(crate::response::lock_response(
-                &entry.token, &entry.owner, &href_with_mount(&app.mount_prefix, &rel), &granted_header,
-            ))).unwrap(),
-        None => Response::builder().status(StatusCode::PRECONDITION_FAILED).body(Body::empty()).unwrap(),
+                &entry.token,
+                &entry.owner,
+                &href_with_mount(&app.mount_prefix, &rel),
+                &granted_header,
+            )))
+            .unwrap(),
+        Ok(None) => Response::builder()
+            .status(StatusCode::PRECONDITION_FAILED)
+            .body(Body::empty())
+            .unwrap(),
+        Err(error) => {
+            tracing::error!(%error, "WebDAV LOCK 刷新存储失败");
+            internal_error()
+        }
     }
 }
 
@@ -195,7 +257,10 @@ async fn unlock_op(
     let Some(ns) = ns else {
         return internal_error();
     };
-    let rel = uri_path.trim_start_matches('/').trim_end_matches('/').to_string();
+    let rel = uri_path
+        .trim_start_matches('/')
+        .trim_end_matches('/')
+        .to_string();
     let token = token_raw.and_then(|v| {
         let trimmed = v.trim().trim_start_matches('<').trim_end_matches('>');
         if trimmed.is_empty() {
@@ -210,16 +275,19 @@ async fn unlock_op(
             .body(Body::empty())
             .unwrap();
     };
-    let lock_key = format!("{ns}:{rel}");
-    match app.locks.unlock(&lock_key, &token) {
-        Some(_) => Response::builder()
+    match app.locks.unlock(&ns, &rel, &token).await {
+        Ok(true) => Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(Body::empty())
             .unwrap(),
-        None => Response::builder()
+        Ok(false) => Response::builder()
             .status(StatusCode::CONFLICT)
             .body(Body::empty())
             .unwrap(),
+        Err(error) => {
+            tracing::error!(%error, "WebDAV UNLOCK 存储失败");
+            internal_error()
+        }
     }
 }
 
@@ -250,14 +318,17 @@ async fn get_op(
     let Some(ns) = ns else {
         return internal_error();
     };
-    let rel = uri_owned.trim_start_matches('/').trim_end_matches('/').to_string();
+    let rel = uri_owned
+        .trim_start_matches('/')
+        .trim_end_matches('/')
+        .to_string();
     let path = match vfiles_domain::types::NormalizedPath::new(&rel) {
         Ok(p) => p,
         Err(_) => {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(Body::empty())
-                .unwrap()
+                .unwrap();
         }
     };
     // r14 ETag（find 一次轻查 ✗ current_version_id 派生）+ If-None-Match 304 短路
@@ -291,13 +362,13 @@ async fn get_op(
             if let Some(et) = cur_etag.as_deref() {
                 base = base.header(header::ETAG, et); // r14 GET/206 响应暴露 ETag
             }
-            let range = range_owned.as_deref().and_then(|rh| {
-                match parse_byte_range(rh, size) {
+            let range = range_owned
+                .as_deref()
+                .and_then(|rh| match parse_byte_range(rh, size) {
                     ByteRange::Satisfiable(a, b) => Some(Ok((a, b))),
                     ByteRange::Unsatisfiable => Some(Err(())),
                     ByteRange::NotApplicable => None,
-                }
-            });
+                });
             match range {
                 Some(Ok((start, end))) => {
                     // 206 分段（seek + take ✗ 仍流式 ✓ 播放器 Range 主流请求式）
@@ -308,16 +379,12 @@ async fn get_op(
                     }
                     let builder = base
                         .status(StatusCode::PARTIAL_CONTENT)
-                        .header(
-                            header::CONTENT_RANGE,
-                            format!("bytes {start}-{end}/{size}"),
-                        )
+                        .header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{size}"))
                         .header(header::CONTENT_LENGTH, len.to_string());
                     if is_head {
                         builder.body(Body::empty()).unwrap()
                     } else {
-                        let stream =
-                            tokio_util::io::ReaderStream::new(reader.take(len));
+                        let stream = tokio_util::io::ReaderStream::new(reader.take(len));
                         builder.body(Body::from_stream(stream)).unwrap()
                     }
                 }
@@ -383,13 +450,20 @@ fn audit_write(
 }
 
 /// 写前置（r7 ✓ 锁查 + If 匹配 → 423/412 分码；None = 放行）。
-fn write_precondition(
+async fn write_precondition(
     app: &WebdavApplication,
     ns: &vfiles_domain::types::NamespaceId,
     rel: &str,
     if_header: Option<&str>,
 ) -> Option<StatusCode> {
-    let entry = app.locks.blocked(&format!("{ns}:{rel}"))?;
+    let entry = match app.locks.blocked(ns, rel).await {
+        Ok(Some(entry)) => entry,
+        Ok(None) => return None,
+        Err(error) => {
+            tracing::error!(%error, rel, "WebDAV 写锁查询失败");
+            return Some(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
     let token_ok = if_header
         .and_then(if_token)
         .map(|t| t == entry.token)
@@ -422,9 +496,12 @@ async fn put_op(
             .body(Body::empty())
             .unwrap();
     };
-    let rel = uri_owned.trim_start_matches('/').trim_end_matches('/').to_string();
+    let rel = uri_owned
+        .trim_start_matches('/')
+        .trim_end_matches('/')
+        .to_string();
     // r7 锁前置（PUT 此前零检查 ✗ 锁摆设缺口 ×1）
-    if let Some(status) = write_precondition(&app, &ns, &rel, if_owned.as_deref()) {
+    if let Some(status) = write_precondition(&app, &ns, &rel, if_owned.as_deref()).await {
         return Response::builder()
             .status(status)
             .body(Body::empty())
@@ -436,7 +513,7 @@ async fn put_op(
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(Body::empty())
-                .unwrap()
+                .unwrap();
         }
     };
     match app.write.put_file(&ns, &path, body_owned, &user.id).await {
@@ -487,7 +564,7 @@ async fn write_op(
     };
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/');
     // 写锁校验（r109a 423 → r7 分码 ✗ 有 If 不匹配 = 412（RFC §9.10.6））
-    if let Some(status) = write_precondition(&app, &ns, rel, if_header.as_deref()) {
+    if let Some(status) = write_precondition(&app, &ns, rel, if_header.as_deref()).await {
         return Response::builder()
             .status(status)
             .body(Body::empty())
@@ -499,7 +576,7 @@ async fn write_op(
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(Body::empty())
-                .unwrap()
+                .unwrap();
         }
     };
     let uid = user.id.clone();
@@ -522,7 +599,7 @@ async fn write_op(
                     return Response::builder()
                         .status(StatusCode::BAD_REQUEST)
                         .body(Body::empty())
-                        .unwrap()
+                        .unwrap();
                 }
             }
         }
@@ -631,7 +708,11 @@ fn precondition_status(locked: bool, has_if: bool, token_ok: bool) -> Option<Sta
 fn href_with_mount(mount: &str, rel: &str) -> String {
     let rel = rel.trim_start_matches('/');
     if mount.is_empty() {
-        if rel.is_empty() { "/".to_string() } else { format!("/{rel}") }
+        if rel.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{rel}")
+        }
     } else if rel.is_empty() {
         format!("{}/", mount.trim_end_matches('/'))
     } else {
@@ -677,13 +758,12 @@ fn www_authenticate() -> Response {
 /// WebDAV 能力宣告（无锁 ✓ 子集 ✓）。
 // r214 协议声明修正 ✗✗ 此前只声明 4 方法 = 实现了 10 个只报 4 个（客户端靠 Allow
 // 判能力 ✗✗）；COPY/PROPPATCH 未实现不声明（声明 = 实力 ✓ 做完再加）
-const ALLOW: &str = "OPTIONS, PROPFIND, PROPPATCH, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY, LOCK, UNLOCK";
+const ALLOW: &str =
+    "OPTIONS, PROPFIND, PROPPATCH, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY, LOCK, UNLOCK";
 
 fn router(app: WebdavApplication) -> Router {
     use axum::Extension;
-    Router::new()
-        .fallback(dav)
-        .layer(Extension(app))
+    Router::new().fallback(dav).layer(Extension(app))
 }
 
 /// PROPFIND（r104 实装 ✓）：Depth 0 = 自身；Depth 1 = 自身 + 直接子条目。
@@ -709,8 +789,8 @@ async fn propfind_owned(
         return Err(StatusCode::FORBIDDEN);
     }
     // 请求体解析（r2 P0 ✗ 非法 = 400（调用方 map_err 下述 NOT_FOUND/500 改由本处 400））
-    let mode = crate::response::parse_propfind_body(&body_owned)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let mode =
+        crate::response::parse_propfind_body(&body_owned).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let uri_path = path.trim_end_matches('/');
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/');
@@ -743,7 +823,7 @@ async fn propfind_owned(
             getetag: None,
             creationdate: cdate_fmt(time::OffsetDateTime::now_utc()), // 根 = 合成（lastmod 同式 ✓ 记档）
             owner: owner_val.clone(),
-            active_lock: active_lock_prop(&app, &ns, rel),
+            active_lock: active_lock_prop(&app, &ns, rel).await?,
         });
     } else {
         let entry = app
@@ -757,10 +837,7 @@ async fn propfind_owned(
         // r209 真因修复 ✗✗ 此前硬编码 is_collection: true = **文件被报成目录** →
         // gvfs 把文件当目录反复 PROPFIND、永不 GET = 用户"打不开文件"完整因果链
         // （列表 children 判对、查自身判错）；href 尾斜杠同错（gvfs 探了 png/ 实证）
-        let is_dir = matches!(
-            entry.entry_type,
-            vfiles_domain::types::EntryKind::Directory
-        );
+        let is_dir = matches!(entry.entry_type, vfiles_domain::types::EntryKind::Directory);
         // r213 ✓ 文件大小必须给客户端（VLC/gvfs-FUSE 的 st_size 来自此属性 ✗ 缺失 =
         // 播放器视文件为空 → "无法打开 MRL" 真因嫌疑 ✗ r105 记档债在此还清 ✓
         // 单目标 = 1 次轻量 open ✓ children 批量 size = 下轮债（列表不阻塞 ✓）
@@ -801,7 +878,7 @@ async fn propfind_owned(
             getetag,
             creationdate: cdate_fmt(entry.created_at),
             owner: owner_val.clone(),
-            active_lock: active_lock_prop(&app, &ns, rel),
+            active_lock: active_lock_prop(&app, &ns, rel).await?,
         });
     }
     if depth == "1" {
@@ -839,37 +916,43 @@ async fn propfind_owned(
                 getcontentlength,
                 getcontenttype,
                 custom: child_props.get(&child.id).cloned().unwrap_or_default(),
-                getetag: child.current_version_id.as_ref().map(|v| format!("\"{}\"", v.to_string().replace('-', ""))),
+                getetag: child
+                    .current_version_id
+                    .as_ref()
+                    .map(|v| format!("\"{}\"", v.to_string().replace('-', ""))),
                 creationdate: cdate_fmt(child.created_at),
                 owner: owner_val.clone(),
-                active_lock: active_lock_prop(&app, &ns, &child_rel),
+                active_lock: active_lock_prop(&app, &ns, &child_rel).await?,
             });
         }
     }
     Ok(crate::response::multistatus(&items, &mode))
 }
 
-fn active_lock_prop(
+async fn active_lock_prop(
     app: &WebdavApplication,
     ns: &vfiles_domain::types::NamespaceId,
     rel: &str,
-) -> Option<crate::response::ActiveLock> {
-    let lock = app.locks.blocked(&format!("{ns}:{rel}"))?;
+) -> Result<Option<crate::response::ActiveLock>, StatusCode> {
+    let lock = app.locks.blocked(ns, rel).await.map_err(|error| {
+        tracing::error!(%error, rel, "WebDAV PROPFIND 锁查询失败");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let Some(lock) = lock else {
+        return Ok(None);
+    };
     let timeout = match lock.expires_at {
         Some(expiry) => format!(
             "Second-{}",
-            expiry
-                .saturating_duration_since(std::time::Instant::now())
-                .as_secs()
-                .max(1)
+            expiry.saturating_sub(crate::lock::LockTable::now()).max(1)
         ),
         None => "Infinite".to_string(),
     };
-    Some(crate::response::ActiveLock {
+    Ok(Some(crate::response::ActiveLock {
         token: lock.token,
         owner: lock.owner,
         timeout,
-    })
+    }))
 }
 
 /// Range 解析（RFC 7233 简式 ✓ 纯函数单测）。
@@ -957,7 +1040,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 return Response::builder()
                     .status(StatusCode::BAD_REQUEST)
                     .body(Body::empty())
-                    .unwrap()
+                    .unwrap();
             }
         }
     } else {
@@ -990,17 +1073,13 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             return www_authenticate();
         };
         // 首次成功 = info（连接可见 ✓）后续 debug（不每请求刷 ✗✗ r210 用户刷屏抱怨）
-    if !AUTH_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        tracing::info!(username = %user.username.as_str(), "WebDAV 认证成功（本次连接后归 debug）");
-    } else {
-        tracing::debug!(username = %user.username.as_str(), "WebDAV 认证成功");
-    }
+        if !AUTH_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tracing::info!(username = %user.username.as_str(), "WebDAV 认证成功（本次连接后归 debug）");
+        } else {
+            tracing::debug!(username = %user.username.as_str(), "WebDAV 认证成功");
+        }
         // per-user ns 动态映射（r109e ✓ ensure_default_for_owner ✓ 多用户隔离）
-        let ns = match app_ref
-            .namespaces
-            .ensure_default_for_owner(&user.id)
-            .await
-        {
+        let ns = match app_ref.namespaces.ensure_default_for_owner(&user.id).await {
             Ok(ns) => ns,
             Err(_) => return internal_error(),
         };
@@ -1025,7 +1104,10 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
-            let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
+            let user_owned = req
+                .extensions()
+                .get::<vfiles_domain::types::User>()
+                .cloned();
             let ns_owned = req
                 .extensions()
                 .get::<vfiles_domain::types::NamespaceId>()
@@ -1077,7 +1159,8 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     .get::<vfiles_domain::types::User>()
                     .cloned(),
             )
-            .await {
+            .await
+            {
                 Ok(xml) => Response::builder()
                     .status(StatusCode::MULTI_STATUS)
                     .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
@@ -1088,12 +1171,15 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     .body(Body::empty())
                     .unwrap(),
             }
-        },
+        }
         // LOCK/UNLOCK（r109a ✓ 商业级核心件 = Windows 映射依赖）。
         // 纯拥有参（#46 三号实录强化 ✗✗ 借用不跨 await = 编码模板纪律）。
         ref m if m.as_str() == "LOCK" || m.as_str() == "UNLOCK" => {
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
-            let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
+            let user_owned = req
+                .extensions()
+                .get::<vfiles_domain::types::User>()
+                .cloned();
             let uri_owned = percent_decode(req.uri().path());
             let token_owned = req
                 .headers()
@@ -1130,7 +1216,14 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 }
             };
             let resp = if m.as_str() == "LOCK" && body_bytes.is_empty() {
-                lock_refresh_op(app_owned, ns_owned, uri_owned, if_token_owned, timeout_owned).await
+                lock_refresh_op(
+                    app_owned,
+                    ns_owned,
+                    uri_owned,
+                    if_token_owned,
+                    timeout_owned,
+                )
+                .await
             } else if m.as_str() == "LOCK" {
                 lock_op(
                     app_owned,
@@ -1150,7 +1243,11 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     req.extensions().get::<WebdavApplication>(),
                     req.extensions().get::<vfiles_domain::types::User>(),
                 ) {
-                    let action = if m.as_str() == "LOCK" { "webdav.lock" } else { "webdav.unlock" };
+                    let action = if m.as_str() == "LOCK" {
+                        "webdav.lock"
+                    } else {
+                        "webdav.unlock"
+                    };
                     let ua = req
                         .headers()
                         .get("user-agent")
@@ -1173,10 +1270,16 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 ) {
                     audit_write(
                         app,
-                        if m.as_str() == "LOCK" { "webdav.lock" } else { "webdav.unlock" },
+                        if m.as_str() == "LOCK" {
+                            "webdav.lock"
+                        } else {
+                            "webdav.unlock"
+                        },
                         percent_decode(req.uri().path()),
                         u,
-                        req.headers().get("user-agent").and_then(|v| v.to_str().ok()),
+                        req.headers()
+                            .get("user-agent")
+                            .and_then(|v| v.to_str().ok()),
                         vfiles_domain::types::AuditResult::Failure,
                     );
                 }
@@ -1191,7 +1294,10 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             // 直路径语义复用 ✓）；remove 恒 403（属性不可删）✗ 其余属性 403（403 =
             // RFC §9.2.1 合规拒码 ✓）；自定义属性持久化 = P1 记债）。
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
-            let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
+            let user_owned = req
+                .extensions()
+                .get::<vfiles_domain::types::User>()
+                .cloned();
             let uri_owned = percent_decode(req.uri().path());
             let ns_owned = req
                 .extensions()
@@ -1225,7 +1331,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             };
             // r7 锁前置（PROPPATCH 此前零检查 ✗ 摆设缺口 ×3）
             if let Some(status) =
-                write_precondition(&app_ref, &ns, path.as_str(), if_owned.as_deref())
+                write_precondition(&app_ref, &ns, path.as_str(), if_owned.as_deref()).await
             {
                 return Response::builder()
                     .status(status)
@@ -1263,11 +1369,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         };
                         match vfiles_domain::types::NormalizedPath::new(&new_rel) {
                             Ok(dest) => {
-                                match app_ref
-                                    .write
-                                    .move_entry(&ns, &path, &dest, &user.id)
-                                    .await
-                                {
+                                match app_ref.write.move_entry(&ns, &path, &dest, &user.id).await {
                                     Ok(()) => {
                                         // 改名成功后后续 op 的 path 同步（顺序语义 ✓）
                                         results.push((op, true));
@@ -1289,38 +1391,37 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     }
                     crate::response::PropOp::Remove { name } => {
                         // r13 remove：自定义存在 → 删 200 / 不存在 → 403（r6 恒 403 升级）
-                        let removed = if crate::response::PREDEFINED_READONLY
-                            .contains(&name.as_str())
-                        {
-                            false
-                        } else {
-                            match app_ref
-                            .entry_repo
-                            .find_by_path(&ns, &path)
-                            .await
-                            .ok()
-                            .flatten()
-                        {
-                            Some(e) => {
-                                let props = app_ref
+                        let removed =
+                            if crate::response::PREDEFINED_READONLY.contains(&name.as_str()) {
+                                false
+                            } else {
+                                match app_ref
                                     .entry_repo
-                                    .list_entry_properties(&[e.id.clone()])
+                                    .find_by_path(&ns, &path)
                                     .await
-                                    .unwrap_or_default();
-                                let exists = props
-                                    .get(&e.id)
-                                    .map(|v| v.iter().any(|(n, _)| n == name))
-                                    .unwrap_or(false);
-                                exists
-                                    && app_ref
-                                        .entry_repo
-                                        .remove_entry_property(&e.id, name)
-                                        .await
-                                        .is_ok()
-                            }
-                            None => false,
-                            }
-                        };
+                                    .ok()
+                                    .flatten()
+                                {
+                                    Some(e) => {
+                                        let props = app_ref
+                                            .entry_repo
+                                            .list_entry_properties(&[e.id.clone()])
+                                            .await
+                                            .unwrap_or_default();
+                                        let exists = props
+                                            .get(&e.id)
+                                            .map(|v| v.iter().any(|(n, _)| n == name))
+                                            .unwrap_or(false);
+                                        exists
+                                            && app_ref
+                                                .entry_repo
+                                                .remove_entry_property(&e.id, name)
+                                                .await
+                                                .is_ok()
+                                    }
+                                    None => false,
+                                }
+                            };
                         results.push((op, removed));
                     }
                     crate::response::PropOp::Set { name, value }
@@ -1381,7 +1482,10 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             // dst 存在 → 409（Overwrite 完整覆盖 = blob release 链 P1 记债 ✗ 不假覆盖）
             // ✗ 审计闭包记 src→dst（copy 带审计链 ✓ 其余写方法接 = P0 债入基线）。
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
-            let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
+            let user_owned = req
+                .extensions()
+                .get::<vfiles_domain::types::User>()
+                .cloned();
             let uri_owned = percent_decode(req.uri().path());
             // r-new：先取原文，解析延后到 app_ref 解包后（mount 需 app ✗ 作用域序修）
             let dest_raw = req
@@ -1424,20 +1528,14 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
             // r10 Overwrite 语义（RFC 缺省 = T ✗ 只有显式 "F" 才是 false）
-            let overwrite = req
-                .headers()
-                .get("overwrite")
-                .and_then(|v| v.to_str().ok())
-                != Some("F");
+            let overwrite =
+                req.headers().get("overwrite").and_then(|v| v.to_str().ok()) != Some("F");
             // 源路径裁前导斜杠（PROPFIND 同式 ✗ 真因：new 不收前导 / ✗ 诊断日志定案 ✓）
             let src_rel = uri_owned.trim_start_matches('/').to_string();
             // r7 锁前置：源 + 目标双查（COPY 此前零检查 ✗ 摆设缺口 ×2）
-            for check_rel in [
-                src_rel.as_str(),
-                dest_hdr.trim_matches('/'),
-            ] {
+            for check_rel in [src_rel.as_str(), dest_hdr.trim_matches('/')] {
                 if let Some(status) =
-                    write_precondition(&app_ref, &ns, check_rel, if_owned.as_deref())
+                    write_precondition(&app_ref, &ns, check_rel, if_owned.as_deref()).await
                 {
                     return Response::builder()
                         .status(status)
@@ -1471,7 +1569,11 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     .body(Body::empty())
                     .unwrap();
             }
-            match app_ref.write.copy_entry(&ns, &path, &dest_path, &user.id, overwrite).await {
+            match app_ref
+                .write
+                .copy_entry(&ns, &path, &dest_path, &user.id, overwrite)
+                .await
+            {
                 Ok(()) => {
                     if let Some(cb) = &app_ref.audit {
                         cb(vfiles_domain::types::NewAuditLog {
@@ -1513,7 +1615,9 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                             "webdav.copy",
                             format!("{} -> {}", path.as_str(), dest_hdr),
                             u,
-                            req.headers().get("user-agent").and_then(|v| v.to_str().ok()),
+                            req.headers()
+                                .get("user-agent")
+                                .and_then(|v| v.to_str().ok()),
                             vfiles_domain::types::AuditResult::Failure,
                         );
                     }
@@ -1530,7 +1634,10 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
         }
         ref m if m.as_str() == "MKCOL" || m.as_str() == "DELETE" || m.as_str() == "MOVE" => {
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
-            let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
+            let user_owned = req
+                .extensions()
+                .get::<vfiles_domain::types::User>()
+                .cloned();
             let uri_owned = percent_decode(req.uri().path());
             let dest_owned = req
                 .headers()
@@ -1565,20 +1672,17 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 // r11 MOVE Overwrite（臂层式 ✗ 零签名变 ✓ extensions 重取 = 不碰已 move 变量）
                 let mut move_overwrite_204 = false;
                 if matches!(op, WriteOp::Move) {
-                    let overwrite = req
-                        .headers()
-                        .get("overwrite")
-                        .and_then(|v| v.to_str().ok())
-                        != Some("F");
+                    let overwrite =
+                        req.headers().get("overwrite").and_then(|v| v.to_str().ok()) != Some("F");
                     if let (Some(app), Some(u), Some(ns_ext)) = (
                         req.extensions().get::<WebdavApplication>(),
                         req.extensions().get::<vfiles_domain::types::User>(),
                         req.extensions().get::<vfiles_domain::types::NamespaceId>(),
                     ) {
                         if let Some(dest_rel) = dest_owned
-                        .as_deref()
-                        .and_then(|d| destination_path(d, &app.mount_prefix))
-                    {
+                            .as_deref()
+                            .and_then(|d| destination_path(d, &app.mount_prefix))
+                        {
                             // r12 dest 即 target（WebDAV 完整目标路径 ✗ r11 曾 join 目录
                             // = 违 RFC 二义 → 服务参数化后臂层同步简化 ✓ 同名目录覆盖打通）
                             if let Ok(target) = vfiles_domain::types::NormalizedPath::new(&dest_rel)
@@ -1599,7 +1703,8 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                                             .unwrap();
                                     }
                                     // T = 删旧（write.delete_entry = delete_entries 全链 = 递归 + blob release ✓）
-                                    if let Err(err) = app.write.delete_entry(ns_ext, &target, &u.id).await
+                                    if let Err(err) =
+                                        app.write.delete_entry(ns_ext, &target, &u.id).await
                                     {
                                         tracing::error!(error = %err, "MOVE 覆盖删旧失败");
                                         return internal_error();
@@ -1610,7 +1715,10 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         }
                     }
                 }
-                let resp = write_op(app_owned, user_owned, ns_owned, uri_owned, dest_owned, if_owned, op).await;
+                let resp = write_op(
+                    app_owned, user_owned, ns_owned, uri_owned, dest_owned, if_owned, op,
+                )
+                .await;
                 // r11 覆盖成功 204（RFC §9.9.3 ✗ 新建保持 201）——外层改写避免 move 后外尾用旧绑
                 let resp = if move_overwrite_204 && resp.status() == StatusCode::CREATED {
                     Response::builder()
@@ -1645,7 +1753,9 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                             audit_action,
                             percent_decode(req.uri().path()),
                             u,
-                            req.headers().get("user-agent").and_then(|v| v.to_str().ok()),
+                            req.headers()
+                                .get("user-agent")
+                                .and_then(|v| v.to_str().ok()),
                             vfiles_domain::types::AuditResult::Failure,
                         );
                     }
@@ -1658,21 +1768,24 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
         // 纯拥有参（#46 四号 ✗✗✗ 调用侧同步提取）。
         ref m if m.as_str() == "PUT" => {
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
-            let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
+            let user_owned = req
+                .extensions()
+                .get::<vfiles_domain::types::User>()
+                .cloned();
             let ns_owned = req
                 .extensions()
                 .get::<vfiles_domain::types::NamespaceId>()
                 .cloned();
             let uri_owned = percent_decode(req.uri().path());
             {
-                let ua = req.headers().get("user-agent").and_then(|v| v.to_str().ok()).map(str::to_string);
+                let ua = req
+                    .headers()
+                    .get("user-agent")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string);
                 // r14 PUT If-Match（乐观并发 ✓ 无 = 不查 / `*` = 须已存在 / 精确须匹配
                 // ✗ 否则 412 RFC §10.3.2 简式）
-                if let Some(im) = req
-                    .headers()
-                    .get("if-match")
-                    .and_then(|v| v.to_str().ok())
-                {
+                if let Some(im) = req.headers().get("if-match").and_then(|v| v.to_str().ok()) {
                     let put_rel = uri_owned.trim_start_matches('/');
                     let cur = match (
                         app_owned.as_ref(),
@@ -1697,23 +1810,30 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     }
                 }
                 let resp = put_op(
-                app_owned,
-                user_owned,
-                ns_owned,
-                uri_owned,
-                req.headers()
-                    .get("if")
-                    .and_then(|v| v.to_str().ok())
-                    .map(str::to_string),
-                put_body,
-            )
-            .await;
+                    app_owned,
+                    user_owned,
+                    ns_owned,
+                    uri_owned,
+                    req.headers()
+                        .get("if")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string),
+                    put_body,
+                )
+                .await;
                 if resp.status().is_success() {
                     if let (Some(app), Some(u)) = (
                         req.extensions().get::<WebdavApplication>(),
                         req.extensions().get::<vfiles_domain::types::User>(),
                     ) {
-                        audit_write(app, "webdav.put", percent_decode(req.uri().path()), u, ua.as_deref(), vfiles_domain::types::AuditResult::Success);
+                        audit_write(
+                            app,
+                            "webdav.put",
+                            percent_decode(req.uri().path()),
+                            u,
+                            ua.as_deref(),
+                            vfiles_domain::types::AuditResult::Success,
+                        );
                     }
                 } else if resp.status() == StatusCode::CONFLICT || resp.status().as_u16() >= 500 {
                     // r17 失败面审计表记（409/5xx → Failure ✗ 423/412 拒绝 = warn 覆盖范围注 ✓）
@@ -1726,7 +1846,9 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                             "webdav.put",
                             percent_decode(req.uri().path()),
                             u,
-                            req.headers().get("user-agent").and_then(|v| v.to_str().ok()),
+                            req.headers()
+                                .get("user-agent")
+                                .and_then(|v| v.to_str().ok()),
                             vfiles_domain::types::AuditResult::Failure,
                         );
                     }
@@ -1827,27 +1949,34 @@ mod decode_tests {
 #[cfg(test)]
 mod href_tests {
     use crate::server::{child_prefix, entry_href};
-    
 
     #[test]
     fn root_children_have_single_slash() {
         // r204 真因回归守护 ✗✗ 空 rel 必须单斜杠（//x = gvfs 丢弃条目）
-        assert_eq!(entry_href(&child_prefix(""), "根文件.txt", false), "/根文件.txt");
+        assert_eq!(
+            entry_href(&child_prefix(""), "根文件.txt", false),
+            "/根文件.txt"
+        );
         assert_eq!(entry_href(&child_prefix(""), "项目库", true), "/项目库/");
         assert!(!entry_href(&child_prefix(""), "x", false).starts_with("//"));
     }
 
     #[test]
     fn nested_children_keep_prefix() {
-        assert_eq!(entry_href(&child_prefix("项目库"), "说明.md", false), "/项目库/说明.md");
-        assert_eq!(entry_href(&child_prefix("项目库/子"), "a", true), "/项目库/子/a/");
+        assert_eq!(
+            entry_href(&child_prefix("项目库"), "说明.md", false),
+            "/项目库/说明.md"
+        );
+        assert_eq!(
+            entry_href(&child_prefix("项目库/子"), "a", true),
+            "/项目库/子/a/"
+        );
     }
 }
 
 #[cfg(test)]
 mod if_token_tests {
     use crate::server::if_token;
-    
 
     #[test]
     fn extracts_opaque_token_and_rejects_nested() {
@@ -1855,14 +1984,17 @@ mod if_token_tests {
             if_token("(<opaquelocktoken:abc123>)"),
             Some("opaquelocktoken:abc123".into())
         );
-        assert_eq!(if_token("(<opaquelocktoken:a> AND <opaquelocktoken:b>)"), None);
+        assert_eq!(
+            if_token("(<opaquelocktoken:a> AND <opaquelocktoken:b>)"),
+            None
+        );
         assert_eq!(if_token("<Not-a-lock-token>"), None);
     }
 }
 
 #[cfg(test)]
 mod range_tests {
-    use super::{parse_byte_range, ByteRange};
+    use super::{ByteRange, parse_byte_range};
 
     #[test]
     fn parses_range_forms() {
@@ -1904,14 +2036,20 @@ mod range_tests {
 #[cfg(test)]
 mod precondition_tests {
     use super::write_precondition;
-    use axum::http::StatusCode;
     use crate::server::precondition_status;
+    use axum::http::StatusCode;
 
     #[test]
     fn codes_per_rfc4918() {
         // r7 分码守护（RFC §9.10.6）：无If锁住=423 / 有If不匹配=412 / 匹配或未锁=放行
-        assert_eq!(precondition_status(true, false, false), Some(StatusCode::LOCKED));
-        assert_eq!(precondition_status(true, true, false), Some(StatusCode::PRECONDITION_FAILED));
+        assert_eq!(
+            precondition_status(true, false, false),
+            Some(StatusCode::LOCKED)
+        );
+        assert_eq!(
+            precondition_status(true, true, false),
+            Some(StatusCode::PRECONDITION_FAILED)
+        );
         assert_eq!(precondition_status(true, true, true), None);
         assert_eq!(precondition_status(false, false, false), None);
         assert_eq!(precondition_status(false, true, false), None);
