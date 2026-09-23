@@ -491,6 +491,36 @@ async fn options_advertises_and_propfind_needs_auth() {
     assert_eq!(failed_stream_put.status(), 400);
     assert!(put_bodies.lock().unwrap().is_empty());
 
+    let oversized_xml = vec![b' '; 1024 * 1024 + 1];
+    let oversized_propfind = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .body(axum::body::Body::from(oversized_xml.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(oversized_propfind.status(), 413);
+
+    let oversized_proppatch = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPPATCH")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::from(oversized_xml))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(oversized_proppatch.status(), 413);
+
     let expected_mtime_timestamp = time::OffsetDateTime::parse(
         "2030-01-02T03:04:05Z",
         &time::format_description::well_known::Rfc3339,

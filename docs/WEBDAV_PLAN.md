@@ -36,6 +36,7 @@
 - LOCK refresh 按同一套 `If` 条件解析执行，接受匹配当前资源的 URI-tagged 列表，并按实际资源的锁 token / ETag 求值。
 - PUT 现在从 Axum `Body` 转为 `StreamReader` 直通 `complete_upload_from_stream_unknown_size`；不再先用 `usize::MAX` 将整个请求体复制到内存。流式计数沿用 HTTP 的较小文件上限，超过时返回 413，并清理上传会话与 blob 临时文件。
 - DELETE、MOVE 源/目标与 COPY 覆盖目标会检查受影响子树中的活动锁；子项锁要求在 URI-tagged `If` 列表中按子项资源提交匹配 token，缺失返回 423、不匹配返回 412。
+- PROPFIND / PROPPATCH 的 XML 请求体上限为 1 MiB；超过上限立即返回 413，不会把空体当作合法请求继续解析。
 
 ## 0.5 GET 流式化（r201 ✓ 商业级硬伤修 ✗ 大文件内存爆）
 

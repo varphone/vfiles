@@ -13,6 +13,8 @@ use axum::{
 
 use crate::response::PropResponse;
 
+const MAX_DAV_XML_BODY_BYTES: usize = 1024 * 1024;
+
 /// WebDAV 服务配置（env 对称 vfiles-ftp：VFILES_WEBDAV_ENABLED/PORT）。
 #[derive(Debug, Clone)]
 pub struct WebdavSettings {
@@ -2068,9 +2070,14 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             let body_owned = {
                 // #46 同步 take 转 owned（await 前结束借 ✓）
                 let taken = std::mem::take(req.body_mut());
-                match axum::body::to_bytes(taken, usize::MAX).await {
+                match axum::body::to_bytes(taken, MAX_DAV_XML_BODY_BYTES).await {
                     Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-                    Err(_) => String::new(),
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::PAYLOAD_TOO_LARGE)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
                 }
             };
             match propfind_owned(
@@ -2236,9 +2243,14 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .cloned();
             let body_owned = {
                 let taken = std::mem::take(req.body_mut());
-                match axum::body::to_bytes(taken, usize::MAX).await {
+                match axum::body::to_bytes(taken, MAX_DAV_XML_BODY_BYTES).await {
                     Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-                    Err(_) => String::new(),
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::PAYLOAD_TOO_LARGE)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
                 }
             };
             let (app_ref, user, ns) = match (app_owned, user_owned, ns_owned) {
