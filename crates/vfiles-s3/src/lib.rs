@@ -2062,7 +2062,7 @@ impl S3 for VfilesS3 {
         }
     }
 
-    /// 列出已上传 part（partNumber = 内部索引+1 ✗ size 可读；part ETag 未持久化 = 记档债）。
+    /// 列出已上传 part（支持 part-number-marker / max-parts 分页）。
     async fn list_parts(
         &self,
         req: S3Request<ListPartsInput>,
@@ -2079,17 +2079,40 @@ impl S3 for VfilesS3 {
             .list_upload_parts(&upload_id)
             .await
             .map_err(dom_err)?;
-        let mut parts: Vec<Part> = Vec::with_capacity(stored.len());
-        for p in &stored {
-            let e_tag = match self.upload.read_upload_part(&upload_id, p.part_index).await {
-                Ok(Some(bytes)) => Some(s3s::dto::ETag::Strong(md5_hex(&bytes))),
-                _ => None,
-            };
+        let marker = input.part_number_marker.unwrap_or(0);
+        if !(0..=10_000).contains(&marker) {
+            return Err(s3s::s3_error!(
+                InvalidArgument,
+                "part-number-marker must be between 0 and 10000"
+            ));
+        }
+        let max_parts = input.max_parts.unwrap_or(1000);
+        if !(1..=1000).contains(&max_parts) {
+            return Err(s3s::s3_error!(
+                InvalidArgument,
+                "max-parts must be between 1 and 1000"
+            ));
+        }
+        let page: Vec<_> = stored
+            .iter()
+            .filter(|part| part.part_index as i64 + 1 > marker as i64)
+            .take(max_parts as usize + 1)
+            .collect();
+        let is_truncated = page.len() > max_parts as usize;
+        let next_marker = is_truncated.then(|| page[max_parts as usize - 1].part_index as i32 + 1);
+        let mut parts: Vec<Part> = Vec::with_capacity(page.len().min(max_parts as usize));
+        for p in page.into_iter().take(max_parts as usize) {
+            let bytes = self
+                .upload
+                .read_upload_part(&upload_id, p.part_index)
+                .await
+                .map_err(dom_err)?
+                .ok_or_else(|| s3s::s3_error!(InternalError, "uploaded part content is missing"))?;
             parts.push(Part {
                 part_number: Some(p.part_index as i32 + 1),
                 size: Some(p.size_bytes.as_u64() as i64),
                 last_modified: Some(Timestamp::from(p.received_at)),
-                e_tag,
+                e_tag: Some(s3s::dto::ETag::Strong(md5_hex(&bytes))),
                 ..Default::default()
             });
         }
@@ -2098,7 +2121,10 @@ impl S3 for VfilesS3 {
             key: Some(input.key),
             upload_id: Some(input.upload_id),
             parts: Some(parts),
-            is_truncated: Some(false),
+            max_parts: Some(max_parts),
+            part_number_marker: Some(marker),
+            next_part_number_marker: next_marker,
+            is_truncated: Some(is_truncated),
             ..Default::default()
         };
         ok(out)

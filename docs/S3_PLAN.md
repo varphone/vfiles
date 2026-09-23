@@ -8,6 +8,7 @@
 - multipart `UploadPart` 仍将单个 part 聚合为内存 `Vec`，后续需扩展 part 存储接口以实现真正的大分片流式写入。
 - `CompleteMultipartUpload` 现在要求完整、严格递增的 partNumber/ETag 清单，必须与已存分片序列一致，并逐个校验分片 MD5 ETag。
 - UploadPart、UploadPartCopy、Complete、Abort、ListParts 都验证 uploadId 的 namespace/owner/key/state/expiry；错误 key 或跨所有者 ID 返回 `NoSuchUpload`，Abort 不再把不存在的会话伪装成成功。
+- `ListParts` 尊重 `part-number-marker` / `max-parts`（限制 1..=1000），仅读取当前页的 part 内容生成 ETag，并返回正确的截断标志与续页标记。
 - `ListMultipartUploads` 由 `UploadStore` 一次扫描会话目录，按 key / upload id 保序，
   只保留 `max-uploads + 1` 个结果；delimiter 的 `CommonPrefixes` 在存储扫描中去重，
   避免原先把全部会话加载进内存，也避免逐页请求重复扫描目录。
