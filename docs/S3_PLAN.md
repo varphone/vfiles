@@ -1,4 +1,18 @@
-# S3 兼容 API（… r22 用户元数据 → r23 multipart 元数据 → **r24 条件复制**）
+# S3 兼容 API（… r23 multipart 元数据 → r24 条件复制 → **r25 桶级探测三式**）
+
+## 状态（r25 末 · 桶级探测补齐 = 客户端连接检查不再报错）
+
+- **实装**（真客户端常在连接/建桶流程里先探测这三式）：
+  | 操作 | 行为 |
+  | --- | --- |
+  | `HeadBucket` | 存在 → 200 空；不存在 → `NoSuchBucket`（HTTP 404） |
+  | `GetBucketLocation` | `LocationConstraint = us-east-1`（常量 `S3_REGION`；**签名区域不校验** = 客户端可用任意 region 配置签名） |
+  | `GetBucketVersioning` | 无 `Status` = unversioned（与 AWS 未启用版本控制同形） |
+- **真机验收（真 SDK）**：`head_bucket` 200 ✓ · 不存在桶 404 ✓ · `get_bucket_location` = `us-east-1` ✓ ·
+  `get_bucket_versioning` 无 `Status` ✓ · `list_buckets` / put / get 回归 ✓。
+- **回归**：自写探针 **24/24** · 真 SDK **38/38**（+桶级探测）。
+- **仍债**：凭证→命名空间绑定（需 domain 按名查命名空间 + 逐请求解析）· `ListObjectVersions` /
+  `PutBucketVersioning`（真版本控制）· region 校验（有意不校验 = 兼容优先）。
 
 ## 状态（r24 末 · `x-amz-copy-source-if-*` 四头 = 并发拷贝安全）
 

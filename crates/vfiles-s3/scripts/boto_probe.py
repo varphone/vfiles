@@ -37,6 +37,21 @@ def main():
 
     buckets = [b["Name"] for b in s3.list_buckets()["Buckets"]]
     check("boto ListBuckets", buckets == ["default"], buckets)
+    # 桶级探测（r25）：rclone / aws-cli 连接检查路径
+    try:
+        hb = s3.head_bucket(Bucket="default")["ResponseMetadata"]["HTTPStatusCode"] == 200
+    except ClientError:
+        hb = False
+    try:
+        s3.head_bucket(Bucket="missing-bucket")
+        hb404 = False
+    except ClientError as e:
+        hb404 = e.response["ResponseMetadata"]["HTTPStatusCode"] == 404
+    loc = s3.get_bucket_location(Bucket="default").get("LocationConstraint")
+    ver = s3.get_bucket_versioning(Bucket="default")
+    check("boto HeadBucket / location / versioning",
+          hb and hb404 and loc == "us-east-1" and ver.get("Status") is None,
+          f"head={hb} 404={hb404} loc={loc} ver={ver.get('Status')}")
 
     blob = b"0123456789abcdef"
     seed = [("boto/a.txt", b"aa"), ("boto/b.txt", b"bb"),

@@ -21,21 +21,26 @@
 
 use async_trait::async_trait;
 use s3s::dto::{
-    AbortMultipartUploadInput, AbortMultipartUploadOutput, Bucket, CommonPrefix,
-    CompleteMultipartUploadInput, CompleteMultipartUploadOutput, CopyObjectInput, CopyObjectOutput,
-    CopyObjectResult, CopyPartResult, CreateMultipartUploadInput, CreateMultipartUploadOutput,
-    DeleteObjectInput, DeleteObjectOutput, DeleteObjectsInput, DeleteObjectsOutput, DeletedObject,
-    ETagCondition, Error as S3DeleteError, GetObjectInput, GetObjectOutput, HeadObjectInput,
-    HeadObjectOutput, ListBucketsOutput, ListMultipartUploadsInput, ListMultipartUploadsOutput,
-    ListObjectsInput, ListObjectsOutput, ListObjectsV2Input, ListObjectsV2Output, ListPartsInput,
-    ListPartsOutput, MultipartUpload, Object, Part, PutObjectInput, PutObjectOutput, StreamingBlob,
-    Timestamp, UploadPartCopyInput, UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
+    AbortMultipartUploadInput, AbortMultipartUploadOutput, Bucket, BucketLocationConstraint,
+    CommonPrefix, CompleteMultipartUploadInput, CompleteMultipartUploadOutput, CopyObjectInput,
+    CopyObjectOutput, CopyObjectResult, CopyPartResult, CreateMultipartUploadInput,
+    CreateMultipartUploadOutput, DeleteObjectInput, DeleteObjectOutput, DeleteObjectsInput,
+    DeleteObjectsOutput, DeletedObject, ETagCondition, Error as S3DeleteError,
+    GetBucketLocationInput, GetBucketLocationOutput, GetBucketVersioningInput,
+    GetBucketVersioningOutput, GetObjectInput, GetObjectOutput, HeadBucketInput, HeadBucketOutput,
+    HeadObjectInput, HeadObjectOutput, ListBucketsOutput, ListMultipartUploadsInput,
+    ListMultipartUploadsOutput, ListObjectsInput, ListObjectsOutput, ListObjectsV2Input,
+    ListObjectsV2Output, ListPartsInput, ListPartsOutput, MultipartUpload, Object, Part,
+    PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp, UploadPartCopyInput,
+    UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
 use tokio::io::AsyncReadExt;
 
 /// 默认（唯一）虚拟桶名。
 pub const DEFAULT_BUCKET: &str = "default";
+/// 对外通告的区域（`GetBucketLocation` ✗ 签名区域不校验 = 最大客户端兼容）。
+pub const S3_REGION: &str = "us-east-1";
 /// 单页上限（S3 硬上限）。
 const MAX_KEYS_LIMIT: usize = 1000;
 
@@ -661,6 +666,44 @@ impl S3 for VfilesS3 {
             ..Default::default()
         };
         ok(out)
+    }
+
+    /// 桶存在性探测（rclone / aws-cli 连接检查常用路径）。
+    async fn head_bucket(
+        &self,
+        req: S3Request<HeadBucketInput>,
+    ) -> S3Result<S3Response<HeadBucketOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        ok(HeadBucketOutput::default())
+    }
+
+    /// 桶区域（回 `us-east-1` ✗ 客户端可用任意 region 配置签名）。
+    async fn get_bucket_location(
+        &self,
+        req: S3Request<GetBucketLocationInput>,
+    ) -> S3Result<S3Response<GetBucketLocationOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        ok(GetBucketLocationOutput {
+            location_constraint: Some(BucketLocationConstraint::from(S3_REGION.to_string())),
+        })
+    }
+
+    /// 版本控制状态（本实现不启用 ✗ 无 `Status` = unversioned，AWS 未启用时同形）。
+    async fn get_bucket_versioning(
+        &self,
+        req: S3Request<GetBucketVersioningInput>,
+    ) -> S3Result<S3Response<GetBucketVersioningOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        ok(GetBucketVersioningOutput::default())
     }
 
     async fn list_objects(
