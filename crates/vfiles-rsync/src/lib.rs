@@ -831,7 +831,7 @@ where
         if tag == MPLEX_BASE + MSG_DATA {
             let take = len.min(remaining);
             let mut left = take;
-            let mut scratch = [0u8; 64 * 1024];
+            let mut scratch = vec![0u8; 64 * 1024];
             while left > 0 {
                 let chunk = left.min(scratch.len());
                 rw.read_exact(&mut scratch[..chunk]).await?;
@@ -845,7 +845,7 @@ where
         } else {
             tracing::debug!(tag = tag, len = len, "rsync：忽略非 MSG_DATA 消息");
             let mut left = len;
-            let mut scratch = [0u8; 64 * 1024];
+            let mut scratch = vec![0u8; 64 * 1024];
             while left > 0 {
                 let chunk = left.min(scratch.len());
                 rw.read_exact(&mut scratch[..chunk]).await?;
@@ -885,7 +885,7 @@ where
         if tag == MPLEX_BASE + MSG_DATA {
             let take = len.min(remaining);
             let mut left = take;
-            let mut scratch = [0u8; 64 * 1024];
+            let mut scratch = vec![0u8; 64 * 1024];
             while left > 0 {
                 let chunk = left.min(scratch.len());
                 rw.read_exact(&mut scratch[..chunk]).await?;
@@ -900,7 +900,7 @@ where
         } else {
             tracing::debug!(tag = tag, len = len, "rsync：忽略非 MSG_DATA 消息");
             let mut left = len;
-            let mut scratch = [0u8; 64 * 1024];
+            let mut scratch = vec![0u8; 64 * 1024];
             while left > 0 {
                 let chunk = left.min(scratch.len());
                 rw.read_exact(&mut scratch[..chunk]).await?;
@@ -3269,13 +3269,17 @@ mod tests {
         let mut req = vec![0x01, 0x00, 0xA0];
         req.extend_from_slice(&[0u8; 16]);
         c.get_mut().write_all(&mux_frame(&req)).await.unwrap();
-        // 数据帧
-        let mut h = [0u8; 4];
-        c.read_exact(&mut h).await.unwrap();
-        let l = (h[0] as usize) | ((h[1] as usize) << 8) | ((h[2] as usize) << 16);
-        assert_eq!(h[3], MPLEX_BASE + MSG_DATA);
-        let mut data = vec![0u8; l];
-        c.read_exact(&mut data).await.unwrap();
+        // `write_ndx_and_attrs` 与 token 流分帧发送；收齐组成此文件响应的 MSG_DATA 内容。
+        let mut data = Vec::new();
+        while data.len() < 19 + 4 + content.len() + 4 + 16 {
+            let mut h = [0u8; 4];
+            c.read_exact(&mut h).await.unwrap();
+            let l = (h[0] as usize) | ((h[1] as usize) << 8) | ((h[2] as usize) << 16);
+            assert_eq!(h[3], MPLEX_BASE + MSG_DATA);
+            let start = data.len();
+            data.resize(start + l, 0);
+            c.read_exact(&mut data[start..]).await.unwrap();
+        }
         // ndx 回显 + iflags + sum_head(16 零) + literal 长度 + 内容 + 终结 + md5
         let mut want = vec![0x01, 0x00, 0xA0];
         want.extend_from_slice(&[0u8; 16]);

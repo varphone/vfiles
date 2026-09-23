@@ -12,6 +12,7 @@
   不再把旧文件整体读入内存。重建结果已直接流入上传存储，不保留整份重建缓冲。
 - pull 发送端按流滚动扫描源文件，仅保留一个块窗口；源文件不再与完整 token 流同时驻留内存。
 - token 流小于 8 MiB 留在内存，超出阈值溢写匿名临时文件，再以 64 KiB 帧缓冲发送；不把 token 文件重新读入内存。
+- 接收端 mux 流式读路径的 64 KiB scratch buffer 使用堆内存，避免 Tokio worker/default test stack 在解析 push flist 时溢出。
 - 收端 token 流直接解码到最终文件流，不保留完整 token 副本；协议块 checksum 表仍按文件块数占用内存。
 
 ## 状态（r21 末 · `--filter=P/H` 类规则保护修复 ✗ 真机抓出的静默失保）
