@@ -1,4 +1,23 @@
-# S3 兼容 API（… r13 列表一条 SQL → r15 multipart 完整性 → **r16 ListMultipartUploads**）
+# S3 兼容 API（… r15 multipart 完整性 → r16 ListMultipartUploads → **r19 UploadPartCopy**）
+
+## 状态（r19 末 · 分片复制落地 = 大对象跨键拷贝路径）
+
+- **实装**：`UploadPartCopy`（`PUT ?partNumber&uploadId` + `x-amz-copy-source`）：
+  - `copy_source` = `<bucket>/<key>`（s3s `CopySource::Bucket`）；同桶校验
+  - `copy_source_range` = `bytes=start-end`（闭区间 ✗ 亦支持 `bytes=start-` 开尾与 `bytes=-N` 后缀；
+    尾越界夹取、起点越界/逆序 → `InvalidRange`）
+  - 读源字节 → `upload_part` 落分片 → 返回 `CopyPartResult{ETag=MD5(分片), LastModified}`
+- **实证（真 SDK）**：
+  | 场景 | 结果 |
+  | --- | --- |
+  | 1MiB 源分两段复制（`0-524287` / `524288-`）→ 完成 → `GetObject` | **1,048,576 B 逐字节同** ✓ |
+  | `ListParts` ETag 对比复制返回 | 逐一相等 ✓ |
+  | 无 range 整对象复制 | 内容同 ✓ |
+  | 起点越界 | `InvalidRange`/`InvalidArgument` ✓ |
+- **回归**：自写探针 **24/24** · 真 SDK **27/27**（+UploadPartCopy）。
+- **拷贝面**：`CopyObject`（小对象/单请求）+ `UploadPartCopy`（大对象/分片）**双式齐全**。
+- **仍债**：SQL 级 prefix/limit 分页 · 访问键绑用户 · region 校验 · `copy_source_if_*` 条件头 ·
+  `MetadataDirective` 于 `UploadPartCopy`（本无意义）。
 
 ## 状态（r16 末 · multipart API 收口 = 六式齐全）
 

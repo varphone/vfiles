@@ -23,13 +23,13 @@ use async_trait::async_trait;
 use s3s::dto::{
     AbortMultipartUploadInput, AbortMultipartUploadOutput, Bucket, CommonPrefix,
     CompleteMultipartUploadInput, CompleteMultipartUploadOutput, CopyObjectInput, CopyObjectOutput,
-    CopyObjectResult, CreateMultipartUploadInput, CreateMultipartUploadOutput, DeleteObjectInput,
-    DeleteObjectOutput, DeleteObjectsInput, DeleteObjectsOutput, DeletedObject,
+    CopyObjectResult, CopyPartResult, CreateMultipartUploadInput, CreateMultipartUploadOutput,
+    DeleteObjectInput, DeleteObjectOutput, DeleteObjectsInput, DeleteObjectsOutput, DeletedObject,
     Error as S3DeleteError, GetObjectInput, GetObjectOutput, HeadObjectInput, HeadObjectOutput,
     ListBucketsOutput, ListMultipartUploadsInput, ListMultipartUploadsOutput, ListObjectsInput,
     ListObjectsOutput, ListObjectsV2Input, ListObjectsV2Output, ListPartsInput, ListPartsOutput,
     MultipartUpload, Object, Part, PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp,
-    UploadPartInput, UploadPartOutput,
+    UploadPartCopyInput, UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
 use tokio::io::AsyncReadExt;
@@ -263,6 +263,44 @@ fn split_key(full: &str) -> (String, String) {
 fn parse_upload_id(s: &str) -> S3Result<vfiles_domain::UploadId> {
     vfiles_domain::UploadId::from_string(s)
         .map_err(|_| s3s::s3_error!(InvalidArgument, "invalid upload id"))
+}
+
+/// `x-amz-copy-source-range` 切片（`bytes=start-end` 闭区间 ✗ `bytes=start-` / `bytes=-suffix` 亦支持）。
+fn slice_copy_range(data: &[u8], spec: &str) -> S3Result<Vec<u8>> {
+    let raw = spec
+        .trim()
+        .strip_prefix("bytes=")
+        .ok_or_else(|| s3s::s3_error!(InvalidArgument, "invalid copy source range"))?;
+    let (a, b) = raw
+        .split_once('-')
+        .ok_or_else(|| s3s::s3_error!(InvalidArgument, "invalid copy source range"))?;
+    let len = data.len() as u64;
+    let (start, end) = if a.is_empty() {
+        // 后缀形 `-N` = 末尾 N 字节
+        let n: u64 = b
+            .parse()
+            .map_err(|_| s3s::s3_error!(InvalidArgument, "invalid copy source range"))?;
+        (len.saturating_sub(n), len.saturating_sub(1))
+    } else {
+        let start: u64 = a
+            .parse()
+            .map_err(|_| s3s::s3_error!(InvalidArgument, "invalid copy source range"))?;
+        let end = if b.is_empty() {
+            len.saturating_sub(1)
+        } else {
+            b.parse::<u64>()
+                .map_err(|_| s3s::s3_error!(InvalidArgument, "invalid copy source range"))?
+        };
+        (start, end)
+    };
+    if len == 0 || start >= len || start > end {
+        return Err(s3s::s3_error!(
+            InvalidRange,
+            "copy source range not satisfiable"
+        ));
+    }
+    let end = end.min(len - 1) as usize;
+    Ok(data[start as usize..=end].to_vec())
 }
 
 /// part 数据 MD5 十六进制（S3 `UploadPart` 返回的 ETag 形）。
@@ -838,6 +876,64 @@ impl S3 for VfilesS3 {
         ok(out)
     }
 
+    /// 分片复制（大对象服务端拷贝路径 ✗ `aws s3api upload-part-copy` / rclone 大文件复制）。
+    ///
+    /// `copy_source` = `<bucket>/<key>`；`copy_source_range` = `bytes=start-end`（闭区间 ✗ 单边可省）。
+    async fn upload_part_copy(
+        &self,
+        req: S3Request<UploadPartCopyInput>,
+    ) -> S3Result<S3Response<UploadPartCopyOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        if !(1..=10_000).contains(&input.part_number) {
+            return Err(s3s::s3_error!(
+                InvalidArgument,
+                "part number must be between 1 and 10000"
+            ));
+        }
+        let upload_id = parse_upload_id(&input.upload_id)?;
+        let (src_bucket, src_key) = match &input.copy_source {
+            s3s::dto::CopySource::Bucket { bucket, key, .. } => {
+                (bucket.to_string(), key.to_string())
+            }
+            _ => {
+                return Err(s3s::s3_error!(
+                    InvalidArgument,
+                    "only <bucket>/<key> copy sources are supported"
+                ));
+            }
+        };
+        if src_bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "source bucket not found"));
+        }
+        let src_path = norm(&src_key).map_err(dom_err)?;
+        let content = self
+            .workspace
+            .read_file_bytes(&self.namespace, &src_path, None)
+            .await
+            .map_err(dom_err)?;
+        let bytes = match &input.copy_source_range {
+            Some(r) => slice_copy_range(&content.bytes, r)?,
+            None => content.bytes,
+        };
+        let etag = md5_hex(&bytes);
+        self.upload
+            .upload_part(&upload_id, (input.part_number - 1) as u32, &bytes)
+            .await
+            .map_err(dom_err)?;
+        let out = UploadPartCopyOutput {
+            copy_part_result: Some(CopyPartResult {
+                e_tag: Some(s3s::dto::ETag::Strong(etag)),
+                last_modified: Some(Timestamp::from(time::OffsetDateTime::now_utc())),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        ok(out)
+    }
+
     /// 完成：校验列出 part 均已上传 → 拼接 → 落库（跳过量校验 ✗ 总大小未知）。
     async fn complete_multipart_upload(
         &self,
@@ -1087,6 +1183,24 @@ mod tests {
             meta("dir/y", 4),
             meta("dir/sub/z", 5),
         ]
+    }
+
+    /// `x-amz-copy-source-range` 解析（闭区间 / 开尾 / 后缀 / 越界）。
+    #[test]
+    fn copy_range_slices() {
+        let d = b"0123456789";
+        assert_eq!(slice_copy_range(d, "bytes=0-3").unwrap(), b"0123");
+        assert_eq!(slice_copy_range(d, "bytes=5-").unwrap(), b"56789");
+        assert_eq!(slice_copy_range(d, "bytes=-3").unwrap(), b"789");
+        assert_eq!(
+            slice_copy_range(d, "bytes=8-99").unwrap(),
+            b"89",
+            "尾越界夹取"
+        );
+        assert!(slice_copy_range(d, "bytes=10-12").is_err(), "起点越界");
+        assert!(slice_copy_range(d, "bytes=5-2").is_err(), "逆序");
+        assert!(slice_copy_range(d, "0-3").is_err(), "缺 bytes= 前缀");
+        assert!(slice_copy_range(b"", "bytes=0-0").is_err(), "空源");
     }
 
     /// delimiter 折叠 = 只折一层（AWS 语义）✗ 目录本身不产出对象。

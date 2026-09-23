@@ -196,6 +196,24 @@ def main():
         for j in range(30):
             s3.delete_object(Bucket="default", Key=f"boto-scale/d{k}/f{j:02d}.txt")
 
+    # ── UploadPartCopy（r19）──
+    cpsrc = bytes([i % 251 for i in range(262144)])
+    s3.put_object(Bucket="default", Key="boto-upc/src.bin", Body=cpsrc)
+    cuid = s3.create_multipart_upload(Bucket="default", Key="boto-upc/dst.bin")["UploadId"]
+    c1 = s3.upload_part_copy(Bucket="default", Key="boto-upc/dst.bin", PartNumber=1,
+                             UploadId=cuid, CopySource="default/boto-upc/src.bin",
+                             CopySourceRange="bytes=0-131071")["CopyPartResult"]["ETag"]
+    c2 = s3.upload_part_copy(Bucket="default", Key="boto-upc/dst.bin", PartNumber=2,
+                             UploadId=cuid, CopySource="default/boto-upc/src.bin",
+                             CopySourceRange="bytes=131072-")["CopyPartResult"]["ETag"]
+    s3.complete_multipart_upload(Bucket="default", Key="boto-upc/dst.bin", UploadId=cuid,
+                                MultipartUpload={"Parts": [{"ETag": c1, "PartNumber": 1},
+                                                           {"ETag": c2, "PartNumber": 2}]})
+    check("boto upload_part_copy range == source",
+          s3.get_object(Bucket="default", Key="boto-upc/dst.bin")["Body"].read() == cpsrc)
+    s3.delete_object(Bucket="default", Key="boto-upc/src.bin")
+    s3.delete_object(Bucket="default", Key="boto-upc/dst.bin")
+
     # ── ListMultipartUploads（r16）──
     muids = {}
     for mk in ["boto-lmu/x.bin", "boto-lmu/sub/y.bin"]:

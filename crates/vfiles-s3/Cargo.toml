@@ -22,6 +22,7 @@ vfiles-domain = { path = "../vfiles-domain" }
 vfiles-infra-fs = { path = "../vfiles-infra-fs" }
 vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }
 s3s = "0.16"
+time.workspace = true
 
 [lints]
 workspace = true
