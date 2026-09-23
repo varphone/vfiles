@@ -1,4 +1,21 @@
-# rsync 协议 daemon（r2 选型 → r3 Phase0 → r4 收尾 → r5 wire → r6 帧三字段 → **r7 编码法定稿** ✗ 状态见下）
+# rsync 协议 daemon（r2 选型 → … → r7 编码法 → **r8 对答表+差分位全定** ✗ 实装 r9 无猜）
+
+## 状态（r8 末 · 双向对答表提取 + preserve/mode 语义解 = 实装钥匙全齐零猜）
+
+- **对答表资产**（`golden/wire_dialogue_r8.md` ✗ strace 双向流按 fd3 分向 = 收流/发流两序
+  直接照推状态机）：收 args 双 NUL → 发 `81 FE` → 收 `1E`+30B checksum 串 → 发 `#…none\n`(36B
+  字面常量)+`46 19 14 67` → 收 `04帧` → **发按树编码的 57B flist** → 尾三帧配对（收 01/03/01 →
+  发 01/02/10·20B 原样记档可疑摘要帧）✗ 顶部 8×832B ELF = 启动噪声剔除 ✓。
+- **差分位方案定稿** ✨：`SAME_UID|SAME_GID 恒置`（`--list-only` 接收端 !preserve = 转录首条
+  `0x19`=TOP|UID|GID 全通 ✗ 后续 `0x18`）+ SAME_MODE/TIME 按与前条差分写值 + 不用 SAME_NAME/
+  LONG_NAME（恒发全名 ≤255）✗ **mode = 原生 stat mode u32 LE 恒等实证**（golden 两独立命中
+  = `to_wire_mode` 无需源 ✗ 本轮 clone 120s 超时复发 = 网络不稳但已无关）✗ mtime=varlong(min4)
+  紧凑（created_at unix 秒可接受）· length=varlong30(min3)（dir 4096 / file meta size、fallback
+  0 记档）· name = l2 byte + basename 递归树序。
+- **r9 终清单**（实装+探针 = goal 收官路径）：ListCtx 依赖入 crate（vfiles-app/domain path
+  house 式）→ OK 后状态机五步 → flist 编码器 → duplex 字节断言单测 → #61 三跑 → bin 传 ctx
+  → **终极探针 = 真 `rsync --list-only rsync://…/files/` = RC0 列 vfiles 文件**（CLI 报错循环
+  修）→ delta（r10）。
 
 ## 状态（r7 末 · git clone 权威源 + **mtime 解出** = flist 编码法全知 = 实装无阻）
 
