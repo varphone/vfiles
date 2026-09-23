@@ -144,6 +144,32 @@ pub trait EntryRepo {
     ) -> DomainResult<Option<Entry>>;
     /// r4 批量版子项（默认回退 = find_children 包装（零 meta ✓ 桩自动兼容）✗
     /// infra 覆写 = 一条 JOIN 消 N+1（children 每文件 open 的 6ms/个 → 索引点查）。
+    /// r13 自定义属性 k/v（默认体 = 空/幂等 ✗ 桩零动 ✓ infra 覆写 = 0006 表）。
+    async fn set_entry_property(
+        &self,
+        _entry_id: &crate::types::EntryId,
+        _name: &str,
+        _value: &str,
+    ) -> DomainResult<()> {
+        Ok(())
+    }
+
+    async fn remove_entry_property(
+        &self,
+        _entry_id: &crate::types::EntryId,
+        _name: &str,
+    ) -> DomainResult<()> {
+        Ok(())
+    }
+
+    /// 按 entry 批量拉属性（PROPFIND children 一次 ✗ r4 批量式复用 ✓）。
+    async fn list_entry_properties(
+        &self,
+        _entry_ids: &[crate::types::EntryId],
+    ) -> DomainResult<std::collections::HashMap<crate::types::EntryId, Vec<(String, String)>>> {
+        Ok(Default::default())
+    }
+
     async fn children_with_meta(
         &self,
         namespace_id: &NamespaceId,

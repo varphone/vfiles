@@ -81,7 +81,7 @@ pub async fn move_entry(
             &destination_path,
             req.message.as_deref(),
             &ctx.actor_user_id,
-            true, // Container（前端拖放 dest = 容器目录 ✗ r12 保持 join 语义）
+            false, // Path（测试真形证：to = archive/note.txt 完整路径 ✗ r12 判定勘误 ✓）
         )
         .await?;
 

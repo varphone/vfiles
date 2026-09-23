@@ -16,7 +16,7 @@
 | MKCOL | ✅ r110' | 201/409 ✓ | - |
 | MOVE | ✅ **r11 文件覆盖全语义** | 201 新建 / **412**（F+存在）/ **204**（T + 缺省=T + 内容变实证）✓ 臂层式零签名变 ✓ **同名目录覆盖 ✅ r12**（dest 语义参数化 `dest_as_container`：bin/ftp=false 完整路径（RFC ✓）/ http+测试=true 容器 ✓ 臂层 dest 即 target ✓ 实证 204+旧404+新在 ✓ 三码回归绿 ✓ 4306 = http 护栏 ✓）| - |
 | **COPY** | ✅ **r5 八式实证** | 递归子树 + blob 零字节复用（create_version upsert ref++ ✓）+ **审计落表** ✓；dst存在/自复制/自子树 = 409 ✓ dest缺 = 400 ✓ Allow 入 ✓ **Overwrite 全语义 ✅ r10**（T=删旧重建 204 ✓ F=412 ✓ 缺省=T ✓ 目录覆盖 204+旧消失 ✓ 审计 ✓）| - |
-| **PROPPATCH** | ✅ **r6 七式实证** | propertyupdate 解析（roxmltree 按序 ✓）+ 每操作 propstat 200/403 ✓ **displayname set = 真改名**（move 单源直路径复用 ✓ PROPFIND 新名可见 ✓）+ 审计落表 ✓ Allow 入 ✓ **自定义属性 k/v 持久化 = P1 记债** | P1属性存储 |
+| **PROPPATCH** | ✅ **r6 七式实证** | propertyupdate 解析（roxmltree 按序 ✓）+ 每操作 propstat 200/403 ✓ **displayname set = 真改名**（move 单源直路径复用 ✓ PROPFIND 新名可见 ✓）+ 审计落表 ✓ Allow 入 ✓ **自定义 k/v ✅ r13**（0006 表 + FK 级联 + set/remove 存在判定 + PROPFIND 读回（单目标+children 批量）+ allprop/propname 并集 ✗ 七式实证 ✓ **r6 债清** ✗ local-name 简式（ns URI 简式记档）| - |
 | LOCK / UNLOCK | ✅ r109a | 无限期锁表 + 423 ✓；**Timeout 有限支持 / 锁刷新 = 缺** | P1 |
 | POST | ➖ | RFC 无定义（405 ✓ 合规）| - |
 
@@ -98,6 +98,9 @@ PROPPATCH 七式 / If+412 七式 / 审计八写点 / 声明面（Allow+DAV class
   3 外调共享 → 三面评估 = P1 栈新序首位）
 - ✅ r12 **同名目录覆盖**（三面评估 → dest 语义参数化 ✗ 四调用点如实标（2 完整路径
   / 2 容器）✗ 多源强制容器 ✓ 母版语义级精修一处判定三分支 ✗ **P1 栈首位清**）
+- ✅ r13 **ETag+If-Match / LOCK Timeout / 属性面 getetag/creationdate/owner / 失败面审计表记 / HTTP 审计跨目标债（原自定义条已清）属性 k/v**（七式实证 ✓ 属性持久化全语义）+ ⚠️ **r12 http 判定勘误**
+  （move_route 测试真形 = to 完整路径 → tree 传 Path ✗ 4306 = 唯一 container ✓
+  **测试真形定案纪律** ✗ 判定类须有测试/实证背书）
 - 剩余 P1：自定义
 属性 k/v / ETag+If-Match 面 / LOCK Timeout 有限 / getetag+creationdate 属性 /
 失败面审计表记 / HTTP 审计跨目标债

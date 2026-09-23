@@ -571,6 +571,7 @@ async fn propfind_owned(
             getlastmodified: mtime_fmt(time::OffsetDateTime::now_utc()),
             getcontentlength: None,
             getcontenttype: None,
+            custom: Vec::new(),
         });
     } else {
         let entry = app
@@ -600,6 +601,14 @@ async fn propfind_owned(
                 _ => (None, None),
             }
         };
+        // r13 自定义属性读（单目标 ✗ list 一次）
+        let custom = app
+            .entry_repo
+            .list_entry_properties(&[entry.id.clone()])
+            .await
+            .unwrap_or_default()
+            .remove(&entry.id)
+            .unwrap_or_default();
         items.push(crate::response::PropResponse {
             href: if is_dir {
                 format!("/{rel}/")
@@ -611,6 +620,7 @@ async fn propfind_owned(
             getlastmodified: mtime_fmt(entry.created_at),
             getcontentlength,
             getcontenttype,
+            custom,
         });
     }
     if depth == "1" {
@@ -620,6 +630,14 @@ async fn propfind_owned(
             .children_with_meta(&ns, &path)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        // r13 自定义属性批量（ids 一次 ✗ r4 批量式复用）
+        let child_ids: Vec<vfiles_domain::types::EntryId> =
+            metas.iter().map(|m| m.entry.id.clone()).collect();
+        let child_props = app
+            .entry_repo
+            .list_entry_properties(&child_ids)
+            .await
+            .unwrap_or_default();
         for meta in metas {
             let child = meta.entry;
             let is_dir = matches!(child.entry_type, vfiles_domain::types::EntryKind::Directory);
@@ -635,6 +653,7 @@ async fn propfind_owned(
                 getlastmodified: mtime_fmt(child.created_at),
                 getcontentlength,
                 getcontenttype,
+                custom: child_props.get(&child.id).cloned().unwrap_or_default(),
             });
         }
     }
@@ -982,6 +1001,58 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                                 rename_failed = true;
                             }
                         }
+                    }
+                    crate::response::PropOp::Remove { name } => {
+                        // r13 remove：自定义存在 → 删 200 / 不存在 → 403（r6 恒 403 升级）
+                        let removed = match app_ref
+                            .entry_repo
+                            .find_by_path(&ns, &path)
+                            .await
+                            .ok()
+                            .flatten()
+                        {
+                            Some(e) => {
+                                let props = app_ref
+                                    .entry_repo
+                                    .list_entry_properties(&[e.id.clone()])
+                                    .await
+                                    .unwrap_or_default();
+                                let exists = props
+                                    .get(&e.id)
+                                    .map(|v| v.iter().any(|(n, _)| n == name))
+                                    .unwrap_or(false);
+                                exists
+                                    && app_ref
+                                        .entry_repo
+                                        .remove_entry_property(&e.id, name)
+                                        .await
+                                        .is_ok()
+                            }
+                            None => false,
+                        };
+                        results.push((op, removed));
+                    }
+                    crate::response::PropOp::Set { name, value }
+                        if name != "displayname"
+                            && !crate::response::PREDEFINED_READONLY.contains(&name.as_str())
+                            && !value.is_empty() =>
+                    {
+                        // r13 自定义 k/v 写（非预定义只读集 ✗ 预定义 → 兜底 403 ✓）
+                        let ok = match app_ref
+                            .entry_repo
+                            .find_by_path(&ns, &path)
+                            .await
+                            .ok()
+                            .flatten()
+                        {
+                            Some(e) => app_ref
+                                .entry_repo
+                                .set_entry_property(&e.id, name, value)
+                                .await
+                                .is_ok(),
+                            None => false,
+                        };
+                        results.push((op, ok));
                     }
                     _ => results.push((op, false)),
                 }

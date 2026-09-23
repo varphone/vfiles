@@ -6,6 +6,14 @@
 #![allow(dead_code)]
 
 /// PROPFIND 请求体模式（RFC 4918 §9.1 ✗ r2 P0 协议精度）。
+/// 预定义只读属性集（r13 ✓ 除 displayname（改名语义）外 PROPPATCH set → 403）。
+pub const PREDEFINED_READONLY: [&str; 4] = [
+    "resourcetype",
+    "getlastmodified",
+    "getcontentlength",
+    "getcontenttype",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PropMode {
     /// 无体 / `<allprop/>` → 属性全集。
@@ -130,6 +138,8 @@ pub struct PropResponse {
     pub getcontentlength: Option<u64>,
     /// r3：MIME 类型（P1 顺车 ✗ get_stream 已带 mime 白送；集合 = None ✓）。
     pub getcontenttype: Option<String>,
+    /// r13 自定义属性（k/v ✗ 名 = local name（ns 简式记档）；PROPFIND 输出/PROPPATCH 写回 ✓）。
+    pub custom: Vec<(String, String)>,
 }
 
 /// 构造 207 Multi-Status 文档（XML 转义 ✓ 集合无 getcontentlength ✓）。
@@ -155,11 +165,14 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
                     .copied()
                     .filter(|&sup| names.iter().any(|n| n.as_str() == sup))
                     .collect();
-                // 404 块 = **请求了但支持集没有**（getetag 类 ✗ 方向错被 propmode 测试当场抓）
+                // 404 块 = 请求了但支持集与本资源自定义集都没有（r13 自定义并入 ✓ r2 方向义保留）
                 let missing: Vec<&str> = names
                     .iter()
                     .map(|n| n.as_str())
-                    .filter(|req| !SUPPORTED.contains(req))
+                    .filter(|req| {
+                        !SUPPORTED.contains(req)
+                            && !item.custom.iter().any(|(cn, _)| cn == req)
+                    })
                     .collect();
                 (wanted, missing)
             }
@@ -210,6 +223,29 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
                 out.push_str("<D:");
                 out.push_str(name);
                 out.push_str("/>");
+            }
+        }
+        // r13 自定义属性输出（All = 全出 ✗ Names = 交集 ✗ PropName = 只名无值）
+        for (cn, cv) in &item.custom {
+            let requested = match mode {
+                PropMode::All => true,
+                PropMode::PropName => true,
+                PropMode::Names(names) => names.iter().any(|n| n == cn),
+            };
+            if requested {
+                if mode == &PropMode::PropName {
+                    out.push_str("<D:");
+                    out.push_str(cn);
+                    out.push_str("/>");
+                } else {
+                    out.push_str("<D:");
+                    out.push_str(cn);
+                    out.push_str(">");
+                    out.push_str(&escape_xml(cv));
+                    out.push_str("</D:");
+                    out.push_str(cn);
+                    out.push_str(">");
+                }
             }
         }
         out.push_str("</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>");
@@ -279,6 +315,7 @@ mod tests {
                 getlastmodified: "Mon, 22 Sep 2026 19:20:00 GMT".into(),
                 getcontentlength: None,
                 getcontenttype: None,
+                custom: Vec::new(),
             },
             PropResponse {
                 href: "/dav/a&b.txt".into(),
@@ -287,6 +324,7 @@ mod tests {
                 getlastmodified: "Mon, 22 Sep 2026 19:21:00 GMT".into(),
                 getcontentlength: Some(42),
                 getcontenttype: Some("text/plain".into()),
+                custom: Vec::new(),
             },
         ], &PropMode::All);
         assert!(xml.contains("<D:collection/>"));
@@ -317,6 +355,7 @@ mod propmode_tests {
             getlastmodified: "Mon, 01 Jan 2026 00:00:00 +0000".into(),
             getcontentlength: Some(5),
             getcontenttype: Some("text/plain".into()),
+            custom: Vec::new(),
         }]
     }
 

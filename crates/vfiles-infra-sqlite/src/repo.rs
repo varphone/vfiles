@@ -977,6 +977,84 @@ impl EntryRepo for SqliteEntryRepo {
         rows.into_iter().map(parse_entry_row).collect()
     }
 
+    async fn set_entry_property(
+        &self,
+        entry_id: &vfiles_domain::types::EntryId,
+        name: &str,
+        value: &str,
+    ) -> DomainResult<()> {
+        sqlx::query(
+            "INSERT INTO entry_properties (entry_id, prop_name, prop_value, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(entry_id, prop_name) DO UPDATE SET prop_value = excluded.prop_value, updated_at = excluded.updated_at",
+        )
+        .bind(entry_id.to_string())
+        .bind(name)
+        .bind(value)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to set entry property: {}", e),
+        })?;
+        Ok(())
+    }
+
+    async fn remove_entry_property(
+        &self,
+        entry_id: &vfiles_domain::types::EntryId,
+        name: &str,
+    ) -> DomainResult<()> {
+        sqlx::query("DELETE FROM entry_properties WHERE entry_id = ? AND prop_name = ?")
+            .bind(entry_id.to_string())
+            .bind(name)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to remove entry property: {}", e),
+            })?;
+        Ok(())
+    }
+
+    async fn list_entry_properties(
+        &self,
+        entry_ids: &[vfiles_domain::types::EntryId],
+    ) -> DomainResult<std::collections::HashMap<vfiles_domain::types::EntryId, Vec<(String, String)>>> {
+        use sqlx::Row as _;
+        use std::collections::HashMap;
+        let mut out: HashMap<vfiles_domain::types::EntryId, Vec<(String, String)>> = HashMap::new();
+        if entry_ids.is_empty() {
+            return Ok(out);
+        }
+        // QueryBuilder（sqlx 注入审计 ✗ format 动态 SQL 被拦 r4 已见 ✓ 正解 push_bind）
+        let mut qb = sqlx::QueryBuilder::new(
+            "SELECT entry_id, prop_name, prop_value FROM entry_properties WHERE entry_id IN (",
+        );
+        for (i, id) in entry_ids.iter().enumerate() {
+            if i > 0 {
+                qb.push(',');
+            }
+            qb.push_bind(id.to_string());
+        }
+        qb.push(')');
+        let rows = qb
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to list entry properties: {}", e),
+            })?;
+        for row in rows {
+            let id_str: String = row.get(0);
+            let name: String = row.get(1);
+            let value: String = row.get(2);
+            let id = vfiles_domain::types::EntryId::from_uuid(
+                uuid::Uuid::parse_str(&id_str).map_err(|_| DomainError::Internal {
+                    message: "Invalid entry UUID".to_string(),
+                })?,
+            );
+            out.entry(id).or_default().push((name, value));
+        }
+        Ok(out)
+    }
+
     async fn children_with_meta(
         &self,
         namespace_id: &NamespaceId,
