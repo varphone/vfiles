@@ -1960,6 +1960,18 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
     }
 
     async fn write(&self, path: String, data: Vec<u8>, mtime: i64) -> Result<(), String> {
+        let size = data.len() as u64;
+        self.write_stream(path, size, mtime, Box::new(std::io::Cursor::new(data)))
+            .await
+    }
+
+    async fn write_stream(
+        &self,
+        path: String,
+        size: u64,
+        mtime: i64,
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    ) -> Result<(), String> {
         let (parent_str, filename) = match path.rsplit_once('/') {
             Some((d, n)) => (d.to_string(), n.to_string()),
             None => (String::new(), path.clone()),
@@ -1976,7 +1988,7 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
                 &self.namespace,
                 &parent,
                 &filename,
-                data.len() as u64,
+                size,
                 None,
                 None,
                 &self.owner,
@@ -1985,14 +1997,17 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
             .map_err(|e| e.to_string())?;
         let result = self
             .upload
-            .complete_upload_from_stream(
-                &session.upload_id,
-                None,
-                Some("rsync push"),
-                Box::new(std::io::Cursor::new(data)),
-            )
-            .await
-            .map_err(|e| e.to_string())?;
+            .complete_upload_from_stream(&session.upload_id, None, Some("rsync push"), reader)
+            .await;
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                if let Err(cancel_error) = self.upload.cancel_upload(&session.upload_id).await {
+                    tracing::warn!(error = %cancel_error, upload_id = %session.upload_id, "rsync：清理失败上传会话失败");
+                }
+                return Err(error.to_string());
+            }
+        };
         // 记录源端 mtime（rsync `-a` size+mtime 快跳；失败仅告警 = 退化为每次传输）
         if let Err(e) = self
             .repo
