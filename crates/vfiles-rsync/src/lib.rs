@@ -360,7 +360,25 @@ struct FilterRule {
 #[derive(Debug, Clone)]
 enum FilterItem {
     Rule(FilterRule),
-    DirMerge(String),
+    DirMerge {
+        filename: String,
+        no_inherit: bool,
+        exclude_file: bool,
+        mode: DirMergeMode,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirMergeMode {
+    Any,
+    ExcludeOnly,
+    IncludeOnly,
+}
+
+#[derive(Debug, Clone)]
+enum DirMergeRule {
+    Rule(FilterRule),
+    ClearInherited,
 }
 
 /// 解析序列化规则行（`+ pat/` / `- pat` ✗ 其余类型跳过）。
@@ -396,11 +414,23 @@ fn parse_rule(line: &str) -> Option<FilterRule> {
 fn parse_filter_item(line: &str) -> Option<FilterItem> {
     let line = line.trim_end_matches(['\n', '\r']);
     if let Some(rest) = line.strip_prefix(':') {
-        let filename = rest
+        let (flags, filename) = rest
             .split_once(' ')
-            .map(|(_, name)| name)
-            .unwrap_or(rest)
-            .trim();
+            .map(|(flags, filename)| (flags, filename))
+            .unwrap_or(("", rest));
+        let mut no_inherit = false;
+        let mut exclude_file = false;
+        let mut mode = DirMergeMode::Any;
+        for flag in flags.chars() {
+            match flag {
+                'n' => no_inherit = true,
+                'e' => exclude_file = true,
+                '-' if mode == DirMergeMode::Any => mode = DirMergeMode::ExcludeOnly,
+                '+' if mode == DirMergeMode::Any => mode = DirMergeMode::IncludeOnly,
+                _ => return None,
+            }
+        }
+        let filename = filename.trim();
         let filename = filename.trim_start_matches('/');
         if filename.is_empty()
             || filename
@@ -409,16 +439,31 @@ fn parse_filter_item(line: &str) -> Option<FilterItem> {
         {
             return None;
         }
-        return Some(FilterItem::DirMerge(filename.to_string()));
+        return Some(FilterItem::DirMerge {
+            filename: filename.to_string(),
+            no_inherit,
+            exclude_file,
+            mode,
+        });
     }
     parse_rule(line).map(FilterItem::Rule)
 }
 
-fn parse_dir_merge_file(contents: &[u8]) -> Vec<FilterRule> {
+fn parse_dir_merge_file(contents: &[u8], mode: DirMergeMode) -> Vec<DirMergeRule> {
     String::from_utf8_lossy(contents)
         .lines()
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .filter_map(parse_rule)
+        .filter_map(|line| {
+            if line == "!" {
+                return Some(DirMergeRule::ClearInherited);
+            }
+            let parsed = match mode {
+                DirMergeMode::Any => parse_rule(line),
+                DirMergeMode::ExcludeOnly => parse_rule(&format!("- {line}")),
+                DirMergeMode::IncludeOnly => parse_rule(&format!("+ {line}")),
+            }?;
+            Some(DirMergeRule::Rule(parsed))
+        })
         .collect()
 }
 
@@ -532,7 +577,7 @@ fn parent_directories(rel_path: &str) -> Vec<String> {
 
 fn is_excluded_with_merges(
     filters: &[FilterItem],
-    merged: &std::collections::HashMap<(usize, String), Vec<FilterRule>>,
+    merged: &std::collections::HashMap<(usize, String), Vec<DirMergeRule>>,
     rel_path: &str,
     is_dir: bool,
 ) -> bool {
@@ -544,17 +589,35 @@ fn is_excluded_with_merges(
                     return decision;
                 }
             }
-            FilterItem::DirMerge(_) => {
+            FilterItem::DirMerge {
+                filename,
+                no_inherit,
+                exclude_file,
+                ..
+            } => {
+                let scope_limit = if *no_inherit { 1 } else { parents.len() };
+                let mut clear_inherited = false;
                 // A child directory's rules have priority over inherited parent rules.
-                for scope in parents.iter().rev() {
+                for scope in parents.iter().rev().take(scope_limit) {
+                    if *exclude_file && filter_merge_path(scope, filename) == rel_path {
+                        return true;
+                    }
                     if let Some(rules) = merged.get(&(index, scope.clone())) {
-                        for rule in rules {
-                            if let Some(decision) =
-                                rule_decision(rule, rel_path, is_dir, Some(scope))
-                            {
-                                return decision;
+                        for item in rules {
+                            match item {
+                                DirMergeRule::Rule(rule) => {
+                                    if let Some(decision) =
+                                        rule_decision(rule, rel_path, is_dir, Some(scope))
+                                    {
+                                        return decision;
+                                    }
+                                }
+                                DirMergeRule::ClearInherited => clear_inherited = true,
                             }
                         }
+                    }
+                    if clear_inherited {
+                        break;
                     }
                 }
             }
@@ -575,7 +638,7 @@ async fn load_dir_merge_rules(
     backend: &dyn RsyncBackend,
     destination: &[FlatEntry],
     filters: &[FilterItem],
-) -> Result<std::collections::HashMap<(usize, String), Vec<FilterRule>>, String> {
+) -> Result<std::collections::HashMap<(usize, String), Vec<DirMergeRule>>, String> {
     const MAX_MERGE_FILE_SIZE: u64 = 1024 * 1024;
     let by_name: std::collections::HashMap<&str, &FlatEntry> = destination
         .iter()
@@ -584,7 +647,7 @@ async fn load_dir_merge_rules(
     let mut loaded = std::collections::HashMap::new();
 
     for (filter_index, filter) in filters.iter().enumerate() {
-        let FilterItem::DirMerge(filename) = filter else {
+        let FilterItem::DirMerge { filename, mode, .. } = filter else {
             continue;
         };
         for directory in destination.iter().filter(|entry| entry.is_dir) {
@@ -613,7 +676,7 @@ async fn load_dir_merge_rules(
             }
             loaded.insert(
                 (filter_index, directory.name.clone()),
-                parse_dir_merge_file(&contents),
+                parse_dir_merge_file(&contents, *mode),
             );
         }
     }
@@ -3635,18 +3698,40 @@ mod tests {
     #[test]
     fn dir_merge_rules_apply_in_scope_and_child_rules_override_parent() {
         let merge = parse_filter_item(": /.rsync-filter").unwrap();
-        assert!(matches!(merge, FilterItem::DirMerge(ref name) if name == ".rsync-filter"));
+        assert!(
+            matches!(merge, FilterItem::DirMerge { filename, no_inherit: false, exclude_file: false, mode: DirMergeMode::Any } if filename == ".rsync-filter")
+        );
+        assert!(matches!(
+            parse_filter_item(":ne .rsync-filter"),
+            Some(FilterItem::DirMerge {
+                no_inherit: true,
+                exclude_file: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse_filter_item(":n- .filter"),
+            Some(FilterItem::DirMerge {
+                no_inherit: true,
+                mode: DirMergeMode::ExcludeOnly,
+                ..
+            })
+        ));
+        assert!(parse_filter_item(":xn .rsync-filter").is_none());
         assert!(parse_filter_item(": ../outside.rules").is_none());
 
         let filters = vec![parse_filter_item(": /.rsync-filter").unwrap()];
         let merged = std::collections::HashMap::from([
             (
                 (0, ".".to_string()),
-                parse_dir_merge_file(b"# root rules\n- keep.txt\n- /root-only\n"),
+                parse_dir_merge_file(
+                    b"# root rules\n- keep.txt\n- /root-only\n",
+                    DirMergeMode::Any,
+                ),
             ),
             (
                 (0, "sub".to_string()),
-                parse_dir_merge_file(b"+ keep.txt\n- /local-only\n"),
+                parse_dir_merge_file(b"+ keep.txt\n- /local-only\n", DirMergeMode::Any),
             ),
         ]);
 
@@ -3710,6 +3795,68 @@ mod tests {
             &merged,
             "sub/child.txt",
             false
+        ));
+    }
+
+    #[test]
+    fn dir_merge_modifiers_and_clear_rule_apply_only_to_this_merge_stack() {
+        let filters = vec![parse_filter_item(": /.rsync-filter").unwrap()];
+        let inherited = parse_dir_merge_file(b"- keep.txt\n", DirMergeMode::Any);
+        let cleared_child = parse_dir_merge_file(b"!\n- deep.txt\n", DirMergeMode::Any);
+        let merged = std::collections::HashMap::from([
+            ((0, ".".to_string()), inherited.clone()),
+            ((0, "sub".to_string()), cleared_child),
+        ]);
+        assert!(
+            !is_excluded_with_merges(&filters, &merged, "sub/nested/keep.txt", false),
+            "! 清除同一 merge 文件栈中的父目录规则"
+        );
+        assert!(is_excluded_with_merges(
+            &filters,
+            &merged,
+            "sub/nested/deep.txt",
+            false
+        ));
+
+        let no_inherit = vec![parse_filter_item(":n .rsync-filter").unwrap()];
+        let no_inherit_rules = std::collections::HashMap::from([
+            (
+                (0, ".".to_string()),
+                parse_dir_merge_file(b"- keep.txt\n", DirMergeMode::Any),
+            ),
+            (
+                (0, "sub".to_string()),
+                parse_dir_merge_file(b"- child.txt\n", DirMergeMode::Any),
+            ),
+        ]);
+        assert!(is_excluded_with_merges(
+            &no_inherit,
+            &no_inherit_rules,
+            "sub/child.txt",
+            false
+        ));
+        assert!(
+            !is_excluded_with_merges(
+                &no_inherit,
+                &no_inherit_rules,
+                "sub/nested/child.txt",
+                false
+            ),
+            "n modifier 不把目录规则传给更深子目录"
+        );
+
+        let exclude_merge_file = vec![parse_filter_item(":e .rsync-filter").unwrap()];
+        assert!(is_excluded_with_merges(
+            &exclude_merge_file,
+            &std::collections::HashMap::new(),
+            "sub/.rsync-filter",
+            false
+        ));
+
+        let exclude_only = parse_dir_merge_file(b"*.cache\n", DirMergeMode::ExcludeOnly);
+        assert!(matches!(
+            exclude_only.as_slice(),
+            [DirMergeRule::Rule(FilterRule { include: false, pattern, .. })] if pattern == "*.cache"
         ));
     }
 
