@@ -1,5 +1,11 @@
 # VFiles 优化路线图（审计 + 迭代记录）
 
+### HTTP：Range 单位按标准忽略大小写
+
+- Range 解析原先只接受小写 `bytes=`，会把合法的 `Bytes=` / `BYTES=` 请求当作整文件请求。
+- 现在按 RFC 9110 的 Range 单位规则忽略大小写，并添加三种大小写形式的回归覆盖。
+- 回归：`cargo test -p vfiles-http`。
+
 ### HTTP：遵守静态资源的身份编码拒绝
 
 - `Accept-Encoding` 明确将 `identity` 设为 `q=0` 时，静态资源曾在没有合适压缩文件时仍返回明文；重复字段也只读取首个值。

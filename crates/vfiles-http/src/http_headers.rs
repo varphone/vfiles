@@ -26,9 +26,12 @@ pub(crate) fn parse_range(headers: &HeaderMap, total_size: u64) -> RangeRequest 
     let Ok(raw_value) = raw_value.to_str() else {
         return RangeRequest::Full;
     };
-    let Some(spec) = raw_value.trim().strip_prefix("bytes=") else {
+    let Some((unit, spec)) = raw_value.trim().split_once('=') else {
         return RangeRequest::Full;
     };
+    if !unit.eq_ignore_ascii_case("bytes") {
+        return RangeRequest::Full;
+    }
     if spec.contains(',') {
         // Multiple ranges are intentionally not supported; serve the full file.
         return RangeRequest::Full;
@@ -418,6 +421,19 @@ fn is_rfc5987_attr_char(byte: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn range_unit_is_case_insensitive() {
+        for value in ["bytes=2-4", "Bytes=2-4", "BYTES=2-4"] {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::RANGE, HeaderValue::from_str(value).unwrap());
+            assert_eq!(
+                parse_range(&headers, 10),
+                RangeRequest::Partial { start: 2, end: 4 },
+                "range value {value:?}"
+            );
+        }
+    }
 
     #[test]
     fn if_none_match_checks_every_repeated_header_field() {
