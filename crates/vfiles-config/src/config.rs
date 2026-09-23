@@ -178,9 +178,12 @@ pub struct S3Config {
     /// **默认关**（新协议面 = 显式启用原则 ✗ r2 交付注：`VFILES_S3_ENABLED=true` 开）。
     #[serde(default = "s3_default_enabled")]
     pub enabled: bool,
-    /// 专用端口（path-style 与前端根语义冲突 ✗ MinIO 9000 惯例）。
+    /// 独立监听端口；embedded 模式下忽略并复用 HTTP listener。
     #[serde(default = "s3_default_port")]
     pub port: u16,
+    /// 将 S3 请求复用 HTTP listener（SigV4 请求按认证头/查询参数分流）。
+    #[serde(default)]
+    pub embedded: bool,
     /// Access Key（空 = 运行时随机 + warn 打印）。
     #[serde(default)]
     pub access_key: String,
@@ -296,6 +299,10 @@ fn s3_from_env() -> Result<S3Config, ConfigError> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(9000);
+    let embedded = std::env::var("VFILES_S3_EMBEDDED")
+        .ok()
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
     let access_key = std::env::var("VFILES_S3_ACCESS_KEY").unwrap_or_default();
     let secret_key = std::env::var("VFILES_S3_SECRET_KEY").unwrap_or_default();
     let credentials = std::env::var("VFILES_S3_CREDENTIALS")
@@ -309,6 +316,7 @@ fn s3_from_env() -> Result<S3Config, ConfigError> {
     Ok(S3Config {
         enabled,
         port,
+        embedded,
         access_key,
         secret_key,
         credentials,

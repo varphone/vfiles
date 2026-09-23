@@ -1,5 +1,12 @@
 # S3 兼容 API（… r34 桶生命周期 → r35 版本列表 → r36 versionId 定向 → **r37 区域校验**）
 
+## 当前工作树补充（HTTP / WebDAV / S3 共端口）
+
+- `VFILES_S3_EMBEDDED=true` 时，S3 使用 HTTP 主 listener；既有 `/api` 路由和已挂载的 WebDAV
+  前缀优先，未匹配请求中带 SigV4 Authorization 或 `X-Amz-Algorithm=AWS4-HMAC-SHA256` 的交给 S3，
+  普通路径仍落到前端静态资源。`VFILES_S3_PORT` 仅独立监听模式使用。
+- 默认仍为独立端口模式；WebDAV 自身的 `VFILES_WEBDAV_EMBEDDED` 配置行为不变。
+
 ## 当前工作树补充（PUT/COPY 流式与 multipart 列表内存）
 
 - S3 `PutObject` 无论 Content-Length 是否提供，都将请求体流式传给 blob 存储，不再因未知长度聚合整份对象；

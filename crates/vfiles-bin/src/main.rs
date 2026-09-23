@@ -1266,8 +1266,8 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     let (service_shutdown_tx, service_shutdown_rx) = tokio::sync::watch::channel(false);
 
     // S3 兼容 API（round 2 ✗ 默认关 = VFILES_S3_ENABLED 显式启用 ✗ 关时明示启用法）
-    if config.s3.enabled {
-        build_and_spawn_s3(
+    let embedded_s3 = if config.s3.enabled {
+        let service = build_s3_service(
             &config.s3,
             Arc::clone(&entry_repo_arc),
             std::sync::Arc::new(vfiles_infra_sqlite::SqliteNamespaceRepo::new(pool.clone())),
@@ -1275,14 +1275,19 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
             upload_service.clone(),
             default_namespace_id,
             default_actor_user_id,
-            service_shutdown_rx.clone(),
         )
         .await;
+        if config.s3.embedded {
+            tracing::info!("S3 兼容 API 已挂载到 HTTP 主端口（SigV4 请求分流）");
+            Some(service)
+        } else {
+            spawn_s3_server(service, &config.s3, service_shutdown_rx.clone());
+            None
+        }
     } else {
-        tracing::info!(
-            "S3 兼容 API 未启用（设置 VFILES_S3_ENABLED=true 后重启即可开放 9000 端口）"
-        );
-    }
+        tracing::info!("S3 兼容 API 未启用（设置 VFILES_S3_ENABLED=true 后重启即可开放服务）");
+        None
+    };
 
     // rsync daemon（round 3 ✗ 默认关 = VFILES_RSYNC_ENABLED 显式启用 ✗ 关时明示启用法）
     if config.rsync.enabled {
@@ -1341,7 +1346,17 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
 
     // Build router
     tracing::debug!("Building HTTP router...");
-    let mut app = build_router(app_state);
+    let frontend_for_dispatch = app_state.frontend_assets.clone();
+    let mut app = if let Some(s3_service) = embedded_s3 {
+        vfiles_http::build_router_without_frontend(app_state)
+            .fallback(shared_http_s3_fallback)
+            .layer(axum::Extension(SharedS3Dispatch {
+                service: s3_service,
+                frontend: frontend_for_dispatch,
+            }))
+    } else {
+        build_router(app_state)
+    };
     // 共端口装配（r-new ✓ S1 实证：axum 0.8 nest_service + into_service 原生可用 ✗
     // 异 state 挂入、nest 自动剥前缀 = handlers 零改 ✓ 显式路由优先于 fallback ✓）
     if let Some((_, webdav_app)) = webdav_runtime.clone() {
@@ -2140,12 +2155,10 @@ fn build_and_spawn_rsync(
     });
 }
 
-/// 装配并拉起 S3 专用端口（round 2 ✗ 对称 webdav spawn：bind 在任务内失败 =
-/// r205 式 error 日志降级不拖垮主站 ✓ with_graceful_shutdown 接同一停机 watch ✗
-/// HandleError 包一层按官方 axum 例（Error→Infallible fallback 适配 ✓））。
+/// 装配 S3 服务（独立端口与共端口共用认证、凭证路由和协议实现）。
 // 装配参数天然多（配置/条目仓储/命名空间仓储/工作区/上传/ns/owner/停机 ✗ 打包收益不抵样板）
 #[allow(clippy::too_many_arguments)]
-async fn build_and_spawn_s3(
+async fn build_s3_service(
     cfg: &vfiles_config::S3Config,
     entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
     namespace_repo: std::sync::Arc<dyn vfiles_domain::NamespaceRepo + Send + Sync>,
@@ -2158,8 +2171,7 @@ async fn build_and_spawn_s3(
     >,
     namespace: vfiles_domain::NamespaceId,
     owner: vfiles_domain::UserId,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
-) {
+) -> s3s::service::S3Service {
     // 凭证表（多客户端/轮换 + 只读键 + 命名空间绑定 ✗ 空 = 运行时随机 + warn）
     let keys = load_s3_credentials(cfg);
     let cred_count = keys.len();
@@ -2238,8 +2250,11 @@ async fn build_and_spawn_s3(
     };
     let mut builder = s3s::service::S3ServiceBuilder::new(router);
     builder.set_auth(auth);
-    let service = builder.build();
-    let router = axum::Router::new().fallback_service(axum::error_handling::HandleError::new(
+    builder.build()
+}
+
+fn s3_http_router(service: s3s::service::S3Service) -> axum::Router {
+    axum::Router::new().fallback_service(axum::error_handling::HandleError::new(
         service,
         |err: s3s::HttpError| async move {
             tracing::error!(?err, "S3 服务错误");
@@ -2248,7 +2263,15 @@ async fn build_and_spawn_s3(
                 .body(axum::body::Body::from("Internal Server Error"))
                 .unwrap()
         },
-    ));
+    ))
+}
+
+fn spawn_s3_server(
+    service: s3s::service::S3Service,
+    cfg: &vfiles_config::S3Config,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    let router = s3_http_router(service);
     let addr = cfg.bind_address();
     tracing::info!(addr = %addr, "S3 兼容 API 已拉起（专用端口 ✗ SigV4 静态单对认证）");
     tokio::spawn(async move {
@@ -2270,6 +2293,50 @@ async fn build_and_spawn_s3(
             }
         }
     });
+}
+
+#[derive(Clone)]
+struct SharedS3Dispatch {
+    service: s3s::service::S3Service,
+    frontend: Option<FrontendAssets>,
+}
+
+async fn shared_http_s3_fallback(
+    axum::Extension(dispatch): axum::Extension<SharedS3Dispatch>,
+    request: axum::extract::Request,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    use tower::ServiceExt;
+    let signed_header = request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("AWS4-HMAC-SHA256 "));
+    let signed_query = request
+        .uri()
+        .query()
+        .is_some_and(|q| q.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
+    if signed_header || signed_query {
+        return match dispatch.service.oneshot(request).await {
+            Ok(response) => {
+                let (parts, body) = response.into_parts();
+                axum::http::Response::from_parts(parts, axum::body::Body::new(body))
+            }
+            Err(err) => {
+                tracing::error!(?err, "共端口 S3 服务错误");
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+        };
+    }
+
+    let Some(frontend) = dispatch.frontend else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    let accept_encoding = request
+        .headers()
+        .get(axum::http::header::ACCEPT_ENCODING)
+        .and_then(|v| v.to_str().ok());
+    frontend.serve(request.uri().path(), accept_encoding).await
 }
 
 /// 按配置装配 WebDAV（r110'a ✓ 用户令「默认开启」✓ config 层 auth 防御已守（r109b））。

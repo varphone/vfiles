@@ -80,6 +80,16 @@ pub struct AppState {
 }
 
 pub fn build_router(state: AppState) -> Router<()> {
+    build_router_inner(state, true)
+}
+
+/// Build the HTTP router without the frontend catch-all so an outer protocol dispatcher can
+/// handle unmatched paths first (for example, path-style S3 requests on the same listener).
+pub fn build_router_without_frontend(state: AppState) -> Router<()> {
+    build_router_inner(state, false)
+}
+
+fn build_router_inner(state: AppState, serve_frontend_fallback: bool) -> Router<()> {
     let mut router = Router::new()
         .route(
             "/s/{code}",
@@ -87,10 +97,11 @@ pub fn build_router(state: AppState) -> Router<()> {
         )
         .nest("/api", routes::api_router());
 
-    if state
-        .frontend_assets
-        .as_ref()
-        .is_some_and(FrontendAssets::is_available)
+    if serve_frontend_fallback
+        && state
+            .frontend_assets
+            .as_ref()
+            .is_some_and(FrontendAssets::is_available)
     {
         router = router.fallback(serve_frontend);
     }
