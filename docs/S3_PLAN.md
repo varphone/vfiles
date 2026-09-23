@@ -460,6 +460,7 @@
 | 项 | 决策 | 依据 |
 | --- | --- | --- |
 | 端口 | **默认 HTTP 共端口**；`VFILES_S3_EMBEDDED=false` 时独立监听默认 9000（`VFILES_S3_PORT`） | SigV4 请求分流，保留 path-style 桶/对象寻址 |
+| HTTP 路径 | **当前挂载在 `/`，不支持 endpoint 前缀 `/s3`** | 共享监听器将已签名请求交给 s3s；前缀不能由普通 `nest_service` 剥离，因为 SigV4 canonical URI 必须与客户端签名时的原始 URI 一致 |
 | 桶 | 单虚拟 **`default`**，严格语义（他桶 → NoSuchBucket 404 XML） | 客户端列桶自配对（ListBuckets=[default] ✓） |
 | 认证 | **SigV4 静态单对**（`VFILES_S3_ACCESS_KEY/SECRET_KEY`，缺省 uuid 随机 + warn 打印 access，secret 不落日志） | s3s 内建验签 + `EnvAuth` 十五行自写（SimpleAuth 也 pub 可换） |
 | 启用 | **默认开**，`VFILES_S3_ENABLED=false` 显式关 | 零配置 listener 可用；生产应设置固定凭证 |
@@ -493,6 +494,7 @@ export VFILES_S3_ENABLED=true          # 默认开；生产建议显式固定配
 export VFILES_S3_ACCESS_KEY=AKIAVFILES0001   # 缺省 = 随机 + warn
 export VFILES_S3_SECRET_KEY=...              # 缺省 = 随机
 # endpoint = http://<host>:9000   bucket = default   path-style
+# 当前不要在 endpoint 后追加 /s3；服务端尚未实现保留原始签名 URI 的前缀转发
 # 客户端：rclone s3 / Cyberduck / AWS CLI / mountpoint-for-s3 全通
 # 通用字段/值：--provider=MinIO --endpoint=http://host:9000 --region 任意
 ```
