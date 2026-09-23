@@ -1,4 +1,35 @@
-# rsync 协议 daemon（r2 选型 → … → r7 编码法 → **r8 对答表+差分位全定** ✗ 实装 r9 无猜）
+# rsync 协议 daemon（r2 选型 → … → r8 对答表 → **r9 协议 30 实装 + 真 CLI RC0 列文件** ✗ delta r10）
+
+## 状态（r9 末 · 权威源驱动实装 = 猜测层清零 ✗ 真 `rsync --list-only` RC0 兑现）
+
+- **实装兑现（终极探针 ✔）**：真 `rsync 3.2.7` 对 `rsync://127.0.0.1:8874/files/` 全链通过：
+  - 列模块 `rsync rsync://host:port/` → `files` RC0
+  - `--list-only …/files/` → 4 行 RC0（含中文名 `说明.md`）
+  - `-r --list-only …/files/aka/` → 9 行嵌套树 RC0（`foo/bar/hallo/*.tar.xz` 全相对路径名）
+  - 未知模块 → `@ERROR: Unknown module 'nope'` + code5 = **逐字同官方**
+  - 下载 `rsync -r …/hallo/ /tmp/dl/` → **code12**（delta 未实现 = r10 首件）
+- **五处猜测校正**（`git clone` 官方源后逐条对源码）：
+  1. mux 头 `[len_lo,len_mid,len_hi,7]`，**len = payload 长**（≤16MB，非 255 ✗ 旧 assert 债清）
+  2. `81 FE` = `compat_flags` **varint**（510=0x1FE）；客户端 `-e` 串含 `v` → `CF_VARINT_FLIST_FLAGS`
+     → flist xflags 必须走 **varint**（0x9A→`80 9A`、0xFE→`80 FE`）
+  3. 校验和协商 = 双向 **vstring**（服务端 `#`=len 35 + `"xxh128 … sha1 none"`，无换行）
+  4. `46 19 14 67` = **`checksum_seed`**（`time^pid`）非字面常量 → 随机生成
+  5. 收尾 = 收 3×NDX_DONE → 发 2×NDX_DONE + 终结 NDX_DONE → 5×varlong30(3) 统计 → 末 NDX_DONE
+- **实装结构**（`crates/vfiles-rsync/src/lib.rs` 全重写，1012 行）：
+  - wire 原语 `write_varint`/`write_varlong`（含 >8MB extra 域）/`write_vstring`/mux 帧 = io.c 移植
+  - `encode_flist`：xflags（`SAME_UID|SAME_GID` 恒置 + `.` 置 `TOP_DIR` + `SAME_MODE/TIME` 差分、
+    **不置 NO_CONTENT_DIR** = 真机两例实证）→ l2+全名 → length(varlong3) → [mtime varlong4] →
+    [mode LE4]；收尾 `00 00`
+  - L1 `handle_conn`：banner → 模块列表/选择/P04 → args（NUL 双尾 + `-e` 串提取）→
+    compat_flags → 协商 vstring → seed → filter list（mux 解复用）→ flist → NDX 收尾；
+    数据源 = **闭包注入**（duplex 单测零 domain 依赖）
+  - L2 `collect_flat`：默认 ns 深度优先前序 + 子路径前缀剥离；**不置 CF_INC_RECURSE** = 单 flist
+    全量（规避增量递归面，客户端读到 `00 00` 即止 ✓ 真机已验证）
+  - bin 装配：`build_and_spawn_rsync` 传 `entry_repo` + 默认 ns（与 WebDAV/S3 同源）
+- **门禁**：`cargo test -p vfiles-rsync` 10/10（真机转录逐字节 golden ×2 + 整链 duplex + varint/
+  varlong/vstring 移植物）× `cargo test --workspace` 全绿 × clippy 零告警 × fmt 干净 × bin build 绿。
+- **r10 清单**：sender **delta**（`send_files` 文件请求 → `sum_head` + token 流 literal/匹配 →
+  真 CLI 文件落地字节比对）→ 收端 push（复用 upload 链）→ secrets 认证 → `--checksum`/压缩面。
 
 ## 状态（r8 末 · 双向对答表提取 + preserve/mode 语义解 = 实装钥匙全齐零猜）
 

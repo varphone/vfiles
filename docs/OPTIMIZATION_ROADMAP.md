@@ -2567,6 +2567,37 @@
 
 > 目录（102 节 ✓ r99 生成）：\n- **4.97x** 空值占位归一 + 语义表（round 97，显示格式轴收官）\n- **4.96x** 显示格式归一 + size 怪形修复（round 96）\n- **4.95x** 底栏层级静态取证 + 探针路线转轨（round 95）\n- **4.99** bundle 预算守护（round 93，性能轴开辟）\n- **4.98** 断点归一变化区复核（round 92，零回归收尾）\n- **4.97** 响应式断点归一（round 91，响应轴收官）\n- **4.96** 十轮增量小节（round 90）+ 节律 sweep 留档\n- **4.95** 注册段浏览器线闭合（round 89，#35 套路首兑现）\n- **4.94** 稳式选择器 + 注册段收窄 + 三债清偿（round 88）\n- **4.93** 行内错误族推广至认证表单（round 87）\n- **4.92** 行内错误 + 字段级 aria 链（round 86）\n- **4.91** 交互轴完备性矩阵（round 85，**双轴完备里程碑**）\n- **4.90** 完备性总评 + elevation 轴收官（round 84）\n- **4.89** 插图族判档 + 工具语 32 条（round 83）\n- **4.88** 工具语汇编单页（round 82）\n- **4.87** 快捷键表双向终审（round 81）\n- **4.86** 十轮增量小节（round 80）+ 节律 sweep 留档\n- **4.85** HUD 超时淡出质感（round 79）\n- **4.84** 中央浮动 HUD（round 78，三轮一主题收官）\n- **4.83** 定位前缀 HUD：勘误 + 测试保障轮（round 77）\n- **4.82** Esc 五层链全链走查（round 76，证据矩阵收口）\n- **4.81** 全屏键 F 与 Esc 单所有者链定稿（round 75）\n- **4.80** 预览补充键 PageUp/PageDown（round 74）\n- **4.79** 文案语调统一评审（round 73）\n- **4.78** 平移拖拽复核（round 72，验证轮）\n- **4.77** 预览键盘缩放：五连侦查链与 ref 死绑定终修（round 71）\n- **4.76** 十轮增量小节（round 70）+ 节律 sweep 留档\n- **4.75** 错误横幅 aria 接线（round 69）\n- **4.74** 表单族终审（round 68）\n- **4.73** 通知族终审（round 67，验证轮）\n- **4.72** 触屏命中区审计与补全（round 66）\n- **4.71** 并排 diff 视图键 U/S（round 65）\n- **4.70** 历史对话框键盘动线终审（round 64，验证轮）\n- **4.69** 高级搜索面板键盘走查（round 63）\n- **4.68** 搜索框键盘动线补全（round 62）\n- **4.67** 落子回执动效（round 61）\n- **4.66** 十轮增量小节（round 60）+ 节律 sweep 留档\n- **4.65** 三态拖拽 chip（round 59，chip 三部收官）\n- **4.64** 两段式拖拽 chip（round 58）\n- **4.63** 光标跟随拖拽 chip（round 57）\n- **4.62** 拖放动线矩阵终审（round 56，验证轮）\n- **4.61** 覆盖上传交互提案 + reduced-motion 约定入档（round 55）\n- **4.60** transition 降级映射表（round 54，reduced-motion 二部收官）\n- **4.59** reduced-motion 动画清单补全 + 可见实例工具语（round 53）\n- **4.58** diff 恢复入口 + 插图族评审（round 52）\n- **4.57** 恢复版本动线终审 + 产品认知修正（round 51，验证轮）\n- **4.56** 里程碑小结（round 50）+ 组件语言速查\n- **4.55** 悬停态终审 + 设计令牌汇总页（round 49）\n- **4.54** 图标规格梳理（round 48，视觉轴数据化三部曲收官）\n- **4.53** 排印轴梳理（round 47）\n- **4.52** 聚焦环家族终审（round 46，验证轮）\n- **4.51** 圆角语义统一 + 间距节奏决策（round 45）\n- **4.50** 骨架家族终审（round 44，验证轮）\n- **4.49** 移动端骨架形状语义对齐（round 43，布局轴收官）\n- **4.48** diff 侧并排视图（round 42，三部曲收官）\n- **4.47** diff 词级高亮（round 41）\n- **4.46** 触屏按压反馈补全（round 40）\n- **4.45** 行染色去圆角（用户反馈插曲，round 39 之后）\n- **4.44** 动效曲线统一（M3 easing 收尾，round 39）\n- **4.43** 列宽回退内容自适应 + 移除拖拽调宽（用户反馈插曲，round 38 之后）\n- **4.42** diff 行号槽（round 38）\n- **4.41** 版本对比（diff）视图重构（round 37）\n- **4.40** 图表色板视觉评审 + check 聚合（round 36）\n- **4.39** 截图回归脚本固化（round 35）\n- **4.38** 双主题整页视觉回归（round 34）\n- **4.37** 历史对话框比例细化 + 菜单条目语言统一（round 33）\n- **4.36** 键盘导航 × sticky 表头滚动缓冲（round 32）\n- **4.35** 列宽默认态修复（用户反馈插曲，位于 round 31 之后）\n- **4.34** 网格骨架几何对齐 + 表单同族复核（round 31）\n- **4.33** 代码高亮与浮层语义色终检（round 30）\n- **4.32** fixed 布局回归核查 + SkeletonList 宿主对齐（round 29）\n- **4.31** 列宽拖拽修复（用户反馈插曲，位于 round 28 之后）\n- **4.30** 半透明令牌误用清查（round 28）\n- **4.29** 表头悬停透底修复（用户反馈插曲，位于 round 27 之后）\n- **4.28** 骨架屏与真实内容尺寸对齐（round 27）\n- **4.27** 批量操作条审计与开发约定落档（round 26）\n- **4.26** 登录页与预览/对话框头部的家族对齐（round 25）\n- **4.25** 树目录落点提示（round 24）\n- **4.24** 操作反馈文案上下文化（round 23）\n- **4.23** 死样式扫描脚本固化（round 22）\n- **4.22** 窄桌面响应式与骨架屏深色复核（round 21）\n- **4.21** 顶栏节奏审计与账户按钮对齐（round 20）\n- **4.20** 分段控件与模式切换细化（round 19）\n- **4.19** 次级面板框体收尾（round 18）\n- **4.18** Bulma 语义色全面对齐令牌（round 17）\n- **4.17** 移动端操作条与文本灰令牌（round 16）\n- **4.16** 死样式全仓扫描收尾（round 15）\n- **4.15** 空状态审计与死样式清理（round 14）\n- **4.14** 拖放目标提示（round 13）\n- **4.13** 组件字面色值清查（round 12）\n- **4.12** 拖起态反馈（round 11）\n- **4.11** 拖拽落点反馈 + 高级搜索面板对齐（round 10）\n- **4.10** 下拉与对话框按钮一致性（用户反馈插曲，位于 round 9 之后）\n- **4.9** 状态胶囊跨页统一 + 软背景对比实测（round 9）\n- **4.8** accent 文字用色语义修正（round 8）\n- **4.7** 文本对比度系统审计（round 7）\n- **4.6** 深色主题 tonal elevation（round 6）\n- **4.5** 搜索框主流化（round 5）\n- **4.4** 工具页共享外壳（round 4）\n- **4.3** sticky 列头修复 + M3 入场动效（round 3）\n- **4.2** 列表行状态语言 + 配色迁移收尾（round 2）\n- **4.1** 控件语言与配色现代化（round 1）
 
+### 4.207x rsync 协议 30 实装 + 真 CLI RC0 列文件（round 9/256 ✨ 权威源驱动、猜测层清零）
+
+- **权威源到手**：`git clone --depth 1 RsyncProject/rsync`（30s 内成 ✓ r6 网络双败后的通道不再
+  复现）→ `io.c`/`flist.c`/`compat.c`/`clientserver.c`/`main.c` 本地可查 = **r7/r8 的五个猜测
+  全部校正**：① mux 头 len = **payload 长**（非 total）② `81 FE` = compat_flags varint（客户端
+  `-e` 串 `v` 位 → flist xflags 走 **varint**）③ `#…` = 服务端 checksum 清单 **vstring**（len 前缀
+  `0x23`=35、无换行）④ `46 19 14 67` = **checksum_seed**（time^pid）非字面常量 ⑤ 收尾 = 3×NDX_DONE
+  + 5×varlong30(3) 统计 + 末 NDX_DONE 问候。
+- **对照法再证**：strace 真 rsync 3.2.7（`--protocol=30`）对**官方 daemon** 抓 `--list-only` 与
+  `-r --list-only` 两条 flist 全字节 → 非递归 44B payload、递归 69B（含增量 flist）逐字段解码入
+  golden 认知；确认 **不置 NO_CONTENT_DIR**（真机两例均无）、递归嵌套名 = **全相对路径**
+  （`sub/b.txt`）、mode = 原生 stat LE。
+- **实装**（`crates/vfiles-rsync/src/lib.rs` 全重写）：`write_varint`/`write_varlong`/`write_vstring`
+  = io.c 逐行移植（含 >8MB 大值 extra 域 ✗ 旧 assert 债清）· `encode_flist` = flist.c 字段序 +
+  XMIT 位表 + varint/byte/shortint 三态 · L1 状态机 = banner → 模块 → args（NUL 双尾 + `-e` 串
+  提取）→ compat_flags → 协商 vstring 双向 → seed → filter list（mux 解复用）→ flist →
+  NDX 收尾 · L2 `collect_flat` = 默认 ns 深度优先前序（**不置 INC_RECURSE** = 单 flist 全量，
+  规避增量递归面）。
+- **真机验收（终极探针兑现）**：
+  | 探针 | 结果 |
+  | --- | --- |
+  | `rsync rsync://127.0.0.1:8874/`（列模块） | `files` RC0 ✓ |
+  | `rsync --list-only …/files/` | 4 行（含中文名）RC0 ✓ |
+  | `rsync -r --list-only …/files/aka/` | 9 行嵌套树（.zip/.tar.xz/UTF-8）RC0 ✓ |
+  | `rsync …/nope`（未知模块） | `@ERROR: Unknown module 'nope'` + code5 **逐字同官方** ✓ |
+  | `rsync -r …/files/aka/foo/bar/hallo/ /tmp/dl/` | **code12**（delta 未实现 = r10 目标）✗ |
+- **门禁**：`cargo test -p vfiles-rsync` 10/10（含真机转录逐字节 golden ×2 + 整链 duplex）·
+  `cargo test --workspace` 全绿 · clippy lib 零告警 · fmt 干净 · bin 构建绿。
+- **r10 清单**：sender delta（`send_files` 文件请求 → sum_head + token 流）→ 真 CLI 文件落地 →
+  收端 push → secrets 认证 → `--checksum`/压缩。
+
 ### 4.206x rsync 对答表 + 差分位全定（round 8/256 ✨ strace 双向流提取、实装钥匙零猜终章）
 
 - **对答表提取**（资产 = `golden/wire_dialogue_r8.md`）：解析 strace 八进制转义按 fd3 分

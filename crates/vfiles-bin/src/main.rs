@@ -1,7 +1,6 @@
 mod import_cmd;
 
 use anyhow::{anyhow, bail};
-use vfiles_s3::VfilesS3;
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -23,6 +22,7 @@ use vfiles_infra_sqlite::{
     SqliteAuditLogRepo, SqliteFavoriteRepo, SqliteHealthProbe, SqliteMigrations, SqlitePoolFactory,
     repo::*,
 };
+use vfiles_s3::VfilesS3;
 
 #[derive(Debug, Parser)]
 #[command(name = "vfiles")]
@@ -1277,14 +1277,23 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
             service_shutdown_rx.clone(),
         );
     } else {
-        tracing::info!("S3 兼容 API 未启用（设置 VFILES_S3_ENABLED=true 后重启即可开放 9000 端口）");
+        tracing::info!(
+            "S3 兼容 API 未启用（设置 VFILES_S3_ENABLED=true 后重启即可开放 9000 端口）"
+        );
     }
 
     // rsync daemon（round 3 ✗ 默认关 = VFILES_RSYNC_ENABLED 显式启用 ✗ 关时明示启用法）
     if config.rsync.enabled {
-        build_and_spawn_rsync(&config.rsync, service_shutdown_rx.clone());
+        build_and_spawn_rsync(
+            &config.rsync,
+            Arc::clone(&entry_repo_arc),
+            default_namespace_id,
+            service_shutdown_rx.clone(),
+        );
     } else {
-        tracing::info!("rsync daemon 未启用（设置 VFILES_RSYNC_ENABLED=true 后重启即可开放 873 端口）");
+        tracing::info!(
+            "rsync daemon 未启用（设置 VFILES_RSYNC_ENABLED=true 后重启即可开放 873 端口）"
+        );
     }
 
     // Create app state
@@ -1376,7 +1385,6 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
 
     // HTTP 与 FTP 共享同一个停机信号：任意一个收到 SIGTERM/SIGINT 都开始优雅停机
 
-
     // WebDAV spawn（r110'a ✓ 降级式 = FTP 同款韧性（端口占用不拖垮站点 ✓））
     let webdav_handle = match webdav_runtime {
         Some((settings, application)) => {
@@ -1396,7 +1404,9 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
                 ) {
                     Ok(()) => {
                         // 调度式文案（r205 ✓ bind 成功以「监听就绪」为权威 ✗ "已启用"曾在 bind 失败时误导）
-                        tracing::info!("WebDAV 监听任务已调度: {bind}（成功确认行 = 「WebDAV 监听就绪」）");
+                        tracing::info!(
+                            "WebDAV 监听任务已调度: {bind}（成功确认行 = 「WebDAV 监听就绪」）"
+                        );
                         Some(())
                     }
                     Err(err) => {
@@ -1616,7 +1626,14 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
     ) -> vfiles_domain::DomainResult<()> {
         // r5 薄转发 ✗ 树逻辑在 services.copy_entries（blob 复用 + 递归 + r10 覆盖链 ✓）
         self.workspace
-            .copy_entries(ns, source, destination, Some("WebDAV COPY"), user_id, overwrite)
+            .copy_entries(
+                ns,
+                source,
+                destination,
+                Some("WebDAV COPY"),
+                user_id,
+                overwrite,
+            )
             .await
     }
 
@@ -1644,11 +1661,7 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
         ns: &vfiles_domain::NamespaceId,
         path: &vfiles_domain::NormalizedPath,
     ) -> vfiles_domain::DomainResult<
-        Option<(
-            Box<dyn vfiles_domain::ReadSeek + Send + Unpin>,
-            String,
-            u64,
-        )>,
+        Option<(Box<dyn vfiles_domain::ReadSeek + Send + Unpin>, String, u64)>,
     > {
         // 流式直通（r201 ✓ reader 不落内存 ✓ open_file 同链）
         let file = match self.workspace.open_file(ns, path, None).await {
@@ -1675,7 +1688,11 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
             Some((dir, name)) => (dir.to_string(), name.to_string()),
             None => (String::new(), full.to_string()),
         };
-        let filename = if filename.is_empty() { "upload".to_string() } else { filename };
+        let filename = if filename.is_empty() {
+            "upload".to_string()
+        } else {
+            filename
+        };
         let parent = vfiles_domain::NormalizedPath::new(&parent_str).map_err(|err| {
             vfiles_domain::DomainError::Validation {
                 message: format!("路径非法：{err}"),
@@ -1717,10 +1734,7 @@ struct EnvAuth {
 
 #[async_trait::async_trait]
 impl s3s::auth::S3Auth for EnvAuth {
-    async fn get_secret_key(
-        &self,
-        access_key: &str,
-    ) -> s3s::S3Result<s3s::auth::SecretKey> {
+    async fn get_secret_key(&self, access_key: &str) -> s3s::S3Result<s3s::auth::SecretKey> {
         if access_key == self.access_key {
             Ok(self.secret_key.clone())
         } else {
@@ -1732,8 +1746,13 @@ impl s3s::auth::S3Auth for EnvAuth {
 /// 装配并拉起 rsync daemon 专用端口（round 3 ✗ RSYNC_PLAN：纯 TCP 直协议（无 axum）✗
 /// 协议件在 vfiles-rsync crate（duplex 黄金单测可打）✗ bind 失败 r205 式降级不拖垮主站 ✓
 /// accept loop 用 select 接停机 watch（shutdown → break + 关 listener））。
+///
+/// r9：数据源 = 默认命名空间条目树（与 WebDAV/S3 同源 `entry_repo`），按请求路径/递归深度
+/// 由 `vfiles_rsync::collect_flat` 枚举后交协议层编码。
 fn build_and_spawn_rsync(
     cfg: &vfiles_config::RsyncConfig,
+    entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
+    namespace: vfiles_domain::NamespaceId,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     let addr = cfg.bind_address();
@@ -1741,7 +1760,7 @@ fn build_and_spawn_rsync(
     tracing::info!(
         addr = %addr,
         module = %module,
-        "rsync daemon 已拉起（专用端口 ✗ 匿名只读单模块 ✗ secrets 密码 = r4 债）"
+        "rsync daemon 已拉起（专用端口 ✗ 匿名只读单模块 ✗ 收端 push = 记档债）"
     );
     tokio::spawn(async move {
         match tokio::net::TcpListener::bind(&addr).await {
@@ -1751,10 +1770,18 @@ fn build_and_spawn_rsync(
                         match accepted {
                             Ok((stream, peer)) => {
                                 let module = module.clone();
+                                let repo = std::sync::Arc::clone(&entry_repo);
+                                let ns = namespace.clone();
                                 tokio::spawn(async move {
-                                    if let Err(err) =
-                                        vfiles_rsync::handle_conn(stream, &module).await
-                                    {
+                                    let res = vfiles_rsync::handle_conn(stream, &module, |req| {
+                                        let repo = std::sync::Arc::clone(&repo);
+                                        let ns = ns.clone();
+                                        async move {
+                                            vfiles_rsync::collect_flat(&*repo, &ns, &req).await
+                                        }
+                                    })
+                                    .await;
+                                    if let Err(err) = res {
                                         tracing::debug!(%peer, error = %err, "rsync 连接结束");
                                     }
                                 });
@@ -1802,12 +1829,27 @@ fn build_and_spawn_s3(
             access_key = %a,
             "S3 未配置密钥对：已随机生成（打印 access ✗ secret 见启动调试 env；生产请设 VFILES_S3_ACCESS_KEY/SECRET_KEY）"
         );
-        (a, s3s::auth::SecretKey::from(uuid::Uuid::new_v4().simple().to_string()))
+        (
+            a,
+            s3s::auth::SecretKey::from(uuid::Uuid::new_v4().simple().to_string()),
+        )
     } else {
-        (cfg.access_key.clone(), s3s::auth::SecretKey::from(cfg.secret_key.clone()))
+        (
+            cfg.access_key.clone(),
+            s3s::auth::SecretKey::from(cfg.secret_key.clone()),
+        )
     };
-    let s3 = VfilesS3 { workspace, upload, entry_repo, namespace, owner };
-    let auth = EnvAuth { access_key, secret_key };
+    let s3 = VfilesS3 {
+        workspace,
+        upload,
+        entry_repo,
+        namespace,
+        owner,
+    };
+    let auth = EnvAuth {
+        access_key,
+        secret_key,
+    };
     let mut builder = s3s::service::S3ServiceBuilder::new(s3);
     builder.set_auth(auth);
     let service = builder.build();
@@ -1861,12 +1903,13 @@ fn build_webdav_runtime(
         vfiles_infra_sqlite::FsBlobStore,
         vfiles_infra_sqlite::FsUploadStore,
     >,
-    audit: Option<
-        std::sync::Arc<dyn Fn(vfiles_domain::types::NewAuditLog) + Send + Sync>,
-    >,
+    audit: Option<std::sync::Arc<dyn Fn(vfiles_domain::types::NewAuditLog) + Send + Sync>>,
     embedded: bool,
     mount_path: String,
-) -> Option<(vfiles_webdav::WebdavSettings, vfiles_webdav::WebdavApplication)> {
+) -> Option<(
+    vfiles_webdav::WebdavSettings,
+    vfiles_webdav::WebdavApplication,
+)> {
     if !enabled {
         return None;
     }
@@ -2005,7 +2048,7 @@ fn build_ftp_runtime(
 ///   即可分辨 → 定信号源方向 ✓）
 /// - **SIGHUP 纳入优雅停机**（此前未监听 = 默认硬杀无痕 ✗✗ 现优雅 + 留痕 ✓）
 async fn shutdown_signal() {
-    use tokio::signal::unix::{signal, SignalKind};
+    use tokio::signal::unix::{SignalKind, signal};
 
     #[cfg(unix)]
     let signal_name = {
