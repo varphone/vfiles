@@ -41,6 +41,36 @@ def main():
         config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 1}),
     )
 
+    # Conditional DeleteObjects fields were added to AWS's S3 model after the
+    # botocore version shipped by some distributions. Keep this probe usable
+    # with those older SDKs while emitting the RFC 822 timestamp format used
+    # by the S3 REST XML API.
+    delete_objects = s3.meta.service_model.operation_model("DeleteObjects")
+    object_shape = (
+        delete_objects.input_shape.members["Delete"]
+        .members["Objects"].member
+    )
+    service_model = s3.meta.service_model
+    for name, shape_name in (
+        ("ETag", "ETag"),
+        ("LastModifiedTime", "LastModified"),
+        ("Size", "ContentLength"),
+    ):
+        if name not in object_shape.members:
+            shape = service_model.shape_for(shape_name)
+            if name == "LastModifiedTime":
+                shape.serialization["timestampFormat"] = "rfc822"
+            object_shape.members[name] = shape
+    get_object_shape = service_model.operation_model("GetObject").input_shape
+    for operation_name, names in (
+        ("PutObject", ("IfMatch", "IfNoneMatch")),
+        ("DeleteObject", ("IfMatch",)),
+    ):
+        input_shape = service_model.operation_model(operation_name).input_shape
+        for name in names:
+            if name not in input_shape.members:
+                input_shape.members[name] = get_object_shape.members[name]
+
     buckets = [b["Name"] for b in s3.list_buckets()["Buckets"]]
     check("boto ListBuckets", buckets == ["default"], buckets)
     # 桶级探测（r25）：rclone / aws-cli 连接检查路径
