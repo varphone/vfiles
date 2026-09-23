@@ -16,7 +16,7 @@
 | MKCOL | ✅ r110' | 201/409 ✓ | - |
 | MOVE | ✅ **r11/r12 覆盖语义；原子替换补强** | 201 新建 / **412**（F+存在）/ **204**（T + 缺省=T）✓；Overwrite T 目标子树删除与源路径更新在 EntryRepo 单 SQLite 事务中提交，事务冲突回滚完整；提交后释放 blob 引用并记录删除/改名快照 | 客户端矩阵继续扩充 |
 | **COPY** | ✅ **r5 八式实证** | 递归子树 + blob 零字节复用（create_version upsert ref++ ✓）+ **审计落表** ✓；dst存在/自复制/自子树 = 409 ✓ dest缺 = 400 ✓ Allow 入 ✓ **Overwrite 全语义 ✅ r10**（T=删旧重建 204 ✓ F=412 ✓ 缺省=T ✓ 目录覆盖 204+旧消失 ✓ 审计 ✓）| - |
-| **PROPPATCH** | ✅ **r6 七式实证** | propertyupdate 解析（roxmltree 按序 ✓）+ 每操作 propstat 200/403 ✓ **displayname set = 真改名**（move 单源直路径复用 ✓ PROPFIND 新名可见 ✓）+ 审计落表 ✓ Allow 入 ✓ **自定义 k/v ✅ r13**（0006 表 + FK 级联 + set/remove 存在判定 + PROPFIND 读回（单目标+children 批量）+ allprop/propname 并集 ✗ 七式实证 ✓ **r6 债清** ✗ local-name 简式（ns URI 简式记档）| - |
+| **PROPPATCH** | ✅ **r6 七式实证** | propertyupdate 解析（roxmltree 按文档顺序 ✓）+ 每操作 propstat 200/403 ✓ **displayname set = 真改名** ✓ + 自定义属性持久化 ✓；属性名使用 namespace URI + local-name，旧键迁移保留原 DAV 命名空间响应 | - |
 | LOCK / UNLOCK | ✅ r109a | 无限期锁表 + 423 ✓；**Timeout 有限支持 / 锁刷新 = 缺** | P1 |
 | POST | ➖ | RFC 无定义（405 ✓ 合规）| - |
 

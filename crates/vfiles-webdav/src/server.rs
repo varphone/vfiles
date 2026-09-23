@@ -1593,7 +1593,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             for op in ops {
                 match &op {
                     crate::response::PropOp::Set { name, value }
-                        if name == "displayname"
+                        if crate::response::is_dav_property(name, "displayname")
                             && !value.is_empty()
                             && !value.contains('/')
                             && !rename_failed =>
@@ -1631,42 +1631,41 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     }
                     crate::response::PropOp::Remove { name } => {
                         // r13 remove：自定义存在 → 删 200 / 不存在 → 403（r6 恒 403 升级）
-                        let removed =
-                            if crate::response::PREDEFINED_READONLY.contains(&name.as_str()) {
-                                false
-                            } else {
-                                match app_ref
-                                    .entry_repo
-                                    .find_by_path(&ns, &path)
-                                    .await
-                                    .ok()
-                                    .flatten()
-                                {
-                                    Some(e) => {
-                                        let props = app_ref
+                        let removed = if crate::response::is_predefined_readonly(name) {
+                            false
+                        } else {
+                            match app_ref
+                                .entry_repo
+                                .find_by_path(&ns, &path)
+                                .await
+                                .ok()
+                                .flatten()
+                            {
+                                Some(e) => {
+                                    let props = app_ref
+                                        .entry_repo
+                                        .list_entry_properties(&[e.id])
+                                        .await
+                                        .unwrap_or_default();
+                                    let exists = props
+                                        .get(&e.id)
+                                        .map(|v| v.iter().any(|(n, _)| n == name))
+                                        .unwrap_or(false);
+                                    exists
+                                        && app_ref
                                             .entry_repo
-                                            .list_entry_properties(&[e.id])
+                                            .remove_entry_property(&e.id, name)
                                             .await
-                                            .unwrap_or_default();
-                                        let exists = props
-                                            .get(&e.id)
-                                            .map(|v| v.iter().any(|(n, _)| n == name))
-                                            .unwrap_or(false);
-                                        exists
-                                            && app_ref
-                                                .entry_repo
-                                                .remove_entry_property(&e.id, name)
-                                                .await
-                                                .is_ok()
-                                    }
-                                    None => false,
+                                            .is_ok()
                                 }
-                            };
+                                None => false,
+                            }
+                        };
                         results.push((op, removed));
                     }
                     crate::response::PropOp::Set { name, value }
-                        if name != "displayname"
-                            && !crate::response::PREDEFINED_READONLY.contains(&name.as_str())
+                        if !crate::response::is_dav_property(name, "displayname")
+                            && !crate::response::is_predefined_readonly(name)
                             && !value.is_empty() =>
                     {
                         // r13 自定义 k/v 写（非预定义只读集 ✗ 预定义 → 兜底 403 ✓）

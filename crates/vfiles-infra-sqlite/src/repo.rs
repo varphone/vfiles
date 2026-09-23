@@ -7024,6 +7024,43 @@ mod webdav_lock_repo_tests {
     use camino::Utf8PathBuf;
 
     #[tokio::test]
+    async fn property_namespace_migration_preserves_legacy_dav_name() {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-property-namespace-migration-test-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        sqlx::query(
+            "CREATE TABLE entry_properties (entry_id TEXT, prop_name TEXT, prop_value TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .expect("legacy properties table should be created");
+        sqlx::query("INSERT INTO entry_properties VALUES ('entry', 'display-label', 'value')")
+            .execute(&pool)
+            .await
+            .expect("legacy property should be inserted");
+
+        sqlx::raw_sql(include_str!(
+            "../migrations/0011_entry_property_namespaces.sql"
+        ))
+        .execute(&pool)
+        .await
+        .expect("property namespace migration should execute");
+        let name: String = sqlx::query_scalar("SELECT prop_name FROM entry_properties")
+            .fetch_one(&pool)
+            .await
+            .expect("migrated property should be queryable");
+        assert_eq!(name, "DAV:\u{001f}display-label");
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
     async fn lock_expiry_migration_preserves_legacy_expiry_time() {
         let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
             "vfiles-webdav-lock-migration-test-{}.db",

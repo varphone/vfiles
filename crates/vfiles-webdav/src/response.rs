@@ -19,6 +19,85 @@ pub const PREDEFINED_READONLY: [&str; 9] = [
     "lockdiscovery",
 ];
 
+const PROPERTY_NAME_SEPARATOR: char = '\u{001f}';
+
+/// Storage key for an XML property name. XML names are identified by both parts.
+pub fn property_key(namespace: Option<&str>, local_name: &str) -> String {
+    format!(
+        "{}{PROPERTY_NAME_SEPARATOR}{local_name}",
+        namespace.unwrap_or("")
+    )
+}
+
+pub fn is_dav_property(name: &str, local_name: &str) -> bool {
+    name == property_key(Some("DAV:"), local_name)
+}
+
+pub fn is_predefined_readonly(name: &str) -> bool {
+    PREDEFINED_READONLY
+        .iter()
+        .any(|local_name| is_dav_property(name, local_name))
+}
+
+fn property_parts(name: &str) -> (&str, &str) {
+    name.split_once(PROPERTY_NAME_SEPARATOR)
+        .unwrap_or(("DAV:", name))
+}
+
+fn append_property_name(out: &mut String, name: &str, self_closing: bool) {
+    let (namespace, local_name) = property_parts(name);
+    if namespace == "DAV:" {
+        out.push_str("<D:");
+        out.push_str(local_name);
+        if self_closing {
+            out.push_str("/>");
+        } else {
+            out.push('>');
+        }
+    } else if namespace.is_empty() {
+        out.push('<');
+        out.push_str(local_name);
+        if self_closing {
+            out.push_str("/>");
+        } else {
+            out.push('>');
+        }
+    } else {
+        out.push_str("<X:");
+        out.push_str(local_name);
+        out.push_str(" xmlns:X=\"");
+        out.push_str(&escape_xml(namespace));
+        if self_closing {
+            out.push_str("\"/>");
+        } else {
+            out.push_str("\">");
+        }
+    }
+}
+
+fn append_property_end(out: &mut String, name: &str) {
+    let (namespace, local_name) = property_parts(name);
+    if namespace == "DAV:" {
+        out.push_str("</D:");
+    } else if namespace.is_empty() {
+        out.push_str("</");
+    } else {
+        out.push_str("</X:");
+    }
+    out.push_str(local_name);
+    out.push('>');
+}
+
+fn canonical_stored_property_key(name: &str) -> String {
+    if name.contains(PROPERTY_NAME_SEPARATOR) {
+        name.to_string()
+    } else {
+        // Legacy rows stored only the local name; preserve their old DAV-style
+        // rendering while new properties retain their namespace URI.
+        property_key(Some("DAV:"), name)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PropMode {
     /// 无体 / `<allprop/>` → 属性全集。
@@ -45,22 +124,24 @@ pub fn parse_propertyupdate(body: &str) -> Result<Vec<PropOp>, ()> {
     }
     let doc = roxmltree::Document::parse(body).map_err(|_| ())?;
     let root = doc.root_element();
-    if root.tag_name().name() != "propertyupdate" {
+    if root.tag_name().namespace() != Some("DAV:") || root.tag_name().name() != "propertyupdate" {
         return Err(());
     }
     let mut ops = Vec::new();
     for op in root.children().filter(|n| n.is_element()) {
         match op.tag_name().name() {
-            "set" | "remove" => {
+            "set" | "remove" if op.tag_name().namespace() == Some("DAV:") => {
                 let is_set = op.tag_name().name() == "set";
-                let prop = op
-                    .children()
-                    .find(|n| n.is_element() && n.tag_name().name() == "prop");
+                let prop = op.children().find(|n| {
+                    n.is_element()
+                        && n.tag_name().namespace() == Some("DAV:")
+                        && n.tag_name().name() == "prop"
+                });
                 let Some(prop) = prop else {
                     return Err(());
                 };
                 for child in prop.children().filter(|c| c.is_element()) {
-                    let name = child.tag_name().name().to_string();
+                    let name = property_key(child.tag_name().namespace(), child.tag_name().name());
                     if is_set {
                         ops.push(PropOp::Set {
                             name,
@@ -90,12 +171,13 @@ pub fn proppatch_multistatus(href: &str, results: &[(PropOp, bool)]) -> String {
     out.push_str(&escape_xml(href));
     out.push_str("</D:href>");
     for (op, ok) in results {
-        out.push_str("<D:propstat><D:prop><D:");
         match op {
-            PropOp::Set { name, .. } => out.push_str(name),
-            PropOp::Remove { name } => out.push_str(name),
+            PropOp::Set { name, .. } | PropOp::Remove { name } => {
+                out.push_str("<D:propstat><D:prop>");
+                append_property_name(&mut out, name, true);
+            }
         }
-        out.push_str("/></D:prop><D:status>HTTP/1.1 ");
+        out.push_str("</D:prop><D:status>HTTP/1.1 ");
         out.push_str(if *ok { "200 OK" } else { "403 Forbidden" });
         out.push_str("</D:status></D:propstat>");
     }
@@ -110,19 +192,19 @@ pub fn parse_propfind_body(body: &str) -> Result<PropMode, ()> {
     }
     let doc = roxmltree::Document::parse(body).map_err(|_| ())?;
     let root = doc.root_element();
-    if root.tag_name().name() != "propfind" {
+    if root.tag_name().namespace() != Some("DAV:") || root.tag_name().name() != "propfind" {
         return Err(());
     }
     match root.children().find(|n| n.is_element()) {
         None => Ok(PropMode::All),
-        Some(n) => match n.tag_name().name() {
+        Some(n) if n.tag_name().namespace() == Some("DAV:") => match n.tag_name().name() {
             "allprop" => Ok(PropMode::All),
             "propname" => Ok(PropMode::PropName),
             "prop" => {
                 let names: Vec<String> = n
                     .children()
                     .filter(|c| c.is_element())
-                    .map(|c| c.tag_name().name().to_string())
+                    .map(|c| property_key(c.tag_name().namespace(), c.tag_name().name()))
                     .collect();
                 if names.is_empty() {
                     return Err(());
@@ -131,6 +213,7 @@ pub fn parse_propfind_body(body: &str) -> Result<PropMode, ()> {
             }
             _ => Err(()),
         },
+        Some(_) => Err(()),
     }
 }
 
@@ -192,14 +275,20 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
                 let wanted: Vec<&str> = SUPPORTED
                     .iter()
                     .copied()
-                    .filter(|&sup| names.iter().any(|n| n.as_str() == sup))
+                    .filter(|&sup| names.iter().any(|name| is_dav_property(name, sup)))
                     .collect();
                 // 404 块 = 请求了但支持集与本资源自定义集都没有（r13 自定义并入 ✓ r2 方向义保留）
                 let missing: Vec<&str> = names
                     .iter()
                     .map(|n| n.as_str())
                     .filter(|req| {
-                        !SUPPORTED.contains(req) && !item.custom.iter().any(|(cn, _)| cn == req)
+                        !SUPPORTED
+                            .iter()
+                            .any(|supported| is_dav_property(req, supported))
+                            && !item
+                                .custom
+                                .iter()
+                                .any(|(cn, _)| canonical_stored_property_key(cn) == *req)
                     })
                     .collect();
                 (wanted, missing)
@@ -281,9 +370,7 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
             }
             // propname 模式：空值元素（RFC：只出名 ✓ 空体即名）
             if mode == &PropMode::PropName {
-                out.push_str("<D:");
-                out.push_str(name);
-                out.push_str("/>");
+                append_property_name(&mut out, &property_key(Some("DAV:"), name), true);
             }
         }
         // r13 自定义属性输出（All = 全出 ✗ Names = 交集 ✗ PropName = 只名无值）
@@ -291,21 +378,17 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
             let requested = match mode {
                 PropMode::All => true,
                 PropMode::PropName => true,
-                PropMode::Names(names) => names.iter().any(|n| n == cn),
+                PropMode::Names(names) => {
+                    let stored_key = canonical_stored_property_key(cn);
+                    names.contains(&stored_key)
+                }
             };
             if requested {
-                if mode == &PropMode::PropName {
-                    out.push_str("<D:");
-                    out.push_str(cn);
-                    out.push_str("/>");
-                } else {
-                    out.push_str("<D:");
-                    out.push_str(cn);
-                    out.push('>');
+                let property_name = canonical_stored_property_key(cn);
+                append_property_name(&mut out, &property_name, mode == &PropMode::PropName);
+                if mode != &PropMode::PropName {
                     out.push_str(&escape_xml(cv));
-                    out.push_str("</D:");
-                    out.push_str(cn);
-                    out.push('>');
+                    append_property_end(&mut out, &property_name);
                 }
             }
         }
@@ -314,9 +397,7 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
             // 未实现属性 = 404 propstat（RFC 4918 §9.1 合规 ✓ 客户端知道该属性不存在）
             out.push_str("<D:propstat><D:prop>");
             for name in &missing {
-                out.push_str("<D:");
-                out.push_str(name);
-                out.push_str("/>");
+                append_property_name(&mut out, name, true);
             }
             out.push_str("</D:prop><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat>");
         }
@@ -418,7 +499,7 @@ mod tests {
 
 #[cfg(test)]
 mod propmode_tests {
-    use super::{PropMode, PropResponse, multistatus, parse_propfind_body};
+    use super::{PropMode, PropResponse, multistatus, parse_propfind_body, property_key};
 
     fn sample() -> Vec<PropResponse> {
         vec![PropResponse {
@@ -451,7 +532,10 @@ mod propmode_tests {
             parse_propfind_body(
                 r#"<D:propfind xmlns:D="DAV:"><D:prop><D:getcontentlength/></D:prop></D:propfind>"#
             ),
-            Ok(PropMode::Names(vec!["getcontentlength".into()]))
+            Ok(PropMode::Names(vec![property_key(
+                Some("DAV:"),
+                "getcontentlength",
+            )]))
         );
         assert_eq!(parse_propfind_body("<broken"), Err(()));
         assert_eq!(
@@ -466,9 +550,9 @@ mod propmode_tests {
         let xml = multistatus(
             &sample(),
             &PropMode::Names(vec![
-                "getcontentlength".into(),
-                "displayname".into(),
-                "getlockdiscovery".into(), // r14 后 getetag 已支持 → 换真未支持名（404 机制守护断言保留）
+                property_key(Some("DAV:"), "getcontentlength"),
+                property_key(Some("DAV:"), "displayname"),
+                property_key(Some("DAV:"), "getlockdiscovery"),
             ]),
         );
         assert!(xml.contains("<D:getcontentlength>5</D:getcontentlength>"));
@@ -492,7 +576,9 @@ mod propmode_tests {
 
 #[cfg(test)]
 mod proppatch_tests {
-    use super::{PropOp, parse_propertyupdate, proppatch_multistatus};
+    use super::{
+        PropOp, is_dav_property, parse_propertyupdate, property_key, proppatch_multistatus,
+    };
 
     #[test]
     fn parses_set_and_remove_in_order() {
@@ -505,11 +591,11 @@ mod proppatch_tests {
             ops,
             vec![
                 PropOp::Set {
-                    name: "displayname".into(),
+                    name: property_key(Some("DAV:"), "displayname"),
                     value: "新名字".into()
                 },
                 PropOp::Remove {
-                    name: "getetag".into()
+                    name: property_key(Some("DAV:"), "getetag")
                 },
             ]
         );
@@ -547,5 +633,24 @@ mod proppatch_tests {
         assert!(xml.contains("403 Forbidden"));
         assert!(xml.contains("200 OK"));
         assert!(xml.contains("<D:getetag/>"));
+    }
+
+    #[test]
+    fn preserves_custom_property_namespace_and_does_not_alias_dav_names() {
+        let body = r#"<D:propertyupdate xmlns:D="DAV:" xmlns:X="urn:example:props">
+            <D:set><D:prop><X:displayname>custom title</X:displayname></D:prop></D:set>
+        </D:propertyupdate>"#;
+        let ops = parse_propertyupdate(body).unwrap();
+        let PropOp::Set { name, .. } = &ops[0] else {
+            panic!("set instruction expected");
+        };
+        assert_eq!(
+            name,
+            &property_key(Some("urn:example:props"), "displayname")
+        );
+        assert!(!is_dav_property(name, "displayname"));
+
+        let xml = proppatch_multistatus("/f.txt", &[(ops[0].clone(), true)]);
+        assert!(xml.contains("<X:displayname xmlns:X=\"urn:example:props\"/>"));
     }
 }

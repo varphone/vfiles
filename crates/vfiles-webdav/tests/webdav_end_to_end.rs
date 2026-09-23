@@ -246,6 +246,61 @@ async fn options_advertises_and_propfind_needs_auth() {
     assert!(body.contains("multistatus"));
     assert!(body.contains("displayname"));
 
+    let patched = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPPATCH")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propertyupdate xmlns:D="DAV:" xmlns:X="urn:example:x" xmlns:Y="urn:example:y">
+                        <D:set><D:prop><X:displayname>extension X</X:displayname><Y:displayname>extension Y</Y:displayname></D:prop></D:set>
+                    </D:propertyupdate>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patched.status(), 207);
+
+    let namespaced_props = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propfind xmlns:D="DAV:" xmlns:X="urn:example:x" xmlns:Y="urn:example:y">
+                        <D:prop><D:displayname/><X:displayname/><Y:displayname/></D:prop>
+                    </D:propfind>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(namespaced_props.status(), 207);
+    let namespaced_body = String::from_utf8(
+        axum::body::to_bytes(namespaced_props.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(namespaced_body.contains("<D:displayname>persist.txt</D:displayname>"));
+    assert!(
+        namespaced_body
+            .contains("<X:displayname xmlns:X=\"urn:example:x\">extension X</X:displayname>")
+    );
+    assert!(
+        namespaced_body
+            .contains("<X:displayname xmlns:X=\"urn:example:y\">extension Y</X:displayname>")
+    );
+
     // A separate WebDAV application instance sees the same SQLite-backed lock.
     let lock_body = r#"<?xml version="1.0"?>
         <D:lockinfo xmlns:D="DAV:">
