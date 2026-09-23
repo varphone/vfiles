@@ -1107,16 +1107,37 @@ impl S3 for VfilesS3 {
         let mut existing: Vec<vfiles_domain::NormalizedPath> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut per_key_err: Vec<Option<String>> = vec![None; keys.len()];
+        // 逐键条件（`ETag` ✗ r29 并发删；不满足只拒该键 = `Errors` 一项，不拖累整批）
+        let want_etag: Vec<Option<String>> = input
+            .delete
+            .objects
+            .iter()
+            .map(|o| o.e_tag.as_ref().map(|e| e.value().to_string()))
+            .collect();
         for (i, k) in keys.iter().enumerate() {
             match norm(k) {
                 Ok(p) if !p.as_str().is_empty() => {
                     match self.entry_repo.find_by_path(&self.namespace, &p).await {
-                        Ok(Some(_)) => {
+                        Ok(Some(entry)) => {
+                            if let Some(want) = &want_etag[i] {
+                                let cur = entry
+                                    .current_version_id
+                                    .map(|v| v.to_string().replace('-', ""));
+                                if cur.as_deref() != Some(want.as_str()) {
+                                    per_key_err[i] = Some("PreconditionFailed".to_string());
+                                    continue;
+                                }
+                            }
                             if seen.insert(p.as_str().to_string()) {
                                 existing.push(p);
                             }
                         }
-                        Ok(None) => {}
+                        // 缺失 + 带条件 = 条件不可满足（幂等语义仅对**无条件**删适用）
+                        Ok(None) => {
+                            if want_etag[i].is_some() {
+                                per_key_err[i] = Some("PreconditionFailed".to_string());
+                            }
+                        }
                         Err(e) => per_key_err[i] = Some(e.to_string()),
                     }
                 }
@@ -1148,10 +1169,18 @@ impl S3 for VfilesS3 {
 
         for (i, k) in keys.iter().enumerate() {
             if let Some(msg) = &per_key_err[i] {
+                let (code, text) = if msg == "PreconditionFailed" {
+                    (
+                        "PreconditionFailed".to_string(),
+                        "the object's etag does not match".to_string(),
+                    )
+                } else {
+                    ("InvalidArgument".to_string(), msg.clone())
+                };
                 errors.push(S3DeleteError {
                     key: Some(k.clone()),
-                    code: Some("InvalidArgument".to_string()),
-                    message: Some(msg.clone()),
+                    code: Some(code),
+                    message: Some(text),
                     ..Default::default()
                 });
                 continue;

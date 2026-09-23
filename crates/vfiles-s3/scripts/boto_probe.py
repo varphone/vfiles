@@ -282,6 +282,21 @@ def main():
     for mk in ["boto-meta/a.txt", "boto-meta/src.txt", "boto-meta/copy.txt", "boto-meta/repl.txt"]:
         s3.delete_object(Bucket="default", Key=mk)
 
+    # ── 批量删的逐键条件（ETag ✗ r29）──
+    for bk in ["boto-dc/a", "boto-dc/b"]:
+        s3.put_object(Bucket="default", Key=bk, Body=b"x")
+    be = s3.head_object(Bucket="default", Key="boto-dc/b")["ETag"]
+    br = s3.delete_objects(Bucket="default", Delete={"Objects": [
+        {"Key": "boto-dc/a", "ETag": '"deadbeefdeadbeefdeadbeefdeadbeef"'},
+        {"Key": "boto-dc/b", "ETag": be},
+    ]})
+    bdel = sorted(d["Key"] for d in br.get("Deleted", []))
+    berr = {e["Key"]: e["Code"] for e in br.get("Errors", [])}
+    check("boto DeleteObjects per-key etag condition",
+          bdel == ["boto-dc/b"] and berr == {"boto-dc/a": "PreconditionFailed"},
+          f"deleted={bdel} errors={berr}")
+    s3.delete_object(Bucket="default", Key="boto-dc/a")
+
     # ── 条件写 / 条件删（If-Match / If-None-Match ✗ r28）──
     def cw(fn):
         try:

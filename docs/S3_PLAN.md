@@ -1,4 +1,16 @@
-# S3 兼容 API（… r25 桶级探测 → r26 命名空间绑定 → **r28 条件写/条件删**）
+# S3 兼容 API（… r26 命名空间绑定 → r28 条件写/删 → **r29 批量删逐键条件**）
+
+## 状态（r29 末 · 批量删的逐键 ETag 条件 = 并发删安全）
+
+- **实装**：`DeleteObjects` 逐键读 `ObjectIdentifier.e_tag` → 与目标当前 ETag 对账，不符**只拒该键**
+  （`Errors` 一项 `PreconditionFailed`，不拖累整批）；**缺失键 + 带条件 = 条件不可满足 → 拒**
+  （幂等语义仅对**无条件**删适用）；无条件键行为不变（存在即删 / 缺失幂等 `Deleted`）。
+- **真机验收（真 SDK，7 项）**：条件匹配者删 + 无条件者删 ✓ · 条件不符者 `PreconditionFailed` ✓ ·
+  被拒对象仍在 ✓ · 已删对象消失 ✓ · 正确 ETag 重试成功 ✓ · 缺失键带条件 → 拒 ✓ ·
+  缺失键无条件 → 幂等 `Deleted` ✓。
+- **回归**：自写探针 **24/24** · 真 SDK **40/40**（+逐键条件）。
+- **仍债**：`ListObjectVersions` / `PutBucketVersioning`（真版本控制）· `LastModifiedTime`/`Size` 逐键条件 ·
+  region 校验（有意不做）。
 
 ## 状态（r28 末 · 目标条件头 = 现代 S3 乐观并发写）
 
