@@ -893,6 +893,38 @@ fn multipart_etag(part_md5s: &[[u8; 16]]) -> String {
     format!("{}-{}", hex::encode(digest.finalize()), part_md5s.len())
 }
 
+fn resolve_completed_part_indices(stored: &[(i32, u64)], requested: &[i32]) -> S3Result<Vec<u32>> {
+    if requested.is_empty() {
+        return Err(s3s::s3_error!(InvalidPart, "completed part list is empty"));
+    }
+    if requested.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(s3s::s3_error!(
+            InvalidPartOrder,
+            "parts must be in ascending order"
+        ));
+    }
+    let stored_by_number: std::collections::HashMap<i32, u64> = stored.iter().copied().collect();
+    let mut indices = Vec::with_capacity(requested.len());
+    for (position, number) in requested.iter().enumerate() {
+        let Some(size) = stored_by_number.get(number).copied() else {
+            return Err(s3s::s3_error!(
+                InvalidPart,
+                "part {} was not uploaded",
+                number
+            ));
+        };
+        if position + 1 != requested.len() && size < 5 * 1024 * 1024 {
+            return Err(s3s::s3_error!(
+                EntityTooSmall,
+                "part {} is smaller than 5 MiB",
+                number
+            ));
+        }
+        indices.push((*number - 1) as u32);
+    }
+    Ok(indices)
+}
+
 impl VfilesS3 {
     /// 读条目的 S3 用户元数据（`x-amz-meta-*` → 响应头）。
     async fn load_metadata(
@@ -2263,7 +2295,7 @@ impl S3 for VfilesS3 {
         ok(out)
     }
 
-    /// 上传单个 part（partNumber 1..=10000 ✗ 内部索引 = partNumber-1，零基连续）。
+    /// 上传单个 part（partNumber 1..=10000 ✗ 内部索引 = partNumber-1）。
     async fn upload_part(
         &self,
         req: S3Request<UploadPartInput>,
@@ -2474,25 +2506,14 @@ impl S3 for VfilesS3 {
         if listed.is_empty() {
             return Err(s3s::s3_error!(InvalidPart, "completed part list is empty"));
         }
-        // S3 要求清单按 partNumber 严格递增；比较序列而非集合，拒绝重复号和乱序清单。
-        if listed.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
-            return Err(s3s::s3_error!(
-                InvalidPart,
-                "parts must be in ascending order"
-            ));
-        }
-        let expected: Vec<i32> = stored.iter().map(|p| p.part_index as i32 + 1).collect();
-        if listed
+        // Completion may select a subset of uploaded parts. S3 requires only an ordered list of
+        // existing parts and a 5 MiB minimum for every selected part except the last.
+        let requested_numbers: Vec<i32> = listed.iter().map(|(number, ..)| *number).collect();
+        let stored_sizes: Vec<(i32, u64)> = stored
             .iter()
-            .map(|(number, ..)| *number)
-            .collect::<Vec<_>>()
-            != expected
-        {
-            return Err(s3s::s3_error!(
-                InvalidPart,
-                "the listed parts do not match the uploaded parts"
-            ));
-        }
+            .map(|part| ((part.part_index + 1) as i32, part.size_bytes.as_u64()))
+            .collect();
+        let selected_indices = resolve_completed_part_indices(&stored_sizes, &requested_numbers)?;
         // 客户端必须回显每个 UploadPart 返回的 ETag，且值需与已存分片内容一致。
         let mut part_md5s = Vec::with_capacity(listed.len());
         for (number, etag, md5, sha1, sha256, crc32, crc32c, crc64nvme) in listed {
@@ -2535,7 +2556,7 @@ impl S3 for VfilesS3 {
             .unwrap_or_default();
         let result = self
             .upload
-            .complete_multipart_upload(&upload_id, Some("S3 multipart"))
+            .complete_multipart_upload(&upload_id, &selected_indices, Some("S3 multipart"))
             .await
             .map_err(dom_err)?;
         self.store_version_etag(&result.entry.id, &result.version.id, &etag)
@@ -3013,6 +3034,23 @@ mod tests {
             multipart_etag(&part_md5s),
             "065947336a2f2a95ba8899f3675c3be6-2"
         );
+    }
+
+    #[test]
+    fn multipart_completion_selects_ordered_existing_parts() {
+        let stored = [(1, 5 * 1024 * 1024), (2, 9), (3, 4 * 1024 * 1024)];
+        assert_eq!(
+            resolve_completed_part_indices(&stored, &[1, 3])
+                .expect("a subset of uploaded parts can be completed"),
+            [0, 2]
+        );
+        assert_eq!(
+            resolve_completed_part_indices(&stored, &[3]).expect("a small final part is allowed"),
+            [2]
+        );
+        assert!(resolve_completed_part_indices(&stored, &[1, 4]).is_err());
+        assert!(resolve_completed_part_indices(&stored, &[3, 1]).is_err());
+        assert!(resolve_completed_part_indices(&stored, &[2, 3]).is_err());
     }
 }
 

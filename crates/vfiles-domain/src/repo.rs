@@ -584,6 +584,12 @@ pub trait UploadStore {
         &self,
         upload_id: &UploadId,
     ) -> DomainResult<Box<dyn tokio::io::AsyncRead + Send + Unpin>>;
+    /// Assemble only the selected zero-based parts in request order (S3 multipart completion).
+    async fn assemble_upload_stream_parts(
+        &self,
+        upload_id: &UploadId,
+        part_indices: &[u32],
+    ) -> DomainResult<Box<dyn tokio::io::AsyncRead + Send + Unpin>>;
     async fn assemble_upload(&self, upload_id: &UploadId) -> DomainResult<Vec<u8>>;
     /// 读单个分片内容（S3 `ListParts` ETag / `CompleteMultipartUpload` 校验）。
     async fn read_upload_part(

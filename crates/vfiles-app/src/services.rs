@@ -3027,8 +3027,8 @@ where
         .await
     }
 
-    /// S3 multipart：开启**未知总大小**的上传会话（`declared_size=0` / `total_chunks=0` ✗
-    /// part 按号存储、完成时按 0..n-1 顺序拼接）。part 号由 S3 层映射为 `partNumber-1`。
+    /// S3 multipart：开启**未知总大小**的上传会话（`declared_size=0` / `total_chunks=0`）；
+    /// part 按号存储，完成时由调用方指定需拼接的 part 索引。S3 层映射为 `partNumber-1`。
     pub async fn init_multipart_upload(
         &self,
         namespace_id: &NamespaceId,
@@ -3053,13 +3053,17 @@ where
     pub async fn complete_multipart_upload(
         &self,
         upload_id: &UploadId,
+        part_indices: &[u32],
         message: Option<&str>,
     ) -> DomainResult<UploadCompleteResponse> {
         let session = self.upload_store.get_upload_session(upload_id).await?;
         if session.expires_at < time::OffsetDateTime::now_utc() {
             return Err(DomainError::UploadExpired);
         }
-        let upload_stream = self.upload_store.assemble_upload_stream(upload_id).await?;
+        let upload_stream = self
+            .upload_store
+            .assemble_upload_stream_parts(upload_id, part_indices)
+            .await?;
         self.commit_upload_stream(
             session,
             upload_stream,

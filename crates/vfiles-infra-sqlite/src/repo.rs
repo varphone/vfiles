@@ -4659,6 +4659,73 @@ impl UploadStore for FsUploadStore {
         Ok(Box::new(assembled_reader))
     }
 
+    async fn assemble_upload_stream_parts(
+        &self,
+        upload_id: &UploadId,
+        part_indices: &[u32],
+    ) -> DomainResult<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
+        let _session = self.get_upload_session(upload_id).await?;
+        if part_indices.is_empty() {
+            return Err(DomainError::UploadPartInvalid);
+        }
+        let stored: std::collections::HashSet<u32> = self
+            .get_upload_parts(upload_id)
+            .await?
+            .into_iter()
+            .map(|part| part.part_index)
+            .collect();
+        let mut unique = std::collections::HashSet::with_capacity(part_indices.len());
+        for index in part_indices {
+            if !stored.contains(index) || !unique.insert(*index) {
+                return Err(DomainError::UploadPartInvalid);
+            }
+        }
+
+        let assembled_path = self.assembled_upload_path(upload_id);
+        if let Some(parent) = assembled_path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to create assembled upload directory: {e}"),
+                })?;
+        }
+        let _ = fs::remove_file(&assembled_path).await;
+        let mut assembled_file =
+            fs::File::create(&assembled_path)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to create assembled upload file: {e}"),
+                })?;
+        for index in part_indices {
+            let part_path = self.get_upload_path(upload_id, Some(*index));
+            let mut part_file =
+                fs::File::open(&part_path)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to open upload part {index}: {e}"),
+                    })?;
+            tokio::io::copy(&mut part_file, &mut assembled_file)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to append upload part {index}: {e}"),
+                })?;
+        }
+        assembled_file
+            .flush()
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to flush assembled upload file: {e}"),
+            })?;
+        drop(assembled_file);
+        let assembled_reader =
+            fs::File::open(&assembled_path)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to reopen assembled upload file: {e}"),
+                })?;
+        Ok(Box::new(assembled_reader))
+    }
+
     async fn assemble_upload(&self, upload_id: &UploadId) -> DomainResult<Vec<u8>> {
         let session = self.get_upload_session(upload_id).await?;
         let mut reader = self.assemble_upload_stream(upload_id).await?;
@@ -4733,6 +4800,59 @@ impl UploadStore for FsUploadStore {
     async fn cleanup_expired_sessions(&self) -> DomainResult<i64> {
         // Simplified implementation - would need to check metadata timestamps
         Ok(0)
+    }
+}
+
+#[cfg(test)]
+mod selected_upload_part_tests {
+    use super::*;
+    use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    async fn assembles_only_requested_parts_in_the_given_order() {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let base = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).expect("utf8 path");
+        let store = FsUploadStore::new(base);
+        let upload_id = store
+            .create_upload_session(
+                &NamespaceId::new(),
+                &NormalizedPath::new("").expect("root path"),
+                "object.bin",
+                None,
+                0,
+                0,
+                &UserId::new(),
+            )
+            .await
+            .expect("create multipart session");
+        for (index, bytes) in [(0, b"first".as_slice()), (1, b"unused"), (2, b"last")] {
+            store
+                .store_upload_part_stream(
+                    &upload_id,
+                    index,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Box::new(std::io::Cursor::new(bytes.to_vec())),
+                )
+                .await
+                .expect("store multipart part");
+        }
+        let mut reader = store
+            .assemble_upload_stream_parts(&upload_id, &[2, 0])
+            .await
+            .expect("assemble selected parts");
+        let mut assembled = Vec::new();
+        reader
+            .read_to_end(&mut assembled)
+            .await
+            .expect("read assembled parts");
+        assert_eq!(assembled, b"lastfirst");
     }
 }
 

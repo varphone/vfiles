@@ -1,5 +1,11 @@
 # S3 兼容 API（… r34 桶生命周期 → r35 版本列表 → r36 versionId 定向 → **r37 区域校验**）
 
+## 当前工作树补充（CompleteMultipartUpload 选择分片）
+
+- 完成请求允许只提交已上传分片中的一个有序子集；未列入完成清单的分片不会进入对象正文。
+- 校验完成清单中的每个分片确实存在，拒绝乱序或重复编号；除最后一个选中分片外，其余选中分片至少为 5 MiB。
+- 分片 ETag/checksum 校验和 multipart ETag 只覆盖完成清单中的分片；内容仍以流方式拼接到临时文件。
+
 ## 当前工作树补充（HTTP / WebDAV / S3 共端口）
 
 - `VFILES_S3_EMBEDDED=true` 时，S3 使用 HTTP 主 listener；`/s3`、`/s3/` 及其子路径始终交给 S3
