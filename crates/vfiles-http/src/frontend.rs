@@ -162,20 +162,23 @@ impl FrontendAssets {
     }
 }
 
-/// 从 `Accept-Encoding` 中挑选可用的预压缩编码，优先 brotli。
+/// 从 `Accept-Encoding` 中挑选客户端质量值最高的预压缩编码；同分时优先 Brotli。
 fn preferred_precompression(accept_encoding: Option<&str>) -> Option<Precompressed> {
     let header = accept_encoding?.to_ascii_lowercase();
-    if accepts_encoding(&header, "br") {
-        return Some(Precompressed::Brotli);
+    let brotli = encoding_quality(&header, "br").unwrap_or(0.0);
+    let gzip = encoding_quality(&header, "gzip").unwrap_or(0.0);
+    if brotli <= 0.0 && gzip <= 0.0 {
+        return None;
     }
-    if accepts_encoding(&header, "gzip") {
-        return Some(Precompressed::Gzip);
+    if brotli >= gzip {
+        Some(Precompressed::Brotli)
+    } else {
+        Some(Precompressed::Gzip)
     }
-    None
 }
 
-/// 是否接受某个编码。明确列出的编码优先于通配符，合法 q 范围为 0..=1。
-fn accepts_encoding(header: &str, encoding: &str) -> bool {
+/// 读取编码的 q 值。明确列出的编码优先于通配符，合法 q 范围为 0..=1。
+fn encoding_quality(header: &str, encoding: &str) -> Option<f32> {
     fn quality(part: &str) -> Option<f32> {
         let mut pieces = part.trim().split(';');
         pieces.next()?;
@@ -197,13 +200,13 @@ fn accepts_encoding(header: &str, encoding: &str) -> bool {
         let trimmed = part.trim();
         let name = trimmed.split(';').next().unwrap_or("").trim();
         if name == encoding {
-            return quality(trimmed).is_some_and(|q| q > 0.0);
+            return quality(trimmed);
         }
         if name == "*" {
             wildcard_quality = quality(trimmed);
         }
     }
-    wildcard_quality.is_some_and(|q| q > 0.0)
+    wildcard_quality
 }
 
 fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
@@ -329,17 +332,25 @@ mod tests {
 
     #[test]
     fn accepts_encoding_handles_quality_and_wildcards() {
-        assert!(accepts_encoding("gzip, br", "br"));
-        assert!(accepts_encoding("gzip, br", "gzip"));
-        assert!(accepts_encoding("*", "br"));
-        assert!(!accepts_encoding("gzip", "br"));
-        assert!(!accepts_encoding("br;q=0", "br"));
-        assert!(accepts_encoding("br;q=0.5", "br"));
-        assert!(!accepts_encoding("br;q=0, *", "br"));
-        assert!(accepts_encoding("gzip;q=0, *;q=0.5", "br"));
-        assert!(!accepts_encoding("br;q=1.5", "br"));
-        assert!(!accepts_encoding("br;q=bogus", "br"));
-        assert!(!accepts_encoding("identity", "gzip"));
+        assert_eq!(encoding_quality("gzip, br", "br"), Some(1.0));
+        assert_eq!(encoding_quality("gzip, br", "gzip"), Some(1.0));
+        assert_eq!(encoding_quality("*", "br"), Some(1.0));
+        assert_eq!(encoding_quality("gzip", "br"), None);
+        assert_eq!(encoding_quality("br;q=0", "br"), Some(0.0));
+        assert_eq!(encoding_quality("br;q=0.5", "br"), Some(0.5));
+        assert_eq!(encoding_quality("br;q=0, *", "br"), Some(0.0));
+        assert_eq!(encoding_quality("gzip;q=0, *;q=0.5", "br"), Some(0.5));
+        assert_eq!(encoding_quality("br;q=1.5", "br"), None);
+        assert_eq!(encoding_quality("br;q=bogus", "br"), None);
+        assert_eq!(encoding_quality("identity", "gzip"), None);
+        assert_eq!(
+            preferred_precompression(Some("br;q=0.2, gzip;q=0.9")),
+            Some(Precompressed::Gzip)
+        );
+        assert_eq!(
+            preferred_precompression(Some("br;q=0.8, gzip;q=0.8")),
+            Some(Precompressed::Brotli)
+        );
     }
 
     #[test]
