@@ -28,6 +28,7 @@ const PASSWORD: &str = "dav-password-1234";
 struct NoopWrite {
     deletes: Arc<std::sync::atomic::AtomicUsize>,
     entry_repo: Arc<SqliteEntryRepo>,
+    put_bodies: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
 }
 
 #[async_trait::async_trait]
@@ -54,9 +55,17 @@ impl WebdavWriteOps for NoopWrite {
         &self,
         _ns: &vfiles_domain::types::NamespaceId,
         _path: &NormalizedPath,
-        _data: Vec<u8>,
+        mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         _uid: &vfiles_domain::types::UserId,
     ) -> vfiles_domain::DomainResult<()> {
+        use tokio::io::AsyncReadExt;
+        let mut data = Vec::new();
+        reader.read_to_end(&mut data).await.map_err(|error| {
+            vfiles_domain::DomainError::Internal {
+                message: format!("failed to read test PUT stream: {error}"),
+            }
+        })?;
+        self.put_bodies.lock().unwrap().push(data);
         Ok(())
     }
     async fn mkcol(
@@ -195,6 +204,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .expect("set fixture version timestamp");
     let deletes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let put_bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
     let workspace = Arc::new(DefaultWorkspaceService::new(
         SqliteEntryRepo::new(pool.clone()),
         SqliteSnapshotRepo::new(pool.clone()),
@@ -222,7 +232,9 @@ async fn options_advertises_and_propfind_needs_auth() {
         write: Arc::new(NoopWrite {
             deletes: Arc::clone(&deletes),
             entry_repo: entry_repo.clone(),
+            put_bodies: Arc::clone(&put_bodies),
         }),
+        max_file_size_bytes: 64,
     };
     let router = vfiles_webdav::router_for_e2e(app.clone());
     let restarted_router = vfiles_webdav::router_for_e2e(WebdavApplication {
@@ -426,6 +438,41 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .unwrap();
     assert_eq!(repeated_if.status(), 400);
+
+    let oversized_put = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::from(vec![b'x'; 65]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(oversized_put.status(), 413);
+    assert!(put_bodies.lock().unwrap().is_empty());
+
+    let broken_body = futures::stream::iter([
+        Ok(axum::body::Bytes::from_static(b"partial upload")),
+        Err(std::io::Error::other("simulated request body failure")),
+    ]);
+    let failed_stream_put = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::from_stream(broken_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(failed_stream_put.status(), 400);
+    assert!(put_bodies.lock().unwrap().is_empty());
+
     let expected_mtime_timestamp = time::OffsetDateTime::parse(
         "2030-01-02T03:04:05Z",
         &time::format_description::well_known::Rfc3339,
@@ -1000,6 +1047,10 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .unwrap();
     assert_eq!(tagged_list_token.status(), 201);
+    assert_eq!(
+        put_bodies.lock().unwrap().as_slice(),
+        &[b"authorized by resource-tagged list".to_vec()]
+    );
 
     let alternative_list_token = router
         .clone()
@@ -1015,6 +1066,13 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .unwrap();
     assert_eq!(alternative_list_token.status(), 201);
+    assert_eq!(
+        put_bodies.lock().unwrap().as_slice(),
+        &[
+            b"authorized by resource-tagged list".to_vec(),
+            b"authorized by alternative list".to_vec(),
+        ]
+    );
 
     let rejected_move = router
         .clone()

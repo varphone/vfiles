@@ -34,6 +34,7 @@
 - 写请求支持 RFC 4918 `If` 条件列表：列表内按 AND 求值、列表间按 OR 求值；支持未标记与 URI-tagged 列表，tagged 列表按挂载路径分别映射到 COPY/MOVE 源和目标；有锁写请求必须在匹配资源的成功列表中提供匹配的正向锁 token；ETag 与 `Not` 条件按当前实体状态求值，即使资源未锁也会校验。
 - `If` 状态 token 接受任意合法 URI；未知 token 按“不匹配”参与条件求值，不会导致整个头部解析失败并屏蔽其它 OR 列表。`Not` 关键字按 ABNF 大小写不敏感解析。
 - LOCK refresh 按同一套 `If` 条件解析执行，接受匹配当前资源的 URI-tagged 列表，并按实际资源的锁 token / ETag 求值。
+- PUT 现在从 Axum `Body` 转为 `StreamReader` 直通 `complete_upload_from_stream_unknown_size`；不再先用 `usize::MAX` 将整个请求体复制到内存。流式计数沿用 HTTP 的较小文件上限，超过时返回 413，并清理上传会话与 blob 临时文件。
 
 ## 0.5 GET 流式化（r201 ✓ 商业级硬伤修 ✗ 大文件内存爆）
 

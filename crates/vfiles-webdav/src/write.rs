@@ -26,7 +26,7 @@ pub trait WebdavWriteOps: Send + Sync {
         &self,
         namespace_id: &NamespaceId,
         path: &NormalizedPath,
-        data: Vec<u8>,
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         user_id: &UserId,
     ) -> DomainResult<()>;
     async fn mkcol(

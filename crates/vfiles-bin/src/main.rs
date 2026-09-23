@@ -1246,6 +1246,10 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         vfiles_app::NamespaceService::new(Arc::new(SqliteNamespaceRepo::new(pool.clone()))),
         Arc::clone(&entry_repo_arc),
         Arc::clone(&ftp_workspace),
+        config
+            .limits
+            .max_upload_size_bytes
+            .min(config.limits.max_file_size_bytes),
         upload_service.clone(),
         {
             // r5 审计闭包（run_serve 有 pool ✓ 构造后传参（独立函数无 pool ✗ #45 作用域））
@@ -1729,7 +1733,7 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
         &self,
         ns: &vfiles_domain::NamespaceId,
         path: &vfiles_domain::NormalizedPath,
-        data: Vec<u8>,
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         uid: &vfiles_domain::UserId,
     ) -> vfiles_domain::DomainResult<()> {
         // init_upload 语义：target_path = 父目录 + filename = 文件名（r110'c 修正：此前
@@ -1751,16 +1755,27 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
         })?;
         let session = self
             .upload
-            .init_upload(ns, &parent, &filename, data.len() as u64, None, None, uid)
+            .init_stream_upload_unknown_size(ns, &parent, &filename, None, uid)
             .await?;
-        self.upload
-            .complete_upload_from_stream(
+        if let Err(error) = self
+            .upload
+            .complete_upload_from_stream_unknown_size(
                 &session.upload_id,
                 None,
                 Some("WebDAV PUT"),
-                Box::new(std::io::Cursor::new(data)),
+                reader,
             )
-            .await?;
+            .await
+        {
+            if let Err(cleanup_error) = self.upload.cancel_upload(&session.upload_id).await {
+                tracing::warn!(
+                    upload_id = %session.upload_id,
+                    error = %cleanup_error,
+                    "Failed to clean up failed WebDAV PUT upload session"
+                );
+            }
+            return Err(error);
+        }
         Ok(())
     }
     async fn delete_entry(
@@ -2402,6 +2417,7 @@ fn build_webdav_runtime(
     namespaces: vfiles_app::NamespaceService,
     entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
     workspace: std::sync::Arc<vfiles_app::DefaultWorkspaceService>,
+    max_file_size_bytes: u64,
     upload: vfiles_app::UploadService<
         vfiles_infra_sqlite::SqliteEntryRepo,
         vfiles_infra_sqlite::SqliteSnapshotRepo,
@@ -2433,6 +2449,7 @@ fn build_webdav_runtime(
         verify,
         locks: std::sync::Arc::new(vfiles_webdav::LockTable::new(lock_repo)),
         write: std::sync::Arc::new(WebdavWrite { workspace, upload }),
+        max_file_size_bytes,
         // r-new 共端口：嵌入 = mount（/dav 等）/ 独立 = ""（现行为零回归 ✗ 1337 按此分流）
         mount_prefix: if embedded { mount_path } else { String::new() },
     };

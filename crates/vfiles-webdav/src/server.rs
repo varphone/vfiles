@@ -41,6 +41,8 @@ pub struct WebdavApplication {
     /// r-new 共端口挂载前缀（"" = 独立端口现行为 ✗ "/dav" = 嵌入主端口：href 加前缀 /
     /// Destination 剥前缀 / spawn 分支按此分流 ✓ 归一无尾斜杠）。
     pub mount_prefix: String,
+    /// Maximum accepted WebDAV PUT body size, shared with the HTTP upload limit.
+    pub max_file_size_bytes: u64,
     /// 排他写锁表（r109a ✓ LOCK/UNLOCK + 写操作 423 校验）。
     pub locks: Arc<crate::lock::LockTable>,
 }
@@ -972,7 +974,7 @@ async fn put_op(
     ns: Option<vfiles_domain::types::NamespaceId>,
     uri_owned: String,
     if_owned: Option<String>,
-    put_body: Option<Vec<u8>>,
+    put_body: Option<Body>,
 ) -> Response {
     let Some(app) = app else {
         return internal_error();
@@ -1009,7 +1011,60 @@ async fn put_op(
                 .unwrap();
         }
     };
-    match app.write.put_file(&ns, &path, body_owned, &user.id).await {
+    use futures::{StreamExt, TryStreamExt};
+    let limit_exceeded = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let exceeded = Arc::clone(&limit_exceeded);
+    let body_read_failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let read_failed = Arc::clone(&body_read_failed);
+    let max_file_size_bytes = app.max_file_size_bytes;
+    let body_stream = body_owned
+        .into_data_stream()
+        .map_err(std::io::Error::other)
+        .scan((0_u64, false), move |(total, stopped), item| {
+            if *stopped {
+                return std::future::ready(None);
+            }
+            let item = match item {
+                Ok(chunk) => {
+                    let next = total.saturating_add(chunk.len() as u64);
+                    if next > max_file_size_bytes {
+                        *stopped = true;
+                        exceeded.store(true, std::sync::atomic::Ordering::Relaxed);
+                        return std::future::ready(Some(Err(std::io::Error::new(
+                            std::io::ErrorKind::FileTooLarge,
+                            "WebDAV PUT exceeds the configured file size limit",
+                        ))));
+                    }
+                    *total = next;
+                    Ok(chunk)
+                }
+                Err(error) => {
+                    *stopped = true;
+                    read_failed.store(true, std::sync::atomic::Ordering::Relaxed);
+                    Err(error)
+                }
+            };
+            std::future::ready(Some(item))
+        })
+        .boxed();
+    let body_reader = tokio_util::io::StreamReader::new(body_stream);
+    let result = app
+        .write
+        .put_file(&ns, &path, Box::new(body_reader), &user.id)
+        .await;
+    if limit_exceeded.load(std::sync::atomic::Ordering::Relaxed) {
+        return Response::builder()
+            .status(StatusCode::PAYLOAD_TOO_LARGE)
+            .body(Body::empty())
+            .unwrap();
+    }
+    if body_read_failed.load(std::sync::atomic::Ordering::Relaxed) {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::empty())
+            .unwrap();
+    }
+    match result {
         Ok(()) => Response::builder()
             .status(StatusCode::CREATED)
             .body(Body::empty())
@@ -1805,20 +1860,10 @@ async fn dav(req: axum::extract::Request) -> Response {
 }
 
 async fn dav_inner(mut req: axum::extract::Request) -> Response {
-    // PUT body 预读（E0507 破案 ✓ `into_body` 需所有权 ✗ &Request ✗ = **match 前同步段**
-    // 拆 owned body ✓ #46 纯拥有纪律贯彻）。
-    // PUT body 预读（E0507 破案 ✓ 两步拆（#46 贯彻）：同步 take → owned to_bytes ✓）
-    let put_body: Option<Vec<u8>> = if req.method() == axum::http::Method::PUT {
-        let body_taken = std::mem::take(req.body_mut());
-        match axum::body::to_bytes(body_taken, usize::MAX).await {
-            Ok(b) => Some(b.to_vec()),
-            Err(_) => {
-                return Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body(Body::empty())
-                    .unwrap();
-            }
-        }
+    // Take ownership before authentication awaits, but do not poll the upload
+    // body until the authorized write path consumes it.
+    let put_body = if req.method() == axum::http::Method::PUT {
+        Some(std::mem::take(req.body_mut()))
     } else {
         None
     };
