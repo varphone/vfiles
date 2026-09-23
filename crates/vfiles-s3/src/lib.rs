@@ -945,26 +945,12 @@ impl VfilesS3 {
         &self,
         path: &vfiles_domain::NormalizedPath,
     ) -> S3Result<bool> {
-        let Some(marker) = self
+        let hidden = self
             .delete_markers
-            .latest(&self.namespace, path.as_str())
-            .await
-            .map_err(dom_err)?
-        else {
-            return Ok(false);
-        };
-        let Some(entry) = self.entry_at(path).await? else {
-            return Ok(true);
-        };
-        let Some(version_id) = entry.current_version_id else {
-            return Ok(true);
-        };
-        let current = self
-            .entry_repo
-            .find_version(&version_id)
+            .current_hidden_keys(&self.namespace, &[path.as_str().to_string()])
             .await
             .map_err(dom_err)?;
-        Ok(marker.created_at >= current.created_at)
+        Ok(hidden.contains(path.as_str()))
     }
 
     async fn filter_current_delete_markers(&self, page: &mut Page) -> S3Result<()> {
@@ -1446,6 +1432,11 @@ impl S3 for VfilesS3 {
                 .map(|entry| (entry.path_norm.as_str().to_string(), entry))
                 .collect();
             let entry_ids: Vec<_> = entry_by_key.values().map(|entry| entry.id).collect();
+            let version_orders = self
+                .delete_markers
+                .version_orders_for_entries(&entry_ids)
+                .await
+                .map_err(dom_err)?;
             let mut versions_by_entry: std::collections::HashMap<_, Vec<_>> =
                 std::collections::HashMap::new();
             for version in self
@@ -1503,6 +1494,7 @@ impl S3 for VfilesS3 {
                 }
                 let mut skipping = key_marker.as_ref() == Some(&key);
                 let mut items: Vec<(
+                    i64,
                     time::OffsetDateTime,
                     String,
                     Option<ObjectVersion>,
@@ -1520,6 +1512,10 @@ impl S3 for VfilesS3 {
                             .cloned()
                             .unwrap_or_else(|| vid.clone());
                         items.push((
+                            version_orders
+                                .get(&ev.id.to_string())
+                                .copied()
+                                .unwrap_or_default(),
                             ev.created_at,
                             vid.clone(),
                             Some(ObjectVersion {
@@ -1536,6 +1532,7 @@ impl S3 for VfilesS3 {
                 }
                 for marker in markers_by_key.remove(&key).unwrap_or_default() {
                     items.push((
+                        marker.event_order,
                         marker.created_at,
                         marker.version_id.clone(),
                         None,
@@ -1551,8 +1548,12 @@ impl S3 for VfilesS3 {
                         }),
                     ));
                 }
-                items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
-                for (index, (_, vid, mut version, mut marker)) in items.into_iter().enumerate() {
+                items.sort_by(|a, b| {
+                    b.0.cmp(&a.0)
+                        .then_with(|| b.1.cmp(&a.1))
+                        .then_with(|| b.2.cmp(&a.2))
+                });
+                for (index, (_, _, vid, mut version, mut marker)) in items.into_iter().enumerate() {
                     if let Some(version) = &mut version {
                         version.is_latest = Some(index == 0);
                     }

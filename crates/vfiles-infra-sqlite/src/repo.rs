@@ -742,6 +742,7 @@ pub struct S3DeleteMarker {
     pub object_key: String,
     pub owner_id: String,
     pub created_at: time::OffsetDateTime,
+    pub event_order: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -787,16 +788,42 @@ impl SqliteS3DeleteMarkerRepo {
                 message: format!("Failed to start S3 delete marker transaction: {e}"),
             })?;
         for chunk in markers.chunks(200) {
+            let last_order: i64 = sqlx::query_scalar(
+                "UPDATE s3_version_sequence SET value = value + ? WHERE id = 1 RETURNING value",
+            )
+            .bind(chunk.len() as i64)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| vfiles_domain::DomainError::Internal {
+                message: format!("Failed to sequence S3 delete markers: {e}"),
+            })?;
+            let first_order = last_order - chunk.len() as i64 + 1;
+            let ordered: Vec<_> = chunk
+                .iter()
+                .enumerate()
+                .map(|(index, (object_key, version_id, created_at))| {
+                    (
+                        object_key,
+                        version_id,
+                        created_at,
+                        first_order + index as i64,
+                    )
+                })
+                .collect();
             let mut query = sqlx::QueryBuilder::new(
-                "INSERT INTO s3_delete_markers (version_id, namespace_id, object_key, owner_id, created_at) ",
+                "INSERT INTO s3_delete_markers (version_id, namespace_id, object_key, owner_id, created_at, event_order) ",
             );
-            query.push_values(chunk, |mut row, (object_key, version_id, created_at)| {
-                row.push_bind(version_id)
-                    .push_bind(namespace_id.to_string())
-                    .push_bind(object_key)
-                    .push_bind(owner_id.to_string())
-                    .push_bind(created_at);
-            });
+            query.push_values(
+                &ordered,
+                |mut row, (object_key, version_id, created_at, event_order)| {
+                    row.push_bind(version_id)
+                        .push_bind(namespace_id.to_string())
+                        .push_bind(object_key)
+                        .push_bind(owner_id.to_string())
+                        .push_bind(created_at)
+                        .push_bind(event_order);
+                },
+            );
             query.build().execute(&mut *tx).await.map_err(|e| {
                 vfiles_domain::DomainError::Internal {
                     message: format!("Failed to create S3 delete markers: {e}"),
@@ -815,8 +842,8 @@ impl SqliteS3DeleteMarkerRepo {
         namespace_id: &vfiles_domain::NamespaceId,
         object_key: &str,
     ) -> Result<Option<S3DeleteMarker>, vfiles_domain::DomainError> {
-        let row = sqlx::query_as::<_, (String, String, String, String, time::OffsetDateTime)>(
-            "SELECT version_id, namespace_id, object_key, owner_id, created_at FROM s3_delete_markers WHERE namespace_id = ? AND object_key = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        let row = sqlx::query_as::<_, (String, String, String, String, time::OffsetDateTime, i64)>(
+            "SELECT version_id, namespace_id, object_key, owner_id, created_at, event_order FROM s3_delete_markers WHERE namespace_id = ? AND object_key = ? ORDER BY event_order DESC, created_at DESC, rowid DESC LIMIT 1",
         )
         .bind(namespace_id.to_string())
         .bind(object_key)
@@ -824,12 +851,15 @@ impl SqliteS3DeleteMarkerRepo {
         .await
         .map_err(|e| vfiles_domain::DomainError::Internal { message: format!("Failed to read S3 delete marker: {e}") })?;
         Ok(row.map(
-            |(version_id, namespace_id, object_key, owner_id, created_at)| S3DeleteMarker {
-                version_id,
-                namespace_id,
-                object_key,
-                owner_id,
-                created_at,
+            |(version_id, namespace_id, object_key, owner_id, created_at, event_order)| {
+                S3DeleteMarker {
+                    version_id,
+                    namespace_id,
+                    object_key,
+                    owner_id,
+                    created_at,
+                    event_order,
+                }
             },
         ))
     }
@@ -879,7 +909,7 @@ impl SqliteS3DeleteMarkerRepo {
                        SELECT newest.rowid FROM s3_delete_markers newest
                        WHERE newest.namespace_id = m.namespace_id
                          AND newest.object_key = m.object_key
-                       ORDER BY newest.created_at DESC, newest.rowid DESC LIMIT 1
+                       ORDER BY newest.event_order DESC, newest.created_at DESC, newest.rowid DESC LIMIT 1
                    )
                 LEFT JOIN entries e
                   ON e.namespace_id = m.namespace_id AND e.path = m.object_key AND e.kind = 'file'
@@ -887,7 +917,9 @@ impl SqliteS3DeleteMarkerRepo {
                     SELECT current.id FROM entry_versions current
                     WHERE current.entry_id = e.id ORDER BY current.version DESC LIMIT 1
                 )
-                WHERE v.created_at IS NULL OR m.created_at >= v.created_at"#,
+                WHERE v.id IS NULL
+                   OR m.event_order > v.created_order
+                   OR (m.event_order = v.created_order AND m.created_at >= v.created_at)"#,
             );
             let rows = query
                 .build_query_scalar::<String>()
@@ -949,7 +981,7 @@ impl SqliteS3DeleteMarkerRepo {
         let mut markers = Vec::new();
         for chunk in object_keys.chunks(500) {
             let mut query = sqlx::QueryBuilder::new(
-                "SELECT version_id, namespace_id, object_key, owner_id, created_at FROM s3_delete_markers WHERE namespace_id = ",
+                "SELECT version_id, namespace_id, object_key, owner_id, created_at, event_order FROM s3_delete_markers WHERE namespace_id = ",
             );
             query.push_bind(namespace_id.to_string());
             query.push(" AND object_key IN (");
@@ -957,25 +989,56 @@ impl SqliteS3DeleteMarkerRepo {
             for key in chunk {
                 separated.push_bind(key);
             }
-            separated.push_unseparated(") ORDER BY object_key, created_at DESC, rowid DESC");
+            separated.push_unseparated(
+                ") ORDER BY object_key, event_order DESC, created_at DESC, rowid DESC",
+            );
             let rows = query
-                .build_query_as::<(String, String, String, String, time::OffsetDateTime)>()
+                .build_query_as::<(String, String, String, String, time::OffsetDateTime, i64)>()
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e| vfiles_domain::DomainError::Internal {
                     message: format!("Failed to read S3 delete markers: {e}"),
                 })?;
             markers.extend(rows.into_iter().map(
-                |(version_id, namespace_id, object_key, owner_id, created_at)| S3DeleteMarker {
-                    version_id,
-                    namespace_id,
-                    object_key,
-                    owner_id,
-                    created_at,
+                |(version_id, namespace_id, object_key, owner_id, created_at, event_order)| {
+                    S3DeleteMarker {
+                        version_id,
+                        namespace_id,
+                        object_key,
+                        owner_id,
+                        created_at,
+                        event_order,
+                    }
                 },
             ));
         }
         Ok(markers)
+    }
+
+    pub async fn version_orders_for_entries(
+        &self,
+        entry_ids: &[vfiles_domain::EntryId],
+    ) -> Result<std::collections::HashMap<String, i64>, vfiles_domain::DomainError> {
+        let mut orders = std::collections::HashMap::new();
+        for chunk in entry_ids.chunks(400) {
+            let mut query = sqlx::QueryBuilder::new(
+                "SELECT id, created_order FROM entry_versions WHERE entry_id IN (",
+            );
+            let mut separated = query.separated(", ");
+            for entry_id in chunk {
+                separated.push_bind(entry_id.to_string());
+            }
+            separated.push_unseparated(")");
+            let rows = query
+                .build_query_as::<(String, i64)>()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| vfiles_domain::DomainError::Internal {
+                    message: format!("Failed to read S3 version ordering: {e}"),
+                })?;
+            orders.extend(rows);
+        }
+        Ok(orders)
     }
 
     pub async fn delete(
@@ -1112,11 +1175,18 @@ mod s3_delete_marker_tests {
         )
         .await
         .expect("marker on a live key should be created");
-        sqlx::query("INSERT INTO entry_versions (id, entry_id, version, size, created_at, created_by) VALUES (?, ?, 1, 12, ?, ?)")
+        let created_order: i64 = sqlx::query_scalar(
+            "UPDATE s3_version_sequence SET value = value + 1 WHERE id = 1 RETURNING value",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("object version event should be sequenced");
+        sqlx::query("INSERT INTO entry_versions (id, entry_id, version, size, created_at, created_by, created_order) VALUES (?, ?, 1, 12, ?, ?, ?)")
             .bind(uuid::Uuid::new_v4().to_string())
             .bind(z_entry_id)
-            .bind(created_at + time::Duration::seconds(2))
+            .bind(created_at - time::Duration::seconds(1))
             .bind(owner.to_string())
+            .bind(created_order)
             .execute(&pool)
             .await
             .expect("newer object version should be inserted");
@@ -3116,8 +3186,17 @@ impl EntryRepo for SqliteEntryRepo {
             })?;
         }
 
+        let created_order: i64 = sqlx::query_scalar(
+            "UPDATE s3_version_sequence SET value = value + 1 WHERE id = 1 RETURNING value",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to sequence entry version: {e}"),
+        })?;
+
         sqlx::query(
-            "INSERT INTO entry_versions (id, entry_id, version, blob_id, size, content_type, created_at, created_by, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO entry_versions (id, entry_id, version, blob_id, size, content_type, created_at, created_by, message, created_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(version_id.to_string())
         .bind(entry_id.to_string())
@@ -3128,6 +3207,7 @@ impl EntryRepo for SqliteEntryRepo {
         .bind(now)
         .bind(created_by.to_string())
         .bind(message)
+        .bind(created_order)
         .execute(&mut *tx)
         .await
         .map_err(|e| DomainError::Internal {
