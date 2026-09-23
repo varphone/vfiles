@@ -1,4 +1,26 @@
-# S3 兼容 API（… r16 multipart 收口 → r19 UploadPartCopy → **r20 SQL 逐页列表**）
+# S3 兼容 API（… r19 UploadPartCopy → r20 SQL 逐页 → **r21 只读凭证**）
+
+## 状态（r21 末 · 按凭证的读写权限 = 多客户端安全基线）
+
+- **实装**：`VFILES_S3_CREDENTIALS` 条目扩展为 `access:secret[:ro]`（`rw`/缺省 = 读写 ✗ 未知模式按读写
+  并 warn）：
+  - `EnvAuth` 仍只做密钥校验；**权限面**由 `VfilesS3.readonly_keys` 承载
+  - s3s 把 SigV4 解析出的 `Credentials{access_key}` 放在 `S3Request.credentials` → 服务端按请求判别
+  - `require_write(creds)` 命中只读键 → `AccessDenied`，覆盖**全部 9 个变更类操作**：
+    `PutObject` / `DeleteObject` / `DeleteObjects` / `CopyObject` / `CreateMultipartUpload` /
+    `UploadPart` / `UploadPartCopy` / `CompleteMultipartUpload` / `AbortMultipartUpload`
+  - 读类（`GetObject` / `HeadObject` / `ListObjects(V2)` / `ListParts` / `ListMultipartUploads`）不受限
+- **真机验收（3 键同服：单对 rw + `rw-key` + `ro-key:…:ro`）**：
+  | 场景 | 结果 |
+  | --- | --- |
+  | `rw` 键写 + 读 | ✓ |
+  | `ro` 键读 + 列 | ✓ |
+  | `ro` 键 PUT / DELETE / 批量 DELETE / CopyObject / CreateMPU / UploadPart / UploadPartCopy / Abort | **8/8 `AccessDenied`** ✓ |
+  | 拒后数据未被改动 | ✓ |
+  | 单对（env `ACCESS_KEY/SECRET_KEY`）仍 rw | ✓ |
+- **回归**：自写探针 **24/24** · 真 SDK **31/31**（`boto_probe.py` 第 6 参 = 第二凭证只读标志，ro/rw 两
+  种服务端配置各跑一遍均 31/31）。
+- **仍债**：凭证→**命名空间**绑定（需 domain 加按名查命名空间）· region 校验 · `copy_source_if_*`。
 
 ## 状态（r20 末 · 列表 SQL 逐页 = 不物化整桶）
 

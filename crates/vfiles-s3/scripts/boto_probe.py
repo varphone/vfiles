@@ -17,6 +17,7 @@ ACCESS = sys.argv[2] if len(sys.argv) > 2 else "test-access"
 SECRET = sys.argv[3] if len(sys.argv) > 3 else "test-secret-123"
 ACCESS2 = sys.argv[4] if len(sys.argv) > 4 else ""
 SECRET2 = sys.argv[5] if len(sys.argv) > 5 else ""
+SECOND_RO = len(sys.argv) > 6 and sys.argv[6] not in ("", "0")
 
 P = []
 
@@ -165,8 +166,8 @@ def main():
             "s3", endpoint_url=ENDPOINT, aws_access_key_id=ACCESS2,
             aws_secret_access_key=SECRET2, region_name="us-east-1",
             config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 1}))
-        s3b.put_object(Bucket="default", Key="boto-r10/second.txt", Body=b"two")
-        ok2 = s3b.get_object(Bucket="default", Key="boto-r10/second.txt")["Body"].read() == b"two"
+        s3.put_object(Bucket="default", Key="boto-r10/second.txt", Body=b"two")
+        read_ok = s3b.get_object(Bucket="default", Key="boto-r10/second.txt")["Body"].read() == b"two"
         try:
             boto3.client(
                 "s3", endpoint_url=ENDPOINT, aws_access_key_id="definitely-unknown",
@@ -176,9 +177,24 @@ def main():
             unknown_rejected = False
         except ClientError:
             unknown_rejected = True
-        check("boto second credential works + unknown rejected", ok2 and unknown_rejected,
-              f"ok2={ok2} rejected={unknown_rejected}")
-        s3b.delete_object(Bucket="default", Key="boto-r10/second.txt")
+        if SECOND_RO:
+            # 只读键（`access:secret:ro`）→ 读可用、写被拒（r21）
+            try:
+                s3b.put_object(Bucket="default", Key="boto-r10/nope.txt", Body=b"x")
+                ro_enforced = False
+            except ClientError as e:
+                ro_enforced = e.response["Error"]["Code"] in ("AccessDenied", "AccessDeniedException")
+            check("boto read-only credential: read ok, write denied",
+                  read_ok and ro_enforced and unknown_rejected,
+                  f"read={read_ok} denied={ro_enforced} unknown={unknown_rejected}")
+        else:
+            s3b.put_object(Bucket="default", Key="boto-r10/second.txt", Body=b"two")
+            write_ok = s3b.get_object(Bucket="default", Key="boto-r10/second.txt")["Body"].read() == b"two"
+            check("boto second credential works + unknown rejected",
+                  read_ok and write_ok and unknown_rejected,
+                  f"read={read_ok} write={write_ok} unknown={unknown_rejected}")
+            s3b.delete_object(Bucket="default", Key="boto-r10/second.txt")
+        s3.delete_object(Bucket="default", Key="boto-r10/second.txt")
 
     # ── 大桶分页（一条 SQL 取全 ✗ r13）──
     for k in range(4):

@@ -1748,27 +1748,44 @@ impl s3s::auth::S3Auth for EnvAuth {
 /// 全空 = 随机生成一把并 warn 打印 access ✗ secret 不落日志）。
 fn load_s3_credentials(
     cfg: &vfiles_config::S3Config,
-) -> std::collections::HashMap<String, s3s::auth::SecretKey> {
+) -> (
+    std::collections::HashMap<String, s3s::auth::SecretKey>,
+    std::collections::HashSet<String>,
+) {
     let mut keys = std::collections::HashMap::new();
+    let mut readonly = std::collections::HashSet::new();
     if !cfg.access_key.is_empty() && !cfg.secret_key.is_empty() {
         keys.insert(
             cfg.access_key.clone(),
             s3s::auth::SecretKey::from(cfg.secret_key.clone()),
         );
     }
-    for pair in cfg.credentials.split(',') {
-        let pair = pair.trim();
-        if pair.is_empty() {
+    // 条目形：`access:secret`（读写）或 `access:secret:ro`（只读 ✗ 消费者/备份专用键）
+    for entry in cfg.credentials.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
             continue;
         }
-        match pair.split_once(':') {
-            Some((a, s)) if !a.trim().is_empty() && !s.trim().is_empty() => {
+        let mut it = entry.split(':');
+        let (a, sec, mode) = (it.next(), it.next(), it.next());
+        match (a, sec) {
+            (Some(a), Some(sec)) if !a.trim().is_empty() && !sec.trim().is_empty() => {
+                let a = a.trim().to_string();
                 keys.insert(
-                    a.trim().to_string(),
-                    s3s::auth::SecretKey::from(s.trim().to_string()),
+                    a.clone(),
+                    s3s::auth::SecretKey::from(sec.trim().to_string()),
                 );
+                match mode.map(|m| m.trim().to_ascii_lowercase()).as_deref() {
+                    Some("ro") | Some("readonly") | Some("read-only") => {
+                        readonly.insert(a);
+                    }
+                    Some("rw") | Some("readwrite") | Some("read-write") | None => {}
+                    Some(other) => {
+                        tracing::warn!(mode = %other, "S3 CREDENTIALS 模式未知（按读写处理）");
+                    }
+                }
             }
-            _ => tracing::warn!("S3 CREDENTIALS 条目格式非法（应为 access:secret），已跳过"),
+            _ => tracing::warn!("S3 CREDENTIALS 条目格式非法（应为 access:secret[:ro]），已跳过"),
         }
     }
     if keys.is_empty() {
@@ -1782,7 +1799,7 @@ fn load_s3_credentials(
             s3s::auth::SecretKey::from(uuid::Uuid::new_v4().simple().to_string()),
         );
     }
-    keys
+    (keys, readonly)
 }
 
 /// 装配并拉起 rsync daemon 专用端口（round 3 ✗ RSYNC_PLAN：纯 TCP 直协议（无 axum）✗
@@ -2079,15 +2096,20 @@ fn build_and_spawn_s3(
     owner: vfiles_domain::UserId,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
-    // 凭证表（多客户端/轮换 ✗ 空 = 运行时随机 + warn）
-    let keys = load_s3_credentials(cfg);
-    tracing::info!(credentials = keys.len(), "S3 凭证表已装配");
+    // 凭证表（多客户端/轮换 + 只读键 ✗ 空 = 运行时随机 + warn）
+    let (keys, readonly_keys) = load_s3_credentials(cfg);
+    tracing::info!(
+        credentials = keys.len(),
+        readonly = readonly_keys.len(),
+        "S3 凭证表已装配"
+    );
     let s3 = VfilesS3 {
         workspace,
         upload,
         entry_repo,
         namespace,
         owner,
+        readonly_keys,
     };
     let auth = EnvAuth { keys };
     let mut builder = s3s::service::S3ServiceBuilder::new(s3);

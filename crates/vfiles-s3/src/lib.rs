@@ -51,6 +51,8 @@ pub struct VfilesS3 {
     pub entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
     pub namespace: vfiles_domain::NamespaceId,
     pub owner: vfiles_domain::UserId,
+    /// 只读凭证（`access:secret:ro` ✗ 变更类操作一律 AccessDenied）。
+    pub readonly_keys: std::collections::HashSet<String>,
 }
 
 fn ok<T>(output: T) -> S3Result<S3Response<T>> {
@@ -461,6 +463,18 @@ impl std::fmt::Debug for VfilesS3 {
     }
 }
 
+impl VfilesS3 {
+    /// 变更类操作门控：命中只读凭证 → `AccessDenied`。
+    fn require_write(&self, creds: Option<&s3s::auth::Credentials>) -> S3Result<()> {
+        if let Some(c) = creds
+            && self.readonly_keys.contains(&c.access_key)
+        {
+            return Err(s3s::s3_error!(AccessDenied, "this access key is read-only"));
+        }
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl S3 for VfilesS3 {
     async fn list_buckets(
@@ -668,6 +682,7 @@ impl S3 for VfilesS3 {
         req: S3Request<PutObjectInput>,
     ) -> S3Result<S3Response<PutObjectOutput>> {
         let input = req.input;
+        self.require_write(req.credentials.as_ref())?;
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
@@ -748,6 +763,7 @@ impl S3 for VfilesS3 {
         req: S3Request<CopyObjectInput>,
     ) -> S3Result<S3Response<CopyObjectOutput>> {
         let input = req.input;
+        self.require_write(req.credentials.as_ref())?;
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
@@ -829,6 +845,7 @@ impl S3 for VfilesS3 {
         req: S3Request<DeleteObjectsInput>,
     ) -> S3Result<S3Response<DeleteObjectsOutput>> {
         let input = req.input;
+        self.require_write(req.credentials.as_ref())?;
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
@@ -947,6 +964,7 @@ impl S3 for VfilesS3 {
         req: S3Request<DeleteObjectInput>,
     ) -> S3Result<S3Response<DeleteObjectOutput>> {
         let input = req.input;
+        self.require_write(req.credentials.as_ref())?;
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
@@ -975,6 +993,7 @@ impl S3 for VfilesS3 {
         req: S3Request<CreateMultipartUploadInput>,
     ) -> S3Result<S3Response<CreateMultipartUploadOutput>> {
         let input = req.input;
+        self.require_write(req.credentials.as_ref())?;
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
@@ -1008,6 +1027,7 @@ impl S3 for VfilesS3 {
         req: S3Request<UploadPartInput>,
     ) -> S3Result<S3Response<UploadPartOutput>> {
         let input = req.input;
+        self.require_write(req.credentials.as_ref())?;
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
@@ -1039,6 +1059,7 @@ impl S3 for VfilesS3 {
         req: S3Request<UploadPartCopyInput>,
     ) -> S3Result<S3Response<UploadPartCopyOutput>> {
         let input = req.input;
+        self.require_write(req.credentials.as_ref())?;
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
@@ -1095,6 +1116,7 @@ impl S3 for VfilesS3 {
         req: S3Request<CompleteMultipartUploadInput>,
     ) -> S3Result<S3Response<CompleteMultipartUploadOutput>> {
         let input = req.input;
+        self.require_write(req.credentials.as_ref())?;
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
@@ -1163,6 +1185,7 @@ impl S3 for VfilesS3 {
         req: S3Request<AbortMultipartUploadInput>,
     ) -> S3Result<S3Response<AbortMultipartUploadOutput>> {
         let input = req.input;
+        self.require_write(req.credentials.as_ref())?;
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
