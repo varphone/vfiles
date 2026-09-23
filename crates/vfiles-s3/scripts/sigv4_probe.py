@@ -72,6 +72,14 @@ def request(method, path, query="", body=b"", extra_headers=None, secret=None):
     except urllib.error.HTTPError as e:
         return e.code, e.read(), dict(e.headers)
 
+def unsigned_request(path):
+    req = urllib.request.Request(ENDPOINT + path, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status, resp.read(), dict(resp.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), dict(e.headers)
+
 def q(params):
     """规范查询串：按 key 排序 + 值 URL 编码。"""
     return "&".join(f"{k}={urllib.parse.quote(str(v), safe='')}" for k, v in sorted(params.items()))
@@ -102,6 +110,13 @@ def ver_count(key):
     return n
 
 def main():
+    endpoint_prefix = urllib.parse.urlsplit(ENDPOINT).path.rstrip("/")
+    if endpoint_prefix.endswith("/s3"):
+        st, body, _ = unsigned_request("/")
+        check("0 /s3/ unauthenticated request returns S3 AccessDenied XML",
+              st == 403 and b"<Code>AccessDenied</Code>" in body,
+              f"{st} {body[:80]!r}")
+
     # ── r2 九式 ──
     st, body, _ = request("GET", "/")
     check("1 ListBuckets default", st == 200 and b"<Name>default</Name>" in body, st)

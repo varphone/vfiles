@@ -1348,6 +1348,11 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     let mut app = if let Some(s3_service) = embedded_s3 {
         vfiles_http::build_router_without_frontend(app_state)
             .fallback(shared_http_s3_fallback)
+            // 保留原始 URI 交给 s3s：nest_service 会改写 URI，导致 SigV4 canonical path 与客户端不符。
+            // 明确挂载 /s3 后，缺少/错误认证头的 S3 请求也能收到 S3 协议错误，而不是前端回退页。
+            .route("/s3", axum::routing::any(shared_http_s3_path))
+            .route("/s3/", axum::routing::any(shared_http_s3_path))
+            .route("/s3/{*path}", axum::routing::any(shared_http_s3_path))
             .layer(axum::Extension(SharedS3Dispatch {
                 service: s3_service,
                 frontend: frontend_for_dispatch,
@@ -2305,7 +2310,6 @@ async fn shared_http_s3_fallback(
     request: axum::extract::Request,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    use tower::ServiceExt;
     let signed_header = request
         .headers()
         .get(axum::http::header::AUTHORIZATION)
@@ -2316,16 +2320,7 @@ async fn shared_http_s3_fallback(
         .query()
         .is_some_and(|q| q.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
     if signed_header || signed_query {
-        return match dispatch.service.oneshot(request).await {
-            Ok(response) => {
-                let (parts, body) = response.into_parts();
-                axum::http::Response::from_parts(parts, axum::body::Body::new(body))
-            }
-            Err(err) => {
-                tracing::error!(?err, "共端口 S3 服务错误");
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
-            }
-        };
+        return dispatch_s3_request(dispatch.service, request, "共端口 S3 服务错误").await;
     }
 
     let Some(frontend) = dispatch.frontend else {
@@ -2336,6 +2331,33 @@ async fn shared_http_s3_fallback(
         .get(axum::http::header::ACCEPT_ENCODING)
         .and_then(|v| v.to_str().ok());
     frontend.serve(request.uri().path(), accept_encoding).await
+}
+
+async fn shared_http_s3_path(
+    axum::Extension(dispatch): axum::extract::Extension<SharedS3Dispatch>,
+    request: axum::extract::Request,
+) -> axum::response::Response {
+    dispatch_s3_request(dispatch.service, request, "共端口 /s3 请求处理失败").await
+}
+
+async fn dispatch_s3_request(
+    service: s3s::service::S3Service,
+    request: axum::extract::Request,
+    error_context: &'static str,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    use tower::ServiceExt;
+
+    match service.oneshot(request).await {
+        Ok(response) => {
+            let (parts, body) = response.into_parts();
+            axum::http::Response::from_parts(parts, axum::body::Body::new(body))
+        }
+        Err(err) => {
+            tracing::error!(?err, error_context = error_context);
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 /// 按配置装配 WebDAV（r110'a ✓ 用户令「默认开启」✓ config 层 auth 防御已守（r109b））。

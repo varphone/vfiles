@@ -2,9 +2,10 @@
 
 ## 当前工作树补充（HTTP / WebDAV / S3 共端口）
 
-- `VFILES_S3_EMBEDDED=true` 时，S3 使用 HTTP 主 listener；既有 `/api` 路由和已挂载的 WebDAV
-  前缀优先，未匹配请求中带 SigV4 Authorization 或 `X-Amz-Algorithm=AWS4-HMAC-SHA256` 的交给 S3，
-  普通路径仍落到前端静态资源。`VFILES_S3_PORT` 仅独立监听模式使用。
+- `VFILES_S3_EMBEDDED=true` 时，S3 使用 HTTP 主 listener；`/s3`、`/s3/` 及其子路径始终交给 S3
+  服务处理（包括返回标准认证错误），并保留原始 URI 供 SigV4 验签。既有 `/api` 路由和已挂载的
+  WebDAV 前缀仍优先；根路径 S3 请求继续按 SigV4 标记分流，普通路径仍落到前端静态资源。
+  `VFILES_S3_PORT` 仅独立监听模式使用。
 - S3 现在默认启用并共用 HTTP 主端口；`VFILES_S3_ENABLED=false` 可关闭，
   `VFILES_S3_EMBEDDED=false` 可退回独立 9000 端口。WebDAV 默认共用主端口，其配置行为不变。
   生产部署应设置固定 Access/Secret 凭证。
