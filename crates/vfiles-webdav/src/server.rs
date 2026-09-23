@@ -148,6 +148,7 @@ async fn get_op(
     user: Option<vfiles_domain::types::User>,
     ns: Option<vfiles_domain::types::NamespaceId>,
     uri_owned: String,
+    range_owned: Option<String>,
     is_head: bool,
 ) -> Response {
     let Some(app) = app else {
@@ -170,17 +171,59 @@ async fn get_op(
         }
     };
     match app.write.get_stream(&ns, &path).await {
-        Ok(Some((reader, mime, size))) => {
-            // 流式响应（r201 ✓ 大文件不入内存 ✗ ReaderStream → Body）
-            let builder = Response::builder()
-                .status(StatusCode::OK)
+        Ok(Some((mut reader, mime, size))) => {
+            use tokio::io::{AsyncReadExt, AsyncSeekExt};
+            // 流式响应（r201 ✓ 大文件不入内存）+ Range 分段（r211 ✓ RFC 7233 ✗
+            // 此前忽略 Range = 播放器要 206 给全量 200 = mp4 循环重试真因）
+            let base = Response::builder()
                 .header(header::CONTENT_TYPE, mime)
-                .header(header::CONTENT_LENGTH, size.to_string());
-            if is_head {
-                builder.body(Body::empty()).unwrap()
-            } else {
-                let stream = tokio_util::io::ReaderStream::new(reader);
-                builder.body(Body::from_stream(stream)).unwrap()
+                .header("accept-ranges", "bytes");
+            let range = range_owned.as_deref().and_then(|rh| {
+                match parse_byte_range(rh, size) {
+                    ByteRange::Satisfiable(a, b) => Some(Ok((a, b))),
+                    ByteRange::Unsatisfiable => Some(Err(())),
+                    ByteRange::NotApplicable => None,
+                }
+            });
+            match range {
+                Some(Ok((start, end))) => {
+                    // 206 分段（seek + take ✗ 仍流式 ✓ 播放器 Range 主流请求式）
+                    let len = (end - start + 1) as u64;
+                    if let Err(err) = reader.seek(std::io::SeekFrom::Start(start as u64)).await {
+                        tracing::error!(error = %err, "WebDAV GET seek 失败");
+                        return internal_error();
+                    }
+                    let builder = base
+                        .status(StatusCode::PARTIAL_CONTENT)
+                        .header(
+                            header::CONTENT_RANGE,
+                            format!("bytes {start}-{end}/{size}"),
+                        )
+                        .header(header::CONTENT_LENGTH, len.to_string());
+                    if is_head {
+                        builder.body(Body::empty()).unwrap()
+                    } else {
+                        let stream =
+                            tokio_util::io::ReaderStream::new(reader.take(len));
+                        builder.body(Body::from_stream(stream)).unwrap()
+                    }
+                }
+                Some(Err(())) => Response::builder()
+                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header(header::CONTENT_RANGE, format!("bytes */{size}"))
+                    .body(Body::empty())
+                    .unwrap(),
+                None => {
+                    let builder = base
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_LENGTH, size.to_string());
+                    if is_head {
+                        builder.body(Body::empty()).unwrap()
+                    } else {
+                        let stream = tokio_util::io::ReaderStream::new(reader);
+                        builder.body(Body::from_stream(stream)).unwrap()
+                    }
+                }
             }
         }
         Ok(None) => {
@@ -507,6 +550,59 @@ async fn propfind_owned(
     Ok(crate::response::multistatus(&items))
 }
 
+/// Range 解析（RFC 7233 简式 ✓ 纯函数单测）。
+/// - `bytes=a-b` / `bytes=a-` / `bytes=-n`（后缀）→ Some(start, end)
+/// - 多段（含逗号）/ 非法 → None（调用方 = 200 全量回退，RFC 允许 ✓）
+/// - 不可满足（start ≥ size 且 size > 0）→ 调用方 416（start > end 时由返回值表达）
+enum ByteRange {
+    Satisfiable(usize, usize),
+    Unsatisfiable,
+    NotApplicable,
+}
+
+fn parse_byte_range(header: &str, size: u64) -> ByteRange {
+    if !header.starts_with("bytes=") || size == 0 {
+        return ByteRange::NotApplicable;
+    }
+    let spec = &header["bytes=".len()..];
+    if spec.contains(',') {
+        return ByteRange::NotApplicable; // 多段 → 200 全量（简式 ✓）
+    }
+    let (a, b) = match spec.split_once('-') {
+        Some(pair) => pair,
+        None => return ByteRange::NotApplicable,
+    };
+    let size_i = size as usize;
+    if a.is_empty() {
+        // 后缀式 bytes=-n
+        let n: usize = match a_is_empty_n(b) {
+            Some(n) => n,
+            None => return ByteRange::NotApplicable,
+        };
+        if n == 0 {
+            return ByteRange::Unsatisfiable;
+        }
+        let start = size_i.saturating_sub(n);
+        return ByteRange::Satisfiable(start, size_i - 1);
+    }
+    let start: usize = match a.parse() {
+        Ok(v) => v,
+        Err(_) => return ByteRange::NotApplicable,
+    };
+    if start >= size_i {
+        return ByteRange::Unsatisfiable;
+    }
+    match b.parse::<usize>() {
+        Ok(end) if end >= start => ByteRange::Satisfiable(start, end.min(size_i - 1)),
+        Ok(_) => ByteRange::Unsatisfiable,
+        Err(_) => ByteRange::Satisfiable(start, size_i - 1), // bytes=a-
+    }
+}
+
+fn a_is_empty_n(suffix: &str) -> Option<usize> {
+    suffix.parse::<usize>().ok()
+}
+
 /// 认证成功首行标记（r210 降噪：首条 info、其后 debug ✗ 连接可见且不刷屏）
 static AUTH_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -601,6 +697,11 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
         ref m if m.as_str() == "GET" || m.as_str() == "HEAD" => {
             // 纯拥有参（#46）：调用侧同步提取。
             let is_head = m.as_str() == "HEAD";
+            let range_owned = req
+                .headers()
+                .get("range")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
             let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
             let ns_owned = req
@@ -608,7 +709,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .get::<vfiles_domain::types::NamespaceId>()
                 .cloned();
             let uri_owned = percent_decode(req.uri().path());
-            get_op(app_owned, user_owned, ns_owned, uri_owned, is_head).await
+            get_op(app_owned, user_owned, ns_owned, uri_owned, range_owned, is_head).await
         }
         ref m if m.as_str() == "PROPFIND" => {
             // 同步提取拥有值（&Request 跨 await = 非 Send ✗✗ E0277 真因 ✓ r105 破案）
@@ -813,5 +914,46 @@ mod if_token_tests {
         );
         assert_eq!(if_token("(<opaquelocktoken:a> AND <opaquelocktoken:b>)"), None);
         assert_eq!(if_token("<Not-a-lock-token>"), None);
+    }
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::{parse_byte_range, ByteRange};
+
+    #[test]
+    fn parses_range_forms() {
+        // RFC 7233 三式 + 回退 + 不可满足（r211 播放器 Range 真因守护）
+        assert!(matches!(
+            parse_byte_range("bytes=0-100", 1000),
+            ByteRange::Satisfiable(0, 100)
+        ));
+        assert!(matches!(
+            parse_byte_range("bytes=500-", 1000),
+            ByteRange::Satisfiable(500, 999)
+        ));
+        assert!(matches!(
+            parse_byte_range("bytes=-100", 1000),
+            ByteRange::Satisfiable(900, 999)
+        ));
+        // 多段 / 非法 → 200 全量回退
+        assert!(matches!(
+            parse_byte_range("bytes=0-1,5-6", 1000),
+            ByteRange::NotApplicable
+        ));
+        assert!(matches!(
+            parse_byte_range("digits", 1000),
+            ByteRange::NotApplicable
+        ));
+        // 不可满足 → 416
+        assert!(matches!(
+            parse_byte_range("bytes=2000-", 1000),
+            ByteRange::Unsatisfiable
+        ));
+        // 空文件 → 全量
+        assert!(matches!(
+            parse_byte_range("bytes=0-10", 0),
+            ByteRange::NotApplicable
+        ));
     }
 }
