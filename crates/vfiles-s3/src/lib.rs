@@ -161,7 +161,11 @@ struct ObjMeta {
     etag: String,
 }
 
-fn obj_meta(m: vfiles_domain::types::EntryChildMeta, properties: &[(String, String)]) -> ObjMeta {
+fn obj_meta(
+    m: vfiles_domain::types::EntryChildMeta,
+    properties: &[(String, String)],
+    version_created_at: Option<time::OffsetDateTime>,
+) -> ObjMeta {
     let version_id = m.entry.current_version_id;
     let version_text = version_id.map(|version| version.to_string().replace('-', ""));
     let etag = version_text
@@ -178,9 +182,19 @@ fn obj_meta(m: vfiles_domain::types::EntryChildMeta, properties: &[(String, Stri
     ObjMeta {
         key: m.entry.path_norm.as_str().to_string(),
         size: m.size_bytes.unwrap_or(0),
-        last_modified: Timestamp::from(m.entry.created_at),
+        last_modified: Timestamp::from(object_last_modified(
+            m.entry.created_at,
+            version_created_at,
+        )),
         etag,
     }
+}
+
+fn object_last_modified(
+    entry_created_at: time::OffsetDateTime,
+    version_created_at: Option<time::OffsetDateTime>,
+) -> time::OffsetDateTime {
+    version_created_at.unwrap_or(entry_created_at)
 }
 
 /// 流式列表收集器（按 key 升序喂入 ✗ 与存储解耦 = 单测可喂内存序列）。
@@ -292,13 +306,28 @@ async fn list_page(
         }
         let ids: Vec<_> = batch.iter().map(|m| m.entry.id).collect();
         let properties = repo.list_entry_properties(&ids).await?;
+        let version_ids: Vec<_> = batch
+            .iter()
+            .filter_map(|meta| meta.entry.current_version_id)
+            .collect();
+        let version_mtimes: std::collections::HashMap<_, _> = repo
+            .find_versions(&version_ids)
+            .await?
+            .into_iter()
+            .map(|version| (version.id, version.created_at))
+            .collect();
         for m in batch {
             cursor = Some(m.entry.path_norm.as_str().to_string());
             let entry_properties = properties
                 .get(&m.entry.id)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
-            if !c.push(obj_meta(m, entry_properties)) {
+            let version_created_at = m
+                .entry
+                .current_version_id
+                .as_ref()
+                .and_then(|version_id| version_mtimes.get(version_id).copied());
+            if !c.push(obj_meta(m, entry_properties, version_created_at)) {
                 break;
             }
         }
@@ -3056,6 +3085,24 @@ impl S3 for VfilesS3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listed_object_last_modified_uses_current_version_time() {
+        let entry_created_at = time::OffsetDateTime::from_unix_timestamp(1_700_000_000)
+            .expect("fixed timestamp is valid");
+        let version_created_at = time::OffsetDateTime::from_unix_timestamp(1_710_000_000)
+            .expect("fixed timestamp is valid");
+        assert_eq!(
+            object_last_modified(entry_created_at, Some(version_created_at)),
+            version_created_at,
+            "overwriting an object must advance its S3 LastModified timestamp"
+        );
+        assert_eq!(
+            object_last_modified(entry_created_at, None),
+            entry_created_at,
+            "objects without version metadata use the entry creation time"
+        );
+    }
 
     #[tokio::test]
     async fn md5_reader_hashes_stream_without_changing_bytes() {
