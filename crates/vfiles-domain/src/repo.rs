@@ -472,6 +472,7 @@ pub trait UploadStore {
         expected_size: Option<u64>,
         max_size: Option<u64>,
         expected_md5: Option<[u8; 16]>,
+        expected_sha256: Option<[u8; 32]>,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt>;
     async fn get_upload_parts(&self, upload_id: &UploadId) -> DomainResult<Vec<UploadPart>>;

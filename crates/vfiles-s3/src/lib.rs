@@ -619,6 +619,18 @@ fn decode_content_md5(value: Option<&str>) -> S3Result<Option<[u8; 16]>> {
     Ok(Some(digest))
 }
 
+fn decode_checksum_sha256(value: Option<&str>) -> S3Result<Option<[u8; 32]>> {
+    use base64::Engine;
+    let Some(value) = value else { return Ok(None) };
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|_| s3s::s3_error!(InvalidDigest, "x-amz-checksum-sha256 is not valid base64"))?;
+    let digest: [u8; 32] = decoded
+        .try_into()
+        .map_err(|_| s3s::s3_error!(InvalidDigest, "SHA256 checksum must decode to 32 bytes"))?;
+    Ok(Some(digest))
+}
+
 impl std::fmt::Debug for VfilesS3 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // workspace/upload 等非 Debug ✗ 标准省内容式（-W missing-debug-implementations 清零）
@@ -1334,6 +1346,9 @@ impl S3 for VfilesS3 {
         }
         let path = norm(&input.key).map_err(dom_err)?;
         let expected_md5 = decode_content_md5(input.content_md5.as_deref())?;
+        let expected_sha256 = decode_checksum_sha256(input.checksum_sha256.as_deref())?;
+        let expected_sha256_hex = expected_sha256.map(hex::encode);
+        let response_checksum_sha256 = input.checksum_sha256.clone();
         // parent/filename 拆（WebDAV put_file 同式 ✗ init=父+名）
         // 条件写（`If-Match` / `If-None-Match` ✗ S3 现代并发控制）
         let cur = self.etag_at(&path).await?;
@@ -1382,7 +1397,7 @@ impl S3 for VfilesS3 {
             self.upload
                 .complete_upload_from_stream_with_md5(
                     &session.upload_id,
-                    None,
+                    expected_sha256_hex.as_deref(),
                     expected_md5,
                     Some("S3 PUT"),
                     Box::new(reader),
@@ -1392,7 +1407,7 @@ impl S3 for VfilesS3 {
             self.upload
                 .complete_upload_from_stream_unknown_size_with_md5(
                     &session.upload_id,
-                    None,
+                    expected_sha256_hex.as_deref(),
                     expected_md5,
                     Some("S3 PUT"),
                     Box::new(reader),
@@ -1407,7 +1422,7 @@ impl S3 for VfilesS3 {
                 }
                 return Err(match error {
                     vfiles_domain::DomainError::BlobChecksumMismatch => {
-                        s3s::s3_error!(BadDigest, "Content-MD5 did not match the uploaded object")
+                        s3s::s3_error!(BadDigest, "uploaded object checksum did not match")
                     }
                     other => dom_err(other),
                 });
@@ -1421,6 +1436,7 @@ impl S3 for VfilesS3 {
         }
         let out = PutObjectOutput {
             e_tag: Some(s3s::dto::ETag::Strong(etag)),
+            checksum_sha256: response_checksum_sha256,
             size: Some(result.version.size_bytes.as_u64() as i64),
             ..Default::default()
         };
@@ -1878,6 +1894,8 @@ impl S3 for VfilesS3 {
         self.validate_multipart_target(&upload_id, &input.key)
             .await?;
         let expected_md5 = decode_content_md5(input.content_md5.as_deref())?;
+        let expected_sha256 = decode_checksum_sha256(input.checksum_sha256.as_deref())?;
+        let response_checksum_sha256 = input.checksum_sha256.clone();
         let blob = input
             .body
             .unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
@@ -1889,17 +1907,19 @@ impl S3 for VfilesS3 {
                 None,
                 Some(5 * 1024 * 1024 * 1024),
                 expected_md5,
+                expected_sha256,
                 Box::new(stream_reader(blob)),
             )
             .await
             .map_err(|error| match error {
                 vfiles_domain::DomainError::UploadPartChecksumMismatch => {
-                    s3s::s3_error!(BadDigest, "Content-MD5 did not match the uploaded part")
+                    s3s::s3_error!(BadDigest, "uploaded part checksum did not match")
                 }
                 other => dom_err(other),
             })?;
         let out = UploadPartOutput {
             e_tag: Some(s3s::dto::ETag::Strong(receipt.md5_hex)),
+            checksum_sha256: response_checksum_sha256,
             ..Default::default()
         };
         ok(out)
@@ -1980,6 +2000,7 @@ impl S3 for VfilesS3 {
                 (input.part_number - 1) as u32,
                 Some(part_size),
                 Some(MAX_S3_PART_SIZE),
+                None,
                 None,
                 Box::new(reader),
             )

@@ -2648,6 +2648,7 @@ where
         expected_size: Option<u64>,
         max_size: Option<u64>,
         expected_md5: Option<[u8; 16]>,
+        expected_sha256: Option<[u8; 32]>,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt> {
         let session = self.upload_store.get_upload_session(upload_id).await?;
@@ -2668,6 +2669,7 @@ where
                 expected_size,
                 max_size,
                 expected_md5,
+                expected_sha256,
                 reader,
             )
             .await

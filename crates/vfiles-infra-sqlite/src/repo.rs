@@ -3188,12 +3188,7 @@ impl BlobStore for FsBlobStore {
         if let Some(expected) = expected_sha256
             && expected != hash_hex
         {
-            return Err(DomainError::Internal {
-                message: format!(
-                    "Blob integrity check failed: expected {}, got {}",
-                    expected, hash_hex
-                ),
-            });
+            return Err(DomainError::BlobChecksumMismatch);
         }
 
         let blob_id = Self::blob_id_for_hash(&hash_hex);
@@ -3316,12 +3311,7 @@ impl BlobStore for FsBlobStore {
             && expected != hash_hex
         {
             let _ = fs::remove_file(&temp_path).await;
-            return Err(DomainError::Internal {
-                message: format!(
-                    "Blob integrity check failed: expected {}, got {}",
-                    expected, hash_hex
-                ),
-            });
+            return Err(DomainError::BlobChecksumMismatch);
         }
 
         let blob_id = Self::blob_id_for_hash(&hash_hex);
@@ -3841,6 +3831,7 @@ impl UploadStore for FsUploadStore {
         expected_size: Option<u64>,
         max_size: Option<u64>,
         expected_md5: Option<[u8; 16]>,
+        expected_sha256: Option<[u8; 32]>,
         mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt> {
         use md5::{Digest as Md5Digest, Md5};
@@ -3859,6 +3850,7 @@ impl UploadStore for FsUploadStore {
                         message: format!("Failed to create temporary upload part: {e}"),
                     })?;
             let mut md5 = <Md5 as Md5Digest>::new();
+            let mut sha256 = Sha256::new();
             let mut size = 0u64;
             let mut buffer = [0u8; 64 * 1024];
             loop {
@@ -3880,6 +3872,7 @@ impl UploadStore for FsUploadStore {
                     return Err(DomainError::UploadPartInvalid);
                 }
                 Md5Digest::update(&mut md5, &buffer[..read]);
+                sha256.update(&buffer[..read]);
                 file.write_all(&buffer[..read])
                     .await
                     .map_err(|e| DomainError::Internal {
@@ -3893,6 +3886,14 @@ impl UploadStore for FsUploadStore {
                 message: format!("Failed to flush upload part: {e}"),
             })?;
             drop(file);
+            let digest: [u8; 16] = Md5Digest::finalize(md5).into();
+            if expected_md5.is_some_and(|expected| expected != digest) {
+                return Err(DomainError::UploadPartChecksumMismatch);
+            }
+            let sha256_digest: [u8; 32] = sha256.finalize().into();
+            if expected_sha256.is_some_and(|expected| expected != sha256_digest) {
+                return Err(DomainError::UploadPartChecksumMismatch);
+            }
             #[cfg(windows)]
             match fs::remove_file(&part_path).await {
                 Ok(()) => {}
@@ -3902,10 +3903,6 @@ impl UploadStore for FsUploadStore {
                         message: format!("Failed to replace existing upload part: {error}"),
                     });
                 }
-            }
-            let digest: [u8; 16] = Md5Digest::finalize(md5).into();
-            if expected_md5.is_some_and(|expected| expected != digest) {
-                return Err(DomainError::UploadPartChecksumMismatch);
             }
             fs::rename(&temp_path, &part_path)
                 .await
@@ -3925,6 +3922,7 @@ impl UploadStore for FsUploadStore {
             Ok(UploadPartReceipt {
                 size_bytes: ByteSize::new(size),
                 md5_hex: actual_md5,
+                sha256_hex: hex::encode(sha256_digest),
             })
         }
         .await;
