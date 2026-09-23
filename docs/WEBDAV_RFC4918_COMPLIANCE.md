@@ -61,6 +61,7 @@
 | percent-decode 全入口 | ✅ r204 | 5 入口 + Destination ✓ | - |
 | 流式 GET/PUT 内存安全 | ✅ r201/110'b | 10MB/分段实证 ✓ | - |
 | 排障观测（访问/认证/失败/信号）| ✅ r205-210 | 全链 info 级 ✓ 降噪三式 ✓ | - |
+| **审计全线（WebDAV）** | ✅ **r8 八写点收官** | `audit_write` 统一 helper（COPY/PROPPATCH 十行式收口）+ put/mkcol/delete/move/lock/unlock 六臂包裹 ✗ **七 action 落表实证** ✓ 失败面 = warn 日志（表记 Failure = P1）| P1失败面 |
 | XML 解析依赖 | ✅ **r2 选型定** | **roxmltree v0.21.1**（KB 级 DOM / 命名空间原生 / 零依赖 ✗ PROPPATCH 复用 ✓）| - |
 
 ## 5. 消项节奏（P0 栈 = 下轮起）
@@ -76,6 +77,17 @@
 5b. Overwrite T 完整覆盖（删旧 + blob release 链）← P1
 6. ~~PROPPATCH~~ ✅ r6（七式 + 审计 ✓）
 7. ~~If 头 + 412~~ ✅ r7（七式 + 分码 + 三臂补锁检 ✓）
-8. **审计全线写入**（登录/管理/其余写点 → record 批量接）← **P0 末项** ← 下轮首项（结构双示范 ✓）
+8. ~~审计全线（WebDAV 八写点）~~ ✅ r8（七 action 落表实证 ✓）
+   - **跨目标债**：HTTP 登录/管理面审计（record 在那里也是零调用 ✗ 看板恒空的另一半
+     真相）= **新目标边界外**（记入 OPTIMIZATION 线 ✗ 本目标 = 协议完备性）
+
+### 🏆 P0 栈全清（r8 · 方法/头/属性/结构四面 P0 全数落地）
+
+✅ XML 选型 / PROPFIND 解析+404propstat+403 / children 双值+批量 / COPY 八式 /
+PROPPATCH 七式 / If+412 七式 / 审计八写点 / 声明面（Allow+DAV class）
+
+**P1 栈（r9 起按序）**：认证热验缓存（0.25s 真头）/ Overwrite T 完整覆盖 / 自定义
+属性 k/v / ETag+If-Match 面 / LOCK Timeout 有限 / getetag+creationdate 属性 /
+失败面审计表记 / HTTP 审计跨目标债
 
 > 记录纪律：每轮改协议面 = 同轮 curl 实证行入表；用户日志线索（gvfs/VLC）= 一等证据源。

@@ -247,6 +247,30 @@ async fn get_op(
 }
 
 /// PUT（r110'b ✓ 纯拥有参（#46 四号破案））。
+/// 审计统一入口（r8 ✓ COPY/PROPPATCH 十行构造式收口成一行调 ✗ audit 为 None = 跳过）。
+fn audit_write(
+    app: &WebdavApplication,
+    action: &str,
+    target: String,
+    user: &vfiles_domain::types::User,
+    ua: Option<&str>,
+    result: vfiles_domain::types::AuditResult,
+) {
+    if let Some(cb) = &app.audit {
+        cb(vfiles_domain::types::NewAuditLog {
+            user_id: Some(user.id.clone()),
+            username: user.username.as_str().to_string(),
+            action: action.to_string(),
+            result,
+            target: Some(target),
+            ip: None,
+            user_agent: ua.map(ToOwned::to_owned),
+            device: None,
+            detail: None,
+        });
+    }
+}
+
 /// 写前置（r7 ✓ 锁查 + If 匹配 → 423/412 分码；None = 放行）。
 fn write_precondition(
     app: &WebdavApplication,
@@ -823,11 +847,33 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .extensions()
                 .get::<vfiles_domain::types::NamespaceId>()
                 .cloned();
-            if m.as_str() == "LOCK" {
+            let resp = if m.as_str() == "LOCK" {
                 lock_op(app_owned, user_owned, ns_owned, uri_owned).await
             } else {
                 unlock_op(app_owned, ns_owned, uri_owned, token_owned).await
+            };
+            if resp.status().is_success() {
+                if let (Some(app), Some(u)) = (
+                    req.extensions().get::<WebdavApplication>(),
+                    req.extensions().get::<vfiles_domain::types::User>(),
+                ) {
+                    let action = if m.as_str() == "LOCK" { "webdav.lock" } else { "webdav.unlock" };
+                    let ua = req
+                        .headers()
+                        .get("user-agent")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string);
+                    audit_write(
+                        app,
+                        action,
+                        percent_decode(req.uri().path()),
+                        u,
+                        ua.as_deref(),
+                        vfiles_domain::types::AuditResult::Success,
+                    );
+                }
             }
+            resp
         }
         // 写法（r108' ✓ MKCOL/DELETE/MOVE 实装；PUT = r109'（分片链）；COPY = 501 记档）。
         // 同步提取拥有值（借用不跨 await ✓ #46）。
@@ -1094,7 +1140,35 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 "DELETE" => WriteOp::Delete,
                 _ => WriteOp::Move,
             };
-            write_op(app_owned, user_owned, ns_owned, uri_owned, dest_owned, if_owned, op).await
+            let audit_action = match m.as_str() {
+                "MKCOL" => "webdav.mkcol",
+                "DELETE" => "webdav.delete",
+                _ => "webdav.move",
+            };
+            {
+                let ua = req
+                    .headers()
+                    .get("user-agent")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string);
+                let resp = write_op(app_owned, user_owned, ns_owned, uri_owned, dest_owned, if_owned, op).await;
+                if resp.status().is_success() {
+                    if let (Some(app), Some(u)) = (
+                        req.extensions().get::<WebdavApplication>(),
+                        req.extensions().get::<vfiles_domain::types::User>(),
+                    ) {
+                        audit_write(
+                            app,
+                            audit_action,
+                            percent_decode(req.uri().path()),
+                            u,
+                            ua.as_deref(),
+                            vfiles_domain::types::AuditResult::Success,
+                        );
+                    }
+                }
+                resp
+            }
         }
         ref m if m.as_str() == "COPY" => Response::builder()
             .status(StatusCode::NOT_IMPLEMENTED)
@@ -1111,7 +1185,9 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .get::<vfiles_domain::types::NamespaceId>()
                 .cloned();
             let uri_owned = percent_decode(req.uri().path());
-            put_op(
+            {
+                let ua = req.headers().get("user-agent").and_then(|v| v.to_str().ok()).map(str::to_string);
+                let resp = put_op(
                 app_owned,
                 user_owned,
                 ns_owned,
@@ -1122,7 +1198,17 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     .map(str::to_string),
                 put_body,
             )
-            .await
+            .await;
+                if resp.status().is_success() {
+                    if let (Some(app), Some(u)) = (
+                        req.extensions().get::<WebdavApplication>(),
+                        req.extensions().get::<vfiles_domain::types::User>(),
+                    ) {
+                        audit_write(app, "webdav.put", percent_decode(req.uri().path()), u, ua.as_deref(), vfiles_domain::types::AuditResult::Success);
+                    }
+                }
+                resp
+            }
         }
         _ => Response::builder()
             .status(StatusCode::METHOD_NOT_ALLOWED)
