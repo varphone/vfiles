@@ -45,22 +45,23 @@ pub struct WebdavApplication {
     pub locks: Arc<crate::lock::LockTable>,
 }
 
-/// `If` 头 token 提取（纯函数 ✓ 单测；复杂式（多重/嵌套）= None → 调用方 412 记档 ✓）。
+/// 提取当前支持的单一未标记 `If` 状态 token。
+///
+/// RFC 4918 的 URI-tagged 条件必须按 URI 对应资源分别求值；当前写前置只对一个资源求值，
+/// 所以严格拒绝 tagged、多列表、`Not`、ETag 混合式和任何尾随语法，避免把其他资源上的
+/// 锁令牌误当作本资源的授权。
 fn if_token(header: &str) -> Option<String> {
-    // 多重/嵌套（AND/OR）= 拒（调用方 412 记档 ✓ 简式 = 单 token 放行 ✓）
-    if header.matches("opaquelocktoken:").count() > 1 {
+    let header = header.trim();
+    let condition = header.strip_prefix('(')?.strip_suffix(')')?.trim();
+    let token = condition.strip_prefix('<')?.strip_suffix('>')?;
+    if !token.starts_with("opaquelocktoken:")
+        || token.chars().any(char::is_whitespace)
+        || token.contains('<')
+        || token.contains('>')
+    {
         return None;
     }
-    let start = header.find("opaquelocktoken:")?;
-    if start == 0 || header.as_bytes().get(start - 1) != Some(&b'<') {
-        return None;
-    }
-    let prefix = header[..start].trim_end_matches('<').trim_end();
-    if prefix.split_whitespace().next_back() == Some("Not") {
-        return None;
-    }
-    let end = header[start..].find('>').map(|i| start + i)?;
-    Some(header[start..end].to_string())
+    Some(token.to_string())
 }
 
 /// LOCK（r109a ✓ exclusive write / depth 0 ✓ 已锁 = 423 ✓ **纯拥有参**（#46 纪律））。

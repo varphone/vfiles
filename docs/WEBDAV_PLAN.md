@@ -25,6 +25,7 @@
 - 空体 LOCK 识别为 refresh：从 `If` 头取唯一 `opaquelocktoken`，仅刷新同路径上仍有效的锁；成功返回原 token 与 lockdiscovery，失效 token 返回 412。
 - 新 LOCK 解析 RFC `lockinfo` XML，只接受 `exclusive` + `write`；shared 请求明确返回 405，不再被静默授予 exclusive 锁。
 - LOCK 的 `Depth` 若显式提供，只接受 `0`；不支持的 scope 返回 400。
+- 写请求的锁前置只接受单一未标记 `If: (<opaquelocktoken:…>)`；URI-tagged、多列表、`Not` 或 ETag 混合条件返回 412，避免把其他 URI 上的 token 当成本资源的锁授权。
 
 ## 0.5 GET 流式化（r201 ✓ 商业级硬伤修 ✗ 大文件内存爆）
 
