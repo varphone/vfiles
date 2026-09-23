@@ -802,18 +802,58 @@ async fn data_take<S>(
 where
     S: AsyncRead + Unpin,
 {
-    while pending.len() < n {
+    let mut out = Vec::new();
+    data_take_into(rw, pending, n, &mut out).await?;
+    Ok(out)
+}
+
+/// 从 mux 输入流直接追加恰好 n 字节到目标缓冲，避免额外构造同样大小的中间 Vec。
+async fn data_take_into<S>(
+    rw: &mut BufReader<S>,
+    pending: &mut Vec<u8>,
+    n: usize,
+    out: &mut Vec<u8>,
+) -> std::io::Result<()>
+where
+    S: AsyncRead + Unpin,
+{
+    let mut remaining = n;
+    while remaining > 0 {
+        if !pending.is_empty() {
+            let take = pending.len().min(remaining);
+            out.extend(pending.drain(..take));
+            remaining -= take;
+            continue;
+        }
         let hdr = read_raw_exact(rw, 4).await?;
         let len = (hdr[0] as usize) | ((hdr[1] as usize) << 8) | ((hdr[2] as usize) << 16);
         let tag = hdr[3];
-        let payload = read_raw_exact(rw, len).await?;
         if tag == MPLEX_BASE + MSG_DATA {
-            pending.extend_from_slice(&payload);
+            let take = len.min(remaining);
+            let mut left = take;
+            let mut scratch = [0u8; 64 * 1024];
+            while left > 0 {
+                let chunk = left.min(scratch.len());
+                rw.read_exact(&mut scratch[..chunk]).await?;
+                out.extend_from_slice(&scratch[..chunk]);
+                left -= chunk;
+            }
+            remaining -= take;
+            if len > take {
+                pending.extend_from_slice(&read_raw_exact(rw, len - take).await?);
+            }
         } else {
             tracing::debug!(tag = tag, len = len, "rsync：忽略非 MSG_DATA 消息");
+            let mut left = len;
+            let mut scratch = [0u8; 64 * 1024];
+            while left > 0 {
+                let chunk = left.min(scratch.len());
+                rw.read_exact(&mut scratch[..chunk]).await?;
+                left -= chunk;
+            }
         }
     }
-    Ok(pending.drain(0..n).collect())
+    Ok(())
 }
 
 /// 协议 30 的 NDX 解码（io.c `read_ndx` 逐行移植）。
@@ -1993,12 +2033,11 @@ where
             for _ in 0..4 {
                 let _ = data_int(&mut rw, &mut pending).await?;
             }
-            // 收 token 流（原样缓冲）→ `apply_tokens` 重建（literal + basis 块匹配）
-            let mut token_buf = Vec::new();
+            // 边读 token 边写入最终字节缓冲；不再另存整份 token 流。
+            let mut data = Vec::new();
             let mut reconstructed_size = 0u64;
             loop {
                 let t = data_int(&mut rw, &mut pending).await?;
-                token_buf.extend_from_slice(&t.to_le_bytes());
                 if t == 0 {
                     break;
                 }
@@ -2013,8 +2052,7 @@ where
                                 "rsync push: literal token 超过文件列表长度",
                             )
                         })?;
-                    let chunk = data_take(&mut rw, &mut pending, literal_size as usize).await?;
-                    token_buf.extend_from_slice(&chunk);
+                    data_take_into(&mut rw, &mut pending, literal_size as usize, &mut data).await?;
                 } else {
                     let block_count = usize::try_from(count).unwrap_or(0);
                     let block_index = t.unsigned_abs().saturating_sub(1) as usize;
@@ -2025,7 +2063,7 @@ where
                             "rsync push: basis token 索引非法",
                         ));
                     }
-                    let matched_size = if block_index == block_count - 1 && remainder > 0 {
+                    let matched_len = if block_index == block_count - 1 && remainder > 0 {
                         let last = usize::try_from(remainder).unwrap_or(usize::MAX);
                         if last > block_size {
                             return Err(std::io::Error::new(
@@ -2036,7 +2074,26 @@ where
                         last
                     } else {
                         block_size
-                    } as u64;
+                    };
+                    let basis_start = block_index.checked_mul(block_size).ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "rsync push: basis 偏移溢出",
+                        )
+                    })?;
+                    let basis_end = basis_start.checked_add(matched_len).ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "rsync push: basis 范围溢出",
+                        )
+                    })?;
+                    if basis_end > basis.len() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "rsync push: basis token 越界",
+                        ));
+                    }
+                    let matched_size = matched_len as u64;
                     reconstructed_size = reconstructed_size
                         .checked_add(matched_size)
                         .filter(|size| *size <= e.size)
@@ -2046,6 +2103,7 @@ where
                                 "rsync push: basis token 超过文件列表长度",
                             )
                         })?;
+                    data.extend_from_slice(&basis[basis_start..basis_end]);
                 }
             }
             if reconstructed_size != e.size {
@@ -2057,14 +2115,6 @@ where
                     ),
                 ));
             }
-            let data = apply_tokens(
-                &token_buf,
-                &basis,
-                blength.max(0) as u32,
-                count,
-                remainder.max(0) as u32,
-            )
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             // 校验重建长度与协商的整文件 MD5；不能把损坏的 delta 静默写入存储。
             if data.len() as u64 != e.size {
                 return Err(std::io::Error::new(
