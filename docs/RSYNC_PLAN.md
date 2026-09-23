@@ -1,4 +1,26 @@
-# rsync 协议 daemon（… r15 `--delete` → r16 filter 保护 → **r17 空目录落地**）
+# rsync 协议 daemon（… r16 filter 保护 → r17 空目录 → **r18 `-c` 校验和快跳**）
+
+## 状态（r18 末 · `-c/--checksum` 快跳 = 未变文件 0 传输）
+
+- **实装**：
+  | 项 | 内容 |
+  | --- | --- |
+  | flist 校验和解析 | `-c` 时官方 `send_file_entry` 在**条目末尾**追加 `flist_csum_len`(=16) 字节整文件 MD5（仅普通文件）→ `recv_file_list(…, always_checksum)` 解析入 `FlatEntry.file_sum` |
+  | 跳过判定 | 收端（generator 角色）取本地 basis → `MD5(basis) == file_sum` → **不发请求**（等价官方 `generator.c` `memcmp(sum, F_SUM(file), flist_csum_len)`）✗ basis 已在 delta 路径读取 = 零额外 IO |
+  | args | `--checksum` / `-c` / `--no-c` |
+- **真机验收（`--stats` 数字）**：
+  | 场景 | 传输文件数 | Literal |
+  | --- | --- | --- |
+  | 首推（无 `-c`） | 3 | 1,572,866 |
+  | 无改动 `-c` 重推 | **0** | **0** |
+  | 改 1 文件后 `-c` | **1** | 1,024（+1,047,552 matched = delta） |
+  | 再无改动 `-c` | **0** | — |
+  → 拉回 `diff -r` **内容全同**；日志 8 条「校验和一致，跳过」。
+- **回归**：`--delete` + `--exclude` 保护 / 无 exclude 删除 / 空目录结构 全保持 ✓。
+- **门禁**：`cargo test -p vfiles-rsync` **22/22**（flist `-c` 往返单测新增校验和断言）× workspace
+  全绿 × clippy 归零 × fmt × build。
+- **债**：**默认快跳（size+mtime）需存源 mtime**（现无该列 = 结构性改动，记档）· 符号链接/设备 ·
+  `.rsync-filter` per-dir · basis 流式。
 
 ## 状态（r17 末 · 推送空目录落地 = 目录结构完整）
 

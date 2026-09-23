@@ -144,6 +144,8 @@ pub struct FlatEntry {
     pub mode: u32,
     /// 命名空间内读取路径（下载用 ✗ `.` = 请求基准目录；测试/列表可留空）。
     pub fs_path: String,
+    /// `-c/--checksum` 时 flist 携带的整文件 MD5（16B ✗ 其余情况 None）。
+    pub file_sum: Option<Vec<u8>>,
 }
 
 impl FlatEntry {
@@ -156,6 +158,7 @@ impl FlatEntry {
             mtime,
             mode: 0o40755,
             fs_path: String::new(),
+            file_sum: None,
         }
     }
 
@@ -168,6 +171,7 @@ impl FlatEntry {
             mtime,
             mode: 0o100644,
             fs_path: String::new(),
+            file_sum: None,
         }
     }
 
@@ -233,6 +237,10 @@ pub fn encode_flist(entries: &[FlatEntry], varint_flags: bool) -> Vec<u8> {
         }
         if x & XMIT_SAME_MODE == 0 {
             body.extend_from_slice(&e.mode.to_le_bytes());
+        }
+        // `-c`：普通文件末尾附整文件校验和（与官方 send_file_entry 同位）
+        if let Some(sum) = &e.file_sum {
+            body.extend_from_slice(sum);
         }
     }
     // write_end_of_flist：xfer_flags_as_varint → varint(0)+varint(0)；否则单字节 0
@@ -566,6 +574,8 @@ struct ParsedArgs {
     delete: bool,
     /// `--delete-excluded`（连被排除项一起删）。
     delete_excluded: bool,
+    /// `-c/--checksum`（flist 携带整文件校验和 → 一致即跳过）。
+    checksum: bool,
     /// `-e` 选项值 = 官方 `client_info`（行为能力串，决定 compat_flags）。
     client_info: String,
     paths: Vec<String>,
@@ -593,6 +603,8 @@ fn parse_args(segs: &[String]) -> ParsedArgs {
                     a.delete = true;
                     a.delete_excluded = true;
                 }
+                "checksum" => a.checksum = true,
+                "no-c" => a.checksum = false,
                 _ => {}
             }
             continue;
@@ -610,6 +622,7 @@ fn parse_args(segs: &[String]) -> ParsedArgs {
                     }
                     'r' => a.recursive = true,
                     'z' => a.compress = true,
+                    'c' => a.checksum = true,
                     _ => {}
                 }
                 i += 1;
@@ -943,6 +956,7 @@ pub async fn recv_file_list<S>(
     rw: &mut BufReader<S>,
     pending: &mut Vec<u8>,
     varint_flags: bool,
+    always_checksum: bool,
 ) -> std::io::Result<Vec<FlatEntry>>
 where
     S: AsyncRead + Unpin,
@@ -1012,6 +1026,12 @@ where
             let l = data_varint(rw, pending).await?.max(0) as usize;
             let _target = data_take(rw, pending, l).await?;
         }
+        // `-c`：普通文件追加整文件校验和（flist 末字段 ✗ 长度 = 协商 md5 = 16）
+        let file_sum = if always_checksum && file_type == 0o100000 {
+            Some(data_take(rw, pending, 16).await?.to_vec())
+        } else {
+            None
+        };
         out.push(FlatEntry {
             name,
             is_dir: file_type == 0o040000,
@@ -1019,6 +1039,7 @@ where
             mtime,
             mode,
             fs_path: String::new(),
+            file_sum,
         });
     }
     Ok(out)
@@ -1580,7 +1601,7 @@ where
             }
             tracing::debug!(rules = filter_rules.len(), "rsync: 已解析 filter 规则");
         }
-        let mut entries = recv_file_list(&mut rw, &mut pending, negotiated).await?;
+        let mut entries = recv_file_list(&mut rw, &mut pending, negotiated, args.checksum).await?;
         sort_flist(&mut entries);
         let mut rp = (-1i32, 1i32); // read_ndx 差分态
         let mut wp = (-1i32, 1i32); // write_ndx 差分态
@@ -1607,6 +1628,14 @@ where
             }
             // 取本地现有内容作 basis（存在 → 发块校验和请求真 delta；否则整文件）
             let basis = backend.read(&full).await.unwrap_or_default();
+            // `-c/--checksum`：整文件 MD5 一致 → 完全跳过（不请求 = 不传 ✗ 官方 generator 同语义）
+            if let Some(sum) = &e.file_sum
+                && !basis.is_empty()
+                && md5_digest(&basis).as_slice() == sum.as_slice()
+            {
+                tracing::debug!(path = %full, "rsync -c：校验和一致，跳过");
+                continue;
+            }
             let s2len: usize = 16;
             let (count, blength, remainder, block_bytes) = if basis.is_empty() {
                 (0i32, 0i32, 0i32, Vec::new())
@@ -1989,6 +2018,7 @@ mod tests {
                 mtime,
                 mode: 0o40775,
                 fs_path: String::new(),
+                file_sum: None,
             },
             FlatEntry {
                 name: "sub".into(),
@@ -1997,6 +2027,7 @@ mod tests {
                 mtime,
                 mode: 0o40775,
                 fs_path: String::new(),
+                file_sum: None,
             },
             FlatEntry {
                 name: "a.txt".into(),
@@ -2005,6 +2036,7 @@ mod tests {
                 mtime,
                 mode: 0o100664,
                 fs_path: String::new(),
+                file_sum: None,
             },
         ];
         let body = encode_flist(&entries, true);
@@ -2031,6 +2063,7 @@ mod tests {
             mtime,
             mode: 0o100664,
             fs_path: String::new(),
+            file_sum: None,
         }];
         let body = encode_flist(&entries, true);
         // xflags = SAME_UID|SAME_GID（首条无 SAME_MODE/TIME）= 0x18 → varint 单字节 0x18
@@ -2125,6 +2158,7 @@ mod tests {
                 mtime,
                 mode: 0o40775,
                 fs_path: String::new(),
+                file_sum: None,
             },
             FlatEntry {
                 name: "a.txt".into(),
@@ -2133,6 +2167,7 @@ mod tests {
                 mtime,
                 mode: 0o100664,
                 fs_path: String::new(),
+                file_sum: None,
             },
         ];
         let (client, server) = tokio::io::duplex(64 * 1024);
@@ -2548,7 +2583,34 @@ mod tests {
         c.shutdown().await.unwrap();
         let mut rw = BufReader::new(srv);
         let mut pending = Vec::new();
-        let got = recv_file_list(&mut rw, &mut pending, true).await.unwrap();
+        let got = recv_file_list(&mut rw, &mut pending, true, false)
+            .await
+            .unwrap();
+
+        // `-c`：普通文件末附 16B 整文件校验和（目录不附 ✗ 对端同语义）
+        let file_sum = Some(md5_digest(b"hello-rsync").to_vec());
+        let mut with_sum = entries.clone();
+        for e in with_sum.iter_mut() {
+            if !e.is_dir {
+                e.file_sum = file_sum.clone();
+            }
+        }
+        let enc2 = encode_flist(&with_sum, true);
+        let (mut c2, srv2) = tokio::io::duplex(64 * 1024);
+        c2.write_all(&mux_frame(&enc2)).await.unwrap();
+        c2.shutdown().await.unwrap();
+        let mut rw2 = BufReader::new(srv2);
+        let mut p2 = Vec::new();
+        let got2 = recv_file_list(&mut rw2, &mut p2, true, true).await.unwrap();
+        assert_eq!(got2.len(), with_sum.len(), "-c 条目数");
+        for (a, b) in got2.iter().zip(with_sum.iter()) {
+            assert_eq!(a.file_sum, b.file_sum, "-c 校验和");
+        }
+        assert!(
+            got2.iter()
+                .filter(|e| e.is_dir)
+                .all(|e| e.file_sum.is_none())
+        );
         assert_eq!(got.len(), entries.len(), "条目数");
         for (a, b) in got.iter().zip(entries.iter()) {
             assert_eq!(a.name, b.name, "名字");
