@@ -6655,3 +6655,59 @@ impl AccessTokenRepo for SqliteAccessTokenRepo {
         Ok(result.rows_affected() > 0)
     }
 }
+
+#[cfg(test)]
+mod tree_page_query_plan_tests {
+    use crate::{SqliteMigrations, SqlitePoolFactory};
+    use camino::Utf8PathBuf;
+    use sqlx::Row;
+
+    #[tokio::test]
+    async fn root_page_uses_ordered_index_without_temporary_sort() {
+        let db_path = Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("vfiles-tree-page-plan-{}.db", uuid::Uuid::new_v4())),
+        )
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let plan = sqlx::query(
+            r#"EXPLAIN QUERY PLAN
+            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+                (SELECT ev.id FROM entry_versions ev
+                 WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
+            FROM entries e
+            WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
+            ORDER BY (e.kind = 'directory') DESC, e.path ASC LIMIT ? OFFSET ?"#,
+        )
+        .bind("plan-test")
+        .bind(200_i64)
+        .bind(0_i64)
+        .fetch_all(&pool)
+        .await
+        .expect("query plan should be available");
+        let details = plan
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>();
+        assert!(
+            details
+                .iter()
+                .any(|detail| detail.contains("idx_entries_namespace_kind_path")),
+            "root page should use its order-compatible index: {details:?}"
+        );
+        assert!(
+            details
+                .iter()
+                .all(|detail| !detail.contains("USE TEMP B-TREE FOR ORDER BY")),
+            "root page should not allocate a temporary sort: {details:?}"
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+}
