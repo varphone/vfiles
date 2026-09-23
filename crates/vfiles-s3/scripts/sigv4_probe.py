@@ -111,17 +111,26 @@ def main():
 
     key = "probe/r1.txt"
     v0 = ver_count(key)
-    st, _, _ = request("PUT", "/default/" + key, body=b"content-v1", extra_headers={"content-type": "text/plain"})
+    st, _, put_headers = request("PUT", "/default/" + key, body=b"content-v1", extra_headers={"content-type": "text/plain"})
     v1 = ver_count(key)
-    check("3 PUT 200 +version", st == 200 and (v0 < 0 or v1 == v0 + 1), f"{st} v{v0}->{v1}")
+    put_etag = put_headers.get("ETag") or put_headers.get("etag")
+    etag_v1 = '"' + hashlib.md5(b"content-v1").hexdigest() + '"'
+    check("3 PUT 200 +version + content MD5 ETag",
+          st == 200 and (v0 < 0 or v1 == v0 + 1) and put_etag == etag_v1,
+          f"{st} v{v0}->{v1} etag={put_etag}")
 
-    st, _, _ = request("PUT", "/default/" + key, body=b"content-v2-longer")
+    st, _, put_headers = request("PUT", "/default/" + key, body=b"content-v2-longer")
     v2 = ver_count(key)
-    check("4 PUT same key +version", st == 200 and (v1 < 0 or v2 == v1 + 1), f"{st} v{v1}->{v2}")
+    put_etag = put_headers.get("ETag") or put_headers.get("etag")
+    etag_v2 = '"' + hashlib.md5(b"content-v2-longer").hexdigest() + '"'
+    check("4 PUT same key +version + content MD5 ETag",
+          st == 200 and (v1 < 0 or v2 == v1 + 1) and put_etag == etag_v2,
+          f"{st} v{v1}->{v2} etag={put_etag}")
 
     st, body, hdrs = request("GET", "/default/" + key)
     etag = hdrs.get("ETag") or hdrs.get("etag")
-    check("5 GET content+ETag", st == 200 and body in (b"content-v1", b"content-v2-longer") and bool(etag), f"{st} etag={etag}")
+    check("5 GET content+ETag", st == 200 and body in (b"content-v1", b"content-v2-longer")
+          and etag == (etag_v1 if body == b"content-v1" else etag_v2), f"{st} etag={etag}")
 
     st, _, hdrs = request("HEAD", "/default/" + key)
     cl = hdrs.get("Content-Length") or hdrs.get("content-length")
@@ -286,13 +295,16 @@ def main():
     cblob = b"copy-src-bytes"
     request("PUT", base + "/probe5/src.bin", body=cblob,
             extra_headers={"content-type": "application/x-thing"})
-    st, _, _ = request("PUT", base + "/probe5/dst.bin",
-                       extra_headers={"x-amz-copy-source": "/default/probe5/src.bin"})
+    st, copy_body, _ = request("PUT", base + "/probe5/dst.bin",
+                               extra_headers={"x-amz-copy-source": "/default/probe5/src.bin"})
     st2, gbody, gh = request("GET", base + "/probe5/dst.bin")
     ct = gh.get("Content-Type") or gh.get("content-type")
+    copy_etag = '"' + hashlib.md5(cblob).hexdigest() + '"'
     check("23 CopyObject bytes + ContentType",
-          st == 200 and st2 == 200 and gbody == cblob and ct == "application/x-thing",
-          f"{st}/{st2} ct={ct}")
+          st == 200 and st2 == 200 and gbody == cblob and ct == "application/x-thing"
+          and copy_etag.encode() in copy_body
+          and (gh.get("ETag") or gh.get("etag")) == copy_etag,
+          f"{st}/{st2} ct={ct} etag={gh.get('ETag') or gh.get('etag')}")
     request("DELETE", base + "/probe5/src.bin")
     request("DELETE", base + "/probe5/dst.bin")
 

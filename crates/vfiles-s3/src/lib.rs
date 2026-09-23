@@ -5,8 +5,8 @@
 //! 认证 = SigV4（s3s 内建 ✗ env 静态凭证表支持只读策略与命名空间 slug 绑定；未设时随机
 //! 生成 + warn 打印 = 零配置试用）。
 //!
-//! 映射：key = 默认 ns 根下相对路径（tree 展开为 flat keys ✗ 单次 Put/Copy ETag 沿用
-//! current_version_id hex；multipart ETag 使用 AWS composite 形，并按版本持久化）。
+//! 映射：key = 默认 ns 根下相对路径（tree 展开为 flat keys ✗ 单次 Put/Copy 使用内容 MD5
+//! ETag，multipart 使用 AWS composite 形；两者均按版本持久化）。
 //!
 //! r3（本轮：列表面的商业级完备）：
 //! - `ListObjectsV2` **全语义**：prefix · delimiter→CommonPrefixes · continuation-token ·
@@ -19,6 +19,7 @@
 //! 扩展能力：multipart upload · region 校验 · 大桶 SQL 分页。
 
 use async_trait::async_trait;
+use md5::{Digest, Md5};
 use s3s::dto::{
     AbortMultipartUploadInput, AbortMultipartUploadOutput, Bucket, BucketLocationConstraint,
     BucketVersioningStatus, CommonPrefix, CompleteMultipartUploadInput,
@@ -38,6 +39,59 @@ use s3s::dto::{
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+/// Hash an upload stream while it is persisted, so regular S3 PUT/COPY ETags don't require a
+/// second read of the newly written object.
+struct Md5Reader<R> {
+    inner: R,
+    digest: std::sync::Arc<std::sync::Mutex<Md5>>,
+}
+
+impl<R> Md5Reader<R> {
+    fn new(inner: R) -> (Self, std::sync::Arc<std::sync::Mutex<Md5>>) {
+        let digest = std::sync::Arc::new(std::sync::Mutex::new(Md5::new()));
+        (
+            Self {
+                inner,
+                digest: digest.clone(),
+            },
+            digest,
+        )
+    }
+}
+
+impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for Md5Reader<R> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        match std::pin::Pin::new(&mut self.inner).poll_read(cx, buf) {
+            std::task::Poll::Ready(Ok(())) => {
+                let bytes = &buf.filled()[before..];
+                if !bytes.is_empty() {
+                    self.digest
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .update(bytes);
+                }
+                std::task::Poll::Ready(Ok(()))
+            }
+            other => other,
+        }
+    }
+}
+
+fn finish_md5(digest: &std::sync::Mutex<Md5>) -> String {
+    hex::encode(
+        digest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .finalize(),
+    )
+}
 
 /// 默认（唯一）虚拟桶名。
 pub const DEFAULT_BUCKET: &str = "default";
@@ -1681,7 +1735,7 @@ impl S3 for VfilesS3 {
         let blob = input
             .body
             .unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
-        let reader = stream_reader(blob);
+        let (reader, md5_digest) = Md5Reader::new(stream_reader(blob));
         let result = if input.content_length.is_some() {
             self.upload
                 .complete_upload_from_stream_with_md5(
@@ -1725,7 +1779,9 @@ impl S3 for VfilesS3 {
                 });
             }
         };
-        let etag = result.version.id.to_string().replace('-', "");
+        let etag = finish_md5(&md5_digest);
+        self.store_version_etag(&result.entry.id, &result.version.id, &etag)
+            .await?;
         // 用户元数据（`x-amz-meta-*`）落 entry 属性；覆盖写 = 清旧
         if let Some(entry) = self.entry_at(&path).await? {
             self.store_metadata(&entry.id, input.metadata.as_ref())
@@ -1823,13 +1879,14 @@ impl S3 for VfilesS3 {
             )
             .await
             .map_err(dom_err)?;
+        let (reader, md5_digest) = Md5Reader::new(content.reader);
         let result = self
             .upload
             .complete_upload_from_stream(
                 &session.upload_id,
                 None,
                 Some("S3 COPY"),
-                Box::new(content.reader),
+                Box::new(reader),
             )
             .await;
         let result = match result {
@@ -1841,7 +1898,9 @@ impl S3 for VfilesS3 {
                 return Err(dom_err(error));
             }
         };
-        let etag = result.version.id.to_string().replace('-', "");
+        let etag = finish_md5(&md5_digest);
+        self.store_version_etag(&result.entry.id, &result.version.id, &etag)
+            .await?;
         // 用户元数据：`REPLACE` = 取请求；否则（COPY）= 抄源条目
         let md = if replace {
             input.metadata.clone()
@@ -2643,6 +2702,16 @@ impl S3 for VfilesS3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn md5_reader_hashes_stream_without_changing_bytes() {
+        let bytes = b"S3 content ETag";
+        let (mut reader, digest) = Md5Reader::new(std::io::Cursor::new(bytes));
+        let mut read_back = Vec::new();
+        reader.read_to_end(&mut read_back).await.unwrap();
+        assert_eq!(read_back, bytes);
+        assert_eq!(finish_md5(&digest), md5_hex(bytes));
+    }
 
     fn meta(key: &str, size: u64) -> ObjMeta {
         ObjMeta {
