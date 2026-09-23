@@ -1,4 +1,26 @@
-# S3 兼容 API（… r19 UploadPartCopy → r20 SQL 逐页 → **r21 只读凭证**）
+# S3 兼容 API（… r20 SQL 逐页 → r21 只读凭证 → **r22 用户元数据**）
+
+## 状态（r22 末 · `x-amz-meta-*` 往返 = 客户端自定义元数据可用）
+
+- **实装**（复用 0006 `entry_properties` 表 = **零迁移**）：
+  | 项 | 内容 |
+  | --- | --- |
+  | 存储 | 前缀 `s3-meta:` 入 entry 属性（s3s `input.metadata` = `x-amz-meta-*` 已解析的 HashMap） |
+  | 读取 | `GetObject` / `HeadObject` 经 `list_entry_properties` 回填 `output.metadata` → 响应头 |
+  | 覆盖写 | `PutObject` 先清旧 `s3-meta:*` 再写新 = 「无元数据即清空」S3 语义 |
+  | 复制 | `CopyObject` 默认（COPY）**抄源条目元数据**；`MetadataDirective=REPLACE` 用请求值（无则清空）；源条目不受影响 |
+  | 级联 | 删 entry → 属性随 FK **ON DELETE CASCADE** 自动清 |
+- **真机验收（真 SDK）**：
+  | 场景 | 结果 |
+  | --- | --- |
+  | PUT 带 3 项元数据 | GET/HEAD 原样返回 ✓ |
+  | 无元数据覆盖写 | 元数据**清空** ✓ |
+  | `CopyObject` 默认 | 元数据**继承源** ✓ |
+  | `REPLACE` + 新元数据 / `REPLACE` 无元数据 | 替换 / **清空** ✓ |
+  | 源条目元数据 | 未被改动 ✓ |
+- **回归**：自写探针 **24/24** · 真 SDK **35/35**（+4 元数据检查）。
+- **仍债**：多段上传的 `x-amz-meta-*`（`CreateMultipartUpload` 传入 ✗ 会话无此字段）· 凭证→命名空间
+  绑定 · region 校验 · `copy_source_if_*` 条件头。
 
 ## 状态（r21 末 · 按凭证的读写权限 = 多客户端安全基线）
 

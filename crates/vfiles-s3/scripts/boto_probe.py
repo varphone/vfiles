@@ -234,6 +234,27 @@ def main():
         for j in range(30):
             s3.delete_object(Bucket="default", Key=f"boto-scale/d{k}/f{j:02d}.txt")
 
+    # ── 用户元数据（x-amz-meta-* ✗ r22）──
+    umd = {"project": "alpha", "owner": "ops", "x-custom": "v=1"}
+    s3.put_object(Bucket="default", Key="boto-meta/a.txt", Body=b"hello", Metadata=umd)
+    check("boto user metadata round-trip (GET)",
+          s3.get_object(Bucket="default", Key="boto-meta/a.txt")["Metadata"] == umd)
+    check("boto user metadata round-trip (HEAD)",
+          s3.head_object(Bucket="default", Key="boto-meta/a.txt")["Metadata"] == umd)
+    s3.put_object(Bucket="default", Key="boto-meta/a.txt", Body=b"again")
+    check("boto overwrite clears metadata",
+          s3.head_object(Bucket="default", Key="boto-meta/a.txt")["Metadata"] == {})
+    s3.put_object(Bucket="default", Key="boto-meta/src.txt", Body=b"s", Metadata=umd)
+    s3.copy_object(Bucket="default", Key="boto-meta/copy.txt", CopySource="default/boto-meta/src.txt")
+    check("boto copy preserves metadata",
+          s3.head_object(Bucket="default", Key="boto-meta/copy.txt")["Metadata"] == umd)
+    s3.copy_object(Bucket="default", Key="boto-meta/repl.txt", CopySource="default/boto-meta/src.txt",
+                   MetadataDirective="REPLACE", Metadata={"only": "one"})
+    check("boto copy REPLACE metadata",
+          s3.head_object(Bucket="default", Key="boto-meta/repl.txt")["Metadata"] == {"only": "one"})
+    for mk in ["boto-meta/a.txt", "boto-meta/src.txt", "boto-meta/copy.txt", "boto-meta/repl.txt"]:
+        s3.delete_object(Bucket="default", Key=mk)
+
     # ── UploadPartCopy（r19）──
     cpsrc = bytes([i % 251 for i in range(262144)])
     s3.put_object(Bucket="default", Key="boto-upc/src.bin", Body=cpsrc)

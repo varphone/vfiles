@@ -463,7 +463,70 @@ impl std::fmt::Debug for VfilesS3 {
     }
 }
 
+/// S3 用户元数据（`x-amz-meta-*`）在 entry 属性表中的前缀（复用 0006 `entry_properties`）。
+const S3_META_PREFIX: &str = "s3-meta:";
+
 impl VfilesS3 {
+    /// 读条目的 S3 用户元数据（`x-amz-meta-*` → 响应头）。
+    async fn load_metadata(
+        &self,
+        entry_id: &vfiles_domain::EntryId,
+    ) -> S3Result<Option<s3s::dto::Metadata>> {
+        let mut map = self
+            .entry_repo
+            .list_entry_properties(&[*entry_id])
+            .await
+            .map_err(dom_err)?;
+        let mut out = s3s::dto::Metadata::new();
+        for (k, v) in map.remove(entry_id).unwrap_or_default() {
+            if let Some(name) = k.strip_prefix(S3_META_PREFIX) {
+                out.insert(name.to_string(), v);
+            }
+        }
+        Ok((!out.is_empty()).then_some(out))
+    }
+
+    /// 覆盖写用户元数据（先清旧 = 与 `MetadataDirective=REPLACE` 语义一致）。
+    async fn store_metadata(
+        &self,
+        entry_id: &vfiles_domain::EntryId,
+        md: Option<&s3s::dto::Metadata>,
+    ) -> S3Result<()> {
+        let mut map = self
+            .entry_repo
+            .list_entry_properties(&[*entry_id])
+            .await
+            .map_err(dom_err)?;
+        for (k, _) in map.remove(entry_id).unwrap_or_default() {
+            if k.starts_with(S3_META_PREFIX) {
+                self.entry_repo
+                    .remove_entry_property(entry_id, &k)
+                    .await
+                    .map_err(dom_err)?;
+            }
+        }
+        if let Some(md) = md {
+            for (k, v) in md {
+                self.entry_repo
+                    .set_entry_property(entry_id, &format!("{S3_META_PREFIX}{k}"), v)
+                    .await
+                    .map_err(dom_err)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// 路径 → entry（元数据读写用 ✗ 不存在则 None）。
+    async fn entry_at(
+        &self,
+        path: &vfiles_domain::NormalizedPath,
+    ) -> S3Result<Option<vfiles_domain::Entry>> {
+        self.entry_repo
+            .find_by_path(&self.namespace, path)
+            .await
+            .map_err(dom_err)
+    }
+
     /// 变更类操作门控：命中只读凭证 → `AccessDenied`。
     fn require_write(&self, creds: Option<&s3s::auth::Credentials>) -> S3Result<()> {
         if let Some(c) = creds
@@ -618,6 +681,7 @@ impl S3 for VfilesS3 {
             }
             None => (data, size as i64, None),
         };
+        let metadata = self.load_metadata(&entry.id).await?;
         let out = GetObjectOutput {
             body: Some(StreamingBlob::from_bytes(body.into())),
             content_length: Some(content_length),
@@ -626,6 +690,7 @@ impl S3 for VfilesS3 {
             content_range,
             e_tag: Some(s3s::dto::ETag::Strong(etag)),
             last_modified: Some(last_modified),
+            metadata,
             ..Default::default()
         };
         ok(out)
@@ -665,6 +730,7 @@ impl S3 for VfilesS3 {
             ),
             None => (size as i64, None),
         };
+        let metadata = self.load_metadata(&entry.id).await?;
         let out = HeadObjectOutput {
             content_length: Some(content_length),
             content_type: file.mime_type,
@@ -672,6 +738,7 @@ impl S3 for VfilesS3 {
             content_range,
             e_tag: Some(s3s::dto::ETag::Strong(etag)),
             last_modified: Some(last_modified),
+            metadata,
             ..Default::default()
         };
         ok(out)
@@ -746,6 +813,11 @@ impl S3 for VfilesS3 {
                 .map_err(dom_err)?
         };
         let etag = result.version.id.to_string().replace('-', "");
+        // 用户元数据（`x-amz-meta-*`）落 entry 属性；覆盖写 = 清旧
+        if let Some(entry) = self.entry_at(&path).await? {
+            self.store_metadata(&entry.id, input.metadata.as_ref())
+                .await?;
+        }
         let out = PutObjectOutput {
             e_tag: Some(s3s::dto::ETag::Strong(etag)),
             size: Some(result.version.size_bytes.as_u64() as i64),
@@ -828,6 +900,18 @@ impl S3 for VfilesS3 {
             .await
             .map_err(dom_err)?;
         let etag = result.version.id.to_string().replace('-', "");
+        // 用户元数据：`REPLACE` = 取请求；否则（COPY）= 抄源条目
+        let md = if replace {
+            input.metadata.clone()
+        } else {
+            match self.entry_at(&src_path).await? {
+                Some(e) => self.load_metadata(&e.id).await?,
+                None => None,
+            }
+        };
+        if let Some(entry) = self.entry_at(&dst_path).await? {
+            self.store_metadata(&entry.id, md.as_ref()).await?;
+        }
         let out = CopyObjectOutput {
             copy_object_result: Some(CopyObjectResult {
                 e_tag: Some(s3s::dto::ETag::Strong(etag)),
