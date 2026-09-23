@@ -1,4 +1,22 @@
-# S3 兼容 API（… r21 只读凭证 → r22 用户元数据 → **r23 multipart 元数据**）
+# S3 兼容 API（… r22 用户元数据 → r23 multipart 元数据 → **r24 条件复制**）
+
+## 状态（r24 末 · `x-amz-copy-source-if-*` 四头 = 并发拷贝安全）
+
+- **实装**：`check_copy_conditions` 统一门控 4 个头（RFC 9110 §13 + S3 语义）：
+  | 头 | 语义 | 不满足 |
+  | --- | --- | --- |
+  | `copy-source-if-match` | 源 ETag 命中才拷（`*` 恒真） | `PreconditionFailed` 412 |
+  | `copy-source-if-none-match` | 源 ETag **不**命中才拷 | 412 |
+  | `copy-source-if-modified-since` | 源修改时间**晚于**该时刻才拷 | 412 |
+  | `copy-source-if-unmodified-since` | 源修改时间**不晚于**该时刻才拷 | 412 |
+  - 源身份（`source_identity`：ETag = `current_version_id` hex + `created_at`）同时修掉「源不存在」的错误码
+    （现为 `NoSuchKey` 而非链路错）
+  - **`CopyObject` 与 `UploadPartCopy` 同门控**（两处都带这 4 个头）
+- **真机验收（真 SDK，11 项）**：if-match 正确/错误 → ok/412；if-none-match 命中/他值 → 412/ok；
+  if-modified-since 过去/未来 → ok/412；if-unmodified-since 未来/过去 → ok/412；拷贝正文仍正确；
+  `upload_part_copy` 的 if-match 正确/错误 → ok/412。
+- **回归**：自写探针 **24/24** · 真 SDK **37/37**（+条件复制）。
+- **仍债**：凭证→命名空间绑定 · region 校验。
 
 ## 状态（r23 末 · 元数据三路齐全 = PUT / Copy / multipart）
 

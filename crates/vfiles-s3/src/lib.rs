@@ -25,11 +25,11 @@ use s3s::dto::{
     CompleteMultipartUploadInput, CompleteMultipartUploadOutput, CopyObjectInput, CopyObjectOutput,
     CopyObjectResult, CopyPartResult, CreateMultipartUploadInput, CreateMultipartUploadOutput,
     DeleteObjectInput, DeleteObjectOutput, DeleteObjectsInput, DeleteObjectsOutput, DeletedObject,
-    Error as S3DeleteError, GetObjectInput, GetObjectOutput, HeadObjectInput, HeadObjectOutput,
-    ListBucketsOutput, ListMultipartUploadsInput, ListMultipartUploadsOutput, ListObjectsInput,
-    ListObjectsOutput, ListObjectsV2Input, ListObjectsV2Output, ListPartsInput, ListPartsOutput,
-    MultipartUpload, Object, Part, PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp,
-    UploadPartCopyInput, UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
+    ETagCondition, Error as S3DeleteError, GetObjectInput, GetObjectOutput, HeadObjectInput,
+    HeadObjectOutput, ListBucketsOutput, ListMultipartUploadsInput, ListMultipartUploadsOutput,
+    ListObjectsInput, ListObjectsOutput, ListObjectsV2Input, ListObjectsV2Output, ListPartsInput,
+    ListPartsOutput, MultipartUpload, Object, Part, PutObjectInput, PutObjectOutput, StreamingBlob,
+    Timestamp, UploadPartCopyInput, UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
 use tokio::io::AsyncReadExt;
@@ -408,6 +408,71 @@ fn split_key(full: &str) -> (String, String) {
 fn parse_upload_id(s: &str) -> S3Result<vfiles_domain::UploadId> {
     vfiles_domain::UploadId::from_string(s)
         .map_err(|_| s3s::s3_error!(InvalidArgument, "invalid upload id"))
+}
+
+/// `x-amz-copy-source-if-*` 条件校验（不满足 → `PreconditionFailed` ✗ RFC 9110 §13 + S3 语义）。
+fn check_copy_conditions(
+    if_match: Option<&ETagCondition>,
+    if_none_match: Option<&ETagCondition>,
+    if_modified_since: Option<&Timestamp>,
+    if_unmodified_since: Option<&Timestamp>,
+    src_etag: &str,
+    src_modified: &Timestamp,
+) -> S3Result<()> {
+    let matches = |c: &ETagCondition| match c {
+        ETagCondition::Any => true,
+        ETagCondition::ETag(e) => e.value() == src_etag,
+    };
+    if let Some(c) = if_match
+        && !matches(c)
+    {
+        return Err(s3s::s3_error!(
+            PreconditionFailed,
+            "copy-source-if-match failed"
+        ));
+    }
+    if let Some(c) = if_none_match
+        && matches(c)
+    {
+        return Err(s3s::s3_error!(
+            PreconditionFailed,
+            "copy-source-if-none-match failed"
+        ));
+    }
+    if let Some(t) = if_modified_since
+        && src_modified <= t
+    {
+        return Err(s3s::s3_error!(
+            PreconditionFailed,
+            "copy-source-if-modified-since failed"
+        ));
+    }
+    if let Some(t) = if_unmodified_since
+        && src_modified > t
+    {
+        return Err(s3s::s3_error!(
+            PreconditionFailed,
+            "copy-source-if-unmodified-since failed"
+        ));
+    }
+    Ok(())
+}
+
+/// 源条目的 `(ETag, LastModified)`（条件头用）。
+async fn source_identity(
+    backend: &VfilesS3,
+    src_path: &vfiles_domain::NormalizedPath,
+) -> S3Result<(String, Timestamp)> {
+    let e = backend
+        .entry_at(src_path)
+        .await?
+        .ok_or_else(|| s3s::s3_error!(NoSuchKey, "source key not found"))?;
+    Ok((
+        e.current_version_id
+            .map(|v| v.to_string().replace('-', ""))
+            .unwrap_or_default(),
+        Timestamp::from(e.created_at),
+    ))
 }
 
 /// `x-amz-copy-source-range` 切片（`bytes=start-end` 闭区间 ✗ `bytes=start-` / `bytes=-suffix` 亦支持）。
@@ -854,6 +919,15 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "source bucket not found"));
         }
         let src_path = norm(&src_key).map_err(dom_err)?;
+        let (src_etag, src_mtime) = source_identity(self, &src_path).await?;
+        check_copy_conditions(
+            input.copy_source_if_match.as_ref(),
+            input.copy_source_if_none_match.as_ref(),
+            input.copy_source_if_modified_since.as_ref(),
+            input.copy_source_if_unmodified_since.as_ref(),
+            &src_etag,
+            &src_mtime,
+        )?;
         let content = self
             .workspace
             .read_file_bytes(&self.namespace, &src_path, None)
@@ -1180,6 +1254,15 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "source bucket not found"));
         }
         let src_path = norm(&src_key).map_err(dom_err)?;
+        let (src_etag, src_mtime) = source_identity(self, &src_path).await?;
+        check_copy_conditions(
+            input.copy_source_if_match.as_ref(),
+            input.copy_source_if_none_match.as_ref(),
+            input.copy_source_if_modified_since.as_ref(),
+            input.copy_source_if_unmodified_since.as_ref(),
+            &src_etag,
+            &src_mtime,
+        )?;
         let content = self
             .workspace
             .read_file_bytes(&self.namespace, &src_path, None)
@@ -1469,6 +1552,42 @@ mod tests {
             meta("dir/y", 4),
             meta("dir/sub/z", 5),
         ]
+    }
+
+    /// `x-amz-copy-source-if-*` 四头条件门控（ETag 匹配/不匹配 + 时间上下界）。
+    #[test]
+    fn copy_conditions_gate() {
+        use s3s::dto::ETag;
+        let etag = "abc123";
+        let now = Timestamp::from(time::OffsetDateTime::now_utc());
+        let past = Timestamp::from(time::OffsetDateTime::now_utc() - time::Duration::seconds(60));
+        let future = Timestamp::from(time::OffsetDateTime::now_utc() + time::Duration::seconds(60));
+        let hit = ETagCondition::ETag(ETag::Strong("abc123".to_string()));
+        let miss = ETagCondition::ETag(ETag::Strong("other".to_string()));
+        let any = ETagCondition::Any;
+        let ok = |a, b, c, d| check_copy_conditions(a, b, c, d, etag, &now).is_ok();
+        assert!(ok(Some(&hit), None, None, None), "if-match 命中");
+        assert!(!ok(Some(&miss), None, None, None), "if-match 不命中");
+        assert!(ok(Some(&any), None, None, None), "if-match * 恒真");
+        assert!(!ok(None, Some(&hit), None, None), "if-none-match 命中即拒");
+        assert!(
+            ok(None, Some(&miss), None, None),
+            "if-none-match 不命中放行"
+        );
+        assert!(!ok(None, Some(&any), None, None), "if-none-match * 恒拒");
+        assert!(ok(None, None, Some(&past), None), "modified-since 已修改");
+        assert!(
+            !ok(None, None, Some(&future), None),
+            "modified-since 未修改即拒"
+        );
+        assert!(
+            ok(None, None, None, Some(&future)),
+            "unmodified-since 未修改"
+        );
+        assert!(
+            !ok(None, None, None, Some(&past)),
+            "unmodified-since 已修改即拒"
+        );
     }
 
     /// 流式分页（SQL 逐页）与参考实现（全量折叠 + 切片）**逐页走全等价**。

@@ -255,6 +255,26 @@ def main():
     for mk in ["boto-meta/a.txt", "boto-meta/src.txt", "boto-meta/copy.txt", "boto-meta/repl.txt"]:
         s3.delete_object(Bucket="default", Key=mk)
 
+    # ── 条件复制（x-amz-copy-source-if-* ✗ r24）──
+    s3.put_object(Bucket="default", Key="boto-cond/src.txt", Body=b"c")
+    cetag = s3.head_object(Bucket="default", Key="boto-cond/src.txt")["ETag"]
+
+    def ctry(**kw):
+        try:
+            s3.copy_object(Bucket="default", Key="boto-cond/dst.txt",
+                           CopySource="default/boto-cond/src.txt", **kw)
+            return "ok"
+        except ClientError as e:
+            return e.response["Error"]["Code"]
+
+    cok = ctry(CopySourceIfMatch=cetag) == "ok"
+    cbad = ctry(CopySourceIfMatch='"deadbeef"') == "PreconditionFailed"
+    cnone = ctry(CopySourceIfNoneMatch=cetag) == "PreconditionFailed"
+    check("boto conditional copy (if-match / if-none-match)",
+          cok and cbad and cnone, f"ok={cok} bad={cbad} none={cnone}")
+    s3.delete_object(Bucket="default", Key="boto-cond/src.txt")
+    s3.delete_object(Bucket="default", Key="boto-cond/dst.txt")
+
     # ── multipart 用户元数据（CreateMultipartUpload 传入 ✗ r23）──
     mmd = {"project": "big", "stage": "mpu"}
     muid = s3.create_multipart_upload(Bucket="default", Key="boto-mpu/meta.bin",
