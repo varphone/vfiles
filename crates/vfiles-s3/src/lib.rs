@@ -23,11 +23,11 @@ use async_trait::async_trait;
 use s3s::dto::{
     AbortMultipartUploadInput, AbortMultipartUploadOutput, Bucket, CommonPrefix,
     CompleteMultipartUploadInput, CompleteMultipartUploadOutput, CreateMultipartUploadInput,
-    CreateMultipartUploadOutput, DeleteObjectInput, DeleteObjectOutput, GetObjectInput,
-    GetObjectOutput, HeadObjectInput, HeadObjectOutput, ListBucketsOutput, ListObjectsInput,
-    ListObjectsOutput, ListObjectsV2Input, ListObjectsV2Output, ListPartsInput, ListPartsOutput,
-    Object, Part, PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp, UploadPartInput,
-    UploadPartOutput,
+    CreateMultipartUploadOutput, DeleteObjectInput, DeleteObjectOutput, DeleteObjectsInput,
+    DeleteObjectsOutput, DeletedObject, Error as S3DeleteError, GetObjectInput, GetObjectOutput,
+    HeadObjectInput, HeadObjectOutput, ListBucketsOutput, ListObjectsInput, ListObjectsOutput,
+    ListObjectsV2Input, ListObjectsV2Output, ListPartsInput, ListPartsOutput, Object, Part,
+    PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp, UploadPartInput, UploadPartOutput,
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
 use tokio::io::AsyncReadExt;
@@ -239,7 +239,7 @@ fn resolve_range(
     }
 }
 
-/// 聚合请求体（PUT / UploadPart 共用 ✗ 流式直连 = 记档债）。
+/// 聚合请求体（未知长度 PUT / UploadPart 回退路径 ✗ 流式直连为默认）。
 async fn read_body(blob: Option<StreamingBlob>) -> S3Result<Vec<u8>> {
     let blob = blob.unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
     let mut data: Vec<u8> = Vec::new();
@@ -249,6 +249,13 @@ async fn read_body(blob: Option<StreamingBlob>) -> S3Result<Vec<u8>> {
         data.extend_from_slice(&chunk);
     }
     Ok(data)
+}
+
+/// `StreamingBlob` → `AsyncRead`（流式直连 blob 存储 ✗ 大文件不再全量入内存）。
+fn stream_reader(blob: StreamingBlob) -> impl tokio::io::AsyncRead + Send + Unpin {
+    use futures::TryStreamExt;
+    let stream = blob.map_err(|e| std::io::Error::other(e.to_string()));
+    tokio_util::io::StreamReader::new(stream)
 }
 
 /// key → (父目录路径, 文件名)（与 WebDAV/S3 PUT 同式 ✗ 空名兜底 "upload"）。
@@ -484,36 +491,190 @@ impl S3 for VfilesS3 {
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
-        // r1 记档债：body 聚合（流式直连 = P2 ✗ 与 WebDAV 流式同级优化）
-        let data = read_body(input.body).await?;
         let path = norm(&input.key).map_err(dom_err)?;
         // parent/filename 拆（WebDAV put_file 同式 ✗ init=父+名）
         let (parent_str, filename) = split_key(path.as_str());
         let parent = vfiles_domain::NormalizedPath::new(&parent_str)
             .map_err(|e| s3s::s3_error!(InvalidArgument, "{}", e))?;
-        let session = self
-            .upload
-            .init_upload(
-                &self.namespace,
-                &parent,
-                &filename,
-                data.len() as u64,
-                input.content_type.as_deref(), // ContentType=String → init 要 &str（透传保留）
-                None,
-                &self.owner,
-            )
-            .await
-            .map_err(dom_err)?;
-        self.upload
-            .complete_upload_from_stream(
-                &session.upload_id,
-                None,
-                Some("S3 PUT"),
-                Box::new(std::io::Cursor::new(data)),
-            )
-            .await
-            .map_err(dom_err)?;
-        let out = PutObjectOutput::default();
+        // r6：Content-Length 已知 → **流式直连**（不再全量入内存）；未知 → 回退聚合
+        let declared = input.content_length.unwrap_or(0);
+        let result = if declared > 0 {
+            let session = self
+                .upload
+                .init_upload(
+                    &self.namespace,
+                    &parent,
+                    &filename,
+                    declared as u64,
+                    input.content_type.as_deref(),
+                    None,
+                    &self.owner,
+                )
+                .await
+                .map_err(dom_err)?;
+            let blob = input
+                .body
+                .unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
+            let reader = stream_reader(blob);
+            self.upload
+                .complete_upload_from_stream(
+                    &session.upload_id,
+                    None,
+                    Some("S3 PUT"),
+                    Box::new(reader),
+                )
+                .await
+                .map_err(dom_err)?
+        } else {
+            let data = read_body(input.body).await?;
+            let session = self
+                .upload
+                .init_upload(
+                    &self.namespace,
+                    &parent,
+                    &filename,
+                    data.len() as u64,
+                    input.content_type.as_deref(),
+                    None,
+                    &self.owner,
+                )
+                .await
+                .map_err(dom_err)?;
+            self.upload
+                .complete_upload_from_stream(
+                    &session.upload_id,
+                    None,
+                    Some("S3 PUT"),
+                    Box::new(std::io::Cursor::new(data)),
+                )
+                .await
+                .map_err(dom_err)?
+        };
+        let etag = result.version.id.to_string().replace('-', "");
+        let out = PutObjectOutput {
+            e_tag: Some(s3s::dto::ETag::Strong(etag)),
+            size: Some(result.version.size_bytes.as_u64() as i64),
+            ..Default::default()
+        };
+        ok(out)
+    }
+
+    /// 批量删除（`aws s3 rm --recursive` / `rclone sync --delete` 路径 ✗ 逐键幂等）。
+    async fn delete_objects(
+        &self,
+        req: S3Request<DeleteObjectsInput>,
+    ) -> S3Result<S3Response<DeleteObjectsOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        let quiet = input.delete.quiet.unwrap_or(false);
+        let keys: Vec<String> = input.delete.objects.iter().map(|o| o.key.clone()).collect();
+        let mut deleted: Vec<DeletedObject> = Vec::new();
+        let mut errors: Vec<S3DeleteError> = Vec::new();
+
+        // 逐键点查存在性（`delete_entries` 遇缺失即整体 NotFound ✗ 必须先分区），
+        // 存在者一次批量删（单快照），缺失者按 S3 幂等语义直接记 deleted。
+        let mut existing: Vec<vfiles_domain::NormalizedPath> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut per_key_err: Vec<Option<String>> = vec![None; keys.len()];
+        for (i, k) in keys.iter().enumerate() {
+            match norm(k) {
+                Ok(p) if !p.as_str().is_empty() => {
+                    match self.entry_repo.find_by_path(&self.namespace, &p).await {
+                        Ok(Some(_)) => {
+                            if seen.insert(p.as_str().to_string()) {
+                                existing.push(p);
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => per_key_err[i] = Some(e.to_string()),
+                    }
+                }
+                Ok(_) => per_key_err[i] = Some("invalid key".to_string()),
+                Err(e) => per_key_err[i] = Some(e.to_string()),
+            }
+        }
+
+        let batch_failed = if existing.is_empty() {
+            false
+        } else {
+            match self
+                .workspace
+                .delete_entries(
+                    &self.namespace,
+                    &existing,
+                    Some("S3 DeleteObjects"),
+                    &self.owner,
+                )
+                .await
+            {
+                Ok(_) => false,
+                Err(e) => {
+                    tracing::warn!(error = %e, "S3 DeleteObjects 批量删除失败，逐键回退");
+                    true
+                }
+            }
+        };
+
+        for (i, k) in keys.iter().enumerate() {
+            if let Some(msg) = &per_key_err[i] {
+                errors.push(S3DeleteError {
+                    key: Some(k.clone()),
+                    code: Some("InvalidArgument".to_string()),
+                    message: Some(msg.clone()),
+                    ..Default::default()
+                });
+                continue;
+            }
+            if batch_failed {
+                // 逐键回退（NotFound 幂等 = 记 deleted）
+                let p = match norm(k) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        errors.push(S3DeleteError {
+                            key: Some(k.clone()),
+                            code: Some("InvalidArgument".to_string()),
+                            message: Some(e.to_string()),
+                            ..Default::default()
+                        });
+                        continue;
+                    }
+                };
+                match self
+                    .workspace
+                    .delete_entries(
+                        &self.namespace,
+                        std::slice::from_ref(&p),
+                        Some("S3 DeleteObjects"),
+                        &self.owner,
+                    )
+                    .await
+                {
+                    Ok(_) | Err(vfiles_domain::DomainError::NotFound { .. }) => {}
+                    Err(e) => {
+                        errors.push(S3DeleteError {
+                            key: Some(k.clone()),
+                            code: Some("InternalError".to_string()),
+                            message: Some(e.to_string()),
+                            ..Default::default()
+                        });
+                        continue;
+                    }
+                }
+            }
+            if !quiet {
+                deleted.push(DeletedObject {
+                    key: Some(k.clone()),
+                    ..Default::default()
+                });
+            }
+        }
+        let out = DeleteObjectsOutput {
+            deleted: (!deleted.is_empty()).then_some(deleted),
+            errors: (!errors.is_empty()).then_some(errors),
+            ..Default::default()
+        };
         ok(out)
     }
 

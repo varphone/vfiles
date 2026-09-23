@@ -1,4 +1,19 @@
-# S3 兼容 API（r2 九式 → r3 列表八式 → **r4 multipart 四式**；自写探针 21/21 + 真 AWS SDK 14/14）
+# S3 兼容 API（r2 九式 → r3 列表八式 → r4 multipart → **r6 流式 PUT + 批量删**；探针 23/23 + 真 SDK 19/19）
+
+## 状态（r6 末 · 大文件流式上传 + 批量删 = 客户端日常动线补齐）
+
+- **新增/改动**（`crates/vfiles-s3/src/lib.rs`）：
+  | 操作 | 变化 |
+  | --- | --- |
+  | `PutObject` | Content-Length 已知 → **流式直连**（`StreamReader` → `complete_upload_from_stream` ✗ 不再全量入内存）；未知长度 → 聚合回退；返回 **ETag + Size** |
+  | `DeleteObjects` | 批量删（逐键点查分区 → 存在者**一次批量删**=单快照；缺失键按 S3 幂等记 `Deleted`；`Quiet` 抑制条目；非法键进 `Error`） |
+- **踩坑记录**：`delete_entries` 遇**任一**路径缺失即整体 `NotFound`（不删任何键）✗ 直接批量传含缺失键的列表 = "报成功但没删"（探针 6.4 抓到）→ 修正为**先分区再批量**。
+- **实证（入仓两通道）**：
+  | 通道 | 结果 |
+  | --- | --- |
+  | `scripts/sigv4_probe.py`（自写 SigV4） | **23/23**（r2 九 + r3 八 + r4 四 + r6 二：`DeleteObjects` 含缺失键 / 删除后列表清空） |
+  | `scripts/boto_probe.py`（**真 AWS SDK**） | **19/19**（+ **8MiB 流式 PUT 往返字节同** + `DeleteObjects` 全报删/Quiet） |
+- **仍债**：`ListMultipartUploads` · per-user 凭证 · region 校验 · 大桶 SQL 分页 · part 哈希持久化（ListParts 无 ETag）。
 
 ## 状态（r4 末 · multipart 上传打通 = 大文件客户端路径可用）
 

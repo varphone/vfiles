@@ -5,6 +5,7 @@
   python3 crates/vfiles-s3/scripts/sigv4_probe.py http://127.0.0.1:9000 <access> <secret> <db路径>
 可选第二入口（真 AWS SDK，需 `pip install boto3`）：scripts/boto_probe.py
 """
+import base64
 import hashlib
 import hmac
 import re
@@ -227,6 +228,32 @@ def main():
     request("PUT", base + "/" + mp_abort, query=q({"partNumber": "1", "uploadId": uid2}), body=b"x" * 10)
     st, _, _ = request("DELETE", base + "/" + mp_abort, query=q({"uploadId": uid2}))
     check("20 AbortMultipartUpload 204", st == 204, st)
+
+    # ── r6 批量删（DeleteObjects ✗ Content-MD5 必需）──
+    del_keys = ["probe4/d1.txt", "probe4/d2.txt"]
+    for k in del_keys:
+        request("PUT", base + "/" + k, body=b"z")
+    dxml = (
+        "<Delete>"
+        + "".join(f"<Object><Key>{k}</Key></Object>" for k in del_keys + ["probe4/missing.txt"])
+        + "</Delete>"
+    ).encode()
+    dmd5 = base64.b64encode(hashlib.md5(dxml).digest()).decode()
+    st, dbody, _ = request(
+        "POST",
+        base,
+        query=q({"delete": ""}),
+        body=dxml,
+        extra_headers={"content-type": "application/xml", "content-md5": dmd5},
+    )
+    ndel = dbody.count(b"<Deleted>")
+    check(
+        "21 DeleteObjects 3 deleted (incl. missing)",
+        st == 200 and ndel == 3 and b"<Error>" not in dbody,
+        f"{st} n={ndel}",
+    )
+    st, lbody, _ = request("GET", base, query=q({"list-type": "2", "prefix": "probe4/"}))
+    check("22 DeleteObjects removed keys", st == 200 and len(keys_of(lbody)) == 0, keys_of(lbody))
 
     # 清理
     for k, _ in seed:

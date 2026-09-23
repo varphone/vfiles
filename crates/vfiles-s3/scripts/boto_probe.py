@@ -104,6 +104,34 @@ def main():
     check("boto mpu abort", True)
     s3.delete_object(Bucket="default", Key=key)
 
+    # ── 流式 PUT（8 MiB）+ 批量删（r6）──
+    import os
+
+    blob = os.urandom(8 * 1024 * 1024)
+    r = s3.put_object(Bucket="default", Key="boto-r6/big.bin", Body=blob,
+                      ContentType="application/octet-stream")
+    check("boto streaming PUT returns ETag", r.get("ETag") is not None, r.get("ETag"))
+    g = s3.get_object(Bucket="default", Key="boto-r6/big.bin")
+    body = g["Body"].read()
+    check("boto streaming PUT bytes", body == blob, f"{len(body)} vs {len(blob)}")
+
+    for k in ["boto-r6/a.txt", "boto-r6/b.txt"]:
+        s3.put_object(Bucket="default", Key=k, Body=b"x")
+    resp = s3.delete_objects(Bucket="default", Delete={
+        "Objects": [{"Key": "boto-r6/a.txt"}, {"Key": "boto-r6/b.txt"}, {"Key": "boto-r6/missing.txt"}],
+        "Quiet": False,
+    })
+    check("boto DeleteObjects reports all deleted",
+          len(resp.get("Deleted", [])) == 3 and len(resp.get("Errors", [])) == 0,
+          [x["Key"] for x in resp.get("Deleted", [])])
+    lst = s3.list_objects_v2(Bucket="default", Prefix="boto-r6/a")
+    check("boto DeleteObjects removed keys", len(lst.get("Contents", [])) == 0)
+    s3.put_object(Bucket="default", Key="boto-r6/q.txt", Body=b"y")
+    rq = s3.delete_objects(Bucket="default", Delete={
+        "Objects": [{"Key": "boto-r6/q.txt"}], "Quiet": True})
+    check("boto DeleteObjects Quiet suppresses entries", len(rq.get("Deleted", [])) == 0)
+    s3.delete_object(Bucket="default", Key="boto-r6/big.bin")
+
     passed = sum(1 for x in P if x)
     print(f"== boto3 {passed}/{len(P)} PASS ==")
     sys.exit(0 if passed == len(P) else 1)
