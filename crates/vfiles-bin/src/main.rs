@@ -1575,7 +1575,14 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
         uid: &vfiles_domain::UserId,
     ) -> vfiles_domain::DomainResult<()> {
         self.workspace
-            .move_entries(ns, std::slice::from_ref(from), to, Some("WebDAV MOVE"), uid)
+            .move_entries(
+                ns,
+                std::slice::from_ref(from),
+                to,
+                Some("WebDAV MOVE"),
+                uid,
+                false, // Path（WebDAV Destination = 完整目标路径 ✗ r12）
+            )
             .await
             .map(|_| ())
     }

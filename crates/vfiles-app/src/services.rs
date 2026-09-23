@@ -2245,6 +2245,10 @@ where
         destination: &NormalizedPath,
         message: Option<&str>,
         user_id: &UserId,
+        // dest 语义（r12 三面评估定案 ✓）：false = 完整目标路径（WebDAV Destination /
+        // FTP RNTO ✗ RFC §9.9 dest 即 target）/ true = 容器目录（http 前端拖放 =
+        // join(dest, 源名)）——多源强制容器。
+        dest_as_container: bool,
     ) -> DomainResult<MutationResult> {
         if sources.is_empty() {
             return Err(DomainError::Validation {
@@ -2278,10 +2282,9 @@ where
                 Some(EntryKind::Directory)
             );
 
-        if sources.len() > 1 && !destination_is_directory {
+        if sources.len() > 1 && !dest_as_container {
             return Err(DomainError::Validation {
-                message: "Destination must be an existing directory for multiple sources"
-                    .to_string(),
+                message: "Multiple sources require a container destination".to_string(),
             });
         }
 
@@ -2297,10 +2300,12 @@ where
                     resource: format!("entry {}", source.as_str()),
                 })?;
 
-            let target_root = if sources.len() == 1 && !destination_is_directory {
-                destination.clone()
-            } else {
+            // r12 dest 语义参数化 ✗ Path = dest 即 target（RFC 完整路径 ✓ 同名目录
+            // 覆盖打通 ✗ 原 join 由 dest_目录判定 = 违 RFC 二义（r11 结构债正解））
+            let target_root = if dest_as_container {
                 join_path(destination, basename(source))?
+            } else {
+                destination.clone()
             };
 
             if target_root.as_str() == source.as_str()
@@ -4309,6 +4314,7 @@ mod tests {
                 &archive,
                 Some("move file"),
                 &context.user_id,
+                true, // Container（archive = 容器目录 ✗ 保持现状语义）
             )
             .await
             .expect("move should succeed");

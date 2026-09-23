@@ -1195,39 +1195,9 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         req.extensions().get::<vfiles_domain::types::NamespaceId>(),
                     ) {
                         if let Some(dest_rel) = dest_owned.as_deref().and_then(destination_path) {
-                            // target = dest 是已存在目录 → join(dest, basename(src))（move 母版语义小复刻）
-                            let src_abs = percent_decode(req.uri().path());
-                            let basename = src_abs
-                                .trim_end_matches('/')
-                                .rsplit('/')
-                                .next()
-                                .unwrap_or_default();
-                            let dest_entry = app
-                                .entry_repo
-                                .find_by_path(
-                                    ns_ext,
-                                    &vfiles_domain::types::NormalizedPath::new(&dest_rel)
-                                        .unwrap_or_else(|_| {
-                                            vfiles_domain::types::NormalizedPath::new("").unwrap()
-                                        }),
-                                )
-                                .await
-                                .ok()
-                                .flatten();
-                            let dest_is_dir = matches!(
-                                dest_entry.as_ref().map(|e| e.entry_type.clone()),
-                                Some(vfiles_domain::types::EntryKind::Directory)
-                            );
-                            let target_rel = if dest_is_dir {
-                                if dest_rel.is_empty() {
-                                    basename.to_string()
-                                } else {
-                                    format!("{}/{}", dest_rel.trim_end_matches('/'), basename)
-                                }
-                            } else {
-                                dest_rel.clone()
-                            };
-                            if let Ok(target) = vfiles_domain::types::NormalizedPath::new(&target_rel)
+                            // r12 dest 即 target（WebDAV 完整目标路径 ✗ r11 曾 join 目录
+                            // = 违 RFC 二义 → 服务参数化后臂层同步简化 ✓ 同名目录覆盖打通）
+                            if let Ok(target) = vfiles_domain::types::NormalizedPath::new(&dest_rel)
                             {
                                 let target_exists = app
                                     .entry_repo

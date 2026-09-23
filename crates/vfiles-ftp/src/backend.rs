@@ -617,6 +617,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
                 &to,
                 Some("FTP 重命名"),
                 &user.id,
+                false, // Path（RNTO = 完整目标路径 ✗ r12）
             )
             .await
             .map_err(to_ftp_error)?;

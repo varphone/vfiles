@@ -81,6 +81,7 @@ pub async fn move_entry(
             &destination_path,
             req.message.as_deref(),
             &ctx.actor_user_id,
+            true, // Container（前端拖放 dest = 容器目录 ✗ r12 保持 join 语义）
         )
         .await?;
 

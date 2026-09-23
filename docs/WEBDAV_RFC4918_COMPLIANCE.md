@@ -14,7 +14,7 @@
 | PUT | ✅ r110'b | 流式完成链 + 409 日志 ✓ | - |
 | DELETE | ✅ **r11 顺修** | 递归 + 409 ✓ **成功 = 204**（原三 op 全 201 = RFC 违背顺手修 ✓ 实证）| - |
 | MKCOL | ✅ r110' | 201/409 ✓ | - |
-| MOVE | ✅ **r11 文件覆盖全语义** | 201 新建 / **412**（F+存在）/ **204**（T + 缺省=T + 内容变实证）✓ 臂层式零签名变 ✓ **同名目录覆盖 = 结构债**（臂/服务双 join 恒入目录 ✗ move 母版 3 外调共享 = 三面评估后改）| P1目录覆盖 |
+| MOVE | ✅ **r11 文件覆盖全语义** | 201 新建 / **412**（F+存在）/ **204**（T + 缺省=T + 内容变实证）✓ 臂层式零签名变 ✓ **同名目录覆盖 ✅ r12**（dest 语义参数化 `dest_as_container`：bin/ftp=false 完整路径（RFC ✓）/ http+测试=true 容器 ✓ 臂层 dest 即 target ✓ 实证 204+旧404+新在 ✓ 三码回归绿 ✓ 4306 = http 护栏 ✓）| - |
 | **COPY** | ✅ **r5 八式实证** | 递归子树 + blob 零字节复用（create_version upsert ref++ ✓）+ **审计落表** ✓；dst存在/自复制/自子树 = 409 ✓ dest缺 = 400 ✓ Allow 入 ✓ **Overwrite 全语义 ✅ r10**（T=删旧重建 204 ✓ F=412 ✓ 缺省=T ✓ 目录覆盖 204+旧消失 ✓ 审计 ✓）| - |
 | **PROPPATCH** | ✅ **r6 七式实证** | propertyupdate 解析（roxmltree 按序 ✓）+ 每操作 propstat 200/403 ✓ **displayname set = 真改名**（move 单源直路径复用 ✓ PROPFIND 新名可见 ✓）+ 审计落表 ✓ Allow 入 ✓ **自定义属性 k/v 持久化 = P1 记债** | P1属性存储 |
 | LOCK / UNLOCK | ✅ r109a | 无限期锁表 + 423 ✓；**Timeout 有限支持 / 锁刷新 = 缺** | P1 |
@@ -96,6 +96,8 @@ PROPPATCH 七式 / If+412 七式 / 审计八写点 / 声明面（Allow+DAV class
 - ✅ r11 **MOVE Overwrite 文件面**（412/204/缺省 T 三码实证 + 内容变 ✓）+ **DELETE 204
   顺修**（RFC 违背第二处清）+ ⚠️ **同名目录覆盖 = 结构债**（move 母版 join 语义级 ✗
   3 外调共享 → 三面评估 = P1 栈新序首位）
+- ✅ r12 **同名目录覆盖**（三面评估 → dest 语义参数化 ✗ 四调用点如实标（2 完整路径
+  / 2 容器）✗ 多源强制容器 ✓ 母版语义级精修一处判定三分支 ✗ **P1 栈首位清**）
 - 剩余 P1：自定义
 属性 k/v / ETag+If-Match 面 / LOCK Timeout 有限 / getetag+creationdate 属性 /
 失败面审计表记 / HTTP 审计跨目标债
