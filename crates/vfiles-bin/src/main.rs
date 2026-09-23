@@ -2248,6 +2248,7 @@ async fn build_s3_service(
     };
     let mut builder = s3s::service::S3ServiceBuilder::new(router);
     builder.set_auth(auth);
+    builder.set_path_prefix("/s3");
     builder.build()
 }
 

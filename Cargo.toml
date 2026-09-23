@@ -12,8 +12,12 @@ members = [
     "crates/vfiles-infra-sqlite",
     "crates/vfiles-infra-fs",
     "crates/vfiles-test-kit", "crates/vfiles-s3",
+    "vendor/s3s",
 ]
 resolver = "3"
+
+[patch.crates-io]
+s3s = { path = "vendor/s3s" }
 
 [workspace.package]
 version = "2.4.2"

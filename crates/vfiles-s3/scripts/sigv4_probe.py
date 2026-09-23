@@ -27,7 +27,7 @@ def _sign(key, msg):
     return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
 
 def sigv4_sign(method, path, query, headers, payload_sha, secret):
-    host = ENDPOINT.split("//", 1)[1]
+    host = urllib.parse.urlsplit(ENDPOINT).netloc
     now = datetime.now(timezone.utc)
     amz_date = now.strftime("%Y%m%dT%H%M%SZ")
     date_stamp = now.strftime("%Y%m%d")
@@ -62,7 +62,9 @@ def request(method, path, query="", body=b"", extra_headers=None, secret=None):
     payload_sha = hashlib.sha256(payload).hexdigest()
     h = dict(extra_headers or {})
     secret_eff = SECRET if secret is None else secret
-    headers = sigv4_sign(method, path, query, h, payload_sha, secret_eff)
+    endpoint_prefix = urllib.parse.urlsplit(ENDPOINT).path.rstrip("/")
+    signed_path = endpoint_prefix + path
+    headers = sigv4_sign(method, signed_path, query, h, payload_sha, secret_eff)
     req = urllib.request.Request(url, data=payload if payload else None, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:

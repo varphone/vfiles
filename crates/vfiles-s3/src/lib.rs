@@ -2650,19 +2650,15 @@ mod tests {
     /// `x-amz-copy-source-range` 解析（闭区间 / 开尾 / 后缀 / 越界）。
     #[test]
     fn copy_range_slices() {
-        let d = b"0123456789";
-        assert_eq!(slice_copy_range(d, "bytes=0-3").unwrap(), b"0123");
-        assert_eq!(slice_copy_range(d, "bytes=5-").unwrap(), b"56789");
-        assert_eq!(slice_copy_range(d, "bytes=-3").unwrap(), b"789");
-        assert_eq!(
-            slice_copy_range(d, "bytes=8-99").unwrap(),
-            b"89",
-            "尾越界夹取"
-        );
-        assert!(slice_copy_range(d, "bytes=10-12").is_err(), "起点越界");
-        assert!(slice_copy_range(d, "bytes=5-2").is_err(), "逆序");
-        assert!(slice_copy_range(d, "0-3").is_err(), "缺 bytes= 前缀");
-        assert!(slice_copy_range(b"", "bytes=0-0").is_err(), "空源");
+        let len = 10;
+        assert_eq!(copy_range_bounds("bytes=0-3", len).unwrap(), 0..4);
+        assert_eq!(copy_range_bounds("bytes=5-", len).unwrap(), 5..10);
+        assert_eq!(copy_range_bounds("bytes=-3", len).unwrap(), 7..10);
+        assert_eq!(copy_range_bounds("bytes=8-99", len).unwrap(), 8..10, "尾越界夹取");
+        assert!(copy_range_bounds("bytes=10-12", len).is_err(), "起点越界");
+        assert!(copy_range_bounds("bytes=5-2", len).is_err(), "逆序");
+        assert!(copy_range_bounds("0-3", len).is_err(), "缺 bytes= 前缀");
+        assert!(copy_range_bounds("bytes=0-0", 0).is_err(), "空源");
     }
 
     /// delimiter 折叠 = 只折一层（AWS 语义）✗ 目录本身不产出对象。
