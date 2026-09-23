@@ -518,6 +518,17 @@ async fn propfind_owned(
             entry.entry_type,
             vfiles_domain::types::EntryKind::Directory
         );
+        // r213 ✓ 文件大小必须给客户端（VLC/gvfs-FUSE 的 st_size 来自此属性 ✗ 缺失 =
+        // 播放器视文件为空 → "无法打开 MRL" 真因嫌疑 ✗ r105 记档债在此还清 ✓
+        // 单目标 = 1 次轻量 open ✓ children 批量 size = 下轮债（列表不阻塞 ✓）
+        let getcontentlength = if is_dir {
+            None
+        } else {
+            match app.write.get_stream(&ns, &path).await {
+                Ok(Some((_reader, _mime, size))) => Some(size),
+                _ => None,
+            }
+        };
         items.push(crate::response::PropResponse {
             href: if is_dir {
                 format!("/{rel}/")
@@ -527,7 +538,7 @@ async fn propfind_owned(
             displayname: entry.name.clone(),
             is_collection: is_dir,
             getlastmodified: mtime_fmt(entry.created_at),
-            getcontentlength: None,
+            getcontentlength,
         });
     }
     if depth == "1" {
