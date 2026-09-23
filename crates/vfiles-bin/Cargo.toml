@@ -17,6 +17,7 @@ vfiles-domain = { path = "../vfiles-domain" }
 async-trait.workspace = true
 vfiles-ftp = { path = "../vfiles-ftp" }
 vfiles-webdav = { path = "../vfiles-webdav" }
+vfiles-rsync = { path = "../vfiles-rsync" }
 vfiles-s3 = { path = "../vfiles-s3" }
 vfiles-http = { path = "../vfiles-http" }
 vfiles-infra-fs = { path = "../vfiles-infra-fs" }

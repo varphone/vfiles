@@ -5,6 +5,7 @@ members = [
     "crates/vfiles-ftp",
     "crates/vfiles-webdav",
     "crates/vfiles-s3",
+    "crates/vfiles-rsync",
     "crates/vfiles-domain",
     "crates/vfiles-app",
     "crates/vfiles-http",

@@ -1,4 +1,18 @@
-# rsync 协议选型注（round 2/256 · r3 开工注）
+# rsync 协议 daemon（round 2 选型 → **round 3 Phase0 探底** ✗ 状态见下）
+
+## 状态（r3 末 · 真 rsync 3.2.7 实证）
+
+- **已通**：版本协商（服务端 `@RSYNCD: 30.0` banner + 客户端 31 降级）✗ **`rsync
+  --list-only rsync://host:PORT/` 真打印模块名 `files`** ✓ 未知模块回
+  `@RSYNCD: ERROR Unknown module` ✓ python 裸 socket 字节断言（banner/`files`）✓ 三黄金
+  单测（死锁根治后 0.00s 绿）+ 装配（`VFILES_RSYNC_ENABLED` 默认关 / PORT / MODULE 三
+  env + accept loop select 停机 + r205 降级 + 关时日志明示启用法）。
+- **差一层（r4 首步）**：客户端列表后报 `didn't get server startup line (code5 @
+  main.c:1885)` = **收尾序列期待差一点** → r4 开工 = **本机起官方 `rsync --daemon` 抓
+  黄金字节序列对照**（官方参照本地就有 = 最强对齐法）→ 然后 file_list 编码 → delta
+  下载（r5）。
+- Phase1（命令段 + file_list）/ Phase2（delta）未开 ✗ 分层推进；探针教学习惯 =
+  **真 CLI 输出全真文呈现、按真形判**（零预设 ✗ 三式已证伪两层预设）。
 
 ## 选型定案：**自研 rsync 30 协议 + daemon 形**
 

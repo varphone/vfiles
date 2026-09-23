@@ -30,6 +30,9 @@ pub struct AppConfig {
     /// S3 兼容 API（round 2 ✗ 新协议面 = **默认关显式启用**（`VFILES_S3_ENABLED=true`）✗
     /// 无键 = 运行时随机生成 + warn 打印（零配置试用 ✓ 生产 env 固定 ✓）。
     pub s3: S3Config,
+    /// rsync 协议 daemon（round 3 ✗ 新协议面 = **默认关显式启用**（`VFILES_RSYNC_ENABLED=true`）
+    /// ✗ 只读匿名模块首版（secrets 密码 = r4 债））。
+    pub rsync: RsyncConfig,
     pub features: FeatureMatrix,
 }
 
@@ -194,6 +197,38 @@ fn s3_default_port() -> u16 {
     9000
 }
 
+/// rsync daemon 配置（对称 S3 先例三变量 ✗ rsync://host/module 形 = 单模块匿名只读）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RsyncConfig {
+    /// **默认关**（新协议面显式启用原则 ✗ r3 交付注：`VFILES_RSYNC_ENABLED=true` 开）。
+    #[serde(default = "rsync_default_enabled")]
+    pub enabled: bool,
+    /// daemon 专用端口（rsync 生态默认 873）。
+    #[serde(default = "rsync_default_port")]
+    pub port: u16,
+    /// 模块名（`rsync://host/<module>` 的 <module> ✗ 单模块 = 默认 ns 根）。
+    #[serde(default = "rsync_default_module")]
+    pub module: String,
+}
+
+fn rsync_default_enabled() -> bool {
+    false
+}
+
+fn rsync_default_port() -> u16 {
+    873
+}
+
+fn rsync_default_module() -> String {
+    "files".to_string()
+}
+
+impl RsyncConfig {
+    pub fn bind_address(&self) -> String {
+        format!("0.0.0.0:{}", self.port)
+    }
+}
+
 impl S3Config {
     pub fn bind_address(&self) -> String {
         format!("0.0.0.0:{}", self.port)
@@ -243,6 +278,24 @@ fn s3_from_env() -> Result<S3Config, ConfigError> {
     let access_key = std::env::var("VFILES_S3_ACCESS_KEY").unwrap_or_default();
     let secret_key = std::env::var("VFILES_S3_SECRET_KEY").unwrap_or_default();
     Ok(S3Config { enabled, port, access_key, secret_key })
+}
+
+/// rsync env 读取（对称式 ✗ 三变量）。
+fn rsync_from_env() -> Result<RsyncConfig, ConfigError> {
+    let enabled = std::env::var("VFILES_RSYNC_ENABLED")
+        .ok()
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    let port = std::env::var("VFILES_RSYNC_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(873);
+    let module = std::env::var("VFILES_RSYNC_MODULE")
+        .ok()
+        .map(|m| m.trim_matches('/').to_string())
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| "files".to_string());
+    Ok(RsyncConfig { enabled, port, module })
 }
 
 fn resolve_webdav_enabled(
@@ -587,6 +640,7 @@ impl ConfigLoader {
             ftp,
             webdav: webdav_from_env(webdav_enabled_raw, auth_enabled)?,
             s3: s3_from_env()?,
+            rsync: rsync_from_env()?,
             features: FeatureMatrix {
                 auth_enabled,
                 multi_user: true,
@@ -822,6 +876,10 @@ mod tests {
         // r2: S3 新面默认关 + 专用端口 9000（显式 VFILES_S3_ENABLED 启用）
         assert!(!config.s3.enabled, "S3 默认关（新协议面显式启用原则）");
         assert_eq!(config.s3.port, 9000);
+        // r3: rsync 新面默认关 + 873 + 模块 files（显式 VFILES_RSYNC_ENABLED 启用）
+        assert!(!config.rsync.enabled, "rsync 默认关（新协议面显式启用原则）");
+        assert_eq!(config.rsync.port, 873);
+        assert_eq!(config.rsync.module, "files");
         assert!(config.auth.enabled);
         assert!(config.auth.login_rate_limit.enabled);
         assert_eq!(config.auth.login_rate_limit.window_ms, 300_000);

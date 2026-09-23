@@ -1280,6 +1280,13 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         tracing::info!("S3 兼容 API 未启用（设置 VFILES_S3_ENABLED=true 后重启即可开放 9000 端口）");
     }
 
+    // rsync daemon（round 3 ✗ 默认关 = VFILES_RSYNC_ENABLED 显式启用 ✗ 关时明示启用法）
+    if config.rsync.enabled {
+        build_and_spawn_rsync(&config.rsync, service_shutdown_rx.clone());
+    } else {
+        tracing::info!("rsync daemon 未启用（设置 VFILES_RSYNC_ENABLED=true 后重启即可开放 873 端口）");
+    }
+
     // Create app state
     let app_state = AppState {
         health_service,
@@ -1720,6 +1727,55 @@ impl s3s::auth::S3Auth for EnvAuth {
             Err(s3s::s3_error!(InvalidAccessKeyId, "unknown access key"))
         }
     }
+}
+
+/// 装配并拉起 rsync daemon 专用端口（round 3 ✗ RSYNC_PLAN：纯 TCP 直协议（无 axum）✗
+/// 协议件在 vfiles-rsync crate（duplex 黄金单测可打）✗ bind 失败 r205 式降级不拖垮主站 ✓
+/// accept loop 用 select 接停机 watch（shutdown → break + 关 listener））。
+fn build_and_spawn_rsync(
+    cfg: &vfiles_config::RsyncConfig,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    let addr = cfg.bind_address();
+    let module = cfg.module.clone();
+    tracing::info!(
+        addr = %addr,
+        module = %module,
+        "rsync daemon 已拉起（专用端口 ✗ 匿名只读单模块 ✗ secrets 密码 = r4 债）"
+    );
+    tokio::spawn(async move {
+        match tokio::net::TcpListener::bind(&addr).await {
+            Ok(listener) => loop {
+                tokio::select! {
+                    accepted = listener.accept() => {
+                        match accepted {
+                            Ok((stream, peer)) => {
+                                let module = module.clone();
+                                tokio::spawn(async move {
+                                    if let Err(err) =
+                                        vfiles_rsync::handle_conn(stream, &module).await
+                                    {
+                                        tracing::debug!(%peer, error = %err, "rsync 连接结束");
+                                    }
+                                });
+                            }
+                            Err(err) => {
+                                tracing::warn!(%addr, error = %err, "rsync accept 失败");
+                            }
+                        }
+                    }
+                    _ = shutdown.changed() => {
+                        tracing::info!(%addr, "rsync daemon 收到停机信号，停止接受新连接");
+                        break;
+                    }
+                }
+            },
+            Err(err) => {
+                // r205 式降级韧性（与 S3/WebDAV 观测语义对齐 ✗ 不拖垮主站）
+                tracing::error!(%addr, error = %err, "rsync 绑定失败（端口占用或地址非法），继续提供其余服务");
+            }
+        }
+    });
 }
 
 /// 装配并拉起 S3 专用端口（round 2 ✗ 对称 webdav spawn：bind 在任务内失败 =
