@@ -352,7 +352,11 @@ fn parse_rule(line: &str) -> Option<FilterRule> {
         b'-' => (false, &line[1..]),
         _ => return None,
     };
-    let rest = rest.trim_start();
+    // 形如 `<+|-><flags…><space><pattern>`（flags = s/r/w/n/! 等 ✗ get_rule_prefix 恒带空格分隔）
+    let rest = match rest.split_once(' ') {
+        Some((_, pattern)) => pattern,
+        None => rest.trim_start(),
+    };
     let (pat, dir_only) = match rest.strip_suffix('/') {
         Some(p) => (p, true),
         None => (rest, false),
@@ -1745,6 +1749,7 @@ where
                 }
                 let rule = data_take(&mut rw, &mut pending, len as usize).await?;
                 let text = String::from_utf8_lossy(&rule);
+                tracing::debug!(rule = %text, "FILTER-RULE");
                 match parse_rule(&text) {
                     Some(r) => filter_rules.push(r),
                     None => tracing::debug!(rule = %text, "rsync: 跳过不支持的 filter 规则"),
@@ -2725,6 +2730,14 @@ mod tests {
         let r = parse_rule("- sub/x.txt").unwrap();
         assert!(r.anchored, "含 / = 锚定");
         assert!(parse_rule(": merge").is_none(), "不支持类型跳过");
+        // flags 前缀剥离（`P` 类保护规则序列化为 `-r pat` ✗ 空格分隔）
+        let r = parse_rule("-r *.probe").expect("flags 形可解析");
+        assert!(!r.include && r.pattern == "*.probe", "flags 不进 pattern");
+        assert_eq!(
+            parse_rule("+s my file.txt").map(|r| (r.include, r.pattern)),
+            Some((true, "my file.txt".to_string())),
+            "pattern 内空格保留"
+        );
 
         let rules: Vec<FilterRule> = ["+ keep.tmp", "- *.tmp", "- cache/", "- /top.txt"]
             .iter()

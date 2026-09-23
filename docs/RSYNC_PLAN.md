@@ -1,4 +1,20 @@
-# rsync 协议 daemon（… r18 `-c` 快跳 → r19 `-a` 修复 → **r20 `--size-only` / `--modify-window`**）
+# rsync 协议 daemon（… r19 `-a` 修复 → r20 size-only/window → **r21 filter 规则 flags 形修复**）
+
+## 状态（r21 末 · `--filter=P/H` 类规则保护修复 ✗ 真机抓出的静默失保）
+
+- **实修 bug**：wire 上规则形如 **`-r <pattern>`**（`get_rule_prefix` = `<+|-><flags…><space><pattern>`
+  ✗ flags = s/r/w/n/! 等）；旧解析只 `trim_start()` → pattern 变成 `"r *.probe"` → **永不匹配 →
+  `--filter='P *.probe' --delete` 静默删掉本应保护的文件**（真机两轮对照抓到）。
+- **修法**：取**第一个空格之后**为 pattern（flags 全剥 ✗ pattern 内空格保留）；`:`（per-dir merge）仍跳过
+  （新增 `FILTER-RULE` 原始行日志 = 排障利器）。
+- **真机验收（对照式）**：
+  | 场景 | 结果 |
+  | --- | --- |
+  | wire 原始行 | **`-r *.probe`**（日志取证） |
+  | 修后 `--filter='P *.probe' --delete` | **`keep.probe` 存活** ✗ 非匹配的 `stray.txt`/`x.m` 正常删除 ✓ |
+  | 对照：无 filter 同状态重推 | `keep.probe` 也被删（保护仅由规则生效） ✓ |
+- **门禁**：单测新增 flags 形解析 + pattern 含空格断言 × workspace 全绿 × clippy 0 × build。
+- **仍债**：per-dir merge（`:` 形，原始行已可 dump）· 符号链接/设备持久化 · basis 流式 · uid/gid 存储。
 
 ## 状态（r20 末 · 快跳判定三档齐全 = 官方 `unchanged_file` 全语义）
 
