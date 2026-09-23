@@ -45,23 +45,58 @@ pub struct WebdavApplication {
     pub locks: Arc<crate::lock::LockTable>,
 }
 
-/// 提取当前支持的单一未标记 `If` 状态 token。
+/// 提取当前支持的单一未标记 `If` 状态 token（仅 LOCK refresh 使用）。
 ///
-/// RFC 4918 的 URI-tagged 条件必须按 URI 对应资源分别求值；当前写前置只对一个资源求值，
-/// 所以严格拒绝 tagged、多列表、`Not`、ETag 混合式和任何尾随语法，避免把其他资源上的
-/// 锁令牌误当作本资源的授权。
+/// refresh 要求头中唯一的 token 明确对应当前资源；拒绝多 token 及 URI-tagged 条件。
 fn if_token(header: &str) -> Option<String> {
-    let header = header.trim();
-    let condition = header.strip_prefix('(')?.strip_suffix(')')?.trim();
-    let token = condition.strip_prefix('<')?.strip_suffix('>')?;
-    if !token.starts_with("opaquelocktoken:")
-        || token.chars().any(char::is_whitespace)
-        || token.contains('<')
-        || token.contains('>')
-    {
-        return None;
+    let lists = parse_if_token_lists(header)?;
+    if lists.len() == 1 && lists[0].len() == 1 {
+        lists.into_iter().next()?.into_iter().next()
+    } else {
+        None
     }
-    Some(token.to_string())
+}
+
+/// Parse the supported untagged state-token form of RFC 4918 `If`.
+/// ETag and `Not` conditions remain unsupported and fail closed.
+fn parse_if_token_lists(header: &str) -> Option<Vec<Vec<String>>> {
+    let mut remaining = header.trim();
+    let mut lists = Vec::new();
+    while !remaining.is_empty() {
+        remaining = remaining.strip_prefix('(')?;
+        let close = remaining.find(')')?;
+        let mut conditions = remaining[..close].trim();
+        let mut tokens = Vec::new();
+        while !conditions.is_empty() {
+            let condition = conditions.strip_prefix('<')?;
+            let end = condition.find('>')?;
+            let token = &condition[..end];
+            if !token.starts_with("opaquelocktoken:")
+                || token.chars().any(char::is_whitespace)
+                || token.contains('<')
+            {
+                return None;
+            }
+            tokens.push(token.to_string());
+            conditions = condition[end + 1..].trim_start();
+        }
+        if tokens.is_empty() {
+            return None;
+        }
+        lists.push(tokens);
+        remaining = remaining[close + 1..].trim_start();
+    }
+    (!lists.is_empty()).then_some(lists)
+}
+
+/// An untagged token-only condition list authorizes the current resource when
+/// it contains exactly that resource's active exclusive lock token.
+fn if_contains_token(header: &str, expected: &str) -> bool {
+    parse_if_token_lists(header).is_some_and(|lists| {
+        lists
+            .iter()
+            .any(|conditions| conditions.len() == 1 && conditions[0] == expected)
+    })
 }
 
 /// LOCK（r109a ✓ exclusive write / depth 0 ✓ 已锁 = 423 ✓ **纯拥有参**（#46 纪律））。
@@ -340,16 +375,16 @@ async fn get_op(
         .flatten()
         .and_then(|e| e.current_version_id)
         .map(|v| derive_etag(&v));
-    if let Some(h) = if_none_match.as_deref() {
-        if etag_satisfies(h, cur_etag.as_deref()) {
-            let mut b = Response::builder()
-                .status(StatusCode::NOT_MODIFIED)
-                .header("cache-control", "private, max-age=0, must-revalidate");
-            if let Some(et) = cur_etag.as_deref() {
-                b = b.header(header::ETAG, et);
-            }
-            return b.body(Body::empty()).unwrap();
+    if let Some(h) = if_none_match.as_deref()
+        && etag_satisfies(h, cur_etag.as_deref())
+    {
+        let mut b = Response::builder()
+            .status(StatusCode::NOT_MODIFIED)
+            .header("cache-control", "private, max-age=0, must-revalidate");
+        if let Some(et) = cur_etag.as_deref() {
+            b = b.header(header::ETAG, et);
         }
+        return b.body(Body::empty()).unwrap();
     }
     match app.write.get_stream(&ns, &path).await {
         Ok(Some((mut reader, mime, size))) => {
@@ -436,7 +471,7 @@ fn audit_write(
 ) {
     if let Some(cb) = &app.audit {
         cb(vfiles_domain::types::NewAuditLog {
-            user_id: Some(user.id.clone()),
+            user_id: Some(user.id),
             username: user.username.as_str().to_string(),
             action: action.to_string(),
             result,
@@ -464,10 +499,7 @@ async fn write_precondition(
             return Some(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
-    let token_ok = if_header
-        .and_then(if_token)
-        .map(|t| t == entry.token)
-        .unwrap_or(false);
+    let token_ok = if_header.is_some_and(|header| if_contains_token(header, &entry.token));
     let status = precondition_status(true, if_header.is_some(), token_ok)?;
     tracing::debug!(rel = %rel, status = %status, "写锁前置拒绝（423/412）");
     Some(status)
@@ -579,7 +611,7 @@ async fn write_op(
                 .unwrap();
         }
     };
-    let uid = user.id.clone();
+    let uid = user.id;
     let result = match op {
         WriteOp::Mkcol => app.write.mkcol(&ns, &path, &uid).await,
         WriteOp::Delete => app.write.delete_entry(&ns, &path, &uid).await,
@@ -631,12 +663,13 @@ fn percent_decode(input: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(v) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(v) = u8::from_str_radix(&input[i + 1..i + 3], 16)
+        {
+            out.push(v);
+            i += 3;
+            continue;
         }
         out.push(bytes[i]);
         i += 1;
@@ -853,7 +886,7 @@ async fn propfind_owned(
         // r13 自定义属性读（单目标 ✗ list 一次）
         let custom = app
             .entry_repo
-            .list_entry_properties(&[entry.id.clone()])
+            .list_entry_properties(&[entry.id])
             .await
             .unwrap_or_default()
             .remove(&entry.id)
@@ -890,7 +923,7 @@ async fn propfind_owned(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         // r13 自定义属性批量（ids 一次 ✗ r4 批量式复用）
         let child_ids: Vec<vfiles_domain::types::EntryId> =
-            metas.iter().map(|m| m.entry.id.clone()).collect();
+            metas.iter().map(|m| m.entry.id).collect();
         let child_props = app
             .entry_repo
             .list_entry_properties(&child_ids)
@@ -1405,7 +1438,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                                     Some(e) => {
                                         let props = app_ref
                                             .entry_repo
-                                            .list_entry_properties(&[e.id.clone()])
+                                            .list_entry_properties(&[e.id])
                                             .await
                                             .unwrap_or_default();
                                         let exists = props
@@ -1451,7 +1484,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             }
             if let Some(cb) = &app_ref.audit {
                 cb(vfiles_domain::types::NewAuditLog {
-                    user_id: Some(user.id.clone()),
+                    user_id: Some(user.id),
                     username: user.username.as_str().to_string(),
                     action: "webdav.proppatch".to_string(),
                     result: vfiles_domain::types::AuditResult::Success,
@@ -1553,7 +1586,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         .unwrap();
                 }
             };
-            let user_id = user.id.clone();
+            let user_id = user.id;
             let username = user.username.as_str().to_string();
             let dst_existed = app_ref
                 .entry_repo
@@ -1678,39 +1711,36 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         req.extensions().get::<WebdavApplication>(),
                         req.extensions().get::<vfiles_domain::types::User>(),
                         req.extensions().get::<vfiles_domain::types::NamespaceId>(),
-                    ) {
-                        if let Some(dest_rel) = dest_owned
-                            .as_deref()
-                            .and_then(|d| destination_path(d, &app.mount_prefix))
-                        {
-                            // r12 dest 即 target（WebDAV 完整目标路径 ✗ r11 曾 join 目录
-                            // = 违 RFC 二义 → 服务参数化后臂层同步简化 ✓ 同名目录覆盖打通）
-                            if let Ok(target) = vfiles_domain::types::NormalizedPath::new(&dest_rel)
-                            {
-                                let target_exists = app
-                                    .entry_repo
-                                    .find_by_path(ns_ext, &target)
-                                    .await
-                                    .ok()
-                                    .flatten()
-                                    .is_some();
-                                if target_exists {
-                                    if !overwrite {
-                                        // Overwrite: F + 目标存在 → 412（同 COPY r10 语义）
-                                        return Response::builder()
-                                            .status(StatusCode::PRECONDITION_FAILED)
-                                            .body(Body::empty())
-                                            .unwrap();
-                                    }
-                                    // T = 删旧（write.delete_entry = delete_entries 全链 = 递归 + blob release ✓）
-                                    if let Err(err) =
-                                        app.write.delete_entry(ns_ext, &target, &u.id).await
-                                    {
-                                        tracing::error!(error = %err, "MOVE 覆盖删旧失败");
-                                        return internal_error();
-                                    }
-                                    move_overwrite_204 = true;
+                    ) && let Some(dest_rel) = dest_owned
+                        .as_deref()
+                        .and_then(|d| destination_path(d, &app.mount_prefix))
+                    {
+                        // r12 dest 即 target（WebDAV 完整目标路径 ✗ r11 曾 join 目录
+                        // = 违 RFC 二义 → 服务参数化后臂层同步简化 ✓ 同名目录覆盖打通）
+                        if let Ok(target) = vfiles_domain::types::NormalizedPath::new(&dest_rel) {
+                            let target_exists = app
+                                .entry_repo
+                                .find_by_path(ns_ext, &target)
+                                .await
+                                .ok()
+                                .flatten()
+                                .is_some();
+                            if target_exists {
+                                if !overwrite {
+                                    // Overwrite: F + 目标存在 → 412（同 COPY r10 语义）
+                                    return Response::builder()
+                                        .status(StatusCode::PRECONDITION_FAILED)
+                                        .body(Body::empty())
+                                        .unwrap();
                                 }
+                                // T = 删旧（write.delete_entry = delete_entries 全链 = 递归 + blob release ✓）
+                                if let Err(err) =
+                                    app.write.delete_entry(ns_ext, &target, &u.id).await
+                                {
+                                    tracing::error!(error = %err, "MOVE 覆盖删旧失败");
+                                    return internal_error();
+                                }
+                                move_overwrite_204 = true;
                             }
                         }
                     }
@@ -1976,7 +2006,7 @@ mod href_tests {
 
 #[cfg(test)]
 mod if_token_tests {
-    use crate::server::if_token;
+    use crate::server::{if_contains_token, if_token};
 
     #[test]
     fn extracts_opaque_token_and_rejects_nested() {
@@ -1989,6 +2019,24 @@ mod if_token_tests {
             None
         );
         assert_eq!(if_token("<Not-a-lock-token>"), None);
+    }
+
+    #[test]
+    fn accepts_matching_token_in_an_alternative_untagged_list() {
+        let expected = "opaquelocktoken:active";
+        assert!(if_contains_token(
+            "(<opaquelocktoken:other>) (<opaquelocktoken:active>)",
+            expected
+        ));
+        assert!(!if_contains_token("(<opaquelocktoken:other>)", expected));
+        assert!(!if_contains_token(
+            "(<opaquelocktoken:active> <opaquelocktoken:other>)",
+            expected
+        ));
+        assert!(!if_contains_token(
+            "</other-resource> (<opaquelocktoken:active>)",
+            expected
+        ));
     }
 }
 

@@ -458,6 +458,7 @@ pub trait BlobStore {
         data: &[u8],
         expected_sha256: Option<&str>,
     ) -> DomainResult<(BlobId, ContentHash, bool)>;
+    #[allow(clippy::too_many_arguments)]
     async fn store_blob_stream(
         &self,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
@@ -512,6 +513,7 @@ pub trait UploadStore {
         data: &[u8],
         sha256: &str,
     ) -> DomainResult<()>;
+    #[allow(clippy::too_many_arguments)]
     async fn store_upload_part_stream(
         &self,
         upload_id: &UploadId,

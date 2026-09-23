@@ -3,12 +3,8 @@
 //! 前端全局错误边界 fire-and-forget 上报 → tracing::warn 留痕（运维日志面收集 ✓
 //! 不落库 ✗ 简式合理；入库/统计 = 后续按需）。认证复用保护上下文（同文件路由式）。
 
-use axum::{
-    Json, Router,
-    http::StatusCode,
-    routing::post,
-};
 use axum::extract::State;
+use axum::{Json, Router, http::StatusCode, routing::post};
 use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 

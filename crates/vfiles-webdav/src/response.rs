@@ -301,11 +301,11 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
                 } else {
                     out.push_str("<D:");
                     out.push_str(cn);
-                    out.push_str(">");
+                    out.push('>');
                     out.push_str(&escape_xml(cv));
                     out.push_str("</D:");
                     out.push_str(cn);
-                    out.push_str(">");
+                    out.push('>');
                 }
             }
         }

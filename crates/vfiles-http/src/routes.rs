@@ -11,9 +11,9 @@ use vfiles_app::NamespaceService;
 use vfiles_domain::{AuthUser, DomainError, NamespaceId, UserId};
 
 pub mod admin;
-pub mod client_error;
 pub mod audit;
 pub mod auth;
+pub mod client_error;
 pub mod content;
 pub mod download;
 pub mod favorites;

@@ -240,8 +240,16 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .unwrap();
     assert_eq!(lock.status(), 200);
+    let lock_token = lock
+        .headers()
+        .get("lock-token")
+        .expect("LOCK should return its token")
+        .to_str()
+        .expect("lock token should be ASCII")
+        .to_string();
 
     let blocked_write = router
+        .clone()
         .oneshot(
             axum::http::Request::builder()
                 .method("PUT")
@@ -253,5 +261,34 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .unwrap();
     assert_eq!(blocked_write.status(), 423);
+
+    let wrong_token = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if", "(<opaquelocktoken:wrong>)")
+                .body(axum::body::Body::from("must stay locked"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong_token.status(), 412);
+
+    let alternative_list_token = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if", format!("(<opaquelocktoken:other>) ({lock_token})"))
+                .body(axum::body::Body::from("authorized by alternative list"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(alternative_list_token.status(), 201);
     let _ = user;
 }

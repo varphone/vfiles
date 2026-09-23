@@ -1977,7 +1977,7 @@ impl S3 for VfilesS3 {
                                 };
                                 etag_checks.push((
                                     i,
-                                    entry.id.clone(),
+                                    entry.id,
                                     version_id.to_string().replace('-', ""),
                                     want.clone(),
                                 ));
@@ -2039,7 +2039,7 @@ impl S3 for VfilesS3 {
         // Put/Copy and multipart ETags are content-derived overrides, so compare them through one
         // batch property read instead of assuming the opaque version id is the object's ETag.
         if !etag_checks.is_empty() {
-            let entry_ids: Vec<_> = etag_checks.iter().map(|(_, id, _, _)| id.clone()).collect();
+            let entry_ids: Vec<_> = etag_checks.iter().map(|(_, id, _, _)| *id).collect();
             let version_etags = self.load_version_etags(&entry_ids).await?;
             for (i, entry_id, version_id, expected) in etag_checks {
                 let actual = version_etags
@@ -2733,7 +2733,10 @@ mod tests {
         let bytes = b"S3 content ETag";
         let (mut reader, digest) = Md5Reader::new(std::io::Cursor::new(bytes));
         let mut read_back = Vec::new();
-        reader.read_to_end(&mut read_back).await.unwrap();
+        reader
+            .read_to_end(&mut read_back)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(read_back, bytes);
         assert_eq!(finish_md5(&digest), md5_hex(bytes));
     }
@@ -2860,11 +2863,20 @@ mod tests {
     #[test]
     fn copy_range_slices() {
         let len = 10;
-        assert_eq!(copy_range_bounds("bytes=0-3", len).unwrap(), 0..4);
-        assert_eq!(copy_range_bounds("bytes=5-", len).unwrap(), 5..10);
-        assert_eq!(copy_range_bounds("bytes=-3", len).unwrap(), 7..10);
         assert_eq!(
-            copy_range_bounds("bytes=8-99", len).unwrap(),
+            copy_range_bounds("bytes=0-3", len).expect("test operation should succeed"),
+            0..4
+        );
+        assert_eq!(
+            copy_range_bounds("bytes=5-", len).expect("test operation should succeed"),
+            5..10
+        );
+        assert_eq!(
+            copy_range_bounds("bytes=-3", len).expect("test operation should succeed"),
+            7..10
+        );
+        assert_eq!(
+            copy_range_bounds("bytes=8-99", len).expect("test operation should succeed"),
             8..10,
             "尾越界夹取"
         );
@@ -2911,7 +2923,7 @@ mod tests {
         assert_eq!(
             p1.contents
                 .iter()
-                .map(|o| o.key.clone().unwrap())
+                .map(|o| o.key.clone().expect("test operation should succeed"))
                 .collect::<Vec<_>>(),
             vec!["a.txt", "b.txt"]
         );
@@ -2921,7 +2933,7 @@ mod tests {
         assert_eq!(
             p2.contents
                 .iter()
-                .map(|o| o.key.clone().unwrap())
+                .map(|o| o.key.clone().expect("test operation should succeed"))
                 .collect::<Vec<_>>(),
             vec!["dir/sub/z", "dir/x"]
         );
@@ -2941,9 +2953,18 @@ mod tests {
 
     #[test]
     fn max_keys_rules() {
-        assert_eq!(resolve_max_keys(None).unwrap(), 1000);
-        assert_eq!(resolve_max_keys(Some(0)).unwrap(), 0);
-        assert_eq!(resolve_max_keys(Some(5000)).unwrap(), 1000);
+        assert_eq!(
+            resolve_max_keys(None).expect("test operation should succeed"),
+            1000
+        );
+        assert_eq!(
+            resolve_max_keys(Some(0)).expect("test operation should succeed"),
+            0
+        );
+        assert_eq!(
+            resolve_max_keys(Some(5000)).expect("test operation should succeed"),
+            1000
+        );
         assert!(
             resolve_max_keys(Some(-1)).is_err(),
             "负值 = InvalidArgument"
@@ -2953,28 +2974,40 @@ mod tests {
     #[test]
     fn range_resolution_matches_http_semantics() {
         let size = 100u64;
-        let int = s3s::dto::Range::parse("bytes=0-9").unwrap();
-        assert_eq!(resolve_range(Some(int), size).unwrap(), Some(0..10));
-        let open = s3s::dto::Range::parse("bytes=90-").unwrap();
-        assert_eq!(resolve_range(Some(open), size).unwrap(), Some(90..100));
-        let suffix = s3s::dto::Range::parse("bytes=-10").unwrap();
-        assert_eq!(resolve_range(Some(suffix), size).unwrap(), Some(90..100));
-        let past = s3s::dto::Range::parse("bytes=200-").unwrap();
+        let int = s3s::dto::Range::parse("bytes=0-9").expect("test operation should succeed");
+        assert_eq!(
+            resolve_range(Some(int), size).expect("test operation should succeed"),
+            Some(0..10)
+        );
+        let open = s3s::dto::Range::parse("bytes=90-").expect("test operation should succeed");
+        assert_eq!(
+            resolve_range(Some(open), size).expect("test operation should succeed"),
+            Some(90..100)
+        );
+        let suffix = s3s::dto::Range::parse("bytes=-10").expect("test operation should succeed");
+        assert_eq!(
+            resolve_range(Some(suffix), size).expect("test operation should succeed"),
+            Some(90..100)
+        );
+        let past = s3s::dto::Range::parse("bytes=200-").expect("test operation should succeed");
         assert!(resolve_range(Some(past), size).is_err(), "越界 = 416");
-        assert_eq!(resolve_range(None, size).unwrap(), None);
+        assert_eq!(
+            resolve_range(None, size).expect("test operation should succeed"),
+            None
+        );
     }
 
     #[test]
     fn multipart_etag_uses_part_md5_digest_and_part_count() {
         let part_md5s = [
             hex::decode("5d41402abc4b2a76b9719d911017c592")
-                .unwrap()
+                .expect("test operation should succeed")
                 .try_into()
-                .unwrap(),
+                .expect("test operation should succeed"),
             hex::decode("7d793037a0760186574b0282f2f435e7")
-                .unwrap()
+                .expect("test operation should succeed")
                 .try_into()
-                .unwrap(),
+                .expect("test operation should succeed"),
         ];
         assert_eq!(
             multipart_etag(&part_md5s),

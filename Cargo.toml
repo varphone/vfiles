@@ -11,9 +11,9 @@ members = [
     "crates/vfiles-http",
     "crates/vfiles-infra-sqlite",
     "crates/vfiles-infra-fs",
-    "crates/vfiles-test-kit", "crates/vfiles-s3",
-    "vendor/s3s",
+    "crates/vfiles-test-kit",
 ]
+exclude = ["vendor/s3s"]
 resolver = "3"
 
 [patch.crates-io]

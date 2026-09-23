@@ -1363,18 +1363,18 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     };
     // 共端口装配（r-new ✓ S1 实证：axum 0.8 nest_service + into_service 原生可用 ✗
     // 异 state 挂入、nest 自动剥前缀 = handlers 零改 ✓ 显式路由优先于 fallback ✓）
-    if let Some((_, webdav_app)) = webdav_runtime.clone() {
-        if !webdav_app.mount_prefix.is_empty() {
-            let mount = webdav_app.mount_prefix.clone();
-            tracing::info!(
-                mount = %mount,
-                "WebDAV 已挂载（共端口模式 ✓ 主端口同时提供 HTTP API + WebDAV + 前端）"
-            );
-            app = app.nest_service(
-                &mount,
-                vfiles_webdav::router_for_e2e(webdav_app).into_service(),
-            );
-        }
+    if let Some((_, webdav_app)) = webdav_runtime.clone()
+        && !webdav_app.mount_prefix.is_empty()
+    {
+        let mount = webdav_app.mount_prefix.clone();
+        tracing::info!(
+            mount = %mount,
+            "WebDAV 已挂载（共端口模式 ✓ 主端口同时提供 HTTP API + WebDAV + 前端）"
+        );
+        app = app.nest_service(
+            &mount,
+            vfiles_webdav::router_for_e2e(webdav_app).into_service(),
+        );
     }
 
     // Start server

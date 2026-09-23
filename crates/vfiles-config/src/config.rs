@@ -1201,7 +1201,7 @@ mod webdav_enabled_semantics {
 
     #[test]
     fn explicit_off_and_explicit_on_forms() {
-        assert_eq!(resolve_webdav_enabled(Some(false), false).unwrap(), false);
+        assert!(!resolve_webdav_enabled(Some(false), false).unwrap());
         assert!(resolve_webdav_enabled(Some(true), false).is_err());
         assert!(resolve_webdav_enabled(Some(true), true).is_ok());
     }

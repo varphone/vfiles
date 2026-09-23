@@ -207,6 +207,8 @@ where
 
 /// Like [`parse_opt_query`], but joins repeated query values with
 /// `separator` instead of rejecting them.
+// Kept for downstream users of this patched dependency, though vfiles does not call it.
+#[allow(dead_code)]
 pub fn parse_opt_query_joined(req: &Request, name: &str, separator: &str) -> Option<String> {
     let qs = req.s3ext.qs.as_ref()?;
 

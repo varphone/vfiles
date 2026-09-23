@@ -941,10 +941,12 @@ pub struct AuthService {
     /// r9 热验缓存 ✗ key = SHA-256(cred)（原文零落盘 ✗）只存成功 + User clone +
     /// TTL 30s（改密码 30s 窗记档 ✗ 禁用 = 命中时查 user.disabled 即时生效 ✓
     /// 失败路径不缓存 = 爆破/timing 防护零损 ✓ Arc<Mutex> = Clone 后共享不分叉 ✓）。
-    verified_cache: std::sync::Arc<
-        std::sync::Mutex<std::collections::HashMap<[u8; 32], (User, std::time::Instant)>>,
-    >,
+    verified_cache: VerifiedCredentialCache,
 }
+
+type VerifiedCredentialCache = std::sync::Arc<
+    std::sync::Mutex<std::collections::HashMap<[u8; 32], (User, std::time::Instant)>>,
+>;
 
 impl AuthService {
     pub fn new(
@@ -1057,10 +1059,11 @@ impl AuthService {
         {
             let key = Self::cred_key(username_or_email, password);
             let cache = self.verified_cache.lock().expect("auth cache poisoned");
-            if let Some((user, at)) = cache.get(&key) {
-                if at.elapsed().as_secs() < 30 && !user.disabled {
-                    return Ok(user.clone());
-                }
+            if let Some((user, at)) = cache.get(&key)
+                && at.elapsed().as_secs() < 30
+                && !user.disabled
+            {
+                return Ok(user.clone());
             }
         }
         // 无效标识与口令错误返回同一个错误，避免泄露「用户名是否存在」
@@ -2257,7 +2260,7 @@ where
         message: Option<&str>,
         user_id: &UserId,
     ) -> DomainResult<()> {
-        let kind = src_entry.entry_type.clone();
+        let kind = src_entry.entry_type;
         let new_id = self
             .entry_repo
             .create_entry(namespace_id, target, kind, user_id)
@@ -2696,6 +2699,7 @@ where
     }
 
     /// 流式接收上传分片，避免 S3 大分片在应用层聚合到内存。
+    #[allow(clippy::too_many_arguments)]
     pub async fn upload_part_from_stream(
         &self,
         upload_id: &UploadId,
@@ -2786,6 +2790,7 @@ where
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn complete_upload_from_stream_with_md5(
         &self,
         upload_id: &UploadId,
@@ -2840,6 +2845,7 @@ where
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn complete_upload_from_stream_unknown_size_with_md5(
         &self,
         upload_id: &UploadId,
@@ -3009,6 +3015,7 @@ where
         self.upload_store.get_upload_parts(upload_id).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn commit_upload_stream(
         &self,
         session: UploadSession,

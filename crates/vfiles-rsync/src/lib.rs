@@ -419,10 +419,7 @@ fn parse_rule(line: &str) -> Option<FilterRule> {
 fn parse_filter_item(line: &str) -> Option<FilterItem> {
     let line = line.trim_end_matches(['\n', '\r']);
     if let Some(rest) = line.strip_prefix(':') {
-        let (flags, filename) = rest
-            .split_once(' ')
-            .map(|(flags, filename)| (flags, filename))
-            .unwrap_or(("", rest));
+        let (flags, filename) = rest.split_once(' ').unwrap_or(("", rest));
         let mut no_inherit = false;
         let mut exclude_file = false;
         let mut mode = DirMergeMode::Any;
@@ -3109,23 +3106,31 @@ mod tests {
         async fn read(&self, path: &str) -> Result<Vec<u8>, String> {
             self.files
                 .lock()
-                .unwrap()
+                .expect("test operation should succeed")
                 .get(path)
                 .cloned()
                 .ok_or_else(|| "not found".to_string())
         }
         async fn write(&self, path: String, data: Vec<u8>, mtime: i64) -> Result<(), String> {
-            let mut f = self.files.lock().unwrap();
+            let mut f = self.files.lock().expect("test operation should succeed");
             f.insert(path.clone(), data);
-            self.mtimes.lock().unwrap().insert(path, mtime);
+            self.mtimes
+                .lock()
+                .expect("test operation should succeed")
+                .insert(path, mtime);
             Ok(())
         }
         async fn stat(&self, path: &str) -> Result<Option<(u64, i64)>, String> {
-            let f = self.files.lock().unwrap();
+            let f = self.files.lock().expect("test operation should succeed");
             Ok(f.get(path).map(|d| {
                 (
                     d.len() as u64,
-                    *self.mtimes.lock().unwrap().get(path).unwrap_or(&0),
+                    *self
+                        .mtimes
+                        .lock()
+                        .expect("test operation should succeed")
+                        .get(path)
+                        .unwrap_or(&0),
                 )
             }))
         }
@@ -3135,7 +3140,7 @@ mod tests {
         async fn mkdir(&self, path: &str) -> Result<(), String> {
             self.files
                 .lock()
-                .unwrap()
+                .expect("test operation should succeed")
                 .entry(format!("{path}/"))
                 .or_default();
             Ok(())
@@ -3312,19 +3317,31 @@ mod tests {
             let backend = FakeBackend::new(Vec::new(), Vec::new());
             handle_conn(server, "files", AuthConfig::default(), &backend)
                 .await
-                .unwrap()
+                .expect("test operation should succeed")
         });
         let mut c = BufReader::new(client);
         let mut line = String::new();
-        c.read_line(&mut line).await.unwrap();
+        c.read_line(&mut line)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(line, PROTOCOL_LINE);
-        c.get_mut().write_all(b"@RSYNCD: 31.0\n").await.unwrap();
-        c.get_mut().write_all(b"\n").await.unwrap();
+        c.get_mut()
+            .write_all(b"@RSYNCD: 31.0\n")
+            .await
+            .expect("test operation should succeed");
+        c.get_mut()
+            .write_all(b"\n")
+            .await
+            .expect("test operation should succeed");
         line.clear();
-        c.read_line(&mut line).await.unwrap();
+        c.read_line(&mut line)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(line, format!("{:<15}\t\n", "files"));
         line.clear();
-        c.read_line(&mut line).await.unwrap();
+        c.read_line(&mut line)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(line, "@RSYNCD: EXIT\n");
     }
 
@@ -3358,20 +3375,27 @@ mod tests {
             let backend = FakeBackend::new(server_entries, Vec::new());
             handle_conn(server, "files", AuthConfig::default(), &backend)
                 .await
-                .unwrap()
+                .expect("test operation should succeed")
         });
         let mut c = BufReader::new(client);
         // banner + 选模块
         c.get_mut()
             .write_all(b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n")
             .await
-            .unwrap();
+            .expect("test operation should succeed");
         let mut line = String::new();
-        c.read_line(&mut line).await.unwrap();
+        c.read_line(&mut line)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(line, PROTOCOL_LINE);
-        c.get_mut().write_all(b"files\n").await.unwrap();
+        c.get_mut()
+            .write_all(b"files\n")
+            .await
+            .expect("test operation should succeed");
         line.clear();
-        c.read_line(&mut line).await.unwrap();
+        c.read_line(&mut line)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(line, "@RSYNCD: OK\n");
         // args（真机字面）
         for a in [
@@ -3383,65 +3407,103 @@ mod tests {
             "files/\0",
             "\0",
         ] {
-            c.get_mut().write_all(a.as_bytes()).await.unwrap();
+            c.get_mut()
+                .write_all(a.as_bytes())
+                .await
+                .expect("test operation should succeed");
         }
         // compat_flags = 0x1FE → 81 FE
         let mut ack = [0u8; 2];
-        c.read_exact(&mut ack).await.unwrap();
+        c.read_exact(&mut ack)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(ack, [0x81, 0xFE], "compat_flags varint");
         // 服务端 checksum vstring = # + 35B
         let mut head = [0u8; 1];
-        c.read_exact(&mut head).await.unwrap();
+        c.read_exact(&mut head)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(head[0] as usize, CHECKSUM_LIST.len());
         let mut list = vec![0u8; CHECKSUM_LIST.len()];
-        c.read_exact(&mut list).await.unwrap();
+        c.read_exact(&mut list)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(&list, CHECKSUM_LIST.as_bytes());
         // 客户端 checksum vstring（回写）
-        c.get_mut().write_all(b"\x1e").await.unwrap();
+        c.get_mut()
+            .write_all(b"\x1e")
+            .await
+            .expect("test operation should succeed");
         c.get_mut()
             .write_all(b"xxh128 xxh3 xxh64 md5 md4 sha1")
             .await
-            .unwrap();
+            .expect("test operation should succeed");
         // checksum_seed 4B
         let mut seed = [0u8; 4];
-        c.read_exact(&mut seed).await.unwrap();
+        c.read_exact(&mut seed)
+            .await
+            .expect("test operation should succeed");
         // filter list（mux int 0）
         c.get_mut()
             .write_all(&mux_frame(&0i32.to_le_bytes()))
             .await
-            .unwrap();
+            .expect("test operation should succeed");
         // flist 帧
         let expected = encode_flist(&entries, true);
         let mut hdr = [0u8; 4];
-        c.read_exact(&mut hdr).await.unwrap();
+        c.read_exact(&mut hdr)
+            .await
+            .expect("test operation should succeed");
         let flen = (hdr[0] as usize) | ((hdr[1] as usize) << 8) | ((hdr[2] as usize) << 16);
         assert_eq!(hdr[3], MPLEX_BASE + MSG_DATA);
         assert_eq!(flen, expected.len());
         let mut body = vec![0u8; flen];
-        c.read_exact(&mut body).await.unwrap();
+        c.read_exact(&mut body)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(body, expected, "flist payload 逐字节");
         // 收尾：发 3 个 NDX_DONE（真机写序列）
-        c.get_mut().write_all(&mux_frame(&[0u8])).await.unwrap();
-        c.get_mut().write_all(&mux_frame(&[0u8])).await.unwrap();
-        c.get_mut().write_all(&mux_frame(&[0u8])).await.unwrap();
+        c.get_mut()
+            .write_all(&mux_frame(&[0u8]))
+            .await
+            .expect("test operation should succeed");
+        c.get_mut()
+            .write_all(&mux_frame(&[0u8]))
+            .await
+            .expect("test operation should succeed");
+        c.get_mut()
+            .write_all(&mux_frame(&[0u8]))
+            .await
+            .expect("test operation should succeed");
         // 收 2×NDX_DONE + 终结 NDX_DONE + 统计
         for _ in 0..3 {
             let mut h = [0u8; 4];
-            c.read_exact(&mut h).await.unwrap();
+            c.read_exact(&mut h)
+                .await
+                .expect("test operation should succeed");
             let l = (h[0] as usize) | ((h[1] as usize) << 8) | ((h[2] as usize) << 16);
             let mut p = vec![0u8; l];
-            c.read_exact(&mut p).await.unwrap();
+            c.read_exact(&mut p)
+                .await
+                .expect("test operation should succeed");
             assert_eq!(l, 1, "收尾 NDX_DONE");
             assert_eq!(p[0], 0);
         }
         let mut h = [0u8; 4];
-        c.read_exact(&mut h).await.unwrap();
+        c.read_exact(&mut h)
+            .await
+            .expect("test operation should succeed");
         let l = (h[0] as usize) | ((h[1] as usize) << 8) | ((h[2] as usize) << 16);
         assert_eq!(l, 15, "5×varlong30(3) 统计");
         let mut stats = vec![0u8; 15];
-        c.read_exact(&mut stats).await.unwrap();
+        c.read_exact(&mut stats)
+            .await
+            .expect("test operation should succeed");
         // 最后问候
-        c.get_mut().write_all(&mux_frame(&[0u8])).await.unwrap();
+        c.get_mut()
+            .write_all(&mux_frame(&[0u8]))
+            .await
+            .expect("test operation should succeed");
     }
 
     /// 排序 = rsync `f_name_cmp` 真机序（文件先于目录、各按名升序、遇目录深度优先下钻）。
@@ -3488,18 +3550,25 @@ mod tests {
                 FakeBackend::new(server_entries, vec![("tiny.txt".into(), server_content)]);
             handle_conn(server, "files", AuthConfig::default(), &backend)
                 .await
-                .unwrap()
+                .expect("test operation should succeed")
         });
         let mut c = BufReader::new(client);
         c.get_mut()
             .write_all(b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n")
             .await
-            .unwrap();
+            .expect("test operation should succeed");
         let mut line = String::new();
-        c.read_line(&mut line).await.unwrap();
-        c.get_mut().write_all(b"files\n").await.unwrap();
+        c.read_line(&mut line)
+            .await
+            .expect("test operation should succeed");
+        c.get_mut()
+            .write_all(b"files\n")
+            .await
+            .expect("test operation should succeed");
         line.clear();
-        c.read_line(&mut line).await.unwrap();
+        c.read_line(&mut line)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(line, "@RSYNCD: OK\n");
         for a in [
             "--server\0",
@@ -3509,52 +3578,77 @@ mod tests {
             "files/tiny.txt\0",
             "\0",
         ] {
-            c.get_mut().write_all(a.as_bytes()).await.unwrap();
+            c.get_mut()
+                .write_all(a.as_bytes())
+                .await
+                .expect("test operation should succeed");
         }
         let mut ack = [0u8; 2];
-        c.read_exact(&mut ack).await.unwrap();
+        c.read_exact(&mut ack)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(ack, [0x81, 0xFE]);
         // checksum 清单 vstring（md5 = 3 字节）
         let mut head = [0u8; 1];
-        c.read_exact(&mut head).await.unwrap();
+        c.read_exact(&mut head)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(head[0] as usize, CHECKSUM_LIST.len());
         let mut list = vec![0u8; CHECKSUM_LIST.len()];
-        c.read_exact(&mut list).await.unwrap();
+        c.read_exact(&mut list)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(&list, CHECKSUM_LIST.as_bytes());
-        c.get_mut().write_all(b"\x1e").await.unwrap();
+        c.get_mut()
+            .write_all(b"\x1e")
+            .await
+            .expect("test operation should succeed");
         c.get_mut()
             .write_all(b"xxh128 xxh3 xxh64 md5 md4 sha1")
             .await
-            .unwrap();
+            .expect("test operation should succeed");
         let mut seed = [0u8; 4];
-        c.read_exact(&mut seed).await.unwrap();
+        c.read_exact(&mut seed)
+            .await
+            .expect("test operation should succeed");
         // filter list
         c.get_mut()
             .write_all(&mux_frame(&0i32.to_le_bytes()))
             .await
-            .unwrap();
+            .expect("test operation should succeed");
         // flist（单文件 = 无 `.`）
         let expected_flist = encode_flist(&entries, true);
         let mut hdr = [0u8; 4];
-        c.read_exact(&mut hdr).await.unwrap();
+        c.read_exact(&mut hdr)
+            .await
+            .expect("test operation should succeed");
         let flen = (hdr[0] as usize) | ((hdr[1] as usize) << 8) | ((hdr[2] as usize) << 16);
         let mut body = vec![0u8; flen];
-        c.read_exact(&mut body).await.unwrap();
+        c.read_exact(&mut body)
+            .await
+            .expect("test operation should succeed");
         assert_eq!(body, expected_flist);
         // 请求帧：ndx 0 + iflags 0xA000 + 全零 sum_head（真机字面）
         let mut req = vec![0x01, 0x00, 0xA0];
         req.extend_from_slice(&[0u8; 16]);
-        c.get_mut().write_all(&mux_frame(&req)).await.unwrap();
+        c.get_mut()
+            .write_all(&mux_frame(&req))
+            .await
+            .expect("test operation should succeed");
         // `write_ndx_and_attrs` 与 token 流分帧发送；收齐组成此文件响应的 MSG_DATA 内容。
         let mut data = Vec::new();
         while data.len() < 19 + 4 + content.len() + 4 + 16 {
             let mut h = [0u8; 4];
-            c.read_exact(&mut h).await.unwrap();
+            c.read_exact(&mut h)
+                .await
+                .expect("test operation should succeed");
             let l = (h[0] as usize) | ((h[1] as usize) << 8) | ((h[2] as usize) << 16);
             assert_eq!(h[3], MPLEX_BASE + MSG_DATA);
             let start = data.len();
             data.resize(start + l, 0);
-            c.read_exact(&mut data[start..]).await.unwrap();
+            c.read_exact(&mut data[start..])
+                .await
+                .expect("test operation should succeed");
         }
         // ndx 回显 + iflags + sum_head(16 零) + literal 长度 + 内容 + 终结 + md5
         let mut want = vec![0x01, 0x00, 0xA0];
@@ -3570,22 +3664,42 @@ mod tests {
             "校验和 = MD5(内容) 无 seed"
         );
         // 收尾
-        c.get_mut().write_all(&mux_frame(&[0u8])).await.unwrap();
-        c.get_mut().write_all(&mux_frame(&[0u8])).await.unwrap();
-        c.get_mut().write_all(&mux_frame(&[0u8])).await.unwrap();
+        c.get_mut()
+            .write_all(&mux_frame(&[0u8]))
+            .await
+            .expect("test operation should succeed");
+        c.get_mut()
+            .write_all(&mux_frame(&[0u8]))
+            .await
+            .expect("test operation should succeed");
+        c.get_mut()
+            .write_all(&mux_frame(&[0u8]))
+            .await
+            .expect("test operation should succeed");
         for _ in 0..3 {
             let mut hh = [0u8; 4];
-            c.read_exact(&mut hh).await.unwrap();
+            c.read_exact(&mut hh)
+                .await
+                .expect("test operation should succeed");
             let ll = (hh[0] as usize) | ((hh[1] as usize) << 8) | ((hh[2] as usize) << 16);
             let mut p = vec![0u8; ll];
-            c.read_exact(&mut p).await.unwrap();
+            c.read_exact(&mut p)
+                .await
+                .expect("test operation should succeed");
         }
         let mut hh = [0u8; 4];
-        c.read_exact(&mut hh).await.unwrap();
+        c.read_exact(&mut hh)
+            .await
+            .expect("test operation should succeed");
         let ll = (hh[0] as usize) | ((hh[1] as usize) << 8) | ((hh[2] as usize) << 16);
         let mut stats = vec![0u8; ll];
-        c.read_exact(&mut stats).await.unwrap();
-        c.get_mut().write_all(&mux_frame(&[0u8])).await.unwrap();
+        c.read_exact(&mut stats)
+            .await
+            .expect("test operation should succeed");
+        c.get_mut()
+            .write_all(&mux_frame(&[0u8]))
+            .await
+            .expect("test operation should succeed");
     }
 
     /// md5 与 RFC 1321 向量（rsync 整文件校验和同算法）。
@@ -3623,8 +3737,10 @@ mod tests {
             body.push(0);
         }
         let (mut c, srv) = tokio::io::duplex(64 * 1024);
-        c.write_all(&mux_frame(&body)).await.unwrap();
-        c.shutdown().await.unwrap();
+        c.write_all(&mux_frame(&body))
+            .await
+            .expect("test operation should succeed");
+        c.shutdown().await.expect("test operation should succeed");
         let mut rw = BufReader::new(srv);
         let mut pending = Vec::new();
         let got = recv_file_list(
@@ -3644,8 +3760,12 @@ mod tests {
         assert_eq!(got[0].size, 5);
         assert_eq!(got[0].mtime, 1_700_000_000);
         assert_eq!(got[0].mode, 0o100644);
-        skip_id_list(&mut rw, &mut pending, true).await.unwrap();
-        skip_id_list(&mut rw, &mut pending, true).await.unwrap();
+        skip_id_list(&mut rw, &mut pending, true)
+            .await
+            .expect("test operation should succeed");
+        skip_id_list(&mut rw, &mut pending, true)
+            .await
+            .expect("test operation should succeed");
     }
 
     /// filter 通配匹配（`*` 不跨 `/`、`**` 跨、`?`、字符类）。
@@ -3668,15 +3788,15 @@ mod tests {
     /// 规则解析（`-`/`+`、目录尾 `/`、锚定首 `/`）+ 首条命中语义 + 保护判定。
     #[test]
     fn filter_rules_parse_and_protect() {
-        let r = parse_rule("- *.tmp").unwrap();
+        let r = parse_rule("- *.tmp").expect("test operation should succeed");
         assert!(!r.include && !r.dir_only && !r.anchored && r.pattern == "*.tmp");
-        let r = parse_rule("+ keep.tmp").unwrap();
+        let r = parse_rule("+ keep.tmp").expect("test operation should succeed");
         assert!(r.include);
-        let r = parse_rule("- cache/").unwrap();
+        let r = parse_rule("- cache/").expect("test operation should succeed");
         assert!(r.dir_only, "尾 / = 仅目录");
-        let r = parse_rule("- /top.txt").unwrap();
+        let r = parse_rule("- /top.txt").expect("test operation should succeed");
         assert!(r.anchored, "首 / = 锚定");
-        let r = parse_rule("- sub/x.txt").unwrap();
+        let r = parse_rule("- sub/x.txt").expect("test operation should succeed");
         assert!(r.anchored, "含 / = 锚定");
         assert!(parse_rule(": merge").is_none(), "不支持类型跳过");
         // flags 前缀剥离（`P` 类保护规则序列化为 `-r pat` ✗ 空格分隔）
@@ -3695,8 +3815,8 @@ mod tests {
         );
 
         let directional_rules = vec![
-            parse_rule("-s *.hidden").unwrap(),
-            parse_rule("-r *.protected").unwrap(),
+            parse_rule("-s *.hidden").expect("test operation should succeed"),
+            parse_rule("-r *.protected").expect("test operation should succeed"),
         ];
         assert!(
             !is_excluded(&directional_rules, "old.hidden", false),
@@ -3728,7 +3848,7 @@ mod tests {
 
     #[test]
     fn dir_merge_rules_apply_in_scope_and_child_rules_override_parent() {
-        let merge = parse_filter_item(": /.rsync-filter").unwrap();
+        let merge = parse_filter_item(": /.rsync-filter").expect("test operation should succeed");
         assert!(
             matches!(merge, FilterItem::DirMerge { filename, no_inherit: false, exclude_file: false, mode: DirMergeMode::Any } if filename == ".rsync-filter")
         );
@@ -3751,7 +3871,8 @@ mod tests {
         assert!(parse_filter_item(":xn .rsync-filter").is_none());
         assert!(parse_filter_item(": ../outside.rules").is_none());
 
-        let filters = vec![parse_filter_item(": /.rsync-filter").unwrap()];
+        let filters =
+            vec![parse_filter_item(": /.rsync-filter").expect("test operation should succeed")];
         let merged = std::collections::HashMap::from([
             (
                 (0, ".".to_string()),
@@ -3809,10 +3930,11 @@ mod tests {
                 ),
             ],
         );
-        let filters = vec![parse_filter_item(": /.rsync-filter").unwrap()];
+        let filters =
+            vec![parse_filter_item(": /.rsync-filter").expect("test operation should succeed")];
         let merged = load_dir_merge_rules(&backend, &entries, &filters)
             .await
-            .unwrap();
+            .expect("test operation should succeed");
 
         assert!(is_excluded_with_merges(
             &filters, &merged, "root.txt", false
@@ -3831,7 +3953,8 @@ mod tests {
 
     #[test]
     fn dir_merge_modifiers_and_clear_rule_apply_only_to_this_merge_stack() {
-        let filters = vec![parse_filter_item(": /.rsync-filter").unwrap()];
+        let filters =
+            vec![parse_filter_item(": /.rsync-filter").expect("test operation should succeed")];
         let inherited = parse_dir_merge_file(b"- keep.txt\n", DirMergeMode::Any);
         let cleared_child = parse_dir_merge_file(b"!\n- deep.txt\n", DirMergeMode::Any);
         let merged = std::collections::HashMap::from([
@@ -3849,7 +3972,8 @@ mod tests {
             false
         ));
 
-        let no_inherit = vec![parse_filter_item(":n .rsync-filter").unwrap()];
+        let no_inherit =
+            vec![parse_filter_item(":n .rsync-filter").expect("test operation should succeed")];
         let no_inherit_rules = std::collections::HashMap::from([
             (
                 (0, ".".to_string()),
@@ -3876,7 +4000,8 @@ mod tests {
             "n modifier 不把目录规则传给更深子目录"
         );
 
-        let exclude_merge_file = vec![parse_filter_item(":e .rsync-filter").unwrap()];
+        let exclude_merge_file =
+            vec![parse_filter_item(":e .rsync-filter").expect("test operation should succeed")];
         assert!(is_excluded_with_merges(
             &exclude_merge_file,
             &std::collections::HashMap::new(),
@@ -3902,8 +4027,8 @@ mod tests {
 
         // 改动中部 137 字节（保持块对齐 = 只有跨界块失配）
         let mut modified = basis.clone();
-        for i in 8000..8137 {
-            modified[i] = modified[i].wrapping_add(7);
+        for byte in &mut modified[8000..8137] {
+            *byte = byte.wrapping_add(7);
         }
         let blocks: Vec<BlockSum> = {
             let b = bl as usize;
@@ -3938,7 +4063,7 @@ mod tests {
             0,
             0,
         )
-        .unwrap();
+        .expect("test operation should succeed");
         assert_eq!(empty, modified, "无 basis 全 literal");
     }
 
@@ -3975,21 +4100,35 @@ mod tests {
             let mut enc = Vec::new();
             write_varint(v, &mut enc);
             let (mut c, srv) = tokio::io::duplex(64);
-            c.write_all(&mux_frame(&enc)).await.unwrap();
-            c.shutdown().await.unwrap();
+            c.write_all(&mux_frame(&enc))
+                .await
+                .expect("test operation should succeed");
+            c.shutdown().await.expect("test operation should succeed");
             let mut rw = BufReader::new(srv);
             let mut pending = Vec::new();
-            assert_eq!(data_varint(&mut rw, &mut pending).await.unwrap(), v);
+            assert_eq!(
+                data_varint(&mut rw, &mut pending)
+                    .await
+                    .expect("test operation should succeed"),
+                v
+            );
         }
         for v in [0i64, 6, 4096, 0x6AB3A68C, 0x1234567] {
             let mut enc = Vec::new();
             write_varlong(3, v, &mut enc);
             let (mut c, srv) = tokio::io::duplex(64);
-            c.write_all(&mux_frame(&enc)).await.unwrap();
-            c.shutdown().await.unwrap();
+            c.write_all(&mux_frame(&enc))
+                .await
+                .expect("test operation should succeed");
+            c.shutdown().await.expect("test operation should succeed");
             let mut rw = BufReader::new(srv);
             let mut pending = Vec::new();
-            assert_eq!(data_varlong(&mut rw, &mut pending, 3).await.unwrap(), v);
+            assert_eq!(
+                data_varlong(&mut rw, &mut pending, 3)
+                    .await
+                    .expect("test operation should succeed"),
+                v
+            );
         }
     }
 
@@ -4005,8 +4144,10 @@ mod tests {
         ];
         let encoded = encode_flist(&entries, true);
         let (mut c, srv) = tokio::io::duplex(64 * 1024);
-        c.write_all(&mux_frame(&encoded)).await.unwrap();
-        c.shutdown().await.unwrap();
+        c.write_all(&mux_frame(&encoded))
+            .await
+            .expect("test operation should succeed");
+        c.shutdown().await.expect("test operation should succeed");
         let mut rw = BufReader::new(srv);
         let mut pending = Vec::new();
         let got = recv_file_list(
@@ -4018,7 +4159,7 @@ mod tests {
             },
         )
         .await
-        .unwrap();
+        .expect("test operation should succeed");
 
         // `-c`：普通文件末附 16B 整文件校验和（目录不附 ✗ 对端同语义）
         let file_sum = Some(md5_digest(b"hello-rsync").to_vec());
@@ -4030,8 +4171,10 @@ mod tests {
         }
         let enc2 = encode_flist(&with_sum, true);
         let (mut c2, srv2) = tokio::io::duplex(64 * 1024);
-        c2.write_all(&mux_frame(&enc2)).await.unwrap();
-        c2.shutdown().await.unwrap();
+        c2.write_all(&mux_frame(&enc2))
+            .await
+            .expect("test operation should succeed");
+        c2.shutdown().await.expect("test operation should succeed");
         let mut rw2 = BufReader::new(srv2);
         let mut p2 = Vec::new();
         let got2 = recv_file_list(
@@ -4044,7 +4187,7 @@ mod tests {
             },
         )
         .await
-        .unwrap();
+        .expect("test operation should succeed");
         assert_eq!(got2.len(), with_sum.len(), "-c 条目数");
         for (a, b) in got2.iter().zip(with_sum.iter()) {
             assert_eq!(a.file_sum, b.file_sum, "-c 校验和");
@@ -4118,8 +4261,8 @@ mod tests {
         let seed = 0x1122_3344u32;
         let basis: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
         let mut data = basis.clone();
-        for i in 1400..1700 {
-            data[i] = data[i].wrapping_add(1);
+        for byte in &mut data[1400..1700] {
+            *byte = byte.wrapping_add(1);
         }
         let blength = 700u32;
         let blocks = blocks_of(&basis, blength, seed, 16);
