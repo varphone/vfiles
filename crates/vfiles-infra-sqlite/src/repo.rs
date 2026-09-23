@@ -2191,6 +2191,136 @@ impl EntryRepo for SqliteEntryRepo {
         Ok(())
     }
 
+    async fn replace_subtree_and_move(
+        &self,
+        namespace_id: &NamespaceId,
+        replaced_root: &NormalizedPath,
+        moves: &[(EntryId, NormalizedPath)],
+    ) -> DomainResult<(Vec<Entry>, Vec<(BlobId, u32)>)> {
+        if moves.is_empty() {
+            return Err(DomainError::Validation {
+                message: "At least one source entry is required".to_string(),
+            });
+        }
+
+        let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to begin replace-and-move transaction: {}", e),
+        })?;
+        let replaced_rows: Vec<EntryRow> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id
+            FROM entries e
+            WHERE e.namespace_id = ?
+              AND (e.path = ? OR substr(e.path, 1, length(?) + 1) = ? || '/')
+            ORDER BY length(e.path) DESC
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(replaced_root.as_str())
+        .bind(replaced_root.as_str())
+        .bind(replaced_root.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list replacement subtree: {}", e),
+        })?;
+        let replaced_entries = replaced_rows
+            .into_iter()
+            .map(parse_entry_row)
+            .collect::<DomainResult<Vec<_>>>()?;
+
+        let blob_rows: Vec<(String, i64)> = sqlx::query_as(
+            r#"
+            SELECT ev.blob_id, COUNT(*)
+            FROM entry_versions ev
+            JOIN entries e ON e.id = ev.entry_id
+            WHERE e.namespace_id = ?
+              AND (e.path = ? OR substr(e.path, 1, length(?) + 1) = ? || '/')
+              AND ev.blob_id IS NOT NULL
+            GROUP BY ev.blob_id
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(replaced_root.as_str())
+        .bind(replaced_root.as_str())
+        .bind(replaced_root.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to count replaced blob references: {}", e),
+        })?;
+        let blob_references = blob_rows
+            .into_iter()
+            .map(|(id, count)| {
+                let id = uuid::Uuid::parse_str(&id)
+                    .map(BlobId::from_uuid)
+                    .map_err(|_| DomainError::Internal {
+                        message: "Invalid blob id in replacement subtree".to_string(),
+                    })?;
+                let count = u32::try_from(count).map_err(|_| DomainError::Internal {
+                    message: "Replacement blob reference count overflow".to_string(),
+                })?;
+                Ok((id, count))
+            })
+            .collect::<DomainResult<Vec<_>>>()?;
+
+        sqlx::query(
+            "DELETE FROM entries WHERE namespace_id = ? AND (path = ? OR substr(path, 1, length(?) + 1) = ? || '/')",
+        )
+        .bind(namespace_id.to_string())
+        .bind(replaced_root.as_str())
+        .bind(replaced_root.as_str())
+        .bind(replaced_root.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to delete replacement subtree: {}", e),
+        })?;
+
+        for (entry_id, new_path) in moves {
+            let result =
+                sqlx::query("UPDATE entries SET path = ? WHERE namespace_id = ? AND id = ?")
+                    .bind(new_path.as_str())
+                    .bind(namespace_id.to_string())
+                    .bind(entry_id.to_string())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| match e {
+                        sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
+                            DomainError::PathConflict {
+                                message: format!("Path already exists: {}", new_path.as_str()),
+                            }
+                        }
+                        _ => DomainError::Internal {
+                            message: format!("Failed to move entry: {}", e),
+                        },
+                    })?;
+            if result.rows_affected() != 1 {
+                return Err(DomainError::NotFound {
+                    resource: format!("entry {}", entry_id),
+                });
+            }
+        }
+
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to commit replace-and-move transaction: {}", e),
+        })?;
+        Ok((replaced_entries, blob_references))
+    }
+
     async fn get_entry_history(
         &self,
         entry_id: &EntryId,
@@ -6622,6 +6752,41 @@ mod entry_move_batch_tests {
             .await;
 
         assert!(matches!(result, Err(DomainError::PathConflict { .. })));
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn replace_subtree_and_move_rolls_back_replacement_on_move_conflict() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+        let source = create(&repo, &namespace_id, &user_id, "docs/source.txt").await;
+        create(&repo, &namespace_id, &user_id, "docs/target.txt").await;
+        create(&repo, &namespace_id, &user_id, "docs/occupied.txt").await;
+
+        let result = repo
+            .replace_subtree_and_move(
+                &namespace_id,
+                &NormalizedPath::new("docs/target.txt").expect("path should parse"),
+                &[(
+                    source,
+                    NormalizedPath::new("docs/occupied.txt").expect("path should parse"),
+                )],
+            )
+            .await;
+        assert!(matches!(result, Err(DomainError::PathConflict { .. })));
+        for path in ["docs/source.txt", "docs/target.txt", "docs/occupied.txt"] {
+            assert!(
+                repo.find_by_path(
+                    &namespace_id,
+                    &NormalizedPath::new(path).expect("path should parse")
+                )
+                .await
+                .expect("lookup should succeed")
+                .is_some(),
+                "transaction should preserve {path}"
+            );
+        }
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);

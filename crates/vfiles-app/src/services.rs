@@ -2321,6 +2321,50 @@ where
         // join(dest, 源名)）——多源强制容器。
         dest_as_container: bool,
     ) -> DomainResult<MutationResult> {
+        self.move_entries_with_overwrite(
+            namespace_id,
+            sources,
+            destination,
+            message,
+            user_id,
+            dest_as_container,
+            false,
+        )
+        .await
+    }
+
+    pub async fn move_entry_overwriting(
+        &self,
+        namespace_id: &NamespaceId,
+        source: &NormalizedPath,
+        destination: &NormalizedPath,
+        message: Option<&str>,
+        user_id: &UserId,
+        overwrite: bool,
+    ) -> DomainResult<MutationResult> {
+        self.move_entries_with_overwrite(
+            namespace_id,
+            std::slice::from_ref(source),
+            destination,
+            message,
+            user_id,
+            false,
+            overwrite,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)] // Keeps the existing move contract plus atomic overwrite mode.
+    async fn move_entries_with_overwrite(
+        &self,
+        namespace_id: &NamespaceId,
+        sources: &[NormalizedPath],
+        destination: &NormalizedPath,
+        message: Option<&str>,
+        user_id: &UserId,
+        dest_as_container: bool,
+        overwrite_destination: bool,
+    ) -> DomainResult<MutationResult> {
         if sources.is_empty() {
             return Err(DomainError::Validation {
                 message: "At least one source path is required".to_string(),
@@ -2340,14 +2384,6 @@ where
             }
         }
 
-        let _destination_entry = if destination.as_str().is_empty() {
-            None
-        } else {
-            self.entry_repo
-                .find_by_path(namespace_id, destination)
-                .await?
-        };
-
         if sources.len() > 1 && !dest_as_container {
             return Err(DomainError::Validation {
                 message: "Multiple sources require a container destination".to_string(),
@@ -2356,6 +2392,7 @@ where
 
         let mut moving_entries = Vec::new();
         let mut changed_entries = Vec::new();
+        let mut replaced_entries = Vec::new();
 
         for source in sources {
             let source_entry = self
@@ -2388,6 +2425,17 @@ where
                 });
             }
 
+            if overwrite_destination
+                && let Some(replaced_root) = self
+                    .entry_repo
+                    .find_by_path(namespace_id, &target_root)
+                    .await?
+            {
+                replaced_entries.extend(
+                    collect_descendants(&self.entry_repo, namespace_id, &replaced_root).await?,
+                );
+            }
+
             let subtree =
                 collect_descendants(&self.entry_repo, namespace_id, &source_entry).await?;
             for entry in subtree {
@@ -2396,6 +2444,13 @@ where
             }
         }
 
+        let mut seen_replaced = std::collections::HashSet::new();
+        replaced_entries.retain(|entry| seen_replaced.insert(entry.id));
+        let replaced_paths: std::collections::HashSet<String> = replaced_entries
+            .iter()
+            .map(|entry| entry.path_norm.as_str().to_string())
+            .collect();
+
         let original_paths = moving_entries
             .iter()
             .map(|(entry, _)| entry.path_norm.as_str().to_string())
@@ -2403,7 +2458,10 @@ where
 
         let candidates = moving_entries
             .iter()
-            .filter(|(_, new_path)| !original_paths.contains(new_path.as_str()))
+            .filter(|(_, new_path)| {
+                !original_paths.contains(new_path.as_str())
+                    && !replaced_paths.contains(new_path.as_str())
+            })
             .map(|(_, new_path)| new_path.clone())
             .collect::<Vec<_>>();
 
@@ -2424,12 +2482,36 @@ where
             path_depth(&left.0.path_norm).cmp(&path_depth(&right.0.path_norm))
         });
 
-        // 单事务批量更新路径，避免逐条提交。
+        // 替换删除与源路径改写在同一 EntryRepo 事务提交，避免先删目标后移动失败。
         let moves = moving_entries
             .iter()
             .map(|(entry, new_path)| (entry.id, new_path.clone()))
             .collect::<Vec<_>>();
-        self.entry_repo.move_entries(&moves).await?;
+        let (replaced_entries, blob_refs) = if overwrite_destination {
+            self.entry_repo
+                .replace_subtree_and_move(namespace_id, destination, &moves)
+                .await?
+        } else {
+            self.entry_repo.move_entries(&moves).await?;
+            (Vec::new(), Vec::new())
+        };
+        let mut deleted_snapshot_entries = Vec::with_capacity(replaced_entries.len());
+        for entry in &replaced_entries {
+            changed_entries.push(ChangedEntry {
+                entry_id: entry.id,
+                path: entry.path_norm.as_str().to_string(),
+                kind: entry.entry_type,
+                current_version_id: entry.current_version_id,
+                change_type: ChangeType::Deleted,
+            });
+            deleted_snapshot_entries.push(pending_snapshot_entry(
+                entry.id,
+                &entry.path_norm,
+                entry.entry_type,
+                None,
+                ChangeType::Deleted,
+            ));
+        }
 
         for (entry, new_path) in &moving_entries {
             changed_entries.push(ChangedEntry {
@@ -2440,8 +2522,29 @@ where
                 change_type: ChangeType::Renamed,
             });
         }
-        let snapshot_entries =
-            collect_snapshot_state(&self.entry_repo, namespace_id, Vec::new()).await?;
+        let mut cleanup_warnings = Vec::new();
+        let released_blobs = self.entry_repo.release_blob_references(&blob_refs).await?;
+        for blob_id in released_blobs {
+            if let Err(err) = self.blob_store.delete_blob(&blob_id).await {
+                cleanup_warnings.push(format!(
+                    "Failed to delete unreferenced blob {}: {}",
+                    blob_id, err
+                ));
+            }
+        }
+        let mut snapshot_entries =
+            collect_snapshot_state(&self.entry_repo, namespace_id, deleted_snapshot_entries)
+                .await?;
+        let rename_changes: HashMap<EntryId, ChangeType> = changed_entries
+            .iter()
+            .filter(|entry| entry.change_type == ChangeType::Renamed)
+            .map(|entry| (entry.entry_id, entry.change_type))
+            .collect();
+        for entry in &mut snapshot_entries {
+            if let Some(change_type) = rename_changes.get(&entry.entry_id) {
+                entry.change_type = *change_type;
+            }
+        }
 
         finalize_mutation(
             &self.snapshot_repo,
@@ -2450,7 +2553,7 @@ where
             user_id,
             changed_entries,
             snapshot_entries,
-            Vec::new(),
+            cleanup_warnings,
         )
         .await
     }
@@ -4786,6 +4889,83 @@ mod tests {
             .await
             .expect("archive tree should still load");
         assert!(archive_tree_after_delete.items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn workspace_service_overwrites_move_in_one_entry_transaction() {
+        use tokio::io::AsyncReadExt;
+
+        let context = TestContext::new().await;
+        let root = TestContext::path("");
+        context
+            .upload_file(&root, "source.txt", b"source bytes", "source")
+            .await;
+        context
+            .upload_file(&root, "target.txt", b"old target bytes", "target")
+            .await;
+
+        let result = context
+            .workspace_service
+            .move_entry_overwriting(
+                &context.namespace_id,
+                &TestContext::path("source.txt"),
+                &TestContext::path("target.txt"),
+                Some("replace target with source"),
+                &context.user_id,
+                true,
+            )
+            .await
+            .expect("overwrite move should succeed");
+        assert_eq!(result.changed_entries.len(), 2);
+        assert!(result.changed_entries.iter().any(|entry| {
+            entry.path == "target.txt" && entry.change_type == ChangeType::Deleted
+        }));
+        assert!(result.changed_entries.iter().any(|entry| {
+            entry.path == "target.txt" && entry.change_type == ChangeType::Renamed
+        }));
+        let snapshot_entries = context
+            .snapshot_repo
+            .get_snapshot_entries(&result.snapshot_id)
+            .await
+            .expect("overwrite snapshot should be readable");
+        assert!(snapshot_entries.iter().any(|entry| {
+            entry.entry_path.as_str() == "target.txt" && entry.change_type == ChangeType::Deleted
+        }));
+        assert!(snapshot_entries.iter().any(|entry| {
+            entry.entry_path.as_str() == "target.txt" && entry.change_type == ChangeType::Renamed
+        }));
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &TestContext::path("source.txt"))
+                .await
+                .expect("source lookup should succeed")
+                .is_none()
+        );
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &TestContext::path("target.txt"))
+                .await
+                .expect("destination lookup should succeed")
+                .is_some()
+        );
+
+        let mut file = context
+            .workspace_service
+            .open_file(
+                &context.namespace_id,
+                &TestContext::path("target.txt"),
+                None,
+            )
+            .await
+            .expect("destination should open");
+        let mut bytes = Vec::new();
+        file.reader
+            .read_to_end(&mut bytes)
+            .await
+            .expect("destination bytes should be readable");
+        assert_eq!(bytes, b"source bytes");
     }
 }
 

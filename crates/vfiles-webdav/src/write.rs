@@ -52,6 +52,16 @@ pub trait WebdavWriteOps: Send + Sync {
         to: &NormalizedPath,
         user_id: &UserId,
     ) -> DomainResult<()>;
+    /// MOVE with RFC 4918 destination replacement semantics. Implementations
+    /// should make replacement and source relocation atomic when supported.
+    async fn move_entry_with_overwrite(
+        &self,
+        namespace_id: &NamespaceId,
+        from: &NormalizedPath,
+        to: &NormalizedPath,
+        user_id: &UserId,
+        overwrite: bool,
+    ) -> DomainResult<()>;
     async fn delete_entry(
         &self,
         namespace_id: &NamespaceId,

@@ -350,6 +350,14 @@ pub trait EntryRepo {
     async fn move_entry(&self, entry_id: &EntryId, new_path: &NormalizedPath) -> DomainResult<()>;
     /// 批量更新路径，在单个事务内执行，避免逐个提交。
     async fn move_entries(&self, moves: &[(EntryId, NormalizedPath)]) -> DomainResult<()>;
+    /// Atomically delete a replacement subtree and apply the source path updates.
+    /// Blob reference accounting and snapshot creation remain application-layer work.
+    async fn replace_subtree_and_move(
+        &self,
+        namespace_id: &NamespaceId,
+        replaced_root: &NormalizedPath,
+        moves: &[(EntryId, NormalizedPath)],
+    ) -> DomainResult<(Vec<Entry>, Vec<(BlobId, u32)>)>;
     async fn get_entry_history(
         &self,
         entry_id: &EntryId,

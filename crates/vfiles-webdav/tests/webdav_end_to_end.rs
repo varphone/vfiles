@@ -77,6 +77,16 @@ impl WebdavWriteOps for NoopWrite {
     ) -> vfiles_domain::DomainResult<()> {
         Ok(())
     }
+    async fn move_entry_with_overwrite(
+        &self,
+        _ns: &vfiles_domain::types::NamespaceId,
+        _from: &NormalizedPath,
+        _to: &NormalizedPath,
+        _uid: &vfiles_domain::types::UserId,
+        _overwrite: bool,
+    ) -> vfiles_domain::DomainResult<()> {
+        Ok(())
+    }
     async fn delete_entry(
         &self,
         _ns: &vfiles_domain::types::NamespaceId,

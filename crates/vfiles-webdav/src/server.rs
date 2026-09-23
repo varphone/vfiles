@@ -782,6 +782,7 @@ enum WriteOp {
 }
 
 /// 写操作分派（**纯拥有参** ✓ r105 Send 修复式贯彻（#46：调用侧借用跨 await 同坑二号 ✓））。
+#[allow(clippy::too_many_arguments)] // Mirrors the owned request context passed from DAV dispatch.
 async fn write_op(
     app: Option<WebdavApplication>,
     user: Option<vfiles_domain::types::User>,
@@ -790,6 +791,7 @@ async fn write_op(
     dest_raw: Option<String>,
     if_header: Option<String>,
     op: WriteOp,
+    overwrite: bool,
 ) -> Response {
     use vfiles_domain::types::NormalizedPath;
 
@@ -823,6 +825,7 @@ async fn write_op(
         }
     };
     let uid = user.id;
+    let overwrite_conflict_is_precondition = matches!(&op, WriteOp::Move) && !overwrite;
     let result = match op {
         WriteOp::Mkcol => app.write.mkcol(&ns, &path, &uid).await,
         WriteOp::Delete => app.write.delete_entry(&ns, &path, &uid).await,
@@ -837,7 +840,11 @@ async fn write_op(
                     .unwrap();
             };
             match NormalizedPath::new(dest_rel.trim_start_matches('/')) {
-                Ok(dest) => app.write.move_entry(&ns, &path, &dest, &uid).await,
+                Ok(dest) => {
+                    app.write
+                        .move_entry_with_overwrite(&ns, &path, &dest, &uid, overwrite)
+                        .await
+                }
                 Err(_) => {
                     return Response::builder()
                         .status(StatusCode::BAD_REQUEST)
@@ -858,8 +865,15 @@ async fn write_op(
             .unwrap(),
         Err(err) => {
             tracing::warn!(path = %rel, op = "mkcol|delete|move", error = %err, "WebDAV 写操作失败（409）");
+            let status = if overwrite_conflict_is_precondition
+                && matches!(err, vfiles_domain::DomainError::PathConflict { .. })
+            {
+                StatusCode::PRECONDITION_FAILED
+            } else {
+                StatusCode::CONFLICT
+            };
             Response::builder()
-                .status(StatusCode::CONFLICT)
+                .status(status)
                 .body(Body::empty())
                 .unwrap()
         }
@@ -1901,98 +1915,110 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     .map(str::to_string);
                 // r11 MOVE Overwrite（臂层式 ✗ 零签名变 ✓ extensions 重取 = 不碰已 move 变量）
                 let mut move_overwrite_204 = false;
-                if matches!(op, WriteOp::Move) {
-                    let overwrite =
-                        req.headers().get("overwrite").and_then(|v| v.to_str().ok()) != Some("F");
-                    if let (Some(app), Some(u), Some(ns_ext)) = (
+                let move_overwrite = if matches!(op, WriteOp::Move) {
+                    match req.headers().get("overwrite").and_then(|v| v.to_str().ok()) {
+                        None | Some("T") => true,
+                        Some("F") => false,
+                        Some(_) => {
+                            return Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body(Body::empty())
+                                .unwrap();
+                        }
+                    }
+                } else {
+                    true
+                };
+                if matches!(op, WriteOp::Move)
+                    && let (Some(app), Some(_u), Some(ns_ext)) = (
                         req.extensions().get::<WebdavApplication>(),
                         req.extensions().get::<vfiles_domain::types::User>(),
                         req.extensions().get::<vfiles_domain::types::NamespaceId>(),
-                    ) && let Some(dest_rel) = dest_owned
+                    )
+                    && let Some(dest_rel) = dest_owned
                         .as_deref()
                         .and_then(|d| destination_path(d, &app.mount_prefix))
+                {
+                    let source_rel = percent_decode(req.uri().path())
+                        .trim_start_matches('/')
+                        .trim_end_matches('/')
+                        .to_string();
+                    if let Some(status) =
+                        write_precondition(app, ns_ext, &source_rel, if_owned.as_deref()).await
                     {
-                        let source_rel = percent_decode(req.uri().path())
-                            .trim_start_matches('/')
-                            .trim_end_matches('/')
-                            .to_string();
-                        if let Some(status) =
-                            write_precondition(app, ns_ext, &source_rel, if_owned.as_deref()).await
-                        {
+                        return Response::builder()
+                            .status(status)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
+                    let source = match vfiles_domain::types::NormalizedPath::new(&source_rel) {
+                        Ok(source) => source,
+                        Err(_) => {
                             return Response::builder()
-                                .status(status)
+                                .status(StatusCode::BAD_REQUEST)
                                 .body(Body::empty())
                                 .unwrap();
                         }
-                        let source = match vfiles_domain::types::NormalizedPath::new(&source_rel) {
-                            Ok(source) => source,
-                            Err(_) => {
-                                return Response::builder()
-                                    .status(StatusCode::BAD_REQUEST)
-                                    .body(Body::empty())
-                                    .unwrap();
-                            }
-                        };
-                        if dest_rel == source_rel || dest_rel.starts_with(&format!("{source_rel}/"))
-                        {
+                    };
+                    if dest_rel == source_rel || dest_rel.starts_with(&format!("{source_rel}/")) {
+                        return Response::builder()
+                            .status(StatusCode::CONFLICT)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
+                    match app.entry_repo.find_by_path(ns_ext, &source).await {
+                        Ok(Some(_)) => {}
+                        Ok(None) => {
                             return Response::builder()
-                                .status(StatusCode::CONFLICT)
+                                .status(StatusCode::NOT_FOUND)
                                 .body(Body::empty())
                                 .unwrap();
                         }
-                        match app.entry_repo.find_by_path(ns_ext, &source).await {
-                            Ok(Some(_)) => {}
-                            Ok(None) => {
-                                return Response::builder()
-                                    .status(StatusCode::NOT_FOUND)
-                                    .body(Body::empty())
-                                    .unwrap();
-                            }
+                        Err(error) => {
+                            tracing::error!(%error, source = %source_rel, "MOVE 覆盖前读取源失败");
+                            return internal_error();
+                        }
+                    }
+                    if let Some(status) =
+                        write_precondition(app, ns_ext, &dest_rel, if_owned.as_deref()).await
+                    {
+                        return Response::builder()
+                            .status(status)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
+                    // r12 dest 即 target（WebDAV 完整目标路径 ✗ r11 曾 join 目录
+                    // = 违 RFC 二义 → 服务参数化后臂层同步简化 ✓ 同名目录覆盖打通）
+                    if let Ok(target) = vfiles_domain::types::NormalizedPath::new(&dest_rel) {
+                        let target_exists = match app.entry_repo.find_by_path(ns_ext, &target).await
+                        {
+                            Ok(entry) => entry.is_some(),
                             Err(error) => {
-                                tracing::error!(%error, source = %source_rel, "MOVE 覆盖前读取源失败");
+                                tracing::error!(%error, target = %dest_rel, "MOVE 覆盖前读取目标失败");
                                 return internal_error();
                             }
-                        }
-                        if let Some(status) =
-                            write_precondition(app, ns_ext, &dest_rel, if_owned.as_deref()).await
-                        {
-                            return Response::builder()
-                                .status(status)
-                                .body(Body::empty())
-                                .unwrap();
-                        }
-                        // r12 dest 即 target（WebDAV 完整目标路径 ✗ r11 曾 join 目录
-                        // = 违 RFC 二义 → 服务参数化后臂层同步简化 ✓ 同名目录覆盖打通）
-                        if let Ok(target) = vfiles_domain::types::NormalizedPath::new(&dest_rel) {
-                            let target_exists = app
-                                .entry_repo
-                                .find_by_path(ns_ext, &target)
-                                .await
-                                .ok()
-                                .flatten()
-                                .is_some();
-                            if target_exists {
-                                if !overwrite {
-                                    // Overwrite: F + 目标存在 → 412（同 COPY r10 语义）
-                                    return Response::builder()
-                                        .status(StatusCode::PRECONDITION_FAILED)
-                                        .body(Body::empty())
-                                        .unwrap();
-                                }
-                                // T = 删旧（write.delete_entry = delete_entries 全链 = 递归 + blob release ✓）
-                                if let Err(err) =
-                                    app.write.delete_entry(ns_ext, &target, &u.id).await
-                                {
-                                    tracing::error!(error = %err, "MOVE 覆盖删旧失败");
-                                    return internal_error();
-                                }
-                                move_overwrite_204 = true;
+                        };
+                        if target_exists {
+                            if !move_overwrite {
+                                // Overwrite: F + 目标存在 → 412（同 COPY r10 语义）
+                                return Response::builder()
+                                    .status(StatusCode::PRECONDITION_FAILED)
+                                    .body(Body::empty())
+                                    .unwrap();
                             }
+                            move_overwrite_204 = true;
                         }
                     }
                 }
                 let resp = write_op(
-                    app_owned, user_owned, ns_owned, uri_owned, dest_owned, if_owned, op,
+                    app_owned,
+                    user_owned,
+                    ns_owned,
+                    uri_owned,
+                    dest_owned,
+                    if_owned,
+                    op,
+                    move_overwrite,
                 )
                 .await;
                 // r11 覆盖成功 204（RFC §9.9.3 ✗ 新建保持 201）——外层改写避免 move 后外尾用旧绑
