@@ -5,9 +5,9 @@
 - `VFILES_S3_EMBEDDED=true` 时，S3 使用 HTTP 主 listener；既有 `/api` 路由和已挂载的 WebDAV
   前缀优先，未匹配请求中带 SigV4 Authorization 或 `X-Amz-Algorithm=AWS4-HMAC-SHA256` 的交给 S3，
   普通路径仍落到前端静态资源。`VFILES_S3_PORT` 仅独立监听模式使用。
-- 默认仍为独立端口模式；WebDAV 自身的 `VFILES_WEBDAV_EMBEDDED` 配置行为不变。
-- S3 现在默认启用；`VFILES_S3_ENABLED=false` 可关闭。端口默认 9000，共端口模式由
-  `VFILES_S3_EMBEDDED=true` 显式选择。生产部署应设置固定 Access/Secret 凭证。
+- S3 现在默认启用并共用 HTTP 主端口；`VFILES_S3_ENABLED=false` 可关闭，
+  `VFILES_S3_EMBEDDED=false` 可退回独立 9000 端口。WebDAV 默认共用主端口，其配置行为不变。
+  生产部署应设置固定 Access/Secret 凭证。
 
 ## 当前工作树补充（PUT/COPY 流式与 multipart 列表内存）
 
@@ -458,7 +458,7 @@
 
 | 项 | 决策 | 依据 |
 | --- | --- | --- |
-| 端口 | **专用 9000**（`VFILES_S3_PORT`） | path-style `/bucket/key` 与前端根语义冲突 ✗ MinIO 惯例直觉 ✓ |
+| 端口 | **默认 HTTP 共端口**；`VFILES_S3_EMBEDDED=false` 时独立监听默认 9000（`VFILES_S3_PORT`） | SigV4 请求分流，保留 path-style 桶/对象寻址 |
 | 桶 | 单虚拟 **`default`**，严格语义（他桶 → NoSuchBucket 404 XML） | 客户端列桶自配对（ListBuckets=[default] ✓） |
 | 认证 | **SigV4 静态单对**（`VFILES_S3_ACCESS_KEY/SECRET_KEY`，缺省 uuid 随机 + warn 打印 access，secret 不落日志） | s3s 内建验签 + `EnvAuth` 十五行自写（SimpleAuth 也 pub 可换） |
 | 启用 | **默认开**，`VFILES_S3_ENABLED=false` 显式关 | 零配置 listener 可用；生产应设置固定凭证 |

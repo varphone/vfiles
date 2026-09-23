@@ -180,7 +180,7 @@ pub struct S3Config {
     #[serde(default = "s3_default_port")]
     pub port: u16,
     /// 将 S3 请求复用 HTTP listener（SigV4 请求按认证头/查询参数分流）。
-    #[serde(default)]
+    #[serde(default = "s3_default_embedded")]
     pub embedded: bool,
     /// Access Key（空 = 运行时随机 + warn 打印）。
     #[serde(default)]
@@ -197,6 +197,10 @@ pub struct S3Config {
 }
 
 fn s3_default_enabled() -> bool {
+    true
+}
+
+fn s3_default_embedded() -> bool {
     true
 }
 
@@ -300,7 +304,7 @@ fn s3_from_env() -> Result<S3Config, ConfigError> {
     let embedded = std::env::var("VFILES_S3_EMBEDDED")
         .ok()
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
-        .unwrap_or(false);
+        .unwrap_or(true);
     let access_key = std::env::var("VFILES_S3_ACCESS_KEY").unwrap_or_default();
     let secret_key = std::env::var("VFILES_S3_SECRET_KEY").unwrap_or_default();
     let credentials = std::env::var("VFILES_S3_CREDENTIALS")
@@ -928,8 +932,9 @@ mod tests {
     fn test_config_load() {
         let config = ConfigLoader::load().unwrap();
         assert_eq!(config.http.port, 3000);
-        // S3 默认启用 + 专用端口 9000（VFILES_S3_ENABLED=false 显式关闭）
+        // S3 默认启用并与 HTTP 共端口（VFILES_S3_ENABLED=false 显式关闭）
         assert!(config.s3.enabled, "S3 默认启用");
+        assert!(config.s3.embedded, "S3 默认复用 HTTP listener");
         assert_eq!(config.s3.port, 9000);
         // rsync 默认启用且只读 + 873 + 模块 files（VFILES_RSYNC_ENABLED=false 显式关闭）
         assert!(config.rsync.enabled, "rsync 默认启用");
