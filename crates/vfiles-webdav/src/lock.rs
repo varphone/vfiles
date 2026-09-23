@@ -93,6 +93,27 @@ impl LockTable {
         None
     }
 
+    /// 刷新匹配 token 的锁时限；已过期、路径错误或 token 错误均不改变锁表。
+    pub fn refresh(
+        &self,
+        path: &str,
+        token: &str,
+        ttl: Option<std::time::Duration>,
+    ) -> Option<LockEntry> {
+        let mut map = self.locks.lock().expect("lock table poisoned");
+        let expired = map.get(path).is_some_and(Self::expired);
+        if expired {
+            map.remove(path);
+            return None;
+        }
+        let entry = map.get_mut(path)?;
+        if entry.token != token {
+            return None;
+        }
+        entry.expires_at = ttl.map(|duration| std::time::Instant::now() + duration);
+        Some(entry.clone())
+    }
+
     /// 写操作锁校验（被锁路径 → Some(entry)（调用方 423 ✓ 无锁 → None ✓）。
     pub fn blocked(&self, path: &str) -> Option<LockEntry> {
         let mut map = self.locks.lock().expect("lock table poisoned");

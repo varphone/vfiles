@@ -11,7 +11,7 @@
 | MKCOL / DELETE / MOVE | ✅ 实装（`WebdavWriteOps` ✓ 审计链 user_id ✓） | |
 | **PUT** | ✅ **链实装**（`init_upload` + `complete_upload_from_stream` 流式直完 ✓） | bin 侧 `put_file` 转发 = 下段（签名已清 ✓） |
 | COPY | ✅ **实装**（Destination + Overwrite + 锁前置 + 审计；文件复用 blob，目录递归复制） | `copy_entries` 提供 overwrite 和目标父目录检查；需持续做 RFC/客户端兼容验收 |
-| LOCK / UNLOCK | ✅ 实装（exclusive / depth 0 ✓ `ns:path` 隔离 ✓） | timeout = Infinite 记档；shared lock = 不支持（405 ✓） |
+| LOCK / UNLOCK | ✅ 实装（exclusive / depth 0 ✓ `ns:path` 隔离 ✓；空体 LOCK refresh） | shared lock 明确 405；非 0 Depth 明确 400；超时支持 Second-N / Infinite |
 | per-user ns | ✅ **实装**（`ensure_default_for_owner` ✓ 多用户隔离 ✓） |
 | auth 门 | ✅ dispatch 顶部（Basic → verify → 401 + WWW-Authenticate ✓ OPTIONS 豁免 ✓） |
 | 默认开启 | ✅ **用户令兑现**（`enabled: true` ✓ auth 强制防御 ✓ 真服务日志确证 ✓） |
@@ -19,6 +19,12 @@
 | **GET 流式化** | ✅ **r201-02 收口**（`get_stream` 直通 + ReaderStream ✓ **10MB sha256 一致性证** ✓ 内存爆除） |
 | COPY | ✅ **已接线**（`WebdavWriteOps::copy_entry` → `DefaultWorkspaceService::copy_entries`；目标覆盖、子树保护、blob 复用与递归目录复制均有实现） |
 | **台架缺口注** | ⚠️ **rclone/Windows 客户端台架** = 待装验（curl 六法链已证栈级 ✓）；bin put_file 转发 = r110'c 已接（init_upload+complete_from_stream ✓） |
+
+## 当前工作树补充（LOCK refresh 与请求 scope 校验）
+
+- 空体 LOCK 识别为 refresh：从 `If` 头取唯一 `opaquelocktoken`，仅刷新同路径上仍有效的锁；成功返回原 token 与 lockdiscovery，失效 token 返回 412。
+- 新 LOCK 解析 RFC `lockinfo` XML，只接受 `exclusive` + `write`；shared 请求明确返回 405，不再被静默授予 exclusive 锁。
+- LOCK 的 `Depth` 若显式提供，只接受 `0`；不支持的 scope 返回 400。
 
 ## 0.5 GET 流式化（r201 ✓ 商业级硬伤修 ✗ 大文件内存爆）
 

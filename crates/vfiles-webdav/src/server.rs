@@ -1,10 +1,4 @@
-//! WebDAV axum 服务端（独立端口 ✓ 与 vfiles-ftp 挂载式并列）。
-//!
-//! r103 中段实件：OPTIONS（Allow 头实 ✓ curl 可证）+ PROPFIND/HEAD 路由壳。
-//! TODO(r104)：PROPFIND 域接线（`BackendDeps::entry_repo.find_children/find_by_path`
-//! + namespace 解析链）→ GET（Entry → EntryVersion → BlobStore::get_blob_stream）→
-//! 写法五件（PUT/DELETE/MKCOL/MOVE/COPY）。LOCK/UNLOCK = 405（记档 ✓
-//! Windows 映射锁依赖待评估）。
+//! WebDAV axum 服务端：读写方法、锁处理、认证与协议错误语义。
 
 #![allow(dead_code)]
 
@@ -58,6 +52,13 @@ fn if_token(header: &str) -> Option<String> {
         return None;
     }
     let start = header.find("opaquelocktoken:")?;
+    if start == 0 || header.as_bytes().get(start - 1) != Some(&b'<') {
+        return None;
+    }
+    let prefix = header[..start].trim_end_matches('<').trim_end();
+    if prefix.split_whitespace().next_back() == Some("Not") {
+        return None;
+    }
     let end = header[start..].find('>').map(|i| start + i)?;
     Some(header[start..end].to_string())
 }
@@ -69,6 +70,8 @@ async fn lock_op(
     ns: Option<vfiles_domain::types::NamespaceId>,
     uri_path: String,
     timeout_owned: Option<String>,
+    depth_owned: Option<String>,
+    lock_body: Vec<u8>,
 ) -> Response {
     let Some(app) = app else {
         return internal_error();
@@ -79,6 +82,18 @@ async fn lock_op(
     let Some(ns) = ns else {
         return internal_error();
     };
+    if depth_owned.as_deref().is_some_and(|depth| !depth.trim().eq_ignore_ascii_case("0")) {
+        return Response::builder().status(StatusCode::BAD_REQUEST).body(Body::empty()).unwrap();
+    }
+    match parse_lockinfo(&lock_body) {
+        Ok(LockScope::ExclusiveWrite) => {}
+        Ok(LockScope::SharedWrite) => {
+            return Response::builder().status(StatusCode::METHOD_NOT_ALLOWED).body(Body::empty()).unwrap();
+        }
+        Err(status) => {
+            return Response::builder().status(status).body(Body::empty()).unwrap();
+        }
+    }
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/').to_string();
     let lock_key = format!("{ns}:{rel}");
     // r15 Timeout（Second-N 解析 ✗ None = Infinite/缺省 = 永久（RFC 缺省语义 ✓））
@@ -107,6 +122,62 @@ async fn lock_op(
             .status(StatusCode::LOCKED)
             .body(Body::empty())
             .unwrap(),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LockScope { ExclusiveWrite, SharedWrite }
+
+/// 只授予实现了真实语义的 exclusive write 锁；不得将 shared 请求静默升级。
+fn parse_lockinfo(body: &[u8]) -> Result<LockScope, StatusCode> {
+    let xml = std::str::from_utf8(body).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let doc = roxmltree::Document::parse(xml).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let root = doc.root_element();
+    if root.tag_name().namespace() != Some("DAV:") || root.tag_name().name() != "lockinfo" {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let scope = root.children().find(|n| n.is_element() && n.tag_name().namespace() == Some("DAV:") && n.tag_name().name() == "lockscope")
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    let scope = scope.children().find(|n| n.is_element() && n.tag_name().namespace() == Some("DAV:")).ok_or(StatusCode::BAD_REQUEST)?;
+    let locktype = root.children().find(|n| n.is_element() && n.tag_name().namespace() == Some("DAV:") && n.tag_name().name() == "locktype")
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    if !locktype.children().any(|n| n.is_element() && n.tag_name().namespace() == Some("DAV:") && n.tag_name().name() == "write") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    match scope.tag_name().name() {
+        "exclusive" => Ok(LockScope::ExclusiveWrite),
+        "shared" => Ok(LockScope::SharedWrite),
+        _ => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// 空体 LOCK = RFC 4918 §9.10.2 锁刷新，必须携带 If 条件中的现存令牌。
+async fn lock_refresh_op(
+    app: Option<WebdavApplication>, ns: Option<vfiles_domain::types::NamespaceId>,
+    uri_path: String, token: Option<String>, timeout_owned: Option<String>,
+) -> Response {
+    let Some(app) = app else {
+        return internal_error();
+    };
+    let Some(ns) = ns else {
+        return internal_error();
+    };
+    let Some(token) = token else {
+        return Response::builder().status(StatusCode::PRECONDITION_FAILED).body(Body::empty()).unwrap();
+    };
+    let rel = uri_path.trim_start_matches('/').trim_end_matches('/').to_string();
+    let lock_key = format!("{ns}:{rel}");
+    let ttl = timeout_owned.as_deref().and_then(crate::lock::LockTable::parse_timeout_header);
+    let granted_header = ttl.map(|d| format!("Second-{}", d.as_secs())).unwrap_or_else(|| "Infinite".to_string());
+    match app.locks.refresh(&lock_key, &token, ttl) {
+        Some(entry) => Response::builder().status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+            .header("Lock-Token", format!("<{}>", entry.token))
+            .header("Timeout", granted_header.clone())
+            .body(Body::from(crate::response::lock_response(
+                &entry.token, &entry.owner, &href_with_mount(&app.mount_prefix, &rel), &granted_header,
+            ))).unwrap(),
+        None => Response::builder().status(StatusCode::PRECONDITION_FAILED).body(Body::empty()).unwrap(),
     }
 }
 
@@ -908,7 +979,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
         req.extensions_mut().insert(user);
         req.extensions_mut().insert(ns);
     }
-    match *req.method() {
+    match req.method().clone() {
         Method::OPTIONS => Response::builder()
             .status(StatusCode::OK)
             .header(header::ALLOW, ALLOW)
@@ -1001,20 +1072,46 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .get("lock-token")
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
+            let if_token_owned = req
+                .headers()
+                .get("if")
+                .and_then(|v| v.to_str().ok())
+                .and_then(if_token);
+            let timeout_owned = req
+                .headers()
+                .get("timeout")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            let depth_owned = req
+                .headers()
+                .get("depth")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
             let ns_owned = req
                 .extensions()
                 .get::<vfiles_domain::types::NamespaceId>()
                 .cloned();
-            let resp = if m.as_str() == "LOCK" {
+            let body = std::mem::replace(req.body_mut(), Body::empty());
+            let body_bytes = match axum::body::to_bytes(body, 64 * 1024).await {
+                Ok(bytes) => bytes.to_vec(),
+                Err(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            };
+            let resp = if m.as_str() == "LOCK" && body_bytes.is_empty() {
+                lock_refresh_op(app_owned, ns_owned, uri_owned, if_token_owned, timeout_owned).await
+            } else if m.as_str() == "LOCK" {
                 lock_op(
                     app_owned,
                     user_owned,
                     ns_owned,
                     uri_owned,
-                    req.headers()
-                        .get("timeout")
-                        .and_then(|v| v.to_str().ok())
-                        .map(str::to_string),
+                    timeout_owned,
+                    depth_owned,
+                    body_bytes,
                 )
                 .await
             } else {
