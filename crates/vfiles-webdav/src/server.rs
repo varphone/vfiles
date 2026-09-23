@@ -519,11 +519,17 @@ async fn dav(mut req: axum::extract::Request) -> Response {
             .and_then(|v| v.to_str().ok())
             .and_then(crate::auth::basic_credentials);
         let Some((u, pw)) = cred else {
+            // 探测期无凭据（OPTIONS 之外首连 401 属正常流程）= debug 级别防刷屏
+            tracing::debug!("WebDAV 401: 无 Authorization 头（客户端尚未发送凭据）");
             return www_authenticate();
         };
+        let log_name = u.clone(); // 日志副本（u move 进 verify ✗ 先留名）
         let Some(user) = (app_ref.verify)(u, pw).await else {
+            // 认证失败 = warn（用户排查关键行 ✗ 服务端日志记 username 不回客户端 ✓）
+            tracing::warn!(username = %log_name, "WebDAV 认证失败（401）——检查用户名/密码，或账号是否被禁用");
             return www_authenticate();
         };
+        tracing::debug!(username = %user.username.as_str(), "WebDAV 认证成功");
         // per-user ns 动态映射（r109e ✓ ensure_default_for_owner ✓ 多用户隔离）
         let ns = match app_ref
             .namespaces
@@ -661,6 +667,7 @@ pub async fn run_webdav_server(
     _app: WebdavApplication,
 ) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&settings.bind).await?;
+    tracing::info!(addr = %settings.bind, "WebDAV 监听就绪（真实绑定成功后打此行；端口被占用则见 spawn error 日志）");
     axum::serve(listener, router(_app.clone())).await?;
     Ok(())
 }
@@ -674,7 +681,12 @@ pub fn spawn_webdav_server(
     // select 并发（r110'a 破案 ✓ **顺序 bug = run 永不执行**（r103 骨架 ✗✗✗ 盲区五轮））
     tokio::spawn(async move {
         tokio::select! {
-            _ = run_webdav_server(settings, app) => {}
+            res = run_webdav_server(settings, app) => {
+                if let Err(err) = res {
+                    // r205 真因修复 ✗✗ 此前 `let _ =` 吞 bind 错 = 起不来也"已启用" = 用户无从排查
+                    tracing::error!(error = %err, "WebDAV 绑定/服务失败（端口被占用或地址非法）");
+                }
+            }
             _ = shutdown.wait_for(|stop| *stop) => {}
         }
     });

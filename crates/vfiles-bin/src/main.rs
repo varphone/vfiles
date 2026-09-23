@@ -1333,7 +1333,8 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
                 service_shutdown_rx.clone(),
             ) {
                 Ok(()) => {
-                    tracing::info!("WebDAV 已启用（默认开启 ✓）: {bind}");
+                    // 调度式文案（r205 ✓ bind 成功以「监听就绪」为权威 ✗ "已启用"曾在 bind 失败时误导）
+                    tracing::info!("WebDAV 监听任务已调度: {bind}（成功确认行 = 「WebDAV 监听就绪」）");
                     Some(())
                 }
                 Err(err) => {
