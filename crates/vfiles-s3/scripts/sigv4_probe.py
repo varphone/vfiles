@@ -267,11 +267,15 @@ def main():
 
     # ── r6 批量删（DeleteObjects ✗ Content-MD5 必需）──
     del_keys = ["probe4/d1.txt", "probe4/d2.txt"]
+    del_etags = {}
     for k in del_keys:
-        request("PUT", base + "/" + k, body=b"z")
+        _, _, h = request("PUT", base + "/" + k, body=b"z")
+        del_etags[k] = h.get("ETag") or h.get("etag")
     dxml = (
         "<Delete>"
-        + "".join(f"<Object><Key>{k}</Key></Object>" for k in del_keys + ["probe4/missing.txt"])
+        + f'<Object><Key>{del_keys[0]}</Key><ETag>"deadbeefdeadbeefdeadbeefdeadbeef"</ETag></Object>'
+        + f"<Object><Key>{del_keys[1]}</Key><ETag>{del_etags[del_keys[1]]}</ETag></Object>"
+        + "<Object><Key>probe4/missing.txt</Key></Object>"
         + "</Delete>"
     ).encode()
     dmd5 = base64.b64encode(hashlib.md5(dxml).digest()).decode()
@@ -283,13 +287,16 @@ def main():
         extra_headers={"content-type": "application/xml", "content-md5": dmd5},
     )
     ndel = dbody.count(b"<Deleted>")
+    etag_rejected = (b"<Code>PreconditionFailed</Code>" in dbody
+                     and f"<Key>{del_keys[0]}</Key>".encode() in dbody)
     check(
-        "21 DeleteObjects 3 deleted (incl. missing)",
-        st == 200 and ndel == 3 and b"<Error>" not in dbody,
-        f"{st} n={ndel}",
+        "21 DeleteObjects ETag conditions (match + reject + missing idempotent)",
+        st == 200 and ndel == 2 and etag_rejected,
+        f"{st} deleted={ndel} rejected={etag_rejected}",
     )
     st, lbody, _ = request("GET", base, query=q({"list-type": "2", "prefix": "probe4/"}))
-    check("22 DeleteObjects removed keys", st == 200 and len(keys_of(lbody)) == 0, keys_of(lbody))
+    check("22 DeleteObjects removed matching key only",
+          st == 200 and keys_of(lbody) == [del_keys[0].encode()], keys_of(lbody))
 
     # ── r10 服务端复制（CopyObject ✗ PUT + x-amz-copy-source）──
     cblob = b"copy-src-bytes"

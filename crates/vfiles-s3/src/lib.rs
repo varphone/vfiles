@@ -995,7 +995,7 @@ impl VfilesS3 {
             .map_err(dom_err)
     }
 
-    /// 目标路径当前 ETag（普通对象 = version id hex；multipart = composite ETag）。
+    /// 目标路径当前 ETag（按版本读出持久化值；历史版本回退到版本 id）。
     async fn etag_at(&self, path: &vfiles_domain::NormalizedPath) -> S3Result<Option<String>> {
         let Some(entry) = self.entry_at(path).await? else {
             return Ok(None);
@@ -1944,6 +1944,8 @@ impl S3 for VfilesS3 {
         let mut existing: Vec<vfiles_domain::NormalizedPath> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut per_key_err: Vec<Option<String>> = vec![None; keys.len()];
+        let mut valid_candidates = Vec::new();
+        let mut etag_checks = Vec::new();
         // 逐键条件（`ETag` / `LastModifiedTime` / `Size` ✗ r29/r31 并发删；不满足只拒该键）
         let want_etag: Vec<Option<String>> = input
             .delete
@@ -1969,13 +1971,16 @@ impl S3 for VfilesS3 {
                     match self.entry_repo.find_by_path(&self.namespace, &p).await {
                         Ok(Some(entry)) => {
                             if let Some(want) = &want_etag[i] {
-                                let cur = entry
-                                    .current_version_id
-                                    .map(|v| v.to_string().replace('-', ""));
-                                if cur.as_deref() != Some(want.as_str()) {
+                                let Some(version_id) = entry.current_version_id else {
                                     per_key_err[i] = Some("PreconditionFailed".to_string());
                                     continue;
-                                }
+                                };
+                                etag_checks.push((
+                                    i,
+                                    entry.id.clone(),
+                                    version_id.to_string().replace('-', ""),
+                                    want.clone(),
+                                ));
                             }
                             if let Some(want) = &want_mtime[i]
                                 && !same_second(&Timestamp::from(entry.created_at), want)
@@ -2015,9 +2020,7 @@ impl S3 for VfilesS3 {
                                     continue;
                                 }
                             }
-                            if seen.insert(p.as_str().to_string()) {
-                                existing.push(p);
-                            }
+                            valid_candidates.push((i, p));
                         }
                         // 缺失 + 带条件 = 条件不可满足（幂等语义仅对**无条件**删适用）
                         Ok(None) => {
@@ -2030,6 +2033,28 @@ impl S3 for VfilesS3 {
                 }
                 Ok(_) => per_key_err[i] = Some("invalid key".to_string()),
                 Err(e) => per_key_err[i] = Some(e.to_string()),
+            }
+        }
+
+        // Put/Copy and multipart ETags are content-derived overrides, so compare them through one
+        // batch property read instead of assuming the opaque version id is the object's ETag.
+        if !etag_checks.is_empty() {
+            let entry_ids: Vec<_> = etag_checks.iter().map(|(_, id, _, _)| id.clone()).collect();
+            let version_etags = self.load_version_etags(&entry_ids).await?;
+            for (i, entry_id, version_id, expected) in etag_checks {
+                let actual = version_etags
+                    .get(&entry_id)
+                    .and_then(|etags| etags.get(&version_id))
+                    .map(String::as_str)
+                    .unwrap_or(version_id.as_str());
+                if actual != expected.as_str() {
+                    per_key_err[i] = Some("PreconditionFailed".to_string());
+                }
+            }
+        }
+        for (i, path) in valid_candidates {
+            if per_key_err[i].is_none() && seen.insert(path.as_str().to_string()) {
+                existing.push(path);
             }
         }
 
