@@ -37,7 +37,7 @@ use s3s::dto::{
     UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 /// 默认（唯一）虚拟桶名。
 pub const DEFAULT_BUCKET: &str = "default";
@@ -403,6 +403,72 @@ fn stream_reader(blob: StreamingBlob) -> impl tokio::io::AsyncRead + Send + Unpi
     use futures::TryStreamExt;
     let stream = blob.map_err(|e| std::io::Error::other(e.to_string()));
     tokio_util::io::StreamReader::new(stream)
+}
+
+/// Read a bounded range from a seekable object as fixed-size chunks. The mutex makes the stream
+/// `Sync`, which is required by s3s's response body stream, while the file itself remains single
+/// reader and never gets copied into an object-sized allocation.
+struct S3ReadStream {
+    reader: std::sync::Mutex<Box<dyn vfiles_domain::ReadSeek + Send + Unpin>>,
+    remaining: u64,
+    buffer: Vec<u8>,
+}
+
+impl S3ReadStream {
+    fn new(reader: Box<dyn vfiles_domain::ReadSeek + Send + Unpin>, length: u64) -> Self {
+        Self {
+            reader: std::sync::Mutex::new(reader),
+            remaining: length,
+            buffer: vec![0; 64 * 1024],
+        }
+    }
+}
+
+impl futures::Stream for S3ReadStream {
+    type Item = Result<bytes::Bytes, std::io::Error>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        use std::task::Poll;
+        let this = self.get_mut();
+        if this.remaining == 0 {
+            return Poll::Ready(None);
+        }
+        let cap = this.remaining.min(this.buffer.len() as u64) as usize;
+        let read = {
+            let mut reader = match this.reader.lock() {
+                Ok(reader) => reader,
+                Err(_) => {
+                    return Poll::Ready(Some(Err(std::io::Error::other(
+                        "S3 object reader mutex poisoned",
+                    ))));
+                }
+            };
+            let mut buf = tokio::io::ReadBuf::new(&mut this.buffer[..cap]);
+            match tokio::io::AsyncRead::poll_read(
+                std::pin::Pin::new(&mut **reader),
+                cx,
+                &mut buf,
+            ) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(err)) => return Poll::Ready(Some(Err(err))),
+                Poll::Ready(Ok(())) => buf.filled().len(),
+            }
+        };
+        if read == 0 {
+            this.remaining = 0;
+            return Poll::Ready(Some(Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "S3 object stream ended before its declared length",
+            ))));
+        }
+        this.remaining -= read as u64;
+        Poll::Ready(Some(Ok(bytes::Bytes::copy_from_slice(
+            &this.buffer[..read],
+        ))))
+    }
 }
 
 /// key → (父目录路径, 文件名)（与 WebDAV/S3 PUT 同式 ✗ 空名兜底 "upload"）。
@@ -1347,26 +1413,28 @@ impl S3 for VfilesS3 {
             .open_file(&self.namespace, &path, raw_commit.as_deref())
             .await
             .map_err(dom_err)?;
-        let mut data = Vec::with_capacity(file.size_bytes as usize);
-        let mut reader = file.reader;
-        reader
-            .read_to_end(&mut data)
-            .await
-            .map_err(|e| s3s::s3_error!(InternalError, "read failed: {}", e))?;
-        let size = data.len() as u64;
+        let size = file.size_bytes;
         let slice = resolve_range(input.range, size)?;
-        let (body, content_length, content_range) = match slice {
-            Some(r) => {
-                let bytes = data[r.start as usize..r.end as usize].to_vec();
-                let cr = format!("bytes {}-{}/{}", r.start, r.end - 1, size);
-                (bytes, (r.end - r.start) as i64, Some(cr))
-            }
-            None => (data, size as i64, None),
+        let (start, length, content_range) = match slice {
+            Some(r) => (
+                r.start,
+                r.end - r.start,
+                Some(format!("bytes {}-{}/{}", r.start, r.end - 1, size)),
+            ),
+            None => (0, size, None),
         };
+        let mut reader = file.reader;
+        if start > 0 {
+            reader
+                .seek(std::io::SeekFrom::Start(start))
+                .await
+                .map_err(|e| s3s::s3_error!(InternalError, "seek failed: {}", e))?;
+        }
+        let body = StreamingBlob::wrap(S3ReadStream::new(reader, length));
         let metadata = self.load_metadata(&entry.id).await?;
         let out = GetObjectOutput {
-            body: Some(StreamingBlob::from_bytes(body.into())),
-            content_length: Some(content_length),
+            body: Some(body),
+            content_length: Some(length as i64),
             content_type: file.mime_type,
             accept_ranges: Some("bytes".to_string()),
             content_range,

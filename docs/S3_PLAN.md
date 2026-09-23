@@ -11,6 +11,7 @@
 
 ## 当前工作树补充（PUT/COPY 流式与 multipart 列表内存）
 
+- `GetObject` 以 64 KiB 块流式读取 blob；Range 请求 seek 到起始偏移后只读取选中区间，避免按对象大小分配整块内存。
 - S3 `PutObject` 无论 Content-Length 是否提供，都将请求体流式传给 blob 存储，不再因未知长度聚合整份对象；
   已知长度仍校验实际字节数，未知长度按实际流长提交。流错误或提交失败会清理上传会话。
 - `PutObject` 校验可选 `Content-MD5`：Base64/长度无效返回 `InvalidDigest`，摘要不符时删除暂存 blob、取消会话并返回 `BadDigest`。
