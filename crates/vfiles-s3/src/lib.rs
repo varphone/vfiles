@@ -45,6 +45,7 @@ pub const DEFAULT_BUCKET: &str = "default";
 pub const S3_REGION: &str = "us-east-1";
 /// 单页上限（S3 硬上限）。
 const MAX_KEYS_LIMIT: usize = 1000;
+const MAX_S3_PART_SIZE: u64 = 5 * 1024 * 1024 * 1024;
 
 /// Vfiles S3 实现（薄组装 ✗ 写面 = app 层 workspace/upload 同 WebDAV 同源链 ✓）。
 pub struct VfilesS3 {
@@ -561,8 +562,8 @@ async fn source_identity(
     ))
 }
 
-/// `x-amz-copy-source-range` 切片（`bytes=start-end` 闭区间 ✗ `bytes=start-` / `bytes=-suffix` 亦支持）。
-fn slice_copy_range(data: &[u8], spec: &str) -> S3Result<Vec<u8>> {
+/// `x-amz-copy-source-range` 解析成半开区间，避免范围复制时分配内容副本。
+fn copy_range_bounds(spec: &str, len: u64) -> S3Result<std::ops::Range<u64>> {
     let raw = spec
         .trim()
         .strip_prefix("bytes=")
@@ -570,7 +571,6 @@ fn slice_copy_range(data: &[u8], spec: &str) -> S3Result<Vec<u8>> {
     let (a, b) = raw
         .split_once('-')
         .ok_or_else(|| s3s::s3_error!(InvalidArgument, "invalid copy source range"))?;
-    let len = data.len() as u64;
     let (start, end) = if a.is_empty() {
         // 后缀形 `-N` = 末尾 N 字节
         let n: u64 = b
@@ -595,8 +595,8 @@ fn slice_copy_range(data: &[u8], spec: &str) -> S3Result<Vec<u8>> {
             "copy source range not satisfiable"
         ));
     }
-    let end = end.min(len - 1) as usize;
-    Ok(data[start as usize..=end].to_vec())
+    let end = end.min(len - 1);
+    Ok(start..end + 1)
 }
 
 /// part 数据 MD5 十六进制（S3 `UploadPart` 返回的 ETag 形）。
@@ -1915,23 +1915,43 @@ impl S3 for VfilesS3 {
             &src_etag,
             &src_mtime,
         )?;
-        let content = self
+        let mut content = self
             .workspace
-            .read_file_bytes(&self.namespace, &src_path, None)
+            .open_file(&self.namespace, &src_path, None)
             .await
             .map_err(dom_err)?;
-        let bytes = match &input.copy_source_range {
-            Some(r) => slice_copy_range(&content.bytes, r)?,
-            None => content.bytes,
+        let range = match input.copy_source_range.as_deref() {
+            Some(spec) => copy_range_bounds(spec, content.size_bytes)?,
+            None => 0..content.size_bytes,
         };
-        let etag = md5_hex(&bytes);
-        self.upload
-            .upload_part(&upload_id, (input.part_number - 1) as u32, &bytes)
+        let part_size = range.end - range.start;
+        if part_size > MAX_S3_PART_SIZE {
+            return Err(s3s::s3_error!(
+                EntityTooLarge,
+                "copied part exceeds the 5 GiB S3 limit"
+            ));
+        }
+        use tokio::io::{AsyncSeekExt, SeekFrom};
+        content
+            .reader
+            .seek(SeekFrom::Start(range.start))
+            .await
+            .map_err(|e| s3s::s3_error!(InternalError, "seek copy source: {}", e))?;
+        let reader = content.reader.take(part_size);
+        let receipt = self
+            .upload
+            .upload_part_from_stream(
+                &upload_id,
+                (input.part_number - 1) as u32,
+                Some(part_size),
+                Some(MAX_S3_PART_SIZE),
+                Box::new(reader),
+            )
             .await
             .map_err(dom_err)?;
         let out = UploadPartCopyOutput {
             copy_part_result: Some(CopyPartResult {
-                e_tag: Some(s3s::dto::ETag::Strong(etag)),
+                e_tag: Some(s3s::dto::ETag::Strong(receipt.md5_hex)),
                 last_modified: Some(Timestamp::from(time::OffsetDateTime::now_utc())),
                 ..Default::default()
             }),
