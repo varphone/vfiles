@@ -79,4 +79,5 @@
 | 55 | **playwright `check()` 对 Vue 受控 checkbox 不触发 change 链**（五轮误报史诗 ✗✗✗ 稳式 = `input.click()` 单发（自带 change ✓ click+dispatch 双发 = 奇偶抵消）；**混类/工具-框架交互**为探针两大深水区） | r137→144 |
 | 56 | **pkill/pgrep -f 自匹配自杀**（模式串含目标名 = 杀自己 shell ✗✗ 用 `-x vfiles` 精确名/倒排法） | r204 |
 | 57 | **curl ASCII 全绿 ≠ 真实客户端可用**（href 合法性 + percent 语义只有真客户端暴露 ✗✗ 双斜杠/未解码 = 真实客户端丢条目或 404）+ **secret 长度<32 fixture 静默断链二犯**（≥34 保） | r204 |
-| 58 | **残留进程跑 deleted 二进制**（`/proc/pid/exe -> (deleted)` = 旧码响应 ✗✗ 排障先核监听进程 exe 时间 vs 工作区二进制；**bind 静默类** = spawn Ok ≠ bind 成功，权威行须在 bind 后打） | r205 |
+| 59 | **单层延迟测量误导归因**（HTTP 总时 = 认证 hash + 查询 + 流转 ✗✗ r3 把 6ms/文件归 open ✗ 实则 hash 主导；**分层法定案** = SQL 直测（sqlite timer）+ 总时差值；同族 = **门禁与服务同 job 的探针早发**（0.0001s = refused ≠ 代码错 → 等端口循环）| r4 |
+| 58 | **残留进程跑 deleted 二进制**（`/proc/pid/exe -> (deleted)` = 旧码响应 ✗✗ 排障先核监听进程 exe 时间 vs 工作区二进制；**bind 静默类** = spawn Ok ≠ bind 成功，权威行须在 bind 后打） | r205 || 58 | **残留进程跑 deleted 二进制**（`/proc/pid/exe -> (deleted)` = 旧码响应 ✗✗ 排障先核监听进程 exe 时间 vs 工作区二进制；**bind 静默类** = spawn Ok ≠ bind 成功，权威行须在 bind 后打） | r205 |

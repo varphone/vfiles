@@ -165,6 +165,14 @@ pub struct Entry {
     pub deleted_at: Option<time::OffsetDateTime>,
 }
 
+/// 子项 + 批量元数据（r4 ✗ 消 children N+1：一条 SQL 直取 size/mime）。
+#[derive(Debug, Clone)]
+pub struct EntryChildMeta {
+    pub entry: Entry,
+    pub size_bytes: Option<u64>,
+    pub mime_type: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntryVersion {
     pub id: VersionId,

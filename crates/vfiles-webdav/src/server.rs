@@ -553,30 +553,19 @@ async fn propfind_owned(
         });
     }
     if depth == "1" {
-        let children = app
+        // r4 批量版（N+1 消 ✗✗ 一条 SQL 直取 size/mime ✗ 替换每文件 open）
+        let metas = app
             .entry_repo
-            .find_children(&ns, &path)
+            .children_with_meta(&ns, &path)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        for child in children {
+        for meta in metas {
+            let child = meta.entry;
             let is_dir = matches!(child.entry_type, vfiles_domain::types::EntryKind::Directory);
-            // r3 P0 债还清 ✗✗ children 双值（size + mime）——每文件一次轻量 get_stream
-            // （本地 sqlite 查询级 ✗ 延迟 curl 实测入档；若可见延迟 → 批量 SQL 优化记）
             let (getcontentlength, getcontenttype) = if is_dir {
                 (None, None)
             } else {
-                let child_rel = if rel.is_empty() {
-                    child.name.clone()
-                } else {
-                    format!("{rel}/{}", child.name)
-                };
-                match vfiles_domain::types::NormalizedPath::new(&child_rel) {
-                    Ok(cp) => match app.write.get_stream(&ns, &cp).await {
-                        Ok(Some((_reader, mime, size))) => (Some(size), Some(mime)),
-                        _ => (None, None),
-                    },
-                    Err(_) => (None, None),
-                }
+                (meta.size_bytes, meta.mime_type)
             };
             items.push(crate::response::PropResponse {
                 href: entry_href(&child_prefix(rel), &child.name, is_dir),

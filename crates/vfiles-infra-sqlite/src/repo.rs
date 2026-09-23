@@ -977,6 +977,127 @@ impl EntryRepo for SqliteEntryRepo {
         rows.into_iter().map(parse_entry_row).collect()
     }
 
+    async fn children_with_meta(
+        &self,
+        namespace_id: &NamespaceId,
+        parent_path: &NormalizedPath,
+    ) -> DomainResult<Vec<vfiles_domain::types::EntryChildMeta>> {
+        // r4 一条 SQL 消 N+1 ✗ 前 7 列 = EntryRow 同构（parse_entry_row 复用 ✓）
+        // + 2 标量子查询（最新 version 的 size/content_type ✗ 索引点查级 ✓）
+        // 字面 SQL（find_children 同风格 ✗ 动态拼接会触 sqlx 注入审计）
+        let rows: Vec<(
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+        )> = if parent_path.as_str().is_empty() {
+            sqlx::query_as(
+                r#"
+                SELECT
+                    e.id,
+                    e.namespace_id,
+                    e.path,
+                    e.kind,
+                    e.created_at,
+                    e.updated_at,
+                    (
+                        SELECT ev.id
+                        FROM entry_versions ev
+                        WHERE ev.entry_id = e.id
+                        ORDER BY ev.version DESC
+                        LIMIT 1
+                    ) AS current_version_id,
+                    (
+                        SELECT ev.size
+                        FROM entry_versions ev
+                        WHERE ev.entry_id = e.id
+                        ORDER BY ev.version DESC
+                        LIMIT 1
+                    ) AS size_b,
+                    (
+                        SELECT ev.content_type
+                        FROM entry_versions ev
+                        WHERE ev.entry_id = e.id
+                        ORDER BY ev.version DESC
+                        LIMIT 1
+                    ) AS mime_t
+                FROM entries e
+                WHERE e.namespace_id = ?
+                  AND instr(e.path, '/') = 0
+                ORDER BY e.path
+                "#,
+            )
+            .bind(namespace_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to find children with meta: {}", e),
+            })?
+        } else {
+            let direct_prefix = format!("{}/", parent_path.as_str().trim_end_matches('/'));
+            sqlx::query_as(
+                r#"
+                SELECT
+                    e.id,
+                    e.namespace_id,
+                    e.path,
+                    e.kind,
+                    e.created_at,
+                    e.updated_at,
+                    (
+                        SELECT ev.id
+                        FROM entry_versions ev
+                        WHERE ev.entry_id = e.id
+                        ORDER BY ev.version DESC
+                        LIMIT 1
+                    ) AS current_version_id,
+                    (
+                        SELECT ev.size
+                        FROM entry_versions ev
+                        WHERE ev.entry_id = e.id
+                        ORDER BY ev.version DESC
+                        LIMIT 1
+                    ) AS size_b,
+                    (
+                        SELECT ev.content_type
+                        FROM entry_versions ev
+                        WHERE ev.entry_id = e.id
+                        ORDER BY ev.version DESC
+                        LIMIT 1
+                    ) AS mime_t
+                FROM entries e
+                WHERE e.namespace_id = ?
+                  AND e.path LIKE ?
+                  AND instr(substr(e.path, length(?) + 1), '/') = 0
+                ORDER BY e.path
+                "#,
+            )
+            .bind(namespace_id.to_string())
+            .bind(format!("{}%", direct_prefix))
+            .bind(direct_prefix)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to find children with meta: {}", e),
+            })?
+        };
+        rows.into_iter()
+            .map(|(a, b, c, d, e2, f, g, size, mime)| {
+                let entry = parse_entry_row((a, b, c, d, e2, f, g))?;
+                Ok(vfiles_domain::types::EntryChildMeta {
+                    entry,
+                    size_bytes: size.map(|v| v as u64),
+                    mime_type: mime,
+                })
+            })
+            .collect()
+    }
+
     async fn find_all(&self, namespace_id: &NamespaceId) -> DomainResult<Vec<Entry>> {
         let rows: Vec<EntryRow> = sqlx::query_as(
             r#"

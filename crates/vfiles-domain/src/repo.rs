@@ -142,6 +142,24 @@ pub trait EntryRepo {
         namespace_id: &NamespaceId,
         path: &NormalizedPath,
     ) -> DomainResult<Option<Entry>>;
+    /// r4 批量版子项（默认回退 = find_children 包装（零 meta ✓ 桩自动兼容）✗
+    /// infra 覆写 = 一条 JOIN 消 N+1（children 每文件 open 的 6ms/个 → 索引点查）。
+    async fn children_with_meta(
+        &self,
+        namespace_id: &NamespaceId,
+        parent_path: &NormalizedPath,
+    ) -> DomainResult<Vec<crate::types::EntryChildMeta>> {
+        let entries = self.find_children(namespace_id, parent_path).await?;
+        Ok(entries
+            .into_iter()
+            .map(|entry| crate::types::EntryChildMeta {
+                entry,
+                size_bytes: None,
+                mime_type: None,
+            })
+            .collect())
+    }
+
     async fn find_children(
         &self,
         namespace_id: &NamespaceId,
