@@ -2117,6 +2117,7 @@ where
         destination: &NormalizedPath,
         message: Option<&str>,
         user_id: &UserId,
+        overwrite: bool,
     ) -> DomainResult<()> {
         if source.as_str() == destination.as_str() {
             return Err(DomainError::Conflict {
@@ -2137,15 +2138,27 @@ where
             .ok_or_else(|| DomainError::NotFound {
                 resource: format!("entry {}", source.as_str()),
             })?;
-        if self
+        let dst_exists = self
             .entry_repo
             .find_by_path(namespace_id, destination)
             .await?
-            .is_some()
-        {
-            return Err(DomainError::Conflict {
-                message: "Destination already exists".to_string(),
-            });
+            .is_some();
+        if dst_exists {
+            if !overwrite {
+                // Overwrite: F + 目标存在 → 412（臂按 overwrite 选码 ✗ Conflict 兜底）
+                return Err(DomainError::Conflict {
+                    message: "Destination already exists".to_string(),
+                });
+            }
+            // Overwrite: T（含 RFC 缺省 ✗ r10 真覆盖：删旧子树 = delete_entries 全链
+            // 自带 blob release 引用计数 ✓）→ 再建
+            self.delete_entries(
+                namespace_id,
+                std::slice::from_ref(destination),
+                message,
+                user_id,
+            )
+            .await?;
         }
         // 目标父必须为已存在集合（move 同语义）
         let dest_parent = {

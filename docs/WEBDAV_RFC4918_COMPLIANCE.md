@@ -15,7 +15,7 @@
 | DELETE | ✅ r108' | 递归 + 409 ✓ | - |
 | MKCOL | ✅ r110' | 201/409 ✓ | - |
 | MOVE | ✅ r108' | overwite 语义简式 ✓ | - |
-| **COPY** | ✅ **r5 八式实证** | 递归子树 + blob 零字节复用（create_version upsert ref++ ✓）+ **审计落表** ✓；dst存在/自复制/自子树 = 409 ✓ dest缺 = 400 ✓ Allow 入 ✓ **Overwrite T 完整覆盖（删旧+blob release）= P1 记债** | P1覆盖 |
+| **COPY** | ✅ **r5 八式实证** | 递归子树 + blob 零字节复用（create_version upsert ref++ ✓）+ **审计落表** ✓；dst存在/自复制/自子树 = 409 ✓ dest缺 = 400 ✓ Allow 入 ✓ **Overwrite 全语义 ✅ r10**（T=删旧重建 204 ✓ F=412 ✓ 缺省=T ✓ 目录覆盖 204+旧消失 ✓ 审计 ✓）| - |
 | **PROPPATCH** | ✅ **r6 七式实证** | propertyupdate 解析（roxmltree 按序 ✓）+ 每操作 propstat 200/403 ✓ **displayname set = 真改名**（move 单源直路径复用 ✓ PROPFIND 新名可见 ✓）+ 审计落表 ✓ Allow 入 ✓ **自定义属性 k/v 持久化 = P1 记债** | P1属性存储 |
 | LOCK / UNLOCK | ✅ r109a | 无限期锁表 + 423 ✓；**Timeout 有限支持 / 锁刷新 = 缺** | P1 |
 | POST | ➖ | RFC 无定义（405 ✓ 合规）| - |
@@ -90,7 +90,10 @@ PROPPATCH 七式 / If+412 七式 / 审计八写点 / 声明面（Allow+DAV class
 - ✅ r9 **认证热验缓存**（SHA-256 cred key 原文零存 ✗ 只缓存成功（爆破防护零损 =
   错密码双发 0.244/0.250s 实证 ✓）✗ disabled 每命中实时查 = 禁用即时 ✓ Clone = Arc
   共享免疫分叉 ✓ **分层计时：0.328s → 1.6ms ≈ 200×** ✗ 改密码 30s 窗 = 记档权衡）
-- 剩余 P1：Overwrite T 完整覆盖 / 自定义
+- ✅ r10 **COPY Overwrite 全语义**（六式实证 ✗ 删旧 = delete_entries 全链自带 blob
+  release ✓ 响应码 T=204/F=412/缺省=T 按 RFC §9.3.3 修正 r5 的全 409 违背 ✓）
+- ⚠️ r10 探针：**MOVE dst 存在 = 409（Overwrite 未接）** = 同语义缺口 → 下轮首项顺接
+- 剩余 P1：自定义
 属性 k/v / ETag+If-Match 面 / LOCK Timeout 有限 / getetag+creationdate 属性 /
 失败面审计表记 / HTTP 审计跨目标债
 

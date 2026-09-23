@@ -1052,6 +1052,12 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .get("if")
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
+            // r10 Overwrite 语义（RFC 缺省 = T ✗ 只有显式 "F" 才是 false）
+            let overwrite = req
+                .headers()
+                .get("overwrite")
+                .and_then(|v| v.to_str().ok())
+                != Some("F");
             // 源路径裁前导斜杠（PROPFIND 同式 ✗ 真因：new 不收前导 / ✗ 诊断日志定案 ✓）
             let src_rel = uri_owned.trim_start_matches('/').to_string();
             // r7 锁前置：源 + 目标双查（COPY 此前零检查 ✗ 摆设缺口 ×2）
@@ -1080,7 +1086,21 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             };
             let user_id = user.id.clone();
             let username = user.username.as_str().to_string();
-            match app_ref.write.copy_entry(&ns, &path, &dest_path, &user.id).await {
+            let dst_existed = app_ref
+                .entry_repo
+                .find_by_path(&ns, &dest_path)
+                .await
+                .ok()
+                .flatten()
+                .is_some();
+            // Overwrite: F + 目标存在 → 412（RFC §9.3.3 ✗ r5 曾全 409 = 违背修正）
+            if dst_existed && !overwrite {
+                return Response::builder()
+                    .status(StatusCode::PRECONDITION_FAILED)
+                    .body(Body::empty())
+                    .unwrap();
+            }
+            match app_ref.write.copy_entry(&ns, &path, &dest_path, &user.id, overwrite).await {
                 Ok(()) => {
                     if let Some(cb) = &app_ref.audit {
                         cb(vfiles_domain::types::NewAuditLog {
@@ -1099,8 +1119,14 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                             detail: None,
                         });
                     }
+                    // r10 覆盖成功 = 204（RFC §9.3.3 ✓）/ 新建 = 201
+                    let status = if dst_existed {
+                        StatusCode::NO_CONTENT
+                    } else {
+                        StatusCode::CREATED
+                    };
                     Response::builder()
-                        .status(StatusCode::CREATED)
+                        .status(status)
                         .body(Body::empty())
                         .unwrap()
                 }

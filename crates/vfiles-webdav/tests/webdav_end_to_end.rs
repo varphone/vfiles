@@ -68,6 +68,7 @@ impl WebdavWriteOps for NoopWrite {
         _source: &NormalizedPath,
         _destination: &NormalizedPath,
         _user_id: &vfiles_domain::UserId,
+        _overwrite: bool,
     ) -> vfiles_domain::DomainResult<()> {
         Ok(())
     }
