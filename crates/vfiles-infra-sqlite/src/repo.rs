@@ -3237,6 +3237,7 @@ impl BlobStore for FsBlobStore {
         expected_md5: Option<[u8; 16]>,
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
+        expected_crc64nvme: Option<u64>,
     ) -> DomainResult<(BlobId, ContentHash, bool, u64)> {
         use md5::{Digest as Md5Digest, Md5};
 
@@ -3257,6 +3258,8 @@ impl BlobStore for FsBlobStore {
         let mut md5 = <Md5 as Md5Digest>::new();
         let mut crc32 = crc32fast::Hasher::new();
         let mut crc32c = 0_u32;
+        let crc64_spec = crc::Crc::<u64>::new(&crc::CRC_64_NVME);
+        let mut crc64nvme = crc64_spec.digest();
         let mut total_size = 0_u64;
         let mut buffer = [0_u8; 64 * 1024];
 
@@ -3278,6 +3281,7 @@ impl BlobStore for FsBlobStore {
                 Md5Digest::update(&mut md5, &buffer[..read]);
                 crc32.update(&buffer[..read]);
                 crc32c = crc32c::crc32c_append(crc32c, &buffer[..read]);
+                crc64nvme.update(&buffer[..read]);
                 total_size += read as u64;
                 temp_file
                     .write_all(&buffer[..read])
@@ -3312,6 +3316,10 @@ impl BlobStore for FsBlobStore {
             return Err(DomainError::BlobChecksumMismatch);
         }
         if expected_crc32c.is_some_and(|expected| expected != crc32c) {
+            let _ = fs::remove_file(&temp_path).await;
+            return Err(DomainError::BlobChecksumMismatch);
+        }
+        if expected_crc64nvme.is_some_and(|expected| expected != crc64nvme.finalize()) {
             let _ = fs::remove_file(&temp_path).await;
             return Err(DomainError::BlobChecksumMismatch);
         }
@@ -3848,6 +3856,7 @@ impl UploadStore for FsUploadStore {
         expected_sha256: Option<[u8; 32]>,
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
+        expected_crc64nvme: Option<u64>,
         mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt> {
         use md5::{Digest as Md5Digest, Md5};
@@ -3869,6 +3878,8 @@ impl UploadStore for FsUploadStore {
             let mut sha256 = Sha256::new();
             let mut crc32 = crc32fast::Hasher::new();
             let mut crc32c = 0_u32;
+            let crc64_spec = crc::Crc::<u64>::new(&crc::CRC_64_NVME);
+            let mut crc64nvme = crc64_spec.digest();
             let mut size = 0u64;
             let mut buffer = [0u8; 64 * 1024];
             loop {
@@ -3893,6 +3904,7 @@ impl UploadStore for FsUploadStore {
                 sha256.update(&buffer[..read]);
                 crc32.update(&buffer[..read]);
                 crc32c = crc32c::crc32c_append(crc32c, &buffer[..read]);
+                crc64nvme.update(&buffer[..read]);
                 file.write_all(&buffer[..read])
                     .await
                     .map_err(|e| DomainError::Internal {
@@ -3919,6 +3931,9 @@ impl UploadStore for FsUploadStore {
                 return Err(DomainError::UploadPartChecksumMismatch);
             }
             if expected_crc32c.is_some_and(|expected| expected != crc32c) {
+                return Err(DomainError::UploadPartChecksumMismatch);
+            }
+            if expected_crc64nvme.is_some_and(|expected| expected != crc64nvme.finalize()) {
                 return Err(DomainError::UploadPartChecksumMismatch);
             }
             #[cfg(windows)]
@@ -5353,6 +5368,7 @@ mod blob_stream_tests {
         let result = store
             .store_blob_stream(
                 Box::new(FailingReader { emitted: false }),
+                None,
                 None,
                 None,
                 None,

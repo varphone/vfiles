@@ -2651,6 +2651,7 @@ where
         expected_sha256: Option<[u8; 32]>,
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
+        expected_crc64nvme: Option<u64>,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt> {
         let session = self.upload_store.get_upload_session(upload_id).await?;
@@ -2674,6 +2675,7 @@ where
                 expected_sha256,
                 expected_crc32,
                 expected_crc32c,
+                expected_crc64nvme,
                 reader,
             )
             .await
@@ -2698,6 +2700,7 @@ where
             None,
             None,
             None,
+            None,
             message,
             true,
         )
@@ -2717,6 +2720,7 @@ where
             None,
             None,
             None,
+            None,
             message,
             upload_stream,
         )
@@ -2730,6 +2734,7 @@ where
         expected_md5: Option<[u8; 16]>,
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
+        expected_crc64nvme: Option<u64>,
         message: Option<&str>,
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadCompleteResponse> {
@@ -2745,6 +2750,7 @@ where
             expected_md5,
             expected_crc32,
             expected_crc32c,
+            expected_crc64nvme,
             message,
             true,
         )
@@ -2765,6 +2771,7 @@ where
             None,
             None,
             None,
+            None,
             message,
             upload_stream,
         )
@@ -2778,6 +2785,7 @@ where
         expected_md5: Option<[u8; 16]>,
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
+        expected_crc64nvme: Option<u64>,
         message: Option<&str>,
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadCompleteResponse> {
@@ -2793,6 +2801,7 @@ where
             expected_md5,
             expected_crc32,
             expected_crc32c,
+            expected_crc64nvme,
             message,
             false,
         )
@@ -2835,6 +2844,7 @@ where
         self.commit_upload_stream(
             session,
             upload_stream,
+            None,
             None,
             None,
             None,
@@ -2932,6 +2942,7 @@ where
         expected_md5: Option<[u8; 16]>,
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
+        expected_crc64nvme: Option<u64>,
         message: Option<&str>,
         enforce_size: bool,
     ) -> DomainResult<UploadCompleteResponse> {
@@ -2943,6 +2954,7 @@ where
                 expected_md5,
                 expected_crc32,
                 expected_crc32c,
+                expected_crc64nvme,
             )
             .await?;
 

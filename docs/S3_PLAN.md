@@ -5,7 +5,7 @@
 - S3 `PutObject` 无论 Content-Length 是否提供，都将请求体流式传给 blob 存储，不再因未知长度聚合整份对象；
   已知长度仍校验实际字节数，未知长度按实际流长提交。流错误或提交失败会清理上传会话。
 - `PutObject` 校验可选 `Content-MD5`：Base64/长度无效返回 `InvalidDigest`，摘要不符时删除暂存 blob、取消会话并返回 `BadDigest`。
-- `PutObject` 与 `UploadPart` 同时支持可选 `x-amz-checksum-sha256` / `x-amz-checksum-crc32` / `x-amz-checksum-crc32c`：校验 Base64 和摘要长度，在同一流式读 pass 中核对摘要，成功时回显已验证的 checksum，摘要不符返回 `BadDigest`。
+- `PutObject` 与 `UploadPart` 同时支持可选 `x-amz-checksum-sha256` / `x-amz-checksum-crc32` / `x-amz-checksum-crc32c` / `x-amz-checksum-crc64nvme`：校验 Base64 和摘要长度，在同一流式读 pass 中核对摘要，成功时回显已验证的 checksum，摘要不符返回 `BadDigest`。
 - 上传服务增加未知总长流式会话和提交入口，供 chunked PUT 等传输使用。
 - `CompleteMultipartUpload` 现在要求完整、严格递增的 partNumber/ETag 清单，必须与已存分片序列一致，并逐个校验分片 MD5 ETag。
 - UploadPart、UploadPartCopy、Complete、Abort、ListParts 都验证 uploadId 的 namespace/owner/key/state/expiry；错误 key 或跨所有者 ID 返回 `NoSuchUpload`，Abort 不再把不存在的会话伪装成成功。

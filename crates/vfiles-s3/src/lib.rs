@@ -655,6 +655,23 @@ fn decode_checksum_crc32c(value: Option<&str>) -> S3Result<Option<u32>> {
     Ok(Some(u32::from_be_bytes(bytes)))
 }
 
+fn decode_checksum_crc64nvme(value: Option<&str>) -> S3Result<Option<u64>> {
+    use base64::Engine;
+    let Some(value) = value else { return Ok(None) };
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|_| {
+            s3s::s3_error!(
+                InvalidDigest,
+                "x-amz-checksum-crc64nvme is not valid base64"
+            )
+        })?;
+    let bytes: [u8; 8] = decoded
+        .try_into()
+        .map_err(|_| s3s::s3_error!(InvalidDigest, "CRC64NVME checksum must decode to 8 bytes"))?;
+    Ok(Some(u64::from_be_bytes(bytes)))
+}
+
 impl std::fmt::Debug for VfilesS3 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // workspace/upload 等非 Debug ✗ 标准省内容式（-W missing-debug-implementations 清零）
@@ -1373,10 +1390,12 @@ impl S3 for VfilesS3 {
         let expected_sha256 = decode_checksum_sha256(input.checksum_sha256.as_deref())?;
         let expected_crc32 = decode_checksum_crc32(input.checksum_crc32.as_deref())?;
         let expected_crc32c = decode_checksum_crc32c(input.checksum_crc32c.as_deref())?;
+        let expected_crc64nvme = decode_checksum_crc64nvme(input.checksum_crc64nvme.as_deref())?;
         let expected_sha256_hex = expected_sha256.map(hex::encode);
         let response_checksum_sha256 = input.checksum_sha256.clone();
         let response_checksum_crc32 = input.checksum_crc32.clone();
         let response_checksum_crc32c = input.checksum_crc32c.clone();
+        let response_checksum_crc64nvme = input.checksum_crc64nvme.clone();
         // parent/filename 拆（WebDAV put_file 同式 ✗ init=父+名）
         // 条件写（`If-Match` / `If-None-Match` ✗ S3 现代并发控制）
         let cur = self.etag_at(&path).await?;
@@ -1429,6 +1448,7 @@ impl S3 for VfilesS3 {
                     expected_md5,
                     expected_crc32,
                     expected_crc32c,
+                    expected_crc64nvme,
                     Some("S3 PUT"),
                     Box::new(reader),
                 )
@@ -1441,6 +1461,7 @@ impl S3 for VfilesS3 {
                     expected_md5,
                     expected_crc32,
                     expected_crc32c,
+                    expected_crc64nvme,
                     Some("S3 PUT"),
                     Box::new(reader),
                 )
@@ -1471,6 +1492,7 @@ impl S3 for VfilesS3 {
             checksum_sha256: response_checksum_sha256,
             checksum_crc32: response_checksum_crc32,
             checksum_crc32c: response_checksum_crc32c,
+            checksum_crc64nvme: response_checksum_crc64nvme,
             size: Some(result.version.size_bytes.as_u64() as i64),
             ..Default::default()
         };
@@ -1931,9 +1953,11 @@ impl S3 for VfilesS3 {
         let expected_sha256 = decode_checksum_sha256(input.checksum_sha256.as_deref())?;
         let expected_crc32 = decode_checksum_crc32(input.checksum_crc32.as_deref())?;
         let expected_crc32c = decode_checksum_crc32c(input.checksum_crc32c.as_deref())?;
+        let expected_crc64nvme = decode_checksum_crc64nvme(input.checksum_crc64nvme.as_deref())?;
         let response_checksum_sha256 = input.checksum_sha256.clone();
         let response_checksum_crc32 = input.checksum_crc32.clone();
         let response_checksum_crc32c = input.checksum_crc32c.clone();
+        let response_checksum_crc64nvme = input.checksum_crc64nvme.clone();
         let blob = input
             .body
             .unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
@@ -1948,6 +1972,7 @@ impl S3 for VfilesS3 {
                 expected_sha256,
                 expected_crc32,
                 expected_crc32c,
+                expected_crc64nvme,
                 Box::new(stream_reader(blob)),
             )
             .await
@@ -1962,6 +1987,7 @@ impl S3 for VfilesS3 {
             checksum_sha256: response_checksum_sha256,
             checksum_crc32: response_checksum_crc32,
             checksum_crc32c: response_checksum_crc32c,
+            checksum_crc64nvme: response_checksum_crc64nvme,
             ..Default::default()
         };
         ok(out)
@@ -2042,6 +2068,7 @@ impl S3 for VfilesS3 {
                 (input.part_number - 1) as u32,
                 Some(part_size),
                 Some(MAX_S3_PART_SIZE),
+                None,
                 None,
                 None,
                 None,
