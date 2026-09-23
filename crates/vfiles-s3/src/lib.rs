@@ -111,6 +111,7 @@ pub struct VfilesS3 {
         vfiles_infra_sqlite::FsUploadStore,
     >,
     pub entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
+    pub delete_markers: vfiles_infra_sqlite::SqliteS3DeleteMarkerRepo,
     pub namespace: vfiles_domain::NamespaceId,
     pub owner: vfiles_domain::UserId,
     /// 只读凭证（`access:secret:ro` ✗ 变更类操作一律 AccessDenied）。
@@ -926,6 +927,48 @@ fn resolve_completed_part_indices(stored: &[(i32, u64)], requested: &[i32]) -> S
 }
 
 impl VfilesS3 {
+    async fn has_current_delete_marker(
+        &self,
+        path: &vfiles_domain::NormalizedPath,
+    ) -> S3Result<bool> {
+        let Some(marker) = self
+            .delete_markers
+            .latest(&self.namespace, path.as_str())
+            .await
+            .map_err(dom_err)?
+        else {
+            return Ok(false);
+        };
+        let Some(entry) = self.entry_at(path).await? else {
+            return Ok(true);
+        };
+        let Some(version_id) = entry.current_version_id else {
+            return Ok(true);
+        };
+        let current = self
+            .entry_repo
+            .find_version(&version_id)
+            .await
+            .map_err(dom_err)?;
+        Ok(marker.created_at >= current.created_at)
+    }
+
+    async fn filter_current_delete_markers(&self, page: &mut Page) -> S3Result<()> {
+        let mut visible = Vec::with_capacity(page.contents.len());
+        for object in page.contents.drain(..) {
+            let Some(key) = object.key.as_deref() else {
+                visible.push(object);
+                continue;
+            };
+            let path = norm(key).map_err(dom_err)?;
+            if !self.has_current_delete_marker(&path).await? {
+                visible.push(object);
+            }
+        }
+        page.contents = visible;
+        Ok(())
+    }
+
     /// 读条目的 S3 用户元数据（`x-amz-meta-*` → 响应头）。
     async fn load_metadata(
         &self,
@@ -1195,6 +1238,7 @@ impl S3 for VfilesS3 {
         .await
         .map_err(dom_err)?;
         let mut page = page_from(entries, truncated);
+        self.filter_current_delete_markers(&mut page).await?;
         // `fetch-owner=true` → 逐对象带 `Owner`（本部署内条目均属该命名空间属主）
         if input.fetch_owner.unwrap_or(false) {
             let owner = Owner {
@@ -1548,6 +1592,7 @@ impl S3 for VfilesS3 {
         .await
         .map_err(dom_err)?;
         let mut page = page_from(entries, truncated);
+        self.filter_current_delete_markers(&mut page).await?;
         // V1 语义：恒带 `Owner`
         let owner = Owner {
             id: Some(self.owner.to_string()),
@@ -1583,6 +1628,9 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let path = norm(&input.key).map_err(dom_err)?;
+        if input.version_id.is_none() && self.has_current_delete_marker(&path).await? {
+            return Err(s3s::s3_error!(NoSuchKey, "No such key"));
+        }
         // 单次 Put/Copy 沿用 version id ETag；multipart 版本从 s3-etag 属性恢复 composite ETag。
         let entry = self
             .entry_repo
@@ -1653,6 +1701,9 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let path = norm(&input.key).map_err(dom_err)?;
+        if input.version_id.is_none() && self.has_current_delete_marker(&path).await? {
+            return Err(s3s::s3_error!(NoSuchKey, "No such key"));
+        }
         let entry = self
             .entry_repo
             .find_by_path(&self.namespace, &path)
@@ -1726,7 +1777,11 @@ impl S3 for VfilesS3 {
         let response_checksum_sha1 = input.checksum_sha1.clone();
         // parent/filename 拆（WebDAV put_file 同式 ✗ init=父+名）
         // 条件写（`If-Match` / `If-None-Match` ✗ S3 现代并发控制）
-        let cur = self.etag_at(&path).await?;
+        let cur = if self.has_current_delete_marker(&path).await? {
+            None
+        } else {
+            self.etag_at(&path).await?
+        };
         check_dest_conditions(
             cur.as_deref(),
             input.if_match.as_ref(),
@@ -2190,8 +2245,20 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let path = norm(&input.key).map_err(dom_err)?;
-        // `versionId` 定向删（非最新版 → 删该行；最新版需删除标记 ✗ 本实现诚实拒绝）
+        // Marker versions live separately from object versions and can be removed directly.
         if let Some(vid) = input.version_id.clone() {
+            if self
+                .delete_markers
+                .delete(&self.namespace, path.as_str(), &vid)
+                .await
+                .map_err(dom_err)?
+            {
+                return ok(DeleteObjectOutput {
+                    delete_marker: Some(true),
+                    version_id: Some(vid),
+                    ..Default::default()
+                });
+            }
             let entry = self
                 .entry_at(&path)
                 .await?
@@ -2212,7 +2279,7 @@ impl S3 for VfilesS3 {
             if entry.current_version_id == Some(ev.id) {
                 return Err(s3s::s3_error!(
                     InvalidRequest,
-                    "deleting the current version requires delete markers, which are not implemented"
+                    "cannot permanently delete the current object version"
                 ));
             }
             if !self
@@ -2229,25 +2296,30 @@ impl S3 for VfilesS3 {
                 .map_err(dom_err)?;
             return ok(DeleteObjectOutput::default());
         }
-        // 条件删（`If-Match` ✗ 不存在/不符即 412）
-        let cur = self.etag_at(&path).await?;
+        // Conditional delete applies to the current object; missing keys still create markers.
+        let cur = if self.has_current_delete_marker(&path).await? {
+            None
+        } else {
+            self.etag_at(&path).await?
+        };
         check_dest_conditions(cur.as_deref(), input.if_match.as_ref(), None)?;
-        match self
-            .workspace
-            .delete_entries(
+        let version_id = vfiles_domain::VersionId::new().to_string();
+        let created_at = time::OffsetDateTime::now_utc();
+        self.delete_markers
+            .create(
                 &self.namespace,
-                std::slice::from_ref(&path),
-                Some("S3 DELETE"),
+                path.as_str(),
                 &self.owner,
+                &version_id,
+                created_at,
             )
             .await
-        {
-            // S3 DELETE 幂等语义：不存在也 204 ✓
-            Ok(_) | Err(vfiles_domain::DomainError::NotFound { .. }) => {
-                ok(DeleteObjectOutput::default())
-            }
-            Err(e) => Err(dom_err(e)),
-        }
+            .map_err(dom_err)?;
+        Ok(S3Response::new(DeleteObjectOutput {
+            delete_marker: Some(true),
+            version_id: Some(version_id),
+            ..Default::default()
+        }))
     }
 
     /// multipart 开启：建未知大小的上传会话，返回 uploadId（= 上传会话 id）。

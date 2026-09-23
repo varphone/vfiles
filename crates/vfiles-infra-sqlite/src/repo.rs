@@ -735,6 +735,158 @@ pub struct SqliteEntryRepo {
     pool: SqlitePool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S3DeleteMarker {
+    pub version_id: String,
+    pub namespace_id: String,
+    pub object_key: String,
+    pub owner_id: String,
+    pub created_at: time::OffsetDateTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct SqliteS3DeleteMarkerRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteS3DeleteMarkerRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn create(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        object_key: &str,
+        owner_id: &vfiles_domain::UserId,
+        version_id: &str,
+        created_at: time::OffsetDateTime,
+    ) -> Result<(), vfiles_domain::DomainError> {
+        sqlx::query("INSERT INTO s3_delete_markers (version_id, namespace_id, object_key, owner_id, created_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(version_id)
+            .bind(namespace_id.to_string())
+            .bind(object_key)
+            .bind(owner_id.to_string())
+            .bind(created_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| vfiles_domain::DomainError::Internal { message: format!("Failed to create S3 delete marker: {e}") })?;
+        Ok(())
+    }
+
+    pub async fn latest(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        object_key: &str,
+    ) -> Result<Option<S3DeleteMarker>, vfiles_domain::DomainError> {
+        let row = sqlx::query_as::<_, (String, String, String, String, time::OffsetDateTime)>(
+            "SELECT version_id, namespace_id, object_key, owner_id, created_at FROM s3_delete_markers WHERE namespace_id = ? AND object_key = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        )
+        .bind(namespace_id.to_string())
+        .bind(object_key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| vfiles_domain::DomainError::Internal { message: format!("Failed to read S3 delete marker: {e}") })?;
+        Ok(row.map(
+            |(version_id, namespace_id, object_key, owner_id, created_at)| S3DeleteMarker {
+                version_id,
+                namespace_id,
+                object_key,
+                owner_id,
+                created_at,
+            },
+        ))
+    }
+
+    pub async fn delete(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        object_key: &str,
+        version_id: &str,
+    ) -> Result<bool, vfiles_domain::DomainError> {
+        let result = sqlx::query("DELETE FROM s3_delete_markers WHERE namespace_id = ? AND object_key = ? AND version_id = ?")
+            .bind(namespace_id.to_string())
+            .bind(object_key)
+            .bind(version_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| vfiles_domain::DomainError::Internal { message: format!("Failed to delete S3 delete marker: {e}") })?;
+        Ok(result.rows_affected() > 0)
+    }
+}
+
+#[cfg(test)]
+mod s3_delete_marker_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn delete_markers_are_persistent_and_version_addressable() {
+        let root = camino::Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("vfiles-s3-markers-{}", uuid::Uuid::new_v4())),
+        )
+        .expect("temporary path should be utf-8");
+        tokio::fs::create_dir_all(&root)
+            .await
+            .expect("temporary directory should be created");
+        let pool = crate::SqlitePoolFactory::connect(&root.join("vfiles.db"))
+            .await
+            .expect("database should connect");
+        crate::SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+        let owner = UserId::new();
+        let namespace = NamespaceId::new();
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, 'user')",
+        )
+        .bind(owner.to_string())
+        .bind(format!("s3-marker-{}", uuid::Uuid::new_v4()))
+        .bind("test")
+        .execute(&pool)
+        .await
+        .expect("test user should be inserted");
+        sqlx::query("INSERT INTO namespaces (id, slug, owner_user_id) VALUES (?, ?, ?)")
+            .bind(namespace.to_string())
+            .bind("s3-markers")
+            .bind(owner.to_string())
+            .execute(&pool)
+            .await
+            .expect("test namespace should be inserted");
+
+        let repo = SqliteS3DeleteMarkerRepo::new(pool);
+        let version_id = uuid::Uuid::new_v4().to_string();
+        let created_at = time::OffsetDateTime::now_utc();
+        repo.create(
+            &namespace,
+            "folder/object.txt",
+            &owner,
+            &version_id,
+            created_at,
+        )
+        .await
+        .expect("marker should be created");
+        let marker = repo
+            .latest(&namespace, "folder/object.txt")
+            .await
+            .expect("marker lookup should succeed")
+            .expect("marker should exist");
+        assert_eq!(marker.version_id, version_id);
+        assert_eq!(marker.owner_id, owner.to_string());
+        assert!(
+            repo.delete(&namespace, "folder/object.txt", &version_id)
+                .await
+                .expect("version-addressed marker delete should succeed")
+        );
+        assert!(
+            repo.latest(&namespace, "folder/object.txt")
+                .await
+                .expect("marker lookup should succeed")
+                .is_none()
+        );
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+}
+
 impl SqliteEntryRepo {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
