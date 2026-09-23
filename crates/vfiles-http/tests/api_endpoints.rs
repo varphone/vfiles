@@ -844,6 +844,25 @@ async fn chunked_upload_history_and_download_round_trip() {
     let mut archive = zip::ZipArchive::new(cursor).expect("zip archive should open");
     assert_eq!(archive.len(), 1);
 
+    let existing_folder_not_modified = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/download/folder?path=docs")
+                .header(header::IF_NONE_MATCH, "*")
+                .body(Body::empty())
+                .expect("wildcard cache validation request should build"),
+        )
+        .await;
+    assert_eq!(
+        existing_folder_not_modified.status(),
+        StatusCode::NOT_MODIFIED
+    );
+    assert!(
+        response_bytes(existing_folder_not_modified)
+            .await
+            .is_empty()
+    );
+
     let mut file = archive
         .by_name("docs/note.txt")
         .expect("zip should contain uploaded file");

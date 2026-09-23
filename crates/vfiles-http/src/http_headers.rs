@@ -128,12 +128,11 @@ pub(crate) async fn streaming_file_response(
     {
         return precondition_failed(etag, modified_at);
     }
-    if let Some(etag) = etag
-        && if_none_match(request_headers, etag)
-    {
+    if if_none_match(request_headers, etag) {
         let mut response = Response::new(Body::empty());
         *response.status_mut() = StatusCode::NOT_MODIFIED;
-        insert_etag(response.headers_mut(), Some(etag))?;
+        insert_etag(response.headers_mut(), etag)?;
+        insert_last_modified(response.headers_mut(), modified_at)?;
         return Ok(response);
     }
     if !request_headers.contains_key(header::IF_NONE_MATCH)
@@ -286,12 +285,17 @@ fn if_unmodified_since_failed(headers: &HeaderMap, modified_at: time::OffsetDate
     modified > date
 }
 
-fn if_none_match(headers: &HeaderMap, current_etag: &str) -> bool {
+fn if_none_match(headers: &HeaderMap, current_etag: Option<&str>) -> bool {
     headers
         .get_all(header::IF_NONE_MATCH)
         .iter()
         .filter_map(|value| value.to_str().ok())
-        .any(|value| if_none_match_value(value, current_etag))
+        .any(|value| {
+            any_etag_candidate(value, |candidate| {
+                candidate == "*"
+                    || current_etag.is_some_and(|etag| weak_etag_eq(candidate.trim(), etag))
+            })
+        })
 }
 
 fn single_header(headers: &HeaderMap, name: header::HeaderName) -> Option<&str> {
@@ -316,12 +320,6 @@ fn if_match(headers: &HeaderMap, current_etag: Option<&str>) -> bool {
         })
 }
 
-fn if_none_match_value(value: &str, current_etag: &str) -> bool {
-    any_etag_candidate(value, |candidate| {
-        etag_candidate_matches(candidate, current_etag)
-    })
-}
-
 fn any_etag_candidate(value: &str, mut matches: impl FnMut(&str) -> bool) -> bool {
     let mut start = 0;
     let mut in_quotes = false;
@@ -336,11 +334,6 @@ fn any_etag_candidate(value: &str, mut matches: impl FnMut(&str) -> bool) -> boo
         }
     }
     matches(value[start..].trim())
-}
-
-fn etag_candidate_matches(candidate: &str, current_etag: &str) -> bool {
-    let candidate = candidate.trim();
-    candidate == "*" || weak_etag_eq(candidate, current_etag)
 }
 
 fn weak_etag_eq(candidate: &str, current_etag: &str) -> bool {
@@ -481,7 +474,7 @@ mod tests {
             HeaderValue::from_static("W/\"current\", \"other\""),
         );
 
-        assert!(if_none_match(&headers, "\"current\""));
+        assert!(if_none_match(&headers, Some("\"current\"")));
     }
 
     #[test]
@@ -492,7 +485,20 @@ mod tests {
             HeaderValue::from_static("\"older,version\", W/\"current\""),
         );
 
-        assert!(if_none_match(&headers, "\"current\""));
+        assert!(if_none_match(&headers, Some("\"current\"")));
+    }
+
+    #[test]
+    fn if_none_match_wildcard_matches_existing_representations_without_etags() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_NONE_MATCH, HeaderValue::from_static("*"));
+        assert!(if_none_match(&headers, None));
+
+        headers.insert(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_static("\"specific-tag\""),
+        );
+        assert!(!if_none_match(&headers, None));
     }
 
     #[test]
