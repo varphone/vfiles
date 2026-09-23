@@ -397,7 +397,7 @@ fn resolve_range(
     }
 }
 
-/// 聚合请求体（未知长度 PUT / UploadPart 回退路径 ✗ 流式直连为默认）。
+/// 聚合 multipart 分片或服务端分片复制使用的请求体。
 async fn read_body(blob: Option<StreamingBlob>) -> S3Result<Vec<u8>> {
     let blob = blob.unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
     let mut data: Vec<u8> = Vec::new();
@@ -1306,26 +1306,40 @@ impl S3 for VfilesS3 {
         let (parent_str, filename) = split_key(path.as_str());
         let parent = vfiles_domain::NormalizedPath::new(&parent_str)
             .map_err(|e| s3s::s3_error!(InvalidArgument, "{}", e))?;
-        // r6：Content-Length 已知 → **流式直连**（不再全量入内存）；未知 → 回退聚合
-        let declared = input.content_length.unwrap_or(0);
-        let result = if declared > 0 {
-            let session = self
+        let session = match input.content_length {
+            Some(length) if length < 0 => {
+                return Err(s3s::s3_error!(InvalidArgument, "negative Content-Length"));
+            }
+            Some(length) => self
                 .upload
                 .init_upload(
                     &self.namespace,
                     &parent,
                     &filename,
-                    declared as u64,
+                    length as u64,
                     input.content_type.as_deref(),
                     None,
                     &self.owner,
                 )
                 .await
-                .map_err(dom_err)?;
-            let blob = input
-                .body
-                .unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
-            let reader = stream_reader(blob);
+                .map_err(dom_err)?,
+            None => self
+                .upload
+                .init_stream_upload_unknown_size(
+                    &self.namespace,
+                    &parent,
+                    &filename,
+                    input.content_type.as_deref(),
+                    &self.owner,
+                )
+                .await
+                .map_err(dom_err)?,
+        };
+        let blob = input
+            .body
+            .unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
+        let reader = stream_reader(blob);
+        let result = if input.content_length.is_some() {
             self.upload
                 .complete_upload_from_stream(
                     &session.upload_id,
@@ -1334,31 +1348,24 @@ impl S3 for VfilesS3 {
                     Box::new(reader),
                 )
                 .await
-                .map_err(dom_err)?
         } else {
-            let data = read_body(input.body).await?;
-            let session = self
-                .upload
-                .init_upload(
-                    &self.namespace,
-                    &parent,
-                    &filename,
-                    data.len() as u64,
-                    input.content_type.as_deref(),
-                    None,
-                    &self.owner,
-                )
-                .await
-                .map_err(dom_err)?;
             self.upload
-                .complete_upload_from_stream(
+                .complete_upload_from_stream_unknown_size(
                     &session.upload_id,
                     None,
                     Some("S3 PUT"),
-                    Box::new(std::io::Cursor::new(data)),
+                    Box::new(reader),
                 )
                 .await
-                .map_err(dom_err)?
+        };
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                if let Err(cancel_error) = self.upload.cancel_upload(&session.upload_id).await {
+                    tracing::warn!(error = %cancel_error, upload_id = %session.upload_id, "S3：清理失败 PUT 会话失败");
+                }
+                return Err(dom_err(error));
+            }
         };
         let etag = result.version.id.to_string().replace('-', "");
         // 用户元数据（`x-amz-meta-*`）落 entry 属性；覆盖写 = 清旧

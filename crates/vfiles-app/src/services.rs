@@ -2589,6 +2589,27 @@ where
         self.get_upload_status(&upload_id).await
     }
 
+    /// 创建声明总长度未知的流式上传会话。
+    pub async fn init_stream_upload_unknown_size(
+        &self,
+        namespace_id: &NamespaceId,
+        target_path: &NormalizedPath,
+        filename: &str,
+        mime_type: Option<&str>,
+        user_id: &UserId,
+    ) -> DomainResult<UploadSessionView> {
+        self.init_upload(
+            namespace_id,
+            target_path,
+            filename,
+            0,
+            mime_type,
+            Some(1),
+            user_id,
+        )
+        .await
+    }
+
     pub async fn upload_part(
         &self,
         upload_id: &UploadId,
@@ -2648,6 +2669,23 @@ where
         }
 
         self.commit_upload_stream(session, upload_stream, expected_sha256, message, true)
+            .await
+    }
+
+    /// 完成总长度未知的流式上传（S3 chunked PUT 等传输场景）。
+    pub async fn complete_upload_from_stream_unknown_size(
+        &self,
+        upload_id: &UploadId,
+        expected_sha256: Option<&str>,
+        message: Option<&str>,
+        upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    ) -> DomainResult<UploadCompleteResponse> {
+        let session = self.upload_store.get_upload_session(upload_id).await?;
+        if session.expires_at < time::OffsetDateTime::now_utc() {
+            return Err(DomainError::UploadExpired);
+        }
+
+        self.commit_upload_stream(session, upload_stream, expected_sha256, message, false)
             .await
     }
 

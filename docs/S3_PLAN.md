@@ -1,10 +1,15 @@
 # S3 兼容 API（… r34 桶生命周期 → r35 版本列表 → r36 versionId 定向 → **r37 区域校验**）
 
-## 当前工作树补充（multipart 列表内存与扫描）
+## 当前工作树补充（PUT 流式与 multipart 列表内存）
 
-- `ListMultipartUploads` 现在由 `UploadStore` 一次扫描会话目录，按 key / upload id 保序，
+- S3 `PutObject` 无论 Content-Length 是否提供，都将请求体流式传给 blob 存储，不再因未知长度聚合整份对象；
+  已知长度仍校验实际字节数，未知长度按实际流长提交。流错误或提交失败会清理上传会话。
+- 上传服务增加未知总长流式会话和提交入口，供 chunked PUT 等传输使用。
+- multipart `UploadPart` 仍将单个 part 聚合为内存 `Vec`，后续需扩展 part 存储接口以实现真正的大分片流式写入。
+- `ListMultipartUploads` 由 `UploadStore` 一次扫描会话目录，按 key / upload id 保序，
   只保留 `max-uploads + 1` 个结果；delimiter 的 `CommonPrefixes` 在存储扫描中去重，
   避免原先把全部会话加载进内存，也避免逐页请求重复扫描目录。
+
 - 文件系统后端仍需检查所有会话元数据来完成排序筛选，时间复杂度仍与会话总数相关；
   当前改动将结果内存限制到单页大小，但没有引入额外的持久化会话索引。
 
