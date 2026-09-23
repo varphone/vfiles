@@ -606,7 +606,8 @@ async fn options_advertises_and_propfind_needs_auth() {
                 .header("content-type", "application/xml")
                 .body(axum::body::Body::from(
                     r#"<D:propertyupdate xmlns:D="DAV:" xmlns:X="urn:example:x" xmlns:Y="urn:example:y">
-                        <D:set><D:prop><X:displayname>extension X</X:displayname><Y:displayname>extension Y</Y:displayname></D:prop></D:set>
+                        <D:set><D:prop><X:displayname>extension X</X:displayname><Y:displayname>extension Y</Y:displayname><X:label>  spaced value
+ </X:label></D:prop></D:set>
                     </D:propertyupdate>"#,
                 ))
                 .unwrap(),
@@ -626,7 +627,7 @@ async fn options_advertises_and_propfind_needs_auth() {
                 .header("content-type", "application/xml")
                 .body(axum::body::Body::from(
                     r#"<D:propfind xmlns:D="DAV:" xmlns:X="urn:example:x" xmlns:Y="urn:example:y">
-                        <D:prop><D:displayname/><X:displayname/><Y:displayname/></D:prop>
+                        <D:prop><D:displayname/><X:displayname/><Y:displayname/><X:label/></D:prop>
                     </D:propfind>"#,
                 ))
                 .unwrap(),
@@ -649,6 +650,9 @@ async fn options_advertises_and_propfind_needs_auth() {
     assert!(
         namespaced_body
             .contains("<X:displayname xmlns:X=\"urn:example:y\">extension Y</X:displayname>")
+    );
+    assert!(
+        namespaced_body.contains("<X:label xmlns:X=\"urn:example:x\">  spaced value\n </X:label>")
     );
 
     let rejected_patch = router
