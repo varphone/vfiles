@@ -8,6 +8,7 @@
 """
 import sys
 import datetime
+from urllib.parse import unquote
 
 import boto3
 from botocore.config import Config
@@ -282,6 +283,19 @@ def main():
           s3.head_object(Bucket="default", Key="boto-meta/repl.txt")["Metadata"] == {"only": "one"})
     for mk in ["boto-meta/a.txt", "boto-meta/src.txt", "boto-meta/copy.txt", "boto-meta/repl.txt"]:
         s3.delete_object(Bucket="default", Key=mk)
+
+    # ── encoding-type=url（r32）──
+    for ek in ["boto-enc/a%20b.txt", "boto-enc/space key.txt"]:
+        s3.put_object(Bucket="default", Key=ek, Body=b"x")
+    eraw = [o["Key"] for o in s3.list_objects_v2(
+        Bucket="default", Prefix="boto-enc/", EncodingType="url").get("Contents", [])]
+    edec = sorted(unquote(k) for k in eraw)
+    check("boto encoding-type=url is reversible",
+          edec == ["boto-enc/a%20b.txt", "boto-enc/space key.txt"]
+          and any("%25" in k for k in eraw),
+          eraw)
+    for ek in ["boto-enc/a%20b.txt", "boto-enc/space key.txt"]:
+        s3.delete_object(Bucket="default", Key=ek)
 
     # ── 批量删的逐键时间/大小条件（r31）──
     for bk in ["boto-dc2/a", "boto-dc2/b", "boto-dc2/c"]:

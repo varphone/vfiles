@@ -232,6 +232,23 @@ async fn list_page(
     Ok(c.finish())
 }
 
+/// `encoding-type=url` 时把页内 key / common prefix / next 游标全部百分号编码。
+fn url_encode_page(p: &mut Page) {
+    for o in &mut p.contents {
+        if let Some(k) = &o.key {
+            o.key = Some(url_encode(k));
+        }
+    }
+    for c in &mut p.prefixes {
+        if let Some(v) = &c.prefix {
+            c.prefix = Some(url_encode(v));
+        }
+    }
+    if let Some(n) = &p.next {
+        p.next = Some(url_encode(n));
+    }
+}
+
 /// 收集结果 → `Page`（`next` = 本页末条 key ✗ 与应用 `after` 独占语义配对）。
 fn page_from(entries: Vec<Listed>, truncated: bool) -> Page {
     let next = truncated
@@ -355,6 +372,21 @@ fn resolve_max_keys(input: Option<i32>) -> S3Result<usize> {
         Some(v) if v < 0 => Err(s3s::s3_error!(InvalidArgument, "max-keys must be >= 0")),
         Some(v) => Ok((v as usize).min(MAX_KEYS_LIMIT)),
     }
+}
+
+/// S3 `encoding-type=url` 的百分号编码（RFC 3986 ✗ 未保留字符直出，其余按字节 %XX）。
+fn url_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            // `/` 保留（S3 列表里 key 的路径分隔符不编码 = 客户端无需特殊处理）
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// 非空字符串 → Some（S3 空 delimiter/prefix 视作未设）。
@@ -731,12 +763,25 @@ impl S3 for VfilesS3 {
         )
         .await
         .map_err(dom_err)?;
-        let page = page_from(entries, truncated);
-
+        let mut page = page_from(entries, truncated);
+        let encode = input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url");
+        if encode {
+            url_encode_page(&mut page);
+        }
+        let (prefix_out, delimiter_out) =
+            if input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url") {
+                (
+                    non_empty(Some(url_encode(&prefix))),
+                    delimiter.as_deref().map(url_encode),
+                )
+            } else {
+                (non_empty(Some(prefix.clone())), delimiter.clone())
+            };
         let out = ListObjectsV2Output {
             name: Some(input.bucket),
-            prefix: non_empty(Some(prefix)),
-            delimiter,
+            prefix: prefix_out,
+            delimiter: delimiter_out,
+            encoding_type: input.encoding_type.clone(),
             max_keys: Some(max as i32),
             key_count: Some((page.contents.len() + page.prefixes.len()) as i32),
             is_truncated: Some(page.truncated),
@@ -810,8 +855,10 @@ impl S3 for VfilesS3 {
         )
         .await
         .map_err(dom_err)?;
-        let page = page_from(entries, truncated);
-
+        let mut page = page_from(entries, truncated);
+        if input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url") {
+            url_encode_page(&mut page);
+        }
         let out = ListObjectsOutput {
             name: Some(input.bucket),
             prefix: non_empty(Some(prefix)),

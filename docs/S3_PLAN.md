@@ -1,4 +1,15 @@
-# S3 兼容 API（… r29 逐键条件 → r30 条件读 304 → **r31 逐键时间/大小条件**）
+# S3 兼容 API（… r30 条件读 304 → r31 逐键时间/大小 → **r32 `encoding-type=url`**）
+
+## 状态（r32 末 · 列表编码协商 = 特殊字符键可用）
+
+- **实装**：`ListObjects` / `ListObjectsV2` 支持 **`encoding-type=url`** → 响应内 `Key` / `CommonPrefixes` /
+  `NextMarker` / `NextContinuationToken` / 回显的 `Prefix`、`Delimiter` 一律**百分号编码**
+  （未保留字符 + `/` 直出 ✗ 其余按字节 `%XX`）；`EncodingType` 原样回显。
+- **真机验收（真 SDK，5 项）**：默认列出原样 key ✓；`encoding-type=url` 编码**可逆**（客户端 `unquote`
+  还原全部 4 个特殊键：`%`、空格、`+`、中文）✓；**关键判别**：键内 `%` 被编码为 `%25`（否则客户端反解会
+  错）✓；delimiter 折叠在编码下仍正确 ✓；含 `%` 键可直接 GET ✓。
+- **回归**：自写探针 **24/24** · 真 SDK **43/43**（+编码协商）。
+- **仍债**：`ListObjectVersions` / `PutBucketVersioning`（真版本控制）· region 校验（有意不做）。
 
 ## 状态（r31 末 · 批量删条件面收口 = ETag + 时间 + 大小）
 
