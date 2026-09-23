@@ -1,4 +1,21 @@
-# rsync 协议 daemon（round 2 选型 → r3 Phase0 → r4 收尾金标准 → r5 wire 全知 → **r6 帧三字段解** ✗ 状态见下）
+# rsync 协议 daemon（r2 选型 → r3 Phase0 → r4 收尾 → r5 wire → r6 帧三字段 → **r7 编码法定稿** ✗ 状态见下）
+
+## 状态（r7 末 · git clone 权威源 + **mtime 解出** = flist 编码法全知 = 实装无阻）
+
+- **通道胜利**：`git clone --depth 1` 官方 rsync（本机 ✗ 避开 r6 web_fetch 30s/反爬双败）
+  → flist.c 4003 行本地权威 ✗ **完整编码法入档 `golden/frame_codec_r7.md`**：
+  XMIT 位表（rsync.h 18 bit）· 字段写序（send/recv 双向源）· **varlong(min) 紧凑形**（ctrl
+  在首判 extra 表、值 LE 尾接、ub 整读 LE ✗ varint 同构 · int=平台 LE ✗ shortint=BE 混用
+  记档）· varlong30≥30 直通（我们锁 30 ✓）。
+- **mtime 解出 ✅✅**：`6a 51 86 b3` = varlong(min4) → ctrl=0x6a(extra0)+ub LE = **0x6AB38651
+  = 1790150225 = epoch 完全命中**（r6"交错"谜团 = **ctrl 首 + 值尾**布局）+ 首条 `.` 全链
+  解通：xflags=0x19=TOP|SAME_UID|SAME_GID 语义吻、length varlong30(min3)=**4096** ✓、
+  name l2 byte ✓ —— **57B 逐字段闭环、r8 编码器可逐字节复刻**。
+- **r8 实装清单（无阻）**：args 解析 → `\x81\xFE` → `\x1E`+checksum → `#选定\n`+4B → mux 收
+  → **flist 帧编码（差分 SAME_* 位 + mode=to_wire_mode 源同步）** → 终结帧配对表对答 →
+  树→条目流 → **终极探针 = 真 `rsync --list-only rsync://…/files/` = RC0 列 vfiles 文件**
+  → delta（r9）。块头语义（`35…`/`81 FE 46 19 14 67` 连读）= 实装时与 strace 前段一并定
+  ✗ 不阻条目层。
 
 ## 状态（r6 末 · P04 真 CLI 完胜 + 57B 帧三字段反推解 = mtime 权威通道待 r7）
 
