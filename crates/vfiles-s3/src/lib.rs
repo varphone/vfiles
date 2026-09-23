@@ -607,6 +607,56 @@ fn md5_hex(data: &[u8]) -> String {
     hex::encode(h.finalize())
 }
 
+struct UploadPartChecksums {
+    md5: [u8; 16],
+    md5_hex: String,
+    sha1: [u8; 20],
+    sha256: [u8; 32],
+    crc32: u32,
+    crc32c: u32,
+    crc64nvme: u64,
+}
+
+/// 一次流式读取计算 multipart ETag 与现有 S3 checksum，避免 Complete 将最大 5 GiB 分片
+/// 聚合到内存。
+async fn hash_upload_part(
+    mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+) -> std::io::Result<UploadPartChecksums> {
+    use md5::{Digest, Md5};
+    use sha2::Digest as Sha2Digest;
+    let mut md5 = Md5::new();
+    let mut sha1 = sha1::Sha1::new();
+    let mut sha256 = sha2::Sha256::new();
+    let mut crc32 = crc32fast::Hasher::new();
+    let mut crc32c = 0_u32;
+    let crc64_spec = crc::Crc::<u64>::new(&crc::CRC_64_NVME);
+    let mut crc64nvme = crc64_spec.digest();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        md5.update(&buf[..n]);
+        sha1.update(&buf[..n]);
+        Sha2Digest::update(&mut sha256, &buf[..n]);
+        crc32.update(&buf[..n]);
+        crc32c = crc32c::crc32c_append(crc32c, &buf[..n]);
+        crc64nvme.update(&buf[..n]);
+    }
+    let md5: [u8; 16] = md5.finalize().into();
+    let sha256: [u8; 32] = Sha2Digest::finalize(sha256).into();
+    Ok(UploadPartChecksums {
+        md5,
+        md5_hex: hex::encode(md5),
+        sha1: sha1.finalize().into(),
+        sha256,
+        crc32: crc32.finalize(),
+        crc32c,
+        crc64nvme: crc64nvme.finalize(),
+    })
+}
+
 fn decode_content_md5(value: Option<&str>) -> S3Result<Option<[u8; 16]>> {
     use base64::Engine;
     let Some(value) = value else { return Ok(None) };
@@ -670,6 +720,18 @@ fn decode_checksum_crc64nvme(value: Option<&str>) -> S3Result<Option<u64>> {
         .try_into()
         .map_err(|_| s3s::s3_error!(InvalidDigest, "CRC64NVME checksum must decode to 8 bytes"))?;
     Ok(Some(u64::from_be_bytes(bytes)))
+}
+
+fn decode_checksum_sha1(value: Option<&str>) -> S3Result<Option<[u8; 20]>> {
+    use base64::Engine;
+    let Some(value) = value else { return Ok(None) };
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|_| s3s::s3_error!(InvalidDigest, "x-amz-checksum-sha1 is not valid base64"))?;
+    let bytes: [u8; 20] = decoded
+        .try_into()
+        .map_err(|_| s3s::s3_error!(InvalidDigest, "SHA1 checksum must decode to 20 bytes"))?;
+    Ok(Some(bytes))
 }
 
 impl std::fmt::Debug for VfilesS3 {
@@ -1391,11 +1453,13 @@ impl S3 for VfilesS3 {
         let expected_crc32 = decode_checksum_crc32(input.checksum_crc32.as_deref())?;
         let expected_crc32c = decode_checksum_crc32c(input.checksum_crc32c.as_deref())?;
         let expected_crc64nvme = decode_checksum_crc64nvme(input.checksum_crc64nvme.as_deref())?;
+        let expected_sha1 = decode_checksum_sha1(input.checksum_sha1.as_deref())?;
         let expected_sha256_hex = expected_sha256.map(hex::encode);
         let response_checksum_sha256 = input.checksum_sha256.clone();
         let response_checksum_crc32 = input.checksum_crc32.clone();
         let response_checksum_crc32c = input.checksum_crc32c.clone();
         let response_checksum_crc64nvme = input.checksum_crc64nvme.clone();
+        let response_checksum_sha1 = input.checksum_sha1.clone();
         // parent/filename 拆（WebDAV put_file 同式 ✗ init=父+名）
         // 条件写（`If-Match` / `If-None-Match` ✗ S3 现代并发控制）
         let cur = self.etag_at(&path).await?;
@@ -1449,6 +1513,7 @@ impl S3 for VfilesS3 {
                     expected_crc32,
                     expected_crc32c,
                     expected_crc64nvme,
+                    expected_sha1,
                     Some("S3 PUT"),
                     Box::new(reader),
                 )
@@ -1462,6 +1527,7 @@ impl S3 for VfilesS3 {
                     expected_crc32,
                     expected_crc32c,
                     expected_crc64nvme,
+                    expected_sha1,
                     Some("S3 PUT"),
                     Box::new(reader),
                 )
@@ -1493,6 +1559,7 @@ impl S3 for VfilesS3 {
             checksum_crc32: response_checksum_crc32,
             checksum_crc32c: response_checksum_crc32c,
             checksum_crc64nvme: response_checksum_crc64nvme,
+            checksum_sha1: response_checksum_sha1,
             size: Some(result.version.size_bytes.as_u64() as i64),
             ..Default::default()
         };
@@ -1954,10 +2021,12 @@ impl S3 for VfilesS3 {
         let expected_crc32 = decode_checksum_crc32(input.checksum_crc32.as_deref())?;
         let expected_crc32c = decode_checksum_crc32c(input.checksum_crc32c.as_deref())?;
         let expected_crc64nvme = decode_checksum_crc64nvme(input.checksum_crc64nvme.as_deref())?;
+        let expected_sha1 = decode_checksum_sha1(input.checksum_sha1.as_deref())?;
         let response_checksum_sha256 = input.checksum_sha256.clone();
         let response_checksum_crc32 = input.checksum_crc32.clone();
         let response_checksum_crc32c = input.checksum_crc32c.clone();
         let response_checksum_crc64nvme = input.checksum_crc64nvme.clone();
+        let response_checksum_sha1 = input.checksum_sha1.clone();
         let blob = input
             .body
             .unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
@@ -1973,6 +2042,7 @@ impl S3 for VfilesS3 {
                 expected_crc32,
                 expected_crc32c,
                 expected_crc64nvme,
+                expected_sha1,
                 Box::new(stream_reader(blob)),
             )
             .await
@@ -1988,6 +2058,7 @@ impl S3 for VfilesS3 {
             checksum_crc32: response_checksum_crc32,
             checksum_crc32c: response_checksum_crc32c,
             checksum_crc64nvme: response_checksum_crc64nvme,
+            checksum_sha1: response_checksum_sha1,
             ..Default::default()
         };
         ok(out)
@@ -2073,6 +2144,7 @@ impl S3 for VfilesS3 {
                 None,
                 None,
                 None,
+                None,
                 Box::new(reader),
             )
             .await
@@ -2122,7 +2194,16 @@ impl S3 for VfilesS3 {
                 .e_tag
                 .as_ref()
                 .ok_or_else(|| s3s::s3_error!(InvalidPart, "part ETag is required"))?;
-            listed.push((number, etag.value().to_string()));
+            listed.push((
+                number,
+                etag.value().to_string(),
+                decode_content_md5(part.checksum_md5.as_deref())?,
+                decode_checksum_sha1(part.checksum_sha1.as_deref())?,
+                decode_checksum_sha256(part.checksum_sha256.as_deref())?,
+                decode_checksum_crc32(part.checksum_crc32.as_deref())?,
+                decode_checksum_crc32c(part.checksum_crc32c.as_deref())?,
+                decode_checksum_crc64nvme(part.checksum_crc64nvme.as_deref())?,
+            ));
         }
         if listed.is_empty() {
             return Err(s3s::s3_error!(InvalidPart, "completed part list is empty"));
@@ -2135,24 +2216,46 @@ impl S3 for VfilesS3 {
             ));
         }
         let expected: Vec<i32> = stored.iter().map(|p| p.part_index as i32 + 1).collect();
-        if listed.iter().map(|(number, _)| *number).collect::<Vec<_>>() != expected {
+        if listed
+            .iter()
+            .map(|(number, ..)| *number)
+            .collect::<Vec<_>>()
+            != expected
+        {
             return Err(s3s::s3_error!(
                 InvalidPart,
                 "the listed parts do not match the uploaded parts"
             ));
         }
         // 客户端必须回显每个 UploadPart 返回的 ETag，且值需与已存分片内容一致。
-        for (number, etag) in listed {
-            match self
+        for (number, etag, md5, sha1, sha256, crc32, crc32c, crc64nvme) in listed {
+            let part_index = (number - 1) as u32;
+            let Some((reader, _size)) = self
                 .upload
-                .read_upload_part(&upload_id, (number - 1) as u32)
+                .open_upload_part(&upload_id, part_index)
                 .await
                 .map_err(dom_err)?
+            else {
+                return Err(s3s::s3_error!(InvalidPart, "part {} is missing", number));
+            };
+            let actual = hash_upload_part(reader)
+                .await
+                .map_err(|e| s3s::s3_error!(InternalError, "read upload part: {}", e))?;
+            if actual.md5_hex != etag {
+                return Err(s3s::s3_error!(InvalidPart, "part {} etag mismatch", number));
+            }
+            if md5.is_some_and(|expected| expected != actual.md5)
+                || sha1.is_some_and(|expected| expected != actual.sha1)
+                || sha256.is_some_and(|expected| expected != actual.sha256)
+                || crc32.is_some_and(|expected| expected != actual.crc32)
+                || crc32c.is_some_and(|expected| expected != actual.crc32c)
+                || crc64nvme.is_some_and(|expected| expected != actual.crc64nvme)
             {
-                Some(bytes) if md5_hex(&bytes) == etag => {}
-                _ => {
-                    return Err(s3s::s3_error!(InvalidPart, "part {} etag mismatch", number));
-                }
+                return Err(s3s::s3_error!(
+                    BadDigest,
+                    "part {} checksum mismatch",
+                    number
+                ));
             }
         }
         // 会话上存的 `x-amz-meta-*` 必须在完成**之前**读（完成会清掉会话目录）

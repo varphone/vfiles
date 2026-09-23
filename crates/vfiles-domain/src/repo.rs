@@ -423,6 +423,7 @@ pub trait BlobStore {
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
         expected_crc64nvme: Option<u64>,
+        expected_sha1: Option<[u8; 20]>,
     ) -> DomainResult<(BlobId, ContentHash, bool, u64)>;
     async fn get_blob(&self, blob_id: &BlobId) -> DomainResult<Option<Vec<u8>>>;
     async fn get_blob_stream(
@@ -479,6 +480,7 @@ pub trait UploadStore {
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
         expected_crc64nvme: Option<u64>,
+        expected_sha1: Option<[u8; 20]>,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt>;
     async fn get_upload_parts(&self, upload_id: &UploadId) -> DomainResult<Vec<UploadPart>>;
@@ -493,6 +495,12 @@ pub trait UploadStore {
         upload_id: &UploadId,
         part_index: u32,
     ) -> DomainResult<Option<Vec<u8>>>;
+    /// 流式打开已存 part，用于大分片校验而不把完整内容聚合到内存。
+    async fn open_upload_part(
+        &self,
+        upload_id: &UploadId,
+        part_index: u32,
+    ) -> DomainResult<Option<(Box<dyn tokio::io::AsyncRead + Send + Unpin>, u64)>>;
     /// 列出全部上传会话（S3 `ListMultipartUploads` ✗ 损坏目录跳过）。
     async fn list_upload_sessions(&self) -> DomainResult<Vec<UploadSession>>;
     /// 按 S3 的 key/upload-id 顺序列出 multipart 项。文件系统后端一次扫描目录，

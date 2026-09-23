@@ -2652,6 +2652,7 @@ where
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
         expected_crc64nvme: Option<u64>,
+        expected_sha1: Option<[u8; 20]>,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt> {
         let session = self.upload_store.get_upload_session(upload_id).await?;
@@ -2676,6 +2677,7 @@ where
                 expected_crc32,
                 expected_crc32c,
                 expected_crc64nvme,
+                expected_sha1,
                 reader,
             )
             .await
@@ -2701,6 +2703,7 @@ where
             None,
             None,
             None,
+            None,
             message,
             true,
         )
@@ -2721,6 +2724,7 @@ where
             None,
             None,
             None,
+            None,
             message,
             upload_stream,
         )
@@ -2735,6 +2739,7 @@ where
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
         expected_crc64nvme: Option<u64>,
+        expected_sha1: Option<[u8; 20]>,
         message: Option<&str>,
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadCompleteResponse> {
@@ -2751,6 +2756,7 @@ where
             expected_crc32,
             expected_crc32c,
             expected_crc64nvme,
+            expected_sha1,
             message,
             true,
         )
@@ -2772,6 +2778,7 @@ where
             None,
             None,
             None,
+            None,
             message,
             upload_stream,
         )
@@ -2786,6 +2793,7 @@ where
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
         expected_crc64nvme: Option<u64>,
+        expected_sha1: Option<[u8; 20]>,
         message: Option<&str>,
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadCompleteResponse> {
@@ -2802,6 +2810,7 @@ where
             expected_crc32,
             expected_crc32c,
             expected_crc64nvme,
+            expected_sha1,
             message,
             false,
         )
@@ -2844,6 +2853,7 @@ where
         self.commit_upload_stream(
             session,
             upload_stream,
+            None,
             None,
             None,
             None,
@@ -2926,6 +2936,16 @@ where
             .await
     }
 
+    pub async fn open_upload_part(
+        &self,
+        upload_id: &UploadId,
+        part_index: u32,
+    ) -> DomainResult<Option<(Box<dyn tokio::io::AsyncRead + Send + Unpin>, u64)>> {
+        self.upload_store
+            .open_upload_part(upload_id, part_index)
+            .await
+    }
+
     /// 列出已接收的 part（S3 `ListParts` / 完成校验用 ✗ 含 size）。
     pub async fn list_upload_parts(
         &self,
@@ -2943,6 +2963,7 @@ where
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
         expected_crc64nvme: Option<u64>,
+        expected_sha1: Option<[u8; 20]>,
         message: Option<&str>,
         enforce_size: bool,
     ) -> DomainResult<UploadCompleteResponse> {
@@ -2955,6 +2976,7 @@ where
                 expected_crc32,
                 expected_crc32c,
                 expected_crc64nvme,
+                expected_sha1,
             )
             .await?;
 

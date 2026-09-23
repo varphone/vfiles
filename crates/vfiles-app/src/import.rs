@@ -210,7 +210,7 @@ impl ImportBatch {
         };
         let (blob_id, content_hash, blob_created, stored_size) = self
             .blob_store
-            .store_blob_stream(reader, None, None, None, None, None)
+            .store_blob_stream(reader, None, None, None, None, None, None)
             .await?;
 
         if let Some(limit) = max_bytes

@@ -10,8 +10,13 @@ rust-version.workspace = true
 [dependencies]
 async-trait.workspace = true
 base64.workspace = true
+crc32fast = "1"
+crc32c = "0.6"
+crc = "3"
 hex.workspace = true
 md-5.workspace = true
+sha1 = "0.10"
+sha2.workspace = true
 futures.workspace = true
 axum = { workspace = true, features = ["macros"] }
 http-body-util.workspace = true

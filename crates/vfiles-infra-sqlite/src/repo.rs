@@ -3238,6 +3238,7 @@ impl BlobStore for FsBlobStore {
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
         expected_crc64nvme: Option<u64>,
+        expected_sha1: Option<[u8; 20]>,
     ) -> DomainResult<(BlobId, ContentHash, bool, u64)> {
         use md5::{Digest as Md5Digest, Md5};
 
@@ -3260,6 +3261,7 @@ impl BlobStore for FsBlobStore {
         let mut crc32c = 0_u32;
         let crc64_spec = crc::Crc::<u64>::new(&crc::CRC_64_NVME);
         let mut crc64nvme = crc64_spec.digest();
+        let mut sha1 = sha1::Sha1::new();
         let mut total_size = 0_u64;
         let mut buffer = [0_u8; 64 * 1024];
 
@@ -3282,6 +3284,7 @@ impl BlobStore for FsBlobStore {
                 crc32.update(&buffer[..read]);
                 crc32c = crc32c::crc32c_append(crc32c, &buffer[..read]);
                 crc64nvme.update(&buffer[..read]);
+                sha1.update(&buffer[..read]);
                 total_size += read as u64;
                 temp_file
                     .write_all(&buffer[..read])
@@ -3307,6 +3310,7 @@ impl BlobStore for FsBlobStore {
         }
 
         let digest: [u8; 16] = Md5Digest::finalize(md5).into();
+        let sha1_digest: [u8; 20] = sha1.finalize().into();
         if expected_md5.is_some_and(|expected| expected != digest) {
             let _ = fs::remove_file(&temp_path).await;
             return Err(DomainError::BlobChecksumMismatch);
@@ -3320,6 +3324,10 @@ impl BlobStore for FsBlobStore {
             return Err(DomainError::BlobChecksumMismatch);
         }
         if expected_crc64nvme.is_some_and(|expected| expected != crc64nvme.finalize()) {
+            let _ = fs::remove_file(&temp_path).await;
+            return Err(DomainError::BlobChecksumMismatch);
+        }
+        if expected_sha1.is_some_and(|expected| expected != sha1_digest) {
             let _ = fs::remove_file(&temp_path).await;
             return Err(DomainError::BlobChecksumMismatch);
         }
@@ -3857,6 +3865,7 @@ impl UploadStore for FsUploadStore {
         expected_crc32: Option<u32>,
         expected_crc32c: Option<u32>,
         expected_crc64nvme: Option<u64>,
+        expected_sha1: Option<[u8; 20]>,
         mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt> {
         use md5::{Digest as Md5Digest, Md5};
@@ -3880,6 +3889,7 @@ impl UploadStore for FsUploadStore {
             let mut crc32c = 0_u32;
             let crc64_spec = crc::Crc::<u64>::new(&crc::CRC_64_NVME);
             let mut crc64nvme = crc64_spec.digest();
+            let mut sha1 = sha1::Sha1::new();
             let mut size = 0u64;
             let mut buffer = [0u8; 64 * 1024];
             loop {
@@ -3905,6 +3915,7 @@ impl UploadStore for FsUploadStore {
                 crc32.update(&buffer[..read]);
                 crc32c = crc32c::crc32c_append(crc32c, &buffer[..read]);
                 crc64nvme.update(&buffer[..read]);
+                sha1.update(&buffer[..read]);
                 file.write_all(&buffer[..read])
                     .await
                     .map_err(|e| DomainError::Internal {
@@ -3919,6 +3930,7 @@ impl UploadStore for FsUploadStore {
             })?;
             drop(file);
             let digest: [u8; 16] = Md5Digest::finalize(md5).into();
+            let sha1_digest: [u8; 20] = sha1.finalize().into();
             if expected_md5.is_some_and(|expected| expected != digest) {
                 return Err(DomainError::UploadPartChecksumMismatch);
             }
@@ -3934,6 +3946,9 @@ impl UploadStore for FsUploadStore {
                 return Err(DomainError::UploadPartChecksumMismatch);
             }
             if expected_crc64nvme.is_some_and(|expected| expected != crc64nvme.finalize()) {
+                return Err(DomainError::UploadPartChecksumMismatch);
+            }
+            if expected_sha1.is_some_and(|expected| expected != sha1_digest) {
                 return Err(DomainError::UploadPartChecksumMismatch);
             }
             #[cfg(windows)]
@@ -4129,6 +4144,30 @@ impl UploadStore for FsUploadStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(DomainError::Internal {
                 message: format!("Failed to read upload part {}: {}", part_index, e),
+            }),
+        }
+    }
+
+    async fn open_upload_part(
+        &self,
+        upload_id: &UploadId,
+        part_index: u32,
+    ) -> DomainResult<Option<(Box<dyn tokio::io::AsyncRead + Send + Unpin>, u64)>> {
+        let path = self.get_upload_path(upload_id, Some(part_index));
+        match fs::File::open(&path).await {
+            Ok(file) => {
+                let size = file
+                    .metadata()
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to inspect upload part {}: {}", part_index, e),
+                    })?
+                    .len();
+                Ok(Some((Box::new(file), size)))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(DomainError::Internal {
+                message: format!("Failed to open upload part {}: {}", part_index, e),
             }),
         }
     }
@@ -5368,6 +5407,7 @@ mod blob_stream_tests {
         let result = store
             .store_blob_stream(
                 Box::new(FailingReader { emitted: false }),
+                None,
                 None,
                 None,
                 None,
