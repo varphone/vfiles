@@ -90,6 +90,14 @@ impl LockTable {
             .await
     }
 
+    pub async fn remove_under_path(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+    ) -> vfiles_domain::DomainResult<()> {
+        self.repo.remove_under_path(namespace_id, path).await
+    }
+
     pub async fn refresh(
         &self,
         namespace_id: &NamespaceId,

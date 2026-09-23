@@ -1462,6 +1462,28 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(authorized_parent_delete.status(), 204);
     assert_eq!(deletes.load(std::sync::atomic::Ordering::Relaxed), 1);
+    let subtree_locks: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM webdav_locks WHERE namespace_id = ? AND (path = 'locked-dir' OR substr(path, 1, length('locked-dir') + 1) = 'locked-dir/')",
+    )
+    .bind(namespace_id.to_string())
+    .fetch_one(&pool)
+    .await
+    .expect("deleted subtree locks should be queryable");
+    assert_eq!(
+        subtree_locks, 0,
+        "DELETE must remove locks on deleted members"
+    );
+    let unrelated_locks: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM webdav_locks WHERE namespace_id = ? AND path = 'persist.txt'",
+    )
+    .bind(namespace_id.to_string())
+    .fetch_one(&pool)
+    .await
+    .expect("unrelated lock should be queryable");
+    assert_eq!(
+        unrelated_locks, 1,
+        "DELETE must keep locks outside its subtree"
+    );
 
     sqlx::query("DROP TABLE entry_properties")
         .execute(&pool)

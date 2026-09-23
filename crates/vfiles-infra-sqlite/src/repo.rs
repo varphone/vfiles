@@ -611,6 +611,25 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         })?;
         Ok(result.rows_affected() > 0)
     }
+
+    async fn remove_under_path(&self, namespace_id: &NamespaceId, path: &str) -> DomainResult<()> {
+        sqlx::query(
+            r#"DELETE FROM webdav_locks
+               WHERE namespace_id = ?
+                 AND (path = ? OR ? = '' OR substr(path, 1, length(?) + 1) = ? || '/')"#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(path)
+        .bind(path)
+        .bind(path)
+        .bind(path)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to remove WebDAV locks under deleted path: {e}"),
+        })?;
+        Ok(())
+    }
 }
 
 impl SqliteNamespaceRepo {

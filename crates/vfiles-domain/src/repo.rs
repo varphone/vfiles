@@ -222,6 +222,8 @@ pub trait WebdavLockRepo: Send + Sync {
         token: &str,
         now: i64,
     ) -> DomainResult<bool>;
+    /// Remove locks rooted at a deleted resource or anywhere below it.
+    async fn remove_under_path(&self, namespace_id: &NamespaceId, path: &str) -> DomainResult<()>;
 }
 
 #[async_trait::async_trait]

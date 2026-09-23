@@ -1195,6 +1195,7 @@ async fn put_op(
 }
 
 /// 写操作三型（r108' ✓）。
+#[derive(Clone, Copy)]
 enum WriteOp {
     Mkcol,
     Delete,
@@ -1280,14 +1281,22 @@ async fn write_op(
         }
     };
     match result {
-        Ok(()) => Response::builder()
-            // r11 分码顺修（RFC：DELETE = 204 ✗ 原三 op 全 201 = 违背顺手修 ✓）
-            .status(match &op {
-                WriteOp::Delete => StatusCode::NO_CONTENT,
-                WriteOp::Mkcol | WriteOp::Move => StatusCode::CREATED,
-            })
-            .body(Body::empty())
-            .unwrap(),
+        Ok(()) => {
+            if matches!(op, WriteOp::Delete)
+                && let Err(error) = app.locks.remove_under_path(&ns, rel).await
+            {
+                tracing::error!(%error, path = %rel, "WebDAV DELETE 已完成但清理资源锁失败");
+                return internal_error();
+            }
+            Response::builder()
+                // r11 分码顺修（RFC：DELETE = 204 ✗ 原三 op 全 201 = 违背顺手修 ✓）
+                .status(match op {
+                    WriteOp::Delete => StatusCode::NO_CONTENT,
+                    WriteOp::Mkcol | WriteOp::Move => StatusCode::CREATED,
+                })
+                .body(Body::empty())
+                .unwrap()
+        }
         Err(err) => {
             tracing::warn!(path = %rel, op = "mkcol|delete|move", error = %err, "WebDAV 写操作失败（409）");
             let status = if overwrite_conflict_is_precondition
