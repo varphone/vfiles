@@ -88,6 +88,21 @@ fn parse_if_header(header: &str) -> Option<IfHeader> {
     (!tagged.is_empty()).then_some(IfHeader::Tagged(tagged))
 }
 
+/// Parse the single RFC 4918 Overwrite field. It defaults to `T`; malformed
+/// values and repeated field lines are rejected instead of silently choosing one.
+fn parse_overwrite_header(headers: &axum::http::HeaderMap) -> Option<bool> {
+    let mut values = headers.get_all("overwrite").iter();
+    match (values.next(), values.next()) {
+        (None, None) => Some(true),
+        (Some(value), None) => match value.to_str().ok()? {
+            "T" => Some(true),
+            "F" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn parse_if_lists(input: &mut &str) -> Option<Vec<Vec<IfCondition>>> {
     let mut lists = Vec::new();
     while input.starts_with('(') {
@@ -2690,10 +2705,9 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
             // RFC 4918 §10.6: only T/F are valid, with T as the default.
-            let overwrite = match req.headers().get("overwrite").and_then(|v| v.to_str().ok()) {
-                None | Some("T") => true,
-                Some("F") => false,
-                Some(_) => {
+            let overwrite = match parse_overwrite_header(req.headers()) {
+                Some(overwrite) => overwrite,
+                None => {
                     return Response::builder()
                         .status(StatusCode::BAD_REQUEST)
                         .body(Body::empty())
@@ -2868,10 +2882,9 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 // r11 MOVE Overwrite（臂层式 ✗ 零签名变 ✓ extensions 重取 = 不碰已 move 变量）
                 let mut move_overwrite_204 = false;
                 let move_overwrite = if matches!(op, WriteOp::Move) {
-                    match req.headers().get("overwrite").and_then(|v| v.to_str().ok()) {
-                        None | Some("T") => true,
-                        Some("F") => false,
-                        Some(_) => {
+                    match parse_overwrite_header(req.headers()) {
+                        Some(overwrite) => overwrite,
+                        None => {
                             return Response::builder()
                                 .status(StatusCode::BAD_REQUEST)
                                 .body(Body::empty())
@@ -3164,6 +3177,29 @@ pub fn router_for_tests(app: WebdavApplication) -> Router {
 // PropResponse 在 server 内暂未消费（r104 PROPFIND 用）——显式引用消除 dead_code 语义含混。
 #[allow(unused_imports)]
 use PropResponse as _PropResponseForR104;
+
+#[cfg(test)]
+mod overwrite_header_tests {
+    use super::parse_overwrite_header;
+    use axum::http::HeaderMap;
+
+    #[test]
+    fn accepts_only_one_valid_overwrite_value_and_defaults_to_true() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(parse_overwrite_header(&headers), Some(true));
+
+        headers.insert("overwrite", "T".parse().unwrap());
+        assert_eq!(parse_overwrite_header(&headers), Some(true));
+        headers.insert("overwrite", "F".parse().unwrap());
+        assert_eq!(parse_overwrite_header(&headers), Some(false));
+        headers.insert("overwrite", "f".parse().unwrap());
+        assert_eq!(parse_overwrite_header(&headers), None);
+
+        headers.insert("overwrite", "T".parse().unwrap());
+        headers.append("overwrite", "F".parse().unwrap());
+        assert_eq!(parse_overwrite_header(&headers), None);
+    }
+}
 
 #[cfg(test)]
 mod write_tests {
