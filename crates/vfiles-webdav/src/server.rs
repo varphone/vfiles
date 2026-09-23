@@ -94,11 +94,16 @@ fn parse_overwrite_header(headers: &axum::http::HeaderMap) -> Option<bool> {
     let mut values = headers.get_all("overwrite").iter();
     match (values.next(), values.next()) {
         (None, None) => Some(true),
-        (Some(value), None) => match value.to_str().ok()? {
-            "T" => Some(true),
-            "F" => Some(false),
-            _ => None,
-        },
+        (Some(value), None) => {
+            let value = value.to_str().ok()?;
+            if value.eq_ignore_ascii_case("T") {
+                Some(true)
+            } else if value.eq_ignore_ascii_case("F") {
+                Some(false)
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
@@ -3190,9 +3195,13 @@ mod overwrite_header_tests {
 
         headers.insert("overwrite", "T".parse().unwrap());
         assert_eq!(parse_overwrite_header(&headers), Some(true));
+        headers.insert("overwrite", "t".parse().unwrap());
+        assert_eq!(parse_overwrite_header(&headers), Some(true));
         headers.insert("overwrite", "F".parse().unwrap());
         assert_eq!(parse_overwrite_header(&headers), Some(false));
         headers.insert("overwrite", "f".parse().unwrap());
+        assert_eq!(parse_overwrite_header(&headers), Some(false));
+        headers.insert("overwrite", "x".parse().unwrap());
         assert_eq!(parse_overwrite_header(&headers), None);
 
         headers.insert("overwrite", "T".parse().unwrap());

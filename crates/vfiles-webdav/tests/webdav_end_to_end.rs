@@ -474,6 +474,22 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(unsupported_copy_depth.status(), 400);
 
+    let lowercase_copy_overwrite = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("COPY")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("destination", "/copy-lowercase-overwrite.txt")
+                .header("overwrite", "f")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(lowercase_copy_overwrite.status(), 201);
+
     let invalid_copy_overwrite = router
         .clone()
         .oneshot(
@@ -482,7 +498,7 @@ async fn options_advertises_and_propfind_needs_auth() {
                 .uri("/persist.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("destination", "/copy-invalid-overwrite.txt")
-                .header("overwrite", "f")
+                .header("overwrite", "x")
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
