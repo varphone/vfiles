@@ -6,23 +6,33 @@
 //! 生成 + warn 打印 = 零配置试用 ✓ per-user 凭证 = 扩展债记档）。
 //!
 //! 映射：key = 默认 ns 根下相对路径（tree 展开为 flat keys ✗ 版本链天然 = ETag =
-//! current_version_id hex 引号（与 WebDAV r14 同式 ✓ 跨协议一致））。r1 记档债：
-//! put 聚合（流式直连 = P2 ✗ 与 WebDAV GET 流式同级优化）、ListObjects 续页/delimiter
-//! 组前缀（r1 全量截 1000）、last_modified 未接（P2 接版本时间）。
+//! current_version_id hex 引号（与 WebDAV r14 同式 ✓ 跨协议一致））。
+//!
+//! r3（本轮：列表面的商业级完备）：
+//! - `ListObjectsV2` **全语义**：prefix · delimiter→CommonPrefixes · continuation-token ·
+//!   start-after · max-keys（尊重请求，上限 1000）· is-truncated · next-continuation-token ·
+//!   key-count；`Object` 带 **size / last-modified / ETag**
+//! - `ListObjects`（V1）：marker / delimiter / max-keys / next-marker / common-prefixes
+//! - `GetObject` / `HeadObject`：**last-modified** + **HTTP Range → 206 / Content-Range**
+//!   （s3s 见 content_range 自动置 206 ✗ `Range::check` 负责夹取与 416）
+//!
+//! 扩展债（记档待排期）：put 流式直连（r1 聚合 Vec）· multipart upload · per-user 凭证 ·
+//! region 校验 · 大桶 SQL 分页（现全量枚举后内存分页）。
 
 use async_trait::async_trait;
-use tokio::io::AsyncReadExt;
-
 use s3s::dto::{
-    DeleteObjectInput, DeleteObjectOutput, GetObjectInput, GetObjectOutput, HeadObjectOutput,
-    HeadObjectInput, ListBucketsOutput, ListObjectsV2Input, ListObjectsV2Output,
-    PutObjectInput, PutObjectOutput,
-    Bucket, Object, StreamingBlob,
+    Bucket, CommonPrefix, DeleteObjectInput, DeleteObjectOutput, GetObjectInput, GetObjectOutput,
+    HeadObjectInput, HeadObjectOutput, ListBucketsOutput, ListObjectsInput, ListObjectsOutput,
+    ListObjectsV2Input, ListObjectsV2Output, Object, PutObjectInput, PutObjectOutput,
+    StreamingBlob, Timestamp,
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
+use tokio::io::AsyncReadExt;
 
 /// 默认（唯一）虚拟桶名。
 pub const DEFAULT_BUCKET: &str = "default";
+/// 单页上限（S3 硬上限）。
+const MAX_KEYS_LIMIT: usize = 1000;
 
 /// Vfiles S3 实现（薄组装 ✗ 写面 = app 层 workspace/upload 同 WebDAV 同源链 ✓）。
 pub struct VfilesS3 {
@@ -39,16 +49,13 @@ pub struct VfilesS3 {
 }
 
 fn ok<T>(output: T) -> S3Result<S3Response<T>> {
-    // protocol.rs:179 官方构造（手填 status/headers 缺 extensions ✗ 编译错即证）
     Ok(S3Response::new(output))
 }
 
 /// DomainErr → S3 错（NotFound/NoSuchKey / 其余 InternalError ✗ 消息带因）。
 fn dom_err(e: vfiles_domain::DomainError) -> s3s::S3Error {
     match e {
-        vfiles_domain::DomainError::NotFound { .. } => {
-            s3s::s3_error!(NoSuchKey, "No such key")
-        }
+        vfiles_domain::DomainError::NotFound { .. } => s3s::s3_error!(NoSuchKey, "No such key"),
         other => s3s::s3_error!(InternalError, "{}", other),
     }
 }
@@ -61,23 +68,172 @@ fn norm(key: &str) -> vfiles_domain::DomainResult<vfiles_domain::NormalizedPath>
     })
 }
 
-/// 递归展平默认 ns 全部文件 key（= path_norm 相对形 ✓ 目录不产出对象 ✗ 树展开 =
-/// r1 无续页全量（截 1000 由调用方 ✓ 记档分页/delimiter = P2 债）。
-async fn collect_keys(
+/// 对象元数据（列表/详情共用 ✗ 一次树遍历取全）。
+#[derive(Debug, Clone)]
+struct ObjMeta {
+    key: String,
+    size: u64,
+    last_modified: Timestamp,
+    etag: String,
+}
+
+/// 递归展平默认 ns 全部**文件** key（目录不产出对象 ✓ = S3 语义），带 size/mtime/ETag。
+async fn collect_objects(
     repo: &std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
     ns: &vfiles_domain::NamespaceId,
-    prefix_path: &vfiles_domain::NormalizedPath,
-    out: &mut Vec<(String, Option<u64>)>,
+) -> vfiles_domain::DomainResult<Vec<ObjMeta>> {
+    let root = vfiles_domain::NormalizedPath::new("").map_err(|e| {
+        vfiles_domain::DomainError::Validation {
+            message: format!("root path: {e}"),
+        }
+    })?;
+    let mut out = Vec::new();
+    walk(repo, ns, &root, &mut out).await?;
+    out.sort_by(|a, b| a.key.cmp(&b.key));
+    Ok(out)
+}
+
+async fn walk(
+    repo: &std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
+    ns: &vfiles_domain::NamespaceId,
+    path: &vfiles_domain::NormalizedPath,
+    out: &mut Vec<ObjMeta>,
 ) -> vfiles_domain::DomainResult<()> {
-    let children = repo.find_children(ns, prefix_path).await?;
-    for child in children {
-        if matches!(child.entry_type, vfiles_domain::EntryKind::Directory) {
-            Box::pin(collect_keys(repo, ns, &child.path_norm, out)).await?;
+    for m in repo.children_with_meta(ns, path).await? {
+        if matches!(m.entry.entry_type, vfiles_domain::EntryKind::Directory) {
+            Box::pin(walk(repo, ns, &m.entry.path_norm, out)).await?;
         } else {
-            out.push((child.path_norm.as_str().to_string(), None));
+            out.push(ObjMeta {
+                key: m.entry.path_norm.as_str().to_string(),
+                size: m.size_bytes.unwrap_or(0),
+                last_modified: Timestamp::from(m.entry.created_at),
+                etag: m
+                    .entry
+                    .current_version_id
+                    .map(|v| v.to_string().replace('-', ""))
+                    .unwrap_or_default(),
+            });
         }
     }
     Ok(())
+}
+
+fn object_dto(o: &ObjMeta) -> Object {
+    Object {
+        key: Some(o.key.clone()),
+        size: Some(o.size as i64),
+        last_modified: Some(o.last_modified.clone()),
+        e_tag: Some(s3s::dto::ETag::Strong(o.etag.clone())),
+        ..Default::default()
+    }
+}
+
+/// 列表条目：对象或 roll-up 的 common prefix（delimiter 折叠 ✗ AWS 语义）。
+#[derive(Clone)]
+enum Listed {
+    Object(ObjMeta),
+    Prefix(String),
+}
+
+impl Listed {
+    fn key(&self) -> &str {
+        match self {
+            Listed::Object(o) => &o.key,
+            Listed::Prefix(p) => p,
+        }
+    }
+}
+
+/// 过滤 + delimiter 折叠 + 排序（common prefix 去重后与对象统一按 key 升序）。
+fn build_entries(all: &[ObjMeta], prefix: &str, delimiter: Option<&str>) -> Vec<Listed> {
+    use std::collections::BTreeSet;
+    let mut prefixes: BTreeSet<String> = BTreeSet::new();
+    let mut objects: Vec<Listed> = Vec::new();
+    for o in all {
+        if !o.key.starts_with(prefix) {
+            continue;
+        }
+        if let Some(d) = delimiter.filter(|d| !d.is_empty()) {
+            let rest = &o.key[prefix.len()..];
+            if let Some(idx) = rest.find(d) {
+                prefixes.insert(format!("{prefix}{}{d}", &rest[..idx]));
+                continue;
+            }
+        }
+        objects.push(Listed::Object(o.clone()));
+    }
+    objects.extend(prefixes.into_iter().map(Listed::Prefix));
+    objects.sort_by(|a, b| a.key().cmp(b.key()));
+    objects
+}
+
+/// 分页切片（`after` 独占 ✗ continuation-token / start-after / marker 同语义）。
+struct Page {
+    contents: Vec<Object>,
+    prefixes: Vec<CommonPrefix>,
+    truncated: bool,
+    next: Option<String>,
+}
+
+fn paginate(entries: Vec<Listed>, after: Option<&str>, max: usize) -> Page {
+    let start = after
+        .map(|a| {
+            entries
+                .iter()
+                .position(|e| e.key() > a)
+                .unwrap_or(entries.len())
+        })
+        .unwrap_or(0);
+    let rest = &entries[start..];
+    let truncated = rest.len() > max;
+    let page = &rest[..max.min(rest.len())];
+    let next = truncated
+        .then(|| page.last().map(|e| e.key().to_string()))
+        .flatten();
+    let mut contents = Vec::new();
+    let mut prefixes = Vec::new();
+    for e in page {
+        match e {
+            Listed::Object(o) => contents.push(object_dto(o)),
+            Listed::Prefix(p) => prefixes.push(CommonPrefix {
+                prefix: Some(p.clone()),
+            }),
+        }
+    }
+    Page {
+        contents,
+        prefixes,
+        truncated,
+        next,
+    }
+}
+
+/// 解析 max-keys（缺省 1000；负值 = InvalidArgument；上限夹到 1000）。
+fn resolve_max_keys(input: Option<i32>) -> S3Result<usize> {
+    match input {
+        None => Ok(MAX_KEYS_LIMIT),
+        Some(v) if v < 0 => Err(s3s::s3_error!(InvalidArgument, "max-keys must be >= 0")),
+        Some(v) => Ok((v as usize).min(MAX_KEYS_LIMIT)),
+    }
+}
+
+/// 非空字符串 → Some（S3 空 delimiter/prefix 视作未设）。
+fn non_empty(s: Option<String>) -> Option<String> {
+    s.filter(|v| !v.is_empty())
+}
+
+/// 计算 Range 切片（None = 全量）。`check` 越界 → InvalidRange（416）。
+fn resolve_range(
+    range: Option<s3s::dto::Range>,
+    size: u64,
+) -> S3Result<Option<std::ops::Range<u64>>> {
+    match range {
+        None => Ok(None),
+        Some(r) => r
+            .check(size)
+            .map(Some)
+            .map_err(|_| s3s::s3_error!(InvalidRange, "range not satisfiable")),
+    }
 }
 
 impl std::fmt::Debug for VfilesS3 {
@@ -93,11 +249,13 @@ impl S3 for VfilesS3 {
         &self,
         _req: S3Request<s3s::dto::ListBucketsInput>,
     ) -> S3Result<S3Response<ListBucketsOutput>> {
-        let mut out = ListBucketsOutput::default();
-        out.buckets = Some(vec![Bucket {
-            name: Some(DEFAULT_BUCKET.to_string()),
+        let out = ListBucketsOutput {
+            buckets: Some(vec![Bucket {
+                name: Some(DEFAULT_BUCKET.to_string()),
+                ..Default::default()
+            }]),
             ..Default::default()
-        }]);
+        };
         ok(out)
     }
 
@@ -109,35 +267,67 @@ impl S3 for VfilesS3 {
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
-        let root = vfiles_domain::NormalizedPath::new("")
-            .map_err(|e| s3s::s3_error!(InvalidArgument, "{}", e))?;
-        let mut raw = Vec::new();
-        collect_keys(&self.entry_repo, &self.namespace, &root, &mut raw)
+        let max = resolve_max_keys(input.max_keys)?;
+        let prefix = input.prefix.clone().unwrap_or_default();
+        let delimiter = non_empty(input.delimiter.clone());
+        let after = input
+            .continuation_token
+            .clone()
+            .or_else(|| input.start_after.clone());
+
+        let all = collect_objects(&self.entry_repo, &self.namespace)
             .await
             .map_err(dom_err)?;
-        let prefix = input.prefix.unwrap_or_default();
-        let mut keys: Vec<String> = raw
-            .into_iter()
-            .map(|(k, _)| k)
-            .filter(|k| k.starts_with(&prefix))
-            .collect();
-        keys.sort();
-        let max = input.max_keys.unwrap_or(1000).min(1000) as usize;
-        let truncated = keys.len() > max;
-        keys.truncate(max);
-        let mut out = ListObjectsV2Output::default();
-        out.name = Some(input.bucket);
-        out.prefix = if prefix.is_empty() { None } else { Some(prefix) };
-        out.key_count = Some(keys.len() as i32);
-        out.is_truncated = Some(truncated);
-        out.contents = Some(
-            keys.into_iter()
-                .map(|key| Object {
-                    key: Some(key),
-                    ..Default::default()
-                })
-                .collect(),
-        );
+        let entries = build_entries(&all, &prefix, delimiter.as_deref());
+        let page = paginate(entries, after.as_deref(), max);
+
+        let out = ListObjectsV2Output {
+            name: Some(input.bucket),
+            prefix: non_empty(Some(prefix)),
+            delimiter,
+            max_keys: Some(max as i32),
+            key_count: Some((page.contents.len() + page.prefixes.len()) as i32),
+            is_truncated: Some(page.truncated),
+            continuation_token: input.continuation_token,
+            next_continuation_token: page.next,
+            contents: (!page.contents.is_empty()).then_some(page.contents),
+            common_prefixes: (!page.prefixes.is_empty()).then_some(page.prefixes),
+            ..Default::default()
+        };
+        ok(out)
+    }
+
+    async fn list_objects(
+        &self,
+        req: S3Request<ListObjectsInput>,
+    ) -> S3Result<S3Response<ListObjectsOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        let max = resolve_max_keys(input.max_keys)?;
+        let prefix = input.prefix.clone().unwrap_or_default();
+        let delimiter = non_empty(input.delimiter.clone());
+        let marker = input.marker.clone();
+
+        let all = collect_objects(&self.entry_repo, &self.namespace)
+            .await
+            .map_err(dom_err)?;
+        let entries = build_entries(&all, &prefix, delimiter.as_deref());
+        let page = paginate(entries, marker.as_deref(), max);
+
+        let out = ListObjectsOutput {
+            name: Some(input.bucket),
+            prefix: non_empty(Some(prefix)),
+            delimiter,
+            marker: non_empty(marker),
+            max_keys: Some(max as i32),
+            is_truncated: Some(page.truncated),
+            next_marker: page.next,
+            contents: (!page.contents.is_empty()).then_some(page.contents),
+            common_prefixes: (!page.prefixes.is_empty()).then_some(page.prefixes),
+            ..Default::default()
+        };
         ok(out)
     }
 
@@ -150,20 +340,19 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let path = norm(&input.key).map_err(dom_err)?;
-        // ETag = current_version_id hex 引号（r1 设计、r2 补赋值 ✗ 与 WebDAV derive_etag
-        // 跨协议同式 ✗ find + open 双查 = r1 注记的已知容忍）
+        // ETag = current_version_id hex 引号（与 WebDAV derive_etag 跨协议同式）
         let entry = self
             .entry_repo
             .find_by_path(&self.namespace, &path)
             .await
             .map_err(dom_err)?
             .ok_or_else(|| s3s::s3_error!(NoSuchKey, "No such key"))?;
-        // None vid = 首版本未定形?Entries 恒有 vid（versions 链必建）✗ None → 空串防呆
-        // Strong 变体序列化自附引号 ✗ 存裸 hex 防双引（etag.rs:19-24 + 编译器式）
+        // Strong 变体序列化自附引号 ✗ 存裸 hex 防双引（etag.rs:19-24）
         let etag = entry
             .current_version_id
             .map(|v| v.to_string().replace('-', ""))
             .unwrap_or_default();
+        let last_modified = Timestamp::from(entry.created_at);
         let file = self
             .workspace
             .open_file(&self.namespace, &path, None)
@@ -171,15 +360,30 @@ impl S3 for VfilesS3 {
             .map_err(dom_err)?;
         let mut data = Vec::with_capacity(file.size_bytes as usize);
         let mut reader = file.reader;
-        reader.read_to_end(&mut data).await.map_err(|e| {
-            s3s::s3_error!(InternalError, "read failed: {}", e)
-        })?;
-        let mut out = GetObjectOutput::default();
-        out.body = Some(StreamingBlob::from_bytes(data.into()));
-        out.content_length = Some(file.size_bytes as i64);
-        out.content_type = file.mime_type;
-        out.accept_ranges = Some("bytes".to_string());
-        out.e_tag = Some(s3s::dto::ETag::Strong(etag));
+        reader
+            .read_to_end(&mut data)
+            .await
+            .map_err(|e| s3s::s3_error!(InternalError, "read failed: {}", e))?;
+        let size = data.len() as u64;
+        let slice = resolve_range(input.range, size)?;
+        let (body, content_length, content_range) = match slice {
+            Some(r) => {
+                let bytes = data[r.start as usize..r.end as usize].to_vec();
+                let cr = format!("bytes {}-{}/{}", r.start, r.end - 1, size);
+                (bytes, (r.end - r.start) as i64, Some(cr))
+            }
+            None => (data, size as i64, None),
+        };
+        let out = GetObjectOutput {
+            body: Some(StreamingBlob::from_bytes(body.into())),
+            content_length: Some(content_length),
+            content_type: file.mime_type,
+            accept_ranges: Some("bytes".to_string()),
+            content_range,
+            e_tag: Some(s3s::dto::ETag::Strong(etag)),
+            last_modified: Some(last_modified),
+            ..Default::default()
+        };
         ok(out)
     }
 
@@ -192,28 +396,40 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let path = norm(&input.key).map_err(dom_err)?;
-        // ETag 同 get（HEAD 头客户端同需 ✗ r2 补）
         let entry = self
             .entry_repo
             .find_by_path(&self.namespace, &path)
             .await
             .map_err(dom_err)?
             .ok_or_else(|| s3s::s3_error!(NoSuchKey, "No such key"))?;
-        // Strong 变体序列化自附引号 ✗ 存裸 hex 防双引（etag.rs:19-24 + 编译器式）
         let etag = entry
             .current_version_id
             .map(|v| v.to_string().replace('-', ""))
             .unwrap_or_default();
+        let last_modified = Timestamp::from(entry.created_at);
         let file = self
             .workspace
             .open_file(&self.namespace, &path, None)
             .await
             .map_err(dom_err)?;
-        let mut out = HeadObjectOutput::default();
-        out.content_length = Some(file.size_bytes as i64);
-        out.content_type = file.mime_type;
-        out.accept_ranges = Some("bytes".to_string());
-        out.e_tag = Some(s3s::dto::ETag::Strong(etag));
+        let size = file.size_bytes;
+        let slice = resolve_range(input.range, size)?;
+        let (content_length, content_range) = match slice {
+            Some(r) => (
+                (r.end - r.start) as i64,
+                Some(format!("bytes {}-{}/{}", r.start, r.end - 1, size)),
+            ),
+            None => (size as i64, None),
+        };
+        let out = HeadObjectOutput {
+            content_length: Some(content_length),
+            content_type: file.mime_type,
+            accept_ranges: Some("bytes".to_string()),
+            content_range,
+            e_tag: Some(s3s::dto::ETag::Strong(etag)),
+            last_modified: Some(last_modified),
+            ..Default::default()
+        };
         ok(out)
     }
 
@@ -226,7 +442,9 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         // r1 记档债：body 聚合（流式直连 = P2 ✗ 与 WebDAV 流式同级优化）
-        let blob = input.body.unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
+        let blob = input
+            .body
+            .unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
         let mut data: Vec<u8> = Vec::new();
         let mut stream = std::pin::pin!(blob);
         while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
@@ -234,13 +452,17 @@ impl S3 for VfilesS3 {
             data.extend_from_slice(&chunk);
         }
         let path = norm(&input.key).map_err(dom_err)?;
-        // parent/filename 拆（WebDAV put_file 同式 ✗ r110'c 语义：init=父+名）
+        // parent/filename 拆（WebDAV put_file 同式 ✗ init=父+名）
         let full = path.as_str();
         let (parent_str, filename) = match full.rsplit_once('/') {
             Some((dir, name)) => (dir.to_string(), name.to_string()),
             None => (String::new(), full.to_string()),
         };
-        let filename = if filename.is_empty() { "upload".to_string() } else { filename };
+        let filename = if filename.is_empty() {
+            "upload".to_string()
+        } else {
+            filename
+        };
         let parent = vfiles_domain::NormalizedPath::new(&parent_str)
             .map_err(|e| s3s::s3_error!(InvalidArgument, "{}", e))?;
         let session = self
@@ -250,7 +472,7 @@ impl S3 for VfilesS3 {
                 &parent,
                 &filename,
                 data.len() as u64,
-                input.content_type.as_deref(), // ContentType=String（content_type.rs:4）→ init 要 &str（as_deref 编译器式 ✓ 透传保留 = P2 债免记）
+                input.content_type.as_deref(), // ContentType=String → init 要 &str（透传保留）
                 None,
                 &self.owner,
             )
@@ -289,8 +511,128 @@ impl S3 for VfilesS3 {
             .await
         {
             // S3 DELETE 幂等语义：不存在也 204 ✓
-            Ok(_) | Err(vfiles_domain::DomainError::NotFound { .. }) => ok(DeleteObjectOutput::default()),
+            Ok(_) | Err(vfiles_domain::DomainError::NotFound { .. }) => {
+                ok(DeleteObjectOutput::default())
+            }
             Err(e) => Err(dom_err(e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(key: &str, size: u64) -> ObjMeta {
+        ObjMeta {
+            key: key.to_string(),
+            size,
+            last_modified: Timestamp::default(),
+            etag: "00".repeat(16),
+        }
+    }
+
+    fn keys(entries: &[Listed]) -> Vec<String> {
+        entries.iter().map(|e| e.key().to_string()).collect()
+    }
+
+    fn sample() -> Vec<ObjMeta> {
+        vec![
+            meta("a.txt", 1),
+            meta("b.txt", 2),
+            meta("dir/x", 3),
+            meta("dir/y", 4),
+            meta("dir/sub/z", 5),
+        ]
+    }
+
+    /// delimiter 折叠 = 只折一层（AWS 语义）✗ 目录本身不产出对象。
+    #[test]
+    fn delimiter_rolls_up_one_level() {
+        let all = sample();
+        let e = build_entries(&all, "", Some("/"));
+        assert_eq!(keys(&e), vec!["a.txt", "b.txt", "dir/"]);
+        // 带 prefix 再折一层
+        let e2 = build_entries(&all, "dir/", Some("/"));
+        assert_eq!(keys(&e2), vec!["dir/sub/", "dir/x", "dir/y"]);
+        // 无 delimiter = 全平铺
+        let e3 = build_entries(&all, "", None);
+        assert_eq!(
+            keys(&e3),
+            vec!["a.txt", "b.txt", "dir/sub/z", "dir/x", "dir/y"]
+        );
+    }
+
+    /// prefix 过滤 + common prefix 去重计数（CommonPrefixes 各算一项）。
+    #[test]
+    fn prefix_filter_and_dedup() {
+        let all = sample();
+        let e = build_entries(&all, "dir", Some("/"));
+        // "dir/x"、"dir/y" 折入 "dir/"；"dir/sub/z" 首分隔符也在 dir/ 后 → 同折
+        assert_eq!(keys(&e), vec!["dir/"]);
+        let e2 = build_entries(&all, "a", None);
+        assert_eq!(keys(&e2), vec!["a.txt"]);
+    }
+
+    /// 分页：截断 + next = 页尾 key；再以 next 为 after 得下一页（不重不漏）。
+    #[test]
+    fn paginate_resumes_without_gap_or_duplicate() {
+        let all = sample();
+        let entries = build_entries(&all, "", None);
+        let p1 = paginate(entries.clone(), None, 2);
+        assert_eq!(
+            p1.contents
+                .iter()
+                .map(|o| o.key.clone().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["a.txt", "b.txt"]
+        );
+        assert!(p1.truncated);
+        assert_eq!(p1.next.as_deref(), Some("b.txt"));
+        let p2 = paginate(entries, p1.next.as_deref(), 2);
+        assert_eq!(
+            p2.contents
+                .iter()
+                .map(|o| o.key.clone().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["dir/sub/z", "dir/x"]
+        );
+        assert!(p2.truncated);
+        assert_eq!(p2.next.as_deref(), Some("dir/x"));
+    }
+
+    /// 满页且无余量 = 不截断（边界：rest.len() == max）。
+    #[test]
+    fn paginate_exact_fit_not_truncated() {
+        let all = vec![meta("a", 1), meta("b", 1)];
+        let entries = build_entries(&all, "", None);
+        let p = paginate(entries, None, 2);
+        assert!(!p.truncated);
+        assert_eq!(p.next, None);
+    }
+
+    #[test]
+    fn max_keys_rules() {
+        assert_eq!(resolve_max_keys(None).unwrap(), 1000);
+        assert_eq!(resolve_max_keys(Some(0)).unwrap(), 0);
+        assert_eq!(resolve_max_keys(Some(5000)).unwrap(), 1000);
+        assert!(
+            resolve_max_keys(Some(-1)).is_err(),
+            "负值 = InvalidArgument"
+        );
+    }
+
+    #[test]
+    fn range_resolution_matches_http_semantics() {
+        let size = 100u64;
+        let int = s3s::dto::Range::parse("bytes=0-9").unwrap();
+        assert_eq!(resolve_range(Some(int), size).unwrap(), Some(0..10));
+        let open = s3s::dto::Range::parse("bytes=90-").unwrap();
+        assert_eq!(resolve_range(Some(open), size).unwrap(), Some(90..100));
+        let suffix = s3s::dto::Range::parse("bytes=-10").unwrap();
+        assert_eq!(resolve_range(Some(suffix), size).unwrap(), Some(90..100));
+        let past = s3s::dto::Range::parse("bytes=200-").unwrap();
+        assert!(resolve_range(Some(past), size).is_err(), "越界 = 416");
+        assert_eq!(resolve_range(None, size).unwrap(), None);
     }
 }

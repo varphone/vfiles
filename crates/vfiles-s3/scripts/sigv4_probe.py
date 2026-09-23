@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""S3 SigV4 九式实证探针（round 2/256 入仓可复演 ✓ AWS SigV4 标准算法）。"""
+"""S3 SigV4 实证探针（r2 九式 + r3 列表/Range 八式 = 入仓可复演 ✓ AWS SigV4 标准算法）。
+
+用法：起服（VFILES_S3_ENABLED=true + 单对密钥）后
+  python3 crates/vfiles-s3/scripts/sigv4_probe.py http://127.0.0.1:9000 <access> <secret> <db路径>
+可选第二入口（真 AWS SDK，需 `pip install boto3`）：scripts/boto_probe.py
+"""
 import hashlib
 import hmac
+import re
 import sqlite3
 import sys
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 
 ENDPOINT = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:9000"
@@ -62,6 +69,16 @@ def request(method, path, query="", body=b"", extra_headers=None, secret=None):
     except urllib.error.HTTPError as e:
         return e.code, e.read(), dict(e.headers)
 
+def q(params):
+    """规范查询串：按 key 排序 + 值 URL 编码。"""
+    return "&".join(f"{k}={urllib.parse.quote(str(v), safe='')}" for k, v in sorted(params.items()))
+
+def keys_of(body):
+    return re.findall(rb"<Contents>.*?<Key>(.*?)</Key>", body, re.S)
+
+def prefixes_of(body):
+    return re.findall(rb"<CommonPrefixes>.*?<Prefix>(.*?)</Prefix>", body, re.S)
+
 P = []
 
 def check(name, ok, detail=""):
@@ -82,6 +99,7 @@ def ver_count(key):
     return n
 
 def main():
+    # ── r2 九式 ──
     st, body, _ = request("GET", "/")
     check("1 ListBuckets default", st == 200 and b"<Name>default</Name>" in body, st)
 
@@ -115,6 +133,69 @@ def main():
 
     st, _, _ = request("GET", "/", secret="totally-wrong")
     check("9 wrong secret 403", st == 403, st)
+
+    # ── r3 列表 / 元数据 / Range 八式 ──
+    base = "/default"
+    blob = b"0123456789abcdef"
+    seed = [("probe2/a.txt", b"aa"), ("probe2/b.txt", b"bb"),
+            ("probe2/dir/x.txt", b"xx"), ("probe2/dir/y.txt", b"yy"),
+            ("probe2/range.bin", blob)]
+    for k, b in seed:
+        request("PUT", base + "/" + k, body=b)
+
+    st, body, _ = request("GET", base, query=q({"list-type": "2", "prefix": "probe2/"}))
+    has_size = b"<Size>2</Size>" in body
+    has_lm = re.search(rb"<LastModified>\d{4}-\d\d-\d\dT", body) is not None
+    has_etag = re.search(rb"<ETag>(&quot;|\")[0-9a-f]{32}(&quot;|\")</ETag>", body) is not None
+    check("10 Contents metadata size/lastmodified/etag",
+          st == 200 and has_size and has_lm and has_etag,
+          f"{st} size={has_size} lm={has_lm} etag={has_etag}")
+
+    st, body, _ = request("GET", base, query=q({"list-type": "2", "prefix": "probe2/", "delimiter": "/"}))
+    ks, ps = keys_of(body), prefixes_of(body)
+    check("11 ListObjectsV2 delimiter CommonPrefixes",
+          st == 200 and ps == [b"probe2/dir/"]
+          and sorted(ks) == [b"probe2/a.txt", b"probe2/b.txt", b"probe2/range.bin"],
+          f"{st} keys={ks} prefixes={ps}")
+
+    st, body, _ = request("GET", base, query=q({"list-type": "2", "prefix": "probe2/", "max-keys": "1"}))
+    trunc = b"<IsTruncated>true</IsTruncated>" in body
+    m = re.search(rb"<NextContinuationToken>(.*?)</NextContinuationToken>", body)
+    first = keys_of(body)
+    check("12a page1 truncated + token", st == 200 and trunc and m is not None and len(first) == 1, f"{st} {first}")
+    seen = list(first)
+    tok = m.group(1).decode() if m else ""
+    for _ in range(8):
+        st, body, _ = request("GET", base, query=q({
+            "list-type": "2", "prefix": "probe2/", "max-keys": "1", "continuation-token": tok}))
+        seen += keys_of(body)
+        m = re.search(rb"<NextContinuationToken>(.*?)</NextContinuationToken>", body)
+        if m is None or b"<IsTruncated>true</IsTruncated>" not in body:
+            break
+        tok = m.group(1).decode()
+    check("12b pagination complete no dup", len(seen) == len(set(seen)) and len(seen) >= 5, f"seen={seen}")
+
+    st, body, _ = request("GET", base, query=q({"prefix": "probe2/", "max-keys": "3"}))
+    check("13 ListObjects V1 Contents+IsTruncated",
+          st == 200 and b"ListBucketResult" in body and len(keys_of(body)) == 3
+          and b"<IsTruncated>true</IsTruncated>" in body,
+          f"{st} keys={len(keys_of(body))}")
+
+    st, body, h = request("GET", base + "/probe2/range.bin", extra_headers={"range": "bytes=2-5"})
+    cr = h.get("Content-Range") or h.get("content-range")
+    check("14 Range 206 + Content-Range",
+          st == 206 and body == blob[2:6] and cr == "bytes 2-5/16", f"{st} body={body} cr={cr}")
+
+    st, body, _ = request("GET", base + "/probe2/range.bin", extra_headers={"range": "bytes=999999-"})
+    check("15 Range 416 InvalidRange", st == 416 and b"InvalidRange" in body, st)
+
+    st, _, h = request("HEAD", base + "/probe2/a.txt")
+    lm = h.get("Last-Modified") or h.get("last-modified")
+    check("16 HEAD Last-Modified", st == 200 and lm is not None, f"{st} lm={lm}")
+
+    # 清理
+    for k, _ in seed:
+        request("DELETE", base + "/" + k)
 
     passed = sum(1 for x in P if x)
     print(f"== {passed}/{len(P)} PASS ==")

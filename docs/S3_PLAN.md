@@ -1,4 +1,26 @@
-# S3 兼容 API（round 2/256 交付 · 九式实证 9/9 全绿）
+# S3 兼容 API（r2 九式 9/9 → **r3 列表/元数据/Range 八式 + 真 AWS SDK 9/9**）
+
+## 状态（r3 末 · 列表面商业级完备 = 自写探针 17/17 + boto3 9/9）
+
+- **新增能力（`crates/vfiles-s3/src/lib.rs`）**：
+  | 面 | 语义 |
+  | --- | --- |
+  | `ListObjectsV2` | prefix · **delimiter→CommonPrefixes**（只折一层）· **continuation-token** · start-after · **max-keys**（尊重请求、上限 1000）· is-truncated · **next-continuation-token** · key-count |
+  | `ListObjects`(V1) | marker · delimiter · max-keys · next-marker · common-prefixes |
+  | `Object` 元数据 | **size / last-modified / ETag**（版本 id hex，与 WebDAV/S3 GET 同式） |
+  | `GetObject`/`HeadObject` | **last-modified** + **HTTP Range → 206/Content-Range**（s3s 见 content_range 自置 206 ✗ `Range::check` 夹取 + 416 InvalidRange） |
+  | bucket | `default` → `<?xml ...><ListBucketResult>` |
+- **关键实现**：`collect_objects` 一次树遍历取 `(key,size,mtime,etag)` → `build_entries`（prefix 过滤 +
+  delimiter 折叠去重 + 排序）→ `paginate`（`after` 独占切片 ✗ token = 页尾 key = 无重无漏）·
+  `resolve_max_keys`（负值 InvalidArgument / 上限 1000）· `resolve_range`（`Range::check`）。
+  纯函数 6 项单测（delimiter 折一层 / 分页续页 / 满页不截断 / max-keys 规则 / range 四态）。
+- **实证（入仓双通道可复演）**：
+  - `scripts/sigv4_probe.py`（自写 SigV4）= **17/17 PASS**：r2 九式 + 元数据 / delimiter /
+    分页 12a+12b（无重无漏）/ V1 / Range 206 / Range 416 / HEAD Last-Modified
+  - `scripts/boto_probe.py`（**真 AWS SDK** = botocore 签名+XML+**paginator**+Range）= **9/9 PASS**：
+    含 SDK 驱动 `get_paginator("list_objects_v2")` PageSize=1 = 4 页 4 key 无重
+- **扩展债（更新）**：put 流式直连 · multipart upload · **`DeleteObjects` 批量删** · per-user 凭证 ·
+  region 校验 · 大桶 SQL 分页（现全量枚举后内存分页 = 十万级需换）。
 
 ## 形态
 
