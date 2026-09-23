@@ -1,4 +1,27 @@
-# rsync 协议 daemon（r9 列 → r10 取 → r11/14 delta → r12 push → r13 认证 → **r15 `--delete` 镜像**）
+# rsync 协议 daemon（r9 列 → r10 取 → r11/14 delta → r12 push → r13 认证 → r15 `--delete` → **r16 filter 保护**）
+
+## 状态（r16 末 · filter/exclude 规则解析 = `--delete` 可信镜像）
+
+- **实装**（`crates/vfiles-rsync/src/lib.rs`）：`--delete` 场景下客户端会先发 **filter list**，
+  规则不再丢弃而是解析为 `FilterRule`：
+  - 序列化形（`send_rules`）：`int32 len + "<+|-><flags> <pattern>[/]"`；解析支持 `- pat`（排除/保护）、
+    `+ pat`（包含/解除保护）、尾 `/` = 仅目录、首 `/` 或含 `/` = 锚定传输根；其余类型跳过（debug 记）
+  - `wildmatch` 子集：`*` 不跨 `/`、`**` 跨 `/`、`?` 单字符、`[..]`/`[!..]` 字符类
+  - `is_excluded` = **首条命中定态**（rsync `check_filter` 语义 ✗ 无命中 = 不保护）
+  - 保护传播：命中 exclude 的**目录连同整棵子树**不参与删除（祖先前缀集合）
+  - `--delete-excluded` → 忽略保护（全删，客户端此时会 elide 规则 ✗ 我们自身标志兜底）
+- **真机验收（每例带对照）**：
+  | 场景 | 结果 |
+  | --- | --- |
+  | `--delete`（无 exclude）删本地已删的 `*.tmp` | `removed=2`（对照） ✓ |
+  | `--delete --exclude='*.tmp'` | `keep.tmp` **被保护**（无删除日志） ✓ |
+  | `--delete --delete-excluded --exclude='*.tmp'` | `removed=2`（保护失效） ✓ |
+  | `--delete --exclude='secret/'` | `secret/` 及 `secret/deep/s.txt` **整树保护** ✓ |
+  | `--delete`（无 exclude） | `secret/` 整树删除 ✓ |
+- **门禁**：`cargo test -p vfiles-rsync` **22/22**（新增 `wildmatch` 12 断言 + 规则解析/保护判定
+  9 断言）× workspace 全绿 × clippy 归零 × fmt × build。
+- **债**：per-dir merge 文件（`.rsync-filter`）/ `P`/`H`/`S`/`R` 规则类型 / `--filter` 完整语法未支持 ·
+  不比较 mtime/size · 符号链接/设备/空目录 · basis 全量入内存。
 
 ## 状态（r15 末 · `--delete` 镜像落地 + 后端 trait 化）
 

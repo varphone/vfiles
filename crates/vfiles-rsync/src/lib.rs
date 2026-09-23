@@ -322,6 +322,122 @@ pub fn sort_flist(entries: &mut Vec<FlatEntry>) {
     *entries = sorted;
 }
 
+// ─────────────────────────── filter/exclude 规则（`--delete` 保护面）───────────────────────────
+
+/// 一条接收端 filter 规则（`--exclude` / `--include` 序列化形 `- pat` / `+ pat`）。
+#[derive(Debug, Clone)]
+struct FilterRule {
+    /// true = include（解除保护），false = exclude（保护不被删除）。
+    include: bool,
+    /// 仅目录（pattern 尾 `/`）。
+    dir_only: bool,
+    /// 锚定传输根（pattern 首 `/` 或含 `/`）。
+    anchored: bool,
+    pattern: String,
+}
+
+/// 解析序列化规则行（`+ pat/` / `- pat` ✗ 其余类型跳过）。
+fn parse_rule(line: &str) -> Option<FilterRule> {
+    let line = line.trim_end_matches(['\n', '\r']);
+    let (include, rest) = match line.as_bytes().first()? {
+        b'+' => (true, &line[1..]),
+        b'-' => (false, &line[1..]),
+        _ => return None,
+    };
+    let rest = rest.trim_start();
+    let (pat, dir_only) = match rest.strip_suffix('/') {
+        Some(p) => (p, true),
+        None => (rest, false),
+    };
+    let anchored = pat.starts_with('/');
+    let pattern = pat.trim_start_matches('/').to_string();
+    if pattern.is_empty() {
+        return None;
+    }
+    Some(FilterRule {
+        include,
+        dir_only,
+        anchored: anchored || pattern.contains('/'),
+        pattern,
+    })
+}
+
+/// 通配匹配（rsync wildmatch 子集）：`*` 不跨 `/`、`**` 跨 `/`、`?` 单字符、`[..]` 字符类。
+fn wildmatch(pattern: &str, text: &str) -> bool {
+    fn m(p: &[u8], t: &[u8]) -> bool {
+        if p.is_empty() {
+            return t.is_empty();
+        }
+        match p[0] {
+            b'*' => {
+                let double = p.len() > 1 && p[1] == b'*';
+                let rest = if double { &p[2..] } else { &p[1..] };
+                if double {
+                    (0..=t.len()).any(|i| m(rest, &t[i..]))
+                } else {
+                    let mut i = 0;
+                    loop {
+                        if m(rest, &t[i..]) {
+                            return true;
+                        }
+                        if i >= t.len() || t[i] == b'/' {
+                            return false;
+                        }
+                        i += 1;
+                    }
+                }
+            }
+            b'?' => !t.is_empty() && t[0] != b'/' && m(&p[1..], &t[1..]),
+            b'[' => {
+                let Some(close) = p.iter().position(|&c| c == b']') else {
+                    return !t.is_empty() && t[0] == b'[' && m(&p[1..], &t[1..]);
+                };
+                if t.is_empty() || t[0] == b'/' {
+                    return false;
+                }
+                let class = &p[1..close];
+                let (negate, class) = match class.first() {
+                    Some(b'!') | Some(b'^') => (true, &class[1..]),
+                    _ => (false, class),
+                };
+                let mut hit = false;
+                let mut i = 0;
+                while i < class.len() {
+                    if i + 2 < class.len() && class[i + 1] == b'-' {
+                        if class[i] <= t[0] && t[0] <= class[i + 2] {
+                            hit = true;
+                        }
+                        i += 3;
+                    } else {
+                        if class[i] == t[0] {
+                            hit = true;
+                        }
+                        i += 1;
+                    }
+                }
+                hit != negate && m(&p[close + 1..], &t[1..])
+            }
+            c => !t.is_empty() && t[0] == c && m(&p[1..], &t[1..]),
+        }
+    }
+    m(pattern.as_bytes(), text.as_bytes())
+}
+
+/// 首条命中规则定保护态（rsync `check_filter` 语义 ✗ 无命中 = 不保护）。
+fn is_excluded(rules: &[FilterRule], rel_path: &str, is_dir: bool) -> bool {
+    let base = rel_path.rsplit('/').next().unwrap_or(rel_path);
+    for r in rules {
+        if r.dir_only && !is_dir {
+            continue;
+        }
+        let target = if r.anchored { rel_path } else { base };
+        if wildmatch(&r.pattern, target) {
+            return !r.include;
+        }
+    }
+    false
+}
+
 // ─────────────────────────── daemon 认证（secrets ✗ r8）───────────────────────────
 
 /// 本端支持的认证摘要（最强优先 ✗ 与 banner 一致）。
@@ -448,6 +564,8 @@ struct ParsedArgs {
     list_only: bool,
     /// `--delete*`（镜像：删目标端源端没有的条目）。
     delete: bool,
+    /// `--delete-excluded`（连被排除项一起删）。
+    delete_excluded: bool,
     /// `-e` 选项值 = 官方 `client_info`（行为能力串，决定 compat_flags）。
     client_info: String,
     paths: Vec<String>,
@@ -470,7 +588,11 @@ fn parse_args(segs: &[String]) -> ParsedArgs {
                 "recursive" => a.recursive = true,
                 "no-r" => a.recursive = false,
                 "delete" | "delete-before" | "delete-during" | "delete-delay" | "delete-after"
-                | "delete-excluded" | "del" => a.delete = true,
+                | "del" => a.delete = true,
+                "delete-excluded" => {
+                    a.delete = true;
+                    a.delete_excluded = true;
+                }
                 _ => {}
             }
             continue;
@@ -1432,7 +1554,8 @@ where
     } else {
         // ── push：客户端为 sender、本端为接收端 ──
         let base = module_path(&args.paths, module);
-        // `--delete*` → 客户端会先发 filter list（receiver_wants_list=true ✗ 规则本版忽略）
+        // `--delete*` → 客户端先发 filter list（receiver_wants_list=true）；规则用于**保护**不被删
+        let mut filter_rules: Vec<FilterRule> = Vec::new();
         if args.delete {
             loop {
                 let b = data_take(&mut rw, &mut pending, 4).await?;
@@ -1446,8 +1569,14 @@ where
                         "rsync: 非法 filter 规则长度（push）",
                     ));
                 }
-                let _rule = data_take(&mut rw, &mut pending, len as usize).await?;
+                let rule = data_take(&mut rw, &mut pending, len as usize).await?;
+                let text = String::from_utf8_lossy(&rule);
+                match parse_rule(&text) {
+                    Some(r) => filter_rules.push(r),
+                    None => tracing::debug!(rule = %text, "rsync: 跳过不支持的 filter 规则"),
+                }
             }
+            tracing::debug!(rules = filter_rules.len(), "rsync: 已解析 filter 规则");
         }
         let mut entries = recv_file_list(&mut rw, &mut pending, negotiated).await?;
         sort_flist(&mut entries);
@@ -1560,12 +1689,38 @@ where
                     .await
                 {
                     Ok(dest) => {
-                        let extras: Vec<String> = dest
-                            .iter()
-                            .filter(|d| d.name != "." && !src_names.contains(d.name.as_str()))
-                            .map(|d| d.fs_path.clone())
-                            .filter(|p| !p.is_empty())
-                            .collect();
+                        // 保护：命中 exclude 的条目（含其子树）不删；`--delete-excluded` 时全删
+                        let mut protected_dirs: std::collections::HashSet<String> =
+                            std::collections::HashSet::new();
+                        let mut extras: Vec<String> = Vec::new();
+                        for d in dest.iter() {
+                            if d.name == "." {
+                                continue;
+                            }
+                            let mut anc_protected = false;
+                            let mut prefix = String::new();
+                            for comp in d.name.split('/') {
+                                if !prefix.is_empty() {
+                                    prefix.push('/');
+                                }
+                                prefix.push_str(comp);
+                                if prefix != d.name && protected_dirs.contains(&prefix) {
+                                    anc_protected = true;
+                                    break;
+                                }
+                            }
+                            let protected = !args.delete_excluded
+                                && (anc_protected || is_excluded(&filter_rules, &d.name, d.is_dir));
+                            if protected {
+                                if d.is_dir {
+                                    protected_dirs.insert(d.name.clone());
+                                }
+                                continue;
+                            }
+                            if !src_names.contains(d.name.as_str()) && !d.fs_path.is_empty() {
+                                extras.push(d.fs_path.clone());
+                            }
+                        }
                         if !extras.is_empty() {
                             let n = extras.len();
                             match backend.delete(extras).await {
@@ -2202,6 +2357,57 @@ mod tests {
                 0x7f, 0x72
             ]
         );
+    }
+
+    /// filter 通配匹配（`*` 不跨 `/`、`**` 跨、`?`、字符类）。
+    #[test]
+    fn wildmatch_subset_matches_rsync() {
+        assert!(wildmatch("*.tmp", "a.tmp"));
+        assert!(!wildmatch("*.tmp", "a.txt"));
+        assert!(wildmatch("sub/*.tmp", "sub/a.tmp"));
+        assert!(!wildmatch("sub/*.tmp", "sub/deep/a.tmp"), "* 不跨 /");
+        assert!(wildmatch("sub/**/*.tmp", "sub/deep/a.tmp"), "** 跨 /");
+        assert!(wildmatch("a?c", "abc"));
+        assert!(wildmatch("[ab]c", "bc"));
+        assert!(wildmatch("[!a]c", "bc"));
+        assert!(!wildmatch("[!b]c", "bc"));
+        assert!(wildmatch("*", "anything"));
+        assert!(wildmatch("exact", "exact"));
+        assert!(!wildmatch("exact", "exact2"));
+    }
+
+    /// 规则解析（`-`/`+`、目录尾 `/`、锚定首 `/`）+ 首条命中语义 + 保护判定。
+    #[test]
+    fn filter_rules_parse_and_protect() {
+        let r = parse_rule("- *.tmp").unwrap();
+        assert!(!r.include && !r.dir_only && !r.anchored && r.pattern == "*.tmp");
+        let r = parse_rule("+ keep.tmp").unwrap();
+        assert!(r.include);
+        let r = parse_rule("- cache/").unwrap();
+        assert!(r.dir_only, "尾 / = 仅目录");
+        let r = parse_rule("- /top.txt").unwrap();
+        assert!(r.anchored, "首 / = 锚定");
+        let r = parse_rule("- sub/x.txt").unwrap();
+        assert!(r.anchored, "含 / = 锚定");
+        assert!(parse_rule(": merge").is_none(), "不支持类型跳过");
+
+        let rules: Vec<FilterRule> = ["+ keep.tmp", "- *.tmp", "- cache/", "- /top.txt"]
+            .iter()
+            .filter_map(|l| parse_rule(l))
+            .collect();
+        assert!(
+            !is_excluded(&rules, "keep.tmp", false),
+            "先 include 解除保护"
+        );
+        assert!(is_excluded(&rules, "sub/a.tmp", false), "basename 命中");
+        assert!(is_excluded(&rules, "cache", true), "目录保护");
+        assert!(!is_excluded(&rules, "cache", false), "非目录不命中目录规则");
+        assert!(is_excluded(&rules, "top.txt", false), "锚定命中根");
+        assert!(
+            !is_excluded(&rules, "sub/top.txt", false),
+            "锚定不匹配子路径"
+        );
+        assert!(!is_excluded(&rules, "other.txt", false), "无命中 = 不保护");
     }
 
     /// 收端 delta 闭环：basis → 块校验和 → 发送端 token → `apply_tokens` 重建 == 新内容。
