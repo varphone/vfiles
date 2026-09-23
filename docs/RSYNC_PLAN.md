@@ -1,4 +1,30 @@
-# rsync 协议 daemon（r2 选型 → … → r8 对答表 → **r9 协议 30 实装 + 真 CLI RC0 列文件** ✗ delta r10）
+# rsync 协议 daemon（r2 选型 → … → r9 列清单 RC0 → **r10 整文件下载 RC0 + 内容 SHA-256 全对** ✗ 真 delta r11）
+
+## 状态（r10 末 · 整文件下载落地 = rsync 从"能列"到"能取" ✗ 真机内容校验全绿）
+
+- **实装兑现（下载探针 ✔）**：真 `rsync 3.2.7` 对我方 daemon：
+  | 探针 | 结果 |
+  | --- | --- |
+  | `rsync …/files/说明.md /tmp/`（单文件） | RC0 + 内容 `v2 content` ✓ |
+  | `rsync -r …/files/aka/foo/bar/hallo/ /tmp/`（4 文件 70MB 嵌套） | RC0 + **4/4 SHA-256 与 blobs 表逐字节同** ✓ |
+  | 同上二跑 `-I`（强制 basis → 接收端发**块校验和** count>0） | RC0 + 4/4 哈希仍全对 ✓ |
+- **协议实现**（照 `golden/download_wire_r9.md` 零猜）：
+  1. **checksum 清单收敛 `"md5"`** = 双方必选 md5（照抄官方全清单会协商 xxh128 ✗ 需 XXH3-128）
+  2. `send_files` 循环：`read_ndx` → `iflags`(shortint) → [BASIS_TYPE 1B] → [XNAME vstring] →
+     仅 `ITEM_TRANSFER` 读 `sum_head`(4×int32) + 块校验和（**读后即弃** ✗ 全 literal 对 count>0 亦合法）
+     → `write_ndx_and_attrs` 回显 + `write_sum_head` 回显 → `int32(len)+data` 分块(CHUNK_SIZE 32KB)
+     → `int32(0)` 终结 → **`MD5(内容)` 16B**（真机实证无 seed）
+  3. **ndx 对齐**：`sort_flist` 按 rsync `f_name_cmp` 真机序（**同目录文件先于子目录、各按名升序、
+     遇目录深度优先下钻** ✗ 官方 `--list-only` 输出序实证）重排后再编码 = 接收端排序下标一致
+  4. 单文件请求：flist 仅该文件（name = basename、无 `.`），size 取父目录批量 meta
+- **新增**：`FlatEntry.fs_path`（命名空间读取路径）+ `handle_conn` 第 4 参 `read_file` 闭包
+  （bin 侧 = `workspace.read_file_bytes` 与 WebDAV/S3 同源 blob 链）+ `write_ndx`/`data_int`/
+  `data_shortint`/`data_vstring`/`md5_digest` + `md-5 0.10` 依赖（本机 registry 已有 = 离线可加）。
+- **门禁**：`cargo test -p vfiles-rsync` **13/13**（排序黄金 + 整文件下载整链逐字节 + md5 RFC 向量
+  + 既有 10 项）× `cargo test --workspace` 全绿 × clippy/fmt × bin build。
+- **r11 清单**：真 **delta**（rolling checksum + strong 匹配 ✗ 现全 literal = 正确但无增量收益）
+  → 收端 push（复用 upload 链）→ secrets 认证 → `--checksum`/压缩面 → 会话内 `read_file` 改流式
+  （现全量入内存 = 大文件内存债）。
 
 ## 状态（r9 末 · 权威源驱动实装 = 猜测层清零 ✗ 真 `rsync --list-only` RC0 兑现）
 

@@ -11,6 +11,7 @@ rust-version.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 vfiles-domain = { path = "../vfiles-domain" }
+md-5.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }

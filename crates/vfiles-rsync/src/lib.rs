@@ -25,8 +25,9 @@ use vfiles_domain::{EntryKind, NamespaceId};
 
 /// daemon banner（版本 + 算法串 ✗ 官方 `output_daemon_greeting` 形）。
 pub const PROTOCOL_LINE: &str = "@RSYNCD: 30.0 sha512 sha256 sha1 md5 md4\n";
-/// 服务端校验和清单（官方 valid_checksums 默认序 = 最强优先；尾 `none` 仅服务端列出）。
-const CHECKSUM_LIST: &str = "xxh128 xxh3 xxh64 md5 md4 sha1 none";
+/// 服务端校验和清单。**只列 `md5`** = 双方必收敛到 md5（照抄官方全清单会协商出 xxh128，
+/// 需 XXH3-128 实现 ✗ 见 `golden/download_wire_r9.md`：文件校验和 = `MD5(内容)` 无 seed）。
+const CHECKSUM_LIST: &str = "md5";
 /// 压缩协商清单（本实现不做压缩 = 仅 `none`，客户端协商后自降级为无压缩）。
 const COMPRESS_LIST: &str = "none";
 
@@ -52,6 +53,15 @@ const CF_VARINT_FLIST_FLAGS: u32 = 1 << 7;
 const CF_ID0_NAMES: u32 = 1 << 8;
 
 const NDX_DONE: i32 = -1;
+
+// ITEM 位（rsync.h ✗ 接收端请求帧使用）
+const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11;
+const ITEM_XNAME_FOLLOWS: u16 = 1 << 12;
+const ITEM_TRANSFER: u16 = 1 << 15;
+/// MSG_NO_SEND（rsync.h msgcode ✗ 文件读取失败时通知接收端）。
+const MSG_NO_SEND: u8 = 102;
+/// 字面量分块（rsync.h `CHUNK_SIZE`）。
+const CHUNK_SIZE: usize = 32 * 1024;
 
 // ─────────────────────────── wire 原语（io.c 移植）───────────────────────────
 
@@ -131,6 +141,8 @@ pub struct FlatEntry {
     pub mtime: i64,
     /// 原生 stat mode（`to_wire_mode` 在 Linux 上恒等 ✗ 直传 LE4）。
     pub mode: u32,
+    /// 命名空间内读取路径（下载用 ✗ `.` = 请求基准目录；测试/列表可留空）。
+    pub fs_path: String,
 }
 
 impl FlatEntry {
@@ -142,6 +154,7 @@ impl FlatEntry {
             size: 4096,
             mtime,
             mode: 0o40755,
+            fs_path: String::new(),
         }
     }
 
@@ -153,7 +166,14 @@ impl FlatEntry {
             size,
             mtime,
             mode: 0o100644,
+            fs_path: String::new(),
         }
+    }
+
+    /// 设置命名空间读取路径（builder）。
+    pub fn with_fs_path(mut self, path: impl Into<String>) -> Self {
+        self.fs_path = path.into();
+        self
     }
 }
 
@@ -224,7 +244,82 @@ pub fn encode_flist(entries: &[FlatEntry], varint_flags: bool) -> Vec<u8> {
     body
 }
 
-// ─────────────────────────── args 解析 ───────────────────────────
+/// 按 rsync `f_name_cmp` 语义排序 flist（ndx = 排序后下标 ✗ 不排序会发错文件）。
+///
+/// 真机实证（官方 daemon `--list-only` 输出序）：**同一目录下文件在前、子目录在后，各自按名字
+/// 升序；遇到子目录立即深度优先下钻**。`.`（根）恒首。实现 = 按父路径建树后 DFS。
+pub fn sort_flist(entries: &mut Vec<FlatEntry>) {
+    use std::collections::BTreeMap;
+    let mut children: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut root_dot: Option<usize> = None;
+    for (i, e) in entries.iter().enumerate() {
+        if e.name == "." {
+            root_dot = Some(i);
+            continue;
+        }
+        let parent = match e.name.rfind('/') {
+            Some(p) => e.name[..p].to_string(),
+            None => String::new(),
+        };
+        children.entry(parent).or_default().push(i);
+    }
+
+    fn basename(e: &FlatEntry) -> &str {
+        e.name.rsplit('/').next().unwrap_or("")
+    }
+
+    fn emit(
+        entries: &[FlatEntry],
+        children: &BTreeMap<String, Vec<usize>>,
+        parent: &str,
+        order: &mut Vec<usize>,
+    ) {
+        let Some(kids) = children.get(parent) else {
+            return;
+        };
+        let mut files: Vec<usize> = kids
+            .iter()
+            .copied()
+            .filter(|&i| !entries[i].is_dir)
+            .collect();
+        let mut dirs: Vec<usize> = kids
+            .iter()
+            .copied()
+            .filter(|&i| entries[i].is_dir)
+            .collect();
+        files.sort_by(|&a, &b| basename(&entries[a]).cmp(basename(&entries[b])));
+        dirs.sort_by(|&a, &b| basename(&entries[a]).cmp(basename(&entries[b])));
+        for i in files {
+            order.push(i);
+        }
+        for i in dirs {
+            order.push(i);
+            let child = entries[i].name.clone();
+            emit(entries, children, &child, order);
+        }
+    }
+
+    let mut order = Vec::with_capacity(entries.len());
+    if let Some(i) = root_dot {
+        order.push(i);
+    }
+    emit(entries, &children, "", &mut order);
+    // 兜底：未纳入树序的条目（异常输入）按原序追加
+    for i in 0..entries.len() {
+        if !order.contains(&i) {
+            order.push(i);
+        }
+    }
+
+    let mut slots: Vec<Option<FlatEntry>> = entries.drain(..).map(Some).collect();
+    let mut sorted = Vec::with_capacity(order.len());
+    for i in order {
+        if let Some(e) = slots[i].take() {
+            sorted.push(e);
+        }
+    }
+    *entries = sorted;
+}
 
 /// 客户端 args 解析结果。
 #[derive(Debug, Default, Clone)]
@@ -434,10 +529,12 @@ where
             four[2] = rest[1];
             u32::from_le_bytes(four)
         } else {
-            ((two[0] as u32) << 8) + two[1] as u32 + *prev_positive as u32
+            ((two[0] as u32) << 8)
+                .wrapping_add(two[1] as u32)
+                .wrapping_add(*prev_positive as u32)
         }
     } else {
-        b[0] as u32 + *prev_positive as u32
+        (b[0] as u32).wrapping_add(*prev_positive as u32)
     };
     if unum > i32::MAX as u32 {
         return Err(std::io::Error::new(
@@ -455,6 +552,92 @@ where
     }
 }
 
+/// 协议 30 的 NDX 编码（io.c `write_ndx` 移植 ✗ 差分位 + NDX_DONE 单字节 0）。
+fn write_ndx(ndx: i32, prev_positive: &mut i32, prev_negative: &mut i32, out: &mut Vec<u8>) {
+    if ndx == NDX_DONE {
+        out.push(0);
+        return;
+    }
+    let mut b = [0u8; 6];
+    let mut cnt = 0usize;
+    let diff;
+    let mut num = ndx;
+    if ndx >= 0 {
+        diff = ndx - *prev_positive;
+        *prev_positive = ndx;
+    } else {
+        b[cnt] = 0xFF;
+        cnt += 1;
+        num = -ndx;
+        diff = num - *prev_negative;
+        *prev_negative = num;
+    }
+    if (1..0xFE).contains(&diff) {
+        b[cnt] = diff as u8;
+        cnt += 1;
+    } else if !(0..=0x7FFF).contains(&diff) {
+        b[cnt] = 0xFE;
+        b[cnt + 1] = ((num >> 24) as u8) | 0x80;
+        b[cnt + 2] = num as u8;
+        b[cnt + 3] = (num >> 8) as u8;
+        b[cnt + 4] = (num >> 16) as u8;
+        cnt += 5;
+    } else {
+        b[cnt] = 0xFE;
+        b[cnt + 1] = (diff >> 8) as u8;
+        b[cnt + 2] = diff as u8;
+        cnt += 3;
+    }
+    out.extend_from_slice(&b[..cnt]);
+}
+
+/// 从解复用流读 4 字节 LE 有符号整数（io.c `read_int`）。
+async fn data_int<S>(rw: &mut BufReader<S>, pending: &mut Vec<u8>) -> std::io::Result<i32>
+where
+    S: AsyncRead + Unpin,
+{
+    let b = data_take(rw, pending, 4).await?;
+    Ok(i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+}
+
+/// 从解复用流读 2 字节 LE 无符号（io.c `read_shortint`）。
+async fn data_shortint<S>(rw: &mut BufReader<S>, pending: &mut Vec<u8>) -> std::io::Result<u16>
+where
+    S: AsyncRead + Unpin,
+{
+    let b = data_take(rw, pending, 2).await?;
+    Ok((b[0] as u16) | ((b[1] as u16) << 8))
+}
+
+/// 从解复用流读 vstring（io.c `read_vstring`）。
+async fn data_vstring<S>(rw: &mut BufReader<S>, pending: &mut Vec<u8>) -> std::io::Result<String>
+where
+    S: AsyncRead + Unpin,
+{
+    let first = data_take(rw, pending, 1).await?[0];
+    let len = if first & 0x80 != 0 {
+        ((first & 0x7F) as usize) * 0x100 + data_take(rw, pending, 1).await?[0] as usize
+    } else {
+        first as usize
+    };
+    if len == 0 {
+        return Ok(String::new());
+    }
+    let bytes = data_take(rw, pending, len).await?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// 文件内容 MD5（真机实证：rsync 整文件校验和 = `MD5(内容)`，**不含 seed** ✗ 见 golden r9）。
+pub fn md5_digest(data: &[u8]) -> [u8; 16] {
+    use md5::{Digest, Md5};
+    let mut h = Md5::new();
+    h.update(data);
+    let out = h.finalize();
+    let mut digest = [0u8; 16];
+    digest.copy_from_slice(&out);
+    digest
+}
+
 /// 写一条 mux MSG_DATA 帧（大 payload 自动分片 ≤ 64KB/帧）。
 async fn write_msg<S>(rw: &mut BufReader<S>, payload: &[u8]) -> std::io::Result<()>
 where
@@ -469,14 +652,22 @@ where
 
 // ─────────────────────────── L1 状态机 ───────────────────────────
 
-/// 处理一条 rsync daemon 连接（协议 30）。
+/// 处理一条 rsync daemon 连接（协议 30 ✗ sender 面：列清单 + 整文件下载）。
 ///
-/// `list` 在为 sender 模式解析完 args 后调用一次，返回该请求的条目流（`.` 必须首条）。
-pub async fn handle_conn<S, F, Fut>(stream: S, module: &str, list: F) -> std::io::Result<()>
+/// - `list`：sender 模式解析完 args 后调用一次，返回该请求的条目流。
+/// - `read_file`：接收端请求某条目内容时按 `FlatEntry.fs_path` 调用（可多次）。
+pub async fn handle_conn<S, F, Fut, R, RFut>(
+    stream: S,
+    module: &str,
+    list: F,
+    read_file: R,
+) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
     F: FnOnce(ListRequest) -> Fut,
     Fut: Future<Output = Result<Vec<FlatEntry>, String>>,
+    R: Fn(&str) -> RFut,
+    RFut: Future<Output = Result<Vec<u8>, String>>,
 {
     let mut rw = BufReader::new(stream);
 
@@ -563,46 +754,122 @@ where
         let _rule = data_take(&mut rw, &mut pending, len as usize).await?;
     }
 
-    // ⑥ flist：收集 + 编码 + 发送
+    // ⑥ flist：收集 → 按 rsync 序排序（ndx 对齐）→ 编码 → 发送
     let req = ListRequest {
         recursive: args.recursive,
         path: module_path(&args.paths, module),
     };
-    let entries = match list(req).await {
+    let mut entries = match list(req).await {
         Ok(entries) => entries,
         Err(err) => {
             tracing::warn!(error = %err, "rsync：列举失败，回空清单");
             vec![FlatEntry::dir(".", now_unix())]
         }
     };
+    sort_flist(&mut entries);
     let flist = encode_flist(&entries, negotiated);
     let total_size: u64 = entries.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
     write_msg(&mut rw, &flist).await?;
 
-    // ⑦ 收尾对答：3×NDX_DONE 入 → 2×NDX_DONE + 终结 NDX_DONE 出 → 统计 → 最后问候
-    let mut phase = 0;
-    let mut prev_positive = -1i32;
-    let mut prev_negative = 1i32;
+    // ⑦ send_files：读接收端请求（ndx + iflags[+basis/xname] + sum_head[+块校验和]）→
+    //    回显 + 全 literal 数据 + MD5；NDX_DONE 走相位机（3 入 → 2 出 + 终结）。
+    let mut phase = 0u32;
+    let mut rp = (-1i32, 1i32); // read_ndx 差分态
+    let mut wp = (-1i32, 1i32); // write_ndx 差分态
     loop {
-        let ndx = read_ndx(
-            &mut rw,
-            &mut pending,
-            &mut prev_positive,
-            &mut prev_negative,
-        )
-        .await?;
+        let ndx = read_ndx(&mut rw, &mut pending, &mut rp.0, &mut rp.1).await?;
         if ndx == NDX_DONE {
             phase += 1;
             if phase > 2 {
                 break;
             }
-            write_msg(&mut rw, &[0u8]).await?;
-        } else {
-            tracing::warn!(ndx = ndx, "rsync：请求具体文件（delta 面未实现），结束会话");
+            let mut out = Vec::new();
+            write_ndx(NDX_DONE, &mut wp.0, &mut wp.1, &mut out);
+            write_msg(&mut rw, &out).await?;
+            continue;
+        }
+        if ndx < 0 {
+            tracing::warn!(ndx = ndx, "rsync：未预期的负索引，结束会话");
             break;
         }
+
+        // 请求属性
+        let iflags = data_shortint(&mut rw, &mut pending).await?;
+        let mut basis_type = 0u8;
+        if iflags & ITEM_BASIS_TYPE_FOLLOWS != 0 {
+            basis_type = data_take(&mut rw, &mut pending, 1).await?[0];
+        }
+        let xname = if iflags & ITEM_XNAME_FOLLOWS != 0 {
+            data_vstring(&mut rw, &mut pending).await?
+        } else {
+            String::new()
+        };
+
+        // 仅 ITEM_TRANSFER 才读接收端 sum_head + 块校验和（官方 send_files 同分支顺序）
+        let transferring = iflags & ITEM_TRANSFER != 0;
+        let (count, blength, s2length, remainder) = if transferring {
+            let c = data_int(&mut rw, &mut pending).await?;
+            let bl = data_int(&mut rw, &mut pending).await?;
+            let s2 = data_int(&mut rw, &mut pending).await?;
+            let rem = data_int(&mut rw, &mut pending).await?;
+            if !(0..=16 * 1024 * 1024).contains(&c) || !(0..=64).contains(&s2) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "rsync: 非法 sum_head",
+                ));
+            }
+            // 块校验和读后即弃（全 literal 发送对 count>0 亦合法；真 delta = 后续轮）
+            for _ in 0..c {
+                let _sum1 = data_int(&mut rw, &mut pending).await?;
+                let _sum2 = data_take(&mut rw, &mut pending, s2 as usize).await?;
+            }
+            (c, bl, s2, rem)
+        } else {
+            (0, 0, 0, 0)
+        };
+
+        // 回显 ndx+attrs（+ sum_head 回显）与数据
+        let mut out = Vec::new();
+        write_ndx(ndx, &mut wp.0, &mut wp.1, &mut out);
+        out.extend_from_slice(&iflags.to_le_bytes());
+        if iflags & ITEM_BASIS_TYPE_FOLLOWS != 0 {
+            out.push(basis_type);
+        }
+        if iflags & ITEM_XNAME_FOLLOWS != 0 {
+            write_vstring(&xname, &mut out);
+        }
+
+        if transferring {
+            out.extend_from_slice(&count.to_le_bytes());
+            out.extend_from_slice(&blength.to_le_bytes());
+            out.extend_from_slice(&s2length.to_le_bytes());
+            out.extend_from_slice(&remainder.to_le_bytes());
+
+            let entry = entries.get(ndx as usize);
+            let fs_path = entry.map(|e| e.fs_path.clone()).unwrap_or_default();
+            match read_file(&fs_path).await {
+                Ok(data) => {
+                    for chunk in data.chunks(CHUNK_SIZE) {
+                        out.extend_from_slice(&(chunk.len() as i32).to_le_bytes());
+                        out.extend_from_slice(chunk);
+                    }
+                    out.extend_from_slice(&0i32.to_le_bytes()); // token 终结
+                    out.extend_from_slice(&md5_digest(&data)); // 文件校验和
+                }
+                Err(err) => {
+                    tracing::warn!(path = %fs_path, error = %err, "rsync：文件读取失败，回 MSG_NO_SEND");
+                    let mut msg = Vec::new();
+                    msg.extend_from_slice(&(ndx as i32).to_le_bytes());
+                    write_msg(&mut rw, &mux_frame_tagged(&msg, MSG_NO_SEND)).await?;
+                    continue;
+                }
+            }
+        }
+        write_msg(&mut rw, &out).await?;
     }
-    write_msg(&mut rw, &[0u8]).await?;
+    let mut done = Vec::new();
+    write_ndx(NDX_DONE, &mut wp.0, &mut wp.1, &mut done);
+    write_msg(&mut rw, &done).await?;
 
     let mut stats = Vec::new();
     write_varlong(3, 0, &mut stats); // total_read
@@ -613,14 +880,20 @@ where
     write_msg(&mut rw, &stats).await?;
 
     // 最后一个 NDX_DONE 问候（官方 read_final_goodbye 协议 30 分支）
-    let _ = read_ndx(
-        &mut rw,
-        &mut pending,
-        &mut prev_positive,
-        &mut prev_negative,
-    )
-    .await?;
+    let _ = read_ndx(&mut rw, &mut pending, &mut rp.0, &mut rp.1).await?;
     Ok(())
+}
+
+/// 带指定 msgcode 的 mux 帧（`[len3, MPLEX_BASE+code] + payload`）。
+fn mux_frame_tagged(payload: &[u8], code: u8) -> Vec<u8> {
+    let len = payload.len();
+    let mut out = Vec::with_capacity(len + 4);
+    out.push((len & 0xFF) as u8);
+    out.push(((len >> 8) & 0xFF) as u8);
+    out.push(((len >> 16) & 0xFF) as u8);
+    out.push(MPLEX_BASE + code);
+    out.extend_from_slice(payload);
+    out
 }
 
 /// 读 NUL 分隔 args 直到空段（双 NUL 尾）。
@@ -661,16 +934,43 @@ pub async fn collect_flat(
 ) -> Result<Vec<FlatEntry>, String> {
     use vfiles_domain::types::NormalizedPath;
     let base = NormalizedPath::new(&req.path).map_err(|e| format!("非法路径: {e}"))?;
-    let base_mtime = if req.path.is_empty() {
-        now_unix()
+    let base_entry = if req.path.is_empty() {
+        None
     } else {
         match repo.find_by_path(namespace, &base).await {
-            Ok(Some(entry)) => entry.created_at.unix_timestamp(),
+            Ok(Some(entry)) => Some(entry),
             Ok(None) => return Err(format!("路径不存在: {}", req.path)),
             Err(e) => return Err(e.to_string()),
         }
     };
-    let mut out = vec![FlatEntry::dir(".", base_mtime)];
+    // 单文件请求（`rsync rsync://host/module/file`）：flist 仅该文件、name = basename、无 `.`
+    if let Some(entry) = &base_entry
+        && !matches!(entry.entry_type, EntryKind::Directory)
+    {
+        // 大小取自父目录的批量 meta（EntryRepo 无单条 meta 接口）
+        let full = base.as_str();
+        let (parent_str, _) = full.rsplit_once('/').unwrap_or(("", full));
+        let size = match NormalizedPath::new(parent_str) {
+            Ok(parent) => repo
+                .children_with_meta(namespace, &parent)
+                .await
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .find(|c| c.entry.path_norm.as_str() == full)
+                .and_then(|c| c.size_bytes)
+                .unwrap_or(0),
+            Err(_) => 0,
+        };
+        return Ok(vec![
+            FlatEntry::file(entry.name.clone(), size, entry.created_at.unix_timestamp())
+                .with_fs_path(entry.path_norm.as_str().to_string()),
+        ]);
+    }
+    let base_mtime = base_entry
+        .as_ref()
+        .map(|e| e.created_at.unix_timestamp())
+        .unwrap_or_else(now_unix);
+    let mut out = vec![FlatEntry::dir(".", base_mtime).with_fs_path(base.as_str().to_string())];
     walk(repo, namespace, &base, "", req.recursive, &mut out).await?;
     Ok(out)
 }
@@ -694,9 +994,10 @@ async fn walk(
         } else {
             format!("{prefix}/{}", m.entry.name)
         };
+        let fs_path = m.entry.path_norm.as_str().to_string();
         let mtime = m.entry.created_at.unix_timestamp();
         if is_dir {
-            out.push(FlatEntry::dir(name.clone(), mtime));
+            out.push(FlatEntry::dir(name.clone(), mtime).with_fs_path(fs_path));
             if recursive {
                 Box::pin(walk(
                     repo,
@@ -709,7 +1010,7 @@ async fn walk(
                 .await?;
             }
         } else {
-            out.push(FlatEntry::file(name, m.size_bytes.unwrap_or(0), mtime));
+            out.push(FlatEntry::file(name, m.size_bytes.unwrap_or(0), mtime).with_fs_path(fs_path));
         }
     }
     Ok(())
@@ -760,7 +1061,7 @@ mod tests {
         assert_eq!(o, b"\x04none");
         o.clear();
         write_vstring(CHECKSUM_LIST, &mut o);
-        assert_eq!(o[0], CHECKSUM_LIST.len() as u8, "35 → 0x23 (#)");
+        assert_eq!(o[0], CHECKSUM_LIST.len() as u8, "md5 → 长度前缀 3");
         assert_eq!(&o[1..], CHECKSUM_LIST.as_bytes());
     }
 
@@ -776,6 +1077,7 @@ mod tests {
                 size: 4096,
                 mtime,
                 mode: 0o40775,
+                fs_path: String::new(),
             },
             FlatEntry {
                 name: "sub".into(),
@@ -783,6 +1085,7 @@ mod tests {
                 size: 4096,
                 mtime,
                 mode: 0o40775,
+                fs_path: String::new(),
             },
             FlatEntry {
                 name: "a.txt".into(),
@@ -790,6 +1093,7 @@ mod tests {
                 size: 6,
                 mtime,
                 mode: 0o100664,
+                fs_path: String::new(),
             },
         ];
         let body = encode_flist(&entries, true);
@@ -815,6 +1119,7 @@ mod tests {
             size: 8,
             mtime,
             mode: 0o100664,
+            fs_path: String::new(),
         }];
         let body = encode_flist(&entries, true);
         // xflags = SAME_UID|SAME_GID（首条无 SAME_MODE/TIME）= 0x18 → varint 单字节 0x18
@@ -878,9 +1183,14 @@ mod tests {
     async fn module_list_and_unknown_module() {
         let (client, server) = tokio::io::duplex(4096);
         tokio::spawn(async move {
-            handle_conn(server, "files", |_| async { Ok(Vec::new()) })
-                .await
-                .unwrap()
+            handle_conn(
+                server,
+                "files",
+                |_| async { Ok(Vec::new()) },
+                |_p: &str| async { Ok(Vec::new()) },
+            )
+            .await
+            .unwrap()
         });
         let mut c = BufReader::new(client);
         let mut line = String::new();
@@ -907,6 +1217,7 @@ mod tests {
                 size: 4096,
                 mtime,
                 mode: 0o40775,
+                fs_path: String::new(),
             },
             FlatEntry {
                 name: "a.txt".into(),
@@ -914,15 +1225,21 @@ mod tests {
                 size: 6,
                 mtime,
                 mode: 0o100664,
+                fs_path: String::new(),
             },
         ];
         let (client, server) = tokio::io::duplex(64 * 1024);
         let server_entries = entries.clone();
         tokio::spawn(async move {
-            handle_conn(server, "files", move |_req| {
-                let e = server_entries.clone();
-                async move { Ok(e) }
-            })
+            handle_conn(
+                server,
+                "files",
+                move |_req| {
+                    let e = server_entries.clone();
+                    async move { Ok(e) }
+                },
+                |_p: &str| async { Ok(Vec::new()) },
+            )
             .await
             .unwrap()
         });
@@ -1008,5 +1325,166 @@ mod tests {
         c.read_exact(&mut stats).await.unwrap();
         // 最后问候
         c.get_mut().write_all(&mux_frame(&[0u8])).await.unwrap();
+    }
+
+    /// 排序 = rsync `f_name_cmp` 真机序（文件先于目录、各按名升序、遇目录深度优先下钻）。
+    #[test]
+    fn sort_flist_matches_rsync_order() {
+        let mut e = vec![
+            FlatEntry::dir("mid", 1),
+            FlatEntry::file("mid/inner.txt", 1, 1),
+            FlatEntry::file("zeta.txt", 1, 1),
+            FlatEntry::dir("alpha", 1),
+            FlatEntry::file("alpha/a.txt", 1, 1),
+            FlatEntry::dir("alpha/inner", 1),
+            FlatEntry::file("beta.txt", 1, 1),
+            FlatEntry::dir(".", 1),
+        ];
+        sort_flist(&mut e);
+        let names: Vec<&str> = e.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                ".",
+                "beta.txt",
+                "zeta.txt",
+                "alpha",
+                "alpha/a.txt",
+                "alpha/inner",
+                "mid",
+                "mid/inner.txt"
+            ],
+            "深度优先：文件先于目录"
+        );
+    }
+
+    /// 整文件下载整链（真机请求帧 0xA000 + 全零 sum_head → 断言数据帧逐字节）。
+    #[tokio::test]
+    async fn whole_file_download_dialogue() {
+        let content = b"tiny-content-12345\n".to_vec();
+        let entries = vec![FlatEntry::file("tiny.txt", 19, 0x6AB3A68C).with_fs_path("tiny.txt")];
+        let (client, server) = tokio::io::duplex(64 * 1024);
+        let server_entries = entries.clone();
+        let server_content = content.clone();
+        tokio::spawn(async move {
+            handle_conn(
+                server,
+                "files",
+                move |_req| {
+                    let e = server_entries.clone();
+                    async move { Ok(e) }
+                },
+                move |_p: &str| {
+                    let d = server_content.clone();
+                    async move { Ok(d) }
+                },
+            )
+            .await
+            .unwrap()
+        });
+        let mut c = BufReader::new(client);
+        c.get_mut()
+            .write_all(b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n")
+            .await
+            .unwrap();
+        let mut line = String::new();
+        c.read_line(&mut line).await.unwrap();
+        c.get_mut().write_all(b"files\n").await.unwrap();
+        line.clear();
+        c.read_line(&mut line).await.unwrap();
+        assert_eq!(line, "@RSYNCD: OK\n");
+        for a in [
+            "--server\0",
+            "--sender\0",
+            "-e.LsfxCIvu\0",
+            ".\0",
+            "files/tiny.txt\0",
+            "\0",
+        ] {
+            c.get_mut().write_all(a.as_bytes()).await.unwrap();
+        }
+        let mut ack = [0u8; 2];
+        c.read_exact(&mut ack).await.unwrap();
+        assert_eq!(ack, [0x81, 0xFE]);
+        // checksum 清单 vstring（md5 = 3 字节）
+        let mut head = [0u8; 1];
+        c.read_exact(&mut head).await.unwrap();
+        assert_eq!(head[0] as usize, CHECKSUM_LIST.len());
+        let mut list = vec![0u8; CHECKSUM_LIST.len()];
+        c.read_exact(&mut list).await.unwrap();
+        assert_eq!(&list, CHECKSUM_LIST.as_bytes());
+        c.get_mut().write_all(b"\x1e").await.unwrap();
+        c.get_mut()
+            .write_all(b"xxh128 xxh3 xxh64 md5 md4 sha1")
+            .await
+            .unwrap();
+        let mut seed = [0u8; 4];
+        c.read_exact(&mut seed).await.unwrap();
+        // filter list
+        c.get_mut()
+            .write_all(&mux_frame(&0i32.to_le_bytes()))
+            .await
+            .unwrap();
+        // flist（单文件 = 无 `.`）
+        let expected_flist = encode_flist(&entries, true);
+        let mut hdr = [0u8; 4];
+        c.read_exact(&mut hdr).await.unwrap();
+        let flen = (hdr[0] as usize) | ((hdr[1] as usize) << 8) | ((hdr[2] as usize) << 16);
+        let mut body = vec![0u8; flen];
+        c.read_exact(&mut body).await.unwrap();
+        assert_eq!(body, expected_flist);
+        // 请求帧：ndx 0 + iflags 0xA000 + 全零 sum_head（真机字面）
+        let mut req = vec![0x01, 0x00, 0xA0];
+        req.extend_from_slice(&[0u8; 16]);
+        c.get_mut().write_all(&mux_frame(&req)).await.unwrap();
+        // 数据帧
+        let mut h = [0u8; 4];
+        c.read_exact(&mut h).await.unwrap();
+        let l = (h[0] as usize) | ((h[1] as usize) << 8) | ((h[2] as usize) << 16);
+        assert_eq!(h[3], MPLEX_BASE + MSG_DATA);
+        let mut data = vec![0u8; l];
+        c.read_exact(&mut data).await.unwrap();
+        // ndx 回显 + iflags + sum_head(16 零) + literal 长度 + 内容 + 终结 + md5
+        let mut want = vec![0x01, 0x00, 0xA0];
+        want.extend_from_slice(&[0u8; 16]);
+        want.extend_from_slice(&(content.len() as i32).to_le_bytes());
+        want.extend_from_slice(&content);
+        want.extend_from_slice(&0i32.to_le_bytes());
+        want.extend_from_slice(&md5_digest(&content));
+        assert_eq!(data, want, "数据帧逐字节（真机转录同形）");
+        assert_eq!(
+            &data[want.len() - 16..],
+            &md5_digest(b"tiny-content-12345\n"),
+            "校验和 = MD5(内容) 无 seed"
+        );
+        // 收尾
+        c.get_mut().write_all(&mux_frame(&[0u8])).await.unwrap();
+        c.get_mut().write_all(&mux_frame(&[0u8])).await.unwrap();
+        c.get_mut().write_all(&mux_frame(&[0u8])).await.unwrap();
+        for _ in 0..3 {
+            let mut hh = [0u8; 4];
+            c.read_exact(&mut hh).await.unwrap();
+            let ll = (hh[0] as usize) | ((hh[1] as usize) << 8) | ((hh[2] as usize) << 16);
+            let mut p = vec![0u8; ll];
+            c.read_exact(&mut p).await.unwrap();
+        }
+        let mut hh = [0u8; 4];
+        c.read_exact(&mut hh).await.unwrap();
+        let ll = (hh[0] as usize) | ((hh[1] as usize) << 8) | ((hh[2] as usize) << 16);
+        let mut stats = vec![0u8; ll];
+        c.read_exact(&mut stats).await.unwrap();
+        c.get_mut().write_all(&mux_frame(&[0u8])).await.unwrap();
+    }
+
+    /// md5 与 RFC 1321 向量（rsync 整文件校验和同算法）。
+    #[test]
+    fn md5_known_vector() {
+        assert_eq!(
+            md5_digest(b"abc"),
+            [
+                0x90, 0x01, 0x50, 0x98, 0x3c, 0xd2, 0x4f, 0xb0, 0xd6, 0x96, 0x3f, 0x7d, 0x28, 0xe1,
+                0x7f, 0x72
+            ]
+        );
     }
 }

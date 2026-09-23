@@ -1287,6 +1287,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         build_and_spawn_rsync(
             &config.rsync,
             Arc::clone(&entry_repo_arc),
+            Arc::clone(&ftp_workspace),
             default_namespace_id,
             service_shutdown_rx.clone(),
         );
@@ -1749,9 +1750,11 @@ impl s3s::auth::S3Auth for EnvAuth {
 ///
 /// r9：数据源 = 默认命名空间条目树（与 WebDAV/S3 同源 `entry_repo`），按请求路径/递归深度
 /// 由 `vfiles_rsync::collect_flat` 枚举后交协议层编码。
+/// r10：文件内容经 `workspace.read_file_bytes` 读取（与 WebDAV/S3 同源 blob 链）。
 fn build_and_spawn_rsync(
     cfg: &vfiles_config::RsyncConfig,
     entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
+    workspace: std::sync::Arc<vfiles_app::DefaultWorkspaceService>,
     namespace: vfiles_domain::NamespaceId,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
@@ -1771,15 +1774,32 @@ fn build_and_spawn_rsync(
                             Ok((stream, peer)) => {
                                 let module = module.clone();
                                 let repo = std::sync::Arc::clone(&entry_repo);
-                                let ns = namespace.clone();
+                                let ws = std::sync::Arc::clone(&workspace);
+                                let ns = namespace;
                                 tokio::spawn(async move {
-                                    let res = vfiles_rsync::handle_conn(stream, &module, |req| {
-                                        let repo = std::sync::Arc::clone(&repo);
-                                        let ns = ns.clone();
-                                        async move {
-                                            vfiles_rsync::collect_flat(&*repo, &ns, &req).await
-                                        }
-                                    })
+                                    let res = vfiles_rsync::handle_conn(
+                                        stream,
+                                        &module,
+                                        move |req| {
+                                            let repo = std::sync::Arc::clone(&repo);
+                                            async move {
+                                                vfiles_rsync::collect_flat(&*repo, &ns, &req).await
+                                            }
+                                        },
+                                        move |path: &str| {
+                                            let ws = std::sync::Arc::clone(&ws);
+                                            let path = path.to_string();
+                                            async move {
+                                                let np = vfiles_domain::NormalizedPath::new(&path)
+                                                    .map_err(|e| e.to_string())?;
+                                                let content = ws
+                                                    .read_file_bytes(&ns, &np, None)
+                                                    .await
+                                                    .map_err(|e| e.to_string())?;
+                                                Ok(content.bytes)
+                                            }
+                                        },
+                                    )
                                     .await;
                                     if let Err(err) = res {
                                         tracing::debug!(%peer, error = %err, "rsync 连接结束");

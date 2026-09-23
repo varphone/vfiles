@@ -52,6 +52,7 @@ image = { version = "0.25", default-features = false, features = [
 ] }
 include_dir = "0.7"
 log = "0.4"
+md-5 = "0.10"
 mime_guess = "2.0"
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
