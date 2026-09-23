@@ -502,6 +502,11 @@ async fn process_single_upload(
 
         match name.as_str() {
             "file" => {
+                if saw_file {
+                    return Err(ApiError::Domain(DomainError::Validation {
+                        message: "Only one file may be uploaded per request".to_string(),
+                    }));
+                }
                 saw_file = true;
                 filename = field.file_name().map(str::to_string);
                 let temp_file = tokio::fs::File::create(temp_path).await.map_err(|err| {

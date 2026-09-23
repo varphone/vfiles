@@ -1377,6 +1377,44 @@ async fn single_upload_streams_multipart_file_to_storage() {
 }
 
 #[tokio::test]
+async fn multipart_upload_rejects_multiple_file_fields_without_replacing_target() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "same.txt", b"original", "original upload")
+        .await;
+
+    let boundary = "----vfiles-multiple-file-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"same.txt\"\r\n\r\nfirst\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"same.txt\"\r\n\r\nsecond\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"path\"\r\n\r\ndocs\r\n--{boundary}--\r\n"
+    );
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/files/upload")
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let content = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/same.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(content.status(), StatusCode::OK);
+    assert_eq!(response_bytes(content).await.as_ref(), b"original");
+}
+
+#[tokio::test]
 async fn tree_lists_direct_children_and_file_metadata() {
     let app = TestApp::new().await;
 
