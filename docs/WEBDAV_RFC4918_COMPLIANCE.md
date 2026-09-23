@@ -9,7 +9,7 @@
 | OPTIONS | ✅ r214 修正 | Allow 全 10 方法 + `DAV: 1, 2` 实证 ✓ | - |
 | PROPFIND | ✅ **r2 五式实证** | 请求体解析落（roxmltree 选型 ✗ allprop/prop/propname ✓ 未支持属性 = 404 propstat ✓ 非法 400 ✓）| - |
 | （同上）children | ✅ **r3 债还清** | 双值齐（**length + contenttype** ✓ video/mp4/5B 实证 ✓ 集合不带 ✓）✅ **r4 批量 SQL 落**（一条字面 SQL + 2 标量子查询 ✗ **51 行实测 0.001s** ✓；⚠️ 真性能头 = **认证哈希 0.25s/请求 → 热验缓存 P1 新债**）| 认证P1 |
-| PROPFIND Depth | ✅ **r2 顺手落** | infinity = **403** 合规码 ✓ 实证 | - |
+| PROPFIND Depth | ✅ | `0`/`1` 支持；省略按 RFC 默认 `infinity` 并返回 `403` + `DAV:propfind-finite-depth`；非法值或重复字段返回 `400` | - |
 | GET / HEAD | ✅ r201+r211 | 流式 + Range 206/416/Accept-Ranges 全实证 ✓ | - |
 | PUT | ✅ r110'b | 流式完成链 + 409 日志 ✓ | - |
 | DELETE | ✅ **r11 顺修** | 递归 + 409 ✓ **成功 = 204**（原三 op 全 201 = RFC 违背顺手修 ✓ 实证）| - |
@@ -24,7 +24,7 @@
 
 | 项 | 状态 | 备注 | 优先 |
 | --- | --- | --- | --- |
-| Depth 头 | ✅ | 0/1 ✓ infinity 见上 | P1 |
+| Depth 头 | ✅ | `0`/`1` ✓ 缺省 `infinity` 按有限深度策略拒绝（含 DAV 前置条件）✓ 非法/重复值 = 400 | - |
 | If 头（锁条件） | ✅ **r7 + tagged 条件实证** | 支持未标记/URI-tagged、ETag、`Not`、列表 AND/OR；**423/412 分码**；无效语法或重复字段返回 400，条件不匹配返回 412 | - |
 | 412 Precondition | ✅ **r7** | 有 If 不匹配 = 412 / 无 If 锁住 = 423 分码纯函数 + 单测 ×5 ✓ | - |
 | Timeout 头（LOCK） | ✅ **r15 七式实证** | `Second-N` 解析（多值取首个可解析 ✓ 纯函数单测）+ 响应回显（Second-N/Infinite）+ **惰性过期**（blocked/lock/unlock 三路径 ✗ 到期释放 201 实证 ✓ 过期 unlock 409 / 重锁 200 接管 ✓ 零后台任务 ✓）| - |

@@ -267,6 +267,59 @@ async fn options_advertises_and_propfind_needs_auth() {
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"))
     };
+    let default_depth = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(default_depth.status(), 403);
+    let default_depth_error = String::from_utf8(
+        axum::body::to_bytes(default_depth.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(default_depth_error.contains("propfind-finite-depth"));
+
+    let invalid_depth = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "2")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_depth.status(), 400);
+
+    let repeated_depth = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("depth", "1")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(repeated_depth.status(), 400);
+
     let resp = router
         .clone()
         .oneshot(

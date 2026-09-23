@@ -1032,11 +1032,14 @@ async fn propfind_owned(
 ) -> Result<String, StatusCode> {
     let app = app.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let ns = ns.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let depth = depth.as_str();
-    if depth == "infinity" {
+    let depth = depth.trim();
+    if depth.eq_ignore_ascii_case("infinity") {
         // r2 合规修正 ✗ RFC 4918 §10.2：拒绝 infinity = 403 + DAV:propfind-finite-depth
         //（原 400 = 合规瑕疵 ✗ P1 项随手落 ✓）
         return Err(StatusCode::FORBIDDEN);
+    }
+    if depth != "0" && depth != "1" {
+        return Err(StatusCode::BAD_REQUEST);
     }
     // 请求体解析（r2 P0 ✗ 非法 = 400（调用方 map_err 下述 NOT_FOUND/500 改由本处 400））
     let mode =
@@ -1435,12 +1438,12 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
         ref m if m.as_str() == "PROPFIND" => {
             // 同步提取拥有值（&Request 跨 await = 非 Send ✗✗ E0277 真因 ✓ r105 破案）
             let path_owned = percent_decode(req.uri().path());
-            let depth_owned = req
-                .headers()
-                .get("depth")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("1")
-                .to_string();
+            let mut depth_values = req.headers().get_all("depth").iter();
+            let depth_owned = match (depth_values.next(), depth_values.next()) {
+                (None, _) => "infinity".to_string(), // RFC 4918 §10.2 default
+                (Some(value), None) => value.to_str().unwrap_or_default().to_string(),
+                (Some(_), Some(_)) => String::new(),
+            };
             let app = req.extensions().get::<WebdavApplication>().cloned();
             let ns_owned = req
                 .extensions()
@@ -1470,6 +1473,13 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     .status(StatusCode::MULTI_STATUS)
                     .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
                     .body(Body::from(xml))
+                    .unwrap(),
+                Err(StatusCode::FORBIDDEN) => Response::builder()
+                    .status(StatusCode::FORBIDDEN)
+                    .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+                    .body(Body::from(
+                        r#"<?xml version="1.0" encoding="utf-8"?><D:error xmlns:D="DAV:"><D:propfind-finite-depth/></D:error>"#,
+                    ))
                     .unwrap(),
                 Err(status) => Response::builder()
                     .status(status)
