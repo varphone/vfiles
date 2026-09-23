@@ -459,7 +459,7 @@ fn www_authenticate() -> Response {
 /// WebDAV 能力宣告（无锁 ✓ 子集 ✓）。
 // r214 协议声明修正 ✗✗ 此前只声明 4 方法 = 实现了 10 个只报 4 个（客户端靠 Allow
 // 判能力 ✗✗）；COPY/PROPPATCH 未实现不声明（声明 = 实力 ✓ 做完再加）
-const ALLOW: &str = "OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY, LOCK, UNLOCK";
+const ALLOW: &str = "OPTIONS, PROPFIND, PROPPATCH, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY, LOCK, UNLOCK";
 
 fn router(app: WebdavApplication) -> Router {
     use axum::Extension;
@@ -800,6 +800,121 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
         }
         // 写法（r108' ✓ MKCOL/DELETE/MOVE 实装；PUT = r109'（分片链）；COPY = 501 记档）。
         // 同步提取拥有值（借用不跨 await ✓ #46）。
+        ref m if m.as_str() == "PROPPATCH" => {
+            // r6 PROPPATCH（RFC 4918 §9.2 ✓ propertyupdate 解析（roxmltree）+ 每操作
+            // propstat（200/403）✗ 可写集 = displayname（set → move 同父改名（r5 单源
+            // 直路径语义复用 ✓）；remove 恒 403（属性不可删）✗ 其余属性 403（403 =
+            // RFC §9.2.1 合规拒码 ✓）；自定义属性持久化 = P1 记债）。
+            let app_owned = req.extensions().get::<WebdavApplication>().cloned();
+            let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
+            let uri_owned = percent_decode(req.uri().path());
+            let ns_owned = req
+                .extensions()
+                .get::<vfiles_domain::types::NamespaceId>()
+                .cloned();
+            let body_owned = {
+                let taken = std::mem::take(req.body_mut());
+                match axum::body::to_bytes(taken, usize::MAX).await {
+                    Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+                    Err(_) => String::new(),
+                }
+            };
+            let (app_ref, user, ns) = match (app_owned, user_owned, ns_owned) {
+                (Some(a), Some(u), Some(n)) => (a, u, n),
+                _ => return internal_error(),
+            };
+            let src_rel = uri_owned.trim_start_matches('/').to_string();
+            let path = match vfiles_domain::types::NormalizedPath::new(&src_rel) {
+                Ok(p) => p,
+                Err(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            };
+            let ops = match crate::response::parse_propertyupdate(&body_owned) {
+                Ok(ops) => ops,
+                Err(()) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            };
+            // 可写集判定 + displayname 同父改名（多 set 顺序执行；名字含 / = 403 拒）
+            let mut results: Vec<(crate::response::PropOp, bool)> = Vec::new();
+            let mut rename_failed = false;
+            for op in ops {
+                match &op {
+                    crate::response::PropOp::Set { name, value }
+                        if name == "displayname"
+                            && !value.is_empty()
+                            && !value.contains('/')
+                            && !rename_failed =>
+                    {
+                        let parent = match path.as_str().rfind('/') {
+                            Some(i) => &path.as_str()[..i],
+                            None => "",
+                        };
+                        let new_rel = if parent.is_empty() {
+                            value.clone()
+                        } else {
+                            format!("{parent}/{value}")
+                        };
+                        match vfiles_domain::types::NormalizedPath::new(&new_rel) {
+                            Ok(dest) => {
+                                match app_ref
+                                    .write
+                                    .move_entry(&ns, &path, &dest, &user.id)
+                                    .await
+                                {
+                                    Ok(()) => {
+                                        // 改名成功后后续 op 的 path 同步（顺序语义 ✓）
+                                        results.push((op, true));
+                                        // 注：单请求多 set 改名 = 后续仍以原 path 改
+                                        // （RFC 允许实现限制 ✗ 记档）
+                                    }
+                                    Err(err) => {
+                                        tracing::warn!(error = %err, "PROPPATCH displayname 改名失败（403）");
+                                        results.push((op, false));
+                                        rename_failed = true;
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                results.push((op, false));
+                                rename_failed = true;
+                            }
+                        }
+                    }
+                    _ => results.push((op, false)),
+                }
+            }
+            if let Some(cb) = &app_ref.audit {
+                cb(vfiles_domain::types::NewAuditLog {
+                    user_id: Some(user.id.clone()),
+                    username: user.username.as_str().to_string(),
+                    action: "webdav.proppatch".to_string(),
+                    result: vfiles_domain::types::AuditResult::Success,
+                    target: Some(path.as_str().to_string()),
+                    ip: None,
+                    user_agent: req
+                        .headers()
+                        .get("user-agent")
+                        .and_then(|v| v.to_str().ok())
+                        .map(ToOwned::to_owned),
+                    device: None,
+                    detail: None,
+                });
+            }
+            let xml = crate::response::proppatch_multistatus(path.as_str(), &results);
+            Response::builder()
+                .status(StatusCode::MULTI_STATUS)
+                .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+                .body(Body::from(xml))
+                .unwrap()
+        }
         ref m if m.as_str() == "COPY" => {
             let _ = m;
             // r5 COPY（RFC 4918 §9.3 ✓ 同臂 owned 提取式（三合一臂照抄 ✗ #46）

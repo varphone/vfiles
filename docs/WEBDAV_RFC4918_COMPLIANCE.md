@@ -16,7 +16,7 @@
 | MKCOL | ✅ r110' | 201/409 ✓ | - |
 | MOVE | ✅ r108' | overwite 语义简式 ✓ | - |
 | **COPY** | ✅ **r5 八式实证** | 递归子树 + blob 零字节复用（create_version upsert ref++ ✓）+ **审计落表** ✓；dst存在/自复制/自子树 = 409 ✓ dest缺 = 400 ✓ Allow 入 ✓ **Overwrite T 完整覆盖（删旧+blob release）= P1 记债** | P1覆盖 |
-| **PROPPATCH** | ❌ **零实现** | **P0 核心缺口**（propertyupdate XML set/remove ✗ 需 XML 解析）| **P0** |
+| **PROPPATCH** | ✅ **r6 七式实证** | propertyupdate 解析（roxmltree 按序 ✓）+ 每操作 propstat 200/403 ✓ **displayname set = 真改名**（move 单源直路径复用 ✓ PROPFIND 新名可见 ✓）+ 审计落表 ✓ Allow 入 ✓ **自定义属性 k/v 持久化 = P1 记债** | P1属性存储 |
 | LOCK / UNLOCK | ✅ r109a | 无限期锁表 + 423 ✓；**Timeout 有限支持 / 锁刷新 = 缺** | P1 |
 | POST | ➖ | RFC 无定义（405 ✓ 合规）| - |
 
@@ -74,7 +74,8 @@
 5a. **审计全线写入**（r5 发现：AuditService.record 生产零调用 ✗✗ 看板恒空真相 ✗
     copy 已接 = 结构就位 → 登录/管理/其余 WebDAV 写点批量接）← **P0 新债**
 5b. Overwrite T 完整覆盖（删旧 + blob release 链）← P1
-6. **PROPPATCH 方法**（P0 核心：propertyupdate set/remove）← 下轮首项
-7. **If 头 + 412**（P0 并发安全）
+6. ~~PROPPATCH~~ ✅ r6（七式 + 审计 ✓）
+7. **If 头 + 412**（P0 并发安全）← 下轮首项
+8. **审计全线写入**（登录/管理/其余写点 → record 批量接）← P0（结构 COPY/PROPPATCH 已示范 ✓）
 
 > 记录纪律：每轮改协议面 = 同轮 curl 实证行入表；用户日志线索（gvfs/VLC）= 一等证据源。

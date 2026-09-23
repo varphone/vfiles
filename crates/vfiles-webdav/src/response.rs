@@ -16,6 +16,78 @@ pub enum PropMode {
     Names(Vec<String>),
 }
 
+/// PROPPATCH 操作（RFC 4918 §9.2 ✓）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PropOp {
+    /// `<set><prop><name>value</name>`（首版可写集 = displayname ✓ 其余 = 403）。
+    Set { name: String, value: String },
+    /// `<remove><prop><name/>`（属性不可删 = 403 恒拒；结构支持 ✓）。
+    Remove { name: String },
+}
+
+/// 解析 propertyupdate 请求体（roxmltree ✗ 按文档序收集 set/remove 操作）。
+pub fn parse_propertyupdate(body: &str) -> Result<Vec<PropOp>, ()> {
+    if body.trim().is_empty() {
+        return Err(());
+    }
+    let doc = roxmltree::Document::parse(body).map_err(|_| ())?;
+    let root = doc.root_element();
+    if root.tag_name().name() != "propertyupdate" {
+        return Err(());
+    }
+    let mut ops = Vec::new();
+    for op in root.children().filter(|n| n.is_element()) {
+        match op.tag_name().name() {
+            "set" | "remove" => {
+                let is_set = op.tag_name().name() == "set";
+                let prop = op.children().find(|n| n.is_element() && n.tag_name().name() == "prop");
+                let Some(prop) = prop else {
+                    return Err(());
+                };
+                for child in prop.children().filter(|c| c.is_element()) {
+                    let name = child.tag_name().name().to_string();
+                    if is_set {
+                        ops.push(PropOp::Set {
+                            name,
+                            value: child.text().unwrap_or_default().trim().to_string(),
+                        });
+                    } else {
+                        ops.push(PropOp::Remove { name });
+                    }
+                }
+            }
+            _ => return Err(()),
+        }
+    }
+    if ops.is_empty() {
+        return Err(());
+    }
+    Ok(ops)
+}
+
+/// PROPPATCH 207 响应（每操作一条 propstat：ok → 200 / 拒 → 403 ✗ RFC §9.2.1 ✓）。
+pub fn proppatch_multistatus(href: &str, results: &[(PropOp, bool)]) -> String {
+    let mut out = String::from(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">"#,
+    );
+    out.push_str("\n<D:response><D:href>");
+    out.push_str(&escape_xml(href));
+    out.push_str("</D:href>");
+    for (op, ok) in results {
+        out.push_str("<D:propstat><D:prop><D:");
+        match op {
+            PropOp::Set { name, .. } => out.push_str(name),
+            PropOp::Remove { name } => out.push_str(name),
+        }
+        out.push_str("/></D:prop><D:status>HTTP/1.1 ");
+        out.push_str(if *ok { "200 OK" } else { "403 Forbidden" });
+        out.push_str("</D:status></D:propstat>");
+    }
+    out.push_str("</D:response>\n</D:multistatus>");
+    out
+}
+
 /// 解析 PROPFIND 请求体（roxmltree DOM ✗ 非法/非 propfind → Err（调用方 400 ✓））。
 pub fn parse_propfind_body(body: &str) -> Result<PropMode, ()> {
     if body.trim().is_empty() {
@@ -296,5 +368,45 @@ mod propmode_tests {
         assert!(xml.contains("<D:resourcetype/>"));
         assert!(!xml.contains(">f.txt<"), "propname 不出值");
         assert!(!xml.contains(">5<"));
+    }
+}
+
+#[cfg(test)]
+mod proppatch_tests {
+    use super::{parse_propertyupdate, proppatch_multistatus, PropOp};
+
+    #[test]
+    fn parses_set_and_remove_in_order() {
+        let body = r#"<D:propertyupdate xmlns:D="DAV:">
+            <D:set><D:prop><D:displayname>新名字</D:displayname></D:prop></D:set>
+            <D:remove><D:prop><D:getetag/></D:prop></D:remove>
+        </D:propertyupdate>"#;
+        let ops = parse_propertyupdate(body).unwrap();
+        assert_eq!(
+            ops,
+            vec![
+                PropOp::Set { name: "displayname".into(), value: "新名字".into() },
+                PropOp::Remove { name: "getetag".into() },
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_or_empty() {
+        assert!(parse_propertyupdate("").is_err());
+        assert!(parse_propertyupdate("<broken").is_err());
+        assert!(parse_propertyupdate(r#"<D:propfind xmlns:D="DAV:"/>"#).is_err());
+        assert!(parse_propertyupdate(r#"<D:propertyupdate xmlns:D="DAV:"/>"#).is_err());
+    }
+
+    #[test]
+    fn response_carries_per_op_status() {
+        let xml = proppatch_multistatus("/f.txt", &[
+            (PropOp::Set { name: "displayname".into(), value: "x".into() }, true),
+            (PropOp::Set { name: "getetag".into(), value: "y".into() }, false),
+        ]);
+        assert!(xml.contains("403 Forbidden"));
+        assert!(xml.contains("200 OK"));
+        assert!(xml.contains("<D:getetag/>"));
     }
 }
