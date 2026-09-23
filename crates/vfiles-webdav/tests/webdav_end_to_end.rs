@@ -159,7 +159,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .ensure_default_for_owner(&user.id)
         .await
         .expect("ns");
-    for path in ["persist.txt", "target.txt"] {
+    for path in ["persist.txt", "target.txt", "space #?汉.txt"] {
         entry_repo
             .create_entry(
                 &namespace_id,
@@ -352,6 +352,7 @@ async fn options_advertises_and_propfind_needs_auth() {
     .unwrap();
     assert!(body.contains("multistatus"));
     assert!(body.contains("displayname"));
+    assert!(body.contains("/space%20%23%3F%E6%B1%89.txt"));
 
     let malformed_if = router
         .clone()

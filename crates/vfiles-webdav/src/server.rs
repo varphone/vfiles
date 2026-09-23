@@ -1138,7 +1138,7 @@ fn etag_satisfies(header: &str, etag: Option<&str>) -> bool {
 /// rel 幂等 trim 前导斜杠 → 空 rel = 根（mount+"/"））。
 fn href_with_mount(mount: &str, rel: &str) -> String {
     let rel = rel.trim_start_matches('/');
-    if mount.is_empty() {
+    let path = if mount.is_empty() {
         if rel.is_empty() {
             "/".to_string()
         } else {
@@ -1148,7 +1148,28 @@ fn href_with_mount(mount: &str, rel: &str) -> String {
         format!("{}/", mount.trim_end_matches('/'))
     } else {
         format!("{}/{}", mount.trim_end_matches('/'), rel)
+    };
+    encode_uri_path(&path)
+}
+
+/// Percent-encode an absolute URI path while preserving RFC 3986 path characters.
+fn encode_uri_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric()
+            || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/' | b':' | b'@')
+            || matches!(
+                byte,
+                b'!' | b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b',' | b';' | b'='
+            )
+        {
+            encoded.push(char::from(byte));
+        } else {
+            use std::fmt::Write;
+            write!(&mut encoded, "%{byte:02X}").expect("writing to String cannot fail");
+        }
     }
+    encoded
 }
 
 fn destination_path(dest: &str, mount: &str) -> Option<String> {
@@ -2675,7 +2696,7 @@ mod decode_tests {
 
 #[cfg(test)]
 mod href_tests {
-    use crate::server::{child_prefix, entry_href};
+    use crate::server::{child_prefix, encode_uri_path, entry_href, href_with_mount};
 
     #[test]
     fn root_children_have_single_slash() {
@@ -2698,6 +2719,16 @@ mod href_tests {
             entry_href(&child_prefix("项目库/子"), "a", true),
             "/项目库/子/a/"
         );
+    }
+
+    #[test]
+    fn href_encodes_uri_delimiters_spaces_and_unicode() {
+        assert_eq!(
+            href_with_mount("/dav", "/a b/汉字/#part?query%"),
+            "/dav/a%20b/%E6%B1%89%E5%AD%97/%23part%3Fquery%25"
+        );
+        assert_eq!(encode_uri_path("/a&b/one+two"), "/a&b/one+two");
+        assert_eq!(href_with_mount("", "/"), "/");
     }
 }
 
