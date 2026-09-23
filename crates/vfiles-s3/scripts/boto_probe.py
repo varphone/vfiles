@@ -284,6 +284,27 @@ def main():
     for mk in ["boto-meta/a.txt", "boto-meta/src.txt", "boto-meta/copy.txt", "boto-meta/repl.txt"]:
         s3.delete_object(Bucket="default", Key=mk)
 
+    # ── 版本列表（r35）──
+    for vb in [b"v1", b"v2"]:
+        s3.put_object(Bucket="default", Key="boto-ver/a.txt", Body=vb)
+    lv = s3.list_object_versions(Bucket="default", Prefix="boto-ver/")
+    vers = lv.get("Versions", [])
+    vh = s3.head_object(Bucket="default", Key="boto-ver/a.txt")
+    check("boto list_object_versions (newest first, etag matches head)",
+          len(vers) == 2 and vers[0]["IsLatest"] is True and vers[0]["ETag"] == vh["ETag"]
+          and sum(1 for v in vers if v["IsLatest"]) == 1,
+          [(v["IsLatest"], v.get("Size")) for v in vers])
+    p1 = s3.list_object_versions(Bucket="default", Prefix="boto-ver/", MaxKeys=1)
+    p2 = s3.list_object_versions(Bucket="default", Prefix="boto-ver/", MaxKeys=1,
+                                 KeyMarker=p1.get("NextKeyMarker", ""),
+                                 VersionIdMarker=p1.get("NextVersionIdMarker", ""))
+    paged = [(p1.get("Versions", []) + p2.get("Versions", []))]
+    got = paged[0]
+    check("boto list_object_versions paging walks all versions",
+          len(got) == 2 and len({(v['Key'], v['VersionId']) for v in got}) == 2,
+          len(got))
+    s3.delete_object(Bucket="default", Key="boto-ver/a.txt")
+
     # ── 桶生命周期（r34）──
     def bcode(fn):
         try:

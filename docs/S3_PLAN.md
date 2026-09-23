@@ -1,4 +1,22 @@
-# S3 兼容 API（… r32 编码协商 → r33 fetch-owner → **r34 桶生命周期**）
+# S3 兼容 API（… r33 fetch-owner → r34 桶生命周期 → **r35 版本列表**）
+
+## 状态（r35 末 · `ListObjectVersions` = 版本历史可见）
+
+- **实装**（本系统**确有版本历史** ✗ `entry_versions` 全表；本实现无删除标记故 `DeleteMarkers` 恒空）：
+  | 语义 | 行为 |
+  | --- | --- |
+  | 排序 | key 升序 ✗ **key 内新版本在前**（AWS 同形 ✗ `version_no desc`） |
+  | 字段 | `VersionId` = 版本 id hex ✗ **最新版 ETag ≡ `HeadObject` ETag**（同源自 version id）· `IsLatest`（vs `current_version_id`）· `Size`/`LastModified` 取自该版本 |
+  | 续页 | `key_marker` + `version_id_marker` + `max_keys`（计入 version 条目；截断游标 = 最后一条已输出项） |
+  | delimiter | 折叠 common prefix ✗ 跨请求不重复投递（`cp <= key_marker` 跳过） |
+  | encoding | `encoding-type=url` 时 key/version_id/prefix/next-marker 一并百分号编码 |
+  | Router | 手写委托（同 r34 坑：生成器早于本轮） |
+- **真机验收（真 SDK，8 项）**：同一键三覆盖 → **3 版本全列出** ✗ 首条 `IsLatest=true` 且仅一条 ·
+  **最新 ETag == `HeadObject` ETag** · size=2 正确 · 无跨键泄漏 · **`MaxKeys=1` + 双 marker 走全 3 条
+  无重复** · delimiter 直出 · `Get` 最新正文=v3。
+- **回归**：自写探针 **24/24** · 真 SDK **47/47**（+版本列表 2 项）。
+- **仍债**：`Get/Head/Delete` 的 `versionId` 参数（现一律落到最新版）· 删除标记（本实现无）·
+  `PutBucketVersioning` · region 校验（有意不做）。
 
 ## 状态（r34 末 · 桶生命周期补齐 = 建/删桶有据可依）
 

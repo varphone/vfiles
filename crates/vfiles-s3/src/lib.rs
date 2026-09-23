@@ -29,10 +29,11 @@ use s3s::dto::{
     ETagCondition, Error as S3DeleteError, GetBucketLocationInput, GetBucketLocationOutput,
     GetBucketVersioningInput, GetBucketVersioningOutput, GetObjectInput, GetObjectOutput,
     HeadBucketInput, HeadBucketOutput, HeadObjectInput, HeadObjectOutput, ListBucketsInput,
-    ListBucketsOutput, ListMultipartUploadsInput, ListMultipartUploadsOutput, ListObjectsInput,
-    ListObjectsOutput, ListObjectsV2Input, ListObjectsV2Output, ListPartsInput, ListPartsOutput,
-    MultipartUpload, Object, Owner, Part, PutObjectInput, PutObjectOutput, StreamingBlob,
-    Timestamp, UploadPartCopyInput, UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
+    ListBucketsOutput, ListMultipartUploadsInput, ListMultipartUploadsOutput,
+    ListObjectVersionsInput, ListObjectVersionsOutput, ListObjectsInput, ListObjectsOutput,
+    ListObjectsV2Input, ListObjectsV2Output, ListPartsInput, ListPartsOutput, MultipartUpload,
+    Object, ObjectVersion, Owner, Part, PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp,
+    UploadPartCopyInput, UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
 use tokio::io::AsyncReadExt;
@@ -850,6 +851,144 @@ impl S3 for VfilesS3 {
             InvalidBucketState,
             "this gateway's bucket is fixed and cannot be deleted"
         ))
+    }
+
+    /// 列出对象版本（本系统**确有版本历史** ✗ `entry_versions` ✗ 本实现无删除标记）。
+    ///
+    /// 语义对齐 AWS：key 升序 ✗ key 内**新版本在前** ✗ `max_keys` 计入 version 条目 ✗
+    /// `key_marker` + `version_id_marker` 续页 ✗ delimiter 折叠（不重复投递）。
+    async fn list_object_versions(
+        &self,
+        req: S3Request<ListObjectVersionsInput>,
+    ) -> S3Result<S3Response<ListObjectVersionsOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        let max = resolve_max_keys(input.max_keys)?;
+        let prefix = input.prefix.clone().unwrap_or_default();
+        let delimiter = non_empty(input.delimiter.clone());
+        let key_marker = input.key_marker.clone();
+        let vid_marker = input.version_id_marker.clone();
+        let encode = input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url");
+
+        let metas = self
+            .entry_repo
+            .files_with_meta(&self.namespace)
+            .await
+            .map_err(dom_err)?;
+        let mut out_versions: Vec<ObjectVersion> = Vec::new();
+        let mut prefixes: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut truncated = false;
+        let mut next_key: Option<String> = None;
+        let mut next_vid: Option<String> = None;
+        // 最后一次输出的 (key, version_id) ✗ 截断时作为续页游标
+        let mut last_emitted: Option<(String, String)> = None;
+
+        'outer: for m in metas {
+            let key = m.entry.path_norm.as_str().to_string();
+            if !key.starts_with(&prefix) {
+                continue;
+            }
+            if let Some(d) = &delimiter {
+                let rest = &key[prefix.len()..];
+                if let Some(idx) = rest.find(d.as_str()) {
+                    let cp = format!("{}{}{}", prefix, &rest[..idx], d);
+                    // 续页：已投递过的 common prefix 不重复
+                    if let Some(km) = &key_marker
+                        && &cp <= km
+                    {
+                        continue;
+                    }
+                    if prefixes.insert(cp.clone()) {
+                        last_emitted = Some((cp, String::new()));
+                        if out_versions.len() + prefixes.len() > max {
+                            truncated = true;
+                            break 'outer;
+                        }
+                    }
+                    continue;
+                }
+            }
+            // 游标：key 小于 marker 跳过；key 等于 marker 时投递到 version marker 之后
+            if let Some(km) = &key_marker
+                && &key < km
+            {
+                continue;
+            }
+            let mut skipping = key_marker.as_ref() == Some(&key);
+            let entry_versions = self
+                .entry_repo
+                .find_versions_for_entries(&[m.entry.id])
+                .await
+                .map_err(dom_err)?;
+            let mut vs: Vec<&vfiles_domain::types::EntryVersion> = entry_versions.iter().collect();
+            vs.sort_by(|a, b| b.version_no.cmp(&a.version_no)); // 新版本在前（AWS 同形）
+            for ev in vs {
+                let vid = ev.id.to_string().replace('-', "");
+                if skipping {
+                    if vid_marker.as_ref() == Some(&vid) {
+                        skipping = false;
+                    }
+                    continue;
+                }
+                if out_versions.len() + prefixes.len() >= max {
+                    truncated = true;
+                    if let Some((k, v)) = &last_emitted {
+                        next_key = Some(k.clone());
+                        next_vid = Some(v.clone());
+                    }
+                    break 'outer;
+                }
+                out_versions.push(ObjectVersion {
+                    key: Some(key.clone()),
+                    version_id: Some(vid.clone()),
+                    is_latest: Some(m.entry.current_version_id == Some(ev.id)),
+                    size: Some(ev.size_bytes.as_u64() as i64),
+                    last_modified: Some(Timestamp::from(ev.created_at)),
+                    e_tag: Some(s3s::dto::ETag::Strong(vid.clone())),
+                    ..Default::default()
+                });
+                last_emitted = Some((key.clone(), vid));
+            }
+        }
+        if encode {
+            for v in &mut out_versions {
+                if let Some(k) = &v.key {
+                    v.key = Some(url_encode(k));
+                }
+                if let Some(vi) = &v.version_id {
+                    v.version_id = Some(url_encode(vi));
+                }
+            }
+            prefixes = prefixes.into_iter().map(|p| url_encode(&p)).collect();
+            if let Some(k) = &next_key {
+                next_key = Some(url_encode(k));
+            }
+        }
+        let out = ListObjectVersionsOutput {
+            name: Some(input.bucket),
+            versions: (!out_versions.is_empty()).then_some(out_versions),
+            common_prefixes: (!prefixes.is_empty()).then(|| {
+                prefixes
+                    .into_iter()
+                    .map(|p| s3s::dto::CommonPrefix { prefix: Some(p) })
+                    .collect()
+            }),
+            delimiter: input.delimiter,
+            encoding_type: input.encoding_type,
+            is_truncated: Some(truncated),
+            key_marker: input.key_marker,
+            max_keys: Some(max as i32),
+            prefix: input.prefix,
+            version_id_marker: input.version_id_marker,
+            next_key_marker: truncated.then_some(next_key).flatten(),
+            next_version_id_marker: truncated
+                .then(|| next_vid.unwrap_or_default())
+                .filter(|v| !v.is_empty()),
+            ..Default::default()
+        };
+        ok(out)
     }
 
     /// 桶存在性探测（rclone / aws-cli 连接检查常用路径）。
@@ -2127,6 +2266,15 @@ impl S3Router {
 
 #[async_trait]
 impl S3 for S3Router {
+    async fn list_object_versions(
+        &self,
+        req: S3Request<ListObjectVersionsInput>,
+    ) -> S3Result<S3Response<ListObjectVersionsOutput>> {
+        self.pick(req.credentials.as_ref())
+            .list_object_versions(req)
+            .await
+    }
+
     /// 桶清单对所有命名空间同形（唯一虚拟桶 ✗ `_req` 形故上面正则未捕获，手写委托）。
     async fn list_buckets(
         &self,
