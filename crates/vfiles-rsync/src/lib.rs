@@ -578,6 +578,10 @@ struct ParsedArgs {
     checksum: bool,
     /// `-I/--ignore-times`（关闭 size+mtime 快跳）。
     ignore_times: bool,
+    /// `--size-only`（只比大小 ✗ 忽略 mtime）。
+    size_only: bool,
+    /// `--modify-window=N`（mtime 容差秒数 ✗ 官方同义）。
+    modify_window: i64,
     /// `-o/--owner`、`-g/--group`、`-D/--devices`/`--specials`、`-U/--atimes`（flist 可选字段）。
     preserve_uid: bool,
     preserve_gid: bool,
@@ -617,6 +621,11 @@ fn parse_args(segs: &[String]) -> ParsedArgs {
                 "no-c" => a.checksum = false,
                 "ignore-times" => a.ignore_times = true,
                 "no-ignore-times" => a.ignore_times = false,
+                "size-only" => a.size_only = true,
+                "no-size-only" => a.size_only = false,
+                _ if long.starts_with("modify-window=") => {
+                    a.modify_window = long["modify-window=".len()..].parse().unwrap_or(0);
+                }
                 "owner" => a.preserve_uid = true,
                 "no-owner" | "no-o" => a.preserve_uid = false,
                 "group" => a.preserve_gid = true,
@@ -1812,7 +1821,7 @@ where
                 && !args.checksum
                 && let Some((dsize, dmtime)) = meta
                 && dsize == e.size
-                && dmtime == e.mtime
+                && (args.size_only || (dmtime - e.mtime).abs() <= args.modify_window)
             {
                 tracing::debug!(path = %full, "rsync：size+mtime 一致，跳过");
                 continue;

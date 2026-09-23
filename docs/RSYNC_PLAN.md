@@ -1,4 +1,27 @@
-# rsync 协议 daemon（… r17 空目录 → r18 `-c` 快跳 → **r19 `-a` 修复 + size+mtime 快跳**）
+# rsync 协议 daemon（… r18 `-c` 快跳 → r19 `-a` 修复 → **r20 `--size-only` / `--modify-window`**）
+
+## 状态（r20 末 · 快跳判定三档齐全 = 官方 `unchanged_file` 全语义）
+
+- **实装**（快跳判定与官方 `unchanged_file` 逐条对齐）：
+  | 开关 | 判定 |
+  | --- | --- |
+  | 默认 | `size 等 && |Δmtime| <= modify_window`（默认窗口 0 ✗ 跨秒即传） |
+  | `--size-only` | 只比 size（**忽略 mtime**） |
+  | `--modify-window=N` | mtime 容差 N 秒（`--modify-window=N` 解析 ✗ 非法值退 0） |
+  | `-I/--ignore-times` | 全关（一律请求） |
+  | `-c/--checksum` | 走整文件校验和（覆盖以上） |
+- **真机验收（每例带对照 ✗ `--stats` 数字）**：
+  | 场景 | 传输文件数 |
+  | --- | --- |
+  | 对照：默认 size+mtime，mtime 跨秒 | **1** |
+  | `--size-only` 同状态（尺寸同） | **0** |
+  | `--modify-window=2`（差 ~1s） | **0** |
+  | `--modify-window=0`（差 ~1s） | **1** |
+  | `--size-only` + 同尺寸内容变更 | 0（**与官方同义盲区**）· `-c` 则 1 |
+  → 拉回 `diff -r` 内容全同。
+- **门禁**：`cargo test -p vfiles-rsync` 23/23 × workspace 全绿 × clippy 归零 × fmt × build。
+- **债**：符号链接/设备落地（已解析 ✗ domain 无条目类型）· `.rsync-filter` per-dir · basis 流式 ·
+  `--numeric-ids` 映射。
 
 ## 状态（r19 末 · `rsync -a` 从「完全不可用」到「快跳 + mtime 保真」）
 
