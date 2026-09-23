@@ -1070,6 +1070,52 @@ impl VfilesS3 {
             .map_err(dom_err)
     }
 
+    async fn permanently_delete_version(
+        &self,
+        path: &vfiles_domain::NormalizedPath,
+        version_id: &str,
+    ) -> S3Result<()> {
+        let id = vfiles_domain::VersionId::from_string(version_id)
+            .map_err(|_| s3s::s3_error!(NoSuchVersion, "no such version"))?;
+        let entry = self
+            .entry_at(path)
+            .await?
+            .ok_or_else(|| s3s::s3_error!(NoSuchVersion, "no such version"))?;
+        let version = self
+            .entry_repo
+            .find_version(&id)
+            .await
+            .map_err(|_| s3s::s3_error!(NoSuchVersion, "no such version"))?;
+        if version.entry_id != entry.id {
+            return Err(s3s::s3_error!(NoSuchVersion, "no such version"));
+        }
+        let versions = self
+            .entry_repo
+            .find_versions_for_entries(&[entry.id])
+            .await
+            .map_err(dom_err)?;
+        if versions.len() == 1 {
+            self.workspace
+                .delete_entries(
+                    &self.namespace,
+                    std::slice::from_ref(path),
+                    Some("S3 delete object version"),
+                    &self.owner,
+                )
+                .await
+                .map_err(dom_err)?;
+        } else {
+            if !self.entry_repo.delete_version(&id).await.map_err(dom_err)? {
+                return Err(s3s::s3_error!(NoSuchVersion, "no such version"));
+            }
+            self.entry_repo
+                .remove_entry_property(&entry.id, &version_etag_property(&id))
+                .await
+                .map_err(dom_err)?;
+        }
+        Ok(())
+    }
+
     /// 目标路径当前 ETag（按版本读出持久化值；历史版本回退到版本 id）。
     async fn etag_at(&self, path: &vfiles_domain::NormalizedPath) -> S3Result<Option<String>> {
         let Some(entry) = self.entry_at(path).await? else {
@@ -1327,7 +1373,7 @@ impl S3 for VfilesS3 {
         ))
     }
 
-    /// 列出对象版本（本系统**确有版本历史** ✗ `entry_versions` ✗ 本实现无删除标记）。
+    /// 列出对象版本和删除标记（双表 key 游标分页，按 key 升序、版本时间倒序输出）。
     ///
     /// 语义对齐 AWS：key 升序 ✗ key 内**新版本在前** ✗ `max_keys` 计入 version 条目 ✗
     /// `key_marker` + `version_id_marker` 续页 ✗ delimiter 折叠（不重复投递）。
@@ -1347,6 +1393,7 @@ impl S3 for VfilesS3 {
         let encode = input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url");
 
         let mut out_versions: Vec<ObjectVersion> = Vec::new();
+        let mut out_markers: Vec<s3s::dto::DeleteMarkerEntry> = Vec::new();
         let mut prefixes: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         let mut truncated = false;
         let mut next_key: Option<String> = None;
@@ -1354,26 +1401,37 @@ impl S3 for VfilesS3 {
         // 最后一次输出的 (key, version_id) ✗ 截断时作为续页游标
         let mut last_emitted: Option<(String, String)> = None;
 
-        // Walk indexed path pages and fetch version rows in batches. The former
-        // implementation materialized every key in a bucket and issued one
-        // version query per key, making a small page cost O(bucket size) memory
-        // and O(number of keys) database round trips.
+        // The repository pages the union of file keys and delete-marker-only keys.
+        // Version and marker rows are then fetched in batches per key page.
         let from = key_marker
             .as_deref()
             .filter(|marker| *marker > prefix.as_str())
             .unwrap_or(&prefix);
         let mut cursor: Option<String> = None;
         'outer: loop {
-            let page = self
-                .entry_repo
-                .files_with_meta_page(&self.namespace, from, cursor.as_deref(), 256)
+            let keys = self
+                .delete_markers
+                .keys_page(&self.namespace, &prefix, from, cursor.as_deref(), 256)
                 .await
                 .map_err(dom_err)?;
-            if page.is_empty() {
+            if keys.is_empty() {
                 break;
             }
-            cursor = page.last().map(|m| m.entry.path_norm.as_str().to_owned());
-            let entry_ids: Vec<_> = page.iter().map(|m| m.entry.id).collect();
+            cursor = keys.last().cloned();
+            let paths = keys
+                .iter()
+                .map(|key| norm(key).map_err(dom_err))
+                .collect::<S3Result<Vec<_>>>()?;
+            let entries = self
+                .entry_repo
+                .find_paths(&self.namespace, &paths)
+                .await
+                .map_err(dom_err)?;
+            let entry_by_key: std::collections::HashMap<_, _> = entries
+                .into_iter()
+                .map(|entry| (entry.path_norm.as_str().to_string(), entry))
+                .collect();
+            let entry_ids: Vec<_> = entry_by_key.values().map(|entry| entry.id).collect();
             let mut versions_by_entry: std::collections::HashMap<_, Vec<_>> =
                 std::collections::HashMap::new();
             for version in self
@@ -1388,11 +1446,20 @@ impl S3 for VfilesS3 {
                     .push(version);
             }
             let version_etags = self.load_version_etags(&entry_ids).await?;
-            for m in page {
-                let key = m.entry.path_norm.as_str().to_string();
-                if !key.starts_with(&prefix) {
-                    break 'outer;
-                }
+            let markers = self
+                .delete_markers
+                .for_keys(&self.namespace, &keys)
+                .await
+                .map_err(dom_err)?;
+            let mut markers_by_key: std::collections::HashMap<_, Vec<_>> =
+                std::collections::HashMap::new();
+            for marker in markers {
+                markers_by_key
+                    .entry(marker.object_key.clone())
+                    .or_default()
+                    .push(marker);
+            }
+            for key in keys {
                 if let Some(d) = &delimiter {
                     let rest = &key[prefix.len()..];
                     if let Some(idx) = rest.find(d.as_str()) {
@@ -1404,7 +1471,7 @@ impl S3 for VfilesS3 {
                             continue;
                         }
                         if !prefixes.contains(&cp) {
-                            if out_versions.len() + prefixes.len() >= max {
+                            if out_versions.len() + out_markers.len() + prefixes.len() >= max {
                                 truncated = true;
                                 break 'outer;
                             }
@@ -1421,22 +1488,70 @@ impl S3 for VfilesS3 {
                     continue;
                 }
                 let mut skipping = key_marker.as_ref() == Some(&key);
-                let mut entry_versions = versions_by_entry.remove(&m.entry.id).unwrap_or_default();
-                entry_versions.sort_by_key(|e| std::cmp::Reverse(e.version_no)); // 新版本在前（AWS 同形）
-                for ev in entry_versions {
-                    let vid = ev.id.to_string().replace('-', "");
-                    let etag = version_etags
-                        .get(&m.entry.id)
-                        .and_then(|map| map.get(&vid))
-                        .cloned()
-                        .unwrap_or_else(|| vid.clone());
+                let mut items: Vec<(
+                    time::OffsetDateTime,
+                    String,
+                    Option<ObjectVersion>,
+                    Option<s3s::dto::DeleteMarkerEntry>,
+                )> = Vec::new();
+                if let Some(entry) = entry_by_key.get(&key) {
+                    let mut entry_versions =
+                        versions_by_entry.remove(&entry.id).unwrap_or_default();
+                    entry_versions.sort_by_key(|e| std::cmp::Reverse(e.version_no));
+                    for ev in entry_versions {
+                        let vid = ev.id.to_string().replace('-', "");
+                        let etag = version_etags
+                            .get(&entry.id)
+                            .and_then(|map| map.get(&vid))
+                            .cloned()
+                            .unwrap_or_else(|| vid.clone());
+                        items.push((
+                            ev.created_at,
+                            vid.clone(),
+                            Some(ObjectVersion {
+                                key: Some(key.clone()),
+                                version_id: Some(vid),
+                                size: Some(ev.size_bytes.as_u64() as i64),
+                                last_modified: Some(Timestamp::from(ev.created_at)),
+                                e_tag: Some(s3s::dto::ETag::Strong(etag)),
+                                ..Default::default()
+                            }),
+                            None,
+                        ));
+                    }
+                }
+                for marker in markers_by_key.remove(&key).unwrap_or_default() {
+                    items.push((
+                        marker.created_at,
+                        marker.version_id.clone(),
+                        None,
+                        Some(s3s::dto::DeleteMarkerEntry {
+                            key: Some(key.clone()),
+                            version_id: Some(marker.version_id),
+                            last_modified: Some(Timestamp::from(marker.created_at)),
+                            owner: Some(Owner {
+                                id: Some(marker.owner_id),
+                                display_name: None,
+                            }),
+                            ..Default::default()
+                        }),
+                    ));
+                }
+                items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+                for (index, (_, vid, mut version, mut marker)) in items.into_iter().enumerate() {
+                    if let Some(version) = &mut version {
+                        version.is_latest = Some(index == 0);
+                    }
+                    if let Some(marker) = &mut marker {
+                        marker.is_latest = Some(index == 0);
+                    }
                     if skipping {
                         if vid_marker.as_ref() == Some(&vid) {
                             skipping = false;
                         }
                         continue;
                     }
-                    if out_versions.len() + prefixes.len() >= max {
+                    if out_versions.len() + out_markers.len() + prefixes.len() >= max {
                         truncated = true;
                         if let Some((k, v)) = &last_emitted {
                             next_key = Some(k.clone());
@@ -1444,15 +1559,12 @@ impl S3 for VfilesS3 {
                         }
                         break 'outer;
                     }
-                    out_versions.push(ObjectVersion {
-                        key: Some(key.clone()),
-                        version_id: Some(vid.clone()),
-                        is_latest: Some(m.entry.current_version_id == Some(ev.id)),
-                        size: Some(ev.size_bytes.as_u64() as i64),
-                        last_modified: Some(Timestamp::from(ev.created_at)),
-                        e_tag: Some(s3s::dto::ETag::Strong(etag)),
-                        ..Default::default()
-                    });
+                    if let Some(version) = version {
+                        out_versions.push(version);
+                    }
+                    if let Some(marker) = marker {
+                        out_markers.push(marker);
+                    }
                     last_emitted = Some((key.clone(), vid));
                 }
             }
@@ -1466,6 +1578,14 @@ impl S3 for VfilesS3 {
                     v.version_id = Some(url_encode(vi));
                 }
             }
+            for marker in &mut out_markers {
+                if let Some(key) = &marker.key {
+                    marker.key = Some(url_encode(key));
+                }
+                if let Some(version_id) = &marker.version_id {
+                    marker.version_id = Some(url_encode(version_id));
+                }
+            }
             prefixes = prefixes.into_iter().map(|p| url_encode(&p)).collect();
             if let Some(k) = &next_key {
                 next_key = Some(url_encode(k));
@@ -1474,6 +1594,7 @@ impl S3 for VfilesS3 {
         let out = ListObjectVersionsOutput {
             name: Some(input.bucket),
             versions: (!out_versions.is_empty()).then_some(out_versions),
+            delete_markers: (!out_markers.is_empty()).then_some(out_markers),
             common_prefixes: (!prefixes.is_empty()).then(|| {
                 prefixes
                     .into_iter()
@@ -2011,7 +2132,7 @@ impl S3 for VfilesS3 {
         ok(out)
     }
 
-    /// 批量删除（`aws s3 rm --recursive` / `rclone sync --delete` 路径 ✗ 逐键幂等）。
+    /// 批量删除（逐键验证条件，再以一次事务批量创建删除标记）。
     async fn delete_objects(
         &self,
         req: S3Request<DeleteObjectsInput>,
@@ -2028,8 +2149,6 @@ impl S3 for VfilesS3 {
 
         // 逐键点查存在性（`delete_entries` 遇缺失即整体 NotFound ✗ 必须先分区），
         // 存在者一次批量删（单快照），缺失者按 S3 幂等语义直接记 deleted。
-        let mut existing: Vec<vfiles_domain::NormalizedPath> = Vec::new();
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut per_key_err: Vec<Option<String>> = vec![None; keys.len()];
         let mut valid_candidates = Vec::new();
         let mut etag_checks = Vec::new();
@@ -2057,6 +2176,14 @@ impl S3 for VfilesS3 {
                 Ok(p) if !p.as_str().is_empty() => {
                     match self.entry_repo.find_by_path(&self.namespace, &p).await {
                         Ok(Some(entry)) => {
+                            if (want_etag[i].is_some()
+                                || want_mtime[i].is_some()
+                                || want_size[i].is_some())
+                                && self.has_current_delete_marker(&p).await?
+                            {
+                                per_key_err[i] = Some("PreconditionFailed".to_string());
+                                continue;
+                            }
                             if let Some(want) = &want_etag[i] {
                                 let Some(version_id) = entry.current_version_id else {
                                     per_key_err[i] = Some("PreconditionFailed".to_string());
@@ -2111,8 +2238,13 @@ impl S3 for VfilesS3 {
                         }
                         // 缺失 + 带条件 = 条件不可满足（幂等语义仅对**无条件**删适用）
                         Ok(None) => {
-                            if want_etag[i].is_some() {
+                            if want_etag[i].is_some()
+                                || want_mtime[i].is_some()
+                                || want_size[i].is_some()
+                            {
                                 per_key_err[i] = Some("PreconditionFailed".to_string());
+                            } else {
+                                valid_candidates.push((i, p));
                             }
                         }
                         Err(e) => per_key_err[i] = Some(e.to_string()),
@@ -2139,32 +2271,123 @@ impl S3 for VfilesS3 {
                 }
             }
         }
+        let mut marker_ids_by_key = std::collections::HashMap::new();
+        let mut marker_rows = Vec::new();
+        let mut marker_indexes_by_key: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        let mut deleted_by_index = std::collections::HashMap::new();
+        let mut seen_keys = std::collections::HashSet::new();
         for (i, path) in valid_candidates {
-            if per_key_err[i].is_none() && seen.insert(path.as_str().to_string()) {
-                existing.push(path);
+            if per_key_err[i].is_some() {
+                continue;
             }
-        }
-
-        let batch_failed = if existing.is_empty() {
-            false
-        } else {
-            match self
-                .workspace
-                .delete_entries(
-                    &self.namespace,
-                    &existing,
-                    Some("S3 DeleteObjects"),
-                    &self.owner,
-                )
-                .await
-            {
-                Ok(_) => false,
-                Err(e) => {
-                    tracing::warn!(error = %e, "S3 DeleteObjects 批量删除失败，逐键回退");
-                    true
+            let key = path.as_str().to_string();
+            if let Some(version_id) = input.delete.objects[i].version_id.as_deref() {
+                if self
+                    .delete_markers
+                    .delete(&self.namespace, &key, version_id)
+                    .await
+                    .map_err(dom_err)?
+                {
+                    deleted_by_index.insert(
+                        i,
+                        DeletedObject {
+                            key: Some(keys[i].clone()),
+                            version_id: Some(version_id.to_string()),
+                            delete_marker: Some(true),
+                            ..Default::default()
+                        },
+                    );
+                    continue;
+                }
+                let version_id_parsed = match vfiles_domain::VersionId::from_string(version_id) {
+                    Ok(id) => id,
+                    Err(_) => {
+                        per_key_err[i] = Some("NoSuchVersion".to_string());
+                        continue;
+                    }
+                };
+                let Some(entry) = self.entry_at(&path).await? else {
+                    per_key_err[i] = Some("NoSuchVersion".to_string());
+                    continue;
+                };
+                match self.entry_repo.find_version(&version_id_parsed).await {
+                    Ok(version) if version.entry_id == entry.id => {}
+                    _ => {
+                        per_key_err[i] = Some("NoSuchVersion".to_string());
+                        continue;
+                    }
+                }
+                let versions = self
+                    .entry_repo
+                    .find_versions_for_entries(&[entry.id])
+                    .await
+                    .map_err(dom_err)?;
+                if versions.len() == 1 {
+                    if let Err(error) = self
+                        .workspace
+                        .delete_entries(
+                            &self.namespace,
+                            std::slice::from_ref(&path),
+                            Some("S3 delete object version"),
+                            &self.owner,
+                        )
+                        .await
+                    {
+                        per_key_err[i] = Some(format!("InternalError:{error}"));
+                        continue;
+                    }
+                } else {
+                    if !self
+                        .entry_repo
+                        .delete_version(&version_id_parsed)
+                        .await
+                        .map_err(dom_err)?
+                    {
+                        per_key_err[i] = Some("NoSuchVersion".to_string());
+                        continue;
+                    }
+                    self.entry_repo
+                        .remove_entry_property(
+                            &entry.id,
+                            &version_etag_property(&version_id_parsed),
+                        )
+                        .await
+                        .map_err(dom_err)?;
+                }
+                deleted_by_index.insert(
+                    i,
+                    DeletedObject {
+                        key: Some(keys[i].clone()),
+                        version_id: Some(version_id.to_string()),
+                        delete_marker: Some(false),
+                        ..Default::default()
+                    },
+                );
+            } else {
+                marker_indexes_by_key
+                    .entry(key.clone())
+                    .or_default()
+                    .push(i);
+                if seen_keys.insert(key.clone()) {
+                    let version_id = vfiles_domain::VersionId::new().to_string();
+                    marker_ids_by_key.insert(key.clone(), version_id.clone());
+                    marker_rows.push((key, version_id, time::OffsetDateTime::now_utc()));
                 }
             }
-        };
+        }
+        if let Err(error) = self
+            .delete_markers
+            .create_many(&self.namespace, &self.owner, &marker_rows)
+            .await
+        {
+            for indexes in marker_indexes_by_key.values() {
+                for index in indexes {
+                    per_key_err[*index] = Some(format!("InternalError:{error}"));
+                }
+            }
+            marker_ids_by_key.clear();
+        }
 
         for (i, k) in keys.iter().enumerate() {
             if let Some(msg) = &per_key_err[i] {
@@ -2173,6 +2396,13 @@ impl S3 for VfilesS3 {
                         "PreconditionFailed".to_string(),
                         "a precondition on this object failed".to_string(),
                     )
+                } else if msg == "NoSuchVersion" || msg == "InvalidRequest" {
+                    (
+                        msg.clone(),
+                        "the requested object version cannot be deleted".to_string(),
+                    )
+                } else if let Some(text) = msg.strip_prefix("InternalError:") {
+                    ("InternalError".to_string(), text.to_string())
                 } else {
                     ("InvalidArgument".to_string(), msg.clone())
                 };
@@ -2184,47 +2414,20 @@ impl S3 for VfilesS3 {
                 });
                 continue;
             }
-            if batch_failed {
-                // 逐键回退（NotFound 幂等 = 记 deleted）
-                let p = match norm(k) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        errors.push(S3DeleteError {
-                            key: Some(k.clone()),
-                            code: Some("InvalidArgument".to_string()),
-                            message: Some(e.to_string()),
-                            ..Default::default()
-                        });
-                        continue;
-                    }
-                };
-                match self
-                    .workspace
-                    .delete_entries(
-                        &self.namespace,
-                        std::slice::from_ref(&p),
-                        Some("S3 DeleteObjects"),
-                        &self.owner,
-                    )
-                    .await
-                {
-                    Ok(_) | Err(vfiles_domain::DomainError::NotFound { .. }) => {}
-                    Err(e) => {
-                        errors.push(S3DeleteError {
-                            key: Some(k.clone()),
-                            code: Some("InternalError".to_string()),
-                            message: Some(e.to_string()),
-                            ..Default::default()
-                        });
-                        continue;
-                    }
-                }
-            }
             if !quiet {
-                deleted.push(DeletedObject {
-                    key: Some(k.clone()),
-                    ..Default::default()
-                });
+                if let Some(item) = deleted_by_index.remove(&i) {
+                    deleted.push(item);
+                } else if let Some(version_id) = norm(k)
+                    .ok()
+                    .and_then(|path| marker_ids_by_key.get(path.as_str()).cloned())
+                {
+                    deleted.push(DeletedObject {
+                        key: Some(k.clone()),
+                        delete_marker: Some(true),
+                        delete_marker_version_id: Some(version_id),
+                        ..Default::default()
+                    });
+                }
             }
         }
         let out = DeleteObjectsOutput {
@@ -2259,42 +2462,12 @@ impl S3 for VfilesS3 {
                     ..Default::default()
                 });
             }
-            let entry = self
-                .entry_at(&path)
-                .await?
-                .ok_or_else(|| s3s::s3_error!(NoSuchKey, "No such key"))?;
-            let version_id = vfiles_domain::VersionId::from_string(&vid)
-                .map_err(|_| s3s::s3_error!(NoSuchVersion, "no such version"))?;
-            let ev = self
-                .entry_repo
-                .find_version(&version_id)
-                .await
-                .map_err(|_| s3s::s3_error!(NoSuchVersion, "no such version"))?;
-            if ev.entry_id != entry.id {
-                return Err(s3s::s3_error!(
-                    NoSuchVersion,
-                    "version does not belong to this key"
-                ));
-            }
-            if entry.current_version_id == Some(ev.id) {
-                return Err(s3s::s3_error!(
-                    InvalidRequest,
-                    "cannot permanently delete the current object version"
-                ));
-            }
-            if !self
-                .entry_repo
-                .delete_version(&version_id)
-                .await
-                .map_err(dom_err)?
-            {
-                return Err(s3s::s3_error!(NoSuchVersion, "no such version"));
-            }
-            self.entry_repo
-                .remove_entry_property(&entry.id, &version_etag_property(&version_id))
-                .await
-                .map_err(dom_err)?;
-            return ok(DeleteObjectOutput::default());
+            self.permanently_delete_version(&path, &vid).await?;
+            return ok(DeleteObjectOutput {
+                delete_marker: Some(false),
+                version_id: Some(vid),
+                ..Default::default()
+            });
         }
         // Conditional delete applies to the current object; missing keys still create markers.
         let cur = if self.has_current_delete_marker(&path).await? {

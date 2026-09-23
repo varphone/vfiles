@@ -762,16 +762,52 @@ impl SqliteS3DeleteMarkerRepo {
         version_id: &str,
         created_at: time::OffsetDateTime,
     ) -> Result<(), vfiles_domain::DomainError> {
-        sqlx::query("INSERT INTO s3_delete_markers (version_id, namespace_id, object_key, owner_id, created_at) VALUES (?, ?, ?, ?, ?)")
-            .bind(version_id)
-            .bind(namespace_id.to_string())
-            .bind(object_key)
-            .bind(owner_id.to_string())
-            .bind(created_at)
-            .execute(&self.pool)
+        self.create_many(
+            namespace_id,
+            owner_id,
+            &[(object_key.to_string(), version_id.to_string(), created_at)],
+        )
+        .await
+    }
+
+    pub async fn create_many(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        owner_id: &vfiles_domain::UserId,
+        markers: &[(String, String, time::OffsetDateTime)],
+    ) -> Result<(), vfiles_domain::DomainError> {
+        if markers.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self
+            .pool
+            .begin()
             .await
-            .map_err(|e| vfiles_domain::DomainError::Internal { message: format!("Failed to create S3 delete marker: {e}") })?;
-        Ok(())
+            .map_err(|e| vfiles_domain::DomainError::Internal {
+                message: format!("Failed to start S3 delete marker transaction: {e}"),
+            })?;
+        for chunk in markers.chunks(200) {
+            let mut query = sqlx::QueryBuilder::new(
+                "INSERT INTO s3_delete_markers (version_id, namespace_id, object_key, owner_id, created_at) ",
+            );
+            query.push_values(chunk, |mut row, (object_key, version_id, created_at)| {
+                row.push_bind(version_id)
+                    .push_bind(namespace_id.to_string())
+                    .push_bind(object_key)
+                    .push_bind(owner_id.to_string())
+                    .push_bind(created_at);
+            });
+            query.build().execute(&mut *tx).await.map_err(|e| {
+                vfiles_domain::DomainError::Internal {
+                    message: format!("Failed to create S3 delete markers: {e}"),
+                }
+            })?;
+        }
+        tx.commit()
+            .await
+            .map_err(|e| vfiles_domain::DomainError::Internal {
+                message: format!("Failed to commit S3 delete markers: {e}"),
+            })
     }
 
     pub async fn latest(
@@ -796,6 +832,83 @@ impl SqliteS3DeleteMarkerRepo {
                 created_at,
             },
         ))
+    }
+
+    pub async fn keys_page(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        prefix: &str,
+        from: &str,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<String>, vfiles_domain::DomainError> {
+        let rows = sqlx::query_scalar::<_, String>(
+            r#"SELECT object_key FROM (
+                   SELECT path AS object_key FROM entries
+                   WHERE namespace_id = ? AND kind = 'file' AND substr(path, 1, length(?)) = ?
+                   UNION
+                   SELECT object_key FROM s3_delete_markers
+                   WHERE namespace_id = ? AND substr(object_key, 1, length(?)) = ?
+               ) keys
+               WHERE object_key >= ? AND (? IS NULL OR object_key > ?)
+               ORDER BY object_key LIMIT ?"#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(prefix)
+        .bind(prefix)
+        .bind(namespace_id.to_string())
+        .bind(prefix)
+        .bind(prefix)
+        .bind(from)
+        .bind(after)
+        .bind(after)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to page S3 object and marker keys: {e}"),
+        })?;
+        Ok(rows)
+    }
+
+    pub async fn for_keys(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        object_keys: &[String],
+    ) -> Result<Vec<S3DeleteMarker>, vfiles_domain::DomainError> {
+        if object_keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut markers = Vec::new();
+        for chunk in object_keys.chunks(500) {
+            let mut query = sqlx::QueryBuilder::new(
+                "SELECT version_id, namespace_id, object_key, owner_id, created_at FROM s3_delete_markers WHERE namespace_id = ",
+            );
+            query.push_bind(namespace_id.to_string());
+            query.push(" AND object_key IN (");
+            let mut separated = query.separated(", ");
+            for key in chunk {
+                separated.push_bind(key);
+            }
+            separated.push_unseparated(") ORDER BY object_key, created_at DESC, rowid DESC");
+            let rows = query
+                .build_query_as::<(String, String, String, String, time::OffsetDateTime)>()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| vfiles_domain::DomainError::Internal {
+                    message: format!("Failed to read S3 delete markers: {e}"),
+                })?;
+            markers.extend(rows.into_iter().map(
+                |(version_id, namespace_id, object_key, owner_id, created_at)| S3DeleteMarker {
+                    version_id,
+                    namespace_id,
+                    object_key,
+                    owner_id,
+                    created_at,
+                },
+            ));
+        }
+        Ok(markers)
     }
 
     pub async fn delete(
@@ -852,6 +965,13 @@ mod s3_delete_marker_tests {
             .execute(&pool)
             .await
             .expect("test namespace should be inserted");
+        sqlx::query("INSERT INTO entries (id, namespace_id, path, kind) VALUES (?, ?, ?, 'file')")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(namespace.to_string())
+            .bind("folder/z.txt")
+            .execute(&pool)
+            .await
+            .expect("test object entry should be inserted");
 
         let repo = SqliteS3DeleteMarkerRepo::new(pool);
         let version_id = uuid::Uuid::new_v4().to_string();
@@ -872,10 +992,58 @@ mod s3_delete_marker_tests {
             .expect("marker should exist");
         assert_eq!(marker.version_id, version_id);
         assert_eq!(marker.owner_id, owner.to_string());
+        let newer_version_id = uuid::Uuid::new_v4().to_string();
+        let newer_created_at = created_at + time::Duration::seconds(1);
+        repo.create_many(
+            &namespace,
+            &owner,
+            &[(
+                "folder/object.txt".to_string(),
+                newer_version_id.clone(),
+                newer_created_at,
+            )],
+        )
+        .await
+        .expect("marker batch should be committed");
+        assert_eq!(
+            repo.latest(&namespace, "folder/object.txt")
+                .await
+                .expect("latest marker lookup should succeed")
+                .expect("new marker should exist")
+                .version_id,
+            newer_version_id
+        );
+        assert!(
+            repo.delete(&namespace, "folder/object.txt", &newer_version_id)
+                .await
+                .expect("newest marker should be deletable")
+        );
+        let first_page = repo
+            .keys_page(&namespace, "folder/", "folder/", None, 1)
+            .await
+            .expect("combined key page should succeed");
+        assert_eq!(first_page, ["folder/object.txt"]);
+        let second_page = repo
+            .keys_page(
+                &namespace,
+                "folder/",
+                "folder/",
+                first_page.last().map(String::as_str),
+                1,
+            )
+            .await
+            .expect("combined key continuation should succeed");
+        assert_eq!(second_page, ["folder/z.txt"]);
+        assert!(
+            repo.latest(&namespace, "folder/object.txt")
+                .await
+                .expect("marker lookup should succeed")
+                .is_some()
+        );
         assert!(
             repo.delete(&namespace, "folder/object.txt", &version_id)
                 .await
-                .expect("version-addressed marker delete should succeed")
+                .expect("original marker should be deletable")
         );
         assert!(
             repo.latest(&namespace, "folder/object.txt")

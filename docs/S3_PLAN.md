@@ -1,11 +1,12 @@
 # S3 兼容 API（… r34 桶生命周期 → r35 版本列表 → r36 versionId 定向 → **r37 区域校验**）
 
-## 当前工作树补充（删除标记基础支持）
+## 当前工作树补充（删除标记与版本列表）
 
 - 新增 SQLite 持久化的 S3 删除标记，`DeleteObject` 无 `versionId` 时创建标记（即使 key 不存在），响应返回 `DeleteMarker=true` 与标记 `VersionId`。
 - `GetObject` / `HeadObject` 在删除标记晚于当前对象版本时隐藏对象；显式指定对象版本仍可读取。`ListObjects` / `ListObjectsV2` 也过滤当前标记遮蔽的对象。
-- `DeleteObject?versionId=<marker>` 可移除对应标记；移除后按照剩余标记与对象版本时间恢复可见状态。
-- **仍待补齐**：`ListObjectVersions` 返回与分页排序中的删除标记；`DeleteObjects` 应创建标记而不是物理删除；跨对象的原子删除/并发排序语义及真实 S3 客户端验证。
+- `ListObjectVersions` 合并文件 key 与仅存在删除标记的 key 做游标分页；每个 key 的对象版本和删除标记按时间倒序混排计算 `IsLatest`，分页上限包含两类条目。
+- `DeleteObject?versionId=<marker>` 和 `DeleteObjects` 的版本定向删除可移除对应标记；普通批量删除在事务内批量创建标记，返回 marker 标志和版本 ID。
+- **仍待补齐**：删除并发与对象写入的统一排序序号、并发写入/删除的原子性，以及真实 S3 客户端验证。
 
 ## 当前工作树补充（CompleteMultipartUpload 选择分片）
 
