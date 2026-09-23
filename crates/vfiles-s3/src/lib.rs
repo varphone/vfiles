@@ -26,9 +26,10 @@ use s3s::dto::{
     CopyObjectResult, CreateMultipartUploadInput, CreateMultipartUploadOutput, DeleteObjectInput,
     DeleteObjectOutput, DeleteObjectsInput, DeleteObjectsOutput, DeletedObject,
     Error as S3DeleteError, GetObjectInput, GetObjectOutput, HeadObjectInput, HeadObjectOutput,
-    ListBucketsOutput, ListObjectsInput, ListObjectsOutput, ListObjectsV2Input,
-    ListObjectsV2Output, ListPartsInput, ListPartsOutput, Object, Part, PutObjectInput,
-    PutObjectOutput, StreamingBlob, Timestamp, UploadPartInput, UploadPartOutput,
+    ListBucketsOutput, ListMultipartUploadsInput, ListMultipartUploadsOutput, ListObjectsInput,
+    ListObjectsOutput, ListObjectsV2Input, ListObjectsV2Output, ListPartsInput, ListPartsOutput,
+    MultipartUpload, Object, Part, PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp,
+    UploadPartInput, UploadPartOutput,
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
 use tokio::io::AsyncReadExt;
@@ -958,6 +959,103 @@ impl S3 for VfilesS3 {
             upload_id: Some(input.upload_id),
             parts: Some(parts),
             is_truncated: Some(false),
+            ..Default::default()
+        };
+        ok(out)
+    }
+
+    /// 列出进行中的分片上传（`aws s3api list-multipart-uploads` / rclone 清理路径）。
+    ///
+    /// 支持 `prefix` / `delimiter` / `max-uploads` / `key-marker` + `upload-id-marker` 续页。
+    async fn list_multipart_uploads(
+        &self,
+        req: S3Request<ListMultipartUploadsInput>,
+    ) -> S3Result<S3Response<ListMultipartUploadsOutput>> {
+        let input = req.input;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        let prefix = input.prefix.clone().unwrap_or_default();
+        let max = input.max_uploads.unwrap_or(1000).clamp(1, 1000) as usize;
+        let sessions = self
+            .upload
+            .list_upload_sessions(&self.namespace)
+            .await
+            .map_err(dom_err)?;
+        let mut items: Vec<(String, String, Timestamp)> = sessions
+            .into_iter()
+            .filter(|s| s.state == vfiles_domain::UploadState::Receiving)
+            .filter_map(|s| {
+                let key = if s.target_path_norm.as_str().is_empty() {
+                    s.filename.clone()
+                } else {
+                    format!("{}/{}", s.target_path_norm.as_str(), s.filename)
+                };
+                key.starts_with(&prefix)
+                    .then(|| (key, s.id.to_string(), Timestamp::from(s.created_at)))
+            })
+            .collect();
+        // 续页游标（key-marker + upload-id-marker ✗ 同 key 多会话时用 id 定序）
+        let after_key = input.key_marker.clone();
+        let after_uid = input.upload_id_marker.clone();
+        items.retain(|(k, id, _)| match (&after_key, &after_uid) {
+            (Some(km), Some(um)) => {
+                k.as_str() > km.as_str() || (k == km && id.as_str() > um.as_str())
+            }
+            (Some(km), None) => k.as_str() > km.as_str(),
+            _ => true,
+        });
+        items.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+        let delim = input.delimiter.clone();
+        let mut combined: Vec<(String, Option<MultipartUpload>)> = Vec::new();
+        for (key, id, created) in items {
+            if let Some(d) = &delim {
+                let rest = &key[prefix.len()..];
+                if let Some(pos) = rest.find(d.as_str()) {
+                    let cp = format!("{}{}{}", prefix, &rest[..pos], d);
+                    if !combined.iter().any(|(c, _)| c == &cp) {
+                        combined.push((cp, None));
+                    }
+                    continue;
+                }
+            }
+            combined.push((
+                key.clone(),
+                Some(MultipartUpload {
+                    key: Some(key),
+                    upload_id: Some(id),
+                    initiated: Some(created),
+                    ..Default::default()
+                }),
+            ));
+        }
+        let truncated = combined.len() > max;
+        combined.truncate(max);
+        let last = combined.last();
+        let next_key = last.map(|(k, _)| k.clone());
+        let next_uid = last.and_then(|(_, u)| u.as_ref().and_then(|u| u.upload_id.clone()));
+        let uploads: Vec<MultipartUpload> =
+            combined.iter().filter_map(|(_, u)| u.clone()).collect();
+        let cps: Vec<CommonPrefix> = combined
+            .iter()
+            .filter(|(_, u)| u.is_none())
+            .map(|(c, _)| CommonPrefix {
+                prefix: Some(c.clone()),
+            })
+            .collect();
+        let out = ListMultipartUploadsOutput {
+            bucket: Some(input.bucket),
+            delimiter: input.delimiter,
+            is_truncated: Some(truncated),
+            key_marker: input.key_marker,
+            max_uploads: Some(max as i32),
+            prefix: input.prefix,
+            upload_id_marker: input.upload_id_marker,
+            next_key_marker: if truncated { next_key } else { None },
+            next_upload_id_marker: if truncated { next_uid } else { None },
+            uploads: Some(uploads),
+            common_prefixes: (!cps.is_empty()).then_some(cps),
             ..Default::default()
         };
         ok(out)

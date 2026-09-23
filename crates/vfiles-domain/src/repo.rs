@@ -436,6 +436,8 @@ pub trait UploadStore {
         upload_id: &UploadId,
         part_index: u32,
     ) -> DomainResult<Option<Vec<u8>>>;
+    /// 列出全部上传会话（S3 `ListMultipartUploads` ✗ 损坏目录跳过）。
+    async fn list_upload_sessions(&self) -> DomainResult<Vec<UploadSession>>;
     async fn complete_upload_session(&self, upload_id: &UploadId) -> DomainResult<()>;
     async fn cancel_upload_session(&self, upload_id: &UploadId) -> DomainResult<()>;
     async fn cleanup_expired_sessions(&self) -> DomainResult<i64>;

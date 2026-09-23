@@ -3704,6 +3704,32 @@ impl UploadStore for FsUploadStore {
         Ok(parts)
     }
 
+    async fn list_upload_sessions(&self) -> DomainResult<Vec<UploadSession>> {
+        let mut out = Vec::new();
+        let mut rd = match fs::read_dir(&self.base_path).await {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+            Err(e) => {
+                return Err(DomainError::Internal {
+                    message: format!("Failed to read upload dir: {}", e),
+                });
+            }
+        };
+        while let Some(entry) = rd.next_entry().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to read upload dir entry: {}", e),
+        })? {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Ok(uuid) = uuid::Uuid::parse_str(&name) else {
+                continue;
+            };
+            let upload_id = UploadId::from_uuid(uuid);
+            if let Ok(session) = self.get_upload_session(&upload_id).await {
+                out.push(session);
+            }
+        }
+        Ok(out)
+    }
+
     async fn read_upload_part(
         &self,
         upload_id: &UploadId,

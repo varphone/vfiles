@@ -196,6 +196,21 @@ def main():
         for j in range(30):
             s3.delete_object(Bucket="default", Key=f"boto-scale/d{k}/f{j:02d}.txt")
 
+    # ── ListMultipartUploads（r16）──
+    muids = {}
+    for mk in ["boto-lmu/x.bin", "boto-lmu/sub/y.bin"]:
+        muids[mk] = s3.create_multipart_upload(Bucket="default", Key=mk)["UploadId"]
+    lm = s3.list_multipart_uploads(Bucket="default", Prefix="boto-lmu/")
+    check("boto list_multipart_uploads",
+          sorted(u["Key"] for u in lm.get("Uploads", [])) == sorted(muids),
+          [u["Key"] for u in lm.get("Uploads", [])])
+    lmd = s3.list_multipart_uploads(Bucket="default", Prefix="boto-lmu/", Delimiter="/")
+    check("boto list_multipart_uploads delimiter",
+          [c["Prefix"] for c in lmd.get("CommonPrefixes", [])] == ["boto-lmu/sub/"],
+          lmd.get("CommonPrefixes"))
+    for mk, mid in muids.items():
+        s3.abort_multipart_upload(Bucket="default", Key=mk, UploadId=mid)
+
     passed = sum(1 for x in P if x)
     print(f"== boto3 {passed}/{len(P)} PASS ==")
     sys.exit(0 if passed == len(P) else 1)

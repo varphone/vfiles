@@ -2688,6 +2688,20 @@ where
             .await
     }
 
+    /// 列出本命名空间的上传会话（S3 `ListMultipartUploads` 用）。
+    pub async fn list_upload_sessions(
+        &self,
+        namespace_id: &NamespaceId,
+    ) -> DomainResult<Vec<vfiles_domain::UploadSession>> {
+        Ok(self
+            .upload_store
+            .list_upload_sessions()
+            .await?
+            .into_iter()
+            .filter(|s| &s.namespace_id == namespace_id)
+            .collect())
+    }
+
     /// 读单个分片内容（S3 `ListParts` ETag / 完成校验用）。
     pub async fn read_upload_part(
         &self,

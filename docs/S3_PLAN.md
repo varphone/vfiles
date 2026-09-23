@@ -1,4 +1,24 @@
-# S3 兼容 API（… r10 多凭证/CopyObject → r13 列表一条 SQL → **r15 multipart 完整性**）
+# S3 兼容 API（… r13 列表一条 SQL → r15 multipart 完整性 → **r16 ListMultipartUploads**）
+
+## 状态（r16 末 · multipart API 收口 = 六式齐全）
+
+- **实装**：
+  | 项 | 内容 |
+  | --- | --- |
+  | `UploadStore::list_upload_sessions` | 新仓储方法（扫上传目录 ✗ 损坏/半成品目录跳过）+ app 按命名空间过滤 |
+  | `ListMultipartUploads` | 只列 `Receiving` 状态；支持 `prefix` / `delimiter` 折叠 / `max-uploads` / `key-marker` + `upload-id-marker` 续页（同 key 多会话按 upload id 定序）|
+- **实证（真 SDK）**：
+  | 场景 | 结果 |
+  | --- | --- |
+  | 5 个进行中上传 | 全部列出 + `Initiated` 存在 ✓ |
+  | `prefix=lmu/` | 4 条 ✓ |
+  | `prefix=lmu/ delimiter=/` | `lmu/sub/` 折叠 + 顶层两条 ✓ |
+  | `max-uploads=2` + marker 续页 | 截断 + 续页无重 ✓ |
+  | abort 一个后 | 该会话消失 ✓ |
+- **回归**：自写探针 **24/24** · 真 SDK **26/26**（+2 ListMultipartUploads）。
+- **multipart 面**：`Create` / `UploadPart` / `Complete`（含校验）/ `Abort` / `ListParts`（含 ETag）/
+  `ListMultipartUploads` **六式齐全**。
+- **仍债**：SQL 级 prefix/limit · 访问键绑用户 · region 校验 · `UploadPartCopy`。
 
 ## 状态（r15 末 · part ETag + 完成校验 = multipart 不静默出错）
 
