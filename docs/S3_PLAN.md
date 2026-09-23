@@ -1,4 +1,17 @@
-# S3 兼容 API（… r24 条件复制 → r25 桶级探测 → **r26 凭证→命名空间绑定**）
+# S3 兼容 API（… r25 桶级探测 → r26 命名空间绑定 → **r28 条件写/条件删**）
+
+## 状态（r28 末 · 目标条件头 = 现代 S3 乐观并发写）
+
+- **实装**：`check_dest_conditions`（目标条目 `If-Match` / `If-None-Match`，缺失 = 视为不存在）→
+  不满足 `PreconditionFailed` 412；接入 **`PutObject`**（条件建/条件改）· **`DeleteObject`**（条件删）·
+  **`CopyObject`** 的**目标**条件（与 `copy-source-if-*` 源条件相互独立）；`If-Match: *` = 必须存在，
+  `If-None-Match: *` = 必须不存在。
+- **真机验收（真 SDK，12 项）**：`If-None-Match:*` 首写 ok / 已存在 412 / **412 后内容未被改写**；
+  `If-Match` 正确 ok / 过期 412 / `*` 存在 ok；`DELETE If-Match` 过期 412（对象仍在）/ 正确 ok；
+  `CopyObject` 目标 `If-None-Match:*` 新键 ok / 已存在 412。
+- **回归**：自写探针 **24/24** · 真 SDK **39/39**（+条件写/删）。
+- **仍债**：`ListObjectVersions` / `PutBucketVersioning`（真版本控制）· `DeleteObjects` 逐键条件头 ·
+  region 校验（有意不做）。
 
 ## 状态（r26 末 · 多租户隔离 = 每凭证一个命名空间视图）
 

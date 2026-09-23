@@ -282,6 +282,27 @@ def main():
     for mk in ["boto-meta/a.txt", "boto-meta/src.txt", "boto-meta/copy.txt", "boto-meta/repl.txt"]:
         s3.delete_object(Bucket="default", Key=mk)
 
+    # ── 条件写 / 条件删（If-Match / If-None-Match ✗ r28）──
+    def cw(fn):
+        try:
+            fn()
+            return "ok"
+        except ClientError as e:
+            return e.response["Error"]["Code"]
+
+    ck = "boto-condw/a.txt"
+    n1 = cw(lambda: s3.put_object(Bucket="default", Key=ck, Body=b"one", IfNoneMatch="*")) == "ok"
+    n2 = cw(lambda: s3.put_object(Bucket="default", Key=ck, Body=b"x", IfNoneMatch="*")) == "PreconditionFailed"
+    ce = s3.head_object(Bucket="default", Key=ck)["ETag"]
+    m1 = cw(lambda: s3.put_object(Bucket="default", Key=ck, Body=b"two", IfMatch=ce)) == "ok"
+    m2 = cw(lambda: s3.put_object(Bucket="default", Key=ck, Body=b"x", IfMatch=ce)) == "PreconditionFailed"
+    d1 = cw(lambda: s3.delete_object(Bucket="default", Key=ck, IfMatch=ce)) == "PreconditionFailed"
+    d2 = cw(lambda: s3.delete_object(Bucket="default", Key=ck,
+                                     IfMatch=s3.head_object(Bucket="default", Key=ck)["ETag"])) == "ok"
+    check("boto conditional write/delete (If-Match / If-None-Match)",
+          n1 and n2 and m1 and m2 and d1 and d2,
+          f"{n1}/{n2}/{m1}/{m2}/{d1}/{d2}")
+
     # ── 凭证→命名空间绑定（多租户隔离 ✗ r26）──
     if NS_ACCESS and NS_SECRET:
         nsc = boto3.client(

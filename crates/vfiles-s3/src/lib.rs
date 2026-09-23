@@ -463,6 +463,30 @@ fn check_copy_conditions(
     Ok(())
 }
 
+/// 目标条目条件（`If-Match` / `If-None-Match` ✗ 缺失 = 视为不存在）→ 不满足 `PreconditionFailed`。
+fn check_dest_conditions(
+    dest_etag: Option<&str>,
+    if_match: Option<&ETagCondition>,
+    if_none_match: Option<&ETagCondition>,
+) -> S3Result<()> {
+    let matched = |c: &ETagCondition| match (c, dest_etag) {
+        (ETagCondition::Any, cur) => cur.is_some(),
+        (ETagCondition::ETag(e), Some(cur)) => e.value() == cur,
+        (ETagCondition::ETag(_), None) => false,
+    };
+    if let Some(c) = if_match
+        && !matched(c)
+    {
+        return Err(s3s::s3_error!(PreconditionFailed, "if-match failed"));
+    }
+    if let Some(c) = if_none_match
+        && matched(c)
+    {
+        return Err(s3s::s3_error!(PreconditionFailed, "if-none-match failed"));
+    }
+    Ok(())
+}
+
 /// 源条目的 `(ETag, LastModified)`（条件头用）。
 async fn source_identity(
     backend: &VfilesS3,
@@ -595,6 +619,15 @@ impl VfilesS3 {
             .find_by_path(&self.namespace, path)
             .await
             .map_err(dom_err)
+    }
+
+    /// 目标路径当前 ETag（`current_version_id` hex ✗ 不存在 = None）。
+    async fn etag_at(&self, path: &vfiles_domain::NormalizedPath) -> S3Result<Option<String>> {
+        Ok(self
+            .entry_at(path)
+            .await?
+            .and_then(|e| e.current_version_id)
+            .map(|v| v.to_string().replace('-', "")))
     }
 
     /// 变更类操作门控：命中只读凭证 → `AccessDenied`。
@@ -863,6 +896,13 @@ impl S3 for VfilesS3 {
         }
         let path = norm(&input.key).map_err(dom_err)?;
         // parent/filename 拆（WebDAV put_file 同式 ✗ init=父+名）
+        // 条件写（`If-Match` / `If-None-Match` ✗ S3 现代并发控制）
+        let cur = self.etag_at(&path).await?;
+        check_dest_conditions(
+            cur.as_deref(),
+            input.if_match.as_ref(),
+            input.if_none_match.as_ref(),
+        )?;
         let (parent_str, filename) = split_key(path.as_str());
         let parent = vfiles_domain::NormalizedPath::new(&parent_str)
             .map_err(|e| s3s::s3_error!(InvalidArgument, "{}", e))?;
@@ -990,6 +1030,13 @@ impl S3 for VfilesS3 {
                 .or_else(|| input.content_type.clone())
         };
         let dst_path = norm(&input.key).map_err(dom_err)?;
+        // 目标条件（`If-Match` / `If-None-Match` 针对**目标**，与 copy-source 条件相区分）
+        let cur = self.etag_at(&dst_path).await?;
+        check_dest_conditions(
+            cur.as_deref(),
+            input.if_match.as_ref(),
+            input.if_none_match.as_ref(),
+        )?;
         let (parent_str, filename) = split_key(dst_path.as_str());
         let parent = vfiles_domain::NormalizedPath::new(&parent_str)
             .map_err(|e| s3s::s3_error!(InvalidArgument, "{}", e))?;
@@ -1170,6 +1217,9 @@ impl S3 for VfilesS3 {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
         let path = norm(&input.key).map_err(dom_err)?;
+        // 条件删（`If-Match` ✗ 不存在/不符即 412）
+        let cur = self.etag_at(&path).await?;
+        check_dest_conditions(cur.as_deref(), input.if_match.as_ref(), None)?;
         match self
             .workspace
             .delete_entries(
