@@ -1932,6 +1932,23 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
             Err(e) => Err(e.to_string()),
         }
     }
+
+    async fn mkdir(&self, path: &str) -> Result<(), String> {
+        let np = vfiles_domain::NormalizedPath::new(path).map_err(|e| e.to_string())?;
+        if np.as_str().is_empty() {
+            return Ok(());
+        }
+        match self.repo.find_by_path(&self.namespace, &np).await {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => {}
+            Err(e) => return Err(e.to_string()),
+        }
+        self.workspace
+            .create_directory(&self.namespace, &np, Some("rsync mkdir"), &self.owner)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
 }
 
 fn build_and_spawn_rsync(

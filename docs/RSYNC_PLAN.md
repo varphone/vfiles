@@ -1,4 +1,21 @@
-# rsync 协议 daemon（r9 列 → r10 取 → r11/14 delta → r12 push → r13 认证 → r15 `--delete` → **r16 filter 保护**）
+# rsync 协议 daemon（… r15 `--delete` → r16 filter 保护 → **r17 空目录落地**）
+
+## 状态（r17 末 · 推送空目录落地 = 目录结构完整）
+
+- **实装**：`RsyncBackend` 增 **`mkdir`**（bin = `workspace.create_directory` ✗ 已存在视为成功）
+  → push 循环对 flist 的**目录条目显式建目录**（此前 `continue` 跳过 = 空目录丢失；非空目录靠
+  文件提交隐式创建故未暴露）。非普通文件（符号链接等）仍跳过（domain 无 symlink kind = 记档债）。
+- **真机验收**：
+  | 场景 | 结果 |
+  | --- | --- |
+  | 推含 `empty/` + `nest/a/b/c/`（嵌套空）+ `full/x.txt` 的树 | RC0 |
+  | `--list-only` | `empty` / `nest` / `nest/a` / `nest/a/b` / `nest/a/b/c` 全在 ✓ |
+  | 拉回 + `find` 结构对比 | **DIR STRUCTURE IDENTICAL** + 内容 IDENTICAL ✓ |
+  | 回归：推 / delta / `--delete` | 1,024 literal / 1,047,556 matched；`--delete` 清 `c.txt` + `sub/`；拉回 `diff -r` 同 ✓ |
+- **门禁**：`cargo test -p vfiles-rsync` 22/22（FakeBackend 增 `mkdir`）× workspace 全绿 × clippy
+  归零 × fmt × build。
+- **债**：符号链接/设备（domain 无对应条目类型）· `.rsync-filter` per-dir 规则 · mtime/size 比较 ·
+  basis 流式 · `--delete` 的 `P`/`H`/`S`/`R` 规则类型。
 
 ## 状态（r16 末 · filter/exclude 规则解析 = `--delete` 可信镜像）
 

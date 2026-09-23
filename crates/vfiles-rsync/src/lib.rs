@@ -1273,6 +1273,8 @@ pub trait RsyncBackend: Send + Sync {
     async fn write(&self, path: String, data: Vec<u8>) -> Result<(), String>;
     /// 删除命名空间路径（`--delete` 镜像 ✗ 目录含后代）。
     async fn delete(&self, paths: Vec<String>) -> Result<(), String>;
+    /// 创建目录（push 空目录 ✗ 已存在视为成功）。
+    async fn mkdir(&self, path: &str) -> Result<(), String>;
 }
 
 /// 处理一条 rsync daemon 连接（协议 30 ✗ 双向：下载/上传/增量/认证）。
@@ -1585,7 +1587,7 @@ where
         let mut transferred = 0usize;
         let to = std::time::Duration::from_secs(15);
         for (i, e) in entries.iter().enumerate() {
-            if e.is_dir || (e.mode & 0o170000) != 0o100000 || e.name == "." {
+            if e.name == "." {
                 continue;
             }
             let full = if base.is_empty() {
@@ -1593,6 +1595,16 @@ where
             } else {
                 format!("{base}/{}", e.name)
             };
+            // 目录：显式创建（空目录不落地 = 此前债）；非普通文件（符号链接等）跳过
+            if e.is_dir {
+                if let Err(err) = backend.mkdir(&full).await {
+                    tracing::warn!(path = %full, error = %err, "rsync push：建目录失败");
+                }
+                continue;
+            }
+            if (e.mode & 0o170000) != 0o100000 {
+                continue;
+            }
             // 取本地现有内容作 basis（存在 → 发块校验和请求真 delta；否则整文件）
             let basis = backend.read(&full).await.unwrap_or_default();
             let s2len: usize = 16;
@@ -1907,6 +1919,14 @@ mod tests {
             Ok(())
         }
         async fn delete(&self, _paths: Vec<String>) -> Result<(), String> {
+            Ok(())
+        }
+        async fn mkdir(&self, path: &str) -> Result<(), String> {
+            self.files
+                .lock()
+                .unwrap()
+                .entry(format!("{path}/"))
+                .or_default();
             Ok(())
         }
     }
