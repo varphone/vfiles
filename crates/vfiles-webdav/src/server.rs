@@ -507,6 +507,9 @@ async fn propfind_owned(
     Ok(crate::response::multistatus(&items))
 }
 
+/// 认证成功首行标记（r210 降噪：首条 info、其后 debug ✗ 连接可见且不刷屏）
+static AUTH_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// 方法分派（PROPFIND 等非标方法经 `any` 到达 ✓）。
 #[axum::debug_handler]
 async fn dav(mut req: axum::extract::Request) -> Response {
@@ -514,7 +517,13 @@ async fn dav(mut req: axum::extract::Request) -> Response {
     let method = req.method().to_string();
     let path = percent_decode(req.uri().path());
     let resp = dav_inner(req).await;
-    tracing::info!(method = %method, path = %path, status = resp.status().as_u16(), "WebDAV 访问");
+    let status = resp.status().as_u16();
+    if status == 404 && method == "PROPFIND" {
+        // 封面/图标探测风暴（gvfs 目录内嵌封面约定 ✗ 无此文件 404 合理但刷屏 ✗ r210 降噪）
+        tracing::debug!(method = %method, path = %path, status, "WebDAV 访问（探测 404 归 debug）");
+    } else {
+        tracing::info!(method = %method, path = %path, status, "WebDAV 访问");
+    }
     resp
 }
 
@@ -562,7 +571,12 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             tracing::warn!(username = %log_name, "WebDAV 认证失败（401）——检查用户名/密码，或账号是否被禁用");
             return www_authenticate();
         };
-        tracing::info!(username = %user.username.as_str(), "WebDAV 认证成功");
+        // 首次成功 = info（连接可见 ✓）后续 debug（不每请求刷 ✗✗ r210 用户刷屏抱怨）
+    if !AUTH_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        tracing::info!(username = %user.username.as_str(), "WebDAV 认证成功（本次连接后归 debug）");
+    } else {
+        tracing::debug!(username = %user.username.as_str(), "WebDAV 认证成功");
+    }
         // per-user ns 动态映射（r109e ✓ ensure_default_for_owner ✓ 多用户隔离）
         let ns = match app_ref
             .namespaces
