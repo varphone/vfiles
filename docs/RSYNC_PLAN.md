@@ -30,6 +30,9 @@
   varlong/vstring 移植物）× `cargo test --workspace` 全绿 × clippy 零告警 × fmt 干净 × bin build 绿。
 - **r10 清单**：sender **delta**（`send_files` 文件请求 → `sum_head` + token 流 literal/匹配 →
   真 CLI 文件落地字节比对）→ 收端 push（复用 upload 链）→ secrets 认证 → `--checksum`/压缩面。
+  ✗ **整文件下载协议已真机转录入档** `golden/download_wire_r9.md`（请求帧 iflags 0xA000 + 全零
+  sum_head、回显 + `int32(len)+data` token 流、校验和 = **MD5(内容) 无 seed**、ndx = f_name_cmp
+  排序下标）→ r10 零猜起步。
 
 ## 状态（r8 末 · 双向对答表提取 + preserve/mode 语义解 = 实装钥匙全齐零猜）
 
