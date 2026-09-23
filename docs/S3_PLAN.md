@@ -1,4 +1,18 @@
-# S3 兼容 API（… r31 逐键时间/大小 → r32 编码协商 → **r33 fetch-owner**）
+# S3 兼容 API（… r32 编码协商 → r33 fetch-owner → **r34 桶生命周期**）
+
+## 状态（r34 末 · 桶生命周期补齐 = 建/删桶有据可依）
+
+- **实装**（网关只有唯一虚拟桶 ✗ 错误码严格对齐 AWS）：
+  | 操作 | 情形 → 响应 |
+  | --- | --- |
+  | `CreateBucket` | `default` 已存在且归本账户 → **409 `BucketAlreadyOwnedByYou`**（AWS 同形，工具视作"已存在"）；其他桶名 → **400 `InvalidBucketName`**（本网关单桶模型） |
+  | `DeleteBucket` | 桶不存在 → 404 `NoSuchBucket`；**视图非空 → 409 `BucketNotEmpty`**（`files_with_meta_page(ns, …, 1)` **LIMIT 1 单查询**判定，不物化整桶）；空 → **409 `InvalidBucketState`**（本网关固定桶不可删，明示拒因） |
+  | `S3Router` | 补手写委托（生成器在 r34 之前运行 ✗ 新方法默认会落 NotImplemented） |
+- **真机验收（真 SDK，两台配置合计 9 项）**：`create(default)`=OwnedByYou ✓ · `create(其他)`=InvalidBucketName ✓ ·
+  `delete(default, 非空)`=BucketNotEmpty ✓ · `delete(不存在)`=NoSuchBucket ✓ ·
+  **tenant2 空视图**：视图为空 ✓ → `delete`=**InvalidBucketState** ✓ → 拒后 `list_buckets` 仍在 ✓。
+- **回归**：自写探针 **24/24** · 真 SDK **45/45**（+桶生命周期）。
+- **仍债**：`ListObjectVersions` / `PutBucketVersioning`（真版本控制）· region 校验（有意不做）。
 
 ## 状态（r33 末 · 列表所有者信息 = 客户端工具可用）
 

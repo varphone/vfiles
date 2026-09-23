@@ -23,16 +23,16 @@ use async_trait::async_trait;
 use s3s::dto::{
     AbortMultipartUploadInput, AbortMultipartUploadOutput, Bucket, BucketLocationConstraint,
     CommonPrefix, CompleteMultipartUploadInput, CompleteMultipartUploadOutput, CopyObjectInput,
-    CopyObjectOutput, CopyObjectResult, CopyPartResult, CreateMultipartUploadInput,
-    CreateMultipartUploadOutput, DeleteObjectInput, DeleteObjectOutput, DeleteObjectsInput,
-    DeleteObjectsOutput, DeletedObject, ETagCondition, Error as S3DeleteError,
-    GetBucketLocationInput, GetBucketLocationOutput, GetBucketVersioningInput,
-    GetBucketVersioningOutput, GetObjectInput, GetObjectOutput, HeadBucketInput, HeadBucketOutput,
-    HeadObjectInput, HeadObjectOutput, ListBucketsInput, ListBucketsOutput,
-    ListMultipartUploadsInput, ListMultipartUploadsOutput, ListObjectsInput, ListObjectsOutput,
-    ListObjectsV2Input, ListObjectsV2Output, ListPartsInput, ListPartsOutput, MultipartUpload,
-    Object, Owner, Part, PutObjectInput, PutObjectOutput, StreamingBlob, Timestamp,
-    UploadPartCopyInput, UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
+    CopyObjectOutput, CopyObjectResult, CopyPartResult, CreateBucketInput, CreateBucketOutput,
+    CreateMultipartUploadInput, CreateMultipartUploadOutput, DeleteBucketInput, DeleteBucketOutput,
+    DeleteObjectInput, DeleteObjectOutput, DeleteObjectsInput, DeleteObjectsOutput, DeletedObject,
+    ETagCondition, Error as S3DeleteError, GetBucketLocationInput, GetBucketLocationOutput,
+    GetBucketVersioningInput, GetBucketVersioningOutput, GetObjectInput, GetObjectOutput,
+    HeadBucketInput, HeadBucketOutput, HeadObjectInput, HeadObjectOutput, ListBucketsInput,
+    ListBucketsOutput, ListMultipartUploadsInput, ListMultipartUploadsOutput, ListObjectsInput,
+    ListObjectsOutput, ListObjectsV2Input, ListObjectsV2Output, ListPartsInput, ListPartsOutput,
+    MultipartUpload, Object, Owner, Part, PutObjectInput, PutObjectOutput, StreamingBlob,
+    Timestamp, UploadPartCopyInput, UploadPartCopyOutput, UploadPartInput, UploadPartOutput,
 };
 use s3s::{S3, S3Request, S3Response, S3Result};
 use tokio::io::AsyncReadExt;
@@ -802,6 +802,54 @@ impl S3 for VfilesS3 {
             ..Default::default()
         };
         ok(out)
+    }
+
+    /// 建桶（本网关只有唯一虚拟桶 ✗ 命名冲突按 AWS 语义回 409）。
+    async fn create_bucket(
+        &self,
+        req: S3Request<CreateBucketInput>,
+    ) -> S3Result<S3Response<CreateBucketOutput>> {
+        let input = req.input;
+        self.require_write(req.credentials.as_ref())?;
+        if input.bucket == DEFAULT_BUCKET {
+            // AWS：桶已存在且归本账户 → 409 BucketAlreadyOwnedByYou
+            return Err(s3s::s3_error!(
+                BucketAlreadyOwnedByYou,
+                "your account already owns this bucket"
+            ));
+        }
+        Err(s3s::s3_error!(
+            InvalidBucketName,
+            "this gateway exposes a single bucket"
+        ))
+    }
+
+    /// 删桶（空 → 409 拒绝本固定桶；非空 → AWS 同形 `BucketNotEmpty`）。
+    async fn delete_bucket(
+        &self,
+        req: S3Request<DeleteBucketInput>,
+    ) -> S3Result<S3Response<DeleteBucketOutput>> {
+        let input = req.input;
+        self.require_write(req.credentials.as_ref())?;
+        if input.bucket != DEFAULT_BUCKET {
+            return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
+        }
+        // 一次 LIMIT 1 查询即可判定空否（不物化整桶）
+        let any = self
+            .entry_repo
+            .files_with_meta_page(&self.namespace, None, 1)
+            .await
+            .map_err(dom_err)?;
+        if !any.is_empty() {
+            return Err(s3s::s3_error!(
+                BucketNotEmpty,
+                "The bucket you tried to delete is not empty"
+            ));
+        }
+        Err(s3s::s3_error!(
+            InvalidBucketState,
+            "this gateway's bucket is fixed and cannot be deleted"
+        ))
     }
 
     /// 桶存在性探测（rclone / aws-cli 连接检查常用路径）。
@@ -2085,6 +2133,21 @@ impl S3 for S3Router {
         req: S3Request<ListBucketsInput>,
     ) -> S3Result<S3Response<ListBucketsOutput>> {
         self.default_service.list_buckets(req).await
+    }
+
+    /// 桶生命周期（r34 后补的手写委托，与上面同因）。
+    async fn create_bucket(
+        &self,
+        req: S3Request<CreateBucketInput>,
+    ) -> S3Result<S3Response<CreateBucketOutput>> {
+        self.pick(req.credentials.as_ref()).create_bucket(req).await
+    }
+
+    async fn delete_bucket(
+        &self,
+        req: S3Request<DeleteBucketInput>,
+    ) -> S3Result<S3Response<DeleteBucketOutput>> {
+        self.pick(req.credentials.as_ref()).delete_bucket(req).await
     }
 
     async fn list_objects_v2(

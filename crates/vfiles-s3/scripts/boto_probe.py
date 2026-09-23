@@ -284,6 +284,21 @@ def main():
     for mk in ["boto-meta/a.txt", "boto-meta/src.txt", "boto-meta/copy.txt", "boto-meta/repl.txt"]:
         s3.delete_object(Bucket="default", Key=mk)
 
+    # ── 桶生命周期（r34）──
+    def bcode(fn):
+        try:
+            fn()
+            return "ok"
+        except ClientError as e:
+            return e.response["Error"]["Code"]
+    check("boto bucket lifecycle (create/delete)",
+          bcode(lambda: s3.create_bucket(Bucket="default")) == "BucketAlreadyOwnedByYou"
+          and bcode(lambda: s3.create_bucket(Bucket="other-b")) == "InvalidBucketName"
+          and bcode(lambda: s3.delete_bucket(Bucket="missing")) == "NoSuchBucket"
+          and bcode(lambda: s3.delete_bucket(Bucket="default")) == "BucketNotEmpty",
+          f"create_owned={bcode(lambda: s3.create_bucket(Bucket='default'))} "
+          f"delete={bcode(lambda: s3.delete_bucket(Bucket='default'))}")
+
     # ── fetch-owner（V2 按需 / V1 恒带 ✗ r33）──
     s3.put_object(Bucket="default", Key="boto-own/a.txt", Body=b"x")
     plain_own = s3.list_objects_v2(Bucket="default", Prefix="boto-own/")
