@@ -565,9 +565,9 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("PROPFIND")
-                .uri("/renamed.txt")
+                .uri("/")
                 .header("authorization", format!("Basic {basic}"))
-                .header("depth", "0")
+                .header("depth", "1")
                 .header("content-type", "application/xml")
                 .body(axum::body::Body::from(
                     r#"<D:propfind xmlns:D="DAV:" xmlns:X="urn:example:x"><D:prop><D:displayname/><X:rejected/></D:prop></D:propfind>"#,
@@ -830,6 +830,32 @@ async fn options_advertises_and_propfind_needs_auth() {
         .execute(&pool)
         .await
         .expect("inject a property repository read failure");
+    let selected_builtin_property = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "1")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propfind xmlns:D="DAV:"><D:prop><D:displayname/></D:prop></D:propfind>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(selected_builtin_property.status(), 207);
+    let selected_builtin_xml = String::from_utf8(
+        axum::body::to_bytes(selected_builtin_property.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(selected_builtin_xml.contains("<D:displayname>renamed.txt</D:displayname>"));
+
     let property_read_failure = router
         .oneshot(
             axum::http::Request::builder()

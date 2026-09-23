@@ -1065,6 +1065,12 @@ async fn propfind_owned(
     let path = vfiles_domain::types::NormalizedPath::new(if rel.is_empty() { "" } else { rel })
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
+    let wants_last_modified = prop_mode_requests(&mode, "getlastmodified");
+    let wants_size_or_type = prop_mode_requests(&mode, "getcontentlength")
+        || prop_mode_requests(&mode, "getcontenttype");
+    let wants_etag = prop_mode_requests(&mode, "getetag");
+    let wants_custom = prop_mode_needs_custom_properties(&mode);
+    let wants_lock = prop_mode_requests(&mode, "lockdiscovery");
     let mtime_fmt = |t: time::OffsetDateTime| {
         let timestamp = t.unix_timestamp().max(0) as u64;
         httpdate::fmt_http_date(std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp))
@@ -1084,25 +1090,45 @@ async fn propfind_owned(
             href: href_with_mount(&app.mount_prefix, "/"),
             displayname: "/".to_string(),
             is_collection: true,
-            getlastmodified: mtime_fmt(time::OffsetDateTime::now_utc()),
+            getlastmodified: if wants_last_modified {
+                mtime_fmt(time::OffsetDateTime::now_utc())
+            } else {
+                String::new()
+            },
             getcontentlength: None,
             getcontenttype: None,
             custom: Vec::new(),
             getetag: None,
             creationdate: cdate_fmt(time::OffsetDateTime::now_utc()), // 根 = 合成（lastmod 同式 ✓ 记档）
             owner: owner_val.clone(),
-            active_lock: active_lock_prop(&app, &ns, rel).await?,
+            active_lock: if wants_lock {
+                active_lock_prop(&app, &ns, rel).await?
+            } else {
+                None
+            },
         });
     } else {
-        let meta = app
-            .entry_repo
-            .find_by_path_with_meta(&ns, &path)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let Some(meta) = meta else {
-            return Err(StatusCode::NOT_FOUND);
+        let (entry, size_bytes, mime_type) = if wants_size_or_type {
+            let meta = app
+                .entry_repo
+                .find_by_path_with_meta(&ns, &path)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let Some(meta) = meta else {
+                return Err(StatusCode::NOT_FOUND);
+            };
+            (meta.entry, meta.size_bytes, meta.mime_type)
+        } else {
+            let entry = app
+                .entry_repo
+                .find_by_path(&ns, &path)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let Some(entry) = entry else {
+                return Err(StatusCode::NOT_FOUND);
+            };
+            (entry, None, None)
         };
-        let entry = meta.entry;
         // r209 真因修复 ✗✗ 此前硬编码 is_collection: true = **文件被报成目录** →
         // gvfs 把文件当目录反复 PROPFIND、永不 GET = 用户"打不开文件"完整因果链
         // （列表 children 判对、查自身判错）；href 尾斜杠同错（gvfs 探了 png/ 实证）
@@ -1111,23 +1137,29 @@ async fn propfind_owned(
         let (getcontentlength, getcontenttype) = if is_dir {
             (None, None)
         } else {
-            (meta.size_bytes, meta.mime_type)
+            (size_bytes, mime_type)
         };
-        // r13 自定义属性读（单目标 ✗ list 一次）
-        let custom = app
-            .entry_repo
-            .list_entry_properties(&[entry.id])
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, path = %rel, "WebDAV PROPFIND 属性读取失败");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?
-            .remove(&entry.id)
-            .unwrap_or_default();
-        let getetag = entry
-            .current_version_id
-            .as_ref()
-            .map(|v| format!("\"{}\"", v.to_string().replace('-', "")));
+        let custom = if wants_custom {
+            app.entry_repo
+                .list_entry_properties(&[entry.id])
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, path = %rel, "WebDAV PROPFIND 属性读取失败");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?
+                .remove(&entry.id)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let getetag = wants_etag
+            .then(|| {
+                entry
+                    .current_version_id
+                    .as_ref()
+                    .map(|v| format!("\"{}\"", v.to_string().replace('-', "")))
+            })
+            .flatten();
         let self_href = if is_dir {
             format!("/{rel}/")
         } else {
@@ -1137,71 +1169,101 @@ async fn propfind_owned(
             href: href_with_mount(&app.mount_prefix, &self_href),
             displayname: entry.name.clone(),
             is_collection: is_dir,
-            getlastmodified: mtime_fmt(match entry.current_version_id.as_ref() {
-                Some(version_id) => {
-                    app.entry_repo
-                        .find_version(version_id)
-                        .await
-                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                        .created_at
-                }
-                None => entry.created_at,
-            }),
+            getlastmodified: if wants_last_modified {
+                mtime_fmt(match entry.current_version_id.as_ref() {
+                    Some(version_id) => {
+                        app.entry_repo
+                            .find_version(version_id)
+                            .await
+                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                            .created_at
+                    }
+                    None => entry.created_at,
+                })
+            } else {
+                String::new()
+            },
             getcontentlength,
             getcontenttype,
             custom,
             getetag,
             creationdate: cdate_fmt(entry.created_at),
             owner: owner_val.clone(),
-            active_lock: active_lock_prop(&app, &ns, rel).await?,
+            active_lock: if wants_lock {
+                active_lock_prop(&app, &ns, rel).await?
+            } else {
+                None
+            },
         });
     }
     if depth == "1" {
         // r4 批量版（N+1 消 ✗✗ 一条 SQL 直取 size/mime ✗ 替换每文件 open）
-        let metas = app
-            .entry_repo
-            .children_with_meta(&ns, &path)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let metas = if wants_size_or_type {
+            app.entry_repo
+                .children_with_meta(&ns, &path)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        } else {
+            app.entry_repo
+                .find_children(&ns, &path)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .into_iter()
+                .map(|entry| vfiles_domain::types::EntryChildMeta {
+                    entry,
+                    size_bytes: None,
+                    mime_type: None,
+                    source_mtime: None,
+                })
+                .collect()
+        };
         // r13 自定义属性批量（ids 一次 ✗ r4 批量式复用）
         let child_ids: Vec<vfiles_domain::types::EntryId> =
             metas.iter().map(|m| m.entry.id).collect();
-        let child_props = app
-            .entry_repo
-            .list_entry_properties(&child_ids)
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, "WebDAV PROPFIND 子项属性读取失败");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
-        let version_ids: Vec<_> = metas
-            .iter()
-            .filter_map(|meta| meta.entry.current_version_id)
-            .collect();
-        let versions = app
-            .entry_repo
-            .find_versions(&version_ids)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let version_mtimes: std::collections::HashMap<_, _> = versions
-            .into_iter()
-            .map(|version| (version.id, version.created_at))
-            .collect();
+        let child_props = if wants_custom && !child_ids.is_empty() {
+            app.entry_repo
+                .list_entry_properties(&child_ids)
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, "WebDAV PROPFIND 子项属性读取失败");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?
+        } else {
+            std::collections::HashMap::new()
+        };
+        let version_mtimes: std::collections::HashMap<_, _> = if wants_last_modified {
+            let version_ids: Vec<_> = metas
+                .iter()
+                .filter_map(|meta| meta.entry.current_version_id)
+                .collect();
+            app.entry_repo
+                .find_versions(&version_ids)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .into_iter()
+                .map(|version| (version.id, version.created_at))
+                .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
         let child_paths: Vec<String> = metas
             .iter()
             .map(|meta| format!("{}{}", child_prefix(rel), meta.entry.name))
             .collect();
-        let mut child_locks: std::collections::HashMap<_, _> = app
-            .locks
-            .blocked_many(&ns, &child_paths)
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, "WebDAV PROPFIND 批量锁查询失败");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?
-            .into_iter()
-            .map(|(path, lock)| (path, active_lock_value(lock)))
-            .collect();
+        let mut child_locks: std::collections::HashMap<_, _> = if wants_lock {
+            app.locks
+                .blocked_many(&ns, &child_paths)
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, "WebDAV PROPFIND 批量锁查询失败");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?
+                .into_iter()
+                .map(|(path, lock)| (path, active_lock_value(lock)))
+                .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
         for meta in metas {
             let child = meta.entry;
             let child_rel = format!("{}{}", child_prefix(rel), child.name);
@@ -1218,20 +1280,28 @@ async fn propfind_owned(
                 ),
                 displayname: child.name,
                 is_collection: is_dir,
-                getlastmodified: mtime_fmt(
-                    child
-                        .current_version_id
-                        .as_ref()
-                        .and_then(|version_id| version_mtimes.get(version_id).copied())
-                        .unwrap_or(child.created_at),
-                ),
+                getlastmodified: if wants_last_modified {
+                    mtime_fmt(
+                        child
+                            .current_version_id
+                            .as_ref()
+                            .and_then(|version_id| version_mtimes.get(version_id).copied())
+                            .unwrap_or(child.created_at),
+                    )
+                } else {
+                    String::new()
+                },
                 getcontentlength,
                 getcontenttype,
                 custom: child_props.get(&child.id).cloned().unwrap_or_default(),
-                getetag: child
-                    .current_version_id
-                    .as_ref()
-                    .map(|v| format!("\"{}\"", v.to_string().replace('-', ""))),
+                getetag: wants_etag
+                    .then(|| {
+                        child
+                            .current_version_id
+                            .as_ref()
+                            .map(|v| format!("\"{}\"", v.to_string().replace('-', "")))
+                    })
+                    .flatten(),
                 creationdate: cdate_fmt(child.created_at),
                 owner: owner_val.clone(),
                 active_lock: child_locks.remove(&child_rel),
@@ -1269,6 +1339,39 @@ fn active_lock_value(lock: crate::lock::LockEntry) -> crate::response::ActiveLoc
         token: lock.token,
         owner: lock.owner,
         timeout,
+    }
+}
+
+fn prop_mode_requests(mode: &crate::response::PropMode, local_name: &str) -> bool {
+    match mode {
+        crate::response::PropMode::All => true,
+        crate::response::PropMode::PropName => false,
+        crate::response::PropMode::Names(names) => names
+            .iter()
+            .any(|name| crate::response::is_dav_property(name, local_name)),
+    }
+}
+
+fn prop_mode_needs_custom_properties(mode: &crate::response::PropMode) -> bool {
+    const SUPPORTED: [&str; 10] = [
+        "displayname",
+        "resourcetype",
+        "getlastmodified",
+        "getcontentlength",
+        "getcontenttype",
+        "getetag",
+        "creationdate",
+        "owner",
+        "supportedlock",
+        "lockdiscovery",
+    ];
+    match mode {
+        crate::response::PropMode::All | crate::response::PropMode::PropName => true,
+        crate::response::PropMode::Names(names) => names.iter().any(|name| {
+            !SUPPORTED
+                .iter()
+                .any(|local_name| crate::response::is_dav_property(name, local_name))
+        }),
     }
 }
 

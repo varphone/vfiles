@@ -62,6 +62,7 @@
 | 流式 GET/PUT 内存安全 | ✅ r201/110'b | 10MB/分段实证 ✓ | - |
 | 排障观测（访问/认证/失败/信号）| ✅ r205-210 | 全链 info 级 ✓ 降噪三式 ✓ | - |
 | PROPFIND Depth 1 活动锁枚举 | ✅ | 子项 `lockdiscovery` 与文件属性一样批量查询；SQLite 按 400 路径一批取锁，避免目录枚举产生每子项一次的锁查询 | - |
+| PROPFIND 按属性取数 | ✅ | 仅当请求包含相应属性时才查询当前版本时间、文件大小/MIME、自定义属性或活动锁；单独请求内建属性不依赖自定义属性表 | - |
 | **审计全线（WebDAV）** | ✅ **r8 八写点收官** | `audit_write` 统一 helper（COPY/PROPPATCH 十行式收口）+ put/mkcol/delete/move/lock/unlock 六臂包裹 ✗ **七 action 落表实证** ✓ 失败面 = warn 日志（表记 Failure = P1）| P1失败面 |
 | XML 解析依赖 | ✅ **r2 选型定** | **roxmltree v0.21.1**（KB 级 DOM / 命名空间原生 / 零依赖 ✗ PROPPATCH 复用 ✓）| - |
 
