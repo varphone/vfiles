@@ -7,11 +7,12 @@
 
 /// PROPFIND 请求体模式（RFC 4918 §9.1 ✗ r2 P0 协议精度）。
 /// 预定义只读属性集（r13 ✓ 除 displayname（改名语义）外 PROPPATCH set → 403）。
-pub const PREDEFINED_READONLY: [&str; 4] = [
+pub const PREDEFINED_READONLY: [&str; 5] = [
     "resourcetype",
     "getlastmodified",
     "getcontentlength",
     "getcontenttype",
+    "getetag", // r14 服务生成 ✗ PROPPATCH set → 403
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,17 +141,21 @@ pub struct PropResponse {
     pub getcontenttype: Option<String>,
     /// r13 自定义属性（k/v ✗ 名 = local name（ns 简式记档）；PROPFIND 输出/PROPPATCH 写回 ✓）。
     pub custom: Vec<(String, String)>,
+    /// r14 ETag（= current_version_id 派生 `"hex32"` ✗ r4 SQL 已查零新查询；
+    /// None = 目录/无版本 → 与 length 同式跳过 ✓ 强 ETag 带引号 ✓）。
+    pub getetag: Option<String>,
 }
 
 /// 构造 207 Multi-Status 文档（XML 转义 ✓ 集合无 getcontentlength ✓）。
 pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
     // r2 协议精度裁剪 ✗ 请求要什么给什么（All=全集 ✗ Names=交集+404 差集 ✗ PropName=只名）
-    const SUPPORTED: [&str; 5] = [
+    const SUPPORTED: [&str; 6] = [
         "displayname",
         "resourcetype",
         "getlastmodified",
         "getcontentlength",
         "getcontenttype",
+        "getetag",
     ];
     let mut out = String::from(
         r#"<?xml version="1.0" encoding="utf-8"?>
@@ -211,6 +216,13 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
                         out.push_str("<D:getcontenttype>");
                         out.push_str(&escape_xml(ct));
                         out.push_str("</D:getcontenttype>");
+                    }
+                }
+                "getetag" if mode != &PropMode::PropName => {
+                    if let Some(et) = &item.getetag {
+                        out.push_str("<D:getetag>");
+                        out.push_str(&escape_xml(et));
+                        out.push_str("</D:getetag>");
                     }
                 }
                 // 其余 = propname 模式（只名无值）或占位（getcontentlength None 时跳过 ✓）
@@ -316,6 +328,7 @@ mod tests {
                 getcontentlength: None,
                 getcontenttype: None,
                 custom: Vec::new(),
+                getetag: None,
             },
             PropResponse {
                 href: "/dav/a&b.txt".into(),
@@ -325,6 +338,7 @@ mod tests {
                 getcontentlength: Some(42),
                 getcontenttype: Some("text/plain".into()),
                 custom: Vec::new(),
+                getetag: None,
             },
         ], &PropMode::All);
         assert!(xml.contains("<D:collection/>"));
@@ -356,6 +370,7 @@ mod propmode_tests {
             getcontentlength: Some(5),
             getcontenttype: Some("text/plain".into()),
             custom: Vec::new(),
+            getetag: None,
         }]
     }
 
@@ -389,13 +404,13 @@ mod propmode_tests {
         let xml = multistatus(&sample(), &PropMode::Names(vec![
             "getcontentlength".into(),
             "displayname".into(),
-            "getetag".into(), // 未实现 → 404 块
+            "getlockdiscovery".into(), // r14 后 getetag 已支持 → 换真未支持名（404 机制守护断言保留）
         ]));
         assert!(xml.contains("<D:getcontentlength>5</D:getcontentlength>"));
         assert!(xml.contains("<D:displayname>f.txt</D:displayname>"));
         assert!(!xml.contains("<D:getlastmodified>"), "未请求的不出现");
         assert!(xml.contains("404 Not Found"));
-        assert!(xml.contains("<D:getetag/>"));
+        assert!(xml.contains("<D:getlockdiscovery/>"));
         // 200 块与 404 块分立
         assert!(xml.contains("200 OK"));
     }

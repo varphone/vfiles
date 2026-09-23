@@ -151,6 +151,7 @@ async fn get_op(
     ns: Option<vfiles_domain::types::NamespaceId>,
     uri_owned: String,
     range_owned: Option<String>,
+    if_none_match: Option<String>,
     is_head: bool,
 ) -> Response {
     let Some(app) = app else {
@@ -172,14 +173,37 @@ async fn get_op(
                 .unwrap()
         }
     };
+    // r14 ETag（find 一次轻查 ✗ current_version_id 派生）+ If-None-Match 304 短路
+    let cur_etag = app
+        .entry_repo
+        .find_by_path(&ns, &path)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|e| e.current_version_id)
+        .map(|v| derive_etag(&v));
+    if let Some(h) = if_none_match.as_deref() {
+        if etag_satisfies(h, cur_etag.as_deref()) {
+            let mut b = Response::builder()
+                .status(StatusCode::NOT_MODIFIED)
+                .header("cache-control", "private, max-age=0, must-revalidate");
+            if let Some(et) = cur_etag.as_deref() {
+                b = b.header(header::ETAG, et);
+            }
+            return b.body(Body::empty()).unwrap();
+        }
+    }
     match app.write.get_stream(&ns, &path).await {
         Ok(Some((mut reader, mime, size))) => {
             use tokio::io::{AsyncReadExt, AsyncSeekExt};
             // 流式响应（r201 ✓ 大文件不入内存）+ Range 分段（r211 ✓ RFC 7233 ✗
             // 此前忽略 Range = 播放器要 206 给全量 200 = mp4 循环重试真因）
-            let base = Response::builder()
+            let mut base = Response::builder()
                 .header(header::CONTENT_TYPE, mime)
                 .header("accept-ranges", "bytes");
+            if let Some(et) = cur_etag.as_deref() {
+                base = base.header(header::ETAG, et); // r14 GET/206 响应暴露 ETag
+            }
             let range = range_owned.as_deref().and_then(|rh| {
                 match parse_byte_range(rh, size) {
                     ByteRange::Satisfiable(a, b) => Some(Ok((a, b))),
@@ -474,6 +498,26 @@ fn child_prefix(rel: &str) -> String {
     }
 }
 
+/// ETag 派生（current_version_id → 强 ETag `"hex32"` ✗ r14 零新查询）。
+fn derive_etag(v: &vfiles_domain::types::VersionId) -> String {
+    format!("\"{}\"", v.to_string().replace('-', ""))
+}
+
+/// If-None-Match / If-Match 判定（r14 ✓ 纯函数单测）：`*` = 存在即真 /
+/// 逗号列表逐项去引号精确比 ✗ 无当前 etag = 条件假（简式安全向 = GET 不 304）。
+fn etag_satisfies(header: &str, etag: Option<&str>) -> bool {
+    let Some(et) = etag else {
+        return false;
+    };
+    let h = header.trim();
+    if h == "*" {
+        return true;
+    }
+    h.split(',')
+        .map(|s| s.trim())
+        .any(|part| part == et || part.trim_matches('"') == et.trim_matches('"'))
+}
+
 /// 锁前置分码（r7 ✓ RFC §4918 §9.10.6 纯函数）：
 /// - 无 If 头 + 资源锁住 → 423 Locked
 /// - 有 If 头但 token 不匹配 → **412 Precondition Failed**
@@ -572,6 +616,7 @@ async fn propfind_owned(
             getcontentlength: None,
             getcontenttype: None,
             custom: Vec::new(),
+            getetag: None,
         });
     } else {
         let entry = app
@@ -609,6 +654,10 @@ async fn propfind_owned(
             .unwrap_or_default()
             .remove(&entry.id)
             .unwrap_or_default();
+        let getetag = entry
+            .current_version_id
+            .as_ref()
+            .map(|v| format!("\"{}\"", v.to_string().replace('-', "")));
         items.push(crate::response::PropResponse {
             href: if is_dir {
                 format!("/{rel}/")
@@ -621,6 +670,7 @@ async fn propfind_owned(
             getcontentlength,
             getcontenttype,
             custom,
+            getetag,
         });
     }
     if depth == "1" {
@@ -654,6 +704,7 @@ async fn propfind_owned(
                 getcontentlength,
                 getcontenttype,
                 custom: child_props.get(&child.id).cloned().unwrap_or_default(),
+                getetag: child.current_version_id.as_ref().map(|v| format!("\"{}\"", v.to_string().replace('-', ""))),
             });
         }
     }
@@ -819,7 +870,19 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .get::<vfiles_domain::types::NamespaceId>()
                 .cloned();
             let uri_owned = percent_decode(req.uri().path());
-            get_op(app_owned, user_owned, ns_owned, uri_owned, range_owned, is_head).await
+            get_op(
+                app_owned,
+                user_owned,
+                ns_owned,
+                uri_owned,
+                range_owned,
+                req.headers()
+                    .get("if-none-match")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string),
+                is_head,
+            )
+            .await
         }
         ref m if m.as_str() == "PROPFIND" => {
             // 同步提取拥有值（&Request 跨 await = 非 Send ✗✗ E0277 真因 ✓ r105 破案）
@@ -1342,6 +1405,36 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             let uri_owned = percent_decode(req.uri().path());
             {
                 let ua = req.headers().get("user-agent").and_then(|v| v.to_str().ok()).map(str::to_string);
+                // r14 PUT If-Match（乐观并发 ✓ 无 = 不查 / `*` = 须已存在 / 精确须匹配
+                // ✗ 否则 412 RFC §10.3.2 简式）
+                if let Some(im) = req
+                    .headers()
+                    .get("if-match")
+                    .and_then(|v| v.to_str().ok())
+                {
+                    let put_rel = uri_owned.trim_start_matches('/');
+                    let cur = match (
+                        app_owned.as_ref(),
+                        ns_owned.as_ref(),
+                        vfiles_domain::types::NormalizedPath::new(put_rel),
+                    ) {
+                        (Some(app), Some(ns_e), Ok(path)) => app
+                            .entry_repo
+                            .find_by_path(ns_e, &path)
+                            .await
+                            .ok()
+                            .flatten()
+                            .and_then(|e| e.current_version_id)
+                            .map(|v| derive_etag(&v)),
+                        _ => None,
+                    };
+                    if !etag_satisfies(im, cur.as_deref()) {
+                        return Response::builder()
+                            .status(StatusCode::PRECONDITION_FAILED)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
+                }
                 let resp = put_op(
                 app_owned,
                 user_owned,
@@ -1536,5 +1629,28 @@ mod precondition_tests {
         assert_eq!(precondition_status(false, false, false), None);
         assert_eq!(precondition_status(false, true, false), None);
         let _ = write_precondition; // 桥引用防空（单测走纯函数面）
+    }
+}
+
+#[cfg(test)]
+mod etag_tests {
+    use super::{derive_etag, etag_satisfies};
+
+    #[test]
+    fn satisfies_star_list_and_exact() {
+        // r14 条件请求守护：* / 多值列表 / 引号裸值 / 未命中 / 无 etag 简式安全
+        assert!(etag_satisfies("*", Some("\"ab\"")));
+        assert!(etag_satisfies("\"ab\", \"cd\"", Some("\"ab\"")));
+        assert!(etag_satisfies("ab", Some("ab")));
+        assert!(!etag_satisfies("\"xy\"", Some("\"ab\"")));
+        assert!(!etag_satisfies("*", None));
+    }
+
+    #[test]
+    fn derive_is_quoted_hex() {
+        let v = vfiles_domain::types::VersionId::from_uuid(uuid::Uuid::new_v4());
+        let et = derive_etag(&v);
+        assert!(et.starts_with('"') && et.ends_with('"'));
+        assert_eq!(et.len(), 34);
     }
 }

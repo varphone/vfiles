@@ -33,7 +33,7 @@
 | 401 + WWW-Authenticate | ✅ r106 | ✓（失败 WARN 日志 r205）| - |
 | 409 Conflict | ✅ | + WARN 日志 r207 ✓ | - |
 | 416 Range | ✅ r211 | ✓ 七式实证 | - |
-| If-None-Match on GET | ❌ | 缓存语义（ETag 面联动）| P2 |
+| If-None-Match on GET | ✅ **r14** | `*`/列表/精确 三态（单测 ×2 ✓）命中 **304 + ETag 头** / 未命中 200 ✗ 写后值变 = 200 实证 ✓ | - |
 | Destination/Overwrite/Depth on MOVE| ✅ r108' | ✓ | - |
 
 ## 3. 资源属性面（PROPFIND 响应）
@@ -46,7 +46,7 @@
 | **getcontentlength 单目标** | ✅ r213 | ✓ 三属性同框实证 | - |
 | **getcontentlength children** | ❌ | 批量（P0 债 = r213 记档）| **P0** |
 | getcontenttype | ✅ **r3 顺车** | 单目标 + children 双位出 ✓ 检测/扩展名回退 ✓ | - |
-| getetag | ❌ | ETag 面前置（If-Match 联动）| P1 |
+| getetag | ✅ **r14 九式实证** | = current_version_id 派生 `"hex32"`（r4 SQL 零新查询 ✓ 强 ETag 引号式 ✓ XML `&quot;` 转义合法 ✓ None = 目录跳过 ✓ 支持集 5→6 + readonly +1 ✓）| - |
 | creationdate | ❌ | entry.created_at 可出 | P2 |
 | lockdiscovery / supportedlock | ❌ | LOCK 属性面（随 P1 锁补全）| P1 |
 | owner / displayname 父链 | ❌ | 简式 owner = 认证用户名 | P2 |
