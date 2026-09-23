@@ -607,6 +607,18 @@ fn md5_hex(data: &[u8]) -> String {
     hex::encode(h.finalize())
 }
 
+fn decode_content_md5(value: Option<&str>) -> S3Result<Option<[u8; 16]>> {
+    use base64::Engine;
+    let Some(value) = value else { return Ok(None) };
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|_| s3s::s3_error!(InvalidDigest, "Content-MD5 is not valid base64"))?;
+    let digest: [u8; 16] = decoded
+        .try_into()
+        .map_err(|_| s3s::s3_error!(InvalidDigest, "Content-MD5 must decode to 16 bytes"))?;
+    Ok(Some(digest))
+}
+
 impl std::fmt::Debug for VfilesS3 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // workspace/upload 等非 Debug ✗ 标准省内容式（-W missing-debug-implementations 清零）
@@ -1857,6 +1869,7 @@ impl S3 for VfilesS3 {
         let upload_id = parse_upload_id(&input.upload_id)?;
         self.validate_multipart_target(&upload_id, &input.key)
             .await?;
+        let expected_md5 = decode_content_md5(input.content_md5.as_deref())?;
         let blob = input
             .body
             .unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
@@ -1867,10 +1880,16 @@ impl S3 for VfilesS3 {
                 (input.part_number - 1) as u32,
                 None,
                 Some(5 * 1024 * 1024 * 1024),
+                expected_md5,
                 Box::new(stream_reader(blob)),
             )
             .await
-            .map_err(dom_err)?;
+            .map_err(|error| match error {
+                vfiles_domain::DomainError::UploadPartChecksumMismatch => {
+                    s3s::s3_error!(BadDigest, "Content-MD5 did not match the uploaded part")
+                }
+                other => dom_err(other),
+            })?;
         let out = UploadPartOutput {
             e_tag: Some(s3s::dto::ETag::Strong(receipt.md5_hex)),
             ..Default::default()
@@ -1953,6 +1972,7 @@ impl S3 for VfilesS3 {
                 (input.part_number - 1) as u32,
                 Some(part_size),
                 Some(MAX_S3_PART_SIZE),
+                None,
                 Box::new(reader),
             )
             .await

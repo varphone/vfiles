@@ -2647,6 +2647,7 @@ where
         part_index: u32,
         expected_size: Option<u64>,
         max_size: Option<u64>,
+        expected_md5: Option<[u8; 16]>,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt> {
         let session = self.upload_store.get_upload_session(upload_id).await?;
@@ -2661,7 +2662,14 @@ where
         }
 
         self.upload_store
-            .store_upload_part_stream(upload_id, part_index, expected_size, max_size, reader)
+            .store_upload_part_stream(
+                upload_id,
+                part_index,
+                expected_size,
+                max_size,
+                expected_md5,
+                reader,
+            )
             .await
     }
 

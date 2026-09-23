@@ -36,6 +36,7 @@ pub fn to_ftp_error(err: DomainError) -> Error {
         DomainError::UploadExpired
         | DomainError::UploadConflict
         | DomainError::UploadPartInvalid
+        | DomainError::UploadPartChecksumMismatch
         | DomainError::SearchIndexNotReady
         | DomainError::NotImplemented { .. }
         | DomainError::Internal { .. } => (ErrorKind::LocalError, err.to_string()),

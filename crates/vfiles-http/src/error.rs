@@ -213,6 +213,12 @@ impl IntoResponse for ApiError {
                 "Upload part is invalid".to_string(),
                 None,
             ),
+            ApiError::Domain(DomainError::UploadPartChecksumMismatch) => (
+                StatusCode::BAD_REQUEST,
+                "UPLOAD_PART_CHECKSUM_MISMATCH".to_string(),
+                "Upload part checksum does not match".to_string(),
+                None,
+            ),
             ApiError::Domain(DomainError::UploadConflict) => (
                 StatusCode::CONFLICT,
                 "UPLOAD_CONFLICT".to_string(),

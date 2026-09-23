@@ -50,6 +50,9 @@ pub enum DomainError {
     #[error("Upload part invalid")]
     UploadPartInvalid,
 
+    #[error("Upload part checksum mismatch")]
+    UploadPartChecksumMismatch,
+
     #[error("Upload conflict")]
     UploadConflict,
 

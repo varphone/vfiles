@@ -3829,6 +3829,7 @@ impl UploadStore for FsUploadStore {
         part_index: u32,
         expected_size: Option<u64>,
         max_size: Option<u64>,
+        expected_md5: Option<[u8; 16]>,
         mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt> {
         use md5::{Digest as Md5Digest, Md5};
@@ -3891,13 +3892,17 @@ impl UploadStore for FsUploadStore {
                     });
                 }
             }
+            let digest: [u8; 16] = Md5Digest::finalize(md5).into();
+            if expected_md5.is_some_and(|expected| expected != digest) {
+                return Err(DomainError::UploadPartChecksumMismatch);
+            }
             fs::rename(&temp_path, &part_path)
                 .await
                 .map_err(|e| DomainError::Internal {
                     message: format!("Failed to finalize upload part: {e}"),
                 })?;
 
-            let actual_md5 = hex::encode(Md5Digest::finalize(md5));
+            let actual_md5 = hex::encode(digest);
             let mut metadata = self.read_metadata(upload_id).await?;
             metadata["updated_at"] = time::OffsetDateTime::now_utc()
                 .format(&time::format_description::well_known::Rfc3339)

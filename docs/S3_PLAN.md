@@ -9,6 +9,7 @@
 - UploadPart、UploadPartCopy、Complete、Abort、ListParts 都验证 uploadId 的 namespace/owner/key/state/expiry；错误 key 或跨所有者 ID 返回 `NoSuchUpload`，Abort 不再把不存在的会话伪装成成功。
 - `ListParts` 尊重 `part-number-marker` / `max-parts`（限制 1..=1000），仅读取当前页的 part 内容生成 ETag，并返回正确的截断标志与续页标记。
 - `UploadPart` 已改为固定 64 KiB 缓冲流式写入临时分片文件，再替换正式分片；写入过程中计算并回传 MD5 ETag，单分片上限为 5 GiB，不再把请求体整份装入内存。
+- `UploadPart` 校验可选 `Content-MD5`：Base64/长度无效返回 `InvalidDigest`，与流式 MD5 不符在替换正式分片前返回 `BadDigest`。
 - `UploadPartCopy` 通过可 seek 文件流复制全对象或 `bytes=start-end` / 开放结束 / 后缀范围；range 直接 seek + take 后流式写分片，无整对象副本，且限制 5 GiB。
 - `CopyObject` 直接把源文件可读流传入上传服务，已知源长度仍严格校验；提交失败时取消上传会话，避免大对象服务端复制整对象驻留内存。
 - `ListMultipartUploads` 由 `UploadStore` 一次扫描会话目录，按 key / upload id 保序，
