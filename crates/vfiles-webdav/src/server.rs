@@ -455,7 +455,9 @@ fn www_authenticate() -> Response {
 }
 
 /// WebDAV 能力宣告（无锁 ✓ 子集 ✓）。
-const ALLOW: &str = "OPTIONS, PROPFIND, GET, HEAD";
+// r214 协议声明修正 ✗✗ 此前只声明 4 方法 = 实现了 10 个只报 4 个（客户端靠 Allow
+// 判能力 ✗✗）；COPY/PROPPATCH 未实现不声明（声明 = 实力 ✓ 做完再加）
+const ALLOW: &str = "OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, MOVE, LOCK, UNLOCK";
 
 fn router(app: WebdavApplication) -> Router {
     use axum::Extension;
@@ -700,7 +702,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
         Method::OPTIONS => Response::builder()
             .status(StatusCode::OK)
             .header(header::ALLOW, ALLOW)
-            .header("DAV", "1")
+            .header("DAV", "1, 2")
             .body(Body::empty())
             .unwrap(),
         // PROPFIND（Depth 0/1 ✓ 其余 Depth = 400 子集记档）。
