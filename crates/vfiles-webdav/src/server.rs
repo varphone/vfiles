@@ -1012,8 +1012,8 @@ fn router(app: WebdavApplication) -> Router {
 
 /// PROPFIND（r104 实装 ✓）：Depth 0 = 自身；Depth 1 = 自身 + 直接子条目。
 ///
-/// href 形 = WebDAV 惯例（目录带尾斜杠 ✓）；mtime = `Entry.created_at`（记档：
-/// 版本级 mtime = r105 随版本链接入）；`deleted_at` 条目假定仓储层已滤（记档 ✓）。
+/// href 形 = WebDAV 惯例（目录带尾斜杠 ✓）；文件 mtime 取当前版本时间，目录回退到条目创建时间；
+/// `deleted_at` 条目假定仓储层已滤（记档 ✓）。
 /// PROPFIND（纯拥有参 ✓ `&Request` 跨 await = 非 Send ✗✗ E0277 真因——
 /// 同步段提取拥有值是教科书 Send 修复式 ✓ r105 破案记档）。
 async fn propfind_owned(
@@ -1042,8 +1042,8 @@ async fn propfind_owned(
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let mtime_fmt = |t: time::OffsetDateTime| {
-        t.format(&time::format_description::well_known::Rfc2822)
-            .unwrap_or_default()
+        let timestamp = t.unix_timestamp().max(0) as u64;
+        httpdate::fmt_http_date(std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp))
     };
     // r16 owner（r109e 隔离下 ≡ 认证者恒等 = 零查询 ✓ 容错 ""）+ RFC3339 创建时间闭包
     let owner_val = user_owned
@@ -1110,7 +1110,16 @@ async fn propfind_owned(
             href: href_with_mount(&app.mount_prefix, &self_href),
             displayname: entry.name.clone(),
             is_collection: is_dir,
-            getlastmodified: mtime_fmt(entry.created_at),
+            getlastmodified: mtime_fmt(match entry.current_version_id.as_ref() {
+                Some(version_id) => {
+                    app.entry_repo
+                        .find_version(version_id)
+                        .await
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                        .created_at
+                }
+                None => entry.created_at,
+            }),
             getcontentlength,
             getcontenttype,
             custom,
@@ -1135,6 +1144,19 @@ async fn propfind_owned(
             .list_entry_properties(&child_ids)
             .await
             .unwrap_or_default();
+        let version_ids: Vec<_> = metas
+            .iter()
+            .filter_map(|meta| meta.entry.current_version_id)
+            .collect();
+        let versions = app
+            .entry_repo
+            .find_versions(&version_ids)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let version_mtimes: std::collections::HashMap<_, _> = versions
+            .into_iter()
+            .map(|version| (version.id, version.created_at))
+            .collect();
         for meta in metas {
             let child = meta.entry;
             let child_rel = format!("{}{}", child_prefix(rel), child.name);
@@ -1151,7 +1173,13 @@ async fn propfind_owned(
                 ),
                 displayname: child.name,
                 is_collection: is_dir,
-                getlastmodified: mtime_fmt(child.created_at),
+                getlastmodified: mtime_fmt(
+                    child
+                        .current_version_id
+                        .as_ref()
+                        .and_then(|version_id| version_mtimes.get(version_id).copied())
+                        .unwrap_or(child.created_at),
+                ),
                 getcontentlength,
                 getcontenttype,
                 custom: child_props.get(&child.id).cloned().unwrap_or_default(),

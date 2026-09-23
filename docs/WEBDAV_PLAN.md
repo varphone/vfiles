@@ -13,7 +13,7 @@
 
 | 项 | 状态 | 注 |
 | --- | --- | --- |
-| OPTIONS / PROPFIND（Depth 0/1）/ GET / HEAD | ✅ **实装 + 真服务证**（curl 207 ✓） | GET = 版本链（`EntryVersion.blob_id` 形清 ✓ 接线待接） |
+| OPTIONS / PROPFIND（Depth 0/1）/ GET / HEAD | ✅ **实装 + 真服务证**（curl 207 ✓） | GET 流式读取版本；PROPFIND 文件 `getlastmodified` 取当前版本时间，目录无版本时回退条目创建时间 |
 | MKCOL / DELETE / MOVE | ✅ 实装（`WebdavWriteOps` ✓ 审计链 user_id ✓） | MOVE Overwrite T 在 SQLite 单事务内删除目标子树并改写源路径；blob 引用释放和快照在提交后处理 |
 | **PUT** | ✅ **链实装**（`init_upload` + `complete_upload_from_stream` 流式直完 ✓） | bin 侧 `put_file` 转发 = 下段（签名已清 ✓） |
 | COPY | ✅ **实装**（Destination + Overwrite + 锁前置 + 审计；文件复用 blob，目录递归复制） | `copy_entries` 提供 overwrite 和目标父目录检查；需持续做 RFC/客户端兼容验收 |

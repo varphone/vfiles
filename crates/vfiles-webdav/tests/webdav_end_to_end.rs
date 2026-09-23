@@ -161,6 +161,30 @@ async fn options_advertises_and_propfind_needs_auth() {
             .await
             .expect("create fixture entry");
     }
+    let persist_path = NormalizedPath::new("persist.txt").expect("fixture path");
+    let persist_entry = entry_repo
+        .find_by_path(&namespace_id, &persist_path)
+        .await
+        .expect("find fixture")
+        .expect("fixture exists");
+    let persist_version = entry_repo
+        .create_version(
+            &persist_entry.id,
+            None,
+            None,
+            0,
+            Some("text/plain"),
+            &user.id,
+            Some("mtime fixture"),
+        )
+        .await
+        .expect("create fixture version");
+    sqlx::query("UPDATE entry_versions SET created_at = ? WHERE id = ?")
+        .bind("2030-01-02T03:04:05Z")
+        .bind(persist_version.id.to_string())
+        .execute(&pool)
+        .await
+        .expect("set fixture version timestamp");
     let deletes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let workspace = Arc::new(DefaultWorkspaceService::new(
         SqliteEntryRepo::new(pool.clone()),
@@ -266,6 +290,18 @@ async fn options_advertises_and_propfind_needs_auth() {
     .unwrap();
     assert!(body.contains("multistatus"));
     assert!(body.contains("displayname"));
+    let expected_mtime_timestamp = time::OffsetDateTime::parse(
+        "2030-01-02T03:04:05Z",
+        &time::format_description::well_known::Rfc3339,
+    )
+    .expect("fixture timestamp")
+    .unix_timestamp() as u64;
+    let expected_mtime = httpdate::fmt_http_date(
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(expected_mtime_timestamp),
+    );
+    assert!(body.contains(&format!(
+        "<D:getlastmodified>{expected_mtime}</D:getlastmodified>"
+    )));
 
     let patched = router
         .clone()
