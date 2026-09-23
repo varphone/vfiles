@@ -56,16 +56,19 @@ pub struct PropResponse {
     /// RFC1123（如 `Mon, 22 Sep 2026 19:20:00 GMT`）。
     pub getlastmodified: String,
     pub getcontentlength: Option<u64>,
+    /// r3：MIME 类型（P1 顺车 ✗ get_stream 已带 mime 白送；集合 = None ✓）。
+    pub getcontenttype: Option<String>,
 }
 
 /// 构造 207 Multi-Status 文档（XML 转义 ✓ 集合无 getcontentlength ✓）。
 pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
     // r2 协议精度裁剪 ✗ 请求要什么给什么（All=全集 ✗ Names=交集+404 差集 ✗ PropName=只名）
-    const SUPPORTED: [&str; 4] = [
+    const SUPPORTED: [&str; 5] = [
         "displayname",
         "resourcetype",
         "getlastmodified",
         "getcontentlength",
+        "getcontenttype",
     ];
     let mut out = String::from(
         r#"<?xml version="1.0" encoding="utf-8"?>
@@ -116,6 +119,13 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
                         out.push_str("<D:getcontentlength>");
                         out.push_str(&len.to_string());
                         out.push_str("</D:getcontentlength>");
+                    }
+                }
+                "getcontenttype" if mode != &PropMode::PropName => {
+                    if let Some(ct) = &item.getcontenttype {
+                        out.push_str("<D:getcontenttype>");
+                        out.push_str(&escape_xml(ct));
+                        out.push_str("</D:getcontenttype>");
                     }
                 }
                 // 其余 = propname 模式（只名无值）或占位（getcontentlength None 时跳过 ✓）
@@ -196,6 +206,7 @@ mod tests {
                 is_collection: true,
                 getlastmodified: "Mon, 22 Sep 2026 19:20:00 GMT".into(),
                 getcontentlength: None,
+                getcontenttype: None,
             },
             PropResponse {
                 href: "/dav/a&b.txt".into(),
@@ -203,6 +214,7 @@ mod tests {
                 is_collection: false,
                 getlastmodified: "Mon, 22 Sep 2026 19:21:00 GMT".into(),
                 getcontentlength: Some(42),
+                getcontenttype: Some("text/plain".into()),
             },
         ], &PropMode::All);
         assert!(xml.contains("<D:collection/>"));
@@ -232,6 +244,7 @@ mod propmode_tests {
             is_collection: false,
             getlastmodified: "Mon, 01 Jan 2026 00:00:00 +0000".into(),
             getcontentlength: Some(5),
+            getcontenttype: Some("text/plain".into()),
         }]
     }
 

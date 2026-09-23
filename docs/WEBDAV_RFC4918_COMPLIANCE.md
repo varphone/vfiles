@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | OPTIONS | ✅ r214 修正 | Allow 全 10 方法 + `DAV: 1, 2` 实证 ✓ | - |
 | PROPFIND | ✅ **r2 五式实证** | 请求体解析落（roxmltree 选型 ✗ allprop/prop/propname ✓ 未支持属性 = 404 propstat ✓ 非法 400 ✓）| - |
-| （同上）children | 🟡 | **getcontentlength 批量**（r213 只做单目标 = 记档债）| **P0** |
+| （同上）children | ✅ **r3 债还清** | 双值齐（**length + contenttype** ✓ video/mp4/5B 实证 ✓ 集合不带 ✓）⚠️ 每文件 get_stream = **0.3s/50 文件（6ms/个）可见延迟 → 批量 SQL 优化 P1 立债** | P1性能 |
 | PROPFIND Depth | ✅ **r2 顺手落** | infinity = **403** 合规码 ✓ 实证 | - |
 | GET / HEAD | ✅ r201+r211 | 流式 + Range 206/416/Accept-Ranges 全实证 ✓ | - |
 | PUT | ✅ r110'b | 流式完成链 + 409 日志 ✓ | - |
@@ -45,7 +45,7 @@
 | getlastmodified | ✅ | ✓ | - |
 | **getcontentlength 单目标** | ✅ r213 | ✓ 三属性同框实证 | - |
 | **getcontentlength children** | ❌ | 批量（P0 债 = r213 记档）| **P0** |
-| getcontenttype | ❌ | MIME（get_stream 已带 mime ✗ 转发即可）| P1 |
+| getcontenttype | ✅ **r3 顺车** | 单目标 + children 双位出 ✓ 检测/扩展名回退 ✓ | - |
 | getetag | ❌ | ETag 面前置（If-Match 联动）| P1 |
 | creationdate | ❌ | entry.created_at 可出 | P2 |
 | lockdiscovery / supportedlock | ❌ | LOCK 属性面（随 P1 锁补全）| P1 |
@@ -68,8 +68,9 @@
 1. ~~XML 选型~~ ✅ r2（roxmltree）
 2. ~~PROPFIND 请求体解析~~ ✅ r2（五式 + 404 propstat + infinity-403 顺手）
 3. **children getcontentlength 批量**（P0 债，客户端列目录必需 ← 下轮首项）
-4. **COPY 方法**（P0 核心：blob 复用 + entry 复制 + 审计链）
-5. **PROPPATCH 方法**（P0 核心：propertyupdate set/remove）
-6. **If 头 + 412**（P0 并发安全）
+4. **children get_stream 批量 SQL**（r3 立债 ✗ 6ms/文件 → 条 JOIN 消 N+1）← 下轮首项
+5. **COPY 方法**（P0 核心：blob 复用 + entry 复制 + 审计链）
+6. **PROPPATCH 方法**（P0 核心：propertyupdate set/remove）
+7. **If 头 + 412**（P0 并发安全）
 
 > 记录纪律：每轮改协议面 = 同轮 curl 实证行入表；用户日志线索（gvfs/VLC）= 一等证据源。

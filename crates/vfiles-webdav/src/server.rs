@@ -509,6 +509,7 @@ async fn propfind_owned(
             is_collection: true,
             getlastmodified: mtime_fmt(time::OffsetDateTime::now_utc()),
             getcontentlength: None,
+            getcontenttype: None,
         });
     } else {
         let entry = app
@@ -529,12 +530,13 @@ async fn propfind_owned(
         // r213 ✓ 文件大小必须给客户端（VLC/gvfs-FUSE 的 st_size 来自此属性 ✗ 缺失 =
         // 播放器视文件为空 → "无法打开 MRL" 真因嫌疑 ✗ r105 记档债在此还清 ✓
         // 单目标 = 1 次轻量 open ✓ children 批量 size = 下轮债（列表不阻塞 ✓）
-        let getcontentlength = if is_dir {
-            None
+        // r3：单目标双值（size + mime ✗ getcontenttype P1 顺车 ✓）
+        let (getcontentlength, getcontenttype) = if is_dir {
+            (None, None)
         } else {
             match app.write.get_stream(&ns, &path).await {
-                Ok(Some((_reader, _mime, size))) => Some(size),
-                _ => None,
+                Ok(Some((_reader, mime, size))) => (Some(size), Some(mime)),
+                _ => (None, None),
             }
         };
         items.push(crate::response::PropResponse {
@@ -547,6 +549,7 @@ async fn propfind_owned(
             is_collection: is_dir,
             getlastmodified: mtime_fmt(entry.created_at),
             getcontentlength,
+            getcontenttype,
         });
     }
     if depth == "1" {
@@ -557,12 +560,31 @@ async fn propfind_owned(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         for child in children {
             let is_dir = matches!(child.entry_type, vfiles_domain::types::EntryKind::Directory);
+            // r3 P0 债还清 ✗✗ children 双值（size + mime）——每文件一次轻量 get_stream
+            // （本地 sqlite 查询级 ✗ 延迟 curl 实测入档；若可见延迟 → 批量 SQL 优化记）
+            let (getcontentlength, getcontenttype) = if is_dir {
+                (None, None)
+            } else {
+                let child_rel = if rel.is_empty() {
+                    child.name.clone()
+                } else {
+                    format!("{rel}/{}", child.name)
+                };
+                match vfiles_domain::types::NormalizedPath::new(&child_rel) {
+                    Ok(cp) => match app.write.get_stream(&ns, &cp).await {
+                        Ok(Some((_reader, mime, size))) => (Some(size), Some(mime)),
+                        _ => (None, None),
+                    },
+                    Err(_) => (None, None),
+                }
+            };
             items.push(crate::response::PropResponse {
                 href: entry_href(&child_prefix(rel), &child.name, is_dir),
                 displayname: child.name,
                 is_collection: is_dir,
                 getlastmodified: mtime_fmt(child.created_at),
-                getcontentlength: None, // 文件 length = r105（版本链 size_bytes ✓）
+                getcontentlength,
+                getcontenttype,
             });
         }
     }
