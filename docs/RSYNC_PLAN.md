@@ -15,6 +15,7 @@
 - 接收端 mux 流式读路径的 64 KiB scratch buffer 使用堆内存，避免 Tokio worker/default test stack 在解析 push flist 时溢出。
 - `--delete` 支持常见 `: /.rsync-filter` per-directory merge：按当前目录作用域载入目的端 merge 文件，`+` / `-` 规则可继承且子目录规则优先；merge 文件缺失视为空，超过 1 MiB 或读取失败时 fail-closed（本次不做删除）。受保护文件会阻止其父目录递归删除，同时允许删除同目录未保护的兄弟项。
 - per-directory merge 支持 `n`（规则不向子目录继承）、`e`（排除 merge 文件自身）、`-` / `+`（文件内裸模式强制为排除/包含）修饰符，以及 `!` 清除当前 merge 规则栈的继承规则。
+- 删除保护按 filter flags 的方向执行：默认规则和带 `r` 的规则作用于接收端删除，纯 `s` 发送端规则（如 `H`/`S`）不会错误保护目标文件；`P`/`R` 的 receiver-only 形分别保护/解除保护。
 - 收端 token 流直接解码到最终文件流，不保留完整 token 副本；协议块 checksum 表仍按文件块数占用内存。
 
 ## 状态（r21 末 · `--filter=P/H` 类规则保护修复 ✗ 真机抓出的静默失保）

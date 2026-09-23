@@ -349,6 +349,8 @@ pub fn sort_flist(entries: &mut Vec<FlatEntry>) {
 struct FilterRule {
     /// true = include（解除保护），false = exclude（保护不被删除）。
     include: bool,
+    /// 规则是否作用于 receiver 删除判断（`-s` / `+s` 仅影响发送端 file list）。
+    receiver_side: bool,
     /// 仅目录（pattern 尾 `/`）。
     dir_only: bool,
     /// 锚定传输根（pattern 首 `/` 或含 `/`）。
@@ -390,13 +392,15 @@ fn parse_rule(line: &str) -> Option<FilterRule> {
         _ => return None,
     };
     // 形如 `<+|-><flags…><space><pattern>`（flags = s/r/w/n/! 等 ✗ get_rule_prefix 恒带空格分隔）
-    let rest = match rest.split_once(' ') {
-        Some((_, pattern)) => pattern,
-        None => rest.trim_start(),
+    let (flags, pattern) = match rest.split_once(' ') {
+        Some((flags, pattern)) => (flags, pattern),
+        None => ("", rest.trim_start()),
     };
-    let (pat, dir_only) = match rest.strip_suffix('/') {
+    // 默认规则作用于两端；明确带 s 且不带 r 的规则是 sender-only（H/S 等）。
+    let receiver_side = !flags.contains('s') || flags.contains('r');
+    let (pat, dir_only) = match pattern.strip_suffix('/') {
         Some(p) => (p, true),
-        None => (rest, false),
+        None => (pattern, false),
     };
     let anchored = pat.starts_with('/');
     let pattern = pat.trim_start_matches('/').to_string();
@@ -405,6 +409,7 @@ fn parse_rule(line: &str) -> Option<FilterRule> {
     }
     Some(FilterRule {
         include,
+        receiver_side,
         dir_only,
         anchored: anchored || pattern.contains('/'),
         pattern,
@@ -557,6 +562,7 @@ fn rule_decision(
 fn is_excluded(rules: &[FilterRule], rel_path: &str, is_dir: bool) -> bool {
     rules
         .iter()
+        .filter(|rule| rule.receiver_side)
         .find_map(|rule| rule_decision(rule, rel_path, is_dir, None))
         .unwrap_or(false)
 }
@@ -585,6 +591,9 @@ fn is_excluded_with_merges(
     for (index, filter) in filters.iter().enumerate() {
         match filter {
             FilterItem::Rule(rule) => {
+                if !rule.receiver_side {
+                    continue;
+                }
                 if let Some(decision) = rule_decision(rule, rel_path, is_dir, None) {
                     return decision;
                 }
@@ -606,6 +615,9 @@ fn is_excluded_with_merges(
                         for item in rules {
                             match item {
                                 DirMergeRule::Rule(rule) => {
+                                    if !rule.receiver_side {
+                                        continue;
+                                    }
                                     if let Some(decision) =
                                         rule_decision(rule, rel_path, is_dir, Some(scope))
                                     {
@@ -3670,10 +3682,29 @@ mod tests {
         // flags 前缀剥离（`P` 类保护规则序列化为 `-r pat` ✗ 空格分隔）
         let r = parse_rule("-r *.probe").expect("flags 形可解析");
         assert!(!r.include && r.pattern == "*.probe", "flags 不进 pattern");
+        let sender_only = parse_rule("-s *.hidden").expect("sender-only flags");
+        assert!(!sender_only.receiver_side, "-s 只影响发送端");
+        let receiver_only = parse_rule("-r *.protected").expect("receiver-only flags");
+        assert!(receiver_only.receiver_side, "-r 影响接收端删除判断");
+        let both_sides = parse_rule("-sr *.both").expect("two-sided flags");
+        assert!(both_sides.receiver_side, "-sr 同时包含接收端");
         assert_eq!(
             parse_rule("+s my file.txt").map(|r| (r.include, r.pattern)),
             Some((true, "my file.txt".to_string())),
             "pattern 内空格保留"
+        );
+
+        let directional_rules = vec![
+            parse_rule("-s *.hidden").unwrap(),
+            parse_rule("-r *.protected").unwrap(),
+        ];
+        assert!(
+            !is_excluded(&directional_rules, "old.hidden", false),
+            "sender-only H 不应保护目标端删除"
+        );
+        assert!(
+            is_excluded(&directional_rules, "old.protected", false),
+            "receiver-only P 应保护目标端删除"
         );
 
         let rules: Vec<FilterRule> = ["+ keep.tmp", "- *.tmp", "- cache/", "- /top.txt"]
