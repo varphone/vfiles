@@ -106,6 +106,10 @@ pub(crate) struct StreamingFileOptions<'a> {
     pub(crate) modified_at: Option<time::OffsetDateTime>,
 }
 
+/// Prevents response compression when strong validators are being evaluated.
+#[derive(Clone)]
+pub(crate) struct DisableCompression;
+
 pub(crate) fn if_none_match_is_wildcard(headers: &HeaderMap) -> bool {
     let mut values = headers.get_all(header::IF_NONE_MATCH).iter();
     let Some(value) = values.next() else {
@@ -122,6 +126,9 @@ pub(crate) fn not_modified_response(
     *response.status_mut() = StatusCode::NOT_MODIFIED;
     insert_etag(response.headers_mut(), etag)?;
     insert_last_modified(response.headers_mut(), modified_at)?;
+    if etag.is_some() {
+        insert_vary_accept_encoding(response.headers_mut());
+    }
     Ok(response)
 }
 
@@ -184,6 +191,9 @@ pub(crate) async fn streaming_file_response(
             );
             insert_etag(response.headers_mut(), etag)?;
             insert_last_modified(response.headers_mut(), modified_at)?;
+            if etag.is_some() {
+                insert_vary_accept_encoding(response.headers_mut());
+            }
             if let Some(filename) = attachment_filename {
                 response
                     .headers_mut()
@@ -205,6 +215,9 @@ pub(crate) async fn streaming_file_response(
             headers.insert(header::CONTENT_TYPE, content_type);
             headers.insert(header::ACCEPT_RANGES, accept_ranges);
             insert_etag(headers, etag)?;
+            if etag.is_some() {
+                insert_vary_accept_encoding(headers);
+            }
             insert_last_modified(headers, modified_at)?;
             headers.insert(
                 header::CONTENT_RANGE,
@@ -222,10 +235,16 @@ pub(crate) async fn streaming_file_response(
             headers.insert(header::CONTENT_TYPE, content_type);
             headers.insert(header::ACCEPT_RANGES, accept_ranges);
             insert_etag(headers, etag)?;
+            if etag.is_some() {
+                insert_vary_accept_encoding(headers);
+            }
             insert_last_modified(headers, modified_at)?;
             insert_content_length(headers, size_bytes)?;
             if let Some(filename) = attachment_filename {
                 headers.insert(header::CONTENT_DISPOSITION, attachment_header(filename)?);
+            }
+            if has_conditional_header(request_headers) {
+                response.extensions_mut().insert(DisableCompression);
             }
             Ok(response)
         }
@@ -240,7 +259,37 @@ fn precondition_failed(
     *response.status_mut() = StatusCode::PRECONDITION_FAILED;
     insert_etag(response.headers_mut(), etag)?;
     insert_last_modified(response.headers_mut(), modified_at)?;
+    if etag.is_some() {
+        insert_vary_accept_encoding(response.headers_mut());
+    }
     Ok(response)
+}
+
+fn has_conditional_header(headers: &HeaderMap) -> bool {
+    [
+        header::IF_MATCH,
+        header::IF_UNMODIFIED_SINCE,
+        header::IF_NONE_MATCH,
+        header::IF_MODIFIED_SINCE,
+        header::IF_RANGE,
+    ]
+    .iter()
+    .any(|name| headers.contains_key(name))
+}
+
+fn insert_vary_accept_encoding(headers: &mut HeaderMap) {
+    let already_varies = headers
+        .get_all(header::VARY)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|name| {
+            name.trim()
+                .eq_ignore_ascii_case(header::ACCEPT_ENCODING.as_str())
+        });
+    if !already_varies {
+        headers.append(header::VARY, HeaderValue::from_static("accept-encoding"));
+    }
 }
 
 fn insert_etag(headers: &mut HeaderMap, etag: Option<&str>) -> ApiResult<()> {

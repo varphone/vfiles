@@ -6120,6 +6120,87 @@ async fn range_requests_stay_uncompressed_even_with_accept_encoding() {
 }
 
 #[tokio::test]
+async fn compressed_file_responses_weaken_etags_and_preserve_conditional_semantics() {
+    let app = TestApp::new().await;
+    let contents = vec![b'a'; 1024];
+    app.upload_version("docs", "compressible.txt", &contents, "compression fixture")
+        .await;
+
+    let identity = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/compressible.txt")
+                .body(Body::empty())
+                .expect("identity request should build"),
+        )
+        .await;
+    let strong_etag = identity.headers()[header::ETAG]
+        .to_str()
+        .expect("identity ETag should be valid")
+        .to_string();
+    assert!(strong_etag.starts_with('"'));
+    assert!(identity.headers().get(header::CONTENT_ENCODING).is_none());
+
+    let compressed = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/compressible.txt")
+                .header(header::ACCEPT_ENCODING, "gzip")
+                .body(Body::empty())
+                .expect("compressed request should build"),
+        )
+        .await;
+    assert_eq!(compressed.headers()[header::CONTENT_ENCODING], "gzip");
+    let weak_etag = compressed.headers()[header::ETAG]
+        .to_str()
+        .expect("compressed ETag should be valid");
+    assert_eq!(weak_etag, format!("W/{strong_etag}"));
+    assert!(
+        compressed.headers()[header::VARY]
+            .to_str()
+            .unwrap()
+            .split(',')
+            .any(|value| value.trim().eq_ignore_ascii_case("accept-encoding"))
+    );
+
+    let revalidated = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/compressible.txt")
+                .header(header::ACCEPT_ENCODING, "gzip")
+                .header(header::IF_NONE_MATCH, weak_etag)
+                .body(Body::empty())
+                .expect("weak ETag revalidation request should build"),
+        )
+        .await;
+    assert_eq!(revalidated.status(), StatusCode::NOT_MODIFIED);
+    assert!(
+        revalidated
+            .headers()
+            .get(header::CONTENT_ENCODING)
+            .is_none()
+    );
+
+    let strong_precondition = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/compressible.txt")
+                .header(header::ACCEPT_ENCODING, "gzip")
+                .header(header::IF_MATCH, &strong_etag)
+                .body(Body::empty())
+                .expect("strong ETag precondition request should build"),
+        )
+        .await;
+    assert_eq!(strong_precondition.status(), StatusCode::OK);
+    assert!(
+        strong_precondition
+            .headers()
+            .get(header::CONTENT_ENCODING)
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn precompressed_static_assets_are_served_when_supported() {
     let app = TestApp::new_with_static_frontend("<html><body>vfiles-ui</body></html>").await;
 

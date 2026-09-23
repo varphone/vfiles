@@ -12,7 +12,7 @@ use axum::{
     Router,
     extract::Request,
     extract::State,
-    http::{Method, StatusCode, Uri, header},
+    http::{Extensions, HeaderValue, Method, StatusCode, Uri, header},
     middleware::Next,
     response::IntoResponse,
     response::Response,
@@ -108,6 +108,7 @@ fn build_router_inner(state: AppState, serve_frontend_fallback: bool) -> Router<
 
     router
         .layer(build_compression_layer())
+        .layer(axum::middleware::from_fn(weaken_compressed_etag))
         .layer(build_cors_layer(&state.config))
         .layer(axum::middleware::from_fn(request_logger))
         .layer(axum::middleware::from_fn(
@@ -136,9 +137,41 @@ fn build_compression_layer() -> CompressionLayer<impl Predicate> {
         .and(NotForContentType::const_new("application/gzip"))
         .and(NotForContentType::const_new("application/x-7z-compressed"))
         .and(NotForContentType::const_new("application/x-rar-compressed"))
-        .and(NotForContentType::const_new("application/octet-stream"));
+        .and(
+            |_: axum::http::StatusCode,
+             _: axum::http::Version,
+             headers: &axum::http::HeaderMap,
+             extensions: &Extensions| {
+                extensions
+                    .get::<http_headers::DisableCompression>()
+                    .is_none()
+                    && !headers
+                        .get(header::CONTENT_TYPE)
+                        .and_then(|value| value.to_str().ok())
+                        .is_some_and(|value| {
+                            value
+                                .to_ascii_lowercase()
+                                .starts_with("application/octet-stream")
+                        })
+            },
+        );
 
     CompressionLayer::new().compress_when(predicate)
+}
+
+/// Compression changes representation bytes. Keep conditional requests on the
+/// identity representation and weaken validators for compressed responses.
+async fn weaken_compressed_etag(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    if response.headers().contains_key(header::CONTENT_ENCODING)
+        && let Some(etag) = response.headers().get(header::ETAG)
+        && let Ok(etag) = etag.to_str()
+        && !etag.starts_with("W/")
+        && let Ok(weak_etag) = HeaderValue::from_str(&format!("W/{etag}"))
+    {
+        response.headers_mut().insert(header::ETAG, weak_etag);
+    }
+    response
 }
 
 fn build_cors_layer(config: &AppConfig) -> CorsLayer {
