@@ -1026,9 +1026,10 @@ async fn options_advertises_and_propfind_needs_auth() {
 
     // A separate WebDAV application instance sees the same SQLite-backed lock.
     let lock_body = r#"<?xml version="1.0"?>
-        <D:lockinfo xmlns:D="DAV:">
+        <D:lockinfo xmlns:D="DAV:" xmlns:X="urn:client:lock-owner">
           <D:lockscope><D:exclusive/></D:lockscope>
           <D:locktype><D:write/></D:locktype>
+          <D:owner><!-- owner note --><X:person lang="zh"><X:name>editor &amp; team</X:name></X:person></D:owner>
         </D:lockinfo>"#;
     let lock = restarted_router
         .clone()
@@ -1053,6 +1054,34 @@ async fn options_advertises_and_propfind_needs_auth() {
         .to_str()
         .expect("lock token should be ASCII")
         .to_string();
+    let lock_xml = String::from_utf8(
+        axum::body::to_bytes(lock.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    let lock_doc = roxmltree::Document::parse(&lock_xml).expect("LOCK response XML should parse");
+    let owner = lock_doc
+        .descendants()
+        .find(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some("DAV:")
+                && node.tag_name().name() == "owner"
+        })
+        .expect("LOCK response should preserve DAV:owner");
+    let person = owner.children().find(|node| node.is_element()).unwrap();
+    assert!(owner.children().any(|node| node.is_comment()));
+    assert_eq!(person.tag_name().namespace(), Some("urn:client:lock-owner"));
+    assert_eq!(person.attribute("lang"), Some("zh"));
+    assert_eq!(
+        person
+            .children()
+            .find(|node| node.is_element())
+            .unwrap()
+            .text(),
+        Some("editor & team")
+    );
 
     let tagged_refresh = restarted_router
         .clone()
@@ -1140,6 +1169,24 @@ async fn options_advertises_and_propfind_needs_auth() {
     assert!(
         child_lock_xml.contains(&child_lock_token[1..child_lock_token.len() - 1]),
         "depth-one PROPFIND should expose the locked child: {child_lock_xml}"
+    );
+    let child_lock_doc = roxmltree::Document::parse(&child_lock_xml).unwrap();
+    let child_owner = child_lock_doc
+        .descendants()
+        .find(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some("DAV:")
+                && node.tag_name().name() == "owner"
+        })
+        .expect("PROPFIND should retain the lock owner");
+    assert_eq!(
+        child_owner
+            .children()
+            .find(|node| node.is_element())
+            .unwrap()
+            .tag_name()
+            .namespace(),
+        Some("urn:client:lock-owner")
     );
 
     let blocked_write = router

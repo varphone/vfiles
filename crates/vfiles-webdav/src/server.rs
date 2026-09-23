@@ -445,20 +445,20 @@ async fn lock_op(
                 .unwrap();
         }
     };
-    match parse_lockinfo(&lock_body) {
-        Ok(LockScope::ExclusiveWrite) => {}
-        Ok(LockScope::SharedWrite) => {
-            return Response::builder()
-                .status(StatusCode::METHOD_NOT_ALLOWED)
-                .body(Body::empty())
-                .unwrap();
-        }
+    let lockinfo = match parse_lockinfo(&lock_body) {
+        Ok(lockinfo) => lockinfo,
         Err(status) => {
             return Response::builder()
                 .status(status)
                 .body(Body::empty())
                 .unwrap();
         }
+    };
+    if matches!(lockinfo.scope, LockScope::SharedWrite) {
+        return Response::builder()
+            .status(StatusCode::METHOD_NOT_ALLOWED)
+            .body(Body::empty())
+            .unwrap();
     }
     let rel = uri_path
         .trim_start_matches('/')
@@ -472,11 +472,8 @@ async fn lock_op(
         Some(d) => format!("Second-{}", d.as_secs()),
         None => "Infinite".to_string(),
     };
-    match app
-        .locks
-        .lock(&ns, &rel, user.username.as_str(), depth_infinity, ttl)
-        .await
-    {
+    let owner = lockinfo.owner.unwrap_or_else(|| user.username.to_string());
+    match app.locks.lock(&ns, &rel, &owner, depth_infinity, ttl).await {
         Ok(Some(entry)) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
@@ -530,8 +527,13 @@ enum LockScope {
     SharedWrite,
 }
 
+struct ParsedLockInfo {
+    scope: LockScope,
+    owner: Option<String>,
+}
+
 /// 只授予实现了真实语义的 exclusive write 锁；不得将 shared 请求静默升级。
-fn parse_lockinfo(body: &[u8]) -> Result<LockScope, StatusCode> {
+fn parse_lockinfo(body: &[u8]) -> Result<ParsedLockInfo, StatusCode> {
     let xml = std::str::from_utf8(body).map_err(|_| StatusCode::BAD_REQUEST)?;
     let doc = roxmltree::Document::parse(xml).map_err(|_| StatusCode::BAD_REQUEST)?;
     let root = doc.root_element();
@@ -563,11 +565,20 @@ fn parse_lockinfo(body: &[u8]) -> Result<LockScope, StatusCode> {
     }) {
         return Err(StatusCode::BAD_REQUEST);
     }
-    match scope.tag_name().name() {
-        "exclusive" => Ok(LockScope::ExclusiveWrite),
-        "shared" => Ok(LockScope::SharedWrite),
-        _ => Err(StatusCode::BAD_REQUEST),
-    }
+    let scope = match scope.tag_name().name() {
+        "exclusive" => LockScope::ExclusiveWrite,
+        "shared" => LockScope::SharedWrite,
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+    let owner = root
+        .children()
+        .find(|node| {
+            node.is_element()
+                && node.tag_name().namespace() == Some("DAV:")
+                && node.tag_name().name() == "owner"
+        })
+        .map(crate::response::store_xml_element);
+    Ok(ParsedLockInfo { scope, owner })
 }
 
 /// 空体 LOCK = RFC 4918 §9.10.2 锁刷新，必须携带 If 条件中的现存令牌。

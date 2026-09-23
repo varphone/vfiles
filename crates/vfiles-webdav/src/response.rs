@@ -41,11 +41,15 @@ pub fn is_predefined_readonly(name: &str) -> bool {
         .any(|local_name| is_dav_property(name, local_name))
 }
 
-fn stored_xml_value(value: &str) -> Option<&str> {
+pub(crate) fn stored_xml_value(value: &str) -> Option<&str> {
     value.strip_prefix(STORED_XML_PREFIX)
 }
 
-fn serialize_property_xml(node: roxmltree::Node<'_, '_>) -> String {
+pub(crate) fn store_xml_element(node: roxmltree::Node<'_, '_>) -> String {
+    format!("{STORED_XML_PREFIX}{}", serialize_xml_element(node))
+}
+
+fn serialize_xml_element(node: roxmltree::Node<'_, '_>) -> String {
     use std::collections::BTreeMap;
 
     fn add_namespace(uri: &str, map: &mut BTreeMap<String, String>) {
@@ -82,6 +86,10 @@ fn serialize_property_xml(node: roxmltree::Node<'_, '_>) -> String {
     ) {
         if node.is_text() {
             out.push_str(&escape_xml(node.text().unwrap_or_default()));
+        } else if node.is_comment() {
+            out.push_str("<!--");
+            out.push_str(node.text().unwrap_or_default());
+            out.push_str("-->");
         } else if node.is_element() {
             let tag = node.tag_name();
             let qname = tag
@@ -251,7 +259,7 @@ pub fn parse_propertyupdate(body: &str) -> Result<Vec<PropOp>, ()> {
                         let value = if is_dav_property(&name, "displayname") {
                             child.text().unwrap_or_default().to_string()
                         } else {
-                            format!("{STORED_XML_PREFIX}{}", serialize_property_xml(child))
+                            store_xml_element(child)
                         };
                         ops.push(PropOp::Set { name, value });
                     } else {
@@ -469,9 +477,9 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
                     if let Some(lock) = &item.active_lock {
                         out.push_str("<D:lockdiscovery><D:activelock><D:locktype><D:write/></D:locktype><D:lockscope><D:exclusive/></D:lockscope><D:depth>");
                         out.push_str(if lock.depth_infinity { "infinity" } else { "0" });
-                        out.push_str("</D:depth><D:owner>");
-                        out.push_str(&escape_xml(&lock.owner));
-                        out.push_str("</D:owner><D:timeout>");
+                        out.push_str("</D:depth>");
+                        append_lock_owner(&mut out, &lock.owner);
+                        out.push_str("<D:timeout>");
                         out.push_str(&escape_xml(&lock.timeout));
                         out.push_str("</D:timeout><D:locktoken><D:href>");
                         out.push_str(&escape_xml(&lock.token));
@@ -539,24 +547,37 @@ pub fn lock_response(
     depth_infinity: bool,
 ) -> String {
     let depth = if depth_infinity { "infinity" } else { "0" };
+    let owner_xml = stored_xml_value(owner)
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("<D:owner>{}</D:owner>", escape_xml(owner)));
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <D:prop xmlns:D="DAV:"><D:lockdiscovery><D:activelock>
 <D:locktype><D:write/></D:locktype>
 <D:lockscope><D:exclusive/></D:lockscope>
 <D:depth>{depth}</D:depth>
-<D:owner>{owner}</D:owner>
+{owner_xml}
 <D:href>{href}</D:href>
 <D:locktoken><D:href>{token}</D:href></D:locktoken>
 <D:lockroot><D:href>{href}</D:href></D:lockroot>
 <D:timeout>{timeout}</D:timeout>
 </D:activelock></D:lockdiscovery></D:prop>"#,
-        owner = escape_xml(owner),
+        owner_xml = owner_xml,
         href = escape_xml(path), // r-new 修双斜杠：caller 已传完整 href（含 mount ✗ 模板不自加 "/"）
         token = escape_xml(token),
         timeout = escape_xml(timeout),
         depth = depth,
     )
+}
+
+fn append_lock_owner(out: &mut String, owner: &str) {
+    if let Some(xml) = stored_xml_value(owner) {
+        out.push_str(xml);
+    } else {
+        out.push_str("<D:owner>");
+        out.push_str(&escape_xml(owner));
+        out.push_str("</D:owner>");
+    }
 }
 
 /// RFC 4918 §9.10.3 reports a failed depth-infinity acquisition as a
