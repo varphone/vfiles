@@ -1096,6 +1096,17 @@ impl S3 for VfilesS3 {
             )
             .await
             .map_err(dom_err)?;
+        // `x-amz-meta-*` 存会话（条目此时尚不存在 ✗ 完成时落到 entry 属性）
+        if let Some(md) = &input.metadata
+            && !md.is_empty()
+        {
+            let map: std::collections::BTreeMap<String, String> =
+                md.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            self.upload
+                .set_upload_custom_metadata(&view.upload_id, &map)
+                .await
+                .map_err(dom_err)?;
+        }
         let out = CreateMultipartUploadOutput {
             bucket: Some(input.bucket),
             key: Some(input.key),
@@ -1246,12 +1257,25 @@ impl S3 for VfilesS3 {
                 }
             }
         }
+        // 会话上存的 `x-amz-meta-*` 必须在完成**之前**读（完成会清掉会话目录）
+        let custom = self
+            .upload
+            .get_upload_custom_metadata(&upload_id)
+            .await
+            .unwrap_or_default();
         let result = self
             .upload
             .complete_multipart_upload(&upload_id, Some("S3 multipart"))
             .await
             .map_err(dom_err)?;
         let etag = result.version.id.to_string().replace('-', "");
+        // 会话上存的 `x-amz-meta-*` → 条目属性（完成即定稿 = 覆盖写语义）
+        let meta_path = norm(&input.key).map_err(dom_err)?;
+        if let Some(entry) = self.entry_at(&meta_path).await? {
+            let map: s3s::dto::Metadata = custom.into_iter().collect();
+            self.store_metadata(&entry.id, (!map.is_empty()).then_some(&map))
+                .await?;
+        }
         let location = format!("/{}/{}", input.bucket, input.key);
         let out = CompleteMultipartUploadOutput {
             bucket: Some(input.bucket),

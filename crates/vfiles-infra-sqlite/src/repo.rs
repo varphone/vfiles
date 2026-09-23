@@ -3855,6 +3855,30 @@ impl UploadStore for FsUploadStore {
         Ok(out)
     }
 
+    async fn set_upload_custom_metadata(
+        &self,
+        upload_id: &UploadId,
+        metadata: &std::collections::BTreeMap<String, String>,
+    ) -> DomainResult<()> {
+        let mut md = self.read_metadata(upload_id).await?;
+        md["custom_metadata"] =
+            serde_json::to_value(metadata).map_err(|e| DomainError::Internal {
+                message: format!("Failed to serialize custom metadata: {}", e),
+            })?;
+        self.write_metadata(upload_id, &md).await
+    }
+
+    async fn get_upload_custom_metadata(
+        &self,
+        upload_id: &UploadId,
+    ) -> DomainResult<std::collections::BTreeMap<String, String>> {
+        let md = self.read_metadata(upload_id).await?;
+        Ok(md
+            .get("custom_metadata")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default())
+    }
+
     async fn read_upload_part(
         &self,
         upload_id: &UploadId,

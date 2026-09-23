@@ -2688,6 +2688,27 @@ where
             .await
     }
 
+    /// 写会话自定义元数据（S3 `x-amz-meta-*`）。
+    pub async fn set_upload_custom_metadata(
+        &self,
+        upload_id: &UploadId,
+        metadata: &std::collections::BTreeMap<String, String>,
+    ) -> DomainResult<()> {
+        self.upload_store
+            .set_upload_custom_metadata(upload_id, metadata)
+            .await
+    }
+
+    /// 读会话自定义元数据（无则空表）。
+    pub async fn get_upload_custom_metadata(
+        &self,
+        upload_id: &UploadId,
+    ) -> DomainResult<std::collections::BTreeMap<String, String>> {
+        self.upload_store
+            .get_upload_custom_metadata(upload_id)
+            .await
+    }
+
     /// 列出本命名空间的上传会话（S3 `ListMultipartUploads` 用）。
     pub async fn list_upload_sessions(
         &self,

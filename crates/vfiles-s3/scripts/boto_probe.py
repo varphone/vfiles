@@ -255,6 +255,21 @@ def main():
     for mk in ["boto-meta/a.txt", "boto-meta/src.txt", "boto-meta/copy.txt", "boto-meta/repl.txt"]:
         s3.delete_object(Bucket="default", Key=mk)
 
+    # ── multipart 用户元数据（CreateMultipartUpload 传入 ✗ r23）──
+    mmd = {"project": "big", "stage": "mpu"}
+    muid = s3.create_multipart_upload(Bucket="default", Key="boto-mpu/meta.bin",
+                                      Metadata=mmd)["UploadId"]
+    mparts = []
+    for i, c in enumerate([b"a" * 1024, b"b" * 1024], 1):
+        r = s3.upload_part(Bucket="default", Key="boto-mpu/meta.bin", PartNumber=i,
+                           UploadId=muid, Body=c)
+        mparts.append({"ETag": r["ETag"], "PartNumber": i})
+    s3.complete_multipart_upload(Bucket="default", Key="boto-mpu/meta.bin", UploadId=muid,
+                                 MultipartUpload={"Parts": mparts})
+    check("boto multipart metadata applied on complete",
+          s3.head_object(Bucket="default", Key="boto-mpu/meta.bin")["Metadata"] == mmd)
+    s3.delete_object(Bucket="default", Key="boto-mpu/meta.bin")
+
     # ── UploadPartCopy（r19）──
     cpsrc = bytes([i % 251 for i in range(262144)])
     s3.put_object(Bucket="default", Key="boto-upc/src.bin", Body=cpsrc)

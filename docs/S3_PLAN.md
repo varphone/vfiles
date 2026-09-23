@@ -1,4 +1,23 @@
-# S3 兼容 API（… r20 SQL 逐页 → r21 只读凭证 → **r22 用户元数据**）
+# S3 兼容 API（… r21 只读凭证 → r22 用户元数据 → **r23 multipart 元数据**）
+
+## 状态（r23 末 · 元数据三路齐全 = PUT / Copy / multipart）
+
+- **实装**：
+  | 项 | 内容 |
+  | --- | --- |
+  | 会话元数据 | `UploadStore::set/get_upload_custom_metadata`（存 `metadata.json` 的 `custom_metadata` 键）+ app 包装 |
+  | Create | `CreateMultipartUpload` 的 `x-amz-meta-*` 存**会话**（条目此时不存在） |
+  | Complete | **先读会话元数据再完成**（完成会清会话目录 ✗ 顺序错 = 元数据丢失，真机抓到）→ 落到 entry 属性（覆盖写语义：无元数据即清空） |
+  | Abort | 会话目录销毁 = 元数据随之消失（对象不存在） |
+- **真机验收（真 SDK）**：
+  | 场景 | 结果 |
+  | --- | --- |
+  | Create 带元数据 → 分片 → 完成 | GET/HEAD **原样返回** + 正文完整 ✓ |
+  | 完成时无元数据（覆盖已有对象） | 元数据**清空**（S3 语义：由 Create 决定） ✓ |
+  | Abort | 不产生对象 ✓ |
+  | 之后普通 PUT（无元数据） | 清空 ✓ |
+- **回归**：自写探针 **24/24** · 真 SDK **36/36**（+multipart 元数据）。
+- **仍债**：凭证→命名空间绑定 · region 校验 · `copy_source_if_*` 条件头。
 
 ## 状态（r22 末 · `x-amz-meta-*` 往返 = 客户端自定义元数据可用）
 
