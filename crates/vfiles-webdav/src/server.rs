@@ -520,8 +520,37 @@ fn internal_error() -> Response {
 struct GetRequestConditions {
     range: Option<String>,
     if_range: Option<String>,
+    if_match: Option<String>,
+    if_unmodified_since: Option<String>,
     if_none_match: Option<String>,
+    if_modified_since: Option<String>,
     head: bool,
+}
+
+fn joined_header_values(
+    request: &axum::extract::Request,
+    name: &axum::http::header::HeaderName,
+) -> Option<String> {
+    let values: Vec<_> = request.headers().get_all(name).iter().collect();
+    (!values.is_empty()).then(|| {
+        values
+            .into_iter()
+            .map(|value| value.to_str().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join(", ")
+    })
+}
+
+fn single_header_value(
+    request: &axum::extract::Request,
+    name: &axum::http::header::HeaderName,
+) -> Option<String> {
+    let values: Vec<_> = request.headers().get_all(name).iter().collect();
+    match values.as_slice() {
+        [] => None,
+        [value] => Some(value.to_str().unwrap_or_default().to_string()),
+        _ => Some(String::new()),
+    }
 }
 
 /// PUT（r110'b ✓ 纯拥有参（#46 纪律）✓ 覆盖语义 = 后端版本化（呼应 PROPOSAL ✓））。
@@ -536,7 +565,10 @@ async fn get_op(
     let GetRequestConditions {
         range: range_owned,
         if_range: if_range_owned,
+        if_match,
+        if_unmodified_since,
         if_none_match,
+        if_modified_since,
         head: is_head,
     } = conditions;
     let Some(app) = app else {
@@ -561,25 +593,57 @@ async fn get_op(
                 .unwrap();
         }
     };
-    // r14 ETag（find 一次轻查 ✗ current_version_id 派生）+ If-None-Match 304 短路
-    let cur_etag = app
+    // Resolve validators from the same current version used for GET/HEAD.
+    let entry = match app
         .entry_repo
         .find_by_path(&ns, &path)
         .await
-        .ok()
-        .flatten()
-        .and_then(|e| e.current_version_id)
-        .map(|v| derive_etag(&v));
-    if let Some(h) = if_none_match.as_deref()
-        && etag_satisfies(h, cur_etag.as_deref())
+        .map_err(|error| {
+            tracing::error!(path = %rel, %error, "WebDAV GET 读取实体元数据失败");
+            error
+        }) {
+        Ok(entry) => entry,
+        Err(_) => return internal_error(),
+    };
+    let mut cur_etag = None;
+    let mut modified_at = entry.as_ref().map(|entry| entry.created_at);
+    if let Some(entry) = &entry
+        && let Some(version_id) = &entry.current_version_id
     {
-        let mut b = Response::builder()
-            .status(StatusCode::NOT_MODIFIED)
-            .header("cache-control", "private, max-age=0, must-revalidate");
-        if let Some(et) = cur_etag.as_deref() {
-            b = b.header(header::ETAG, et);
-        }
-        return b.body(Body::empty()).unwrap();
+        let version = match app.entry_repo.find_version(version_id).await {
+            Ok(version) => version,
+            Err(error) => {
+                tracing::error!(path = %rel, %error, "WebDAV GET 读取当前版本元数据失败");
+                return internal_error();
+            }
+        };
+        cur_etag = Some(derive_etag(version_id));
+        modified_at = Some(version.created_at);
+    }
+    let has_representation = entry
+        .as_ref()
+        .is_some_and(|entry| matches!(entry.entry_type, vfiles_domain::types::EntryKind::File));
+    if if_match.as_deref().is_some_and(|condition| {
+        !if_match_satisfied(condition, cur_etag.as_deref(), has_representation)
+    }) || (if_match.is_none()
+        && if_unmodified_since.as_deref().is_some_and(|condition| {
+            modified_at.is_some_and(|modified| if_unmodified_since_failed(condition, modified))
+        }))
+    {
+        return conditional_response(
+            StatusCode::PRECONDITION_FAILED,
+            cur_etag.as_deref(),
+            modified_at,
+        );
+    }
+    if if_none_match.as_deref().is_some_and(|condition| {
+        if_none_match_satisfied(condition, cur_etag.as_deref(), has_representation)
+    }) || (if_none_match.is_none()
+        && if_modified_since.as_deref().is_some_and(|condition| {
+            modified_at.is_some_and(|modified| if_modified_since_matches(condition, modified))
+        }))
+    {
+        return conditional_response(StatusCode::NOT_MODIFIED, cur_etag.as_deref(), modified_at);
     }
     match app.write.get_stream(&ns, &path).await {
         Ok(Some((mut reader, mime, size))) => {
@@ -591,6 +655,9 @@ async fn get_op(
                 .header("accept-ranges", "bytes");
             if let Some(et) = cur_etag.as_deref() {
                 base = base.header(header::ETAG, et); // r14 GET/206 响应暴露 ETag
+            }
+            if let Some(modified_at) = modified_at {
+                base = base.header(header::LAST_MODIFIED, format_http_date(modified_at));
             }
             let range = if if_range_allows_range(if_range_owned.as_deref(), cur_etag.as_deref()) {
                 range_owned
@@ -622,11 +689,19 @@ async fn get_op(
                         builder.body(Body::from_stream(stream)).unwrap()
                     }
                 }
-                Some(Err(())) => Response::builder()
-                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
-                    .header(header::CONTENT_RANGE, format!("bytes */{size}"))
-                    .body(Body::empty())
-                    .unwrap(),
+                Some(Err(())) => {
+                    let mut builder = Response::builder()
+                        .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                        .header(header::CONTENT_RANGE, format!("bytes */{size}"));
+                    if let Some(etag) = cur_etag.as_deref() {
+                        builder = builder.header(header::ETAG, etag);
+                    }
+                    if let Some(modified_at) = modified_at {
+                        builder =
+                            builder.header(header::LAST_MODIFIED, format_http_date(modified_at));
+                    }
+                    builder.body(Body::empty()).unwrap()
+                }
                 None => {
                     let builder = base
                         .status(StatusCode::OK)
@@ -947,6 +1022,97 @@ fn child_prefix(rel: &str) -> String {
 /// ETag 派生（current_version_id → 强 ETag `"hex32"` ✗ r14 零新查询）。
 fn derive_etag(v: &vfiles_domain::types::VersionId) -> String {
     format!("\"{}\"", v.to_string().replace('-', ""))
+}
+
+fn if_match_satisfied(value: &str, etag: Option<&str>, exists: bool) -> bool {
+    let value = value.trim();
+    if value == "*" {
+        return exists;
+    }
+    let Some(etag) = etag else {
+        return false;
+    };
+    any_entity_tag_match(value, |candidate| {
+        !candidate.starts_with("W/") && candidate == etag
+    })
+}
+
+fn if_none_match_satisfied(value: &str, etag: Option<&str>, exists: bool) -> bool {
+    let value = value.trim();
+    if value == "*" {
+        return exists;
+    }
+    let Some(etag) = etag else {
+        return false;
+    };
+    any_entity_tag_match(value, |candidate| {
+        candidate.strip_prefix("W/").unwrap_or(candidate) == etag
+    })
+}
+
+fn any_entity_tag_match(value: &str, mut matches: impl FnMut(&str) -> bool) -> bool {
+    let mut start = 0;
+    let mut in_quotes = false;
+    for (index, byte) in value.bytes().enumerate() {
+        if byte == b'"' {
+            in_quotes = !in_quotes;
+        } else if byte == b',' && !in_quotes {
+            if matches(value[start..index].trim()) {
+                return true;
+            }
+            start = index + 1;
+        }
+    }
+    matches(value[start..].trim())
+}
+
+fn modified_system_time(modified_at: time::OffsetDateTime) -> Option<std::time::SystemTime> {
+    let seconds = modified_at.unix_timestamp();
+    (seconds >= 0)
+        .then(|| std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds as u64))
+}
+
+fn format_http_date(modified_at: time::OffsetDateTime) -> String {
+    let modified = modified_system_time(modified_at).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+    httpdate::fmt_http_date(modified)
+}
+
+fn if_unmodified_since_failed(value: &str, modified_at: time::OffsetDateTime) -> bool {
+    let (Some(modified), Ok(date)) = (
+        modified_system_time(modified_at),
+        httpdate::parse_http_date(value),
+    ) else {
+        return false;
+    };
+    modified > date
+}
+
+fn if_modified_since_matches(value: &str, modified_at: time::OffsetDateTime) -> bool {
+    let (Some(modified), Ok(date)) = (
+        modified_system_time(modified_at),
+        httpdate::parse_http_date(value),
+    ) else {
+        return false;
+    };
+    modified <= date
+}
+
+fn conditional_response(
+    status: StatusCode,
+    etag: Option<&str>,
+    modified_at: Option<time::OffsetDateTime>,
+) -> Response {
+    let mut builder = Response::builder().status(status);
+    if status == StatusCode::NOT_MODIFIED {
+        builder = builder.header("cache-control", "private, max-age=0, must-revalidate");
+    }
+    if let Some(etag) = etag {
+        builder = builder.header(header::ETAG, etag);
+    }
+    if let Some(modified_at) = modified_at {
+        builder = builder.header(header::LAST_MODIFIED, format_http_date(modified_at));
+    }
+    builder.body(Body::empty()).unwrap()
 }
 
 /// If-None-Match / If-Match 判定（r14 ✓ 纯函数单测）：`*` = 存在即真 /
@@ -1543,6 +1709,10 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 [value] => Some(value.to_str().unwrap_or_default().to_string()),
                 _ => Some(String::new()),
             };
+            let if_match_owned = joined_header_values(&req, &header::IF_MATCH);
+            let if_none_match_owned = joined_header_values(&req, &header::IF_NONE_MATCH);
+            let if_unmodified_since_owned = single_header_value(&req, &header::IF_UNMODIFIED_SINCE);
+            let if_modified_since_owned = single_header_value(&req, &header::IF_MODIFIED_SINCE);
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
             let user_owned = req
                 .extensions()
@@ -1561,11 +1731,10 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 GetRequestConditions {
                     range: range_owned,
                     if_range: if_range_owned,
-                    if_none_match: req
-                        .headers()
-                        .get("if-none-match")
-                        .and_then(|v| v.to_str().ok())
-                        .map(str::to_string),
+                    if_match: if_match_owned,
+                    if_unmodified_since: if_unmodified_since_owned,
+                    if_none_match: if_none_match_owned,
+                    if_modified_since: if_modified_since_owned,
                     head: is_head,
                 },
             )

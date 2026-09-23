@@ -606,6 +606,13 @@ async fn options_advertises_and_propfind_needs_auth() {
         .to_str()
         .expect("ETag should be ASCII")
         .to_string();
+    let last_modified = full_get
+        .headers()
+        .get("last-modified")
+        .expect("GET should expose Last-Modified")
+        .to_str()
+        .expect("Last-Modified should be ASCII")
+        .to_string();
     assert_eq!(
         axum::body::to_bytes(full_get.into_body(), usize::MAX)
             .await
@@ -613,6 +620,112 @@ async fn options_advertises_and_propfind_needs_auth() {
             .as_ref(),
         b"webdav range fixture"
     );
+
+    let matching_if_match = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/renamed.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-match", &etag)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(matching_if_match.status(), 200);
+
+    let stale_if_match = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/renamed.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-match", "\"stale\"")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale_if_match.status(), 412);
+
+    let weak_if_match = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/renamed.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-match", format!("W/{etag}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(weak_if_match.status(), 412);
+
+    let not_modified = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/renamed.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-none-match", format!("W/{etag}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(not_modified.status(), 304);
+
+    let date_not_modified = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/renamed.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-modified-since", &last_modified)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(date_not_modified.status(), 304);
+
+    let stale_if_unmodified_since = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/renamed.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-unmodified-since", "Thu, 01 Jan 1970 00:00:00 GMT")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale_if_unmodified_since.status(), 412);
+
+    let if_match_precedes_date = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/renamed.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-match", &etag)
+                .header("if-unmodified-since", "Thu, 01 Jan 1970 00:00:00 GMT")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(if_match_precedes_date.status(), 200);
 
     let current_if_range = router
         .clone()
@@ -654,6 +767,29 @@ async fn options_advertises_and_propfind_needs_auth() {
     assert_eq!(stale_if_range.status(), 200);
     assert_eq!(
         axum::body::to_bytes(stale_if_range.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .as_ref(),
+        b"webdav range fixture"
+    );
+
+    let date_if_range = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/renamed.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("range", "bytes=0-3")
+                .header("if-range", &last_modified)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(date_if_range.status(), 200);
+    assert_eq!(
+        axum::body::to_bytes(date_if_range.into_body(), usize::MAX)
             .await
             .unwrap()
             .as_ref(),
