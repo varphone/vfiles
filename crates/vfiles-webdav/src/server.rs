@@ -1181,10 +1181,11 @@ async fn active_lock_prop(
         return Ok(None);
     };
     let timeout = match lock.expires_at {
-        Some(expiry) => format!(
-            "Second-{}",
-            expiry.saturating_sub(crate::lock::LockTable::now()).max(1)
-        ),
+        Some(expiry) => {
+            let remaining_ms = expiry.saturating_sub(crate::lock::LockTable::now()).max(1);
+            let remaining_seconds = remaining_ms.saturating_add(999) / 1_000;
+            format!("Second-{remaining_seconds}")
+        }
         None => "Infinite".to_string(),
     };
     Ok(Some(crate::response::ActiveLock {

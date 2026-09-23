@@ -7024,6 +7024,46 @@ mod webdav_lock_repo_tests {
     use camino::Utf8PathBuf;
 
     #[tokio::test]
+    async fn lock_expiry_migration_preserves_legacy_expiry_time() {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-webdav-lock-migration-test-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        sqlx::query(
+            "CREATE TABLE webdav_locks (namespace_id TEXT, path TEXT, token TEXT, owner TEXT, expires_at INTEGER)",
+        )
+        .execute(&pool)
+        .await
+        .expect("legacy lock table should be created");
+        sqlx::query(
+            "INSERT INTO webdav_locks (namespace_id, path, token, owner, expires_at) VALUES ('ns', 'file', 'token', 'owner', 1_800_000_123)",
+        )
+        .execute(&pool)
+        .await
+        .expect("legacy lock should be inserted");
+
+        sqlx::raw_sql(include_str!(
+            "../migrations/0010_webdav_lock_millisecond_expiry.sql"
+        ))
+        .execute(&pool)
+        .await
+        .expect("expiry migration should execute");
+        let expires_at: i64 =
+            sqlx::query_scalar("SELECT expires_at FROM webdav_locks WHERE token = 'token'")
+                .fetch_one(&pool)
+                .await
+                .expect("migrated expiry should be queryable");
+        assert_eq!(expires_at, 1_800_000_123_000);
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
     async fn lock_acquire_is_atomic_and_expired_locks_can_be_replaced() {
         let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
             "vfiles-webdav-lock-test-{}.db",

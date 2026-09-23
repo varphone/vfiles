@@ -132,7 +132,7 @@ pub trait NamespaceRepo {
     }
 }
 
-/// A persisted WebDAV exclusive lock. `expires_at` is Unix seconds; `None` means infinite.
+/// A persisted WebDAV exclusive lock. `expires_at` is Unix milliseconds; `None` means infinite.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebdavLock {
     pub token: String,
