@@ -1,4 +1,23 @@
-# S3 兼容 API（r2 九式 → … → r10 多凭证/CopyObject → **r13 列表一条 SQL 消 N+1**）
+# S3 兼容 API（… r10 多凭证/CopyObject → r13 列表一条 SQL → **r15 multipart 完整性**）
+
+## 状态（r15 末 · part ETag + 完成校验 = multipart 不静默出错）
+
+- **实装**：
+  | 项 | 内容 |
+  | --- | --- |
+  | `UploadStore::read_upload_part` | 新仓储方法（读单个分片 ✗ SQLite 覆写 = 直读 `part_<i>` 文件）+ `UploadService::read_upload_part` 包装 |
+  | `ListParts` ETag | 逐分片读回 → `ETag = MD5(分片)`（此前 `ETag` 恒缺 = 客户端拿不到 part 校验值） |
+  | `CompleteMultipartUpload` 校验 | ① 客户端回显的 part ETag 与存储分片 MD5 **逐一对账**，不符 → `InvalidPart`；② **列出集合必须等于已存集合**（否则拼接会按全部已存分片进行 = 内容静默错位）→ `InvalidPart` |
+- **实证（真 SDK）**：
+  | 场景 | 结果 |
+  | --- | --- |
+  | 4×256KiB 分片 → `list_parts` ETag 对比 `upload_part` 回显 | **逐一相等** ✓ |
+  | 完成时篡改一个 ETag | `InvalidPart` ✓ |
+  | 完成时只列子集（1,3） | `InvalidPart` ✓ |
+  | 正确完成 → `GetObject` | 1,048,576 B 逐字节同 ✓ |
+- **回归**：自写探针 **24/24** · 真 SDK **24/24**（新增 2 项 multipart 完整性检查）。
+- **仍债**：`ListMultipartUploads`（需列活跃会话）· SQL 级 prefix/limit · 访问键绑用户 · region 校验 ·
+  `UploadPartCopy`。
 
 ## 状态（r13 末 · 大桶列表可扩展 = 250 对象 11.7ms / 分页无重无漏）
 

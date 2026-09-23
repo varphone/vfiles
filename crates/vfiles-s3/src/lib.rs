@@ -854,17 +854,39 @@ impl S3 for VfilesS3 {
             .map_err(dom_err)?;
         let have: std::collections::BTreeSet<i32> =
             stored.iter().map(|p| p.part_index as i32 + 1).collect();
-        if let Some(mpu) = &input.multipart_upload {
-            for p in mpu.parts.iter().flatten() {
-                if let Some(n) = p.part_number
-                    && !have.contains(&n)
-                {
-                    return Err(s3s::s3_error!(InvalidPart, "part {} not uploaded", n));
-                }
-            }
-        }
         if have.is_empty() {
             return Err(s3s::s3_error!(InvalidPart, "no parts uploaded"));
+        }
+        if let Some(mpu) = &input.multipart_upload {
+            let listed: std::collections::BTreeSet<i32> = mpu
+                .parts
+                .iter()
+                .flatten()
+                .filter_map(|p| p.part_number)
+                .collect();
+            // 拼接按全部已存分片进行 ✗ 列出集合必须与已存集合一致（否则内容会静默错位）
+            if listed != have {
+                return Err(s3s::s3_error!(
+                    InvalidPart,
+                    "the listed parts do not match the uploaded parts"
+                ));
+            }
+            // ETag 校验（客户端回显的 part ETag = MD5(分片) ✗ 不符即拒）
+            for p in mpu.parts.iter().flatten() {
+                let Some(n) = p.part_number else { continue };
+                let Some(etag) = &p.e_tag else { continue };
+                match self
+                    .upload
+                    .read_upload_part(&upload_id, (n - 1) as u32)
+                    .await
+                    .map_err(dom_err)?
+                {
+                    Some(bytes) if md5_hex(&bytes) == etag.value() => {}
+                    _ => {
+                        return Err(s3s::s3_error!(InvalidPart, "part {} etag mismatch", n));
+                    }
+                }
+            }
         }
         let result = self
             .upload
@@ -916,15 +938,20 @@ impl S3 for VfilesS3 {
             .list_upload_parts(&upload_id)
             .await
             .map_err(dom_err)?;
-        let parts: Vec<Part> = stored
-            .iter()
-            .map(|p| Part {
+        let mut parts: Vec<Part> = Vec::with_capacity(stored.len());
+        for p in &stored {
+            let e_tag = match self.upload.read_upload_part(&upload_id, p.part_index).await {
+                Ok(Some(bytes)) => Some(s3s::dto::ETag::Strong(md5_hex(&bytes))),
+                _ => None,
+            };
+            parts.push(Part {
                 part_number: Some(p.part_index as i32 + 1),
                 size: Some(p.size_bytes.as_u64() as i64),
                 last_modified: Some(Timestamp::from(p.received_at)),
+                e_tag,
                 ..Default::default()
-            })
-            .collect();
+            });
+        }
         let out = ListPartsOutput {
             bucket: Some(input.bucket),
             key: Some(input.key),

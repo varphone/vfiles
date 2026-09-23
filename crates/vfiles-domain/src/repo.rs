@@ -430,6 +430,12 @@ pub trait UploadStore {
         upload_id: &UploadId,
     ) -> DomainResult<Box<dyn tokio::io::AsyncRead + Send + Unpin>>;
     async fn assemble_upload(&self, upload_id: &UploadId) -> DomainResult<Vec<u8>>;
+    /// 读单个分片内容（S3 `ListParts` ETag / `CompleteMultipartUpload` 校验）。
+    async fn read_upload_part(
+        &self,
+        upload_id: &UploadId,
+        part_index: u32,
+    ) -> DomainResult<Option<Vec<u8>>>;
     async fn complete_upload_session(&self, upload_id: &UploadId) -> DomainResult<()>;
     async fn cancel_upload_session(&self, upload_id: &UploadId) -> DomainResult<()>;
     async fn cleanup_expired_sessions(&self) -> DomainResult<i64>;

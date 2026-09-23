@@ -97,6 +97,18 @@ def main():
     check("boto mpu upload 4 parts", len(parts) == 4 and all(p["ETag"] for p in parts), parts[0]["ETag"])
     lp = s3.list_parts(Bucket="default", Key=key, UploadId=uid)
     check("boto mpu list_parts", len(lp.get("Parts", [])) == 4, [p["PartNumber"] for p in lp.get("Parts", [])])
+    got = {p["PartNumber"]: p.get("ETag") for p in lp.get("Parts", [])}
+    want = {p["PartNumber"]: p["ETag"] for p in parts}
+    check("boto mpu list_parts etags match upload_part", got == want, got)
+    bad = [dict(p) for p in parts]
+    bad[0]["ETag"] = '"deadbeefdeadbeefdeadbeefdeadbeef"'
+    try:
+        s3.complete_multipart_upload(Bucket="default", Key=key, UploadId=uid,
+                                     MultipartUpload={"Parts": bad})
+        wrong_rejected = False
+    except ClientError:
+        wrong_rejected = True
+    check("boto mpu complete wrong etag rejected", wrong_rejected)
     s3.complete_multipart_upload(Bucket="default", Key=key, UploadId=uid, MultipartUpload={"Parts": parts})
     g = s3.get_object(Bucket="default", Key=key)
     body = g["Body"].read()

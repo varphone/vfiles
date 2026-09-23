@@ -2688,6 +2688,17 @@ where
             .await
     }
 
+    /// 读单个分片内容（S3 `ListParts` ETag / 完成校验用）。
+    pub async fn read_upload_part(
+        &self,
+        upload_id: &UploadId,
+        part_index: u32,
+    ) -> DomainResult<Option<Vec<u8>>> {
+        self.upload_store
+            .read_upload_part(upload_id, part_index)
+            .await
+    }
+
     /// 列出已接收的 part（S3 `ListParts` / 完成校验用 ✗ 含 size）。
     pub async fn list_upload_parts(
         &self,

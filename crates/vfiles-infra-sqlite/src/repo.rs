@@ -3704,6 +3704,21 @@ impl UploadStore for FsUploadStore {
         Ok(parts)
     }
 
+    async fn read_upload_part(
+        &self,
+        upload_id: &UploadId,
+        part_index: u32,
+    ) -> DomainResult<Option<Vec<u8>>> {
+        let path = self.get_upload_path(upload_id, Some(part_index));
+        match fs::read(&path).await {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(DomainError::Internal {
+                message: format!("Failed to read upload part {}: {}", part_index, e),
+            }),
+        }
+    }
+
     async fn assemble_upload_stream(
         &self,
         upload_id: &UploadId,
