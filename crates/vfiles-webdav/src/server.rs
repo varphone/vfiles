@@ -464,6 +464,15 @@ async fn lock_op(
         .trim_start_matches('/')
         .trim_end_matches('/')
         .to_string();
+    let path = match vfiles_domain::types::NormalizedPath::new(&rel) {
+        Ok(path) => path,
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::empty())
+                .unwrap();
+        }
+    };
     // r15 Timeout（Second-N 解析 ✗ None = Infinite/缺省 = 永久（RFC 缺省语义 ✓））
     let ttl = timeout_owned
         .as_deref()
@@ -474,20 +483,59 @@ async fn lock_op(
     };
     let owner = lockinfo.owner.unwrap_or_else(|| user.username.to_string());
     match app.locks.lock(&ns, &rel, &owner, depth_infinity, ttl).await {
-        Ok(Some(entry)) => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
-            .header("Lock-Token", format!("<{}>", entry.token))
-            .header("Timeout", granted_header.clone()) // r15 授予值回显（clone 供 XML 同源 ✗ move 后借防）
-            .body(Body::from(crate::response::lock_response(
-                &entry.token,
-                &entry.owner,
-                // r-new 顺手修：原传 entry.path = lock_key("ns:rel") 形错 ✗ 资源相对 rel + mount 前缀
-                &href_with_mount(&app.mount_prefix, &rel),
-                &granted_header,
-                depth_infinity,
-            )))
-            .unwrap(),
+        Ok(Some(entry)) => {
+            let created = if rel.is_empty() {
+                // The namespace root is a mapped collection with no ordinary entry row.
+                false
+            } else {
+                match app.entry_repo.find_by_path(&ns, &path).await {
+                    Ok(Some(_)) => false,
+                    Ok(None) => match app
+                        .write
+                        .put_file(&ns, &path, Box::new(tokio::io::empty()), &user.id)
+                        .await
+                    {
+                        Ok(created) => created,
+                        Err(error) => {
+                            if let Err(cleanup_error) =
+                                app.locks.unlock(&ns, &rel, &entry.token).await
+                            {
+                                tracing::error!(%cleanup_error, path = %rel, "LOCK-null 资源创建失败后释放锁失败");
+                            }
+                            return Response::builder()
+                                .status(write_error_status(&error))
+                                .body(Body::empty())
+                                .unwrap();
+                        }
+                    },
+                    Err(error) => {
+                        if let Err(cleanup_error) = app.locks.unlock(&ns, &rel, &entry.token).await
+                        {
+                            tracing::error!(%cleanup_error, path = %rel, "LOCK-null 资源查询失败后释放锁失败");
+                        }
+                        tracing::error!(%error, path = %rel, "LOCK 资源查询失败");
+                        return internal_error();
+                    }
+                }
+            };
+            Response::builder()
+                .status(if created {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::OK
+                })
+                .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+                .header("Lock-Token", format!("<{}>", entry.token))
+                .header("Timeout", granted_header.clone())
+                .body(Body::from(crate::response::lock_response(
+                    &entry.token,
+                    &entry.owner,
+                    &href_with_mount(&app.mount_prefix, &rel),
+                    &granted_header,
+                    depth_infinity,
+                )))
+                .unwrap()
+        }
         Ok(None) => {
             if depth_infinity {
                 match app.locks.blocked_under_path(&ns, &rel).await {

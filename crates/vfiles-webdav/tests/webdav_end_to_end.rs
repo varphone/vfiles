@@ -43,7 +43,11 @@ impl WebdavWriteOps for NoopWrite {
         if self.entry_repo.find_by_path(ns, path).await?.is_none() {
             return Ok(None);
         }
-        let bytes = b"webdav range fixture".to_vec();
+        let bytes = if path.as_str().ends_with("lock-null.txt") {
+            Vec::new()
+        } else {
+            b"webdav range fixture".to_vec()
+        };
         let size = bytes.len() as u64;
         Ok(Some((
             Box::new(tokio::io::BufReader::new(std::io::Cursor::new(bytes))),
@@ -56,7 +60,7 @@ impl WebdavWriteOps for NoopWrite {
         ns: &vfiles_domain::types::NamespaceId,
         path: &NormalizedPath,
         mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
-        _uid: &vfiles_domain::types::UserId,
+        user_id: &vfiles_domain::types::UserId,
     ) -> vfiles_domain::DomainResult<bool> {
         use tokio::io::AsyncReadExt;
         let mut data = Vec::new();
@@ -65,8 +69,15 @@ impl WebdavWriteOps for NoopWrite {
                 message: format!("failed to read test PUT stream: {error}"),
             }
         })?;
+        let exists = self.entry_repo.find_by_path(ns, path).await?.is_some();
+        if !exists && data.is_empty() {
+            self.entry_repo
+                .create_entry(ns, path, vfiles_domain::types::EntryKind::File, user_id)
+                .await?;
+            return Ok(true);
+        }
         self.put_bodies.lock().unwrap().push(data);
-        Ok(self.entry_repo.find_by_path(ns, path).await?.is_none())
+        Ok(!exists)
     }
     async fn mkcol(
         &self,
@@ -1031,6 +1042,153 @@ async fn options_advertises_and_propfind_needs_auth() {
           <D:locktype><D:write/></D:locktype>
           <D:owner><!-- owner note --><X:person lang="zh"><X:name>editor &amp; team</X:name></X:person></D:owner>
         </D:lockinfo>"#;
+    let lock_null = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/locked-dir/lock-null.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(lock_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        lock_null.status(),
+        201,
+        "LOCK on an unmapped URL creates it"
+    );
+    let lock_null_token = lock_null
+        .headers()
+        .get("lock-token")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        entry_repo
+            .find_by_path(
+                &namespace_id,
+                &NormalizedPath::new("locked-dir/lock-null.txt").unwrap()
+            )
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let unlock_null = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("UNLOCK")
+                .uri("/locked-dir/lock-null.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("lock-token", lock_null_token)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unlock_null.status(), 204);
+    assert!(
+        entry_repo
+            .find_by_path(
+                &namespace_id,
+                &NormalizedPath::new("locked-dir/lock-null.txt").unwrap()
+            )
+            .await
+            .unwrap()
+            .is_some(),
+        "the empty resource remains after its lock is removed"
+    );
+    let propfind_lock_null = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/locked-dir/")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "1")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propfind xmlns:D="DAV:"><D:prop><D:displayname/></D:prop></D:propfind>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(propfind_lock_null.status(), 207);
+    let propfind_lock_null_xml = String::from_utf8(
+        axum::body::to_bytes(propfind_lock_null.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(
+        propfind_lock_null_xml.contains("/locked-dir/lock-null.txt"),
+        "PROPFIND should enumerate the persisted empty resource: {propfind_lock_null_xml}"
+    );
+    let get_lock_null = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/locked-dir/lock-null.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_lock_null.status(), 200);
+    assert_eq!(
+        axum::body::to_bytes(get_lock_null.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .len(),
+        0
+    );
+
+    let root_lock = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(lock_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(root_lock.status(), 200, "virtual root is already mapped");
+    let root_lock_token = root_lock
+        .headers()
+        .get("lock-token")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let root_unlock = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("UNLOCK")
+                .uri("/")
+                .header("authorization", format!("Basic {basic}"))
+                .header("lock-token", root_lock_token)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(root_unlock.status(), 204);
+
     let lock = restarted_router
         .clone()
         .oneshot(
@@ -1046,7 +1204,8 @@ async fn options_advertises_and_propfind_needs_auth() {
         )
         .await
         .unwrap();
-    assert_eq!(lock.status(), 200);
+    // persist.txt was renamed earlier, so this request also creates a lock-null resource.
+    assert_eq!(lock.status(), 201);
     let lock_token = lock
         .headers()
         .get("lock-token")
@@ -1245,7 +1404,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         )
         .await
         .unwrap();
-    assert_eq!(tagged_list_token.status(), 201);
+    assert_eq!(tagged_list_token.status(), 200);
     assert_eq!(
         put_bodies.lock().unwrap().as_slice(),
         &[b"authorized by resource-tagged list".to_vec()]
@@ -1264,7 +1423,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         )
         .await
         .unwrap();
-    assert_eq!(alternative_list_token.status(), 201);
+    assert_eq!(alternative_list_token.status(), 200);
     assert_eq!(
         put_bodies.lock().unwrap().as_slice(),
         &[
