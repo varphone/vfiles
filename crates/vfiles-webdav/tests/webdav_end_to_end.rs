@@ -607,7 +607,7 @@ async fn options_advertises_and_propfind_needs_auth() {
                 .body(axum::body::Body::from(
                     r#"<D:propertyupdate xmlns:D="DAV:" xmlns:X="urn:example:x" xmlns:Y="urn:example:y">
                         <D:set><D:prop><X:displayname>extension X</X:displayname><Y:displayname>extension Y</Y:displayname><X:label>  spaced value
- </X:label></D:prop></D:set>
+ </X:label><X:complex flag="yes">before<Y:item>inside</Y:item>after</X:complex></D:prop></D:set>
                     </D:propertyupdate>"#,
                 ))
                 .unwrap(),
@@ -627,7 +627,7 @@ async fn options_advertises_and_propfind_needs_auth() {
                 .header("content-type", "application/xml")
                 .body(axum::body::Body::from(
                     r#"<D:propfind xmlns:D="DAV:" xmlns:X="urn:example:x" xmlns:Y="urn:example:y">
-                        <D:prop><D:displayname/><X:displayname/><Y:displayname/><X:label/></D:prop>
+                        <D:prop><D:displayname/><X:displayname/><Y:displayname/><X:label/><X:complex/></D:prop>
                     </D:propfind>"#,
                 ))
                 .unwrap(),
@@ -643,17 +643,41 @@ async fn options_advertises_and_propfind_needs_auth() {
     )
     .unwrap();
     assert!(namespaced_body.contains("<D:displayname>persist.txt</D:displayname>"));
-    assert!(
-        namespaced_body
-            .contains("<X:displayname xmlns:X=\"urn:example:x\">extension X</X:displayname>")
-    );
-    assert!(
-        namespaced_body
-            .contains("<X:displayname xmlns:X=\"urn:example:y\">extension Y</X:displayname>")
-    );
-    assert!(
-        namespaced_body.contains("<X:label xmlns:X=\"urn:example:x\">  spaced value\n </X:label>")
-    );
+    let namespaced_xml = roxmltree::Document::parse(&namespaced_body).unwrap();
+    let elements: Vec<_> = namespaced_xml
+        .descendants()
+        .filter(|node| node.is_element())
+        .collect();
+    let extension_x = elements
+        .iter()
+        .find(|node| {
+            node.tag_name().namespace() == Some("urn:example:x")
+                && node.tag_name().name() == "displayname"
+        })
+        .unwrap();
+    assert_eq!(extension_x.text(), Some("extension X"));
+    let extension_y = elements
+        .iter()
+        .find(|node| {
+            node.tag_name().namespace() == Some("urn:example:y")
+                && node.tag_name().name() == "displayname"
+        })
+        .unwrap();
+    assert_eq!(extension_y.text(), Some("extension Y"));
+    let label = elements
+        .iter()
+        .find(|node| node.tag_name().name() == "label")
+        .unwrap();
+    assert_eq!(label.text(), Some("  spaced value\n "));
+    let complex = elements
+        .iter()
+        .find(|node| node.tag_name().name() == "complex")
+        .unwrap();
+    assert_eq!(complex.attribute("flag"), Some("yes"));
+    assert_eq!(complex.text(), Some("before"));
+    let nested = complex.children().find(|node| node.is_element()).unwrap();
+    assert_eq!(nested.tag_name().namespace(), Some("urn:example:y"));
+    assert_eq!(nested.text(), Some("inside"));
 
     let rejected_patch = router
         .clone()

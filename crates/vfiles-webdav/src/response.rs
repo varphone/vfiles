@@ -20,6 +20,8 @@ pub const PREDEFINED_READONLY: [&str; 9] = [
 ];
 
 const PROPERTY_NAME_SEPARATOR: char = '\u{001f}';
+// XML 1.0 forbids this character, so it cannot collide with a legacy text value.
+const STORED_XML_PREFIX: &str = "\u{001f}vfiles-webdav-xml-v1:";
 
 /// Storage key for an XML property name. XML names are identified by both parts.
 pub fn property_key(namespace: Option<&str>, local_name: &str) -> String {
@@ -37,6 +39,100 @@ pub fn is_predefined_readonly(name: &str) -> bool {
     PREDEFINED_READONLY
         .iter()
         .any(|local_name| is_dav_property(name, local_name))
+}
+
+fn stored_xml_value(value: &str) -> Option<&str> {
+    value.strip_prefix(STORED_XML_PREFIX)
+}
+
+fn serialize_property_xml(node: roxmltree::Node<'_, '_>) -> String {
+    use std::collections::BTreeMap;
+
+    fn add_namespace(uri: &str, map: &mut BTreeMap<String, String>) {
+        if !map.contains_key(uri) {
+            let prefix = format!("N{}", map.len());
+            map.insert(uri.to_string(), prefix);
+        }
+    }
+
+    fn collect_namespaces(node: roxmltree::Node<'_, '_>, map: &mut BTreeMap<String, String>) {
+        if node.is_element() {
+            if let Some(uri) = node.tag_name().namespace() {
+                add_namespace(uri, map);
+            }
+            for attribute in node.attributes() {
+                if let Some(uri) = attribute
+                    .namespace()
+                    .filter(|uri| *uri != "http://www.w3.org/XML/1998/namespace")
+                {
+                    add_namespace(uri, map);
+                }
+            }
+        }
+        for child in node.children() {
+            collect_namespaces(child, map);
+        }
+    }
+
+    fn write_node(
+        node: roxmltree::Node<'_, '_>,
+        namespaces: &BTreeMap<String, String>,
+        out: &mut String,
+        root: bool,
+    ) {
+        if node.is_text() {
+            out.push_str(&escape_xml(node.text().unwrap_or_default()));
+        } else if node.is_element() {
+            let tag = node.tag_name();
+            let qname = tag
+                .namespace()
+                .and_then(|uri| namespaces.get(uri))
+                .map(|prefix| format!("{prefix}:{}", tag.name()))
+                .unwrap_or_else(|| tag.name().to_string());
+            out.push('<');
+            out.push_str(&qname);
+            if root {
+                for (uri, prefix) in namespaces {
+                    out.push_str(" xmlns:");
+                    out.push_str(prefix);
+                    out.push_str("=\"");
+                    out.push_str(&escape_xml(uri));
+                    out.push('"');
+                }
+            }
+            for attribute in node.attributes() {
+                let attr_name = match attribute.namespace() {
+                    Some("http://www.w3.org/XML/1998/namespace") => {
+                        format!("xml:{}", attribute.name())
+                    }
+                    Some(uri) => format!("{}:{}", namespaces[uri], attribute.name()),
+                    None => attribute.name().to_string(),
+                };
+                out.push(' ');
+                out.push_str(&attr_name);
+                out.push_str("=\"");
+                out.push_str(&escape_xml(attribute.value()));
+                out.push('"');
+            }
+            if node.children().next().is_none() {
+                out.push_str("/>");
+            } else {
+                out.push('>');
+                for child in node.children() {
+                    write_node(child, namespaces, out, false);
+                }
+                out.push_str("</");
+                out.push_str(&qname);
+                out.push('>');
+            }
+        }
+    }
+
+    let mut namespaces = BTreeMap::new();
+    collect_namespaces(node, &mut namespaces);
+    let mut out = String::new();
+    write_node(node, &namespaces, &mut out, true);
+    out
 }
 
 fn property_parts(name: &str) -> (&str, &str) {
@@ -152,12 +248,12 @@ pub fn parse_propertyupdate(body: &str) -> Result<Vec<PropOp>, ()> {
                 for child in prop.children().filter(|c| c.is_element()) {
                     let name = property_key(child.tag_name().namespace(), child.tag_name().name());
                     if is_set {
-                        ops.push(PropOp::Set {
-                            name,
-                            // Dead-property values are opaque to the server. Preserve
-                            // significant leading/trailing whitespace exactly.
-                            value: child.text().unwrap_or_default().to_string(),
-                        });
+                        let value = if is_dav_property(&name, "displayname") {
+                            child.text().unwrap_or_default().to_string()
+                        } else {
+                            format!("{STORED_XML_PREFIX}{}", serialize_property_xml(child))
+                        };
+                        ops.push(PropOp::Set { name, value });
                     } else {
                         ops.push(PropOp::Remove { name });
                     }
@@ -408,8 +504,12 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
             };
             if requested {
                 let property_name = canonical_stored_property_key(cn);
-                append_property_name(&mut out, &property_name, mode == &PropMode::PropName);
-                if mode != &PropMode::PropName {
+                if mode == &PropMode::PropName {
+                    append_property_name(&mut out, &property_name, true);
+                } else if let Some(xml) = stored_xml_value(cv) {
+                    out.push_str(xml);
+                } else {
+                    append_property_name(&mut out, &property_name, false);
                     out.push_str(&escape_xml(cv));
                     append_property_end(&mut out, &property_name);
                 }
@@ -624,7 +724,7 @@ mod propmode_tests {
 mod proppatch_tests {
     use super::{
         PropOp, PropPatchStatus, is_dav_property, parse_propertyupdate, property_key,
-        proppatch_multistatus,
+        proppatch_multistatus, stored_xml_value,
     };
 
     #[test]
@@ -705,12 +805,31 @@ mod proppatch_tests {
     fn preserves_dead_property_text_whitespace() {
         let body = "<D:propertyupdate xmlns:D=\"DAV:\" xmlns:X=\"urn:example:props\"><D:set><D:prop><X:label>  spaced value\n </X:label></D:prop></D:set></D:propertyupdate>";
         let ops = parse_propertyupdate(body).expect("property update should parse");
-        assert_eq!(
-            ops,
-            vec![PropOp::Set {
-                name: property_key(Some("urn:example:props"), "label"),
-                value: "  spaced value\n ".to_string(),
-            }]
-        );
+        let PropOp::Set { name, value } = &ops[0] else {
+            panic!("set instruction expected")
+        };
+        assert_eq!(name, &property_key(Some("urn:example:props"), "label"));
+        let fragment = stored_xml_value(value).expect("serialized XML value");
+        let parsed = roxmltree::Document::parse(fragment).unwrap();
+        assert_eq!(parsed.root_element().text(), Some("  spaced value\n "));
+    }
+
+    #[test]
+    fn preserves_nested_dead_property_xml_and_attributes() {
+        let body = r#"<D:propertyupdate xmlns:D="DAV:" xmlns:X="urn:outer" xmlns:Y="urn:inner">
+            <D:set><D:prop><X:complex key="value">before<Y:item>inside</Y:item>after</X:complex></D:prop></D:set>
+        </D:propertyupdate>"#;
+        let ops = parse_propertyupdate(body).unwrap();
+        let PropOp::Set { value, .. } = &ops[0] else {
+            panic!("set instruction expected")
+        };
+        let fragment = stored_xml_value(value).expect("serialized XML value");
+        let parsed = roxmltree::Document::parse(fragment).expect("valid serialized property XML");
+        let root = parsed.root_element();
+        assert_eq!(root.attribute("key"), Some("value"));
+        assert_eq!(root.tag_name().namespace(), Some("urn:outer"));
+        let item = root.children().find(|node| node.is_element()).unwrap();
+        assert_eq!(item.tag_name().namespace(), Some("urn:inner"));
+        assert_eq!(item.text(), Some("inside"));
     }
 }
