@@ -499,6 +499,15 @@ async fn propfind_owned(
 /// 方法分派（PROPFIND 等非标方法经 `any` 到达 ✓）。
 #[axum::debug_handler]
 async fn dav(mut req: axum::extract::Request) -> Response {
+    // 访问日志（r208 ✓ 主流服务器标配 ✗ 此前成功连接在 info 级全隐身 = 用户"看不到日志"）
+    let method = req.method().to_string();
+    let path = percent_decode(req.uri().path());
+    let resp = dav_inner(req).await;
+    tracing::info!(method = %method, path = %path, status = resp.status().as_u16(), "WebDAV 访问");
+    resp
+}
+
+async fn dav_inner(mut req: axum::extract::Request) -> Response {
     // PUT body 预读（E0507 破案 ✓ `into_body` 需所有权 ✗ &Request ✗ = **match 前同步段**
     // 拆 owned body ✓ #46 纯拥有纪律贯彻）。
     // PUT body 预读（E0507 破案 ✓ 两步拆（#46 贯彻）：同步 take → owned to_bytes ✓）
@@ -542,7 +551,7 @@ async fn dav(mut req: axum::extract::Request) -> Response {
             tracing::warn!(username = %log_name, "WebDAV 认证失败（401）——检查用户名/密码，或账号是否被禁用");
             return www_authenticate();
         };
-        tracing::debug!(username = %user.username.as_str(), "WebDAV 认证成功");
+        tracing::info!(username = %user.username.as_str(), "WebDAV 认证成功");
         // per-user ns 动态映射（r109e ✓ ensure_default_for_owner ✓ 多用户隔离）
         let ns = match app_ref
             .namespaces
