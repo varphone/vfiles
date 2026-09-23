@@ -110,11 +110,10 @@ pub(crate) struct StreamingFileOptions<'a> {
 pub(crate) struct DisableCompression;
 
 pub(crate) fn if_none_match_is_wildcard(headers: &HeaderMap) -> bool {
-    let mut values = headers.get_all(header::IF_NONE_MATCH).iter();
-    let Some(value) = values.next() else {
-        return false;
-    };
-    values.next().is_none() && value.to_str().is_ok_and(|value| value.trim() == "*")
+    matches!(
+        etag_candidates(headers, &header::IF_NONE_MATCH).as_deref(),
+        Some(["*"])
+    )
 }
 
 pub(crate) fn not_modified_response(
@@ -345,16 +344,15 @@ fn if_unmodified_since_failed(headers: &HeaderMap, modified_at: time::OffsetDate
 }
 
 fn if_none_match(headers: &HeaderMap, current_etag: Option<&str>) -> bool {
-    headers
-        .get_all(header::IF_NONE_MATCH)
+    let Some(candidates) = etag_candidates(headers, &header::IF_NONE_MATCH) else {
+        return false;
+    };
+    if candidates.contains(&"*") {
+        return candidates.len() == 1;
+    }
+    candidates
         .iter()
-        .filter_map(|value| value.to_str().ok())
-        .any(|value| {
-            any_etag_candidate(value, |candidate| {
-                candidate == "*"
-                    || current_etag.is_some_and(|etag| weak_etag_eq(candidate.trim(), etag))
-            })
-        })
+        .any(|candidate| current_etag.is_some_and(|etag| weak_etag_eq(candidate, etag)))
 }
 
 fn single_header(headers: &HeaderMap, name: header::HeaderName) -> Option<&str> {
@@ -367,32 +365,41 @@ fn single_header(headers: &HeaderMap, name: header::HeaderName) -> Option<&str> 
 }
 
 fn if_match(headers: &HeaderMap, current_etag: Option<&str>) -> bool {
-    headers
-        .get_all(header::IF_MATCH)
+    let Some(candidates) = etag_candidates(headers, &header::IF_MATCH) else {
+        return false;
+    };
+    if candidates.contains(&"*") {
+        return candidates.len() == 1;
+    }
+    candidates
         .iter()
-        .filter_map(|value| value.to_str().ok())
-        .any(|value| {
-            any_etag_candidate(value, |candidate| {
-                candidate == "*"
-                    || (!candidate.starts_with("W/") && current_etag == Some(candidate))
-            })
-        })
+        .any(|candidate| !candidate.starts_with("W/") && current_etag == Some(candidate))
 }
 
-fn any_etag_candidate(value: &str, mut matches: impl FnMut(&str) -> bool) -> bool {
+fn etag_candidates<'a>(headers: &'a HeaderMap, name: &header::HeaderName) -> Option<Vec<&'a str>> {
+    let mut candidates = Vec::new();
+    for value in headers.get_all(name).iter() {
+        let value = value.to_str().ok()?;
+        candidates.extend(split_etag_list(value));
+    }
+    candidates.retain(|candidate| !candidate.is_empty());
+    Some(candidates)
+}
+
+fn split_etag_list(value: &str) -> Vec<&str> {
+    let mut candidates = Vec::new();
     let mut start = 0;
     let mut in_quotes = false;
     for (index, byte) in value.bytes().enumerate() {
         if byte == b'"' {
             in_quotes = !in_quotes;
         } else if byte == b',' && !in_quotes {
-            if matches(value[start..index].trim()) {
-                return true;
-            }
+            candidates.push(value[start..index].trim());
             start = index + 1;
         }
     }
-    matches(value[start..].trim())
+    candidates.push(value[start..].trim());
+    candidates
 }
 
 fn weak_etag_eq(candidate: &str, current_etag: &str) -> bool {
@@ -569,6 +576,14 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(header::IF_NONE_MATCH, HeaderValue::from_static("*"));
         assert!(if_none_match(&headers, None));
+        assert!(if_none_match_is_wildcard(&headers));
+
+        headers.insert(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_static("*, \"current\""),
+        );
+        assert!(!if_none_match(&headers, Some("\"current\"")));
+        assert!(!if_none_match_is_wildcard(&headers));
 
         headers.insert(
             header::IF_NONE_MATCH,
@@ -594,6 +609,9 @@ mod tests {
 
         headers.insert(header::IF_MATCH, HeaderValue::from_static("*"));
         assert!(if_match(&headers, None));
+
+        headers.insert(header::IF_MATCH, HeaderValue::from_static("*, \"current\""));
+        assert!(!if_match(&headers, Some("\"current\"")));
     }
 
     #[test]
