@@ -5938,6 +5938,29 @@ async fn static_frontend_is_compressed_for_clients_that_accept_it() {
 }
 
 #[tokio::test]
+async fn static_frontend_combines_repeated_accept_encoding_fields() {
+    let app = TestApp::new_with_static_frontend(
+        "<html><body>vfiles-ui-compression-check-that-is-long-enough</body></html>",
+    )
+    .await;
+    let mut request = Request::builder()
+        .method(Method::GET)
+        .uri("/assets/app.js")
+        .header(header::ACCEPT_ENCODING, "identity;q=0")
+        .body(Body::empty())
+        .expect("request should build");
+    request.headers_mut().append(
+        header::ACCEPT_ENCODING,
+        "gzip;q=0.5, br;q=0".parse().unwrap(),
+    );
+
+    let response = app.request(request).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+}
+
+#[tokio::test]
 async fn range_requests_stay_uncompressed_even_with_accept_encoding() {
     let app = TestApp::new().await;
     app.upload_version("docs", "range-enc.txt", b"0123456789", "range upload")

@@ -180,10 +180,18 @@ async fn serve_frontend(
     };
 
     let accept_encoding = headers
-        .get(header::ACCEPT_ENCODING)
-        .and_then(|value| value.to_str().ok());
+        .get_all(header::ACCEPT_ENCODING)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect::<Vec<_>>()
+        .join(",");
 
-    frontend_assets.serve(uri.path(), accept_encoding).await
+    frontend_assets
+        .serve(
+            uri.path(),
+            (!accept_encoding.is_empty()).then_some(&accept_encoding),
+        )
+        .await
 }
 
 async fn request_logger(req: Request, next: Next) -> Result<Response, StatusCode> {

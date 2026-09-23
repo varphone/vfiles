@@ -78,9 +78,9 @@ impl FrontendAssets {
         let Some(request_path) = resolve_request_path(uri_path) else {
             return StatusCode::NOT_FOUND.into_response();
         };
-        let encoding = preferred_precompression(accept_encoding);
+        let preferences = encoding_preferences(accept_encoding);
 
-        if let Some(response) = self.serve_requested_path(&request_path, encoding).await {
+        if let Some(response) = self.serve_requested_path(&request_path, &preferences).await {
             return response;
         }
 
@@ -88,7 +88,7 @@ impl FrontendAssets {
             return StatusCode::NOT_FOUND.into_response();
         }
 
-        self.serve_index(encoding)
+        self.serve_index(&preferences)
             .await
             .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
     }
@@ -96,117 +96,193 @@ impl FrontendAssets {
     async fn serve_requested_path(
         &self,
         request_path: &FrontendRequestPath,
-        encoding: Option<Precompressed>,
+        preferences: &EncodingPreferences,
     ) -> Option<Response> {
         match self {
             Self::Filesystem(base_path) => {
                 let candidate = filesystem_candidate(base_path, &request_path.segments);
                 let hint = candidate.to_string_lossy().into_owned();
 
-                if let Some(encoding) = encoding {
+                if !candidate.is_file() {
+                    return None;
+                }
+                for encoding in &preferences.precompressed {
                     let variant = append_suffix(&candidate, encoding.suffix());
                     if let Some(response) =
-                        serve_filesystem_file(&variant, &hint, Some(encoding)).await
+                        serve_filesystem_file(&variant, &hint, Some(*encoding)).await
                     {
                         return Some(response);
                     }
                 }
-                serve_filesystem_file(&candidate, &hint, None).await
+                if preferences.identity_allowed {
+                    serve_filesystem_file(&candidate, &hint, None).await
+                } else {
+                    Some(StatusCode::NOT_ACCEPTABLE.into_response())
+                }
             }
             #[cfg(feature = "embed")]
             Self::Embedded => {
                 let candidate = embedded_candidate(&request_path.segments);
 
-                if let Some(encoding) = encoding {
+                if EMBEDDED_FRONTEND.get_file(&candidate).is_none() {
+                    return None;
+                }
+                for encoding in &preferences.precompressed {
                     let variant = format!("{candidate}{}", encoding.suffix());
                     if let Some(response) =
-                        serve_embedded_file(&variant, &candidate, Some(encoding))
+                        serve_embedded_file(&variant, &candidate, Some(*encoding))
                     {
                         return Some(response);
                     }
                 }
-                serve_embedded_file(&candidate, &candidate, None)
+                if preferences.identity_allowed {
+                    serve_embedded_file(&candidate, &candidate, None)
+                } else {
+                    Some(StatusCode::NOT_ACCEPTABLE.into_response())
+                }
             }
         }
     }
 
-    async fn serve_index(&self, encoding: Option<Precompressed>) -> Option<Response> {
+    async fn serve_index(&self, preferences: &EncodingPreferences) -> Option<Response> {
         match self {
             Self::Filesystem(base_path) => {
                 let candidate = base_path.join("index.html");
                 let hint = candidate.to_string_lossy().into_owned();
 
-                if let Some(encoding) = encoding {
+                if !candidate.is_file() {
+                    return None;
+                }
+                for encoding in &preferences.precompressed {
                     let variant = append_suffix(&candidate, encoding.suffix());
                     if let Some(response) =
-                        serve_filesystem_file(&variant, &hint, Some(encoding)).await
+                        serve_filesystem_file(&variant, &hint, Some(*encoding)).await
                     {
                         return Some(response);
                     }
                 }
-                serve_filesystem_file(&candidate, &hint, None).await
+                if preferences.identity_allowed {
+                    serve_filesystem_file(&candidate, &hint, None).await
+                } else {
+                    Some(StatusCode::NOT_ACCEPTABLE.into_response())
+                }
             }
             #[cfg(feature = "embed")]
             Self::Embedded => {
-                if let Some(encoding) = encoding {
+                if EMBEDDED_FRONTEND.get_file("index.html").is_none() {
+                    return None;
+                }
+                for encoding in &preferences.precompressed {
                     let variant = format!("index.html{}", encoding.suffix());
                     if let Some(response) =
-                        serve_embedded_file(&variant, "index.html", Some(encoding))
+                        serve_embedded_file(&variant, "index.html", Some(*encoding))
                     {
                         return Some(response);
                     }
                 }
-                serve_embedded_file("index.html", "index.html", None)
+                if preferences.identity_allowed {
+                    serve_embedded_file("index.html", "index.html", None)
+                } else {
+                    Some(StatusCode::NOT_ACCEPTABLE.into_response())
+                }
             }
         }
     }
 }
 
-/// 从 `Accept-Encoding` 中挑选客户端质量值最高的预压缩编码；同分时优先 Brotli。
-fn preferred_precompression(accept_encoding: Option<&str>) -> Option<Precompressed> {
-    let header = accept_encoding?.to_ascii_lowercase();
+#[derive(Debug)]
+struct EncodingPreferences {
+    precompressed: Vec<Precompressed>,
+    identity_allowed: bool,
+}
+
+/// 按客户端质量值降序排列可用的预压缩编码，同分时优先 Brotli。
+fn encoding_preferences(accept_encoding: Option<&str>) -> EncodingPreferences {
+    let Some(header) = accept_encoding else {
+        return EncodingPreferences {
+            precompressed: Vec::new(),
+            identity_allowed: true,
+        };
+    };
+    let header = header.to_ascii_lowercase();
     let brotli = encoding_quality(&header, "br").unwrap_or(0.0);
     let gzip = encoding_quality(&header, "gzip").unwrap_or(0.0);
-    if brotli <= 0.0 && gzip <= 0.0 {
-        return None;
+    let mut precompressed = Vec::new();
+    if brotli > 0.0 {
+        precompressed.push((Precompressed::Brotli, brotli));
     }
-    if brotli >= gzip {
-        Some(Precompressed::Brotli)
-    } else {
-        Some(Precompressed::Gzip)
+    if gzip > 0.0 {
+        precompressed.push((Precompressed::Gzip, gzip));
+    }
+    precompressed.sort_by(|(left_encoding, left_q), (right_encoding, right_q)| {
+        right_q.total_cmp(left_q).then_with(|| {
+            let priority = |encoding| match encoding {
+                Precompressed::Brotli => 0,
+                Precompressed::Gzip => 1,
+            };
+            priority(*left_encoding).cmp(&priority(*right_encoding))
+        })
+    });
+    let identity_quality = explicit_quality(&header, "identity");
+    let identity_allowed = match identity_quality {
+        Some(Some(quality)) => quality > 0.0,
+        Some(None) => false,
+        None => wildcard_quality(&header) != Some(Some(0.0)),
+    };
+    EncodingPreferences {
+        precompressed: precompressed
+            .into_iter()
+            .map(|(encoding, _)| encoding)
+            .collect(),
+        identity_allowed,
     }
 }
 
 /// 读取编码的 q 值。明确列出的编码优先于通配符，合法 q 范围为 0..=1。
 fn encoding_quality(header: &str, encoding: &str) -> Option<f32> {
-    fn quality(part: &str) -> Option<f32> {
-        let mut pieces = part.trim().split(';');
-        pieces.next()?;
-        let mut quality = 1.0;
-        for parameter in pieces {
-            let (key, value) = parameter.trim().split_once('=')?;
-            if key.trim().eq_ignore_ascii_case("q") {
-                quality = value.trim().parse::<f32>().ok()?;
-                if !(0.0..=1.0).contains(&quality) {
-                    return None;
-                }
-            }
+    explicit_quality(header, encoding).flatten().or_else(|| {
+        if has_explicit_coding(header, encoding) {
+            None
+        } else {
+            wildcard_quality(header).flatten()
         }
-        Some(quality)
-    }
+    })
+}
 
-    let mut wildcard_quality = None;
-    for part in header.split(',') {
+fn explicit_quality(header: &str, encoding: &str) -> Option<Option<f32>> {
+    header.split(',').find_map(|part| {
         let trimmed = part.trim();
         let name = trimmed.split(';').next().unwrap_or("").trim();
-        if name == encoding {
-            return quality(trimmed);
-        }
-        if name == "*" {
-            wildcard_quality = quality(trimmed);
+        (name == encoding).then(|| quality(trimmed))
+    })
+}
+
+fn has_explicit_coding(header: &str, encoding: &str) -> bool {
+    explicit_quality(header, encoding).is_some()
+}
+
+fn wildcard_quality(header: &str) -> Option<Option<f32>> {
+    header.split(',').find_map(|part| {
+        let trimmed = part.trim();
+        let name = trimmed.split(';').next().unwrap_or("").trim();
+        (name == "*").then(|| quality(trimmed))
+    })
+}
+
+fn quality(part: &str) -> Option<f32> {
+    let mut pieces = part.trim().split(';');
+    pieces.next()?;
+    let mut quality = 1.0;
+    for parameter in pieces {
+        let (key, value) = parameter.trim().split_once('=')?;
+        if key.trim().eq_ignore_ascii_case("q") {
+            quality = value.trim().parse::<f32>().ok()?;
+            if !(0.0..=1.0).contains(&quality) {
+                return None;
+            }
         }
     }
-    wildcard_quality
+    Some(quality)
 }
 
 fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
@@ -343,32 +419,54 @@ mod tests {
         assert_eq!(encoding_quality("br;q=1.5", "br"), None);
         assert_eq!(encoding_quality("br;q=bogus", "br"), None);
         assert_eq!(encoding_quality("identity", "gzip"), None);
+        let preferences = encoding_preferences(Some("br;q=0.2, gzip;q=0.9"));
         assert_eq!(
-            preferred_precompression(Some("br;q=0.2, gzip;q=0.9")),
-            Some(Precompressed::Gzip)
+            preferences.precompressed,
+            vec![Precompressed::Gzip, Precompressed::Brotli]
         );
+        let preferences = encoding_preferences(Some("br;q=0.8, gzip;q=0.8"));
         assert_eq!(
-            preferred_precompression(Some("br;q=0.8, gzip;q=0.8")),
-            Some(Precompressed::Brotli)
+            preferences.precompressed,
+            vec![Precompressed::Brotli, Precompressed::Gzip]
         );
     }
 
     #[test]
-    fn preferred_precompression_prefers_brotli() {
-        assert_eq!(
-            preferred_precompression(Some("gzip, br")),
-            Some(Precompressed::Brotli)
-        );
-        assert_eq!(
-            preferred_precompression(Some("gzip")),
-            Some(Precompressed::Gzip)
-        );
-        assert_eq!(
-            preferred_precompression(Some("br;q=0, *;q=0.5")),
-            Some(Precompressed::Gzip)
-        );
-        assert_eq!(preferred_precompression(Some("identity")), None);
-        assert_eq!(preferred_precompression(None), None);
+    fn identity_is_rejected_only_when_explicitly_unacceptable() {
+        assert!(!encoding_preferences(Some("identity;q=0")).identity_allowed);
+        assert!(!encoding_preferences(Some("*;q=0")).identity_allowed);
+        assert!(encoding_preferences(Some("br, gzip")).identity_allowed);
+        assert!(encoding_preferences(None).identity_allowed);
+    }
+
+    #[tokio::test]
+    async fn refuses_identity_when_no_acceptable_representation_exists() {
+        let dir = tempfile::tempdir().expect("temporary frontend directory");
+        std::fs::write(dir.path().join("index.html"), b"index").unwrap();
+        std::fs::write(dir.path().join("app.js"), b"script").unwrap();
+        let frontend = FrontendAssets::Filesystem(dir.path().to_path_buf());
+
+        let response = frontend
+            .serve("/app.js", Some("identity;q=0, br;q=0, gzip;q=0"))
+            .await;
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
+
+        let response = frontend
+            .serve("/app.js", Some("identity;q=0, br;q=0.4, gzip;q=0.8"))
+            .await;
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
+
+        let response = frontend
+            .serve("/app.js", Some("identity;q=0, br;q=0, gzip;q=0.8"))
+            .await;
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
+
+        std::fs::write(dir.path().join("app.js.gz"), b"compressed").unwrap();
+        let response = frontend
+            .serve("/app.js", Some("identity;q=0, br;q=0.4, gzip;q=0.8"))
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
     }
 }
 
