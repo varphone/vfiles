@@ -290,6 +290,37 @@ async fn options_advertises_and_propfind_needs_auth() {
     .unwrap();
     assert!(body.contains("multistatus"));
     assert!(body.contains("displayname"));
+
+    let malformed_if = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if", "not-a-valid-if-condition")
+                .body(axum::body::Body::from("must not be written"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(malformed_if.status(), 400);
+
+    let repeated_if = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if", "([\"matching-shape\"])")
+                .header("if", "([\"second-field\"])")
+                .body(axum::body::Body::from("must not be written"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(repeated_if.status(), 400);
     let expected_mtime_timestamp = time::OffsetDateTime::parse(
         "2030-01-02T03:04:05Z",
         &time::format_description::well_known::Rfc3339,

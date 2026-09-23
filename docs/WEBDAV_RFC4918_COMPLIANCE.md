@@ -25,7 +25,7 @@
 | 项 | 状态 | 备注 | 优先 |
 | --- | --- | --- | --- |
 | Depth 头 | ✅ | 0/1 ✓ infinity 见上 | P1 |
-| If 头（锁条件） | ✅ **r7 七式实证** | lock-token 形解析 + **423/412 分码**（RFC §9.10.6 ✓）+ 三臂缺口补齐（PUT/COPY/PROPPATCH 此前零锁检 = 锁摆设 ×3 ✗ 源/目标双查 ✓）**If-Match/ETag 面 = P1 记债**（无 ETag 面）| P1 ETag |
+| If 头（锁条件） | ✅ **r7 + tagged 条件实证** | 支持未标记/URI-tagged、ETag、`Not`、列表 AND/OR；**423/412 分码**；无效语法或重复字段返回 400，条件不匹配返回 412 | - |
 | 412 Precondition | ✅ **r7** | 有 If 不匹配 = 412 / 无 If 锁住 = 423 分码纯函数 + 单测 ×5 ✓ | - |
 | Timeout 头（LOCK） | ✅ **r15 七式实证** | `Second-N` 解析（多值取首个可解析 ✓ 纯函数单测）+ 响应回显（Second-N/Infinite）+ **惰性过期**（blocked/lock/unlock 三路径 ✗ 到期释放 201 实证 ✓ 过期 unlock 409 / 重锁 200 接管 ✓ 零后台任务 ✓）| - |
 | 423 Locked | ✅ | ✓ | - |

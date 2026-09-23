@@ -697,16 +697,22 @@ async fn write_precondition(
         } else {
             None
         };
-        if if_header_matches_resource(
+        match if_header_matches_resource(
             header,
             rel,
             &app.mount_prefix,
             lock.as_ref().map(|entry| entry.token.as_str()),
             etag.as_deref(),
-        ) != Some(true)
-        {
-            tracing::debug!(rel = %rel, "WebDAV If 条件未匹配，返回 412");
-            return Some(StatusCode::PRECONDITION_FAILED);
+        ) {
+            Some(true) => {}
+            Some(false) => {
+                tracing::debug!(rel = %rel, "WebDAV If 条件未匹配，返回 412");
+                return Some(StatusCode::PRECONDITION_FAILED);
+            }
+            None => {
+                tracing::debug!(rel = %rel, "WebDAV If 头语法无效，返回 400");
+                return Some(StatusCode::BAD_REQUEST);
+            }
         }
     }
     if lock.is_some() && if_header.is_none() {
@@ -1353,6 +1359,12 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
         };
         req.extensions_mut().insert(user);
         req.extensions_mut().insert(ns);
+    }
+    if req.headers().get_all("if").iter().count() > 1 {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::empty())
+            .unwrap();
     }
     match req.method().clone() {
         Method::OPTIONS => Response::builder()
