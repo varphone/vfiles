@@ -5354,6 +5354,78 @@ async fn content_search_returns_line_matches_when_feature_enabled() {
 }
 
 #[tokio::test]
+async fn search_uses_only_the_current_version_of_each_file() {
+    let mut features = default_features();
+    features.search_content = true;
+    let app = TestApp::new_with_features(features).await;
+
+    app.upload_version(
+        "docs",
+        "revision-note.txt",
+        b"obsolete marker from the old version\n",
+        "old searchable version",
+    )
+    .await;
+    app.upload_version(
+        "docs",
+        "revision-note.txt",
+        b"current marker from the live version\n",
+        "current searchable version",
+    )
+    .await;
+
+    let filename_search = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/search?q=revision&search_files=true&search_content=false")
+                .body(Body::empty())
+                .expect("filename search request should build"),
+        )
+        .await;
+    assert_eq!(filename_search.status(), StatusCode::OK);
+    let filename_results = response_json(filename_search).await;
+    let filename_items = filename_results["items"]
+        .as_array()
+        .expect("filename search items should be an array");
+    assert_eq!(filename_items.len(), 1, "one entry should appear once");
+    assert_eq!(filename_items[0]["entry"]["path"], "docs/revision-note.txt");
+
+    let obsolete_content_search = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/search?q=obsolete&search_content=true")
+                .body(Body::empty())
+                .expect("old content search request should build"),
+        )
+        .await;
+    assert_eq!(obsolete_content_search.status(), StatusCode::OK);
+    let obsolete_results = response_json(obsolete_content_search).await;
+    assert!(
+        obsolete_results["items"]
+            .as_array()
+            .expect("content search items should be an array")
+            .is_empty(),
+        "search should not find content that was replaced"
+    );
+
+    let current_content_search = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/search?q=current&search_content=true")
+                .body(Body::empty())
+                .expect("current content search request should build"),
+        )
+        .await;
+    assert_eq!(current_content_search.status(), StatusCode::OK);
+    let current_results = response_json(current_content_search).await;
+    let current_items = current_results["items"]
+        .as_array()
+        .expect("current content search items should be an array");
+    assert_eq!(current_items.len(), 1);
+    assert_eq!(current_items[0]["entry"]["path"], "docs/revision-note.txt");
+}
+
+#[tokio::test]
 async fn incomplete_chunked_upload_returns_conflict_on_completion() {
     let app = TestApp::new().await;
 

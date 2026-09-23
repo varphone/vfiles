@@ -5654,8 +5654,14 @@ where
                 ev.created_by,
                 ev.message as change_message
             FROM entries e
-            LEFT JOIN entry_versions ev ON e.id = ev.entry_id
-                        LEFT JOIN blobs b ON b.id = ev.blob_id
+            LEFT JOIN entry_versions ev
+              ON ev.entry_id = e.id
+             AND ev.version = (
+                 SELECT MAX(current_ev.version)
+                 FROM entry_versions current_ev
+                 WHERE current_ev.entry_id = e.id
+             )
+            LEFT JOIN blobs b ON b.id = ev.blob_id
             WHERE e.namespace_id = ?
               AND (LOWER(e.path) LIKE ?)
                             AND (? IS NULL OR e.kind = ?)
@@ -5864,7 +5870,13 @@ where
                 ev.created_by,
                 ev.message as change_message
             FROM entries e
-            JOIN entry_versions ev ON e.id = ev.entry_id
+            JOIN entry_versions ev
+              ON ev.entry_id = e.id
+             AND ev.version = (
+                 SELECT MAX(current_ev.version)
+                 FROM entry_versions current_ev
+                 WHERE current_ev.entry_id = e.id
+             )
             LEFT JOIN blobs b ON b.id = ev.blob_id
             WHERE e.namespace_id = ?
               AND ev.blob_id IS NOT NULL
