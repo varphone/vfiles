@@ -1772,36 +1772,52 @@ fn build_ftp_runtime(
     )))
 }
 
+/// 等待停机信号（r206 排障增强 ✗ 用户报告"连接即退出"却无法分辨信号源）：
+/// - **信号名入日志**（SIGINT=Ctrl+C / SIGTERM=kill / SIGHUP=终端断开 ✗ 下次退出
+///   即可分辨 → 定信号源方向 ✓）
+/// - **SIGHUP 纳入优雅停机**（此前未监听 = 默认硬杀无痕 ✗✗ 现优雅 + 留痕 ✓）
 async fn shutdown_signal() {
-    let ctrl_c = async {
-        if let Err(err) = tokio::signal::ctrl_c().await {
-            tracing::warn!(error = %err, "failed to listen for ctrl-c");
-            std::future::pending::<()>().await;
-        }
-    };
+    use tokio::signal::unix::{signal, SignalKind};
 
     #[cfg(unix)]
-    let terminate = async {
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(mut signal) => {
-                signal.recv().await;
+    let signal_name = {
+        let mut int = match signal(SignalKind::interrupt()) {
+            Ok(s) => s,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to listen for SIGINT");
+                std::future::pending().await
             }
+        };
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
             Err(err) => {
                 tracing::warn!(error = %err, "failed to listen for SIGTERM");
-                std::future::pending::<()>().await;
+                std::future::pending().await
             }
+        };
+        let mut hangup = match signal(SignalKind::hangup()) {
+            Ok(s) => s,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to listen for SIGHUP");
+                std::future::pending().await
+            }
+        };
+        tokio::select! {
+            _ = int.recv() => "SIGINT",
+            _ = term.recv() => "SIGTERM",
+            _ = hangup.recv() => "SIGHUP",
         }
     };
 
     #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
+    let signal_name: &'static str = {
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            tracing::warn!(error = %err, "failed to listen for ctrl-c");
+        }
+        "SIGINT"
+    };
 
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
-
-    tracing::info!("Shutdown signal received; finishing in-flight requests");
+    tracing::info!(signal = %signal_name, "收到停机信号（优雅停机开始 ✗ 信号名 = 定源排障）");
 }
 
 #[cfg(test)]
