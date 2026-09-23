@@ -41,6 +41,15 @@ pub trait WebdavWriteOps: Send + Sync {
         path: &NormalizedPath,
         user_id: &UserId,
     ) -> DomainResult<()>;
+    /// COPY（r5 ✗ Destination 解析在调用方 ✓ src/dst 拥有式）。
+    async fn copy_entry(
+        &self,
+        namespace_id: &NamespaceId,
+        source: &NormalizedPath,
+        destination: &NormalizedPath,
+        user_id: &UserId,
+    ) -> DomainResult<()>;
+
     async fn move_entry(
         &self,
         namespace_id: &NamespaceId,

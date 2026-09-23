@@ -1246,6 +1246,16 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         Arc::clone(&entry_repo_arc),
         Arc::clone(&ftp_workspace),
         upload_service.clone(),
+        {
+            // r5 审计闭包（run_serve 有 pool ✓ 构造后传参（独立函数无 pool ✗ #45 作用域））
+            let audit_service = std::sync::Arc::new(vfiles_app::AuditService::new(
+                SqliteAuditLogRepo::new(pool.clone()),
+            ));
+            Some(std::sync::Arc::new(move |entry| {
+                let svc = audit_service.clone();
+                tokio::spawn(async move { svc.record(entry).await });
+            }))
+        },
     );
 
     // Create app state
@@ -1543,6 +1553,19 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
             .await
             .map(|_| ())
     }
+    async fn copy_entry(
+        &self,
+        ns: &vfiles_domain::NamespaceId,
+        source: &vfiles_domain::NormalizedPath,
+        destination: &vfiles_domain::NormalizedPath,
+        user_id: &vfiles_domain::UserId,
+    ) -> vfiles_domain::DomainResult<()> {
+        // r5 薄转发 ✗ 树逻辑在 services.copy_entries（blob 复用 + 递归 ✓）
+        self.workspace
+            .copy_entries(ns, source, destination, Some("WebDAV COPY"), user_id)
+            .await
+    }
+
     async fn move_entry(
         &self,
         ns: &vfiles_domain::NamespaceId,
@@ -1641,6 +1664,9 @@ fn build_webdav_runtime(
         vfiles_infra_sqlite::FsBlobStore,
         vfiles_infra_sqlite::FsUploadStore,
     >,
+    audit: Option<
+        std::sync::Arc<dyn Fn(vfiles_domain::types::NewAuditLog) + Send + Sync>,
+    >,
 ) -> Option<(vfiles_webdav::WebdavSettings, vfiles_webdav::WebdavApplication)> {
     if !enabled {
         return None;
@@ -1653,6 +1679,7 @@ fn build_webdav_runtime(
         })
     };
     let app = vfiles_webdav::WebdavApplication {
+        audit,
         namespaces,
         entry_repo,
         verify,

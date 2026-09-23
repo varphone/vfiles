@@ -2068,6 +2068,125 @@ where
         .await
     }
 
+    /// COPY（r5 ✗ RFC 4918 §9.3 —— blob 零字节复用：新 entry + 新 version 指同 blob
+    /// （`create_version` 的 upsert 自带 ref_count+1 ✓）+ 递归子树 + src==dst 409。
+    /// Overwrite 语义诚实判：dst 存在 → Conflict（**覆盖完整实现（删旧子树 + blob release
+    /// 链）= P1 记债** ✗ 首版 T/F 同 409 ✗ 不可静默假覆盖）。
+    pub async fn copy_entries(
+        &self,
+        namespace_id: &NamespaceId,
+        source: &NormalizedPath,
+        destination: &NormalizedPath,
+        message: Option<&str>,
+        user_id: &UserId,
+    ) -> DomainResult<()> {
+        if source.as_str() == destination.as_str() {
+            return Err(DomainError::Conflict {
+                message: "Cannot copy a resource onto itself".to_string(),
+            });
+        }
+        // 目标不得在源子树内（✗ 否则 dest 建进 src children = **无限自递归 core dump**
+        // r5 实测抓获 ✗ move 同防照抄）
+        if destination.as_str().starts_with(&format!("{}/", source.as_str())) {
+            return Err(DomainError::Conflict {
+                message: "Cannot copy a resource into its own subtree".to_string(),
+            });
+        }
+        let src_entry = self
+            .entry_repo
+            .find_by_path(namespace_id, source)
+            .await?
+            .ok_or_else(|| DomainError::NotFound {
+                resource: format!("entry {}", source.as_str()),
+            })?;
+        if self
+            .entry_repo
+            .find_by_path(namespace_id, destination)
+            .await?
+            .is_some()
+        {
+            return Err(DomainError::Conflict {
+                message: "Destination already exists".to_string(),
+            });
+        }
+        // 目标父必须为已存在集合（move 同语义）
+        let dest_parent = {
+            let dp = destination.as_str();
+            match dp.rfind('/') {
+                Some(i) => NormalizedPath::new(&dp[..i]).map_err(|_| DomainError::Validation {
+                    message: "Invalid destination parent".to_string(),
+                })?,
+                None => NormalizedPath::new("").map_err(|_| DomainError::Validation {
+                    message: "Invalid destination parent".to_string(),
+                })?,
+            }
+        };
+        let parent_entry = self
+            .entry_repo
+            .find_by_path(namespace_id, &dest_parent)
+            .await?;
+        let parent_ok = dest_parent.as_str().is_empty()
+            || matches!(parent_entry.as_ref().map(|e| e.entry_type), Some(EntryKind::Directory));
+        if !parent_ok {
+            return Err(DomainError::Conflict {
+                message: "Destination parent is not a collection".to_string(),
+            });
+        }
+        self
+            .recursive_copy(namespace_id, &src_entry, destination, message, user_id)
+            .await
+    }
+
+    /// 递归复制子树（dir = 建目录逐层下钻 ✗ file = 建 entry + version 复用同 blob）。
+    async fn recursive_copy(
+        &self,
+        namespace_id: &NamespaceId,
+        src_entry: &Entry,
+        target: &NormalizedPath,
+        message: Option<&str>,
+        user_id: &UserId,
+    ) -> DomainResult<()> {
+        let kind = src_entry.entry_type.clone();
+        let new_id = self
+            .entry_repo
+            .create_entry(namespace_id, target, kind, user_id)
+            .await?;
+        if matches!(src_entry.entry_type, EntryKind::File) {
+            let vid = src_entry.current_version_id.as_ref().ok_or_else(|| {
+                DomainError::Validation {
+                    message: "Source file has no version".to_string(),
+                }
+            })?;
+            let sv = self.entry_repo.find_version(vid).await?;
+            let nv = self
+                .entry_repo
+                .create_version(
+                    &new_id,
+                    sv.blob_id.as_ref(),
+                    Some(&sv.content_hash),
+                    sv.size_bytes.as_u64(),
+                    sv.mime_type.as_deref(),
+                    user_id,
+                    message,
+                )
+                .await?;
+            self.entry_repo
+                .update_current_version(&new_id, &nv.id)
+                .await?;
+        } else {
+            let children = self
+                .entry_repo
+                .find_children(namespace_id, &src_entry.path_norm)
+                .await?;
+            for child in children {
+                let child_target = join_path(target, &child.name)?;
+                Box::pin(self.recursive_copy(namespace_id, &child, &child_target, message, user_id))
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn move_entries(
         &self,
         namespace_id: &NamespaceId,

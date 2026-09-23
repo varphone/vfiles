@@ -15,7 +15,7 @@
 | DELETE | ✅ r108' | 递归 + 409 ✓ | - |
 | MKCOL | ✅ r110' | 201/409 ✓ | - |
 | MOVE | ✅ r108' | overwite 语义简式 ✓ | - |
-| **COPY** | ❌ **501** | **P0 核心缺口**（深域件：blob 复用 + entry 复制 + 审计链，既有排期细化 ✓）| **P0** |
+| **COPY** | ✅ **r5 八式实证** | 递归子树 + blob 零字节复用（create_version upsert ref++ ✓）+ **审计落表** ✓；dst存在/自复制/自子树 = 409 ✓ dest缺 = 400 ✓ Allow 入 ✓ **Overwrite T 完整覆盖（删旧+blob release）= P1 记债** | P1覆盖 |
 | **PROPPATCH** | ❌ **零实现** | **P0 核心缺口**（propertyupdate XML set/remove ✗ 需 XML 解析）| **P0** |
 | LOCK / UNLOCK | ✅ r109a | 无限期锁表 + 423 ✓；**Timeout 有限支持 / 锁刷新 = 缺** | P1 |
 | POST | ➖ | RFC 无定义（405 ✓ 合规）| - |
@@ -70,8 +70,11 @@
 3. **children getcontentlength 批量**（P0 债，客户端列目录必需 ← 下轮首项）
 4. ~~children 批量 SQL~~ ✅ r4（0.001s 实测 ✓）
 4a. **认证热验缓存**（0.25s/请求真头 ✗ r4 分层发现）← P1 新债
-5. **COPY 方法**（P0 核心：blob 复用 + entry 复制 + 审计链）← 下轮首项
-6. **PROPPATCH 方法**（P0 核心：propertyupdate set/remove）
+5. ~~COPY~~ ✅ r5（八式 + 审计 ✓）
+5a. **审计全线写入**（r5 发现：AuditService.record 生产零调用 ✗✗ 看板恒空真相 ✗
+    copy 已接 = 结构就位 → 登录/管理/其余 WebDAV 写点批量接）← **P0 新债**
+5b. Overwrite T 完整覆盖（删旧 + blob release 链）← P1
+6. **PROPPATCH 方法**（P0 核心：propertyupdate set/remove）← 下轮首项
 7. **If 头 + 412**（P0 并发安全）
 
 > 记录纪律：每轮改协议面 = 同轮 curl 实证行入表；用户日志线索（gvfs/VLC）= 一等证据源。

@@ -40,8 +40,10 @@ pub struct WebdavApplication {
     pub entry_repo: Arc<dyn vfiles_domain::repo::EntryRepo + Send + Sync>,
     /// Basic 凭据校验回调（r106 安全段 ✓ 挡匿名/坏格式/无效凭据 = 401；回 User = 审计链 ✓）。
     pub verify: crate::auth::VerifyFn,
-    /// 写门面（r108' ✓ MKCOL/MOVE/DELETE）。
+    /// 写门面（r108' ✓ MKCOL/MOVE/DELETE ✗ r5 +COPY）。
     pub write: Arc<dyn crate::write::WebdavWriteOps + Send + Sync>,
+    /// 审计闭包（r5 ✓ 零泛型下渗 ✗ None = 不记（宽松装配）；bin 捕 AuditService spawn ✓）。
+    pub audit: Option<std::sync::Arc<dyn Fn(vfiles_domain::types::NewAuditLog) + Send + Sync>>,
     /// 排他写锁表（r109a ✓ LOCK/UNLOCK + 写操作 423 校验）。
     pub locks: Arc<crate::lock::LockTable>,
 }
@@ -457,7 +459,7 @@ fn www_authenticate() -> Response {
 /// WebDAV 能力宣告（无锁 ✓ 子集 ✓）。
 // r214 协议声明修正 ✗✗ 此前只声明 4 方法 = 实现了 10 个只报 4 个（客户端靠 Allow
 // 判能力 ✗✗）；COPY/PROPPATCH 未实现不声明（声明 = 实力 ✓ 做完再加）
-const ALLOW: &str = "OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, MOVE, LOCK, UNLOCK";
+const ALLOW: &str = "OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY, LOCK, UNLOCK";
 
 fn router(app: WebdavApplication) -> Router {
     use axum::Extension;
@@ -798,6 +800,98 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
         }
         // 写法（r108' ✓ MKCOL/DELETE/MOVE 实装；PUT = r109'（分片链）；COPY = 501 记档）。
         // 同步提取拥有值（借用不跨 await ✓ #46）。
+        ref m if m.as_str() == "COPY" => {
+            let _ = m;
+            // r5 COPY（RFC 4918 §9.3 ✓ 同臂 owned 提取式（三合一臂照抄 ✗ #46）
+            // dst 存在 → 409（Overwrite 完整覆盖 = blob release 链 P1 记债 ✗ 不假覆盖）
+            // ✗ 审计闭包记 src→dst（copy 带审计链 ✓ 其余写方法接 = P0 债入基线）。
+            let app_owned = req.extensions().get::<WebdavApplication>().cloned();
+            let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
+            let uri_owned = percent_decode(req.uri().path());
+            let dest_hdr = req
+                .headers()
+                .get("destination")
+                .and_then(|v| v.to_str().ok())
+                .and_then(destination_path);
+            let ns_owned = req
+                .extensions()
+                .get::<vfiles_domain::types::NamespaceId>()
+                .cloned();
+            let (app_ref, user, ns) = match (app_owned, user_owned, ns_owned) {
+                (Some(a), Some(u), Some(n)) => (a, u, n),
+                _ => return internal_error(),
+            };
+            let dest_hdr = match dest_hdr {
+                Some(d) => d,
+                None => {
+                    tracing::warn!(uri = %req.uri(), "COPY 400：Destination 头缺失或不可解析");
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            };
+            let dest_path = match vfiles_domain::types::NormalizedPath::new(&dest_hdr) {
+                Ok(d) => d,
+                Err(err) => {
+                    tracing::warn!(raw = %dest_hdr, error = %err, "COPY 400：Destination 路径非法");
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            };
+            // 源路径裁前导斜杠（PROPFIND 同式 ✗ 真因：new 不收前导 / ✗ 诊断日志定案 ✓）
+            let src_rel = uri_owned.trim_start_matches('/').to_string();
+            let path = match vfiles_domain::types::NormalizedPath::new(&src_rel) {
+                Ok(p) => p,
+                Err(err) => {
+                    tracing::warn!(raw = %src_rel, error = %err, "COPY 400：源路径非法");
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            };
+            let user_id = user.id.clone();
+            let username = user.username.as_str().to_string();
+            match app_ref.write.copy_entry(&ns, &path, &dest_path, &user.id).await {
+                Ok(()) => {
+                    if let Some(cb) = &app_ref.audit {
+                        cb(vfiles_domain::types::NewAuditLog {
+                            user_id: Some(user_id),
+                            username,
+                            action: "webdav.copy".to_string(),
+                            result: vfiles_domain::types::AuditResult::Success,
+                            target: Some(format!("{} -> {}", path.as_str(), dest_hdr)),
+                            ip: None,
+                            user_agent: req
+                                .headers()
+                                .get("user-agent")
+                                .and_then(|v| v.to_str().ok())
+                                .map(ToOwned::to_owned),
+                            device: None,
+                            detail: None,
+                        });
+                    }
+                    Response::builder()
+                        .status(StatusCode::CREATED)
+                        .body(Body::empty())
+                        .unwrap()
+                }
+                Err(vfiles_domain::DomainError::Conflict { message }) => {
+                    tracing::warn!(target = %dest_hdr, reason = %message, "WebDAV COPY 冲突（409）");
+                    Response::builder()
+                        .status(StatusCode::CONFLICT)
+                        .body(Body::empty())
+                        .unwrap()
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, "WebDAV COPY 失败");
+                    internal_error()
+                }
+            }
+        }
         ref m if m.as_str() == "MKCOL" || m.as_str() == "DELETE" || m.as_str() == "MOVE" => {
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
             let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();

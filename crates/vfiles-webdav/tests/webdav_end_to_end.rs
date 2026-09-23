@@ -62,6 +62,16 @@ impl WebdavWriteOps for NoopWrite {
     ) -> vfiles_domain::DomainResult<()> {
         Ok(())
     }
+    async fn copy_entry(
+        &self,
+        _ns: &vfiles_domain::types::NamespaceId,
+        _source: &NormalizedPath,
+        _destination: &NormalizedPath,
+        _user_id: &vfiles_domain::UserId,
+    ) -> vfiles_domain::DomainResult<()> {
+        Ok(())
+    }
+
     async fn move_entry(
         &self,
         _ns: &vfiles_domain::types::NamespaceId,
@@ -132,6 +142,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         })
     };
     let app = WebdavApplication {
+        audit: None,
         namespaces: namespaces.clone(),
         entry_repo: entry_repo.clone() as Arc<dyn EntryRepo + Send + Sync>,
         verify,
