@@ -980,7 +980,60 @@ async fn file_content_and_download_support_range_requests() {
             .expect("content-length should be present"),
         "4"
     );
+    let etag = content_partial
+        .headers()
+        .get(header::ETAG)
+        .expect("file responses should expose an ETag")
+        .to_str()
+        .expect("ETag should be visible")
+        .to_owned();
     assert_eq!(response_bytes(content_partial).await.as_ref(), b"2345");
+
+    let not_modified = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range.txt")
+                .header(header::IF_NONE_MATCH, format!("W/{etag}"))
+                .body(Body::empty())
+                .expect("conditional request should build"),
+        )
+        .await;
+    assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        not_modified
+            .headers()
+            .get(header::ETAG)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        etag
+    );
+
+    let stale_if_range = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range.txt")
+                .header(header::RANGE, "bytes=0-1")
+                .header(header::IF_RANGE, "\"stale-validator\"")
+                .body(Body::empty())
+                .expect("If-Range request should build"),
+        )
+        .await;
+    assert_eq!(stale_if_range.status(), StatusCode::OK);
+    assert_eq!(response_bytes(stale_if_range).await.as_ref(), b"0123456789");
+
+    let current_if_range = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range.txt")
+                .header(header::RANGE, "bytes=0-1")
+                .header(header::IF_RANGE, etag)
+                .body(Body::empty())
+                .expect("If-Range request should build"),
+        )
+        .await;
+    assert_eq!(current_if_range.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response_bytes(current_if_range).await.as_ref(), b"01");
 
     let content_suffix = app
         .request_as_admin(

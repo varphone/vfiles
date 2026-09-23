@@ -66,6 +66,7 @@ async fn download_file(
         file.mime_type.as_deref(),
         file.size_bytes,
         Some(&file.filename),
+        Some(&file.etag),
     )
     .await
 }
@@ -104,6 +105,7 @@ async fn download_folder(
         Some("application/zip"),
         archive.size_bytes,
         Some(&archive.filename),
+        None,
     )
     .await
 }

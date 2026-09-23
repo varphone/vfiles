@@ -54,6 +54,7 @@ async fn get_file_content(
         file.mime_type.as_deref(),
         file.size_bytes,
         None,
+        Some(&file.etag),
     )
     .await
 }

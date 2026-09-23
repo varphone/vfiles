@@ -191,6 +191,7 @@ pub async fn download_share(
                 file.mime_type.as_deref(),
                 file.size_bytes,
                 Some(&file.filename),
+                Some(&file.etag),
             )
             .await
         }
@@ -206,6 +207,7 @@ pub async fn download_share(
                 Some("application/zip"),
                 archive.size_bytes,
                 Some(&archive.filename),
+                None,
             )
             .await
         }

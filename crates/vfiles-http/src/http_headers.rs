@@ -92,12 +92,32 @@ pub(crate) async fn streaming_file_response(
     mime_type: Option<&str>,
     size_bytes: u64,
     attachment_filename: Option<&str>,
+    etag: Option<&str>,
 ) -> ApiResult<Response> {
+    if let Some(etag) = etag
+        && if_none_match(request_headers, etag)
+    {
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = StatusCode::NOT_MODIFIED;
+        insert_etag(response.headers_mut(), Some(etag))?;
+        return Ok(response);
+    }
+
     let content_type = HeaderValue::from_str(mime_type.unwrap_or("application/octet-stream"))
         .map_err(|e| ApiError::Internal(format!("Invalid content type header: {}", e)))?;
     let accept_ranges = HeaderValue::from_static("bytes");
+    let range_is_current = if request_headers.contains_key(header::IF_RANGE) {
+        etag.is_some_and(|etag| if_range_matches(request_headers, etag))
+    } else {
+        true
+    };
+    let range = if range_is_current {
+        parse_range(request_headers, size_bytes)
+    } else {
+        RangeRequest::Full
+    };
 
-    match parse_range(request_headers, size_bytes) {
+    match range {
         RangeRequest::Unsatisfiable => {
             let mut response = Response::new(Body::empty());
             *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
@@ -108,6 +128,7 @@ pub(crate) async fn streaming_file_response(
                 header::CONTENT_RANGE,
                 unsatisfied_content_range_value(size_bytes)?,
             );
+            insert_etag(response.headers_mut(), etag)?;
             if let Some(filename) = attachment_filename {
                 response
                     .headers_mut()
@@ -128,6 +149,7 @@ pub(crate) async fn streaming_file_response(
             let headers = response.headers_mut();
             headers.insert(header::CONTENT_TYPE, content_type);
             headers.insert(header::ACCEPT_RANGES, accept_ranges);
+            insert_etag(headers, etag)?;
             headers.insert(
                 header::CONTENT_RANGE,
                 content_range_value(start, end, size_bytes)?,
@@ -143,6 +165,7 @@ pub(crate) async fn streaming_file_response(
             let headers = response.headers_mut();
             headers.insert(header::CONTENT_TYPE, content_type);
             headers.insert(header::ACCEPT_RANGES, accept_ranges);
+            insert_etag(headers, etag)?;
             insert_content_length(headers, size_bytes)?;
             if let Some(filename) = attachment_filename {
                 headers.insert(header::CONTENT_DISPOSITION, attachment_header(filename)?);
@@ -150,6 +173,59 @@ pub(crate) async fn streaming_file_response(
             Ok(response)
         }
     }
+}
+
+fn insert_etag(headers: &mut HeaderMap, etag: Option<&str>) -> ApiResult<()> {
+    if let Some(etag) = etag {
+        let value = HeaderValue::from_str(etag)
+            .map_err(|e| ApiError::Internal(format!("Invalid ETag header: {}", e)))?;
+        headers.insert(header::ETAG, value);
+    }
+    Ok(())
+}
+
+fn if_none_match(headers: &HeaderMap, current_etag: &str) -> bool {
+    let Some(value) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let mut start = 0;
+    let mut in_quotes = false;
+    for (index, byte) in value.bytes().enumerate() {
+        if byte == b'"' {
+            in_quotes = !in_quotes;
+        } else if byte == b',' && !in_quotes {
+            if etag_candidate_matches(&value[start..index], current_etag) {
+                return true;
+            }
+            start = index + 1;
+        }
+    }
+    etag_candidate_matches(&value[start..], current_etag)
+}
+
+fn etag_candidate_matches(candidate: &str, current_etag: &str) -> bool {
+    let candidate = candidate.trim();
+    candidate == "*" || weak_etag_eq(candidate, current_etag)
+}
+
+fn weak_etag_eq(candidate: &str, current_etag: &str) -> bool {
+    let candidate = candidate.strip_prefix("W/").unwrap_or(candidate);
+    candidate == current_etag
+}
+
+fn if_range_matches(headers: &HeaderMap, current_etag: &str) -> bool {
+    let Some(value) = headers
+        .get(header::IF_RANGE)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return true;
+    };
+    // If-Range requires a strong entity-tag comparison. Date validators are not
+    // emitted by this endpoint, so they cannot authorize a partial response.
+    value.trim() == current_etag && !value.trim().starts_with("W/")
 }
 
 fn insert_content_length(headers: &mut axum::http::HeaderMap, size_bytes: u64) -> ApiResult<()> {

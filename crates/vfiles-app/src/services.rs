@@ -1300,6 +1300,7 @@ pub struct FileContentStream {
     pub filename: String,
     pub mime_type: Option<String>,
     pub size_bytes: u64,
+    pub etag: String,
     pub reader: Box<dyn vfiles_domain::ReadSeek + Send + Unpin>,
 }
 
@@ -1750,6 +1751,7 @@ where
             filename: resolved.filename,
             mime_type: resolved.mime_type,
             size_bytes: resolved.size_bytes,
+            etag: format!("\"{}\"", resolved.blob_id),
             reader,
         })
     }
