@@ -517,6 +517,13 @@ fn internal_error() -> Response {
         .unwrap()
 }
 
+struct GetRequestConditions {
+    range: Option<String>,
+    if_range: Option<String>,
+    if_none_match: Option<String>,
+    head: bool,
+}
+
 /// PUT（r110'b ✓ 纯拥有参（#46 纪律）✓ 覆盖语义 = 后端版本化（呼应 PROPOSAL ✓））。
 /// GET/HEAD（r110'c ✓ 纯拥有参（#46）✓ HEAD = 同头无体 ✓）。
 async fn get_op(
@@ -524,10 +531,14 @@ async fn get_op(
     user: Option<vfiles_domain::types::User>,
     ns: Option<vfiles_domain::types::NamespaceId>,
     uri_owned: String,
-    range_owned: Option<String>,
-    if_none_match: Option<String>,
-    is_head: bool,
+    conditions: GetRequestConditions,
 ) -> Response {
+    let GetRequestConditions {
+        range: range_owned,
+        if_range: if_range_owned,
+        if_none_match,
+        head: is_head,
+    } = conditions;
     let Some(app) = app else {
         return internal_error();
     };
@@ -581,13 +592,17 @@ async fn get_op(
             if let Some(et) = cur_etag.as_deref() {
                 base = base.header(header::ETAG, et); // r14 GET/206 响应暴露 ETag
             }
-            let range = range_owned
-                .as_deref()
-                .and_then(|rh| match parse_byte_range(rh, size) {
-                    ByteRange::Satisfiable(a, b) => Some(Ok((a, b))),
-                    ByteRange::Unsatisfiable => Some(Err(())),
-                    ByteRange::NotApplicable => None,
-                });
+            let range = if if_range_allows_range(if_range_owned.as_deref(), cur_etag.as_deref()) {
+                range_owned
+                    .as_deref()
+                    .and_then(|rh| match parse_byte_range(rh, size) {
+                        ByteRange::Satisfiable(a, b) => Some(Ok((a, b))),
+                        ByteRange::Unsatisfiable => Some(Err(())),
+                        ByteRange::NotApplicable => None,
+                    })
+            } else {
+                None
+            };
             match range {
                 Some(Ok((start, end))) => {
                     // 206 分段（seek + take ✗ 仍流式 ✓ 播放器 Range 主流请求式）
@@ -1306,6 +1321,14 @@ fn parse_byte_range(header: &str, size: u64) -> ByteRange {
     }
 }
 
+fn if_range_allows_range(if_range: Option<&str>, etag: Option<&str>) -> bool {
+    let Some(if_range) = if_range else {
+        return true;
+    };
+    let if_range = if_range.trim();
+    !if_range.starts_with("W/") && etag.is_some_and(|current| if_range == current)
+}
+
 fn a_is_empty_n(suffix: &str) -> Option<usize> {
     suffix.parse::<usize>().ok()
 }
@@ -1411,6 +1434,12 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .get("range")
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
+            let if_range_values = req.headers().get_all("if-range").iter().collect::<Vec<_>>();
+            let if_range_owned = match if_range_values.as_slice() {
+                [] => None,
+                [value] => Some(value.to_str().unwrap_or_default().to_string()),
+                _ => Some(String::new()),
+            };
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
             let user_owned = req
                 .extensions()
@@ -1426,12 +1455,16 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 user_owned,
                 ns_owned,
                 uri_owned,
-                range_owned,
-                req.headers()
-                    .get("if-none-match")
-                    .and_then(|v| v.to_str().ok())
-                    .map(str::to_string),
-                is_head,
+                GetRequestConditions {
+                    range: range_owned,
+                    if_range: if_range_owned,
+                    if_none_match: req
+                        .headers()
+                        .get("if-none-match")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string),
+                    head: is_head,
+                },
             )
             .await
         }
@@ -2536,7 +2569,7 @@ mod tagged_if_tests {
 
 #[cfg(test)]
 mod range_tests {
-    use super::{ByteRange, parse_byte_range};
+    use super::{ByteRange, if_range_allows_range, parse_byte_range};
 
     #[test]
     fn parses_range_forms() {
@@ -2571,6 +2604,20 @@ mod range_tests {
         assert!(matches!(
             parse_byte_range("bytes=0-10", 0),
             ByteRange::NotApplicable
+        ));
+    }
+
+    #[test]
+    fn if_range_requires_a_matching_strong_entity_tag() {
+        let current = Some("\"current\"");
+        assert!(if_range_allows_range(None, current));
+        assert!(if_range_allows_range(Some("\"current\""), current));
+        assert!(!if_range_allows_range(Some("\"stale\""), current));
+        assert!(!if_range_allows_range(Some("W/\"current\""), current));
+        assert!(!if_range_allows_range(Some("\"current\""), None));
+        assert!(!if_range_allows_range(
+            Some("Thu, 01 Jan 1970 00:00:00 GMT"),
+            current
         ));
     }
 }

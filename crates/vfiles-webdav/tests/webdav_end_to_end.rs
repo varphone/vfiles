@@ -34,12 +34,21 @@ struct NoopWrite {
 impl WebdavWriteOps for NoopWrite {
     async fn get_stream(
         &self,
-        _ns: &vfiles_domain::types::NamespaceId,
-        _path: &NormalizedPath,
+        ns: &vfiles_domain::types::NamespaceId,
+        path: &NormalizedPath,
     ) -> vfiles_domain::DomainResult<
         Option<(Box<dyn vfiles_domain::ReadSeek + Send + Unpin>, String, u64)>,
     > {
-        Ok(None)
+        if self.entry_repo.find_by_path(ns, path).await?.is_none() {
+            return Ok(None);
+        }
+        let bytes = b"webdav range fixture".to_vec();
+        let size = bytes.len() as u64;
+        Ok(Some((
+            Box::new(tokio::io::BufReader::new(std::io::Cursor::new(bytes))),
+            "text/plain".to_string(),
+            size,
+        )))
     }
     async fn put_file(
         &self,
@@ -576,6 +585,80 @@ async fn options_advertises_and_propfind_needs_auth() {
     .unwrap();
     assert!(mixed_check_body.contains("<D:displayname>renamed.txt</D:displayname>"));
     assert!(mixed_check_body.contains("must not persist"));
+
+    let full_get = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/renamed.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(full_get.status(), 200);
+    let etag = full_get
+        .headers()
+        .get("etag")
+        .expect("GET should expose its current strong ETag")
+        .to_str()
+        .expect("ETag should be ASCII")
+        .to_string();
+    assert_eq!(
+        axum::body::to_bytes(full_get.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .as_ref(),
+        b"webdav range fixture"
+    );
+
+    let current_if_range = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/renamed.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("range", "bytes=0-3")
+                .header("if-range", &etag)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(current_if_range.status(), 206);
+    assert_eq!(
+        axum::body::to_bytes(current_if_range.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .as_ref(),
+        b"webd"
+    );
+
+    let stale_if_range = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/renamed.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("range", "bytes=0-3")
+                .header("if-range", "\"stale\"")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale_if_range.status(), 200);
+    assert_eq!(
+        axum::body::to_bytes(stale_if_range.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .as_ref(),
+        b"webdav range fixture"
+    );
 
     // A separate WebDAV application instance sees the same SQLite-backed lock.
     let lock_body = r#"<?xml version="1.0"?>

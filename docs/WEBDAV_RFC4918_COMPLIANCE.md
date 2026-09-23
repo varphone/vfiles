@@ -10,7 +10,7 @@
 | PROPFIND | ✅ **r2 五式实证** | 请求体解析落（roxmltree 选型 ✗ allprop/prop/propname ✓ 未支持属性 = 404 propstat ✓ 非法 400 ✓）| - |
 | （同上）children | ✅ **r3 债还清** | 双值齐（**length + contenttype** ✓ video/mp4/5B 实证 ✓ 集合不带 ✓）✅ **r4 批量 SQL 落**（一条字面 SQL + 2 标量子查询 ✗ **51 行实测 0.001s** ✓；⚠️ 真性能头 = **认证哈希 0.25s/请求 → 热验缓存 P1 新债**）| 认证P1 |
 | PROPFIND Depth | ✅ | `0`/`1` 支持；省略按 RFC 默认 `infinity` 并返回 `403` + `DAV:propfind-finite-depth`；非法值或重复字段返回 `400` | - |
-| GET / HEAD | ✅ r201+r211 | 流式 + Range 206/416/Accept-Ranges 全实证 ✓ | - |
+| GET / HEAD | ✅ | 流式 + Range 206/416/Accept-Ranges；`If-Range` 强 ETag 命中才返回部分内容，过期/弱/日期验证器回退完整表示 | - |
 | PUT | ✅ r110'b | 流式完成链 + 409 日志 ✓ | - |
 | DELETE | ✅ **r11 顺修** | 递归 + 409 ✓ **成功 = 204**（原三 op 全 201 = RFC 违背顺手修 ✓ 实证）| - |
 | MKCOL | ✅ r110' | 201/409 ✓ | - |
