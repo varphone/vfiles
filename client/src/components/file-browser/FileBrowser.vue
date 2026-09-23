@@ -887,6 +887,7 @@ import {
   IconShare,
   IconUserShare,
   IconTrash,
+  IconCheck,
   IconInfoCircle,
   IconKeyboard,
   IconStar,
@@ -1475,6 +1476,9 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
   const isDirectory = file.kind === "directory";
 
   const items: ContextMenuItem[] = [];
+  // F 决策：菜单首项「选择」= 移动侧唯一进批量态入口（长按=既有菜单手势零冲突 ✓
+  // 与桌面 Ctrl+A 对偶 ✗ 与「勾选即出操作条」语义接通）
+  items.push({ key: "select", label: "选择", icon: IconCheck });
   if (isDirectory) {
     items.push({ key: "open", label: "打开", icon: IconFolderOpen, shortcut: "Enter" });
     items.push({
@@ -2549,6 +2553,11 @@ function handleContextMenuSelect(key: string) {
   if (!file) return;
 
   switch (key) {
+    case "select":
+      // F：进入批量选择态 + 勾中触发项（批量条与勾选槽随之出现 ✗ 167 出条条件）
+      batchMode.value = true;
+      if (!selectedPaths.value.has(file.path)) toggleSelect(file);
+      break;
     case "details":
       openDetailsDialog(file);
       break;
