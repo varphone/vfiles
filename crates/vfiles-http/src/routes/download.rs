@@ -1,13 +1,13 @@
 use crate::{
     AppState,
     error::{ApiError, ApiResult},
-    http_headers::streaming_file_response,
+    http_headers::{StreamingFileOptions, streaming_file_response},
     routes::protected_request_context,
 };
 use axum::{
     Router,
     extract::{Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, Method},
     response::Response,
     routing::get,
 };
@@ -29,6 +29,7 @@ pub fn router() -> Router<AppState> {
 
 async fn download_file(
     State(state): State<AppState>,
+    method: Method,
     headers: HeaderMap,
     jar: CookieJar,
     Query(query): Query<DownloadQuery>,
@@ -62,18 +63,22 @@ async fn download_file(
 
     streaming_file_response(
         file.reader,
-        &headers,
-        file.mime_type.as_deref(),
-        file.size_bytes,
-        Some(&file.filename),
-        Some(&file.etag),
-        file.modified_at,
+        StreamingFileOptions {
+            range_allowed: method == Method::GET,
+            request_headers: &headers,
+            mime_type: file.mime_type.as_deref(),
+            size_bytes: file.size_bytes,
+            attachment_filename: Some(&file.filename),
+            etag: Some(&file.etag),
+            modified_at: file.modified_at,
+        },
     )
     .await
 }
 
 async fn download_folder(
     State(state): State<AppState>,
+    method: Method,
     headers: HeaderMap,
     jar: CookieJar,
     Query(query): Query<DownloadQuery>,
@@ -102,12 +107,15 @@ async fn download_folder(
 
     streaming_file_response(
         archive.reader,
-        &headers,
-        Some("application/zip"),
-        archive.size_bytes,
-        Some(&archive.filename),
-        None,
-        None,
+        StreamingFileOptions {
+            range_allowed: method == Method::GET,
+            request_headers: &headers,
+            mime_type: Some("application/zip"),
+            size_bytes: archive.size_bytes,
+            attachment_filename: Some(&archive.filename),
+            etag: None,
+            modified_at: None,
+        },
     )
     .await
 }

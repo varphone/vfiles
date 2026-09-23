@@ -3,7 +3,7 @@
 use axum::{
     Router,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, Method, StatusCode},
     response::{Json, Response},
     routing::{delete, get, post},
 };
@@ -12,7 +12,7 @@ use crate::{
     AppState,
     dto::{CreateShareRequest, CreateShareResponse, ShareDto},
     error::{ApiError, ApiJson},
-    http_headers::streaming_file_response,
+    http_headers::{StreamingFileOptions, streaming_file_response},
     middleware::client_ip_from_headers,
     routes::authenticated_request_context,
 };
@@ -142,6 +142,7 @@ async fn access_share(
 
 pub async fn download_share(
     State(state): State<AppState>,
+    method: Method,
     headers: HeaderMap,
     Path(code): Path<String>,
 ) -> Result<Response, ApiError> {
@@ -187,12 +188,15 @@ pub async fn download_share(
 
             streaming_file_response(
                 file.reader,
-                &headers,
-                file.mime_type.as_deref(),
-                file.size_bytes,
-                Some(&file.filename),
-                Some(&file.etag),
-                file.modified_at,
+                StreamingFileOptions {
+                    range_allowed: method == Method::GET,
+                    request_headers: &headers,
+                    mime_type: file.mime_type.as_deref(),
+                    size_bytes: file.size_bytes,
+                    attachment_filename: Some(&file.filename),
+                    etag: Some(&file.etag),
+                    modified_at: file.modified_at,
+                },
             )
             .await
         }
@@ -204,12 +208,15 @@ pub async fn download_share(
 
             streaming_file_response(
                 archive.reader,
-                &headers,
-                Some("application/zip"),
-                archive.size_bytes,
-                Some(&archive.filename),
-                None,
-                None,
+                StreamingFileOptions {
+                    range_allowed: method == Method::GET,
+                    request_headers: &headers,
+                    mime_type: Some("application/zip"),
+                    size_bytes: archive.size_bytes,
+                    attachment_filename: Some(&archive.filename),
+                    etag: None,
+                    modified_at: None,
+                },
             )
             .await
         }

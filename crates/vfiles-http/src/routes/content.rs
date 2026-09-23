@@ -1,13 +1,13 @@
 use crate::{
     AppState,
     error::{ApiError, ApiResult},
-    http_headers::streaming_file_response,
+    http_headers::{StreamingFileOptions, streaming_file_response},
     routes::protected_request_context,
 };
 use axum::{
     Router,
     extract::{Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, Method},
     response::Response,
     routing::get,
 };
@@ -27,6 +27,7 @@ pub fn router() -> Router<AppState> {
 
 async fn get_file_content(
     State(state): State<AppState>,
+    method: Method,
     headers: HeaderMap,
     jar: CookieJar,
     Query(query): Query<ContentQuery>,
@@ -50,12 +51,15 @@ async fn get_file_content(
 
     streaming_file_response(
         file.reader,
-        &headers,
-        file.mime_type.as_deref(),
-        file.size_bytes,
-        None,
-        Some(&file.etag),
-        file.modified_at,
+        StreamingFileOptions {
+            range_allowed: method == Method::GET,
+            request_headers: &headers,
+            mime_type: file.mime_type.as_deref(),
+            size_bytes: file.size_bytes,
+            attachment_filename: None,
+            etag: Some(&file.etag),
+            modified_at: file.modified_at,
+        },
     )
     .await
 }

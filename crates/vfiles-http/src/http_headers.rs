@@ -96,15 +96,29 @@ pub(crate) fn unsatisfied_content_range_value(total: u64) -> ApiResult<HeaderVal
         .map_err(|e| ApiError::Internal(format!("Invalid content range header: {}", e)))
 }
 
+pub(crate) struct StreamingFileOptions<'a> {
+    pub(crate) range_allowed: bool,
+    pub(crate) request_headers: &'a HeaderMap,
+    pub(crate) mime_type: Option<&'a str>,
+    pub(crate) size_bytes: u64,
+    pub(crate) attachment_filename: Option<&'a str>,
+    pub(crate) etag: Option<&'a str>,
+    pub(crate) modified_at: Option<time::OffsetDateTime>,
+}
+
 pub(crate) async fn streaming_file_response(
     mut reader: Box<dyn ReadSeek + Send + Unpin>,
-    request_headers: &HeaderMap,
-    mime_type: Option<&str>,
-    size_bytes: u64,
-    attachment_filename: Option<&str>,
-    etag: Option<&str>,
-    modified_at: Option<time::OffsetDateTime>,
+    options: StreamingFileOptions<'_>,
 ) -> ApiResult<Response> {
+    let StreamingFileOptions {
+        range_allowed,
+        request_headers,
+        mime_type,
+        size_bytes,
+        attachment_filename,
+        etag,
+        modified_at,
+    } = options;
     if request_headers.contains_key(header::IF_MATCH) && !if_match(request_headers, etag) {
         return precondition_failed(etag, modified_at);
     }
@@ -135,11 +149,12 @@ pub(crate) async fn streaming_file_response(
     let content_type = HeaderValue::from_str(mime_type.unwrap_or("application/octet-stream"))
         .map_err(|e| ApiError::Internal(format!("Invalid content type header: {}", e)))?;
     let accept_ranges = HeaderValue::from_static("bytes");
-    let range_is_current = if request_headers.contains_key(header::IF_RANGE) {
-        if_range_matches(request_headers, etag, modified_at)
-    } else {
-        true
-    };
+    let range_is_current = range_allowed
+        && if request_headers.contains_key(header::IF_RANGE) {
+            if_range_matches(request_headers, etag, modified_at)
+        } else {
+            range_allowed
+        };
     let range = if range_is_current {
         parse_range(request_headers, size_bytes)
     } else {
