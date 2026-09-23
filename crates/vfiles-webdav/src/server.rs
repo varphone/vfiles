@@ -283,6 +283,95 @@ fn if_header_matches_resource(
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct DestinationContext {
+    authority: Option<String>,
+    scheme: Option<String>,
+}
+
+impl DestinationContext {
+    fn from_request(uri: &axum::http::Uri, headers: &axum::http::HeaderMap) -> Self {
+        let authority = uri.authority().map(ToString::to_string).or_else(|| {
+            headers
+                .get(header::HOST)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string)
+        });
+        Self {
+            authority,
+            scheme: uri.scheme_str().map(str::to_string),
+        }
+    }
+}
+
+fn destination_path_for_request(
+    destination: &str,
+    mount: &str,
+    context: &DestinationContext,
+) -> Option<String> {
+    if let Ok(uri) = axum::http::Uri::try_from(destination)
+        && let Some(authority) = uri.authority()
+    {
+        let scheme = uri.scheme_str()?;
+        if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+            return None;
+        }
+        let request_authority = context.authority.as_deref()?;
+        if !same_webdav_authority(
+            authority,
+            request_authority,
+            scheme,
+            context.scheme.as_deref(),
+        ) {
+            return None;
+        }
+        if context
+            .scheme
+            .as_deref()
+            .is_some_and(|request_scheme| !request_scheme.eq_ignore_ascii_case(scheme))
+        {
+            return None;
+        }
+    }
+    destination_path(destination, mount)
+}
+
+fn same_webdav_authority(
+    destination: &axum::http::uri::Authority,
+    request: &str,
+    destination_scheme: &str,
+    request_scheme: Option<&str>,
+) -> bool {
+    let Ok(request) = axum::http::uri::Authority::try_from(request) else {
+        return false;
+    };
+    if !destination.host().eq_ignore_ascii_case(request.host()) {
+        return false;
+    }
+    let default_port = |scheme: &str| match scheme.to_ascii_lowercase().as_str() {
+        "http" => Some(80),
+        "https" => Some(443),
+        _ => None,
+    };
+    let destination_port = destination
+        .port_u16()
+        .or_else(|| default_port(destination_scheme));
+    let request_port = request.port_u16().or_else(|| {
+        request_scheme.and_then(default_port).or({
+            // Origin-form requests do not carry a scheme. A bare Host can be
+            // the default port for either HTTP or HTTPS.
+            match destination_port {
+                Some(port @ (80 | 443)) => Some(port),
+                _ => None,
+            }
+        })
+    });
+    match (destination_port, request_port) {
+        (Some(destination), Some(request)) => destination == request,
+        _ => true,
+    }
+}
+
 /// LOCK（r109a ✓ exclusive write / depth 0 ✓ 已锁 = 423 ✓ **纯拥有参**（#46 纪律））。
 async fn lock_op(
     app: Option<WebdavApplication>,
@@ -888,6 +977,7 @@ async fn write_op(
     if_header: Option<String>,
     op: WriteOp,
     overwrite: bool,
+    destination_context: DestinationContext,
 ) -> Response {
     use vfiles_domain::types::NormalizedPath;
 
@@ -926,10 +1016,9 @@ async fn write_op(
         WriteOp::Mkcol => app.write.mkcol(&ns, &path, &uid).await,
         WriteOp::Delete => app.write.delete_entry(&ns, &path, &uid).await,
         WriteOp::Move => {
-            let Some(dest_rel) = dest_raw
-                .as_deref()
-                .and_then(|d| destination_path(d, &app.mount_prefix))
-            else {
+            let Some(dest_rel) = dest_raw.as_deref().and_then(|d| {
+                destination_path_for_request(d, &app.mount_prefix, &destination_context)
+            }) else {
                 return Response::builder()
                     .status(StatusCode::BAD_REQUEST)
                     .body(Body::empty())
@@ -1173,11 +1262,17 @@ fn encode_uri_path(path: &str) -> String {
 }
 
 fn destination_path(dest: &str, mount: &str) -> Option<String> {
-    let path_part = if let Some(scheme_pos) = dest.find("://") {
-        let after_scheme = &dest[scheme_pos + 3..];
-        after_scheme.find('/').map(|i| &after_scheme[i..])?
+    let path_part = if dest.contains("://") {
+        let uri = axum::http::Uri::try_from(dest).ok()?;
+        if uri.query().is_some() {
+            return None;
+        }
+        uri.path().to_string()
     } else {
-        dest
+        if dest.contains(['?', '#']) {
+            return None;
+        }
+        dest.to_string()
     };
     if !path_part.starts_with('/') {
         return None;
@@ -1186,7 +1281,8 @@ fn destination_path(dest: &str, mount: &str) -> Option<String> {
     let rel = percent_decode(trimmed.trim_start_matches('/'));
     // r-new 嵌入模式剥挂载段（standalone mount="" =零变化 ✓）：dest 恰=mount → 根("")
     if !mount.is_empty() {
-        let m = mount.trim_start_matches('/');
+        let decoded_mount = percent_decode(mount);
+        let m = decoded_mount.trim_start_matches('/');
         if rel == m {
             return Some(String::new());
         }
@@ -2191,7 +2287,10 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 (Some(a), Some(u), Some(n)) => (a, u, n),
                 _ => return internal_error(),
             };
-            let dest_hdr = dest_raw.and_then(|d| destination_path(&d, &app_ref.mount_prefix));
+            let destination_context = DestinationContext::from_request(req.uri(), req.headers());
+            let dest_hdr = dest_raw.and_then(|d| {
+                destination_path_for_request(&d, &app_ref.mount_prefix, &destination_context)
+            });
             let dest_hdr = match dest_hdr {
                 Some(d) => d,
                 None => {
@@ -2381,9 +2480,13 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         req.extensions().get::<vfiles_domain::types::User>(),
                         req.extensions().get::<vfiles_domain::types::NamespaceId>(),
                     )
-                    && let Some(dest_rel) = dest_owned
-                        .as_deref()
-                        .and_then(|d| destination_path(d, &app.mount_prefix))
+                    && let Some(dest_rel) = dest_owned.as_deref().and_then(|d| {
+                        destination_path_for_request(
+                            d,
+                            &app.mount_prefix,
+                            &DestinationContext::from_request(req.uri(), req.headers()),
+                        )
+                    })
                 {
                     let source_rel = percent_decode(req.uri().path())
                         .trim_start_matches('/')
@@ -2465,6 +2568,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     if_owned,
                     op,
                     move_overwrite,
+                    DestinationContext::from_request(req.uri(), req.headers()),
                 )
                 .await;
                 // r11 覆盖成功 204（RFC §9.9.3 ✗ 新建保持 201）——外层改写避免 move 后外尾用旧绑
@@ -2654,7 +2758,8 @@ use PropResponse as _PropResponseForR104;
 
 #[cfg(test)]
 mod write_tests {
-    use super::destination_path;
+    use super::{DestinationContext, destination_path, destination_path_for_request};
+    use axum::http::{HeaderMap, HeaderValue, Uri, header};
 
     #[test]
     fn parses_destination_absolute_and_relative() {
@@ -2672,6 +2777,65 @@ mod write_tests {
         );
         assert_eq!(destination_path("/dav", "/dav"), Some(String::new()));
         assert_eq!(destination_path("/other/x", "/dav"), None);
+        assert_eq!(
+            destination_path("http://host/dav/a%20b/%E6%B1%89", "/dav"),
+            Some("a b/汉".to_string())
+        );
+        assert_eq!(destination_path("/dav/file?version=1", "/dav"), None);
+    }
+
+    #[test]
+    fn destination_absolute_uri_must_match_request_origin() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("dav.example:8080"));
+        let request_uri = Uri::from_static("/dav/source.txt");
+        let context = DestinationContext::from_request(&request_uri, &headers);
+
+        assert_eq!(
+            destination_path_for_request(
+                "http://DAV.example:8080/dav/target.txt",
+                "/dav",
+                &context,
+            ),
+            Some("target.txt".to_string())
+        );
+        assert_eq!(
+            destination_path_for_request(
+                "http://attacker.example:8080/dav/target.txt",
+                "/dav",
+                &context,
+            ),
+            None
+        );
+        assert_eq!(
+            destination_path_for_request(
+                "http://dav.example:8081/dav/target.txt",
+                "/dav",
+                &context,
+            ),
+            None
+        );
+        assert_eq!(
+            destination_path_for_request("/dav/target.txt", "/dav", &context),
+            Some("target.txt".to_string())
+        );
+    }
+
+    #[test]
+    fn destination_absolute_uri_must_match_known_request_scheme() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("dav.example"));
+        let request_uri = Uri::from_static("http://dav.example/source.txt");
+        let context = DestinationContext::from_request(&request_uri, &headers);
+
+        assert_eq!(
+            destination_path_for_request("http://dav.example/target.txt", "", &context),
+            Some("target.txt".to_string())
+        );
+        assert_eq!(
+            destination_path_for_request("https://dav.example/target.txt", "", &context),
+            None
+        );
     }
 }
 

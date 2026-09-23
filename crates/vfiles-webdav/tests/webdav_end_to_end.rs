@@ -276,6 +276,48 @@ async fn options_advertises_and_propfind_needs_auth() {
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"))
     };
+    let remote_destination = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("MOVE")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("host", "dav.example")
+                .header("destination", "http://attacker.example/target.txt")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(remote_destination.status(), 400);
+    assert!(
+        entry_repo
+            .find_by_path(
+                &namespace_id,
+                &NormalizedPath::new("persist.txt").expect("fixture path"),
+            )
+            .await
+            .expect("read source entry")
+            .is_some()
+    );
+
+    let encoded_local_destination = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("MOVE")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("host", "dav.example")
+                .header("destination", "http://DAV.example/target%20space.txt")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(encoded_local_destination.status(), 201);
+
     let default_depth = router
         .clone()
         .oneshot(
