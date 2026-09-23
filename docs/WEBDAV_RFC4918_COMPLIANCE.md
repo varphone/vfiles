@@ -7,9 +7,9 @@
 | 方法 | 状态 | 缺口/备注 | 优先 |
 | --- | --- | --- | --- |
 | OPTIONS | ✅ r214 修正 | Allow 全 10 方法 + `DAV: 1, 2` 实证 ✓ | - |
-| PROPFIND | 🟡 主体 ✓ | **请求体 prop 列表未解析**（固定全量返回 ✗ 协议精度缺）| **P0** |
+| PROPFIND | ✅ **r2 五式实证** | 请求体解析落（roxmltree 选型 ✗ allprop/prop/propname ✓ 未支持属性 = 404 propstat ✓ 非法 400 ✓）| - |
 | （同上）children | 🟡 | **getcontentlength 批量**（r213 只做单目标 = 记档债）| **P0** |
-| PROPFIND Depth | 🟡 | infinity = 400 ✗ 应 **403 + DAV:propfind-finite-depth** 前提（合规瑕疵）| P1 |
+| PROPFIND Depth | ✅ **r2 顺手落** | infinity = **403** 合规码 ✓ 实证 | - |
 | GET / HEAD | ✅ r201+r211 | 流式 + Range 206/416/Accept-Ranges 全实证 ✓ | - |
 | PUT | ✅ r110'b | 流式完成链 + 409 日志 ✓ | - |
 | DELETE | ✅ r108' | 递归 + 409 ✓ | - |
@@ -61,13 +61,13 @@
 | percent-decode 全入口 | ✅ r204 | 5 入口 + Destination ✓ | - |
 | 流式 GET/PUT 内存安全 | ✅ r201/110'b | 10MB/分段实证 ✓ | - |
 | 排障观测（访问/认证/失败/信号）| ✅ r205-210 | 全链 info 级 ✓ 降噪三式 ✓ | - |
-| XML 解析依赖（PROPPATCH/prop 列表前置）| ❌ | quick-xml vs roxmltree 评估 = P0 前置 | **P0** |
+| XML 解析依赖 | ✅ **r2 选型定** | **roxmltree v0.21.1**（KB 级 DOM / 命名空间原生 / 零依赖 ✗ PROPPATCH 复用 ✓）| - |
 
 ## 5. 消项节奏（P0 栈 = 下轮起）
 
-1. **XML 解析依赖选型**（quick-xml 流式 vs roxmltree DOM ✗ 依赖评估）
-2. **PROPFIND 请求体 prop 列表解析**（精确响应 ✗ P0 协议精度）
-3. **children getcontentlength 批量**（P0 债，客户端列目录必需）
+1. ~~XML 选型~~ ✅ r2（roxmltree）
+2. ~~PROPFIND 请求体解析~~ ✅ r2（五式 + 404 propstat + infinity-403 顺手）
+3. **children getcontentlength 批量**（P0 债，客户端列目录必需 ← 下轮首项）
 4. **COPY 方法**（P0 核心：blob 复用 + entry 复制 + 审计链）
 5. **PROPPATCH 方法**（P0 核心：propertyupdate set/remove）
 6. **If 头 + 412**（P0 并发安全）

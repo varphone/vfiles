@@ -9,6 +9,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 axum = { workspace = true, features = ["macros"] }
 base64.workspace = true
+roxmltree = "0.21.1"
 time.workspace = true
 tokio.workspace = true
 tokio-util = { workspace = true, features = ["io"] }

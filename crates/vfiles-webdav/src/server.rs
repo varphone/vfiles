@@ -477,13 +477,19 @@ async fn propfind_owned(
     ns: Option<vfiles_domain::types::NamespaceId>,
     path: String,
     depth: String,
+    body_owned: String,
 ) -> Result<String, StatusCode> {
     let app = app.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let ns = ns.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let depth = depth.as_str();
     if depth == "infinity" {
-        return Err(StatusCode::BAD_REQUEST);
+        // r2 合规修正 ✗ RFC 4918 §10.2：拒绝 infinity = 403 + DAV:propfind-finite-depth
+        //（原 400 = 合规瑕疵 ✗ P1 项随手落 ✓）
+        return Err(StatusCode::FORBIDDEN);
     }
+    // 请求体解析（r2 P0 ✗ 非法 = 400（调用方 map_err 下述 NOT_FOUND/500 改由本处 400））
+    let mode = crate::response::parse_propfind_body(&body_owned)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let uri_path = path.trim_end_matches('/');
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/');
@@ -560,7 +566,7 @@ async fn propfind_owned(
             });
         }
     }
-    Ok(crate::response::multistatus(&items))
+    Ok(crate::response::multistatus(&items, &mode))
 }
 
 /// Range 解析（RFC 7233 简式 ✓ 纯函数单测）。
@@ -738,7 +744,15 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .extensions()
                 .get::<vfiles_domain::types::NamespaceId>()
                 .cloned();
-            match propfind_owned(app, ns_owned, path_owned, depth_owned).await {
+            let body_owned = {
+                // #46 同步 take 转 owned（await 前结束借 ✓）
+                let taken = std::mem::take(req.body_mut());
+                match axum::body::to_bytes(taken, usize::MAX).await {
+                    Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+                    Err(_) => String::new(),
+                }
+            };
+            match propfind_owned(app, ns_owned, path_owned, depth_owned, body_owned).await {
                 Ok(xml) => Response::builder()
                     .status(StatusCode::MULTI_STATUS)
                     .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
