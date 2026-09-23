@@ -10,14 +10,14 @@
 | OPTIONS / PROPFIND（Depth 0/1）/ GET / HEAD | ✅ **实装 + 真服务证**（curl 207 ✓） | GET = 版本链（`EntryVersion.blob_id` 形清 ✓ 接线待接） |
 | MKCOL / DELETE / MOVE | ✅ 实装（`WebdavWriteOps` ✓ 审计链 user_id ✓） | |
 | **PUT** | ✅ **链实装**（`init_upload` + `complete_upload_from_stream` 流式直完 ✓） | bin 侧 `put_file` 转发 = 下段（签名已清 ✓） |
-| COPY | ⚠️ **501 记档** | 无后端 copy API ✓ rclone GET+PUT 不依赖 ✓ |
+| COPY | ✅ **实装**（Destination + Overwrite + 锁前置 + 审计；文件复用 blob，目录递归复制） | `copy_entries` 提供 overwrite 和目标父目录检查；需持续做 RFC/客户端兼容验收 |
 | LOCK / UNLOCK | ✅ 实装（exclusive / depth 0 ✓ `ns:path` 隔离 ✓） | timeout = Infinite 记档；shared lock = 不支持（405 ✓） |
 | per-user ns | ✅ **实装**（`ensure_default_for_owner` ✓ 多用户隔离 ✓） |
 | auth 门 | ✅ dispatch 顶部（Basic → verify → 401 + WWW-Authenticate ✓ OPTIONS 豁免 ✓） |
 | 默认开启 | ✅ **用户令兑现**（`enabled: true` ✓ auth 强制防御 ✓ 真服务日志确证 ✓） |
 | 边界/错误语义 | ✅ Depth infinity = 400 ✓ If 复杂式 = 412 记档 ✓ 锁冲突 = 423 ✓ token 不配 = 409 ✓ |
 | **GET 流式化** | ✅ **r201-02 收口**（`get_stream` 直通 + ReaderStream ✓ **10MB sha256 一致性证** ✓ 内存爆除） |
-| COPY | ⚠️ **r210 排期**（无后端 copy API ✗ 深域件 = **blob 复用 + entry 复制 + 审计链**三件 ✗✗ 量 = 2 轮+；rclone GET+PUT 不依赖 ✓ 优先级中） |
+| COPY | ✅ **已接线**（`WebdavWriteOps::copy_entry` → `DefaultWorkspaceService::copy_entries`；目标覆盖、子树保护、blob 复用与递归目录复制均有实现） |
 | **台架缺口注** | ⚠️ **rclone/Windows 客户端台架** = 待装验（curl 六法链已证栈级 ✓）；bin put_file 转发 = r110'c 已接（init_upload+complete_from_stream ✓） |
 
 ## 0.5 GET 流式化（r201 ✓ 商业级硬伤修 ✗ 大文件内存爆）

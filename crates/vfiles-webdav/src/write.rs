@@ -2,8 +2,8 @@
 //! `DefaultWorkspaceService::create_directory/move_entries/delete_entries`）。
 //!
 //! `user_id` 贯通审计链（后端 MutationResult 记录 ✓ 语义 = Web/FTP 一致）。
-//! PUT = `init_upload` 链（分片式）→ r109'（与覆盖上传提案语义联动 ✓）；
-//! COPY = 无后端 copy API → **501 记档**（rclone 用 GET+PUT 不依赖 ✓）。
+//! PUT = `init_upload` + `complete_upload_from_stream`；COPY = workspace 的递归复制服务，
+//! 文件版本复用 blob，目录递归复制。
 
 #![allow(dead_code)]
 

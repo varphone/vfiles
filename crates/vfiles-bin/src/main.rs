@@ -1918,6 +1918,19 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
         Ok(content.bytes)
     }
 
+    async fn open(
+        &self,
+        path: &str,
+    ) -> Result<Option<(Box<dyn vfiles_domain::ReadSeek + Send + Unpin>, u64)>, String> {
+        let np = vfiles_domain::NormalizedPath::new(path).map_err(|e| e.to_string())?;
+        let content = self
+            .workspace
+            .open_file(&self.namespace, &np, None)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(Some((content.reader, content.size_bytes)))
+    }
+
     async fn stat(&self, path: &str) -> Result<Option<(u64, i64)>, String> {
         let map = self
             .stat_cache
@@ -2143,6 +2156,7 @@ async fn build_and_spawn_s3(
     // 每绑定命名空间起一个服务实例（共享 Arc ✗ 仅 namespace/owner 不同）= 多租户隔离
     let mut by_key: std::collections::HashMap<String, Box<VfilesS3>> =
         std::collections::HashMap::new();
+    let mut rejected_keys = std::collections::HashSet::new();
     for (access, cred) in &keys {
         let Some(slug) = &cred.namespace else {
             continue;
@@ -2167,17 +2181,23 @@ async fn build_and_spawn_s3(
                 );
                 tracing::info!(access_key = %access, slug = %slug, "S3 凭证已绑定命名空间");
             }
-            Ok(None) => tracing::warn!(
-                access_key = %access,
-                slug = %slug,
-                "S3 凭证绑定的命名空间不存在（回落默认命名空间）"
-            ),
-            Err(e) => tracing::warn!(
-                access_key = %access,
-                slug = %slug,
-                error = %e,
-                "S3 命名空间解析失败（回落默认命名空间）"
-            ),
+            Ok(None) => {
+                rejected_keys.insert(access.clone());
+                tracing::warn!(
+                    access_key = %access,
+                    slug = %slug,
+                    "S3 凭证绑定的命名空间不存在，凭证已拒绝"
+                );
+            }
+            Err(e) => {
+                rejected_keys.insert(access.clone());
+                tracing::warn!(
+                    access_key = %access,
+                    slug = %slug,
+                    error = %e,
+                    "S3 命名空间解析失败，凭证已拒绝"
+                );
+            }
         }
     }
     tracing::info!(
@@ -2198,6 +2218,7 @@ async fn build_and_spawn_s3(
     let router = vfiles_s3::S3Router {
         default_service: Box::new(s3),
         by_key,
+        rejected_keys,
         expected_region: cfg.region.clone(),
     };
     let mut builder = s3s::service::S3ServiceBuilder::new(router);

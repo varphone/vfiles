@@ -2,8 +2,8 @@
 //!
 //! 形态：独立端口（S3 path-style 寻址与前端根语义冲突 ✗ MinIO 同款 9000 独立端口直觉 ✓）+
 //! 单虚拟桶 `default`（严格语义：非 default 桶 → NoSuchBucket ✓ 客户端列桶自配对）+
-//! 认证 = SigV4（s3s 内建 ✗ env 静态单对 `VFILES_S3_ACCESS_KEY/SECRET_KEY`，未设随机
-//! 生成 + warn 打印 = 零配置试用 ✓ per-user 凭证 = 扩展债记档）。
+//! 认证 = SigV4（s3s 内建 ✗ env 静态凭证表支持只读策略与命名空间 slug 绑定；未设时随机
+//! 生成 + warn 打印 = 零配置试用）。
 //!
 //! 映射：key = 默认 ns 根下相对路径（tree 展开为 flat keys ✗ 版本链天然 = ETag =
 //! current_version_id hex 引号（与 WebDAV r14 同式 ✓ 跨协议一致））。
@@ -16,8 +16,7 @@
 //! - `GetObject` / `HeadObject`：**last-modified** + **HTTP Range → 206 / Content-Range**
 //!   （s3s 见 content_range 自动置 206 ✗ `Range::check` 负责夹取与 416）
 //!
-//! 扩展债（记档待排期）：put 流式直连（r1 聚合 Vec）· multipart upload · per-user 凭证 ·
-//! region 校验 · 大桶 SQL 分页（现全量枚举后内存分页）。
+//! 扩展能力：multipart upload · region 校验 · 大桶 SQL 分页。
 
 use async_trait::async_trait;
 use s3s::dto::{
@@ -105,18 +104,6 @@ fn obj_meta(m: vfiles_domain::types::EntryChildMeta) -> ObjMeta {
     }
 }
 
-/// prefix 的字典序上界（末字节 +1 ✗ 越过即可停扫 = 不做全桶扫描）。
-fn prefix_upper_bound(prefix: &str) -> Option<String> {
-    let mut bytes = prefix.as_bytes().to_vec();
-    while let Some(b) = bytes.pop() {
-        if b < 0xFF {
-            bytes.push(b + 1);
-            return String::from_utf8(bytes).ok();
-        }
-    }
-    None
-}
-
 /// 流式列表收集器（按 key 升序喂入 ✗ 与存储解耦 = 单测可喂内存序列）。
 ///
 /// 语义与 `build_entries` + `paginate` 等价（r20 起取代全量物化）：
@@ -155,13 +142,12 @@ impl<'a> ListCollector<'a> {
             return false;
         }
         if !o.key.starts_with(self.prefix) {
-            // 越过 prefix 区间 → 后续不可能再命中
-            if let Some(u) = prefix_upper_bound(self.prefix)
-                && o.key.as_str() >= u.as_str()
-            {
-                self.done = true;
+            if o.key.as_str() < self.prefix {
+                return true;
             }
-            return !self.done;
+            // SQL 从 prefix 字典序下界开始；有序键中的前缀匹配连续，首个不匹配即越界。
+            self.done = true;
+            return false;
         }
         let listed = match self.delimiter {
             Some(d) => {
@@ -220,7 +206,7 @@ async fn list_page(
     let mut cursor: Option<String> = after.map(|a| a.to_string());
     while !c.done {
         let batch = repo
-            .files_with_meta_page(ns, cursor.as_deref(), BATCH)
+            .files_with_meta_page(ns, prefix, cursor.as_deref(), BATCH)
             .await?;
         if batch.is_empty() {
             break;
@@ -873,7 +859,7 @@ impl S3 for VfilesS3 {
         // 一次 LIMIT 1 查询即可判定空否（不物化整桶）
         let any = self
             .entry_repo
-            .files_with_meta_page(&self.namespace, None, 1)
+            .files_with_meta_page(&self.namespace, "", None, 1)
             .await
             .map_err(dom_err)?;
         if !any.is_empty() {
@@ -907,11 +893,6 @@ impl S3 for VfilesS3 {
         let vid_marker = input.version_id_marker.clone();
         let encode = input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url");
 
-        let metas = self
-            .entry_repo
-            .files_with_meta(&self.namespace)
-            .await
-            .map_err(dom_err)?;
         let mut out_versions: Vec<ObjectVersion> = Vec::new();
         let mut prefixes: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         let mut truncated = false;
@@ -920,71 +901,101 @@ impl S3 for VfilesS3 {
         // 最后一次输出的 (key, version_id) ✗ 截断时作为续页游标
         let mut last_emitted: Option<(String, String)> = None;
 
-        'outer: for m in metas {
-            let key = m.entry.path_norm.as_str().to_string();
-            if !key.starts_with(&prefix) {
-                continue;
-            }
-            if let Some(d) = &delimiter {
-                let rest = &key[prefix.len()..];
-                if let Some(idx) = rest.find(d.as_str()) {
-                    let cp = format!("{}{}{}", prefix, &rest[..idx], d);
-                    // 续页：已投递过的 common prefix 不重复
-                    if let Some(km) = &key_marker
-                        && &cp <= km
-                    {
-                        continue;
-                    }
-                    if prefixes.insert(cp.clone()) {
-                        last_emitted = Some((cp, String::new()));
-                        if out_versions.len() + prefixes.len() > max {
-                            truncated = true;
-                            break 'outer;
-                        }
-                    }
-                    continue;
-                }
-            }
-            // 游标：key 小于 marker 跳过；key 等于 marker 时投递到 version marker 之后
-            if let Some(km) = &key_marker
-                && &key < km
-            {
-                continue;
-            }
-            let mut skipping = key_marker.as_ref() == Some(&key);
-            let entry_versions = self
+        // Walk indexed path pages and fetch version rows in batches. The former
+        // implementation materialized every key in a bucket and issued one
+        // version query per key, making a small page cost O(bucket size) memory
+        // and O(number of keys) database round trips.
+        let from = key_marker
+            .as_deref()
+            .filter(|marker| *marker > prefix.as_str())
+            .unwrap_or(&prefix);
+        let mut cursor: Option<String> = None;
+        'outer: loop {
+            let page = self
                 .entry_repo
-                .find_versions_for_entries(&[m.entry.id])
+                .files_with_meta_page(&self.namespace, from, cursor.as_deref(), 256)
                 .await
                 .map_err(dom_err)?;
-            let mut vs: Vec<&vfiles_domain::types::EntryVersion> = entry_versions.iter().collect();
-            vs.sort_by_key(|e| std::cmp::Reverse(e.version_no)); // 新版本在前（AWS 同形）
-            for ev in vs {
-                let vid = ev.id.to_string().replace('-', "");
-                if skipping {
-                    if vid_marker.as_ref() == Some(&vid) {
-                        skipping = false;
-                    }
-                    continue;
-                }
-                if out_versions.len() + prefixes.len() >= max {
-                    truncated = true;
-                    if let Some((k, v)) = &last_emitted {
-                        next_key = Some(k.clone());
-                        next_vid = Some(v.clone());
-                    }
+            if page.is_empty() {
+                break;
+            }
+            cursor = page.last().map(|m| m.entry.path_norm.as_str().to_owned());
+            let entry_ids: Vec<_> = page.iter().map(|m| m.entry.id).collect();
+            let mut versions_by_entry: std::collections::HashMap<_, Vec<_>> =
+                std::collections::HashMap::new();
+            for version in self
+                .entry_repo
+                .find_versions_for_entries(&entry_ids)
+                .await
+                .map_err(dom_err)?
+            {
+                versions_by_entry
+                    .entry(version.entry_id)
+                    .or_default()
+                    .push(version);
+            }
+            for m in page {
+                let key = m.entry.path_norm.as_str().to_string();
+                if !key.starts_with(&prefix) {
                     break 'outer;
                 }
-                out_versions.push(ObjectVersion {
-                    key: Some(key.clone()),
-                    version_id: Some(vid.clone()),
-                    is_latest: Some(m.entry.current_version_id == Some(ev.id)),
-                    size: Some(ev.size_bytes.as_u64() as i64),
-                    last_modified: Some(Timestamp::from(ev.created_at)),
-                    e_tag: Some(s3s::dto::ETag::Strong(vid.clone())),
-                    ..Default::default()
-                });
-                last_emitted = Some((key.clone(), vid));
+                if let Some(d) = &delimiter {
+                    let rest = &key[prefix.len()..];
+                    if let Some(idx) = rest.find(d.as_str()) {
+                        let cp = format!("{}{}{}", prefix, &rest[..idx], d);
+                        // 续页：已投递过的 common prefix 不重复
+                        if let Some(km) = &key_marker
+                            && &cp <= km
+                        {
+                            continue;
+                        }
+                        if !prefixes.contains(&cp) {
+                            if out_versions.len() + prefixes.len() >= max {
+                                truncated = true;
+                                break 'outer;
+                            }
+                            prefixes.insert(cp.clone());
+                            last_emitted = Some((cp, String::new()));
+                        }
+                        continue;
+                    }
+                }
+                // 游标：key 小于 marker 跳过；key 等于 marker 时投递到 version marker 之后
+                if let Some(km) = &key_marker
+                    && &key < km
+                {
+                    continue;
+                }
+                let mut skipping = key_marker.as_ref() == Some(&key);
+                let mut entry_versions = versions_by_entry.remove(&m.entry.id).unwrap_or_default();
+                entry_versions.sort_by_key(|e| std::cmp::Reverse(e.version_no)); // 新版本在前（AWS 同形）
+                for ev in entry_versions {
+                    let vid = ev.id.to_string().replace('-', "");
+                    if skipping {
+                        if vid_marker.as_ref() == Some(&vid) {
+                            skipping = false;
+                        }
+                        continue;
+                    }
+                    if out_versions.len() + prefixes.len() >= max {
+                        truncated = true;
+                        if let Some((k, v)) = &last_emitted {
+                            next_key = Some(k.clone());
+                            next_vid = Some(v.clone());
+                        }
+                        break 'outer;
+                    }
+                    out_versions.push(ObjectVersion {
+                        key: Some(key.clone()),
+                        version_id: Some(vid.clone()),
+                        is_latest: Some(m.entry.current_version_id == Some(ev.id)),
+                        size: Some(ev.size_bytes.as_u64() as i64),
+                        last_modified: Some(Timestamp::from(ev.created_at)),
+                        e_tag: Some(s3s::dto::ETag::Strong(vid.clone())),
+                        ..Default::default()
+                    });
+                    last_emitted = Some((key.clone(), vid));
+                }
             }
         }
         if encode {
@@ -2359,6 +2370,8 @@ mod tests {
 pub struct S3Router {
     pub default_service: Box<VfilesS3>,
     pub by_key: std::collections::HashMap<String, Box<VfilesS3>>,
+    /// Explicit namespace bindings that failed to resolve must fail closed.
+    pub rejected_keys: std::collections::HashSet<String>,
     /// 期望签名区域（空 = 不校验 ✗ 设了比对 `Authorization` Credential scope 的 region 段）。
     pub expected_region: String,
 }
@@ -2381,6 +2394,12 @@ impl S3Router {
             }
         }
         let creds = req.credentials.as_ref();
+        if creds.is_some_and(|c| self.rejected_keys.contains(&c.access_key)) {
+            return Err(s3s::s3_error!(
+                AccessDenied,
+                "the access key is bound to an unavailable namespace"
+            ));
+        }
         Ok(creds
             .and_then(|c| self.by_key.get(&c.access_key))
             .map(|b| b.as_ref())

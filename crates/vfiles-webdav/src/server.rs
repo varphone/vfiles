@@ -1058,7 +1058,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             }
             resp
         }
-        // 写法（r108' ✓ MKCOL/DELETE/MOVE 实装；PUT = r109'（分片链）；COPY = 501 记档）。
+        // 写面由 MKCOL/DELETE/MOVE/COPY 与流式 PUT 分支处理。
         // 同步提取拥有值（借用不跨 await ✓ #46）。
         ref m if m.as_str() == "PROPPATCH" => {
             // r6 PROPPATCH（RFC 4918 §9.2 ✓ propertyupdate 解析（roxmltree）+ 每操作
@@ -1522,10 +1522,6 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 resp
             }
         }
-        ref m if m.as_str() == "COPY" => Response::builder()
-            .status(StatusCode::NOT_IMPLEMENTED)
-            .body(Body::from("COPY 无后端 copy API（rclone 用 GET+PUT 不依赖 ✓ 记档）"))
-            .unwrap(),
         // PUT（r110'b ✓ 商业级写面终件 = 流式直传）。
         // PUT（r110'b ✓ 商业级写面终件 = 流式直传）。
         // 纯拥有参（#46 四号 ✗✗✗ 调用侧同步提取）。

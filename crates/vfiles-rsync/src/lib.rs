@@ -39,6 +39,7 @@ const XMIT_SAME_MODE: u16 = 1 << 1;
 const XMIT_EXTENDED_FLAGS: u16 = 1 << 2;
 const XMIT_SAME_UID: u16 = 1 << 3;
 const XMIT_SAME_GID: u16 = 1 << 4;
+const XMIT_LONG_NAME: u16 = 1 << 6;
 const XMIT_SAME_TIME: u16 = 1 << 7;
 
 // compat_flags（compat.c）
@@ -192,7 +193,7 @@ pub struct ListRequest {
 }
 
 /// flist 字节编码（flist.c `send_file_entry` 字段序 + r9 真机转录逐字节校准）：
-/// xflags → l2 → name（恒发全名，不用 SAME_NAME）→ length(varlong3) →
+/// xflags → l2 → name（恒发全名，不用 SAME_NAME；长名用 LONG_NAME + varint 长度）→ length(varlong3) →
 /// [mtime varlong4 if !SAME_TIME] → [mode LE4 if !SAME_MODE]；收尾 `00 00`(varint) 或 `00`。
 ///
 /// xflags 恒置 `SAME_UID|SAME_GID`（list-only 无 `-o/-g` = 官方同形）+ 首条 `.` 置 `TOP_DIR`；
@@ -202,7 +203,11 @@ pub fn encode_flist(entries: &[FlatEntry], varint_flags: bool) -> Vec<u8> {
     let mut last_mode: Option<u32> = None;
     let mut last_mtime: Option<i64> = None;
     for e in entries {
-        assert!(e.name.len() <= 255, "LONG_NAME 未实现：name ≤255 字节");
+        let name_len = e.name.len();
+        assert!(
+            name_len <= i32::MAX as usize,
+            "rsync name exceeds protocol limit"
+        );
         let mut x: u16 = XMIT_SAME_UID | XMIT_SAME_GID;
         if e.is_dir && e.name == "." {
             x |= XMIT_TOP_DIR;
@@ -212,6 +217,9 @@ pub fn encode_flist(entries: &[FlatEntry], varint_flags: bool) -> Vec<u8> {
         }
         if last_mtime == Some(e.mtime) {
             x |= XMIT_SAME_TIME;
+        }
+        if name_len > u8::MAX as usize {
+            x |= XMIT_LONG_NAME;
         }
         last_mode = Some(e.mode);
         last_mtime = Some(e.mtime);
@@ -226,9 +234,13 @@ pub fn encode_flist(entries: &[FlatEntry], varint_flags: bool) -> Vec<u8> {
             body.push(x as u8);
         }
 
-        // 全名（l1 = 0 ✗ 不用 SAME_NAME/LONG_NAME，≤255 l2 单字节）
+        // 全名（l1 = 0 ✗ 不用 SAME_NAME；长名 l2 使用 varint30）
         let name = e.name.as_bytes();
-        body.push(name.len() as u8);
+        if x & XMIT_LONG_NAME != 0 {
+            write_varint(name_len as i32, &mut body);
+        } else {
+            body.push(name_len as u8);
+        }
         body.extend_from_slice(name);
 
         write_varlong(3, e.size as i64, &mut body);
@@ -1416,11 +1428,65 @@ async fn write_msg<S>(rw: &mut BufReader<S>, payload: &[u8]) -> std::io::Result<
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut buf = Vec::with_capacity(payload.len() + 4);
+    let writer = rw.get_mut();
+    let mut frame = Vec::with_capacity(64 * 1024 + 4);
     for chunk in payload.chunks(64 * 1024) {
-        buf.extend_from_slice(&mux_frame(chunk));
+        let len = chunk.len();
+        frame.clear();
+        frame.extend_from_slice(&[
+            (len & 0xFF) as u8,
+            ((len >> 8) & 0xFF) as u8,
+            ((len >> 16) & 0xFF) as u8,
+            MPLEX_BASE + MSG_DATA,
+        ]);
+        frame.extend_from_slice(chunk);
+        writer.write_all(&frame).await?;
     }
-    write_raw(rw, &buf).await
+    writer.flush().await
+}
+
+/// 从异步 reader 流式发送 literal token，并在发送时累计整文件 MD5。
+async fn write_literal_reader<S, R>(
+    rw: &mut BufReader<S>,
+    reader: &mut R,
+) -> std::io::Result<[u8; 16]>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+    R: AsyncRead + Unpin + ?Sized,
+{
+    use md5::{Digest, Md5};
+
+    let writer = rw.get_mut();
+    let mut frame = Vec::with_capacity(CHUNK_SIZE + 8);
+    let mut chunk = vec![0u8; CHUNK_SIZE];
+    let mut digest = Md5::new();
+    loop {
+        let size = reader.read(&mut chunk).await?;
+        if size == 0 {
+            break;
+        }
+        digest.update(&chunk[..size]);
+        let len = 4 + size;
+        frame.clear();
+        frame.extend_from_slice(&[
+            (len & 0xFF) as u8,
+            ((len >> 8) & 0xFF) as u8,
+            ((len >> 16) & 0xFF) as u8,
+            MPLEX_BASE + MSG_DATA,
+        ]);
+        frame.extend_from_slice(&(size as i32).to_le_bytes());
+        frame.extend_from_slice(&chunk[..size]);
+        writer.write_all(&frame).await?;
+    }
+    frame.clear();
+    frame.extend_from_slice(&[4, 0, 0, MPLEX_BASE + MSG_DATA]);
+    frame.extend_from_slice(&0i32.to_le_bytes());
+    writer.write_all(&frame).await?;
+    writer.flush().await?;
+    let result = digest.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&result);
+    Ok(bytes)
 }
 
 // ─────────────────────────── L1 状态机 ───────────────────────────
@@ -1432,6 +1498,15 @@ pub trait RsyncBackend: Send + Sync {
     async fn list(&self, req: ListRequest) -> Result<Vec<FlatEntry>, String>;
     /// 按命名空间路径读文件内容（下载 / 收端 delta basis / `--delete` 存在性）。
     async fn read(&self, path: &str) -> Result<Vec<u8>, String>;
+    /// 打开下载流；默认兼容只实现 `read` 的后端，生产存储应覆盖以避免整文件入内存。
+    async fn open(
+        &self,
+        path: &str,
+    ) -> Result<Option<(Box<dyn vfiles_domain::ReadSeek + Send + Unpin>, u64)>, String> {
+        let data = self.read(path).await?;
+        let size = data.len() as u64;
+        Ok(Some((Box::new(std::io::Cursor::new(data)), size)))
+    }
     /// 按命名空间路径写入文件（push ✗ `mtime` = 源端秒级时间，供快跳比对）。
     async fn write(&self, path: String, data: Vec<u8>, mtime: i64) -> Result<(), String>;
     /// 查目标条目的 `(size, 源 mtime)`；不存在 → `None`（push 快跳用）。
@@ -1676,6 +1751,9 @@ where
                 write_vstring(&xname, &mut out);
             }
 
+            let mut direct_reader = None;
+            let mut delta_tokens = None;
+            let mut file_digest = None;
             if transferring {
                 out.extend_from_slice(&count.to_le_bytes());
                 out.extend_from_slice(&blength.to_le_bytes());
@@ -1684,35 +1762,59 @@ where
 
                 let entry = entries.get(ndx as usize);
                 let fs_path = entry.map(|e| e.fs_path.clone()).unwrap_or_default();
-                match backend.read(&fs_path).await {
-                    Ok(data) => {
-                        // count>0 = 有 basis → 真 delta（弱 sum1 滚动 + 强 sum2 前缀匹配）；
-                        // 否则整文件 literal（无 basis 的常规路径）
-                        if blocks.is_empty() || blength <= 0 {
-                            emit_literal(&mut out, &data);
-                            out.extend_from_slice(&0i32.to_le_bytes()); // token 终结
-                        } else {
-                            let tokens = build_delta_tokens(
+                // 没有 basis 时无需随机访问文件：直接从 blob 流式读出，发送时计算 MD5。
+                if blocks.is_empty() || blength <= 0 {
+                    match backend.open(&fs_path).await {
+                        Ok(Some((reader, _size))) => direct_reader = Some(reader),
+                        Ok(None) => {
+                            tracing::warn!(path = %fs_path, "rsync：文件不存在，回 MSG_NO_SEND");
+                            let mut msg = Vec::new();
+                            msg.extend_from_slice(&(ndx as i32).to_le_bytes());
+                            write_msg(&mut rw, &mux_frame_tagged(&msg, MSG_NO_SEND)).await?;
+                            continue;
+                        }
+                        Err(err) => {
+                            tracing::warn!(path = %fs_path, error = %err, "rsync：文件打开失败，回 MSG_NO_SEND");
+                            let mut msg = Vec::new();
+                            msg.extend_from_slice(&(ndx as i32).to_le_bytes());
+                            write_msg(&mut rw, &mux_frame_tagged(&msg, MSG_NO_SEND)).await?;
+                            continue;
+                        }
+                    }
+                } else {
+                    match backend.read(&fs_path).await {
+                        Ok(data) => {
+                            file_digest = Some(md5_digest(&data));
+                            // 有 basis 时保留 delta 匹配；basis 和源文件目前仍需缓冲。
+                            delta_tokens = Some(build_delta_tokens(
                                 &data,
                                 &blocks,
                                 blength as u32,
                                 seed,
                                 s2length as usize,
-                            );
-                            out.extend_from_slice(&tokens);
+                            ));
                         }
-                        out.extend_from_slice(&md5_digest(&data)); // 文件校验和（无 seed ✗ 真机实证）
-                    }
-                    Err(err) => {
-                        tracing::warn!(path = %fs_path, error = %err, "rsync：文件读取失败，回 MSG_NO_SEND");
-                        let mut msg = Vec::new();
-                        msg.extend_from_slice(&(ndx as i32).to_le_bytes());
-                        write_msg(&mut rw, &mux_frame_tagged(&msg, MSG_NO_SEND)).await?;
-                        continue;
+                        Err(err) => {
+                            tracing::warn!(path = %fs_path, error = %err, "rsync：文件读取失败，回 MSG_NO_SEND");
+                            let mut msg = Vec::new();
+                            msg.extend_from_slice(&(ndx as i32).to_le_bytes());
+                            write_msg(&mut rw, &mux_frame_tagged(&msg, MSG_NO_SEND)).await?;
+                            continue;
+                        }
                     }
                 }
             }
             write_msg(&mut rw, &out).await?;
+            if let Some(mut reader) = direct_reader {
+                let digest = write_literal_reader(&mut rw, &mut reader).await?;
+                write_msg(&mut rw, &digest).await?;
+            }
+            if let Some(tokens) = delta_tokens {
+                write_msg(&mut rw, &tokens).await?;
+            }
+            if let Some(digest) = file_digest {
+                write_msg(&mut rw, &digest).await?; // 整文件校验和无 seed（真机实证）
+            }
         }
         let mut done = Vec::new();
         write_ndx(NDX_DONE, &mut wp.0, &mut wp.1, &mut done);

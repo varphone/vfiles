@@ -1308,6 +1308,7 @@ impl EntryRepo for SqliteEntryRepo {
     async fn files_with_meta_page(
         &self,
         namespace_id: &NamespaceId,
+        from: &str,
         after: Option<&str>,
         limit: u32,
     ) -> DomainResult<Vec<vfiles_domain::types::EntryChildMeta>> {
@@ -1363,12 +1364,14 @@ impl EntryRepo for SqliteEntryRepo {
             FROM entries e
             WHERE e.namespace_id = ?
               AND e.kind = 'file'
+              AND e.path >= ?
               AND e.path > ?
             ORDER BY e.path
             LIMIT ?
             "#,
         )
         .bind(namespace_id.to_string())
+        .bind(from)
         .bind(after.unwrap_or(""))
         .bind(limit as i64)
         .fetch_all(&self.pool)
