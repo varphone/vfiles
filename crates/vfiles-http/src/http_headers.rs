@@ -185,12 +185,14 @@ fn insert_etag(headers: &mut HeaderMap, etag: Option<&str>) -> ApiResult<()> {
 }
 
 fn if_none_match(headers: &HeaderMap, current_etag: &str) -> bool {
-    let Some(value) = headers
-        .get(header::IF_NONE_MATCH)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return false;
-    };
+    headers
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .any(|value| if_none_match_value(value, current_etag))
+}
+
+fn if_none_match_value(value: &str, current_etag: &str) -> bool {
     let mut start = 0;
     let mut in_quotes = false;
     for (index, byte) in value.bytes().enumerate() {
@@ -298,4 +300,32 @@ fn is_rfc5987_attr_char(byte: u8) -> bool {
             | b'|'
             | b'~'
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn if_none_match_checks_every_repeated_header_field() {
+        let mut headers = HeaderMap::new();
+        headers.append(header::IF_NONE_MATCH, HeaderValue::from_static("\"older\""));
+        headers.append(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_static("W/\"current\", \"other\""),
+        );
+
+        assert!(if_none_match(&headers, "\"current\""));
+    }
+
+    #[test]
+    fn if_none_match_keeps_quoted_commas_inside_one_entity_tag() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_static("\"older,version\", W/\"current\""),
+        );
+
+        assert!(if_none_match(&headers, "\"current\""));
+    }
 }
