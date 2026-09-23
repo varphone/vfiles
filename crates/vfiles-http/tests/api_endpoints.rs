@@ -2878,6 +2878,46 @@ async fn put_upload_accepts_raw_body() {
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
 }
 
+#[tokio::test]
+async fn chunk_upload_streams_and_rejects_a_part_over_its_configured_size() {
+    let app = TestApp::new().await;
+    let init = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/upload/init",
+            json!({
+                "path": "docs",
+                "filename": "bounded-part.bin",
+                "size": 4,
+                "chunk_size": 4,
+            }),
+        )
+        .await;
+    assert_eq!(init.status(), StatusCode::OK);
+    let upload_id = response_json(init).await["upload_id"]
+        .as_str()
+        .expect("upload id should be present")
+        .to_string();
+
+    let oversized = app
+        .bytes_request_as_admin(
+            Method::PUT,
+            &format!("/api/files/upload/chunks/{upload_id}/0"),
+            b"12345".to_vec(),
+        )
+        .await;
+    assert_eq!(oversized.status(), StatusCode::BAD_REQUEST);
+
+    let valid = app
+        .bytes_request_as_admin(
+            Method::PUT,
+            &format!("/api/files/upload/chunks/{upload_id}/0"),
+            b"1234".to_vec(),
+        )
+        .await;
+    assert_eq!(valid.status(), StatusCode::OK);
+}
+
 /// 访问令牌：可用来上传/下载（CLI、构建系统场景），撤销后失效，且不能自我扩权。
 #[tokio::test]
 async fn access_token_authenticates_api_requests() {

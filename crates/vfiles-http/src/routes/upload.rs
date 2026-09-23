@@ -119,7 +119,7 @@ async fn ensure_upload_owner(
     state: &AppState,
     jar: &CookieJar,
     upload_id: &UploadId,
-) -> ApiResult<()> {
+) -> ApiResult<u64> {
     let ctx = protected_request_context(state, jar).await?;
     let session = state.upload_store.get_upload_session(upload_id).await?;
 
@@ -127,14 +127,14 @@ async fn ensure_upload_owner(
         return Err(ApiError::Domain(DomainError::Forbidden));
     }
 
-    Ok(())
+    Ok(session.chunk_size)
 }
 
 async fn upload_chunk(
     jar: CookieJar,
     axum::extract::Path((upload_id_str, chunk_index_str)): axum::extract::Path<(String, String)>,
     axum::extract::State(state): axum::extract::State<AppState>,
-    body: axum::body::Bytes,
+    request: axum::extract::Request,
 ) -> ApiResult<Json<serde_json::Value>> {
     let upload_id = upload_id_str
         .parse::<uuid::Uuid>()
@@ -151,18 +151,42 @@ async fn upload_chunk(
         })
     })?;
 
-    ensure_upload_owner(&state, &jar, &upload_id).await?;
+    let max_part_size = ensure_upload_owner(&state, &jar, &upload_id).await?;
+
+    let expected_size = request
+        .headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
 
     tracing::debug!(
         "Uploading chunk {} for upload {} (size: {} bytes)",
         chunk_index,
         upload_id,
-        body.len()
+        expected_size.map_or_else(|| "streamed".to_string(), |size| size.to_string())
     );
 
+    use futures::TryStreamExt;
+    let body_stream = request
+        .into_body()
+        .into_data_stream()
+        .map_err(std::io::Error::other);
+    let body_reader = tokio_util::io::StreamReader::new(body_stream);
     state
         .upload_service
-        .upload_part(&upload_id, chunk_index, &body)
+        .upload_part_from_stream(
+            &upload_id,
+            chunk_index,
+            expected_size,
+            Some(max_part_size),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Box::new(body_reader),
+        )
         .await?;
 
     tracing::debug!("Chunk {} uploaded successfully", chunk_index);
