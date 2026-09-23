@@ -11,6 +11,7 @@ pub struct LockEntry {
     pub token: String,
     pub owner: String,
     pub path: String,
+    pub depth_infinity: bool,
     /// Unix milliseconds; `None` represents an infinite lock.
     pub expires_at: Option<i64>,
 }
@@ -41,6 +42,7 @@ impl LockTable {
             owner: lock.owner,
             path: path.to_string(),
             expires_at: lock.expires_at,
+            depth_infinity: lock.depth_infinity,
         }
     }
 
@@ -49,6 +51,7 @@ impl LockTable {
         namespace_id: &NamespaceId,
         path: &str,
         owner: &str,
+        depth_infinity: bool,
         ttl: Option<Duration>,
     ) -> vfiles_domain::DomainResult<Option<LockEntry>> {
         let now = Self::now();
@@ -58,10 +61,13 @@ impl LockTable {
             .acquire(
                 namespace_id,
                 path,
-                &token,
-                owner,
-                Self::expires_at(ttl, now),
-                now,
+                vfiles_domain::NewWebdavLock {
+                    token: &token,
+                    owner,
+                    depth_infinity,
+                    expires_at: Self::expires_at(ttl, now),
+                    now,
+                },
             )
             .await?;
         Ok(acquired.then(|| LockEntry {
@@ -69,6 +75,7 @@ impl LockTable {
             owner: owner.to_string(),
             path: path.to_string(),
             expires_at: Self::expires_at(ttl, now),
+            depth_infinity,
         }))
     }
 
@@ -105,9 +112,9 @@ impl LockTable {
     ) -> vfiles_domain::DomainResult<Option<LockEntry>> {
         Ok(self
             .repo
-            .find_active(namespace_id, path, Self::now())
+            .find_active_covering(namespace_id, path, Self::now())
             .await?
-            .map(|lock| Self::from_record(path, lock)))
+            .map(|(lock_path, lock)| Self::from_record(&lock_path, lock)))
     }
 
     pub async fn blocked_many(
@@ -117,10 +124,12 @@ impl LockTable {
     ) -> vfiles_domain::DomainResult<std::collections::HashMap<String, LockEntry>> {
         Ok(self
             .repo
-            .find_active_many(namespace_id, paths, Self::now())
+            .find_active_covering_many(namespace_id, paths, Self::now())
             .await?
             .into_iter()
-            .map(|(path, lock)| (path.clone(), Self::from_record(&path, lock)))
+            .map(|(resource_path, (lock_path, lock))| {
+                (resource_path, Self::from_record(&lock_path, lock))
+            })
             .collect())
     }
 

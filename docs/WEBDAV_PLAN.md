@@ -17,7 +17,7 @@
 | MKCOL / DELETE / MOVE | ✅ 实装（`WebdavWriteOps` ✓ 审计链 user_id ✓） | MOVE Overwrite T 在 SQLite 单事务内删除目标子树并改写源路径；blob 引用释放和快照在提交后处理 |
 | **PUT** | ✅ **链实装**（`init_upload` + `complete_upload_from_stream` 流式直完 ✓） | bin 侧 `put_file` 转发 = 下段（签名已清 ✓） |
 | COPY | ✅ **实装**（Destination + Overwrite + 锁前置 + 审计；文件复用 blob，目录递归复制） | `copy_entries` 提供 overwrite 和目标父目录检查；需持续做 RFC/客户端兼容验收 |
-| LOCK / UNLOCK | ✅ 实装（exclusive / depth 0 ✓ SQLite 持久化并按 namespace/path 隔离 ✓；空体 LOCK refresh） | 并发获取原子化；过期锁可接管；shared lock 明确 405；超时支持 Second-N / Infinite |
+| LOCK / UNLOCK | ✅ 实装（exclusive / depth 0 与 infinity ✓；省略 Depth 默认 infinity；SQLite 持久化并按 namespace/path 隔离；空体 LOCK refresh） | 并发冲突检测原子化；祖先 infinity 锁继承到后代；过期锁可接管；shared lock 明确 405；超时支持 Second-N / Infinite |
 | per-user ns | ✅ **实装**（`ensure_default_for_owner` ✓ 多用户隔离 ✓） |
 | auth 门 | ✅ dispatch 顶部（Basic → verify → 401 + WWW-Authenticate ✓ OPTIONS 豁免 ✓） |
 | 默认开启 | ✅ **用户令兑现**（`enabled: true` ✓ auth 强制防御 ✓ 真服务日志确证 ✓） |
@@ -30,7 +30,7 @@
 
 - 空体 LOCK 识别为 refresh：从 `If` 头取唯一 `opaquelocktoken`，仅刷新同路径上仍有效的锁；成功返回原 token 与 lockdiscovery，失效 token 返回 412。
 - 新 LOCK 解析 RFC `lockinfo` XML，只接受 `exclusive` + `write`；shared 请求明确返回 405，不再被静默授予 exclusive 锁。
-- LOCK 的 `Depth` 若显式提供，只接受 `0`；不支持的 scope 返回 400。
+- LOCK 接受 `Depth: 0` 与 `Depth: infinity`，省略时按 RFC 默认 `infinity`；祖先 infinity 锁会覆盖后代资源；直接冲突返回 423，infinity 锁遇到阻塞后代时返回含 423/424 的 207 Multi-Status。
 - 写请求支持 RFC 4918 `If` 条件列表：列表内按 AND 求值、列表间按 OR 求值；支持未标记与 URI-tagged 列表，tagged 列表按挂载路径分别映射到 COPY/MOVE 源和目标；有锁写请求必须在匹配资源的成功列表中提供匹配的正向锁 token；ETag 与 `Not` 条件按当前实体状态求值，即使资源未锁也会校验。
 - `If` 状态 token 接受任意合法 URI；未知 token 按“不匹配”参与条件求值，不会导致整个头部解析失败并屏蔽其它 OR 列表。`Not` 关键字按 ABNF 大小写不敏感解析。
 - LOCK refresh 按同一套 `If` 条件解析执行，接受匹配当前资源的 URI-tagged 列表，并按实际资源的锁 token / ETag 求值。

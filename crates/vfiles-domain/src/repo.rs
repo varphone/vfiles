@@ -138,6 +138,15 @@ pub struct WebdavLock {
     pub token: String,
     pub owner: String,
     pub expires_at: Option<i64>,
+    pub depth_infinity: bool,
+}
+
+pub struct NewWebdavLock<'a> {
+    pub token: &'a str,
+    pub owner: &'a str,
+    pub depth_infinity: bool,
+    pub expires_at: Option<i64>,
+    pub now: i64,
 }
 
 /// Cross-process storage for WebDAV locks.
@@ -147,10 +156,7 @@ pub trait WebdavLockRepo: Send + Sync {
         &self,
         namespace_id: &NamespaceId,
         path: &str,
-        token: &str,
-        owner: &str,
-        expires_at: Option<i64>,
-        now: i64,
+        lock: NewWebdavLock<'_>,
     ) -> DomainResult<bool>;
     async fn find_active(
         &self,
@@ -158,6 +164,27 @@ pub trait WebdavLockRepo: Send + Sync {
         path: &str,
         now: i64,
     ) -> DomainResult<Option<WebdavLock>>;
+    /// Find an active lock that directly or depth-infinity locks this resource.
+    async fn find_active_covering(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        now: i64,
+    ) -> DomainResult<Option<(String, WebdavLock)>>;
+    async fn find_active_covering_many(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[String],
+        now: i64,
+    ) -> DomainResult<std::collections::HashMap<String, (String, WebdavLock)>> {
+        let mut locks = std::collections::HashMap::new();
+        for path in paths {
+            if let Some(lock) = self.find_active_covering(namespace_id, path, now).await? {
+                locks.insert(path.clone(), lock);
+            }
+        }
+        Ok(locks)
+    }
     async fn find_active_many(
         &self,
         namespace_id: &NamespaceId,

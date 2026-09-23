@@ -313,27 +313,45 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         &self,
         namespace_id: &NamespaceId,
         path: &str,
-        token: &str,
-        owner: &str,
-        expires_at: Option<i64>,
-        now: i64,
+        lock: NewWebdavLock<'_>,
     ) -> DomainResult<bool> {
         let result = sqlx::query(
-            r#"INSERT INTO webdav_locks (namespace_id, path, token, owner, expires_at)
-               VALUES (?, ?, ?, ?, ?)
+            r#"INSERT INTO webdav_locks
+                   (namespace_id, path, token, owner, expires_at, depth_infinity)
+               SELECT ?, ?, ?, ?, ?, ?
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM webdav_locks
+                   WHERE namespace_id = ?
+                     AND (expires_at IS NULL OR expires_at > ?)
+                     AND (
+                       path = ? OR
+                       (depth_infinity = 1 AND (path = '' OR substr(?, 1, length(path) + 1) = path || '/')) OR
+                       (? = 1 AND (? = '' OR substr(path, 1, length(?) + 1) = ? || '/'))
+                     )
+               )
                ON CONFLICT(namespace_id, path) DO UPDATE SET
                    token = excluded.token,
                    owner = excluded.owner,
-                   expires_at = excluded.expires_at
+                   expires_at = excluded.expires_at,
+                   depth_infinity = excluded.depth_infinity
                WHERE webdav_locks.expires_at IS NOT NULL
                  AND webdav_locks.expires_at <= ?"#,
         )
         .bind(namespace_id.to_string())
         .bind(path)
-        .bind(token)
-        .bind(owner)
-        .bind(expires_at)
-        .bind(now)
+        .bind(lock.token)
+        .bind(lock.owner)
+        .bind(lock.expires_at)
+        .bind(lock.depth_infinity)
+        .bind(namespace_id.to_string())
+        .bind(lock.now)
+        .bind(path)
+        .bind(path)
+        .bind(lock.depth_infinity)
+        .bind(path)
+        .bind(path)
+        .bind(path)
+        .bind(lock.now)
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::Internal {
@@ -348,8 +366,8 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         path: &str,
         now: i64,
     ) -> DomainResult<Option<WebdavLock>> {
-        let row: Option<(String, String, Option<i64>)> = sqlx::query_as(
-            "SELECT token, owner, expires_at FROM webdav_locks WHERE namespace_id = ? AND path = ? AND (expires_at IS NULL OR expires_at > ?)",
+        let row: Option<(String, String, Option<i64>, bool)> = sqlx::query_as(
+            "SELECT token, owner, expires_at, depth_infinity FROM webdav_locks WHERE namespace_id = ? AND path = ? AND (expires_at IS NULL OR expires_at > ?)",
         )
         .bind(namespace_id.to_string())
         .bind(path)
@@ -359,11 +377,94 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         .map_err(|e| DomainError::Internal {
             message: format!("Failed to look up WebDAV lock: {e}"),
         })?;
-        Ok(row.map(|(token, owner, expires_at)| WebdavLock {
-            token,
-            owner,
-            expires_at,
+        Ok(
+            row.map(|(token, owner, expires_at, depth_infinity)| WebdavLock {
+                token,
+                owner,
+                expires_at,
+                depth_infinity,
+            }),
+        )
+    }
+
+    async fn find_active_covering(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        now: i64,
+    ) -> DomainResult<Option<(String, WebdavLock)>> {
+        let row: Option<(String, String, String, Option<i64>, bool)> = sqlx::query_as(
+            r#"SELECT path, token, owner, expires_at, depth_infinity
+               FROM webdav_locks
+               WHERE namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)
+                 AND (path = ? OR (depth_infinity = 1 AND
+                   (path = '' OR substr(?, 1, length(path) + 1) = path || '/')))
+               ORDER BY length(path) DESC LIMIT 1"#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(now)
+        .bind(path)
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to look up covering WebDAV lock: {e}"),
+        })?;
+        Ok(row.map(|(path, token, owner, expires_at, depth_infinity)| {
+            (
+                path,
+                WebdavLock {
+                    token,
+                    owner,
+                    expires_at,
+                    depth_infinity,
+                },
+            )
         }))
+    }
+
+    async fn find_active_covering_many(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[String],
+        now: i64,
+    ) -> DomainResult<std::collections::HashMap<String, (String, WebdavLock)>> {
+        let mut locks = std::collections::HashMap::new();
+        for chunk in paths.chunks(300) {
+            if chunk.is_empty() {
+                continue;
+            }
+            let mut query = sqlx::QueryBuilder::new("WITH requested(path) AS (");
+            query.push_values(chunk.iter(), |mut row, path| {
+                row.push_bind(path);
+            });
+            query.push(") SELECT requested.path, locks.path, locks.token, locks.owner, locks.expires_at, locks.depth_infinity FROM requested JOIN webdav_locks AS locks ON locks.namespace_id = ");
+            query.push_bind(namespace_id.to_string());
+            query.push(" AND (locks.expires_at IS NULL OR locks.expires_at > ");
+            query.push_bind(now);
+            query.push(") AND (locks.path = requested.path OR (locks.depth_infinity = 1 AND (locks.path = '' OR substr(requested.path, 1, length(locks.path) + 1) = locks.path || '/'))) ORDER BY length(locks.path) DESC");
+            let rows = query
+                .build_query_as::<(String, String, String, String, Option<i64>, bool)>()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to look up covering WebDAV locks: {e}"),
+                })?;
+            for (requested, lock_path, token, owner, expires_at, depth_infinity) in rows {
+                locks.entry(requested).or_insert_with(|| {
+                    (
+                        lock_path,
+                        WebdavLock {
+                            token,
+                            owner,
+                            expires_at,
+                            depth_infinity,
+                        },
+                    )
+                });
+            }
+        }
+        Ok(locks)
     }
 
     async fn find_active_many(
@@ -375,7 +476,7 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         let mut locks = std::collections::HashMap::new();
         for chunk in paths.chunks(400) {
             let mut query = sqlx::QueryBuilder::new(
-                "SELECT path, token, owner, expires_at FROM webdav_locks WHERE namespace_id = ",
+                "SELECT path, token, owner, expires_at, depth_infinity FROM webdav_locks WHERE namespace_id = ",
             );
             query.push_bind(namespace_id.to_string());
             query.push(" AND (expires_at IS NULL OR expires_at > ");
@@ -387,22 +488,25 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
             }
             separated.push_unseparated(")");
             let rows = query
-                .build_query_as::<(String, String, String, Option<i64>)>()
+                .build_query_as::<(String, String, String, Option<i64>, bool)>()
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e| DomainError::Internal {
                     message: format!("Failed to look up WebDAV locks: {e}"),
                 })?;
-            locks.extend(rows.into_iter().map(|(path, token, owner, expires_at)| {
-                (
-                    path,
-                    WebdavLock {
-                        token,
-                        owner,
-                        expires_at,
-                    },
-                )
-            }));
+            locks.extend(rows.into_iter().map(
+                |(path, token, owner, expires_at, depth_infinity)| {
+                    (
+                        path,
+                        WebdavLock {
+                            token,
+                            owner,
+                            expires_at,
+                            depth_infinity,
+                        },
+                    )
+                },
+            ));
         }
         Ok(locks)
     }
@@ -413,8 +517,8 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         path: &str,
         now: i64,
     ) -> DomainResult<std::collections::HashMap<String, WebdavLock>> {
-        let rows: Vec<(String, String, String, Option<i64>)> = sqlx::query_as(
-            r#"SELECT path, token, owner, expires_at
+        let rows: Vec<(String, String, String, Option<i64>, bool)> = sqlx::query_as(
+            r#"SELECT path, token, owner, expires_at, depth_infinity
                FROM webdav_locks
                WHERE namespace_id = ?
                  AND (expires_at IS NULL OR expires_at > ?)
@@ -436,13 +540,14 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         })?;
         Ok(rows
             .into_iter()
-            .map(|(path, token, owner, expires_at)| {
+            .map(|(path, token, owner, expires_at, depth_infinity)| {
                 (
                     path,
                     WebdavLock {
                         token,
                         owner,
                         expires_at,
+                        depth_infinity,
                     },
                 )
             })
@@ -457,11 +562,11 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         expires_at: Option<i64>,
         now: i64,
     ) -> DomainResult<Option<WebdavLock>> {
-        let row: Option<(String, String, Option<i64>)> = sqlx::query_as(
+        let row: Option<(String, String, Option<i64>, bool)> = sqlx::query_as(
             r#"UPDATE webdav_locks SET expires_at = ?
                WHERE namespace_id = ? AND path = ? AND token = ?
                  AND (expires_at IS NULL OR expires_at > ?)
-               RETURNING token, owner, expires_at"#,
+               RETURNING token, owner, expires_at, depth_infinity"#,
         )
         .bind(expires_at)
         .bind(namespace_id.to_string())
@@ -473,11 +578,14 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         .map_err(|e| DomainError::Internal {
             message: format!("Failed to refresh WebDAV lock: {e}"),
         })?;
-        Ok(row.map(|(token, owner, expires_at)| WebdavLock {
-            token,
-            owner,
-            expires_at,
-        }))
+        Ok(
+            row.map(|(token, owner, expires_at, depth_infinity)| WebdavLock {
+                token,
+                owner,
+                expires_at,
+                depth_infinity,
+            }),
+        )
     }
 
     async fn release(
@@ -7983,9 +8091,19 @@ mod webdav_lock_repo_tests {
             ("folderish/other.txt", "sibling-token"),
         ] {
             assert!(
-                repo.acquire(&namespace_id, path, token, "alice", None, 1_000)
-                    .await
-                    .expect("subtree fixture lock should be created")
+                repo.acquire(
+                    &namespace_id,
+                    path,
+                    NewWebdavLock {
+                        token,
+                        owner: "alice",
+                        depth_infinity: false,
+                        expires_at: None,
+                        now: 1_000,
+                    },
+                )
+                .await
+                .expect("subtree fixture lock should be created")
             );
         }
         let subtree_locks = repo
@@ -8007,14 +8125,81 @@ mod webdav_lock_repo_tests {
         );
 
         let (first, second) = tokio::join!(
-            repo.acquire(&namespace_id, "a.txt", "token-a", "alice", None, 1_000),
-            repo.acquire(&namespace_id, "a.txt", "token-b", "bob", None, 1_000),
+            repo.acquire(
+                &namespace_id,
+                "a.txt",
+                NewWebdavLock {
+                    token: "token-a",
+                    owner: "alice",
+                    depth_infinity: false,
+                    expires_at: None,
+                    now: 1_000
+                }
+            ),
+            repo.acquire(
+                &namespace_id,
+                "a.txt",
+                NewWebdavLock {
+                    token: "token-b",
+                    owner: "bob",
+                    depth_infinity: false,
+                    expires_at: None,
+                    now: 1_000
+                }
+            ),
         );
         let acquired = [
             first.expect("first acquire"),
             second.expect("second acquire"),
         ];
         assert_eq!(acquired.iter().filter(|value| **value).count(), 1);
+
+        let root_namespace_id = NamespaceId::new();
+        sqlx::query(
+            "INSERT INTO namespaces (id, slug, owner_user_id) VALUES (?, 'lock-root-check', ?)",
+        )
+        .bind(root_namespace_id.to_string())
+        .bind(user_id.to_string())
+        .execute(&pool)
+        .await
+        .expect("root-lock namespace should be inserted");
+        assert!(
+            repo.acquire(
+                &root_namespace_id,
+                "",
+                NewWebdavLock {
+                    token: "root-token",
+                    owner: "alice",
+                    depth_infinity: true,
+                    expires_at: None,
+                    now: 1_000
+                }
+            )
+            .await
+            .expect("infinity root lock should be acquired")
+        );
+        assert!(
+            repo.find_active_covering(&root_namespace_id, "nested/file", 1_000)
+                .await
+                .expect("root lock should cover descendants")
+                .is_some()
+        );
+        assert!(
+            !repo
+                .acquire(
+                    &root_namespace_id,
+                    "nested/file",
+                    NewWebdavLock {
+                        token: "nested-token",
+                        owner: "bob",
+                        depth_infinity: false,
+                        expires_at: None,
+                        now: 1_000
+                    },
+                )
+                .await
+                .expect("descendant lock should not overlap root lock")
+        );
 
         let active = repo
             .find_active(&namespace_id, "a.txt", 1_000)
@@ -8049,10 +8234,13 @@ mod webdav_lock_repo_tests {
             repo.acquire(
                 &namespace_id,
                 "expired.txt",
-                "old-token",
-                "alice",
-                Some(10),
-                1,
+                NewWebdavLock {
+                    token: "old-token",
+                    owner: "alice",
+                    depth_infinity: false,
+                    expires_at: Some(10),
+                    now: 1
+                },
             )
             .await
             .expect("initial finite lock")
@@ -8067,10 +8255,13 @@ mod webdav_lock_repo_tests {
             repo.acquire(
                 &namespace_id,
                 "expired.txt",
-                "replacement-token",
-                "bob",
-                None,
-                10,
+                NewWebdavLock {
+                    token: "replacement-token",
+                    owner: "bob",
+                    depth_infinity: false,
+                    expires_at: None,
+                    now: 10
+                },
             )
             .await
             .expect("expired lock takeover")

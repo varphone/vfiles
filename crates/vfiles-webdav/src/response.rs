@@ -262,6 +262,8 @@ pub struct ActiveLock {
     pub token: String,
     pub owner: String,
     pub timeout: String,
+    pub depth_infinity: bool,
+    pub root_href: String,
 }
 
 /// 构造 207 Multi-Status 文档（XML 转义 ✓ 集合无 getcontentlength ✓）。
@@ -367,13 +369,17 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
                 }
                 "lockdiscovery" if mode != &PropMode::PropName => {
                     if let Some(lock) = &item.active_lock {
-                        out.push_str("<D:lockdiscovery><D:activelock><D:locktype><D:write/></D:locktype><D:lockscope><D:exclusive/></D:lockscope><D:depth>0</D:depth><D:owner>");
+                        out.push_str("<D:lockdiscovery><D:activelock><D:locktype><D:write/></D:locktype><D:lockscope><D:exclusive/></D:lockscope><D:depth>");
+                        out.push_str(if lock.depth_infinity { "infinity" } else { "0" });
+                        out.push_str("</D:depth><D:owner>");
                         out.push_str(&escape_xml(&lock.owner));
                         out.push_str("</D:owner><D:timeout>");
                         out.push_str(&escape_xml(&lock.timeout));
                         out.push_str("</D:timeout><D:locktoken><D:href>");
                         out.push_str(&escape_xml(&lock.token));
-                        out.push_str("</D:href></D:locktoken></D:activelock></D:lockdiscovery>");
+                        out.push_str("</D:href></D:locktoken><D:lockroot><D:href>");
+                        out.push_str(&escape_xml(&lock.root_href));
+                        out.push_str("</D:href></D:lockroot></D:activelock></D:lockdiscovery>");
                     } else {
                         out.push_str("<D:lockdiscovery/>");
                     }
@@ -423,22 +429,45 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
 }
 
 /// LOCK 响应体（lockdiscovery ✓ RFC 4918 §14.13 子集：exclusive write / depth 0 ✓）。
-pub fn lock_response(token: &str, owner: &str, path: &str, timeout: &str) -> String {
+pub fn lock_response(
+    token: &str,
+    owner: &str,
+    path: &str,
+    timeout: &str,
+    depth_infinity: bool,
+) -> String {
+    let depth = if depth_infinity { "infinity" } else { "0" };
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <D:prop xmlns:D="DAV:"><D:lockdiscovery><D:activelock>
 <D:locktype><D:write/></D:locktype>
 <D:lockscope><D:exclusive/></D:lockscope>
-<D:depth>0</D:depth>
+<D:depth>{depth}</D:depth>
 <D:owner>{owner}</D:owner>
 <D:href>{href}</D:href>
 <D:locktoken><D:href>{token}</D:href></D:locktoken>
+<D:lockroot><D:href>{href}</D:href></D:lockroot>
 <D:timeout>{timeout}</D:timeout>
 </D:activelock></D:lockdiscovery></D:prop>"#,
         owner = escape_xml(owner),
         href = escape_xml(path), // r-new 修双斜杠：caller 已传完整 href（含 mount ✗ 模板不自加 "/"）
         token = escape_xml(token),
         timeout = escape_xml(timeout),
+        depth = depth,
+    )
+}
+
+/// RFC 4918 §9.10.3 reports a failed depth-infinity acquisition as a
+/// multistatus when a descendant prevents the whole hierarchy from locking.
+pub fn lock_conflict_response(request_href: &str, conflict_href: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+<D:response><D:href>{conflict}</D:href><D:status>HTTP/1.1 423 Locked</D:status></D:response>
+<D:response><D:href>{request}</D:href><D:status>HTTP/1.1 424 Failed Dependency</D:status></D:response>
+</D:multistatus>"#,
+        conflict = escape_xml(conflict_href),
+        request = escape_xml(request_href),
     )
 }
 

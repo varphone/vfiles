@@ -1146,6 +1146,123 @@ async fn options_advertises_and_propfind_needs_auth() {
         "MOVE must reject a stale source condition before deleting its destination"
     );
 
+    // An omitted LOCK Depth defaults to infinity. The single lock covers the
+    // collection and its members, and prevents conflicting descendant locks.
+    let repeated_lock_depth = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/locked-dir")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("depth", "infinity")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(lock_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(repeated_lock_depth.status(), 400);
+
+    let infinity_lock = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/locked-dir")
+                .header("authorization", format!("Basic {basic}"))
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(lock_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(infinity_lock.status(), 200);
+    let infinity_token = infinity_lock
+        .headers()
+        .get("lock-token")
+        .expect("infinity LOCK should return its token")
+        .to_str()
+        .expect("lock token should be ASCII")
+        .to_string();
+    let infinity_xml = String::from_utf8(
+        axum::body::to_bytes(infinity_lock.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(infinity_xml.contains("<D:depth>infinity</D:depth>"));
+
+    let inherited_lock_props = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/locked-dir/child.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propfind xmlns:D="DAV:"><D:prop><D:lockdiscovery/></D:prop></D:propfind>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let inherited_lock_xml = String::from_utf8(
+        axum::body::to_bytes(inherited_lock_props.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(inherited_lock_xml.contains("<D:depth>infinity</D:depth>"));
+
+    let blocked_child_put = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/locked-dir/child.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::from("blocked"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(blocked_child_put.status(), 423);
+    let conflicting_child_lock = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/locked-dir/child.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(lock_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(conflicting_child_lock.status(), 423);
+    let release_infinity = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("UNLOCK")
+                .uri("/locked-dir")
+                .header("authorization", format!("Basic {basic}"))
+                .header("lock-token", format!("<{infinity_token}>"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(release_infinity.status(), 204);
+
     let nested_lock = router
         .clone()
         .oneshot(
@@ -1168,6 +1285,31 @@ async fn options_advertises_and_propfind_needs_auth() {
         .to_str()
         .expect("nested lock token should be ASCII")
         .to_string();
+
+    let blocked_infinity_lock = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/locked-dir")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "infinity")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(lock_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(blocked_infinity_lock.status(), 207);
+    let blocked_infinity_xml = String::from_utf8(
+        axum::body::to_bytes(blocked_infinity_lock.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(blocked_infinity_xml.contains("/locked-dir/child.txt"));
+    assert!(blocked_infinity_xml.contains("424 Failed Dependency"));
 
     let blocked_parent_delete = router
         .clone()

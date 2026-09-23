@@ -415,7 +415,7 @@ fn same_webdav_authority(
     }
 }
 
-/// LOCK（r109a ✓ exclusive write / depth 0 ✓ 已锁 = 423 ✓ **纯拥有参**（#46 纪律））。
+/// LOCK（exclusive write / depth 0 or infinity; omitted Depth defaults to infinity）。
 async fn lock_op(
     app: Option<WebdavApplication>,
     user: Option<vfiles_domain::types::User>,
@@ -434,15 +434,17 @@ async fn lock_op(
     let Some(ns) = ns else {
         return internal_error();
     };
-    if depth_owned
-        .as_deref()
-        .is_some_and(|depth| !depth.trim().eq_ignore_ascii_case("0"))
-    {
-        return Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .body(Body::empty())
-            .unwrap();
-    }
+    let depth_infinity = match depth_owned.as_deref().map(str::trim) {
+        None => true,
+        Some(depth) if depth.eq_ignore_ascii_case("infinity") => true,
+        Some("0") => false,
+        Some(_) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::empty())
+                .unwrap();
+        }
+    };
     match parse_lockinfo(&lock_body) {
         Ok(LockScope::ExclusiveWrite) => {}
         Ok(LockScope::SharedWrite) => {
@@ -470,7 +472,11 @@ async fn lock_op(
         Some(d) => format!("Second-{}", d.as_secs()),
         None => "Infinite".to_string(),
     };
-    match app.locks.lock(&ns, &rel, user.username.as_str(), ttl).await {
+    match app
+        .locks
+        .lock(&ns, &rel, user.username.as_str(), depth_infinity, ttl)
+        .await
+    {
         Ok(Some(entry)) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
@@ -482,12 +488,35 @@ async fn lock_op(
                 // r-new 顺手修：原传 entry.path = lock_key("ns:rel") 形错 ✗ 资源相对 rel + mount 前缀
                 &href_with_mount(&app.mount_prefix, &rel),
                 &granted_header,
+                depth_infinity,
             )))
             .unwrap(),
-        Ok(None) => Response::builder()
-            .status(StatusCode::LOCKED)
-            .body(Body::empty())
-            .unwrap(),
+        Ok(None) => {
+            if depth_infinity {
+                match app.locks.blocked_under_path(&ns, &rel).await {
+                    Ok(locks) => {
+                        if let Some(conflict) = locks.values().find(|lock| lock.path != rel) {
+                            return Response::builder()
+                                .status(StatusCode::MULTI_STATUS)
+                                .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+                                .body(Body::from(crate::response::lock_conflict_response(
+                                    &href_with_mount(&app.mount_prefix, &rel),
+                                    &href_with_mount(&app.mount_prefix, &conflict.path),
+                                )))
+                                .unwrap();
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "WebDAV LOCK 冲突路径查询失败");
+                        return internal_error();
+                    }
+                }
+            }
+            Response::builder()
+                .status(StatusCode::LOCKED)
+                .body(Body::empty())
+                .unwrap()
+        }
         Err(error) => {
             tracing::error!(%error, "WebDAV LOCK 存储失败");
             internal_error()
@@ -629,6 +658,7 @@ async fn lock_refresh_op(
                 &entry.owner,
                 &href_with_mount(&app.mount_prefix, &rel),
                 &granted_header,
+                entry.depth_infinity,
             )))
             .unwrap(),
         Ok(None) => Response::builder()
@@ -1748,7 +1778,7 @@ async fn propfind_owned(
                     StatusCode::INTERNAL_SERVER_ERROR
                 })?
                 .into_iter()
-                .map(|(path, lock)| (path, active_lock_value(lock)))
+                .map(|(path, lock)| (path, active_lock_value(lock, &app.mount_prefix)))
                 .collect()
         } else {
             std::collections::HashMap::new()
@@ -1812,10 +1842,13 @@ async fn active_lock_prop(
     let Some(lock) = lock else {
         return Ok(None);
     };
-    Ok(Some(active_lock_value(lock)))
+    Ok(Some(active_lock_value(lock, &app.mount_prefix)))
 }
 
-fn active_lock_value(lock: crate::lock::LockEntry) -> crate::response::ActiveLock {
+fn active_lock_value(
+    lock: crate::lock::LockEntry,
+    mount_prefix: &str,
+) -> crate::response::ActiveLock {
     let timeout = match lock.expires_at {
         Some(expiry) => {
             let remaining_ms = expiry.saturating_sub(crate::lock::LockTable::now()).max(1);
@@ -1828,6 +1861,8 @@ fn active_lock_value(lock: crate::lock::LockEntry) -> crate::response::ActiveLoc
         token: lock.token,
         owner: lock.owner,
         timeout,
+        depth_infinity: lock.depth_infinity,
+        root_href: href_with_mount(mount_prefix, &lock.path),
     }
 }
 
@@ -2134,11 +2169,12 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .get("timeout")
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
-            let depth_owned = req
-                .headers()
-                .get("depth")
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_string);
+            let mut depth_values = req.headers().get_all("depth").iter();
+            let depth_owned = match (depth_values.next(), depth_values.next()) {
+                (None, None) => None,
+                (Some(value), None) => Some(value.to_str().map(str::to_string).unwrap_or_default()),
+                _ => Some(String::new()),
+            };
             let ns_owned = req
                 .extensions()
                 .get::<vfiles_domain::types::NamespaceId>()
