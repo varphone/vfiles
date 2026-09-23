@@ -171,6 +171,8 @@ pub struct EntryChildMeta {
     pub entry: Entry,
     pub size_bytes: Option<u64>,
     pub mime_type: Option<String>,
+    /// 源端 mtime（秒 ✗ rsync `-a` 快跳用；NULL = 未知）。
+    pub source_mtime: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

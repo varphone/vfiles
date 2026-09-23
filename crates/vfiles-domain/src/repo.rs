@@ -182,6 +182,7 @@ pub trait EntryRepo {
                 entry,
                 size_bytes: None,
                 mime_type: None,
+                source_mtime: None,
             })
             .collect())
     }
@@ -201,6 +202,7 @@ pub trait EntryRepo {
                 entry,
                 size_bytes: None,
                 mime_type: None,
+                source_mtime: None,
             })
             .collect();
         out.sort_by(|a, b| a.entry.path_norm.as_str().cmp(b.entry.path_norm.as_str()));
@@ -303,6 +305,13 @@ pub trait EntryRepo {
         created_by: &UserId,
         message: Option<&str>,
     ) -> DomainResult<EntryVersion>;
+
+    /// 记录版本的源端 mtime（rsync `-a` 快跳用 ✗ 其余来源不调用 = NULL 语义安全）。
+    async fn set_version_source_mtime(
+        &self,
+        version_id: &VersionId,
+        source_mtime: i64,
+    ) -> DomainResult<()>;
 }
 
 /// 收藏夹：以条目 ID 记录，重命名/移动后依然有效。

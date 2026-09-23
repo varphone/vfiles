@@ -1074,6 +1074,7 @@ impl EntryRepo for SqliteEntryRepo {
             Option<String>,
             Option<i64>,
             Option<String>,
+            Option<i64>,
         )> = if parent_path.as_str().is_empty() {
             sqlx::query_as(
                 r#"
@@ -1104,7 +1105,14 @@ impl EntryRepo for SqliteEntryRepo {
                         WHERE ev.entry_id = e.id
                         ORDER BY ev.version DESC
                         LIMIT 1
-                    ) AS mime_t
+                    ) AS mime_t,
+                    (
+                        SELECT ev.source_mtime
+                        FROM entry_versions ev
+                        WHERE ev.entry_id = e.id
+                        ORDER BY ev.version DESC
+                        LIMIT 1
+                    ) AS src_mtime
                 FROM entries e
                 WHERE e.namespace_id = ?
                   AND instr(e.path, '/') = 0
@@ -1148,7 +1156,14 @@ impl EntryRepo for SqliteEntryRepo {
                         WHERE ev.entry_id = e.id
                         ORDER BY ev.version DESC
                         LIMIT 1
-                    ) AS mime_t
+                    ) AS mime_t,
+                    (
+                        SELECT ev.source_mtime
+                        FROM entry_versions ev
+                        WHERE ev.entry_id = e.id
+                        ORDER BY ev.version DESC
+                        LIMIT 1
+                    ) AS src_mtime
                 FROM entries e
                 WHERE e.namespace_id = ?
                   AND e.path LIKE ?
@@ -1166,12 +1181,13 @@ impl EntryRepo for SqliteEntryRepo {
             })?
         };
         rows.into_iter()
-            .map(|(a, b, c, d, e2, f, g, size, mime)| {
+            .map(|(a, b, c, d, e2, f, g, size, mime, src_mtime)| {
                 let entry = parse_entry_row((a, b, c, d, e2, f, g))?;
                 Ok(vfiles_domain::types::EntryChildMeta {
                     entry,
                     size_bytes: size.map(|v| v as u64),
                     mime_type: mime,
+                    source_mtime: src_mtime,
                 })
             })
             .collect()
@@ -1192,6 +1208,7 @@ impl EntryRepo for SqliteEntryRepo {
             Option<String>,
             Option<i64>,
             Option<String>,
+            Option<i64>,
         )> = sqlx::query_as(
             r#"
             SELECT
@@ -1221,7 +1238,14 @@ impl EntryRepo for SqliteEntryRepo {
                     WHERE ev.entry_id = e.id
                     ORDER BY ev.version DESC
                     LIMIT 1
-                ) AS mime_t
+                ) AS mime_t,
+                (
+                    SELECT ev.source_mtime
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS src_mtime
             FROM entries e
             WHERE e.namespace_id = ?
               AND e.kind = 'file'
@@ -1235,12 +1259,13 @@ impl EntryRepo for SqliteEntryRepo {
             message: format!("Failed to list files with meta: {}", e),
         })?;
         rows.into_iter()
-            .map(|(a, b, c, d, e2, f, g, size, mime)| {
+            .map(|(a, b, c, d, e2, f, g, size, mime, src_mtime)| {
                 let entry = parse_entry_row((a, b, c, d, e2, f, g))?;
                 Ok(vfiles_domain::types::EntryChildMeta {
                     entry,
                     size_bytes: size.map(|v| v as u64),
                     mime_type: mime,
+                    source_mtime: src_mtime,
                 })
             })
             .collect()
@@ -1679,6 +1704,22 @@ impl EntryRepo for SqliteEntryRepo {
             },
         })?;
         Ok(id)
+    }
+
+    async fn set_version_source_mtime(
+        &self,
+        version_id: &VersionId,
+        source_mtime: i64,
+    ) -> DomainResult<()> {
+        sqlx::query("UPDATE entry_versions SET source_mtime = ? WHERE id = ?")
+            .bind(source_mtime)
+            .bind(version_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to set source mtime: {}", e),
+            })?;
+        Ok(())
     }
 
     async fn update_current_version(

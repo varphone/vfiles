@@ -576,6 +576,16 @@ struct ParsedArgs {
     delete_excluded: bool,
     /// `-c/--checksum`（flist 携带整文件校验和 → 一致即跳过）。
     checksum: bool,
+    /// `-I/--ignore-times`（关闭 size+mtime 快跳）。
+    ignore_times: bool,
+    /// `-o/--owner`、`-g/--group`、`-D/--devices`/`--specials`、`-U/--atimes`（flist 可选字段）。
+    preserve_uid: bool,
+    preserve_gid: bool,
+    preserve_devices: bool,
+    preserve_specials: bool,
+    preserve_atimes: bool,
+    /// `--numeric-ids`（不传 uid/gid 名列表）。
+    numeric_ids: bool,
     /// `-e` 选项值 = 官方 `client_info`（行为能力串，决定 compat_flags）。
     client_info: String,
     paths: Vec<String>,
@@ -605,6 +615,22 @@ fn parse_args(segs: &[String]) -> ParsedArgs {
                 }
                 "checksum" => a.checksum = true,
                 "no-c" => a.checksum = false,
+                "ignore-times" => a.ignore_times = true,
+                "no-ignore-times" => a.ignore_times = false,
+                "owner" => a.preserve_uid = true,
+                "no-owner" | "no-o" => a.preserve_uid = false,
+                "group" => a.preserve_gid = true,
+                "no-group" | "no-g" => a.preserve_gid = false,
+                "devices" => a.preserve_devices = true,
+                "specials" => a.preserve_specials = true,
+                "no-devices" | "no-D" => {
+                    a.preserve_devices = false;
+                    a.preserve_specials = false;
+                }
+                "atimes" => a.preserve_atimes = true,
+                "no-atimes" => a.preserve_atimes = false,
+                "numeric-ids" => a.numeric_ids = true,
+                "no-numeric-ids" => a.numeric_ids = false,
                 _ => {}
             }
             continue;
@@ -623,6 +649,14 @@ fn parse_args(segs: &[String]) -> ParsedArgs {
                     'r' => a.recursive = true,
                     'z' => a.compress = true,
                     'c' => a.checksum = true,
+                    'I' => a.ignore_times = true,
+                    'o' => a.preserve_uid = true,
+                    'g' => a.preserve_gid = true,
+                    'D' => {
+                        a.preserve_devices = true;
+                        a.preserve_specials = true;
+                    }
+                    'U' => a.preserve_atimes = true,
                     _ => {}
                 }
                 i += 1;
@@ -951,16 +985,40 @@ where
     Ok(i64::from_le_bytes(v))
 }
 
+/// flist 解析开关（决定条目里出现哪些可选字段 ✗ 官方 `preserve_*` 全局量同源）。
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FlistOpts {
+    /// `CF_VARINT_FLIST_FLAGS`（1<<7）→ xflags 为 varint。
+    pub varint_flags: bool,
+    /// `-c/--checksum` → 普通文件末附 16B 整文件 MD5。
+    pub always_checksum: bool,
+    /// `-o/--owner` → 条目含 uid（varint ✗ 名字随行仅增量递归时）。
+    pub preserve_uid: bool,
+    /// `-g/--group` → 条目含 gid。
+    pub preserve_gid: bool,
+    /// `-D/--devices` → 设备条目含 rdev（varint30 major + varint minor）。
+    pub preserve_devices: bool,
+    /// `-D/--specials` → 特殊文件条目含 rdev（协议 31 前）。
+    pub preserve_specials: bool,
+    /// `-U/--atimes` → 条目含 atime（varlong4 ✗ 目录不附）。
+    pub preserve_atimes: bool,
+}
+
 /// 接收客户端发来的 flist（recv_file_entry 逐字段逆序 ✗ `lastname` 前缀压缩重建）。
+///
+/// 字段序（官方 `send_file_entry`/`recv_file_entry` 对称 ✗ r18 补齐 `-a` 所需）：
+/// xflags → 名 → [hlink ndx] → 长 → [mtime] → [nsec] → [mode] → [atime] → [uid] →
+/// [gid] → [rdev] → [symlink target] → [整文件校验和]。
 pub async fn recv_file_list<S>(
     rw: &mut BufReader<S>,
     pending: &mut Vec<u8>,
-    varint_flags: bool,
-    always_checksum: bool,
+    opts: FlistOpts,
 ) -> std::io::Result<Vec<FlatEntry>>
 where
     S: AsyncRead + Unpin,
 {
+    let varint_flags = opts.varint_flags;
+    let always_checksum = opts.always_checksum;
     let mut out = Vec::new();
     let mut lastname = String::new();
     let mut last_mode: u32 = 0;
@@ -1003,6 +1061,10 @@ where
         name_bytes.extend_from_slice(&suffix);
         let name = String::from_utf8_lossy(&name_bytes).into_owned();
         lastname = name.clone();
+        // XMIT_HLINKED（`-H` 硬链接 ✗ `-a` 不含）→ 首个同 inode 条目的 ndx
+        if x & (1 << 9) != 0 {
+            let _hlink_ndx = data_varint(rw, pending).await?;
+        }
 
         let size = data_varlong(rw, pending, 3).await?.max(0) as u64;
         let mtime = if x & 0x80 == 0 {
@@ -1021,8 +1083,35 @@ where
         };
         last_mode = mode;
         let file_type = mode & 0o170000;
+        let is_dir = file_type == 0o040000;
+        // atime（`-U` ✗ 目录不附）
+        if opts.preserve_atimes && !is_dir && x & (1 << 14) == 0 {
+            let _atime = data_varlong(rw, pending, 4).await?;
+        }
+        // uid / gid（`-a` 含 `-o -g` ✗ 同值或首个条目外不重发）
+        if opts.preserve_uid && x & (1 << 3) == 0 {
+            let _uid = data_varint(rw, pending).await?;
+            if x & (1 << 10) != 0 {
+                let l = data_byte(rw, pending).await? as usize;
+                let _name = data_take(rw, pending, l).await?;
+            }
+        }
+        if opts.preserve_gid && x & (1 << 4) == 0 {
+            let _gid = data_varint(rw, pending).await?;
+            if x & (1 << 11) != 0 {
+                let l = data_byte(rw, pending).await? as usize;
+                let _name = data_take(rw, pending, l).await?;
+            }
+        }
+        // rdev（设备/特殊文件 ✗ 协议 30 = varint major + varint minor）
+        if (opts.preserve_devices && file_type == 0o020000)
+            || (opts.preserve_specials && file_type == 0o010000)
+        {
+            let _major = data_varint(rw, pending).await?;
+            let _minor = data_varint(rw, pending).await?;
+        }
+        // 符号链接 target（`-l` 时才有 ✗ 位置在 uid/gid/rdev **之后**）
         if file_type == 0o120000 {
-            // 符号链接：读走 target（不请求传输 = 记档债）
             let l = data_varint(rw, pending).await?.max(0) as usize;
             let _target = data_take(rw, pending, l).await?;
         }
@@ -1034,7 +1123,7 @@ where
         };
         out.push(FlatEntry {
             name,
-            is_dir: file_type == 0o040000,
+            is_dir,
             size,
             mtime,
             mode,
@@ -1043,6 +1132,46 @@ where
         });
     }
     Ok(out)
+}
+
+/// 读走 uid/gid 名列表（官方 `recv_id_list`：flist 之后、传输之前 ✗ `-o`/`-g` 且非 numeric-ids）。
+///
+/// 形 = `[varint id][byte len][name]…` 终结：`xmit_id0_names` 时 id0 条目自带名字，否则裸 `varint 0`。
+async fn skip_id_list<S>(
+    rw: &mut BufReader<S>,
+    pending: &mut Vec<u8>,
+    xmit_id0_names: bool,
+) -> std::io::Result<()>
+where
+    S: AsyncRead + Unpin,
+{
+    loop {
+        let id = data_varint(rw, pending).await?;
+        if id == 0 && !xmit_id0_names {
+            return Ok(());
+        }
+        let len = data_byte(rw, pending).await? as usize;
+        if len > 0 {
+            let _name = data_take(rw, pending, len).await?;
+        }
+        if id == 0 {
+            return Ok(());
+        }
+    }
+}
+
+/// 发送空 uid/gid 名列表（终结形随 `xmit_id0_names`：带 id0 名字则 varint(0)+byte(0)）。
+async fn write_id_list<S>(rw: &mut BufReader<S>, xmit_id0_names: bool) -> std::io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let mut buf = Vec::new();
+    write_varint(0, &mut buf);
+    if xmit_id0_names {
+        buf.push(0);
+    }
+    // 出向已多路复用（与 flist/文件数据同流）→ 必须打 MSG_DATA 帧
+    write_msg(rw, &buf).await
 }
 
 /// 文件内容 MD5（真机实证：rsync 整文件校验和 = `MD5(内容)`，**不含 seed** ✗ 见 golden r9）。
@@ -1290,8 +1419,10 @@ pub trait RsyncBackend: Send + Sync {
     async fn list(&self, req: ListRequest) -> Result<Vec<FlatEntry>, String>;
     /// 按命名空间路径读文件内容（下载 / 收端 delta basis / `--delete` 存在性）。
     async fn read(&self, path: &str) -> Result<Vec<u8>, String>;
-    /// 按命名空间路径写入文件（push）。
-    async fn write(&self, path: String, data: Vec<u8>) -> Result<(), String>;
+    /// 按命名空间路径写入文件（push ✗ `mtime` = 源端秒级时间，供快跳比对）。
+    async fn write(&self, path: String, data: Vec<u8>, mtime: i64) -> Result<(), String>;
+    /// 查目标条目的 `(size, 源 mtime)`；不存在 → `None`（push 快跳用）。
+    async fn stat(&self, path: &str) -> Result<Option<(u64, i64)>, String>;
     /// 删除命名空间路径（`--delete` 镜像 ✗ 目录含后代）。
     async fn delete(&self, paths: Vec<String>) -> Result<(), String>;
     /// 创建目录（push 空目录 ✗ 已存在视为成功）。
@@ -1441,6 +1572,17 @@ where
         let flist = encode_flist(&entries, negotiated);
         let total_size: u64 = entries.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
         write_msg(&mut rw, &flist).await?;
+        // `-o`/`-g` 且非 `--numeric-ids`：**本端为发送端** → flist 后紧跟 uid/gid 名列表
+        // （官方 `send_id_lists` ✗ 空表 = 不做 id 映射，值与名都不传）
+        if !args.numeric_ids {
+            let xmit_id0 = compat & CF_ID0_NAMES != 0;
+            if args.preserve_uid {
+                write_id_list(&mut rw, xmit_id0).await?;
+            }
+            if args.preserve_gid {
+                write_id_list(&mut rw, xmit_id0).await?;
+            }
+        }
 
         // ⑦ send_files：读接收端请求（ndx + iflags[+basis/xname] + sum_head[+块校验和]）→
         //    回显 + 全 literal 数据 + MD5；NDX_DONE 走相位机（3 入 → 2 出 + 终结）。
@@ -1601,7 +1743,44 @@ where
             }
             tracing::debug!(rules = filter_rules.len(), "rsync: 已解析 filter 规则");
         }
-        let mut entries = recv_file_list(&mut rw, &mut pending, negotiated, args.checksum).await?;
+        let mut entries = recv_file_list(
+            &mut rw,
+            &mut pending,
+            FlistOpts {
+                varint_flags: negotiated,
+                always_checksum: args.checksum,
+                preserve_uid: args.preserve_uid,
+                preserve_gid: args.preserve_gid,
+                preserve_devices: args.preserve_devices,
+                preserve_specials: args.preserve_specials,
+                preserve_atimes: args.preserve_atimes,
+            },
+        )
+        .await?;
+        // 诊断用：VFILES_RSYNC_DUMP_FLIST=1 时逐条打印收到的 flist（协议对齐排障）
+        if std::env::var("VFILES_RSYNC_DUMP_FLIST").is_ok() {
+            for (i, e) in entries.iter().enumerate() {
+                tracing::warn!(
+                    i,
+                    name = %e.name,
+                    is_dir = e.is_dir,
+                    size = e.size,
+                    mtime = e.mtime,
+                    mode = format!("{:o}", e.mode),
+                    "FLIST"
+                );
+            }
+        }
+        // `-o`/`-g` 且非 `--numeric-ids`：**本端为接收端** → flist 后紧跟 uid/gid 名列表（读走）
+        if !args.numeric_ids {
+            let xmit_id0 = compat & CF_ID0_NAMES != 0;
+            if args.preserve_uid {
+                skip_id_list(&mut rw, &mut pending, xmit_id0).await?;
+            }
+            if args.preserve_gid {
+                skip_id_list(&mut rw, &mut pending, xmit_id0).await?;
+            }
+        }
         sort_flist(&mut entries);
         let mut rp = (-1i32, 1i32); // read_ndx 差分态
         let mut wp = (-1i32, 1i32); // write_ndx 差分态
@@ -1626,9 +1805,21 @@ where
             if (e.mode & 0o170000) != 0o100000 {
                 continue;
             }
+            // 快跳（官方 generator `unchanged_file` 语义）：
+            // 默认 = size + 源 mtime 双等；`-c` = 整文件校验和；`-I` 全关。
+            let meta = backend.stat(&full).await.unwrap_or(None);
+            if !args.ignore_times
+                && !args.checksum
+                && let Some((dsize, dmtime)) = meta
+                && dsize == e.size
+                && dmtime == e.mtime
+            {
+                tracing::debug!(path = %full, "rsync：size+mtime 一致，跳过");
+                continue;
+            }
             // 取本地现有内容作 basis（存在 → 发块校验和请求真 delta；否则整文件）
             let basis = backend.read(&full).await.unwrap_or_default();
-            // `-c/--checksum`：整文件 MD5 一致 → 完全跳过（不请求 = 不传 ✗ 官方 generator 同语义）
+            // `-c/--checksum`：整文件 MD5 一致 → 完全跳过（不请求 = 不传）
             if let Some(sum) = &e.file_sum
                 && !basis.is_empty()
                 && md5_digest(&basis).as_slice() == sum.as_slice()
@@ -1697,7 +1888,7 @@ where
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             // 文件校验和（协商 md5 = 16B；读走以推进流）
             let _file_sum = data_take(&mut rw, &mut pending, 16).await?;
-            match backend.write(full.clone(), data).await {
+            match backend.write(full.clone(), data, e.mtime).await {
                 Ok(()) => transferred += 1,
                 Err(err) => tracing::warn!(path = %full, error = %err, "rsync push：写入失败"),
             }
@@ -1856,9 +2047,26 @@ pub async fn collect_flat(
                 .unwrap_or(0),
             Err(_) => 0,
         };
+        let sum_mtime = repo
+            .children_with_meta(
+                namespace,
+                &NormalizedPath::new(base.as_str().rsplit_once('/').map(|(p, _)| p).unwrap_or(""))
+                    .map_err(|e| format!("非法父路径: {e}"))?,
+            )
+            .await
+            .ok()
+            .and_then(|v| {
+                v.into_iter()
+                    .find(|c| c.entry.path_norm.as_str() == base.as_str())
+                    .and_then(|c| c.source_mtime)
+            });
         return Ok(vec![
-            FlatEntry::file(entry.name.clone(), size, entry.created_at.unix_timestamp())
-                .with_fs_path(entry.path_norm.as_str().to_string()),
+            FlatEntry::file(
+                entry.name.clone(),
+                size,
+                sum_mtime.unwrap_or_else(|| entry.created_at.unix_timestamp()),
+            )
+            .with_fs_path(entry.path_norm.as_str().to_string()),
         ]);
     }
     let base_mtime = base_entry
@@ -1890,7 +2098,9 @@ async fn walk(
             format!("{prefix}/{}", m.entry.name)
         };
         let fs_path = m.entry.path_norm.as_str().to_string();
-        let mtime = m.entry.created_at.unix_timestamp();
+        let mtime = m
+            .source_mtime
+            .unwrap_or_else(|| m.entry.created_at.unix_timestamp());
         if is_dir {
             out.push(FlatEntry::dir(name.clone(), mtime).with_fs_path(fs_path));
             if recursive {
@@ -1919,6 +2129,7 @@ mod tests {
     struct FakeBackend {
         entries: Vec<FlatEntry>,
         files: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+        mtimes: std::sync::Mutex<std::collections::HashMap<String, i64>>,
     }
 
     impl FakeBackend {
@@ -1926,6 +2137,7 @@ mod tests {
             Self {
                 entries,
                 files: std::sync::Mutex::new(files.into_iter().collect()),
+                mtimes: std::sync::Mutex::new(std::collections::HashMap::new()),
             }
         }
     }
@@ -1943,9 +2155,20 @@ mod tests {
                 .cloned()
                 .ok_or_else(|| "not found".to_string())
         }
-        async fn write(&self, path: String, data: Vec<u8>) -> Result<(), String> {
-            self.files.lock().unwrap().insert(path, data);
+        async fn write(&self, path: String, data: Vec<u8>, mtime: i64) -> Result<(), String> {
+            let mut f = self.files.lock().unwrap();
+            f.insert(path.clone(), data);
+            self.mtimes.lock().unwrap().insert(path, mtime);
             Ok(())
+        }
+        async fn stat(&self, path: &str) -> Result<Option<(u64, i64)>, String> {
+            let f = self.files.lock().unwrap();
+            Ok(f.get(path).map(|d| {
+                (
+                    d.len() as u64,
+                    *self.mtimes.lock().unwrap().get(path).unwrap_or(&0),
+                )
+            }))
         }
         async fn delete(&self, _paths: Vec<String>) -> Result<(), String> {
             Ok(())
@@ -2414,6 +2637,54 @@ mod tests {
         );
     }
 
+    /// `-a` 关键面：flist 的 uid/gid 字段 + 其后的 uid/gid 名列表（r18 真机 bug 回归）。
+    #[tokio::test]
+    async fn flist_owner_fields_and_id_list_parse() {
+        let mut body = Vec::new();
+        write_varint(1 << 2, &mut body); // xflags = EXTENDED_FLAGS（非 0 = 非终结；无 SAME_*）
+        body.push(5);
+        body.extend_from_slice(b"f.txt");
+        write_varlong(3, 5, &mut body); // size
+        write_varlong(4, 1_700_000_000, &mut body); // mtime
+        body.extend_from_slice(&0o100644u32.to_le_bytes());
+        write_varint(1000, &mut body); // uid
+        write_varint(1000, &mut body); // gid
+        write_varint(0, &mut body); // 终结 xflags
+        write_varint(0, &mut body); // io_error
+        // 两条 id 列表（uid/gid 对称）+ 终结（xmit_id0_names = varint(0)+byte(0)）
+        for _ in 0..2 {
+            write_varint(1000, &mut body);
+            body.push(4);
+            body.extend_from_slice(b"user");
+            write_varint(0, &mut body);
+            body.push(0);
+        }
+        let (mut c, srv) = tokio::io::duplex(64 * 1024);
+        c.write_all(&mux_frame(&body)).await.unwrap();
+        c.shutdown().await.unwrap();
+        let mut rw = BufReader::new(srv);
+        let mut pending = Vec::new();
+        let got = recv_file_list(
+            &mut rw,
+            &mut pending,
+            FlistOpts {
+                varint_flags: true,
+                preserve_uid: true,
+                preserve_gid: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("uid/gid 字段解析不得错位");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "f.txt");
+        assert_eq!(got[0].size, 5);
+        assert_eq!(got[0].mtime, 1_700_000_000);
+        assert_eq!(got[0].mode, 0o100644);
+        skip_id_list(&mut rw, &mut pending, true).await.unwrap();
+        skip_id_list(&mut rw, &mut pending, true).await.unwrap();
+    }
+
     /// filter 通配匹配（`*` 不跨 `/`、`**` 跨、`?`、字符类）。
     #[test]
     fn wildmatch_subset_matches_rsync() {
@@ -2583,9 +2854,16 @@ mod tests {
         c.shutdown().await.unwrap();
         let mut rw = BufReader::new(srv);
         let mut pending = Vec::new();
-        let got = recv_file_list(&mut rw, &mut pending, true, false)
-            .await
-            .unwrap();
+        let got = recv_file_list(
+            &mut rw,
+            &mut pending,
+            FlistOpts {
+                varint_flags: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
 
         // `-c`：普通文件末附 16B 整文件校验和（目录不附 ✗ 对端同语义）
         let file_sum = Some(md5_digest(b"hello-rsync").to_vec());
@@ -2601,7 +2879,17 @@ mod tests {
         c2.shutdown().await.unwrap();
         let mut rw2 = BufReader::new(srv2);
         let mut p2 = Vec::new();
-        let got2 = recv_file_list(&mut rw2, &mut p2, true, true).await.unwrap();
+        let got2 = recv_file_list(
+            &mut rw2,
+            &mut p2,
+            FlistOpts {
+                varint_flags: true,
+                always_checksum: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(got2.len(), with_sum.len(), "-c 条目数");
         for (a, b) in got2.iter().zip(with_sum.iter()) {
             assert_eq!(a.file_sum, b.file_sum, "-c 校验和");

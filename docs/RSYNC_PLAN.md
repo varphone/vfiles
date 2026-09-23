@@ -1,4 +1,38 @@
-# rsync 协议 daemon（… r16 filter 保护 → r17 空目录 → **r18 `-c` 校验和快跳**）
+# rsync 协议 daemon（… r17 空目录 → r18 `-c` 快跳 → **r19 `-a` 修复 + size+mtime 快跳**）
+
+## 状态（r19 末 · `rsync -a` 从「完全不可用」到「快跳 + mtime 保真」）
+
+- **修掉的真 bug**：`rsync -a`（**最常用调用**）此前**整条不可用**（此前各轮只测过 `-r`）：
+  | 缺口 | 修复 |
+  | --- | --- |
+  | flist 缺 uid/gid 字段 | `-o`/`-g` 时条目含 `varint uid`/`varint gid`（+ 名字随行 = 仅增量递归）→ 现按官方序解析 |
+  | 符号链接 target 位置错 | 官方序在 **uid/gid/rdev 之后**（我们此前紧跟 mode ✗ 无 `-o/-g` 时碰巧正确） |
+  | `XMIT_HLINKED` 未处理 | 读走 hlink ndx（`-H` 面 ✗ 防御性） |
+  | rdev / atime 未处理 | 设备/特殊文件 `varint30(major)+varint(minor)`；`-U` 的 varlong4 |
+  | **uid/gid 名列表** | flist 之后、传输之前：接收端**读走**（`recv_id_list`），发送端**发空表**（`send_id_lists` ✗ 出向须打 MSG_DATA 帧 = 真机 rc12 的坑） |
+- **size+mtime 默认快跳**（官方 generator `unchanged_file` 同义）：
+  - 新迁移 `0007_entry_source_mtime.sql` + `set_version_source_mtime`（**不动 `create_version` 签名** = 10 处调用零改）
+  - push 落盘时记录**源端 mtime**；`EntryChildMeta.source_mtime` 经 `children_with_meta`/`files_with_meta` 带出
+  - `RsyncBackend` 增 **`stat`**（连接级 `OnceCell` 缓存 = 一次 `files_with_meta` 覆盖全树 ✗ 非逐文件点查）
+  - 判定：`!-I && !-c && size 等 && 源 mtime 等` → 不发请求；`-I/--ignore-times` 全关
+- **下载侧 mtime 保真**：`collect_flat` 用 `source_mtime` 优先（回退 `created_at`）→ 客户端 `-a` 拉到**源端 mtime**，
+  二次下载客户端自行快跳。
+- **真机验收（`--stats` 数字）**：
+  | 场景 | 传输文件数 |
+  | --- | --- |
+  | `-a` 首推 | 3 |
+  | 无改动 `-a` 重推 | **0** |
+  | `-a -I` 重推 | 3 |
+  | `touch` 后 `-a` | 1 |
+  | 再无改动 `-a` | 0 |
+  | `-a` 拉回后再 `-a` 下载 | **0**（mtime 双侧 1790163085 相等 ✓） |
+  | 同秒同尺寸改内容（rsync 经典界） | 0（**与官方一致**）· `-c` 则 1 ✓ |
+  | 跨秒改动 | 1，随后 0 ✓ |
+  → 拉回 `diff -r` / `find` 结构 + 内容**全同**。
+- **门禁**：`cargo test -p vfiles-rsync` **23/23**（新增 uid/gid + id-list 真机帧回归单测）×
+  workspace 全绿 × clippy 归零 × fmt × build。诊断开关：`VFILES_RSYNC_DUMP_FLIST=1` 打印收到的 flist。
+- **债**：符号链接/设备**落地**（已解析但 domain 无对应条目类型）· `.rsync-filter` per-dir · basis 流式 ·
+  `--numeric-ids` 的 id 映射（现一律不映射）。
 
 ## 状态（r18 末 · `-c/--checksum` 快跳 = 未变文件 0 传输）
 

@@ -1845,6 +1845,8 @@ struct RepoBackend {
     upload: RsyncUploadService,
     namespace: vfiles_domain::NamespaceId,
     owner: vfiles_domain::UserId,
+    /// 连接级 stat 缓存（一次 `files_with_meta` 覆盖全树 ✗ 避免逐文件点查）。
+    stat_cache: tokio::sync::OnceCell<std::collections::HashMap<String, (u64, i64)>>,
 }
 
 #[async_trait::async_trait]
@@ -1866,7 +1868,35 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
         Ok(content.bytes)
     }
 
-    async fn write(&self, path: String, data: Vec<u8>) -> Result<(), String> {
+    async fn stat(&self, path: &str) -> Result<Option<(u64, i64)>, String> {
+        let map = self
+            .stat_cache
+            .get_or_try_init(|| async {
+                let metas = self
+                    .repo
+                    .files_with_meta(&self.namespace)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok::<_, String>(
+                    metas
+                        .into_iter()
+                        .map(|m| {
+                            (
+                                m.entry.path_norm.as_str().to_string(),
+                                (
+                                    m.size_bytes.unwrap_or(0),
+                                    m.source_mtime.unwrap_or(i64::MIN),
+                                ),
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .await?;
+        Ok(map.get(path).copied())
+    }
+
+    async fn write(&self, path: String, data: Vec<u8>, mtime: i64) -> Result<(), String> {
         let (parent_str, filename) = match path.rsplit_once('/') {
             Some((d, n)) => (d.to_string(), n.to_string()),
             None => (String::new(), path.clone()),
@@ -1890,7 +1920,8 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
             )
             .await
             .map_err(|e| e.to_string())?;
-        self.upload
+        let result = self
+            .upload
             .complete_upload_from_stream(
                 &session.upload_id,
                 None,
@@ -1899,6 +1930,14 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
             )
             .await
             .map_err(|e| e.to_string())?;
+        // 记录源端 mtime（rsync `-a` size+mtime 快跳；失败仅告警 = 退化为每次传输）
+        if let Err(e) = self
+            .repo
+            .set_version_source_mtime(&result.version.id, mtime)
+            .await
+        {
+            tracing::warn!(error = %e, path = %path, "rsync：记录源 mtime 失败");
+        }
         Ok(())
     }
 
@@ -1990,6 +2029,7 @@ fn build_and_spawn_rsync(
                                         upload,
                                         namespace: ns,
                                         owner,
+                                        stat_cache: tokio::sync::OnceCell::new(),
                                     };
                                     let res = vfiles_rsync::handle_conn(
                                         stream,
