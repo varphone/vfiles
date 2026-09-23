@@ -6,6 +6,7 @@
   已知长度仍校验实际字节数，未知长度按实际流长提交。流错误或提交失败会清理上传会话。
 - 上传服务增加未知总长流式会话和提交入口，供 chunked PUT 等传输使用。
 - multipart `UploadPart` 仍将单个 part 聚合为内存 `Vec`，后续需扩展 part 存储接口以实现真正的大分片流式写入。
+- `CompleteMultipartUpload` 现在要求完整、严格递增的 partNumber/ETag 清单，必须与已存分片序列一致，并逐个校验分片 MD5 ETag。
 - `ListMultipartUploads` 由 `UploadStore` 一次扫描会话目录，按 key / upload id 保序，
   只保留 `max-uploads + 1` 个结果；delimiter 的 `CommonPrefixes` 在存储扫描中去重，
   避免原先把全部会话加载进内存，也避免逐页请求重复扫描目录。

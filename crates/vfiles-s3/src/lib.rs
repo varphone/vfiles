@@ -1918,39 +1918,52 @@ impl S3 for VfilesS3 {
             .list_upload_parts(&upload_id)
             .await
             .map_err(dom_err)?;
-        let have: std::collections::BTreeSet<i32> =
-            stored.iter().map(|p| p.part_index as i32 + 1).collect();
-        if have.is_empty() {
+        if stored.is_empty() {
             return Err(s3s::s3_error!(InvalidPart, "no parts uploaded"));
         }
-        if let Some(mpu) = &input.multipart_upload {
-            let listed: std::collections::BTreeSet<i32> = mpu
-                .parts
-                .iter()
-                .flatten()
-                .filter_map(|p| p.part_number)
-                .collect();
-            // 拼接按全部已存分片进行 ✗ 列出集合必须与已存集合一致（否则内容会静默错位）
-            if listed != have {
-                return Err(s3s::s3_error!(
-                    InvalidPart,
-                    "the listed parts do not match the uploaded parts"
-                ));
-            }
-            // ETag 校验（客户端回显的 part ETag = MD5(分片) ✗ 不符即拒）
-            for p in mpu.parts.iter().flatten() {
-                let Some(n) = p.part_number else { continue };
-                let Some(etag) = &p.e_tag else { continue };
-                match self
-                    .upload
-                    .read_upload_part(&upload_id, (n - 1) as u32)
-                    .await
-                    .map_err(dom_err)?
-                {
-                    Some(bytes) if md5_hex(&bytes) == etag.value() => {}
-                    _ => {
-                        return Err(s3s::s3_error!(InvalidPart, "part {} etag mismatch", n));
-                    }
+        let mpu = input
+            .multipart_upload
+            .as_ref()
+            .ok_or_else(|| s3s::s3_error!(InvalidPart, "completed part list is required"))?;
+        let mut listed = Vec::with_capacity(mpu.parts.iter().flatten().count());
+        for part in mpu.parts.iter().flatten() {
+            let number = part
+                .part_number
+                .ok_or_else(|| s3s::s3_error!(InvalidPart, "part number is required"))?;
+            let etag = part
+                .e_tag
+                .as_ref()
+                .ok_or_else(|| s3s::s3_error!(InvalidPart, "part ETag is required"))?;
+            listed.push((number, etag.value().to_string()));
+        }
+        if listed.is_empty() {
+            return Err(s3s::s3_error!(InvalidPart, "completed part list is empty"));
+        }
+        // S3 要求清单按 partNumber 严格递增；比较序列而非集合，拒绝重复号和乱序清单。
+        if listed.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
+            return Err(s3s::s3_error!(
+                InvalidPart,
+                "parts must be in ascending order"
+            ));
+        }
+        let expected: Vec<i32> = stored.iter().map(|p| p.part_index as i32 + 1).collect();
+        if listed.iter().map(|(number, _)| *number).collect::<Vec<_>>() != expected {
+            return Err(s3s::s3_error!(
+                InvalidPart,
+                "the listed parts do not match the uploaded parts"
+            ));
+        }
+        // 客户端必须回显每个 UploadPart 返回的 ETag，且值需与已存分片内容一致。
+        for (number, etag) in listed {
+            match self
+                .upload
+                .read_upload_part(&upload_id, (number - 1) as u32)
+                .await
+                .map_err(dom_err)?
+            {
+                Some(bytes) if md5_hex(&bytes) == etag => {}
+                _ => {
+                    return Err(s3s::s3_error!(InvalidPart, "part {} etag mismatch", number));
                 }
             }
         }
