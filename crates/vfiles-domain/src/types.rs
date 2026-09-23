@@ -283,6 +283,7 @@ pub struct UploadPartReceipt {
     pub size_bytes: ByteSize,
     pub md5_hex: String,
     pub sha256_hex: String,
+    pub crc32: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -2649,6 +2649,7 @@ where
         max_size: Option<u64>,
         expected_md5: Option<[u8; 16]>,
         expected_sha256: Option<[u8; 32]>,
+        expected_crc32: Option<u32>,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt> {
         let session = self.upload_store.get_upload_session(upload_id).await?;
@@ -2670,6 +2671,7 @@ where
                 max_size,
                 expected_md5,
                 expected_sha256,
+                expected_crc32,
                 reader,
             )
             .await
@@ -2687,8 +2689,16 @@ where
         }
 
         let upload_stream = self.upload_store.assemble_upload_stream(upload_id).await?;
-        self.commit_upload_stream(session, upload_stream, expected_sha256, None, message, true)
-            .await
+        self.commit_upload_stream(
+            session,
+            upload_stream,
+            expected_sha256,
+            None,
+            None,
+            message,
+            true,
+        )
+        .await
     }
 
     pub async fn complete_upload_from_stream(
@@ -2702,6 +2712,7 @@ where
             upload_id,
             expected_sha256,
             None,
+            None,
             message,
             upload_stream,
         )
@@ -2713,6 +2724,7 @@ where
         upload_id: &UploadId,
         expected_sha256: Option<&str>,
         expected_md5: Option<[u8; 16]>,
+        expected_crc32: Option<u32>,
         message: Option<&str>,
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadCompleteResponse> {
@@ -2726,6 +2738,7 @@ where
             upload_stream,
             expected_sha256,
             expected_md5,
+            expected_crc32,
             message,
             true,
         )
@@ -2744,6 +2757,7 @@ where
             upload_id,
             expected_sha256,
             None,
+            None,
             message,
             upload_stream,
         )
@@ -2755,6 +2769,7 @@ where
         upload_id: &UploadId,
         expected_sha256: Option<&str>,
         expected_md5: Option<[u8; 16]>,
+        expected_crc32: Option<u32>,
         message: Option<&str>,
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadCompleteResponse> {
@@ -2768,6 +2783,7 @@ where
             upload_stream,
             expected_sha256,
             expected_md5,
+            expected_crc32,
             message,
             false,
         )
@@ -2807,7 +2823,7 @@ where
             return Err(DomainError::UploadExpired);
         }
         let upload_stream = self.upload_store.assemble_upload_stream(upload_id).await?;
-        self.commit_upload_stream(session, upload_stream, None, None, message, false)
+        self.commit_upload_stream(session, upload_stream, None, None, None, message, false)
             .await
     }
 
@@ -2896,12 +2912,13 @@ where
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         expected_sha256: Option<&str>,
         expected_md5: Option<[u8; 16]>,
+        expected_crc32: Option<u32>,
         message: Option<&str>,
         enforce_size: bool,
     ) -> DomainResult<UploadCompleteResponse> {
         let (blob_id, content_hash, created_blob, stored_size) = self
             .blob_store
-            .store_blob_stream(upload_stream, expected_sha256, expected_md5)
+            .store_blob_stream(upload_stream, expected_sha256, expected_md5, expected_crc32)
             .await?;
 
         if enforce_size && stored_size != session.declared_size.as_u64() {

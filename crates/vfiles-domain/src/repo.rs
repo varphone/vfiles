@@ -420,6 +420,7 @@ pub trait BlobStore {
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         expected_sha256: Option<&str>,
         expected_md5: Option<[u8; 16]>,
+        expected_crc32: Option<u32>,
     ) -> DomainResult<(BlobId, ContentHash, bool, u64)>;
     async fn get_blob(&self, blob_id: &BlobId) -> DomainResult<Option<Vec<u8>>>;
     async fn get_blob_stream(
@@ -473,6 +474,7 @@ pub trait UploadStore {
         max_size: Option<u64>,
         expected_md5: Option<[u8; 16]>,
         expected_sha256: Option<[u8; 32]>,
+        expected_crc32: Option<u32>,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt>;
     async fn get_upload_parts(&self, upload_id: &UploadId) -> DomainResult<Vec<UploadPart>>;
