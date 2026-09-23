@@ -1603,6 +1603,69 @@ pub fn build_delta_tokens(
     out
 }
 
+const DELTA_TOKEN_MEMORY_LIMIT: usize = 8 * 1024 * 1024;
+
+/// 小 delta 留在内存，大 delta 溢写临时文件，避免 literal-heavy 文件复制整份数据到 RAM。
+enum DeltaTokenSpool {
+    Memory(Vec<u8>),
+    File(tokio::fs::File),
+}
+
+impl DeltaTokenSpool {
+    fn new() -> Self {
+        Self::Memory(Vec::new())
+    }
+
+    async fn append(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        let current = std::mem::replace(self, Self::Memory(Vec::new()));
+        *self = match current {
+            Self::Memory(mut data)
+                if data
+                    .len()
+                    .checked_add(bytes.len())
+                    .is_some_and(|size| size <= DELTA_TOKEN_MEMORY_LIMIT) =>
+            {
+                data.extend_from_slice(bytes);
+                Self::Memory(data)
+            }
+            Self::Memory(data) => {
+                let file = tempfile::tempfile()?;
+                let mut file = tokio::fs::File::from_std(file);
+                file.write_all(&data).await?;
+                file.write_all(bytes).await?;
+                Self::File(file)
+            }
+            Self::File(mut file) => {
+                file.write_all(bytes).await?;
+                Self::File(file)
+            }
+        };
+        Ok(())
+    }
+
+    async fn send<S>(&mut self, rw: &mut BufReader<S>) -> std::io::Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        match self {
+            Self::Memory(data) => write_msg(rw, data).await,
+            Self::File(file) => {
+                use tokio::io::{AsyncSeekExt, SeekFrom};
+                file.seek(SeekFrom::Start(0)).await?;
+                write_msg_reader(rw, file).await
+            }
+        }
+    }
+}
+
+async fn spool_literal_tokens(spool: &mut DeltaTokenSpool, data: &[u8]) -> std::io::Result<()> {
+    for chunk in data.chunks(CHUNK_SIZE) {
+        spool.append(&(chunk.len() as i32).to_le_bytes()).await?;
+        spool.append(chunk).await?;
+    }
+    Ok(())
+}
+
 /// 流式构造 sender delta：仅保留一个块窗口与待发 literal 缓冲，避免同时驻留源文件和
 /// 完整 token 副本。返回的 token 字节仍需暂存至协议发送阶段。
 async fn build_delta_tokens_stream(
@@ -1612,20 +1675,14 @@ async fn build_delta_tokens_stream(
     blength: u32,
     seed: u32,
     s2length: usize,
-) -> std::io::Result<(Vec<u8>, [u8; 16])> {
+) -> std::io::Result<(DeltaTokenSpool, [u8; 16])> {
     use md5::{Digest, Md5};
     use std::collections::{HashMap, VecDeque};
 
     let mut input = tokio::io::BufReader::with_capacity(64 * 1024, reader);
     let mut digest = Md5::new();
-    let mut tokens = Vec::new();
+    let mut tokens = DeltaTokenSpool::new();
     let mut literal = Vec::with_capacity(CHUNK_SIZE);
-    let emit_pending = |tokens: &mut Vec<u8>, literal: &mut Vec<u8>| {
-        if !literal.is_empty() {
-            emit_literal(tokens, literal);
-            literal.clear();
-        }
-    };
     let block_len = blength as usize;
 
     if blocks.is_empty() || block_len == 0 || len == 0 {
@@ -1635,11 +1692,11 @@ async fn build_delta_tokens_stream(
             let amount = remaining.min(buffer.len() as u64) as usize;
             input.read_exact(&mut buffer[..amount]).await?;
             digest.update(&buffer[..amount]);
-            tokens.extend_from_slice(&(amount as i32).to_le_bytes());
-            tokens.extend_from_slice(&buffer[..amount]);
+            tokens.append(&(amount as i32).to_le_bytes()).await?;
+            tokens.append(&buffer[..amount]).await?;
             remaining -= amount as u64;
         }
-        tokens.extend_from_slice(&0i32.to_le_bytes());
+        tokens.append(&0i32.to_le_bytes()).await?;
         return Ok((tokens, digest.finalize().into()));
     }
 
@@ -1679,8 +1736,9 @@ async fn build_delta_tokens_stream(
         }
 
         if let Some(i) = hit {
-            emit_pending(&mut tokens, &mut literal);
-            tokens.extend_from_slice(&(-(i as i32 + 1)).to_le_bytes());
+            spool_literal_tokens(&mut tokens, &literal).await?;
+            literal.clear();
+            tokens.append(&(-(i as i32 + 1)).to_le_bytes()).await?;
             let matched_len = blocks[i].len as usize;
             for _ in 0..matched_len {
                 window.pop_front();
@@ -1708,7 +1766,8 @@ async fn build_delta_tokens_stream(
         })?;
         literal.push(removed);
         if literal.len() == CHUNK_SIZE {
-            emit_pending(&mut tokens, &mut literal);
+            spool_literal_tokens(&mut tokens, &literal).await?;
+            literal.clear();
         }
         let more = offset + (window_len as u64) < len;
         s1 = s1.wrapping_sub(signed_byte(removed));
@@ -1726,8 +1785,8 @@ async fn build_delta_tokens_stream(
     }
 
     literal.extend(window);
-    emit_pending(&mut tokens, &mut literal);
-    tokens.extend_from_slice(&0i32.to_le_bytes());
+    spool_literal_tokens(&mut tokens, &literal).await?;
+    tokens.append(&0i32.to_le_bytes()).await?;
     Ok((tokens, digest.finalize().into()))
 }
 
@@ -1748,6 +1807,33 @@ where
             MPLEX_BASE + MSG_DATA,
         ]);
         frame.extend_from_slice(chunk);
+        writer.write_all(&frame).await?;
+    }
+    writer.flush().await
+}
+
+/// 将 staged 的 token 字节流分帧发送，不把临时文件重新聚合到内存。
+async fn write_msg_reader<S, R>(rw: &mut BufReader<S>, reader: &mut R) -> std::io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+    R: AsyncRead + Unpin + ?Sized,
+{
+    let writer = rw.get_mut();
+    let mut frame = Vec::with_capacity(64 * 1024 + 4);
+    let mut chunk = vec![0u8; 64 * 1024];
+    loop {
+        let size = reader.read(&mut chunk).await?;
+        if size == 0 {
+            break;
+        }
+        frame.clear();
+        frame.extend_from_slice(&[
+            (size & 0xFF) as u8,
+            ((size >> 8) & 0xFF) as u8,
+            ((size >> 16) & 0xFF) as u8,
+            MPLEX_BASE + MSG_DATA,
+        ]);
+        frame.extend_from_slice(&chunk[..size]);
         writer.write_all(&frame).await?;
     }
     writer.flush().await
@@ -2161,8 +2247,8 @@ where
                 let digest = write_literal_reader(&mut rw, &mut reader).await?;
                 write_msg(&mut rw, &digest).await?;
             }
-            if let Some(tokens) = delta_tokens {
-                write_msg(&mut rw, &tokens).await?;
+            if let Some(mut tokens) = delta_tokens {
+                tokens.send(&mut rw).await?;
             }
             if let Some(digest) = file_digest {
                 write_msg(&mut rw, &digest).await?; // 整文件校验和无 seed（真机实证）

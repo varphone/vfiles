@@ -8,7 +8,8 @@
 - push 收端的 basis 通过 seekable 流分块计算 checksum，并在匹配 token 时按偏移 seek 读取；
   不再把旧文件整体读入内存。重建结果已直接流入上传存储，不保留整份重建缓冲。
 - pull 发送端按流滚动扫描源文件，仅保留一个块窗口；源文件不再与完整 token 流同时驻留内存。
-- token 流直接解码到最终文件流，不保留完整 token 副本；协议块 checksum 表仍按文件块数占用内存。
+- token 流小于 8 MiB 留在内存，超出阈值溢写匿名临时文件，再以 64 KiB 帧缓冲发送；不把 token 文件重新读入内存。
+- 收端 token 流直接解码到最终文件流，不保留完整 token 副本；协议块 checksum 表仍按文件块数占用内存。
 
 ## 状态（r21 末 · `--filter=P/H` 类规则保护修复 ✗ 真机抓出的静默失保）
 
@@ -24,7 +25,7 @@
   | 修后 `--filter='P *.probe' --delete` | **`keep.probe` 存活** ✗ 非匹配的 `stray.txt`/`x.m` 正常删除 ✓ |
   | 对照：无 filter 同状态重推 | `keep.probe` 也被删（保护仅由规则生效） ✓ |
 - **门禁**：单测新增 flags 形解析 + pattern 含空格断言 × workspace 全绿 × clippy 0 × build。
-- **仍债**：per-dir merge（`:` 形，原始行已可 dump）· 符号链接/设备持久化 · 源端仍将完整 token 流暂存在内存 · uid/gid 存储。
+- **仍债**：per-dir merge（`:` 形，原始行已可 dump）· 符号链接/设备持久化 · sender delta 在发送前需完整生成（大流使用临时文件）· uid/gid 存储。
 
 ## 状态（r20 末 · 快跳判定三档齐全 = 官方 `unchanged_file` 全语义）
 
