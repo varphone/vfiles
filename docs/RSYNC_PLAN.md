@@ -1,4 +1,27 @@
-# rsync 协议 daemon（r9 列 → r10 取 → r11 delta → r12 push → **r13 secrets 认证 + 写门控**）
+# rsync 协议 daemon（r9 列 → r10 取 → r11 下载 delta → r12 push → r13 认证 → **r14 收端 delta**）
+
+## 状态（r14 末 · 收端 delta 落地 = 双向增量，推 3MiB 改 1KB 只传 1.7KB）
+
+- **实装**：push 请求不再恒发 `sum_head` 全零，而是**取本地现有内容作 basis**：
+  - `block_size(n)` = `sqrt` 夹取 `[700, 32KiB]`（与官方 `sum_sizes_sqroot` 同量级）
+  - `build_block_sums(basis, blength, seed, s2length=16)` = `count/remainder + (弱 sum1 int32 +
+    强 MD5(seed‖块)) × count` → 随请求发出
+  - 收端把 token 流**原样缓冲**后交 `apply_tokens(tokens, basis, blength, count, remainder)` 重建
+    （`>0` literal / `<0` 匹配 basis 块 `idx=-t-1` / `0` 终结）
+  - 无 basis（新文件）→ 仍全 literal（回归保持）
+- **真机验收（`--stats` 数字 = 证据）**：
+  | 场景 | Literal | Matched |
+  | --- | --- | --- |
+  | 首推（无 basis） | 3,145,728 | 0 |
+  | 改 1000B 重推 | **1,773** | **3,143,955（99.94%）** |
+  | 内容同重推（`-I`） | **0** | **2,097,152（100%）** |
+  | 多次/多文件递归（3 文件改 1 个） | **724** | **1,572,146** |
+  → 推后拉回 `cmp` / `diff -r` **全同**（重建逐字节正确 ✓）。
+- **门禁**：`cargo test -p vfiles-rsync` **20/20**（新增收端 delta 闭环单测：basis → 块校验和 →
+  发送端 token → `apply_tokens` 重建 == 新内容；含无 basis 全 literal 分支）· workspace 全绿 ·
+  clippy 归零 · fmt · build。
+- **债**：不比较 mtime/size（恒传输 = 等价 `-I`；100% matched 时近零带宽，故影响小）· 符号链接/设备/
+  空目录不落地 · `--delete` 未支持 · 收端 basis 全量入内存（大文件内存债）。
 
 ## 状态（r13 末 · 认证 + 写门控落地 = 匿名写窗口关闭）
 

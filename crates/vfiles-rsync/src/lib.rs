@@ -957,6 +957,88 @@ fn emit_literal(out: &mut Vec<u8>, data: &[u8]) {
     }
 }
 
+/// 接收端块大小启发（sqrt 夹取 ✗ 与官方 `sum_sizes_sqroot` 同量级；具体值双方经 sum_head 对齐）。
+fn block_size(n: usize) -> u32 {
+    if n == 0 {
+        return 0;
+    }
+    ((n as f64).sqrt() as u32).clamp(700, 32 * 1024)
+}
+
+/// 由本地 basis 生成块校验和（弱 sum1 int32 + 强 `MD5(seed‖块)` 前 `s2length` 字节）。
+/// 返回 `(count, remainder, 序列化块字节)` ✗ 与官方 `write_sum_head` + `sums[]` 同形。
+pub fn build_block_sums(
+    basis: &[u8],
+    blength: u32,
+    seed: u32,
+    s2length: usize,
+) -> (i32, u32, Vec<u8>) {
+    let b = blength as usize;
+    if b == 0 || basis.is_empty() {
+        return (0, 0, Vec::new());
+    }
+    let n = basis.len();
+    let count = n.div_ceil(b);
+    let remainder = (n % b) as u32;
+    let mut out = Vec::with_capacity(count * (4 + s2length));
+    for i in 0..count {
+        let start = i * b;
+        let end = (start + b).min(n);
+        let chunk = &basis[start..end];
+        let (s1, s2) = checksum1_signed(chunk);
+        let weak = (s1 & 0xffff) | (s2 << 16);
+        out.extend_from_slice(&(weak as i32).to_le_bytes());
+        out.extend_from_slice(&md5_seeded(seed, chunk)[..s2length]);
+    }
+    (count as i32, remainder, out)
+}
+
+/// 应用 token 流重建文件（接收端 ✗ literal 段 + basis 块匹配）。
+///
+/// token 编码：`>0` = 后随 n 字节 literal；`<0` = 匹配 basis 块 `idx = -t-1`；`0` = 终结。
+pub fn apply_tokens(
+    tokens: &[u8],
+    basis: &[u8],
+    blength: u32,
+    count: i32,
+    remainder: u32,
+) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    let b = blength as usize;
+    let mut i = 0usize;
+    while i + 4 <= tokens.len() {
+        let t = i32::from_le_bytes([tokens[i], tokens[i + 1], tokens[i + 2], tokens[i + 3]]);
+        i += 4;
+        if t == 0 {
+            return Ok(out);
+        }
+        if t > 0 {
+            let len = t as usize;
+            if i + len > tokens.len() {
+                return Err("literal 越界".to_string());
+            }
+            out.extend_from_slice(&tokens[i..i + len]);
+            i += len;
+        } else {
+            let idx = (-t - 1) as usize;
+            if b == 0 || idx >= count.max(0) as usize {
+                return Err("匹配索引越界".to_string());
+            }
+            let start = idx * b;
+            let len = if idx == count as usize - 1 && remainder != 0 {
+                remainder as usize
+            } else {
+                b
+            };
+            if start + len > basis.len() {
+                return Err("basis 越界".to_string());
+            }
+            out.extend_from_slice(&basis[start..start + len]);
+        }
+    }
+    Err("token 流未终结".to_string())
+}
+
 /// delta token 流（flist 块校验和 vs 本文件内容）：滚动弱校验和命中 → 强校验和确认 →
 /// 发匹配 token `-(idx+1)`；未命中区段作 literal 发送；末尾 `int32(0)` 终结。
 ///
@@ -1354,11 +1436,29 @@ where
             if e.is_dir || (e.mode & 0o170000) != 0o100000 || e.name == "." {
                 continue;
             }
-            // 请求整文件（无 basis：count/blength/s2length/remainder 全零）
+            let full = if base.is_empty() {
+                e.name.clone()
+            } else {
+                format!("{base}/{}", e.name)
+            };
+            // 取本地现有内容作 basis（存在 → 发块校验和请求真 delta；否则整文件）
+            let basis = read_file(&full).await.unwrap_or_default();
+            let s2len: usize = 16;
+            let (count, blength, remainder, block_bytes) = if basis.is_empty() {
+                (0i32, 0i32, 0i32, Vec::new())
+            } else {
+                let bl = block_size(basis.len());
+                let (c, rem, bytes) = build_block_sums(&basis, bl, seed, s2len);
+                (c, bl as i32, rem as i32, bytes)
+            };
             let mut req = Vec::new();
             write_ndx(i as i32, &mut wp.0, &mut wp.1, &mut req);
             req.extend_from_slice(&(ITEM_TRANSFER | ITEM_IS_NEW).to_le_bytes());
-            req.extend_from_slice(&[0u8; 16]);
+            req.extend_from_slice(&count.to_le_bytes());
+            req.extend_from_slice(&blength.to_le_bytes());
+            req.extend_from_slice(&(s2len as i32).to_le_bytes());
+            req.extend_from_slice(&remainder.to_le_bytes());
+            req.extend_from_slice(&block_bytes);
             write_msg(&mut rw, &req).await?;
 
             // 应答：ndx 回显 + iflags + sum_head 回显
@@ -1381,29 +1481,29 @@ where
             for _ in 0..4 {
                 let _ = data_int(&mut rw, &mut pending).await?;
             }
-            // token 流（count=0 → 客户端全 literal）
-            let mut data = Vec::new();
+            // 收 token 流（原样缓冲）→ `apply_tokens` 重建（literal + basis 块匹配）
+            let mut token_buf = Vec::new();
             loop {
                 let t = data_int(&mut rw, &mut pending).await?;
+                token_buf.extend_from_slice(&t.to_le_bytes());
                 if t == 0 {
                     break;
                 }
-                if t < 0 {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "rsync push: 非预期匹配 token（未提供 basis）",
-                    ));
+                if t > 0 {
+                    let chunk = data_take(&mut rw, &mut pending, t as usize).await?;
+                    token_buf.extend_from_slice(&chunk);
                 }
-                let chunk = data_take(&mut rw, &mut pending, t as usize).await?;
-                data.extend_from_slice(&chunk);
             }
+            let data = apply_tokens(
+                &token_buf,
+                &basis,
+                blength.max(0) as u32,
+                count,
+                remainder.max(0) as u32,
+            )
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             // 文件校验和（协商 md5 = 16B；读走以推进流）
             let _file_sum = data_take(&mut rw, &mut pending, 16).await?;
-            let full = if base.is_empty() {
-                e.name.clone()
-            } else {
-                format!("{base}/{}", e.name)
-            };
             match write_file(full.clone(), data).await {
                 Ok(()) => transferred += 1,
                 Err(err) => tracing::warn!(path = %full, error = %err, "rsync push：写入失败"),
@@ -2035,6 +2135,57 @@ mod tests {
                 0x7f, 0x72
             ]
         );
+    }
+
+    /// 收端 delta 闭环：basis → 块校验和 → 发送端 token → `apply_tokens` 重建 == 新内容。
+    #[test]
+    fn receive_delta_roundtrip() {
+        let seed = 0xDEAD_BEEFu32;
+        let basis: Vec<u8> = (0..20000u32).map(|i| (i % 251) as u8).collect();
+        let bl = block_size(basis.len());
+        let s2len = 16usize;
+        let (count, remainder, _blocks_bytes) = build_block_sums(&basis, bl, seed, s2len);
+
+        // 改动中部 137 字节（保持块对齐 = 只有跨界块失配）
+        let mut modified = basis.clone();
+        for i in 8000..8137 {
+            modified[i] = modified[i].wrapping_add(7);
+        }
+        let blocks: Vec<BlockSum> = {
+            let b = bl as usize;
+            (0..count as usize)
+                .map(|i| {
+                    let start = i * b;
+                    let len = if i == count as usize - 1 && remainder != 0 {
+                        remainder as usize
+                    } else {
+                        b
+                    };
+                    let chunk = &basis[start..start + len];
+                    let (s1, s2) = checksum1_signed(chunk);
+                    BlockSum {
+                        sum1: (s1 & 0xffff) | (s2 << 16),
+                        sum2: md5_seeded(seed, chunk)[..s2len].to_vec(),
+                        len: len as u32,
+                    }
+                })
+                .collect()
+        };
+        // 发送端视角：由 basis 块校验和编码 token 流
+        let tokens = build_delta_tokens(&modified, &blocks, bl, seed, s2len);
+        // 接收端视角：由 token 流 + basis 重建
+        let rebuilt = apply_tokens(&tokens, &basis, bl, count, remainder).expect("rebuild ok");
+        assert_eq!(rebuilt, modified, "收端 delta 重建逐字节同");
+        // basis 完全为空时纯 literal 亦通
+        let empty = apply_tokens(
+            &build_delta_tokens(&modified, &[], 0, seed, s2len),
+            &[],
+            0,
+            0,
+            0,
+        )
+        .unwrap();
+        assert_eq!(empty, modified, "无 basis 全 literal");
     }
 
     /// 认证响应值与真机转录逐字同（sha512 ✗ 客户端 `RSYNC_PASSWORD` 实测帧）。
