@@ -1587,21 +1587,37 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         .unwrap();
                 }
             };
-            // 可写集判定 + displayname 同父改名（多 set 顺序执行；名字含 / = 403 拒）
-            let mut results: Vec<(crate::response::PropOp, bool)> = Vec::new();
-            let mut rename_failed = false;
-            for op in ops {
-                match &op {
-                    crate::response::PropOp::Set { name, value }
-                        if crate::response::is_dav_property(name, "displayname")
-                            && !value.is_empty()
-                            && !value.contains('/')
-                            && !rename_failed =>
-                    {
-                        let parent = match path.as_str().rfind('/') {
-                            Some(i) => &path.as_str()[..i],
-                            None => "",
+            let mut results: Vec<(crate::response::PropOp, crate::response::PropPatchStatus)> =
+                Vec::with_capacity(ops.len());
+            let rename_index = ops.iter().position(|op| {
+                matches!(op, crate::response::PropOp::Set { name, .. }
+                    if crate::response::is_dav_property(name, "displayname"))
+            });
+
+            if let Some(index) = rename_index {
+                if ops.len() != 1 {
+                    // Rename uses a separate workspace transaction. Reject mixed
+                    // property patches as a unit until the stores share one transaction.
+                    results.extend(ops.into_iter().enumerate().map(|(i, op)| {
+                        let status = if i == index {
+                            crate::response::PropPatchStatus::Conflict
+                        } else {
+                            crate::response::PropPatchStatus::FailedDependency
                         };
+                        (op, status)
+                    }));
+                } else {
+                    let op = ops.into_iter().next().expect("one rename operation");
+                    let crate::response::PropOp::Set { value, .. } = &op else {
+                        unreachable!("rename index refers to a set operation")
+                    };
+                    let valid_name = !value.is_empty()
+                        && !value.contains('/')
+                        && vfiles_domain::types::NormalizedPath::new(value).is_ok();
+                    let status = if !valid_name {
+                        crate::response::PropPatchStatus::Forbidden
+                    } else {
+                        let parent = path.as_str().rfind('/').map_or("", |i| &path.as_str()[..i]);
                         let new_rel = if parent.is_empty() {
                             value.clone()
                         } else {
@@ -1610,82 +1626,78 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         match vfiles_domain::types::NormalizedPath::new(&new_rel) {
                             Ok(dest) => {
                                 match app_ref.write.move_entry(&ns, &path, &dest, &user.id).await {
-                                    Ok(()) => {
-                                        // 改名成功后后续 op 的 path 同步（顺序语义 ✓）
-                                        results.push((op, true));
-                                        // 注：单请求多 set 改名 = 后续仍以原 path 改
-                                        // （RFC 允许实现限制 ✗ 记档）
-                                    }
-                                    Err(err) => {
-                                        tracing::warn!(error = %err, "PROPPATCH displayname 改名失败（403）");
-                                        results.push((op, false));
-                                        rename_failed = true;
+                                    Ok(()) => crate::response::PropPatchStatus::Ok,
+                                    Err(error) => {
+                                        tracing::warn!(%error, "WebDAV PROPPATCH displayname 改名失败");
+                                        crate::response::PropPatchStatus::Forbidden
                                     }
                                 }
                             }
-                            Err(_) => {
-                                results.push((op, false));
-                                rename_failed = true;
+                            Err(_) => crate::response::PropPatchStatus::Forbidden,
+                        }
+                    };
+                    results.push((op, status));
+                }
+            } else if let Some(failed_index) = ops.iter().position(|op| match op {
+                crate::response::PropOp::Set { name, .. } => {
+                    crate::response::is_predefined_readonly(name)
+                }
+                crate::response::PropOp::Remove { name } => {
+                    crate::response::is_predefined_readonly(name)
+                        || crate::response::is_dav_property(name, "displayname")
+                }
+            }) {
+                results.extend(ops.into_iter().enumerate().map(|(i, op)| {
+                    let status = if i == failed_index {
+                        crate::response::PropPatchStatus::Forbidden
+                    } else {
+                        crate::response::PropPatchStatus::FailedDependency
+                    };
+                    (op, status)
+                }));
+            } else {
+                let entry = match app_ref.entry_repo.find_by_path(&ns, &path).await {
+                    Ok(Some(entry)) => entry,
+                    Ok(None) => {
+                        return Response::builder()
+                            .status(StatusCode::NOT_FOUND)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, path = path.as_str(), "WebDAV PROPPATCH 资源查询失败");
+                        return internal_error();
+                    }
+                };
+                let changes: Vec<vfiles_domain::EntryPropertyChange> = ops
+                    .iter()
+                    .map(|op| match op {
+                        crate::response::PropOp::Set { name, value } => {
+                            vfiles_domain::EntryPropertyChange::Set {
+                                name: name.clone(),
+                                value: value.clone(),
                             }
                         }
-                    }
-                    crate::response::PropOp::Remove { name } => {
-                        // r13 remove：自定义存在 → 删 200 / 不存在 → 403（r6 恒 403 升级）
-                        let removed = if crate::response::is_predefined_readonly(name) {
-                            false
-                        } else {
-                            match app_ref
-                                .entry_repo
-                                .find_by_path(&ns, &path)
-                                .await
-                                .ok()
-                                .flatten()
-                            {
-                                Some(e) => {
-                                    let props = app_ref
-                                        .entry_repo
-                                        .list_entry_properties(&[e.id])
-                                        .await
-                                        .unwrap_or_default();
-                                    let exists = props
-                                        .get(&e.id)
-                                        .map(|v| v.iter().any(|(n, _)| n == name))
-                                        .unwrap_or(false);
-                                    exists
-                                        && app_ref
-                                            .entry_repo
-                                            .remove_entry_property(&e.id, name)
-                                            .await
-                                            .is_ok()
-                                }
-                                None => false,
-                            }
-                        };
-                        results.push((op, removed));
-                    }
-                    crate::response::PropOp::Set { name, value }
-                        if !crate::response::is_dav_property(name, "displayname")
-                            && !crate::response::is_predefined_readonly(name)
-                            && !value.is_empty() =>
-                    {
-                        // r13 自定义 k/v 写（非预定义只读集 ✗ 预定义 → 兜底 403 ✓）
-                        let ok = match app_ref
-                            .entry_repo
-                            .find_by_path(&ns, &path)
-                            .await
-                            .ok()
-                            .flatten()
-                        {
-                            Some(e) => app_ref
-                                .entry_repo
-                                .set_entry_property(&e.id, name, value)
-                                .await
-                                .is_ok(),
-                            None => false,
-                        };
-                        results.push((op, ok));
-                    }
-                    _ => results.push((op, false)),
+                        crate::response::PropOp::Remove { name } => {
+                            vfiles_domain::EntryPropertyChange::Remove { name: name.clone() }
+                        }
+                    })
+                    .collect();
+                if let Err(error) = app_ref
+                    .entry_repo
+                    .apply_entry_property_changes(&entry.id, &changes)
+                    .await
+                {
+                    tracing::error!(%error, path = path.as_str(), "WebDAV PROPPATCH 事务失败");
+                    results.extend(
+                        ops.into_iter()
+                            .map(|op| (op, crate::response::PropPatchStatus::InternalServerError)),
+                    );
+                } else {
+                    results.extend(
+                        ops.into_iter()
+                            .map(|op| (op, crate::response::PropPatchStatus::Ok)),
+                    );
                 }
             }
             if let Some(cb) = &app_ref.audit {
@@ -1693,7 +1705,14 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     user_id: Some(user.id),
                     username: user.username.as_str().to_string(),
                     action: "webdav.proppatch".to_string(),
-                    result: vfiles_domain::types::AuditResult::Success,
+                    result: if results
+                        .iter()
+                        .all(|(_, status)| *status == crate::response::PropPatchStatus::Ok)
+                    {
+                        vfiles_domain::types::AuditResult::Success
+                    } else {
+                        vfiles_domain::types::AuditResult::Failure
+                    },
                     target: Some(path.as_str().to_string()),
                     ip: None,
                     user_agent: req

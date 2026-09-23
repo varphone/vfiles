@@ -181,6 +181,12 @@ pub trait SystemSettingsRepo {
     async fn is_bootstrapped(&self) -> DomainResult<bool>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EntryPropertyChange {
+    Set { name: String, value: String },
+    Remove { name: String },
+}
+
 #[async_trait::async_trait]
 pub trait EntryRepo {
     async fn find_by_id(&self, entry_id: &EntryId) -> DomainResult<Entry>;
@@ -222,6 +228,17 @@ pub trait EntryRepo {
         _name: &str,
     ) -> DomainResult<()> {
         Ok(())
+    }
+
+    /// Apply an ordered property patch as one atomic operation when supported.
+    async fn apply_entry_property_changes(
+        &self,
+        _entry_id: &crate::types::EntryId,
+        _changes: &[EntryPropertyChange],
+    ) -> DomainResult<()> {
+        Err(DomainError::Internal {
+            message: "Atomic entry property patches are not supported by this repository".into(),
+        })
     }
 
     /// 按 entry 批量拉属性（PROPFIND children 一次 ✗ r4 批量式复用 ✓）。

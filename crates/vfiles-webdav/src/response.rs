@@ -117,6 +117,15 @@ pub enum PropOp {
     Remove { name: String },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropPatchStatus {
+    Ok,
+    Forbidden,
+    Conflict,
+    FailedDependency,
+    InternalServerError,
+}
+
 /// 解析 propertyupdate 请求体（roxmltree ✗ 按文档序收集 set/remove 操作）。
 pub fn parse_propertyupdate(body: &str) -> Result<Vec<PropOp>, ()> {
     if body.trim().is_empty() {
@@ -161,8 +170,8 @@ pub fn parse_propertyupdate(body: &str) -> Result<Vec<PropOp>, ()> {
     Ok(ops)
 }
 
-/// PROPPATCH 207 响应（每操作一条 propstat：ok → 200 / 拒 → 403 ✗ RFC §9.2.1 ✓）。
-pub fn proppatch_multistatus(href: &str, results: &[(PropOp, bool)]) -> String {
+/// PROPPATCH 207 响应（每操作一条 propstat，包含依赖失败状态）。
+pub fn proppatch_multistatus(href: &str, results: &[(PropOp, PropPatchStatus)]) -> String {
     let mut out = String::from(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:">"#,
@@ -170,7 +179,7 @@ pub fn proppatch_multistatus(href: &str, results: &[(PropOp, bool)]) -> String {
     out.push_str("\n<D:response><D:href>");
     out.push_str(&escape_xml(href));
     out.push_str("</D:href>");
-    for (op, ok) in results {
+    for (op, status) in results {
         match op {
             PropOp::Set { name, .. } | PropOp::Remove { name } => {
                 out.push_str("<D:propstat><D:prop>");
@@ -178,7 +187,13 @@ pub fn proppatch_multistatus(href: &str, results: &[(PropOp, bool)]) -> String {
             }
         }
         out.push_str("</D:prop><D:status>HTTP/1.1 ");
-        out.push_str(if *ok { "200 OK" } else { "403 Forbidden" });
+        out.push_str(match status {
+            PropPatchStatus::Ok => "200 OK",
+            PropPatchStatus::Forbidden => "403 Forbidden",
+            PropPatchStatus::Conflict => "409 Conflict",
+            PropPatchStatus::FailedDependency => "424 Failed Dependency",
+            PropPatchStatus::InternalServerError => "500 Internal Server Error",
+        });
         out.push_str("</D:status></D:propstat>");
     }
     out.push_str("</D:response>\n</D:multistatus>");
@@ -577,7 +592,8 @@ mod propmode_tests {
 #[cfg(test)]
 mod proppatch_tests {
     use super::{
-        PropOp, is_dav_property, parse_propertyupdate, property_key, proppatch_multistatus,
+        PropOp, PropPatchStatus, is_dav_property, parse_propertyupdate, property_key,
+        proppatch_multistatus,
     };
 
     #[test]
@@ -619,14 +635,14 @@ mod proppatch_tests {
                         name: "displayname".into(),
                         value: "x".into(),
                     },
-                    true,
+                    PropPatchStatus::Ok,
                 ),
                 (
                     PropOp::Set {
                         name: "getetag".into(),
                         value: "y".into(),
                     },
-                    false,
+                    PropPatchStatus::Forbidden,
                 ),
             ],
         );
@@ -650,7 +666,7 @@ mod proppatch_tests {
         );
         assert!(!is_dav_property(name, "displayname"));
 
-        let xml = proppatch_multistatus("/f.txt", &[(ops[0].clone(), true)]);
+        let xml = proppatch_multistatus("/f.txt", &[(ops[0].clone(), PropPatchStatus::Ok)]);
         assert!(xml.contains("<X:displayname xmlns:X=\"urn:example:props\"/>"));
     }
 }

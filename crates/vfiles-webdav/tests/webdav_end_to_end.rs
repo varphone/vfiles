@@ -301,6 +301,142 @@ async fn options_advertises_and_propfind_needs_auth() {
             .contains("<X:displayname xmlns:X=\"urn:example:y\">extension Y</X:displayname>")
     );
 
+    let rejected_patch = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPPATCH")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propertyupdate xmlns:D="DAV:" xmlns:X="urn:example:x">
+                        <D:set><D:prop><X:rollback>must not persist</X:rollback></D:prop></D:set>
+                        <D:set><D:prop><D:getetag>protected</D:getetag></D:prop></D:set>
+                    </D:propertyupdate>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected_patch.status(), 207);
+    let rejected_body = String::from_utf8(
+        axum::body::to_bytes(rejected_patch.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(rejected_body.contains("424 Failed Dependency"));
+    assert!(rejected_body.contains("403 Forbidden"));
+
+    let rollback_check = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propfind xmlns:D="DAV:" xmlns:X="urn:example:x"><D:prop><X:rollback/></D:prop></D:propfind>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let rollback_body = String::from_utf8(
+        axum::body::to_bytes(rollback_check.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(rollback_body.contains("404 Not Found"));
+    assert!(!rollback_body.contains("must not persist"));
+
+    let remove_missing = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPPATCH")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propertyupdate xmlns:D="DAV:" xmlns:X="urn:example:x"><D:remove><D:prop><X:absent/></D:prop></D:remove></D:propertyupdate>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(remove_missing.status(), 207);
+    let remove_body = String::from_utf8(
+        axum::body::to_bytes(remove_missing.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(remove_body.contains("200 OK"));
+    assert!(!remove_body.contains("403 Forbidden"));
+
+    let mixed_rename = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPPATCH")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propertyupdate xmlns:D="DAV:" xmlns:X="urn:example:x">
+                        <D:set><D:prop><X:rejected>must not persist</X:rejected></D:prop></D:set>
+                        <D:set><D:prop><D:displayname>renamed.txt</D:displayname></D:prop></D:set>
+                    </D:propertyupdate>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mixed_rename.status(), 207);
+    let mixed_rename_body = String::from_utf8(
+        axum::body::to_bytes(mixed_rename.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(mixed_rename_body.contains("409 Conflict"));
+    assert!(mixed_rename_body.contains("424 Failed Dependency"));
+
+    let mixed_rename_check = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propfind xmlns:D="DAV:" xmlns:X="urn:example:x"><D:prop><D:displayname/><X:rejected/></D:prop></D:propfind>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let mixed_check_body = String::from_utf8(
+        axum::body::to_bytes(mixed_rename_check.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(mixed_check_body.contains("<D:displayname>persist.txt</D:displayname>"));
+    assert!(mixed_check_body.contains("404 Not Found"));
+
     // A separate WebDAV application instance sees the same SQLite-backed lock.
     let lock_body = r#"<?xml version="1.0"?>
         <D:lockinfo xmlns:D="DAV:">

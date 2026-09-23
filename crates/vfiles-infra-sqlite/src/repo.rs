@@ -1196,6 +1196,48 @@ impl EntryRepo for SqliteEntryRepo {
         rows.into_iter().map(parse_entry_row).collect()
     }
 
+    async fn apply_entry_property_changes(
+        &self,
+        entry_id: &vfiles_domain::types::EntryId,
+        changes: &[vfiles_domain::EntryPropertyChange],
+    ) -> DomainResult<()> {
+        let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to begin entry property patch: {e}"),
+        })?;
+        for change in changes {
+            match change {
+                vfiles_domain::EntryPropertyChange::Set { name, value } => {
+                    sqlx::query(
+                        "INSERT INTO entry_properties (entry_id, prop_name, prop_value, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(entry_id, prop_name) DO UPDATE SET prop_value = excluded.prop_value, updated_at = excluded.updated_at",
+                    )
+                    .bind(entry_id.to_string())
+                    .bind(name)
+                    .bind(value)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to set entry property in patch: {e}"),
+                    })?;
+                }
+                vfiles_domain::EntryPropertyChange::Remove { name } => {
+                    sqlx::query(
+                        "DELETE FROM entry_properties WHERE entry_id = ? AND prop_name = ?",
+                    )
+                    .bind(entry_id.to_string())
+                    .bind(name)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to remove entry property in patch: {e}"),
+                    })?;
+                }
+            }
+        }
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to commit entry property patch: {e}"),
+        })
+    }
+
     async fn set_entry_property(
         &self,
         entry_id: &vfiles_domain::types::EntryId,
@@ -7022,6 +7064,58 @@ mod webdav_lock_repo_tests {
     use super::*;
     use crate::{SqliteMigrations, SqlitePoolFactory};
     use camino::Utf8PathBuf;
+
+    #[tokio::test]
+    async fn entry_property_patch_rolls_back_all_changes_on_storage_error() {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-property-patch-rollback-test-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        sqlx::query(
+            "CREATE TABLE entry_properties (entry_id TEXT, prop_name TEXT, prop_value TEXT, updated_at TEXT, PRIMARY KEY(entry_id, prop_name))",
+        )
+        .execute(&pool)
+        .await
+        .expect("property table should be created");
+        sqlx::query(
+            "CREATE TRIGGER reject_property BEFORE INSERT ON entry_properties WHEN NEW.prop_name = 'fail' BEGIN SELECT RAISE(ABORT, 'injected failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .expect("failure trigger should be created");
+
+        let entry_id = EntryId::new();
+        let repo = SqliteEntryRepo::new(pool.clone());
+        let result = repo
+            .apply_entry_property_changes(
+                &entry_id,
+                &[
+                    EntryPropertyChange::Set {
+                        name: "first".to_string(),
+                        value: "value".to_string(),
+                    },
+                    EntryPropertyChange::Set {
+                        name: "fail".to_string(),
+                        value: "error".to_string(),
+                    },
+                ],
+            )
+            .await;
+        assert!(result.is_err());
+
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entry_properties")
+            .fetch_one(&pool)
+            .await
+            .expect("property count should be queryable");
+        assert_eq!(remaining, 0, "failed patches must roll back earlier writes");
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
 
     #[tokio::test]
     async fn property_namespace_migration_preserves_legacy_dav_name() {
