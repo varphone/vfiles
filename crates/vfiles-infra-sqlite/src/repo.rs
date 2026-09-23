@@ -3236,6 +3236,7 @@ impl BlobStore for FsBlobStore {
         expected_sha256: Option<&str>,
         expected_md5: Option<[u8; 16]>,
         expected_crc32: Option<u32>,
+        expected_crc32c: Option<u32>,
     ) -> DomainResult<(BlobId, ContentHash, bool, u64)> {
         use md5::{Digest as Md5Digest, Md5};
 
@@ -3255,6 +3256,7 @@ impl BlobStore for FsBlobStore {
         let mut hasher = Sha256::new();
         let mut md5 = <Md5 as Md5Digest>::new();
         let mut crc32 = crc32fast::Hasher::new();
+        let mut crc32c = 0_u32;
         let mut total_size = 0_u64;
         let mut buffer = [0_u8; 64 * 1024];
 
@@ -3275,6 +3277,7 @@ impl BlobStore for FsBlobStore {
                 hasher.update(&buffer[..read]);
                 Md5Digest::update(&mut md5, &buffer[..read]);
                 crc32.update(&buffer[..read]);
+                crc32c = crc32c::crc32c_append(crc32c, &buffer[..read]);
                 total_size += read as u64;
                 temp_file
                     .write_all(&buffer[..read])
@@ -3305,6 +3308,10 @@ impl BlobStore for FsBlobStore {
             return Err(DomainError::BlobChecksumMismatch);
         }
         if expected_crc32.is_some_and(|expected| expected != crc32.finalize()) {
+            let _ = fs::remove_file(&temp_path).await;
+            return Err(DomainError::BlobChecksumMismatch);
+        }
+        if expected_crc32c.is_some_and(|expected| expected != crc32c) {
             let _ = fs::remove_file(&temp_path).await;
             return Err(DomainError::BlobChecksumMismatch);
         }
@@ -3840,6 +3847,7 @@ impl UploadStore for FsUploadStore {
         expected_md5: Option<[u8; 16]>,
         expected_sha256: Option<[u8; 32]>,
         expected_crc32: Option<u32>,
+        expected_crc32c: Option<u32>,
         mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt> {
         use md5::{Digest as Md5Digest, Md5};
@@ -3860,6 +3868,7 @@ impl UploadStore for FsUploadStore {
             let mut md5 = <Md5 as Md5Digest>::new();
             let mut sha256 = Sha256::new();
             let mut crc32 = crc32fast::Hasher::new();
+            let mut crc32c = 0_u32;
             let mut size = 0u64;
             let mut buffer = [0u8; 64 * 1024];
             loop {
@@ -3883,6 +3892,7 @@ impl UploadStore for FsUploadStore {
                 Md5Digest::update(&mut md5, &buffer[..read]);
                 sha256.update(&buffer[..read]);
                 crc32.update(&buffer[..read]);
+                crc32c = crc32c::crc32c_append(crc32c, &buffer[..read]);
                 file.write_all(&buffer[..read])
                     .await
                     .map_err(|e| DomainError::Internal {
@@ -3906,6 +3916,9 @@ impl UploadStore for FsUploadStore {
             }
             let crc32_digest = crc32.finalize();
             if expected_crc32.is_some_and(|expected| expected != crc32_digest) {
+                return Err(DomainError::UploadPartChecksumMismatch);
+            }
+            if expected_crc32c.is_some_and(|expected| expected != crc32c) {
                 return Err(DomainError::UploadPartChecksumMismatch);
             }
             #[cfg(windows)]
@@ -5338,7 +5351,13 @@ mod blob_stream_tests {
         let store = FsBlobStore::new(pool, storage_root.join("blobs"));
 
         let result = store
-            .store_blob_stream(Box::new(FailingReader { emitted: false }), None, None, None)
+            .store_blob_stream(
+                Box::new(FailingReader { emitted: false }),
+                None,
+                None,
+                None,
+                None,
+            )
             .await;
         assert!(result.is_err(), "读取失败应返回错误，实际: {result:?}");
 

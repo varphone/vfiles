@@ -2650,6 +2650,7 @@ where
         expected_md5: Option<[u8; 16]>,
         expected_sha256: Option<[u8; 32]>,
         expected_crc32: Option<u32>,
+        expected_crc32c: Option<u32>,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadPartReceipt> {
         let session = self.upload_store.get_upload_session(upload_id).await?;
@@ -2672,6 +2673,7 @@ where
                 expected_md5,
                 expected_sha256,
                 expected_crc32,
+                expected_crc32c,
                 reader,
             )
             .await
@@ -2695,6 +2697,7 @@ where
             expected_sha256,
             None,
             None,
+            None,
             message,
             true,
         )
@@ -2713,6 +2716,7 @@ where
             expected_sha256,
             None,
             None,
+            None,
             message,
             upload_stream,
         )
@@ -2725,6 +2729,7 @@ where
         expected_sha256: Option<&str>,
         expected_md5: Option<[u8; 16]>,
         expected_crc32: Option<u32>,
+        expected_crc32c: Option<u32>,
         message: Option<&str>,
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadCompleteResponse> {
@@ -2739,6 +2744,7 @@ where
             expected_sha256,
             expected_md5,
             expected_crc32,
+            expected_crc32c,
             message,
             true,
         )
@@ -2758,6 +2764,7 @@ where
             expected_sha256,
             None,
             None,
+            None,
             message,
             upload_stream,
         )
@@ -2770,6 +2777,7 @@ where
         expected_sha256: Option<&str>,
         expected_md5: Option<[u8; 16]>,
         expected_crc32: Option<u32>,
+        expected_crc32c: Option<u32>,
         message: Option<&str>,
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> DomainResult<UploadCompleteResponse> {
@@ -2784,6 +2792,7 @@ where
             expected_sha256,
             expected_md5,
             expected_crc32,
+            expected_crc32c,
             message,
             false,
         )
@@ -2823,8 +2832,17 @@ where
             return Err(DomainError::UploadExpired);
         }
         let upload_stream = self.upload_store.assemble_upload_stream(upload_id).await?;
-        self.commit_upload_stream(session, upload_stream, None, None, None, message, false)
-            .await
+        self.commit_upload_stream(
+            session,
+            upload_stream,
+            None,
+            None,
+            None,
+            None,
+            message,
+            false,
+        )
+        .await
     }
 
     /// 写会话自定义元数据（S3 `x-amz-meta-*`）。
@@ -2913,12 +2931,19 @@ where
         expected_sha256: Option<&str>,
         expected_md5: Option<[u8; 16]>,
         expected_crc32: Option<u32>,
+        expected_crc32c: Option<u32>,
         message: Option<&str>,
         enforce_size: bool,
     ) -> DomainResult<UploadCompleteResponse> {
         let (blob_id, content_hash, created_blob, stored_size) = self
             .blob_store
-            .store_blob_stream(upload_stream, expected_sha256, expected_md5, expected_crc32)
+            .store_blob_stream(
+                upload_stream,
+                expected_sha256,
+                expected_md5,
+                expected_crc32,
+                expected_crc32c,
+            )
             .await?;
 
         if enforce_size && stored_size != session.declared_size.as_u64() {

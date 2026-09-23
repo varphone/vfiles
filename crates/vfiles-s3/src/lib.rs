@@ -643,6 +643,18 @@ fn decode_checksum_crc32(value: Option<&str>) -> S3Result<Option<u32>> {
     Ok(Some(u32::from_be_bytes(bytes)))
 }
 
+fn decode_checksum_crc32c(value: Option<&str>) -> S3Result<Option<u32>> {
+    use base64::Engine;
+    let Some(value) = value else { return Ok(None) };
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|_| s3s::s3_error!(InvalidDigest, "x-amz-checksum-crc32c is not valid base64"))?;
+    let bytes: [u8; 4] = decoded
+        .try_into()
+        .map_err(|_| s3s::s3_error!(InvalidDigest, "CRC32C checksum must decode to 4 bytes"))?;
+    Ok(Some(u32::from_be_bytes(bytes)))
+}
+
 impl std::fmt::Debug for VfilesS3 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // workspace/upload 等非 Debug ✗ 标准省内容式（-W missing-debug-implementations 清零）
@@ -1360,9 +1372,11 @@ impl S3 for VfilesS3 {
         let expected_md5 = decode_content_md5(input.content_md5.as_deref())?;
         let expected_sha256 = decode_checksum_sha256(input.checksum_sha256.as_deref())?;
         let expected_crc32 = decode_checksum_crc32(input.checksum_crc32.as_deref())?;
+        let expected_crc32c = decode_checksum_crc32c(input.checksum_crc32c.as_deref())?;
         let expected_sha256_hex = expected_sha256.map(hex::encode);
         let response_checksum_sha256 = input.checksum_sha256.clone();
         let response_checksum_crc32 = input.checksum_crc32.clone();
+        let response_checksum_crc32c = input.checksum_crc32c.clone();
         // parent/filename 拆（WebDAV put_file 同式 ✗ init=父+名）
         // 条件写（`If-Match` / `If-None-Match` ✗ S3 现代并发控制）
         let cur = self.etag_at(&path).await?;
@@ -1414,6 +1428,7 @@ impl S3 for VfilesS3 {
                     expected_sha256_hex.as_deref(),
                     expected_md5,
                     expected_crc32,
+                    expected_crc32c,
                     Some("S3 PUT"),
                     Box::new(reader),
                 )
@@ -1425,6 +1440,7 @@ impl S3 for VfilesS3 {
                     expected_sha256_hex.as_deref(),
                     expected_md5,
                     expected_crc32,
+                    expected_crc32c,
                     Some("S3 PUT"),
                     Box::new(reader),
                 )
@@ -1454,6 +1470,7 @@ impl S3 for VfilesS3 {
             e_tag: Some(s3s::dto::ETag::Strong(etag)),
             checksum_sha256: response_checksum_sha256,
             checksum_crc32: response_checksum_crc32,
+            checksum_crc32c: response_checksum_crc32c,
             size: Some(result.version.size_bytes.as_u64() as i64),
             ..Default::default()
         };
@@ -1913,8 +1930,10 @@ impl S3 for VfilesS3 {
         let expected_md5 = decode_content_md5(input.content_md5.as_deref())?;
         let expected_sha256 = decode_checksum_sha256(input.checksum_sha256.as_deref())?;
         let expected_crc32 = decode_checksum_crc32(input.checksum_crc32.as_deref())?;
+        let expected_crc32c = decode_checksum_crc32c(input.checksum_crc32c.as_deref())?;
         let response_checksum_sha256 = input.checksum_sha256.clone();
         let response_checksum_crc32 = input.checksum_crc32.clone();
+        let response_checksum_crc32c = input.checksum_crc32c.clone();
         let blob = input
             .body
             .unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
@@ -1928,6 +1947,7 @@ impl S3 for VfilesS3 {
                 expected_md5,
                 expected_sha256,
                 expected_crc32,
+                expected_crc32c,
                 Box::new(stream_reader(blob)),
             )
             .await
@@ -1941,6 +1961,7 @@ impl S3 for VfilesS3 {
             e_tag: Some(s3s::dto::ETag::Strong(receipt.md5_hex)),
             checksum_sha256: response_checksum_sha256,
             checksum_crc32: response_checksum_crc32,
+            checksum_crc32c: response_checksum_crc32c,
             ..Default::default()
         };
         ok(out)
@@ -2021,6 +2042,7 @@ impl S3 for VfilesS3 {
                 (input.part_number - 1) as u32,
                 Some(part_size),
                 Some(MAX_S3_PART_SIZE),
+                None,
                 None,
                 None,
                 None,
