@@ -11,7 +11,9 @@
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 /// 协议版本行（锁定 30.0 ✗ 31 客户端协商降级到此）。
-pub const PROTOCOL_LINE: &str = "@RSYNCD: 30.0\n";
+/// banner = 版本 + 空格分隔校验和算法串（官方 18873 黄金逐字节 ✗ 锁 30.0 + 客户端 31
+/// 降级;算法串 = 官方同款 = 客户端按可用协商）。
+pub const PROTOCOL_LINE: &str = "@RSYNCD: 30.0 sha512 sha256 sha1 md5 md4\n";
 
 /// 处理单连接：版本交换 → 模块列表（客户端空行请求）或模块选择（名字行）。
 ///
@@ -58,11 +60,12 @@ where
     let text = request.trim_end_matches(['\n', '\r']).to_string();
 
     if text.is_empty() {
-        // 模块列表：名字行 + NUL 终结（daemon 形 ✗ 单模块 files）——NUL 走 rw 读侧
-        // 不再另开流（缓冲一致性 ✗ 字节留在 BufReader 内由对端继续读 = 测试 1 之坑）
-        rw.get_mut().write_all(module.as_bytes()).await?;
-        rw.get_mut().write_all(b"\n").await?;
-        rw.get_mut().write_all(b"\0").await?;
+        // 模块列表黄金形（官方 18873 逐字节）：`{name:<15}` + ``\t` + 描述（空）+ ``\n`
+        // → `@RSYNCD: EXIT\n` 收尾 + 关连接 ✗ **NUL 是多路复用帧的 channel 字节、
+        // 不是列表终结**（r4 黄金对照破的百年疑案 ✗ r3 把它当 terminator = RC5 真因）
+        let line = format!("{:<15}\t\n", module);
+        rw.get_mut().write_all(line.as_bytes()).await?;
+        rw.get_mut().write_all(b"@RSYNCD: EXIT\n").await?;
         rw.get_mut().flush().await?;
         return Ok(());
     }
@@ -103,7 +106,7 @@ mod handshake_tests {
     use super::*;
     use tokio::io::AsyncWriteExt;
 
-    /// 黄金式：我方先发 30.0 → client 31 → 空行 → 列表 = `files\n\0`。
+    /// 黄金式（官方 18873 对照）：banner → client 31 → 空行 → `{files:<15}\t\n` + `@RSYNCD: EXIT\n`。
     #[tokio::test]
     async fn lists_module_after_version_handshake() {
         let (client, server) = tokio::io::duplex(4096);
@@ -121,10 +124,11 @@ mod handshake_tests {
 
         line.clear();
         c.read_line(&mut line).await.unwrap();
-        assert_eq!(line, "files\n", "模块名行");
-        let mut nul = [0u8; 1];
-        tokio::io::AsyncReadExt::read_exact(&mut c, &mut nul).await.unwrap();
-        assert_eq!(nul[0], 0, "NUL 终结");
+        assert_eq!(line, format!("{:<15}\t\n", "files"), "模块行黄金形（15列+tab）");
+        // 收尾黄金 = @RSYNCD: EXIT 行 + EOF（NUL 是 mux 帧字节 ✗ r4 对照破的错位）
+        line.clear();
+        c.read_line(&mut line).await.unwrap();
+        assert_eq!(line, "@RSYNCD: EXIT\n", "EXIT 收尾");
     }
 
     /// 黄金式：选中模块 = OK 行 / 未命中 = ERROR 行。

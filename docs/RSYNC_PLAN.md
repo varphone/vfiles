@@ -1,18 +1,23 @@
 # rsync 协议 daemon（round 2 选型 → **round 3 Phase0 探底** ✗ 状态见下）
 
-## 状态（r3 末 · 真 rsync 3.2.7 实证）
+## 状态（r4 末 · 官方 daemon 黄金对照法全胜）
 
-- **已通**：版本协商（服务端 `@RSYNCD: 30.0` banner + 客户端 31 降级）✗ **`rsync
-  --list-only rsync://host:PORT/` 真打印模块名 `files`** ✓ 未知模块回
-  `@RSYNCD: ERROR Unknown module` ✓ python 裸 socket 字节断言（banner/`files`）✓ 三黄金
-  单测（死锁根治后 0.00s 绿）+ 装配（`VFILES_RSYNC_ENABLED` 默认关 / PORT / MODULE 三
-  env + accept loop select 停机 + r205 降级 + 关时日志明示启用法）。
-- **差一层（r4 首步）**：客户端列表后报 `didn't get server startup line (code5 @
-  main.c:1885)` = **收尾序列期待差一点** → r4 开工 = **本机起官方 `rsync --daemon` 抓
-  黄金字节序列对照**（官方参照本地就有 = 最强对齐法）→ 然后 file_list 编码 → delta
-  下载（r5）。
-- Phase1（命令段 + file_list）/ Phase2（delta）未开 ✗ 分层推进；探针教学习惯 =
-  **真 CLI 输出全真文呈现、按真形判**（零预设 ✗ 三式已证伪两层预设）。
+- **收尾层完成（r4 主目标 = 金标准达标）** ✨：`rsync --list-only rsync://…/` **RC0**
+  干净退出、输出 `files          \t`（**15 列填充 + tab** 与官方 `GOLD           \t`
+  逐字节同构）✗ banner = `@RSYNCD: 30.0 sha512 sha256 sha1 md5 md4`（**版本+算法串**
+  形补齐）✗ 收尾 = `@RSYNCD: EXIT\n` + 关连接（**破的百年疑案 = NUL 是 mux 帧的
+  channel 字节、不是列表终结** ✗ r3 把它当 terminator = RC5 真身）。
+- **对照法（r4 立法、后续全用）**：本机起**官方 `rsync --daemon`** 最小 conf → python
+  扮客户端**同款三步双向 dump**（收 banner → 发 31 → 空行/选模块）→ 与自家逐字节列差异
+  =**四层差一次全暴露**（banner 算法串 / 模块行 15+tab / EXIT 收尾 / 时机）。
+- **Phase1 黄金资产已入库**（`crates/vfiles-rsync/golden/`）：选模块层 = `@RSYNCD: OK\n`
+  （**我方已同形 ✓**）· 客户端 args = `--server\0--sender\0--list-only\0-v\0.\0\0`
+  （NUL 分隔双 NUL 尾 = r5 解析形已知）· 官方首响应 = **5 字节 `06 fc 5d 11 67`**
+  （mux 首帧待解剖 · rsync 源 mux 定义 + 更完整客户端模拟 = r5 两参照）。
+- **r5 首件（一行修）**：P04 未知模块形对齐官方 = `@ERROR: Unknown module '<name>'`
+  （单行即关 ✗ 现我方 `@RSYNCD: ERROR …` 多一句 didn't-get = 形差）→ 断言同步。
+- 纪律践行全程：#62 串行 / #63 硬超时（每跑 timeout 60-300）/ #65 **五钟阈值**（本批
+  一切跑秒级 = rsync 0.00s、full 26 套 9-10s、各 build/check 0-2s ✗ 无一次分钟级）。
 
 ## 选型定案：**自研 rsync 30 协议 + daemon 形**
 
