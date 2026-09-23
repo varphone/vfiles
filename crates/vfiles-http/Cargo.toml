@@ -17,6 +17,7 @@ axum-extra.workspace = true
 axum.workspace = true
 bytes.workspace = true
 hex.workspace = true
+httpdate = "1.0.3"
 include_dir = { workspace = true, optional = true }
 image.workspace = true
 mime_guess.workspace = true

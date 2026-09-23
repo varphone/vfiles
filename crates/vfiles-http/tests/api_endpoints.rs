@@ -987,6 +987,13 @@ async fn file_content_and_download_support_range_requests() {
         .to_str()
         .expect("ETag should be visible")
         .to_owned();
+    let last_modified = content_partial
+        .headers()
+        .get(header::LAST_MODIFIED)
+        .expect("file responses should expose Last-Modified")
+        .to_str()
+        .expect("Last-Modified should be visible")
+        .to_owned();
     assert_eq!(response_bytes(content_partial).await.as_ref(), b"2345");
 
     let not_modified = app
@@ -1007,6 +1014,26 @@ async fn file_content_and_download_support_range_requests() {
             .to_str()
             .unwrap(),
         etag
+    );
+
+    let date_not_modified = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range.txt")
+                .header(header::IF_MODIFIED_SINCE, &last_modified)
+                .body(Body::empty())
+                .expect("date conditional request should build"),
+        )
+        .await;
+    assert_eq!(date_not_modified.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        date_not_modified
+            .headers()
+            .get(header::LAST_MODIFIED)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        last_modified
     );
 
     let stale_if_range = app

@@ -1294,6 +1294,7 @@ struct ResolvedFileBlob {
     mime_type: Option<String>,
     size_bytes: u64,
     blob_id: BlobId,
+    modified_at: Option<time::OffsetDateTime>,
 }
 
 pub struct FileContentStream {
@@ -1301,6 +1302,7 @@ pub struct FileContentStream {
     pub mime_type: Option<String>,
     pub size_bytes: u64,
     pub etag: String,
+    pub modified_at: Option<time::OffsetDateTime>,
     pub reader: Box<dyn vfiles_domain::ReadSeek + Send + Unpin>,
 }
 
@@ -1689,6 +1691,7 @@ where
                     mime_type: version.mime_type.clone(),
                     size_bytes: version.size_bytes.as_u64(),
                     blob_id,
+                    modified_at: Some(version.created_at),
                 })
             }
             RequestedFileRevision::Version(version_id) => {
@@ -1707,6 +1710,7 @@ where
                     mime_type: version.mime_type.clone(),
                     size_bytes: version.size_bytes.as_u64(),
                     blob_id,
+                    modified_at: Some(version.created_at),
                 })
             }
             RequestedFileRevision::Snapshot(snapshot_id) => {
@@ -1725,6 +1729,7 @@ where
                     mime_type: entry.mime_type.clone(),
                     size_bytes: entry.size_bytes.map(|value| value.as_u64()).unwrap_or(0),
                     blob_id,
+                    modified_at: entry.created_at,
                 })
             }
         }
@@ -1752,6 +1757,7 @@ where
             mime_type: resolved.mime_type,
             size_bytes: resolved.size_bytes,
             etag: format!("\"{}\"", resolved.blob_id),
+            modified_at: resolved.modified_at,
             reader,
         })
     }

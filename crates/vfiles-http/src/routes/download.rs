@@ -67,6 +67,7 @@ async fn download_file(
         file.size_bytes,
         Some(&file.filename),
         Some(&file.etag),
+        file.modified_at,
     )
     .await
 }
@@ -105,6 +106,7 @@ async fn download_folder(
         Some("application/zip"),
         archive.size_bytes,
         Some(&archive.filename),
+        None,
         None,
     )
     .await

@@ -1,4 +1,5 @@
 use std::fmt::Write;
+use std::time::{Duration, SystemTime};
 
 use axum::{
     body::Body,
@@ -93,6 +94,7 @@ pub(crate) async fn streaming_file_response(
     size_bytes: u64,
     attachment_filename: Option<&str>,
     etag: Option<&str>,
+    modified_at: Option<time::OffsetDateTime>,
 ) -> ApiResult<Response> {
     if let Some(etag) = etag
         && if_none_match(request_headers, etag)
@@ -100,6 +102,15 @@ pub(crate) async fn streaming_file_response(
         let mut response = Response::new(Body::empty());
         *response.status_mut() = StatusCode::NOT_MODIFIED;
         insert_etag(response.headers_mut(), Some(etag))?;
+        return Ok(response);
+    }
+    if !request_headers.contains_key(header::IF_NONE_MATCH)
+        && modified_at.is_some_and(|modified_at| if_modified_since(request_headers, modified_at))
+    {
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = StatusCode::NOT_MODIFIED;
+        insert_etag(response.headers_mut(), etag)?;
+        insert_last_modified(response.headers_mut(), modified_at)?;
         return Ok(response);
     }
 
@@ -129,6 +140,7 @@ pub(crate) async fn streaming_file_response(
                 unsatisfied_content_range_value(size_bytes)?,
             );
             insert_etag(response.headers_mut(), etag)?;
+            insert_last_modified(response.headers_mut(), modified_at)?;
             if let Some(filename) = attachment_filename {
                 response
                     .headers_mut()
@@ -150,6 +162,7 @@ pub(crate) async fn streaming_file_response(
             headers.insert(header::CONTENT_TYPE, content_type);
             headers.insert(header::ACCEPT_RANGES, accept_ranges);
             insert_etag(headers, etag)?;
+            insert_last_modified(headers, modified_at)?;
             headers.insert(
                 header::CONTENT_RANGE,
                 content_range_value(start, end, size_bytes)?,
@@ -166,6 +179,7 @@ pub(crate) async fn streaming_file_response(
             headers.insert(header::CONTENT_TYPE, content_type);
             headers.insert(header::ACCEPT_RANGES, accept_ranges);
             insert_etag(headers, etag)?;
+            insert_last_modified(headers, modified_at)?;
             insert_content_length(headers, size_bytes)?;
             if let Some(filename) = attachment_filename {
                 headers.insert(header::CONTENT_DISPOSITION, attachment_header(filename)?);
@@ -182,6 +196,38 @@ fn insert_etag(headers: &mut HeaderMap, etag: Option<&str>) -> ApiResult<()> {
         headers.insert(header::ETAG, value);
     }
     Ok(())
+}
+
+fn insert_last_modified(
+    headers: &mut HeaderMap,
+    modified_at: Option<time::OffsetDateTime>,
+) -> ApiResult<()> {
+    if let Some(modified_at) = modified_at {
+        let seconds = modified_at.unix_timestamp();
+        let modified = SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(seconds.max(0) as u64))
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let value = HeaderValue::from_str(&httpdate::fmt_http_date(modified))
+            .map_err(|e| ApiError::Internal(format!("Invalid Last-Modified header: {e}")))?;
+        headers.insert(header::LAST_MODIFIED, value);
+    }
+    Ok(())
+}
+
+fn if_modified_since(headers: &HeaderMap, modified_at: time::OffsetDateTime) -> bool {
+    let Some(since) = headers
+        .get(header::IF_MODIFIED_SINCE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| httpdate::parse_http_date(value).ok())
+    else {
+        return false;
+    };
+    let modified_seconds = modified_at.unix_timestamp();
+    if modified_seconds < 0 {
+        return false;
+    }
+    let modified = SystemTime::UNIX_EPOCH + Duration::from_secs(modified_seconds as u64);
+    modified <= since
 }
 
 fn if_none_match(headers: &HeaderMap, current_etag: &str) -> bool {

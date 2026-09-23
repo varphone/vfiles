@@ -55,6 +55,7 @@ async fn get_file_content(
         file.size_bytes,
         None,
         Some(&file.etag),
+        file.modified_at,
     )
     .await
 }

@@ -192,6 +192,7 @@ pub async fn download_share(
                 file.size_bytes,
                 Some(&file.filename),
                 Some(&file.etag),
+                file.modified_at,
             )
             .await
         }
@@ -207,6 +208,7 @@ pub async fn download_share(
                 Some("application/zip"),
                 archive.size_bytes,
                 Some(&archive.filename),
+                None,
                 None,
             )
             .await
