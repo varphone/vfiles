@@ -77,3 +77,5 @@
 | 53 | **输出语义分层**（用户报 ✗ 调试注记/符号标记经 print 泄漏到命令输出 = 看似报错日志 ✗ 命令输出只载事实；注记归 commit/docs；回复用纯中文） | r113' |
 | 54 | **fireEvent 修饰键回显存疑**（jsdom `fireEvent.keyDown({ctrlKey:true})` 实际未置修饰位 ✗ 自构造 `new KeyboardEvent` + dispatch = 稳式（r77 同族）） | r124 |
 | 55 | **playwright `check()` 对 Vue 受控 checkbox 不触发 change 链**（五轮误报史诗 ✗✗✗ 稳式 = `input.click()` 单发（自带 change ✓ click+dispatch 双发 = 奇偶抵消）；**混类/工具-框架交互**为探针两大深水区） | r137→144 |
+| 56 | **pkill/pgrep -f 自匹配自杀**（模式串含目标名 = 杀自己 shell ✗✗ 用 `-x vfiles` 精确名/倒排法） | r204 |
+| 57 | **curl ASCII 全绿 ≠ 真实客户端可用**（href 合法性 + percent 语义只有真客户端暴露 ✗✗ 双斜杠/未解码 = 真实客户端丢条目或 404）+ **secret 长度<32 fixture 静默断链二犯**（≥34 保） | r204 |

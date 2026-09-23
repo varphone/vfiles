@@ -329,11 +329,53 @@ async fn write_op(
     }
 }
 
+/// URI percent-decode（纯函数 ✓ 单测覆盖，零依赖手写 ✗ 仅解 %XX（`+` 非空格 ✗ WebDAV
+/// 路径语义）→ 非法序列原样保留）——**r204 真因二号修复**：中文/空格路径直接查库
+/// = 404（curl ASCII 实证从未暴露 ✗✗ 真实客户端 percent-encode 必解码）。
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(v) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| input.to_string())
+}
+
+/// 条目 href 拼接（纯函数 ✓ 单测覆盖）——**前缀式**（r204 ✗ 真因修复：空 rel 时
+/// `format!("/{}", "", name)` 产出双斜杠 `//x` ✗✗ = GNOME/gvfs 解析非法 href 后
+/// **丢弃条目 = 列表显示为空**（curl 不校验 href ✗ 全绿假象 = 真因））。
+fn entry_href(prefix: &str, name: &str, is_dir: bool) -> String {
+    if is_dir {
+        format!("/{prefix}{name}/")
+    } else {
+        format!("/{prefix}{name}")
+    }
+}
+
+/// 目录前缀（根 = 空 ✗ 子目录 = `rel/`）。
+fn child_prefix(rel: &str) -> String {
+    let trimmed = rel.trim_matches('/');
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("{trimmed}/")
+    }
+}
+
 /// `Destination` 头 → 相对路径（纯函数 ✓ 单测覆盖）。
 ///
 /// 形 = `http://host/dav/a/b.txt` 或 `/dav/a/b.txt` → `a/b.txt`（去 scheme/host ✓
 /// 头必须路径带前导 `/` 否则 400（RFC 4918 §10.3）→ 本式返回 None 由调用方 400 ✓）。
-fn destination_path(dest: &str) -> Option<&str> {
+fn destination_path(dest: &str) -> Option<String> {
     let path_part = if let Some(scheme_pos) = dest.find("://") {
         let after_scheme = &dest[scheme_pos + 3..];
         after_scheme.find('/').map(|i| &after_scheme[i..])?
@@ -344,7 +386,7 @@ fn destination_path(dest: &str) -> Option<&str> {
         return None;
     }
     let trimmed = path_part.trim_end_matches('/');
-    Some(trimmed.trim_start_matches('/'))
+    Some(percent_decode(trimmed.trim_start_matches('/')))
 }
 
 /// 401 + `WWW-Authenticate: Basic`（RFC 4918 §20.1 ✓）。
@@ -430,11 +472,7 @@ async fn propfind_owned(
         for child in children {
             let is_dir = matches!(child.entry_type, vfiles_domain::types::EntryKind::Directory);
             items.push(crate::response::PropResponse {
-                href: if is_dir {
-                    format!("/{}/{}/", rel.trim_matches('/'), child.name)
-                } else {
-                    format!("/{}/{}", rel.trim_matches('/'), child.name)
-                },
+                href: entry_href(&child_prefix(rel), &child.name, is_dir),
                 displayname: child.name,
                 is_collection: is_dir,
                 getlastmodified: mtime_fmt(child.created_at),
@@ -516,12 +554,12 @@ async fn dav(mut req: axum::extract::Request) -> Response {
                 .extensions()
                 .get::<vfiles_domain::types::NamespaceId>()
                 .cloned();
-            let uri_owned = req.uri().path().to_string();
+            let uri_owned = percent_decode(req.uri().path());
             get_op(app_owned, user_owned, ns_owned, uri_owned, is_head).await
         }
         ref m if m.as_str() == "PROPFIND" => {
             // 同步提取拥有值（&Request 跨 await = 非 Send ✗✗ E0277 真因 ✓ r105 破案）
-            let path_owned = req.uri().path().to_string();
+            let path_owned = percent_decode(req.uri().path());
             let depth_owned = req
                 .headers()
                 .get("depth")
@@ -550,7 +588,7 @@ async fn dav(mut req: axum::extract::Request) -> Response {
         ref m if m.as_str() == "LOCK" || m.as_str() == "UNLOCK" => {
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
             let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
-            let uri_owned = req.uri().path().to_string();
+            let uri_owned = percent_decode(req.uri().path());
             let token_owned = req
                 .headers()
                 .get("lock-token")
@@ -571,7 +609,7 @@ async fn dav(mut req: axum::extract::Request) -> Response {
         ref m if m.as_str() == "MKCOL" || m.as_str() == "DELETE" || m.as_str() == "MOVE" => {
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
             let user_owned = req.extensions().get::<vfiles_domain::types::User>().cloned();
-            let uri_owned = req.uri().path().to_string();
+            let uri_owned = percent_decode(req.uri().path());
             let dest_owned = req
                 .headers()
                 .get("destination")
@@ -607,7 +645,7 @@ async fn dav(mut req: axum::extract::Request) -> Response {
                 .extensions()
                 .get::<vfiles_domain::types::NamespaceId>()
                 .cloned();
-            let uri_owned = req.uri().path().to_string();
+            let uri_owned = percent_decode(req.uri().path());
             put_op(app_owned, user_owned, ns_owned, uri_owned, put_body).await
         }
         _ => Response::builder()
@@ -661,14 +699,50 @@ mod write_tests {
         // 挂载点 = root（`/` ✓ 客户端 base 自配）；`/dav/` 前缀样 = 语义错配已正
         assert_eq!(
             destination_path("http://host/a/b.txt"),
-            Some("a/b.txt")
+            Some("a/b.txt".to_string())
         );
-        assert_eq!(destination_path("/sub/x"), Some("sub/x"));
+        assert_eq!(destination_path("/sub/x"), Some("sub/x".to_string()));
         assert_eq!(destination_path("no-leading-slash"), None);
     }
 }
 
 #[cfg(test)]
+mod decode_tests {
+    use super::percent_decode;
+
+    #[test]
+    fn decodes_percent_encoded_paths() {
+        // r204 真因二号回归守护 ✗✗ 中文/空格必须解码（否则查库 404）
+        assert_eq!(percent_decode("/%E9%A1%B9%E7%9B%AE%E5%BA%93/"), "/项目库/");
+        assert_eq!(percent_decode("/a%20b.txt"), "/a b.txt");
+        assert_eq!(percent_decode("/ascii/x.txt"), "/ascii/x.txt");
+    }
+
+    #[test]
+    fn falls_back_on_invalid_sequences() {
+        assert_eq!(percent_decode("%ZZ%"), "%ZZ%");
+        assert_eq!(percent_decode("%E4%B8"), "%E4%B8"); // 截断 UTF-8 → 保留原文
+    }
+}
+
+mod href_tests {
+    use super::{child_prefix, entry_href};
+
+    #[test]
+    fn root_children_have_single_slash() {
+        // r204 真因回归守护 ✗✗ 空 rel 必须单斜杠（//x = gvfs 丢弃条目）
+        assert_eq!(entry_href(&child_prefix(""), "根文件.txt", false), "/根文件.txt");
+        assert_eq!(entry_href(&child_prefix(""), "项目库", true), "/项目库/");
+        assert!(!entry_href(&child_prefix(""), "x", false).starts_with("//"));
+    }
+
+    #[test]
+    fn nested_children_keep_prefix() {
+        assert_eq!(entry_href(&child_prefix("项目库"), "说明.md", false), "/项目库/说明.md");
+        assert_eq!(entry_href(&child_prefix("项目库/子"), "a", true), "/项目库/子/a/");
+    }
+}
+
 mod if_token_tests {
     use super::if_token;
 
