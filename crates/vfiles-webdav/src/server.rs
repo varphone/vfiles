@@ -1335,6 +1335,20 @@ fn write_error_status(error: &vfiles_domain::DomainError) -> StatusCode {
     }
 }
 
+fn copy_error_status(error: &vfiles_domain::DomainError, overwrite: bool) -> StatusCode {
+    if !overwrite
+        && matches!(
+            error,
+            vfiles_domain::DomainError::Conflict { .. }
+                | vfiles_domain::DomainError::PathConflict { .. }
+        )
+    {
+        StatusCode::PRECONDITION_FAILED
+    } else {
+        write_error_status(error)
+    }
+}
+
 /// URI percent-decode（纯函数 ✓ 单测覆盖，零依赖手写 ✗ 仅解 %XX（`+` 非空格 ✗ WebDAV
 /// 路径语义）→ 非法序列原样保留）——**r204 真因二号修复**：中文/空格路径直接查库
 /// = 404（curl ASCII 实证从未暴露 ✗✗ 真实客户端 percent-encode 必解码）。
@@ -2647,13 +2661,13 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             };
             let user_id = user.id;
             let username = user.username.as_str().to_string();
-            let dst_existed = app_ref
-                .entry_repo
-                .find_by_path(&ns, &dest_path)
-                .await
-                .ok()
-                .flatten()
-                .is_some();
+            let dst_existed = match app_ref.entry_repo.find_by_path(&ns, &dest_path).await {
+                Ok(entry) => entry.is_some(),
+                Err(error) => {
+                    tracing::error!(%error, target = %dest_hdr, "COPY 目标状态查询失败");
+                    return internal_error();
+                }
+            };
             // Overwrite: F + 目标存在 → 412（RFC §9.3.3 ✗ r5 曾全 409 = 违背修正）
             if dst_existed && !overwrite {
                 return Response::builder()
@@ -2695,9 +2709,8 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         .body(Body::empty())
                         .unwrap()
                 }
-                Err(vfiles_domain::DomainError::Conflict { message }) => {
-                    tracing::warn!(target = %dest_hdr, reason = %message, "WebDAV COPY 冲突（409）");
-                    // r17 失败面表记（409 → Failure ✓ 与 Success 对称）
+                Err(err) => {
+                    tracing::warn!(target = %dest_hdr, error = %err, "WebDAV COPY 失败");
                     if let (Some(app), Some(u)) = (
                         req.extensions().get::<WebdavApplication>(),
                         req.extensions().get::<vfiles_domain::types::User>(),
@@ -2714,13 +2727,9 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         );
                     }
                     Response::builder()
-                        .status(StatusCode::CONFLICT)
+                        .status(copy_error_status(&err, overwrite))
                         .body(Body::empty())
                         .unwrap()
-                }
-                Err(err) => {
-                    tracing::error!(error = %err, "WebDAV COPY 失败");
-                    internal_error()
                 }
             }
         }
@@ -3428,7 +3437,7 @@ mod etag_tests {
 
 #[cfg(test)]
 mod write_error_tests {
-    use super::write_error_status;
+    use super::{copy_error_status, write_error_status};
     use axum::http::StatusCode;
     use vfiles_domain::DomainError;
 
@@ -3453,6 +3462,22 @@ mod write_error_tests {
                 message: "storage failure".to_string()
             }),
             StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn copy_overwrite_precondition_maps_destination_conflicts_to_412() {
+        let conflict = DomainError::PathConflict {
+            message: "destination exists".to_string(),
+        };
+        assert_eq!(
+            copy_error_status(&conflict, false),
+            StatusCode::PRECONDITION_FAILED
+        );
+        assert_eq!(copy_error_status(&conflict, true), StatusCode::CONFLICT);
+        assert_eq!(
+            copy_error_status(&DomainError::StorageQuotaExceeded, true),
+            StatusCode::INSUFFICIENT_STORAGE
         );
     }
 }
