@@ -38,10 +38,13 @@ jobs:
         run: cargo test --workspace
 
       - name: Install WebDAV interoperability client
-        run: sudo apt-get update && sudo apt-get install -y cadaver litmus
+        run: sudo apt-get update && sudo apt-get install -y cadaver litmus rsync
 
       - name: Run WebDAV real-client probe
         run: ./crates/vfiles-webdav/scripts/cadaver_probe.sh
 
       - name: Run WebDAV conformance probe
         run: ./crates/vfiles-webdav/scripts/litmus_probe.sh
+
+      - name: Run rsync real-client probe
+        run: ./crates/vfiles-rsync/scripts/rsync_probe.sh
