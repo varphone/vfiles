@@ -2181,6 +2181,8 @@ pub trait RsyncBackend: Send + Sync {
     async fn delete(&self, paths: Vec<String>) -> Result<(), String>;
     /// 创建目录（push 空目录 ✗ 已存在视为成功）。
     async fn mkdir(&self, path: &str) -> Result<(), String>;
+    /// Restore a received directory's source mtime after its children are processed.
+    async fn set_directory_mtime(&self, path: &str, mtime: i64) -> Result<(), String>;
 }
 
 fn validate_upload_entries(entries: &[FlatEntry]) -> std::io::Result<()> {
@@ -2613,9 +2615,13 @@ where
         let mut rp = (-1i32, 1i32); // read_ndx 差分态
         let mut wp = (-1i32, 1i32); // write_ndx 差分态
         let mut transferred = 0usize;
+        let mut directory_mtimes = Vec::new();
         let to = std::time::Duration::from_secs(15);
         for (i, e) in entries.iter().enumerate() {
             if e.name == "." {
+                if e.is_dir && !base.is_empty() {
+                    directory_mtimes.push((base.clone(), e.mtime));
+                }
                 continue;
             }
             let full = if base.is_empty() {
@@ -2628,6 +2634,7 @@ where
                 backend.mkdir(&full).await.map_err(|err| {
                     std::io::Error::other(format!("rsync push: create directory {full}: {err}"))
                 })?;
+                directory_mtimes.push((full, e.mtime));
                 continue;
             }
             // 快跳（官方 generator `unchanged_file` 语义）：
@@ -2969,6 +2976,13 @@ where
                 }
             }
         }
+        for (path, mtime) in directory_mtimes {
+            if let Err(error) = backend.set_directory_mtime(&path, mtime).await {
+                let message = format!("rsync push: set directory mtime {path}: {error}");
+                send_rsync_error(&mut rw, &message).await?;
+                return Err(std::io::Error::other(message));
+            }
+        }
         // 相位收尾（客户端 sender：2 答 + 终结；本端 4 出 / 3 入 ✗ 超时防挂）
         for round in 0..4 {
             let mut d = Vec::new();
@@ -3203,6 +3217,9 @@ mod tests {
                 .expect("test operation should succeed")
                 .entry(format!("{path}/"))
                 .or_default();
+            Ok(())
+        }
+        async fn set_directory_mtime(&self, _path: &str, _mtime: i64) -> Result<(), String> {
             Ok(())
         }
     }

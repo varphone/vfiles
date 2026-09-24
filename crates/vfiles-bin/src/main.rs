@@ -2281,6 +2281,14 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
         self.stat_cache.write().await.clear();
         Ok(())
     }
+
+    async fn set_directory_mtime(&self, path: &str, mtime: i64) -> Result<(), String> {
+        let np = vfiles_domain::NormalizedPath::new(path).map_err(|e| e.to_string())?;
+        self.repo
+            .set_directory_source_mtime(&self.namespace, &np, mtime)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 fn build_and_spawn_rsync(

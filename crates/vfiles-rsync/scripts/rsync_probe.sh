@@ -93,6 +93,8 @@ import sys
 pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256)) * 8192)
 PY
 touch -d '@946684800' "$tmpdir/source/nested/large.bin"
+touch -d '@946684801' "$tmpdir/source/empty"
+touch -d '@946684802' "$tmpdir/source/nested"
 
 rsync -a --quiet "$tmpdir/source/" "$module_url"
 rsync --list-only "$module_url" >"$tmpdir/initial-list.log"
@@ -107,6 +109,14 @@ if [[ "$pulled_mtime" != "$source_mtime" ]]; then
   echo "rsync -a did not preserve the file modification time: source=$source_mtime pulled=$pulled_mtime" >&2
   exit 1
 fi
+for directory in empty nested; do
+  source_directory_mtime=$(stat -c '%Y' "$tmpdir/source/$directory")
+  pulled_directory_mtime=$(stat -c '%Y' "$tmpdir/pull/$directory")
+  if [[ "$pulled_directory_mtime" != "$source_directory_mtime" ]]; then
+    echo "rsync -a did not preserve the $directory directory mtime: source=$source_directory_mtime pulled=$pulled_directory_mtime" >&2
+    exit 1
+  fi
+done
 mkdir -p "$tmpdir/single-file-pull"
 rsync -a --quiet "$module_url/nested/large.bin" "$tmpdir/single-file-pull/"
 cmp "$tmpdir/source/nested/large.bin" "$tmpdir/single-file-pull/large.bin"

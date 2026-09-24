@@ -336,6 +336,18 @@ pub trait EntryRepo {
                 source_mtime: None,
             }))
     }
+
+    /// Store the source modification time for an rsync-received directory.
+    async fn set_directory_source_mtime(
+        &self,
+        _namespace_id: &NamespaceId,
+        _path: &NormalizedPath,
+        _source_mtime: i64,
+    ) -> DomainResult<()> {
+        Err(DomainError::NotImplemented {
+            feature: "directory source modification times".to_string(),
+        })
+    }
     /// r4 批量版子项（默认回退 = find_children 包装（零 meta ✓ 桩自动兼容）✗
     /// infra 覆写 = 一条 JOIN 消 N+1（children 每文件 open 的 6ms/个 → 索引点查）。
     /// r13 自定义属性 k/v（默认体 = 空/幂等 ✗ 桩零动 ✓ infra 覆写 = 0006 表）。

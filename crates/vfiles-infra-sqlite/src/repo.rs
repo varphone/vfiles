@@ -2928,13 +2928,13 @@ impl EntryRepo for SqliteEntryRepo {
                         ORDER BY ev.version DESC
                         LIMIT 1
                     ) AS mime_t,
-                    (
+                    COALESCE((
                         SELECT ev.source_mtime
                         FROM entry_versions ev
                         WHERE ev.entry_id = e.id
                         ORDER BY ev.version DESC
                         LIMIT 1
-                    ) AS src_mtime
+                    ), e.source_mtime) AS src_mtime
                 FROM entries e
                 WHERE e.namespace_id = ?
                   AND instr(e.path, '/') = 0
@@ -2979,13 +2979,13 @@ impl EntryRepo for SqliteEntryRepo {
                         ORDER BY ev.version DESC
                         LIMIT 1
                     ) AS mime_t,
-                    (
+                    COALESCE((
                         SELECT ev.source_mtime
                         FROM entry_versions ev
                         WHERE ev.entry_id = e.id
                         ORDER BY ev.version DESC
                         LIMIT 1
-                    ) AS src_mtime
+                    ), e.source_mtime) AS src_mtime
                 FROM entries e
                 WHERE e.namespace_id = ?
                   AND e.path LIKE ?
@@ -3013,6 +3013,31 @@ impl EntryRepo for SqliteEntryRepo {
                 })
             })
             .collect()
+    }
+
+    async fn set_directory_source_mtime(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        source_mtime: i64,
+    ) -> DomainResult<()> {
+        let result = sqlx::query(
+            "UPDATE entries SET source_mtime = ? WHERE namespace_id = ? AND path = ? AND kind = 'directory'",
+        )
+        .bind(source_mtime)
+        .bind(namespace_id.to_string())
+        .bind(path.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to set directory source modification time: {e}"),
+        })?;
+        if result.rows_affected() == 0 {
+            return Err(DomainError::NotFound {
+                resource: format!("directory {}", path.as_str()),
+            });
+        }
+        Ok(())
     }
 
     async fn files_with_meta(
@@ -10101,6 +10126,39 @@ mod entry_repo_lookup_tests {
             .find(|entry| entry.path_norm.as_str() == "docs")
             .expect("directory should be present");
         assert!(directory.current_version_id.is_none());
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn directory_source_mtime_is_persisted_and_returned_in_child_metadata() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+        let directory_path = NormalizedPath::new("archive").expect("path should parse");
+        repo.create_entry(
+            &namespace_id,
+            &directory_path,
+            EntryKind::Directory,
+            &user_id,
+        )
+        .await
+        .expect("directory should be created");
+        repo.set_directory_source_mtime(&namespace_id, &directory_path, 946_684_802)
+            .await
+            .expect("directory source mtime should be stored");
+
+        let metadata = repo
+            .children_with_meta(
+                &namespace_id,
+                &NormalizedPath::new("").expect("root path should parse"),
+            )
+            .await
+            .expect("root child metadata should load");
+        let archive = metadata
+            .iter()
+            .find(|child| child.entry.path_norm == directory_path)
+            .expect("archive directory should be listed");
+        assert_eq!(archive.source_mtime, Some(946_684_802));
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);
