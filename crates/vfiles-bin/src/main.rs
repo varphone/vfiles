@@ -3036,18 +3036,19 @@ mod tests {
                 .command,
             Commands::Ls(_)
         ));
-        assert!(matches!(
-            Cli::try_parse_from(["vfiles", "ci", "local.txt", "docs/remote.txt"])
-                .unwrap()
-                .command,
-            Commands::Ci(_)
-        ));
-        assert!(matches!(
-            Cli::try_parse_from(["vfiles", "co", "docs", "./download"])
-                .unwrap()
-                .command,
-            Commands::Co(_)
-        ));
+        let cli = Cli::try_parse_from(["vfiles", "ci", "./local", "docs/remote"]).unwrap();
+        let Commands::Ci(args) = cli.command else {
+            panic!("ci command should parse");
+        };
+        assert_eq!(args.local_path, PathBuf::from("./local"));
+        assert_eq!(args.namespace_path, "docs/remote");
+
+        let cli = Cli::try_parse_from(["vfiles", "co", "docs/remote", "./local"]).unwrap();
+        let Commands::Co(args) = cli.command else {
+            panic!("co command should parse");
+        };
+        assert_eq!(args.namespace_path, "docs/remote");
+        assert_eq!(args.local_path, PathBuf::from("./local"));
     }
 
     fn maintenance_config(interval_seconds: u64, initial_delay_seconds: u64) -> MaintenanceConfig {
