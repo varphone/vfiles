@@ -18,6 +18,7 @@ use crate::{
 use vfiles_domain::{DomainError, NewAuditLog, NormalizedPath, UploadId};
 
 const UPLOAD_WRITE_BUFFER_BYTES: usize = 64 * 1024;
+const MAX_MULTIPART_METADATA_FIELD_BYTES: usize = 64 * 1024;
 
 struct TempUploadFile(std::path::PathBuf);
 
@@ -49,6 +50,28 @@ fn create_temp_upload_file(path: &std::path::Path) -> ApiResult<tokio::fs::File>
 #[derive(Debug, Deserialize)]
 struct CompleteUploadRequest {
     message: Option<String>,
+}
+
+async fn read_multipart_metadata_field(
+    mut field: axum_extra::extract::multipart::Field,
+    name: &'static str,
+) -> ApiResult<Vec<u8>> {
+    let mut value = Vec::new();
+    while let Some(chunk) = field.chunk().await.map_err(|err| {
+        ApiError::Domain(DomainError::Validation {
+            message: format!("Failed to read {name} field: {err}"),
+        })
+    })? {
+        let size_bytes = value.len().saturating_add(chunk.len());
+        if size_bytes > MAX_MULTIPART_METADATA_FIELD_BYTES {
+            return Err(ApiError::Validation {
+                field: name.to_string(),
+                message: format!("must not exceed {MAX_MULTIPART_METADATA_FIELD_BYTES} bytes"),
+            });
+        }
+        value.extend_from_slice(&chunk);
+    }
+    Ok(value)
 }
 
 pub fn router() -> Router<AppState> {
@@ -575,25 +598,16 @@ async fn process_single_upload(
                 drop(temp_file);
             }
             "path" => {
-                let bytes = field.bytes().await.map_err(|_| {
-                    ApiError::Domain(DomainError::Validation {
-                        message: "Invalid path encoding".to_string(),
-                    })
-                })?;
-                path = String::from_utf8(bytes.to_vec()).map_err(|_| {
+                let bytes = read_multipart_metadata_field(field, "path").await?;
+                path = String::from_utf8(bytes).map_err(|_| {
                     ApiError::Domain(DomainError::Validation {
                         message: "Invalid path encoding".to_string(),
                     })
                 })?;
             }
             "message" => {
-                let bytes = field.bytes().await.map_err(|_| {
-                    ApiError::Domain(DomainError::Validation {
-                        message: "Invalid message encoding".to_string(),
-                    })
-                })?;
-                message =
-                    String::from_utf8(bytes.to_vec()).unwrap_or_else(|_| "Upload file".to_string());
+                let bytes = read_multipart_metadata_field(field, "message").await?;
+                message = String::from_utf8(bytes).unwrap_or_else(|_| "Upload file".to_string());
             }
             _ => {
                 // Ignore unknown fields.

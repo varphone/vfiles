@@ -1473,6 +1473,42 @@ async fn single_upload_streams_multipart_file_to_storage() {
 }
 
 #[tokio::test]
+async fn multipart_upload_bounds_metadata_fields_and_cleans_temp_file() {
+    let app = TestApp::new().await;
+    let boundary = "----vfiles-oversized-metadata-boundary";
+    let oversized_path = "x".repeat(64 * 1024 + 1);
+    for field_name in ["path", "message"] {
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"bounded.txt\"\r\n\r\nfile bytes\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"{field_name}\"\r\n\r\n{oversized_path}\r\n--{boundary}--\r\n"
+        )
+        .into_bytes();
+
+        let response = app
+            .request_as_admin(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/files/upload")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .expect("request should build"),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let error = response_json(response).await;
+        assert_eq!(error["code"], "VALIDATION_FAILED");
+        assert_eq!(error["details"]["field"], field_name);
+        let temp_files = std::fs::read_dir(app._temp_dir.path().join("tmp"))
+            .expect("upload temp directory should be readable")
+            .count();
+        assert_eq!(temp_files, 0, "rejected upload must remove its temp file");
+    }
+}
+
+#[tokio::test]
 async fn multipart_upload_rejects_multiple_file_fields_without_replacing_target() {
     let app = TestApp::new().await;
     app.upload_version("docs", "same.txt", b"original", "original upload")
