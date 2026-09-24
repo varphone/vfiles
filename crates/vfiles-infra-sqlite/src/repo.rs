@@ -4499,40 +4499,71 @@ impl EntryRepo for SqliteEntryRepo {
         })?;
 
         if let Some(condition) = condition {
-            let row: Option<(String, Option<String>)> = sqlx::query_as(
-                "SELECT e.id, (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1) FROM entries e WHERE e.namespace_id = ? AND e.path = ?",
-            )
-            .bind(condition.namespace_id.to_string())
-            .bind(condition.path.as_str())
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(|e| DomainError::Internal {
-                message: format!("Failed to verify conditional write state: {e}"),
-            })?;
-            let current = row
-                .map(|(entry_id, version_id)| {
-                    let entry_id =
-                        EntryId::from_string(&entry_id).map_err(|error| DomainError::Internal {
-                            message: format!(
-                                "Invalid entry id in conditional write check: {error}"
-                            ),
+            if let Some(expected_tokens) = &condition.expected_lock_tokens {
+                let now = time::OffsetDateTime::now_utc()
+                    .unix_timestamp_nanos()
+                    .div_euclid(1_000_000)
+                    .clamp(0, i64::MAX as i128) as i64;
+                let current_tokens: Vec<String> = sqlx::query_scalar(
+                    r#"SELECT token FROM webdav_locks
+                       WHERE namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)
+                         AND (path = ? OR (depth_infinity = 1 AND
+                           (path = '' OR substr(?, 1, length(path) + 1) = path || '/')))
+                       ORDER BY token"#,
+                )
+                .bind(condition.namespace_id.to_string())
+                .bind(now)
+                .bind(condition.path.as_str())
+                .bind(condition.path.as_str())
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to verify conditional WebDAV lock state: {e}"),
+                })?;
+                let mut expected_tokens = expected_tokens.clone();
+                expected_tokens.sort_unstable();
+                if current_tokens != expected_tokens {
+                    return Err(DomainError::PreconditionFailed);
+                }
+            }
+
+            if condition.check_entry_state {
+                let row: Option<(String, Option<String>)> = sqlx::query_as(
+                    "SELECT e.id, (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1) FROM entries e WHERE e.namespace_id = ? AND e.path = ?",
+                )
+                .bind(condition.namespace_id.to_string())
+                .bind(condition.path.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to verify conditional write state: {e}"),
+                })?;
+                let current = row
+                    .map(|(entry_id, version_id)| {
+                        let entry_id = EntryId::from_string(&entry_id).map_err(|error| {
+                            DomainError::Internal {
+                                message: format!(
+                                    "Invalid entry id in conditional write check: {error}"
+                                ),
+                            }
                         })?;
-                    let version_id = version_id
-                        .map(|id| VersionId::from_string(&id))
-                        .transpose()
-                        .map_err(|error| DomainError::Internal {
-                            message: format!(
-                                "Invalid version id in conditional write check: {error}"
-                            ),
-                        })?;
-                    Ok::<_, DomainError>((entry_id, version_id))
-                })
-                .transpose()?;
-            let expected = condition
-                .expected_entry_id
-                .map(|entry_id| (entry_id, condition.expected_version_id));
-            if current != expected {
-                return Err(DomainError::PreconditionFailed);
+                        let version_id = version_id
+                            .map(|id| VersionId::from_string(&id))
+                            .transpose()
+                            .map_err(|error| DomainError::Internal {
+                                message: format!(
+                                    "Invalid version id in conditional write check: {error}"
+                                ),
+                            })?;
+                        Ok::<_, DomainError>((entry_id, version_id))
+                    })
+                    .transpose()?;
+                let expected = condition
+                    .expected_entry_id
+                    .map(|entry_id| (entry_id, condition.expected_version_id));
+                if current != expected {
+                    return Err(DomainError::PreconditionFailed);
+                }
             }
         }
 
@@ -8701,8 +8732,10 @@ mod entry_version_batch_tests {
         let condition = vfiles_domain::EntryWriteCondition {
             namespace_id,
             path: path.clone(),
+            check_entry_state: true,
             expected_entry_id: Some(entry_id),
             expected_version_id: Some(first.id),
+            expected_lock_tokens: None,
         };
         let result = repo
             .create_version_with_properties(
@@ -8733,6 +8766,63 @@ mod entry_version_batch_tests {
             current.current_version_id,
             versions.iter().max_by_key(|v| v.version_no).map(|v| v.id)
         );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn conditional_version_write_rejects_a_lock_acquired_after_precheck() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+        let path = NormalizedPath::new("docs/lock-race.txt").expect("path should parse");
+        let entry_id = repo
+            .create_entry(&namespace_id, &path, EntryKind::File, &user_id)
+            .await
+            .expect("entry should be created");
+        let first = repo
+            .create_version(&entry_id, None, None, 1, Some("text/plain"), &user_id, None)
+            .await
+            .expect("initial version should be created");
+        sqlx::query(
+            "INSERT INTO webdav_locks (namespace_id, path, token, owner, expires_at, depth_infinity, scope) VALUES (?, ?, ?, 'client', NULL, 0, 'exclusive')",
+        )
+        .bind(namespace_id.to_string())
+        .bind(path.as_str())
+        .bind("opaquelocktoken:acquired-during-upload")
+        .execute(&pool)
+        .await
+        .expect("concurrent lock should become active");
+
+        let no_properties = |_version_id| Vec::new();
+        let condition = vfiles_domain::EntryWriteCondition {
+            namespace_id,
+            path: path.clone(),
+            check_entry_state: true,
+            expected_entry_id: Some(entry_id),
+            expected_version_id: Some(first.id),
+            expected_lock_tokens: Some(Vec::new()),
+        };
+        let result = repo
+            .create_version_with_properties(
+                &entry_id,
+                None,
+                None,
+                2,
+                Some("text/plain"),
+                &user_id,
+                None,
+                &no_properties,
+                Some(&condition),
+            )
+            .await;
+        assert!(matches!(result, Err(DomainError::PreconditionFailed)));
+
+        let current = repo
+            .find_by_path(&namespace_id, &path)
+            .await
+            .expect("entry lookup should succeed")
+            .expect("entry should remain present");
+        assert_eq!(current.current_version_id, Some(first.id));
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);

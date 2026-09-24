@@ -293,8 +293,13 @@ pub enum EntryPropertyChange {
 pub struct EntryWriteCondition {
     pub namespace_id: NamespaceId,
     pub path: NormalizedPath,
+    /// Whether the entry identity and version must still equal the observed state.
+    pub check_entry_state: bool,
     pub expected_entry_id: Option<EntryId>,
     pub expected_version_id: Option<VersionId>,
+    /// When present, the active WebDAV lock tokens covering `path` must still match
+    /// exactly when the entry mutation commits.
+    pub expected_lock_tokens: Option<Vec<String>>,
 }
 
 #[async_trait::async_trait]

@@ -1188,11 +1188,22 @@ async fn write_precondition(
     rel: &str,
     if_header: Option<&str>,
 ) -> Option<StatusCode> {
+    write_precondition_snapshot(app, ns, rel, if_header)
+        .await
+        .err()
+}
+
+async fn write_precondition_snapshot(
+    app: &WebdavApplication,
+    ns: &vfiles_domain::types::NamespaceId,
+    rel: &str,
+    if_header: Option<&str>,
+) -> Result<Vec<String>, StatusCode> {
     let locks = match app.locks.blocked_all(ns, rel).await {
         Ok(entries) => entries,
         Err(error) => {
             tracing::error!(%error, rel, "WebDAV 写锁查询失败");
-            return Some(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
     if locks.is_empty() {
@@ -1205,7 +1216,7 @@ async fn write_precondition(
                         .map(derive_etag),
                     Err(error) => {
                         tracing::error!(%error, rel, "WebDAV If 条件读取实体标签失败");
-                        return Some(StatusCode::INTERNAL_SERVER_ERROR);
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
                     }
                 },
                 Err(_) => None,
@@ -1217,14 +1228,18 @@ async fn write_precondition(
                 None,
                 etag.as_deref(),
             ) {
-                Some(true) => None,
-                Some(false) => Some(StatusCode::PRECONDITION_FAILED),
-                None => Some(StatusCode::BAD_REQUEST),
+                Some(true) => Ok(Vec::new()),
+                Some(false) => Err(StatusCode::PRECONDITION_FAILED),
+                None => Err(StatusCode::BAD_REQUEST),
             };
         }
-        return None;
+        return Ok(Vec::new());
     }
     if let Some(header) = if_header {
+        let tokens_at_request = locks
+            .iter()
+            .map(|lock| lock.token.clone())
+            .collect::<Vec<_>>();
         let mut locks_by_path = std::collections::HashMap::<String, Vec<_>>::new();
         for lock in locks {
             locks_by_path
@@ -1241,7 +1256,7 @@ async fn write_precondition(
                         .map(derive_etag),
                     Err(error) => {
                         tracing::error!(%error, rel, "WebDAV If 条件读取实体标签失败");
-                        return Some(StatusCode::INTERNAL_SERVER_ERROR);
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
                     }
                 }
             } else {
@@ -1260,17 +1275,17 @@ async fn write_precondition(
                 true,
             ) {
                 Some(true) => {}
-                Some(false) => return Some(StatusCode::PRECONDITION_FAILED),
-                None => return Some(StatusCode::BAD_REQUEST),
+                Some(false) => return Err(StatusCode::PRECONDITION_FAILED),
+                None => return Err(StatusCode::BAD_REQUEST),
             }
         }
-        return None;
+        return Ok(tokens_at_request);
     }
     if !locks.is_empty() {
         tracing::debug!(rel = %rel, "WebDAV 写请求缺少锁 token，返回 423");
-        return Some(StatusCode::LOCKED);
+        return Err(StatusCode::LOCKED);
     }
-    None
+    Ok(Vec::new())
 }
 
 async fn write_subtree_precondition(
@@ -1345,7 +1360,7 @@ async fn put_op(
     ns: Option<vfiles_domain::types::NamespaceId>,
     uri_owned: String,
     if_owned: Option<String>,
-    write_condition: Option<vfiles_domain::EntryWriteCondition>,
+    mut write_condition: Option<vfiles_domain::EntryWriteCondition>,
     put_body: Option<Body>,
 ) -> Response {
     let Some(app) = app else {
@@ -1367,13 +1382,6 @@ async fn put_op(
         .trim_start_matches('/')
         .trim_end_matches('/')
         .to_string();
-    // r7 锁前置（PUT 此前零检查 ✗ 锁摆设缺口 ×1）
-    if let Some(status) = write_precondition(&app, &ns, &rel, if_owned.as_deref()).await {
-        return Response::builder()
-            .status(status)
-            .body(Body::empty())
-            .unwrap();
-    }
     let path = match vfiles_domain::types::NormalizedPath::new(&rel) {
         Ok(p) => p,
         Err(_) => {
@@ -1383,6 +1391,27 @@ async fn put_op(
                 .unwrap();
         }
     };
+    // Capture and validate the active lock set before consuming the body. The same snapshot is
+    // checked again inside SQLite's version-commit transaction to close the LOCK/PUT race.
+    let active_lock_tokens =
+        match write_precondition_snapshot(&app, &ns, &rel, if_owned.as_deref()).await {
+            Ok(tokens) => tokens,
+            Err(status) => {
+                return Response::builder()
+                    .status(status)
+                    .body(Body::empty())
+                    .unwrap();
+            }
+        };
+    let condition = write_condition.get_or_insert_with(|| vfiles_domain::EntryWriteCondition {
+        namespace_id: ns,
+        path: path.clone(),
+        check_entry_state: false,
+        expected_entry_id: None,
+        expected_version_id: None,
+        expected_lock_tokens: None,
+    });
+    condition.expected_lock_tokens = Some(active_lock_tokens);
     use futures::{StreamExt, TryStreamExt};
     let limit_exceeded = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let exceeded = Arc::clone(&limit_exceeded);
@@ -1733,8 +1762,10 @@ async fn check_http_write_preconditions(
     Ok(Some(vfiles_domain::EntryWriteCondition {
         namespace_id: *namespace_id,
         path: path.clone(),
+        check_entry_state: true,
         expected_entry_id,
         expected_version_id,
+        expected_lock_tokens: None,
     }))
 }
 
@@ -3558,10 +3589,12 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                                     write_condition = Some(vfiles_domain::EntryWriteCondition {
                                         namespace_id: *ns_e,
                                         path: put_path.clone(),
+                                        check_entry_state: true,
                                         expected_entry_id: entry.as_ref().map(|entry| entry.id),
                                         expected_version_id: entry
                                             .as_ref()
                                             .and_then(|entry| entry.current_version_id),
+                                        expected_lock_tokens: None,
                                     });
                                     let mut cur = None;
                                     let mut modified_at =
