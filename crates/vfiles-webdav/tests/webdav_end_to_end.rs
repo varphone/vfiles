@@ -1299,6 +1299,35 @@ async fn options_advertises_and_propfind_needs_auth() {
         b"webdav range fixture"
     );
 
+    let head_with_range = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("HEAD")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("range", "bytes=0-3")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(head_with_range.status(), 200);
+    assert!(head_with_range.headers().get("content-range").is_none());
+    assert_eq!(
+        head_with_range
+            .headers()
+            .get("content-length")
+            .and_then(|value| value.to_str().ok()),
+        Some("20")
+    );
+    assert!(
+        axum::body::to_bytes(head_with_range.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
     let matching_if_match = router
         .clone()
         .oneshot(

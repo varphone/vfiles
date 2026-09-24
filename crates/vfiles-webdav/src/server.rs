@@ -1035,11 +1035,12 @@ async fn get_op(
             if let Some(modified_at) = modified_at {
                 base = base.header(header::LAST_MODIFIED, format_http_date(modified_at));
             }
-            let range = if if_range_allows_range(
-                if_range_owned.as_deref(),
-                cur_etag.as_deref(),
-                modified_at,
-            ) {
+            let range = if !is_head
+                && if_range_allows_range(
+                    if_range_owned.as_deref(),
+                    cur_etag.as_deref(),
+                    modified_at,
+                ) {
                 range_owned
                     .as_deref()
                     .and_then(|rh| match parse_byte_range(rh, size) {
