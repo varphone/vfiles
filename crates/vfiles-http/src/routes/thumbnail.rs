@@ -18,6 +18,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncReadExt;
 use vfiles_domain::{DomainError, NormalizedPath};
 
 use crate::{
@@ -194,7 +195,7 @@ async fn get_file_thumbnail(
 
     let file = state
         .workspace_service
-        .read_file_bytes(&ctx.namespace_id, &path, query.commit.as_deref())
+        .open_file(&ctx.namespace_id, &path, query.commit.as_deref())
         .await?;
 
     if !is_supported_image(&file.mime_type, &file.filename) || file.size_bytes > MAX_SOURCE_BYTES {
@@ -209,12 +210,17 @@ async fn get_file_thumbnail(
     }
 
     // ETag 与缓存文件都带上格式，避免切换格式命中旧内容。
-    let etag = format!("\"{}-{}-{}\"", file.blob_id, size, format.as_str());
+    let etag = format!(
+        "\"{}-{}-{}\"",
+        file.etag.trim_matches('"'),
+        size,
+        format.as_str()
+    );
     if if_none_match(&headers, Some(&etag)) {
         return Ok(not_modified_response(&etag));
     }
 
-    let cache_path = thumbnail_cache_path(&state, &file.blob_id.to_string(), size, format);
+    let cache_path = thumbnail_cache_path(&state, file.etag.trim_matches('"'), size, format);
 
     if let Some(bytes) = read_cache(&cache_path).await {
         STATS.cache_hits.fetch_add(1, Ordering::Relaxed);
@@ -222,7 +228,17 @@ async fn get_file_thumbnail(
         return Ok(thumbnail_response(bytes, &etag, format));
     }
 
-    let source = file.bytes;
+    let mut reader = file.reader.take(file.size_bytes.saturating_add(1));
+    let mut source = Vec::with_capacity(file.size_bytes as usize);
+    let bytes_read = reader
+        .read_to_end(&mut source)
+        .await
+        .map_err(|err| ApiError::Internal(format!("Failed to read thumbnail source: {err}")))?;
+    if bytes_read as u64 != file.size_bytes {
+        return Err(ApiError::Internal(
+            "Thumbnail source size does not match stored metadata".to_string(),
+        ));
+    }
     let generated =
         tokio::task::spawn_blocking(move || generate_thumbnail(&source, size, format)).await;
 
