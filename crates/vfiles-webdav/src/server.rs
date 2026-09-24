@@ -2433,29 +2433,33 @@ async fn propfind_owned(
     if depth != "0" {
         const PAGE_SIZE: u32 = 256;
         let mut after_path: Option<String> = None;
+        let mut direct_child_cursor: Option<(bool, String)> = None;
         loop {
-            // Direct children remain one logical page; infinity walks the subtree using keyset paging.
+            // Both direct-child and recursive queries are bounded. Depth 1 uses the ordered
+            // SQL page API; infinity uses a path cursor to walk the subtree.
             let (metas, has_more) = if depth == "1" {
-                let metas = if wants_size_or_type {
-                    app.entry_repo
-                        .children_with_meta(&ns, &path)
-                        .await
-                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                } else {
-                    app.entry_repo
-                        .find_children(&ns, &path)
-                        .await
-                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                        .into_iter()
-                        .map(|entry| vfiles_domain::types::EntryChildMeta {
-                            entry,
-                            size_bytes: None,
-                            mime_type: None,
-                            source_mtime: None,
-                        })
-                        .collect()
-                };
-                (metas, false)
+                let entries = app
+                    .entry_repo
+                    .find_children_after(&ns, &path, direct_child_cursor.clone(), PAGE_SIZE)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                let has_more = entries.len() == PAGE_SIZE as usize;
+                direct_child_cursor = entries.last().map(|entry| {
+                    (
+                        entry.entry_type == vfiles_domain::types::EntryKind::Directory,
+                        entry.path_norm.as_str().to_string(),
+                    )
+                });
+                let metas: Vec<vfiles_domain::types::EntryChildMeta> = entries
+                    .into_iter()
+                    .map(|entry| vfiles_domain::types::EntryChildMeta {
+                        entry,
+                        size_bytes: None,
+                        mime_type: None,
+                        source_mtime: None,
+                    })
+                    .collect();
+                (metas, has_more)
             } else {
                 let entries = if rel.is_empty() {
                     app.entry_repo
@@ -2486,8 +2490,8 @@ async fn propfind_owned(
             if metas.is_empty() {
                 break;
             }
-            // Subtree metadata is loaded in one version batch so infinity depth does
-            // not issue one metadata query per resource.
+            // File metadata is loaded in one version batch per page, including Depth 1,
+            // so high-fanout collections do not issue one query per resource.
             let child_ids: Vec<vfiles_domain::types::EntryId> =
                 metas.iter().map(|meta| meta.entry.id).collect();
             let child_props = if wants_custom && !child_ids.is_empty() {
@@ -2502,7 +2506,7 @@ async fn propfind_owned(
                 std::collections::HashMap::new()
             };
             let version_metadata: std::collections::HashMap<_, _> =
-                if wants_last_modified || (depth == "infinity" && wants_size_or_type) {
+                if wants_last_modified || wants_size_or_type {
                     let version_ids: Vec<_> = metas
                         .iter()
                         .filter_map(|meta| meta.entry.current_version_id)

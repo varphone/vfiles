@@ -210,6 +210,64 @@ async fn options_advertises_and_propfind_needs_auth() {
         )
         .await
         .expect("depth test directory should be created");
+    for index in 0..260 {
+        entry_repo
+            .create_entry(
+                &namespace_id,
+                &NormalizedPath::new(&format!("root-fanout-{index:04}")).expect("root fanout path"),
+                vfiles_domain::types::EntryKind::Directory,
+                &user.id,
+            )
+            .await
+            .expect("root fanout child should be created");
+    }
+    for index in 0..520 {
+        entry_repo
+            .create_entry(
+                &namespace_id,
+                &NormalizedPath::new(&format!("depth-dir/child-{index:04}"))
+                    .expect("fanout child path"),
+                vfiles_domain::types::EntryKind::Directory,
+                &user.id,
+            )
+            .await
+            .expect("fanout child should be created");
+    }
+    for index in 0..520 {
+        entry_repo
+            .create_entry(
+                &namespace_id,
+                &NormalizedPath::new(&format!("depth-dir/file-{index:04}.txt"))
+                    .expect("fanout file path"),
+                vfiles_domain::types::EntryKind::File,
+                &user.id,
+            )
+            .await
+            .expect("fanout file entry should be created");
+    }
+    for name in ["first.txt", "last.txt"] {
+        let file = entry_repo
+            .create_entry(
+                &namespace_id,
+                &NormalizedPath::new(&format!("depth-dir/{name}")).expect("file path"),
+                vfiles_domain::types::EntryKind::File,
+                &user.id,
+            )
+            .await
+            .expect("fanout file should be created");
+        entry_repo
+            .create_version(
+                &file,
+                None,
+                None,
+                0,
+                Some("text/plain"),
+                &user.id,
+                Some("fanout listing fixture"),
+            )
+            .await
+            .expect("fanout file version should be created");
+    }
     entry_repo
         .create_entry(
             &namespace_id,
@@ -402,6 +460,57 @@ async fn options_advertises_and_propfind_needs_auth() {
         "/persist.txt</D:href><D:propstat><D:prop><D:getcontentlength>0</D:getcontentlength>"
     ));
     assert!(!child_lengths_xml.contains("/locked-dir/child.txt"));
+
+    let paged_depth_one = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/depth-dir")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "1")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propfind xmlns:D="DAV:"><D:prop><D:getcontentlength/><D:getcontenttype/></D:prop></D:propfind>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(paged_depth_one.status(), 207);
+    let paged_depth_one_xml = String::from_utf8(
+        axum::body::to_bytes(paged_depth_one.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert_eq!(paged_depth_one_xml.matches("<D:response>").count(), 1043);
+    for name in [
+        "child-0000/",
+        "child-0519/",
+        "file-0000.txt",
+        "file-0519.txt",
+        "first.txt",
+        "last.txt",
+    ] {
+        assert!(
+            paged_depth_one_xml.contains(name),
+            "missing depth-one entry {name}"
+        );
+    }
+    assert_eq!(
+        paged_depth_one_xml
+            .matches("<D:getcontentlength>0</D:getcontentlength>")
+            .count(),
+        2
+    );
+    assert_eq!(
+        paged_depth_one_xml
+            .matches("<D:getcontenttype>text/plain</D:getcontenttype>")
+            .count(),
+        2
+    );
 
     let allprop_with_include = router
         .clone()

@@ -3536,6 +3536,125 @@ impl EntryRepo for SqliteEntryRepo {
         Ok((entries, total.max(0) as u64))
     }
 
+    async fn find_children_after(
+        &self,
+        namespace_id: &NamespaceId,
+        parent_path: &NormalizedPath,
+        after: Option<(bool, String)>,
+        limit: u32,
+    ) -> DomainResult<Vec<Entry>> {
+        const ROOT_FIRST: &str = r#"
+            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
+            FROM entries e WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
+            ORDER BY (e.kind = 'directory') DESC, e.path ASC LIMIT ?
+        "#;
+        const ROOT_AFTER_DIRECTORY: &str = r#"
+            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
+            FROM entries e WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
+              AND (e.kind = 'file' OR (e.kind = 'directory' AND e.path > ?))
+            ORDER BY (e.kind = 'directory') DESC, e.path ASC LIMIT ?
+        "#;
+        const ROOT_AFTER_FILE: &str = r#"
+            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
+            FROM entries e WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
+              AND e.kind = 'file' AND e.path > ?
+            ORDER BY e.path ASC LIMIT ?
+        "#;
+        const PREFIX_FIRST: &str = r#"
+            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
+            FROM entries e WHERE e.namespace_id = ? AND e.path >= ? AND e.path < ?
+              AND instr(substr(e.path, length(?) + 1), '/') = 0
+            ORDER BY (e.kind = 'directory') DESC, e.path ASC LIMIT ?
+        "#;
+        const PREFIX_AFTER_DIRECTORY: &str = r#"
+            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
+            FROM entries e WHERE e.namespace_id = ? AND e.path >= ? AND e.path < ?
+              AND instr(substr(e.path, length(?) + 1), '/') = 0
+              AND (e.kind = 'file' OR (e.kind = 'directory' AND e.path > ?))
+            ORDER BY (e.kind = 'directory') DESC, e.path ASC LIMIT ?
+        "#;
+        const PREFIX_AFTER_FILE: &str = r#"
+            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
+            FROM entries e WHERE e.namespace_id = ? AND e.path >= ? AND e.path < ?
+              AND instr(substr(e.path, length(?) + 1), '/') = 0
+              AND e.kind = 'file' AND e.path > ?
+            ORDER BY e.path ASC LIMIT ?
+        "#;
+
+        let limit = i64::from(limit);
+        let is_root = parent_path.as_str().is_empty();
+        let prefix = format!("{}/", parent_path.as_str().trim_end_matches('/'));
+        let upper = format!("{}0", parent_path.as_str().trim_end_matches('/'));
+        let rows: Vec<EntryRow> = match (is_root, after) {
+            (true, None) => {
+                sqlx::query_as(ROOT_FIRST)
+                    .bind(namespace_id.to_string())
+                    .bind(limit)
+                    .fetch_all(&self.pool)
+                    .await
+            }
+            (true, Some((true, path))) => {
+                sqlx::query_as(ROOT_AFTER_DIRECTORY)
+                    .bind(namespace_id.to_string())
+                    .bind(path)
+                    .bind(limit)
+                    .fetch_all(&self.pool)
+                    .await
+            }
+            (true, Some((false, path))) => {
+                sqlx::query_as(ROOT_AFTER_FILE)
+                    .bind(namespace_id.to_string())
+                    .bind(path)
+                    .bind(limit)
+                    .fetch_all(&self.pool)
+                    .await
+            }
+            (false, None) => {
+                sqlx::query_as(PREFIX_FIRST)
+                    .bind(namespace_id.to_string())
+                    .bind(&prefix)
+                    .bind(&upper)
+                    .bind(&prefix)
+                    .bind(limit)
+                    .fetch_all(&self.pool)
+                    .await
+            }
+            (false, Some((true, path))) => {
+                sqlx::query_as(PREFIX_AFTER_DIRECTORY)
+                    .bind(namespace_id.to_string())
+                    .bind(&prefix)
+                    .bind(&upper)
+                    .bind(&prefix)
+                    .bind(path)
+                    .bind(limit)
+                    .fetch_all(&self.pool)
+                    .await
+            }
+            (false, Some((false, path))) => {
+                sqlx::query_as(PREFIX_AFTER_FILE)
+                    .bind(namespace_id.to_string())
+                    .bind(&prefix)
+                    .bind(&upper)
+                    .bind(&prefix)
+                    .bind(path)
+                    .bind(limit)
+                    .fetch_all(&self.pool)
+                    .await
+            }
+        }
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to list children cursor page: {error}"),
+        })?;
+
+        rows.into_iter().map(parse_entry_row).collect()
+    }
+
     async fn find_subtree(
         &self,
         namespace_id: &NamespaceId,

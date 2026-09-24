@@ -526,6 +526,35 @@ pub trait EntryRepo {
         offset: u32,
     ) -> DomainResult<(Vec<Entry>, u64)>;
 
+    /// Fetch the next bounded page of direct children in directory-first path order.
+    /// The cursor contains `(is_directory, path)` from the last result.
+    async fn find_children_after(
+        &self,
+        namespace_id: &NamespaceId,
+        parent_path: &NormalizedPath,
+        after: Option<(bool, String)>,
+        limit: u32,
+    ) -> DomainResult<Vec<Entry>> {
+        let mut entries = self.find_children(namespace_id, parent_path).await?;
+        entries.sort_by(|left, right| {
+            let left_directory = left.entry_type == EntryKind::Directory;
+            let right_directory = right.entry_type == EntryKind::Directory;
+            right_directory
+                .cmp(&left_directory)
+                .then_with(|| left.path_norm.as_str().cmp(right.path_norm.as_str()))
+        });
+        if let Some((after_directory, after_path)) = after {
+            entries.retain(|entry| {
+                let is_directory = entry.entry_type == EntryKind::Directory;
+                (is_directory != after_directory && after_directory)
+                    || (is_directory == after_directory
+                        && entry.path_norm.as_str() > after_path.as_str())
+            });
+        }
+        entries.truncate(limit as usize);
+        Ok(entries)
+    }
+
     async fn find_subtree(
         &self,
         namespace_id: &NamespaceId,
