@@ -850,6 +850,19 @@ def main():
     check("boto list_multipart_uploads delimiter",
           [c["Prefix"] for c in lmd.get("CommonPrefixes", [])] == ["boto-lmu/sub/"],
           lmd.get("CommonPrefixes"))
+    lmd1 = s3.list_multipart_uploads(
+        Bucket="default", Prefix="boto-lmu/", Delimiter="/", MaxUploads=1
+    )
+    lmd2 = s3.list_multipart_uploads(
+        Bucket="default", Prefix="boto-lmu/", Delimiter="/", MaxUploads=1,
+        KeyMarker=lmd1.get("NextKeyMarker", ""),
+        UploadIdMarker=lmd1.get("NextUploadIdMarker", ""),
+    )
+    check("boto delimiter listing resumes after common prefix",
+          lmd1.get("IsTruncated") is True
+          and [c["Prefix"] for c in lmd1.get("CommonPrefixes", [])] == ["boto-lmu/sub/"]
+          and [u["Key"] for u in lmd2.get("Uploads", [])] == ["boto-lmu/x.bin"],
+          (lmd1, lmd2))
     for mk, mid in muids.items():
         s3.abort_multipart_upload(Bucket="default", Key=mk, UploadId=mid)
 

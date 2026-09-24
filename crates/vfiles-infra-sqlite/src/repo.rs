@@ -1308,6 +1308,48 @@ impl SqliteS3MultipartUploadRepo {
             })
             .collect()
     }
+
+    /// Return a key-ordered page starting inclusively at a raw key boundary.
+    pub async fn page_from_key(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        prefix: &str,
+        from_key: &str,
+        limit: u32,
+    ) -> Result<Vec<S3MultipartUploadRecord>, vfiles_domain::DomainError> {
+        let rows: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT object_key, upload_id, initiated_at \
+             FROM s3_multipart_uploads \
+             WHERE namespace_id = ? AND object_key >= ? AND object_key >= ? \
+               AND substr(object_key, 1, length(?)) = ? \
+             ORDER BY object_key, upload_id \
+             LIMIT ?",
+        )
+        .bind(namespace_id.to_string())
+        .bind(from_key)
+        .bind(prefix)
+        .bind(prefix)
+        .bind(prefix)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to page S3 multipart uploads from key boundary: {e}"),
+        })?;
+        rows.into_iter()
+            .map(|(object_key, upload_id, initiated_at)| {
+                let initiated_at = time::OffsetDateTime::from_unix_timestamp(initiated_at)
+                    .map_err(|e| vfiles_domain::DomainError::Internal {
+                        message: format!("Invalid S3 multipart timestamp: {e}"),
+                    })?;
+                Ok(S3MultipartUploadRecord {
+                    object_key,
+                    upload_id,
+                    initiated_at,
+                })
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2107,6 +2149,54 @@ mod s3_multipart_upload_repo_tests {
             .await
             .expect("second upload page should load");
         assert_eq!(next.len(), 1);
+
+        for _ in 0..520 {
+            repo.register(
+                &namespace,
+                "bulk/nested/object",
+                &UploadId::new(),
+                initiated,
+            )
+            .await
+            .expect("nested upload should be indexed");
+        }
+        repo.register(&namespace, "bulk/z-object", &UploadId::new(), initiated)
+            .await
+            .expect("later upload should be indexed");
+        let after_common_prefix = repo
+            .page_from_key(&namespace, "bulk/", "bulk/nested0", 2)
+            .await
+            .expect("key-boundary multipart page should load");
+        assert_eq!(after_common_prefix.len(), 1);
+        assert_eq!(after_common_prefix[0].object_key, "bulk/z-object");
+        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+            "EXPLAIN QUERY PLAN SELECT object_key, upload_id, initiated_at \
+             FROM s3_multipart_uploads \
+             WHERE namespace_id = ? AND object_key >= ? AND object_key >= ? \
+               AND substr(object_key, 1, length(?)) = ? \
+             ORDER BY object_key, upload_id LIMIT ?",
+        )
+        .bind(namespace.to_string())
+        .bind("bulk/nested0")
+        .bind("bulk/")
+        .bind("bulk/")
+        .bind("bulk/")
+        .bind(2_i64)
+        .fetch_all(&pool)
+        .await
+        .expect("key-boundary query plan should be available");
+        assert!(
+            plan.iter()
+                .any(|(_, _, _, detail)| { detail.contains("idx_s3_multipart_uploads_listing") })
+        );
+        repo.register(
+            &namespace,
+            "multi::nested::object",
+            &UploadId::new(),
+            initiated,
+        )
+        .await
+        .expect("multi-character delimiter upload should be indexed");
         repo.mark_backfill_complete(&namespace)
             .await
             .expect("backfill state should persist");

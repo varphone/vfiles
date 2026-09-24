@@ -1094,6 +1094,21 @@ fn resolve_completed_part_indices(stored: &[(i32, u64)], requested: &[i32]) -> S
     Ok(indices)
 }
 
+fn multipart_prefix_successor(prefix: &str) -> Option<String> {
+    let mut chars: Vec<char> = prefix.chars().collect();
+    while let Some(last) = chars.pop() {
+        let mut next = last as u32 + 1;
+        while next <= char::MAX as u32 {
+            if let Some(next_char) = char::from_u32(next) {
+                chars.push(next_char);
+                return Some(chars.into_iter().collect());
+            }
+            next += 1;
+        }
+    }
+    None
+}
+
 fn multipart_upload_is_after_marker(
     listed_key: &str,
     is_upload: bool,
@@ -3234,32 +3249,38 @@ impl S3 for VfilesS3 {
         }
         let prefix = input.prefix.clone().unwrap_or_default();
         let max = input.max_uploads.unwrap_or(1000).clamp(1, 1000) as usize;
-        let delim = input.delimiter.clone();
+        const PAGE_SIZE: u32 = 512;
         let mut combined: std::collections::BTreeMap<(String, String), Option<MultipartUpload>> =
             std::collections::BTreeMap::new();
         let mut after_key = input.key_marker.clone();
         let mut after_upload_id = input.upload_id_marker.clone();
-        loop {
-            let records = self
-                .multipart_uploads
-                .page(
-                    &self.namespace,
-                    &prefix,
-                    after_key.as_deref(),
-                    after_upload_id.as_deref(),
-                    512,
-                )
-                .await
-                .map_err(dom_err)?;
+        let mut seek_from_key: Option<String> = None;
+        'pages: loop {
+            let records = if let Some(from_key) = seek_from_key.take() {
+                self.multipart_uploads
+                    .page_from_key(&self.namespace, &prefix, &from_key, PAGE_SIZE)
+                    .await
+            } else {
+                self.multipart_uploads
+                    .page(
+                        &self.namespace,
+                        &prefix,
+                        after_key.as_deref(),
+                        after_upload_id.as_deref(),
+                        PAGE_SIZE,
+                    )
+                    .await
+            }
+            .map_err(dom_err)?;
             if records.is_empty() {
                 break;
             }
-            let count = records.len();
-            for record in &records {
+            let page_len = records.len();
+            for record in records {
                 after_key = Some(record.object_key.clone());
                 after_upload_id = Some(record.upload_id.clone());
                 let (listed_key, item) =
-                    if let Some(delimiter) = delim.as_deref().filter(|d| !d.is_empty()) {
+                    if let Some(delimiter) = input.delimiter.as_deref().filter(|d| !d.is_empty()) {
                         let remainder = &record.object_key[prefix.len()..];
                         if let Some(pos) = remainder.find(delimiter) {
                             (
@@ -3294,19 +3315,41 @@ impl S3 for VfilesS3 {
                     input.key_marker.as_deref(),
                     input.upload_id_marker.as_deref(),
                 ) {
+                    if item.is_none()
+                        && let Some(next_key) = multipart_prefix_successor(&listed_key)
+                    {
+                        seek_from_key = Some(next_key);
+                        break;
+                    }
                     continue;
                 }
                 let id = item
                     .as_ref()
                     .and_then(|upload| upload.upload_id.clone())
                     .unwrap_or_default();
-                combined.entry((listed_key, id)).or_insert(item);
+                combined
+                    .entry((listed_key.clone(), id))
+                    .or_insert(item.clone());
+                if item.is_none() {
+                    if combined.len() > max {
+                        break 'pages;
+                    }
+                    if let Some(next_key) = multipart_prefix_successor(&listed_key) {
+                        seek_from_key = Some(next_key);
+                        break;
+                    }
+                }
+                if combined.len() > max {
+                    break 'pages;
+                }
             }
-            if combined.len() > max || count < 512 {
+            if seek_from_key.is_some() {
+                continue;
+            }
+            if page_len < PAGE_SIZE as usize {
                 break;
             }
         }
-
         let mut combined: Vec<(String, Option<MultipartUpload>)> = combined
             .into_iter()
             .map(|((key, _), upload)| (key, upload))
@@ -3314,15 +3357,18 @@ impl S3 for VfilesS3 {
         let truncated = combined.len() > max;
         combined.truncate(max);
         let last = combined.last();
-        let next_key = last.map(|(k, _)| k.clone());
-        let next_uid = last.and_then(|(_, u)| u.as_ref().and_then(|u| u.upload_id.clone()));
-        let uploads: Vec<MultipartUpload> =
-            combined.iter().filter_map(|(_, u)| u.clone()).collect();
+        let next_key = last.map(|(key, _)| key.clone());
+        let next_uid =
+            last.and_then(|(_, upload)| upload.as_ref().and_then(|u| u.upload_id.clone()));
+        let uploads: Vec<MultipartUpload> = combined
+            .iter()
+            .filter_map(|(_, item)| item.clone())
+            .collect();
         let cps: Vec<CommonPrefix> = combined
             .iter()
-            .filter(|(_, u)| u.is_none())
-            .map(|(c, _)| CommonPrefix {
-                prefix: Some(c.clone()),
+            .filter(|(_, item)| item.is_none())
+            .map(|(key, _)| CommonPrefix {
+                prefix: Some(key.clone()),
             })
             .collect();
         let out = ListMultipartUploadsOutput {
@@ -3369,6 +3415,51 @@ mod tests {
             s3s::S3ErrorCode::InvalidArgument,
             "invalid S3 keys must map to InvalidArgument rather than InternalError"
         );
+    }
+
+    #[test]
+    fn multipart_common_prefix_successor_skips_the_complete_delimiter_range() {
+        assert_eq!(
+            multipart_prefix_successor("bulk/nested/"),
+            Some("bulk/nested0".into())
+        );
+        assert_eq!(
+            multipart_prefix_successor("multi::nested::"),
+            Some("multi::nested:;".into())
+        );
+        assert_eq!(multipart_prefix_successor(""), None);
+        assert_eq!(
+            multipart_prefix_successor("nested/\u{10ffff}"),
+            Some("nested0".into())
+        );
+    }
+
+    #[test]
+    fn multipart_listing_marker_keeps_later_uploads_for_the_same_key() {
+        assert!(multipart_upload_is_after_marker(
+            "same-key",
+            true,
+            Some("same-key"),
+            Some("upload-1")
+        ));
+        assert!(!multipart_upload_is_after_marker(
+            "same-key",
+            true,
+            Some("same-key"),
+            None
+        ));
+        assert!(!multipart_upload_is_after_marker(
+            "same-key/",
+            false,
+            Some("same-key/"),
+            Some("upload-1")
+        ));
+        assert!(multipart_upload_is_after_marker(
+            "z-next-key",
+            true,
+            Some("same-key"),
+            None
+        ));
     }
 
     #[test]
@@ -3732,34 +3823,6 @@ mod tests {
         assert!(resolve_completed_part_indices(&stored, &[1, 4]).is_err());
         assert!(resolve_completed_part_indices(&stored, &[3, 1]).is_err());
         assert!(resolve_completed_part_indices(&stored, &[2, 3]).is_err());
-    }
-
-    #[test]
-    fn multipart_listing_marker_keeps_later_uploads_for_the_same_key() {
-        assert!(multipart_upload_is_after_marker(
-            "same-key",
-            true,
-            Some("same-key"),
-            Some("upload-1")
-        ));
-        assert!(!multipart_upload_is_after_marker(
-            "same-key",
-            true,
-            Some("same-key"),
-            None
-        ));
-        assert!(!multipart_upload_is_after_marker(
-            "same-key/",
-            false,
-            Some("same-key/"),
-            Some("upload-1")
-        ));
-        assert!(multipart_upload_is_after_marker(
-            "z-next-key",
-            true,
-            Some("same-key"),
-            None
-        ));
     }
 
     #[tokio::test]
