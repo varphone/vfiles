@@ -205,7 +205,6 @@ fn valid_state_token(value: &str) -> bool {
                     | b':'
                     | b'/'
                     | b'?'
-                    | b'#'
                     | b'['
                     | b']'
                     | b'@'
@@ -3709,7 +3708,7 @@ mod lockinfo_tests {
 
 #[cfg(test)]
 mod lock_token_tests {
-    use super::parse_lock_token_header;
+    use super::{parse_if_header, parse_lock_token_header, valid_state_token};
 
     #[test]
     fn accepts_one_coded_uri_and_rejects_malformed_lock_token_fields() {
@@ -3717,12 +3716,17 @@ mod lock_token_tests {
             parse_lock_token_header(" <opaquelocktoken:abc-123> "),
             Some("opaquelocktoken:abc-123".to_string())
         );
+        assert!(valid_state_token("opaquelocktoken:abc-123?query"));
+        assert!(valid_state_token("opaquelocktoken:abc-123%23encoded"));
+        assert!(!valid_state_token("opaquelocktoken:abc-123#fragment"));
+        assert!(parse_if_header("(<opaquelocktoken:abc-123#fragment>)").is_none());
         for malformed in [
             "opaquelocktoken:abc-123",
             "<<opaquelocktoken:abc-123>>",
             "<>",
             "<opaquelocktoken:abc 123>",
             "<opaquelocktoken:abc-123>>",
+            "<opaquelocktoken:abc-123#fragment>",
         ] {
             assert_eq!(parse_lock_token_header(malformed), None, "{malformed:?}");
         }

@@ -495,13 +495,27 @@ async fn options_advertises_and_propfind_needs_auth() {
                 .method("UNLOCK")
                 .uri("/target.txt")
                 .header("authorization", format!("Basic {basic}"))
-                .header("lock-token", raw_lock_token)
+                .header("lock-token", &raw_lock_token)
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(malformed_unlock.status(), 400);
+    let fragment_unlock = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("UNLOCK")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("lock-token", format!("<{raw_lock_token}#fragment>"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(fragment_unlock.status(), 400);
 
     let copy_locked_source = router
         .clone()
