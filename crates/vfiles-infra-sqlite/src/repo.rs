@@ -1102,6 +1102,81 @@ pub struct SqliteS3DeleteMarkerRepo {
     pool: SqlitePool,
 }
 
+/// Persistent association between an exact S3 key and its backing file entry.
+#[derive(Debug, Clone)]
+pub struct SqliteS3ObjectKeyRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteS3ObjectKeyRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn entry_id(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        object_key: &str,
+    ) -> Result<Option<vfiles_domain::EntryId>, vfiles_domain::DomainError> {
+        let id: Option<String> = sqlx::query_scalar(
+            "SELECT entry_id FROM s3_object_keys WHERE namespace_id = ? AND object_key = ?",
+        )
+        .bind(namespace_id.to_string())
+        .bind(object_key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to look up S3 object key: {e}"),
+        })?;
+        id.map(|id| {
+            vfiles_domain::EntryId::from_string(&id).map_err(|_| {
+                vfiles_domain::DomainError::Internal {
+                    message: "Invalid entry id in S3 object key index".to_string(),
+                }
+            })
+        })
+        .transpose()
+    }
+
+    pub async fn bind(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        object_key: &str,
+        entry_id: &vfiles_domain::EntryId,
+    ) -> Result<(), vfiles_domain::DomainError> {
+        sqlx::query(
+            "INSERT INTO s3_object_keys (namespace_id, object_key, entry_id) VALUES (?, ?, ?) \
+             ON CONFLICT(namespace_id, object_key) DO UPDATE SET entry_id = excluded.entry_id",
+        )
+        .bind(namespace_id.to_string())
+        .bind(object_key)
+        .bind(entry_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to bind S3 object key: {e}"),
+        })?;
+        Ok(())
+    }
+
+    pub async fn unbind(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        object_key: &str,
+    ) -> Result<bool, vfiles_domain::DomainError> {
+        let result =
+            sqlx::query("DELETE FROM s3_object_keys WHERE namespace_id = ? AND object_key = ?")
+                .bind(namespace_id.to_string())
+                .bind(object_key)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| vfiles_domain::DomainError::Internal {
+                    message: format!("Failed to unbind S3 object key: {e}"),
+                })?;
+        Ok(result.rows_affected() != 0)
+    }
+}
+
 impl SqliteS3DeleteMarkerRepo {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -1455,6 +1530,33 @@ mod s3_delete_marker_tests {
             .execute(&pool)
             .await
             .expect("test object entry should be inserted");
+
+        let object_keys = SqliteS3ObjectKeyRepo::new(pool.clone());
+        let entry_id = EntryId::from_string(&z_entry_id).expect("entry id should parse");
+        object_keys
+            .bind(&namespace, "folder/z.txt", &entry_id)
+            .await
+            .expect("object key should bind");
+        assert_eq!(
+            object_keys
+                .entry_id(&namespace, "folder/z.txt")
+                .await
+                .expect("object key lookup should succeed"),
+            Some(entry_id)
+        );
+        assert!(
+            object_keys
+                .unbind(&namespace, "folder/z.txt")
+                .await
+                .expect("object key should unbind")
+        );
+        assert_eq!(
+            object_keys
+                .entry_id(&namespace, "folder/z.txt")
+                .await
+                .expect("object key lookup should succeed"),
+            None
+        );
 
         let repo = SqliteS3DeleteMarkerRepo::new(pool.clone());
         let version_id = uuid::Uuid::new_v4().to_string();

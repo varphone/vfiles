@@ -5,8 +5,8 @@ pub mod repo;
 pub use repo::{
     FsBlobStore, FsUploadStore, SqliteAccessTokenRepo, SqliteAdminRepo, SqliteAuditLogRepo,
     SqliteEntryRepo, SqliteFavoriteRepo, SqliteNamespaceRepo, SqliteS3DeleteMarkerRepo,
-    SqliteSearchRepo, SqliteSessionRepo, SqliteShareRepo, SqliteSnapshotRepo,
-    SqliteSystemSettingsRepo, SqliteUserRepo, SqliteWebdavLockRepo,
+    SqliteS3ObjectKeyRepo, SqliteSearchRepo, SqliteSessionRepo, SqliteShareRepo,
+    SqliteSnapshotRepo, SqliteSystemSettingsRepo, SqliteUserRepo, SqliteWebdavLockRepo,
 };
 
 use camino::Utf8Path;
