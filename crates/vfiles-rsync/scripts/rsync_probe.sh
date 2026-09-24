@@ -100,6 +100,9 @@ grep -Fq 'nested' "$tmpdir/initial-list.log"
 mkdir -p "$tmpdir/pull"
 rsync -a --quiet "$module_url" "$tmpdir/pull/"
 diff -r "$tmpdir/source" "$tmpdir/pull"
+mkdir -p "$tmpdir/single-file-pull"
+rsync -a --quiet "$module_url/nested/large.bin" "$tmpdir/single-file-pull/"
+cmp "$tmpdir/source/nested/large.bin" "$tmpdir/single-file-pull/large.bin"
 
 # Mutate a small range without changing the file size. Checksum mode must find it
 # and the server's delta path must reconstruct bytes identical to the source.

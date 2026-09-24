@@ -3035,37 +3035,27 @@ pub async fn collect_flat(
         // 大小取自父目录的批量 meta（EntryRepo 无单条 meta 接口）
         let full = base.as_str();
         let (parent_str, _) = full.rsplit_once('/').unwrap_or(("", full));
-        let size = match NormalizedPath::new(parent_str) {
-            Ok(parent) => repo
-                .children_with_meta(namespace, &parent)
-                .await
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .find(|c| c.entry.path_norm.as_str() == full)
-                .and_then(|c| c.size_bytes)
-                .unwrap_or(0),
-            Err(_) => 0,
-        };
-        let sum_mtime = repo
-            .children_with_meta(
-                namespace,
-                &NormalizedPath::new(base.as_str().rsplit_once('/').map(|(p, _)| p).unwrap_or(""))
-                    .map_err(|e| format!("非法父路径: {e}"))?,
-            )
+        let parent = NormalizedPath::new(parent_str).map_err(|e| format!("非法父路径: {e}"))?;
+        let meta = repo
+            .children_with_meta(namespace, &parent)
             .await
-            .ok()
-            .and_then(|v| {
-                v.into_iter()
-                    .find(|c| c.entry.path_norm.as_str() == base.as_str())
-                    .and_then(|c| c.source_mtime)
-            });
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|child| child.entry.path_norm.as_str() == full);
+        let (size, mtime) = meta.map_or_else(
+            || (0, entry.created_at.unix_timestamp()),
+            |child| {
+                (
+                    child.size_bytes.unwrap_or(0),
+                    child
+                        .source_mtime
+                        .unwrap_or_else(|| entry.created_at.unix_timestamp()),
+                )
+            },
+        );
         return Ok(vec![
-            FlatEntry::file(
-                entry.name.clone(),
-                size,
-                sum_mtime.unwrap_or_else(|| entry.created_at.unix_timestamp()),
-            )
-            .with_fs_path(entry.path_norm.as_str().to_string()),
+            FlatEntry::file(entry.name.clone(), size, mtime)
+                .with_fs_path(entry.path_norm.as_str().to_string()),
         ]);
     }
     let base_mtime = base_entry
