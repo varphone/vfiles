@@ -37,6 +37,10 @@ pub struct WebdavApplication {
     pub entry_repo: Arc<dyn vfiles_domain::repo::EntryRepo + Send + Sync>,
     /// Basic 凭据校验回调（r106 安全段 ✓ 挡匿名/坏格式/无效凭据 = 401；回 User = 审计链 ✓）。
     pub verify: crate::auth::VerifyFn,
+    /// Shared failed-login limiter used by HTTP and FTP authentication.
+    pub login_attempt_limiter: Arc<vfiles_app::LoginAttemptLimiter>,
+    pub login_rate_limit: vfiles_app::RateLimitPolicy,
+    pub ingest_stats: Arc<vfiles_app::IngestStats>,
     /// 写门面（r108' ✓ MKCOL/MOVE/DELETE ✗ r5 +COPY）。
     pub write: Arc<dyn crate::write::WebdavWriteOps + Send + Sync>,
     /// 审计闭包（r5 ✓ 零泛型下渗 ✗ None = 不记（宽松装配）；bin 捕 AuditService spawn ✓）。
@@ -1753,6 +1757,14 @@ fn www_authenticate() -> Response {
         .unwrap()
 }
 
+fn login_rate_limited(retry_after_secs: u64) -> Response {
+    Response::builder()
+        .status(StatusCode::TOO_MANY_REQUESTS)
+        .header(header::RETRY_AFTER, retry_after_secs.to_string())
+        .body(Body::empty())
+        .unwrap()
+}
+
 /// WebDAV 能力宣告（无锁 ✓ 子集 ✓）。
 // r214 协议声明修正 ✗✗ 此前只声明 4 方法 = 实现了 10 个只报 4 个（客户端靠 Allow
 // 判能力 ✗✗）；COPY/PROPPATCH 未实现不声明（声明 = 实力 ✓ 做完再加）
@@ -2231,12 +2243,31 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             tracing::debug!("WebDAV 401: 无 Authorization 头（客户端尚未发送凭据）");
             return www_authenticate();
         };
+        let peer_ip = req
+            .extensions()
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|axum::extract::ConnectInfo(peer)| peer.ip().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let login_key = format!("ip:{peer_ip}|login:{}", u.trim().to_ascii_lowercase());
+        if let Some(block) = app_ref
+            .login_attempt_limiter
+            .check(&app_ref.login_rate_limit, &login_key)
+        {
+            app_ref.ingest_stats.record_login_failure();
+            tracing::warn!(username = %u, retry_after_secs = block.retry_after_secs, "WebDAV 认证尝试被限流拒绝");
+            return login_rate_limited(block.retry_after_secs);
+        }
         let log_name = u.clone(); // 日志副本（u move 进 verify ✗ 先留名）
         let Some(user) = (app_ref.verify)(u, pw).await else {
+            app_ref
+                .login_attempt_limiter
+                .record_failure(&app_ref.login_rate_limit, &login_key);
+            app_ref.ingest_stats.record_login_failure();
             // 认证失败 = warn（用户排查关键行 ✗ 服务端日志记 username 不回客户端 ✓）
             tracing::warn!(username = %log_name, "WebDAV 认证失败（401）——检查用户名/密码，或账号是否被禁用");
             return www_authenticate();
         };
+        app_ref.login_attempt_limiter.clear(&login_key);
         // 首次成功 = info（连接可见 ✓）后续 debug（不每请求刷 ✗✗ r210 用户刷屏抱怨）
         if !AUTH_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
             tracing::info!(username = %user.username.as_str(), "WebDAV 认证成功（本次连接后归 debug）");
@@ -3274,7 +3305,11 @@ pub async fn run_webdav_server(
 ) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&settings.bind).await?;
     tracing::info!(addr = %settings.bind, "WebDAV 监听就绪（真实绑定成功后打此行；端口被占用则见 spawn error 日志）");
-    axum::serve(listener, router(_app.clone())).await?;
+    axum::serve(
+        listener,
+        router(_app.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 

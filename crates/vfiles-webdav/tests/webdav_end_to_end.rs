@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use base64::Engine;
 use camino::Utf8PathBuf;
 use tower::ServiceExt;
 use vfiles_app::{AuthService, DefaultWorkspaceService, NamespaceService};
@@ -250,12 +251,22 @@ async fn options_advertises_and_propfind_needs_auth() {
             Box::pin(async move { auth.verify_credentials(&u, &pw).await.ok() })
         })
     };
+    let login_attempt_limiter = Arc::new(vfiles_app::LoginAttemptLimiter::new());
+    let login_rate_limit = vfiles_app::RateLimitPolicy {
+        enabled: true,
+        window_ms: 60_000,
+        max_attempts: 2,
+    };
+    let ingest_stats = Arc::new(vfiles_app::IngestStats::new());
     let app = WebdavApplication {
         audit: None,
         mount_prefix: String::new(), // e2e 直连 router（不经 nest ✗ "" = 独立语义零前缀）
         namespaces: namespaces.clone(),
         entry_repo: entry_repo.clone() as Arc<dyn EntryRepo + Send + Sync>,
         verify,
+        login_attempt_limiter: Arc::clone(&login_attempt_limiter),
+        login_rate_limit,
+        ingest_stats: Arc::clone(&ingest_stats),
         locks: Arc::new(vfiles_webdav::LockTable::new(Arc::new(
             SqliteWebdavLockRepo::new(pool.clone()),
         ))),
@@ -2029,6 +2040,7 @@ async fn options_advertises_and_propfind_needs_auth() {
     assert!(selected_builtin_xml.contains("<D:displayname>renamed.txt</D:displayname>"));
 
     let property_read_failure = router
+        .clone()
         .oneshot(
             axum::http::Request::builder()
                 .method("PROPFIND")
@@ -2041,5 +2053,62 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .unwrap();
     assert_eq!(property_read_failure.status(), 500);
+
+    let stats_before_rate_limit = ingest_stats.snapshot();
+    let invalid_basic =
+        base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:incorrect-password"));
+    for _ in 0..2 {
+        let failed_login = router
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri("/persist.txt")
+                    .header("authorization", format!("Basic {invalid_basic}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(failed_login.status(), 401);
+    }
+    let blocked_login = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(blocked_login.status(), 429);
+    assert!(blocked_login.headers().contains_key("retry-after"));
+
+    let valid_from_other_ip = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .extension(axum::extract::ConnectInfo(
+                    "127.0.0.2:12345"
+                        .parse::<std::net::SocketAddr>()
+                        .expect("socket address"),
+                ))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(valid_from_other_ip.status(), 200);
+    let stats = ingest_stats.snapshot();
+    assert_eq!(
+        stats.logins_failed - stats_before_rate_limit.logins_failed,
+        3
+    );
+    assert_eq!(stats.logins_ok, stats_before_rate_limit.logins_ok);
     let _ = user;
 }

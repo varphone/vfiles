@@ -20,6 +20,7 @@
 | LOCK / UNLOCK | ✅ exclusive/shared write 实装（depth 0/infinity、refresh、SQLite 持久化、同资源共享锁并发、锁冲突原子判断、Second-N/Infinite） | 系统 litmus 共享锁、双共享锁、锁发现与解锁用例通过 |
 | per-user ns | ✅ **实装**（`ensure_default_for_owner` ✓ 多用户隔离 ✓） |
 | auth 门 | ✅ dispatch 顶部（Basic → verify → 401 + WWW-Authenticate ✓ OPTIONS 豁免 ✓） |
+| 登录爆破保护 | ✅ 复用 HTTP/FTP 共享失败计数器，按 socket peer IP + 规范化用户名限流；超限返回 429 与 Retry-After，成功后清除计数 |
 | 默认开启 | ✅ **用户令兑现**（`enabled: true` ✓ auth 强制防御 ✓ 真服务日志确证 ✓） |
 | 边界/错误语义 | ✅ Depth infinity = 400 ✓ If 复杂式 = 412 记档 ✓ 锁冲突 = 423 ✓ token 不配 = 409 ✓ |
 | **GET 流式化** | ✅ **r201-02 收口**（`get_stream` 直通 + ReaderStream ✓ **10MB sha256 一致性证** ✓ 内存爆除） |

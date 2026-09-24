@@ -1,8 +1,7 @@
 //! WebDAV Basic 认证——复用 `AuthService::verify_credentials`（与 Web/FTP 一致）。
 //!
-//! 实件（r103）：`basic_credentials` 解码（Base64 → (username, password)）+ 401 处置
-//! 形。TODO(r104)：axum extractor 注入 AuthService + 登录限流（范本 =
-//! vfiles-ftp/src/auth.rs `VfilesAuthenticator`）+ 命名空间解析（backend 侧链）。
+//! 认证负责解析 Basic 凭据；服务分派层通过共享 `LoginAttemptLimiter` 限制失败尝试，
+//! 再调用注入的校验器，以便该模块不直接依赖具体认证仓储。
 
 #![allow(dead_code)]
 
@@ -14,7 +13,7 @@ pub struct WebdavAuthenticator {
     pub username: String,
 }
 
-/// 校验回调型（r106 安全段 ✓ bin 侧接 `AuthService::verify_credentials`）。
+/// 校验回调型（bin 侧接 `AuthService::verify_credentials`）。
 pub type VerifyFn = std::sync::Arc<
     dyn Fn(
             String,

@@ -1251,6 +1251,13 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
             .max_upload_size_bytes
             .min(config.limits.max_file_size_bytes),
         upload_service.clone(),
+        Arc::clone(&login_attempt_limiter),
+        vfiles_app::RateLimitPolicy {
+            enabled: config.auth.login_rate_limit.enabled,
+            window_ms: config.auth.login_rate_limit.window_ms,
+            max_attempts: config.auth.login_rate_limit.max_attempts,
+        },
+        Arc::clone(&ingest_stats),
         {
             // r5 审计闭包（run_serve 有 pool ✓ 构造后传参（独立函数无 pool ✗ #45 作用域））
             let audit_service = std::sync::Arc::new(vfiles_app::AuditService::new(
@@ -1488,12 +1495,15 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
 
     tracing::info!("VFiles server started successfully!");
     let mut http_shutdown = service_shutdown_rx.clone();
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            // 收到信号或 FTP 侧触发停机时都结束 HTTP 服务
-            let _ = http_shutdown.changed().await;
-        })
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        // 收到信号或 FTP 侧触发停机时都结束 HTTP 服务
+        let _ = http_shutdown.changed().await;
+    })
+    .await?;
 
     // 收到 SIGTERM/SIGINT 后先停止接收新请求，再停止 FTP 与维护任务，最后关闭连接池。
     let _ = service_shutdown_tx.send(true);
@@ -2438,6 +2448,9 @@ fn build_webdav_runtime(
         vfiles_infra_sqlite::FsBlobStore,
         vfiles_infra_sqlite::FsUploadStore,
     >,
+    login_attempt_limiter: Arc<LoginAttemptLimiter>,
+    login_rate_limit: vfiles_app::RateLimitPolicy,
+    ingest_stats: Arc<vfiles_app::IngestStats>,
     audit: Option<std::sync::Arc<dyn Fn(vfiles_domain::types::NewAuditLog) + Send + Sync>>,
     embedded: bool,
     mount_path: String,
@@ -2461,6 +2474,9 @@ fn build_webdav_runtime(
         namespaces,
         entry_repo,
         verify,
+        login_attempt_limiter,
+        login_rate_limit,
+        ingest_stats,
         locks: std::sync::Arc::new(vfiles_webdav::LockTable::new(lock_repo)),
         write: std::sync::Arc::new(WebdavWrite { workspace, upload }),
         max_file_size_bytes,
