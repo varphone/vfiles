@@ -360,6 +360,21 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(mkcol_with_body.status(), 415);
 
+    let copy_collection_with_trailing_slash = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("COPY")
+                .uri("/locked-dir/")
+                .header("authorization", format!("Basic {basic}"))
+                .header("destination", "/copied-locked-dir/")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(copy_collection_with_trailing_slash.status(), 201);
+
     let shared_lock = router
         .clone()
         .oneshot(

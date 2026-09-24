@@ -2790,7 +2790,10 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 }
             };
             // 源路径裁前导斜杠（PROPFIND 同式 ✗ 真因：new 不收前导 / ✗ 诊断日志定案 ✓）
-            let src_rel = uri_owned.trim_start_matches('/').to_string();
+            let src_rel = uri_owned
+                .trim_start_matches('/')
+                .trim_end_matches('/')
+                .to_string();
             // COPY writes/replaces the destination subtree; source is read-only.
             if let Some(status) =
                 write_precondition(&app_ref, &ns, &src_rel, if_owned.as_deref()).await
