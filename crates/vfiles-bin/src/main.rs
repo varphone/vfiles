@@ -1781,10 +1781,16 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
                 return Err(error);
             }
         };
-        Ok(completed.mutation.changed_entries.iter().any(|change| {
-            change.path == path.as_str()
-                && change.change_type == vfiles_domain::types::ChangeType::Added
-        }))
+        Ok(completed
+            .mutation
+            .as_ref()
+            .map(|mutation| {
+                mutation.changed_entries.iter().any(|change| {
+                    change.path == path.as_str()
+                        && change.change_type == vfiles_domain::types::ChangeType::Added
+                })
+            })
+            .unwrap_or(completed.version.version_no == 1))
     }
     async fn delete_entry(
         &self,

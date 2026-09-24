@@ -2855,7 +2855,8 @@ pub struct UploadCompleteResponse {
     pub upload: UploadSession,
     pub entry: Entry,
     pub version: EntryVersion,
-    pub mutation: MutationResult,
+    /// Snapshot creation is auxiliary to the committed object write and may fail independently.
+    pub mutation: Option<MutationResult>,
 }
 
 #[derive(Debug, Clone)]
@@ -3350,7 +3351,7 @@ where
                 &session.owner_user_id,
             )
             .await?;
-            let entry_id = if let Some(entry) = self
+            let entry = if let Some(entry) = self
                 .entry_repo
                 .find_by_path(&session.namespace_id, &file_path)
                 .await?
@@ -3360,7 +3361,7 @@ where
                         message: format!("Path is occupied by a directory: {}", file_path.as_str()),
                     });
                 }
-                entry.id
+                entry
             } else {
                 let entry_id = self
                     .entry_repo
@@ -3372,12 +3373,12 @@ where
                     )
                     .await?;
                 created_entry_id = Some(entry_id);
-                entry_id
+                self.entry_repo.find_by_id(&entry_id).await?
             };
-            Ok::<_, DomainError>((file_path, changed_entries, entry_id))
+            Ok::<_, DomainError>((file_path, changed_entries, entry))
         }
         .await;
-        let (file_path, mut changed_entries, entry_id) = match prepare_result {
+        let (file_path, mut changed_entries, mut entry) = match prepare_result {
             Ok(prepared) => prepared,
             Err(error) => {
                 if let Some(entry_id) = created_entry_id
@@ -3393,6 +3394,7 @@ where
                 return Err(error);
             }
         };
+        let entry_id = entry.id;
 
         let mime_type = session
             .mime_type
@@ -3449,15 +3451,7 @@ where
                 "failed to cleanup completed upload session"
             );
         }
-        let entry = self
-            .entry_repo
-            .find_by_path(&session.namespace_id, &file_path)
-            .await?
-            .ok_or_else(|| DomainError::NotFound {
-                resource: "entry".to_string(),
-            })?;
-        let snapshot_entries =
-            collect_snapshot_state(&self.entry_repo, &session.namespace_id, Vec::new()).await?;
+        entry.current_version_id = Some(version.id);
 
         changed_entries.push(ChangedEntry {
             entry_id,
@@ -3471,16 +3465,32 @@ where
             },
         });
 
-        let mutation = finalize_mutation(
-            &self.snapshot_repo,
-            &session.namespace_id,
-            message,
-            &session.owner_user_id,
-            changed_entries,
-            snapshot_entries,
-            Vec::new(),
-        )
-        .await?;
+        let mutation_result = async {
+            let snapshot_entries =
+                collect_snapshot_state(&self.entry_repo, &session.namespace_id, Vec::new()).await?;
+            finalize_mutation(
+                &self.snapshot_repo,
+                &session.namespace_id,
+                message,
+                &session.owner_user_id,
+                changed_entries,
+                snapshot_entries,
+                Vec::new(),
+            )
+            .await
+        }
+        .await;
+        let mutation = match mutation_result {
+            Ok(mutation) => Some(mutation),
+            Err(error) => {
+                tracing::error!(
+                    upload_id = %session.id,
+                    error = ?error,
+                    "object version committed but snapshot finalization failed"
+                );
+                None
+            }
+        };
 
         Ok(UploadCompleteResponse {
             upload,
@@ -4682,7 +4692,13 @@ mod tests {
             .tree(
                 &context.namespace_id,
                 &docs,
-                Some(&first.mutation.snapshot_id),
+                Some(
+                    &first
+                        .mutation
+                        .as_ref()
+                        .expect("upload snapshot should be created")
+                        .snapshot_id,
+                ),
             )
             .await
             .expect("snapshot tree should load");
@@ -4704,7 +4720,12 @@ mod tests {
             .expect("live file content should load");
         assert_eq!(live_content.bytes, b"hello from version two\n");
 
-        let snapshot_commit = first.mutation.snapshot_id.to_string();
+        let snapshot_commit = first
+            .mutation
+            .as_ref()
+            .expect("upload snapshot should be created")
+            .snapshot_id
+            .to_string();
         let snapshot_content = context
             .workspace_service
             .read_file_bytes(
@@ -4770,7 +4791,15 @@ mod tests {
             .download_directory_archive(
                 &context.namespace_id,
                 &docs,
-                Some(first.mutation.snapshot_id.to_string().as_str()),
+                Some(
+                    first
+                        .mutation
+                        .as_ref()
+                        .expect("upload snapshot should be created")
+                        .snapshot_id
+                        .to_string()
+                        .as_str(),
+                ),
             )
             .await
             .expect("snapshot directory archive should build");
@@ -4995,6 +5024,60 @@ mod tests {
                 .exists(),
             "upload session storage should be removed best-effort"
         );
+    }
+
+    #[tokio::test]
+    async fn committed_upload_succeeds_when_snapshot_creation_fails() {
+        let context = TestContext::new().await;
+        let root = TestContext::path("");
+        let bytes = b"committed object with failed snapshot".to_vec();
+        let upload = context
+            .upload_service
+            .init_upload(
+                &context.namespace_id,
+                &root,
+                "snapshot-failure.txt",
+                bytes.len() as u64,
+                None,
+                None,
+                &context.user_id,
+            )
+            .await
+            .expect("upload should initialize");
+        let fault_pool =
+            SqlitePoolFactory::connect(context.storage_root.join("vfiles.db").as_path())
+                .await
+                .expect("database should reopen for fault injection");
+        sqlx::query(
+            "CREATE TRIGGER reject_snapshot BEFORE INSERT ON snapshots BEGIN SELECT RAISE(ABORT, 'injected snapshot failure'); END",
+        )
+        .execute(&fault_pool)
+        .await
+        .expect("snapshot fault trigger should be installed");
+
+        let completed = context
+            .upload_service
+            .complete_upload_from_stream(
+                &upload.upload_id,
+                None,
+                None,
+                Box::new(std::io::Cursor::new(bytes.clone())),
+            )
+            .await
+            .expect("snapshot failure must not turn a committed object into a failed write");
+
+        assert!(completed.mutation.is_none());
+        assert_eq!(completed.version.size_bytes.as_u64(), bytes.len() as u64);
+        assert_eq!(
+            context
+                .blob_store
+                .get_blob(completed.version.blob_id.as_ref().unwrap())
+                .await
+                .expect("blob lookup should succeed")
+                .expect("committed blob should exist"),
+            bytes
+        );
+        fault_pool.close().await;
     }
 
     #[tokio::test]
