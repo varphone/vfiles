@@ -53,7 +53,7 @@ fn serialize_xml_element(node: roxmltree::Node<'_, '_>) -> String {
     use std::collections::BTreeMap;
 
     fn add_namespace(uri: &str, map: &mut BTreeMap<String, String>) {
-        if !map.contains_key(uri) {
+        if !uri.is_empty() && !map.contains_key(uri) {
             let prefix = format!("N{}", map.len());
             map.insert(uri.to_string(), prefix);
         }
@@ -854,6 +854,19 @@ mod proppatch_tests {
         let fragment = stored_xml_value(value).expect("serialized XML value");
         let parsed = roxmltree::Document::parse(fragment).unwrap();
         assert_eq!(parsed.root_element().text(), Some("  spaced value\n "));
+    }
+
+    #[test]
+    fn preserves_null_namespace_without_empty_prefix_binding() {
+        let body = r#"<D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><nonamespace xmlns="">randomvalue</nonamespace></D:prop></D:set></D:propertyupdate>"#;
+        let ops = parse_propertyupdate(body).unwrap();
+        let PropOp::Set { value, .. } = &ops[0] else {
+            panic!("set instruction expected")
+        };
+        let fragment = stored_xml_value(value).expect("serialized XML value");
+        assert!(!fragment.contains("xmlns:N0=\"\""));
+        let parsed = roxmltree::Document::parse(fragment).expect("null-namespace XML is valid");
+        assert_eq!(parsed.root_element().tag_name().namespace(), None);
     }
 
     #[test]
