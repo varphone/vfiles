@@ -301,6 +301,52 @@ pub fn encode_flist(entries: &[FlatEntry], varint_flags: bool) -> Vec<u8> {
     body
 }
 
+/// Checked encoder for entries that can originate from a backend or another protocol peer.
+/// The compatibility `encode_flist` helper remains infallible for existing callers, while the
+/// daemon uses this function so invalid metadata cannot panic a request task.
+pub fn try_encode_flist(entries: &[FlatEntry], varint_flags: bool) -> std::io::Result<Vec<u8>> {
+    for entry in entries {
+        if entry.name.len() > i32::MAX as usize {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "rsync name exceeds protocol limit",
+            ));
+        }
+        if entry.size > i64::MAX as u64 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "rsync entry size exceeds protocol limit",
+            ));
+        }
+        if entry.mode & 0o170000 == 0o120000 {
+            let Some(target) = entry.symlink_target.as_deref() else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("rsync symlink entry has no target: {}", entry.name),
+                ));
+            };
+            if target.len() > MAX_SYMLINK_TARGET_BYTES {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "rsync symlink target exceeds protocol limit",
+                ));
+            }
+        }
+        if entry.mode & 0o170000 == 0o100000
+            && entry
+                .file_sum
+                .as_ref()
+                .is_some_and(|checksum| checksum.len() != 16)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "rsync whole-file checksum must be 16 bytes",
+            ));
+        }
+    }
+    Ok(encode_flist(entries, varint_flags))
+}
+
 /// 按 rsync `f_name_cmp` 语义排序 flist（ndx = 排序后下标 ✗ 不排序会发错文件）。
 ///
 /// 真机实证（官方 daemon `--list-only` 输出序）：**同一目录下文件在前、子目录在后，各自按名字
@@ -2402,7 +2448,7 @@ where
             }
         };
         sort_flist(&mut entries);
-        let flist = encode_flist(&entries, negotiated);
+        let flist = try_encode_flist(&entries, negotiated)?;
         let total_size: u64 = entries.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
         write_msg(&mut rw, &flist).await?;
         // `-o`/`-g` 且非 `--numeric-ids`：**本端为发送端** → flist 后紧跟 uid/gid 名列表
@@ -4466,6 +4512,44 @@ mod tests {
             .expect_err("invalid symlink target length must be rejected");
             assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         }
+    }
+
+    #[test]
+    fn checked_flist_encoder_rejects_invalid_backend_metadata() {
+        let mut missing_target = FlatEntry::file("link", 0, 1);
+        missing_target.mode = 0o120777;
+        assert_eq!(
+            try_encode_flist(&[missing_target], true)
+                .expect_err("missing target must be reported")
+                .kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+
+        let oversized_target = FlatEntry::symlink("link", vec![0; MAX_SYMLINK_TARGET_BYTES + 1], 1);
+        assert_eq!(
+            try_encode_flist(&[oversized_target], true)
+                .expect_err("oversized target must be reported")
+                .kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+
+        let mut oversized_file = FlatEntry::file("large", 0, 1);
+        oversized_file.size = i64::MAX as u64 + 1;
+        assert_eq!(
+            try_encode_flist(&[oversized_file], true)
+                .expect_err("unrepresentable size must be reported")
+                .kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+
+        let mut invalid_checksum = FlatEntry::file("file", 1, 1);
+        invalid_checksum.file_sum = Some(vec![0; 15]);
+        assert_eq!(
+            try_encode_flist(&[invalid_checksum], true)
+                .expect_err("invalid checksum length must be reported")
+                .kind(),
+            std::io::ErrorKind::InvalidInput
+        );
     }
 
     #[test]
