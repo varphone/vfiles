@@ -801,6 +801,7 @@ pub struct SearchResult {
     pub entry: Entry,
     pub version: Option<EntryVersion>,
     pub matches: Vec<SearchMatch>,
+    pub matches_truncated: bool,
     pub score: f32,
 }
 
@@ -808,6 +809,7 @@ pub struct SearchResult {
 pub struct SearchMatch {
     pub match_type: SearchMatchType,
     pub context: Option<String>,
+    pub context_truncated: bool,
     pub line_number: Option<u32>,
 }
 

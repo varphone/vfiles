@@ -137,6 +137,8 @@ curl -T app.tar.gz -H "Authorization: Bearer $TOKEN" \
     - `path` 可选，限定目录前缀
     - `type` 可选：`all` / `file` / `directory`
     - `limit` / `offset` 可选
+  - 内容命中每个文件最多返回 20 行；`matches_truncated` 表示还有未列出的命中。
+    `context` 是命中附近的片段；`context_truncated` 表示该行其余内容已省略。
 
 ## 审计日志（只读）
 

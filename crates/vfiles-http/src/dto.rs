@@ -316,6 +316,7 @@ pub struct SearchResultDto {
     pub entry: EntryDto,
     pub version: Option<EntryVersionDto>,
     pub matches: Vec<SearchMatchDto>,
+    pub matches_truncated: bool,
     pub score: f32,
 }
 
@@ -325,6 +326,7 @@ impl From<vfiles_domain::SearchResult> for SearchResultDto {
             entry: result.entry.into(),
             version: result.version.map(Into::into),
             matches: result.matches.into_iter().map(Into::into).collect(),
+            matches_truncated: result.matches_truncated,
             score: result.score,
         }
     }
@@ -346,6 +348,7 @@ pub struct SearchPageDto {
 pub struct SearchMatchDto {
     pub match_type: String,
     pub context: Option<String>,
+    pub context_truncated: bool,
     pub line_number: Option<u32>,
 }
 
@@ -358,6 +361,7 @@ impl From<vfiles_domain::SearchMatch> for SearchMatchDto {
                 vfiles_domain::SearchMatchType::Content => "content".to_string(),
             },
             context: match_.context,
+            context_truncated: match_.context_truncated,
             line_number: match_.line_number,
         }
     }

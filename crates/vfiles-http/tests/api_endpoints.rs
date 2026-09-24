@@ -5587,9 +5587,60 @@ async fn content_search_returns_line_matches_when_feature_enabled() {
     );
     assert_eq!(results[0]["matches"][0]["line_number"], Value::from(2));
     assert_eq!(
+        results[0]["matches"][0]["context_truncated"],
+        Value::Bool(false)
+    );
+    assert_eq!(
         results[0]["matches"][0]["context"],
         Value::String("hello streaming search".to_string())
     );
+}
+
+#[tokio::test]
+async fn content_search_bounds_large_line_context_and_repeated_matches() {
+    let mut features = default_features();
+    features.search_content = true;
+    let app = TestApp::new_with_features(features).await;
+
+    let mut content = format!("{}needle{}\n", "x".repeat(32_768), "y".repeat(32_768));
+    for line in 2..=30 {
+        content.push_str(&format!("line {line}: needle\n"));
+    }
+    app.upload_version(
+        "docs",
+        "many-matches.txt",
+        content.as_bytes(),
+        "seed bounded content search",
+    )
+    .await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/search?q=needle&search_content=true")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = response_json(response).await;
+    let results = payload["items"]
+        .as_array()
+        .expect("search response should carry an items array");
+    assert_eq!(results.len(), 1);
+    let matches = results[0]["matches"]
+        .as_array()
+        .expect("content result should carry line matches");
+    assert_eq!(matches.len(), 20);
+    assert_eq!(results[0]["matches_truncated"], Value::Bool(true));
+    assert_eq!(matches[0]["line_number"], Value::from(1));
+    assert_eq!(matches[0]["context_truncated"], Value::Bool(true));
+    let context = matches[0]["context"]
+        .as_str()
+        .expect("large line match should include a context snippet");
+    assert!(context.to_lowercase().contains("needle"));
+    assert!(context.chars().count() <= 2 * 64 + "needle".chars().count());
+    assert_eq!(matches[19]["line_number"], Value::from(20));
 }
 
 #[tokio::test]

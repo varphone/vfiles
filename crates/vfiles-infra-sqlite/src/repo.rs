@@ -6858,7 +6858,7 @@ impl SnapshotRepo for SqliteSnapshotRepo {
 use camino::Utf8PathBuf;
 use sha2::{Digest, Sha256};
 use tokio::fs;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 async fn sync_blob_directory(path: &camino::Utf8Path) -> DomainResult<()> {
     #[cfg(unix)]
@@ -8331,6 +8331,294 @@ const MAX_FILENAME_SEARCH_CANDIDATES: i64 = 2000;
 const MAX_CONTENT_SEARCH_CANDIDATES: i64 = 500;
 /// 内容搜索最多返回多少条命中。
 const MAX_CONTENT_SEARCH_MATCHES: usize = 500;
+/// 每个内容搜索结果最多保留多少条行命中，避免重复关键词膨胀响应。
+const MAX_CONTENT_MATCHES_PER_FILE: usize = 20;
+/// 每个匹配行上下文保留命中附近的字符数。
+const CONTENT_SEARCH_CONTEXT_RADIUS: usize = 64;
+
+struct ContentLineScanner {
+    pattern: Vec<char>,
+    failure: Vec<usize>,
+    matched_prefix: usize,
+    line_number: u32,
+    line_started: bool,
+    pending_carriage_return: bool,
+    line_matched: bool,
+    context_before: std::collections::VecDeque<char>,
+    context_before_limit: usize,
+    context_before_truncated: bool,
+    context: Option<String>,
+    context_truncated: bool,
+    context_after_remaining: usize,
+    matches: Vec<SearchMatch>,
+    matches_truncated: bool,
+}
+
+impl ContentLineScanner {
+    fn new(search_term: &str) -> Self {
+        let pattern: Vec<char> = search_term.chars().collect();
+        let mut failure = vec![0; pattern.len()];
+        let mut prefix_len = 0;
+        for index in 1..pattern.len() {
+            while prefix_len > 0 && pattern[index] != pattern[prefix_len] {
+                prefix_len = failure[prefix_len - 1];
+            }
+            if pattern[index] == pattern[prefix_len] {
+                prefix_len += 1;
+            }
+            failure[index] = prefix_len;
+        }
+        let context_before_limit = CONTENT_SEARCH_CONTEXT_RADIUS.saturating_add(pattern.len());
+        Self {
+            pattern,
+            failure,
+            matched_prefix: 0,
+            line_number: 0,
+            line_started: false,
+            pending_carriage_return: false,
+            line_matched: false,
+            context_before: std::collections::VecDeque::with_capacity(context_before_limit),
+            context_before_limit,
+            context_before_truncated: false,
+            context: None,
+            context_truncated: false,
+            context_after_remaining: 0,
+            matches: Vec::new(),
+            matches_truncated: false,
+        }
+    }
+
+    fn push_text(&mut self, text: &str) {
+        for character in text.chars() {
+            if character == '\n' {
+                // std::io::Lines removes the CR in CRLF before yielding a line.
+                self.pending_carriage_return = false;
+                self.finish_line();
+                continue;
+            }
+            if self.pending_carriage_return {
+                self.process_character('\r');
+                self.pending_carriage_return = false;
+            }
+            if character == '\r' {
+                self.pending_carriage_return = true;
+                self.line_started = true;
+            } else {
+                self.process_character(character);
+            }
+        }
+    }
+
+    fn process_character(&mut self, character: char) {
+        self.line_started = true;
+        if self.matches.len() >= MAX_CONTENT_MATCHES_PER_FILE {
+            if self.line_matched {
+                return;
+            }
+            for lower_character in character.to_lowercase() {
+                if self.advance_match(lower_character) {
+                    self.line_matched = true;
+                    break;
+                }
+            }
+            return;
+        }
+        if self.line_matched {
+            if self.context_after_remaining > 0 {
+                if let Some(context) = &mut self.context {
+                    context.push(character);
+                }
+                self.context_after_remaining -= 1;
+            } else {
+                self.context_truncated = true;
+            }
+            return;
+        }
+
+        self.context_before.push_back(character);
+        if self.context_before.len() > self.context_before_limit {
+            self.context_before.pop_front();
+            self.context_before_truncated = true;
+        }
+        for lower_character in character.to_lowercase() {
+            if self.advance_match(lower_character) {
+                self.line_matched = true;
+                self.context = Some(self.context_before.iter().collect());
+                self.context_truncated = self.context_before_truncated;
+                self.context_after_remaining = CONTENT_SEARCH_CONTEXT_RADIUS;
+                break;
+            }
+        }
+    }
+
+    fn advance_match(&mut self, character: char) -> bool {
+        while self.matched_prefix > 0 && self.pattern.get(self.matched_prefix) != Some(&character) {
+            self.matched_prefix = self.failure[self.matched_prefix - 1];
+        }
+        if self.pattern.get(self.matched_prefix) == Some(&character) {
+            self.matched_prefix += 1;
+        }
+        !self.pattern.is_empty() && self.matched_prefix == self.pattern.len()
+    }
+
+    fn finish_line(&mut self) {
+        self.line_number = self.line_number.saturating_add(1);
+        if self.line_matched {
+            if self.matches.len() < MAX_CONTENT_MATCHES_PER_FILE {
+                self.matches.push(SearchMatch {
+                    match_type: SearchMatchType::Content,
+                    context: self
+                        .context
+                        .take()
+                        .map(|context| context.trim().to_string()),
+                    context_truncated: self.context_truncated,
+                    line_number: Some(self.line_number),
+                });
+            } else {
+                self.matches_truncated = true;
+            }
+        }
+        self.line_started = false;
+        self.line_matched = false;
+        self.matched_prefix = 0;
+        self.context_before.clear();
+        self.context_before_truncated = false;
+        self.context = None;
+        self.context_truncated = false;
+        self.context_after_remaining = 0;
+    }
+
+    fn finish(mut self) -> (Vec<SearchMatch>, bool) {
+        // A terminal CR is stripped by Lines just like the CR in CRLF.
+        self.pending_carriage_return = false;
+        if self.line_started {
+            self.finish_line();
+        }
+        (self.matches, self.matches_truncated)
+    }
+}
+
+async fn scan_content_matches<R>(
+    mut reader: R,
+    search_term: &str,
+) -> std::io::Result<(Vec<SearchMatch>, bool)>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    const CHUNK_SIZE: usize = 8192;
+    let mut scanner = ContentLineScanner::new(search_term);
+    let mut chunk = [0_u8; CHUNK_SIZE];
+    let mut pending = Vec::with_capacity(4);
+    loop {
+        let read = reader.read(&mut chunk).await?;
+        if read == 0 {
+            break;
+        }
+        pending.extend_from_slice(&chunk[..read]);
+        let valid_len = match std::str::from_utf8(&pending) {
+            Ok(text) => text.len(),
+            Err(error) if error.error_len().is_none() => error.valid_up_to(),
+            Err(error) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("content search encountered invalid UTF-8: {error}"),
+                ));
+            }
+        };
+        if valid_len > 0 {
+            let text = std::str::from_utf8(&pending[..valid_len])
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+            scanner.push_text(text);
+            pending.drain(..valid_len);
+        }
+        if pending.len() > 3 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "content search encountered an incomplete UTF-8 sequence",
+            ));
+        }
+    }
+    if !pending.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "content search ended with an incomplete UTF-8 sequence",
+        ));
+    }
+    Ok(scanner.finish())
+}
+
+#[cfg(test)]
+mod content_search_scanner_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn scans_large_single_lines_with_bounded_context() {
+        let content = format!("{}Needle{}", "x".repeat(32_768), "y".repeat(32_768));
+        let (matches, truncated) =
+            scan_content_matches(std::io::Cursor::new(content.into_bytes()), "needle")
+                .await
+                .expect("valid UTF-8 content should scan");
+
+        assert_eq!(matches.len(), 1);
+        assert!(!truncated);
+        assert_eq!(matches[0].line_number, Some(1));
+        let context = matches[0]
+            .context
+            .as_deref()
+            .expect("match should include bounded context");
+        assert!(context.to_lowercase().contains("needle"));
+        assert!(context.chars().count() <= 2 * CONTENT_SEARCH_CONTEXT_RADIUS + 6);
+    }
+
+    #[tokio::test]
+    async fn caps_repeated_line_matches_and_preserves_line_numbers() {
+        let content = (1..=MAX_CONTENT_MATCHES_PER_FILE + 5)
+            .map(|line| format!("line {line}: Needle\r\n"))
+            .collect::<String>();
+        let (matches, truncated) =
+            scan_content_matches(std::io::Cursor::new(content.into_bytes()), "needle")
+                .await
+                .expect("valid UTF-8 content should scan");
+
+        assert_eq!(matches.len(), MAX_CONTENT_MATCHES_PER_FILE);
+        assert!(truncated);
+        assert_eq!(matches[0].line_number, Some(1));
+        assert_eq!(
+            matches.last().and_then(|matched| matched.line_number),
+            Some(MAX_CONTENT_MATCHES_PER_FILE as u32)
+        );
+    }
+
+    #[tokio::test]
+    async fn matches_across_read_chunks_and_unicode_lowercase_expansion() {
+        let content = format!("{}Needle\r\nİ\n", "x".repeat(8190));
+        let (matches, truncated) =
+            scan_content_matches(std::io::Cursor::new(content.into_bytes()), "needle")
+                .await
+                .expect("valid UTF-8 content should scan");
+        assert!(!truncated);
+        assert_eq!(matches[0].line_number, Some(1));
+
+        let (unicode, truncated) =
+            scan_content_matches(std::io::Cursor::new("İ\n".as_bytes()), "i\u{307}")
+                .await
+                .expect("valid UTF-8 content should scan");
+        assert!(!truncated);
+        assert_eq!(unicode.len(), 1);
+        assert_eq!(unicode[0].line_number, Some(1));
+    }
+
+    #[tokio::test]
+    async fn invalid_utf8_invalidates_the_whole_file_like_lines_did() {
+        let result = scan_content_matches(std::io::Cursor::new(b"Needle\n\xff"), "needle").await;
+        assert_eq!(
+            result
+                .expect_err("invalid UTF-8 should reject a blob")
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
+    }
+}
 
 #[async_trait::async_trait]
 impl<B> SearchRepo for SqliteSearchRepo<B>
@@ -8535,6 +8823,7 @@ where
             let matches = vec![SearchMatch {
                 match_type: SearchMatchType::Path, // Since we're searching paths
                 context: None,
+                context_truncated: false,
                 line_number: None,
             }];
 
@@ -8542,6 +8831,7 @@ where
                 entry,
                 version,
                 matches,
+                matches_truncated: false,
                 score: 1.0, // Simple scoring for now
             });
         }
@@ -8653,32 +8943,12 @@ where
             {
                 let blob_id = BlobId::from_uuid(blob_id);
                 if let Ok(Some(blob_stream)) = self.blob_store.get_blob_stream(&blob_id).await {
-                    let mut lines = BufReader::new(blob_stream).lines();
-                    let mut line_number = 0_u32;
-                    let mut matches = Vec::new();
-                    let mut read_failed = false;
-
-                    loop {
-                        match lines.next_line().await {
-                            Ok(Some(line)) => {
-                                line_number += 1;
-                                if line.to_lowercase().contains(&search_term) {
-                                    matches.push(SearchMatch {
-                                        match_type: SearchMatchType::Content,
-                                        context: Some(line.trim().to_string()),
-                                        line_number: Some(line_number),
-                                    });
-                                }
-                            }
-                            Ok(None) => break,
-                            Err(_) => {
-                                read_failed = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if read_failed || matches.is_empty() {
+                    let Ok((matches, matches_truncated)) =
+                        scan_content_matches(blob_stream, &search_term).await
+                    else {
+                        continue;
+                    };
+                    if matches.is_empty() {
                         continue;
                     }
 
@@ -8787,6 +9057,7 @@ where
                         entry,
                         version,
                         matches,
+                        matches_truncated,
                         score: 0.8, // Content matches get slightly lower score than filename matches
                     });
                 }
