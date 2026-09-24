@@ -176,6 +176,41 @@ if grep -Fq 'keep.probe' "$tmpdir/deleted-list.log"; then
   exit 1
 fi
 
+# Inject a storage failure into the destructive phase and require rsync to
+# report it instead of returning success with a stale destination entry.
+mkdir -p "$tmpdir/delete-failure-seed" "$tmpdir/delete-failure-source"
+printf 'stale destination data\n' >"$tmpdir/delete-failure-seed/blocked.txt"
+printf 'current source data\n' >"$tmpdir/delete-failure-source/current.txt"
+rsync -a --quiet "$tmpdir/delete-failure-seed/" "$module_url/delete-failure-target/"
+python3 - "$tmpdir/storage/vfiles.db" <<'PY'
+import sqlite3
+import sys
+
+with sqlite3.connect(sys.argv[1]) as db:
+    db.execute("""
+        CREATE TRIGGER reject_rsync_delete
+        BEFORE DELETE ON entries
+        WHEN OLD.path = 'delete-failure-target/blocked.txt'
+        BEGIN
+          SELECT RAISE(ABORT, 'injected rsync delete failure');
+        END
+    """)
+PY
+if rsync -a --delete --quiet "$tmpdir/delete-failure-source/" "$module_url/delete-failure-target/" >"$tmpdir/delete-failure.log" 2>&1; then
+  echo "rsync reported success although the receiver could not delete a stale entry" >&2
+  exit 1
+fi
+python3 - "$tmpdir/storage/vfiles.db" <<'PY'
+import sqlite3
+import sys
+
+with sqlite3.connect(sys.argv[1]) as db:
+    db.execute("DROP TRIGGER reject_rsync_delete")
+PY
+rsync --list-only "$module_url/delete-failure-target/" >"$tmpdir/delete-failure-list.log"
+grep -Fq 'blocked.txt' "$tmpdir/delete-failure-list.log"
+grep -Fq 'current.txt' "$tmpdir/delete-failure-list.log"
+
 # A receiver-side path conflict must reach the sender as a failed sync. Returning
 # success while logging a rejected upload would silently lose source data.
 mkdir -p "$tmpdir/conflict-source"

@@ -2851,25 +2851,16 @@ where
                 }
             }
         }
-        // 相位收尾（客户端 sender：2 答 + 终结；本端 4 出 / 3 入 ✗ 超时防挂）
-        for round in 0..4 {
-            let mut d = Vec::new();
-            write_ndx(NDX_DONE, &mut wp.0, &mut wp.1, &mut d);
-            write_msg(&mut rw, &d).await?;
-            if round < 3
-                && tokio::time::timeout(to, read_ndx(&mut rw, &mut pending, &mut rp.0, &mut rp.1))
-                    .await
-                    .is_err()
-            {
-                break;
-            }
-        }
         // `--delete`：删目标端源端没有的条目（镜像 ✗ 递归才有意义；目录删含后代）
         if args.delete {
             if !filter_list.can_delete_safely() {
-                tracing::warn!("rsync --delete 收到未支持的 filter 规则；本次跳过删除");
+                let message = "rsync --delete: unsupported filter rule; refusing incomplete sync";
+                send_rsync_error(&mut rw, message).await?;
+                return Err(std::io::Error::other(message));
             } else if !args.recursive {
-                tracing::warn!("rsync：--delete 需配合 -r（本次跳过删除）");
+                let message = "rsync --delete: recursive transfer is required";
+                send_rsync_error(&mut rw, message).await?;
+                return Err(std::io::Error::other(message));
             } else {
                 let src_names: std::collections::HashSet<&str> =
                     entries.iter().map(|e| e.name.as_str()).collect();
@@ -2882,10 +2873,12 @@ where
                 {
                     Ok(dest) => {
                         match load_dir_merge_rules(backend, &dest, &filter_list.items).await {
-                            Err(error) => tracing::warn!(
-                                error = %error,
-                                "rsync --delete 无法安全加载 per-directory filter；本次跳过删除"
-                            ),
+                            Err(error) => {
+                                let message =
+                                    format!("rsync --delete: load per-directory filters: {error}");
+                                send_rsync_error(&mut rw, &message).await?;
+                                return Err(std::io::Error::other(message));
+                            }
                             Ok(merged_rules) => {
                                 // 先完整求出受保护项，再传播到父目录。否则父目录先出现时
                                 // 会被递归删除，连后来识别出的受保护文件也一并删掉。
@@ -2957,15 +2950,36 @@ where
                                             tracing::info!(removed = n, "rsync --delete 完成")
                                         }
                                         Err(e) => {
-                                            tracing::warn!(error = %e, "rsync --delete 失败")
+                                            let message = format!(
+                                                "rsync --delete: remove destination entries: {e}"
+                                            );
+                                            send_rsync_error(&mut rw, &message).await?;
+                                            return Err(std::io::Error::other(message));
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                    Err(e) => tracing::warn!(error = %e, "rsync --delete 列举目标失败"),
+                    Err(e) => {
+                        let message = format!("rsync --delete: list destination: {e}");
+                        send_rsync_error(&mut rw, &message).await?;
+                        return Err(std::io::Error::other(message));
+                    }
                 }
+            }
+        }
+        // 相位收尾（客户端 sender：2 答 + 终结；本端 4 出 / 3 入 ✗ 超时防挂）
+        for round in 0..4 {
+            let mut d = Vec::new();
+            write_ndx(NDX_DONE, &mut wp.0, &mut wp.1, &mut d);
+            write_msg(&mut rw, &d).await?;
+            if round < 3
+                && tokio::time::timeout(to, read_ndx(&mut rw, &mut pending, &mut rp.0, &mut rp.1))
+                    .await
+                    .is_err()
+            {
+                break;
             }
         }
         tracing::info!(files = transferred, delete = args.delete, "rsync push 完成");
@@ -2983,6 +2997,15 @@ fn mux_frame_tagged(payload: &[u8], code: u8) -> Vec<u8> {
     out.push(MPLEX_BASE + code);
     out.extend_from_slice(payload);
     out
+}
+
+async fn send_rsync_error<S>(rw: &mut BufReader<S>, message: &str) -> std::io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let payload = format!("ERROR: {message}\n").into_bytes();
+    let frame = mux_frame_tagged(&payload, 3);
+    write_msg(rw, &frame).await
 }
 
 /// 读 NUL 分隔 args 直到空段（双 NUL 尾）。
