@@ -520,6 +520,25 @@ pub trait EntryRepo {
         &self,
         entry_ids: &[EntryId],
     ) -> DomainResult<Vec<EntryVersion>>;
+    /// Fetch the latest version at or before a timestamp for each entry in bounded batches.
+    async fn find_versions_for_entries_before(
+        &self,
+        entry_ids: &[EntryId],
+        cutoff: time::OffsetDateTime,
+    ) -> DomainResult<Vec<EntryVersion>> {
+        let mut latest = std::collections::HashMap::new();
+        for version in self.find_versions_for_entries(entry_ids).await? {
+            if version.created_at <= cutoff {
+                let current = latest
+                    .entry(version.entry_id)
+                    .or_insert_with(|| version.clone());
+                if version.version_no > current.version_no {
+                    *current = version;
+                }
+            }
+        }
+        Ok(latest.into_values().collect())
+    }
     /// Fetch only each entry's latest version, avoiding history-sized reads for current metadata.
     async fn find_current_versions_for_entries(
         &self,

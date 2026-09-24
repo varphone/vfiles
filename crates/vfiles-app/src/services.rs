@@ -1540,7 +1540,7 @@ where
             let Some(blob_id) = version.blob_id else {
                 continue;
             };
-            files.push((entry.path_norm, blob_id));
+            files.push((entry.path_norm.clone(), blob_id));
         }
 
         files.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
@@ -1555,24 +1555,31 @@ where
     ) -> DomainResult<Vec<(NormalizedPath, BlobId)>> {
         let cutoff = self.entry_repo.find_version(version_id).await?.created_at;
         let scope_entries = self.collect_scoped_entries(namespace_id, path).await?;
+        let file_entries = scope_entries
+            .iter()
+            .filter(|entry| entry.entry_type == EntryKind::File)
+            .collect::<Vec<_>>();
+        let entry_ids = file_entries
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>();
+        let versions_by_entry = self
+            .entry_repo
+            .find_versions_for_entries_before(&entry_ids, cutoff)
+            .await?
+            .into_iter()
+            .map(|version| (version.entry_id, version))
+            .collect::<HashMap<_, _>>();
 
         let mut files = Vec::new();
-        for entry in scope_entries {
-            if entry.entry_type != EntryKind::File {
-                continue;
-            }
-
-            let history = self
-                .entry_repo
-                .get_entry_history(&entry.id, u32::MAX, None)
-                .await?;
-            let Some(version) = history.into_iter().find(|item| item.created_at <= cutoff) else {
+        for entry in file_entries {
+            let Some(version) = versions_by_entry.get(&entry.id) else {
                 continue;
             };
             let Some(blob_id) = version.blob_id else {
                 continue;
             };
-            files.push((entry.path_norm, blob_id));
+            files.push((entry.path_norm.clone(), blob_id));
         }
 
         files.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));

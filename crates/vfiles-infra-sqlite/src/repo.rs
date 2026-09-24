@@ -3737,6 +3737,57 @@ impl EntryRepo for SqliteEntryRepo {
         Ok(versions)
     }
 
+    async fn find_versions_for_entries_before(
+        &self,
+        entry_ids: &[EntryId],
+        cutoff: time::OffsetDateTime,
+    ) -> DomainResult<Vec<EntryVersion>> {
+        if entry_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        const CHUNK: usize = 500;
+        let mut versions = Vec::new();
+
+        for chunk in entry_ids.chunks(CHUNK) {
+            let mut builder = sqlx::QueryBuilder::new(
+                "SELECT \
+                    ev.id, ev.entry_id, ev.version, ev.blob_id, ev.size, ev.content_type, \
+                    b.content_hash, ev.created_at, ev.created_by, ev.message \
+                 FROM entry_versions ev \
+                 LEFT JOIN blobs b ON b.id = ev.blob_id \
+                 WHERE ev.entry_id IN (",
+            );
+            let mut separated = builder.separated(", ");
+            for entry_id in chunk {
+                separated.push_bind(entry_id.to_string());
+            }
+            separated.push_unseparated(
+                ") AND ev.version = (\
+                    SELECT MAX(cutoff_ev.version) \
+                    FROM entry_versions cutoff_ev \
+                    WHERE cutoff_ev.entry_id = ev.entry_id \
+                      AND cutoff_ev.created_at <= ",
+            );
+            builder.push_bind(cutoff);
+            builder.push(")");
+
+            let rows: Vec<EntryVersionRow> = builder
+                .build_query_as()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                message: format!("Failed to find entry versions before cutoff: {}", e),
+            })?;
+
+            for row in rows {
+                versions.push(parse_entry_version_row(row)?);
+            }
+        }
+
+        Ok(versions)
+    }
+
     async fn find_current_versions_for_entries(
         &self,
         entry_ids: &[EntryId],
@@ -8431,6 +8482,55 @@ mod entry_move_batch_tests {
         );
 
         pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn find_versions_before_cutoff_returns_latest_eligible_version() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+        let path = NormalizedPath::new("docs/cutoff.txt").expect("path should parse");
+        let entry_id = repo
+            .create_entry(&namespace_id, &path, EntryKind::File, &user_id)
+            .await
+            .expect("entry should be created");
+        let first = repo
+            .create_version(&entry_id, None, None, 1, None, &user_id, Some("first"))
+            .await
+            .expect("first version should be created");
+        let second = repo
+            .create_version(&entry_id, None, None, 2, None, &user_id, Some("second"))
+            .await
+            .expect("second version should be created");
+        let second_at = first.created_at + time::Duration::days(1);
+        sqlx::query("UPDATE entry_versions SET created_at = ? WHERE id = ?")
+            .bind(second_at)
+            .bind(second.id.to_string())
+            .execute(&pool)
+            .await
+            .expect("second version timestamp should be adjusted for deterministic test");
+
+        let at_first = repo
+            .find_versions_for_entries_before(&[entry_id], first.created_at)
+            .await
+            .expect("cutoff lookup should succeed");
+        assert_eq!(at_first.len(), 1);
+        assert_eq!(at_first[0].id, first.id);
+
+        let at_second = repo
+            .find_versions_for_entries_before(&[entry_id], second_at)
+            .await
+            .expect("later cutoff lookup should succeed");
+        assert_eq!(at_second.len(), 1);
+        assert_eq!(at_second[0].id, second.id);
+
+        assert!(
+            repo.find_versions_for_entries_before(&[], second_at)
+                .await
+                .expect("empty cutoff lookup should succeed")
+                .is_empty()
+        );
+
+        drop(pool);
         let _ = std::fs::remove_file(db_path);
     }
 
