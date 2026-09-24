@@ -1036,10 +1036,12 @@ impl VfilesS3 {
         Ok((!out.is_empty()).then_some(out))
     }
 
-    /// 覆盖写用户元数据（先清旧 = 与 `MetadataDirective=REPLACE` 语义一致）。
-    async fn store_metadata(
+    /// 原子替换对象元数据并保存该版本 ETag，避免清旧/写新分多条 SQL 后留下半套属性。
+    async fn store_object_properties(
         &self,
         entry_id: &vfiles_domain::EntryId,
+        version_id: &vfiles_domain::VersionId,
+        etag: &str,
         md: Option<&s3s::dto::Metadata>,
     ) -> S3Result<()> {
         let mut map = self
@@ -1047,23 +1049,28 @@ impl VfilesS3 {
             .list_entry_properties(&[*entry_id])
             .await
             .map_err(dom_err)?;
+        let mut changes = Vec::new();
         for (k, _) in map.remove(entry_id).unwrap_or_default() {
             if k.starts_with(S3_META_PREFIX) {
-                self.entry_repo
-                    .remove_entry_property(entry_id, &k)
-                    .await
-                    .map_err(dom_err)?;
+                changes.push(vfiles_domain::EntryPropertyChange::Remove { name: k });
             }
         }
+        changes.push(vfiles_domain::EntryPropertyChange::Set {
+            name: version_etag_property(version_id),
+            value: etag.to_string(),
+        });
         if let Some(md) = md {
             for (k, v) in md {
-                self.entry_repo
-                    .set_entry_property(entry_id, &format!("{S3_META_PREFIX}{k}"), v)
-                    .await
-                    .map_err(dom_err)?;
+                changes.push(vfiles_domain::EntryPropertyChange::Set {
+                    name: format!("{S3_META_PREFIX}{k}"),
+                    value: v.clone(),
+                });
             }
         }
-        Ok(())
+        self.entry_repo
+            .apply_entry_property_changes(entry_id, &changes)
+            .await
+            .map_err(dom_err)
     }
 
     async fn load_version_etags(
@@ -1093,18 +1100,6 @@ impl VfilesS3 {
                 (entry_id, etags)
             })
             .collect())
-    }
-
-    async fn store_version_etag(
-        &self,
-        entry_id: &vfiles_domain::EntryId,
-        version_id: &vfiles_domain::VersionId,
-        etag: &str,
-    ) -> S3Result<()> {
-        self.entry_repo
-            .set_entry_property(entry_id, &version_etag_property(version_id), etag)
-            .await
-            .map_err(dom_err)
     }
 
     /// 路径 → entry（元数据读写用 ✗ 不存在则 None）。
@@ -2080,13 +2075,13 @@ impl S3 for VfilesS3 {
             }
         };
         let etag = finish_md5(&md5_digest);
-        self.store_version_etag(&result.entry.id, &result.version.id, &etag)
-            .await?;
-        // 用户元数据（`x-amz-meta-*`）落 entry 属性；覆盖写 = 清旧
-        if let Some(entry) = self.entry_at(&path).await? {
-            self.store_metadata(&entry.id, input.metadata.as_ref())
-                .await?;
-        }
+        self.store_object_properties(
+            &result.entry.id,
+            &result.version.id,
+            &etag,
+            input.metadata.as_ref(),
+        )
+        .await?;
         let out = PutObjectOutput {
             e_tag: Some(s3s::dto::ETag::Strong(etag)),
             checksum_sha256: response_checksum_sha256,
@@ -2155,6 +2150,15 @@ impl S3 for VfilesS3 {
                 .clone()
                 .or_else(|| input.content_type.clone())
         };
+        // Resolve inherited metadata before committing the destination version.
+        let md = if replace {
+            input.metadata.clone()
+        } else {
+            match self.entry_at(&src_path).await? {
+                Some(entry) => self.load_metadata(&entry.id).await?,
+                None => None,
+            }
+        };
         let dst_path = norm(&input.key).map_err(dom_err)?;
         // 目标条件（`If-Match` / `If-None-Match` 针对**目标**，与 copy-source 条件相区分）
         let cur = self.etag_at(&dst_path).await?;
@@ -2199,20 +2203,8 @@ impl S3 for VfilesS3 {
             }
         };
         let etag = finish_md5(&md5_digest);
-        self.store_version_etag(&result.entry.id, &result.version.id, &etag)
+        self.store_object_properties(&result.entry.id, &result.version.id, &etag, md.as_ref())
             .await?;
-        // 用户元数据：`REPLACE` = 取请求；否则（COPY）= 抄源条目
-        let md = if replace {
-            input.metadata.clone()
-        } else {
-            match self.entry_at(&src_path).await? {
-                Some(e) => self.load_metadata(&e.id).await?,
-                None => None,
-            }
-        };
-        if let Some(entry) = self.entry_at(&dst_path).await? {
-            self.store_metadata(&entry.id, md.as_ref()).await?;
-        }
         let out = CopyObjectOutput {
             copy_object_result: Some(CopyObjectResult {
                 e_tag: Some(s3s::dto::ETag::Strong(etag)),
@@ -2909,18 +2901,21 @@ impl S3 for VfilesS3 {
             .upload
             .get_upload_custom_metadata(&upload_id)
             .await
-            .unwrap_or_default();
+            .map_err(dom_err)?;
         let result = self
             .upload
             .complete_multipart_upload(&upload_id, &selected_indices, Some("S3 multipart"))
             .await
             .map_err(dom_err)?;
-        self.store_version_etag(&result.entry.id, &result.version.id, &etag)
-            .await?;
         // 会话上存的 `x-amz-meta-*` → 条目属性（完成即定稿 = 覆盖写语义）
         let map: s3s::dto::Metadata = custom.into_iter().collect();
-        self.store_metadata(&result.entry.id, (!map.is_empty()).then_some(&map))
-            .await?;
+        self.store_object_properties(
+            &result.entry.id,
+            &result.version.id,
+            &etag,
+            (!map.is_empty()).then_some(&map),
+        )
+        .await?;
         let location = format!("/{}/{}", input.bucket, input.key);
         let out = CompleteMultipartUploadOutput {
             bucket: Some(input.bucket),
