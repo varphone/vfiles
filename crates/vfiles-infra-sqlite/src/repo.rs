@@ -1112,6 +1112,7 @@ pub struct SqliteS3ObjectKeyRepo {
 pub struct S3ObjectKeyRecord {
     pub object_key: String,
     pub entry_id: vfiles_domain::EntryId,
+    pub path: vfiles_domain::NormalizedPath,
 }
 
 impl SqliteS3ObjectKeyRepo {
@@ -1152,7 +1153,8 @@ impl SqliteS3ObjectKeyRepo {
     ) -> Result<(), vfiles_domain::DomainError> {
         sqlx::query(
             "INSERT INTO s3_object_keys (namespace_id, object_key, entry_id) VALUES (?, ?, ?) \
-             ON CONFLICT(namespace_id, object_key) DO UPDATE SET entry_id = excluded.entry_id",
+             ON CONFLICT(namespace_id, object_key) DO UPDATE SET entry_id = excluded.entry_id \
+             ON CONFLICT(namespace_id, entry_id) DO UPDATE SET object_key = excluded.object_key",
         )
         .bind(namespace_id.to_string())
         .bind(object_key)
@@ -1173,12 +1175,13 @@ impl SqliteS3ObjectKeyRepo {
         after: Option<&str>,
         limit: u32,
     ) -> Result<Vec<S3ObjectKeyRecord>, vfiles_domain::DomainError> {
-        let rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT object_key, entry_id FROM s3_object_keys \
-             WHERE namespace_id = ? AND object_key >= ? \
-               AND (? IS NULL OR object_key > ?) \
-               AND substr(object_key, 1, length(?)) = ? \
-             ORDER BY object_key LIMIT ?",
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT s3.object_key, s3.entry_id, e.path \
+             FROM s3_object_keys s3 JOIN entries e ON e.id = s3.entry_id \
+             WHERE s3.namespace_id = ? AND s3.object_key >= ? \
+               AND (? IS NULL OR s3.object_key > ?) \
+               AND substr(s3.object_key, 1, length(?)) = ? \
+             ORDER BY s3.object_key LIMIT ?",
         )
         .bind(namespace_id.to_string())
         .bind(prefix)
@@ -1193,15 +1196,21 @@ impl SqliteS3ObjectKeyRepo {
             message: format!("Failed to page S3 object keys: {e}"),
         })?;
         rows.into_iter()
-            .map(|(object_key, id)| {
+            .map(|(object_key, id, path)| {
                 let entry_id = vfiles_domain::EntryId::from_string(&id).map_err(|_| {
                     vfiles_domain::DomainError::Internal {
                         message: "Invalid entry id in S3 object key index".to_string(),
                     }
                 })?;
+                let path = vfiles_domain::NormalizedPath::new(&path).map_err(|_| {
+                    vfiles_domain::DomainError::Internal {
+                        message: "Invalid path in S3 object key index".to_string(),
+                    }
+                })?;
                 Ok(S3ObjectKeyRecord {
                     object_key,
                     entry_id,
+                    path,
                 })
             })
             .collect()
@@ -1418,8 +1427,8 @@ impl SqliteS3DeleteMarkerRepo {
     ) -> Result<Vec<String>, vfiles_domain::DomainError> {
         let rows = sqlx::query_scalar::<_, String>(
             r#"SELECT object_key FROM (
-                   SELECT path AS object_key FROM entries
-                   WHERE namespace_id = ? AND kind = 'file' AND substr(path, 1, length(?)) = ?
+                   SELECT object_key FROM s3_object_keys
+                   WHERE namespace_id = ? AND substr(object_key, 1, length(?)) = ?
                    UNION
                    SELECT object_key FROM s3_delete_markers
                    WHERE namespace_id = ? AND substr(object_key, 1, length(?)) = ?
@@ -1639,6 +1648,10 @@ mod s3_delete_marker_tests {
                 .expect("object key lookup should succeed"),
             None
         );
+        object_keys
+            .bind(&namespace, "folder/z.txt", &entry_id)
+            .await
+            .expect("object key should be rebound for paging checks");
 
         let repo = SqliteS3DeleteMarkerRepo::new(pool.clone());
         let version_id = uuid::Uuid::new_v4().to_string();
@@ -1689,7 +1702,7 @@ mod s3_delete_marker_tests {
             .keys_page(&namespace, "folder/", "folder/", None, 1)
             .await
             .expect("combined key page should succeed");
-        assert_eq!(first_page, ["folder/object.txt"]);
+        assert_eq!(first_page, ["folder/a"]);
         let second_page = repo
             .keys_page(
                 &namespace,
@@ -1700,7 +1713,18 @@ mod s3_delete_marker_tests {
             )
             .await
             .expect("combined key continuation should succeed");
-        assert_eq!(second_page, ["folder/z.txt"]);
+        assert_eq!(second_page, ["folder/object.txt"]);
+        let third_page = repo
+            .keys_page(
+                &namespace,
+                "folder/",
+                "folder/",
+                second_page.last().map(String::as_str),
+                1,
+            )
+            .await
+            .expect("combined key continuation should succeed");
+        assert_eq!(third_page, ["folder/z.txt"]);
         let z_marker_id = uuid::Uuid::new_v4().to_string();
         repo.create(
             &namespace,

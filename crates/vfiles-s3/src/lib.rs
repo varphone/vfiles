@@ -320,21 +320,25 @@ impl<'a> ListCollector<'a> {
 
 /// 一页列表（SQL 分页拉取 ✗ **不物化整桶**）：返回 `(条目, 是否截断)`。
 async fn list_page(
-    repo: &std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
-    delete_markers: &vfiles_infra_sqlite::SqliteS3DeleteMarkerRepo,
+    repos: (
+        &std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
+        &vfiles_infra_sqlite::SqliteS3ObjectKeyRepo,
+        &vfiles_infra_sqlite::SqliteS3DeleteMarkerRepo,
+    ),
     ns: &vfiles_domain::NamespaceId,
     prefix: &str,
     delimiter: Option<&str>,
     after: Option<&str>,
     max: usize,
 ) -> vfiles_domain::DomainResult<(Vec<Listed>, bool)> {
+    let (repo, object_keys, delete_markers) = repos;
     const BATCH: u32 = 1000;
     let mut c = ListCollector::new(prefix, delimiter, after, max);
-    // 续页游标：滚出条目单调不减 → 直接从 `after` 之后扫原始 key（不丢条目，见 r20 论证）
+    // The database cursor follows the raw S3 key order, independent of backing paths.
     let mut cursor: Option<String> = after.map(|a| a.to_string());
     while !c.done {
-        let batch = repo
-            .files_with_meta_page(ns, prefix, cursor.as_deref(), BATCH)
+        let batch = object_keys
+            .page(ns, prefix, cursor.as_deref(), BATCH)
             .await?;
         if batch.is_empty() {
             break;
@@ -342,44 +346,73 @@ async fn list_page(
         // Advance over every stored object, including those hidden by a current
         // delete marker. Filtering after pagination would underfill pages and
         // could emit CommonPrefixes made only from deleted objects.
-        cursor = batch
-            .last()
-            .map(|meta| meta.entry.path_norm.as_str().to_string());
-        let keys: Vec<_> = batch
+        cursor = batch.last().map(|record| record.object_key.clone());
+        let raw_keys: Vec<_> = batch
             .iter()
-            .map(|meta| meta.entry.path_norm.as_str().to_string())
+            .map(|record| record.object_key.clone())
             .collect();
-        let hidden = delete_markers.current_hidden_keys(ns, &keys).await?;
-        let batch: Vec<_> = batch
+        let mut hidden_keys = raw_keys.clone();
+        hidden_keys.extend(batch.iter().map(|record| record.path.as_str().to_string()));
+        let hidden = delete_markers.current_hidden_keys(ns, &hidden_keys).await?;
+        let paths: Vec<_> = batch.iter().map(|record| record.path.clone()).collect();
+        let entries = repo.find_paths(ns, &paths).await?;
+        let entries_by_path: std::collections::HashMap<_, _> = entries
             .into_iter()
-            .filter(|meta| !hidden.contains(meta.entry.path_norm.as_str()))
+            .map(|entry| (entry.path_norm.as_str().to_string(), entry))
             .collect();
-        if batch.is_empty() {
+        let visible: Vec<_> = batch
+            .into_iter()
+            .filter(|record| {
+                !hidden.contains(record.object_key.as_str())
+                    && !hidden.contains(record.path.as_str())
+                    && entries_by_path.contains_key(record.path.as_str())
+            })
+            .collect();
+        if visible.is_empty() {
             continue;
         }
-        let ids: Vec<_> = batch.iter().map(|m| m.entry.id).collect();
-        let properties = repo.list_entry_properties(&ids).await?;
-        let version_ids: Vec<_> = batch
+        let ids: Vec<_> = visible
             .iter()
-            .filter_map(|meta| meta.entry.current_version_id)
+            .filter_map(|record| {
+                entries_by_path
+                    .get(record.path.as_str())
+                    .map(|entry| entry.id)
+            })
             .collect();
-        let version_mtimes: std::collections::HashMap<_, _> = repo
+        let properties = repo.list_entry_properties(&ids).await?;
+        let version_ids: Vec<_> = visible
+            .iter()
+            .filter_map(|record| {
+                entries_by_path
+                    .get(record.path.as_str())
+                    .and_then(|entry| entry.current_version_id)
+            })
+            .collect();
+        let versions: std::collections::HashMap<_, _> = repo
             .find_versions(&version_ids)
             .await?
             .into_iter()
-            .map(|version| (version.id, version.created_at))
+            .map(|version| (version.id, version))
             .collect();
-        for m in batch {
-            let entry_properties = properties
-                .get(&m.entry.id)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            let version_created_at = m
-                .entry
+        for record in visible {
+            let Some(entry) = entries_by_path.get(record.path.as_str()) else {
+                continue;
+            };
+            let entry_properties = properties.get(&entry.id).map(Vec::as_slice).unwrap_or(&[]);
+            let version_created_at = entry
                 .current_version_id
                 .as_ref()
-                .and_then(|version_id| version_mtimes.get(version_id).copied());
-            if !c.push(obj_meta(m, entry_properties, version_created_at)) {
+                .and_then(|version_id| versions.get(version_id).map(|version| version.created_at));
+            let version = entry.current_version_id.and_then(|id| versions.get(&id));
+            let meta = vfiles_domain::types::EntryChildMeta {
+                entry: entry.clone(),
+                size_bytes: version.map(|v| v.size_bytes.as_u64()),
+                mime_type: version.and_then(|v| v.mime_type.clone()),
+                source_mtime: None,
+            };
+            let mut object = obj_meta(meta, entry_properties, version_created_at);
+            object.key = record.object_key;
+            if !c.push(object) {
                 break;
             }
         }
@@ -1045,12 +1078,13 @@ impl VfilesS3 {
         &self,
         path: &vfiles_domain::NormalizedPath,
     ) -> S3Result<bool> {
+        let key = external_key(path);
         let hidden = self
             .delete_markers
-            .current_hidden_keys(&self.namespace, &[path.as_str().to_string()])
+            .current_hidden_keys(&self.namespace, std::slice::from_ref(&key))
             .await
             .map_err(dom_err)?;
-        Ok(hidden.contains(path.as_str()))
+        Ok(hidden.contains(&key))
     }
 
     /// 读条目的 S3 用户元数据（`x-amz-meta-*` → 响应头）。
@@ -1346,8 +1380,7 @@ impl S3 for VfilesS3 {
             .or_else(|| input.start_after.clone());
 
         let (entries, truncated) = list_page(
-            &self.entry_repo,
-            &self.delete_markers,
+            (&self.entry_repo, &self.object_keys, &self.delete_markers),
             &self.namespace,
             &prefix,
             delimiter.as_deref(),
@@ -1499,9 +1532,18 @@ impl S3 for VfilesS3 {
                 .find_paths(&self.namespace, &paths)
                 .await
                 .map_err(dom_err)?;
-            let entry_by_key: std::collections::HashMap<_, _> = entries
+            let entry_by_path: std::collections::HashMap<_, _> = entries
                 .into_iter()
                 .map(|entry| (entry.path_norm.as_str().to_string(), entry))
+                .collect();
+            let entry_by_key: std::collections::HashMap<_, _> = keys
+                .iter()
+                .zip(&paths)
+                .filter_map(|(key, path)| {
+                    entry_by_path
+                        .get(path.as_str())
+                        .map(|entry| (key.clone(), entry.clone()))
+                })
                 .collect();
             let entry_ids: Vec<_> = entry_by_key.values().map(|entry| entry.id).collect();
             let version_orders = self
@@ -1790,8 +1832,7 @@ impl S3 for VfilesS3 {
         let marker = input.marker.clone();
 
         let (entries, truncated) = list_page(
-            &self.entry_repo,
-            &self.delete_markers,
+            (&self.entry_repo, &self.object_keys, &self.delete_markers),
             &self.namespace,
             &prefix,
             delimiter.as_deref(),
@@ -1839,7 +1880,7 @@ impl S3 for VfilesS3 {
         if let Some(version_id) = input.version_id.as_deref()
             && self
                 .delete_markers
-                .contains_version(&self.namespace, path.as_str(), version_id)
+                .contains_version(&self.namespace, &external_key(&path), version_id)
                 .await
                 .map_err(dom_err)?
         {
@@ -1921,7 +1962,7 @@ impl S3 for VfilesS3 {
         if let Some(version_id) = input.version_id.as_deref()
             && self
                 .delete_markers
-                .contains_version(&self.namespace, path.as_str(), version_id)
+                .contains_version(&self.namespace, &external_key(&path), version_id)
                 .await
                 .map_err(dom_err)?
         {
@@ -2415,7 +2456,7 @@ impl S3 for VfilesS3 {
             if per_key_err[i].is_some() {
                 continue;
             }
-            let key = path.as_str().to_string();
+            let key = external_key(&path);
             if let Some(version_id) = input.delete.objects[i].version_id.as_deref() {
                 if self
                     .delete_markers
@@ -2553,7 +2594,7 @@ impl S3 for VfilesS3 {
                     deleted.push(item);
                 } else if let Some(version_id) = norm(k)
                     .ok()
-                    .and_then(|path| marker_ids_by_key.get(path.as_str()).cloned())
+                    .and_then(|path| marker_ids_by_key.get(&external_key(&path)).cloned())
                 {
                     deleted.push(DeletedObject {
                         key: Some(k.clone()),
@@ -2586,7 +2627,7 @@ impl S3 for VfilesS3 {
         if let Some(vid) = input.version_id.clone() {
             if self
                 .delete_markers
-                .delete(&self.namespace, path.as_str(), &vid)
+                .delete(&self.namespace, &external_key(&path), &vid)
                 .await
                 .map_err(dom_err)?
             {
@@ -2615,7 +2656,7 @@ impl S3 for VfilesS3 {
         self.delete_markers
             .create(
                 &self.namespace,
-                path.as_str(),
+                &external_key(&path),
                 &self.owner,
                 &version_id,
                 created_at,
@@ -3566,6 +3607,16 @@ mod tests {
             user: &vfiles_domain::UserId,
             path: &str,
         ) {
+            add_file_with_key(pool, namespace, user, path, path).await;
+        }
+
+        async fn add_file_with_key(
+            pool: &vfiles_infra_sqlite::SqlitePool,
+            namespace: &vfiles_domain::NamespaceId,
+            user: &vfiles_domain::UserId,
+            object_key: &str,
+            path: &str,
+        ) {
             let entry = vfiles_domain::EntryId::new();
             let version = vfiles_domain::VersionId::new();
             sqlx::query(
@@ -3577,6 +3628,10 @@ mod tests {
             .execute(pool)
             .await
             .expect("insert test entry");
+            vfiles_infra_sqlite::SqliteS3ObjectKeyRepo::new(pool.clone())
+                .bind(namespace, object_key, &entry)
+                .await
+                .expect("bind test S3 object key");
             sqlx::query("INSERT INTO entry_versions (id, entry_id, version, size, created_by) VALUES (?, ?, 1, 1, ?)")
                 .bind(version.to_string())
                 .bind(entry.to_string())
@@ -3596,7 +3651,28 @@ mod tests {
         for key in keys {
             add_file(&pool, &namespace, &user, key).await;
         }
+        for key in ["a", "/a", "a/"] {
+            let path = norm(key).expect("S3 key should map to an internal path");
+            add_file_with_key(&pool, &namespace, &user, key, path.as_str()).await;
+        }
+        let http_entry = vfiles_domain::EntryId::new();
+        let http_version = vfiles_domain::VersionId::new();
+        sqlx::query("INSERT INTO entries (id, namespace_id, path, kind) VALUES (?, ?, ?, 'file')")
+            .bind(http_entry.to_string())
+            .bind(namespace.to_string())
+            .bind("http-created/file.txt")
+            .execute(&pool)
+            .await
+            .expect("insert HTTP-created file");
+        sqlx::query("INSERT INTO entry_versions (id, entry_id, version, size, created_by) VALUES (?, ?, 1, 1, ?)")
+            .bind(http_version.to_string())
+            .bind(http_entry.to_string())
+            .bind(user.to_string())
+            .execute(&pool)
+            .await
+            .expect("insert HTTP-created file version");
         let markers = vfiles_infra_sqlite::SqliteS3DeleteMarkerRepo::new(pool.clone());
+        let object_keys = vfiles_infra_sqlite::SqliteS3ObjectKeyRepo::new(pool.clone());
         for key in ["marker-dir/deleted/only.txt", "marker-page/00-hidden.txt"] {
             markers
                 .create(
@@ -3612,9 +3688,56 @@ mod tests {
         let repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync> =
             std::sync::Arc::new(vfiles_infra_sqlite::SqliteEntryRepo::new(pool.clone()));
 
+        let (slash_page, slash_truncated) = list_page(
+            (&repo, &object_keys, &markers),
+            &namespace,
+            "a/",
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("list keys with trailing slash prefix");
+        assert!(!slash_truncated);
+        assert_eq!(
+            slash_page.iter().map(Listed::key).collect::<Vec<_>>(),
+            ["a/"]
+        );
+        let (all_page, all_truncated) = list_page(
+            (&repo, &object_keys, &markers),
+            &namespace,
+            "",
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("list all raw keys");
+        assert!(!all_truncated);
+        let aliases: Vec<_> = all_page
+            .iter()
+            .map(Listed::key)
+            .filter(|key| ["a", "/a", "a/"].contains(key))
+            .collect();
+        assert_eq!(aliases, ["/a", "a", "a/"]);
+        let (http_page, http_truncated) = list_page(
+            (&repo, &object_keys, &markers),
+            &namespace,
+            "http-created/",
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("list files inserted outside the S3 API");
+        assert!(!http_truncated);
+        assert_eq!(
+            http_page.iter().map(Listed::key).collect::<Vec<_>>(),
+            ["http-created/file.txt"]
+        );
+
         let (folded, folded_truncated) = list_page(
-            &repo,
-            &markers,
+            (&repo, &object_keys, &markers),
             &namespace,
             "marker-dir/",
             Some("/"),
@@ -3629,10 +3752,16 @@ mod tests {
             ["marker-dir/live/"]
         );
 
-        let (first, first_truncated) =
-            list_page(&repo, &markers, &namespace, "marker-page/", None, None, 1)
-                .await
-                .expect("list first visible page");
+        let (first, first_truncated) = list_page(
+            (&repo, &object_keys, &markers),
+            &namespace,
+            "marker-page/",
+            None,
+            None,
+            1,
+        )
+        .await
+        .expect("list first visible page");
         assert!(first_truncated);
         assert_eq!(
             first.iter().map(Listed::key).collect::<Vec<_>>(),
@@ -3642,8 +3771,7 @@ mod tests {
             .next
             .expect("truncated page should have a continuation key");
         let (second, second_truncated) = list_page(
-            &repo,
-            &markers,
+            (&repo, &object_keys, &markers),
             &namespace,
             "marker-page/",
             None,
