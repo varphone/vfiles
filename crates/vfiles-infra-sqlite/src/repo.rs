@@ -1145,6 +1145,23 @@ impl SqliteS3ObjectKeyRepo {
         .transpose()
     }
 
+    pub async fn object_key(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        entry_id: &vfiles_domain::EntryId,
+    ) -> Result<Option<String>, vfiles_domain::DomainError> {
+        sqlx::query_scalar(
+            "SELECT object_key FROM s3_object_keys WHERE namespace_id = ? AND entry_id = ?",
+        )
+        .bind(namespace_id.to_string())
+        .bind(entry_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to look up S3 object key by entry: {e}"),
+        })
+    }
+
     pub async fn bind(
         &self,
         namespace_id: &vfiles_domain::NamespaceId,

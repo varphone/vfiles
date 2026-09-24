@@ -186,6 +186,26 @@ fn external_key(path: &vfiles_domain::NormalizedPath) -> String {
         .unwrap_or_else(|| path.as_str().to_string())
 }
 
+async fn indexed_path_for_key(
+    entry_repo: &std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
+    object_keys: &vfiles_infra_sqlite::SqliteS3ObjectKeyRepo,
+    namespace: &vfiles_domain::NamespaceId,
+    key: &str,
+) -> S3Result<Option<vfiles_domain::NormalizedPath>> {
+    let Some(entry_id) = object_keys
+        .entry_id(namespace, key)
+        .await
+        .map_err(dom_err)?
+    else {
+        return Ok(None);
+    };
+    let entry = entry_repo.find_by_id(&entry_id).await.map_err(dom_err)?;
+    if entry.namespace_id != *namespace || entry.entry_type != vfiles_domain::EntryKind::File {
+        return Err(s3s::s3_error!(NoSuchKey, "No such key"));
+    }
+    Ok(Some(entry.path_norm))
+}
+
 /// 对象元数据（列表/详情共用 ✗ 一次树遍历取全）。
 #[derive(Debug, Clone)]
 struct ObjMeta {
@@ -1074,11 +1094,29 @@ fn resolve_completed_part_indices(stored: &[(i32, u64)], requested: &[i32]) -> S
 }
 
 impl VfilesS3 {
+    async fn path_for_key(&self, key: &str) -> S3Result<vfiles_domain::NormalizedPath> {
+        // Validate every wire key even when an index row exists.
+        let fallback = norm(key).map_err(dom_err)?;
+        Ok(
+            indexed_path_for_key(&self.entry_repo, &self.object_keys, &self.namespace, key)
+                .await?
+                .unwrap_or(fallback),
+        )
+    }
+
     async fn has_current_delete_marker(
         &self,
         path: &vfiles_domain::NormalizedPath,
     ) -> S3Result<bool> {
-        let key = external_key(path);
+        let key = if let Some(entry) = self.entry_at(path).await? {
+            self.object_keys
+                .object_key(&self.namespace, &entry.id)
+                .await
+                .map_err(dom_err)?
+                .unwrap_or_else(|| external_key(path))
+        } else {
+            external_key(path)
+        };
         let hidden = self
             .delete_markers
             .current_hidden_keys(&self.namespace, std::slice::from_ref(&key))
@@ -1236,7 +1274,9 @@ impl VfilesS3 {
         upload_id: &vfiles_domain::UploadId,
         key: &str,
     ) -> S3Result<()> {
-        let requested_path = norm(key)
+        let requested_path = self
+            .path_for_key(key)
+            .await
             .map_err(|_| s3s::s3_error!(NoSuchUpload, "upload id does not identify this object"))?;
         let session =
             self.upload
@@ -1523,10 +1563,10 @@ impl S3 for VfilesS3 {
                 break;
             }
             cursor = keys.last().cloned();
-            let paths = keys
-                .iter()
-                .map(|key| norm(key).map_err(dom_err))
-                .collect::<S3Result<Vec<_>>>()?;
+            let mut paths = Vec::with_capacity(keys.len());
+            for key in &keys {
+                paths.push(self.path_for_key(key).await?);
+            }
             let entries = self
                 .entry_repo
                 .find_paths(&self.namespace, &paths)
@@ -1876,7 +1916,7 @@ impl S3 for VfilesS3 {
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
-        let path = norm(&input.key).map_err(dom_err)?;
+        let path = self.path_for_key(&input.key).await?;
         if let Some(version_id) = input.version_id.as_deref()
             && self
                 .delete_markers
@@ -1958,7 +1998,7 @@ impl S3 for VfilesS3 {
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
-        let path = norm(&input.key).map_err(dom_err)?;
+        let path = self.path_for_key(&input.key).await?;
         if let Some(version_id) = input.version_id.as_deref()
             && self
                 .delete_markers
@@ -2029,7 +2069,7 @@ impl S3 for VfilesS3 {
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
-        let path = norm(&input.key).map_err(dom_err)?;
+        let path = self.path_for_key(&input.key).await?;
         let expected_md5 = decode_content_md5(input.content_md5.as_deref())?;
         let expected_sha256 = decode_checksum_sha256(input.checksum_sha256.as_deref())?;
         let expected_crc32 = decode_checksum_crc32(input.checksum_crc32.as_deref())?;
@@ -2175,7 +2215,7 @@ impl S3 for VfilesS3 {
         if src_bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "source bucket not found"));
         }
-        let src_path = norm(&src_key).map_err(dom_err)?;
+        let src_path = self.path_for_key(&src_key).await?;
         let (src_etag, src_mtime) = source_identity(self, &src_path).await?;
         check_copy_conditions(
             input.copy_source_if_match.as_ref(),
@@ -2212,7 +2252,7 @@ impl S3 for VfilesS3 {
                 None => None,
             }
         };
-        let dst_path = norm(&input.key).map_err(dom_err)?;
+        let dst_path = self.path_for_key(&input.key).await?;
         // 目标条件（`If-Match` / `If-None-Match` 针对**目标**，与 copy-source 条件相区分）
         let cur = self.etag_at(&dst_path).await?;
         check_dest_conditions(
@@ -2329,7 +2369,7 @@ impl S3 for VfilesS3 {
             std::collections::HashMap<String, u64>,
         > = std::collections::HashMap::new();
         for (i, k) in keys.iter().enumerate() {
-            match norm(k) {
+            match self.path_for_key(k).await {
                 Ok(p) if !p.as_str().is_empty() => {
                     match self.entry_repo.find_by_path(&self.namespace, &p).await {
                         Ok(Some(entry)) => {
@@ -2592,10 +2632,7 @@ impl S3 for VfilesS3 {
             if !quiet {
                 if let Some(item) = deleted_by_index.remove(&i) {
                     deleted.push(item);
-                } else if let Some(version_id) = norm(k)
-                    .ok()
-                    .and_then(|path| marker_ids_by_key.get(&external_key(&path)).cloned())
-                {
+                } else if let Some(version_id) = marker_ids_by_key.get(k).cloned() {
                     deleted.push(DeletedObject {
                         key: Some(k.clone()),
                         delete_marker: Some(true),
@@ -2622,7 +2659,7 @@ impl S3 for VfilesS3 {
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
-        let path = norm(&input.key).map_err(dom_err)?;
+        let path = self.path_for_key(&input.key).await?;
         // Marker versions live separately from object versions and can be removed directly.
         if let Some(vid) = input.version_id.clone() {
             if self
@@ -2680,7 +2717,7 @@ impl S3 for VfilesS3 {
         if input.bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "bucket not found"));
         }
-        let path = norm(&input.key).map_err(dom_err)?;
+        let path = self.path_for_key(&input.key).await?;
         let (parent_str, filename) = split_key(path.as_str());
         let parent = vfiles_domain::NormalizedPath::new(&parent_str)
             .map_err(|e| s3s::s3_error!(InvalidArgument, "{}", e))?;
@@ -2817,7 +2854,7 @@ impl S3 for VfilesS3 {
         if src_bucket != DEFAULT_BUCKET {
             return Err(s3s::s3_error!(NoSuchBucket, "source bucket not found"));
         }
-        let src_path = norm(&src_key).map_err(dom_err)?;
+        let src_path = self.path_for_key(&src_key).await?;
         let (src_etag, src_mtime) = source_identity(self, &src_path).await?;
         check_copy_conditions(
             input.copy_source_if_match.as_ref(),
@@ -3606,8 +3643,8 @@ mod tests {
             namespace: &vfiles_domain::NamespaceId,
             user: &vfiles_domain::UserId,
             path: &str,
-        ) {
-            add_file_with_key(pool, namespace, user, path, path).await;
+        ) -> vfiles_domain::EntryId {
+            add_file_with_key(pool, namespace, user, path, path).await
         }
 
         async fn add_file_with_key(
@@ -3616,7 +3653,7 @@ mod tests {
             user: &vfiles_domain::UserId,
             object_key: &str,
             path: &str,
-        ) {
+        ) -> vfiles_domain::EntryId {
             let entry = vfiles_domain::EntryId::new();
             let version = vfiles_domain::VersionId::new();
             sqlx::query(
@@ -3639,6 +3676,7 @@ mod tests {
                 .execute(pool)
                 .await
                 .expect("insert test version");
+            entry
         }
 
         let keys = [
@@ -3651,9 +3689,13 @@ mod tests {
         for key in keys {
             add_file(&pool, &namespace, &user, key).await;
         }
+        let mut trailing_slash_entry = None;
         for key in ["a", "/a", "a/"] {
             let path = norm(key).expect("S3 key should map to an internal path");
-            add_file_with_key(&pool, &namespace, &user, key, path.as_str()).await;
+            let entry = add_file_with_key(&pool, &namespace, &user, key, path.as_str()).await;
+            if key == "a/" {
+                trailing_slash_entry = Some(entry);
+            }
         }
         let http_entry = vfiles_domain::EntryId::new();
         let http_version = vfiles_domain::VersionId::new();
@@ -3687,6 +3729,20 @@ mod tests {
         }
         let repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync> =
             std::sync::Arc::new(vfiles_infra_sqlite::SqliteEntryRepo::new(pool.clone()));
+        let trailing_slash_entry = trailing_slash_entry.expect("trailing slash object inserted");
+        sqlx::query("UPDATE entries SET path = 'renamed-special' WHERE id = ?")
+            .bind(trailing_slash_entry.to_string())
+            .execute(&pool)
+            .await
+            .expect("simulate a path rename from another protocol");
+        assert_eq!(
+            indexed_path_for_key(&repo, &object_keys, &namespace, "a/")
+                .await
+                .expect("resolve moved object by original S3 key")
+                .expect("mapping should remain after move")
+                .as_str(),
+            "renamed-special"
+        );
 
         let (slash_page, slash_truncated) = list_page(
             (&repo, &object_keys, &markers),
