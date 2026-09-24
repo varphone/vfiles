@@ -1711,6 +1711,35 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
             .await
             .map(|_| ())
     }
+    async fn move_entry_with_condition(
+        &self,
+        ns: &vfiles_domain::NamespaceId,
+        from: &vfiles_domain::NormalizedPath,
+        to: &vfiles_domain::NormalizedPath,
+        uid: &vfiles_domain::UserId,
+        overwrite: bool,
+        condition: Option<vfiles_domain::EntryWriteCondition>,
+    ) -> vfiles_domain::DomainResult<()> {
+        match condition {
+            Some(condition) => self
+                .workspace
+                .move_entry_overwriting_with_condition(
+                    ns,
+                    from,
+                    to,
+                    Some("WebDAV MOVE"),
+                    uid,
+                    overwrite,
+                    &condition,
+                )
+                .await
+                .map(|_| ()),
+            None => {
+                self.move_entry_with_overwrite(ns, from, to, uid, overwrite)
+                    .await
+            }
+        }
+    }
     async fn move_entry_with_property_changes(
         &self,
         ns: &vfiles_domain::NamespaceId,

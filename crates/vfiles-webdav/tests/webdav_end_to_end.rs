@@ -1322,6 +1322,22 @@ async fn options_advertises_and_propfind_needs_auth() {
         "stale If-Match must reject DELETE before reaching the write operation"
     );
 
+    let stale_if_match_move = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("MOVE")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("destination", "/stale-move-destination.txt")
+                .header("if-match", "\"stale\"")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale_if_match_move.status(), 412);
+
     let invalid_depth_delete = router
         .clone()
         .oneshot(

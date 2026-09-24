@@ -73,6 +73,18 @@ pub trait WebdavWriteOps: Send + Sync {
         user_id: &UserId,
         overwrite: bool,
     ) -> DomainResult<()>;
+    async fn move_entry_with_condition(
+        &self,
+        namespace_id: &NamespaceId,
+        from: &NormalizedPath,
+        to: &NormalizedPath,
+        user_id: &UserId,
+        overwrite: bool,
+        _condition: Option<vfiles_domain::EntryWriteCondition>,
+    ) -> DomainResult<()> {
+        self.move_entry_with_overwrite(namespace_id, from, to, user_id, overwrite)
+            .await
+    }
     async fn move_entry_with_property_changes(
         &self,
         namespace_id: &NamespaceId,

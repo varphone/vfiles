@@ -1454,8 +1454,8 @@ async fn write_op(
             }
         }
     }
-    let delete_condition = if matches!(op, WriteOp::Delete) {
-        match check_delete_http_preconditions(&app, &ns, &path, http_conditions.unwrap_or_default())
+    let write_condition = if matches!(op, WriteOp::Delete | WriteOp::Move) {
+        match check_http_write_preconditions(&app, &ns, &path, http_conditions.unwrap_or_default())
             .await
         {
             Ok(condition) => condition,
@@ -1516,7 +1516,7 @@ async fn write_op(
         WriteOp::Mkcol => app.write.mkcol(&ns, &path, &uid).await,
         WriteOp::Delete => {
             app.write
-                .delete_entry_with_condition(&ns, &path, &uid, delete_condition)
+                .delete_entry_with_condition(&ns, &path, &uid, write_condition)
                 .await
         }
         WriteOp::Move => {
@@ -1531,7 +1531,14 @@ async fn write_op(
             match NormalizedPath::new(dest_rel.trim_start_matches('/')) {
                 Ok(dest) => {
                     app.write
-                        .move_entry_with_overwrite(&ns, &path, &dest, &uid, overwrite)
+                        .move_entry_with_condition(
+                            &ns,
+                            &path,
+                            &dest,
+                            &uid,
+                            overwrite,
+                            write_condition,
+                        )
                         .await
                 }
                 Err(_) => {
@@ -1596,7 +1603,7 @@ async fn write_op(
     }
 }
 
-async fn check_delete_http_preconditions(
+async fn check_http_write_preconditions(
     app: &WebdavApplication,
     namespace_id: &vfiles_domain::NamespaceId,
     path: &vfiles_domain::NormalizedPath,
@@ -1610,7 +1617,7 @@ async fn check_delete_http_preconditions(
         .find_by_path(namespace_id, path)
         .await
         .map_err(|error| {
-            tracing::error!(%error, path = %path.as_str(), "WebDAV DELETE 条件校验读取目标失败");
+            tracing::error!(%error, path = %path.as_str(), "WebDAV 写条件校验读取目标失败");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     let exists = entry.is_some();
@@ -1624,7 +1631,7 @@ async fn check_delete_http_preconditions(
             .find_version(&version_id)
             .await
             .map_err(|error| {
-                tracing::error!(%error, path = %path.as_str(), "WebDAV DELETE 条件校验读取版本失败");
+                tracing::error!(%error, path = %path.as_str(), "WebDAV 写条件校验读取版本失败");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
         modified_at = Some(version.created_at);
@@ -3177,7 +3184,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     .get("user-agent")
                     .and_then(|v| v.to_str().ok())
                     .map(str::to_string);
-                let http_conditions = if matches!(op, WriteOp::Delete) {
+                let http_conditions = if matches!(op, WriteOp::Delete | WriteOp::Move) {
                     match HttpWriteConditions::from_headers(req.headers()) {
                         Ok(conditions) => conditions,
                         Err(()) => {

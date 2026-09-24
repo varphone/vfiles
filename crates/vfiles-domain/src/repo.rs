@@ -510,6 +510,22 @@ pub trait EntryRepo {
     async fn move_entry(&self, entry_id: &EntryId, new_path: &NormalizedPath) -> DomainResult<()>;
     /// 批量更新路径，在单个事务内执行，避免逐个提交。
     async fn move_entries(&self, moves: &[(EntryId, NormalizedPath)]) -> DomainResult<()>;
+    async fn move_entries_if_current(
+        &self,
+        moves: &[(EntryId, NormalizedPath)],
+        condition: &EntryWriteCondition,
+    ) -> DomainResult<()> {
+        let current = self
+            .find_by_path(&condition.namespace_id, &condition.path)
+            .await?;
+        if current.as_ref().map(|entry| entry.id) != condition.expected_entry_id
+            || current.as_ref().and_then(|entry| entry.current_version_id)
+                != condition.expected_version_id
+        {
+            return Err(DomainError::PreconditionFailed);
+        }
+        self.move_entries(moves).await
+    }
     async fn move_entries_with_property_changes(
         &self,
         moves: &[(EntryId, NormalizedPath)],
@@ -528,6 +544,7 @@ pub trait EntryRepo {
         namespace_id: &NamespaceId,
         replaced_root: &NormalizedPath,
         moves: &[(EntryId, NormalizedPath)],
+        condition: Option<&EntryWriteCondition>,
     ) -> DomainResult<(Vec<Entry>, Vec<(BlobId, u32)>)>;
     async fn get_entry_history(
         &self,

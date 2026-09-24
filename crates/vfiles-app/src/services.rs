@@ -2485,6 +2485,7 @@ where
             dest_as_container,
             false,
             None,
+            None,
         )
         .await
     }
@@ -2507,6 +2508,32 @@ where
             false,
             overwrite,
             None,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)] // Mirrors the existing move inputs plus the request snapshot.
+    pub async fn move_entry_overwriting_with_condition(
+        &self,
+        namespace_id: &NamespaceId,
+        source: &NormalizedPath,
+        destination: &NormalizedPath,
+        message: Option<&str>,
+        user_id: &UserId,
+        overwrite: bool,
+        condition: &vfiles_domain::EntryWriteCondition,
+    ) -> DomainResult<MutationResult> {
+        self.move_entries_with_overwrite(
+            namespace_id,
+            std::slice::from_ref(source),
+            destination,
+            message,
+            user_id,
+            false,
+            overwrite,
+            None,
+            Some(condition),
         )
         .await
     }
@@ -2529,6 +2556,7 @@ where
             false,
             false,
             Some(changes),
+            None,
         )
         .await
     }
@@ -2544,6 +2572,7 @@ where
         dest_as_container: bool,
         overwrite_destination: bool,
         property_changes: Option<&[vfiles_domain::EntryPropertyChange]>,
+        condition: Option<&vfiles_domain::EntryWriteCondition>,
     ) -> DomainResult<MutationResult> {
         if sources.is_empty() {
             return Err(DomainError::Validation {
@@ -2669,7 +2698,7 @@ where
             .collect::<Vec<_>>();
         let (replaced_entries, blob_refs) = if overwrite_destination {
             self.entry_repo
-                .replace_subtree_and_move(namespace_id, destination, &moves)
+                .replace_subtree_and_move(namespace_id, destination, &moves, condition)
                 .await?
         } else {
             if let Some(changes) = property_changes {
@@ -2682,6 +2711,10 @@ where
                     })?;
                 self.entry_repo
                     .move_entries_with_property_changes(&moves, &source_id, changes)
+                    .await?;
+            } else if let Some(condition) = condition {
+                self.entry_repo
+                    .move_entries_if_current(&moves, condition)
                     .await?;
             } else {
                 self.entry_repo.move_entries(&moves).await?;
@@ -5256,6 +5289,128 @@ mod tests {
                 .await
                 .expect("entry lookup should succeed")
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn conditional_move_rejects_stale_source_and_preserves_overwrite_target() {
+        let context = TestContext::new().await;
+        let root = TestContext::path("");
+        let source = context
+            .upload_file(&root, "conditional-move.txt", b"initial", "initial")
+            .await;
+        context
+            .upload_file(&root, "conditional-move-dest.txt", b"target", "target")
+            .await;
+        let source_path = TestContext::path("conditional-move.txt");
+        let destination = TestContext::path("conditional-move-dest.txt");
+        let entry = context
+            .entry_repo
+            .find_by_path(&context.namespace_id, &source_path)
+            .await
+            .expect("source lookup should succeed")
+            .expect("source should exist");
+        let stale_condition = vfiles_domain::EntryWriteCondition {
+            namespace_id: context.namespace_id,
+            path: source_path.clone(),
+            expected_entry_id: Some(entry.id),
+            expected_version_id: Some(source.version.id),
+        };
+        let newer = context
+            .upload_file(&root, "conditional-move.txt", b"newer", "newer")
+            .await;
+
+        let no_overwrite_destination = TestContext::path("conditional-no-overwrite-dest.txt");
+        let stale_move_without_overwrite = context
+            .workspace_service
+            .move_entry_overwriting_with_condition(
+                &context.namespace_id,
+                &source_path,
+                &no_overwrite_destination,
+                Some("stale WebDAV MOVE"),
+                &context.user_id,
+                false,
+                &stale_condition,
+            )
+            .await;
+        assert!(matches!(
+            stale_move_without_overwrite,
+            Err(DomainError::PreconditionFailed)
+        ));
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &no_overwrite_destination)
+                .await
+                .expect("destination lookup should succeed")
+                .is_none()
+        );
+
+        let stale_move = context
+            .workspace_service
+            .move_entry_overwriting_with_condition(
+                &context.namespace_id,
+                &source_path,
+                &destination,
+                Some("stale WebDAV MOVE"),
+                &context.user_id,
+                true,
+                &stale_condition,
+            )
+            .await;
+        assert!(matches!(stale_move, Err(DomainError::PreconditionFailed)));
+        assert_eq!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &source_path)
+                .await
+                .expect("source lookup should succeed")
+                .and_then(|entry| entry.current_version_id),
+            Some(newer.version.id)
+        );
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &destination)
+                .await
+                .expect("destination lookup should succeed")
+                .is_some(),
+            "failed conditional MOVE must preserve the overwrite target"
+        );
+
+        let current_condition = vfiles_domain::EntryWriteCondition {
+            expected_version_id: Some(newer.version.id),
+            ..stale_condition
+        };
+        context
+            .workspace_service
+            .move_entry_overwriting_with_condition(
+                &context.namespace_id,
+                &source_path,
+                &destination,
+                Some("current WebDAV MOVE"),
+                &context.user_id,
+                true,
+                &current_condition,
+            )
+            .await
+            .expect("matching conditional MOVE should succeed");
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &source_path)
+                .await
+                .expect("source lookup should succeed")
+                .is_none()
+        );
+        assert_eq!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &destination)
+                .await
+                .expect("destination lookup should succeed")
+                .and_then(|entry| entry.current_version_id),
+            Some(newer.version.id)
         );
     }
 

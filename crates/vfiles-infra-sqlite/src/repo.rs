@@ -3456,6 +3456,72 @@ impl EntryRepo for SqliteEntryRepo {
         Ok(())
     }
 
+    async fn move_entries_if_current(
+        &self,
+        moves: &[(EntryId, NormalizedPath)],
+        condition: &vfiles_domain::EntryWriteCondition,
+    ) -> DomainResult<()> {
+        let mut tx =
+            self.pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to begin conditional move transaction: {e}"),
+                })?;
+        let row: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT e.id, (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1) FROM entries e WHERE e.namespace_id = ? AND e.path = ?",
+        )
+        .bind(condition.namespace_id.to_string())
+        .bind(condition.path.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to verify conditional move state: {e}"),
+        })?;
+        let current = row
+            .map(|(entry_id, version_id)| {
+                let entry_id =
+                    EntryId::from_string(&entry_id).map_err(|error| DomainError::Internal {
+                        message: format!("Invalid entry id in conditional move check: {error}"),
+                    })?;
+                let version_id = version_id
+                    .map(|id| VersionId::from_string(&id))
+                    .transpose()
+                    .map_err(|error| DomainError::Internal {
+                        message: format!("Invalid version id in conditional move check: {error}"),
+                    })?;
+                Ok::<_, DomainError>((entry_id, version_id))
+            })
+            .transpose()?;
+        let expected = condition
+            .expected_entry_id
+            .map(|entry_id| (entry_id, condition.expected_version_id));
+        if current != expected {
+            return Err(DomainError::PreconditionFailed);
+        }
+        for (entry_id, new_path) in moves {
+            sqlx::query("UPDATE entries SET path = ? WHERE id = ?")
+                .bind(new_path.as_str())
+                .bind(entry_id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| match e {
+                    sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
+                        DomainError::PathConflict {
+                            message: format!("Path already exists: {}", new_path.as_str()),
+                        }
+                    }
+                    _ => DomainError::Internal {
+                        message: format!("Failed to conditionally move entry: {e}"),
+                    },
+                })?;
+        }
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to commit conditional move transaction: {e}"),
+        })?;
+        Ok(())
+    }
+
     async fn move_entries_with_property_changes(
         &self,
         moves: &[(EntryId, NormalizedPath)],
@@ -3526,6 +3592,7 @@ impl EntryRepo for SqliteEntryRepo {
         namespace_id: &NamespaceId,
         replaced_root: &NormalizedPath,
         moves: &[(EntryId, NormalizedPath)],
+        condition: Option<&vfiles_domain::EntryWriteCondition>,
     ) -> DomainResult<(Vec<Entry>, Vec<(BlobId, u32)>)> {
         if moves.is_empty() {
             return Err(DomainError::Validation {
@@ -3536,6 +3603,41 @@ impl EntryRepo for SqliteEntryRepo {
         let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
             message: format!("Failed to begin replace-and-move transaction: {}", e),
         })?;
+        if let Some(condition) = condition {
+            let row: Option<(String, Option<String>)> = sqlx::query_as(
+                "SELECT e.id, (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1) FROM entries e WHERE e.namespace_id = ? AND e.path = ?",
+            )
+            .bind(condition.namespace_id.to_string())
+            .bind(condition.path.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to verify conditional replace-and-move state: {e}"),
+            })?;
+            let current = row
+                .map(|(entry_id, version_id)| {
+                    let entry_id =
+                        EntryId::from_string(&entry_id).map_err(|error| DomainError::Internal {
+                            message: format!("Invalid entry id in conditional move check: {error}"),
+                        })?;
+                    let version_id = version_id
+                        .map(|id| VersionId::from_string(&id))
+                        .transpose()
+                        .map_err(|error| DomainError::Internal {
+                            message: format!(
+                                "Invalid version id in conditional move check: {error}"
+                            ),
+                        })?;
+                    Ok::<_, DomainError>((entry_id, version_id))
+                })
+                .transpose()?;
+            let expected = condition
+                .expected_entry_id
+                .map(|entry_id| (entry_id, condition.expected_version_id));
+            if current != expected {
+                return Err(DomainError::PreconditionFailed);
+            }
+        }
         let replaced_rows: Vec<EntryRow> = sqlx::query_as(
             r#"
             SELECT
@@ -8785,6 +8887,7 @@ mod entry_move_batch_tests {
                     source,
                     NormalizedPath::new("docs/occupied.txt").expect("path should parse"),
                 )],
+                None,
             )
             .await;
         assert!(matches!(result, Err(DomainError::PathConflict { .. })));
