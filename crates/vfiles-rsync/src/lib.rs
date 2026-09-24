@@ -147,6 +147,8 @@ pub struct FlatEntry {
     pub fs_path: String,
     /// `-c/--checksum` 时 flist 携带的整文件 MD5（16B ✗ 其余情况 None）。
     pub file_sum: Option<Vec<u8>>,
+    /// 符号链接的目标字节（`mode` 为 symlink 时位于 flist 的 `length` 之后）。
+    pub symlink_target: Option<Vec<u8>>,
 }
 
 impl FlatEntry {
@@ -160,6 +162,7 @@ impl FlatEntry {
             mode: 0o40755,
             fs_path: String::new(),
             file_sum: None,
+            symlink_target: None,
         }
     }
 
@@ -173,6 +176,22 @@ impl FlatEntry {
             mode: 0o100644,
             fs_path: String::new(),
             file_sum: None,
+            symlink_target: None,
+        }
+    }
+
+    /// Symlink entry (the target is stored in the flist, not transferred as file data).
+    pub fn symlink(name: impl Into<String>, target: impl Into<Vec<u8>>, mtime: i64) -> Self {
+        let target = target.into();
+        FlatEntry {
+            name: name.into(),
+            is_dir: false,
+            size: target.len() as u64,
+            mtime,
+            mode: 0o120777,
+            fs_path: String::new(),
+            file_sum: None,
+            symlink_target: Some(target),
         }
     }
 
@@ -250,8 +269,25 @@ pub fn encode_flist(entries: &[FlatEntry], varint_flags: bool) -> Vec<u8> {
         if x & XMIT_SAME_MODE == 0 {
             body.extend_from_slice(&e.mode.to_le_bytes());
         }
+        if e.mode & 0o170000 == 0o120000 {
+            let target = e
+                .symlink_target
+                .as_deref()
+                .expect("symlink entries require a target");
+            assert!(
+                target.len() <= MAX_SYMLINK_TARGET_BYTES,
+                "rsync symlink target exceeds protocol limit"
+            );
+            write_varint(
+                i32::try_from(target.len()).expect("bounded symlink target length fits i32"),
+                &mut body,
+            );
+            body.extend_from_slice(target);
+        }
         // `-c`：普通文件末尾附整文件校验和（与官方 send_file_entry 同位）
-        if let Some(sum) = &e.file_sum {
+        if e.mode & 0o170000 == 0o100000
+            && let Some(sum) = &e.file_sum
+        {
             body.extend_from_slice(sum);
         }
     }
@@ -1404,6 +1440,8 @@ pub struct FlistOpts {
     pub preserve_atimes: bool,
 }
 
+const MAX_SYMLINK_TARGET_BYTES: usize = 64 * 1024;
+
 /// 接收客户端发来的 flist（recv_file_entry 逐字段逆序 ✗ `lastname` 前缀压缩重建）。
 ///
 /// 字段序（官方 `send_file_entry`/`recv_file_entry` 对称 ✗ r18 补齐 `-a` 所需）：
@@ -1512,8 +1550,30 @@ where
         }
         // 符号链接 target（`-l` 时才有 ✗ 位置在 uid/gid/rdev **之后**）
         if file_type == 0o120000 {
-            let l = data_varint(rw, pending).await?.max(0) as usize;
-            let _target = data_take(rw, pending, l).await?;
+            let target_len = usize::try_from(data_varint(rw, pending).await?).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "rsync: negative symlink target length",
+                )
+            })?;
+            if target_len > MAX_SYMLINK_TARGET_BYTES {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "rsync: symlink target exceeds protocol limit",
+                ));
+            }
+            let symlink_target = Some(data_take(rw, pending, target_len).await?);
+            out.push(FlatEntry {
+                name,
+                is_dir,
+                size,
+                mtime,
+                mode,
+                fs_path: String::new(),
+                file_sum: None,
+                symlink_target,
+            });
+            continue;
         }
         // `-c`：普通文件追加整文件校验和（flist 末字段 ✗ 长度 = 协商 md5 = 16）
         let file_sum = if always_checksum && file_type == 0o100000 {
@@ -1529,6 +1589,7 @@ where
             mode,
             fs_path: String::new(),
             file_sum,
+            symlink_target: None,
         });
     }
     Ok(out)
@@ -3344,6 +3405,7 @@ mod tests {
                 mode: 0o40775,
                 fs_path: String::new(),
                 file_sum: None,
+                symlink_target: None,
             },
             FlatEntry {
                 name: "sub".into(),
@@ -3353,6 +3415,7 @@ mod tests {
                 mode: 0o40775,
                 fs_path: String::new(),
                 file_sum: None,
+                symlink_target: None,
             },
             FlatEntry {
                 name: "a.txt".into(),
@@ -3362,6 +3425,7 @@ mod tests {
                 mode: 0o100664,
                 fs_path: String::new(),
                 file_sum: None,
+                symlink_target: None,
             },
         ];
         let body = encode_flist(&entries, true);
@@ -3389,6 +3453,7 @@ mod tests {
             mode: 0o100664,
             fs_path: String::new(),
             file_sum: None,
+            symlink_target: None,
         }];
         let body = encode_flist(&entries, true);
         // xflags = SAME_UID|SAME_GID（首条无 SAME_MODE/TIME）= 0x18 → varint 单字节 0x18
@@ -3496,6 +3561,7 @@ mod tests {
                 mode: 0o40775,
                 fs_path: String::new(),
                 file_sum: None,
+                symlink_target: None,
             },
             FlatEntry {
                 name: "a.txt".into(),
@@ -3505,6 +3571,7 @@ mod tests {
                 mode: 0o100664,
                 fs_path: String::new(),
                 file_sum: None,
+                symlink_target: None,
             },
         ];
         let (client, server) = tokio::io::duplex(64 * 1024);
@@ -4299,6 +4366,7 @@ mod tests {
             FlatEntry::dir("sub", 2),
             FlatEntry::file("sub/b.txt", 7, 2),
             FlatEntry::file("中文名.txt", 9, 3),
+            FlatEntry::symlink("link", b"sub/b.txt".to_vec(), 4),
         ];
         let encoded = encode_flist(&entries, true);
         let (mut c, srv) = tokio::io::duplex(64 * 1024);
@@ -4323,7 +4391,7 @@ mod tests {
         let file_sum = Some(md5_digest(b"hello-rsync").to_vec());
         let mut with_sum = entries.clone();
         for e in with_sum.iter_mut() {
-            if !e.is_dir {
+            if e.mode & 0o170000 == 0o100000 {
                 e.file_sum = file_sum.clone();
             }
         }
@@ -4361,6 +4429,42 @@ mod tests {
             assert_eq!(a.is_dir, b.is_dir, "目录位");
             assert_eq!(a.size, b.size, "大小");
             assert_eq!(a.mode, b.mode, "mode");
+            assert_eq!(a.symlink_target, b.symlink_target, "symlink target");
+        }
+    }
+
+    #[tokio::test]
+    async fn flist_rejects_invalid_symlink_target_lengths() {
+        for target_len in [-1, (MAX_SYMLINK_TARGET_BYTES as i32) + 1] {
+            let mut encoded = Vec::new();
+            write_varint((XMIT_SAME_UID | XMIT_SAME_GID) as i32, &mut encoded);
+            encoded.push(4);
+            encoded.extend_from_slice(b"link");
+            write_varlong(3, 0, &mut encoded);
+            write_varlong(4, 1, &mut encoded);
+            encoded.extend_from_slice(&0o120777_u32.to_le_bytes());
+            write_varint(target_len, &mut encoded);
+            encoded.extend_from_slice(&[0, 0]);
+
+            let (mut client, server) = tokio::io::duplex(128);
+            client
+                .write_all(&mux_frame(&encoded))
+                .await
+                .expect("test frame should be written");
+            client.shutdown().await.expect("test frame should close");
+            let mut reader = BufReader::new(server);
+            let mut pending = Vec::new();
+            let error = recv_file_list(
+                &mut reader,
+                &mut pending,
+                FlistOpts {
+                    varint_flags: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("invalid symlink target length must be rejected");
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         }
     }
 
@@ -4372,11 +4476,12 @@ mod tests {
             FlatEntry {
                 name: "link".into(),
                 is_dir: false,
-                size: 4,
+                size: 6,
                 mtime: 2,
                 mode: 0o120777,
                 fs_path: String::new(),
                 file_sum: None,
+                symlink_target: Some(b"target".to_vec()),
             },
         ];
         let err =
