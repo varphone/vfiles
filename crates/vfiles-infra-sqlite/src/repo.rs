@@ -9312,6 +9312,105 @@ mod blob_stream_tests {
 
         let _ = tokio::fs::remove_dir_all(&storage_root).await;
     }
+
+    #[tokio::test]
+    async fn interrupted_process_upload_temp_is_reclaimed_after_restart() {
+        const TEMP_PATH_ENV: &str = "VFILES_TEST_CRASH_UPLOAD_TEMP_PATH";
+        const READY_PATH_ENV: &str = "VFILES_TEST_CRASH_UPLOAD_READY_PATH";
+
+        if let Some(temp_path) = std::env::var_os(TEMP_PATH_ENV) {
+            use std::io::Write as _;
+
+            let temp_path = std::path::PathBuf::from(temp_path);
+            let ready_path = std::path::PathBuf::from(
+                std::env::var_os(READY_PATH_ENV).expect("ready path should be provided"),
+            );
+            std::fs::create_dir_all(temp_path.parent().expect("temp parent should exist"))
+                .expect("temp directory should be created");
+            let mut file = std::fs::File::create(&temp_path).expect("upload temp should open");
+            file.write_all(b"partially received upload")
+                .expect("partial content should be written");
+            file.sync_all().expect("partial content should be synced");
+            std::fs::write(ready_path, b"ready").expect("ready marker should be written");
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(60));
+            }
+        }
+
+        let storage_root = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-blob-process-crash-{}",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let temp_dir = storage_root.join("blobs").join("tmp");
+        tokio::fs::create_dir_all(&temp_dir)
+            .await
+            .expect("blob temp directory should be created");
+        let upload_temp = temp_dir.join(format!("blob-upload-{}.tmp", uuid::Uuid::new_v4()));
+        let ready_path = storage_root.join("child-ready");
+        let current_exe = std::env::current_exe().expect("test executable path should resolve");
+        let mut child = std::process::Command::new(current_exe)
+            .args([
+                "--exact",
+                "repo::blob_stream_tests::interrupted_process_upload_temp_is_reclaimed_after_restart",
+                "--nocapture",
+            ])
+            .env(TEMP_PATH_ENV, upload_temp.as_str())
+            .env(READY_PATH_ENV, ready_path.as_str())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("crash simulation child should start");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if ready_path.exists() {
+                break;
+            }
+            if let Some(status) = child.try_wait().expect("child status should be readable") {
+                panic!("crash simulation child exited before writing temp file: {status}");
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("crash simulation child did not finish its upload temp");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        child.kill().expect("child process should be terminated");
+        let status = child.wait().expect("child status should be collected");
+        assert!(
+            !status.success(),
+            "the child should be forcefully terminated"
+        );
+        assert!(
+            upload_temp.exists(),
+            "process termination should leave the temp file"
+        );
+
+        let database = storage_root.join("vfiles.db");
+        let pool = SqlitePoolFactory::connect(&database)
+            .await
+            .expect("database should open after process termination");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should succeed after restart");
+        let store = FsBlobStore::new(pool.clone(), storage_root.join("blobs"));
+        let (removed, freed_bytes) = store
+            .purge_stale_upload_temps(time::OffsetDateTime::now_utc() + time::Duration::seconds(1))
+            .await
+            .expect("maintenance should reclaim the interrupted upload temp");
+        assert_eq!(removed, 1);
+        assert_eq!(freed_bytes, b"partially received upload".len() as u64);
+        assert!(
+            !upload_temp.exists(),
+            "interrupted upload temp should be removed"
+        );
+
+        pool.close().await;
+        let _ = tokio::fs::remove_dir_all(&storage_root).await;
+    }
 }
 
 #[cfg(test)]
