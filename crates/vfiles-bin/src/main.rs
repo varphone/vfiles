@@ -1386,9 +1386,10 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         );
         app = app.nest_service(
             &mount,
-            vfiles_webdav::router_for_e2e(webdav_app)
-                .layer(vfiles_http::cors_layer(&config))
-                .into_service(),
+            vfiles_webdav::apply_options_capabilities(
+                vfiles_webdav::router_for_e2e(webdav_app).layer(vfiles_http::cors_layer(&config)),
+            )
+            .into_service(),
         );
     }
 

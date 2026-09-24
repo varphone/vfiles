@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::{
     Router,
     body::Body,
-    http::{Method, StatusCode, header},
+    http::{HeaderValue, Method, StatusCode, header},
     response::Response,
 };
 use http_body::Body as _;
@@ -2222,6 +2222,31 @@ const ALLOW: &str =
 fn router(app: WebdavApplication) -> Router {
     use axum::Extension;
     Router::new().fallback(dav).layer(Extension(app))
+}
+
+/// Restore WebDAV capability headers after CORS handles an OPTIONS request.
+///
+/// `tower_http::cors::CorsLayer` short-circuits every OPTIONS request, including
+/// ordinary WebDAV capability discovery requests that are not CORS preflights.
+pub fn apply_options_capabilities(router: Router) -> Router {
+    router.layer(axum::middleware::from_fn(options_capabilities))
+}
+
+async fn options_capabilities(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let is_options = request.method() == Method::OPTIONS;
+    let mut response = next.run(request).await;
+    if is_options {
+        response
+            .headers_mut()
+            .insert(header::ALLOW, HeaderValue::from_static(ALLOW));
+        response
+            .headers_mut()
+            .insert("dav", HeaderValue::from_static("1, 2"));
+    }
+    response
 }
 
 /// PROPFIND（r104 实装 ✓）：Depth 0 = 自身；Depth 1 = 自身 + 直接子条目。

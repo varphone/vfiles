@@ -19,6 +19,6 @@ mod server;
 pub use auth::VerifyFn;
 pub use auth::WebdavAuthenticator;
 pub use server::{
-    WebdavApplication, WebdavSettings, router_for_tests as router_for_e2e, run_webdav_server,
-    spawn_webdav_server,
+    WebdavApplication, WebdavSettings, apply_options_capabilities,
+    router_for_tests as router_for_e2e, run_webdav_server, spawn_webdav_server,
 };

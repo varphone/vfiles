@@ -70,6 +70,17 @@ if [[ "$ready" != true ]]; then
   exit 1
 fi
 
+options_headers=$(curl --fail --silent --show-error --dump-header - --output /dev/null \
+  --request OPTIONS "http://127.0.0.1:$port/dav/" | tr '[:upper:]' '[:lower:]')
+grep -Eq '^allow:.*(^|[,[:space:]])lock([,[:space:]]|$)' <<<"$options_headers" || {
+  echo "WebDAV OPTIONS did not advertise LOCK in Allow" >&2
+  exit 1
+}
+grep -Eq '^dav:.*(^|[,[:space:]])2([,[:space:]]|$)' <<<"$options_headers" || {
+  echo "WebDAV OPTIONS did not advertise DAV class 2" >&2
+  exit 1
+}
+
 if ! litmus "http://127.0.0.1:$port/dav" litmusprobe litmusprobe-password-123 \
   >"$tmpdir/litmus.log" 2>&1; then
   cat "$tmpdir/litmus.log" >&2
