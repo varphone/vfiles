@@ -12,7 +12,7 @@
 | PROPFIND Depth | ✅ | `0`/`1` 支持；省略按 RFC 默认 `infinity` 并返回 `403` + `DAV:propfind-finite-depth`；非法值或重复字段返回 `400` | - |
 | GET / HEAD | ✅ | 流式 + Range 206/416/Accept-Ranges；响应带 ETag/Last-Modified；`If-Match`/`If-Unmodified-Since`/`If-None-Match`/`If-Modified-Since` 按 RFC 优先级求值；`If-Range` 仅强 ETag 命中才返回部分内容 | - |
 | PUT | ✅ r110'b | 流式完成链 + 409 日志 ✓ | - |
-| DELETE | ✅ **r11 顺修** | 递归 + 409 ✓ **成功 = 204**；递归范围中的子项锁也需对应 URI-tagged `If` token | - |
+| DELETE | ✅ **r11 顺修** | 递归 + 409 ✓ **成功 = 204**；递归范围中的子项锁也需对应 URI-tagged `If` token；HTTP `If-Match` / `If-Unmodified-Since` / `If-None-Match` 条件失败返回 412，SQLite 原子比较资源版本后删除 | - |
 | MKCOL | ✅ r110' | 201/409 ✓ | - |
 | MOVE | ✅ **r11/r12 覆盖语义；原子替换补强** | 201 新建 / **412**（F+存在）/ **204**（T + 缺省=T）✓；Overwrite T 目标子树删除与源路径更新在 EntryRepo 单 SQLite 事务中提交；源、被覆盖目标的子树锁均须按资源标签提交 token | 客户端矩阵继续扩充 |
 | **COPY** | ✅ **r5 八式实证** | 递归子树 + blob 零字节复用（create_version upsert ref++ ✓）+ **审计落表** ✓；dst存在/自复制/自子树 = 409 ✓ dest缺 = 400 ✓ Allow 入 ✓ **Overwrite 全语义 ✅ r10**（T=删旧重建 204 ✓ F=412 ✓ 缺省=T ✓ 目录覆盖 204+旧消失 ✓ 审计 ✓）；被覆盖目标子树锁按资源标签校验 | - |

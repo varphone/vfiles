@@ -1831,10 +1831,31 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
         path: &vfiles_domain::NormalizedPath,
         uid: &vfiles_domain::UserId,
     ) -> vfiles_domain::DomainResult<()> {
-        self.workspace
-            .delete_entries(ns, std::slice::from_ref(path), Some("WebDAV DELETE"), uid)
-            .await
-            .map(|_| ())
+        self.delete_entry_with_condition(ns, path, uid, None).await
+    }
+    async fn delete_entry_with_condition(
+        &self,
+        ns: &vfiles_domain::NamespaceId,
+        path: &vfiles_domain::NormalizedPath,
+        uid: &vfiles_domain::UserId,
+        condition: Option<vfiles_domain::EntryWriteCondition>,
+    ) -> vfiles_domain::DomainResult<()> {
+        let result = if let Some(condition) = condition.as_ref() {
+            self.workspace
+                .delete_entries_with_condition(
+                    ns,
+                    std::slice::from_ref(path),
+                    Some("WebDAV DELETE"),
+                    uid,
+                    condition,
+                )
+                .await
+        } else {
+            self.workspace
+                .delete_entries(ns, std::slice::from_ref(path), Some("WebDAV DELETE"), uid)
+                .await
+        };
+        result.map(|_| ())
     }
 }
 

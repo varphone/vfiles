@@ -3241,6 +3241,72 @@ impl EntryRepo for SqliteEntryRepo {
         Ok(())
     }
 
+    async fn delete_entries_if_current(
+        &self,
+        entry_ids: &[EntryId],
+        condition: &vfiles_domain::EntryWriteCondition,
+    ) -> DomainResult<()> {
+        let mut tx =
+            self.pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to begin conditional delete transaction: {e}"),
+                })?;
+        let current: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT e.id, (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1) FROM entries e WHERE e.namespace_id = ? AND e.path = ?",
+        )
+        .bind(condition.namespace_id.to_string())
+        .bind(condition.path.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to verify conditional delete state: {e}"),
+        })?;
+        let current = current
+            .map(|(entry_id, version_id)| {
+                let entry_id =
+                    EntryId::from_string(&entry_id).map_err(|error| DomainError::Internal {
+                        message: format!("Invalid entry id in conditional delete check: {error}"),
+                    })?;
+                let version_id = version_id
+                    .map(|id| VersionId::from_string(&id))
+                    .transpose()
+                    .map_err(|error| DomainError::Internal {
+                        message: format!("Invalid version id in conditional delete check: {error}"),
+                    })?;
+                Ok::<_, DomainError>((entry_id, version_id))
+            })
+            .transpose()?;
+        let expected = condition
+            .expected_entry_id
+            .map(|entry_id| (entry_id, condition.expected_version_id));
+        if current != expected {
+            return Err(DomainError::PreconditionFailed);
+        }
+
+        const CHUNK: usize = 500;
+        for chunk in entry_ids.chunks(CHUNK) {
+            let mut builder = sqlx::QueryBuilder::new("DELETE FROM entries WHERE id IN (");
+            let mut separated = builder.separated(", ");
+            for entry_id in chunk {
+                separated.push_bind(entry_id.to_string());
+            }
+            separated.push_unseparated(")");
+            builder
+                .build()
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to conditionally delete entries: {e}"),
+                })?;
+        }
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to commit conditional delete transaction: {e}"),
+        })?;
+        Ok(())
+    }
+
     async fn release_blob_references(
         &self,
         references: &[(BlobId, u32)],

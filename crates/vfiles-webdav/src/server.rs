@@ -824,6 +824,55 @@ struct GetRequestConditions {
     head: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+struct HttpWriteConditions {
+    if_match: Vec<String>,
+    if_unmodified_since: Option<String>,
+    if_none_match: Option<String>,
+}
+
+impl HttpWriteConditions {
+    fn from_headers(headers: &axum::http::HeaderMap) -> Result<Option<Self>, ()> {
+        let if_match = headers
+            .get_all(header::IF_MATCH)
+            .iter()
+            .map(|value| value.to_str().map(str::to_owned).map_err(|_| ()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let if_unmodified_values = headers
+            .get_all(header::IF_UNMODIFIED_SINCE)
+            .iter()
+            .collect::<Vec<_>>();
+        let if_unmodified_since = match if_unmodified_values.as_slice() {
+            [] => None,
+            [value] => Some(value.to_str().map(str::to_owned).map_err(|_| ())?),
+            _ => Some(String::new()),
+        };
+        let if_none_match_values = headers
+            .get_all(header::IF_NONE_MATCH)
+            .iter()
+            .map(|value| value.to_str().map(str::to_owned).map_err(|_| ()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let if_none_match =
+            (!if_none_match_values.is_empty()).then(|| if_none_match_values.join(", "));
+        let conditions = Self {
+            if_match,
+            if_unmodified_since,
+            if_none_match,
+        };
+        if conditions.has_any() {
+            Ok(Some(conditions))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn has_any(&self) -> bool {
+        !self.if_match.is_empty()
+            || self.if_unmodified_since.is_some()
+            || self.if_none_match.is_some()
+    }
+}
+
 fn joined_header_values(
     request: &axum::extract::Request,
     name: &axum::http::header::HeaderName,
@@ -1333,6 +1382,7 @@ async fn write_op(
     op: WriteOp,
     overwrite: bool,
     destination_context: DestinationContext,
+    http_conditions: Option<HttpWriteConditions>,
 ) -> Response {
     use vfiles_domain::types::NormalizedPath;
 
@@ -1369,6 +1419,21 @@ async fn write_op(
                 .body(Body::empty())
                 .unwrap();
         }
+    };
+    let delete_condition = if matches!(op, WriteOp::Delete) {
+        match check_delete_http_preconditions(&app, &ns, &path, http_conditions.unwrap_or_default())
+            .await
+        {
+            Ok(condition) => condition,
+            Err(status) => {
+                return Response::builder()
+                    .status(status)
+                    .body(Body::empty())
+                    .unwrap();
+            }
+        }
+    } else {
+        None
     };
     if matches!(op, WriteOp::Mkcol) {
         if rel.is_empty() {
@@ -1415,7 +1480,11 @@ async fn write_op(
     let overwrite_conflict_is_precondition = matches!(&op, WriteOp::Move) && !overwrite;
     let result = match op {
         WriteOp::Mkcol => app.write.mkcol(&ns, &path, &uid).await,
-        WriteOp::Delete => app.write.delete_entry(&ns, &path, &uid).await,
+        WriteOp::Delete => {
+            app.write
+                .delete_entry_with_condition(&ns, &path, &uid, delete_condition)
+                .await
+        }
         WriteOp::Move => {
             let Some(dest_rel) = dest_raw.as_deref().and_then(|d| {
                 destination_path_for_request(d, &app.mount_prefix, &destination_context)
@@ -1491,6 +1560,66 @@ async fn write_op(
                 .unwrap()
         }
     }
+}
+
+async fn check_delete_http_preconditions(
+    app: &WebdavApplication,
+    namespace_id: &vfiles_domain::NamespaceId,
+    path: &vfiles_domain::NormalizedPath,
+    conditions: HttpWriteConditions,
+) -> Result<Option<vfiles_domain::EntryWriteCondition>, StatusCode> {
+    if !conditions.has_any() {
+        return Ok(None);
+    }
+    let entry = app
+        .entry_repo
+        .find_by_path(namespace_id, path)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, path = %path.as_str(), "WebDAV DELETE 条件校验读取目标失败");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let exists = entry.is_some();
+    let expected_entry_id = entry.as_ref().map(|entry| entry.id);
+    let expected_version_id = entry.as_ref().and_then(|entry| entry.current_version_id);
+    let etag = expected_version_id.map(|id| derive_etag(&id));
+    let mut modified_at = entry.as_ref().map(|entry| entry.created_at);
+    if let Some(version_id) = expected_version_id {
+        let version = app
+            .entry_repo
+            .find_version(&version_id)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, path = %path.as_str(), "WebDAV DELETE 条件校验读取版本失败");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        modified_at = Some(version.created_at);
+    }
+    let if_match = (!conditions.if_match.is_empty()).then(|| conditions.if_match.join(", "));
+    let failed = if_match
+        .as_deref()
+        .is_some_and(|condition| !if_match_satisfied(condition, etag.as_deref(), exists))
+        || (if_match.is_none()
+            && conditions
+                .if_unmodified_since
+                .as_deref()
+                .is_some_and(|condition| {
+                    modified_at
+                        .is_some_and(|modified| if_unmodified_since_failed(condition, modified))
+                }))
+        || conditions
+            .if_none_match
+            .as_deref()
+            .is_some_and(|condition| if_none_match_satisfied(condition, etag.as_deref(), exists));
+    if failed {
+        return Err(StatusCode::PRECONDITION_FAILED);
+    }
+    Ok(Some(vfiles_domain::EntryWriteCondition {
+        namespace_id: *namespace_id,
+        path: path.clone(),
+        expected_entry_id,
+        expected_version_id,
+    }))
 }
 
 fn write_error_status(error: &vfiles_domain::DomainError) -> StatusCode {
@@ -3001,6 +3130,19 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     .get("user-agent")
                     .and_then(|v| v.to_str().ok())
                     .map(str::to_string);
+                let http_conditions = if matches!(op, WriteOp::Delete) {
+                    match HttpWriteConditions::from_headers(req.headers()) {
+                        Ok(conditions) => conditions,
+                        Err(()) => {
+                            return Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body(Body::empty())
+                                .unwrap();
+                        }
+                    }
+                } else {
+                    None
+                };
                 // r11 MOVE Overwrite（臂层式 ✗ 零签名变 ✓ extensions 重取 = 不碰已 move 变量）
                 let mut move_overwrite_204 = false;
                 let move_overwrite = if matches!(op, WriteOp::Move) {
@@ -3113,6 +3255,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     op,
                     move_overwrite,
                     DestinationContext::from_request(req.uri(), req.headers()),
+                    http_conditions,
                 )
                 .await;
                 // r11 覆盖成功 204（RFC §9.9.3 ✗ 新建保持 201）——外层改写避免 move 后外尾用旧绑

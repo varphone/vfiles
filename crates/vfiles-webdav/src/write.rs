@@ -87,4 +87,13 @@ pub trait WebdavWriteOps: Send + Sync {
         path: &NormalizedPath,
         user_id: &UserId,
     ) -> DomainResult<()>;
+    async fn delete_entry_with_condition(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        user_id: &UserId,
+        _condition: Option<vfiles_domain::EntryWriteCondition>,
+    ) -> DomainResult<()> {
+        self.delete_entry(namespace_id, path, user_id).await
+    }
 }

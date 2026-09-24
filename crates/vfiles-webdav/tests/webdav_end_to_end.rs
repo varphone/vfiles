@@ -1292,6 +1292,27 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(stale_if_match.status(), 412);
 
+    let delete_count_before = deletes.load(std::sync::atomic::Ordering::Relaxed);
+    let stale_if_match_delete = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("DELETE")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-match", "\"stale\"")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale_if_match_delete.status(), 412);
+    assert_eq!(
+        deletes.load(std::sync::atomic::Ordering::Relaxed),
+        delete_count_before,
+        "stale If-Match must reject DELETE before reaching the write operation"
+    );
+
     let weak_if_match = router
         .clone()
         .oneshot(

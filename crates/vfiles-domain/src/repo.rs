@@ -485,6 +485,24 @@ pub trait EntryRepo {
     async fn delete_entry(&self, entry_id: &EntryId) -> DomainResult<()>;
     /// 批量删除条目，避免逐个删除造成 N 次查询。
     async fn delete_entries(&self, entry_ids: &[EntryId]) -> DomainResult<()>;
+    /// Delete a subtree only if the target path still has the observed entry/version.
+    /// Repositories with transactional support must compare and delete atomically.
+    async fn delete_entries_if_current(
+        &self,
+        entry_ids: &[EntryId],
+        condition: &EntryWriteCondition,
+    ) -> DomainResult<()> {
+        let current = self
+            .find_by_path(&condition.namespace_id, &condition.path)
+            .await?;
+        let entry_matches = current.as_ref().map(|entry| entry.id) == condition.expected_entry_id;
+        let version_matches = current.as_ref().and_then(|entry| entry.current_version_id)
+            == condition.expected_version_id;
+        if !entry_matches || !version_matches {
+            return Err(DomainError::PreconditionFailed);
+        }
+        self.delete_entries(entry_ids).await
+    }
     async fn release_blob_references(
         &self,
         references: &[(BlobId, u32)],

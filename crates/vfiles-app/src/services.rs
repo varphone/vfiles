@@ -2758,6 +2758,30 @@ where
         message: Option<&str>,
         user_id: &UserId,
     ) -> DomainResult<MutationResult> {
+        self.delete_entries_inner(namespace_id, paths, message, user_id, None)
+            .await
+    }
+
+    pub async fn delete_entries_with_condition(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[NormalizedPath],
+        message: Option<&str>,
+        user_id: &UserId,
+        condition: &vfiles_domain::EntryWriteCondition,
+    ) -> DomainResult<MutationResult> {
+        self.delete_entries_inner(namespace_id, paths, message, user_id, Some(condition))
+            .await
+    }
+
+    async fn delete_entries_inner(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[NormalizedPath],
+        message: Option<&str>,
+        user_id: &UserId,
+        condition: Option<&vfiles_domain::EntryWriteCondition>,
+    ) -> DomainResult<MutationResult> {
         if paths.is_empty() {
             return Err(DomainError::Validation {
                 message: "At least one path is required".to_string(),
@@ -2819,7 +2843,13 @@ where
         }
         let blob_refs = blob_counts.into_iter().collect::<Vec<_>>();
 
-        self.entry_repo.delete_entries(&entry_ids).await?;
+        if let Some(condition) = condition {
+            self.entry_repo
+                .delete_entries_if_current(&entry_ids, condition)
+                .await?;
+        } else {
+            self.entry_repo.delete_entries(&entry_ids).await?;
+        }
 
         let released_blobs = self.entry_repo.release_blob_references(&blob_refs).await?;
         for blob_id in released_blobs {
@@ -5158,6 +5188,75 @@ mod tests {
             .expect("entry lookup should succeed")
             .expect("new resource should be present");
         assert_eq!(entry.current_version_id, Some(completed.version.id));
+    }
+
+    #[tokio::test]
+    async fn conditional_delete_rejects_stale_version_and_accepts_current_version() {
+        let context = TestContext::new().await;
+        let root = TestContext::path("");
+        let initial = context
+            .upload_file(&root, "conditional-delete.txt", b"initial", "initial")
+            .await;
+        let path = TestContext::path("conditional-delete.txt");
+        let entry = context
+            .entry_repo
+            .find_by_path(&context.namespace_id, &path)
+            .await
+            .expect("entry lookup should succeed")
+            .expect("entry should exist");
+        let stale_condition = vfiles_domain::EntryWriteCondition {
+            namespace_id: context.namespace_id,
+            path: path.clone(),
+            expected_entry_id: Some(entry.id),
+            expected_version_id: Some(initial.version.id),
+        };
+        let newer = context
+            .upload_file(&root, "conditional-delete.txt", b"newer", "newer")
+            .await;
+
+        let stale_delete = context
+            .workspace_service
+            .delete_entries_with_condition(
+                &context.namespace_id,
+                std::slice::from_ref(&path),
+                Some("stale WebDAV DELETE"),
+                &context.user_id,
+                &stale_condition,
+            )
+            .await;
+        assert!(matches!(stale_delete, Err(DomainError::PreconditionFailed)));
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &path)
+                .await
+                .expect("entry lookup should succeed")
+                .is_some()
+        );
+
+        let current_condition = vfiles_domain::EntryWriteCondition {
+            expected_version_id: Some(newer.version.id),
+            ..stale_condition
+        };
+        context
+            .workspace_service
+            .delete_entries_with_condition(
+                &context.namespace_id,
+                std::slice::from_ref(&path),
+                Some("current WebDAV DELETE"),
+                &context.user_id,
+                &current_condition,
+            )
+            .await
+            .expect("matching conditional delete should succeed");
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &path)
+                .await
+                .expect("entry lookup should succeed")
+                .is_none()
+        );
     }
 
     #[tokio::test]
