@@ -1263,8 +1263,12 @@ async fn file_content_and_download_support_range_requests() {
                 .expect("date If-Range request should build"),
         )
         .await;
-    assert_eq!(current_date_if_range.status(), StatusCode::PARTIAL_CONTENT);
-    assert_eq!(response_bytes(current_date_if_range).await.as_ref(), b"01");
+    // A recent Last-Modified value is not a strong date validator for If-Range.
+    assert_eq!(current_date_if_range.status(), StatusCode::OK);
+    assert_eq!(
+        response_bytes(current_date_if_range).await.as_ref(),
+        b"0123456789"
+    );
 
     let future_date_if_range = app
         .request_as_admin(

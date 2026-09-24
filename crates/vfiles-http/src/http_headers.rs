@@ -427,10 +427,17 @@ fn if_range_matches(
         return false;
     };
     let modified_seconds = modified_at.unix_timestamp();
-    modified_seconds >= 0
-        && date
+    if modified_seconds < 0
+        || !date
             .duration_since(SystemTime::UNIX_EPOCH)
             .is_ok_and(|date| date.as_secs() == modified_seconds as u64)
+    {
+        return false;
+    }
+    let modified = SystemTime::UNIX_EPOCH + Duration::from_secs(modified_seconds as u64);
+    SystemTime::now()
+        .duration_since(modified)
+        .is_ok_and(|age| age >= Duration::from_secs(60))
 }
 
 fn insert_content_length(headers: &mut axum::http::HeaderMap, size_bytes: u64) -> ApiResult<()> {
@@ -672,5 +679,25 @@ mod tests {
             Some("\"current\""),
             Some(modified)
         ));
+    }
+
+    #[test]
+    fn if_range_date_requires_an_exact_strong_last_modified_validator() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_RANGE,
+            HeaderValue::from_static("Thu, 01 Jan 1970 00:00:10 GMT"),
+        );
+        let old_modified = time::OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(10);
+        assert!(if_range_matches(&headers, None, Some(old_modified)));
+
+        let recent_modified = time::OffsetDateTime::now_utc() - time::Duration::seconds(30);
+        let recent_system_time =
+            SystemTime::UNIX_EPOCH + Duration::from_secs(recent_modified.unix_timestamp() as u64);
+        headers.insert(
+            header::IF_RANGE,
+            HeaderValue::from_str(&httpdate::fmt_http_date(recent_system_time)).unwrap(),
+        );
+        assert!(!if_range_matches(&headers, None, Some(recent_modified)));
     }
 }
