@@ -6251,12 +6251,53 @@ async fn thumbnail_generates_cached_jpeg_and_supports_conditional_requests() {
         .request_as_admin(
             Request::builder()
                 .uri(uri)
-                .header(header::IF_NONE_MATCH, etag)
+                .header(header::IF_NONE_MATCH, etag.clone())
                 .body(Body::empty())
                 .expect("request should build"),
         )
         .await;
     assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
+
+    let weak_etag = format!("W/{}", etag.to_str().expect("etag should be ascii"));
+    let weak_match = app
+        .request_as_admin(
+            Request::builder()
+                .uri(uri)
+                .header(header::IF_NONE_MATCH, weak_etag)
+                .body(Body::empty())
+                .expect("weak conditional request should build"),
+        )
+        .await;
+    assert_eq!(weak_match.status(), StatusCode::NOT_MODIFIED);
+
+    let list_match = app
+        .request_as_admin(
+            Request::builder()
+                .uri(uri)
+                .header(
+                    header::IF_NONE_MATCH,
+                    format!(
+                        "\"stale\", {}",
+                        etag.to_str().expect("etag should be ascii")
+                    ),
+                )
+                .body(Body::empty())
+                .expect("list conditional request should build"),
+        )
+        .await;
+    assert_eq!(list_match.status(), StatusCode::NOT_MODIFIED);
+
+    let repeated_match = app
+        .request_as_admin(
+            Request::builder()
+                .uri(uri)
+                .header(header::IF_NONE_MATCH, "\"stale\"")
+                .header(header::IF_NONE_MATCH, etag)
+                .body(Body::empty())
+                .expect("repeated conditional request should build"),
+        )
+        .await;
+    assert_eq!(repeated_match.status(), StatusCode::NOT_MODIFIED);
 }
 
 #[tokio::test]
@@ -6465,6 +6506,34 @@ async fn compressed_file_responses_weaken_etags_and_preserve_conditional_semanti
             .get(header::CONTENT_ENCODING)
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn ranged_file_response_is_not_compressed_after_selecting_byte_offsets() {
+    let app = TestApp::new().await;
+    let contents = vec![b'a'; 1024];
+    app.upload_version("docs", "range-compressible.txt", &contents, "range fixture")
+        .await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/range-compressible.txt")
+                .header(header::RANGE, "bytes=100-199")
+                .header(header::ACCEPT_ENCODING, "gzip")
+                .body(Body::empty())
+                .expect("range request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        response.headers()[header::CONTENT_RANGE],
+        "bytes 100-199/1024"
+    );
+    assert_eq!(response.headers()[header::CONTENT_LENGTH], "100");
+    assert!(response.headers().get(header::CONTENT_ENCODING).is_none());
+    assert_eq!(response_bytes(response).await.as_ref(), &contents[100..200]);
 }
 
 #[tokio::test]

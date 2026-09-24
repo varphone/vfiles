@@ -343,7 +343,7 @@ fn if_unmodified_since_failed(headers: &HeaderMap, modified_at: time::OffsetDate
     modified > date
 }
 
-fn if_none_match(headers: &HeaderMap, current_etag: Option<&str>) -> bool {
+pub(crate) fn if_none_match(headers: &HeaderMap, current_etag: Option<&str>) -> bool {
     let Some(candidates) = etag_candidates(headers, &header::IF_NONE_MATCH) else {
         return false;
     };

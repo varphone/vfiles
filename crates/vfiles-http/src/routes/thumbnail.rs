@@ -23,6 +23,7 @@ use vfiles_domain::{DomainError, NormalizedPath};
 use crate::{
     AppState,
     error::{ApiError, ApiResult},
+    http_headers::if_none_match,
     routes::protected_request_context,
 };
 
@@ -209,7 +210,7 @@ async fn get_file_thumbnail(
 
     // ETag 与缓存文件都带上格式，避免切换格式命中旧内容。
     let etag = format!("\"{}-{}-{}\"", file.blob_id, size, format.as_str());
-    if is_not_modified(&headers, &etag) {
+    if if_none_match(&headers, Some(&etag)) {
         return Ok(not_modified_response(&etag));
     }
 
@@ -597,13 +598,6 @@ fn generate_thumbnail(
     }
 
     encode_thumbnail(format, &flattened)
-}
-
-fn is_not_modified(headers: &HeaderMap, etag: &str) -> bool {
-    headers
-        .get(header::IF_NONE_MATCH)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.trim() == etag || value.trim() == "*")
 }
 
 fn thumbnail_response(bytes: Vec<u8>, etag: &str, format: ThumbnailFormat) -> Response {
