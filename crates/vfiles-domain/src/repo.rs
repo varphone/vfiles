@@ -574,7 +574,7 @@ pub trait EntryRepo {
         overwrite: bool,
         user_id: &UserId,
         message: Option<&str>,
-    ) -> DomainResult<(Vec<Entry>, Vec<(BlobId, u32)>)> {
+    ) -> DomainResult<(Vec<Entry>, Vec<BlobId>)> {
         let _ = (
             namespace_id,
             destination,

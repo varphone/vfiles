@@ -3845,7 +3845,7 @@ impl EntryRepo for SqliteEntryRepo {
         overwrite: bool,
         user_id: &UserId,
         message: Option<&str>,
-    ) -> DomainResult<(Vec<Entry>, Vec<(BlobId, u32)>)> {
+    ) -> DomainResult<(Vec<Entry>, Vec<BlobId>)> {
         if entries.is_empty() || !entries.iter().any(|entry| entry.path == *destination) {
             return Err(DomainError::Validation {
                 message: "COPY entries must include the destination root".into(),
@@ -4153,10 +4153,39 @@ impl EntryRepo for SqliteEntryRepo {
         .map_err(|e| DomainError::Internal {
             message: format!("Failed to retain blobs referenced by COPY snapshot: {e}"),
         })?;
+        let mut orphaned_blobs = Vec::new();
+        for (blob_id, released_count) in blob_references {
+            sqlx::query("UPDATE blobs SET ref_count = MAX(ref_count - ?, 0) WHERE id = ?")
+                .bind(i64::from(released_count))
+                .bind(blob_id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to release overwritten COPY blob references: {e}"),
+                })?;
+            let remaining: Option<i64> =
+                sqlx::query_scalar("SELECT ref_count FROM blobs WHERE id = ?")
+                    .bind(blob_id.to_string())
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to inspect overwritten COPY blob references: {e}"),
+                    })?;
+            if remaining == Some(0) {
+                sqlx::query("DELETE FROM blobs WHERE id = ? AND ref_count = 0")
+                    .bind(blob_id.to_string())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to remove unreferenced COPY blob: {e}"),
+                    })?;
+                orphaned_blobs.push(blob_id);
+            }
+        }
         tx.commit().await.map_err(|e| DomainError::Internal {
             message: format!("Failed to commit atomic subtree COPY: {e}"),
         })?;
-        Ok((replaced_entries, blob_references))
+        Ok((replaced_entries, orphaned_blobs))
     }
 
     async fn get_entry_history(
@@ -8717,9 +8746,19 @@ mod entry_version_batch_tests {
             .create_entry(&namespace_id, &destination, EntryKind::File, &user_id)
             .await
             .expect("old target should be created");
-        repo.create_version(&old_id, None, None, 3, None, &user_id, Some("old"))
-            .await
-            .expect("old target version should be created");
+        let old_blob = BlobId::new();
+        let old_hash = ContentHash::new(&"2".repeat(64)).expect("hash should parse");
+        repo.create_version(
+            &old_id,
+            Some(&old_blob),
+            Some(&old_hash),
+            3,
+            None,
+            &user_id,
+            Some("old"),
+        )
+        .await
+        .expect("old target version should be created");
         let source_id = repo
             .create_entry(
                 &namespace_id,
@@ -8793,21 +8832,33 @@ mod entry_version_batch_tests {
             )
             .await
             .expect("source version should be readable");
-        repo.replace_subtree_with_copy(
-            &namespace_id,
-            &destination,
-            &[CopyEntrySpec {
-                path: destination.clone(),
-                entry_type: EntryKind::File,
-                version: Some(good_version),
-                properties: Vec::new(),
-            }],
-            true,
-            &user_id,
-            Some("atomic copy success"),
-        )
-        .await
-        .expect("valid copy should commit");
+        let (_, orphaned_blobs) = repo
+            .replace_subtree_with_copy(
+                &namespace_id,
+                &destination,
+                &[CopyEntrySpec {
+                    path: destination.clone(),
+                    entry_type: EntryKind::File,
+                    version: Some(good_version),
+                    properties: Vec::new(),
+                }],
+                true,
+                &user_id,
+                Some("atomic copy success"),
+            )
+            .await
+            .expect("valid copy should commit");
+        assert_eq!(orphaned_blobs, vec![old_blob]);
+        let old_blob_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM blobs WHERE id = ?)")
+                .bind(old_blob.to_string())
+                .fetch_one(&pool)
+                .await
+                .expect("old blob lookup should work");
+        assert!(
+            !old_blob_exists,
+            "unreferenced old blob metadata is removed in transaction"
+        );
         let snapshot_rows: Vec<String> = sqlx::query_scalar(
             "SELECT change_type FROM snapshot_entries WHERE entry_path = ? ORDER BY change_type",
         )

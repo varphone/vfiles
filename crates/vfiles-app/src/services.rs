@@ -2440,7 +2440,7 @@ where
                     .unwrap_or_default(),
             });
         }
-        let (_, blob_refs) = self
+        let (_, orphaned_blobs) = self
             .entry_repo
             .replace_subtree_with_copy(
                 namespace_id,
@@ -2451,16 +2451,9 @@ where
                 message,
             )
             .await?;
-        match self.entry_repo.release_blob_references(&blob_refs).await {
-            Ok(released_blobs) => {
-                for blob_id in released_blobs {
-                    if let Err(error) = self.blob_store.delete_blob(&blob_id).await {
-                        tracing::warn!(%blob_id, %error, "failed to remove blob released by COPY overwrite");
-                    }
-                }
-            }
-            Err(error) => {
-                tracing::warn!(%error, "failed to release overwritten COPY blob references")
+        for blob_id in orphaned_blobs {
+            if let Err(error) = self.blob_store.delete_blob(&blob_id).await {
+                tracing::warn!(%blob_id, %error, "failed to remove blob released by COPY overwrite");
             }
         }
         Ok(())
