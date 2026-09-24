@@ -844,6 +844,20 @@ def main():
     for mk, mid in muids.items():
         s3.abort_multipart_upload(Bucket="default", Key=mk, UploadId=mid)
 
+    legacy_upload_id_file = os.environ.get("VFILES_LEGACY_UPLOAD_ID_FILE")
+    if legacy_upload_id_file:
+        legacy_upload_id = open(legacy_upload_id_file, encoding="utf-8").read()
+        legacy_list = s3.list_multipart_uploads(
+            Bucket="default", Prefix="boto-legacy-multipart/"
+        ).get("Uploads", [])
+        check(
+            "boto indexed-list startup backfill preserves legacy uploads",
+            len(legacy_list) == 1
+            and legacy_list[0]["Key"] == "boto-legacy-multipart/pending.bin"
+            and legacy_list[0]["UploadId"] == legacy_upload_id,
+            legacy_list,
+        )
+
     passed = sum(1 for x in P if x)
     print(f"== boto3 {passed}/{len(P)} PASS ==")
     sys.exit(0 if passed == len(P) else 1)

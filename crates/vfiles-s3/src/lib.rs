@@ -1095,6 +1095,46 @@ fn resolve_completed_part_indices(stored: &[(i32, u64)], requested: &[i32]) -> S
 }
 
 impl VfilesS3 {
+    /// Reconcile in-flight sessions created before the indexed S3 listing migration.
+    pub async fn backfill_multipart_upload_index(
+        &self,
+        sessions: &[vfiles_domain::UploadSession],
+    ) -> vfiles_domain::DomainResult<usize> {
+        if !self
+            .multipart_uploads
+            .needs_backfill(&self.namespace)
+            .await?
+        {
+            return Ok(0);
+        }
+        let mut inserted = 0;
+        for session in sessions.iter().filter(|session| {
+            session.namespace_id == self.namespace
+                && session.state == vfiles_domain::UploadState::Receiving
+        }) {
+            let internal_key = if session.target_path_norm.as_str().is_empty() {
+                session.filename.clone()
+            } else {
+                format!("{}/{}", session.target_path_norm.as_str(), session.filename)
+            };
+            let path = vfiles_domain::NormalizedPath::new(&internal_key)
+                .map_err(|message| vfiles_domain::DomainError::Validation { message })?;
+            self.multipart_uploads
+                .register(
+                    &self.namespace,
+                    &external_key(&path),
+                    &session.id,
+                    session.created_at,
+                )
+                .await?;
+            inserted += 1;
+        }
+        self.multipart_uploads
+            .mark_backfill_complete(&self.namespace)
+            .await?;
+        Ok(inserted)
+    }
+
     async fn path_for_key(&self, key: &str) -> S3Result<vfiles_domain::NormalizedPath> {
         // Validate every wire key even when an index row exists.
         let fallback = norm(key).map_err(dom_err)?;

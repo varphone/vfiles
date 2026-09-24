@@ -3529,6 +3529,13 @@ where
             .collect())
     }
 
+    /// List all persisted sessions once for startup reconciliation tasks.
+    pub async fn list_all_upload_sessions(
+        &self,
+    ) -> DomainResult<Vec<vfiles_domain::UploadSession>> {
+        self.upload_store.list_upload_sessions().await
+    }
+
     /// 分页列出命名空间下进行中的 S3 multipart 会话。
     pub async fn list_upload_sessions_page(
         &self,

@@ -1208,7 +1208,7 @@ impl SqliteS3MultipartUploadRepo {
         upload_id: &vfiles_domain::UploadId,
         initiated_at: time::OffsetDateTime,
     ) -> Result<(), vfiles_domain::DomainError> {
-        sqlx::query("INSERT INTO s3_multipart_uploads (namespace_id, object_key, upload_id, initiated_at) VALUES (?, ?, ?, ?)")
+        sqlx::query("INSERT INTO s3_multipart_uploads (namespace_id, object_key, upload_id, initiated_at) VALUES (?, ?, ?, ?) ON CONFLICT(namespace_id, upload_id) DO UPDATE SET object_key = excluded.object_key, initiated_at = excluded.initiated_at")
             .bind(namespace_id.to_string())
             .bind(object_key)
             .bind(upload_id.to_string())
@@ -1216,6 +1216,36 @@ impl SqliteS3MultipartUploadRepo {
             .execute(&self.pool)
             .await
             .map_err(|e| vfiles_domain::DomainError::Internal { message: format!("Failed to index S3 multipart upload: {e}") })?;
+        Ok(())
+    }
+
+    pub async fn needs_backfill(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+    ) -> Result<bool, vfiles_domain::DomainError> {
+        let completed: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM s3_multipart_backfill WHERE namespace_id = ?)",
+        )
+        .bind(namespace_id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to check S3 multipart index backfill: {e}"),
+        })?;
+        Ok(!completed)
+    }
+
+    pub async fn mark_backfill_complete(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+    ) -> Result<(), vfiles_domain::DomainError> {
+        sqlx::query("INSERT OR IGNORE INTO s3_multipart_backfill (namespace_id) VALUES (?)")
+            .bind(namespace_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| vfiles_domain::DomainError::Internal {
+                message: format!("Failed to record S3 multipart index backfill: {e}"),
+            })?;
         Ok(())
     }
 
@@ -1977,6 +2007,107 @@ mod s3_delete_marker_tests {
                 .expect("object key lookup should succeed after delete"),
             None
         );
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+}
+
+#[cfg(test)]
+mod s3_multipart_upload_repo_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn multipart_index_pages_idempotently_and_tracks_backfill_state() {
+        let root = camino::Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("vfiles-s3-multipart-{}", uuid::Uuid::new_v4())),
+        )
+        .expect("temporary path should be utf-8");
+        tokio::fs::create_dir_all(&root)
+            .await
+            .expect("temporary directory should be created");
+        let pool = crate::SqlitePoolFactory::connect(&root.join("vfiles.db"))
+            .await
+            .expect("database should connect");
+        crate::SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+        let owner = UserId::new();
+        let namespace = NamespaceId::new();
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, 'user')",
+        )
+        .bind(owner.to_string())
+        .bind(format!("s3-multipart-{}", uuid::Uuid::new_v4()))
+        .bind("test")
+        .execute(&pool)
+        .await
+        .expect("test user should be inserted");
+        sqlx::query("INSERT INTO namespaces (id, slug, owner_user_id) VALUES (?, ?, ?)")
+            .bind(namespace.to_string())
+            .bind(format!("s3-multipart-{}", uuid::Uuid::new_v4()))
+            .bind(owner.to_string())
+            .execute(&pool)
+            .await
+            .expect("test namespace should be inserted");
+
+        let repo = SqliteS3MultipartUploadRepo::new(pool.clone());
+        assert!(
+            repo.needs_backfill(&namespace)
+                .await
+                .expect("backfill state should load")
+        );
+        let first_id = UploadId::new();
+        let second_id = UploadId::new();
+        let third_id = UploadId::new();
+        let initiated = time::OffsetDateTime::now_utc();
+        repo.register(&namespace, "folder/a", &first_id, initiated)
+            .await
+            .expect("first upload should be indexed");
+        repo.register(&namespace, "folder/a", &second_id, initiated)
+            .await
+            .expect("second upload should be indexed");
+        repo.register(&namespace, "folder/b", &third_id, initiated)
+            .await
+            .expect("third upload should be indexed");
+        repo.register(&namespace, "folder/renamed", &first_id, initiated)
+            .await
+            .expect("reconciliation should safely update an existing upload");
+        let page = repo
+            .page(&namespace, "folder/", None, None, 2)
+            .await
+            .expect("first upload page should load");
+        assert_eq!(page.len(), 2);
+        let cursor = page.last().expect("page has entries");
+        let next = repo
+            .page(
+                &namespace,
+                "folder/",
+                Some(&cursor.object_key),
+                Some(&cursor.upload_id),
+                2,
+            )
+            .await
+            .expect("second upload page should load");
+        assert_eq!(next.len(), 1);
+        repo.mark_backfill_complete(&namespace)
+            .await
+            .expect("backfill state should persist");
+        assert!(
+            !repo
+                .needs_backfill(&namespace)
+                .await
+                .expect("backfill state should load")
+        );
+        repo.remove(&namespace, &second_id)
+            .await
+            .expect("completed upload should be removable");
+        assert_eq!(
+            repo.page(&namespace, "folder/a", None, None, 10)
+                .await
+                .expect("remaining upload should be page-able")
+                .len(),
+            0
+        );
+        pool.close().await;
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 }

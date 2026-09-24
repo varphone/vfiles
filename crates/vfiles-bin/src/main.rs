@@ -1281,15 +1281,21 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     let embedded_s3 = if config.s3.enabled {
         let service = build_s3_service(
             &config.s3,
-            Arc::clone(&entry_repo_arc),
-            std::sync::Arc::new(vfiles_infra_sqlite::SqliteNamespaceRepo::new(pool.clone())),
-            Arc::clone(&ftp_workspace),
-            upload_service.clone(),
-            default_namespace_id,
-            default_actor_user_id,
-            vfiles_infra_sqlite::SqliteS3DeleteMarkerRepo::new(pool.clone()),
-            vfiles_infra_sqlite::SqliteS3ObjectKeyRepo::new(pool.clone()),
-            vfiles_infra_sqlite::SqliteS3MultipartUploadRepo::new(pool.clone()),
+            S3ServiceDependencies {
+                entry_repo: Arc::clone(&entry_repo_arc),
+                namespace_repo: std::sync::Arc::new(vfiles_infra_sqlite::SqliteNamespaceRepo::new(
+                    pool.clone(),
+                )),
+                workspace: Arc::clone(&ftp_workspace),
+                upload: upload_service.clone(),
+                namespace: default_namespace_id,
+                owner: default_actor_user_id,
+                delete_markers: vfiles_infra_sqlite::SqliteS3DeleteMarkerRepo::new(pool.clone()),
+                object_keys: vfiles_infra_sqlite::SqliteS3ObjectKeyRepo::new(pool.clone()),
+                multipart_uploads: vfiles_infra_sqlite::SqliteS3MultipartUploadRepo::new(
+                    pool.clone(),
+                ),
+            },
         )
         .await;
         if config.s3.embedded {
@@ -2333,11 +2339,46 @@ fn build_and_spawn_rsync(
     });
 }
 
-/// 装配 S3 服务（独立端口与共端口共用认证、凭证路由和协议实现）。
-// 装配参数天然多（配置/条目仓储/命名空间仓储/工作区/上传/ns/owner/停机 ✗ 打包收益不抵样板）
-#[allow(clippy::too_many_arguments)]
-async fn build_s3_service(
-    cfg: &vfiles_config::S3Config,
+async fn backfill_s3_multipart_index(
+    service: &VfilesS3,
+    sessions: &mut Option<Vec<UploadSession>>,
+) {
+    match service
+        .multipart_uploads
+        .needs_backfill(&service.namespace)
+        .await
+    {
+        Ok(false) => return,
+        Ok(true) => {}
+        Err(error) => {
+            tracing::error!(%error, namespace = %service.namespace, "无法检查 S3 multipart 索引回填状态");
+            return;
+        }
+    }
+    if sessions.is_none() {
+        match service.upload.list_all_upload_sessions().await {
+            Ok(all) => *sessions = Some(all),
+            Err(error) => {
+                tracing::error!(%error, "无法读取旧上传会话，S3 multipart 索引未回填");
+                return;
+            }
+        }
+    }
+    let Some(all_sessions) = sessions.as_deref() else {
+        return;
+    };
+    match service.backfill_multipart_upload_index(all_sessions).await {
+        Ok(count) => {
+            tracing::info!(count, namespace = %service.namespace, "S3 multipart 索引回填完成")
+        }
+        Err(error) => {
+            tracing::error!(%error, namespace = %service.namespace, "S3 multipart 索引回填失败")
+        }
+    }
+}
+
+/// Dependencies shared by default and namespace-bound S3 service instances.
+struct S3ServiceDependencies {
     entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
     namespace_repo: std::sync::Arc<dyn vfiles_domain::NamespaceRepo + Send + Sync>,
     workspace: std::sync::Arc<vfiles_app::DefaultWorkspaceService>,
@@ -2352,7 +2393,24 @@ async fn build_s3_service(
     delete_markers: vfiles_infra_sqlite::SqliteS3DeleteMarkerRepo,
     object_keys: vfiles_infra_sqlite::SqliteS3ObjectKeyRepo,
     multipart_uploads: vfiles_infra_sqlite::SqliteS3MultipartUploadRepo,
+}
+
+/// Assemble the shared-port or standalone S3 service and its credential router.
+async fn build_s3_service(
+    cfg: &vfiles_config::S3Config,
+    dependencies: S3ServiceDependencies,
 ) -> s3s::service::S3Service {
+    let S3ServiceDependencies {
+        entry_repo,
+        namespace_repo,
+        workspace,
+        upload,
+        namespace,
+        owner,
+        delete_markers,
+        object_keys,
+        multipart_uploads,
+    } = dependencies;
     // 凭证表（多客户端/轮换 + 只读键 + 命名空间绑定 ✗ 空 = 运行时随机 + warn）
     let keys = load_s3_credentials(cfg);
     let cred_count = keys.len();
@@ -2365,6 +2423,7 @@ async fn build_s3_service(
     let mut by_key: std::collections::HashMap<String, Box<VfilesS3>> =
         std::collections::HashMap::new();
     let mut rejected_keys = std::collections::HashSet::new();
+    let mut legacy_upload_sessions = None;
     for (access, cred) in &keys {
         let Some(slug) = &cred.namespace else {
             continue;
@@ -2372,24 +2431,23 @@ async fn build_s3_service(
         match namespace_repo.find_by_slug(slug).await {
             Ok(Some((ns, ns_owner))) => {
                 let ro = cred.readonly;
-                by_key.insert(
-                    access.clone(),
-                    Box::new(VfilesS3 {
-                        workspace: workspace.clone(),
-                        upload: upload.clone(),
-                        entry_repo: entry_repo.clone(),
-                        delete_markers: delete_markers.clone(),
-                        object_keys: object_keys.clone(),
-                        multipart_uploads: multipart_uploads.clone(),
-                        namespace: ns,
-                        owner: ns_owner,
-                        readonly_keys: if ro {
-                            std::collections::HashSet::from([access.clone()])
-                        } else {
-                            std::collections::HashSet::new()
-                        },
-                    }),
-                );
+                let service = VfilesS3 {
+                    workspace: workspace.clone(),
+                    upload: upload.clone(),
+                    entry_repo: entry_repo.clone(),
+                    delete_markers: delete_markers.clone(),
+                    object_keys: object_keys.clone(),
+                    multipart_uploads: multipart_uploads.clone(),
+                    namespace: ns,
+                    owner: ns_owner,
+                    readonly_keys: if ro {
+                        std::collections::HashSet::from([access.clone()])
+                    } else {
+                        std::collections::HashSet::new()
+                    },
+                };
+                backfill_s3_multipart_index(&service, &mut legacy_upload_sessions).await;
+                by_key.insert(access.clone(), Box::new(service));
                 tracing::info!(access_key = %access, slug = %slug, "S3 凭证已绑定命名空间");
             }
             Ok(None) => {
@@ -2428,6 +2486,7 @@ async fn build_s3_service(
         owner,
         readonly_keys: default_readonly,
     };
+    backfill_s3_multipart_index(&s3, &mut legacy_upload_sessions).await;
     let auth = EnvAuth { keys };
     let router = vfiles_s3::S3Router {
         default_service: Box::new(s3),

@@ -56,6 +56,44 @@ export VFILES_RSYNC_ENABLED=false
   --password boto-probe-password-123 \
   --role admin >/dev/null
 
+# Seed a session written by the pre-index filesystem layout. Startup must
+# reconcile it into the S3 listing index before serving ListMultipartUploads.
+export VFILES_LEGACY_UPLOAD_ID_FILE="$tmpdir/legacy-upload-id"
+python3 - <<'PY'
+import datetime
+import json
+import os
+import pathlib
+import sqlite3
+import uuid
+
+db = sqlite3.connect(os.environ["VFILES_DATABASE_PATH"])
+namespace_id, owner_id = db.execute(
+    "SELECT id, owner_user_id FROM namespaces WHERE slug = 'default' "
+    "ORDER BY created_at, id LIMIT 1"
+).fetchone()
+upload_id = str(uuid.uuid4())
+now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+directory = pathlib.Path(os.environ["VFILES_STORAGE_ROOT"]) / "uploads" / upload_id
+directory.mkdir(parents=True)
+(directory / "metadata.json").write_text(json.dumps({
+    "upload_id": upload_id,
+    "namespace_id": namespace_id,
+    "target_path": "",
+    "filename": "boto-legacy-multipart/pending.bin",
+    "mime_type": "application/octet-stream",
+    "size_bytes": 0,
+    "chunk_size": 1,
+    "total_chunks": 0,
+    "user_id": owner_id,
+    "created_at": now,
+    "updated_at": now,
+    "expires_at": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=24)).isoformat().replace("+00:00", "Z"),
+    "status": "receiving",
+}), encoding="utf-8")
+pathlib.Path(os.environ["VFILES_LEGACY_UPLOAD_ID_FILE"]).write_text(upload_id)
+PY
+
 "$binary" serve --host 127.0.0.1 --port "$port" >"$tmpdir/server.log" 2>&1 &
 server_pid=$!
 ready=false
