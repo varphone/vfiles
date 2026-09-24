@@ -1449,6 +1449,25 @@ async fn write_op(
                 tracing::error!(%error, path = %rel, "WebDAV DELETE 已完成但清理资源锁失败");
                 return internal_error();
             }
+            if matches!(op, WriteOp::Move) {
+                if let Err(error) = app.locks.remove_under_path(&ns, rel).await {
+                    tracing::error!(%error, path = %rel, "WebDAV MOVE 已完成但清理源资源锁失败");
+                    return internal_error();
+                }
+                if overwrite
+                    && let Some(dest_rel) = dest_raw.as_deref().and_then(|destination| {
+                        destination_path_for_request(
+                            destination,
+                            &app.mount_prefix,
+                            &destination_context,
+                        )
+                    })
+                    && let Err(error) = app.locks.remove_under_path(&ns, &dest_rel).await
+                {
+                    tracing::error!(%error, path = %dest_rel, "WebDAV MOVE 已完成但清理被覆盖目标锁失败");
+                    return internal_error();
+                }
+            }
             Response::builder()
                 // r11 分码顺修（RFC：DELETE = 204 ✗ 原三 op 全 201 = 违背顺手修 ✓）
                 .status(match op {

@@ -2088,6 +2088,7 @@ async fn options_advertises_and_propfind_needs_auth() {
     assert!(blocked_login.headers().contains_key("retry-after"));
 
     let valid_from_other_ip = router
+        .clone()
         .oneshot(
             axum::http::Request::builder()
                 .method("GET")
@@ -2110,5 +2111,96 @@ async fn options_advertises_and_propfind_needs_auth() {
         3
     );
     assert_eq!(stats.logins_ok, stats_before_rate_limit.logins_ok);
+
+    let move_source_lock = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/move-source-lock.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .extension(axum::extract::ConnectInfo(
+                    "127.0.0.3:12345"
+                        .parse::<std::net::SocketAddr>()
+                        .expect("socket address"),
+                ))
+                .body(axum::body::Body::from(lock_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(move_source_lock.status(), 201);
+    let move_source_token = move_source_lock
+        .headers()
+        .get("lock-token")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let move_destination_lock = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/move-destination-lock.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .extension(axum::extract::ConnectInfo(
+                    "127.0.0.3:12345"
+                        .parse::<std::net::SocketAddr>()
+                        .expect("socket address"),
+                ))
+                .body(axum::body::Body::from(lock_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(move_destination_lock.status(), 201);
+    let move_destination_token = move_destination_lock
+        .headers()
+        .get("lock-token")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let move_locked_resource = router
+        .oneshot(
+            axum::http::Request::builder()
+                .method("MOVE")
+                .uri("/move-source-lock.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("destination", "/move-destination-lock.txt")
+                .header(
+                    "if",
+                    format!(
+                        "</move-source-lock.txt> ({move_source_token}) </move-destination-lock.txt> ({move_destination_token})"
+                    ),
+                )
+                .extension(axum::extract::ConnectInfo(
+                    "127.0.0.3:12345"
+                        .parse::<std::net::SocketAddr>()
+                        .expect("socket address"),
+                ))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(move_locked_resource.status(), 204);
+    let stale_move_locks: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM webdav_locks WHERE namespace_id = ? AND path IN ('move-source-lock.txt', 'move-destination-lock.txt')",
+    )
+    .bind(namespace_id.to_string())
+    .fetch_one(&pool)
+    .await
+    .expect("MOVE lock cleanup should be queryable");
+    assert_eq!(
+        stale_move_locks, 0,
+        "MOVE must clear locks at unmapped URLs"
+    );
+
     let _ = user;
 }
