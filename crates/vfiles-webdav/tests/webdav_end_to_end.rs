@@ -357,6 +357,34 @@ async fn options_advertises_and_propfind_needs_auth() {
         "/persist.txt</D:href><D:propstat><D:prop><D:getcontentlength>0</D:getcontentlength>"
     ));
 
+    let allprop_with_include = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propfind xmlns:D="DAV:" xmlns:X="urn:example"><D:allprop/><D:include><D:getcontentlength/><X:checksum/></D:include></D:propfind>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(allprop_with_include.status(), 207);
+    let allprop_with_include_xml = String::from_utf8(
+        axum::body::to_bytes(allprop_with_include.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(allprop_with_include_xml.contains("<D:getcontentlength>0</D:getcontentlength>"));
+    assert!(allprop_with_include_xml.contains("<X:checksum xmlns:X=\"urn:example\"/>"));
+    assert!(allprop_with_include_xml.contains("404 Not Found"));
+
     let missing_parent_mkcol = router
         .clone()
         .oneshot(

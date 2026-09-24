@@ -2122,7 +2122,7 @@ fn active_lock_value(
 
 fn prop_mode_requests(mode: &crate::response::PropMode, local_name: &str) -> bool {
     match mode {
-        crate::response::PropMode::All => true,
+        crate::response::PropMode::All | crate::response::PropMode::AllInclude(_) => true,
         crate::response::PropMode::PropName => false,
         crate::response::PropMode::Names(names) => names
             .iter()
@@ -2144,7 +2144,9 @@ fn prop_mode_needs_custom_properties(mode: &crate::response::PropMode) -> bool {
         "lockdiscovery",
     ];
     match mode {
-        crate::response::PropMode::All | crate::response::PropMode::PropName => true,
+        crate::response::PropMode::All
+        | crate::response::PropMode::AllInclude(_)
+        | crate::response::PropMode::PropName => true,
         crate::response::PropMode::Names(names) => names.iter().any(|name| {
             crate::response::is_dav_property(name, "displayname")
                 || !SUPPORTED

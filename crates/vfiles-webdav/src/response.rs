@@ -206,6 +206,8 @@ fn canonical_stored_property_key(name: &str) -> String {
 pub enum PropMode {
     /// 无体 / `<allprop/>` → 属性全集。
     All,
+    /// `<allprop/><include>…</include>` → 属性全集与附加属性。
+    AllInclude(Vec<String>),
     /// `<propname/>` → 只出属性名（无值）。
     PropName,
     /// `<prop>…</prop>` → 精确集合（未知属性 = 404 propstat ✓ RFC 要求）。
@@ -329,13 +331,17 @@ pub fn parse_propfind_body(body: &str) -> Result<PropMode, ()> {
     if root.tag_name().namespace() != Some("DAV:") || root.tag_name().name() != "propfind" {
         return Err(());
     }
-    match root.children().find(|n| n.is_element()) {
-        None => Ok(PropMode::All),
-        Some(n) if n.tag_name().namespace() == Some("DAV:") => match n.tag_name().name() {
-            "allprop" => Ok(PropMode::All),
-            "propname" => Ok(PropMode::PropName),
+    if has_non_whitespace_text(root) {
+        return Err(());
+    }
+    let children: Vec<_> = root.children().filter(|node| node.is_element()).collect();
+    match children.as_slice() {
+        [] => Ok(PropMode::All),
+        [mode] if mode.tag_name().namespace() == Some("DAV:") => match mode.tag_name().name() {
+            "allprop" if is_empty_xml_element(*mode) => Ok(PropMode::All),
+            "propname" if is_empty_xml_element(*mode) => Ok(PropMode::PropName),
             "prop" => {
-                let names: Vec<String> = n
+                let names: Vec<String> = mode
                     .children()
                     .filter(|c| c.is_element())
                     .map(|c| property_key(c.tag_name().namespace(), c.tag_name().name()))
@@ -347,8 +353,47 @@ pub fn parse_propfind_body(body: &str) -> Result<PropMode, ()> {
             }
             _ => Err(()),
         },
-        Some(_) => Err(()),
+        [allprop, include]
+            if allprop.tag_name().namespace() == Some("DAV:")
+                && allprop.tag_name().name() == "allprop"
+                && is_empty_xml_element(*allprop)
+                && include.tag_name().namespace() == Some("DAV:")
+                && include.tag_name().name() == "include" =>
+        {
+            if include
+                .children()
+                .any(|node| node.is_text() && !node.text().unwrap_or_default().trim().is_empty())
+            {
+                return Err(());
+            }
+            let names = include
+                .children()
+                .filter(|node| node.is_element())
+                .map(|node| {
+                    if node.children().any(|child| child.is_element())
+                        || has_non_whitespace_text(node)
+                    {
+                        return Err(());
+                    }
+                    Ok(property_key(
+                        node.tag_name().namespace(),
+                        node.tag_name().name(),
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(PropMode::AllInclude(names))
+        }
+        _ => Err(()),
     }
+}
+
+fn is_empty_xml_element(node: roxmltree::Node<'_, '_>) -> bool {
+    !node.children().any(|child| child.is_element()) && !has_non_whitespace_text(node)
+}
+
+fn has_non_whitespace_text(node: roxmltree::Node<'_, '_>) -> bool {
+    node.children()
+        .any(|child| child.is_text() && !child.text().unwrap_or_default().trim().is_empty())
 }
 
 fn has_invalid_prefixed_namespace(root: roxmltree::Node<'_, '_>) -> bool {
@@ -417,6 +462,24 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
     for item in items {
         let (wanted, missing): (Vec<&str>, Vec<&str>) = match mode {
             PropMode::All | PropMode::PropName => (SUPPORTED.to_vec(), Vec::new()),
+            PropMode::AllInclude(names) => {
+                let mut seen = std::collections::HashSet::new();
+                let missing = names
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|name| {
+                        !SUPPORTED
+                            .iter()
+                            .any(|supported| is_dav_property(name, supported))
+                            && !item
+                                .custom
+                                .iter()
+                                .any(|(stored, _)| canonical_stored_property_key(stored) == *name)
+                    })
+                    .filter(|name| seen.insert(*name))
+                    .collect();
+                (SUPPORTED.to_vec(), missing)
+            }
             PropMode::Names(names) => {
                 let wanted: Vec<&str> = SUPPORTED
                     .iter()
@@ -549,7 +612,7 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
                 continue;
             }
             let requested = match mode {
-                PropMode::All => true,
+                PropMode::All | PropMode::AllInclude(_) => true,
                 PropMode::PropName => true,
                 PropMode::Names(names) => {
                     let stored_key = canonical_stored_property_key(cn);
@@ -744,6 +807,15 @@ mod propmode_tests {
             Ok(PropMode::All)
         );
         assert_eq!(
+            parse_propfind_body(
+                r#"<D:propfind xmlns:D="DAV:" xmlns:X="urn:example"><D:allprop/><D:include><D:getetag/><X:checksum/></D:include></D:propfind>"#
+            ),
+            Ok(PropMode::AllInclude(vec![
+                property_key(Some("DAV:"), "getetag"),
+                property_key(Some("urn:example"), "checksum"),
+            ]))
+        );
+        assert_eq!(
             parse_propfind_body(r#"<D:propfind xmlns:D="DAV:"><D:propname/></D:propfind>"#),
             Ok(PropMode::PropName)
         );
@@ -767,6 +839,20 @@ mod propmode_tests {
             parse_propfind_body(r#"<notpropfind><allprop/></notpropfind>"#),
             Err(())
         );
+        assert_eq!(
+            parse_propfind_body(
+                r#"<D:propfind xmlns:D="DAV:"><D:propname/><D:allprop/></D:propfind>"#
+            ),
+            Err(()),
+            "PROPFIND selectors are mutually exclusive"
+        );
+        assert_eq!(
+            parse_propfind_body(
+                r#"<D:propfind xmlns:D="DAV:"><D:allprop/><D:include>text</D:include></D:propfind>"#
+            ),
+            Err(()),
+            "include cannot contain character data"
+        );
     }
 
     #[test]
@@ -787,6 +873,20 @@ mod propmode_tests {
         assert!(xml.contains("<D:getlockdiscovery/>"));
         // 200 块与 404 块分立
         assert!(xml.contains("200 OK"));
+    }
+
+    #[test]
+    fn allprop_include_adds_missing_property_status_without_duplicating_live_properties() {
+        let xml = multistatus(
+            &sample(),
+            &PropMode::AllInclude(vec![
+                property_key(Some("DAV:"), "displayname"),
+                property_key(Some("urn:example"), "checksum"),
+            ]),
+        );
+        assert_eq!(xml.matches("<D:displayname>").count(), 1);
+        assert!(xml.contains("<X:checksum xmlns:X=\"urn:example\"/>"));
+        assert!(xml.contains("404 Not Found"));
     }
 
     #[test]
