@@ -3094,6 +3094,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn configured_region_checks_the_verified_sigv4_scope() {
+        assert!(validate_expected_region("us-east-1", Some("us-east-1")).is_ok());
+        assert!(validate_expected_region("", Some("us-west-2")).is_ok());
+        let error = validate_expected_region("us-east-1", Some("us-west-2"))
+            .expect_err("a mismatched verified signature region should be rejected");
+        assert_eq!(
+            *error.code(),
+            s3s::S3ErrorCode::AuthorizationHeaderMalformed
+        );
+    }
+
+    #[test]
     fn listed_object_last_modified_uses_current_version_time() {
         let entry_created_at = time::OffsetDateTime::from_unix_timestamp(1_700_000_000)
             .expect("fixed timestamp is valid");
@@ -3443,20 +3455,10 @@ pub struct S3Router {
 impl S3Router {
     /// 按凭证选命名空间实例 + （可选）区域校验（单点 ✗ 覆盖全部委托）。
     fn pick<T>(&self, req: &S3Request<T>) -> S3Result<&VfilesS3> {
-        if !self.expected_region.is_empty()
-            && let Some(az) = req.headers.get(axum::http::header::AUTHORIZATION)
-            && let Ok(auth) = az.to_str()
-        {
-            // Credential=<AK>/<date>/<region>/<service>/<aws4_request>
-            let region = auth.split('/').nth(2).unwrap_or_default();
-            if region != self.expected_region {
-                let msg = format!(
-                    "region '{}' is wrong; expecting '{}'",
-                    region, self.expected_region
-                );
-                return Err(s3s::s3_error!(AuthorizationHeaderMalformed, "{}", msg));
-            }
-        }
+        validate_expected_region(
+            &self.expected_region,
+            req.region.as_ref().map(|r| r.as_str()),
+        )?;
         let creds = req.credentials.as_ref();
         if creds.is_some_and(|c| self.rejected_keys.contains(&c.access_key)) {
             return Err(s3s::s3_error!(
@@ -3469,6 +3471,19 @@ impl S3Router {
             .map(|b| b.as_ref())
             .unwrap_or(self.default_service.as_ref()))
     }
+}
+
+fn validate_expected_region(expected: &str, requested: Option<&str>) -> S3Result<()> {
+    if expected.is_empty() {
+        return Ok(());
+    }
+    if let Some(requested) = requested
+        && requested != expected
+    {
+        let msg = format!("region '{requested}' is wrong; expecting '{expected}'");
+        return Err(s3s::s3_error!(AuthorizationHeaderMalformed, "{}", msg));
+    }
+    Ok(())
 }
 
 #[async_trait]

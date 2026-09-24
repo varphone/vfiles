@@ -8,8 +8,11 @@
 """
 import sys
 import datetime
+import os
 import time
 from urllib.parse import unquote
+from urllib.error import HTTPError
+from urllib.request import urlopen
 
 import boto3
 from botocore.config import Config
@@ -38,7 +41,8 @@ def main():
         aws_access_key_id=ACCESS,
         aws_secret_access_key=SECRET,
         region_name="us-east-1",
-        config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 1}),
+        config=Config(signature_version="s3v4", s3={"addressing_style": "path"},
+                      retries={"max_attempts": 1}),
     )
 
     # Conditional DeleteObjects fields were added to AWS's S3 model after the
@@ -73,6 +77,37 @@ def main():
 
     buckets = [b["Name"] for b in s3.list_buckets()["Buckets"]]
     check("boto ListBuckets", buckets == ["default"], buckets)
+    if os.environ.get("VFILES_S3_REGION"):
+        wrong_region_client = boto3.client(
+            "s3", endpoint_url=ENDPOINT, aws_access_key_id=ACCESS,
+            aws_secret_access_key=SECRET, region_name="us-west-2",
+            config=Config(signature_version="s3v4", s3={"addressing_style": "path"},
+                          retries={"max_attempts": 1}),
+        )
+        wrong_region_url = wrong_region_client.generate_presigned_url(
+            "list_objects_v2", Params={"Bucket": "default"}, ExpiresIn=60
+        )
+        try:
+            wrong_region_response = urlopen(wrong_region_url, timeout=10)
+            wrong_region_status = wrong_region_response.status
+            wrong_region_body = wrong_region_response.read().decode("utf-8", "replace")
+        except HTTPError as error:
+            wrong_region_status = error.code
+            wrong_region_body = error.read().decode("utf-8", "replace")
+        check(
+            "boto presigned URL rejects mismatched signing region",
+            wrong_region_status == 400 and "AuthorizationHeaderMalformed" in wrong_region_body,
+            f"status={wrong_region_status} body={wrong_region_body[:240]}",
+        )
+        correct_region_url = s3.generate_presigned_url(
+            "list_objects_v2", Params={"Bucket": "default"}, ExpiresIn=60
+        )
+        try:
+            with urlopen(correct_region_url, timeout=10) as response:
+                check("boto presigned URL accepts configured signing region", response.status == 200)
+        except HTTPError as error:
+            check("boto presigned URL accepts configured signing region", False,
+                  f"status={error.code} body={error.read().decode('utf-8', 'replace')[:240]}")
     # 桶级探测（r25）：rclone / aws-cli 连接检查路径
     try:
         hb = s3.head_bucket(Bucket="default")["ResponseMetadata"]["HTTPStatusCode"] == 200
@@ -175,8 +210,6 @@ def main():
     s3.delete_object(Bucket="default", Key=key)
 
     # ── 流式 PUT（8 MiB）+ 批量删（r6）──
-    import os
-
     blob = os.urandom(8 * 1024 * 1024)
     r = s3.put_object(Bucket="default", Key="boto-r6/big.bin", Body=blob,
                       ContentType="application/octet-stream")
