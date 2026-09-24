@@ -131,6 +131,18 @@ def main():
         s3.put_object(Bucket="default", Key=k, Body=b, ContentType="text/plain")
     check("boto put 4 keys", True)
 
+    try:
+        s3.put_object(Bucket="default", Key="k" * 1025, Body=b"invalid")
+        long_key_result = (False, "request unexpectedly succeeded")
+    except ClientError as e:
+        error_code = e.response["Error"]["Code"]
+        long_key_result = (
+            e.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+            and error_code in {"InvalidArgument", "KeyTooLongError"},
+            f"{e.response['ResponseMetadata']['HTTPStatusCode']} {error_code}",
+        )
+    check("boto rejects object keys over 1024 UTF-8 bytes with HTTP 400", *long_key_result)
+
     o = s3.head_object(Bucket="default", Key="boto/a.txt")
     check("boto head size/ETag/LastModified",
           o["ContentLength"] == 2 and o["ETag"].strip('"') != "" and "LastModified" in o,

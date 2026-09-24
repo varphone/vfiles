@@ -99,6 +99,7 @@ pub const DEFAULT_BUCKET: &str = "default";
 pub const S3_REGION: &str = "us-east-1";
 /// 单页上限（S3 硬上限）。
 const MAX_KEYS_LIMIT: usize = 1000;
+const MAX_S3_KEY_BYTES: usize = 1024;
 const MAX_S3_PART_SIZE: u64 = 5 * 1024 * 1024 * 1024;
 
 /// Vfiles S3 实现（薄组装 ✗ 写面 = app 层 workspace/upload 同 WebDAV 同源链 ✓）。
@@ -140,11 +141,19 @@ fn delete_marker_read_error() -> s3s::S3Error {
 fn dom_err(e: vfiles_domain::DomainError) -> s3s::S3Error {
     match e {
         vfiles_domain::DomainError::NotFound { .. } => s3s::s3_error!(NoSuchKey, "No such key"),
+        vfiles_domain::DomainError::Validation { message } => {
+            s3s::s3_error!(InvalidArgument, "{}", message)
+        }
         other => s3s::s3_error!(InternalError, "{}", other),
     }
 }
 
 fn norm(key: &str) -> vfiles_domain::DomainResult<vfiles_domain::NormalizedPath> {
+    if key.len() > MAX_S3_KEY_BYTES {
+        return Err(vfiles_domain::DomainError::Validation {
+            message: format!("object key exceeds {MAX_S3_KEY_BYTES} UTF-8 bytes"),
+        });
+    }
     vfiles_domain::NormalizedPath::new(key.trim_matches('/')).map_err(|err| {
         vfiles_domain::DomainError::Validation {
             message: format!("invalid key: {err}"),
@@ -3094,6 +3103,30 @@ impl S3 for VfilesS3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn object_key_limit_counts_utf8_bytes() {
+        let ascii_limit = "a".repeat(MAX_S3_KEY_BYTES);
+        assert!(norm(&ascii_limit).is_ok());
+        assert!(norm(&format!("{ascii_limit}a")).is_err());
+
+        let multibyte_limit = format!("{}abcd", "中".repeat(340));
+        assert_eq!(multibyte_limit.len(), MAX_S3_KEY_BYTES);
+        assert!(norm(&multibyte_limit).is_ok());
+
+        let over_limit = format!("{}ab", "中".repeat(341));
+        assert!(over_limit.len() > MAX_S3_KEY_BYTES);
+        let error = norm(&over_limit).expect_err("UTF-8 byte length over 1024 must be rejected");
+        assert!(matches!(
+            error,
+            vfiles_domain::DomainError::Validation { .. }
+        ));
+        assert_eq!(
+            *dom_err(error).code(),
+            s3s::S3ErrorCode::InvalidArgument,
+            "invalid S3 keys must map to InvalidArgument rather than InternalError"
+        );
+    }
 
     #[test]
     fn configured_region_checks_the_verified_sigv4_scope() {
