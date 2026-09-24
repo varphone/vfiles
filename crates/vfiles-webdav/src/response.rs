@@ -374,8 +374,8 @@ pub struct PropResponse {
     /// r16 属主（r109e per-user 隔离下 ≡ 认证用户名恒等 = 零查询白捡 ✓
     /// 记档：未来共享 ns 语义需回查 namespaces.owner_user_id ✓ 真值源已在表 ✗ 0001:30）。
     pub owner: String,
-    /// 当前资源的活动排他写锁；无锁时仍返回空 lockdiscovery 属性。
-    pub active_lock: Option<ActiveLock>,
+    /// 当前资源覆盖的活动锁（包含同一资源的多个共享锁）。
+    pub active_lock: Vec<ActiveLock>,
 }
 
 #[derive(Debug, Clone)]
@@ -384,6 +384,7 @@ pub struct ActiveLock {
     pub owner: String,
     pub timeout: String,
     pub depth_infinity: bool,
+    pub scope: vfiles_domain::WebdavLockScope,
     pub root_href: String,
 }
 
@@ -486,23 +487,34 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
                     out.push_str("</D:owner>");
                 }
                 "supportedlock" if mode != &PropMode::PropName => {
-                    out.push_str("<D:supportedlock><D:lockentry><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockentry></D:supportedlock>");
+                    out.push_str("<D:supportedlock><D:lockentry><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockentry><D:lockentry><D:lockscope><D:shared/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockentry></D:supportedlock>");
                 }
                 "lockdiscovery" if mode != &PropMode::PropName => {
-                    if let Some(lock) = &item.active_lock {
-                        out.push_str("<D:lockdiscovery><D:activelock><D:locktype><D:write/></D:locktype><D:lockscope><D:exclusive/></D:lockscope><D:depth>");
-                        out.push_str(if lock.depth_infinity { "infinity" } else { "0" });
-                        out.push_str("</D:depth>");
-                        append_lock_owner(&mut out, &lock.owner);
-                        out.push_str("<D:timeout>");
-                        out.push_str(&escape_xml(&lock.timeout));
-                        out.push_str("</D:timeout><D:locktoken><D:href>");
-                        out.push_str(&escape_xml(&lock.token));
-                        out.push_str("</D:href></D:locktoken><D:lockroot><D:href>");
-                        out.push_str(&escape_xml(&lock.root_href));
-                        out.push_str("</D:href></D:lockroot></D:activelock></D:lockdiscovery>");
-                    } else {
+                    if item.active_lock.is_empty() {
                         out.push_str("<D:lockdiscovery/>");
+                    } else {
+                        out.push_str("<D:lockdiscovery>");
+                        for lock in &item.active_lock {
+                            out.push_str(
+                                "<D:activelock><D:locktype><D:write/></D:locktype><D:lockscope>",
+                            );
+                            out.push_str(match lock.scope {
+                                vfiles_domain::WebdavLockScope::Exclusive => "<D:exclusive/>",
+                                vfiles_domain::WebdavLockScope::Shared => "<D:shared/>",
+                            });
+                            out.push_str("</D:lockscope><D:depth>");
+                            out.push_str(if lock.depth_infinity { "infinity" } else { "0" });
+                            out.push_str("</D:depth>");
+                            append_lock_owner(&mut out, &lock.owner);
+                            out.push_str("<D:timeout>");
+                            out.push_str(&escape_xml(&lock.timeout));
+                            out.push_str("</D:timeout><D:locktoken><D:href>");
+                            out.push_str(&escape_xml(&lock.token));
+                            out.push_str("</D:href></D:locktoken><D:lockroot><D:href>");
+                            out.push_str(&escape_xml(&lock.root_href));
+                            out.push_str("</D:href></D:lockroot></D:activelock>");
+                        }
+                        out.push_str("</D:lockdiscovery>");
                     }
                 }
                 // 其余 = propname 模式（只名无值）或占位（getcontentlength None 时跳过 ✓）
@@ -560,16 +572,21 @@ pub fn lock_response(
     path: &str,
     timeout: &str,
     depth_infinity: bool,
+    scope: vfiles_domain::WebdavLockScope,
 ) -> String {
     let depth = if depth_infinity { "infinity" } else { "0" };
     let owner_xml = stored_xml_value(owner)
         .map(str::to_owned)
         .unwrap_or_else(|| format!("<D:owner>{}</D:owner>", escape_xml(owner)));
+    let scope_xml = match scope {
+        vfiles_domain::WebdavLockScope::Exclusive => "<D:exclusive/>",
+        vfiles_domain::WebdavLockScope::Shared => "<D:shared/>",
+    };
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <D:prop xmlns:D="DAV:"><D:lockdiscovery><D:activelock>
 <D:locktype><D:write/></D:locktype>
-<D:lockscope><D:exclusive/></D:lockscope>
+<D:lockscope>{scope_xml}</D:lockscope>
 <D:depth>{depth}</D:depth>
 {owner_xml}
 <D:href>{href}</D:href>
@@ -578,6 +595,7 @@ pub fn lock_response(
 <D:timeout>{timeout}</D:timeout>
 </D:activelock></D:lockdiscovery></D:prop>"#,
         owner_xml = owner_xml,
+        scope_xml = scope_xml,
         href = escape_xml(path), // r-new 修双斜杠：caller 已传完整 href（含 mount ✗ 模板不自加 "/"）
         token = escape_xml(token),
         timeout = escape_xml(timeout),
@@ -645,7 +663,7 @@ mod tests {
                     getetag: None,
                     creationdate: "2026-09-23T00:00:00Z".into(),
                     owner: "tester".into(),
-                    active_lock: None,
+                    active_lock: Vec::new(),
                 },
                 PropResponse {
                     href: "/dav/a&b.txt".into(),
@@ -658,7 +676,7 @@ mod tests {
                     getetag: None,
                     creationdate: "2026-09-23T00:00:00Z".into(),
                     owner: "tester".into(),
-                    active_lock: None,
+                    active_lock: Vec::new(),
                 },
             ],
             &PropMode::All,
@@ -695,7 +713,7 @@ mod propmode_tests {
             getetag: None,
             creationdate: "2026-09-23T00:00:00Z".into(),
             owner: "tester".into(),
-            active_lock: None,
+            active_lock: Vec::new(),
         }]
     }
 

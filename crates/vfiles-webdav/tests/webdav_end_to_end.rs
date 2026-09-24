@@ -461,9 +461,40 @@ async fn options_advertises_and_propfind_needs_auth() {
         )
         .await
         .unwrap();
-    assert_eq!(shared_lock.status(), 405);
+    assert_eq!(shared_lock.status(), 200);
+    let shared_lock_token = shared_lock
+        .headers()
+        .get("lock-token")
+        .expect("shared LOCK response includes a token")
+        .to_str()
+        .unwrap()
+        .to_string();
+    let second_shared_lock = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:lockinfo xmlns:D="DAV:"><D:lockscope><D:shared/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second_shared_lock.status(), 200);
+    let second_shared_lock_token = second_shared_lock
+        .headers()
+        .get("lock-token")
+        .expect("second shared LOCK response includes a token")
+        .to_str()
+        .unwrap()
+        .to_string();
 
-    let exclusive_only = router
+    let lock_properties = router
         .clone()
         .oneshot(
             axum::http::Request::builder()
@@ -473,22 +504,52 @@ async fn options_advertises_and_propfind_needs_auth() {
                 .header("depth", "0")
                 .header("content-type", "application/xml")
                 .body(axum::body::Body::from(
-                    r#"<D:propfind xmlns:D="DAV:"><D:prop><D:supportedlock/></D:prop></D:propfind>"#,
+                    r#"<D:propfind xmlns:D="DAV:"><D:prop><D:supportedlock/><D:lockdiscovery/></D:prop></D:propfind>"#,
                 ))
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(exclusive_only.status(), 207);
+    assert_eq!(lock_properties.status(), 207);
     let supported_locks = String::from_utf8(
-        axum::body::to_bytes(exclusive_only.into_body(), usize::MAX)
+        axum::body::to_bytes(lock_properties.into_body(), usize::MAX)
             .await
             .unwrap()
             .to_vec(),
     )
     .unwrap();
     assert!(supported_locks.contains("<D:exclusive/>"));
-    assert!(!supported_locks.contains("<D:shared/>"));
+    assert!(supported_locks.contains("<D:shared/>"));
+    assert_eq!(supported_locks.matches("<D:activelock>").count(), 2);
+
+    let unlock_first_shared = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("UNLOCK")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("lock-token", shared_lock_token)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unlock_first_shared.status(), 204);
+    let unlock_second_shared = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("UNLOCK")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("lock-token", second_shared_lock_token)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unlock_second_shared.status(), 204);
 
     let remote_destination = router
         .clone()

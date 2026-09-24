@@ -521,6 +521,49 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         Ok(locks)
     }
 
+    async fn find_active_covering_many_all(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[String],
+        now: i64,
+    ) -> DomainResult<std::collections::HashMap<String, Vec<(String, WebdavLock)>>> {
+        let mut locks = std::collections::HashMap::<String, Vec<(String, WebdavLock)>>::new();
+        for chunk in paths.chunks(300) {
+            if chunk.is_empty() {
+                continue;
+            }
+            let mut query = sqlx::QueryBuilder::new("WITH requested(path) AS (");
+            query.push_values(chunk.iter(), |mut row, path| {
+                row.push_bind(path);
+            });
+            query.push(") SELECT requested.path, locks.path, locks.token, locks.owner, locks.expires_at, locks.depth_infinity, locks.scope FROM requested JOIN webdav_locks AS locks ON locks.namespace_id = ");
+            query.push_bind(namespace_id.to_string());
+            query.push(" AND (locks.expires_at IS NULL OR locks.expires_at > ");
+            query.push_bind(now);
+            query.push(" ) AND (locks.path = requested.path OR (locks.depth_infinity = 1 AND (locks.path = '' OR substr(requested.path, 1, length(locks.path) + 1) = locks.path || '/'))) ORDER BY requested.path, length(locks.path) DESC, locks.token");
+            let rows = query
+                .build_query_as::<(String, String, String, String, Option<i64>, bool, String)>()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to look up covering WebDAV locks: {e}"),
+                })?;
+            for (requested, lock_path, token, owner, expires_at, depth_infinity, scope) in rows {
+                locks.entry(requested).or_default().push((
+                    lock_path,
+                    WebdavLock {
+                        token,
+                        owner,
+                        expires_at,
+                        depth_infinity,
+                        scope: parse_webdav_lock_scope(&scope),
+                    },
+                ));
+            }
+        }
+        Ok(locks)
+    }
+
     async fn find_active_many(
         &self,
         namespace_id: &NamespaceId,

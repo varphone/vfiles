@@ -475,12 +475,6 @@ async fn lock_op(
                 .unwrap();
         }
     };
-    if matches!(lockinfo.scope, LockScope::SharedWrite) {
-        return Response::builder()
-            .status(StatusCode::METHOD_NOT_ALLOWED)
-            .body(Body::empty())
-            .unwrap();
-    }
     let rel = uri_path
         .trim_start_matches('/')
         .trim_end_matches('/')
@@ -505,14 +499,7 @@ async fn lock_op(
     let owner = lockinfo.owner.unwrap_or_else(|| user.username.to_string());
     match app
         .locks
-        .lock(
-            &ns,
-            &rel,
-            &owner,
-            depth_infinity,
-            ttl,
-            vfiles_domain::WebdavLockScope::Exclusive,
-        )
+        .lock(&ns, &rel, &owner, depth_infinity, ttl, lockinfo.scope)
         .await
     {
         Ok(Some(entry)) => {
@@ -565,6 +552,7 @@ async fn lock_op(
                     &href_with_mount(&app.mount_prefix, &rel),
                     &granted_header,
                     depth_infinity,
+                    entry.scope,
                 )))
                 .unwrap()
         }
@@ -601,18 +589,12 @@ async fn lock_op(
     }
 }
 
-#[derive(Clone, Copy)]
-enum LockScope {
-    ExclusiveWrite,
-    SharedWrite,
-}
-
 struct ParsedLockInfo {
-    scope: LockScope,
+    scope: vfiles_domain::WebdavLockScope,
     owner: Option<String>,
 }
 
-/// 只授予实现了真实语义的 exclusive write 锁；不得将 shared 请求静默升级。
+/// 解析 RFC 4918 exclusive/shared write 锁请求。
 fn parse_lockinfo(body: &[u8]) -> Result<ParsedLockInfo, StatusCode> {
     let xml = std::str::from_utf8(body).map_err(|_| StatusCode::BAD_REQUEST)?;
     let doc = roxmltree::Document::parse(xml).map_err(|_| StatusCode::BAD_REQUEST)?;
@@ -654,8 +636,8 @@ fn parse_lockinfo(body: &[u8]) -> Result<ParsedLockInfo, StatusCode> {
         return Err(StatusCode::BAD_REQUEST);
     }
     let scope = match scope.tag_name().name() {
-        "exclusive" => LockScope::ExclusiveWrite,
-        "shared" => LockScope::SharedWrite,
+        "exclusive" => vfiles_domain::WebdavLockScope::Exclusive,
+        "shared" => vfiles_domain::WebdavLockScope::Shared,
         _ => return Err(StatusCode::BAD_REQUEST),
     };
     let owner = root
@@ -693,9 +675,9 @@ async fn lock_refresh_op(
         .trim_start_matches('/')
         .trim_end_matches('/')
         .to_string();
-    let lock = match app.locks.blocked(&ns, &rel).await {
-        Ok(Some(lock)) => lock,
-        Ok(None) => {
+    let locks = match app.locks.blocked_all(&ns, &rel).await {
+        Ok(locks) if !locks.is_empty() => locks,
+        Ok(_) => {
             return Response::builder()
                 .status(StatusCode::PRECONDITION_FAILED)
                 .body(Body::empty())
@@ -706,41 +688,45 @@ async fn lock_refresh_op(
             return internal_error();
         }
     };
-    let lock_path = lock.path.as_str();
-    let etag = match vfiles_domain::types::NormalizedPath::new(lock_path) {
-        Ok(path) => match app.entry_repo.find_by_path(&ns, &path).await {
-            Ok(entry) => entry
-                .and_then(|entry| entry.current_version_id)
-                .as_ref()
-                .map(derive_etag),
-            Err(error) => {
-                tracing::error!(%error, rel, "WebDAV If 条件读取实体标签失败");
-                return internal_error();
-            }
-        },
-        Err(_) => None,
-    };
-    match if_header_matches_resource(
-        &if_header,
-        lock_path,
-        &app.mount_prefix,
-        Some(&lock.token),
-        etag.as_deref(),
-    ) {
-        Some(true) => {}
-        Some(false) => {
-            return Response::builder()
-                .status(StatusCode::PRECONDITION_FAILED)
-                .body(Body::empty())
-                .unwrap();
-        }
-        None => {
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::empty())
-                .unwrap();
+    let mut selected = None;
+    let mut invalid_if = false;
+    for lock in locks {
+        let etag = match vfiles_domain::types::NormalizedPath::new(&lock.path) {
+            Ok(path) => match app.entry_repo.find_by_path(&ns, &path).await {
+                Ok(entry) => entry
+                    .and_then(|entry| entry.current_version_id)
+                    .as_ref()
+                    .map(derive_etag),
+                Err(error) => {
+                    tracing::error!(%error, rel, "WebDAV If 条件读取实体标签失败");
+                    return internal_error();
+                }
+            },
+            Err(_) => None,
+        };
+        match if_header_matches_resource(
+            &if_header,
+            &lock.path,
+            &app.mount_prefix,
+            Some(&lock.token),
+            etag.as_deref(),
+        ) {
+            Some(true) => selected = Some(lock),
+            Some(false) => {}
+            None => invalid_if = true,
         }
     }
+    let Some(lock) = selected else {
+        return Response::builder()
+            .status(if invalid_if {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::PRECONDITION_FAILED
+            })
+            .body(Body::empty())
+            .unwrap();
+    };
+    let lock_path = lock.path.as_str();
     let ttl = timeout_owned
         .as_deref()
         .and_then(crate::lock::LockTable::parse_timeout_header);
@@ -758,6 +744,7 @@ async fn lock_refresh_op(
                 &href_with_mount(&app.mount_prefix, lock_path),
                 &granted_header,
                 entry.depth_infinity,
+                entry.scope,
             )))
             .unwrap(),
         Ok(None) => Response::builder()
@@ -1073,48 +1060,65 @@ async fn write_precondition(
     rel: &str,
     if_header: Option<&str>,
 ) -> Option<StatusCode> {
-    let lock = match app.locks.blocked(ns, rel).await {
-        Ok(entry) => entry,
+    let locks = match app.locks.blocked_all(ns, rel).await {
+        Ok(entries) => entries,
         Err(error) => {
             tracing::error!(%error, rel, "WebDAV 写锁查询失败");
             return Some(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
+    if locks.is_empty() {
+        if let Some(header) = if_header {
+            return match if_header_matches_resource(header, rel, &app.mount_prefix, None, None) {
+                Some(true) => None,
+                Some(false) => Some(StatusCode::PRECONDITION_FAILED),
+                None => Some(StatusCode::BAD_REQUEST),
+            };
+        }
+        return None;
+    }
     if let Some(header) = if_header {
-        let condition_rel = lock.as_ref().map_or(rel, |entry| entry.path.as_str());
-        let etag = if let Ok(path) = vfiles_domain::types::NormalizedPath::new(condition_rel) {
-            match app.entry_repo.find_by_path(ns, &path).await {
-                Ok(entry) => entry
-                    .and_then(|entry| entry.current_version_id)
-                    .as_ref()
-                    .map(derive_etag),
-                Err(error) => {
-                    tracing::error!(%error, rel, "WebDAV If 条件读取实体标签失败");
-                    return Some(StatusCode::INTERNAL_SERVER_ERROR);
+        let mut matched = false;
+        let mut invalid = false;
+        for lock in &locks {
+            let condition_rel = lock.path.as_str();
+            let etag = if let Ok(path) = vfiles_domain::types::NormalizedPath::new(condition_rel) {
+                match app.entry_repo.find_by_path(ns, &path).await {
+                    Ok(entry) => entry
+                        .and_then(|entry| entry.current_version_id)
+                        .as_ref()
+                        .map(derive_etag),
+                    Err(error) => {
+                        tracing::error!(%error, rel, "WebDAV If 条件读取实体标签失败");
+                        return Some(StatusCode::INTERNAL_SERVER_ERROR);
+                    }
                 }
-            }
-        } else {
-            None
-        };
-        match if_header_matches_resource(
-            header,
-            condition_rel,
-            &app.mount_prefix,
-            lock.as_ref().map(|entry| entry.token.as_str()),
-            etag.as_deref(),
-        ) {
-            Some(true) => {}
-            Some(false) => {
-                tracing::debug!(rel = %rel, "WebDAV If 条件未匹配，返回 412");
-                return Some(StatusCode::PRECONDITION_FAILED);
-            }
-            None => {
-                tracing::debug!(rel = %rel, "WebDAV If 头语法无效，返回 400");
-                return Some(StatusCode::BAD_REQUEST);
+            } else {
+                None
+            };
+            match if_header_matches_resource(
+                header,
+                condition_rel,
+                &app.mount_prefix,
+                Some(&lock.token),
+                etag.as_deref(),
+            ) {
+                Some(true) => matched = true,
+                Some(false) => {}
+                None => invalid = true,
             }
         }
+        if matched {
+            return None;
+        }
+        return Some(if invalid {
+            StatusCode::BAD_REQUEST
+        } else {
+            tracing::debug!(rel = %rel, "WebDAV If 条件未匹配，返回 412");
+            StatusCode::PRECONDITION_FAILED
+        });
     }
-    if lock.is_some() && if_header.is_none() {
+    if !locks.is_empty() {
         tracing::debug!(rel = %rel, "WebDAV 写请求缺少锁 token，返回 423");
         return Some(StatusCode::LOCKED);
     }
@@ -1130,17 +1134,23 @@ async fn write_subtree_precondition(
     if let Some(status) = write_precondition(app, ns, rel, if_header).await {
         return Some(status);
     }
-    let locks = match app.locks.blocked_under_path(ns, rel).await {
+    let locks = match app.locks.blocked_under_path_all(ns, rel).await {
         Ok(locks) => locks,
         Err(error) => {
             tracing::error!(%error, rel, "WebDAV 子树锁查询失败");
             return Some(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
-    for (locked_path, lock) in locks {
-        if locked_path == rel {
-            continue;
+    let mut locks_by_path = std::collections::HashMap::<String, Vec<_>>::new();
+    for lock in locks {
+        if lock.path != rel {
+            locks_by_path
+                .entry(lock.path.clone())
+                .or_default()
+                .push(lock);
         }
+    }
+    for (locked_path, path_locks) in locks_by_path {
         let Some(header) = if_header else {
             tracing::debug!(path = %locked_path, "WebDAV 子树资源被锁且缺少 If token，返回 423");
             return Some(StatusCode::LOCKED);
@@ -1158,22 +1168,28 @@ async fn write_subtree_precondition(
             },
             Err(_) => None,
         };
-        match tagged_if_matches_resource(
-            header,
-            &locked_path,
-            &app.mount_prefix,
-            &lock.token,
-            etag.as_deref(),
-        ) {
-            Some(true) => {}
-            Some(false) => {
+        let mut matched = false;
+        let mut invalid = false;
+        for lock in path_locks {
+            match tagged_if_matches_resource(
+                header,
+                &locked_path,
+                &app.mount_prefix,
+                &lock.token,
+                etag.as_deref(),
+            ) {
+                Some(true) => matched = true,
+                Some(false) => {}
+                None => invalid = true,
+            }
+        }
+        if !matched {
+            return Some(if invalid {
+                StatusCode::BAD_REQUEST
+            } else {
                 tracing::debug!(path = %locked_path, "WebDAV 子树 If 条件未匹配，返回 412");
-                return Some(StatusCode::PRECONDITION_FAILED);
-            }
-            None => {
-                tracing::debug!(path = %locked_path, "WebDAV 子树 If 头语法无效，返回 400");
-                return Some(StatusCode::BAD_REQUEST);
-            }
+                StatusCode::PRECONDITION_FAILED
+            });
         }
     }
     None
@@ -1821,7 +1837,7 @@ async fn propfind_owned(
             active_lock: if wants_lock {
                 active_lock_prop(&app, &ns, rel).await?
             } else {
-                None
+                Vec::new()
             },
         });
     } else {
@@ -1909,7 +1925,7 @@ async fn propfind_owned(
             active_lock: if wants_lock {
                 active_lock_prop(&app, &ns, rel).await?
             } else {
-                None
+                Vec::new()
             },
         });
     }
@@ -1969,14 +1985,22 @@ async fn propfind_owned(
             .collect();
         let mut child_locks: std::collections::HashMap<_, _> = if wants_lock {
             app.locks
-                .blocked_many(&ns, &child_paths)
+                .blocked_many_all(&ns, &child_paths)
                 .await
                 .map_err(|error| {
                     tracing::error!(%error, "WebDAV PROPFIND 批量锁查询失败");
                     StatusCode::INTERNAL_SERVER_ERROR
                 })?
                 .into_iter()
-                .map(|(path, lock)| (path, active_lock_value(lock, &app.mount_prefix)))
+                .map(|(path, locks)| {
+                    (
+                        path,
+                        locks
+                            .into_iter()
+                            .map(|lock| active_lock_value(lock, &app.mount_prefix))
+                            .collect(),
+                    )
+                })
                 .collect()
         } else {
             std::collections::HashMap::new()
@@ -2021,7 +2045,7 @@ async fn propfind_owned(
                     .flatten(),
                 creationdate: cdate_fmt(child.created_at),
                 owner: owner_val.clone(),
-                active_lock: child_locks.remove(&child_rel),
+                active_lock: child_locks.remove(&child_rel).unwrap_or_default(),
             });
         }
     }
@@ -2032,15 +2056,15 @@ async fn active_lock_prop(
     app: &WebdavApplication,
     ns: &vfiles_domain::types::NamespaceId,
     rel: &str,
-) -> Result<Option<crate::response::ActiveLock>, StatusCode> {
-    let lock = app.locks.blocked(ns, rel).await.map_err(|error| {
+) -> Result<Vec<crate::response::ActiveLock>, StatusCode> {
+    let locks = app.locks.blocked_all(ns, rel).await.map_err(|error| {
         tracing::error!(%error, rel, "WebDAV PROPFIND 锁查询失败");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let Some(lock) = lock else {
-        return Ok(None);
-    };
-    Ok(Some(active_lock_value(lock, &app.mount_prefix)))
+    Ok(locks
+        .into_iter()
+        .map(|lock| active_lock_value(lock, &app.mount_prefix))
+        .collect())
 }
 
 fn active_lock_value(
@@ -2060,6 +2084,7 @@ fn active_lock_value(
         owner: lock.owner,
         timeout,
         depth_infinity: lock.depth_infinity,
+        scope: lock.scope,
         root_href: href_with_mount(mount_prefix, &lock.path),
     }
 }
@@ -3677,7 +3702,7 @@ mod etag_tests {
 
 #[cfg(test)]
 mod lockinfo_tests {
-    use super::{LockScope, parse_lockinfo};
+    use super::parse_lockinfo;
 
     #[test]
     fn rejects_multiple_lock_scope_choices_in_one_lockinfo() {
@@ -3696,7 +3721,16 @@ mod lockinfo_tests {
         let body = br#"<D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#;
         assert!(matches!(
             parse_lockinfo(body).map(|lockinfo| lockinfo.scope),
-            Ok(LockScope::ExclusiveWrite)
+            Ok(vfiles_domain::WebdavLockScope::Exclusive)
+        ));
+    }
+
+    #[test]
+    fn accepts_shared_write_scope() {
+        let body = br#"<D:lockinfo xmlns:D="DAV:"><D:lockscope><D:shared/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#;
+        assert!(matches!(
+            parse_lockinfo(body).map(|lockinfo| lockinfo.scope),
+            Ok(vfiles_domain::WebdavLockScope::Shared)
         ));
     }
 }

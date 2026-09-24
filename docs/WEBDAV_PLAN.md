@@ -17,7 +17,7 @@
 | MKCOL / DELETE / MOVE | ✅ 实装（`WebdavWriteOps` ✓ 审计链 user_id ✓） | MOVE Overwrite T 在 SQLite 单事务内删除目标子树并改写源路径；blob 引用释放和快照在提交后处理 |
 | **PUT** | ✅ **链实装**（`init_upload` + `complete_upload_from_stream` 流式直完 ✓） | bin 侧 `put_file` 转发 = 下段（签名已清 ✓） |
 | COPY | ✅ **实装**（Destination + Overwrite + 锁前置 + 审计；文件复用 blob，目录递归复制） | `copy_entries` 提供 overwrite 和目标父目录检查；需持续做 RFC/客户端兼容验收 |
-| LOCK / UNLOCK | ✅ exclusive write 实装（depth 0/infinity、refresh、SQLite 持久化、锁冲突原子判断、Second-N/Infinite） | 当前只广告并授予 exclusive；shared 明确 405。RFC 4918 允许服务器选择锁组合；共享锁互操作属于后续兼容性增强 |
+| LOCK / UNLOCK | ✅ exclusive/shared write 实装（depth 0/infinity、refresh、SQLite 持久化、同资源共享锁并发、锁冲突原子判断、Second-N/Infinite） | 系统 litmus 共享锁、双共享锁、锁发现与解锁用例通过 |
 | per-user ns | ✅ **实装**（`ensure_default_for_owner` ✓ 多用户隔离 ✓） |
 | auth 门 | ✅ dispatch 顶部（Basic → verify → 401 + WWW-Authenticate ✓ OPTIONS 豁免 ✓） |
 | 默认开启 | ✅ **用户令兑现**（`enabled: true` ✓ auth 强制防御 ✓ 真服务日志确证 ✓） |
@@ -26,10 +26,10 @@
 | COPY | ✅ **已接线**（`WebdavWriteOps::copy_entry` → `DefaultWorkspaceService::copy_entries`；目标覆盖、子树保护、blob 复用与递归目录复制均有实现） |
 | **台架缺口注** | cadaver 0.24 基础读写/目录/COPY/MOVE 由 `scripts/cadaver_probe.sh` 自动回归并接入 CI；rclone 1.60.1-DEV 已实测 MKCOL/PUT/list/GET；Windows 客户端与完整 litmus 套件仍待测 |
 
-## 当前工作树补充（LOCK refresh 与请求 scope 校验）
+## 当前工作树补充（多 scope 锁与请求 scope 校验）
 
 - 空体 LOCK 识别为 refresh：从 `If` 头取唯一 `opaquelocktoken`，仅刷新同路径上仍有效的锁；成功返回原 token 与 lockdiscovery，失效 token 返回 412。
-- 新 LOCK 解析 RFC `lockinfo` XML，只接受 `exclusive` + `write`；shared 请求明确返回 405，不再被静默授予 exclusive 锁。
+- 新 LOCK 解析 RFC `lockinfo` XML，只接受一个 `exclusive` 或 `shared` scope 与 `write` 类型；scope 写入 SQLite，多共享锁并发授予且其 lockdiscovery 可完整列出。
 - LOCK 接受 `Depth: 0` 与 `Depth: infinity`，省略时按 RFC 默认 `infinity`；祖先 infinity 锁会覆盖后代资源；直接冲突返回 423，infinity 锁遇到阻塞后代时返回含 423/424 的 207 Multi-Status。
 - 写请求支持 RFC 4918 `If` 条件列表：列表内按 AND 求值、列表间按 OR 求值；支持未标记与 URI-tagged 列表，tagged 列表按挂载路径分别映射到 COPY/MOVE 源和目标；有锁写请求必须在匹配资源的成功列表中提供匹配的正向锁 token；ETag 与 `Not` 条件按当前实体状态求值，即使资源未锁也会校验。
 - `If` 状态 token 接受任意合法 URI；未知 token 按“不匹配”参与条件求值，不会导致整个头部解析失败并屏蔽其它 OR 列表。`Not` 关键字按 ABNF 大小写不敏感解析。
@@ -77,7 +77,7 @@
 | **r110'b 商业级清单定稿** | PUT（init_upload 链）+ 边界/错误语义 RFC 全检 + rclone/Windows 台架 + **商业级清单定稿**（含缺口注 ✓） | |
 | **r110' 验收台架** | 边界/错误语义 RFC 全检 + curl/rclone/Windows 台架 + 商业级清单 | |
 | r107（挂载段遗留） | bin 挂载 + curl/rclone e2e + GET（`EntryVersion.blob_id` ✓ 形已清） | 并入 r110' 台架 ✓ |
-| 记档 | shared 锁明确不支持（405），`supportedlock` 只广告 exclusive write | RFC 允许锁能力子集；Windows/完整 litmus 互操作仍待实测 |
+| 记档 | exclusive/shared write 锁均已持久化并在 `supportedlock`/`lockdiscovery` 中准确宣告；同资源共享锁可并发，独占锁冲突按 scope 原子校验 | 系统 litmus 41/41 locks 测试通过；Windows 客户端仍待实测 |
 
 ## 3. 客户端兼容矩阵（预期）
 
