@@ -24,7 +24,7 @@
 | 边界/错误语义 | ✅ Depth infinity = 400 ✓ If 复杂式 = 412 记档 ✓ 锁冲突 = 423 ✓ token 不配 = 409 ✓ |
 | **GET 流式化** | ✅ **r201-02 收口**（`get_stream` 直通 + ReaderStream ✓ **10MB sha256 一致性证** ✓ 内存爆除） |
 | COPY | ✅ **已接线**（`WebdavWriteOps::copy_entry` → `DefaultWorkspaceService::copy_entries`；目标覆盖、子树保护、blob 复用与递归目录复制均有实现） |
-| **台架缺口注** | cadaver 0.24 基础读写/目录/COPY/MOVE 由 `scripts/cadaver_probe.sh` 自动回归并接入 CI；rclone 1.60.1-DEV 已实测 MKCOL/PUT/list/GET；Windows 客户端与完整 litmus 套件仍待测 |
+| **台架缺口注** | cadaver 0.24 基础读写/目录/COPY/MOVE 由 `scripts/cadaver_probe.sh` 自动回归并接入 CI；rclone 1.60.1-DEV 已实测 MKCOL/PUT/list/GET；系统 litmus 完整套件实测 104/104 通过（两条 warning 分别是客户端 DELETE URI fragment 提示，以及无效 `If` 条件返回 412、而 litmus 期望 423）；Windows 客户端仍待测 |
 
 ## 当前工作树补充（多 scope 锁与请求 scope 校验）
 
