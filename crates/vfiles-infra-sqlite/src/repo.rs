@@ -3873,18 +3873,24 @@ impl EntryRepo for SqliteEntryRepo {
     ) -> DomainResult<EntryVersion> {
         let version_id = VersionId::new();
         let now = time::OffsetDateTime::now_utc();
+        let mut tx =
+            self.pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to begin entry version transaction: {}", e),
+                })?;
+
+        // Allocate the per-entry version number under the same write transaction as the
+        // INSERT. Reading it from the pool first let concurrent writers observe the same MAX.
         let next_version: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(version), 0) + 1 FROM entry_versions WHERE entry_id = ?",
         )
         .bind(entry_id.to_string())
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| DomainError::Internal {
             message: format!("Failed to calculate next entry version: {}", e),
-        })?;
-
-        let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
-            message: format!("Failed to begin entry version transaction: {}", e),
         })?;
 
         if let Some(blob_id) = blob_id {
@@ -7979,6 +7985,54 @@ mod entry_version_batch_tests {
             .expect("lookup with missing id should succeed");
         assert_eq!(only_first.len(), 1);
         assert_eq!(only_first[0].id, first.id);
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn concurrent_version_writes_allocate_distinct_sequential_numbers() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+        let path = NormalizedPath::new("docs/concurrent.txt").expect("path should parse");
+        let entry_id = repo
+            .create_entry(&namespace_id, &path, EntryKind::File, &user_id)
+            .await
+            .expect("entry should be created");
+
+        let write = |size| {
+            repo.create_version(
+                &entry_id,
+                None,
+                None,
+                size,
+                Some("text/plain"),
+                &user_id,
+                Some("concurrent"),
+            )
+        };
+        let results = tokio::join!(
+            write(0),
+            write(1),
+            write(2),
+            write(3),
+            write(4),
+            write(5),
+            write(6),
+            write(7),
+        );
+        let mut version_numbers = vec![
+            results.0, results.1, results.2, results.3, results.4, results.5, results.6, results.7,
+        ]
+        .into_iter()
+        .map(|result| {
+            result
+                .expect("concurrent version write should succeed")
+                .version_no
+        })
+        .collect::<Vec<_>>();
+        version_numbers.sort_unstable();
+
+        assert_eq!(version_numbers, (1..=8).collect::<Vec<_>>());
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);
