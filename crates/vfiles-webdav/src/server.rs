@@ -695,7 +695,8 @@ async fn lock_refresh_op(
             return internal_error();
         }
     };
-    let etag = match vfiles_domain::types::NormalizedPath::new(&rel) {
+    let lock_path = lock.path.as_str();
+    let etag = match vfiles_domain::types::NormalizedPath::new(lock_path) {
         Ok(path) => match app.entry_repo.find_by_path(&ns, &path).await {
             Ok(entry) => entry
                 .and_then(|entry| entry.current_version_id)
@@ -710,7 +711,7 @@ async fn lock_refresh_op(
     };
     match if_header_matches_resource(
         &if_header,
-        &rel,
+        lock_path,
         &app.mount_prefix,
         Some(&lock.token),
         etag.as_deref(),
@@ -735,7 +736,7 @@ async fn lock_refresh_op(
     let granted_header = ttl
         .map(|d| format!("Second-{}", d.as_secs()))
         .unwrap_or_else(|| "Infinite".to_string());
-    match app.locks.refresh(&ns, &rel, &lock.token, ttl).await {
+    match app.locks.refresh(&ns, lock_path, &lock.token, ttl).await {
         Ok(Some(entry)) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
@@ -743,7 +744,7 @@ async fn lock_refresh_op(
             .body(Body::from(crate::response::lock_response(
                 &entry.token,
                 &entry.owner,
-                &href_with_mount(&app.mount_prefix, &rel),
+                &href_with_mount(&app.mount_prefix, lock_path),
                 &granted_header,
                 entry.depth_infinity,
             )))
@@ -1069,7 +1070,8 @@ async fn write_precondition(
         }
     };
     if let Some(header) = if_header {
-        let etag = if let Ok(path) = vfiles_domain::types::NormalizedPath::new(rel) {
+        let condition_rel = lock.as_ref().map_or(rel, |entry| entry.path.as_str());
+        let etag = if let Ok(path) = vfiles_domain::types::NormalizedPath::new(condition_rel) {
             match app.entry_repo.find_by_path(ns, &path).await {
                 Ok(entry) => entry
                     .and_then(|entry| entry.current_version_id)
@@ -1085,7 +1087,7 @@ async fn write_precondition(
         };
         match if_header_matches_resource(
             header,
-            rel,
+            condition_rel,
             &app.mount_prefix,
             lock.as_ref().map(|entry| entry.token.as_str()),
             etag.as_deref(),
