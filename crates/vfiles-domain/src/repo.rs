@@ -460,6 +460,24 @@ pub trait EntryRepo {
         namespace_id: &NamespaceId,
         root_path: &NormalizedPath,
     ) -> DomainResult<Vec<Entry>>;
+    async fn find_subtree_if_current(
+        &self,
+        namespace_id: &NamespaceId,
+        root_path: &NormalizedPath,
+        condition: &EntryWriteCondition,
+    ) -> DomainResult<Vec<Entry>> {
+        if condition.namespace_id != *namespace_id || condition.path != *root_path {
+            return Err(DomainError::PreconditionFailed);
+        }
+        let current = self.find_by_path(namespace_id, root_path).await?;
+        if current.as_ref().map(|entry| entry.id) != condition.expected_entry_id
+            || current.as_ref().and_then(|entry| entry.current_version_id)
+                != condition.expected_version_id
+        {
+            return Err(DomainError::PreconditionFailed);
+        }
+        self.find_subtree(namespace_id, root_path).await
+    }
     /// 转移所有权：把条目迁到另一个命名空间（路径不变，版本历史随条目保留）。
     async fn transfer_entries(&self, moves: &[(EntryId, NamespaceId)]) -> DomainResult<()>;
     /// 批量按路径查询（用于移动前的冲突检查），只返回存在的条目。

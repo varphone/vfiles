@@ -12,6 +12,21 @@ struct CopySourceIndex {
     properties: HashMap<EntryId, Vec<(String, String)>>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct CopyOptions {
+    pub overwrite: bool,
+    pub depth_infinity: bool,
+    pub condition: Option<EntryWriteCondition>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MoveOptions<'a> {
+    pub destination_is_container: bool,
+    pub overwrite_destination: bool,
+    pub property_changes: Option<&'a [EntryPropertyChange]>,
+    pub condition: Option<&'a EntryWriteCondition>,
+}
+
 pub(crate) fn normalize_message(message: Option<&str>) -> Option<String> {
     message.and_then(|value| {
         let trimmed = value.trim();
@@ -2267,30 +2282,37 @@ where
         user_id: &UserId,
         overwrite: bool,
     ) -> DomainResult<()> {
-        self.copy_entries_with_depth(
+        self.copy_entries_with_options(
             namespace_id,
             source,
             destination,
             message,
             user_id,
-            overwrite,
-            true,
+            CopyOptions {
+                overwrite,
+                depth_infinity: true,
+                condition: None,
+            },
         )
         .await
     }
 
     /// Copy a resource and optionally recurse through collection members.
-    #[allow(clippy::too_many_arguments)] // Mirrors the workspace mutation context and COPY options.
-    pub async fn copy_entries_with_depth(
+    pub async fn copy_entries_with_options(
         &self,
         namespace_id: &NamespaceId,
         source: &NormalizedPath,
         destination: &NormalizedPath,
         message: Option<&str>,
         user_id: &UserId,
-        overwrite: bool,
-        depth_infinity: bool,
+        options: CopyOptions,
     ) -> DomainResult<()> {
+        let CopyOptions {
+            overwrite,
+            depth_infinity,
+            condition,
+        } = options;
+        let condition = condition.as_ref();
         if source.as_str() == destination.as_str() {
             return Err(DomainError::Conflict {
                 message: "Cannot copy a resource onto itself".to_string(),
@@ -2306,13 +2328,39 @@ where
                 message: "Cannot copy a resource into its own subtree".to_string(),
             });
         }
-        let src_entry = self
-            .entry_repo
-            .find_by_path(namespace_id, source)
-            .await?
+        if condition.is_some_and(|condition| {
+            condition.namespace_id != *namespace_id || condition.path != *source
+        }) {
+            return Err(DomainError::PreconditionFailed);
+        }
+        let mut source_entries = if let Some(condition) = condition {
+            self.entry_repo
+                .find_subtree_if_current(namespace_id, source, condition)
+                .await?
+        } else {
+            let root = self
+                .entry_repo
+                .find_by_path(namespace_id, source)
+                .await?
+                .ok_or_else(|| DomainError::NotFound {
+                    resource: format!("entry {}", source.as_str()),
+                })?;
+            if depth_infinity && root.entry_type == EntryKind::Directory {
+                self.entry_repo.find_subtree(namespace_id, source).await?
+            } else {
+                vec![root]
+            }
+        };
+        let src_entry = source_entries
+            .iter()
+            .find(|entry| entry.path_norm == *source)
+            .cloned()
             .ok_or_else(|| DomainError::NotFound {
                 resource: format!("entry {}", source.as_str()),
             })?;
+        if !depth_infinity || src_entry.entry_type != EntryKind::Directory {
+            source_entries.retain(|entry| entry.id == src_entry.id);
+        }
         let dst_exists = self
             .entry_repo
             .find_by_path(namespace_id, destination)
@@ -2361,11 +2409,6 @@ where
                 message: "Destination parent is not a collection".to_string(),
             });
         }
-        let source_entries = if depth_infinity && src_entry.entry_type == EntryKind::Directory {
-            self.entry_repo.find_subtree(namespace_id, source).await?
-        } else {
-            vec![src_entry.clone()]
-        };
         let source_entry_ids = source_entries
             .iter()
             .map(|entry| entry.id)
@@ -2482,10 +2525,10 @@ where
             destination,
             message,
             user_id,
-            dest_as_container,
-            false,
-            None,
-            None,
+            MoveOptions {
+                destination_is_container: dest_as_container,
+                ..MoveOptions::default()
+            },
         )
         .await
     }
@@ -2505,15 +2548,14 @@ where
             destination,
             message,
             user_id,
-            false,
-            overwrite,
-            None,
-            None,
+            MoveOptions {
+                overwrite_destination: overwrite,
+                ..MoveOptions::default()
+            },
         )
         .await
     }
 
-    #[allow(clippy::too_many_arguments)] // Mirrors the existing move inputs plus the request snapshot.
     pub async fn move_entry_overwriting_with_condition(
         &self,
         namespace_id: &NamespaceId,
@@ -2521,8 +2563,7 @@ where
         destination: &NormalizedPath,
         message: Option<&str>,
         user_id: &UserId,
-        overwrite: bool,
-        condition: &vfiles_domain::EntryWriteCondition,
+        options: MoveOptions<'_>,
     ) -> DomainResult<MutationResult> {
         self.move_entries_with_overwrite(
             namespace_id,
@@ -2530,10 +2571,7 @@ where
             destination,
             message,
             user_id,
-            false,
-            overwrite,
-            None,
-            Some(condition),
+            options,
         )
         .await
     }
@@ -2553,15 +2591,14 @@ where
             destination,
             message,
             user_id,
-            false,
-            false,
-            Some(changes),
-            None,
+            MoveOptions {
+                property_changes: Some(changes),
+                ..MoveOptions::default()
+            },
         )
         .await
     }
 
-    #[allow(clippy::too_many_arguments)] // Keeps the existing move contract plus atomic overwrite mode.
     async fn move_entries_with_overwrite(
         &self,
         namespace_id: &NamespaceId,
@@ -2569,11 +2606,14 @@ where
         destination: &NormalizedPath,
         message: Option<&str>,
         user_id: &UserId,
-        dest_as_container: bool,
-        overwrite_destination: bool,
-        property_changes: Option<&[vfiles_domain::EntryPropertyChange]>,
-        condition: Option<&vfiles_domain::EntryWriteCondition>,
+        options: MoveOptions<'_>,
     ) -> DomainResult<MutationResult> {
+        let MoveOptions {
+            destination_is_container: dest_as_container,
+            overwrite_destination,
+            property_changes,
+            condition,
+        } = options;
         if sources.is_empty() {
             return Err(DomainError::Validation {
                 message: "At least one source path is required".to_string(),
@@ -5329,8 +5369,10 @@ mod tests {
                 &no_overwrite_destination,
                 Some("stale WebDAV MOVE"),
                 &context.user_id,
-                false,
-                &stale_condition,
+                MoveOptions {
+                    condition: Some(&stale_condition),
+                    ..MoveOptions::default()
+                },
             )
             .await;
         assert!(matches!(
@@ -5354,8 +5396,11 @@ mod tests {
                 &destination,
                 Some("stale WebDAV MOVE"),
                 &context.user_id,
-                true,
-                &stale_condition,
+                MoveOptions {
+                    overwrite_destination: true,
+                    condition: Some(&stale_condition),
+                    ..MoveOptions::default()
+                },
             )
             .await;
         assert!(matches!(stale_move, Err(DomainError::PreconditionFailed)));
@@ -5390,8 +5435,11 @@ mod tests {
                 &destination,
                 Some("current WebDAV MOVE"),
                 &context.user_id,
-                true,
-                &current_condition,
+                MoveOptions {
+                    overwrite_destination: true,
+                    condition: Some(&current_condition),
+                    ..MoveOptions::default()
+                },
             )
             .await
             .expect("matching conditional MOVE should succeed");
@@ -5412,6 +5460,98 @@ mod tests {
                 .and_then(|entry| entry.current_version_id),
             Some(newer.version.id)
         );
+    }
+
+    #[tokio::test]
+    async fn conditional_copy_uses_a_consistent_source_snapshot() {
+        let context = TestContext::new().await;
+        let root = TestContext::path("");
+        let initial = context
+            .upload_file(&root, "conditional-copy.txt", b"initial", "initial")
+            .await;
+        context
+            .upload_file(&root, "conditional-copy-dest.txt", b"target", "target")
+            .await;
+        let source_path = TestContext::path("conditional-copy.txt");
+        let destination = TestContext::path("conditional-copy-dest.txt");
+        let entry = context
+            .entry_repo
+            .find_by_path(&context.namespace_id, &source_path)
+            .await
+            .expect("source lookup should succeed")
+            .expect("source should exist");
+        let stale_condition = vfiles_domain::EntryWriteCondition {
+            namespace_id: context.namespace_id,
+            path: source_path.clone(),
+            expected_entry_id: Some(entry.id),
+            expected_version_id: Some(initial.version.id),
+        };
+        let newer = context
+            .upload_file(&root, "conditional-copy.txt", b"newer", "newer")
+            .await;
+
+        let stale_copy = context
+            .workspace_service
+            .copy_entries_with_options(
+                &context.namespace_id,
+                &source_path,
+                &destination,
+                Some("stale WebDAV COPY"),
+                &context.user_id,
+                CopyOptions {
+                    overwrite: true,
+                    depth_infinity: true,
+                    condition: Some(stale_condition.clone()),
+                },
+            )
+            .await;
+        assert!(matches!(stale_copy, Err(DomainError::PreconditionFailed)));
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &destination)
+                .await
+                .expect("destination lookup should succeed")
+                .is_some(),
+            "failed conditional COPY must preserve the overwrite target"
+        );
+
+        let current_condition = vfiles_domain::EntryWriteCondition {
+            expected_version_id: Some(newer.version.id),
+            ..stale_condition
+        };
+        context
+            .workspace_service
+            .copy_entries_with_options(
+                &context.namespace_id,
+                &source_path,
+                &destination,
+                Some("current WebDAV COPY"),
+                &context.user_id,
+                CopyOptions {
+                    overwrite: true,
+                    depth_infinity: true,
+                    condition: Some(current_condition),
+                },
+            )
+            .await
+            .expect("matching conditional COPY should succeed");
+        let copied = context
+            .entry_repo
+            .find_by_path(&context.namespace_id, &destination)
+            .await
+            .expect("destination lookup should succeed")
+            .expect("copy destination should exist");
+        let copied_version = context
+            .entry_repo
+            .find_version(
+                &copied
+                    .current_version_id
+                    .expect("copied version should exist"),
+            )
+            .await
+            .expect("copied version lookup should succeed");
+        assert_eq!(copied_version.blob_id, newer.version.blob_id);
     }
 
     #[tokio::test]
@@ -6076,14 +6216,17 @@ mod tests {
 
         context
             .workspace_service
-            .copy_entries_with_depth(
+            .copy_entries_with_options(
                 &context.namespace_id,
                 &source,
                 &TestContext::path("shallow-copy"),
                 Some("depth zero copy"),
                 &context.user_id,
-                false,
-                false,
+                CopyOptions {
+                    overwrite: false,
+                    depth_infinity: false,
+                    condition: None,
+                },
             )
             .await
             .expect("depth-zero copy should succeed");
@@ -6136,14 +6279,17 @@ mod tests {
 
         context
             .workspace_service
-            .copy_entries_with_depth(
+            .copy_entries_with_options(
                 &context.namespace_id,
                 &source,
                 &TestContext::path("recursive-copy"),
                 Some("infinite copy"),
                 &context.user_id,
-                false,
-                true,
+                CopyOptions {
+                    overwrite: false,
+                    depth_infinity: true,
+                    condition: None,
+                },
             )
             .await
             .expect("infinity copy should succeed");

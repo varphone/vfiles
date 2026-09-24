@@ -1667,14 +1667,40 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
     ) -> vfiles_domain::DomainResult<()> {
         // r5 薄转发 ✗ 树逻辑在 services.copy_entries（blob 复用 + 递归 + r10 覆盖链 ✓）
         self.workspace
-            .copy_entries_with_depth(
+            .copy_entries_with_options(
                 ns,
                 source,
                 destination,
                 Some("WebDAV COPY"),
                 user_id,
-                overwrite,
-                depth_infinity,
+                vfiles_app::CopyOptions {
+                    overwrite,
+                    depth_infinity,
+                    condition: None,
+                },
+            )
+            .await
+    }
+    async fn copy_entry_with_condition(
+        &self,
+        ns: &vfiles_domain::NamespaceId,
+        source: &vfiles_domain::NormalizedPath,
+        destination: &vfiles_domain::NormalizedPath,
+        user_id: &vfiles_domain::UserId,
+        options: vfiles_webdav::WebdavCopyOptions,
+    ) -> vfiles_domain::DomainResult<()> {
+        self.workspace
+            .copy_entries_with_options(
+                ns,
+                source,
+                destination,
+                Some("WebDAV COPY"),
+                user_id,
+                vfiles_app::CopyOptions {
+                    overwrite: options.overwrite,
+                    depth_infinity: options.depth_infinity,
+                    condition: options.condition,
+                },
             )
             .await
     }
@@ -1729,8 +1755,11 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
                     to,
                     Some("WebDAV MOVE"),
                     uid,
-                    overwrite,
-                    &condition,
+                    vfiles_app::MoveOptions {
+                        overwrite_destination: overwrite,
+                        condition: Some(&condition),
+                        ..vfiles_app::MoveOptions::default()
+                    },
                 )
                 .await
                 .map(|_| ()),

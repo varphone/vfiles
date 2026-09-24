@@ -15,7 +15,7 @@
 | DELETE | ✅ **r11 顺修** | 递归 + 409 ✓ **成功 = 204**；集合目标的 `Depth` 缺省或 `infinity`，拒绝其他/重复值；递归范围中的子项锁也需对应 URI-tagged `If` token；HTTP `If-Match` / `If-Unmodified-Since` / `If-None-Match` 条件失败返回 412，SQLite 原子比较资源版本后删除 | - |
 | MKCOL | ✅ r110' | 201/409 ✓ | - |
 | MOVE | ✅ **r11/r12 覆盖语义；原子替换补强** | 201 新建 / **412**（F+存在）/ **204**（T + 缺省=T）✓；集合源的 `Depth` 缺省或 `infinity`，拒绝其他/重复值；HTTP `If-Match` / `If-Unmodified-Since` / `If-None-Match` 条件失败返回 412，SQLite 在移动及覆盖替换事务内原子比较源版本；源、被覆盖目标的子树锁均须按资源标签提交 token | 客户端矩阵继续扩充 |
-| **COPY** | ✅ **r5 八式实证** | 递归子树 + blob 零字节复用（create_version upsert ref++ ✓）+ **审计落表** ✓；dst存在/自复制/自子树 = 409 ✓ dest缺 = 400 ✓ Allow 入 ✓ **Overwrite 全语义 ✅ r10**（T=删旧重建 204 ✓ F=412 ✓ 缺省=T ✓ 目录覆盖 204+旧消失 ✓ 审计 ✓）；被覆盖目标子树锁按资源标签校验 | - |
+| **COPY** | ✅ **r5 八式实证** | 递归子树 + blob 零字节复用（create_version upsert ref++ ✓）+ **审计落表** ✓；源上的 HTTP `If-Match` / `If-Unmodified-Since` / `If-None-Match` 失败返回 412，条件复制用 SQLite 一致性读快照绑定源 entry/version；dst存在/自复制/自子树 = 409 ✓ dest缺 = 400 ✓ Allow 入 ✓ **Overwrite 全语义 ✅ r10**（T=删旧重建 204 ✓ F=412 ✓ 缺省=T ✓ 目录覆盖 204+旧消失 ✓ 审计 ✓）；被覆盖目标子树锁按资源标签校验 | - |
 | **PROPPATCH** | ✅ **r6 + 原子混合改名实证** | propertyupdate 按文档顺序解析；自定义属性按 namespace URI + local-name 持久化；SQLite 批量修改使用单事务，失败整批回滚；混合 displayname 改名和死属性修改在同一移动/属性事务中提交；只读属性返回 403，依赖项返回 424，移除不存在的属性成功 | - |
 | LOCK / UNLOCK | ✅ | 持久化独占 write 锁，支持 Depth 0 / infinity（省略时 infinity）；无限深度锁继承到所有后代并参与冲突检测；Timeout 与空体 LOCK refresh 支持未标记及匹配资源的 URI-tagged `If` 条件 | - |
 | POST | ➖ | RFC 无定义（405 ✓ 合规）| - |

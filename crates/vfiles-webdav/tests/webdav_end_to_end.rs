@@ -1338,6 +1338,22 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(stale_if_match_move.status(), 412);
 
+    let stale_if_match_copy = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("COPY")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("destination", "/stale-copy-destination.txt")
+                .header("if-match", "\"stale\"")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale_if_match_copy.status(), 412);
+
     let invalid_depth_delete = router
         .clone()
         .oneshot(

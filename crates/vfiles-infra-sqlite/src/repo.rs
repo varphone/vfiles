@@ -3042,6 +3042,90 @@ impl EntryRepo for SqliteEntryRepo {
         rows.into_iter().map(parse_entry_row).collect()
     }
 
+    async fn find_subtree_if_current(
+        &self,
+        namespace_id: &NamespaceId,
+        root_path: &NormalizedPath,
+        condition: &vfiles_domain::EntryWriteCondition,
+    ) -> DomainResult<Vec<Entry>> {
+        if condition.namespace_id != *namespace_id || condition.path != *root_path {
+            return Err(DomainError::PreconditionFailed);
+        }
+        let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to begin conditional subtree read: {e}"),
+        })?;
+        let state: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT e.id, (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1) FROM entries e WHERE e.namespace_id = ? AND e.path = ?",
+        )
+        .bind(namespace_id.to_string())
+        .bind(root_path.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to verify conditional subtree source: {e}"),
+        })?;
+        let state = state
+            .map(|(entry_id, version_id)| {
+                let entry_id =
+                    EntryId::from_string(&entry_id).map_err(|error| DomainError::Internal {
+                        message: format!("Invalid entry id in subtree source check: {error}"),
+                    })?;
+                let version_id = version_id
+                    .map(|id| VersionId::from_string(&id))
+                    .transpose()
+                    .map_err(|error| DomainError::Internal {
+                        message: format!("Invalid version id in subtree source check: {error}"),
+                    })?;
+                Ok::<_, DomainError>((entry_id, version_id))
+            })
+            .transpose()?;
+        let expected = condition
+            .expected_entry_id
+            .map(|entry_id| (entry_id, condition.expected_version_id));
+        if state != expected {
+            return Err(DomainError::PreconditionFailed);
+        }
+
+        let root = root_path.as_str().trim_end_matches('/');
+        let lower = format!("{root}/");
+        let upper = format!("{root}0");
+        let rows: Vec<EntryRow> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id
+            FROM entries e
+            WHERE e.namespace_id = ?
+              AND (e.path = ? OR (e.path >= ? AND e.path < ?))
+            ORDER BY e.path
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(root)
+        .bind(lower)
+        .bind(upper)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to read conditional source subtree: {e}"),
+        })?;
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to finish conditional subtree read: {e}"),
+        })?;
+        rows.into_iter().map(parse_entry_row).collect()
+    }
+
     async fn find_paths(
         &self,
         namespace_id: &NamespaceId,

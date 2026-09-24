@@ -3019,6 +3019,25 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         .unwrap();
                 }
             };
+            let http_conditions = match HttpWriteConditions::from_headers(req.headers()) {
+                Ok(conditions) => conditions.unwrap_or_default(),
+                Err(()) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            };
+            let copy_condition =
+                match check_http_write_preconditions(&app_ref, &ns, &path, http_conditions).await {
+                    Ok(condition) => condition,
+                    Err(status) => {
+                        return Response::builder()
+                            .status(status)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
+                };
             let user_id = user.id;
             let username = user.username.as_str().to_string();
             let dst_existed = match app_ref.entry_repo.find_by_path(&ns, &dest_path).await {
@@ -3062,7 +3081,17 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             }
             match app_ref
                 .write
-                .copy_entry(&ns, &path, &dest_path, &user.id, overwrite, depth_infinity)
+                .copy_entry_with_condition(
+                    &ns,
+                    &path,
+                    &dest_path,
+                    &user.id,
+                    crate::write::WebdavCopyOptions {
+                        overwrite,
+                        depth_infinity,
+                        condition: copy_condition,
+                    },
+                )
                 .await
             {
                 Ok(()) => {

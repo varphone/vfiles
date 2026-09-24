@@ -12,7 +12,7 @@ mod lock;
 mod write;
 
 pub use lock::LockTable;
-pub use write::WebdavWriteOps;
+pub use write::{WebdavCopyOptions, WebdavWriteOps};
 mod response;
 mod server;
 

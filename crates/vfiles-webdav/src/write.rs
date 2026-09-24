@@ -11,6 +11,13 @@ use async_trait::async_trait;
 use vfiles_domain::DomainResult;
 use vfiles_domain::types::{NamespaceId, NormalizedPath, UserId};
 
+#[derive(Clone, Debug, Default)]
+pub struct WebdavCopyOptions {
+    pub overwrite: bool,
+    pub depth_infinity: bool,
+    pub condition: Option<vfiles_domain::EntryWriteCondition>,
+}
+
 #[async_trait]
 pub trait WebdavWriteOps: Send + Sync {
     /// PUT（r110'b ✓ 商业级写面终件）：流式直传（`init_upload` + `complete_upload_from_stream` ✓
@@ -55,6 +62,24 @@ pub trait WebdavWriteOps: Send + Sync {
         overwrite: bool,
         depth_infinity: bool,
     ) -> DomainResult<()>;
+    async fn copy_entry_with_condition(
+        &self,
+        namespace_id: &NamespaceId,
+        source: &NormalizedPath,
+        destination: &NormalizedPath,
+        user_id: &UserId,
+        options: WebdavCopyOptions,
+    ) -> DomainResult<()> {
+        self.copy_entry(
+            namespace_id,
+            source,
+            destination,
+            user_id,
+            options.overwrite,
+            options.depth_infinity,
+        )
+        .await
+    }
 
     async fn move_entry(
         &self,
