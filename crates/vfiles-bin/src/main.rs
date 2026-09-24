@@ -1,3 +1,4 @@
+mod copy_cmd;
 mod import_cmd;
 
 use anyhow::{anyhow, bail};
@@ -48,6 +49,12 @@ enum Commands {
     },
     /// Import a local directory into a user's namespace
     Import(ImportArgs),
+    /// List files and directories in a user's namespace
+    Ls(NamespacePathArgs),
+    /// Copy a local file into a user's namespace
+    Ci(CopyIntoArgs),
+    /// Copy a file or directory from a user's namespace to the local filesystem
+    Co(CopyOutArgs),
     /// Run health checks
     Check,
     /// Maintenance tasks
@@ -55,6 +62,29 @@ enum Commands {
         #[command(subcommand)]
         command: MaintenanceCommands,
     },
+}
+
+#[derive(Debug, Args, Clone)]
+struct NamespacePathArgs {
+    path: Option<String>,
+    #[arg(long)]
+    owner: Option<String>,
+}
+
+#[derive(Debug, Args, Clone)]
+struct CopyIntoArgs {
+    source: PathBuf,
+    target: String,
+    #[arg(long)]
+    owner: Option<String>,
+}
+
+#[derive(Debug, Args, Clone)]
+struct CopyOutArgs {
+    source: String,
+    target: PathBuf,
+    #[arg(long)]
+    owner: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -290,6 +320,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Import(args) => {
             run_import_command(args).await?;
         }
+        Commands::Ls(args) => copy_cmd::run_ls(args.path, args.owner).await?,
+        Commands::Ci(args) => copy_cmd::run_ci(args.source, args.target, args.owner).await?,
+        Commands::Co(args) => copy_cmd::run_co(args.source, args.target, args.owner).await?,
         Commands::Check => {
             run_check().await?;
         }
@@ -2846,6 +2879,28 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ls_ci_and_co_commands_parse_expected_paths() {
+        assert!(matches!(
+            Cli::try_parse_from(["vfiles", "ls", "/docs"])
+                .unwrap()
+                .command,
+            Commands::Ls(_)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["vfiles", "ci", "local.txt", "docs/remote.txt"])
+                .unwrap()
+                .command,
+            Commands::Ci(_)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["vfiles", "co", "docs", "./download"])
+                .unwrap()
+                .command,
+            Commands::Co(_)
+        ));
+    }
 
     fn maintenance_config(interval_seconds: u64, initial_delay_seconds: u64) -> MaintenanceConfig {
         MaintenanceConfig {
