@@ -57,5 +57,8 @@ jobs:
       - name: Run S3 boto3 client probe
         run: ./crates/vfiles-s3/scripts/boto_probe.sh
 
+      - name: Run S3 rclone client probe
+        run: ./crates/vfiles-s3/scripts/rclone_probe.sh
+
       - name: Run rsync real-client probe
         run: ./crates/vfiles-rsync/scripts/rsync_probe.sh
