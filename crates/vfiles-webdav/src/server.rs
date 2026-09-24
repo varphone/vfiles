@@ -3274,19 +3274,23 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .to_string();
             // COPY reads the source without changing it; only the destination subtree
             // participates in write-lock preconditions.
-            if let Some(status) = write_subtree_precondition(
-                &app_ref,
-                &ns,
-                dest_hdr.trim_matches('/'),
-                if_owned.as_deref(),
-            )
-            .await
-            {
-                return Response::builder()
-                    .status(status)
-                    .body(Body::empty())
-                    .unwrap();
-            }
+            let (destination_lock_tokens, mut destination_lock_states) =
+                match write_subtree_precondition_snapshot(
+                    &app_ref,
+                    &ns,
+                    dest_hdr.trim_matches('/'),
+                    if_owned.as_deref(),
+                )
+                .await
+                {
+                    Ok(snapshot) => snapshot,
+                    Err(status) => {
+                        return Response::builder()
+                            .status(status)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
+                };
             let path = match vfiles_domain::types::NormalizedPath::new(&src_rel) {
                 Ok(p) => p,
                 Err(err) => {
@@ -3368,6 +3372,14 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         overwrite,
                         depth_infinity,
                         condition: copy_condition,
+                        destination_lock_states: {
+                            destination_lock_states.push(vfiles_domain::EntryLockSnapshot {
+                                path: dest_path.clone(),
+                                tokens: destination_lock_tokens,
+                                include_ancestors: true,
+                            });
+                            destination_lock_states
+                        },
                     },
                 )
                 .await

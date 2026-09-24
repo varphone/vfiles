@@ -1677,6 +1677,7 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
                     overwrite,
                     depth_infinity,
                     condition: None,
+                    destination_lock_states: Vec::new(),
                 },
             )
             .await
@@ -1700,6 +1701,7 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
                     overwrite: options.overwrite,
                     depth_infinity: options.depth_infinity,
                     condition: options.condition,
+                    destination_lock_states: options.destination_lock_states,
                 },
             )
             .await

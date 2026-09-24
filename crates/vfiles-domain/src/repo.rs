@@ -616,19 +616,12 @@ pub trait EntryRepo {
         &self,
         namespace_id: &NamespaceId,
         destination: &NormalizedPath,
-        entries: &[CopyEntrySpec],
+        copy: CopySubtreeSpec<'_>,
         overwrite: bool,
         user_id: &UserId,
         message: Option<&str>,
     ) -> DomainResult<(Vec<Entry>, Vec<BlobId>)> {
-        let _ = (
-            namespace_id,
-            destination,
-            entries,
-            overwrite,
-            user_id,
-            message,
-        );
+        let _ = (namespace_id, destination, copy, overwrite, user_id, message);
         Err(DomainError::Internal {
             message: "Atomic subtree COPY is not supported by this repository".into(),
         })

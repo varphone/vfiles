@@ -16,6 +16,7 @@ pub struct WebdavCopyOptions {
     pub overwrite: bool,
     pub depth_infinity: bool,
     pub condition: Option<vfiles_domain::EntryWriteCondition>,
+    pub destination_lock_states: Vec<vfiles_domain::EntryLockSnapshot>,
 }
 
 #[async_trait]

@@ -3973,11 +3973,12 @@ impl EntryRepo for SqliteEntryRepo {
         &self,
         namespace_id: &NamespaceId,
         destination: &NormalizedPath,
-        entries: &[vfiles_domain::CopyEntrySpec],
+        copy: vfiles_domain::CopySubtreeSpec<'_>,
         overwrite: bool,
         user_id: &UserId,
         message: Option<&str>,
     ) -> DomainResult<(Vec<Entry>, Vec<BlobId>)> {
+        let entries = copy.entries;
         if entries.is_empty() || !entries.iter().any(|entry| entry.path == *destination) {
             return Err(DomainError::Validation {
                 message: "COPY entries must include the destination root".into(),
@@ -4011,6 +4012,19 @@ impl EntryRepo for SqliteEntryRepo {
                 .map_err(|e| DomainError::Internal {
                     message: format!("Failed to begin atomic subtree COPY: {e}"),
                 })?;
+        verify_write_lock_snapshot(
+            &mut tx,
+            &vfiles_domain::EntryWriteCondition {
+                namespace_id: *namespace_id,
+                path: destination.clone(),
+                check_entry_state: false,
+                expected_entry_id: None,
+                expected_version_id: None,
+                expected_lock_tokens: None,
+                expected_additional_lock_states: Some(copy.destination_lock_states.to_vec()),
+            },
+        )
+        .await?;
         let parent_path = destination
             .as_str()
             .rsplit_once('/')
@@ -9012,12 +9026,15 @@ mod entry_version_batch_tests {
             .replace_subtree_with_copy(
                 &namespace_id,
                 &destination,
-                &[CopyEntrySpec {
-                    path: destination.clone(),
-                    entry_type: EntryKind::File,
-                    version: Some(source_version),
-                    properties: Vec::new(),
-                }],
+                CopySubtreeSpec {
+                    entries: &[CopyEntrySpec {
+                        path: destination.clone(),
+                        entry_type: EntryKind::File,
+                        version: Some(source_version),
+                        properties: Vec::new(),
+                    }],
+                    destination_lock_states: &[],
+                },
                 true,
                 &user_id,
                 Some("atomic copy failure"),
@@ -9060,12 +9077,15 @@ mod entry_version_batch_tests {
             .replace_subtree_with_copy(
                 &namespace_id,
                 &destination,
-                &[CopyEntrySpec {
-                    path: destination.clone(),
-                    entry_type: EntryKind::File,
-                    version: Some(good_version),
-                    properties: Vec::new(),
-                }],
+                CopySubtreeSpec {
+                    entries: &[CopyEntrySpec {
+                        path: destination.clone(),
+                        entry_type: EntryKind::File,
+                        version: Some(good_version),
+                        properties: Vec::new(),
+                    }],
+                    destination_lock_states: &[],
+                },
                 true,
                 &user_id,
                 Some("atomic copy success"),
@@ -10055,12 +10075,42 @@ mod webdav_lock_repo_tests {
             ..condition.clone()
         };
         let destination_move_result = entry_repo
-            .move_entries_if_current(&[(entry_id, destination)], &destination_condition)
+            .move_entries_if_current(&[(entry_id, destination.clone())], &destination_condition)
             .await;
         assert!(matches!(
             destination_move_result,
             Err(DomainError::PreconditionFailed)
         ));
+        let copy_result = entry_repo
+            .replace_subtree_with_copy(
+                &namespace_id,
+                &destination,
+                CopySubtreeSpec {
+                    entries: &[CopyEntrySpec {
+                        path: destination.clone(),
+                        entry_type: EntryKind::Directory,
+                        version: None,
+                        properties: Vec::new(),
+                    }],
+                    destination_lock_states: &[vfiles_domain::EntryLockSnapshot {
+                        path: destination.clone(),
+                        tokens: Vec::new(),
+                        include_ancestors: true,
+                    }],
+                },
+                true,
+                &user_id,
+                Some("copy lock race"),
+            )
+            .await;
+        assert!(matches!(copy_result, Err(DomainError::PreconditionFailed)));
+        assert!(
+            entry_repo
+                .find_by_path(&namespace_id, &destination)
+                .await
+                .expect("copy destination lookup should succeed")
+                .is_none()
+        );
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entry_properties")
             .fetch_one(&pool)
             .await

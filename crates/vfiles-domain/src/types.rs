@@ -201,6 +201,13 @@ pub struct CopyEntrySpec {
     pub properties: Vec<(String, String)>,
 }
 
+/// Fully prepared COPY tree and its destination lock snapshot for one atomic commit.
+#[derive(Debug, Clone)]
+pub struct CopySubtreeSpec<'a> {
+    pub entries: &'a [CopyEntrySpec],
+    pub destination_lock_states: &'a [crate::EntryLockSnapshot],
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectoryVersion {
     pub id: VersionId,

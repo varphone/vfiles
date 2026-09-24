@@ -12,6 +12,7 @@ pub struct CopyOptions {
     pub overwrite: bool,
     pub depth_infinity: bool,
     pub condition: Option<EntryWriteCondition>,
+    pub destination_lock_states: Vec<EntryLockSnapshot>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -2284,6 +2285,7 @@ where
                 overwrite,
                 depth_infinity: true,
                 condition: None,
+                destination_lock_states: Vec::new(),
             },
         )
         .await
@@ -2303,6 +2305,7 @@ where
             overwrite,
             depth_infinity,
             condition,
+            destination_lock_states,
         } = options;
         let condition = condition.as_ref();
         if source.as_str() == destination.as_str() {
@@ -2445,7 +2448,10 @@ where
             .replace_subtree_with_copy(
                 namespace_id,
                 destination,
-                &copy_entries,
+                CopySubtreeSpec {
+                    entries: &copy_entries,
+                    destination_lock_states: &destination_lock_states,
+                },
                 overwrite,
                 user_id,
                 message,
@@ -5469,6 +5475,7 @@ mod tests {
                     overwrite: true,
                     depth_infinity: true,
                     condition: Some(stale_condition.clone()),
+                    destination_lock_states: Vec::new(),
                 },
             )
             .await;
@@ -5499,6 +5506,7 @@ mod tests {
                     overwrite: true,
                     depth_infinity: true,
                     condition: Some(current_condition),
+                    destination_lock_states: Vec::new(),
                 },
             )
             .await
@@ -6193,6 +6201,7 @@ mod tests {
                     overwrite: false,
                     depth_infinity: false,
                     condition: None,
+                    destination_lock_states: Vec::new(),
                 },
             )
             .await
@@ -6256,6 +6265,7 @@ mod tests {
                     overwrite: false,
                     depth_infinity: true,
                     condition: None,
+                    destination_lock_states: Vec::new(),
                 },
             )
             .await
