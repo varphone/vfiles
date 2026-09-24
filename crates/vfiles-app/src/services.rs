@@ -3428,10 +3428,20 @@ where
             }
         };
 
-        self.upload_store
-            .complete_upload_session(&session.id)
-            .await?;
-        let upload = self.upload_store.get_upload_session(&session.id).await?;
+        let mut upload = session.clone();
+        upload.state = UploadState::Completed;
+        let completed_at = time::OffsetDateTime::now_utc();
+        upload.completed_at = Some(completed_at);
+        upload.updated_at = completed_at;
+        if let Err(err) = self.upload_store.complete_upload_session(&session.id).await {
+            // The object version is already committed. Returning an error here
+            // would tell the client to retry a write that has in fact succeeded.
+            tracing::warn!(
+                upload_id = %session.id,
+                error = ?err,
+                "failed to mark committed upload session complete"
+            );
+        }
         if let Err(err) = self.upload_store.cancel_upload_session(&session.id).await {
             tracing::warn!(
                 upload_id = %session.id,
@@ -4431,6 +4441,27 @@ mod tests {
         SqlitePoolFactory, SqliteSnapshotRepo, SqliteUserRepo,
     };
 
+    struct CorruptUploadMetadataReader {
+        path: std::path::PathBuf,
+        bytes: &'static [u8],
+        emitted: bool,
+    }
+
+    impl tokio::io::AsyncRead for CorruptUploadMetadataReader {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            if !self.emitted {
+                std::fs::write(&self.path, b"corrupted after session lookup")?;
+                buf.put_slice(self.bytes);
+                self.emitted = true;
+            }
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
     struct TestContext {
         _temp_dir: TempDir,
         storage_root: Utf8PathBuf,
@@ -4903,6 +4934,66 @@ mod tests {
                 .expect("racing directory should remain")
                 .entry_type,
             EntryKind::Directory
+        );
+    }
+
+    #[tokio::test]
+    async fn committed_upload_succeeds_when_session_cleanup_metadata_is_unreadable() {
+        let context = TestContext::new().await;
+        let root = TestContext::path("");
+        let bytes = b"object committed before session cleanup";
+        let upload = context
+            .upload_service
+            .init_upload(
+                &context.namespace_id,
+                &root,
+                "committed.txt",
+                bytes.len() as u64,
+                None,
+                None,
+                &context.user_id,
+            )
+            .await
+            .expect("upload should initialize");
+        let metadata_path = context
+            .storage_root
+            .join("uploads")
+            .join(upload.upload_id.to_string())
+            .join("metadata.json")
+            .into_std_path_buf();
+
+        let completed = context
+            .upload_service
+            .complete_upload_from_stream(
+                &upload.upload_id,
+                None,
+                None,
+                Box::new(CorruptUploadMetadataReader {
+                    path: metadata_path,
+                    bytes,
+                    emitted: false,
+                }),
+            )
+            .await
+            .expect("session cleanup failure must not turn a committed object into a failed write");
+
+        assert_eq!(completed.upload.state, UploadState::Completed);
+        assert_eq!(
+            context
+                .blob_store
+                .get_blob(completed.version.blob_id.as_ref().unwrap())
+                .await
+                .expect("blob lookup should succeed")
+                .expect("committed blob should exist"),
+            bytes
+        );
+        assert!(
+            !context
+                .storage_root
+                .join("uploads")
+                .join(upload.upload_id.to_string())
+                .exists(),
+            "upload session storage should be removed best-effort"
         );
     }
 
