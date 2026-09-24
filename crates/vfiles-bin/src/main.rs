@@ -2088,15 +2088,20 @@ fn load_rsync_auth(cfg: &vfiles_config::RsyncConfig) -> vfiles_rsync::AuthConfig
 }
 
 /// rsync 数据后端（domain 链装配 ✗ 下载/上传/删除三面同源）。
+type RsyncStatMap = std::collections::HashMap<String, (u64, i64)>;
+type RsyncDirectoryStatCache = std::collections::HashMap<String, RsyncStatMap>;
+
 struct RepoBackend {
     repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
     workspace: std::sync::Arc<vfiles_app::DefaultWorkspaceService>,
     upload: RsyncUploadService,
     namespace: vfiles_domain::NamespaceId,
     owner: vfiles_domain::UserId,
-    /// 连接级 stat 缓存（一次 `files_with_meta` 覆盖全树 ✗ 避免逐文件点查）。
-    stat_cache: tokio::sync::OnceCell<std::collections::HashMap<String, (u64, i64)>>,
+    /// 按父目录缓存 stat，限制一次小范围同步读取并保留的命名空间数据量。
+    stat_cache: tokio::sync::RwLock<RsyncDirectoryStatCache>,
 }
+
+const RSYNC_STAT_CACHE_MAX_DIRECTORIES: usize = 128;
 
 #[async_trait::async_trait]
 impl vfiles_rsync::RsyncBackend for RepoBackend {
@@ -2131,31 +2136,37 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
     }
 
     async fn stat(&self, path: &str) -> Result<Option<(u64, i64)>, String> {
-        let map = self
-            .stat_cache
-            .get_or_try_init(|| async {
-                let metas = self
-                    .repo
-                    .files_with_meta(&self.namespace)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok::<_, String>(
-                    metas
-                        .into_iter()
-                        .map(|m| {
-                            (
-                                m.entry.path_norm.as_str().to_string(),
-                                (
-                                    m.size_bytes.unwrap_or(0),
-                                    m.source_mtime.unwrap_or(i64::MIN),
-                                ),
-                            )
-                        })
-                        .collect(),
+        let (parent, _) = path.rsplit_once('/').unwrap_or(("", path));
+        {
+            let cache = self.stat_cache.read().await;
+            if let Some(entries) = cache.get(parent) {
+                return Ok(entries.get(path).copied());
+            }
+        }
+        let parent_path = vfiles_domain::NormalizedPath::new(parent).map_err(|e| e.to_string())?;
+        let entries: std::collections::HashMap<String, (u64, i64)> = self
+            .repo
+            .children_with_meta(&self.namespace, &parent_path)
+            .await
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|meta| meta.entry.entry_type == vfiles_domain::EntryKind::File)
+            .map(|meta| {
+                (
+                    meta.entry.path_norm.as_str().to_string(),
+                    (
+                        meta.size_bytes.unwrap_or(0),
+                        meta.source_mtime.unwrap_or(i64::MIN),
+                    ),
                 )
             })
-            .await?;
-        Ok(map.get(path).copied())
+            .collect();
+        let mut cache = self.stat_cache.write().await;
+        if cache.len() >= RSYNC_STAT_CACHE_MAX_DIRECTORIES {
+            cache.clear();
+        }
+        let entries = cache.entry(parent.to_string()).or_insert(entries);
+        Ok(entries.get(path).copied())
     }
 
     async fn write(&self, path: String, data: Vec<u8>, mtime: i64) -> Result<(), String> {
@@ -2215,6 +2226,7 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
         {
             tracing::warn!(error = %e, path = %path, "rsync：记录源 mtime 失败");
         }
+        self.stat_cache.write().await.remove(&parent_str);
         Ok(())
     }
 
@@ -2244,7 +2256,10 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
             )
             .await
         {
-            Ok(_) | Err(vfiles_domain::DomainError::NotFound { .. }) => Ok(()),
+            Ok(_) | Err(vfiles_domain::DomainError::NotFound { .. }) => {
+                self.stat_cache.write().await.clear();
+                Ok(())
+            }
             Err(e) => Err(e.to_string()),
         }
     }
@@ -2262,8 +2277,9 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
         self.workspace
             .create_directory(&self.namespace, &np, Some("rsync mkdir"), &self.owner)
             .await
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        self.stat_cache.write().await.clear();
+        Ok(())
     }
 }
 
@@ -2306,7 +2322,9 @@ fn build_and_spawn_rsync(
                                         upload,
                                         namespace: ns,
                                         owner,
-                                        stat_cache: tokio::sync::OnceCell::new(),
+                                        stat_cache: tokio::sync::RwLock::new(
+                                            std::collections::HashMap::new(),
+                                        ),
                                     };
                                     let res = vfiles_rsync::handle_conn(
                                         stream,
