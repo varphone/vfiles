@@ -25,7 +25,7 @@
 | 边界/错误语义 | ✅ Depth infinity = 400 ✓ If 复杂式 = 412 记档 ✓ 锁冲突 = 423 ✓ token 不配 = 409 ✓ |
 | **GET 流式化** | ✅ **r201-02 收口**（`get_stream` 直通 + ReaderStream ✓ **10MB sha256 一致性证** ✓ 内存爆除） |
 | COPY | ✅ **已接线**（`WebdavWriteOps::copy_entry` → `DefaultWorkspaceService::copy_entries`；目标覆盖、子树保护、blob 复用与递归目录复制均有实现） |
-| **台架缺口注** | cadaver 0.24 基础读写/目录/COPY/MOVE 由 `scripts/cadaver_probe.sh` 自动回归并接入 CI；rclone 1.60.1-DEV 已实测 MKCOL/PUT/list/GET；系统 litmus 完整套件实测 104/104 通过。两条 warning 已核对：HTTP URI parser 在进入 DAV handler 前剥离 fragment；RFC 4918 §10.4 要求 false `If` 条件返回 412，尽管 litmus 的提示期望 423；Windows 客户端仍待测 |
+| **台架缺口注** | cadaver、rclone 实际文件操作与系统 litmus 104 项套件均由独立探针自动回归并接入 CI；rclone 覆盖 MKCOL/PUT/list/GET/空目录/check/MOVE/DELETE。两条 warning 已核对：HTTP URI parser 在进入 DAV handler 前剥离 fragment；RFC 4918 §10.4 要求 false `If` 条件返回 412，尽管 litmus 的提示期望 423；Windows 客户端仍待测 |
 
 ## 当前工作树补充（多 scope 锁与请求 scope 校验）
 
