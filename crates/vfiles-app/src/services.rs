@@ -2440,7 +2440,7 @@ where
                     .unwrap_or_default(),
             });
         }
-        let (replaced_entries, blob_refs) = self
+        let (_, blob_refs) = self
             .entry_repo
             .replace_subtree_with_copy(
                 namespace_id,
@@ -2451,62 +2451,18 @@ where
                 message,
             )
             .await?;
-        let released_blobs = self.entry_repo.release_blob_references(&blob_refs).await?;
-        for blob_id in released_blobs {
-            if let Err(error) = self.blob_store.delete_blob(&blob_id).await {
-                tracing::warn!(%blob_id, %error, "failed to remove blob released by COPY overwrite");
+        match self.entry_repo.release_blob_references(&blob_refs).await {
+            Ok(released_blobs) => {
+                for blob_id in released_blobs {
+                    if let Err(error) = self.blob_store.delete_blob(&blob_id).await {
+                        tracing::warn!(%blob_id, %error, "failed to remove blob released by COPY overwrite");
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "failed to release overwritten COPY blob references")
             }
         }
-
-        let mut snapshot_entries = replaced_entries
-            .iter()
-            .map(|entry| {
-                pending_snapshot_entry(
-                    entry.id,
-                    &entry.path_norm,
-                    entry.entry_type,
-                    None,
-                    ChangeType::Deleted,
-                )
-            })
-            .collect::<Vec<_>>();
-        let copied = self
-            .entry_repo
-            .find_subtree(namespace_id, destination)
-            .await?;
-        let changed_entries = replaced_entries
-            .iter()
-            .map(|entry| ChangedEntry {
-                entry_id: entry.id,
-                path: entry.path_norm.as_str().to_string(),
-                kind: entry.entry_type,
-                current_version_id: entry.current_version_id,
-                change_type: ChangeType::Deleted,
-            })
-            .chain(copied.iter().map(|entry| ChangedEntry {
-                entry_id: entry.id,
-                path: entry.path_norm.as_str().to_string(),
-                kind: entry.entry_type,
-                current_version_id: entry.current_version_id,
-                change_type: ChangeType::Added,
-            }))
-            .collect();
-        snapshot_entries = collect_snapshot_state(
-            &self.entry_repo,
-            namespace_id,
-            std::mem::take(&mut snapshot_entries),
-        )
-        .await?;
-        finalize_mutation(
-            &self.snapshot_repo,
-            namespace_id,
-            message,
-            user_id,
-            changed_entries,
-            snapshot_entries,
-            Vec::new(),
-        )
-        .await?;
         Ok(())
     }
 

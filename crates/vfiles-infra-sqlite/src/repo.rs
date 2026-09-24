@@ -4069,6 +4069,90 @@ impl EntryRepo for SqliteEntryRepo {
                 })?;
             }
         }
+
+        let snapshot_no: i64 = sqlx::query_scalar(
+            r#"SELECT COALESCE(MAX(CASE
+                    WHEN instr(name, '-') > 0
+                    THEN CAST(substr(name, instr(name, '-') + 1) AS INTEGER)
+                    ELSE 0 END), 0) + 1
+               FROM snapshots WHERE namespace_id = ?"#,
+        )
+        .bind(namespace_id.to_string())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to allocate COPY snapshot number: {e}"),
+        })?;
+        let snapshot_number = u32::try_from(snapshot_no).map_err(|e| DomainError::Internal {
+            message: format!("Invalid COPY snapshot number: {e}"),
+        })?;
+        let snapshot_id = SnapshotId::new();
+        let snapshot_time = time::OffsetDateTime::now_utc();
+        sqlx::query(
+            "INSERT INTO snapshots (id, namespace_id, name, description, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(snapshot_id.to_string())
+        .bind(namespace_id.to_string())
+        .bind(snapshot_name(SnapshotKind::AutoCommit, snapshot_number))
+        .bind(message.map(str::trim).filter(|message| !message.is_empty()))
+        .bind(snapshot_time)
+        .bind(user_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to create atomic COPY snapshot: {e}"),
+        })?;
+        for replaced_entry in &replaced_entries {
+            sqlx::query(
+                "INSERT INTO snapshot_entries (snapshot_id, entry_id, entry_path, entry_kind, change_type, created_by, created_at) VALUES (?, ?, ?, ?, 'deleted', ?, ?)",
+            )
+            .bind(snapshot_id.to_string())
+            .bind(replaced_entry.id.to_string())
+            .bind(replaced_entry.path_norm.as_str())
+            .bind(entry_kind_as_str(replaced_entry.entry_type))
+            .bind(user_id.to_string())
+            .bind(snapshot_time)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to snapshot overwritten COPY entry: {e}"),
+            })?;
+        }
+        sqlx::query(
+            r#"INSERT INTO snapshot_entries (
+                   snapshot_id, entry_id, entry_version_id, entry_path, entry_kind,
+                   blob_id, size, content_type, version_no, change_type, created_by, created_at
+               )
+               SELECT ?, e.id, v.id, e.path, e.kind, v.blob_id, v.size, v.content_type,
+                      v.version, CASE WHEN v.version IS NULL OR v.version <= 1
+                                      THEN 'added' ELSE 'modified' END,
+                      COALESCE(v.created_by, ?), COALESCE(v.created_at, ?)
+               FROM entries e
+               LEFT JOIN entry_versions v ON v.id = (
+                   SELECT current.id FROM entry_versions current
+                   WHERE current.entry_id = e.id ORDER BY current.version DESC LIMIT 1
+               )
+               WHERE e.namespace_id = ?"#,
+        )
+        .bind(snapshot_id.to_string())
+        .bind(user_id.to_string())
+        .bind(snapshot_time)
+        .bind(namespace_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to snapshot COPY namespace state: {e}"),
+        })?;
+        sqlx::query(
+            "UPDATE blobs SET ref_count = ref_count + (SELECT COUNT(*) FROM snapshot_entries WHERE snapshot_id = ? AND blob_id = blobs.id) WHERE id IN (SELECT blob_id FROM snapshot_entries WHERE snapshot_id = ? AND blob_id IS NOT NULL)",
+        )
+        .bind(snapshot_id.to_string())
+        .bind(snapshot_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to retain blobs referenced by COPY snapshot: {e}"),
+        })?;
         tx.commit().await.map_err(|e| DomainError::Internal {
             message: format!("Failed to commit atomic subtree COPY: {e}"),
         })?;
@@ -8645,8 +8729,18 @@ mod entry_version_batch_tests {
             )
             .await
             .expect("source should be created");
+        let source_blob = BlobId::new();
+        let source_hash = ContentHash::new(&"1".repeat(64)).expect("hash should parse");
         let mut source_version = repo
-            .create_version(&source_id, None, None, 4, None, &user_id, Some("source"))
+            .create_version(
+                &source_id,
+                Some(&source_blob),
+                Some(&source_hash),
+                4,
+                None,
+                &user_id,
+                Some("source"),
+            )
             .await
             .expect("source version should be created");
         source_version.blob_id = Some(BlobId::new());
@@ -8674,6 +8768,62 @@ mod entry_version_batch_tests {
                 .expect("old destination must survive rollback")
                 .id,
             old_id
+        );
+        let snapshot_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM snapshots WHERE namespace_id = ?")
+                .bind(namespace_id.to_string())
+                .fetch_one(&pool)
+                .await
+                .expect("snapshot count should be queryable");
+        assert_eq!(snapshot_count, 0, "failed COPY must roll back its snapshot");
+
+        let source = repo
+            .find_by_path(
+                &namespace_id,
+                &NormalizedPath::new("source.txt").expect("source path should parse"),
+            )
+            .await
+            .expect("source lookup should succeed")
+            .expect("source should exist");
+        let good_version = repo
+            .find_version(
+                &source
+                    .current_version_id
+                    .expect("source current version should exist"),
+            )
+            .await
+            .expect("source version should be readable");
+        repo.replace_subtree_with_copy(
+            &namespace_id,
+            &destination,
+            &[CopyEntrySpec {
+                path: destination.clone(),
+                entry_type: EntryKind::File,
+                version: Some(good_version),
+                properties: Vec::new(),
+            }],
+            true,
+            &user_id,
+            Some("atomic copy success"),
+        )
+        .await
+        .expect("valid copy should commit");
+        let snapshot_rows: Vec<String> = sqlx::query_scalar(
+            "SELECT change_type FROM snapshot_entries WHERE entry_path = ? ORDER BY change_type",
+        )
+        .bind(destination.as_str())
+        .fetch_all(&pool)
+        .await
+        .expect("COPY snapshot rows should be readable");
+        assert_eq!(snapshot_rows, vec!["added", "deleted"]);
+        let source_blob_refs: i64 = sqlx::query_scalar("SELECT ref_count FROM blobs WHERE id = ?")
+            .bind(source_blob.to_string())
+            .fetch_one(&pool)
+            .await
+            .expect("source blob should remain referenced");
+        assert_eq!(
+            source_blob_refs, 4,
+            "source, copy, and their two snapshot entries own refs"
         );
 
         pool.close().await;
