@@ -2916,14 +2916,22 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 }
             };
             // r7 锁前置（PROPPATCH 此前零检查 ✗ 摆设缺口 ×3）
-            if let Some(status) =
-                write_precondition(&app_ref, &ns, path.as_str(), if_owned.as_deref()).await
+            let expected_lock_tokens = match write_precondition_snapshot(
+                &app_ref,
+                &ns,
+                path.as_str(),
+                if_owned.as_deref(),
+            )
+            .await
             {
-                return Response::builder()
-                    .status(status)
-                    .body(Body::empty())
-                    .unwrap();
-            }
+                Ok(tokens) => tokens,
+                Err(status) => {
+                    return Response::builder()
+                        .status(status)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            };
             let ops = match crate::response::parse_propertyupdate(&body_owned) {
                 Ok(ops) => ops,
                 Err(()) => {
@@ -2979,11 +2987,25 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         }
                     })
                     .collect();
+                let condition = vfiles_domain::EntryWriteCondition {
+                    namespace_id: ns,
+                    path: path.clone(),
+                    check_entry_state: true,
+                    expected_entry_id: Some(entry.id),
+                    expected_version_id: entry.current_version_id,
+                    expected_lock_tokens: Some(expected_lock_tokens),
+                };
                 if let Err(error) = app_ref
                     .entry_repo
-                    .apply_entry_property_changes(&entry.id, &changes)
+                    .apply_entry_property_changes_if_current(&entry.id, &changes, &condition)
                     .await
                 {
+                    if matches!(&error, vfiles_domain::DomainError::PreconditionFailed) {
+                        return Response::builder()
+                            .status(StatusCode::PRECONDITION_FAILED)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
                     tracing::error!(%error, path = path.as_str(), "WebDAV PROPPATCH 事务失败");
                     results.extend(
                         ops.into_iter()

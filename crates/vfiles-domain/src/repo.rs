@@ -356,6 +356,33 @@ pub trait EntryRepo {
         })
     }
 
+    /// Apply a property patch only if the observed entry and covering lock state remain current.
+    async fn apply_entry_property_changes_if_current(
+        &self,
+        entry_id: &crate::types::EntryId,
+        changes: &[EntryPropertyChange],
+        condition: &EntryWriteCondition,
+    ) -> DomainResult<()> {
+        if condition.expected_lock_tokens.is_some() || condition.check_entry_state {
+            return Err(DomainError::Internal {
+                message: "Conditional entry property patches are not supported by this repository"
+                    .into(),
+            });
+        }
+        self.apply_entry_property_changes(entry_id, changes).await
+    }
+
+    async fn apply_entry_property_changes_inner(
+        &self,
+        _entry_id: &crate::types::EntryId,
+        _changes: &[EntryPropertyChange],
+        _condition: Option<&EntryWriteCondition>,
+    ) -> DomainResult<()> {
+        Err(DomainError::Internal {
+            message: "Atomic entry property patches are not supported by this repository".into(),
+        })
+    }
+
     /// 按 entry 批量拉属性（PROPFIND children 一次 ✗ r4 批量式复用 ✓）。
     async fn list_entry_properties(
         &self,

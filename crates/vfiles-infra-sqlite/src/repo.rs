@@ -2275,9 +2275,85 @@ impl EntryRepo for SqliteEntryRepo {
         entry_id: &vfiles_domain::types::EntryId,
         changes: &[vfiles_domain::EntryPropertyChange],
     ) -> DomainResult<()> {
-        let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
-            message: format!("Failed to begin entry property patch: {e}"),
-        })?;
+        self.apply_entry_property_changes_inner(entry_id, changes, None)
+            .await
+    }
+
+    async fn apply_entry_property_changes_if_current(
+        &self,
+        entry_id: &vfiles_domain::types::EntryId,
+        changes: &[vfiles_domain::EntryPropertyChange],
+        condition: &vfiles_domain::EntryWriteCondition,
+    ) -> DomainResult<()> {
+        self.apply_entry_property_changes_inner(entry_id, changes, Some(condition))
+            .await
+    }
+
+    async fn apply_entry_property_changes_inner(
+        &self,
+        entry_id: &vfiles_domain::types::EntryId,
+        changes: &[vfiles_domain::EntryPropertyChange],
+        condition: Option<&vfiles_domain::EntryWriteCondition>,
+    ) -> DomainResult<()> {
+        let mut tx =
+            self.pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to begin entry property patch: {e}"),
+                })?;
+        if let Some(condition) = condition {
+            if condition.check_entry_state {
+                let current: Option<(String, Option<String>)> = sqlx::query_as(
+                    "SELECT e.id, (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1) FROM entries e WHERE e.namespace_id = ? AND e.path = ?",
+                )
+                .bind(condition.namespace_id.to_string())
+                .bind(condition.path.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to verify conditional property patch state: {e}"),
+                })?;
+                let expected = condition.expected_entry_id.map(|id| {
+                    (
+                        id.to_string(),
+                        condition
+                            .expected_version_id
+                            .map(|version| version.to_string()),
+                    )
+                });
+                if current != expected || condition.expected_entry_id != Some(*entry_id) {
+                    return Err(DomainError::PreconditionFailed);
+                }
+            }
+            if let Some(expected_tokens) = &condition.expected_lock_tokens {
+                let now = time::OffsetDateTime::now_utc()
+                    .unix_timestamp_nanos()
+                    .div_euclid(1_000_000)
+                    .clamp(0, i64::MAX as i128) as i64;
+                let current_tokens: Vec<String> = sqlx::query_scalar(
+                    r#"SELECT token FROM webdav_locks
+                       WHERE namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)
+                         AND (path = ? OR (depth_infinity = 1 AND
+                           (path = '' OR substr(?, 1, length(path) + 1) = path || '/')))
+                       ORDER BY token"#,
+                )
+                .bind(condition.namespace_id.to_string())
+                .bind(now)
+                .bind(condition.path.as_str())
+                .bind(condition.path.as_str())
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to verify conditional property patch locks: {e}"),
+                })?;
+                let mut expected_tokens = expected_tokens.clone();
+                expected_tokens.sort_unstable();
+                if current_tokens != expected_tokens {
+                    return Err(DomainError::PreconditionFailed);
+                }
+            }
+        }
         for change in changes {
             match change {
                 vfiles_domain::EntryPropertyChange::Set { name, value } => {
@@ -9784,6 +9860,83 @@ mod webdav_lock_repo_tests {
             .await
             .expect("property count should be queryable");
         assert_eq!(remaining, 0, "failed patches must roll back earlier writes");
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn conditional_property_patch_rejects_a_lock_added_after_precheck() {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-property-patch-lock-race-test-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
+        let user_id = user_repo
+            .create_admin("admin", "admin@example.com", "hashed-password")
+            .await
+            .expect("admin user should be created");
+        let namespace_id = namespace_repo
+            .create_default(&user_id, "default")
+            .await
+            .expect("default namespace should be created");
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+        let path = NormalizedPath::new("locked.txt").expect("path should parse");
+        let entry_id = entry_repo
+            .create_entry(&namespace_id, &path, EntryKind::File, &user_id)
+            .await
+            .expect("entry should be created");
+        let lock_repo = SqliteWebdavLockRepo::new(pool.clone());
+        assert!(
+            lock_repo
+                .acquire(
+                    &namespace_id,
+                    path.as_str(),
+                    NewWebdavLock {
+                        token: "opaquelocktoken:new-lock",
+                        owner: "alice",
+                        depth_infinity: false,
+                        scope: WebdavLockScope::Exclusive,
+                        expires_at: None,
+                        now: 1_000,
+                    },
+                )
+                .await
+                .expect("lock should be created after request precheck")
+        );
+
+        let condition = vfiles_domain::EntryWriteCondition {
+            namespace_id,
+            path,
+            check_entry_state: true,
+            expected_entry_id: Some(entry_id),
+            expected_version_id: None,
+            expected_lock_tokens: Some(Vec::new()),
+        };
+        let result = entry_repo
+            .apply_entry_property_changes_if_current(
+                &entry_id,
+                &[EntryPropertyChange::Set {
+                    name: "urn:test#property".to_string(),
+                    value: "must-not-be-written".to_string(),
+                }],
+                &condition,
+            )
+            .await;
+        assert!(matches!(result, Err(DomainError::PreconditionFailed)));
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entry_properties")
+            .fetch_one(&pool)
+            .await
+            .expect("property count should be queryable");
+        assert_eq!(count, 0, "the rejected patch must not write properties");
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);
