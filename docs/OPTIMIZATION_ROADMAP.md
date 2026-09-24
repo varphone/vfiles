@@ -518,8 +518,8 @@
   `limit`/`offset`/`commit`；`limit` 夹取到 `1..=1000`（默认 200），响应为
   `EntryPageDto { items, total, limit, offset, has_more }`（`has_more` 由
   `offset + items.len() < total` 计算，避免客户端自行推断）。
-- 分页与既有 `/tree` 接口共用同一套命名空间/提交快照读取路径（`fetch_entry_items`），
-  保持权限、`commit` 历史浏览与排序语义完全一致；`/tree` 保持不变以兼容
+- 目录页分别走实时目录 SQL 分页和历史快照直属项分页；两条路径保持目录优先、名称升序，
+  并校验工作区范围。历史快照页不再先装载并重建整棵快照树；`/tree` 保持不变以兼容
   `getFiles` 的既有调用方（如移动对话框的重名检查）。
 - 前端：`files.service.getFilesPage()`；`files.store` 新增 `totalFiles` /
   `hasMoreFiles` / `loadingMoreFiles` 与 `loadMoreFiles()`（沿用 `loadSequence`

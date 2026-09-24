@@ -252,6 +252,15 @@ pub struct SnapshotEntry {
     pub created_at: Option<time::OffsetDateTime>,
 }
 
+/// One immediate child in a snapshot tree. Direct snapshot records retain their metadata;
+/// implicit directories synthesized from descendant paths have no backing entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotTreeChild {
+    pub path: NormalizedPath,
+    pub kind: EntryKind,
+    pub entry: Option<SnapshotEntry>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Blob {
     pub id: BlobId,

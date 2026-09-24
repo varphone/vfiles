@@ -2268,6 +2268,25 @@ async fn directory_history_returns_snapshot_commits_for_tree_and_content_browsin
     );
     assert_eq!(entries[0]["size_bytes"], Value::from(3));
 
+    let historical_page = app
+        .request_as_admin(
+            Request::builder()
+                .uri(format!(
+                    "/api/files/list/docs?commit={snapshot_id}&limit=1&offset=0"
+                ))
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(historical_page.status(), StatusCode::OK);
+    let historical_page = response_json(historical_page).await;
+    assert_eq!(historical_page["total"], Value::from(1));
+    assert_eq!(historical_page["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        historical_page["items"][0]["path"],
+        Value::String("docs/note.txt".to_string())
+    );
+
     let content = app
         .request_as_admin(
             Request::builder()

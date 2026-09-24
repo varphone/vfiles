@@ -267,8 +267,32 @@ async fn paginated_listing(
     let offset = query.offset.unwrap_or(0);
 
     if let Some(commit) = query.commit.as_deref() {
-        let items = fetch_entry_items(state, namespace_id, path, Some(commit)).await?;
-        return Ok(Json(paginate(items, Some(limit), Some(offset))));
+        let snapshot_id = parse_snapshot_id(Some(commit))?.ok_or_else(|| {
+            ApiError::Domain(DomainError::Validation {
+                message: "Invalid snapshot ID".to_string(),
+            })
+        })?;
+        let (items, total) = state
+            .workspace_service
+            .snapshot_children_page(
+                namespace_id,
+                path,
+                &snapshot_id,
+                limit as u32,
+                u32::try_from(offset).unwrap_or(u32::MAX),
+            )
+            .await?;
+        let items: Vec<EntryDto> = items.into_iter().map(Into::into).collect();
+        let total = total as usize;
+        let offset = offset.min(total);
+        let end = (offset + items.len()).min(total);
+        return Ok(Json(EntryPageDto {
+            items,
+            total,
+            limit,
+            offset,
+            has_more: end < total,
+        }));
     }
 
     let (items, total) = state
@@ -293,43 +317,6 @@ async fn paginated_listing(
         offset,
         has_more: end < total,
     }))
-}
-
-async fn fetch_entry_items(
-    state: &AppState,
-    namespace_id: &NamespaceId,
-    path: &NormalizedPath,
-    commit: Option<&str>,
-) -> ApiResult<Vec<EntryDto>> {
-    let snapshot_id = parse_snapshot_id(commit)?;
-    let tree = state
-        .workspace_service
-        .tree(namespace_id, path, snapshot_id.as_ref())
-        .await?;
-
-    Ok(tree.items.into_iter().map(Into::into).collect())
-}
-
-/// 对完整列表分页；`total` 始终为全量条目数，便于客户端展示与判断是否还有更多。
-fn paginate(items: Vec<EntryDto>, limit: Option<usize>, offset: Option<usize>) -> EntryPageDto {
-    let total = items.len();
-    let limit = limit.unwrap_or(DEFAULT_PAGE_LIMIT).clamp(1, MAX_PAGE_LIMIT);
-    let offset = offset.unwrap_or(0).min(total);
-    let end = (offset + limit).min(total);
-
-    let page = items
-        .into_iter()
-        .skip(offset)
-        .take(end - offset)
-        .collect::<Vec<_>>();
-
-    EntryPageDto {
-        items: page,
-        total,
-        limit,
-        offset,
-        has_more: end < total,
-    }
 }
 
 pub async fn create_directory(

@@ -1900,6 +1900,91 @@ type EntryRow = (
     Option<String>,
 );
 
+type SnapshotEntryRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    Option<String>,
+    Option<i64>,
+    Option<String>,
+    Option<i64>,
+    String,
+    Option<String>,
+    Option<String>,
+);
+
+fn parse_snapshot_entry_row(row: SnapshotEntryRow) -> DomainResult<SnapshotEntry> {
+    Ok(SnapshotEntry {
+        snapshot_id: SnapshotId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
+            DomainError::Internal {
+                message: "Invalid snapshot UUID".to_string(),
+            }
+        })?),
+        entry_id: EntryId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(|_| {
+            DomainError::Internal {
+                message: "Invalid entry UUID".to_string(),
+            }
+        })?),
+        entry_path: NormalizedPath::new(&row.3).map_err(|_| DomainError::Internal {
+            message: "Invalid snapshot entry path".to_string(),
+        })?,
+        entry_kind: parse_entry_kind(&row.4)?,
+        entry_version_id: parse_version_id_opt(row.2.as_deref())?,
+        blob_id: parse_blob_id_opt(row.5.as_deref())?,
+        size_bytes: row.6.map(|value| ByteSize::new(value as u64)),
+        mime_type: row.7,
+        version_no: row.8.map(|value| value as u32),
+        change_type: parse_change_type(&row.9)?,
+        created_by: parse_user_id_opt(row.10.as_deref())?,
+        created_at: parse_timestamp_opt(row.11.as_deref())?,
+    })
+}
+
+fn push_snapshot_children_cte(
+    query: &mut sqlx::QueryBuilder<sqlx::Sqlite>,
+    snapshot_id: String,
+    root: &str,
+    lower: &str,
+    upper: &str,
+) {
+    query.push("WITH visible AS (SELECT entry_path, entry_kind, ");
+    if root.is_empty() {
+        query.push("entry_path AS remainder");
+    } else {
+        query
+            .push("substr(entry_path, length(")
+            .push_bind(root)
+            .push(") + 2) AS remainder");
+    }
+    query
+        .push(" FROM snapshot_entries WHERE snapshot_id = ")
+        .push_bind(snapshot_id)
+        .push(" AND change_type != 'deleted'");
+    if !root.is_empty() {
+        query
+            .push(" AND entry_path >= ")
+            .push_bind(lower)
+            .push(" AND entry_path < ")
+            .push_bind(upper);
+    }
+    query.push(
+        r#"), children AS (
+                SELECT
+                    CASE WHEN instr(remainder, '/') = 0 THEN entry_path
+                         ELSE substr(entry_path, 1, length(entry_path) - length(remainder))
+                              || substr(remainder, 1, instr(remainder, '/') - 1)
+                    END AS child_path,
+                    MAX(CASE WHEN instr(remainder, '/') > 0 OR entry_kind = 'directory'
+                             THEN 1 ELSE 0 END) AS is_directory
+                FROM visible
+                WHERE remainder != ''
+                GROUP BY child_path
+            )"#,
+    );
+}
+
 type EntryChildMetaRow = (
     String,
     String,
@@ -5640,20 +5725,7 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         &self,
         snapshot_id: &SnapshotId,
     ) -> DomainResult<Vec<SnapshotEntry>> {
-        let rows: Vec<(
-            String,
-            String,
-            Option<String>,
-            String,
-            String,
-            Option<String>,
-            Option<i64>,
-            Option<String>,
-            Option<i64>,
-            String,
-            Option<String>,
-            Option<String>,
-        )> = sqlx::query_as(
+        let rows: Vec<SnapshotEntryRow> = sqlx::query_as(
             r#"
             SELECT
                 snapshot_id,
@@ -5680,35 +5752,148 @@ impl SnapshotRepo for SqliteSnapshotRepo {
             message: format!("Failed to get snapshot entries: {}", e),
         })?;
 
-        let mut entries = Vec::new();
-        for row in rows {
-            entries.push(SnapshotEntry {
-                snapshot_id: SnapshotId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(
-                    |_| DomainError::Internal {
-                        message: "Invalid UUID".to_string(),
-                    },
-                )?),
-                entry_id: EntryId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(|_| {
-                    DomainError::Internal {
-                        message: "Invalid UUID".to_string(),
-                    }
-                })?),
-                entry_path: NormalizedPath::new(&row.3).map_err(|_| DomainError::Internal {
-                    message: "Invalid path".to_string(),
-                })?,
-                entry_kind: parse_entry_kind(&row.4)?,
-                entry_version_id: parse_version_id_opt(row.2.as_deref())?,
-                blob_id: parse_blob_id_opt(row.5.as_deref())?,
-                size_bytes: row.6.map(|value| ByteSize::new(value as u64)),
-                mime_type: row.7,
-                version_no: row.8.map(|value| value as u32),
-                change_type: parse_change_type(&row.9)?,
-                created_by: parse_user_id_opt(row.10.as_deref())?,
-                created_at: parse_timestamp_opt(row.11.as_deref())?,
-            });
+        rows.into_iter().map(parse_snapshot_entry_row).collect()
+    }
+
+    async fn list_snapshot_children_page(
+        &self,
+        snapshot_id: &SnapshotId,
+        path: &NormalizedPath,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<SnapshotTreeChild>, u64)> {
+        let root = path.as_str();
+        if !root.is_empty() {
+            let exact_kind: Option<String> = sqlx::query_scalar(
+                "SELECT entry_kind FROM snapshot_entries WHERE snapshot_id = ? AND entry_path = ? AND change_type != 'deleted' LIMIT 1",
+            )
+            .bind(snapshot_id.to_string())
+            .bind(root)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to validate snapshot directory: {error}"),
+            })?;
+            if exact_kind.as_deref() == Some("file") {
+                return Err(DomainError::Validation {
+                    message: "Path is not a directory".to_string(),
+                });
+            }
+            if exact_kind.is_none() {
+                let lower = format!("{root}/");
+                let upper = format!("{root}0");
+                let has_descendants: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM snapshot_entries WHERE snapshot_id = ? AND change_type != 'deleted' AND entry_path >= ? AND entry_path < ?)",
+                )
+                .bind(snapshot_id.to_string())
+                .bind(lower)
+                .bind(upper)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to validate snapshot directory: {error}"),
+                })?;
+                if !has_descendants {
+                    return Err(DomainError::NotFound {
+                        resource: "snapshot entry".to_string(),
+                    });
+                }
+            }
         }
 
-        Ok(entries)
+        let lower = format!("{root}/");
+        let upper = format!("{root}0");
+        let mut count_query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("");
+        push_snapshot_children_cte(
+            &mut count_query,
+            snapshot_id.to_string(),
+            root,
+            &lower,
+            &upper,
+        );
+        count_query.push(" SELECT COUNT(*) FROM children");
+        let total: i64 = count_query
+            .build_query_scalar()
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to count snapshot children: {error}"),
+            })?;
+        let total = total as u64;
+        if total == 0 || u64::from(offset) >= total || limit == 0 {
+            return Ok((Vec::new(), total));
+        }
+
+        let mut page_query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("");
+        push_snapshot_children_cte(
+            &mut page_query,
+            snapshot_id.to_string(),
+            root,
+            &lower,
+            &upper,
+        );
+        page_query
+            .push(" SELECT child_path, is_directory FROM children ORDER BY is_directory DESC, child_path ASC LIMIT ")
+            .push_bind(i64::from(limit))
+            .push(" OFFSET ")
+            .push_bind(i64::from(offset));
+        let page: Vec<(String, i64)> = page_query
+            .build_query_as()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to page snapshot children: {error}"),
+            })?;
+
+        let mut entries_by_path = std::collections::HashMap::new();
+        if !page.is_empty() {
+            let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                r#"SELECT snapshot_id, entry_id, entry_version_id, entry_path, entry_kind,
+                          blob_id, size, content_type, version_no, change_type, created_by, created_at
+                   FROM snapshot_entries
+                   WHERE snapshot_id = "#,
+            );
+            query
+                .push_bind(snapshot_id.to_string())
+                .push(" AND change_type != 'deleted' AND entry_path IN (");
+            {
+                let mut paths = query.separated(", ");
+                for (child_path, _) in &page {
+                    paths.push_bind(child_path);
+                }
+                paths.push_unseparated(") ORDER BY entry_path");
+            }
+            let rows: Vec<SnapshotEntryRow> = query
+                .build_query_as()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to load snapshot page metadata: {error}"),
+                })?;
+            for entry in rows.into_iter().map(parse_snapshot_entry_row) {
+                let entry = entry?;
+                entries_by_path.insert(entry.entry_path.as_str().to_string(), entry);
+            }
+        }
+
+        let children = page
+            .into_iter()
+            .map(|(child_path, is_directory)| {
+                let path = NormalizedPath::new(&child_path).map_err(|_| DomainError::Internal {
+                    message: "Snapshot contains an invalid child path".to_string(),
+                })?;
+                Ok(SnapshotTreeChild {
+                    path: path.clone(),
+                    kind: if is_directory != 0 {
+                        EntryKind::Directory
+                    } else {
+                        EntryKind::File
+                    },
+                    entry: entries_by_path.remove(&child_path),
+                })
+            })
+            .collect::<DomainResult<Vec<_>>>()?;
+        Ok((children, total))
     }
 
     async fn list_all_snapshots(&self) -> DomainResult<Vec<Snapshot>> {
@@ -8383,6 +8568,139 @@ mod snapshot_repo_tests {
     async fn cleanup_db(pool: SqlitePool, db_path: Utf8PathBuf) {
         pool.close().await;
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn snapshot_children_page_keeps_directory_first_order_and_scope() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup_snapshot_repo().await;
+        let snapshot_id = repo
+            .create_snapshot(
+                &namespace_id,
+                Some("tree page"),
+                SnapshotKind::UserCreated,
+                &user_id,
+            )
+            .await
+            .expect("snapshot should be created");
+        let now = time::OffsetDateTime::now_utc();
+        let entries = [
+            ("z.txt", EntryKind::File, ChangeType::Added),
+            ("a/child.txt", EntryKind::File, ChangeType::Added),
+            ("b", EntryKind::Directory, ChangeType::Added),
+            ("c.txt", EntryKind::File, ChangeType::Added),
+            ("gone.txt", EntryKind::File, ChangeType::Deleted),
+        ]
+        .into_iter()
+        .map(|(path, entry_kind, change_type)| SnapshotEntry {
+            snapshot_id,
+            entry_id: EntryId::new(),
+            entry_path: NormalizedPath::new(path).expect("fixture path should parse"),
+            entry_kind,
+            entry_version_id: None,
+            blob_id: None,
+            size_bytes: None,
+            mime_type: None,
+            version_no: None,
+            change_type,
+            created_by: Some(user_id),
+            created_at: Some(now),
+        })
+        .collect::<Vec<_>>();
+        repo.add_snapshot_entries(&snapshot_id, &entries)
+            .await
+            .expect("snapshot entries should be saved");
+
+        let (first, total) = repo
+            .list_snapshot_children_page(
+                &snapshot_id,
+                &NormalizedPath::new("").expect("root path should parse"),
+                2,
+                0,
+            )
+            .await
+            .expect("first page should load");
+        assert_eq!(total, 4);
+        assert_eq!(
+            first
+                .iter()
+                .map(|child| child.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+        assert!(first.iter().all(|child| child.kind == EntryKind::Directory));
+        assert!(
+            first[0].entry.is_none(),
+            "implicit directory is synthesized"
+        );
+        assert!(
+            first[1].entry.is_some(),
+            "explicit directory keeps metadata"
+        );
+
+        let (second, second_total) = repo
+            .list_snapshot_children_page(
+                &snapshot_id,
+                &NormalizedPath::new("").expect("root path should parse"),
+                2,
+                2,
+            )
+            .await
+            .expect("second page should load");
+        assert_eq!(second_total, 4);
+        assert_eq!(
+            second
+                .iter()
+                .map(|child| child.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["c.txt", "z.txt"]
+        );
+
+        let (nested, nested_total) = repo
+            .list_snapshot_children_page(
+                &snapshot_id,
+                &NormalizedPath::new("a").expect("nested path should parse"),
+                10,
+                0,
+            )
+            .await
+            .expect("implicit directory should be traversable");
+        assert_eq!(nested_total, 1);
+        assert_eq!(nested[0].path.as_str(), "a/child.txt");
+
+        let mut plan_query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("EXPLAIN QUERY PLAN ");
+        push_snapshot_children_cte(&mut plan_query, snapshot_id.to_string(), "a", "a/", "a0");
+        plan_query.push(" SELECT child_path, is_directory FROM children");
+        let plan: Vec<(i64, i64, i64, String)> = plan_query
+            .build_query_as()
+            .fetch_all(&pool)
+            .await
+            .expect("snapshot subtree query plan should be available");
+        assert!(
+            plan.iter()
+                .any(|row| row.3.contains("idx_snapshot_entries_snapshot_path")),
+            "snapshot subtree query should use its snapshot/path index: {plan:?}"
+        );
+
+        let missing = repo
+            .list_snapshot_children_page(
+                &snapshot_id,
+                &NormalizedPath::new("missing").expect("path should parse"),
+                10,
+                0,
+            )
+            .await;
+        assert!(matches!(missing, Err(DomainError::NotFound { .. })));
+        let file_path = repo
+            .list_snapshot_children_page(
+                &snapshot_id,
+                &NormalizedPath::new("c.txt").expect("path should parse"),
+                10,
+                0,
+            )
+            .await;
+        assert!(matches!(file_path, Err(DomainError::Validation { .. })));
+
+        cleanup_db(pool, db_path).await;
     }
 
     #[tokio::test]

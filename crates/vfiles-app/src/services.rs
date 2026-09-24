@@ -2009,6 +2009,50 @@ where
         Ok((items, total))
     }
 
+    /// Read one historical directory page directly from the snapshot index.
+    pub async fn snapshot_children_page(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        snapshot_id: &SnapshotId,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<TreeItem>, u64)> {
+        let snapshot = self.snapshot_repo.find_snapshot(snapshot_id).await?;
+        if snapshot.namespace_id != *namespace_id {
+            return Err(DomainError::SnapshotNotFound);
+        }
+        let (children, total) = self
+            .snapshot_repo
+            .list_snapshot_children_page(snapshot_id, path, limit, offset)
+            .await?;
+        let items = children
+            .into_iter()
+            .map(|child| {
+                if let Some(entry) = child.entry {
+                    return Ok(tree_item_from_snapshot(&snapshot, &entry));
+                }
+                let name = basename(&child.path).to_string();
+                let path = child.path.as_str().to_string();
+                Ok(TreeItem {
+                    entry_id: synthetic_snapshot_entry_id(snapshot_id, &child.path),
+                    name,
+                    path,
+                    kind: child.kind,
+                    size_bytes: None,
+                    created_at: snapshot.created_at,
+                    modified_at: Some(snapshot.created_at),
+                    version_id: None,
+                    mime_type: None,
+                    is_text: None,
+                    preview_kind: None,
+                    last_change: None,
+                })
+            })
+            .collect::<DomainResult<Vec<_>>>()?;
+        Ok((items, total))
+    }
+
     /// 批量补全版本信息并排序，返回可展示的条目列表。
     async fn build_tree_items(&self, children: Vec<Entry>) -> DomainResult<Vec<TreeItem>> {
         // 批量取当前版本，避免逐个 child 查询造成 N+1。

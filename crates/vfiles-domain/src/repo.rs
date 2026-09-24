@@ -832,6 +832,105 @@ pub trait SnapshotRepo {
         &self,
         snapshot_id: &SnapshotId,
     ) -> DomainResult<Vec<SnapshotEntry>>;
+    /// Read one immediate snapshot directory page without materializing the whole tree.
+    /// Implementations should preserve directory-first, path-ascending ordering.
+    async fn list_snapshot_children_page(
+        &self,
+        snapshot_id: &SnapshotId,
+        path: &NormalizedPath,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<SnapshotTreeChild>, u64)> {
+        let entries = self.get_snapshot_entries(snapshot_id).await?;
+        let visible = entries
+            .iter()
+            .filter(|entry| entry.change_type != ChangeType::Deleted)
+            .collect::<Vec<_>>();
+        if !path.as_str().is_empty() {
+            if let Some(entry) = visible.iter().find(|entry| entry.entry_path == *path) {
+                if entry.entry_kind != EntryKind::Directory {
+                    return Err(DomainError::Validation {
+                        message: "Path is not a directory".to_string(),
+                    });
+                }
+            } else {
+                let prefix = format!("{}/", path.as_str());
+                if !visible
+                    .iter()
+                    .any(|entry| entry.entry_path.as_str().starts_with(&prefix))
+                {
+                    return Err(DomainError::NotFound {
+                        resource: "snapshot entry".to_string(),
+                    });
+                }
+            }
+        }
+
+        let prefix = (!path.as_str().is_empty()).then(|| format!("{}/", path.as_str()));
+        let mut children = std::collections::BTreeMap::<String, SnapshotTreeChild>::new();
+        for entry in visible {
+            let remainder = if path.as_str().is_empty() {
+                entry.entry_path.as_str()
+            } else if entry.entry_path == *path {
+                continue;
+            } else if let Some(remainder) = prefix
+                .as_deref()
+                .and_then(|prefix| entry.entry_path.as_str().strip_prefix(prefix))
+            {
+                remainder
+            } else {
+                continue;
+            };
+            let name = remainder.split('/').next().unwrap_or_default();
+            if name.is_empty() {
+                continue;
+            }
+            let child_path = if path.as_str().is_empty() {
+                name.to_string()
+            } else {
+                format!("{}/{name}", path.as_str())
+            };
+            let normalized_child_path =
+                NormalizedPath::new(&child_path).map_err(|_| DomainError::Internal {
+                    message: "Snapshot contains an invalid child path".to_string(),
+                })?;
+            let is_directory = remainder.contains('/') || entry.entry_kind == EntryKind::Directory;
+            let direct_entry = (!remainder.contains('/')).then(|| (*entry).clone());
+            let child = SnapshotTreeChild {
+                path: normalized_child_path,
+                kind: if is_directory {
+                    EntryKind::Directory
+                } else {
+                    EntryKind::File
+                },
+                entry: direct_entry,
+            };
+            let key = child_path;
+            match children.get(&key) {
+                Some(existing) if existing.entry.is_some() || child.entry.is_none() => {}
+                _ => {
+                    children.insert(key, child);
+                }
+            }
+        }
+
+        let mut children = children.into_values().collect::<Vec<_>>();
+        children.sort_by(|left, right| {
+            let kind_order = match (left.kind, right.kind) {
+                (EntryKind::Directory, EntryKind::File) => std::cmp::Ordering::Less,
+                (EntryKind::File, EntryKind::Directory) => std::cmp::Ordering::Greater,
+                _ => std::cmp::Ordering::Equal,
+            };
+            kind_order.then_with(|| left.path.as_str().cmp(right.path.as_str()))
+        });
+        let total = children.len() as u64;
+        let start = (offset as usize).min(children.len());
+        let end = start.saturating_add(limit as usize).min(children.len());
+        Ok((
+            children.into_iter().skip(start).take(end - start).collect(),
+            total,
+        ))
+    }
     /// 列出全部快照（按创建时间倒序，维护任务使用）。
     async fn list_all_snapshots(&self) -> DomainResult<Vec<Snapshot>>;
     /// 删除快照及其条目（条目通过外键级联删除）。
