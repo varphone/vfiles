@@ -668,6 +668,62 @@ def main():
     for ek in ["boto-enc/a%20b.txt", "boto-enc/space key.txt"]:
         s3.delete_object(Bucket="default", Key=ek)
 
+    # V2 continuation tokens are opaque even when a delimiter prefix itself
+    # contains characters that encoding-type=url must escape.
+    delimiter_keys = [
+        "boto-enc-page/a space/child.bin",
+        "boto-enc-page/m% literal.txt",
+        "boto-enc-page/z/child.bin",
+    ]
+    for ek in delimiter_keys:
+        s3.put_object(Bucket="default", Key=ek, Body=b"x")
+    delimiter_pages = []
+    token = None
+    for _ in range(4):
+        request = {
+            "Bucket": "default", "Prefix": "boto-enc-page/",
+            "Delimiter": "/", "EncodingType": "url", "MaxKeys": 1,
+        }
+        if token is not None:
+            request["ContinuationToken"] = token
+        page = s3.list_objects_v2(**request)
+        delimiter_pages.extend(
+            unquote(item.get("Key", item.get("Prefix", "")))
+            for item in page.get("Contents", []) + page.get("CommonPrefixes", [])
+        )
+        if not page.get("IsTruncated"):
+            break
+        token = page.get("NextContinuationToken")
+    check("boto URL-encoded delimiter pagination uses opaque continuation tokens",
+          delimiter_pages == [
+              "boto-enc-page/a space/", "boto-enc-page/m% literal.txt", "boto-enc-page/z/"
+          ] and len(delimiter_pages) == 3,
+          f"entries={delimiter_pages} pages={len(delimiter_pages)} token={token}")
+    v1_delimiter_pages = []
+    marker = None
+    for _ in range(4):
+        request = {
+            "Bucket": "default", "Prefix": "boto-enc-page/",
+            "Delimiter": "/", "EncodingType": "url", "MaxKeys": 1,
+        }
+        if marker is not None:
+            request["Marker"] = marker
+        page = s3.list_objects(**request)
+        v1_delimiter_pages.extend(
+            unquote(item.get("Key", item.get("Prefix", "")))
+            for item in page.get("Contents", []) + page.get("CommonPrefixes", [])
+        )
+        if not page.get("IsTruncated"):
+            break
+        marker = page.get("NextMarker")
+    check("boto V1 URL-encoded delimiter pagination resumes from NextMarker",
+          v1_delimiter_pages == [
+              "boto-enc-page/a space/", "boto-enc-page/m% literal.txt", "boto-enc-page/z/"
+          ] and len(v1_delimiter_pages) == 3,
+          f"entries={v1_delimiter_pages} pages={len(v1_delimiter_pages)} marker={marker}")
+    for ek in delimiter_keys:
+        s3.delete_object(Bucket="default", Key=ek)
+
     # ── 批量删的逐键时间/大小条件（r31）──
     for bk in ["boto-dc2/a", "boto-dc2/b", "boto-dc2/c"]:
         s3.put_object(Bucket="default", Key=bk, Body=b"12345")

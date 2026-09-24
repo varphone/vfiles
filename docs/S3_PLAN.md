@@ -466,13 +466,15 @@
 - **新增能力（`crates/vfiles-s3/src/lib.rs`）**：
   | 面 | 语义 |
   | --- | --- |
-  | `ListObjectsV2` | prefix · **delimiter→CommonPrefixes**（只折一层）· **continuation-token** · start-after · **max-keys**（尊重请求、上限 1000）· is-truncated · **next-continuation-token** · key-count |
+| `ListObjectsV2` | prefix · **delimiter→CommonPrefixes**（只折一层）· 不透明 continuation-token · start-after · **max-keys**（尊重请求、上限 1000）· is-truncated · **next-continuation-token** · key-count |
   | `ListObjects`(V1) | marker · delimiter · max-keys · next-marker · common-prefixes |
   | `Object` 元数据 | **size / last-modified / ETag**（版本 id hex，与 WebDAV/S3 GET 同式） |
   | `GetObject`/`HeadObject` | **last-modified** + **HTTP Range → 206/Content-Range**（s3s 见 content_range 自置 206 ✗ `Range::check` 夹取 + 416 InvalidRange） |
   | bucket | `default` → `<?xml ...><ListBucketResult>` |
-- **关键实现**：`collect_objects` 一次树遍历取 `(key,size,mtime,etag)` → `build_entries`（prefix 过滤 +
-  delimiter 折叠去重 + 排序）→ `paginate`（`after` 独占切片 ✗ token = 页尾 key = 无重无漏）·
+- **关键实现**：生产列表按 SQL key 游标有界取页，`ListCollector` 先应用 prefix / delimiter 折叠和
+  `after` 独占续页，再收集 `max+1` 项判断截断；V2 页尾 key 只作为内部游标，并封装成 URL-safe
+  不透明 token 返回。`encoding-type=url` 只编码响应中的 key / CommonPrefix 字段，不改写 V2 token。
+  `build_entries` 仅作为测试参考实现使用；
   `resolve_max_keys`（负值 InvalidArgument / 上限 1000）· `resolve_range`（`Range::check`）。
   纯函数 6 项单测（delimiter 折一层 / 分页续页 / 满页不截断 / max-keys 规则 / range 四态）。
 - **实证（入仓双通道可复演）**：

@@ -441,8 +441,9 @@ async fn list_page(
     Ok(c.finish())
 }
 
-/// `encoding-type=url` 时把页内 key / common prefix / next 游标全部百分号编码。
-fn url_encode_page(p: &mut Page) {
+/// `encoding-type=url` 时编码页内对象 key、CommonPrefix，以及 V1 的 key marker。
+/// V2 continuation token 是独立的不透明游标，不受 `encoding-type` 影响。
+fn url_encode_page(p: &mut Page, encode_next_marker: bool) {
     for o in &mut p.contents {
         if let Some(k) = &o.key {
             o.key = Some(url_encode(k));
@@ -453,9 +454,38 @@ fn url_encode_page(p: &mut Page) {
             c.prefix = Some(url_encode(v));
         }
     }
-    if let Some(n) = &p.next {
-        p.next = Some(url_encode(n));
+    if encode_next_marker && let Some(next) = &p.next {
+        p.next = Some(url_encode(next));
     }
+}
+
+const LIST_V2_TOKEN_PREFIX: &str = "vfiles-list-v2:";
+
+/// Return an opaque, URL/XML-safe V2 continuation token. AWS specifies that
+/// continuation tokens are opaque and are not object keys. In particular,
+/// `encoding-type=url` applies to key fields, not to this token.
+fn encode_list_v2_token(last_key: &str) -> String {
+    use base64::Engine;
+
+    format!(
+        "{LIST_V2_TOKEN_PREFIX}{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(last_key.as_bytes())
+    )
+}
+
+/// Accept tokens produced by this version and raw-key tokens emitted by older
+/// releases so an in-flight client can finish pagination after an upgrade.
+fn decode_list_v2_token(token: &str) -> S3Result<String> {
+    use base64::Engine;
+
+    let Some(encoded) = token.strip_prefix(LIST_V2_TOKEN_PREFIX) else {
+        return Ok(token.to_string());
+    };
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| s3s::s3_error!(InvalidArgument, "invalid continuation token"))?;
+    String::from_utf8(bytes)
+        .map_err(|_| s3s::s3_error!(InvalidArgument, "invalid continuation token"))
 }
 
 /// 收集结果 → `Page`（`next` = 本页末条 key ✗ 与应用 `after` 独占语义配对）。
@@ -1509,7 +1539,9 @@ impl S3 for VfilesS3 {
         let delimiter = non_empty(input.delimiter.clone());
         let after = input
             .continuation_token
-            .clone()
+            .as_deref()
+            .map(decode_list_v2_token)
+            .transpose()?
             .or_else(|| input.start_after.clone());
 
         let (entries, truncated) = list_page(
@@ -1535,7 +1567,7 @@ impl S3 for VfilesS3 {
         }
         let encode = input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url");
         if encode {
-            url_encode_page(&mut page);
+            url_encode_page(&mut page, false);
         }
         let (prefix_out, delimiter_out) =
             if input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url") {
@@ -1555,7 +1587,7 @@ impl S3 for VfilesS3 {
             key_count: Some((page.contents.len() + page.prefixes.len()) as i32),
             is_truncated: Some(page.truncated),
             continuation_token: input.continuation_token,
-            next_continuation_token: page.next,
+            next_continuation_token: page.next.as_deref().map(encode_list_v2_token),
             contents: (!page.contents.is_empty()).then_some(page.contents),
             common_prefixes: (!page.prefixes.is_empty()).then_some(page.prefixes),
             ..Default::default()
@@ -1983,7 +2015,7 @@ impl S3 for VfilesS3 {
             o.owner = Some(owner.clone());
         }
         if input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url") {
-            url_encode_page(&mut page);
+            url_encode_page(&mut page, true);
         }
         let out = ListObjectsOutput {
             name: Some(input.bucket),
@@ -3449,6 +3481,23 @@ mod tests {
     }
 
     #[test]
+    fn list_v2_continuation_tokens_are_opaque_and_legacy_markers_still_work() {
+        for key in ["folder with space/", "目录/%20/", "control/\u{0001}/"] {
+            let token = encode_list_v2_token(key);
+            assert_ne!(token, key);
+            assert_eq!(
+                decode_list_v2_token(&token).expect("encoded token should decode"),
+                key
+            );
+        }
+        assert_eq!(
+            decode_list_v2_token("legacy/key").expect("legacy key marker should pass through"),
+            "legacy/key"
+        );
+        assert!(decode_list_v2_token("vfiles-list-v2:%%%").is_err());
+    }
+
+    #[test]
     fn multipart_common_prefix_successor_skips_the_complete_delimiter_range() {
         assert_eq!(
             multipart_prefix_successor("bulk/nested/"),
@@ -3718,6 +3767,57 @@ mod tests {
                 assert_eq!(
                     seen, reference,
                     "prefix={prefix:?} delim={delim:?} 分页走全应与参考一致"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn delimiter_matrix_paginates_each_rollup_once() {
+        let mut all = [
+            "a!direct",
+            "a!nested!one",
+            "a!nested!two",
+            "a/child",
+            "a//child",
+            "emoji💥child",
+            "emoji💥nested💥child",
+            "é::child",
+            "é::nested::child",
+        ]
+        .into_iter()
+        .map(|key| meta(key, 1))
+        .collect::<Vec<_>>();
+        all.sort_by(|a, b| a.key.cmp(&b.key));
+
+        for prefix in ["", "a", "a!", "é::", "emoji💥"] {
+            for delimiter in [None, Some("/"), Some("!"), Some("::"), Some("💥")] {
+                let expected = build_entries(&all, prefix, delimiter)
+                    .iter()
+                    .map(|entry| entry.key().to_string())
+                    .collect::<Vec<_>>();
+                let mut actual = Vec::new();
+                let mut after: Option<String> = None;
+                for _ in 0..expected.len().saturating_add(1) {
+                    let mut collector = ListCollector::new(prefix, delimiter, after.as_deref(), 1);
+                    for object in &all {
+                        if !collector.push(object.clone()) {
+                            break;
+                        }
+                    }
+                    let (page, truncated) = collector.finish();
+                    assert_eq!(page.len(), 1, "prefix={prefix:?} delimiter={delimiter:?}");
+                    let last = page[0].key().to_string();
+                    assert!(!actual.contains(&last), "duplicate roll-up: {last:?}");
+                    actual.push(last.clone());
+                    if !truncated {
+                        break;
+                    }
+                    after = Some(last);
+                }
+                assert_eq!(
+                    actual, expected,
+                    "prefix={prefix:?} delimiter={delimiter:?}"
                 );
             }
         }
