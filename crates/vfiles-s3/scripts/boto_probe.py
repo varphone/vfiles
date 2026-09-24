@@ -440,6 +440,45 @@ def main():
           and marker_read and marker_restored,
           f"id={bool(marker_id)} latest={marker_latest} hidden={marker_hidden} copy_hidden={marker_copy_hidden} read={marker_read} restored={marker_restored}")
 
+    # Current delete markers must be applied before delimiter folding and
+    # pagination: hidden-only prefixes disappear, and pages contain visible
+    # keys instead of empty pages that only advanced past hidden objects.
+    hidden_dir_key = "boto-list-markers/deleted/only.txt"
+    page_hidden_key = "boto-list-marker-page/00-hidden.txt"
+    visible_page_keys = [
+        "boto-list-marker-page/01-visible.txt",
+        "boto-list-marker-page/02-visible.txt",
+    ]
+    for key in [hidden_dir_key, page_hidden_key, *visible_page_keys,
+                "boto-list-markers/live/visible.txt"]:
+        s3.put_object(Bucket="default", Key=key, Body=b"visible-list-fixture")
+    s3.delete_object(Bucket="default", Key=hidden_dir_key)
+    s3.delete_object(Bucket="default", Key=page_hidden_key)
+    folded = s3.list_objects_v2(
+        Bucket="default", Prefix="boto-list-markers/", Delimiter="/"
+    )
+    folded_prefixes = sorted(p["Prefix"] for p in folded.get("CommonPrefixes", []))
+    folded_ok = folded_prefixes == ["boto-list-markers/live/"]
+    first_marker_page = s3.list_objects_v2(
+        Bucket="default", Prefix="boto-list-marker-page/", MaxKeys=1
+    )
+    second_marker_page = s3.list_objects_v2(
+        Bucket="default", Prefix="boto-list-marker-page/", MaxKeys=1,
+        ContinuationToken=first_marker_page.get("NextContinuationToken", ""),
+    )
+    marker_pages_ok = (
+        [o["Key"] for o in first_marker_page.get("Contents", [])]
+        == [visible_page_keys[0]]
+        and first_marker_page["IsTruncated"] is True
+        and [o["Key"] for o in second_marker_page.get("Contents", [])]
+        == [visible_page_keys[1]]
+        and second_marker_page["IsTruncated"] is False
+    )
+    check("boto delete markers before delimiter folding and pagination",
+          folded_ok and marker_pages_ok,
+          f"prefixes={folded_prefixes} first={first_marker_page.get('Contents')} "
+          f"second={second_marker_page.get('Contents')}")
+
     missing_marker = s3.delete_objects(Bucket="default", Delete={
         "Objects": [{"Key": "boto-vid/never-existed.txt"}], "Quiet": False,
     }).get("Deleted", [{}])[0]

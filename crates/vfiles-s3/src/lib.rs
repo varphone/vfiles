@@ -287,6 +287,7 @@ impl<'a> ListCollector<'a> {
 /// 一页列表（SQL 分页拉取 ✗ **不物化整桶**）：返回 `(条目, 是否截断)`。
 async fn list_page(
     repo: &std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
+    delete_markers: &vfiles_infra_sqlite::SqliteS3DeleteMarkerRepo,
     ns: &vfiles_domain::NamespaceId,
     prefix: &str,
     delimiter: Option<&str>,
@@ -304,6 +305,24 @@ async fn list_page(
         if batch.is_empty() {
             break;
         }
+        // Advance over every stored object, including those hidden by a current
+        // delete marker. Filtering after pagination would underfill pages and
+        // could emit CommonPrefixes made only from deleted objects.
+        cursor = batch
+            .last()
+            .map(|meta| meta.entry.path_norm.as_str().to_string());
+        let keys: Vec<_> = batch
+            .iter()
+            .map(|meta| meta.entry.path_norm.as_str().to_string())
+            .collect();
+        let hidden = delete_markers.current_hidden_keys(ns, &keys).await?;
+        let batch: Vec<_> = batch
+            .into_iter()
+            .filter(|meta| !hidden.contains(meta.entry.path_norm.as_str()))
+            .collect();
+        if batch.is_empty() {
+            continue;
+        }
         let ids: Vec<_> = batch.iter().map(|m| m.entry.id).collect();
         let properties = repo.list_entry_properties(&ids).await?;
         let version_ids: Vec<_> = batch
@@ -317,7 +336,6 @@ async fn list_page(
             .map(|version| (version.id, version.created_at))
             .collect();
         for m in batch {
-            cursor = Some(m.entry.path_norm.as_str().to_string());
             let entry_properties = properties
                 .get(&m.entry.id)
                 .map(Vec::as_slice)
@@ -1001,22 +1019,6 @@ impl VfilesS3 {
         Ok(hidden.contains(path.as_str()))
     }
 
-    async fn filter_current_delete_markers(&self, page: &mut Page) -> S3Result<()> {
-        let keys: Vec<_> = page
-            .contents
-            .iter()
-            .filter_map(|object| object.key.clone())
-            .collect();
-        let hidden = self
-            .delete_markers
-            .current_hidden_keys(&self.namespace, &keys)
-            .await
-            .map_err(dom_err)?;
-        page.contents
-            .retain(|object| object.key.as_ref().is_none_or(|key| !hidden.contains(key)));
-        Ok(())
-    }
-
     /// 读条目的 S3 用户元数据（`x-amz-meta-*` → 响应头）。
     async fn load_metadata(
         &self,
@@ -1311,6 +1313,7 @@ impl S3 for VfilesS3 {
 
         let (entries, truncated) = list_page(
             &self.entry_repo,
+            &self.delete_markers,
             &self.namespace,
             &prefix,
             delimiter.as_deref(),
@@ -1320,7 +1323,6 @@ impl S3 for VfilesS3 {
         .await
         .map_err(dom_err)?;
         let mut page = page_from(entries, truncated);
-        self.filter_current_delete_markers(&mut page).await?;
         // `fetch-owner=true` → 逐对象带 `Owner`（本部署内条目均属该命名空间属主）
         if input.fetch_owner.unwrap_or(false) {
             let owner = Owner {
@@ -1755,6 +1757,7 @@ impl S3 for VfilesS3 {
 
         let (entries, truncated) = list_page(
             &self.entry_repo,
+            &self.delete_markers,
             &self.namespace,
             &prefix,
             delimiter.as_deref(),
@@ -1764,7 +1767,6 @@ impl S3 for VfilesS3 {
         .await
         .map_err(dom_err)?;
         let mut page = page_from(entries, truncated);
-        self.filter_current_delete_markers(&mut page).await?;
         // V1 语义：恒带 `Owner`
         let owner = Owner {
             id: Some(self.owner.to_string()),
@@ -3438,6 +3440,137 @@ mod tests {
         assert!(resolve_completed_part_indices(&stored, &[1, 4]).is_err());
         assert!(resolve_completed_part_indices(&stored, &[3, 1]).is_err());
         assert!(resolve_completed_part_indices(&stored, &[2, 3]).is_err());
+    }
+
+    #[tokio::test]
+    async fn listing_filters_delete_markers_before_prefix_folding_and_pagination() {
+        let temp = tempfile::tempdir().expect("temporary database directory");
+        let db_path = camino::Utf8PathBuf::from_path_buf(temp.path().join("s3-listing.db"))
+            .expect("utf8 database path");
+        let pool = vfiles_infra_sqlite::SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool");
+        vfiles_infra_sqlite::SqliteMigrations::run(&pool)
+            .await
+            .expect("database migrations");
+
+        let user = vfiles_domain::UserId::new();
+        let namespace = vfiles_domain::NamespaceId::new();
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, 'admin')",
+        )
+        .bind(user.to_string())
+        .bind("s3-listing-test")
+        .bind("unused")
+        .execute(&pool)
+        .await
+        .expect("insert test user");
+        sqlx::query("INSERT INTO namespaces (id, slug, owner_user_id) VALUES (?, ?, ?)")
+            .bind(namespace.to_string())
+            .bind("default")
+            .bind(user.to_string())
+            .execute(&pool)
+            .await
+            .expect("insert test namespace");
+
+        async fn add_file(
+            pool: &vfiles_infra_sqlite::SqlitePool,
+            namespace: &vfiles_domain::NamespaceId,
+            user: &vfiles_domain::UserId,
+            path: &str,
+        ) {
+            let entry = vfiles_domain::EntryId::new();
+            let version = vfiles_domain::VersionId::new();
+            sqlx::query(
+                "INSERT INTO entries (id, namespace_id, path, kind) VALUES (?, ?, ?, 'file')",
+            )
+            .bind(entry.to_string())
+            .bind(namespace.to_string())
+            .bind(path)
+            .execute(pool)
+            .await
+            .expect("insert test entry");
+            sqlx::query("INSERT INTO entry_versions (id, entry_id, version, size, created_by) VALUES (?, ?, 1, 1, ?)")
+                .bind(version.to_string())
+                .bind(entry.to_string())
+                .bind(user.to_string())
+                .execute(pool)
+                .await
+                .expect("insert test version");
+        }
+
+        let keys = [
+            "marker-dir/deleted/only.txt",
+            "marker-dir/live/visible.txt",
+            "marker-page/00-hidden.txt",
+            "marker-page/01-visible.txt",
+            "marker-page/02-visible.txt",
+        ];
+        for key in keys {
+            add_file(&pool, &namespace, &user, key).await;
+        }
+        let markers = vfiles_infra_sqlite::SqliteS3DeleteMarkerRepo::new(pool.clone());
+        for key in ["marker-dir/deleted/only.txt", "marker-page/00-hidden.txt"] {
+            markers
+                .create(
+                    &namespace,
+                    key,
+                    &user,
+                    &vfiles_domain::VersionId::new().to_string(),
+                    time::OffsetDateTime::now_utc(),
+                )
+                .await
+                .expect("create current delete marker");
+        }
+        let repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync> =
+            std::sync::Arc::new(vfiles_infra_sqlite::SqliteEntryRepo::new(pool.clone()));
+
+        let (folded, folded_truncated) = list_page(
+            &repo,
+            &markers,
+            &namespace,
+            "marker-dir/",
+            Some("/"),
+            None,
+            10,
+        )
+        .await
+        .expect("list marker prefixes");
+        assert!(!folded_truncated);
+        assert_eq!(
+            folded.iter().map(Listed::key).collect::<Vec<_>>(),
+            ["marker-dir/live/"]
+        );
+
+        let (first, first_truncated) =
+            list_page(&repo, &markers, &namespace, "marker-page/", None, None, 1)
+                .await
+                .expect("list first visible page");
+        assert!(first_truncated);
+        assert_eq!(
+            first.iter().map(Listed::key).collect::<Vec<_>>(),
+            ["marker-page/01-visible.txt"]
+        );
+        let next = page_from(first, first_truncated)
+            .next
+            .expect("truncated page should have a continuation key");
+        let (second, second_truncated) = list_page(
+            &repo,
+            &markers,
+            &namespace,
+            "marker-page/",
+            None,
+            Some(&next),
+            1,
+        )
+        .await
+        .expect("list next visible page");
+        assert!(!second_truncated);
+        assert_eq!(
+            second.iter().map(Listed::key).collect::<Vec<_>>(),
+            ["marker-page/02-visible.txt"]
+        );
+        pool.close().await;
     }
 }
 

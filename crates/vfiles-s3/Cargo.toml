@@ -34,3 +34,8 @@ time.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+camino.workspace = true
+sqlx.workspace = true
+tempfile = "3"
