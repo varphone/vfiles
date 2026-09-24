@@ -1208,15 +1208,50 @@ impl SqliteS3MultipartUploadRepo {
         upload_id: &vfiles_domain::UploadId,
         initiated_at: time::OffsetDateTime,
     ) -> Result<(), vfiles_domain::DomainError> {
+        let initiated_at =
+            i64::try_from(initiated_at.unix_timestamp_nanos() / 1_000).map_err(|e| {
+                vfiles_domain::DomainError::Internal {
+                    message: format!("S3 multipart initiation time is out of range: {e}"),
+                }
+            })?;
         sqlx::query("INSERT INTO s3_multipart_uploads (namespace_id, object_key, upload_id, initiated_at) VALUES (?, ?, ?, ?) ON CONFLICT(namespace_id, upload_id) DO UPDATE SET object_key = excluded.object_key, initiated_at = excluded.initiated_at")
             .bind(namespace_id.to_string())
             .bind(object_key)
             .bind(upload_id.to_string())
-            .bind(initiated_at.unix_timestamp())
+            .bind(initiated_at)
             .execute(&self.pool)
             .await
             .map_err(|e| vfiles_domain::DomainError::Internal { message: format!("Failed to index S3 multipart upload: {e}") })?;
         Ok(())
+    }
+
+    pub async fn find_initiated_at(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        object_key: &str,
+        upload_id: &str,
+    ) -> Result<Option<time::OffsetDateTime>, vfiles_domain::DomainError> {
+        let initiated_at: Option<i64> = sqlx::query_scalar(
+            "SELECT initiated_at FROM s3_multipart_uploads \
+             WHERE namespace_id = ? AND object_key = ? AND upload_id = ?",
+        )
+        .bind(namespace_id.to_string())
+        .bind(object_key)
+        .bind(upload_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to find S3 multipart upload cursor: {e}"),
+        })?;
+        initiated_at
+            .map(|value| {
+                time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(value) * 1_000).map_err(
+                    |e| vfiles_domain::DomainError::Internal {
+                        message: format!("Invalid S3 multipart timestamp: {e}"),
+                    },
+                )
+            })
+            .transpose()
     }
 
     pub async fn needs_backfill(
@@ -1271,14 +1306,24 @@ impl SqliteS3MultipartUploadRepo {
         prefix: &str,
         after_key: Option<&str>,
         after_upload_id: Option<&str>,
+        after_initiated_at: Option<time::OffsetDateTime>,
         limit: u32,
     ) -> Result<Vec<S3MultipartUploadRecord>, vfiles_domain::DomainError> {
+        let after_initiated_at = after_initiated_at
+            .map(|value| i64::try_from(value.unix_timestamp_nanos() / 1_000))
+            .transpose()
+            .map_err(|e| vfiles_domain::DomainError::Internal {
+                message: format!("S3 multipart cursor timestamp is out of range: {e}"),
+            })?;
         let rows: Vec<(String, String, i64)> = sqlx::query_as(
             "SELECT object_key, upload_id, initiated_at FROM s3_multipart_uploads \
              WHERE namespace_id = ? AND object_key >= ? \
                AND substr(object_key, 1, length(?)) = ? \
-               AND (? IS NULL OR object_key > ? OR (object_key = ? AND upload_id > ?)) \
-             ORDER BY object_key, upload_id LIMIT ?",
+               AND (? IS NULL OR object_key > ? OR (object_key = ? AND ( \
+                    (? IS NOT NULL AND (initiated_at > ? OR (initiated_at = ? AND upload_id > ?))) \
+                    OR (? IS NULL AND upload_id > ?) \
+               ))) \
+             ORDER BY object_key, initiated_at, upload_id LIMIT ?",
         )
         .bind(namespace_id.to_string())
         .bind(prefix)
@@ -1287,6 +1332,11 @@ impl SqliteS3MultipartUploadRepo {
         .bind(after_key)
         .bind(after_key)
         .bind(after_key)
+        .bind(after_initiated_at)
+        .bind(after_initiated_at)
+        .bind(after_initiated_at)
+        .bind(after_upload_id)
+        .bind(after_initiated_at)
         .bind(after_upload_id)
         .bind(limit as i64)
         .fetch_all(&self.pool)
@@ -1296,10 +1346,12 @@ impl SqliteS3MultipartUploadRepo {
         })?;
         rows.into_iter()
             .map(|(object_key, upload_id, initiated_at)| {
-                let initiated_at = time::OffsetDateTime::from_unix_timestamp(initiated_at)
-                    .map_err(|e| vfiles_domain::DomainError::Internal {
-                        message: format!("Invalid S3 multipart timestamp: {e}"),
-                    })?;
+                let initiated_at = time::OffsetDateTime::from_unix_timestamp_nanos(
+                    i128::from(initiated_at) * 1_000,
+                )
+                .map_err(|e| vfiles_domain::DomainError::Internal {
+                    message: format!("Invalid S3 multipart timestamp: {e}"),
+                })?;
                 Ok(S3MultipartUploadRecord {
                     object_key,
                     upload_id,
@@ -1322,7 +1374,7 @@ impl SqliteS3MultipartUploadRepo {
              FROM s3_multipart_uploads \
              WHERE namespace_id = ? AND object_key >= ? AND object_key >= ? \
                AND substr(object_key, 1, length(?)) = ? \
-             ORDER BY object_key, upload_id \
+             ORDER BY object_key, initiated_at, upload_id \
              LIMIT ?",
         )
         .bind(namespace_id.to_string())
@@ -1338,10 +1390,12 @@ impl SqliteS3MultipartUploadRepo {
         })?;
         rows.into_iter()
             .map(|(object_key, upload_id, initiated_at)| {
-                let initiated_at = time::OffsetDateTime::from_unix_timestamp(initiated_at)
-                    .map_err(|e| vfiles_domain::DomainError::Internal {
-                        message: format!("Invalid S3 multipart timestamp: {e}"),
-                    })?;
+                let initiated_at = time::OffsetDateTime::from_unix_timestamp_nanos(
+                    i128::from(initiated_at) * 1_000,
+                )
+                .map_err(|e| vfiles_domain::DomainError::Internal {
+                    message: format!("Invalid S3 multipart timestamp: {e}"),
+                })?;
                 Ok(S3MultipartUploadRecord {
                     object_key,
                     upload_id,
@@ -2111,7 +2165,7 @@ mod s3_multipart_upload_repo_tests {
             .await
             .expect("third upload should be indexed");
         let same_key_first = repo
-            .page(&namespace, "folder/", None, None, 1)
+            .page(&namespace, "folder/", None, None, None, 1)
             .await
             .expect("first same-key upload page should load");
         assert_eq!(same_key_first.len(), 1);
@@ -2122,6 +2176,7 @@ mod s3_multipart_upload_repo_tests {
                 "folder/",
                 Some(&same_key_first[0].object_key),
                 Some(&same_key_first[0].upload_id),
+                Some(same_key_first[0].initiated_at),
                 1,
             )
             .await
@@ -2129,11 +2184,44 @@ mod s3_multipart_upload_repo_tests {
         assert_eq!(same_key_next.len(), 1);
         assert_eq!(same_key_next[0].object_key, "folder/a");
         assert_ne!(same_key_next[0].upload_id, same_key_first[0].upload_id);
+
+        let earlier_id = UploadId::from_string("ffffffff-ffff-4fff-8fff-ffffffffffff")
+            .expect("earlier upload id should parse");
+        let later_id = UploadId::from_string("00000000-0000-4000-8000-000000000001")
+            .expect("later upload id should parse");
+        let earlier_time = time::OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(100);
+        let later_time = earlier_time + time::Duration::seconds(1);
+        repo.register(&namespace, "ordered/key", &earlier_id, earlier_time)
+            .await
+            .expect("earlier upload should be indexed");
+        repo.register(&namespace, "ordered/key", &later_id, later_time)
+            .await
+            .expect("later upload should be indexed");
+        let ordered_first = repo
+            .page(&namespace, "ordered/", None, None, None, 1)
+            .await
+            .expect("first initiation-ordered page should load");
+        assert_eq!(ordered_first[0].upload_id, earlier_id.to_string());
+        let ordered_next = repo
+            .page(
+                &namespace,
+                "ordered/",
+                Some(&ordered_first[0].object_key),
+                Some(&ordered_first[0].upload_id),
+                Some(ordered_first[0].initiated_at),
+                1,
+            )
+            .await
+            .expect("second initiation-ordered page should load");
+        assert_eq!(ordered_next.len(), 1);
+        assert_eq!(ordered_next[0].upload_id, later_id.to_string());
+        assert!(ordered_first[0].initiated_at < ordered_next[0].initiated_at);
+
         repo.register(&namespace, "folder/renamed", &first_id, initiated)
             .await
             .expect("reconciliation should safely update an existing upload");
         let page = repo
-            .page(&namespace, "folder/", None, None, 2)
+            .page(&namespace, "folder/", None, None, None, 2)
             .await
             .expect("first upload page should load");
         assert_eq!(page.len(), 2);
@@ -2144,6 +2232,7 @@ mod s3_multipart_upload_repo_tests {
                 "folder/",
                 Some(&cursor.object_key),
                 Some(&cursor.upload_id),
+                Some(cursor.initiated_at),
                 2,
             )
             .await
@@ -2174,7 +2263,7 @@ mod s3_multipart_upload_repo_tests {
              FROM s3_multipart_uploads \
              WHERE namespace_id = ? AND object_key >= ? AND object_key >= ? \
                AND substr(object_key, 1, length(?)) = ? \
-             ORDER BY object_key, upload_id LIMIT ?",
+             ORDER BY object_key, initiated_at, upload_id LIMIT ?",
         )
         .bind(namespace.to_string())
         .bind("bulk/nested0")
@@ -2188,6 +2277,44 @@ mod s3_multipart_upload_repo_tests {
         assert!(
             plan.iter()
                 .any(|(_, _, _, detail)| { detail.contains("idx_s3_multipart_uploads_listing") })
+        );
+        let ordered_plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+            "EXPLAIN QUERY PLAN SELECT object_key, upload_id, initiated_at \
+             FROM s3_multipart_uploads \
+             WHERE namespace_id = ? AND object_key >= ? \
+               AND substr(object_key, 1, length(?)) = ? \
+               AND (? IS NULL OR object_key > ? OR (object_key = ? AND ( \
+                    (? IS NOT NULL AND (initiated_at > ? OR (initiated_at = ? AND upload_id > ?))) \
+                    OR (? IS NULL AND upload_id > ?) \
+               ))) \
+             ORDER BY object_key, initiated_at, upload_id LIMIT ?",
+        )
+        .bind(namespace.to_string())
+        .bind("folder/")
+        .bind("folder/")
+        .bind("folder/")
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<i64>::None)
+        .bind(Option::<i64>::None)
+        .bind(Option::<i64>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<i64>::None)
+        .bind(Option::<String>::None)
+        .bind(2_i64)
+        .fetch_all(&pool)
+        .await
+        .expect("initiation-ordered query plan should be available");
+        assert!(
+            ordered_plan
+                .iter()
+                .any(|(_, _, _, detail)| { detail.contains("idx_s3_multipart_uploads_listing") })
+        );
+        assert!(
+            !ordered_plan
+                .iter()
+                .any(|(_, _, _, detail)| { detail.contains("USE TEMP B-TREE FOR ORDER BY") })
         );
         repo.register(
             &namespace,
@@ -2210,7 +2337,7 @@ mod s3_multipart_upload_repo_tests {
             .await
             .expect("completed upload should be removable");
         assert_eq!(
-            repo.page(&namespace, "folder/a", None, None, 10)
+            repo.page(&namespace, "folder/a", None, None, None, 10)
                 .await
                 .expect("remaining upload should be page-able")
                 .len(),

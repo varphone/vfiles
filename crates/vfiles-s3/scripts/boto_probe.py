@@ -863,6 +863,26 @@ def main():
           and [c["Prefix"] for c in lmd1.get("CommonPrefixes", [])] == ["boto-lmu/sub/"]
           and [u["Key"] for u in lmd2.get("Uploads", [])] == ["boto-lmu/x.bin"],
           (lmd1, lmd2))
+    ordered_key = "boto-lmu-ordered/same-key.bin"
+    older_upload = s3.create_multipart_upload(Bucket="default", Key=ordered_key)["UploadId"]
+    time.sleep(1.1)
+    newer_upload = s3.create_multipart_upload(Bucket="default", Key=ordered_key)["UploadId"]
+    ordered_first = s3.list_multipart_uploads(
+        Bucket="default", Prefix="boto-lmu-ordered/", MaxUploads=1
+    )
+    ordered_second = s3.list_multipart_uploads(
+        Bucket="default", Prefix="boto-lmu-ordered/", MaxUploads=1,
+        KeyMarker=ordered_first.get("NextKeyMarker", ""),
+        UploadIdMarker=ordered_first.get("NextUploadIdMarker", ""),
+    )
+    ordered_uploads = ordered_first.get("Uploads", []) + ordered_second.get("Uploads", [])
+    check("boto same-key multipart uploads follow initiation order across markers",
+          len(ordered_uploads) == 2
+          and [u["UploadId"] for u in ordered_uploads] == [older_upload, newer_upload]
+          and ordered_uploads[0]["Initiated"] < ordered_uploads[1]["Initiated"],
+          ordered_uploads)
+    for upload_id in [older_upload, newer_upload]:
+        s3.abort_multipart_upload(Bucket="default", Key=ordered_key, UploadId=upload_id)
     for mk, mid in muids.items():
         s3.abort_multipart_upload(Bucket="default", Key=mk, UploadId=mid)
 

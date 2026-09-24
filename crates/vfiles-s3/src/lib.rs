@@ -1125,6 +1125,27 @@ fn multipart_upload_is_after_marker(
     }
 }
 
+fn push_unique_multipart_list_result(
+    results: &mut Vec<(String, Option<MultipartUpload>)>,
+    seen_uploads: &mut std::collections::BTreeSet<(String, String)>,
+    seen_common_prefixes: &mut std::collections::BTreeSet<String>,
+    listed_key: String,
+    item: Option<MultipartUpload>,
+) -> bool {
+    let is_new = if let Some(upload) = &item {
+        seen_uploads.insert((
+            listed_key.clone(),
+            upload.upload_id.clone().unwrap_or_default(),
+        ))
+    } else {
+        seen_common_prefixes.insert(listed_key.clone())
+    };
+    if is_new {
+        results.push((listed_key, item));
+    }
+    is_new
+}
+
 impl VfilesS3 {
     /// Reconcile in-flight sessions created before the indexed S3 listing migration.
     pub async fn backfill_multipart_upload_index(
@@ -3250,10 +3271,22 @@ impl S3 for VfilesS3 {
         let prefix = input.prefix.clone().unwrap_or_default();
         let max = input.max_uploads.unwrap_or(1000).clamp(1, 1000) as usize;
         const PAGE_SIZE: u32 = 512;
-        let mut combined: std::collections::BTreeMap<(String, String), Option<MultipartUpload>> =
-            std::collections::BTreeMap::new();
+        let mut combined: Vec<(String, Option<MultipartUpload>)> = Vec::new();
+        let mut seen_uploads = std::collections::BTreeSet::new();
+        let mut seen_common_prefixes = std::collections::BTreeSet::new();
         let mut after_key = input.key_marker.clone();
         let mut after_upload_id = input.upload_id_marker.clone();
+        let mut after_initiated_at = match (
+            input.key_marker.as_deref(),
+            input.upload_id_marker.as_deref(),
+        ) {
+            (Some(key), Some(upload_id)) => self
+                .multipart_uploads
+                .find_initiated_at(&self.namespace, key, upload_id)
+                .await
+                .map_err(dom_err)?,
+            _ => None,
+        };
         let mut seek_from_key: Option<String> = None;
         'pages: loop {
             let records = if let Some(from_key) = seek_from_key.take() {
@@ -3267,6 +3300,7 @@ impl S3 for VfilesS3 {
                         &prefix,
                         after_key.as_deref(),
                         after_upload_id.as_deref(),
+                        after_initiated_at,
                         PAGE_SIZE,
                     )
                     .await
@@ -3279,6 +3313,7 @@ impl S3 for VfilesS3 {
             for record in records {
                 after_key = Some(record.object_key.clone());
                 after_upload_id = Some(record.upload_id.clone());
+                after_initiated_at = Some(record.initiated_at);
                 let (listed_key, item) =
                     if let Some(delimiter) = input.delimiter.as_deref().filter(|d| !d.is_empty()) {
                         let remainder = &record.object_key[prefix.len()..];
@@ -3323,13 +3358,13 @@ impl S3 for VfilesS3 {
                     }
                     continue;
                 }
-                let id = item
-                    .as_ref()
-                    .and_then(|upload| upload.upload_id.clone())
-                    .unwrap_or_default();
-                combined
-                    .entry((listed_key.clone(), id))
-                    .or_insert(item.clone());
+                push_unique_multipart_list_result(
+                    &mut combined,
+                    &mut seen_uploads,
+                    &mut seen_common_prefixes,
+                    listed_key.clone(),
+                    item.clone(),
+                );
                 if item.is_none() {
                     if combined.len() > max {
                         break 'pages;
@@ -3350,10 +3385,6 @@ impl S3 for VfilesS3 {
                 break;
             }
         }
-        let mut combined: Vec<(String, Option<MultipartUpload>)> = combined
-            .into_iter()
-            .map(|((key, _), upload)| (key, upload))
-            .collect();
         let truncated = combined.len() > max;
         combined.truncate(max);
         let last = combined.last();
@@ -3460,6 +3491,46 @@ mod tests {
             Some("same-key"),
             None
         ));
+    }
+
+    #[test]
+    fn multipart_list_deduplication_preserves_initiation_order() {
+        let mut results = Vec::new();
+        let mut seen_uploads = std::collections::BTreeSet::new();
+        let mut seen_common_prefixes = std::collections::BTreeSet::new();
+        for upload_id in ["z-upload-first", "a-upload-second"] {
+            assert!(push_unique_multipart_list_result(
+                &mut results,
+                &mut seen_uploads,
+                &mut seen_common_prefixes,
+                "same-key".to_string(),
+                Some(MultipartUpload {
+                    key: Some("same-key".to_string()),
+                    upload_id: Some(upload_id.to_string()),
+                    ..Default::default()
+                }),
+            ));
+        }
+        assert!(!push_unique_multipart_list_result(
+            &mut results,
+            &mut seen_uploads,
+            &mut seen_common_prefixes,
+            "same-key".to_string(),
+            Some(MultipartUpload {
+                key: Some("same-key".to_string()),
+                upload_id: Some("z-upload-first".to_string()),
+                ..Default::default()
+            }),
+        ));
+        assert_eq!(
+            results
+                .iter()
+                .map(|(_, upload)| upload
+                    .as_ref()
+                    .and_then(|upload| upload.upload_id.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![Some("z-upload-first"), Some("a-upload-second")]
+        );
     }
 
     #[test]
