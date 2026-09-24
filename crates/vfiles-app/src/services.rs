@@ -3063,6 +3063,7 @@ where
             message,
             true,
             None,
+            None,
         )
         .await
     }
@@ -3118,6 +3119,7 @@ where
             message,
             true,
             None,
+            None,
         )
         .await
     }
@@ -3140,6 +3142,35 @@ where
             None,
             message,
             upload_stream,
+        )
+        .await
+    }
+
+    pub async fn complete_upload_from_stream_unknown_size_with_condition(
+        &self,
+        upload_id: &UploadId,
+        message: Option<&str>,
+        upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        condition: &vfiles_domain::EntryWriteCondition,
+    ) -> DomainResult<UploadCompleteResponse> {
+        let session = self.upload_store.get_upload_session(upload_id).await?;
+        if session.expires_at < time::OffsetDateTime::now_utc() {
+            return Err(DomainError::UploadExpired);
+        }
+
+        self.commit_upload_stream(
+            session,
+            upload_stream,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            message,
+            false,
+            None,
+            Some(condition),
         )
         .await
     }
@@ -3173,6 +3204,7 @@ where
             expected_sha1,
             message,
             false,
+            None,
             None,
         )
         .await
@@ -3215,6 +3247,7 @@ where
             message,
             enforce_size,
             Some(properties),
+            None,
         )
         .await
     }
@@ -3268,6 +3301,7 @@ where
             message,
             false,
             None,
+            None,
         )
         .await
     }
@@ -3303,6 +3337,7 @@ where
             message,
             false,
             Some(properties),
+            None,
         )
         .await
     }
@@ -3416,6 +3451,7 @@ where
                      + Sync
              ),
         >,
+        condition: Option<&vfiles_domain::EntryWriteCondition>,
     ) -> DomainResult<UploadCompleteResponse> {
         let (blob_id, content_hash, created_blob, stored_size) = self
             .blob_store
@@ -3497,32 +3533,31 @@ where
             .clone()
             .or_else(|| guess_mime_type(&session.filename));
         let normalized_message = normalize_message(message);
-        let version_result = if let Some(properties) = version_properties {
-            self.entry_repo
-                .create_version_with_properties(
-                    &entry_id,
-                    Some(&blob_id),
-                    Some(&content_hash),
-                    stored_size,
-                    mime_type.as_deref(),
-                    &session.owner_user_id,
-                    normalized_message.as_deref(),
-                    properties,
-                )
-                .await
-        } else {
-            self.entry_repo
-                .create_version(
-                    &entry_id,
-                    Some(&blob_id),
-                    Some(&content_hash),
-                    stored_size,
-                    mime_type.as_deref(),
-                    &session.owner_user_id,
-                    normalized_message.as_deref(),
-                )
-                .await
-        };
+        let no_properties = |_version_id| Vec::new();
+        let properties = version_properties.unwrap_or(&no_properties);
+        let mut effective_condition = condition.cloned();
+        if let Some(condition) = effective_condition.as_mut()
+            && condition.expected_entry_id.is_none()
+            && created_entry_id == Some(entry_id)
+        {
+            // This upload created the entry after observing absence. Bind the condition to
+            // that new entry so a concurrent creator cannot be mistaken for our own entry.
+            condition.expected_entry_id = Some(entry_id);
+        }
+        let version_result = self
+            .entry_repo
+            .create_version_with_properties(
+                &entry_id,
+                Some(&blob_id),
+                Some(&content_hash),
+                stored_size,
+                mime_type.as_deref(),
+                &session.owner_user_id,
+                normalized_message.as_deref(),
+                properties,
+                effective_condition.as_ref(),
+            )
+            .await;
         let version = match version_result {
             Ok(version) => version,
             Err(err) => {
@@ -5013,6 +5048,116 @@ mod tests {
             .await
             .expect_err("incomplete upload should fail");
         assert!(matches!(error, DomainError::UploadConflict));
+    }
+
+    #[tokio::test]
+    async fn conditional_stream_upload_rejects_a_stale_snapshot_at_commit() {
+        let context = TestContext::new().await;
+        let root = TestContext::path("");
+        let initial = context
+            .upload_file(&root, "conditional.txt", b"initial", "initial")
+            .await;
+        let path = TestContext::path("conditional.txt");
+        let entry = context
+            .entry_repo
+            .find_by_path(&context.namespace_id, &path)
+            .await
+            .expect("entry lookup should succeed")
+            .expect("entry should exist");
+        let pending = context
+            .upload_service
+            .init_stream_upload_unknown_size(
+                &context.namespace_id,
+                &root,
+                "conditional.txt",
+                None,
+                &context.user_id,
+            )
+            .await
+            .expect("conditional upload should initialize");
+
+        let newer = context
+            .upload_file(&root, "conditional.txt", b"newer", "newer")
+            .await;
+        let condition = vfiles_domain::EntryWriteCondition {
+            namespace_id: context.namespace_id,
+            path: path.clone(),
+            expected_entry_id: Some(entry.id),
+            expected_version_id: Some(initial.version.id),
+        };
+        let result = context
+            .upload_service
+            .complete_upload_from_stream_unknown_size_with_condition(
+                &pending.upload_id,
+                Some("WebDAV PUT"),
+                Box::new(std::io::Cursor::new(b"stale body".to_vec())),
+                &condition,
+            )
+            .await;
+
+        assert!(matches!(result, Err(DomainError::PreconditionFailed)));
+        let versions = context
+            .entry_repo
+            .find_versions_for_entries(&[entry.id])
+            .await
+            .expect("versions should be readable");
+        assert_eq!(versions.len(), 2);
+        assert_eq!(
+            versions
+                .iter()
+                .max_by_key(|version| version.version_no)
+                .map(|version| version.id),
+            Some(newer.version.id)
+        );
+        context
+            .upload_service
+            .cancel_upload(&pending.upload_id)
+            .await
+            .expect("rejected upload session should be cancellable");
+    }
+
+    #[tokio::test]
+    async fn conditional_stream_upload_can_create_a_previously_absent_resource() {
+        let context = TestContext::new().await;
+        let root = TestContext::path("");
+        let path = TestContext::path("new-conditional.txt");
+        let pending = context
+            .upload_service
+            .init_stream_upload_unknown_size(
+                &context.namespace_id,
+                &root,
+                "new-conditional.txt",
+                None,
+                &context.user_id,
+            )
+            .await
+            .expect("conditional upload should initialize");
+        let condition = vfiles_domain::EntryWriteCondition {
+            namespace_id: context.namespace_id,
+            path: path.clone(),
+            expected_entry_id: None,
+            expected_version_id: None,
+        };
+
+        let completed = context
+            .upload_service
+            .complete_upload_from_stream_unknown_size_with_condition(
+                &pending.upload_id,
+                Some("WebDAV PUT"),
+                Box::new(std::io::Cursor::new(b"created".to_vec())),
+                &condition,
+            )
+            .await
+            .expect("conditional create should succeed while the resource is absent");
+
+        assert_eq!(completed.version.version_no, 1);
+        let entry = context
+            .entry_repo
+            .find_by_path(&context.namespace_id, &path)
+            .await
+            .expect("entry lookup should succeed")
+            .expect("new resource should be present");
+        assert_eq!(entry.current_version_id, Some(completed.version.id));
     }
 
     #[tokio::test]

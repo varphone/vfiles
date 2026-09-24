@@ -3856,6 +3856,7 @@ impl EntryRepo for SqliteEntryRepo {
             created_by,
             message,
             &no_properties,
+            None,
         )
         .await
     }
@@ -3870,6 +3871,7 @@ impl EntryRepo for SqliteEntryRepo {
         created_by: &UserId,
         message: Option<&str>,
         properties: &(dyn Fn(VersionId) -> Vec<vfiles_domain::EntryPropertyChange> + Send + Sync),
+        condition: Option<&vfiles_domain::EntryWriteCondition>,
     ) -> DomainResult<EntryVersion> {
         let version_id = VersionId::new();
         let now = time::OffsetDateTime::now_utc();
@@ -3892,6 +3894,44 @@ impl EntryRepo for SqliteEntryRepo {
         .map_err(|e| DomainError::Internal {
             message: format!("Failed to calculate next entry version: {}", e),
         })?;
+
+        if let Some(condition) = condition {
+            let row: Option<(String, Option<String>)> = sqlx::query_as(
+                "SELECT e.id, (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1) FROM entries e WHERE e.namespace_id = ? AND e.path = ?",
+            )
+            .bind(condition.namespace_id.to_string())
+            .bind(condition.path.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to verify conditional write state: {e}"),
+            })?;
+            let current = row
+                .map(|(entry_id, version_id)| {
+                    let entry_id =
+                        EntryId::from_string(&entry_id).map_err(|error| DomainError::Internal {
+                            message: format!(
+                                "Invalid entry id in conditional write check: {error}"
+                            ),
+                        })?;
+                    let version_id = version_id
+                        .map(|id| VersionId::from_string(&id))
+                        .transpose()
+                        .map_err(|error| DomainError::Internal {
+                            message: format!(
+                                "Invalid version id in conditional write check: {error}"
+                            ),
+                        })?;
+                    Ok::<_, DomainError>((entry_id, version_id))
+                })
+                .transpose()?;
+            let expected = condition
+                .expected_entry_id
+                .map(|entry_id| (entry_id, condition.expected_version_id));
+            if current != expected {
+                return Err(DomainError::PreconditionFailed);
+            }
+        }
 
         if let Some(blob_id) = blob_id {
             let content_hash = content_hash.ok_or_else(|| DomainError::Internal {
@@ -8033,6 +8073,63 @@ mod entry_version_batch_tests {
         version_numbers.sort_unstable();
 
         assert_eq!(version_numbers, (1..=8).collect::<Vec<_>>());
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn conditional_version_write_rejects_a_stale_snapshot_atomically() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+        let path = NormalizedPath::new("docs/conditional.txt").expect("path should parse");
+        let entry_id = repo
+            .create_entry(&namespace_id, &path, EntryKind::File, &user_id)
+            .await
+            .expect("entry should be created");
+        let first = repo
+            .create_version(&entry_id, None, None, 1, Some("text/plain"), &user_id, None)
+            .await
+            .expect("initial version should be created");
+        repo.create_version(&entry_id, None, None, 2, Some("text/plain"), &user_id, None)
+            .await
+            .expect("concurrent update should be created");
+
+        let no_properties = |_version_id| Vec::new();
+        let condition = vfiles_domain::EntryWriteCondition {
+            namespace_id,
+            path: path.clone(),
+            expected_entry_id: Some(entry_id),
+            expected_version_id: Some(first.id),
+        };
+        let result = repo
+            .create_version_with_properties(
+                &entry_id,
+                None,
+                None,
+                3,
+                Some("text/plain"),
+                &user_id,
+                None,
+                &no_properties,
+                Some(&condition),
+            )
+            .await;
+
+        assert!(matches!(result, Err(DomainError::PreconditionFailed)));
+        let current = repo
+            .find_by_path(&namespace_id, &path)
+            .await
+            .expect("entry lookup should succeed")
+            .expect("entry should remain present");
+        let versions = repo
+            .find_versions_for_entries(&[entry_id])
+            .await
+            .expect("version lookup should succeed");
+        assert_eq!(versions.len(), 2);
+        assert_eq!(
+            current.current_version_id,
+            versions.iter().max_by_key(|v| v.version_no).map(|v| v.id)
+        );
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);

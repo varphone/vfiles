@@ -59,6 +59,9 @@ pub enum DomainError {
     #[error("Upload conflict")]
     UploadConflict,
 
+    #[error("Write precondition failed")]
+    PreconditionFailed,
+
     #[error("Storage quota exceeded")]
     StorageQuotaExceeded,
 

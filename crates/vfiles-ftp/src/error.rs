@@ -18,7 +18,9 @@ pub fn to_ftp_error(err: DomainError) -> Error {
         DomainError::EntryNotFound => (ErrorKind::PermanentFileNotAvailable, err.to_string()),
         DomainError::VersionNotFound => (ErrorKind::PermanentFileNotAvailable, err.to_string()),
         DomainError::SnapshotNotFound => (ErrorKind::PermanentFileNotAvailable, err.to_string()),
-        DomainError::PathConflict { .. } | DomainError::Conflict { .. } => {
+        DomainError::PathConflict { .. }
+        | DomainError::Conflict { .. }
+        | DomainError::PreconditionFailed => {
             (ErrorKind::PermanentFileNotAvailable, err.to_string())
         }
         DomainError::Validation { .. } => (ErrorKind::PermissionDenied, err.to_string()),

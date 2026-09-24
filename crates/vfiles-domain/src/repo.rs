@@ -288,6 +288,15 @@ pub enum EntryPropertyChange {
     RemovePrefix { prefix: String },
 }
 
+/// Snapshot of the resource state required by an atomic conditional write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryWriteCondition {
+    pub namespace_id: NamespaceId,
+    pub path: NormalizedPath,
+    pub expected_entry_id: Option<EntryId>,
+    pub expected_version_id: Option<VersionId>,
+}
+
 #[async_trait::async_trait]
 pub trait EntryRepo {
     async fn find_by_id(&self, entry_id: &EntryId) -> DomainResult<Entry>;
@@ -581,7 +590,22 @@ pub trait EntryRepo {
         created_by: &UserId,
         message: Option<&str>,
         properties: &(dyn Fn(VersionId) -> Vec<EntryPropertyChange> + Send + Sync),
+        condition: Option<&EntryWriteCondition>,
     ) -> DomainResult<EntryVersion> {
+        if let Some(condition) = condition {
+            let current_entry = self
+                .find_by_path(&condition.namespace_id, &condition.path)
+                .await?;
+            let entry_matches =
+                current_entry.as_ref().map(|entry| entry.id) == condition.expected_entry_id;
+            let version_matches = current_entry
+                .as_ref()
+                .and_then(|entry| entry.current_version_id)
+                == condition.expected_version_id;
+            if !entry_matches || !version_matches {
+                return Err(DomainError::PreconditionFailed);
+            }
+        }
         let version = self
             .create_version(
                 entry_id,

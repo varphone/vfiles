@@ -231,6 +231,12 @@ impl IntoResponse for ApiError {
                 "Upload conflict".to_string(),
                 None,
             ),
+            ApiError::Domain(DomainError::PreconditionFailed) => (
+                StatusCode::PRECONDITION_FAILED,
+                "PRECONDITION_FAILED".to_string(),
+                "Write precondition failed".to_string(),
+                None,
+            ),
             ApiError::Domain(DomainError::StorageQuotaExceeded) => (
                 StatusCode::INSUFFICIENT_STORAGE,
                 "STORAGE_QUOTA_EXCEEDED".to_string(),

@@ -1203,6 +1203,7 @@ async fn put_op(
     ns: Option<vfiles_domain::types::NamespaceId>,
     uri_owned: String,
     if_owned: Option<String>,
+    write_condition: Option<vfiles_domain::EntryWriteCondition>,
     put_body: Option<Body>,
 ) -> Response {
     let Some(app) = app else {
@@ -1279,7 +1280,7 @@ async fn put_op(
     let body_reader = tokio_util::io::StreamReader::new(body_stream);
     let result = app
         .write
-        .put_file(&ns, &path, Box::new(body_reader), &user.id)
+        .put_file_with_condition(&ns, &path, Box::new(body_reader), &user.id, write_condition)
         .await;
     if limit_exceeded.load(std::sync::atomic::Ordering::Relaxed) {
         return Response::builder()
@@ -1504,6 +1505,7 @@ fn write_error_status(error: &vfiles_domain::DomainError) -> StatusCode {
         | DomainError::PathConflict { .. }
         | DomainError::UploadExpired
         | DomainError::UploadConflict => StatusCode::CONFLICT,
+        DomainError::PreconditionFailed => StatusCode::PRECONDITION_FAILED,
         DomainError::NotFound { .. }
         | DomainError::EntryNotFound
         | DomainError::VersionNotFound
@@ -3171,6 +3173,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .get::<vfiles_domain::types::NamespaceId>()
                 .cloned();
             let uri_owned = percent_decode(req.uri().path());
+            let mut write_condition = None;
             {
                 let ua = req
                     .headers()
@@ -3216,6 +3219,14 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                             match app.entry_repo.find_by_path(ns_e, &put_path).await {
                                 Ok(entry) => {
                                     let exists = entry.is_some();
+                                    write_condition = Some(vfiles_domain::EntryWriteCondition {
+                                        namespace_id: *ns_e,
+                                        path: put_path.clone(),
+                                        expected_entry_id: entry.as_ref().map(|entry| entry.id),
+                                        expected_version_id: entry
+                                            .as_ref()
+                                            .and_then(|entry| entry.current_version_id),
+                                    });
                                     let mut cur = None;
                                     let mut modified_at =
                                         entry.as_ref().map(|entry| entry.created_at);
@@ -3278,6 +3289,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         .get("if")
                         .and_then(|v| v.to_str().ok())
                         .map(str::to_string),
+                    write_condition,
                     put_body,
                 )
                 .await;

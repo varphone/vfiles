@@ -29,6 +29,16 @@ pub trait WebdavWriteOps: Send + Sync {
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         user_id: &UserId,
     ) -> DomainResult<bool>;
+    async fn put_file_with_condition(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        user_id: &UserId,
+        _condition: Option<vfiles_domain::EntryWriteCondition>,
+    ) -> DomainResult<bool> {
+        self.put_file(namespace_id, path, reader, user_id).await
+    }
     async fn mkcol(
         &self,
         namespace_id: &NamespaceId,

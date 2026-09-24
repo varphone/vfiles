@@ -1749,6 +1749,18 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         uid: &vfiles_domain::UserId,
     ) -> vfiles_domain::DomainResult<bool> {
+        self.put_file_with_condition(ns, path, reader, uid, None)
+            .await
+    }
+
+    async fn put_file_with_condition(
+        &self,
+        ns: &vfiles_domain::NamespaceId,
+        path: &vfiles_domain::NormalizedPath,
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        uid: &vfiles_domain::UserId,
+        condition: Option<vfiles_domain::EntryWriteCondition>,
+    ) -> vfiles_domain::DomainResult<bool> {
         // init_upload 语义：target_path = 父目录 + filename = 文件名（r110'c 修正：此前
         // 误传完整路径导致文件被建成目录条目）。
         let full = path.as_str();
@@ -1770,16 +1782,26 @@ impl vfiles_webdav::WebdavWriteOps for WebdavWrite {
             .upload
             .init_stream_upload_unknown_size(ns, &parent, &filename, None, uid)
             .await?;
-        let completed = match self
-            .upload
-            .complete_upload_from_stream_unknown_size(
-                &session.upload_id,
-                None,
-                Some("WebDAV PUT"),
-                reader,
-            )
-            .await
-        {
+        let completion = if let Some(condition) = condition {
+            self.upload
+                .complete_upload_from_stream_unknown_size_with_condition(
+                    &session.upload_id,
+                    Some("WebDAV PUT"),
+                    reader,
+                    &condition,
+                )
+                .await
+        } else {
+            self.upload
+                .complete_upload_from_stream_unknown_size(
+                    &session.upload_id,
+                    None,
+                    Some("WebDAV PUT"),
+                    reader,
+                )
+                .await
+        };
+        let completed = match completion {
             Ok(completed) => completed,
             Err(error) => {
                 if let Err(cleanup_error) = self.upload.cancel_upload(&session.upload_id).await {
