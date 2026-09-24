@@ -341,26 +341,10 @@ pub async fn create_directory(
         )
         .await?;
 
-    let parent_path = normalized_path
-        .as_str()
-        .rsplit_once('/')
-        .map(|(parent, _)| parent)
-        .unwrap_or("");
-    let parent_path = NormalizedPath::new(parent_path).map_err(|_| {
-        ApiError::Domain(DomainError::Validation {
-            message: "Invalid parent path format".to_string(),
-        })
-    })?;
-
-    let tree = state
-        .workspace_service
-        .tree(&ctx.namespace_id, &parent_path, None)
+    let entry = state
+        .entry_repo
+        .find_by_path(&ctx.namespace_id, &normalized_path)
         .await?
-        .items;
-
-    let entry = tree
-        .into_iter()
-        .find(|item| item.path == normalized_path.as_str())
         .ok_or(ApiError::Domain(DomainError::NotFound {
             resource: "entry".to_string(),
         }))?;
