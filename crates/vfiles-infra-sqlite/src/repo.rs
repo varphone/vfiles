@@ -8305,11 +8305,18 @@ mod selected_upload_part_tests {
 pub struct SqliteSearchRepo<B> {
     pool: SqlitePool,
     blob_store: B,
+    content_search_semaphore: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl<B> SqliteSearchRepo<B> {
     pub fn new(pool: SqlitePool, blob_store: B) -> Self {
-        Self { pool, blob_store }
+        Self {
+            pool,
+            blob_store,
+            content_search_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(
+                CONTENT_SEARCH_CONCURRENCY,
+            )),
+        }
     }
 }
 
@@ -8321,6 +8328,7 @@ where
         Self {
             pool: self.pool.clone(),
             blob_store: self.blob_store.clone(),
+            content_search_semaphore: self.content_search_semaphore.clone(),
         }
     }
 }
@@ -8329,12 +8337,30 @@ where
 const MAX_FILENAME_SEARCH_CANDIDATES: i64 = 2000;
 /// 内容搜索最多扫描多少个候选文件。
 const MAX_CONTENT_SEARCH_CANDIDATES: i64 = 500;
-/// 内容搜索最多返回多少条命中。
-const MAX_CONTENT_SEARCH_MATCHES: usize = 500;
+/// 同时扫描的内容文件数；有界并发缩短 I/O 等待，同时限制打开的 blob 流。
+const CONTENT_SEARCH_CONCURRENCY: usize = 8;
 /// 每个内容搜索结果最多保留多少条行命中，避免重复关键词膨胀响应。
 const MAX_CONTENT_MATCHES_PER_FILE: usize = 20;
 /// 每个匹配行上下文保留命中附近的字符数。
 const CONTENT_SEARCH_CONTEXT_RADIUS: usize = 64;
+
+#[derive(sqlx::FromRow)]
+struct ContentSearchRow {
+    entry_id: String,
+    namespace_id: String,
+    path: String,
+    entry_type: String,
+    entry_created_at: String,
+    version_id: Option<String>,
+    version_no: Option<i64>,
+    blob_id: Option<String>,
+    size_bytes: Option<i64>,
+    mime_type: Option<String>,
+    content_hash: Option<String>,
+    version_created_at: Option<String>,
+    created_by: Option<String>,
+    change_message: Option<String>,
+}
 
 struct ContentLineScanner {
     pattern: Vec<char>,
@@ -8547,6 +8573,17 @@ where
     Ok(scanner.finish())
 }
 
+async fn acquire_content_search_permit(
+    semaphore: std::sync::Arc<tokio::sync::Semaphore>,
+) -> DomainResult<tokio::sync::OwnedSemaphorePermit> {
+    semaphore
+        .acquire_owned()
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Content search concurrency control failed: {error}"),
+        })
+}
+
 #[cfg(test)]
 mod content_search_scanner_tests {
     use super::*;
@@ -8618,6 +8655,168 @@ mod content_search_scanner_tests {
             std::io::ErrorKind::InvalidData
         );
     }
+
+    #[tokio::test]
+    async fn content_search_concurrency_is_bounded_across_shared_permits() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let semaphore =
+            std::sync::Arc::new(tokio::sync::Semaphore::new(CONTENT_SEARCH_CONCURRENCY));
+        let active = std::sync::Arc::new(AtomicUsize::new(0));
+        let peak = std::sync::Arc::new(AtomicUsize::new(0));
+        let tasks = (0..32)
+            .map(|_| {
+                let semaphore = semaphore.clone();
+                let active = active.clone();
+                let peak = peak.clone();
+                tokio::spawn(async move {
+                    let _permit = acquire_content_search_permit(semaphore)
+                        .await
+                        .expect("search permit should remain open");
+                    let now_active = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(now_active, Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+                    active.fetch_sub(1, Ordering::SeqCst);
+                })
+            })
+            .collect::<Vec<_>>();
+        for task in tasks {
+            task.await.expect("concurrency probe task should finish");
+        }
+
+        assert!(peak.load(Ordering::SeqCst) > 1);
+        assert!(peak.load(Ordering::SeqCst) <= CONTENT_SEARCH_CONCURRENCY);
+    }
+}
+
+async fn search_content_candidate<B>(
+    blob_store: &B,
+    semaphore: &std::sync::Arc<tokio::sync::Semaphore>,
+    row: ContentSearchRow,
+    search_term: &str,
+) -> DomainResult<Option<SearchResult>>
+where
+    B: BlobStore + Send + Sync,
+{
+    let Some(blob_id_str) = row.blob_id.as_deref() else {
+        return Ok(None);
+    };
+    let Ok(blob_id_uuid) = uuid::Uuid::parse_str(blob_id_str) else {
+        return Ok(None);
+    };
+    let blob_id = BlobId::from_uuid(blob_id_uuid);
+    let _permit = acquire_content_search_permit(std::sync::Arc::clone(semaphore)).await?;
+    let Ok(Some(blob_stream)) = blob_store.get_blob_stream(&blob_id).await else {
+        return Ok(None);
+    };
+    let Ok((matches, matches_truncated)) = scan_content_matches(blob_stream, search_term).await
+    else {
+        return Ok(None);
+    };
+    if matches.is_empty() {
+        return Ok(None);
+    }
+
+    let entry_id = uuid::Uuid::parse_str(&row.entry_id).map_err(|error| DomainError::Internal {
+        message: format!("Invalid entry ID: {error}"),
+    })?;
+    let namespace_id =
+        uuid::Uuid::parse_str(&row.namespace_id).map_err(|error| DomainError::Internal {
+            message: format!("Invalid namespace ID: {error}"),
+        })?;
+    let path = row.path;
+    let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+    let entry_type = match row.entry_type.as_str() {
+        "file" => EntryKind::File,
+        "directory" => EntryKind::Directory,
+        _ => return Ok(None),
+    };
+    let current_version_id = row
+        .version_id
+        .as_deref()
+        .map(|id| {
+            uuid::Uuid::parse_str(id)
+                .map(VersionId::from_uuid)
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Invalid version ID: {error}"),
+                })
+        })
+        .transpose()?;
+    let entry = Entry {
+        id: EntryId::from_uuid(entry_id),
+        namespace_id: NamespaceId::from_uuid(namespace_id),
+        parent_entry_id: None, // TODO: populate from path
+        path_norm: NormalizedPath::new(&path)
+            .map_err(|message| DomainError::Internal { message })?,
+        name,
+        entry_type,
+        current_version_id,
+        created_at: time::OffsetDateTime::parse(
+            &row.entry_created_at,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
+        deleted_at: None,
+    };
+
+    let version = if let Some(version_id) = row.version_id.as_deref() {
+        let version_id =
+            uuid::Uuid::parse_str(version_id).map_err(|error| DomainError::Internal {
+                message: format!("Invalid version ID: {error}"),
+            })?;
+        let created_by = uuid::Uuid::parse_str(row.created_by.as_deref().unwrap_or_default())
+            .map_err(|error| DomainError::Internal {
+                message: format!("Invalid user ID: {error}"),
+            })?;
+        Some(EntryVersion {
+            id: VersionId::from_uuid(version_id),
+            entry_id: entry.id,
+            version_no: row.version_no.unwrap_or(1) as u32,
+            blob_id: Some(blob_id),
+            size_bytes: ByteSize::new(row.size_bytes.unwrap_or(0) as u64),
+            mime_type: row.mime_type,
+            is_text: true,
+            is_symlink: false,
+            content_hash: row
+                .content_hash
+                .as_deref()
+                .map(ContentHash::new)
+                .transpose()
+                .map_err(|_| DomainError::Internal {
+                    message: "Invalid content hash".to_string(),
+                })?
+                .unwrap_or_else(default_content_hash),
+            created_by: UserId::from_uuid(created_by),
+            created_at: row
+                .version_created_at
+                .as_deref()
+                .and_then(|created_at| {
+                    time::OffsetDateTime::parse(
+                        created_at,
+                        &time::format_description::well_known::Rfc3339,
+                    )
+                    .ok()
+                })
+                .unwrap_or_else(time::OffsetDateTime::now_utc),
+            change_type: ChangeType::Modified,
+            change_message: row.change_message.as_deref().and_then(|message| {
+                NonEmptyMessage::new(message)
+                    .ok()
+                    .or_else(|| NonEmptyMessage::new("Updated").ok())
+            }),
+            source_upload_id: None,
+        })
+    } else {
+        None
+    };
+
+    Ok(Some(SearchResult {
+        entry,
+        version,
+        matches,
+        matches_truncated,
+        score: 0.8, // Content matches get slightly lower score than filename matches
+    }))
 }
 
 #[async_trait::async_trait]
@@ -8858,28 +9057,8 @@ where
             .as_ref()
             .map(|path| path.as_str().to_string());
         let path_like = path_exact.as_ref().map(|path| format!("{path}/%"));
-        // 同文件名搜索：分页统一由应用层在排序后处理，这里只限制候选文件数量，
-        // 并在候选范围内收集全部命中（上限 MAX_CONTENT_SEARCH_MATCHES）。
+        // 分页统一由应用层在排序后处理；这里先限制候选文件数，再并发扫描这些候选。
         let candidate_limit = MAX_CONTENT_SEARCH_CANDIDATES;
-
-        // Define a struct for the query result
-        #[derive(sqlx::FromRow)]
-        struct ContentSearchRow {
-            entry_id: String,
-            namespace_id: String,
-            path: String,
-            entry_type: String,
-            entry_created_at: String,
-            version_id: Option<String>,
-            version_no: Option<i64>,
-            blob_id: Option<String>,
-            size_bytes: Option<i64>,
-            mime_type: Option<String>,
-            content_hash: Option<String>,
-            version_created_at: Option<String>,
-            created_by: Option<String>,
-            change_message: Option<String>,
-        }
 
         // Find text files in the namespace
         let rows: Vec<ContentSearchRow> = sqlx::query_as::<_, ContentSearchRow>(
@@ -8930,140 +9109,22 @@ where
             message: format!("Failed to search content candidates: {}", e),
         })?;
 
+        use futures::StreamExt;
+        let mut candidates = futures::stream::iter(rows.into_iter().map(|row| {
+            search_content_candidate(
+                &self.blob_store,
+                &self.content_search_semaphore,
+                row,
+                &search_term,
+            )
+        }))
+        .buffer_unordered(CONTENT_SEARCH_CONCURRENCY);
         let mut results = Vec::new();
-        for row in rows {
-            // 候选范围内收集全部命中（分页在应用层完成），仍设上限防止极端耗时
-            if results.len() >= MAX_CONTENT_SEARCH_MATCHES {
-                break;
-            }
-
-            // Try to get blob content
-            if let Some(blob_id_str) = &row.blob_id
-                && let Ok(blob_id) = uuid::Uuid::parse_str(blob_id_str)
-            {
-                let blob_id = BlobId::from_uuid(blob_id);
-                if let Ok(Some(blob_stream)) = self.blob_store.get_blob_stream(&blob_id).await {
-                    let Ok((matches, matches_truncated)) =
-                        scan_content_matches(blob_stream, &search_term).await
-                    else {
-                        continue;
-                    };
-                    if matches.is_empty() {
-                        continue;
-                    }
-
-                    // Extract filename from path
-                    let path = &row.path;
-                    let name = path.split('/').next_back().unwrap_or(path).to_string();
-
-                    let entry = Entry {
-                        id: EntryId::from_uuid(uuid::Uuid::parse_str(&row.entry_id).map_err(
-                            |e| DomainError::Internal {
-                                message: format!("Invalid entry ID: {}", e),
-                            },
-                        )?),
-                        namespace_id: NamespaceId::from_uuid(
-                            uuid::Uuid::parse_str(&row.namespace_id).map_err(|e| {
-                                DomainError::Internal {
-                                    message: format!("Invalid namespace ID: {}", e),
-                                }
-                            })?,
-                        ),
-                        parent_entry_id: None, // TODO: populate from path
-                        path_norm: NormalizedPath::new(path).map_err(|e| {
-                            DomainError::Internal {
-                                message: format!("Invalid path: {}", e),
-                            }
-                        })?,
-                        name,
-                        entry_type: match row.entry_type.as_str() {
-                            "file" => EntryKind::File,
-                            "directory" => EntryKind::Directory,
-                            _ => continue, // Skip invalid entries
-                        },
-                        current_version_id: row.version_id.as_ref().map(|id| {
-                            VersionId::from_uuid(
-                                uuid::Uuid::parse_str(id)
-                                    .map_err(|e| DomainError::Internal {
-                                        message: format!("Invalid version ID: {}", e),
-                                    })
-                                    .unwrap(), // Safe because we checked
-                            )
-                        }),
-                        created_at: time::OffsetDateTime::parse(
-                            &row.entry_created_at,
-                            &time::format_description::well_known::Rfc3339,
-                        )
-                        .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
-                        deleted_at: None,
-                    };
-
-                    let version = if let Some(version_id) = &row.version_id {
-                        Some(EntryVersion {
-                            id: VersionId::from_uuid(uuid::Uuid::parse_str(version_id).map_err(
-                                |e| DomainError::Internal {
-                                    message: format!("Invalid version ID: {}", e),
-                                },
-                            )?),
-                            entry_id: entry.id,
-                            version_no: row.version_no.unwrap_or(1) as u32,
-                            blob_id: Some(blob_id),
-                            size_bytes: ByteSize::new(row.size_bytes.unwrap_or(0) as u64),
-                            mime_type: row.mime_type,
-                            is_text: true,
-                            is_symlink: false,
-                            content_hash: row
-                                .content_hash
-                                .as_deref()
-                                .map(ContentHash::new)
-                                .transpose()
-                                .map_err(|_| DomainError::Internal {
-                                    message: "Invalid content hash".to_string(),
-                                })?
-                                .unwrap_or_else(default_content_hash),
-                            created_by: UserId::from_uuid(
-                                uuid::Uuid::parse_str(
-                                    row.created_by.as_ref().unwrap_or(&"".to_string()),
-                                )
-                                .map_err(|e| {
-                                    DomainError::Internal {
-                                        message: format!("Invalid user ID: {}", e),
-                                    }
-                                })?,
-                            ),
-                            created_at: row
-                                .version_created_at
-                                .as_ref()
-                                .map(|dt| {
-                                    time::OffsetDateTime::parse(
-                                        dt,
-                                        &time::format_description::well_known::Rfc3339,
-                                    )
-                                    .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
-                                })
-                                .unwrap_or_else(time::OffsetDateTime::now_utc),
-                            change_type: ChangeType::Modified,
-                            change_message: row.change_message.as_ref().map(|msg| {
-                                NonEmptyMessage::new(msg)
-                                    .unwrap_or_else(|_| NonEmptyMessage::new("Updated").unwrap())
-                            }),
-                            source_upload_id: None,
-                        })
-                    } else {
-                        None
-                    };
-
-                    results.push(SearchResult {
-                        entry,
-                        version,
-                        matches,
-                        matches_truncated,
-                        score: 0.8, // Content matches get slightly lower score than filename matches
-                    });
-                }
+        while let Some(result) = candidates.next().await {
+            if let Some(result) = result? {
+                results.push(result);
             }
         }
-
         Ok(results)
     }
 }

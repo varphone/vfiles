@@ -11,6 +11,7 @@ vfiles-domain = { path = "../vfiles-domain" }
 
 async-trait.workspace = true
 camino.workspace = true
+futures.workspace = true
 crc32fast = "1"
 crc32c = "0.6"
 crc = "3"
