@@ -11,6 +11,7 @@ axum = { workspace = true, features = ["macros"] }
 base64.workspace = true
 httpdate = "1.0.3"
 futures.workspace = true
+http-body = "1"
 roxmltree = "0.21.1"
 time.workspace = true
 tokio.workspace = true

@@ -318,6 +318,48 @@ async fn options_advertises_and_propfind_needs_auth() {
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"))
     };
+    let missing_parent_mkcol = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("MKCOL")
+                .uri("/missing-parent/new-collection")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing_parent_mkcol.status(), 409);
+
+    let existing_target_mkcol = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("MKCOL")
+                .uri("/locked-dir")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(existing_target_mkcol.status(), 405);
+
+    let mkcol_with_body = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("MKCOL")
+                .uri("/body-collection")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::from("unsupported MKCOL body"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mkcol_with_body.status(), 415);
+
     let shared_lock = router
         .clone()
         .oneshot(

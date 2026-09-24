@@ -10,6 +10,7 @@ use axum::{
     http::{Method, StatusCode, header},
     response::Response,
 };
+use http_body::Body as _;
 
 use crate::response::PropResponse;
 
@@ -1337,6 +1338,47 @@ async fn write_op(
                 .unwrap();
         }
     };
+    if matches!(op, WriteOp::Mkcol) {
+        if rel.is_empty() {
+            return Response::builder()
+                .status(StatusCode::METHOD_NOT_ALLOWED)
+                .body(Body::empty())
+                .unwrap();
+        }
+        match app.entry_repo.find_by_path(&ns, &path).await {
+            Ok(Some(_)) => {
+                return Response::builder()
+                    .status(StatusCode::METHOD_NOT_ALLOWED)
+                    .body(Body::empty())
+                    .unwrap();
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::error!(%error, path = %rel, "MKCOL 前检查目标失败");
+                return internal_error();
+            }
+        }
+        if let Some((parent_rel, _)) = rel.rsplit_once('/') {
+            let parent = match NormalizedPath::new(parent_rel) {
+                Ok(parent) => parent,
+                Err(_) => return internal_error(),
+            };
+            match app.entry_repo.find_by_path(&ns, &parent).await {
+                Ok(Some(entry))
+                    if entry.entry_type == vfiles_domain::types::EntryKind::Directory => {}
+                Ok(_) => {
+                    return Response::builder()
+                        .status(StatusCode::CONFLICT)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+                Err(error) => {
+                    tracing::error!(%error, parent = %parent_rel, "MKCOL 前检查父目录失败");
+                    return internal_error();
+                }
+            }
+        }
+    }
     let uid = user.id;
     let overwrite_conflict_is_precondition = matches!(&op, WriteOp::Move) && !overwrite;
     let result = match op {
@@ -2881,6 +2923,22 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 "DELETE" => WriteOp::Delete,
                 _ => WriteOp::Move,
             };
+            let mkcol_has_body = req
+                .body()
+                .size_hint()
+                .exact()
+                .is_some_and(|length| length > 0);
+            if matches!(op, WriteOp::Mkcol)
+                && (mkcol_has_body
+                    || req
+                        .headers()
+                        .contains_key(axum::http::header::TRANSFER_ENCODING))
+            {
+                return Response::builder()
+                    .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
+                    .body(Body::empty())
+                    .unwrap();
+            }
             let audit_action = match m.as_str() {
                 "MKCOL" => "webdav.mkcol",
                 "DELETE" => "webdav.delete",
