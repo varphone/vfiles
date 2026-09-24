@@ -260,7 +260,14 @@ pub fn parse_propertyupdate(body: &str) -> Result<Vec<PropOp>, ()> {
                     let name = property_key(child.tag_name().namespace(), child.tag_name().name());
                     if is_set {
                         let value = if is_dav_property(&name, "displayname") {
-                            child.text().unwrap_or_default().to_string()
+                            if child.children().any(|node| node.is_element()) {
+                                return Err(());
+                            }
+                            child
+                                .children()
+                                .filter(|node| node.is_text())
+                                .filter_map(|node| node.text())
+                                .collect::<String>()
                         } else {
                             store_xml_element(child)
                         };
@@ -818,6 +825,25 @@ mod proppatch_tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn displayname_collects_text_around_comments_and_rejects_nested_elements() {
+        let body = r#"<D:propertyupdate xmlns:D="DAV:">
+            <D:set><D:prop><D:displayname>Project<!-- separator --> / Folder</D:displayname></D:prop></D:set>
+        </D:propertyupdate>"#;
+        assert_eq!(
+            parse_propertyupdate(body).unwrap(),
+            vec![PropOp::Set {
+                name: property_key(Some("DAV:"), "displayname"),
+                value: "Project / Folder".into(),
+            }]
+        );
+
+        let nested = r#"<D:propertyupdate xmlns:D="DAV:">
+            <D:set><D:prop><D:displayname>Project <D:em>Folder</D:em></D:displayname></D:prop></D:set>
+        </D:propertyupdate>"#;
+        assert!(parse_propertyupdate(nested).is_err());
     }
 
     #[test]
