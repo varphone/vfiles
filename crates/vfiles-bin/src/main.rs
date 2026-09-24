@@ -1887,7 +1887,7 @@ fn load_s3_credentials(cfg: &vfiles_config::S3Config) -> std::collections::HashM
             3 => (Some(parts[2].to_string()), false),
             _ => {
                 if !mode(parts[3]) {
-                    tracing::warn!(entry = %entry, "S3 CREDENTIALS 第四段非 ro/rw，按读写处理");
+                    tracing::warn!("S3 CREDENTIALS 第四段非 ro/rw，按读写处理（凭证内容已省略）");
                 }
                 (Some(parts[2].to_string()), readonly_mode(parts[3]))
             }
@@ -2820,5 +2820,25 @@ mod tests {
         assert!(unit.contains("WorkingDirectory=/srv/vfiles"));
         assert!(unit.contains("Environment=\"VFILES_STORAGE_ROOT=/var/lib/vfiles\""));
         assert!(unit.contains("WantedBy=multi-user.target"));
+    }
+
+    #[test]
+    fn malformed_s3_credential_mode_defaults_to_read_write() {
+        let cfg = vfiles_config::S3Config {
+            enabled: true,
+            port: 9000,
+            embedded: true,
+            access_key: String::new(),
+            secret_key: String::new(),
+            credentials: "access-key:highly-sensitive-secret:team:read-write-typo".to_string(),
+            region: String::new(),
+        };
+
+        let credentials = load_s3_credentials(&cfg);
+        let credential = credentials
+            .get("access-key")
+            .expect("configured access key should remain available");
+        assert_eq!(credential.namespace.as_deref(), Some("team"));
+        assert!(!credential.readonly);
     }
 }
