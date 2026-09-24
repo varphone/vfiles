@@ -3340,34 +3340,58 @@ where
             return Err(DomainError::UploadConflict);
         }
 
-        let file_path = uploaded_file_path(&session.target_path_norm, &session.filename)?;
-        let mut changed_entries = ensure_directory_path(
-            &self.entry_repo,
-            &session.namespace_id,
-            &session.target_path_norm,
-            &session.owner_user_id,
-        )
-        .await?;
-        let entry_id = if let Some(entry) = self
-            .entry_repo
-            .find_by_path(&session.namespace_id, &file_path)
-            .await?
-        {
-            if entry.entry_type != EntryKind::File {
-                return Err(DomainError::PathConflict {
-                    message: format!("Path is occupied by a directory: {}", file_path.as_str()),
-                });
-            }
-            entry.id
-        } else {
-            self.entry_repo
-                .create_entry(
-                    &session.namespace_id,
-                    &file_path,
-                    EntryKind::File,
-                    &session.owner_user_id,
-                )
+        let mut created_entry_id = None;
+        let prepare_result = async {
+            let file_path = uploaded_file_path(&session.target_path_norm, &session.filename)?;
+            let changed_entries = ensure_directory_path(
+                &self.entry_repo,
+                &session.namespace_id,
+                &session.target_path_norm,
+                &session.owner_user_id,
+            )
+            .await?;
+            let entry_id = if let Some(entry) = self
+                .entry_repo
+                .find_by_path(&session.namespace_id, &file_path)
                 .await?
+            {
+                if entry.entry_type != EntryKind::File {
+                    return Err(DomainError::PathConflict {
+                        message: format!("Path is occupied by a directory: {}", file_path.as_str()),
+                    });
+                }
+                entry.id
+            } else {
+                let entry_id = self
+                    .entry_repo
+                    .create_entry(
+                        &session.namespace_id,
+                        &file_path,
+                        EntryKind::File,
+                        &session.owner_user_id,
+                    )
+                    .await?;
+                created_entry_id = Some(entry_id);
+                entry_id
+            };
+            Ok::<_, DomainError>((file_path, changed_entries, entry_id))
+        }
+        .await;
+        let (file_path, mut changed_entries, entry_id) = match prepare_result {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                if let Some(entry_id) = created_entry_id
+                    && let Err(cleanup_error) = self.entry_repo.delete_entry(&entry_id).await
+                {
+                    tracing::warn!(%cleanup_error, %entry_id, "failed to rollback empty upload entry");
+                }
+                if created_blob
+                    && let Err(cleanup_error) = self.blob_store.delete_blob(&blob_id).await
+                {
+                    tracing::warn!(%cleanup_error, %blob_id, "failed to rollback unpublished upload blob");
+                }
+                return Err(error);
+            }
         };
 
         let mime_type = session
@@ -3390,8 +3414,15 @@ where
         let version = match version_result {
             Ok(version) => version,
             Err(err) => {
-                if created_blob {
-                    let _ = self.blob_store.delete_blob(&blob_id).await;
+                if let Some(entry_id) = created_entry_id
+                    && let Err(cleanup_error) = self.entry_repo.delete_entry(&entry_id).await
+                {
+                    tracing::warn!(%cleanup_error, %entry_id, "failed to rollback empty upload entry");
+                }
+                if created_blob
+                    && let Err(cleanup_error) = self.blob_store.delete_blob(&blob_id).await
+                {
+                    tracing::warn!(%cleanup_error, %blob_id, "failed to rollback unpublished upload blob");
                 }
                 return Err(err);
             }
@@ -4812,6 +4843,67 @@ mod tests {
             .await
             .expect_err("incomplete upload should fail");
         assert!(matches!(error, DomainError::UploadConflict));
+    }
+
+    #[tokio::test]
+    async fn failed_stream_commit_removes_new_blob_when_target_becomes_a_directory() {
+        let context = TestContext::new().await;
+        let root = TestContext::path("");
+        let target = TestContext::path("race.txt");
+        let bytes = b"blob must be rolled back".to_vec();
+        let upload = context
+            .upload_service
+            .init_upload(
+                &context.namespace_id,
+                &root,
+                "race.txt",
+                bytes.len() as u64,
+                None,
+                None,
+                &context.user_id,
+            )
+            .await
+            .expect("upload should initialize before the path race");
+        context
+            .entry_repo
+            .create_entry(
+                &context.namespace_id,
+                &target,
+                EntryKind::Directory,
+                &context.user_id,
+            )
+            .await
+            .expect("racing directory should be created");
+
+        let error = context
+            .upload_service
+            .complete_upload_from_stream(
+                &upload.upload_id,
+                None,
+                None,
+                Box::new(std::io::Cursor::new(bytes)),
+            )
+            .await
+            .expect_err("the concurrent directory must reject the file upload");
+        assert!(matches!(error, DomainError::PathConflict { .. }));
+        assert!(
+            context
+                .blob_store
+                .list_stored_blob_files()
+                .await
+                .expect("blob listing should succeed")
+                .is_empty()
+        );
+        assert_eq!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &target)
+                .await
+                .expect("target lookup should succeed")
+                .expect("racing directory should remain")
+                .entry_type,
+            EntryKind::Directory
+        );
     }
 
     #[tokio::test]
