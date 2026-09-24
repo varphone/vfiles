@@ -13,7 +13,7 @@
 
 | 项 | 状态 | 注 |
 | --- | --- | --- |
-| OPTIONS / PROPFIND（Depth 0/1）/ GET / HEAD | ✅ **实装 + 真服务证**（curl 207 ✓） | GET 流式读取版本；PROPFIND 文件 `getlastmodified` 取当前版本时间，目录无版本时回退条目创建时间 |
+| OPTIONS / PROPFIND（Depth 0/1/infinity）/ GET / HEAD | ✅ **实装 + 真服务证**（curl 207 ✓） | PROPFIND infinity 使用子树查询并批量读取版本、自定义属性和锁信息；GET 流式读取版本 |
 | MKCOL / DELETE / MOVE | ✅ 实装（`WebdavWriteOps` ✓ 审计链 user_id ✓） | MOVE Overwrite T 在 SQLite 单事务内删除目标子树并改写源路径；blob 引用释放和快照在提交后处理 |
 | **PUT** | ✅ **链实装**（`init_upload` + `complete_upload_from_stream` 流式直完 ✓） | bin 侧 `put_file` 转发 = 下段（签名已清 ✓） |
 | COPY | ✅ **实装**（Destination + Overwrite + 锁前置 + 审计；文件复用 blob，目录递归复制） | `copy_entries` 提供 overwrite 和目标父目录检查；需持续做 RFC/客户端兼容验收 |
@@ -22,7 +22,7 @@
 | auth 门 | ✅ dispatch 顶部（Basic → verify → 401 + WWW-Authenticate ✓ OPTIONS 豁免 ✓） |
 | 登录爆破保护 | ✅ 复用 HTTP/FTP 共享失败计数器，按 socket peer IP + 规范化用户名限流；超限返回 429 与 Retry-After，成功后清除计数 |
 | 默认开启 | ✅ **用户令兑现**（`enabled: true` ✓ auth 强制防御 ✓ 真服务日志确证 ✓） |
-| 边界/错误语义 | ✅ 不支持的 PROPFIND Depth infinity = 403 + `DAV:propfind-finite-depth`（RFC §10.2）；非法 Depth = 400；If 复杂式 = 412；锁冲突 = 423；token 不配 = 409 |
+| 边界/错误语义 | ✅ PROPFIND Depth `0`/`1`/`infinity`（省略默认 infinity）；非法或重复 Depth = 400；If 复杂式 = 412；锁冲突 = 423；token 不配 = 409 |
 | **GET 流式化** | ✅ **r201-02 收口**（`get_stream` 直通 + ReaderStream ✓ **10MB sha256 一致性证** ✓ 内存爆除） |
 | COPY | ✅ **已接线**（`WebdavWriteOps::copy_entry` → `DefaultWorkspaceService::copy_entries`；目标覆盖、子树保护、blob 复用与递归目录复制均有实现） |
 | **台架缺口注** | cadaver、rclone 实际文件操作与系统 litmus 104 项套件均由独立探针自动回归并接入 CI；rclone 覆盖 MKCOL/PUT/list/GET/空目录/check/MOVE/DELETE。两条 warning 已核对：HTTP URI parser 在进入 DAV handler 前剥离 fragment；RFC 4918 §10.4 要求 false `If` 条件返回 412，尽管 litmus 的提示期望 423；Windows 客户端仍待测 |

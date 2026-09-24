@@ -81,6 +81,40 @@ grep -Eq '^dav:.*(^|[,[:space:]])2([,[:space:]]|$)' <<<"$options_headers" || {
   exit 1
 }
 
+dav_url="http://127.0.0.1:$port/dav"
+curl --fail --silent --show-error --user litmusprobe:litmusprobe-password-123 \
+  --request MKCOL "$dav_url/litmus-infinity/" >/dev/null
+curl --fail --silent --show-error --user litmusprobe:litmusprobe-password-123 \
+  --request MKCOL "$dav_url/litmus-infinity/sub/" >/dev/null
+printf 'infinity depth probe\n' >"$tmpdir/infinity.txt"
+curl --fail --silent --show-error --user litmusprobe:litmusprobe-password-123 \
+  --upload-file "$tmpdir/infinity.txt" "$dav_url/litmus-infinity/sub/infinity.txt" >/dev/null
+infinity_status=$(curl --silent --show-error --user litmusprobe:litmusprobe-password-123 \
+  --request PROPFIND --header 'Depth: infinity' \
+  --output "$tmpdir/infinity.xml" --write-out '%{http_code}' "$dav_url/litmus-infinity/")
+default_depth_status=$(curl --silent --show-error --user litmusprobe:litmusprobe-password-123 \
+  --request PROPFIND --output "$tmpdir/default-depth.xml" --write-out '%{http_code}' "$dav_url/")
+python3 - "$tmpdir/infinity.xml" "$tmpdir/default-depth.xml" \
+  "$infinity_status" "$default_depth_status" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+infinity_path, default_path, infinity_status, default_status = sys.argv[1:]
+if infinity_status != "207" or default_status != "207":
+    raise SystemExit(
+        f"expected Depth infinity/default statuses 207; got {infinity_status}/{default_status}"
+    )
+ns = {"d": "DAV:"}
+for path, expected in (
+    (infinity_path, "/dav/litmus-infinity/sub/infinity.txt"),
+    (default_path, "/dav/litmus-infinity/sub/infinity.txt"),
+):
+    root = ET.parse(path).getroot()
+    hrefs = {element.text for element in root.findall("d:response/d:href", ns)}
+    if expected not in hrefs:
+        raise SystemExit(f"{path}: recursive resource {expected!r} missing from {hrefs!r}")
+PY
+
 if ! litmus "http://127.0.0.1:$port/dav" litmusprobe litmusprobe-password-123 \
   >"$tmpdir/litmus.log" 2>&1; then
   cat "$tmpdir/litmus.log" >&2

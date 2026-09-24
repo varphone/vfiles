@@ -4,7 +4,7 @@
 //! Cyberduck / davfs2。与 vfiles-ftp 并列为第二协议面（独立端口 ✓ 独立开关 ✓
 //! auth 复用 `AuthService::verify_credentials` 与 Web/FTP 完全一致）。
 //!
-//! 支持 OPTIONS / PROPFIND（Depth 0/1）/ GET / HEAD、PUT/DELETE/MKCOL/MOVE/COPY、
+//! 支持 OPTIONS / PROPFIND（Depth 0/1/infinity）/ GET / HEAD、PUT/DELETE/MKCOL/MOVE/COPY、
 //! LOCK/UNLOCK（exclusive write、depth 0/infinity、refresh；shared lock 明确返回 405）。
 
 mod auth;

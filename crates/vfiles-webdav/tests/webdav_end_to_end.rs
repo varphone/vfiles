@@ -401,6 +401,7 @@ async fn options_advertises_and_propfind_needs_auth() {
     assert!(child_lengths_xml.contains(
         "/persist.txt</D:href><D:propstat><D:prop><D:getcontentlength>0</D:getcontentlength>"
     ));
+    assert!(!child_lengths_xml.contains("/locked-dir/child.txt"));
 
     let allprop_with_include = router
         .clone()
@@ -794,15 +795,39 @@ async fn options_advertises_and_propfind_needs_auth() {
         )
         .await
         .unwrap();
-    assert_eq!(default_depth.status(), 403);
-    let default_depth_error = String::from_utf8(
+    assert_eq!(default_depth.status(), 207);
+    let default_depth_xml = String::from_utf8(
         axum::body::to_bytes(default_depth.into_body(), usize::MAX)
             .await
             .unwrap()
             .to_vec(),
     )
     .unwrap();
-    assert!(default_depth_error.contains("propfind-finite-depth"));
+    assert!(default_depth_xml.contains("<D:href>/locked-dir/child.txt</D:href>"));
+
+    let explicit_infinity = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/locked-dir/")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "InFiNiTy")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(explicit_infinity.status(), 207);
+    let explicit_infinity_xml = String::from_utf8(
+        axum::body::to_bytes(explicit_infinity.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(explicit_infinity_xml.contains("<D:href>/locked-dir/child.txt</D:href>"));
+    assert!(!explicit_infinity_xml.contains("/persist.txt"));
 
     let invalid_depth = router
         .clone()

@@ -2249,7 +2249,7 @@ async fn options_capabilities(
     response
 }
 
-/// PROPFIND（r104 实装 ✓）：Depth 0 = 自身；Depth 1 = 自身 + 直接子条目。
+/// PROPFIND：Depth 0 = 自身；Depth 1 = 自身 + 直接子条目；infinity = 整棵子树。
 ///
 /// href 形 = WebDAV 惯例（目录带尾斜杠 ✓）；文件 mtime 取当前版本时间，目录回退到条目创建时间；
 /// `deleted_at` 条目假定仓储层已滤（记档 ✓）。
@@ -2266,14 +2266,15 @@ async fn propfind_owned(
     let app = app.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let ns = ns.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let depth = depth.trim();
-    if depth.eq_ignore_ascii_case("infinity") {
-        // r2 合规修正 ✗ RFC 4918 §10.2：拒绝 infinity = 403 + DAV:propfind-finite-depth
-        //（原 400 = 合规瑕疵 ✗ P1 项随手落 ✓）
-        return Err(StatusCode::FORBIDDEN);
-    }
-    if depth != "0" && depth != "1" {
+    let depth = if depth.eq_ignore_ascii_case("infinity") {
+        "infinity"
+    } else if depth == "0" {
+        "0"
+    } else if depth == "1" {
+        "1"
+    } else {
         return Err(StatusCode::BAD_REQUEST);
-    }
+    };
     // 请求体解析（r2 P0 ✗ 非法 = 400（调用方 map_err 下述 NOT_FOUND/500 改由本处 400））
     let mode =
         crate::response::parse_propfind_body(&body_owned).map_err(|_| StatusCode::BAD_REQUEST)?;
@@ -2414,19 +2415,38 @@ async fn propfind_owned(
             },
         });
     }
-    if depth == "1" {
+    if depth != "0" {
         // r4 批量版（N+1 消 ✗✗ 一条 SQL 直取 size/mime ✗ 替换每文件 open）
-        let metas = if wants_size_or_type {
-            app.entry_repo
-                .children_with_meta(&ns, &path)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        let metas: Vec<vfiles_domain::types::EntryChildMeta> = if depth == "1" {
+            if wants_size_or_type {
+                app.entry_repo
+                    .children_with_meta(&ns, &path)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            } else {
+                app.entry_repo
+                    .find_children(&ns, &path)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                    .into_iter()
+                    .map(|entry| vfiles_domain::types::EntryChildMeta {
+                        entry,
+                        size_bytes: None,
+                        mime_type: None,
+                        source_mtime: None,
+                    })
+                    .collect()
+            }
         } else {
-            app.entry_repo
-                .find_children(&ns, &path)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            let entries = if rel.is_empty() {
+                app.entry_repo.find_all(&ns).await
+            } else {
+                app.entry_repo.find_subtree(&ns, &path).await
+            }
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            entries
                 .into_iter()
+                .filter(|entry| entry.path_norm.as_str() != rel)
                 .map(|entry| vfiles_domain::types::EntryChildMeta {
                     entry,
                     size_bytes: None,
@@ -2435,9 +2455,10 @@ async fn propfind_owned(
                 })
                 .collect()
         };
-        // r13 自定义属性批量（ids 一次 ✗ r4 批量式复用）
+        // Subtree metadata is loaded in one version batch so infinity depth does
+        // not issue one metadata query per resource.
         let child_ids: Vec<vfiles_domain::types::EntryId> =
-            metas.iter().map(|m| m.entry.id).collect();
+            metas.iter().map(|meta| meta.entry.id).collect();
         let child_props = if wants_custom && !child_ids.is_empty() {
             app.entry_repo
                 .list_entry_properties(&child_ids)
@@ -2449,24 +2470,25 @@ async fn propfind_owned(
         } else {
             std::collections::HashMap::new()
         };
-        let version_mtimes: std::collections::HashMap<_, _> = if wants_last_modified {
-            let version_ids: Vec<_> = metas
-                .iter()
-                .filter_map(|meta| meta.entry.current_version_id)
-                .collect();
-            app.entry_repo
-                .find_versions(&version_ids)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                .into_iter()
-                .map(|version| (version.id, version.created_at))
-                .collect()
-        } else {
-            std::collections::HashMap::new()
-        };
+        let version_metadata: std::collections::HashMap<_, _> =
+            if wants_last_modified || (depth == "infinity" && wants_size_or_type) {
+                let version_ids: Vec<_> = metas
+                    .iter()
+                    .filter_map(|meta| meta.entry.current_version_id)
+                    .collect();
+                app.entry_repo
+                    .find_versions(&version_ids)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                    .into_iter()
+                    .map(|version| (version.id, version))
+                    .collect()
+            } else {
+                std::collections::HashMap::new()
+            };
         let child_paths: Vec<String> = metas
             .iter()
-            .map(|meta| format!("{}{}", child_prefix(rel), meta.entry.name))
+            .map(|meta| meta.entry.path_norm.as_str().to_string())
             .collect();
         let mut child_locks: std::collections::HashMap<_, _> = if wants_lock {
             app.locks
@@ -2492,18 +2514,24 @@ async fn propfind_owned(
         };
         for meta in metas {
             let child = meta.entry;
-            let child_rel = format!("{}{}", child_prefix(rel), child.name);
+            let child_rel = child.path_norm.as_str();
             let is_dir = matches!(child.entry_type, vfiles_domain::types::EntryKind::Directory);
             let (getcontentlength, getcontenttype) = if is_dir {
                 (None, None)
             } else {
-                (meta.size_bytes, meta.mime_type)
+                let version = child
+                    .current_version_id
+                    .as_ref()
+                    .and_then(|version_id| version_metadata.get(version_id));
+                (
+                    meta.size_bytes
+                        .or_else(|| version.map(|version| version.size_bytes.as_u64())),
+                    meta.mime_type
+                        .or_else(|| version.and_then(|version| version.mime_type.clone())),
+                )
             };
             items.push(crate::response::PropResponse {
-                href: href_with_mount(
-                    &app.mount_prefix,
-                    &entry_href(&child_prefix(rel), &child.name, is_dir),
-                ),
+                href: href_with_mount(&app.mount_prefix, &entry_href("", child_rel, is_dir)),
                 displayname: child.name,
                 is_collection: is_dir,
                 getlastmodified: if wants_last_modified {
@@ -2511,8 +2539,12 @@ async fn propfind_owned(
                         child
                             .current_version_id
                             .as_ref()
-                            .and_then(|version_id| version_mtimes.get(version_id).copied())
-                            .unwrap_or(child.created_at),
+                            .map_or(child.created_at, |id| {
+                                version_metadata
+                                    .get(id)
+                                    .map(|version| version.created_at)
+                                    .unwrap_or(child.created_at)
+                            }),
                     )
                 } else {
                     String::new()
@@ -2530,7 +2562,7 @@ async fn propfind_owned(
                     .flatten(),
                 creationdate: cdate_fmt(child.created_at),
                 owner: owner_val.clone(),
-                active_lock: child_locks.remove(&child_rel).unwrap_or_default(),
+                active_lock: child_locks.remove(child_rel).unwrap_or_default(),
             });
         }
     }
@@ -2790,7 +2822,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             .header("DAV", "1, 2")
             .body(Body::empty())
             .unwrap(),
-        // PROPFIND（Depth 0/1 ✓ 其余 Depth = 400 子集记档）。
+        // PROPFIND（Depth 0/1/infinity）。
         // GET/HEAD（r110'c ✓ 读面终件）。
         ref m if m.as_str() == "GET" || m.as_str() == "HEAD" => {
             // 纯拥有参（#46）：调用侧同步提取。
@@ -2888,13 +2920,6 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     .status(StatusCode::MULTI_STATUS)
                     .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
                     .body(Body::from(xml))
-                    .unwrap(),
-                Err(StatusCode::FORBIDDEN) => Response::builder()
-                    .status(StatusCode::FORBIDDEN)
-                    .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
-                    .body(Body::from(
-                        r#"<?xml version="1.0" encoding="utf-8"?><D:error xmlns:D="DAV:"><D:propfind-finite-depth/></D:error>"#,
-                    ))
                     .unwrap(),
                 Err(status) => Response::builder()
                     .status(status)
