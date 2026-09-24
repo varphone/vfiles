@@ -2183,6 +2183,22 @@ pub trait RsyncBackend: Send + Sync {
     async fn mkdir(&self, path: &str) -> Result<(), String>;
 }
 
+fn validate_upload_entries(entries: &[FlatEntry]) -> std::io::Result<()> {
+    for entry in entries {
+        let file_type = entry.mode & 0o170000;
+        if file_type != 0o040000 && file_type != 0o100000 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!(
+                    "rsync: unsupported uploaded entry type {:o} at {}",
+                    file_type, entry.name
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// 处理一条 rsync daemon 连接（协议 30 ✗ 双向：下载/上传/增量/认证）。
 pub async fn handle_conn<S, B>(
     stream: S,
@@ -2565,6 +2581,10 @@ where
             },
         )
         .await?;
+        // The storage model currently accepts only regular files and directories. Reject
+        // unsupported flist entries before applying any directory or file mutations so a
+        // successful-looking partial sync cannot silently discard symlinks/devices/FIFOs.
+        validate_upload_entries(&entries)?;
         // 诊断用：VFILES_RSYNC_DUMP_FLIST=1 时逐条打印收到的 flist（协议对齐排障）
         if std::env::var("VFILES_RSYNC_DUMP_FLIST").is_ok() {
             for (i, e) in entries.iter().enumerate() {
@@ -2603,14 +2623,11 @@ where
             } else {
                 format!("{base}/{}", e.name)
             };
-            // 目录：显式创建（空目录不落地 = 此前债）；非普通文件（符号链接等）跳过
+            // 目录：显式创建（空目录不落地 = 此前债）
             if e.is_dir {
                 if let Err(err) = backend.mkdir(&full).await {
                     tracing::warn!(path = %full, error = %err, "rsync push：建目录失败");
                 }
-                continue;
-            }
-            if (e.mode & 0o170000) != 0o100000 {
                 continue;
             }
             // 快跳（官方 generator `unchanged_file` 语义）：
@@ -4250,6 +4267,27 @@ mod tests {
             assert_eq!(a.size, b.size, "大小");
             assert_eq!(a.mode, b.mode, "mode");
         }
+    }
+
+    #[test]
+    fn upload_flist_rejects_unsupported_types_before_mutation() {
+        let entries = vec![
+            FlatEntry::dir(".", 1),
+            FlatEntry::file("would-have-been-written", 1, 2),
+            FlatEntry {
+                name: "link".into(),
+                is_dir: false,
+                size: 4,
+                mtime: 2,
+                mode: 0o120777,
+                fs_path: String::new(),
+                file_sum: None,
+            },
+        ];
+        let err =
+            validate_upload_entries(&entries).expect_err("symlink must not be silently dropped");
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        assert!(err.to_string().contains("link"));
     }
 
     /// 弱/强校验和与真机转录逐位同（官方 daemon md5 + 200000B 模式文件第 0 块）。

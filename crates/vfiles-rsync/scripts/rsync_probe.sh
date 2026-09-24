@@ -131,6 +131,21 @@ mkdir -p "$tmpdir/pull-after-delta"
 rsync -a --quiet "$module_url" "$tmpdir/pull-after-delta/"
 diff -r "$tmpdir/source" "$tmpdir/pull-after-delta"
 
+# Unsupported entry types must fail the whole push before regular sibling files
+# are written; silently skipping a symlink would make rsync report a false success.
+printf 'must-not-be-partially-written\n' >"$tmpdir/source/would-be-partial.txt"
+ln -s nested/large.bin "$tmpdir/source/unsupported-link"
+if rsync -a --quiet "$tmpdir/source/" "$module_url" >"$tmpdir/unsupported.log" 2>&1; then
+  echo "rsync push unexpectedly accepted a symlink" >&2
+  exit 1
+fi
+rsync --list-only "$module_url" >"$tmpdir/unsupported-list.log"
+if grep -Fq 'would-be-partial.txt' "$tmpdir/unsupported-list.log"; then
+  echo "unsupported-entry push partially wrote its regular sibling" >&2
+  exit 1
+fi
+rm "$tmpdir/source/unsupported-link" "$tmpdir/source/would-be-partial.txt"
+
 # Receiver-side exclude rules protect matching destination-only files under
 # --delete; --delete-excluded removes them when explicitly requested.
 mkdir -p "$tmpdir/destination-only"
