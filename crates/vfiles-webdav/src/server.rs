@@ -503,7 +503,18 @@ async fn lock_op(
         None => "Infinite".to_string(),
     };
     let owner = lockinfo.owner.unwrap_or_else(|| user.username.to_string());
-    match app.locks.lock(&ns, &rel, &owner, depth_infinity, ttl).await {
+    match app
+        .locks
+        .lock(
+            &ns,
+            &rel,
+            &owner,
+            depth_infinity,
+            ttl,
+            vfiles_domain::WebdavLockScope::Exclusive,
+        )
+        .await
+    {
         Ok(Some(entry)) => {
             let created = if rel.is_empty() {
                 // The namespace root is a mapped collection with no ordinary entry row.

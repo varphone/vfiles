@@ -132,19 +132,27 @@ pub trait NamespaceRepo {
     }
 }
 
-/// A persisted WebDAV exclusive lock. `expires_at` is Unix milliseconds; `None` means infinite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebdavLockScope {
+    Exclusive,
+    Shared,
+}
+
+/// A persisted WebDAV lock. `expires_at` is Unix milliseconds; `None` means infinite.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebdavLock {
     pub token: String,
     pub owner: String,
     pub expires_at: Option<i64>,
     pub depth_infinity: bool,
+    pub scope: WebdavLockScope,
 }
 
 pub struct NewWebdavLock<'a> {
     pub token: &'a str,
     pub owner: &'a str,
     pub depth_infinity: bool,
+    pub scope: WebdavLockScope,
     pub expires_at: Option<i64>,
     pub now: i64,
 }
@@ -171,6 +179,35 @@ pub trait WebdavLockRepo: Send + Sync {
         path: &str,
         now: i64,
     ) -> DomainResult<Option<(String, WebdavLock)>>;
+    async fn find_active_covering_all(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        now: i64,
+    ) -> DomainResult<Vec<(String, WebdavLock)>> {
+        Ok(self
+            .find_active_covering(namespace_id, path, now)
+            .await?
+            .into_iter()
+            .collect())
+    }
+    async fn find_active_covering_many_all(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[String],
+        now: i64,
+    ) -> DomainResult<std::collections::HashMap<String, Vec<(String, WebdavLock)>>> {
+        let mut locks = std::collections::HashMap::new();
+        for path in paths {
+            let covering = self
+                .find_active_covering_all(namespace_id, path, now)
+                .await?;
+            if !covering.is_empty() {
+                locks.insert(path.clone(), covering);
+            }
+        }
+        Ok(locks)
+    }
     async fn find_active_covering_many(
         &self,
         namespace_id: &NamespaceId,
@@ -207,6 +244,18 @@ pub trait WebdavLockRepo: Send + Sync {
         path: &str,
         now: i64,
     ) -> DomainResult<std::collections::HashMap<String, WebdavLock>>;
+    async fn find_active_under_path_all(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        now: i64,
+    ) -> DomainResult<Vec<(String, WebdavLock)>> {
+        Ok(self
+            .find_active_under_path(namespace_id, path, now)
+            .await?
+            .into_iter()
+            .collect())
+    }
     async fn refresh(
         &self,
         namespace_id: &NamespaceId,

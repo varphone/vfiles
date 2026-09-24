@@ -14,6 +14,7 @@ pub struct LockEntry {
     pub owner: String,
     pub path: String,
     pub depth_infinity: bool,
+    pub scope: vfiles_domain::WebdavLockScope,
     /// Unix milliseconds; `None` represents an infinite lock.
     pub expires_at: Option<i64>,
 }
@@ -45,6 +46,7 @@ impl LockTable {
             path: path.to_string(),
             expires_at: lock.expires_at,
             depth_infinity: lock.depth_infinity,
+            scope: lock.scope,
         }
     }
 
@@ -55,6 +57,7 @@ impl LockTable {
         owner: &str,
         depth_infinity: bool,
         ttl: Option<Duration>,
+        scope: vfiles_domain::WebdavLockScope,
     ) -> vfiles_domain::DomainResult<Option<LockEntry>> {
         let now = Self::now();
         let token = format!("opaquelocktoken:{}", uuid::Uuid::new_v4());
@@ -67,6 +70,7 @@ impl LockTable {
                     token: &token,
                     owner,
                     depth_infinity,
+                    scope,
                     expires_at: Self::expires_at(ttl, now),
                     now,
                 },
@@ -78,6 +82,7 @@ impl LockTable {
             path: path.to_string(),
             expires_at: Self::expires_at(ttl, now),
             depth_infinity,
+            scope,
         }))
     }
 
@@ -127,6 +132,20 @@ impl LockTable {
             .map(|(lock_path, lock)| Self::from_record(&lock_path, lock)))
     }
 
+    pub async fn blocked_all(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+    ) -> vfiles_domain::DomainResult<Vec<LockEntry>> {
+        Ok(self
+            .repo
+            .find_active_covering_all(namespace_id, path, Self::now())
+            .await?
+            .into_iter()
+            .map(|(lock_path, lock)| Self::from_record(&lock_path, lock))
+            .collect())
+    }
+
     pub async fn blocked_many(
         &self,
         namespace_id: &NamespaceId,
@@ -143,6 +162,28 @@ impl LockTable {
             .collect())
     }
 
+    pub async fn blocked_many_all(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[String],
+    ) -> vfiles_domain::DomainResult<std::collections::HashMap<String, Vec<LockEntry>>> {
+        Ok(self
+            .repo
+            .find_active_covering_many_all(namespace_id, paths, Self::now())
+            .await?
+            .into_iter()
+            .map(|(resource_path, locks)| {
+                (
+                    resource_path,
+                    locks
+                        .into_iter()
+                        .map(|(lock_path, lock)| Self::from_record(&lock_path, lock))
+                        .collect(),
+                )
+            })
+            .collect())
+    }
+
     pub async fn blocked_under_path(
         &self,
         namespace_id: &NamespaceId,
@@ -154,6 +195,20 @@ impl LockTable {
             .await?
             .into_iter()
             .map(|(path, lock)| (path.clone(), Self::from_record(&path, lock)))
+            .collect())
+    }
+
+    pub async fn blocked_under_path_all(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+    ) -> vfiles_domain::DomainResult<Vec<LockEntry>> {
+        Ok(self
+            .repo
+            .find_active_under_path_all(namespace_id, path, Self::now())
+            .await?
+            .into_iter()
+            .map(|(lock_path, lock)| Self::from_record(&lock_path, lock))
             .collect())
     }
 

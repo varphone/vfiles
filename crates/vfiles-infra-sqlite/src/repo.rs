@@ -11,6 +11,13 @@ fn role_as_str(role: Role) -> &'static str {
     }
 }
 
+fn parse_webdav_lock_scope(value: &str) -> WebdavLockScope {
+    match value {
+        "shared" => WebdavLockScope::Shared,
+        _ => WebdavLockScope::Exclusive,
+    }
+}
+
 fn parse_role(value: &str) -> DomainResult<Role> {
     match value {
         "admin" => Ok(Role::Admin),
@@ -317,25 +324,20 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
     ) -> DomainResult<bool> {
         let result = sqlx::query(
             r#"INSERT INTO webdav_locks
-                   (namespace_id, path, token, owner, expires_at, depth_infinity)
-               SELECT ?, ?, ?, ?, ?, ?
+                   (namespace_id, path, token, owner, expires_at, depth_infinity, scope)
+               SELECT ?, ?, ?, ?, ?, ?, ?
                WHERE NOT EXISTS (
                    SELECT 1 FROM webdav_locks
                    WHERE namespace_id = ?
                      AND (expires_at IS NULL OR expires_at > ?)
+                     AND (? = 'exclusive' OR scope = 'exclusive')
                      AND (
                        path = ? OR
                        (depth_infinity = 1 AND (path = '' OR substr(?, 1, length(path) + 1) = path || '/')) OR
                        (? = 1 AND (? = '' OR substr(path, 1, length(?) + 1) = ? || '/'))
                      )
                )
-               ON CONFLICT(namespace_id, path) DO UPDATE SET
-                   token = excluded.token,
-                   owner = excluded.owner,
-                   expires_at = excluded.expires_at,
-                   depth_infinity = excluded.depth_infinity
-               WHERE webdav_locks.expires_at IS NOT NULL
-                 AND webdav_locks.expires_at <= ?"#,
+               "#,
         )
         .bind(namespace_id.to_string())
         .bind(path)
@@ -343,15 +345,22 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         .bind(lock.owner)
         .bind(lock.expires_at)
         .bind(lock.depth_infinity)
+        .bind(match lock.scope {
+            WebdavLockScope::Exclusive => "exclusive",
+            WebdavLockScope::Shared => "shared",
+        })
         .bind(namespace_id.to_string())
         .bind(lock.now)
+        .bind(match lock.scope {
+            WebdavLockScope::Exclusive => "exclusive",
+            WebdavLockScope::Shared => "shared",
+        })
         .bind(path)
         .bind(path)
         .bind(lock.depth_infinity)
         .bind(path)
         .bind(path)
         .bind(path)
-        .bind(lock.now)
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::Internal {
@@ -366,8 +375,8 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         path: &str,
         now: i64,
     ) -> DomainResult<Option<WebdavLock>> {
-        let row: Option<(String, String, Option<i64>, bool)> = sqlx::query_as(
-            "SELECT token, owner, expires_at, depth_infinity FROM webdav_locks WHERE namespace_id = ? AND path = ? AND (expires_at IS NULL OR expires_at > ?)",
+        let row: Option<(String, String, Option<i64>, bool, String)> = sqlx::query_as(
+            "SELECT token, owner, expires_at, depth_infinity, scope FROM webdav_locks WHERE namespace_id = ? AND path = ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY token LIMIT 1",
         )
         .bind(namespace_id.to_string())
         .bind(path)
@@ -377,14 +386,15 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         .map_err(|e| DomainError::Internal {
             message: format!("Failed to look up WebDAV lock: {e}"),
         })?;
-        Ok(
-            row.map(|(token, owner, expires_at, depth_infinity)| WebdavLock {
+        Ok(row.map(
+            |(token, owner, expires_at, depth_infinity, scope)| WebdavLock {
                 token,
                 owner,
                 expires_at,
                 depth_infinity,
-            }),
-        )
+                scope: parse_webdav_lock_scope(&scope),
+            },
+        ))
     }
 
     async fn find_active_covering(
@@ -393,8 +403,8 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         path: &str,
         now: i64,
     ) -> DomainResult<Option<(String, WebdavLock)>> {
-        let row: Option<(String, String, String, Option<i64>, bool)> = sqlx::query_as(
-            r#"SELECT path, token, owner, expires_at, depth_infinity
+        let row: Option<(String, String, String, Option<i64>, bool, String)> = sqlx::query_as(
+            r#"SELECT path, token, owner, expires_at, depth_infinity, scope
                FROM webdav_locks
                WHERE namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)
                  AND (path = ? OR (depth_infinity = 1 AND
@@ -410,17 +420,60 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         .map_err(|e| DomainError::Internal {
             message: format!("Failed to look up covering WebDAV lock: {e}"),
         })?;
-        Ok(row.map(|(path, token, owner, expires_at, depth_infinity)| {
-            (
-                path,
-                WebdavLock {
-                    token,
-                    owner,
-                    expires_at,
-                    depth_infinity,
-                },
-            )
-        }))
+        Ok(
+            row.map(|(path, token, owner, expires_at, depth_infinity, scope)| {
+                (
+                    path,
+                    WebdavLock {
+                        token,
+                        owner,
+                        expires_at,
+                        depth_infinity,
+                        scope: parse_webdav_lock_scope(&scope),
+                    },
+                )
+            }),
+        )
+    }
+
+    async fn find_active_covering_all(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        now: i64,
+    ) -> DomainResult<Vec<(String, WebdavLock)>> {
+        let rows: Vec<(String, String, String, Option<i64>, bool, String)> = sqlx::query_as(
+            r#"SELECT path, token, owner, expires_at, depth_infinity, scope
+               FROM webdav_locks
+               WHERE namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)
+                 AND (path = ? OR (depth_infinity = 1 AND
+                   (path = '' OR substr(?, 1, length(path) + 1) = path || '/')))
+               ORDER BY length(path) DESC, token"#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(now)
+        .bind(path)
+        .bind(path)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to look up covering WebDAV locks: {e}"),
+        })?;
+        Ok(rows
+            .into_iter()
+            .map(|(path, token, owner, expires_at, depth_infinity, scope)| {
+                (
+                    path,
+                    WebdavLock {
+                        token,
+                        owner,
+                        expires_at,
+                        depth_infinity,
+                        scope: parse_webdav_lock_scope(&scope),
+                    },
+                )
+            })
+            .collect())
     }
 
     async fn find_active_covering_many(
@@ -438,19 +491,19 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
             query.push_values(chunk.iter(), |mut row, path| {
                 row.push_bind(path);
             });
-            query.push(") SELECT requested.path, locks.path, locks.token, locks.owner, locks.expires_at, locks.depth_infinity FROM requested JOIN webdav_locks AS locks ON locks.namespace_id = ");
+            query.push(") SELECT requested.path, locks.path, locks.token, locks.owner, locks.expires_at, locks.depth_infinity, locks.scope FROM requested JOIN webdav_locks AS locks ON locks.namespace_id = ");
             query.push_bind(namespace_id.to_string());
             query.push(" AND (locks.expires_at IS NULL OR locks.expires_at > ");
             query.push_bind(now);
             query.push(") AND (locks.path = requested.path OR (locks.depth_infinity = 1 AND (locks.path = '' OR substr(requested.path, 1, length(locks.path) + 1) = locks.path || '/'))) ORDER BY length(locks.path) DESC");
             let rows = query
-                .build_query_as::<(String, String, String, String, Option<i64>, bool)>()
+                .build_query_as::<(String, String, String, String, Option<i64>, bool, String)>()
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e| DomainError::Internal {
                     message: format!("Failed to look up covering WebDAV locks: {e}"),
                 })?;
-            for (requested, lock_path, token, owner, expires_at, depth_infinity) in rows {
+            for (requested, lock_path, token, owner, expires_at, depth_infinity, scope) in rows {
                 locks.entry(requested).or_insert_with(|| {
                     (
                         lock_path,
@@ -459,6 +512,7 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
                             owner,
                             expires_at,
                             depth_infinity,
+                            scope: parse_webdav_lock_scope(&scope),
                         },
                     )
                 });
@@ -476,7 +530,7 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         let mut locks = std::collections::HashMap::new();
         for chunk in paths.chunks(400) {
             let mut query = sqlx::QueryBuilder::new(
-                "SELECT path, token, owner, expires_at, depth_infinity FROM webdav_locks WHERE namespace_id = ",
+                "SELECT path, token, owner, expires_at, depth_infinity, scope FROM webdav_locks WHERE namespace_id = ",
             );
             query.push_bind(namespace_id.to_string());
             query.push(" AND (expires_at IS NULL OR expires_at > ");
@@ -488,14 +542,14 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
             }
             separated.push_unseparated(")");
             let rows = query
-                .build_query_as::<(String, String, String, Option<i64>, bool)>()
+                .build_query_as::<(String, String, String, Option<i64>, bool, String)>()
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e| DomainError::Internal {
                     message: format!("Failed to look up WebDAV locks: {e}"),
                 })?;
             locks.extend(rows.into_iter().map(
-                |(path, token, owner, expires_at, depth_infinity)| {
+                |(path, token, owner, expires_at, depth_infinity, scope)| {
                     (
                         path,
                         WebdavLock {
@@ -503,6 +557,7 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
                             owner,
                             expires_at,
                             depth_infinity,
+                            scope: parse_webdav_lock_scope(&scope),
                         },
                     )
                 },
@@ -517,8 +572,8 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         path: &str,
         now: i64,
     ) -> DomainResult<std::collections::HashMap<String, WebdavLock>> {
-        let rows: Vec<(String, String, String, Option<i64>, bool)> = sqlx::query_as(
-            r#"SELECT path, token, owner, expires_at, depth_infinity
+        let rows: Vec<(String, String, String, Option<i64>, bool, String)> = sqlx::query_as(
+            r#"SELECT path, token, owner, expires_at, depth_infinity, scope
                FROM webdav_locks
                WHERE namespace_id = ?
                  AND (expires_at IS NULL OR expires_at > ?)
@@ -540,7 +595,7 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         })?;
         Ok(rows
             .into_iter()
-            .map(|(path, token, owner, expires_at, depth_infinity)| {
+            .map(|(path, token, owner, expires_at, depth_infinity, scope)| {
                 (
                     path,
                     WebdavLock {
@@ -548,6 +603,49 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
                         owner,
                         expires_at,
                         depth_infinity,
+                        scope: parse_webdav_lock_scope(&scope),
+                    },
+                )
+            })
+            .collect())
+    }
+
+    async fn find_active_under_path_all(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        now: i64,
+    ) -> DomainResult<Vec<(String, WebdavLock)>> {
+        let rows: Vec<(String, String, String, Option<i64>, bool, String)> = sqlx::query_as(
+            r#"SELECT path, token, owner, expires_at, depth_infinity, scope
+               FROM webdav_locks
+               WHERE namespace_id = ?
+                 AND (expires_at IS NULL OR expires_at > ?)
+                 AND (? = '' OR path = ? OR substr(path, 1, length(?) + 1) = ? || '/')
+               ORDER BY path, token"#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(now)
+        .bind(path)
+        .bind(path)
+        .bind(path)
+        .bind(path)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to look up WebDAV subtree locks: {e}"),
+        })?;
+        Ok(rows
+            .into_iter()
+            .map(|(path, token, owner, expires_at, depth_infinity, scope)| {
+                (
+                    path,
+                    WebdavLock {
+                        token,
+                        owner,
+                        expires_at,
+                        depth_infinity,
+                        scope: parse_webdav_lock_scope(&scope),
                     },
                 )
             })
@@ -562,11 +660,11 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         expires_at: Option<i64>,
         now: i64,
     ) -> DomainResult<Option<WebdavLock>> {
-        let row: Option<(String, String, Option<i64>, bool)> = sqlx::query_as(
+        let row: Option<(String, String, Option<i64>, bool, String)> = sqlx::query_as(
             r#"UPDATE webdav_locks SET expires_at = ?
                WHERE namespace_id = ? AND path = ? AND token = ?
                  AND (expires_at IS NULL OR expires_at > ?)
-               RETURNING token, owner, expires_at, depth_infinity"#,
+               RETURNING token, owner, expires_at, depth_infinity, scope"#,
         )
         .bind(expires_at)
         .bind(namespace_id.to_string())
@@ -578,14 +676,15 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         .map_err(|e| DomainError::Internal {
             message: format!("Failed to refresh WebDAV lock: {e}"),
         })?;
-        Ok(
-            row.map(|(token, owner, expires_at, depth_infinity)| WebdavLock {
+        Ok(row.map(
+            |(token, owner, expires_at, depth_infinity, scope)| WebdavLock {
                 token,
                 owner,
                 expires_at,
                 depth_infinity,
-            }),
-        )
+                scope: parse_webdav_lock_scope(&scope),
+            },
+        ))
     }
 
     async fn release(
@@ -8192,6 +8291,7 @@ mod webdav_lock_repo_tests {
                     NewWebdavLock {
                         token,
                         owner: "alice",
+                        scope: WebdavLockScope::Exclusive,
                         depth_infinity: false,
                         expires_at: None,
                         now: 1_000,
@@ -8226,6 +8326,7 @@ mod webdav_lock_repo_tests {
                 NewWebdavLock {
                     token: "token-a",
                     owner: "alice",
+                    scope: WebdavLockScope::Exclusive,
                     depth_infinity: false,
                     expires_at: None,
                     now: 1_000
@@ -8237,6 +8338,7 @@ mod webdav_lock_repo_tests {
                 NewWebdavLock {
                     token: "token-b",
                     owner: "bob",
+                    scope: WebdavLockScope::Exclusive,
                     depth_infinity: false,
                     expires_at: None,
                     now: 1_000
@@ -8248,6 +8350,78 @@ mod webdav_lock_repo_tests {
             second.expect("second acquire"),
         ];
         assert_eq!(acquired.iter().filter(|value| **value).count(), 1);
+
+        for (token, owner) in [("shared-a", "alice"), ("shared-b", "bob")] {
+            assert!(
+                repo.acquire(
+                    &namespace_id,
+                    "shared.txt",
+                    NewWebdavLock {
+                        token,
+                        owner,
+                        scope: WebdavLockScope::Shared,
+                        depth_infinity: false,
+                        expires_at: None,
+                        now: 1_000,
+                    },
+                )
+                .await
+                .expect("compatible shared locks should coexist")
+            );
+        }
+        let shared = repo
+            .find_active_covering_all(&namespace_id, "shared.txt", 1_000)
+            .await
+            .expect("shared locks should be enumerable");
+        assert_eq!(shared.len(), 2);
+        assert!(
+            shared
+                .iter()
+                .all(|(_, lock)| lock.scope == WebdavLockScope::Shared)
+        );
+        assert!(
+            !repo
+                .acquire(
+                    &namespace_id,
+                    "shared.txt",
+                    NewWebdavLock {
+                        token: "exclusive-denied",
+                        owner: "carol",
+                        scope: WebdavLockScope::Exclusive,
+                        depth_infinity: false,
+                        expires_at: None,
+                        now: 1_000,
+                    },
+                )
+                .await
+                .expect("exclusive conflict query should succeed")
+        );
+        assert!(
+            repo.release(&namespace_id, "shared.txt", "shared-a", 1_000)
+                .await
+                .unwrap()
+        );
+        assert!(
+            repo.release(&namespace_id, "shared.txt", "shared-b", 1_000)
+                .await
+                .unwrap()
+        );
+        assert!(
+            repo.acquire(
+                &namespace_id,
+                "shared.txt",
+                NewWebdavLock {
+                    token: "exclusive-after-shared",
+                    owner: "carol",
+                    scope: WebdavLockScope::Exclusive,
+                    depth_infinity: false,
+                    expires_at: None,
+                    now: 1_000,
+                },
+            )
+            .await
+            .unwrap()
+        );
 
         let root_namespace_id = NamespaceId::new();
         sqlx::query(
@@ -8265,6 +8439,7 @@ mod webdav_lock_repo_tests {
                 NewWebdavLock {
                     token: "root-token",
                     owner: "alice",
+                    scope: WebdavLockScope::Exclusive,
                     depth_infinity: true,
                     expires_at: None,
                     now: 1_000
@@ -8287,6 +8462,7 @@ mod webdav_lock_repo_tests {
                     NewWebdavLock {
                         token: "nested-token",
                         owner: "bob",
+                        scope: WebdavLockScope::Exclusive,
                         depth_infinity: false,
                         expires_at: None,
                         now: 1_000
@@ -8332,6 +8508,7 @@ mod webdav_lock_repo_tests {
                 NewWebdavLock {
                     token: "old-token",
                     owner: "alice",
+                    scope: WebdavLockScope::Exclusive,
                     depth_infinity: false,
                     expires_at: Some(10),
                     now: 1
@@ -8353,6 +8530,7 @@ mod webdav_lock_repo_tests {
                 NewWebdavLock {
                     token: "replacement-token",
                     owner: "bob",
+                    scope: WebdavLockScope::Exclusive,
                     depth_infinity: false,
                     expires_at: None,
                     now: 10
