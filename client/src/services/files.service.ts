@@ -815,13 +815,23 @@ export const filesService = {
   /**
    * 获取文件历史
    */
-  async getFileHistory(path: string, limit: number = 50): Promise<FileHistory> {
+  async getFileHistory(
+    path: string,
+    limit: number = 50,
+    cursor?: string,
+  ): Promise<FileHistory> {
     const response = await apiService.get<FileHistory>("/history", {
       path,
       limit,
+      cursor,
     });
     return (
-      response.data || { commits: [], currentVersion: "", totalCommits: 0 }
+      response.data || {
+        commits: [],
+        currentVersion: "",
+        totalCommits: 0,
+        nextCursor: null,
+      }
     );
   },
 

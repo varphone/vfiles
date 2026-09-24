@@ -77,7 +77,7 @@
           />
 
           <div
-            v-if="history.totalCommits > history.commits.length"
+            v-if="nextCursor"
             class="history-more"
           >
             <button
@@ -406,7 +406,7 @@ const history = ref<FileHistory>({
 const loading = ref(false);
 const error = ref<string | null>(null);
 const DEFAULT_LIMIT = 20;
-const limit = ref(DEFAULT_LIMIT);
+const nextCursor = ref<string | null>(null);
 const restoringHash = ref<string | null>(null);
 
 let historyRequestId = 0;
@@ -628,7 +628,7 @@ watch(
   () => {
     // filePath 变化时重置所有本地状态，避免复用组件导致历史/预览/对比残留
     historyRequestId++;
-    limit.value = DEFAULT_LIMIT;
+    nextCursor.value = null;
     history.value = { commits: [], currentVersion: "", totalCommits: 0 };
     loading.value = false;
     error.value = null;
@@ -640,15 +640,25 @@ watch(
   { immediate: true },
 );
 
-async function loadHistory() {
+async function loadHistory(cursor?: string) {
   const reqId = ++historyRequestId;
   loading.value = true;
   error.value = null;
 
   try {
-    const data = await filesService.getFileHistory(props.filePath, limit.value);
+    const data = await filesService.getFileHistory(
+      props.filePath,
+      DEFAULT_LIMIT,
+      cursor,
+    );
     if (reqId !== historyRequestId) return;
-    history.value = data;
+    history.value = cursor
+      ? {
+          ...data,
+          commits: [...history.value.commits, ...data.commits],
+        }
+      : data;
+    nextCursor.value = data.nextCursor ?? null;
   } catch (err) {
     if (reqId !== historyRequestId) return;
     error.value = err instanceof Error ? err.message : "加载失败";
@@ -988,8 +998,7 @@ function downloadVersion(hash: string) {
 }
 
 function loadMore() {
-  limit.value += 20;
-  loadHistory();
+  if (nextCursor.value) void loadHistory(nextCursor.value);
 }
 </script>
 

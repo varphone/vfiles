@@ -32,6 +32,7 @@ function history() {
   return {
     currentVersion: CURRENT,
     totalCommits: 6,
+    nextCursor: PREVIOUS,
     commits: [
       {
         hash: CURRENT,
@@ -93,6 +94,26 @@ describe("VersionHistory.vue", () => {
       "title",
       CURRENT,
     );
+  });
+
+  it("loads older history with a cursor and appends the page", async () => {
+    historyMock
+      .mockResolvedValueOnce({
+        ...history(),
+        commits: [history().commits[0]],
+        nextCursor: PREVIOUS,
+      })
+      .mockResolvedValueOnce({
+        ...history(),
+        commits: [history().commits[1]],
+        nextCursor: null,
+      });
+    const { container, getByRole } = renderHistory();
+    await waitFor(() => expect(container.querySelectorAll(".history-row")).toHaveLength(1));
+    await fireEvent.click(getByRole("button", { name: /加载更多/ }));
+    await waitFor(() => expect(container.querySelectorAll(".history-row")).toHaveLength(2));
+    expect(historyMock).toHaveBeenNthCalledWith(2, "notes.txt", 20, PREVIOUS);
+    expect(container.querySelector(".history-more")).toBeNull();
   });
 
   it("explains the retention policy above the list", async () => {

@@ -22,6 +22,7 @@ use vfiles_domain::{ChangeType, DomainError, SnapshotKind, VersionId};
 struct HistoryQuery {
     path: Option<String>,
     limit: Option<u32>,
+    cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,6 +100,7 @@ fn file_history_payload(page: EntryHistoryPage) -> serde_json::Value {
         }).collect::<Vec<_>>(),
         "currentVersion": current_version,
         "totalCommits": page.total_items,
+        "nextCursor": page.next_cursor,
     })
 }
 
@@ -153,7 +155,12 @@ async fn get_entry_history(
 
     let history = match state
         .history_service
-        .entry_history(&ctx.namespace_id, &normalized_path, None, limit)
+        .entry_history(
+            &ctx.namespace_id,
+            &normalized_path,
+            query.cursor.as_deref(),
+            limit,
+        )
         .await
     {
         Ok(page) => file_history_payload(page),

@@ -175,6 +175,7 @@ export interface FileHistory {
   commits: CommitInfo[];
   currentVersion: string;
   totalCommits: number;
+  nextCursor?: string | null;
 }
 
 export interface ApiResponse<T = any> {

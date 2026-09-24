@@ -747,6 +747,31 @@ async fn chunked_upload_history_and_download_round_trip() {
         Value::String(version2.clone())
     );
     assert_eq!(
+        limited_history["data"]["nextCursor"],
+        Value::String(version2.clone())
+    );
+    let cursor_history = app
+        .request_as_admin(
+            Request::builder()
+                .uri(format!(
+                    "/api/history?path=docs/note.txt&limit=1&cursor={version2}"
+                ))
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(cursor_history.status(), StatusCode::OK);
+    let cursor_history = response_json(cursor_history).await;
+    assert_eq!(
+        cursor_history["data"]["commits"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        cursor_history["data"]["commits"][0]["hash"],
+        Value::String(version1.clone())
+    );
+    assert!(cursor_history["data"]["nextCursor"].is_null());
+    assert_eq!(
         history_payload["data"]["commits"][0]["author"]["name"],
         Value::String("admin".to_string())
     );
