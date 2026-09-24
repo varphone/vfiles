@@ -92,6 +92,7 @@ import sys
 
 pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256)) * 8192)
 PY
+touch -d '@946684800' "$tmpdir/source/nested/large.bin"
 
 rsync -a --quiet "$tmpdir/source/" "$module_url"
 rsync --list-only "$module_url" >"$tmpdir/initial-list.log"
@@ -100,6 +101,12 @@ grep -Fq 'nested' "$tmpdir/initial-list.log"
 mkdir -p "$tmpdir/pull"
 rsync -a --quiet "$module_url" "$tmpdir/pull/"
 diff -r "$tmpdir/source" "$tmpdir/pull"
+source_mtime=$(stat -c '%Y' "$tmpdir/source/nested/large.bin")
+pulled_mtime=$(stat -c '%Y' "$tmpdir/pull/nested/large.bin")
+if [[ "$pulled_mtime" != "$source_mtime" ]]; then
+  echo "rsync -a did not preserve the file modification time: source=$source_mtime pulled=$pulled_mtime" >&2
+  exit 1
+fi
 mkdir -p "$tmpdir/single-file-pull"
 rsync -a --quiet "$module_url/nested/large.bin" "$tmpdir/single-file-pull/"
 cmp "$tmpdir/source/nested/large.bin" "$tmpdir/single-file-pull/large.bin"
@@ -169,4 +176,4 @@ if grep -Fq 'keep.probe' "$tmpdir/deleted-list.log"; then
   exit 1
 fi
 
-echo "PASS rsync $(rsync --version | awk 'NR == 1 { print $3 }') module/push/pull/delta/delete"
+echo "PASS rsync $(rsync --version | awk 'NR == 1 { print $3 }') module/push/pull/mtime/delta/delete"
