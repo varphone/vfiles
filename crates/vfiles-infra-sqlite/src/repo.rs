@@ -2068,6 +2068,19 @@ impl EntryRepo for SqliteEntryRepo {
                         message: format!("Failed to remove entry property in patch: {e}"),
                     })?;
                 }
+                vfiles_domain::EntryPropertyChange::RemovePrefix { prefix } => {
+                    sqlx::query(
+                        "DELETE FROM entry_properties WHERE entry_id = ? AND substr(prop_name, 1, length(?)) = ?",
+                    )
+                    .bind(entry_id.to_string())
+                    .bind(prefix.clone())
+                    .bind(prefix)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to remove entry property prefix in patch: {e}"),
+                    })?;
+                }
             }
         }
         tx.commit().await.map_err(|e| DomainError::Internal {
@@ -3185,6 +3198,19 @@ impl EntryRepo for SqliteEntryRepo {
                         message: format!("Failed to remove entry property in move patch: {e}"),
                     })?;
                 }
+                vfiles_domain::EntryPropertyChange::RemovePrefix { prefix } => {
+                    sqlx::query(
+                        "DELETE FROM entry_properties WHERE entry_id = ? AND substr(prop_name, 1, length(?)) = ?",
+                    )
+                    .bind(entry_id.to_string())
+                    .bind(prefix.clone())
+                    .bind(prefix)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to remove entry property prefix in move patch: {e}"),
+                    })?;
+                }
             }
         }
         tx.commit().await.map_err(|e| DomainError::Internal {
@@ -3532,6 +3558,31 @@ impl EntryRepo for SqliteEntryRepo {
         created_by: &UserId,
         message: Option<&str>,
     ) -> DomainResult<EntryVersion> {
+        let no_properties = |_version_id: VersionId| Vec::new();
+        self.create_version_with_properties(
+            entry_id,
+            blob_id,
+            content_hash,
+            size_bytes,
+            mime_type,
+            created_by,
+            message,
+            &no_properties,
+        )
+        .await
+    }
+
+    async fn create_version_with_properties(
+        &self,
+        entry_id: &EntryId,
+        blob_id: Option<&BlobId>,
+        content_hash: Option<&ContentHash>,
+        size_bytes: u64,
+        mime_type: Option<&str>,
+        created_by: &UserId,
+        message: Option<&str>,
+        properties: &(dyn Fn(VersionId) -> Vec<vfiles_domain::EntryPropertyChange> + Send + Sync),
+    ) -> DomainResult<EntryVersion> {
         let version_id = VersionId::new();
         let now = time::OffsetDateTime::now_utc();
         let next_version: i64 = sqlx::query_scalar(
@@ -3614,6 +3665,49 @@ impl EntryRepo for SqliteEntryRepo {
             message: format!("Failed to create entry version: {}", e),
         })?;
 
+        for change in properties(version_id) {
+            match change {
+                vfiles_domain::EntryPropertyChange::Set { name, value } => {
+                    sqlx::query(
+                        "INSERT INTO entry_properties (entry_id, prop_name, prop_value, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(entry_id, prop_name) DO UPDATE SET prop_value = excluded.prop_value, updated_at = excluded.updated_at",
+                    )
+                    .bind(entry_id.to_string())
+                    .bind(name)
+                    .bind(value)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to set version properties: {e}"),
+                    })?;
+                }
+                vfiles_domain::EntryPropertyChange::Remove { name } => {
+                    sqlx::query(
+                        "DELETE FROM entry_properties WHERE entry_id = ? AND prop_name = ?",
+                    )
+                    .bind(entry_id.to_string())
+                    .bind(name)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to remove version properties: {e}"),
+                    })?;
+                }
+                vfiles_domain::EntryPropertyChange::RemovePrefix { prefix } => {
+                    sqlx::query(
+                        "DELETE FROM entry_properties WHERE entry_id = ? AND substr(prop_name, 1, length(?)) = ?",
+                    )
+                    .bind(entry_id.to_string())
+                    .bind(prefix.clone())
+                    .bind(prefix)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to remove version property prefix: {e}"),
+                    })?;
+                }
+            }
+        }
+
         sqlx::query("UPDATE entries SET updated_at = ? WHERE id = ?")
             .bind(now)
             .bind(entry_id.to_string())
@@ -3627,7 +3721,25 @@ impl EntryRepo for SqliteEntryRepo {
             message: format!("Failed to commit entry version transaction: {}", e),
         })?;
 
-        self.find_version(&version_id).await
+        Ok(EntryVersion {
+            id: version_id,
+            entry_id: *entry_id,
+            version_no: next_version as u32,
+            blob_id: blob_id.copied(),
+            size_bytes: ByteSize::new(size_bytes),
+            mime_type: mime_type.map(str::to_owned),
+            is_text: is_text_content_type(mime_type),
+            content_hash: content_hash.cloned().unwrap_or_else(default_content_hash),
+            created_by: *created_by,
+            created_at: now,
+            change_type: if next_version <= 1 {
+                ChangeType::Added
+            } else {
+                ChangeType::Modified
+            },
+            change_message: message.and_then(|value| NonEmptyMessage::new(value).ok()),
+            source_upload_id: None,
+        })
     }
 }
 

@@ -1036,29 +1036,14 @@ impl VfilesS3 {
         Ok((!out.is_empty()).then_some(out))
     }
 
-    /// 原子替换对象元数据并保存该版本 ETag，避免清旧/写新分多条 SQL 后留下半套属性。
-    async fn store_object_properties(
-        &self,
-        entry_id: &vfiles_domain::EntryId,
-        version_id: &vfiles_domain::VersionId,
-        etag: &str,
+    /// Properties supplied with a new object version; the repository applies these in the same
+    /// transaction that creates the version and derives its version-specific ETag key.
+    fn object_metadata_changes(
         md: Option<&s3s::dto::Metadata>,
-    ) -> S3Result<()> {
-        let mut map = self
-            .entry_repo
-            .list_entry_properties(&[*entry_id])
-            .await
-            .map_err(dom_err)?;
-        let mut changes = Vec::new();
-        for (k, _) in map.remove(entry_id).unwrap_or_default() {
-            if k.starts_with(S3_META_PREFIX) {
-                changes.push(vfiles_domain::EntryPropertyChange::Remove { name: k });
-            }
-        }
-        changes.push(vfiles_domain::EntryPropertyChange::Set {
-            name: version_etag_property(version_id),
-            value: etag.to_string(),
-        });
+    ) -> Vec<vfiles_domain::EntryPropertyChange> {
+        let mut changes = vec![vfiles_domain::EntryPropertyChange::RemovePrefix {
+            prefix: S3_META_PREFIX.to_string(),
+        }];
         if let Some(md) = md {
             for (k, v) in md {
                 changes.push(vfiles_domain::EntryPropertyChange::Set {
@@ -1067,10 +1052,7 @@ impl VfilesS3 {
                 });
             }
         }
-        self.entry_repo
-            .apply_entry_property_changes(entry_id, &changes)
-            .await
-            .map_err(dom_err)
+        changes
     }
 
     async fn load_version_etags(
@@ -2031,35 +2013,32 @@ impl S3 for VfilesS3 {
             .body
             .unwrap_or_else(|| StreamingBlob::from_bytes(Default::default()));
         let (reader, md5_digest) = Md5Reader::new(stream_reader(blob));
-        let result = if input.content_length.is_some() {
-            self.upload
-                .complete_upload_from_stream_with_md5(
-                    &session.upload_id,
-                    expected_sha256_hex.as_deref(),
-                    expected_md5,
-                    expected_crc32,
-                    expected_crc32c,
-                    expected_crc64nvme,
-                    expected_sha1,
-                    Some("S3 PUT"),
-                    Box::new(reader),
-                )
-                .await
-        } else {
-            self.upload
-                .complete_upload_from_stream_unknown_size_with_md5(
-                    &session.upload_id,
-                    expected_sha256_hex.as_deref(),
-                    expected_md5,
-                    expected_crc32,
-                    expected_crc32c,
-                    expected_crc64nvme,
-                    expected_sha1,
-                    Some("S3 PUT"),
-                    Box::new(reader),
-                )
-                .await
+        let base_properties = Self::object_metadata_changes(input.metadata.as_ref());
+        let property_digest = md5_digest.clone();
+        let version_properties = move |version_id: vfiles_domain::VersionId| {
+            let mut properties = base_properties.clone();
+            properties.push(vfiles_domain::EntryPropertyChange::Set {
+                name: version_etag_property(&version_id),
+                value: finish_md5(&property_digest),
+            });
+            properties
         };
+        let result = self
+            .upload
+            .complete_upload_from_stream_with_properties(
+                &session.upload_id,
+                expected_sha256_hex.as_deref(),
+                expected_md5,
+                expected_crc32,
+                expected_crc32c,
+                expected_crc64nvme,
+                expected_sha1,
+                Some("S3 PUT"),
+                Box::new(reader),
+                input.content_length.is_some(),
+                &version_properties,
+            )
+            .await;
         let result = match result {
             Ok(result) => result,
             Err(error) => {
@@ -2075,13 +2054,6 @@ impl S3 for VfilesS3 {
             }
         };
         let etag = finish_md5(&md5_digest);
-        self.store_object_properties(
-            &result.entry.id,
-            &result.version.id,
-            &etag,
-            input.metadata.as_ref(),
-        )
-        .await?;
         let out = PutObjectOutput {
             e_tag: Some(s3s::dto::ETag::Strong(etag)),
             checksum_sha256: response_checksum_sha256,
@@ -2184,13 +2156,30 @@ impl S3 for VfilesS3 {
             .await
             .map_err(dom_err)?;
         let (reader, md5_digest) = Md5Reader::new(content.reader);
+        let base_properties = Self::object_metadata_changes(md.as_ref());
+        let property_digest = md5_digest.clone();
+        let version_properties = move |version_id: vfiles_domain::VersionId| {
+            let mut properties = base_properties.clone();
+            properties.push(vfiles_domain::EntryPropertyChange::Set {
+                name: version_etag_property(&version_id),
+                value: finish_md5(&property_digest),
+            });
+            properties
+        };
         let result = self
             .upload
-            .complete_upload_from_stream(
+            .complete_upload_from_stream_with_properties(
                 &session.upload_id,
+                None,
+                None,
+                None,
+                None,
+                None,
                 None,
                 Some("S3 COPY"),
                 Box::new(reader),
+                true,
+                &version_properties,
             )
             .await;
         let result = match result {
@@ -2203,8 +2192,6 @@ impl S3 for VfilesS3 {
             }
         };
         let etag = finish_md5(&md5_digest);
-        self.store_object_properties(&result.entry.id, &result.version.id, &etag, md.as_ref())
-            .await?;
         let out = CopyObjectOutput {
             copy_object_result: Some(CopyObjectResult {
                 e_tag: Some(s3s::dto::ETag::Strong(etag)),
@@ -2902,20 +2889,26 @@ impl S3 for VfilesS3 {
             .get_upload_custom_metadata(&upload_id)
             .await
             .map_err(dom_err)?;
-        let result = self
-            .upload
-            .complete_multipart_upload(&upload_id, &selected_indices, Some("S3 multipart"))
+        let map: s3s::dto::Metadata = custom.into_iter().collect();
+        let base_properties = Self::object_metadata_changes((!map.is_empty()).then_some(&map));
+        let property_etag = etag.clone();
+        let version_properties = move |version_id: vfiles_domain::VersionId| {
+            let mut properties = base_properties.clone();
+            properties.push(vfiles_domain::EntryPropertyChange::Set {
+                name: version_etag_property(&version_id),
+                value: property_etag.clone(),
+            });
+            properties
+        };
+        self.upload
+            .complete_multipart_upload_with_properties(
+                &upload_id,
+                &selected_indices,
+                Some("S3 multipart"),
+                &version_properties,
+            )
             .await
             .map_err(dom_err)?;
-        // 会话上存的 `x-amz-meta-*` → 条目属性（完成即定稿 = 覆盖写语义）
-        let map: s3s::dto::Metadata = custom.into_iter().collect();
-        self.store_object_properties(
-            &result.entry.id,
-            &result.version.id,
-            &etag,
-            (!map.is_empty()).then_some(&map),
-        )
-        .await?;
         let location = format!("/{}/{}", input.bucket, input.key);
         let out = CompleteMultipartUploadOutput {
             bucket: Some(input.bucket),

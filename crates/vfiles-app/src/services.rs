@@ -3053,6 +3053,7 @@ where
             None,
             message,
             true,
+            None,
         )
         .await
     }
@@ -3107,6 +3108,7 @@ where
             expected_sha1,
             message,
             true,
+            None,
         )
         .await
     }
@@ -3162,6 +3164,48 @@ where
             expected_sha1,
             message,
             false,
+            None,
+        )
+        .await
+    }
+
+    /// Complete an upload while committing version-derived entry properties in the same
+    /// repository transaction as the new version.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn complete_upload_from_stream_with_properties(
+        &self,
+        upload_id: &UploadId,
+        expected_sha256: Option<&str>,
+        expected_md5: Option<[u8; 16]>,
+        expected_crc32: Option<u32>,
+        expected_crc32c: Option<u32>,
+        expected_crc64nvme: Option<u64>,
+        expected_sha1: Option<[u8; 20]>,
+        message: Option<&str>,
+        upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        enforce_size: bool,
+        properties: &(
+             dyn Fn(vfiles_domain::VersionId) -> Vec<vfiles_domain::EntryPropertyChange>
+                 + Send
+                 + Sync
+         ),
+    ) -> DomainResult<UploadCompleteResponse> {
+        let session = self.upload_store.get_upload_session(upload_id).await?;
+        if session.expires_at < time::OffsetDateTime::now_utc() {
+            return Err(DomainError::UploadExpired);
+        }
+        self.commit_upload_stream(
+            session,
+            upload_stream,
+            expected_sha256,
+            expected_md5,
+            expected_crc32,
+            expected_crc32c,
+            expected_crc64nvme,
+            expected_sha1,
+            message,
+            enforce_size,
+            Some(properties),
         )
         .await
     }
@@ -3214,6 +3258,42 @@ where
             None,
             message,
             false,
+            None,
+        )
+        .await
+    }
+
+    pub async fn complete_multipart_upload_with_properties(
+        &self,
+        upload_id: &UploadId,
+        part_indices: &[u32],
+        message: Option<&str>,
+        properties: &(
+             dyn Fn(vfiles_domain::VersionId) -> Vec<vfiles_domain::EntryPropertyChange>
+                 + Send
+                 + Sync
+         ),
+    ) -> DomainResult<UploadCompleteResponse> {
+        let session = self.upload_store.get_upload_session(upload_id).await?;
+        if session.expires_at < time::OffsetDateTime::now_utc() {
+            return Err(DomainError::UploadExpired);
+        }
+        let upload_stream = self
+            .upload_store
+            .assemble_upload_stream_parts(upload_id, part_indices)
+            .await?;
+        self.commit_upload_stream(
+            session,
+            upload_stream,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            message,
+            false,
+            Some(properties),
         )
         .await
     }
@@ -3320,6 +3400,13 @@ where
         expected_sha1: Option<[u8; 20]>,
         message: Option<&str>,
         enforce_size: bool,
+        version_properties: Option<
+            &(
+                 dyn Fn(vfiles_domain::VersionId) -> Vec<vfiles_domain::EntryPropertyChange>
+                     + Send
+                     + Sync
+             ),
+        >,
     ) -> DomainResult<UploadCompleteResponse> {
         let (blob_id, content_hash, created_blob, stored_size) = self
             .blob_store
@@ -3401,18 +3488,32 @@ where
             .clone()
             .or_else(|| guess_mime_type(&session.filename));
         let normalized_message = normalize_message(message);
-        let version_result = self
-            .entry_repo
-            .create_version(
-                &entry_id,
-                Some(&blob_id),
-                Some(&content_hash),
-                stored_size,
-                mime_type.as_deref(),
-                &session.owner_user_id,
-                normalized_message.as_deref(),
-            )
-            .await;
+        let version_result = if let Some(properties) = version_properties {
+            self.entry_repo
+                .create_version_with_properties(
+                    &entry_id,
+                    Some(&blob_id),
+                    Some(&content_hash),
+                    stored_size,
+                    mime_type.as_deref(),
+                    &session.owner_user_id,
+                    normalized_message.as_deref(),
+                    properties,
+                )
+                .await
+        } else {
+            self.entry_repo
+                .create_version(
+                    &entry_id,
+                    Some(&blob_id),
+                    Some(&content_hash),
+                    stored_size,
+                    mime_type.as_deref(),
+                    &session.owner_user_id,
+                    normalized_message.as_deref(),
+                )
+                .await
+        };
         let version = match version_result {
             Ok(version) => version,
             Err(err) => {
@@ -5076,6 +5177,80 @@ mod tests {
                 .expect("blob lookup should succeed")
                 .expect("committed blob should exist"),
             bytes
+        );
+        fault_pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn version_and_s3_properties_roll_back_in_one_transaction() {
+        let context = TestContext::new().await;
+        let root = TestContext::path("");
+        let path = TestContext::path("atomic-properties.txt");
+        let bytes = b"rollback version with property".to_vec();
+        let upload = context
+            .upload_service
+            .init_upload(
+                &context.namespace_id,
+                &root,
+                "atomic-properties.txt",
+                bytes.len() as u64,
+                None,
+                None,
+                &context.user_id,
+            )
+            .await
+            .expect("upload should initialize");
+        let fault_pool =
+            SqlitePoolFactory::connect(context.storage_root.join("vfiles.db").as_path())
+                .await
+                .expect("database should reopen for fault injection");
+        sqlx::query(
+            "CREATE TRIGGER reject_object_property BEFORE INSERT ON entry_properties BEGIN SELECT RAISE(ABORT, 'injected property failure'); END",
+        )
+        .execute(&fault_pool)
+        .await
+        .expect("property fault trigger should be installed");
+        let properties = |version_id: VersionId| {
+            vec![EntryPropertyChange::Set {
+                name: format!("s3-etag:{version_id}"),
+                value: "0123456789abcdef0123456789abcdef".to_string(),
+            }]
+        };
+
+        let error = context
+            .upload_service
+            .complete_upload_from_stream_with_properties(
+                &upload.upload_id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("S3 PUT"),
+                Box::new(std::io::Cursor::new(bytes)),
+                true,
+                &properties,
+            )
+            .await
+            .expect_err("property failure must abort the version transaction");
+
+        assert!(matches!(error, DomainError::Internal { .. }));
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &path)
+                .await
+                .expect("entry lookup should succeed")
+                .is_none()
+        );
+        assert!(
+            context
+                .blob_store
+                .list_stored_blob_files()
+                .await
+                .expect("blob listing should succeed")
+                .is_empty()
         );
         fault_pool.close().await;
     }

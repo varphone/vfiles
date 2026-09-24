@@ -285,6 +285,7 @@ pub trait SystemSettingsRepo {
 pub enum EntryPropertyChange {
     Set { name: String, value: String },
     Remove { name: String },
+    RemovePrefix { prefix: String },
 }
 
 #[async_trait::async_trait]
@@ -547,6 +548,39 @@ pub trait EntryRepo {
         created_by: &UserId,
         message: Option<&str>,
     ) -> DomainResult<EntryVersion>;
+
+    /// Create a version and atomically persist properties derived from its generated id.
+    /// Repositories with transactional support should override this method.
+    #[allow(clippy::too_many_arguments)]
+    async fn create_version_with_properties(
+        &self,
+        entry_id: &EntryId,
+        blob_id: Option<&BlobId>,
+        content_hash: Option<&ContentHash>,
+        size_bytes: u64,
+        mime_type: Option<&str>,
+        created_by: &UserId,
+        message: Option<&str>,
+        properties: &(dyn Fn(VersionId) -> Vec<EntryPropertyChange> + Send + Sync),
+    ) -> DomainResult<EntryVersion> {
+        let version = self
+            .create_version(
+                entry_id,
+                blob_id,
+                content_hash,
+                size_bytes,
+                mime_type,
+                created_by,
+                message,
+            )
+            .await?;
+        let changes = properties(version.id);
+        if !changes.is_empty() {
+            self.apply_entry_property_changes(entry_id, &changes)
+                .await?;
+        }
+        Ok(version)
+    }
 
     /// 记录版本的源端 mtime（rsync `-a` 快跳用 ✗ 其余来源不调用 = NULL 语义安全）。
     async fn set_version_source_mtime(
