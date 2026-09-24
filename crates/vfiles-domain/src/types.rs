@@ -192,6 +192,15 @@ pub struct EntryVersion {
     pub source_upload_id: Option<UploadId>,
 }
 
+/// A fully prepared entry to insert during an atomic subtree copy.
+#[derive(Debug, Clone)]
+pub struct CopyEntrySpec {
+    pub path: NormalizedPath,
+    pub entry_type: EntryKind,
+    pub version: Option<EntryVersion>,
+    pub properties: Vec<(String, String)>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectoryVersion {
     pub id: VersionId,

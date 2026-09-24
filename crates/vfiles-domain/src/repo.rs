@@ -564,6 +564,29 @@ pub trait EntryRepo {
         moves: &[(EntryId, NormalizedPath)],
         condition: Option<&EntryWriteCondition>,
     ) -> DomainResult<(Vec<Entry>, Vec<(BlobId, u32)>)>;
+    /// Atomically replace a destination subtree with fully prepared copied entries.
+    /// Repositories must roll back both deletion and insertion on any failure.
+    async fn replace_subtree_with_copy(
+        &self,
+        namespace_id: &NamespaceId,
+        destination: &NormalizedPath,
+        entries: &[CopyEntrySpec],
+        overwrite: bool,
+        user_id: &UserId,
+        message: Option<&str>,
+    ) -> DomainResult<(Vec<Entry>, Vec<(BlobId, u32)>)> {
+        let _ = (
+            namespace_id,
+            destination,
+            entries,
+            overwrite,
+            user_id,
+            message,
+        );
+        Err(DomainError::Internal {
+            message: "Atomic subtree COPY is not supported by this repository".into(),
+        })
+    }
     async fn get_entry_history(
         &self,
         entry_id: &EntryId,

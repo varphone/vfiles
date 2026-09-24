@@ -7,12 +7,6 @@ use vfiles_infra_sqlite::{
     SqliteUserRepo,
 };
 
-struct CopySourceIndex {
-    children: HashMap<String, Vec<Entry>>,
-    properties: HashMap<EntryId, Vec<(String, String)>>,
-    versions: HashMap<EntryId, EntryVersion>,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct CopyOptions {
     pub overwrite: bool,
@@ -2270,10 +2264,7 @@ where
         .await
     }
 
-    /// COPY（r5 ✗ RFC 4918 §9.3 —— blob 零字节复用：新 entry + 新 version 指同 blob
-    /// （`create_version` 的 upsert 自带 ref_count+1 ✓）+ 递归子树 + src==dst 409。
-    /// Overwrite 语义诚实判：dst 存在 → Conflict（**覆盖完整实现（删旧子树 + blob release
-    /// 链）= P1 记债** ✗ 首版 T/F 同 409 ✗ 不可静默假覆盖）。
+    /// Copy a resource subtree using a single repository transaction for destination replacement.
     pub async fn copy_entries(
         &self,
         namespace_id: &NamespaceId,
@@ -2398,17 +2389,10 @@ where
             .entry_repo
             .list_entry_properties(&source_entry_ids)
             .await?;
-        let mut source_children = HashMap::<String, Vec<Entry>>::new();
         let mut source_versions = HashMap::<EntryId, EntryVersion>::new();
         for entry in &source_entries {
             if entry.id == src_entry.id {
                 continue;
-            }
-            if let Some((parent, _)) = entry.path_norm.as_str().rsplit_once('/') {
-                source_children
-                    .entry(parent.to_string())
-                    .or_default()
-                    .push(entry.clone());
             }
             if entry.entry_type == EntryKind::File {
                 let version_id =
@@ -2435,101 +2419,94 @@ where
             );
         }
 
-        let dst_exists = self
+        let mut copy_entries = Vec::with_capacity(source_entries.len());
+        for entry in &source_entries {
+            let suffix = entry
+                .path_norm
+                .as_str()
+                .strip_prefix(source.as_str())
+                .expect("subtree query only returns source descendants");
+            let target_path = NormalizedPath::new(&format!("{}{}", destination.as_str(), suffix))
+                .map_err(|_| DomainError::Validation {
+                message: "Invalid copied destination path".to_string(),
+            })?;
+            copy_entries.push(CopyEntrySpec {
+                path: target_path,
+                entry_type: entry.entry_type,
+                version: source_versions.get(&entry.id).cloned(),
+                properties: source_properties
+                    .get(&entry.id)
+                    .cloned()
+                    .unwrap_or_default(),
+            });
+        }
+        let (replaced_entries, blob_refs) = self
             .entry_repo
-            .find_by_path(namespace_id, destination)
-            .await?
-            .is_some();
-        if dst_exists {
-            if !overwrite {
-                // Overwrite: F + 目标存在 → 412（臂按 overwrite 选码 ✗ Conflict 兜底）
-                return Err(DomainError::Conflict {
-                    message: "Destination already exists".to_string(),
-                });
-            }
-            // Overwrite: T（含 RFC 缺省 ✗ r10 真覆盖：删旧子树 = delete_entries 全链
-            // 自带 blob release 引用计数 ✓）→ 再建
-            self.delete_entries(
+            .replace_subtree_with_copy(
                 namespace_id,
-                std::slice::from_ref(destination),
-                message,
+                destination,
+                &copy_entries,
+                overwrite,
                 user_id,
+                message,
             )
             .await?;
+        let released_blobs = self.entry_repo.release_blob_references(&blob_refs).await?;
+        for blob_id in released_blobs {
+            if let Err(error) = self.blob_store.delete_blob(&blob_id).await {
+                tracing::warn!(%blob_id, %error, "failed to remove blob released by COPY overwrite");
+            }
         }
-        let source_index = CopySourceIndex {
-            children: source_children,
-            properties: source_properties,
-            versions: source_versions,
-        };
-        self.recursive_copy(
+
+        let mut snapshot_entries = replaced_entries
+            .iter()
+            .map(|entry| {
+                pending_snapshot_entry(
+                    entry.id,
+                    &entry.path_norm,
+                    entry.entry_type,
+                    None,
+                    ChangeType::Deleted,
+                )
+            })
+            .collect::<Vec<_>>();
+        let copied = self
+            .entry_repo
+            .find_subtree(namespace_id, destination)
+            .await?;
+        let changed_entries = replaced_entries
+            .iter()
+            .map(|entry| ChangedEntry {
+                entry_id: entry.id,
+                path: entry.path_norm.as_str().to_string(),
+                kind: entry.entry_type,
+                current_version_id: entry.current_version_id,
+                change_type: ChangeType::Deleted,
+            })
+            .chain(copied.iter().map(|entry| ChangedEntry {
+                entry_id: entry.id,
+                path: entry.path_norm.as_str().to_string(),
+                kind: entry.entry_type,
+                current_version_id: entry.current_version_id,
+                change_type: ChangeType::Added,
+            }))
+            .collect();
+        snapshot_entries = collect_snapshot_state(
+            &self.entry_repo,
             namespace_id,
-            &src_entry,
-            destination,
+            std::mem::take(&mut snapshot_entries),
+        )
+        .await?;
+        finalize_mutation(
+            &self.snapshot_repo,
+            namespace_id,
             message,
             user_id,
-            &source_index,
+            changed_entries,
+            snapshot_entries,
+            Vec::new(),
         )
-        .await
-    }
-
-    /// 递归复制子树（dir = 建目录逐层下钻 ✗ file = 建 entry + version 复用同 blob）。
-    async fn recursive_copy(
-        &self,
-        namespace_id: &NamespaceId,
-        src_entry: &Entry,
-        target: &NormalizedPath,
-        message: Option<&str>,
-        user_id: &UserId,
-        source_index: &CopySourceIndex,
-    ) -> DomainResult<()> {
-        let kind = src_entry.entry_type;
-        let new_id = self
-            .entry_repo
-            .create_entry(namespace_id, target, kind, user_id)
-            .await?;
-        if let Some(properties) = source_index.properties.get(&src_entry.id) {
-            for (name, value) in properties {
-                self.entry_repo
-                    .set_entry_property(&new_id, name, value)
-                    .await?;
-            }
-        }
-        if matches!(src_entry.entry_type, EntryKind::File) {
-            let sv = source_index.versions.get(&src_entry.id).ok_or_else(|| {
-                DomainError::Validation {
-                    message: "Source file has no version".to_string(),
-                }
-            })?;
-            let nv = self
-                .entry_repo
-                .create_version(
-                    &new_id,
-                    sv.blob_id.as_ref(),
-                    Some(&sv.content_hash),
-                    sv.size_bytes.as_u64(),
-                    sv.mime_type.as_deref(),
-                    user_id,
-                    message,
-                )
-                .await?;
-            self.entry_repo
-                .update_current_version(&new_id, &nv.id)
-                .await?;
-        } else if let Some(children) = source_index.children.get(src_entry.path_norm.as_str()) {
-            for child in children {
-                let child_target = join_path(target, &child.name)?;
-                Box::pin(self.recursive_copy(
-                    namespace_id,
-                    child,
-                    &child_target,
-                    message,
-                    user_id,
-                    source_index,
-                ))
-                .await?;
-            }
-        }
+        .await?;
         Ok(())
     }
 

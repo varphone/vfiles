@@ -3837,6 +3837,244 @@ impl EntryRepo for SqliteEntryRepo {
         Ok((replaced_entries, blob_references))
     }
 
+    async fn replace_subtree_with_copy(
+        &self,
+        namespace_id: &NamespaceId,
+        destination: &NormalizedPath,
+        entries: &[vfiles_domain::CopyEntrySpec],
+        overwrite: bool,
+        user_id: &UserId,
+        message: Option<&str>,
+    ) -> DomainResult<(Vec<Entry>, Vec<(BlobId, u32)>)> {
+        if entries.is_empty() || !entries.iter().any(|entry| entry.path == *destination) {
+            return Err(DomainError::Validation {
+                message: "COPY entries must include the destination root".into(),
+            });
+        }
+        let mut paths = std::collections::HashSet::new();
+        for entry in entries {
+            if entry.path != *destination
+                && !entry
+                    .path
+                    .as_str()
+                    .starts_with(&format!("{}/", destination.as_str()))
+            {
+                return Err(DomainError::Validation {
+                    message: "COPY entry is outside the destination subtree".into(),
+                });
+            }
+            if !paths.insert(entry.path.as_str())
+                || (entry.entry_type == EntryKind::File) != entry.version.is_some()
+            {
+                return Err(DomainError::Validation {
+                    message: "COPY entries have duplicate paths or invalid versions".into(),
+                });
+            }
+        }
+
+        let mut tx =
+            self.pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to begin atomic subtree COPY: {e}"),
+                })?;
+        let parent_path = destination
+            .as_str()
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .unwrap_or("");
+        let parent_kind: Option<String> = if parent_path.is_empty() {
+            None
+        } else {
+            sqlx::query_scalar("SELECT kind FROM entries WHERE namespace_id = ? AND path = ?")
+                .bind(namespace_id.to_string())
+                .bind(parent_path)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to verify COPY destination parent: {e}"),
+                })?
+        };
+        if !parent_path.is_empty() && parent_kind.as_deref() != Some("directory") {
+            return Err(DomainError::Conflict {
+                message: "Destination parent is not a collection".into(),
+            });
+        }
+        let destination_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM entries WHERE namespace_id = ? AND (path = ? OR substr(path, 1, length(?) + 1) = ? || '/'))",
+        )
+        .bind(namespace_id.to_string())
+        .bind(destination.as_str())
+        .bind(destination.as_str())
+        .bind(destination.as_str())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to inspect COPY destination: {e}"),
+        })?;
+        if destination_exists && !overwrite {
+            return Err(DomainError::Conflict {
+                message: "Destination already exists".into(),
+            });
+        }
+
+        let replaced_rows: Vec<EntryRow> = sqlx::query_as(
+            r#"SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+                      (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id
+                       ORDER BY ev.version DESC LIMIT 1) AS current_version_id
+               FROM entries e WHERE e.namespace_id = ?
+                 AND (e.path = ? OR substr(e.path, 1, length(?) + 1) = ? || '/')
+               ORDER BY length(e.path) DESC"#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(destination.as_str())
+        .bind(destination.as_str())
+        .bind(destination.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list overwritten COPY subtree: {e}"),
+        })?;
+        let replaced_entries = replaced_rows
+            .into_iter()
+            .map(parse_entry_row)
+            .collect::<DomainResult<Vec<_>>>()?;
+        let blob_rows: Vec<(String, i64)> = sqlx::query_as(
+            r#"SELECT ev.blob_id, COUNT(*) FROM entry_versions ev
+               JOIN entries e ON e.id = ev.entry_id WHERE e.namespace_id = ?
+                 AND (e.path = ? OR substr(e.path, 1, length(?) + 1) = ? || '/')
+                 AND ev.blob_id IS NOT NULL GROUP BY ev.blob_id"#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(destination.as_str())
+        .bind(destination.as_str())
+        .bind(destination.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to count overwritten COPY blob references: {e}"),
+        })?;
+        let blob_references = blob_rows
+            .into_iter()
+            .map(|(id, count)| {
+                let id = uuid::Uuid::parse_str(&id)
+                    .map(BlobId::from_uuid)
+                    .map_err(|_| DomainError::Internal {
+                        message: "Invalid blob id in overwritten COPY subtree".into(),
+                    })?;
+                let count = u32::try_from(count).map_err(|_| DomainError::Internal {
+                    message: "Overwritten COPY blob reference count overflow".into(),
+                })?;
+                Ok((id, count))
+            })
+            .collect::<DomainResult<Vec<_>>>()?;
+        sqlx::query(
+            "DELETE FROM entries WHERE namespace_id = ? AND (path = ? OR substr(path, 1, length(?) + 1) = ? || '/')",
+        )
+        .bind(namespace_id.to_string())
+        .bind(destination.as_str())
+        .bind(destination.as_str())
+        .bind(destination.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to remove overwritten COPY subtree: {e}"),
+        })?;
+
+        let mut ordered_entries = entries.iter().collect::<Vec<_>>();
+        ordered_entries.sort_by_key(|entry| entry.path.as_str().matches('/').count());
+        for entry in ordered_entries {
+            let entry_id = EntryId::new();
+            let kind = match entry.entry_type {
+                EntryKind::File => "file",
+                EntryKind::Directory => "directory",
+            };
+            sqlx::query(
+                "INSERT INTO entries (id, namespace_id, path, kind, created_at) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(entry_id.to_string())
+            .bind(namespace_id.to_string())
+            .bind(entry.path.as_str())
+            .bind(kind)
+            .bind(time::OffsetDateTime::now_utc())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
+                    DomainError::PathConflict {
+                        message: format!("Path already exists: {}", entry.path.as_str()),
+                    }
+                }
+                _ => DomainError::Internal {
+                    message: format!("Failed to create copied entry: {e}"),
+                },
+            })?;
+            if let Some(version) = &entry.version {
+                let now = time::OffsetDateTime::now_utc();
+                if let Some(blob_id) = &version.blob_id {
+                    let result = sqlx::query(
+                        "UPDATE blobs SET ref_count = ref_count + 1 WHERE id = ? AND content_hash = ?",
+                    )
+                    .bind(blob_id.to_string())
+                    .bind(version.content_hash.as_str())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to retain copied blob: {e}"),
+                    })?;
+                    if result.rows_affected() != 1 {
+                        return Err(DomainError::Internal {
+                            message: "Blob referenced by COPY source is missing".into(),
+                        });
+                    }
+                }
+                let created_order: i64 = sqlx::query_scalar(
+                    "UPDATE s3_version_sequence SET value = value + 1 WHERE id = 1 RETURNING value",
+                )
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to sequence copied version: {e}"),
+                })?;
+                sqlx::query(
+                    "INSERT INTO entry_versions (id, entry_id, version, blob_id, size, content_type, created_at, created_by, message, created_order) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(VersionId::new().to_string())
+                .bind(entry_id.to_string())
+                .bind(version.blob_id.as_ref().map(ToString::to_string))
+                .bind(version.size_bytes.as_u64() as i64)
+                .bind(version.mime_type.as_deref())
+                .bind(now)
+                .bind(user_id.to_string())
+                .bind(message)
+                .bind(created_order)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to create copied version: {e}"),
+                })?;
+            }
+            for (name, value) in &entry.properties {
+                sqlx::query(
+                    "INSERT INTO entry_properties (entry_id, prop_name, prop_value, updated_at) VALUES (?, ?, ?, datetime('now'))",
+                )
+                .bind(entry_id.to_string())
+                .bind(name)
+                .bind(value)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to create copied entry property: {e}"),
+                })?;
+            }
+        }
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to commit atomic subtree COPY: {e}"),
+        })?;
+        Ok((replaced_entries, blob_references))
+    }
+
     async fn get_entry_history(
         &self,
         entry_id: &EntryId,
@@ -8381,6 +8619,61 @@ mod entry_version_batch_tests {
         assert_eq!(
             current.current_version_id,
             versions.iter().max_by_key(|v| v.version_no).map(|v| v.id)
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn failed_atomic_copy_restores_overwritten_subtree() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+        let destination = NormalizedPath::new("destination.txt").expect("path should parse");
+        let old_id = repo
+            .create_entry(&namespace_id, &destination, EntryKind::File, &user_id)
+            .await
+            .expect("old target should be created");
+        repo.create_version(&old_id, None, None, 3, None, &user_id, Some("old"))
+            .await
+            .expect("old target version should be created");
+        let source_id = repo
+            .create_entry(
+                &namespace_id,
+                &NormalizedPath::new("source.txt").expect("source path should parse"),
+                EntryKind::File,
+                &user_id,
+            )
+            .await
+            .expect("source should be created");
+        let mut source_version = repo
+            .create_version(&source_id, None, None, 4, None, &user_id, Some("source"))
+            .await
+            .expect("source version should be created");
+        source_version.blob_id = Some(BlobId::new());
+
+        let result = repo
+            .replace_subtree_with_copy(
+                &namespace_id,
+                &destination,
+                &[CopyEntrySpec {
+                    path: destination.clone(),
+                    entry_type: EntryKind::File,
+                    version: Some(source_version),
+                    properties: Vec::new(),
+                }],
+                true,
+                &user_id,
+                Some("atomic copy failure"),
+            )
+            .await;
+        assert!(result.is_err(), "missing source blob must fail COPY");
+        assert_eq!(
+            repo.find_by_path(&namespace_id, &destination)
+                .await
+                .expect("destination lookup should work")
+                .expect("old destination must survive rollback")
+                .id,
+            old_id
         );
 
         pool.close().await;
