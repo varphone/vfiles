@@ -2166,7 +2166,47 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
         &self,
         req: vfiles_rsync::ListRequest,
     ) -> Result<Vec<vfiles_rsync::FlatEntry>, String> {
-        vfiles_rsync::collect_flat(&*self.repo, &self.namespace, &req).await
+        let mut entries = vfiles_rsync::collect_flat(&*self.repo, &self.namespace, &req).await?;
+        let entry_ids: Vec<_> = entries.iter().filter_map(|entry| entry.entry_id).collect();
+        let mut properties = std::collections::HashMap::new();
+        for batch in entry_ids.chunks(500) {
+            properties.extend(
+                self.repo
+                    .list_entry_properties(batch)
+                    .await
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        for entry in &mut entries {
+            let Some(entry_id) = entry.entry_id else {
+                continue;
+            };
+            let is_symlink = properties.get(&entry_id).is_some_and(|items| {
+                items.iter().any(|(name, value)| {
+                    name == vfiles_rsync::SYMLINK_ENTRY_PROPERTY && value == "v1"
+                })
+            });
+            if !is_symlink {
+                continue;
+            }
+            let path = vfiles_domain::NormalizedPath::new(&entry.fs_path)
+                .map_err(|error| error.to_string())?;
+            let content = self
+                .workspace
+                .read_file_bytes(&self.namespace, &path, None)
+                .await
+                .map_err(|error| error.to_string())?;
+            if content.bytes.is_empty() || content.bytes.len() > 64 * 1024 {
+                return Err(format!(
+                    "stored rsync symlink target has invalid length at {}",
+                    entry.fs_path
+                ));
+            }
+            entry.mode = 0o120777;
+            entry.size = content.bytes.len() as u64;
+            entry.symlink_target = Some(content.bytes);
+        }
+        Ok(entries)
     }
 
     async fn read(&self, path: &str) -> Result<Vec<u8>, String> {
@@ -2232,6 +2272,70 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
             .await
     }
 
+    async fn write_symlink(&self, path: String, target: Vec<u8>, mtime: i64) -> Result<(), String> {
+        if target.is_empty() || target.len() > 64 * 1024 {
+            return Err("invalid symbolic link target length".to_string());
+        }
+        let (parent_str, filename) = match path.rsplit_once('/') {
+            Some((directory, name)) => (directory.to_string(), name.to_string()),
+            None => (String::new(), path.clone()),
+        };
+        let parent = vfiles_domain::NormalizedPath::new(&parent_str).map_err(|e| e.to_string())?;
+        let session = self
+            .upload
+            .init_upload(
+                &self.namespace,
+                &parent,
+                &filename,
+                target.len() as u64,
+                None,
+                None,
+                &self.owner,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let properties = |_: VersionId| {
+            vec![EntryPropertyChange::Set {
+                name: vfiles_rsync::SYMLINK_ENTRY_PROPERTY.to_string(),
+                value: "v1".to_string(),
+            }]
+        };
+        let result = self
+            .upload
+            .complete_upload_from_stream_with_properties(
+                &session.upload_id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("rsync symlink"),
+                Box::new(std::io::Cursor::new(target)),
+                true,
+                &properties,
+            )
+            .await;
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                if let Err(cancel_error) = self.upload.cancel_upload(&session.upload_id).await {
+                    tracing::warn!(error = %cancel_error, upload_id = %session.upload_id, "rsync：清理失败符号链接上传会话失败");
+                }
+                return Err(error.to_string());
+            }
+        };
+        if let Err(error) = self
+            .repo
+            .set_version_source_mtime(&result.version.id, mtime)
+            .await
+        {
+            tracing::warn!(%error, path = %path, "rsync：记录符号链接源 mtime 失败");
+        }
+        self.stat_cache.write().await.remove(&parent_str);
+        Ok(())
+    }
+
     async fn write_stream(
         &self,
         path: String,
@@ -2262,9 +2366,26 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
             )
             .await
             .map_err(|e| e.to_string())?;
+        let properties = |_: VersionId| {
+            vec![EntryPropertyChange::Remove {
+                name: vfiles_rsync::SYMLINK_ENTRY_PROPERTY.to_string(),
+            }]
+        };
         let result = self
             .upload
-            .complete_upload_from_stream(&session.upload_id, None, Some("rsync push"), reader)
+            .complete_upload_from_stream_with_properties(
+                &session.upload_id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("rsync push"),
+                reader,
+                true,
+                &properties,
+            )
             .await;
         let result = match result {
             Ok(result) => result,

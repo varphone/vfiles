@@ -2368,7 +2368,7 @@ async fn propfind_owned(
         } else {
             (size_bytes, mime_type)
         };
-        let custom = if wants_custom {
+        let mut custom = if wants_custom {
             app.entry_repo
                 .list_entry_properties(&[entry.id])
                 .await
@@ -2381,6 +2381,7 @@ async fn propfind_owned(
         } else {
             Vec::new()
         };
+        custom.retain(|(name, _)| !name.starts_with("urn:vfiles:internal:"));
         let getetag = wants_etag
             .then(|| {
                 entry
@@ -2494,7 +2495,7 @@ async fn propfind_owned(
             // so high-fanout collections do not issue one query per resource.
             let child_ids: Vec<vfiles_domain::types::EntryId> =
                 metas.iter().map(|meta| meta.entry.id).collect();
-            let child_props = if wants_custom && !child_ids.is_empty() {
+            let mut child_props = if wants_custom && !child_ids.is_empty() {
                 app.entry_repo
                     .list_entry_properties(&child_ids)
                     .await
@@ -2505,6 +2506,9 @@ async fn propfind_owned(
             } else {
                 std::collections::HashMap::new()
             };
+            for properties in child_props.values_mut() {
+                properties.retain(|(name, _)| !name.starts_with("urn:vfiles:internal:"));
+            }
             let version_metadata: std::collections::HashMap<_, _> =
                 if wants_last_modified || wants_size_or_type {
                     let version_ids: Vec<_> = metas

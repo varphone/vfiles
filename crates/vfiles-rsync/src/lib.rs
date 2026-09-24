@@ -149,6 +149,8 @@ pub struct FlatEntry {
     pub file_sum: Option<Vec<u8>>,
     /// 符号链接的目标字节（`mode` 为 symlink 时位于 flist 的 `length` 之后）。
     pub symlink_target: Option<Vec<u8>>,
+    /// Persistent entry identity used to join protocol-specific metadata in batches.
+    pub entry_id: Option<vfiles_domain::EntryId>,
 }
 
 impl FlatEntry {
@@ -163,6 +165,7 @@ impl FlatEntry {
             fs_path: String::new(),
             file_sum: None,
             symlink_target: None,
+            entry_id: None,
         }
     }
 
@@ -177,6 +180,7 @@ impl FlatEntry {
             fs_path: String::new(),
             file_sum: None,
             symlink_target: None,
+            entry_id: None,
         }
     }
 
@@ -192,12 +196,18 @@ impl FlatEntry {
             fs_path: String::new(),
             file_sum: None,
             symlink_target: Some(target),
+            entry_id: None,
         }
     }
 
     /// 设置命名空间读取路径（builder）。
     pub fn with_fs_path(mut self, path: impl Into<String>) -> Self {
         self.fs_path = path.into();
+        self
+    }
+
+    pub fn with_entry_id(mut self, entry_id: vfiles_domain::EntryId) -> Self {
+        self.entry_id = Some(entry_id);
         self
     }
 }
@@ -1487,6 +1497,7 @@ pub struct FlistOpts {
 }
 
 const MAX_SYMLINK_TARGET_BYTES: usize = 64 * 1024;
+pub const SYMLINK_ENTRY_PROPERTY: &str = "urn:vfiles:internal:rsync-symlink";
 
 /// 接收客户端发来的 flist（recv_file_entry 逐字段逆序 ✗ `lastname` 前缀压缩重建）。
 ///
@@ -1618,6 +1629,7 @@ where
                 fs_path: String::new(),
                 file_sum: None,
                 symlink_target,
+                entry_id: None,
             });
             continue;
         }
@@ -1636,6 +1648,7 @@ where
             fs_path: String::new(),
             file_sum,
             symlink_target: None,
+            entry_id: None,
         });
     }
     Ok(out)
@@ -2261,6 +2274,11 @@ pub trait RsyncBackend: Send + Sync {
     }
     /// 按命名空间路径写入文件（push ✗ `mtime` = 源端秒级时间，供快跳比对）。
     async fn write(&self, path: String, data: Vec<u8>, mtime: i64) -> Result<(), String>;
+    /// Persist a symbolic link target without following or normalizing it.
+    async fn write_symlink(&self, path: String, target: Vec<u8>, mtime: i64) -> Result<(), String> {
+        let _ = (path, target, mtime);
+        Err("rsync backend does not support persistent symlinks".to_string())
+    }
     /// 流式写入 push 内容。默认适配旧后端；生产后端应覆盖以避免整文件缓冲。
     async fn write_stream(
         &self,
@@ -2295,7 +2313,23 @@ pub trait RsyncBackend: Send + Sync {
 fn validate_upload_entries(entries: &[FlatEntry]) -> std::io::Result<()> {
     for entry in entries {
         let file_type = entry.mode & 0o170000;
-        if file_type != 0o040000 && file_type != 0o100000 {
+        if file_type == 0o120000 {
+            let Some(target) = entry.symlink_target.as_deref() else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("rsync: symlink target missing at {}", entry.name),
+                ));
+            };
+            if target.is_empty()
+                || target.len() > MAX_SYMLINK_TARGET_BYTES
+                || entry.size != target.len() as u64
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("rsync: invalid symlink target length at {}", entry.name),
+                ));
+            }
+        } else if file_type != 0o040000 && file_type != 0o100000 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 format!(
@@ -2470,6 +2504,7 @@ where
         let mut wp = (-1i32, 1i32); // write_ndx 差分态
         loop {
             let ndx = read_ndx(&mut rw, &mut pending, &mut rp.0, &mut rp.1).await?;
+            tracing::debug!(ndx, phase, "rsync sender received file index");
             if ndx == NDX_DONE {
                 phase += 1;
                 if phase > 2 {
@@ -2487,6 +2522,7 @@ where
 
             // 请求属性
             let iflags = data_shortint(&mut rw, &mut pending).await?;
+            tracing::debug!(ndx, iflags, "rsync sender received item flags");
             let mut basis_type = 0u8;
             if iflags & ITEM_BASIS_TYPE_FOLLOWS != 0 {
                 basis_type = data_take(&mut rw, &mut pending, 1).await?[0];
@@ -2690,9 +2726,8 @@ where
             },
         )
         .await?;
-        // The storage model currently accepts only regular files and directories. Reject
-        // unsupported flist entries before applying any directory or file mutations so a
-        // successful-looking partial sync cannot silently discard symlinks/devices/FIFOs.
+        // Symlink target data and its internal marker are persisted transactionally. Reject
+        // unsupported devices/FIFOs before any mutation so they cannot yield a partial success.
         validate_upload_entries(&entries)?;
         // 诊断用：VFILES_RSYNC_DUMP_FLIST=1 时逐条打印收到的 flist（协议对齐排障）
         if std::env::var("VFILES_RSYNC_DUMP_FLIST").is_ok() {
@@ -2736,6 +2771,22 @@ where
             } else {
                 format!("{base}/{}", e.name)
             };
+            if e.mode & 0o170000 == 0o120000 {
+                let target = e.symlink_target.clone().ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("rsync push: symlink target missing at {full}"),
+                    )
+                })?;
+                backend
+                    .write_symlink(full.clone(), target, e.mtime)
+                    .await
+                    .map_err(|err| {
+                        std::io::Error::other(format!("rsync push: create symlink {full}: {err}"))
+                    })?;
+                transferred += 1;
+                continue;
+            }
             // 目录：显式创建（空目录不落地 = 此前债）
             if e.is_dir {
                 backend.mkdir(&full).await.map_err(|err| {
@@ -3203,14 +3254,19 @@ pub async fn collect_flat(
         );
         return Ok(vec![
             FlatEntry::file(entry.name.clone(), size, mtime)
-                .with_fs_path(entry.path_norm.as_str().to_string()),
+                .with_fs_path(entry.path_norm.as_str().to_string())
+                .with_entry_id(entry.id),
         ]);
     }
     let base_mtime = base_entry
         .as_ref()
         .map(|e| e.created_at.unix_timestamp())
         .unwrap_or_else(now_unix);
-    let mut out = vec![FlatEntry::dir(".", base_mtime).with_fs_path(base.as_str().to_string())];
+    let mut root_entry = FlatEntry::dir(".", base_mtime).with_fs_path(base.as_str().to_string());
+    if let Some(base_entry) = &base_entry {
+        root_entry = root_entry.with_entry_id(base_entry.id);
+    }
+    let mut out = vec![root_entry];
     if req.recursive {
         let subtree = repo
             .find_subtree_with_meta(namespace, &base)
@@ -3265,12 +3321,17 @@ fn append_subtree_children(
             .source_mtime
             .unwrap_or_else(|| meta.entry.created_at.unix_timestamp());
         if meta.entry.entry_type == EntryKind::Directory {
-            out.push(FlatEntry::dir(relative_path.clone(), mtime).with_fs_path(full_path));
+            out.push(
+                FlatEntry::dir(relative_path.clone(), mtime)
+                    .with_fs_path(full_path)
+                    .with_entry_id(meta.entry.id),
+            );
             append_subtree_children(&relative_path, &relative_path, by_parent, out);
         } else {
             out.push(
                 FlatEntry::file(relative_path, meta.size_bytes.unwrap_or(0), mtime)
-                    .with_fs_path(full_path),
+                    .with_fs_path(full_path)
+                    .with_entry_id(meta.entry.id),
             );
         }
     }
@@ -3300,7 +3361,11 @@ async fn walk(
             .source_mtime
             .unwrap_or_else(|| m.entry.created_at.unix_timestamp());
         if is_dir {
-            out.push(FlatEntry::dir(name.clone(), mtime).with_fs_path(fs_path));
+            out.push(
+                FlatEntry::dir(name.clone(), mtime)
+                    .with_fs_path(fs_path)
+                    .with_entry_id(m.entry.id),
+            );
             if recursive {
                 Box::pin(walk(
                     repo,
@@ -3313,7 +3378,11 @@ async fn walk(
                 .await?;
             }
         } else {
-            out.push(FlatEntry::file(name, m.size_bytes.unwrap_or(0), mtime).with_fs_path(fs_path));
+            out.push(
+                FlatEntry::file(name, m.size_bytes.unwrap_or(0), mtime)
+                    .with_fs_path(fs_path)
+                    .with_entry_id(m.entry.id),
+            );
         }
     }
     Ok(())
@@ -3452,6 +3521,7 @@ mod tests {
                 fs_path: String::new(),
                 file_sum: None,
                 symlink_target: None,
+                entry_id: None,
             },
             FlatEntry {
                 name: "sub".into(),
@@ -3462,6 +3532,7 @@ mod tests {
                 fs_path: String::new(),
                 file_sum: None,
                 symlink_target: None,
+                entry_id: None,
             },
             FlatEntry {
                 name: "a.txt".into(),
@@ -3472,6 +3543,7 @@ mod tests {
                 fs_path: String::new(),
                 file_sum: None,
                 symlink_target: None,
+                entry_id: None,
             },
         ];
         let body = encode_flist(&entries, true);
@@ -3500,6 +3572,7 @@ mod tests {
             fs_path: String::new(),
             file_sum: None,
             symlink_target: None,
+            entry_id: None,
         }];
         let body = encode_flist(&entries, true);
         // xflags = SAME_UID|SAME_GID（首条无 SAME_MODE/TIME）= 0x18 → varint 单字节 0x18
@@ -3608,6 +3681,7 @@ mod tests {
                 fs_path: String::new(),
                 file_sum: None,
                 symlink_target: None,
+                entry_id: None,
             },
             FlatEntry {
                 name: "a.txt".into(),
@@ -3618,6 +3692,7 @@ mod tests {
                 fs_path: String::new(),
                 file_sum: None,
                 symlink_target: None,
+                entry_id: None,
             },
         ];
         let (client, server) = tokio::io::duplex(64 * 1024);
@@ -4553,25 +4628,35 @@ mod tests {
     }
 
     #[test]
-    fn upload_flist_rejects_unsupported_types_before_mutation() {
+    fn upload_flist_accepts_symlinks_and_rejects_special_types_before_mutation() {
+        let symlink = FlatEntry::symlink("link", b"target".to_vec(), 2);
+        assert!(validate_upload_entries(&[symlink]).is_ok());
+        let mut inconsistent_symlink = FlatEntry::symlink("bad-link", b"target".to_vec(), 2);
+        inconsistent_symlink.size += 1;
+        assert_eq!(
+            validate_upload_entries(&[inconsistent_symlink])
+                .expect_err("target length must match the flist length")
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
         let entries = vec![
             FlatEntry::dir(".", 1),
             FlatEntry::file("would-have-been-written", 1, 2),
             FlatEntry {
-                name: "link".into(),
+                name: "fifo".into(),
                 is_dir: false,
-                size: 6,
+                size: 0,
                 mtime: 2,
-                mode: 0o120777,
+                mode: 0o010644,
                 fs_path: String::new(),
                 file_sum: None,
-                symlink_target: Some(b"target".to_vec()),
+                symlink_target: None,
+                entry_id: None,
             },
         ];
-        let err =
-            validate_upload_entries(&entries).expect_err("symlink must not be silently dropped");
+        let err = validate_upload_entries(&entries).expect_err("FIFO must not be silently dropped");
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
-        assert!(err.to_string().contains("link"));
+        assert!(err.to_string().contains("fifo"));
     }
 
     /// 弱/强校验和与真机转录逐位同（官方 daemon md5 + 200000B 模式文件第 0 块）。

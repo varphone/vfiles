@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 cd "$repo_root"
 
-for command in cargo curl python3 rsync; do
+for command in cargo curl python3 rsync timeout; do
   command -v "$command" >/dev/null || {
     echo "required command not found: $command" >&2
     exit 2
@@ -36,6 +36,7 @@ PY
 http_port=${ports[0]}
 rsync_port=${ports[1]}
 
+export RUST_LOG=vfiles_rsync=debug,vfiles=info
 export VFILES_STORAGE_ROOT="$tmpdir/storage"
 export VFILES_DATABASE_PATH="$tmpdir/storage/vfiles.db"
 export VFILES_HTTP_HOST=127.0.0.1
@@ -151,12 +152,42 @@ mkdir -p "$tmpdir/pull-after-delta"
 rsync -a --quiet "$module_url" "$tmpdir/pull-after-delta/"
 diff -r "$tmpdir/source" "$tmpdir/pull-after-delta"
 
-# Unsupported entry types must fail the whole push before regular sibling files
-# are written; silently skipping a symlink would make rsync report a false success.
+# Symbolic links are stored as versioned target bytes plus an internal marker. RSYNC
+# reconstructs the link on pull while HTTP/WebDAV/S3 continue to expose its bytes.
+printf 'previous regular file\n' >"$tmpdir/source/supported-link"
+rsync -a --quiet "$tmpdir/source/" "$module_url"
+rm "$tmpdir/source/supported-link"
+ln -s nested/large.bin "$tmpdir/source/supported-link"
+rsync -a --quiet "$tmpdir/source/" "$module_url"
+mkdir -p "$tmpdir/pull-with-link"
+if ! timeout 15 rsync -a --quiet "$module_url" "$tmpdir/pull-with-link/" >"$tmpdir/symlink-pull.log" 2>&1; then
+  cat "$tmpdir/symlink-pull.log" >&2
+  cat "$tmpdir/server.log" >&2
+  echo "rsync symlink pull stalled or failed" >&2
+  exit 1
+fi
+test -L "$tmpdir/pull-with-link/supported-link"
+test "$(readlink "$tmpdir/pull-with-link/supported-link")" = 'nested/large.bin'
+curl --fail --silent \
+  "http://127.0.0.1:$http_port/api/download?path=supported-link" \
+  >"$tmpdir/http-symlink-bytes"
+printf 'nested/large.bin' | cmp - "$tmpdir/http-symlink-bytes"
+rm "$tmpdir/source/supported-link"
+printf 'replacement regular file\n' >"$tmpdir/source/supported-link"
+rsync -a --quiet "$tmpdir/source/" "$module_url"
+mkdir -p "$tmpdir/pull-after-type-change"
+rsync -a --quiet "$module_url/supported-link" "$tmpdir/pull-after-type-change/"
+test ! -L "$tmpdir/pull-after-type-change/supported-link"
+cmp "$tmpdir/source/supported-link" "$tmpdir/pull-after-type-change/supported-link"
+rm "$tmpdir/source/supported-link"
+rsync -a --delete --quiet "$tmpdir/source/" "$module_url"
+
+# Unsupported device/special entries still fail the whole push before regular
+# sibling files are written.
 printf 'must-not-be-partially-written\n' >"$tmpdir/source/would-be-partial.txt"
-ln -s nested/large.bin "$tmpdir/source/unsupported-link"
-if rsync -a --quiet "$tmpdir/source/" "$module_url" >"$tmpdir/unsupported.log" 2>&1; then
-  echo "rsync push unexpectedly accepted a symlink" >&2
+mkfifo "$tmpdir/source/unsupported-fifo"
+if timeout 15 rsync -a --quiet "$tmpdir/source/" "$module_url" >"$tmpdir/unsupported.log" 2>&1; then
+  echo "rsync push unexpectedly accepted a FIFO" >&2
   exit 1
 fi
 rsync --list-only "$module_url" >"$tmpdir/unsupported-list.log"
@@ -164,7 +195,7 @@ if grep -Fq 'would-be-partial.txt' "$tmpdir/unsupported-list.log"; then
   echo "unsupported-entry push partially wrote its regular sibling" >&2
   exit 1
 fi
-rm "$tmpdir/source/unsupported-link" "$tmpdir/source/would-be-partial.txt"
+rm "$tmpdir/source/unsupported-fifo" "$tmpdir/source/would-be-partial.txt"
 
 # Receiver-side exclude rules protect matching destination-only files under
 # --delete; --delete-excluded removes them when explicitly requested.
@@ -238,4 +269,4 @@ if ! grep -Fq 'placeholder' "$tmpdir/conflict-child-list.log"; then
   exit 1
 fi
 
-echo "PASS rsync $(rsync --version | awk 'NR == 1 { print $3 }') module/push/pull/mtime/delta/delete"
+echo "PASS rsync $(rsync --version | awk 'NR == 1 { print $3 }') module/push/pull/symlink/mtime/delta/delete"
