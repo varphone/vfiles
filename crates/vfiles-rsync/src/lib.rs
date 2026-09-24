@@ -1578,7 +1578,7 @@ pub struct FlistOpts {
 }
 
 const MAX_SYMLINK_TARGET_BYTES: usize = 64 * 1024;
-pub const SYMLINK_ENTRY_PROPERTY: &str = "urn:vfiles:internal:rsync-symlink";
+pub const SYMLINK_ENTRY_PROPERTY: &str = vfiles_domain::RSYNC_SYMLINK_ENTRY_PROPERTY;
 
 /// 接收客户端发来的 flist（recv_file_entry 逐字段逆序 ✗ `lastname` 前缀压缩重建）。
 ///

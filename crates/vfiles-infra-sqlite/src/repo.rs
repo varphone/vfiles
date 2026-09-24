@@ -2452,6 +2452,7 @@ type EntryVersionRow = (
     String,
     String,
     Option<String>,
+    bool,
 );
 
 fn parse_entry_version_row(
@@ -2466,6 +2467,7 @@ fn parse_entry_version_row(
         created_at,
         created_by,
         message,
+        is_symlink,
     ): EntryVersionRow,
 ) -> DomainResult<EntryVersion> {
     Ok(EntryVersion {
@@ -2484,6 +2486,7 @@ fn parse_entry_version_row(
         size_bytes: ByteSize::new(size.unwrap_or_default() as u64),
         mime_type: content_type.clone(),
         is_text: is_text_content_type(content_type.as_deref()),
+        is_symlink,
         content_hash: content_hash
             .as_deref()
             .map(ContentHash::new)
@@ -4897,10 +4900,11 @@ impl EntryRepo for SqliteEntryRepo {
                 .map_err(|e| DomainError::Internal {
                     message: format!("Failed to sequence copied version: {e}"),
                 })?;
+                let copied_version_id = VersionId::new();
                 sqlx::query(
-                    "INSERT INTO entry_versions (id, entry_id, version, blob_id, size, content_type, created_at, created_by, message, created_order) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO entry_versions (id, entry_id, version, blob_id, size, content_type, created_at, created_by, message, created_order, is_symlink) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
-                .bind(VersionId::new().to_string())
+                .bind(copied_version_id.to_string())
                 .bind(entry_id.to_string())
                 .bind(version.blob_id.as_ref().map(ToString::to_string))
                 .bind(version.size_bytes.as_u64() as i64)
@@ -4909,6 +4913,7 @@ impl EntryRepo for SqliteEntryRepo {
                 .bind(user_id.to_string())
                 .bind(message)
                 .bind(created_order)
+                .bind(version.is_symlink)
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| DomainError::Internal {
@@ -5066,7 +5071,8 @@ impl EntryRepo for SqliteEntryRepo {
                 b.content_hash,
                 ev.created_at,
                 ev.created_by,
-                ev.message
+                ev.message,
+                ev.is_symlink
             FROM entry_versions ev
             LEFT JOIN blobs b ON b.id = ev.blob_id
             WHERE ev.entry_id = ?
@@ -5123,7 +5129,8 @@ impl EntryRepo for SqliteEntryRepo {
 
         let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
             r#"SELECT ev.id, ev.entry_id, ev.version, ev.blob_id, ev.size,
-                      ev.content_type, b.content_hash, ev.created_at, ev.created_by, ev.message
+                      ev.content_type, b.content_hash, ev.created_at, ev.created_by, ev.message,
+                      ev.is_symlink
                FROM entry_versions ev
                LEFT JOIN blobs b ON b.id = ev.blob_id
                WHERE ev.entry_id = "#,
@@ -5169,7 +5176,8 @@ impl EntryRepo for SqliteEntryRepo {
                 b.content_hash,
                 ev.created_at,
                 ev.created_by,
-                ev.message
+                ev.message,
+                ev.is_symlink
             FROM entry_versions ev
             LEFT JOIN blobs b ON b.id = ev.blob_id
             WHERE ev.id = ?
@@ -5202,7 +5210,7 @@ impl EntryRepo for SqliteEntryRepo {
             let mut builder = sqlx::QueryBuilder::new(
                 "SELECT \
                     ev.id, ev.entry_id, ev.version, ev.blob_id, ev.size, ev.content_type, \
-                    b.content_hash, ev.created_at, ev.created_by, ev.message \
+                    b.content_hash, ev.created_at, ev.created_by, ev.message, ev.is_symlink \
                  FROM entry_versions ev \
                  LEFT JOIN blobs b ON b.id = ev.blob_id \
                  WHERE ev.id IN (",
@@ -5244,7 +5252,7 @@ impl EntryRepo for SqliteEntryRepo {
             let mut builder = sqlx::QueryBuilder::new(
                 "SELECT \
                     ev.id, ev.entry_id, ev.version, ev.blob_id, ev.size, ev.content_type, \
-                    b.content_hash, ev.created_at, ev.created_by, ev.message \
+                    b.content_hash, ev.created_at, ev.created_by, ev.message, ev.is_symlink \
                  FROM entry_versions ev \
                  LEFT JOIN blobs b ON b.id = ev.blob_id \
                  WHERE ev.entry_id IN (",
@@ -5287,7 +5295,7 @@ impl EntryRepo for SqliteEntryRepo {
             let mut builder = sqlx::QueryBuilder::new(
                 "SELECT \
                     ev.id, ev.entry_id, ev.version, ev.blob_id, ev.size, ev.content_type, \
-                    b.content_hash, ev.created_at, ev.created_by, ev.message \
+                    b.content_hash, ev.created_at, ev.created_by, ev.message, ev.is_symlink \
                  FROM entry_versions ev \
                  LEFT JOIN blobs b ON b.id = ev.blob_id \
                  WHERE ev.entry_id IN (",
@@ -5337,7 +5345,7 @@ impl EntryRepo for SqliteEntryRepo {
             let mut builder = sqlx::QueryBuilder::new(
                 "SELECT \
                     ev.id, ev.entry_id, ev.version, ev.blob_id, ev.size, ev.content_type, \
-                    b.content_hash, ev.created_at, ev.created_by, ev.message \
+                    b.content_hash, ev.created_at, ev.created_by, ev.message, ev.is_symlink \
                  FROM entry_versions ev \
                  LEFT JOIN blobs b ON b.id = ev.blob_id \
                  WHERE ev.entry_id IN (",
@@ -5389,6 +5397,7 @@ impl EntryRepo for SqliteEntryRepo {
             mime_type,
             created_by,
             message,
+            false,
             &no_properties,
             None,
         )
@@ -5404,6 +5413,7 @@ impl EntryRepo for SqliteEntryRepo {
         mime_type: Option<&str>,
         created_by: &UserId,
         message: Option<&str>,
+        is_symlink: bool,
         properties: &(dyn Fn(VersionId) -> Vec<vfiles_domain::EntryPropertyChange> + Send + Sync),
         condition: Option<&vfiles_domain::EntryWriteCondition>,
     ) -> DomainResult<EntryVersion> {
@@ -5546,7 +5556,7 @@ impl EntryRepo for SqliteEntryRepo {
         })?;
 
         sqlx::query(
-            "INSERT INTO entry_versions (id, entry_id, version, blob_id, size, content_type, created_at, created_by, message, created_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO entry_versions (id, entry_id, version, blob_id, size, content_type, created_at, created_by, message, created_order, is_symlink) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(version_id.to_string())
         .bind(entry_id.to_string())
@@ -5558,6 +5568,7 @@ impl EntryRepo for SqliteEntryRepo {
         .bind(created_by.to_string())
         .bind(message)
         .bind(created_order)
+        .bind(is_symlink)
         .execute(&mut *tx)
         .await
         .map_err(|e| DomainError::Internal {
@@ -5628,6 +5639,7 @@ impl EntryRepo for SqliteEntryRepo {
             size_bytes: ByteSize::new(size_bytes),
             mime_type: mime_type.map(str::to_owned),
             is_text: is_text_content_type(mime_type),
+            is_symlink,
             content_hash: content_hash.cloned().unwrap_or_else(default_content_hash),
             created_by: *created_by,
             created_at: now,
@@ -8265,6 +8277,7 @@ where
                     size_bytes: ByteSize::new(row.size_bytes.unwrap_or(0) as u64),
                     mime_type: row.mime_type,
                     is_text: true, // TODO: determine from mime type
+                    is_symlink: false,
                     content_hash: row
                         .content_hash
                         .as_deref()
@@ -8511,6 +8524,7 @@ where
                             size_bytes: ByteSize::new(row.size_bytes.unwrap_or(0) as u64),
                             mime_type: row.mime_type,
                             is_text: true,
+                            is_symlink: false,
                             content_hash: row
                                 .content_hash
                                 .as_deref()
@@ -10279,6 +10293,7 @@ mod entry_version_batch_tests {
                 Some("text/plain"),
                 &user_id,
                 None,
+                false,
                 &no_properties,
                 Some(&condition),
             )
@@ -10345,6 +10360,7 @@ mod entry_version_batch_tests {
                 Some("text/plain"),
                 &user_id,
                 None,
+                false,
                 &no_properties,
                 Some(&condition),
             )

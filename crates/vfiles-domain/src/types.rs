@@ -184,6 +184,8 @@ pub struct EntryVersion {
     pub size_bytes: ByteSize,
     pub mime_type: Option<String>,
     pub is_text: bool,
+    /// Whether this version represents an RSYNC symbolic link rather than a regular file.
+    pub is_symlink: bool,
     pub content_hash: ContentHash,
     pub created_by: UserId,
     pub created_at: time::OffsetDateTime,
@@ -191,6 +193,9 @@ pub struct EntryVersion {
     pub change_message: Option<NonEmptyMessage>,
     pub source_upload_id: Option<UploadId>,
 }
+
+/// Internal entry property mirrored by the current RSYNC symlink version.
+pub const RSYNC_SYMLINK_ENTRY_PROPERTY: &str = "urn:vfiles:internal:rsync-symlink";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntryVersionPage {

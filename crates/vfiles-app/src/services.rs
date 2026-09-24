@@ -3225,6 +3225,7 @@ where
             None,
             message,
             true,
+            false,
             None,
             None,
         )
@@ -3281,6 +3282,7 @@ where
             expected_sha1,
             message,
             true,
+            false,
             None,
             None,
         )
@@ -3332,6 +3334,7 @@ where
             None,
             message,
             false,
+            false,
             None,
             Some(condition),
         )
@@ -3367,6 +3370,7 @@ where
             expected_sha1,
             message,
             false,
+            false,
             None,
             None,
         )
@@ -3388,6 +3392,7 @@ where
         message: Option<&str>,
         upload_stream: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         enforce_size: bool,
+        is_symlink: bool,
         properties: &(
              dyn Fn(vfiles_domain::VersionId) -> Vec<vfiles_domain::EntryPropertyChange>
                  + Send
@@ -3409,6 +3414,7 @@ where
             expected_sha1,
             message,
             enforce_size,
+            is_symlink,
             Some(properties),
             None,
         )
@@ -3463,6 +3469,7 @@ where
             None,
             message,
             false,
+            false,
             None,
             None,
         )
@@ -3498,6 +3505,7 @@ where
             None,
             None,
             message,
+            false,
             false,
             Some(properties),
             None,
@@ -3614,6 +3622,7 @@ where
         expected_sha1: Option<[u8; 20]>,
         message: Option<&str>,
         enforce_size: bool,
+        is_symlink: bool,
         version_properties: Option<
             &(
                  dyn Fn(vfiles_domain::VersionId) -> Vec<vfiles_domain::EntryPropertyChange>
@@ -3724,6 +3733,7 @@ where
                 mime_type.as_deref(),
                 &session.owner_user_id,
                 normalized_message.as_deref(),
+                is_symlink,
                 properties,
                 effective_condition.as_ref(),
             )
@@ -4145,9 +4155,22 @@ where
             return Err(DomainError::VersionNotFound);
         }
 
+        let symlink_property = vfiles_domain::RSYNC_SYMLINK_ENTRY_PROPERTY.to_string();
+        let property_changes = move |_version_id: VersionId| {
+            if version.is_symlink {
+                vec![EntryPropertyChange::Set {
+                    name: symlink_property.clone(),
+                    value: "v1".to_string(),
+                }]
+            } else {
+                vec![EntryPropertyChange::Remove {
+                    name: symlink_property.clone(),
+                }]
+            }
+        };
         let restored = self
             .entry_repo
-            .create_version(
+            .create_version_with_properties(
                 &entry.id,
                 version.blob_id.as_ref(),
                 version.blob_id.as_ref().map(|_| &version.content_hash),
@@ -4157,6 +4180,9 @@ where
                 normalize_message(message)
                     .or_else(|| Some(format!("Restore version {}", version.version_no)))
                     .as_deref(),
+                version.is_symlink,
+                &property_changes,
+                None,
             )
             .await?;
         let snapshot_entries =
@@ -5228,6 +5254,131 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restoring_a_version_restores_rsync_symlink_type_and_current_marker() {
+        let context = TestContext::new().await;
+        let path = TestContext::path("link");
+        let uploaded = context
+            .upload_file(&TestContext::path(""), "link", b"target", "regular seed")
+            .await;
+        let set_marker = |_: VersionId| {
+            vec![EntryPropertyChange::Set {
+                name: RSYNC_SYMLINK_ENTRY_PROPERTY.to_string(),
+                value: "v1".to_string(),
+            }]
+        };
+        let link_version = context
+            .entry_repo
+            .create_version_with_properties(
+                &uploaded.version.entry_id,
+                uploaded.version.blob_id.as_ref(),
+                Some(&uploaded.version.content_hash),
+                uploaded.version.size_bytes.as_u64(),
+                uploaded.version.mime_type.as_deref(),
+                &context.user_id,
+                Some("symlink version"),
+                true,
+                &set_marker,
+                None,
+            )
+            .await
+            .expect("symlink version should commit");
+        let remove_marker = |_: VersionId| {
+            vec![EntryPropertyChange::Remove {
+                name: RSYNC_SYMLINK_ENTRY_PROPERTY.to_string(),
+            }]
+        };
+        context
+            .entry_repo
+            .create_version_with_properties(
+                &uploaded.version.entry_id,
+                uploaded.version.blob_id.as_ref(),
+                Some(&uploaded.version.content_hash),
+                uploaded.version.size_bytes.as_u64(),
+                uploaded.version.mime_type.as_deref(),
+                &context.user_id,
+                Some("regular version"),
+                false,
+                &remove_marker,
+                None,
+            )
+            .await
+            .expect("regular version should commit");
+
+        context
+            .history_service
+            .restore_version(
+                &context.namespace_id,
+                &path,
+                &link_version.id,
+                None,
+                &context.user_id,
+            )
+            .await
+            .expect("symlink version should restore");
+        let restored_link = context
+            .entry_repo
+            .find_by_path(&context.namespace_id, &path)
+            .await
+            .expect("restored link entry should load")
+            .expect("restored link entry should exist");
+        let restored_link_version = context
+            .entry_repo
+            .find_version(&restored_link.current_version_id.expect("current version"))
+            .await
+            .expect("restored link version should load");
+        assert!(restored_link_version.is_symlink);
+        assert!(
+            context
+                .entry_repo
+                .list_entry_properties(std::slice::from_ref(&restored_link.id))
+                .await
+                .expect("restored link marker should load")[&restored_link.id]
+                .iter()
+                .any(|(name, value)| name == RSYNC_SYMLINK_ENTRY_PROPERTY && value == "v1")
+        );
+
+        context
+            .history_service
+            .restore_version(
+                &context.namespace_id,
+                &path,
+                &uploaded.version.id,
+                None,
+                &context.user_id,
+            )
+            .await
+            .expect("regular version should restore");
+        let restored_regular = context
+            .entry_repo
+            .find_by_path(&context.namespace_id, &path)
+            .await
+            .expect("restored regular entry should load")
+            .expect("restored regular entry should exist");
+        let restored_regular_version = context
+            .entry_repo
+            .find_version(
+                &restored_regular
+                    .current_version_id
+                    .expect("current version"),
+            )
+            .await
+            .expect("restored regular version should load");
+        assert!(!restored_regular_version.is_symlink);
+        let properties = context
+            .entry_repo
+            .list_entry_properties(std::slice::from_ref(&restored_regular.id))
+            .await
+            .expect("restored regular properties should load");
+        assert!(
+            !properties
+                .get(&restored_regular.id)
+                .is_some_and(|properties| properties
+                    .iter()
+                    .any(|(name, _)| name == RSYNC_SYMLINK_ENTRY_PROPERTY))
+        );
+    }
+
+    #[tokio::test]
     async fn upload_service_reports_missing_parts_and_rejects_incomplete_completion() {
         let context = TestContext::new().await;
         let root = TestContext::path("");
@@ -5913,6 +6064,7 @@ mod tests {
                 Some("S3 PUT"),
                 Box::new(std::io::Cursor::new(bytes)),
                 true,
+                false,
                 &properties,
             )
             .await

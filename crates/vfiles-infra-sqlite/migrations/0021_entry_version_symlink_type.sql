@@ -1,0 +1,2 @@
+ALTER TABLE entry_versions
+    ADD COLUMN is_symlink BOOLEAN NOT NULL DEFAULT FALSE;

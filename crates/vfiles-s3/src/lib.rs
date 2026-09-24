@@ -2209,6 +2209,7 @@ impl S3 for VfilesS3 {
                 Some("S3 PUT"),
                 Box::new(reader),
                 input.content_length.is_some(),
+                false,
                 &version_properties,
             )
             .await;
@@ -2356,6 +2357,7 @@ impl S3 for VfilesS3 {
                 Some("S3 COPY"),
                 Box::new(reader),
                 true,
+                false,
                 &version_properties,
             )
             .await;

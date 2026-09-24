@@ -829,6 +829,7 @@ pub trait EntryRepo {
         mime_type: Option<&str>,
         created_by: &UserId,
         message: Option<&str>,
+        is_symlink: bool,
         properties: &(dyn Fn(VersionId) -> Vec<EntryPropertyChange> + Send + Sync),
         condition: Option<&EntryWriteCondition>,
     ) -> DomainResult<EntryVersion> {
@@ -846,7 +847,7 @@ pub trait EntryRepo {
                 return Err(DomainError::PreconditionFailed);
             }
         }
-        let version = self
+        let mut version = self
             .create_version(
                 entry_id,
                 blob_id,
@@ -857,6 +858,7 @@ pub trait EntryRepo {
                 message,
             )
             .await?;
+        version.is_symlink = is_symlink;
         let changes = properties(version.id);
         if !changes.is_empty() {
             self.apply_entry_property_changes(entry_id, &changes)

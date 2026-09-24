@@ -2316,6 +2316,7 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
                 Some("rsync symlink"),
                 Box::new(std::io::Cursor::new(target)),
                 true,
+                true,
                 &properties,
             )
             .await;
@@ -2387,6 +2388,7 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
                 Some("rsync push"),
                 reader,
                 true,
+                false,
                 &properties,
             )
             .await;
