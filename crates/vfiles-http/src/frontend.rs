@@ -124,9 +124,7 @@ impl FrontendAssets {
             Self::Embedded => {
                 let candidate = embedded_candidate(&request_path.segments);
 
-                if EMBEDDED_FRONTEND.get_file(&candidate).is_none() {
-                    return None;
-                }
+                EMBEDDED_FRONTEND.get_file(&candidate)?;
                 for encoding in &preferences.precompressed {
                     let variant = format!("{candidate}{}", encoding.suffix());
                     if let Some(response) =
@@ -169,9 +167,7 @@ impl FrontendAssets {
             }
             #[cfg(feature = "embed")]
             Self::Embedded => {
-                if EMBEDDED_FRONTEND.get_file("index.html").is_none() {
-                    return None;
-                }
+                EMBEDDED_FRONTEND.get_file("index.html")?;
                 for encoding in &preferences.precompressed {
                     let variant = format!("index.html{}", encoding.suffix());
                     if let Some(response) =
