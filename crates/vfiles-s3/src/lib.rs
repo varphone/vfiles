@@ -628,6 +628,50 @@ fn url_encode(s: &str) -> String {
     out
 }
 
+/// Decode a key field returned with `encoding-type=url` before using it as a
+/// V1 marker. `+` is a literal plus in S3's percent encoding, not a space.
+fn url_decode(s: &str) -> S3Result<String> {
+    fn hex_digit(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        }
+    }
+
+    let input = s.as_bytes();
+    let mut decoded = Vec::with_capacity(input.len());
+    let mut index = 0;
+    while index < input.len() {
+        if input[index] == b'%' {
+            let Some((&high, &low)) = input.get(index + 1).zip(input.get(index + 2)) else {
+                return Err(s3s::s3_error!(
+                    InvalidArgument,
+                    "invalid URL-encoded marker"
+                ));
+            };
+            let Some(byte) = hex_digit(high)
+                .zip(hex_digit(low))
+                .map(|(high, low)| high * 16 + low)
+            else {
+                return Err(s3s::s3_error!(
+                    InvalidArgument,
+                    "invalid URL-encoded marker"
+                ));
+            };
+            decoded.push(byte);
+            index += 3;
+        } else {
+            decoded.push(input[index]);
+            index += 1;
+        }
+    }
+
+    String::from_utf8(decoded)
+        .map_err(|_| s3s::s3_error!(InvalidArgument, "invalid UTF-8 URL-encoded marker"))
+}
+
 /// 非空字符串 → Some（S3 空 delimiter/prefix 视作未设）。
 fn non_empty(s: Option<String>) -> Option<String> {
     s.filter(|v| !v.is_empty())
@@ -1994,13 +2038,18 @@ impl S3 for VfilesS3 {
         let prefix = input.prefix.clone().unwrap_or_default();
         let delimiter = non_empty(input.delimiter.clone());
         let marker = input.marker.clone();
+        let after = if input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url") {
+            marker.as_deref().map(url_decode).transpose()?
+        } else {
+            marker.clone()
+        };
 
         let (entries, truncated) = list_page(
             (&self.entry_repo, &self.object_keys, &self.delete_markers),
             &self.namespace,
             &prefix,
             delimiter.as_deref(),
-            marker.as_deref(),
+            after.as_deref(),
             max,
         )
         .await
@@ -2017,16 +2066,24 @@ impl S3 for VfilesS3 {
         if input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url") {
             url_encode_page(&mut page, true);
         }
+        let encode = input.encoding_type.as_ref().map(|e| e.as_str()) == Some("url");
+        let prefix = non_empty(Some(prefix));
+        let prefix = prefix.map(|value| if encode { url_encode(&value) } else { value });
+        let delimiter = delimiter.map(|value| if encode { url_encode(&value) } else { value });
+        let has_delimiter = delimiter.is_some();
+        let marker = non_empty(marker);
+        let marker = marker.map(|value| if encode { url_encode(&value) } else { value });
         let out = ListObjectsOutput {
             name: Some(input.bucket),
-            prefix: non_empty(Some(prefix)),
+            prefix,
             delimiter,
-            marker: non_empty(marker),
+            marker,
             max_keys: Some(max as i32),
             is_truncated: Some(page.truncated),
-            next_marker: page.next,
+            next_marker: has_delimiter.then_some(page.next).flatten(),
             contents: (!page.contents.is_empty()).then_some(page.contents),
             common_prefixes: (!page.prefixes.is_empty()).then_some(page.prefixes),
+            encoding_type: input.encoding_type,
             ..Default::default()
         };
         ok(out)
@@ -3769,6 +3826,24 @@ mod tests {
                     "prefix={prefix:?} delim={delim:?} 分页走全应与参考一致"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn url_encoded_marker_decodes_percent_escapes_once() {
+        for (encoded, decoded, canonical) in [
+            ("a%20b", "a b", "a%20b"),
+            ("a%2520b", "a%20b", "a%2520b"),
+            ("a%2Bb", "a+b", "a%2Bb"),
+            ("%E4%B8%AD", "中", "%E4%B8%AD"),
+            ("a%2Fb", "a/b", "a/b"),
+        ] {
+            let actual = url_decode(encoded).expect("valid URL-encoded marker should decode");
+            assert_eq!(actual, decoded);
+            assert_eq!(url_encode(&actual), canonical);
+        }
+        for invalid in ["%", "%0", "%GG", "%FF"] {
+            assert!(url_decode(invalid).is_err(), "accepted {invalid:?}");
         }
     }
 

@@ -425,8 +425,10 @@ def main():
     # V1 marker 分页 + StartAfter + 单键续页走全（r20 SQL 逐页）
     v1 = s3.list_objects(Bucket="default", Prefix="boto-scale/", MaxKeys=50)
     v1b = s3.list_objects(Bucket="default", Prefix="boto-scale/", MaxKeys=50,
-                          Marker=v1.get("NextMarker", ""))
-    check("boto V1 marker paging", v1["IsTruncated"] and len(v1b.get("Contents", [])) == 50,
+                          Marker=v1["Contents"][-1]["Key"])
+    check("boto V1 marker paging omits NextMarker without delimiter",
+          v1["IsTruncated"] and "NextMarker" not in v1
+          and len(v1b.get("Contents", [])) == 50,
           v1.get("NextMarker"))
     sa = s3.list_objects_v2(Bucket="default", Prefix="boto-scale/",
                             StartAfter="boto-scale/d1/f29.txt", MaxKeys=5)
@@ -672,6 +674,7 @@ def main():
     # contains characters that encoding-type=url must escape.
     delimiter_keys = [
         "boto-enc-page/a space/child.bin",
+        "boto-enc-page/a!between.txt",
         "boto-enc-page/m% literal.txt",
         "boto-enc-page/z/child.bin",
     ]
@@ -679,7 +682,7 @@ def main():
         s3.put_object(Bucket="default", Key=ek, Body=b"x")
     delimiter_pages = []
     token = None
-    for _ in range(4):
+    for _ in range(5):
         request = {
             "Bucket": "default", "Prefix": "boto-enc-page/",
             "Delimiter": "/", "EncodingType": "url", "MaxKeys": 1,
@@ -696,8 +699,9 @@ def main():
         token = page.get("NextContinuationToken")
     check("boto URL-encoded delimiter pagination uses opaque continuation tokens",
           delimiter_pages == [
-              "boto-enc-page/a space/", "boto-enc-page/m% literal.txt", "boto-enc-page/z/"
-          ] and len(delimiter_pages) == 3,
+              "boto-enc-page/a space/", "boto-enc-page/a!between.txt",
+              "boto-enc-page/m% literal.txt", "boto-enc-page/z/"
+          ] and len(delimiter_pages) == 4,
           f"entries={delimiter_pages} pages={len(delimiter_pages)} token={token}")
     v1_delimiter_pages = []
     marker = None
@@ -716,11 +720,27 @@ def main():
         if not page.get("IsTruncated"):
             break
         marker = page.get("NextMarker")
-    check("boto V1 URL-encoded delimiter pagination resumes from NextMarker",
+    check("boto V1 URL-encoded delimiter pagination decodes NextMarker",
           v1_delimiter_pages == [
-              "boto-enc-page/a space/", "boto-enc-page/m% literal.txt", "boto-enc-page/z/"
-          ] and len(v1_delimiter_pages) == 3,
+              "boto-enc-page/a space/", "boto-enc-page/a!between.txt",
+              "boto-enc-page/m% literal.txt", "boto-enc-page/z/"
+          ] and len(v1_delimiter_pages) == 4,
           f"entries={v1_delimiter_pages} pages={len(v1_delimiter_pages)} marker={marker}")
+
+    encoded_fields_key = "boto-enc-fields/a space/segment!child.bin"
+    s3.put_object(Bucket="default", Key=encoded_fields_key, Body=b"x")
+    encoded_fields = s3.list_objects(
+        Bucket="default", Prefix="boto-enc-fields/a space/", Delimiter="!",
+        EncodingType="url",
+    )
+    check("boto V1 URL encoding covers prefix delimiter and response metadata",
+          encoded_fields.get("EncodingType") == "url"
+          and encoded_fields.get("Prefix") == "boto-enc-fields/a%20space/"
+          and encoded_fields.get("Delimiter") == "%21"
+          and encoded_fields.get("CommonPrefixes", [{}])[0].get("Prefix")
+          == "boto-enc-fields/a%20space/segment%21",
+          encoded_fields)
+    s3.delete_object(Bucket="default", Key=encoded_fields_key)
     for ek in delimiter_keys:
         s3.delete_object(Bucket="default", Key=ek)
 
