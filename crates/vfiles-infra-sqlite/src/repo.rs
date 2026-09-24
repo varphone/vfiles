@@ -4456,6 +4456,50 @@ use sha2::{Digest, Sha256};
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
+async fn sync_blob_directory(path: &camino::Utf8Path) -> DomainResult<()> {
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        let directory = fs::File::open(parent)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to open blob directory for sync: {}", e),
+            })?;
+        directory
+            .sync_all()
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to sync blob directory: {}", e),
+            })?;
+    }
+    Ok(())
+}
+
+async fn publish_blob_file(
+    temp: &camino::Utf8Path,
+    target: &camino::Utf8Path,
+) -> DomainResult<bool> {
+    match fs::hard_link(temp, target).await {
+        Ok(()) => {
+            if let Err(error) = sync_blob_directory(target).await {
+                let _ = fs::remove_file(temp).await;
+                return Err(error);
+            }
+            let _ = fs::remove_file(temp).await;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = fs::remove_file(temp).await;
+            Ok(false)
+        }
+        Err(error) => {
+            let _ = fs::remove_file(temp).await;
+            Err(DomainError::Internal {
+                message: format!("Failed to publish blob file: {}", error),
+            })
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FsBlobStore {
     pool: SqlitePool,
@@ -4518,31 +4562,56 @@ impl BlobStore for FsBlobStore {
             return Ok((blob_id, content_hash, false));
         }
 
-        // Create directory if it doesn't exist
+        // Create directory if it doesn't exist and persist its entry before
+        // publishing a blob inside it.
         if let Some(parent) = blob_path.parent() {
+            let parent_existed =
+                fs::try_exists(parent)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to inspect blob directory: {}", e),
+                    })?;
             fs::create_dir_all(parent)
                 .await
                 .map_err(|e| DomainError::Internal {
                     message: format!("Failed to create blob directory: {}", e),
                 })?;
+            if !parent_existed && let Some(grandparent) = parent.parent() {
+                sync_blob_directory(grandparent).await?;
+            }
         }
 
-        // Write blob data
-        let mut file = fs::File::create(&blob_path)
+        // Write and sync a sibling temporary file before publishing it. Readers
+        // must never observe a partially written content-addressed blob.
+        let temp_path = blob_path.with_file_name(format!(".blob-{}.tmp", uuid::Uuid::new_v4()));
+        let mut file = fs::File::create(&temp_path)
             .await
             .map_err(|e| DomainError::Internal {
-                message: format!("Failed to create blob file: {}", e),
+                message: format!("Failed to create temporary blob file: {}", e),
             })?;
-        file.write_all(data)
-            .await
-            .map_err(|e| DomainError::Internal {
-                message: format!("Failed to write blob data: {}", e),
+        let write_result = async {
+            file.write_all(data)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to write blob data: {}", e),
+                })?;
+            file.flush().await.map_err(|e| DomainError::Internal {
+                message: format!("Failed to flush blob file: {}", e),
             })?;
-        file.flush().await.map_err(|e| DomainError::Internal {
-            message: format!("Failed to flush blob file: {}", e),
-        })?;
+            file.sync_all().await.map_err(|e| DomainError::Internal {
+                message: format!("Failed to sync blob file: {}", e),
+            })?;
+            Ok::<(), DomainError>(())
+        }
+        .await;
+        drop(file);
+        if let Err(error) = write_result {
+            let _ = fs::remove_file(&temp_path).await;
+            return Err(error);
+        }
 
-        Ok((blob_id, content_hash, true))
+        let created = publish_blob_file(&temp_path, &blob_path).await?;
+        Ok((blob_id, content_hash, created))
     }
 
     async fn store_blob_stream(
@@ -4612,6 +4681,12 @@ impl BlobStore for FsBlobStore {
             temp_file.flush().await.map_err(|e| DomainError::Internal {
                 message: format!("Failed to flush blob temp file: {}", e),
             })?;
+            temp_file
+                .sync_all()
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to sync blob temp file: {}", e),
+                })?;
 
             Ok(())
         }
@@ -4673,33 +4748,24 @@ impl BlobStore for FsBlobStore {
         }
 
         if let Some(parent) = blob_path.parent() {
+            let parent_existed =
+                fs::try_exists(parent)
+                    .await
+                    .map_err(|e| DomainError::Internal {
+                        message: format!("Failed to inspect blob directory: {}", e),
+                    })?;
             fs::create_dir_all(parent)
                 .await
                 .map_err(|e| DomainError::Internal {
                     message: format!("Failed to create blob directory: {}", e),
                 })?;
-        }
-
-        match fs::rename(&temp_path, &blob_path).await {
-            Ok(()) => Ok((blob_id, content_hash, true, total_size)),
-            Err(e) => {
-                if fs::try_exists(&blob_path).await.map_err(|inspect_err| {
-                    DomainError::Internal {
-                        message: format!(
-                            "Failed to inspect blob path after rename failure: {}",
-                            inspect_err
-                        ),
-                    }
-                })? {
-                    let _ = fs::remove_file(&temp_path).await;
-                    Ok((blob_id, content_hash, false, total_size))
-                } else {
-                    Err(DomainError::Internal {
-                        message: format!("Failed to move blob temp file into place: {}", e),
-                    })
-                }
+            if !parent_existed && let Some(grandparent) = parent.parent() {
+                sync_blob_directory(grandparent).await?;
             }
         }
+
+        let created = publish_blob_file(&temp_path, &blob_path).await?;
+        Ok((blob_id, content_hash, created, total_size))
     }
 
     async fn get_blob(&self, blob_id: &BlobId) -> DomainResult<Option<Vec<u8>>> {
@@ -6830,6 +6896,80 @@ mod blob_stream_tests {
             buf.put_slice(b"partial");
             std::task::Poll::Ready(Ok(()))
         }
+    }
+
+    #[tokio::test]
+    async fn blob_writes_publish_complete_readable_content() {
+        let storage_root = Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("vfiles-blob-publish-{}", uuid::Uuid::new_v4())),
+        )
+        .expect("temp path should be valid utf-8");
+        tokio::fs::create_dir_all(&storage_root)
+            .await
+            .expect("temp dir should be created");
+        let pool = SqlitePoolFactory::connect(storage_root.join("vfiles.db").as_path())
+            .await
+            .expect("pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should succeed");
+        let store = FsBlobStore::new(pool, storage_root.join("blobs"));
+
+        let bytes = b"atomically published blob";
+        let (blob_id, _, created) = store
+            .store_blob(bytes, None)
+            .await
+            .expect("blob should be stored");
+        assert!(created);
+        assert_eq!(store.get_blob(&blob_id).await.unwrap().unwrap(), bytes);
+
+        let streamed = b"durably published stream".to_vec();
+        let (stream_id, _, created, size) = store
+            .store_blob_stream(
+                Box::new(tokio::io::BufReader::new(std::io::Cursor::new(
+                    streamed.clone(),
+                ))),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("stream blob should be stored");
+        assert!(created);
+        assert_eq!(size, streamed.len() as u64);
+        assert_eq!(store.get_blob(&stream_id).await.unwrap().unwrap(), streamed);
+
+        let concurrent = b"same stream committed concurrently".to_vec();
+        let (first, second) = tokio::join!(
+            store.store_blob_stream(
+                Box::new(std::io::Cursor::new(concurrent.clone())),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            store.store_blob_stream(
+                Box::new(std::io::Cursor::new(concurrent.clone())),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        );
+        let first = first.expect("first concurrent store should succeed");
+        let second = second.expect("second concurrent store should succeed");
+        assert_ne!(first.2, second.2, "only one stream owns blob cleanup");
+        assert_eq!(first.0, second.0);
+        assert_eq!(store.get_blob(&first.0).await.unwrap().unwrap(), concurrent);
+
+        let _ = tokio::fs::remove_dir_all(&storage_root).await;
     }
 
     #[tokio::test]
