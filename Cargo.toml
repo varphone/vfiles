@@ -13,11 +13,13 @@ members = [
     "crates/vfiles-infra-fs",
     "crates/vfiles-test-kit",
 ]
-exclude = ["vendor/s3s"]
+exclude = ["vendor/s3s", "vendor/hyper", "vendor/h2"]
 resolver = "3"
 
 [patch.crates-io]
 s3s = { path = "vendor/s3s" }
+hyper = { path = "vendor/hyper" }
+h2 = { path = "vendor/h2" }
 
 [workspace.package]
 version = "2.4.2"

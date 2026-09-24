@@ -82,6 +82,8 @@ import re
 import sys
 
 output = open(sys.argv[1], encoding="utf-8").read()
+if "DELETE removed collection resource with Request-URI including fragment" in output:
+    raise SystemExit("litmus detected a fragment-bearing DELETE reached the resource")
 summaries = re.findall(
     r"of (\d+) tests run: (\d+) passed, (\d+) failed", output
 )

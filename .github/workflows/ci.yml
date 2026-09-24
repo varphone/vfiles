@@ -37,6 +37,11 @@ jobs:
       - name: Rust test
         run: cargo test --workspace
 
+      - name: Test patched HTTP request-target parsers
+        run: |
+          cargo test --manifest-path vendor/hyper/Cargo.toml --features full test_decoder_request
+          cargo test --manifest-path vendor/h2/Cargo.toml request_parser_rejects_raw_fragment_and_accepts_encoded_hash
+
       - name: Install protocol interoperability clients
         run: sudo apt-get update && sudo apt-get install -y cadaver litmus python3-boto3 rclone rsync
 
