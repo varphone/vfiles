@@ -2060,6 +2060,21 @@ async fn multi_user_mode_isolates_tree_and_content_by_authenticated_user() {
     )
     .await;
 
+    let alice_snapshot = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/snapshots",
+            json!({ "message": "private snapshot" }),
+            &alice_cookie,
+        )
+        .await;
+    assert_eq!(alice_snapshot.status(), StatusCode::OK);
+    let alice_snapshot = response_json(alice_snapshot).await;
+    let alice_snapshot_id = alice_snapshot["id"]
+        .as_str()
+        .expect("snapshot id should be returned")
+        .to_string();
+
     let alice_root = app
         .request_with_cookie(
             Request::builder()
@@ -2123,6 +2138,27 @@ async fn multi_user_mode_isolates_tree_and_content_by_authenticated_user() {
         )
         .await;
     assert_eq!(bob_access_alice.status(), StatusCode::NOT_FOUND);
+
+    for uri in [
+        format!("/api/files/tree/docs?commit={alice_snapshot_id}"),
+        format!("/api/files/content?path=docs/alice.txt&commit={alice_snapshot_id}"),
+        format!("/api/download/folder?path=docs&commit={alice_snapshot_id}"),
+    ] {
+        let response = app
+            .request_with_cookie(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request should build"),
+                &bob_cookie,
+            )
+            .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "another user's snapshot must not be accessible at this endpoint"
+        );
+    }
 }
 
 #[tokio::test]

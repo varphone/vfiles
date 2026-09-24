@@ -1389,6 +1389,7 @@ where
 
     async fn resolve_requested_file_revision(
         &self,
+        namespace_id: &NamespaceId,
         raw_commit: Option<&str>,
     ) -> DomainResult<RequestedFileRevision> {
         let Some(raw_commit) = raw_commit.filter(|value| !value.trim().is_empty()) else {
@@ -1397,7 +1398,10 @@ where
 
         match SnapshotId::from_string(raw_commit) {
             Ok(snapshot_id) => match self.snapshot_repo.find_snapshot(&snapshot_id).await {
-                Ok(_) => Ok(RequestedFileRevision::Snapshot(snapshot_id)),
+                Ok(snapshot) if snapshot.namespace_id == *namespace_id => {
+                    Ok(RequestedFileRevision::Snapshot(snapshot_id))
+                }
+                Ok(_) => Err(DomainError::SnapshotNotFound),
                 Err(DomainError::SnapshotNotFound) => Ok(RequestedFileRevision::Version(
                     VersionId::from_string(raw_commit).map_err(|_| invalid_commit_error())?,
                 )),
@@ -1740,7 +1744,10 @@ where
     ) -> DomainResult<ResolvedFileBlob> {
         let filename = basename(path).to_string();
 
-        match self.resolve_requested_file_revision(raw_commit).await? {
+        match self
+            .resolve_requested_file_revision(namespace_id, raw_commit)
+            .await?
+        {
             RequestedFileRevision::Live => {
                 let version = self
                     .resolve_file_version_for_path(namespace_id, path, None)
@@ -1861,7 +1868,10 @@ where
         raw_commit: Option<&str>,
     ) -> DomainResult<DirectoryArchive> {
         let archive_name = archive_name_for(path);
-        let files = match self.resolve_requested_file_revision(raw_commit).await? {
+        let files = match self
+            .resolve_requested_file_revision(namespace_id, raw_commit)
+            .await?
+        {
             RequestedFileRevision::Live => {
                 self.collect_live_directory_files(namespace_id, path)
                     .await?
@@ -1894,7 +1904,10 @@ where
         path: &NormalizedPath,
         raw_commit: Option<&str>,
     ) -> DomainResult<()> {
-        match self.resolve_requested_file_revision(raw_commit).await? {
+        match self
+            .resolve_requested_file_revision(namespace_id, raw_commit)
+            .await?
+        {
             RequestedFileRevision::Live => {
                 self.validate_directory_scope(namespace_id, path).await?;
             }
@@ -2062,10 +2075,14 @@ where
 
     async fn snapshot_tree(
         &self,
+        namespace_id: &NamespaceId,
         path: &NormalizedPath,
         snapshot_id: &SnapshotId,
     ) -> DomainResult<TreeResponse> {
         let snapshot = self.snapshot_repo.find_snapshot(snapshot_id).await?;
+        if snapshot.namespace_id != *namespace_id {
+            return Err(DomainError::SnapshotNotFound);
+        }
         let snapshot_entries = self.snapshot_repo.get_snapshot_entries(snapshot_id).await?;
         let visible_entries = snapshot_entries
             .iter()
@@ -2207,7 +2224,7 @@ where
         snapshot_id: Option<&SnapshotId>,
     ) -> DomainResult<TreeResponse> {
         if let Some(snapshot_id) = snapshot_id {
-            self.snapshot_tree(path, snapshot_id).await
+            self.snapshot_tree(namespace_id, path, snapshot_id).await
         } else {
             self.live_tree(namespace_id, path).await
         }
