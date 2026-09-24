@@ -607,63 +607,93 @@ fn parse_dir_merge_file(contents: &[u8], mode: DirMergeMode) -> Result<Vec<DirMe
 
 /// 通配匹配（rsync wildmatch 子集）：`*` 不跨 `/`、`**` 跨 `/`、`?` 单字符、`[..]` 字符类。
 fn wildmatch(pattern: &str, text: &str) -> bool {
-    fn m(p: &[u8], t: &[u8]) -> bool {
-        if p.is_empty() {
-            return t.is_empty();
+    fn m(
+        pattern: &[u8],
+        text: &[u8],
+        pattern_offset: usize,
+        text_offset: usize,
+        memo: &mut std::collections::HashMap<(usize, usize), bool>,
+    ) -> bool {
+        if let Some(&matched) = memo.get(&(pattern_offset, text_offset)) {
+            return matched;
         }
-        match p[0] {
-            b'*' => {
-                let double = p.len() > 1 && p[1] == b'*';
-                let rest = if double { &p[2..] } else { &p[1..] };
-                if double {
-                    (0..=t.len()).any(|i| m(rest, &t[i..]))
-                } else {
-                    let mut i = 0;
+        let matched = if pattern_offset == pattern.len() {
+            text_offset == text.len()
+        } else {
+            match pattern[pattern_offset] {
+                b'*' => {
+                    let double = pattern.get(pattern_offset + 1) == Some(&b'*');
+                    let rest = pattern_offset + if double { 2 } else { 1 };
+                    let mut offset = text_offset;
                     loop {
-                        if m(rest, &t[i..]) {
-                            return true;
+                        if m(pattern, text, rest, offset, memo) {
+                            break true;
                         }
-                        if i >= t.len() || t[i] == b'/' {
-                            return false;
+                        if offset == text.len() || (!double && text[offset] == b'/') {
+                            break false;
                         }
-                        i += 1;
+                        offset += 1;
                     }
                 }
-            }
-            b'?' => !t.is_empty() && t[0] != b'/' && m(&p[1..], &t[1..]),
-            b'[' => {
-                let Some(close) = p.iter().position(|&c| c == b']') else {
-                    return !t.is_empty() && t[0] == b'[' && m(&p[1..], &t[1..]);
-                };
-                if t.is_empty() || t[0] == b'/' {
-                    return false;
+                b'?' => {
+                    text.get(text_offset).is_some_and(|byte| *byte != b'/')
+                        && m(pattern, text, pattern_offset + 1, text_offset + 1, memo)
                 }
-                let class = &p[1..close];
-                let (negate, class) = match class.first() {
-                    Some(b'!') | Some(b'^') => (true, &class[1..]),
-                    _ => (false, class),
-                };
-                let mut hit = false;
-                let mut i = 0;
-                while i < class.len() {
-                    if i + 2 < class.len() && class[i + 1] == b'-' {
-                        if class[i] <= t[0] && t[0] <= class[i + 2] {
-                            hit = true;
+                b'[' => {
+                    if let Some(close) = pattern[pattern_offset..]
+                        .iter()
+                        .position(|&byte| byte == b']')
+                        .map(|index| pattern_offset + index)
+                    {
+                        if let Some(&text_byte) =
+                            text.get(text_offset).filter(|&&byte| byte != b'/')
+                        {
+                            let class = &pattern[pattern_offset + 1..close];
+                            let (negate, class) = match class.first() {
+                                Some(b'!') | Some(b'^') => (true, &class[1..]),
+                                _ => (false, class),
+                            };
+                            let mut hit = false;
+                            let mut i = 0;
+                            while i < class.len() {
+                                if i + 2 < class.len() && class[i + 1] == b'-' {
+                                    if class[i] <= text_byte && text_byte <= class[i + 2] {
+                                        hit = true;
+                                    }
+                                    i += 3;
+                                } else {
+                                    if class[i] == text_byte {
+                                        hit = true;
+                                    }
+                                    i += 1;
+                                }
+                            }
+                            hit != negate && m(pattern, text, close + 1, text_offset + 1, memo)
+                        } else {
+                            false
                         }
-                        i += 3;
                     } else {
-                        if class[i] == t[0] {
-                            hit = true;
-                        }
-                        i += 1;
+                        text.get(text_offset) == Some(&b'[')
+                            && m(pattern, text, pattern_offset + 1, text_offset + 1, memo)
                     }
                 }
-                hit != negate && m(&p[close + 1..], &t[1..])
+                byte => {
+                    text.get(text_offset) == Some(&byte)
+                        && m(pattern, text, pattern_offset + 1, text_offset + 1, memo)
+                }
             }
-            c => !t.is_empty() && t[0] == c && m(&p[1..], &t[1..]),
-        }
+        };
+        memo.insert((pattern_offset, text_offset), matched);
+        matched
     }
-    m(pattern.as_bytes(), text.as_bytes())
+
+    m(
+        pattern.as_bytes(),
+        text.as_bytes(),
+        0,
+        0,
+        &mut std::collections::HashMap::new(),
+    )
 }
 
 /// 首条命中规则定保护态（rsync `check_filter` 语义 ✗ 无命中 = 不保护）。
@@ -4146,6 +4176,15 @@ mod tests {
         assert!(wildmatch("*", "anything"));
         assert!(wildmatch("exact", "exact"));
         assert!(!wildmatch("exact", "exact2"));
+    }
+
+    #[test]
+    fn wildmatch_memoizes_ambiguous_star_backtracking() {
+        let pattern = format!("{}b", "*a".repeat(32));
+        let text = "a".repeat(128);
+        assert!(!wildmatch(&pattern, &text));
+        assert!(wildmatch("**/target", "a/b/target"));
+        assert!(!wildmatch("*.tmp", "a/b.tmp"));
     }
 
     /// 规则解析（`-`/`+`、目录尾 `/`、锚定首 `/`）+ 首条命中语义 + 保护判定。
