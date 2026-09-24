@@ -470,6 +470,23 @@ pub trait EntryRepo {
         &self,
         entry_ids: &[EntryId],
     ) -> DomainResult<Vec<EntryVersion>>;
+    /// Fetch only each entry's latest version, avoiding history-sized reads for current metadata.
+    async fn find_current_versions_for_entries(
+        &self,
+        entry_ids: &[EntryId],
+    ) -> DomainResult<Vec<EntryVersion>> {
+        let versions = self.find_versions_for_entries(entry_ids).await?;
+        let mut latest = std::collections::HashMap::new();
+        for version in versions {
+            let current = latest
+                .entry(version.entry_id)
+                .or_insert_with(|| version.clone());
+            if version.version_no > current.version_no {
+                *current = version;
+            }
+        }
+        Ok(latest.into_values().collect())
+    }
     #[allow(clippy::too_many_arguments)]
     async fn create_version(
         &self,

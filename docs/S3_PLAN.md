@@ -11,6 +11,7 @@
 - boto3 验证修复了三个问题：CopyObject/UploadPartCopy 源条件误用内部版本 ID 当 ETag；删除标记遮蔽的 key 仍能作为复制源；GetObject/HeadObject 对当前版本返回条目创建时间而非版本修改时间。探针 multipart 用例现按 S3 的 5 MiB 非末片规则构造。
 - **仍待补齐**：文件系统 blob 与 SQLite 事务跨存储故障时的恢复验证。
 - 版本事件序号由 `entry_versions` 写事务与删除标记写事务共同递增，使 HTTP/WebDAV 写入也参与同一 key 的 S3 最新状态排序，不依赖系统墙钟精度。
+- `DeleteObjects` 的 `LastModifiedTime` 条件现在批量只读取涉及条目的当前版本，并与其修改时间比较；此前错误使用条目创建时间，覆盖上传后的正确客户端条件会被拒绝。SQLite 批量接口避免 N+1 和拉取整段历史；boto3 回归验证旧时间拒绝、当前 `HeadObject` 时间接受。
 
 ## 当前工作树补充（CompleteMultipartUpload 选择分片）
 

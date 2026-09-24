@@ -486,6 +486,26 @@ def main():
     for bk in ["boto-dc2/b", "boto-dc2/c"]:
         s3.delete_object(Bucket="default", Key=bk)
 
+    # LastModifiedTime must use the current version after an overwrite, matching
+    # HeadObject rather than the immutable entry creation timestamp.
+    conditional_key = "boto-dc2/overwritten"
+    s3.put_object(Bucket="default", Key=conditional_key, Body=b"old")
+    old_modified = s3.head_object(Bucket="default", Key=conditional_key)["LastModified"]
+    time.sleep(1.1)
+    s3.put_object(Bucket="default", Key=conditional_key, Body=b"new")
+    current_head = s3.head_object(Bucket="default", Key=conditional_key)
+    stale_result = s3.delete_objects(Bucket="default", Delete={"Objects": [
+        {"Key": conditional_key, "LastModifiedTime": old_modified},
+    ]})
+    stale_errors = {e["Key"]: e["Code"] for e in stale_result.get("Errors", [])}
+    current_result = s3.delete_objects(Bucket="default", Delete={"Objects": [
+        {"Key": conditional_key, "LastModifiedTime": current_head["LastModified"]},
+    ]})
+    check("boto DeleteObjects LastModifiedTime follows current overwritten version",
+          stale_errors == {conditional_key: "PreconditionFailed"}
+          and [d["Key"] for d in current_result.get("Deleted", [])] == [conditional_key],
+          f"stale={stale_errors} current={[d['Key'] for d in current_result.get('Deleted', [])]}")
+
     # ── 条件读（If-None-Match → 304 ✗ r30）──
     s3.put_object(Bucket="default", Key="boto-getc/a.txt", Body=b"hello")
     gh = s3.head_object(Bucket="default", Key="boto-getc/a.txt")

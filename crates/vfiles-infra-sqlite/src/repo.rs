@@ -3332,6 +3332,54 @@ impl EntryRepo for SqliteEntryRepo {
         Ok(versions)
     }
 
+    async fn find_current_versions_for_entries(
+        &self,
+        entry_ids: &[EntryId],
+    ) -> DomainResult<Vec<EntryVersion>> {
+        if entry_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        const CHUNK: usize = 500;
+        let mut versions = Vec::new();
+
+        for chunk in entry_ids.chunks(CHUNK) {
+            let mut builder = sqlx::QueryBuilder::new(
+                "SELECT \
+                    ev.id, ev.entry_id, ev.version, ev.blob_id, ev.size, ev.content_type, \
+                    b.content_hash, ev.created_at, ev.created_by, ev.message \
+                 FROM entry_versions ev \
+                 LEFT JOIN blobs b ON b.id = ev.blob_id \
+                 WHERE ev.entry_id IN (",
+            );
+            let mut separated = builder.separated(", ");
+            for entry_id in chunk {
+                separated.push_bind(entry_id.to_string());
+            }
+            separated.push_unseparated(
+                ") AND ev.version = (\
+                    SELECT MAX(current_ev.version) \
+                    FROM entry_versions current_ev \
+                    WHERE current_ev.entry_id = ev.entry_id\
+                )",
+            );
+
+            let rows: Vec<EntryVersionRow> = builder
+                .build_query_as()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                message: format!("Failed to find current entry versions: {}", e),
+            })?;
+
+            for row in rows {
+                versions.push(parse_entry_version_row(row)?);
+            }
+        }
+
+        Ok(versions)
+    }
+
     async fn create_version(
         &self,
         entry_id: &EntryId,
@@ -7520,6 +7568,22 @@ mod entry_batch_cleanup_tests {
             .await
             .expect("batch history should succeed");
         assert_eq!(versions.len(), 4);
+        let current_versions = repo
+            .find_current_versions_for_entries(&entry_ids)
+            .await
+            .expect("batch current-version lookup should succeed");
+        assert_eq!(current_versions.len(), 2);
+        assert!(
+            current_versions
+                .iter()
+                .all(|version| version.version_no == 2)
+        );
+        assert!(
+            repo.find_current_versions_for_entries(&[])
+                .await
+                .expect("empty current-version batch should succeed")
+                .is_empty()
+        );
         assert!(
             repo.find_versions_for_entries(&[])
                 .await

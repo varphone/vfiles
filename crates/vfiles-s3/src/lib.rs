@@ -2244,6 +2244,7 @@ impl S3 for VfilesS3 {
         let mut per_key_err: Vec<Option<String>> = vec![None; keys.len()];
         let mut valid_candidates = Vec::new();
         let mut etag_checks = Vec::new();
+        let mut mtime_checks = Vec::new();
         // 逐键条件（`ETag` / `LastModifiedTime` / `Size` ✗ r29/r31 并发删；不满足只拒该键）
         let want_etag: Vec<Option<String>> = input
             .delete
@@ -2288,11 +2289,8 @@ impl S3 for VfilesS3 {
                                     want.clone(),
                                 ));
                             }
-                            if let Some(want) = &want_mtime[i]
-                                && !same_second(&Timestamp::from(entry.created_at), want)
-                            {
-                                per_key_err[i] = Some("PreconditionFailed".to_string());
-                                continue;
+                            if let Some(want) = &want_mtime[i] {
+                                mtime_checks.push((i, entry.id, want.clone()));
                             }
                             if let Some(want) = want_size[i] {
                                 let (parent_str, _) =
@@ -2344,6 +2342,27 @@ impl S3 for VfilesS3 {
                 }
                 Ok(_) => per_key_err[i] = Some("invalid key".to_string()),
                 Err(e) => per_key_err[i] = Some(e.to_string()),
+            }
+        }
+
+        if !mtime_checks.is_empty() {
+            let entry_ids: Vec<_> = mtime_checks.iter().map(|(_, id, _)| *id).collect();
+            let versions = self
+                .entry_repo
+                .find_current_versions_for_entries(&entry_ids)
+                .await
+                .map_err(dom_err)?;
+            let current_mtimes: std::collections::HashMap<_, _> = versions
+                .into_iter()
+                .map(|version| (version.entry_id, Timestamp::from(version.created_at)))
+                .collect();
+            for (index, entry_id, expected) in mtime_checks {
+                if !current_mtimes
+                    .get(&entry_id)
+                    .is_some_and(|actual| same_second(actual, &expected))
+                {
+                    per_key_err[index] = Some("PreconditionFailed".to_string());
+                }
             }
         }
 
