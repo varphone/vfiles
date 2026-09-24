@@ -1554,13 +1554,13 @@ async fn options_advertises_and_propfind_needs_auth() {
         )
         .await
         .unwrap();
-    assert_eq!(date_if_range.status(), 200);
+    assert_eq!(date_if_range.status(), 206);
     assert_eq!(
         axum::body::to_bytes(date_if_range.into_body(), usize::MAX)
             .await
             .unwrap()
             .as_ref(),
-        b"webdav range fixture"
+        b"webd"
     );
 
     // A separate WebDAV application instance sees the same SQLite-backed lock.

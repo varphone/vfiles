@@ -1035,7 +1035,11 @@ async fn get_op(
             if let Some(modified_at) = modified_at {
                 base = base.header(header::LAST_MODIFIED, format_http_date(modified_at));
             }
-            let range = if if_range_allows_range(if_range_owned.as_deref(), cur_etag.as_deref()) {
+            let range = if if_range_allows_range(
+                if_range_owned.as_deref(),
+                cur_etag.as_deref(),
+                modified_at,
+            ) {
                 range_owned
                     .as_deref()
                     .and_then(|rh| match parse_byte_range(rh, size) {
@@ -2410,12 +2414,25 @@ fn parse_byte_range(header: &str, size: u64) -> ByteRange {
     }
 }
 
-fn if_range_allows_range(if_range: Option<&str>, etag: Option<&str>) -> bool {
+fn if_range_allows_range(
+    if_range: Option<&str>,
+    etag: Option<&str>,
+    modified_at: Option<time::OffsetDateTime>,
+) -> bool {
     let Some(if_range) = if_range else {
         return true;
     };
     let if_range = if_range.trim();
-    !if_range.starts_with("W/") && etag.is_some_and(|current| if_range == current)
+    if !if_range.starts_with("W/") && etag.is_some_and(|current| if_range == current) {
+        return true;
+    }
+    let (Some(modified), Ok(date)) = (
+        modified_at.and_then(modified_system_time),
+        httpdate::parse_http_date(if_range),
+    ) else {
+        return false;
+    };
+    modified <= date
 }
 
 fn a_is_empty_n(suffix: &str) -> Option<usize> {
@@ -3978,6 +3995,7 @@ mod tagged_if_tests {
 #[cfg(test)]
 mod range_tests {
     use super::{ByteRange, if_range_allows_range, parse_byte_range};
+    use time::OffsetDateTime;
 
     #[test]
     fn parses_range_forms() {
@@ -4016,16 +4034,42 @@ mod range_tests {
     }
 
     #[test]
-    fn if_range_requires_a_matching_strong_entity_tag() {
+    fn if_range_accepts_matching_strong_tag_or_current_date() {
         let current = Some("\"current\"");
-        assert!(if_range_allows_range(None, current));
-        assert!(if_range_allows_range(Some("\"current\""), current));
-        assert!(!if_range_allows_range(Some("\"stale\""), current));
-        assert!(!if_range_allows_range(Some("W/\"current\""), current));
-        assert!(!if_range_allows_range(Some("\"current\""), None));
+        let modified = Some(OffsetDateTime::from_unix_timestamp(1_000_000).unwrap());
+        assert!(if_range_allows_range(None, current, modified));
+        assert!(if_range_allows_range(
+            Some("\"current\""),
+            current,
+            modified
+        ));
+        assert!(!if_range_allows_range(Some("\"stale\""), current, modified));
+        assert!(!if_range_allows_range(
+            Some("W/\"current\""),
+            current,
+            modified
+        ));
+        assert!(!if_range_allows_range(Some("\"current\""), None, modified));
         assert!(!if_range_allows_range(
             Some("Thu, 01 Jan 1970 00:00:00 GMT"),
-            current
+            current,
+            modified
+        ));
+        assert!(if_range_allows_range(
+            Some("Mon, 12 Jan 1970 13:46:40 GMT"),
+            None,
+            modified
+        ));
+        assert!(if_range_allows_range(
+            Some("Tue, 13 Jan 1970 13:46:40 GMT"),
+            None,
+            modified
+        ));
+        assert!(!if_range_allows_range(Some("not a date"), None, modified));
+        assert!(!if_range_allows_range(
+            Some("Tue, 13 Jan 1970 13:46:40 GMT"),
+            None,
+            None
         ));
     }
 }
