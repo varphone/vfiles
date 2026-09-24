@@ -22,7 +22,7 @@
 | auth 门 | ✅ dispatch 顶部（Basic → verify → 401 + WWW-Authenticate ✓ OPTIONS 豁免 ✓） |
 | 登录爆破保护 | ✅ 复用 HTTP/FTP 共享失败计数器，按 socket peer IP + 规范化用户名限流；超限返回 429 与 Retry-After，成功后清除计数 |
 | 默认开启 | ✅ **用户令兑现**（`enabled: true` ✓ auth 强制防御 ✓ 真服务日志确证 ✓） |
-| 边界/错误语义 | ✅ Depth infinity = 400 ✓ If 复杂式 = 412 记档 ✓ 锁冲突 = 423 ✓ token 不配 = 409 ✓ |
+| 边界/错误语义 | ✅ 不支持的 PROPFIND Depth infinity = 403 + `DAV:propfind-finite-depth`（RFC §10.2）；非法 Depth = 400；If 复杂式 = 412；锁冲突 = 423；token 不配 = 409 |
 | **GET 流式化** | ✅ **r201-02 收口**（`get_stream` 直通 + ReaderStream ✓ **10MB sha256 一致性证** ✓ 内存爆除） |
 | COPY | ✅ **已接线**（`WebdavWriteOps::copy_entry` → `DefaultWorkspaceService::copy_entries`；目标覆盖、子树保护、blob 复用与递归目录复制均有实现） |
 | **台架缺口注** | cadaver、rclone 实际文件操作与系统 litmus 104 项套件均由独立探针自动回归并接入 CI；rclone 覆盖 MKCOL/PUT/list/GET/空目录/check/MOVE/DELETE。两条 warning 已核对：HTTP URI parser 在进入 DAV handler 前剥离 fragment；RFC 4918 §10.4 要求 false `If` 条件返回 412，尽管 litmus 的提示期望 423；Windows 客户端仍待测 |

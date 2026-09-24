@@ -131,6 +131,18 @@ fn parse_write_depth(headers: &axum::http::HeaderMap) -> Result<Option<bool>, ()
     }
 }
 
+async fn request_body_is_nonempty(body: &mut Body) -> bool {
+    let size_hint = body.size_hint();
+    if size_hint.lower() > 0 || size_hint.exact().is_some_and(|length| length > 0) {
+        return true;
+    }
+    match axum::body::to_bytes(std::mem::take(body), 1).await {
+        Ok(bytes) => !bytes.is_empty(),
+        // An unreadable/oversized body cannot be accepted as an empty MKCOL request.
+        Err(_) => true,
+    }
+}
+
 fn parse_if_lists(input: &mut &str) -> Option<Vec<Vec<IfCondition>>> {
     let mut lists = Vec::new();
     while input.starts_with('(') {
@@ -3186,11 +3198,11 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             } else {
                 None
             };
-            let mkcol_has_body = req
-                .body()
-                .size_hint()
-                .exact()
-                .is_some_and(|length| length > 0);
+            let mkcol_has_body = if matches!(op, WriteOp::Mkcol) {
+                request_body_is_nonempty(req.body_mut()).await
+            } else {
+                false
+            };
             if matches!(op, WriteOp::Mkcol)
                 && (mkcol_has_body
                     || req

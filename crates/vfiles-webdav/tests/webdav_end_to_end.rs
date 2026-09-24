@@ -472,6 +472,34 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(mkcol_with_body.status(), 415);
 
+    let unknown_length_body = futures::stream::iter([Ok::<_, std::convert::Infallible>(
+        axum::body::Bytes::from_static(b"HTTP/2 body without a content length"),
+    )]);
+    let mkcol_with_unknown_length_body = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("MKCOL")
+                .uri("/unknown-length-body-collection")
+                .header("authorization", format!("Basic {basic}"))
+                .body(axum::body::Body::from_stream(unknown_length_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mkcol_with_unknown_length_body.status(), 415);
+    assert!(
+        entry_repo
+            .find_by_path(
+                &namespace_id,
+                &NormalizedPath::new("unknown-length-body-collection").unwrap(),
+            )
+            .await
+            .unwrap()
+            .is_none(),
+        "MKCOL with a body must not create a collection"
+    );
+
     let copy_collection_with_trailing_slash = router
         .clone()
         .oneshot(
