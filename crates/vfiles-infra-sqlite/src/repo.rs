@@ -1760,7 +1760,7 @@ mod s3_delete_marker_tests {
         .expect("object version event should be sequenced");
         sqlx::query("INSERT INTO entry_versions (id, entry_id, version, size, created_at, created_by, created_order) VALUES (?, ?, 1, 12, ?, ?, ?)")
             .bind(uuid::Uuid::new_v4().to_string())
-            .bind(z_entry_id)
+            .bind(&z_entry_id)
             .bind(created_at - time::Duration::seconds(1))
             .bind(owner.to_string())
             .bind(created_order)
@@ -1792,6 +1792,18 @@ mod s3_delete_marker_tests {
                 .await
                 .expect("marker lookup should succeed")
                 .is_none()
+        );
+        sqlx::query("DELETE FROM entries WHERE id = ?")
+            .bind(&z_entry_id)
+            .execute(&pool)
+            .await
+            .expect("delete backing object as an HTTP/WebDAV delete would");
+        assert_eq!(
+            object_keys
+                .entry_id(&namespace, "folder/z.txt")
+                .await
+                .expect("object key lookup should succeed after delete"),
+            None
         );
         let _ = tokio::fs::remove_dir_all(root).await;
     }
