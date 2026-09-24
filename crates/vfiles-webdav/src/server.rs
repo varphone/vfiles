@@ -608,29 +608,37 @@ fn parse_lockinfo(body: &[u8]) -> Result<ParsedLockInfo, StatusCode> {
     if root.tag_name().namespace() != Some("DAV:") || root.tag_name().name() != "lockinfo" {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let scope = root
+    let mut scopes = root.children().filter(|n| {
+        n.is_element()
+            && n.tag_name().namespace() == Some("DAV:")
+            && n.tag_name().name() == "lockscope"
+    });
+    let scope = scopes.next().ok_or(StatusCode::BAD_REQUEST)?;
+    if scopes.next().is_some() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let scope_elements: Vec<_> = scope.children().filter(|node| node.is_element()).collect();
+    if scope_elements.len() != 1 || scope_elements[0].tag_name().namespace() != Some("DAV:") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let scope = scope_elements[0];
+    let mut locktypes = root.children().filter(|n| {
+        n.is_element()
+            && n.tag_name().namespace() == Some("DAV:")
+            && n.tag_name().name() == "locktype"
+    });
+    let locktype = locktypes.next().ok_or(StatusCode::BAD_REQUEST)?;
+    if locktypes.next().is_some() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let locktype_elements: Vec<_> = locktype
         .children()
-        .find(|n| {
-            n.is_element()
-                && n.tag_name().namespace() == Some("DAV:")
-                && n.tag_name().name() == "lockscope"
-        })
-        .ok_or(StatusCode::BAD_REQUEST)?;
-    let scope = scope
-        .children()
-        .find(|n| n.is_element() && n.tag_name().namespace() == Some("DAV:"))
-        .ok_or(StatusCode::BAD_REQUEST)?;
-    let locktype = root
-        .children()
-        .find(|n| {
-            n.is_element()
-                && n.tag_name().namespace() == Some("DAV:")
-                && n.tag_name().name() == "locktype"
-        })
-        .ok_or(StatusCode::BAD_REQUEST)?;
-    if !locktype.children().any(|n| {
-        n.is_element() && n.tag_name().namespace() == Some("DAV:") && n.tag_name().name() == "write"
-    }) {
+        .filter(|node| node.is_element())
+        .collect();
+    if locktype_elements.len() != 1
+        || locktype_elements[0].tag_name().namespace() != Some("DAV:")
+        || locktype_elements[0].tag_name().name() != "write"
+    {
         return Err(StatusCode::BAD_REQUEST);
     }
     let scope = match scope.tag_name().name() {
@@ -3572,6 +3580,32 @@ mod etag_tests {
         let et = derive_etag(&v);
         assert!(et.starts_with('"') && et.ends_with('"'));
         assert_eq!(et.len(), 34);
+    }
+}
+
+#[cfg(test)]
+mod lockinfo_tests {
+    use super::{LockScope, parse_lockinfo};
+
+    #[test]
+    fn rejects_multiple_lock_scope_choices_in_one_lockinfo() {
+        let body = br#"<D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/><D:shared/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#;
+        assert!(parse_lockinfo(body).is_err());
+    }
+
+    #[test]
+    fn rejects_multiple_lockscope_elements() {
+        let body = br#"<D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:lockscope><D:shared/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#;
+        assert!(parse_lockinfo(body).is_err());
+    }
+
+    #[test]
+    fn accepts_one_supported_lock_scope_and_type() {
+        let body = br#"<D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#;
+        assert!(matches!(
+            parse_lockinfo(body).map(|lockinfo| lockinfo.scope),
+            Ok(LockScope::ExclusiveWrite)
+        ));
     }
 }
 

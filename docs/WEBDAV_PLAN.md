@@ -17,14 +17,14 @@
 | MKCOL / DELETE / MOVE | ✅ 实装（`WebdavWriteOps` ✓ 审计链 user_id ✓） | MOVE Overwrite T 在 SQLite 单事务内删除目标子树并改写源路径；blob 引用释放和快照在提交后处理 |
 | **PUT** | ✅ **链实装**（`init_upload` + `complete_upload_from_stream` 流式直完 ✓） | bin 侧 `put_file` 转发 = 下段（签名已清 ✓） |
 | COPY | ✅ **实装**（Destination + Overwrite + 锁前置 + 审计；文件复用 blob，目录递归复制） | `copy_entries` 提供 overwrite 和目标父目录检查；需持续做 RFC/客户端兼容验收 |
-| LOCK / UNLOCK | ✅ 实装（exclusive / depth 0 与 infinity ✓；省略 Depth 默认 infinity；SQLite 持久化并按 namespace/path 隔离；空体 LOCK refresh） | 并发冲突检测原子化；祖先 infinity 锁继承到后代；过期锁可接管；shared lock 明确 405；超时支持 Second-N / Infinite |
+| LOCK / UNLOCK | ✅ exclusive write 实装（depth 0/infinity、refresh、SQLite 持久化、锁冲突原子判断、Second-N/Infinite） | 当前只广告并授予 exclusive；shared 明确 405。RFC 4918 允许服务器选择锁组合；共享锁互操作属于后续兼容性增强 |
 | per-user ns | ✅ **实装**（`ensure_default_for_owner` ✓ 多用户隔离 ✓） |
 | auth 门 | ✅ dispatch 顶部（Basic → verify → 401 + WWW-Authenticate ✓ OPTIONS 豁免 ✓） |
 | 默认开启 | ✅ **用户令兑现**（`enabled: true` ✓ auth 强制防御 ✓ 真服务日志确证 ✓） |
 | 边界/错误语义 | ✅ Depth infinity = 400 ✓ If 复杂式 = 412 记档 ✓ 锁冲突 = 423 ✓ token 不配 = 409 ✓ |
 | **GET 流式化** | ✅ **r201-02 收口**（`get_stream` 直通 + ReaderStream ✓ **10MB sha256 一致性证** ✓ 内存爆除） |
 | COPY | ✅ **已接线**（`WebdavWriteOps::copy_entry` → `DefaultWorkspaceService::copy_entries`；目标覆盖、子树保护、blob 复用与递归目录复制均有实现） |
-| **台架缺口注** | ⚠️ **rclone/Windows 客户端台架** = 待装验（curl 六法链已证栈级 ✓）；bin put_file 转发 = r110'c 已接（init_upload+complete_from_stream ✓） |
+| **台架缺口注** | cadaver 0.24 与 rclone 1.60.1-DEV 已实测基础读写/目录及 COPY/MOVE；Windows 客户端与完整 litmus 套件仍待测；bin `put_file` 转发已接（init_upload+complete_from_stream） |
 
 ## 当前工作树补充（LOCK refresh 与请求 scope 校验）
 
@@ -77,7 +77,7 @@
 | **r110'b 商业级清单定稿** | PUT（init_upload 链）+ 边界/错误语义 RFC 全检 + rclone/Windows 台架 + **商业级清单定稿**（含缺口注 ✓） | |
 | **r110' 验收台架** | 边界/错误语义 RFC 全检 + curl/rclone/Windows 台架 + 商业级清单 | |
 | r107（挂载段遗留） | bin 挂载 + curl/rclone e2e + GET（`EntryVersion.blob_id` ✓ 形已清） | 并入 r110' 台架 ✓ |
-| 记档 | **LOCK/UNLOCK 不支持**（405） | macOS/Linux/rclone 挂载不受影响 ✓ Windows 映射依赖锁 → 后续评估 |
+| 记档 | shared 锁明确不支持（405），`supportedlock` 只广告 exclusive write | RFC 允许锁能力子集；Windows/完整 litmus 互操作仍待实测 |
 
 ## 3. 客户端兼容矩阵（预期）
 

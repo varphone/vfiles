@@ -318,6 +318,51 @@ async fn options_advertises_and_propfind_needs_auth() {
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"))
     };
+    let shared_lock = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:lockinfo xmlns:D="DAV:"><D:lockscope><D:shared/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(shared_lock.status(), 405);
+
+    let exclusive_only = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propfind xmlns:D="DAV:"><D:prop><D:supportedlock/></D:prop></D:propfind>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(exclusive_only.status(), 207);
+    let supported_locks = String::from_utf8(
+        axum::body::to_bytes(exclusive_only.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(supported_locks.contains("<D:exclusive/>"));
+    assert!(!supported_locks.contains("<D:shared/>"));
+
     let remote_destination = router
         .clone()
         .oneshot(
