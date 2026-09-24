@@ -10,6 +10,7 @@ use vfiles_infra_sqlite::{
 struct CopySourceIndex {
     children: HashMap<String, Vec<Entry>>,
     properties: HashMap<EntryId, Vec<(String, String)>>,
+    versions: HashMap<EntryId, EntryVersion>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2361,29 +2362,9 @@ where
         if !depth_infinity || src_entry.entry_type != EntryKind::Directory {
             source_entries.retain(|entry| entry.id == src_entry.id);
         }
-        let dst_exists = self
-            .entry_repo
-            .find_by_path(namespace_id, destination)
-            .await?
-            .is_some();
-        if dst_exists {
-            if !overwrite {
-                // Overwrite: F + 目标存在 → 412（臂按 overwrite 选码 ✗ Conflict 兜底）
-                return Err(DomainError::Conflict {
-                    message: "Destination already exists".to_string(),
-                });
-            }
-            // Overwrite: T（含 RFC 缺省 ✗ r10 真覆盖：删旧子树 = delete_entries 全链
-            // 自带 blob release 引用计数 ✓）→ 再建
-            self.delete_entries(
-                namespace_id,
-                std::slice::from_ref(destination),
-                message,
-                user_id,
-            )
-            .await?;
-        }
-        // 目标父必须为已存在集合（move 同语义）
+        // Complete all predictable validation and source lookups before deleting an
+        // overwrite target. Otherwise a malformed source or invalid parent can turn
+        // a failed COPY into a destructive operation.
         let dest_parent = {
             let dp = destination.as_str();
             match dp.rfind('/') {
@@ -2418,7 +2399,8 @@ where
             .list_entry_properties(&source_entry_ids)
             .await?;
         let mut source_children = HashMap::<String, Vec<Entry>>::new();
-        for entry in source_entries {
+        let mut source_versions = HashMap::<EntryId, EntryVersion>::new();
+        for entry in &source_entries {
             if entry.id == src_entry.id {
                 continue;
             }
@@ -2426,12 +2408,59 @@ where
                 source_children
                     .entry(parent.to_string())
                     .or_default()
-                    .push(entry);
+                    .push(entry.clone());
             }
+            if entry.entry_type == EntryKind::File {
+                let version_id =
+                    entry
+                        .current_version_id
+                        .as_ref()
+                        .ok_or_else(|| DomainError::Validation {
+                            message: "Source file has no version".to_string(),
+                        })?;
+                source_versions.insert(entry.id, self.entry_repo.find_version(version_id).await?);
+            }
+        }
+        if src_entry.entry_type == EntryKind::File {
+            let version_id =
+                src_entry
+                    .current_version_id
+                    .as_ref()
+                    .ok_or_else(|| DomainError::Validation {
+                        message: "Source file has no version".to_string(),
+                    })?;
+            source_versions.insert(
+                src_entry.id,
+                self.entry_repo.find_version(version_id).await?,
+            );
+        }
+
+        let dst_exists = self
+            .entry_repo
+            .find_by_path(namespace_id, destination)
+            .await?
+            .is_some();
+        if dst_exists {
+            if !overwrite {
+                // Overwrite: F + 目标存在 → 412（臂按 overwrite 选码 ✗ Conflict 兜底）
+                return Err(DomainError::Conflict {
+                    message: "Destination already exists".to_string(),
+                });
+            }
+            // Overwrite: T（含 RFC 缺省 ✗ r10 真覆盖：删旧子树 = delete_entries 全链
+            // 自带 blob release 引用计数 ✓）→ 再建
+            self.delete_entries(
+                namespace_id,
+                std::slice::from_ref(destination),
+                message,
+                user_id,
+            )
+            .await?;
         }
         let source_index = CopySourceIndex {
             children: source_children,
             properties: source_properties,
+            versions: source_versions,
         };
         self.recursive_copy(
             namespace_id,
@@ -2467,14 +2496,11 @@ where
             }
         }
         if matches!(src_entry.entry_type, EntryKind::File) {
-            let vid =
-                src_entry
-                    .current_version_id
-                    .as_ref()
-                    .ok_or_else(|| DomainError::Validation {
-                        message: "Source file has no version".to_string(),
-                    })?;
-            let sv = self.entry_repo.find_version(vid).await?;
+            let sv = source_index.versions.get(&src_entry.id).ok_or_else(|| {
+                DomainError::Validation {
+                    message: "Source file has no version".to_string(),
+                }
+            })?;
             let nv = self
                 .entry_repo
                 .create_version(
