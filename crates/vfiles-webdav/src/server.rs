@@ -1611,19 +1611,57 @@ fn if_none_match_satisfied(value: &str, etag: Option<&str>, exists: bool) -> boo
 }
 
 fn any_entity_tag_match(value: &str, mut matches: impl FnMut(&str) -> bool) -> bool {
-    let mut start = 0;
-    let mut in_quotes = false;
-    for (index, byte) in value.bytes().enumerate() {
-        if byte == b'"' {
-            in_quotes = !in_quotes;
-        } else if byte == b',' && !in_quotes {
-            if matches(value[start..index].trim()) {
-                return true;
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    let mut matched = false;
+
+    loop {
+        while bytes
+            .get(index)
+            .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+        {
+            index += 1;
+        }
+        let start = index;
+        if bytes.get(index..index + 2) == Some(b"W/") {
+            index += 2;
+        }
+        if bytes.get(index) != Some(&b'"') {
+            return false;
+        }
+        index += 1;
+        while let Some(byte) = bytes.get(index) {
+            if *byte == b'"' {
+                break;
             }
-            start = index + 1;
+            if !matches!(*byte, 0x21 | 0x23..=0x7e | 0x80..=0xff) {
+                return false;
+            }
+            index += 1;
+        }
+        if bytes.get(index) != Some(&b'"') {
+            return false;
+        }
+        index += 1;
+        matched |= matches(&value[start..index]);
+
+        while bytes
+            .get(index)
+            .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+        {
+            index += 1;
+        }
+        if index == bytes.len() {
+            return matched;
+        }
+        if bytes.get(index) != Some(&b',') {
+            return false;
+        }
+        index += 1;
+        if index == bytes.len() {
+            return false;
         }
     }
-    matches(value[start..].trim())
 }
 
 fn modified_system_time(modified_at: time::OffsetDateTime) -> Option<std::time::SystemTime> {
@@ -1673,21 +1711,6 @@ fn conditional_response(
         builder = builder.header(header::LAST_MODIFIED, format_http_date(modified_at));
     }
     builder.body(Body::empty()).unwrap()
-}
-
-/// If-None-Match / If-Match 判定（r14 ✓ 纯函数单测）：`*` = 存在即真 /
-/// 逗号列表逐项去引号精确比 ✗ 无当前 etag = 条件假（简式安全向 = GET 不 304）。
-fn etag_satisfies(header: &str, etag: Option<&str>) -> bool {
-    let Some(et) = etag else {
-        return false;
-    };
-    let h = header.trim();
-    if h == "*" {
-        return true;
-    }
-    h.split(',')
-        .map(|s| s.trim())
-        .any(|part| part == et || part.trim_matches('"') == et.trim_matches('"'))
 }
 
 /// `Destination` 头 → 相对路径（纯函数 ✓ 单测覆盖）。
@@ -3154,26 +3177,55 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     .get("user-agent")
                     .and_then(|v| v.to_str().ok())
                     .map(str::to_string);
-                // r14 PUT If-Match（乐观并发 ✓ 无 = 不查 / `*` = 须已存在 / 精确须匹配
-                // ✗ 否则 412 RFC §10.3.2 简式）
-                if let Some(im) = req.headers().get("if-match").and_then(|v| v.to_str().ok()) {
-                    let put_rel = uri_owned.trim_start_matches('/');
-                    let cur = match (
-                        app_owned.as_ref(),
-                        ns_owned.as_ref(),
-                        vfiles_domain::types::NormalizedPath::new(put_rel),
-                    ) {
-                        (Some(app), Some(ns_e), Ok(path)) => app
-                            .entry_repo
-                            .find_by_path(ns_e, &path)
-                            .await
-                            .ok()
-                            .flatten()
-                            .and_then(|e| e.current_version_id)
-                            .map(|v| derive_etag(&v)),
-                        _ => None,
+                // If-Match uses strong comparison. Combine repeated field lines as an entity-tag
+                // list and preserve resource existence independently of whether it has an ETag.
+                let if_match_values = req
+                    .headers()
+                    .get_all(header::IF_MATCH)
+                    .iter()
+                    .map(|value| value.to_str().map(str::to_owned))
+                    .collect::<Result<Vec<_>, _>>();
+                let if_match_values = match if_match_values {
+                    Ok(values) => values,
+                    Err(error) => {
+                        tracing::warn!(%error, "WebDAV PUT received an invalid If-Match header");
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
+                };
+                if !if_match_values.is_empty() {
+                    let im = if_match_values.join(", ");
+                    let put_rel = uri_owned.trim_start_matches('/').trim_end_matches('/');
+                    let put_path = match vfiles_domain::types::NormalizedPath::new(put_rel) {
+                        Ok(path) => path,
+                        Err(_) => {
+                            return Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body(Body::empty())
+                                .unwrap();
+                        }
                     };
-                    if !etag_satisfies(im, cur.as_deref()) {
+                    let (exists, cur) = match (app_owned.as_ref(), ns_owned.as_ref()) {
+                        (Some(app), Some(ns_e)) => {
+                            match app.entry_repo.find_by_path(ns_e, &put_path).await {
+                                Ok(entry) => {
+                                    let cur = entry
+                                        .as_ref()
+                                        .and_then(|entry| entry.current_version_id.as_ref())
+                                        .map(derive_etag);
+                                    (entry.is_some(), cur)
+                                }
+                                Err(error) => {
+                                    tracing::error!(%error, path = %put_rel, "WebDAV PUT If-Match resource lookup failed");
+                                    return internal_error();
+                                }
+                            }
+                        }
+                        _ => return internal_error(),
+                    };
+                    if !if_match_satisfied(&im, cur.as_deref(), exists) {
                         return Response::builder()
                             .status(StatusCode::PRECONDITION_FAILED)
                             .body(Body::empty())
@@ -3650,16 +3702,27 @@ mod range_tests {
 
 #[cfg(test)]
 mod etag_tests {
-    use super::{derive_etag, etag_satisfies};
+    use super::{derive_etag, if_match_satisfied};
 
     #[test]
-    fn satisfies_star_list_and_exact() {
-        // r14 条件请求守护：* / 多值列表 / 引号裸值 / 未命中 / 无 etag 简式安全
-        assert!(etag_satisfies("*", Some("\"ab\"")));
-        assert!(etag_satisfies("\"ab\", \"cd\"", Some("\"ab\"")));
-        assert!(etag_satisfies("ab", Some("ab")));
-        assert!(!etag_satisfies("\"xy\"", Some("\"ab\"")));
-        assert!(!etag_satisfies("*", None));
+    fn if_match_uses_strong_entity_tag_comparison() {
+        let current = "\"ab\"";
+        assert!(if_match_satisfied("*", Some(current), true));
+        assert!(if_match_satisfied("\"xy\", \"ab\"", Some(current), true));
+        assert!(if_match_satisfied(
+            "\"tag,with,commas\", \"ab\"",
+            Some(current),
+            true
+        ));
+        assert!(!if_match_satisfied("W/\"ab\"", Some(current), true));
+        assert!(!if_match_satisfied("ab", Some(current), true));
+        assert!(!if_match_satisfied("\"xy\"", Some(current), true));
+        assert!(!if_match_satisfied(
+            "\"ab\", malformed",
+            Some(current),
+            true
+        ));
+        assert!(!if_match_satisfied("*", None, false));
     }
 
     #[test]

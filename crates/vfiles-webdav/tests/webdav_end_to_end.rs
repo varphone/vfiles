@@ -228,6 +228,42 @@ async fn options_advertises_and_propfind_needs_auth() {
         )
         .await
         .expect("create fixture version");
+    let conditional_path = NormalizedPath::new("conditional.txt").expect("conditional path");
+    let conditional_entry = entry_repo
+        .create_entry(
+            &namespace_id,
+            &conditional_path,
+            vfiles_domain::types::EntryKind::File,
+            &user.id,
+        )
+        .await
+        .expect("conditional fixture should be created");
+    let conditional_version = entry_repo
+        .create_version(
+            &conditional_entry,
+            None,
+            None,
+            0,
+            Some("text/plain"),
+            &user.id,
+            Some("If-Match fixture"),
+        )
+        .await
+        .expect("conditional fixture version should be created");
+    let conditional_etag = format!(
+        "\"{}\"",
+        conditional_version.id.to_string().replace('-', "")
+    );
+    let unversioned_path = NormalizedPath::new("unversioned.txt").expect("unversioned path");
+    entry_repo
+        .create_entry(
+            &namespace_id,
+            &unversioned_path,
+            vfiles_domain::types::EntryKind::File,
+            &user.id,
+        )
+        .await
+        .expect("unversioned fixture should be created");
     sqlx::query("UPDATE entry_versions SET created_at = ? WHERE id = ?")
         .bind("2030-01-02T03:04:05Z")
         .bind(persist_version.id.to_string())
@@ -1825,6 +1861,82 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .unwrap();
     assert_eq!(created_put.status(), 201);
+
+    let weak_if_match = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/conditional.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-match", format!("W/{conditional_etag}"))
+                .body(axum::body::Body::from("weak tag must not match"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(weak_if_match.status(), 412);
+
+    let bare_if_match = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/conditional.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-match", conditional_etag.trim_matches('"'))
+                .body(axum::body::Body::from("bare tag must not match"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bare_if_match.status(), 412);
+
+    let repeated_if_match = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/conditional.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-match", "W/\"different\"")
+                .header("if-match", &conditional_etag)
+                .body(axum::body::Body::from("repeated If-Match fields"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(repeated_if_match.status(), 200);
+
+    let unversioned_wildcard_if_match = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/unversioned.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-match", "*")
+                .body(axum::body::Body::from("wildcard checks existence"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unversioned_wildcard_if_match.status(), 200);
+
+    let missing_wildcard_if_match = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/missing-conditional.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-match", "*")
+                .body(axum::body::Body::from("missing resource must fail"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing_wildcard_if_match.status(), 412);
 
     let rejected_move = router
         .clone()
