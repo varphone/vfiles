@@ -1581,13 +1581,36 @@ async fn options_advertises_and_propfind_needs_auth() {
         )
         .await
         .unwrap();
-    assert_eq!(date_if_range.status(), 206);
+    // Recent Last-Modified values are weak date validators for If-Range.
+    assert_eq!(date_if_range.status(), 200);
     assert_eq!(
         axum::body::to_bytes(date_if_range.into_body(), usize::MAX)
             .await
             .unwrap()
             .as_ref(),
-        b"webd"
+        b"webdav range fixture"
+    );
+
+    let malformed_range = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("range", "bytes=0-x")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(malformed_range.status(), 200);
+    assert_eq!(
+        axum::body::to_bytes(malformed_range.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .as_ref(),
+        b"webdav range fixture"
     );
 
     // A separate WebDAV application instance sees the same SQLite-backed lock.

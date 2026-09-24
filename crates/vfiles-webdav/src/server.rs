@@ -2407,10 +2407,13 @@ fn parse_byte_range(header: &str, size: u64) -> ByteRange {
     if start >= size_i {
         return ByteRange::Unsatisfiable;
     }
+    if b.is_empty() {
+        return ByteRange::Satisfiable(start, size_i - 1); // bytes=a-
+    }
     match b.parse::<usize>() {
         Ok(end) if end >= start => ByteRange::Satisfiable(start, end.min(size_i - 1)),
         Ok(_) => ByteRange::Unsatisfiable,
-        Err(_) => ByteRange::Satisfiable(start, size_i - 1), // bytes=a-
+        Err(_) => ByteRange::NotApplicable,
     }
 }
 
@@ -2432,7 +2435,10 @@ fn if_range_allows_range(
     ) else {
         return false;
     };
-    modified <= date
+    modified == date
+        && std::time::SystemTime::now()
+            .duration_since(modified)
+            .is_ok_and(|age| age >= std::time::Duration::from_secs(60))
 }
 
 fn a_is_empty_n(suffix: &str) -> Option<usize> {
@@ -4027,6 +4033,14 @@ mod range_tests {
             parse_byte_range("digits", 1000),
             ByteRange::NotApplicable
         ));
+        assert!(matches!(
+            parse_byte_range("bytes=0-x", 1000),
+            ByteRange::NotApplicable
+        ));
+        assert!(matches!(
+            parse_byte_range("bytes=0-1 ", 1000),
+            ByteRange::NotApplicable
+        ));
         // 不可满足 → 416
         assert!(matches!(
             parse_byte_range("bytes=2000-", 1000),
@@ -4066,7 +4080,7 @@ mod range_tests {
             None,
             modified
         ));
-        assert!(if_range_allows_range(
+        assert!(!if_range_allows_range(
             Some("Tue, 13 Jan 1970 13:46:40 GMT"),
             None,
             modified
@@ -4076,6 +4090,14 @@ mod range_tests {
             Some("Tue, 13 Jan 1970 13:46:40 GMT"),
             None,
             None
+        ));
+
+        let recent = OffsetDateTime::now_utc() - time::Duration::seconds(30);
+        let recent_date = super::format_http_date(recent);
+        assert!(!if_range_allows_range(
+            Some(&recent_date),
+            None,
+            Some(recent)
         ));
     }
 }
