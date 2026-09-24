@@ -2830,6 +2830,31 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     return internal_error();
                 }
             };
+            if let Some((parent_rel, _)) = dest_hdr.rsplit_once('/') {
+                let parent = match vfiles_domain::types::NormalizedPath::new(parent_rel) {
+                    Ok(parent) => parent,
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
+                };
+                match app_ref.entry_repo.find_by_path(&ns, &parent).await {
+                    Ok(Some(entry))
+                        if entry.entry_type == vfiles_domain::types::EntryKind::Directory => {}
+                    Ok(_) => {
+                        return Response::builder()
+                            .status(StatusCode::CONFLICT)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, parent = %parent_rel, "COPY 目标父集合查询失败");
+                        return internal_error();
+                    }
+                }
+            }
             // Overwrite: F + 目标存在 → 412（RFC §9.3.3 ✗ r5 曾全 409 = 违背修正）
             if dst_existed && !overwrite {
                 return Response::builder()

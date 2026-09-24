@@ -375,6 +375,22 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(copy_collection_with_trailing_slash.status(), 201);
 
+    let copy_to_missing_parent = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("COPY")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("overwrite", "F")
+                .header("destination", "/missing-copy-parent/copied.txt")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(copy_to_missing_parent.status(), 409);
+
     let lock_response = router
         .clone()
         .oneshot(
