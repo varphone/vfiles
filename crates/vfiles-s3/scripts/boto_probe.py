@@ -144,6 +144,22 @@ def main():
         key: s3.get_object(Bucket="default", Key=key)["Body"].read()
         for key in identity_keys
     }
+    copied_plain_key = "boto-key-copy/from-trailing-slash"
+    copied_slash_key = "/boto-key-copy/to-leading-slash/"
+    s3.copy_object(
+        Bucket="default",
+        Key=copied_plain_key,
+        CopySource={"Bucket": "default", "Key": "boto-key-identity/a/"},
+    )
+    s3.copy_object(
+        Bucket="default",
+        Key=copied_slash_key,
+        CopySource={"Bucket": "default", "Key": "boto-key-identity/a"},
+    )
+    copy_reads = {
+        copied_plain_key: s3.get_object(Bucket="default", Key=copied_plain_key)["Body"].read(),
+        copied_slash_key: s3.get_object(Bucket="default", Key=copied_slash_key)["Body"].read(),
+    }
     identity_list = s3.list_objects_v2(
         Bucket="default", Prefix="boto-key-identity/"
     ).get("Contents", [])
@@ -158,15 +174,43 @@ def main():
     check(
         "boto preserves leading/trailing slash key identity and exact prefixes",
         identity_reads == identity_keys
+        and copy_reads == {
+            copied_plain_key: b"trailing-slash",
+            copied_slash_key: b"plain",
+        }
         and set(identity_keys).issubset(identity_all_keys)
         and identity_list_keys == ["boto-key-identity/a", "boto-key-identity/a/"]
         and [item["Key"] for item in identity_trailing] == ["boto-key-identity/a/"],
-        f"reads={identity_reads} all={identity_all_keys} list={identity_list_keys} "
+        f"reads={identity_reads} copies={copy_reads} all={identity_all_keys} list={identity_list_keys} "
         f"trailing={identity_trailing}",
+    )
+    multipart_identity_key = "boto-mpu-key-identity/a/"
+    multipart_identity_id = s3.create_multipart_upload(
+        Bucket="default", Key=multipart_identity_key
+    )["UploadId"]
+    multipart_identity_list = s3.list_multipart_uploads(
+        Bucket="default", Prefix="boto-mpu-key-identity/"
+    ).get("Uploads", [])
+    check(
+        "boto multipart list preserves the raw trailing-slash key",
+        any(
+            upload["Key"] == multipart_identity_key
+            and upload["UploadId"] == multipart_identity_id
+            for upload in multipart_identity_list
+        ),
+        multipart_identity_list,
+    )
+    s3.abort_multipart_upload(
+        Bucket="default", Key=multipart_identity_key, UploadId=multipart_identity_id
     )
     s3.delete_objects(
         Bucket="default",
-        Delete={"Objects": [{"Key": key} for key in identity_keys]},
+        Delete={
+            "Objects": [
+                {"Key": key}
+                for key in [*identity_keys, copied_plain_key, copied_slash_key]
+            ]
+        },
     )
 
     try:
