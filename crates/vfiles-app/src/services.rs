@@ -369,18 +369,6 @@ async fn collect_namespace_entries(
     Ok(entries)
 }
 
-async fn resolve_current_version_for_entry(
-    entry_repo: &(dyn EntryRepo + Send + Sync),
-    entry: &Entry,
-) -> DomainResult<Option<EntryVersion>> {
-    match (entry.entry_type, entry.current_version_id) {
-        (EntryKind::File, Some(version_id)) => {
-            Ok(Some(entry_repo.find_version(&version_id).await?))
-        }
-        _ => Ok(None),
-    }
-}
-
 fn snapshot_change_type(entry_kind: EntryKind, version: Option<&EntryVersion>) -> ChangeType {
     version
         .map(|value| value.change_type)
@@ -1388,10 +1376,6 @@ where
         }
     }
 
-    async fn version_for_entry(&self, entry: &Entry) -> DomainResult<Option<EntryVersion>> {
-        resolve_current_version_for_entry(&self.entry_repo, entry).await
-    }
-
     async fn resolve_requested_file_revision(
         &self,
         raw_commit: Option<&str>,
@@ -1527,12 +1511,30 @@ where
     ) -> DomainResult<Vec<(NormalizedPath, BlobId)>> {
         let scope_entries = self.collect_scoped_entries(namespace_id, path).await?;
 
+        let version_ids = scope_entries
+            .iter()
+            .filter(|entry| entry.entry_type == EntryKind::File)
+            .filter_map(|entry| entry.current_version_id)
+            .collect::<Vec<_>>();
+        let versions_by_id = self
+            .entry_repo
+            .find_versions(&version_ids)
+            .await?
+            .into_iter()
+            .map(|version| (version.id, version))
+            .collect::<HashMap<_, _>>();
+
         let mut files = Vec::new();
         for entry in scope_entries {
             if entry.entry_type != EntryKind::File {
                 continue;
             }
-            let Some(version) = self.version_for_entry(&entry).await? else {
+            let Some(version_id) = entry.current_version_id else {
+                continue;
+            };
+            let Some(version) = versions_by_id.get(&version_id) else {
+                // Preserve the repository's missing-version error if metadata is inconsistent.
+                self.entry_repo.find_version(&version_id).await?;
                 continue;
             };
             let Some(blob_id) = version.blob_id else {
