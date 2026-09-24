@@ -223,26 +223,26 @@ pub async fn run_import(deps: ImportDeps, options: ImportOptions) -> anyhow::Res
 }
 
 #[derive(Debug)]
-struct PlannedFile {
-    relative: String,
-    absolute: PathBuf,
+pub(crate) struct PlannedFile {
+    pub(crate) relative: String,
+    pub(crate) absolute: PathBuf,
 }
 
 #[derive(Debug)]
-struct PlannedDirectory {
-    relative: String,
+pub(crate) struct PlannedDirectory {
+    pub(crate) relative: String,
 }
 
 #[derive(Debug, Default)]
-struct ImportPlan {
-    files: Vec<PlannedFile>,
-    directories: Vec<PlannedDirectory>,
-    bytes: u64,
-    skipped_symlinks: u64,
+pub(crate) struct ImportPlan {
+    pub(crate) files: Vec<PlannedFile>,
+    pub(crate) directories: Vec<PlannedDirectory>,
+    pub(crate) bytes: u64,
+    pub(crate) skipped_symlinks: u64,
 }
 
 /// 递归收集待导入的文件与目录（目录按层级浅到深排序，便于先建目录）。
-fn collect_plan(source: &Path, include_hidden: bool) -> anyhow::Result<ImportPlan> {
+pub(crate) fn collect_plan(source: &Path, include_hidden: bool) -> anyhow::Result<ImportPlan> {
     let mut plan = ImportPlan::default();
     let mut stack = vec![(source.to_path_buf(), String::new())];
 
@@ -295,7 +295,10 @@ fn collect_plan(source: &Path, include_hidden: bool) -> anyhow::Result<ImportPla
     Ok(plan)
 }
 
-fn join_target(target: &NormalizedPath, relative: &str) -> anyhow::Result<NormalizedPath> {
+pub(crate) fn join_target(
+    target: &NormalizedPath,
+    relative: &str,
+) -> anyhow::Result<NormalizedPath> {
     let joined = if target.as_str().is_empty() {
         relative.to_string()
     } else {

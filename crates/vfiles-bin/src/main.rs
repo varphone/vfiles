@@ -51,7 +51,7 @@ enum Commands {
     Import(ImportArgs),
     /// List files and directories in a user's namespace
     Ls(NamespacePathArgs),
-    /// Copy a local file into a user's namespace
+    /// Copy a local file or directory into a user's namespace
     Ci(CopyIntoArgs),
     /// Copy a file or directory from a user's namespace to the local filesystem
     Co(CopyOutArgs),
@@ -73,16 +73,22 @@ struct NamespacePathArgs {
 
 #[derive(Debug, Args, Clone)]
 struct CopyIntoArgs {
-    source: PathBuf,
-    target: String,
+    /// Local path to copy into the namespace (a file or directory)
+    #[arg(value_name = "LOCAL_PATH")]
+    local_path: PathBuf,
+    #[arg(value_name = "NAMESPACE_PATH")]
+    namespace_path: String,
     #[arg(long)]
     owner: Option<String>,
 }
 
 #[derive(Debug, Args, Clone)]
 struct CopyOutArgs {
-    source: String,
-    target: PathBuf,
+    #[arg(value_name = "NAMESPACE_PATH")]
+    namespace_path: String,
+    /// Local path where the file or directory tree is copied
+    #[arg(value_name = "LOCAL_PATH")]
+    local_path: PathBuf,
     #[arg(long)]
     owner: Option<String>,
 }
@@ -321,8 +327,12 @@ async fn main() -> anyhow::Result<()> {
             run_import_command(args).await?;
         }
         Commands::Ls(args) => copy_cmd::run_ls(args.path, args.owner).await?,
-        Commands::Ci(args) => copy_cmd::run_ci(args.source, args.target, args.owner).await?,
-        Commands::Co(args) => copy_cmd::run_co(args.source, args.target, args.owner).await?,
+        Commands::Ci(args) => {
+            copy_cmd::run_ci(args.local_path, args.namespace_path, args.owner).await?
+        }
+        Commands::Co(args) => {
+            copy_cmd::run_co(args.namespace_path, args.local_path, args.owner).await?
+        }
         Commands::Check => {
             run_check().await?;
         }
