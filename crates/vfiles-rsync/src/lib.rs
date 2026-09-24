@@ -623,7 +623,30 @@ fn wildmatch(pattern: &str, text: &str) -> bool {
             match pattern[pattern_offset] {
                 b'*' => {
                     let double = pattern.get(pattern_offset + 1) == Some(&b'*');
-                    let rest = pattern_offset + if double { 2 } else { 1 };
+                    let has_double_star_slash =
+                        double && pattern.get(pattern_offset + 2) == Some(&b'/');
+                    let rest = pattern_offset
+                        + if has_double_star_slash {
+                            3
+                        } else if double {
+                            2
+                        } else {
+                            1
+                        };
+                    if has_double_star_slash {
+                        let mut offset = text_offset;
+                        let mut matched = m(pattern, text, rest, offset, memo);
+                        while !matched && offset < text.len() {
+                            if text[offset] == b'/' {
+                                offset += 1;
+                                matched = m(pattern, text, rest, offset, memo);
+                            } else {
+                                offset += 1;
+                            }
+                        }
+                        memo.insert((pattern_offset, text_offset), matched);
+                        return matched;
+                    }
                     let mut offset = text_offset;
                     loop {
                         if m(pattern, text, rest, offset, memo) {
@@ -4169,6 +4192,10 @@ mod tests {
         assert!(wildmatch("sub/*.tmp", "sub/a.tmp"));
         assert!(!wildmatch("sub/*.tmp", "sub/deep/a.tmp"), "* 不跨 /");
         assert!(wildmatch("sub/**/*.tmp", "sub/deep/a.tmp"), "** 跨 /");
+        assert!(wildmatch("**/target", "target"), "**/ 可匹配零层目录");
+        assert!(wildmatch("**/target", "a/target"));
+        assert!(!wildmatch("**/target", "foottarget"));
+        assert!(wildmatch("sub/**/*.tmp", "sub/a.tmp"));
         assert!(wildmatch("a?c", "abc"));
         assert!(wildmatch("[ab]c", "bc"));
         assert!(wildmatch("[!a]c", "bc"));
