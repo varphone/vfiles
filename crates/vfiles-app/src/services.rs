@@ -712,6 +712,8 @@ impl Clone for HealthService {
 pub struct BlobPurgeReport {
     pub removed: u64,
     pub freed_bytes: u64,
+    pub removed_upload_temps: u64,
+    pub freed_upload_temp_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -727,6 +729,8 @@ pub struct MaintenanceRunReport {
     pub released_blobs: u64,
     pub purged_blobs: u64,
     pub freed_bytes: u64,
+    pub removed_upload_temps: u64,
+    pub freed_upload_temp_bytes: u64,
 }
 
 /// 维护任务：清理没有任何版本或快照引用、且已过保护期的 blob，以及裁剪历史快照。
@@ -776,6 +780,8 @@ where
             released_blobs: prune.released_blobs,
             purged_blobs: purge.removed,
             freed_bytes: purge.freed_bytes,
+            removed_upload_temps: purge.removed_upload_temps,
+            freed_upload_temp_bytes: purge.freed_upload_temp_bytes,
         })
     }
 
@@ -864,6 +870,11 @@ where
             known_blobs.iter().map(|blob| blob.id).collect();
 
         let mut report = BlobPurgeReport::default();
+
+        let (removed_upload_temps, freed_upload_temp_bytes) =
+            self.blob_store.purge_stale_upload_temps(cutoff).await?;
+        report.removed_upload_temps = removed_upload_temps;
+        report.freed_upload_temp_bytes = freed_upload_temp_bytes;
 
         // 1) 有元数据行但无任何引用（异常/崩溃残留）。
         for blob in &known_blobs {
@@ -6599,6 +6610,25 @@ mod maintenance_tests {
             .await
             .expect("blob should store");
 
+        let upload_temp_dir = root.join("blobs").join("tmp");
+        tokio::fs::create_dir_all(&upload_temp_dir)
+            .await
+            .expect("upload temp directory should be created");
+        let abandoned_upload_temp =
+            upload_temp_dir.join(format!("blob-upload-{}.tmp", uuid::Uuid::new_v4()));
+        tokio::fs::write(&abandoned_upload_temp, b"abandoned upload")
+            .await
+            .expect("abandoned upload temp should be written");
+        let fresh_upload_temp =
+            upload_temp_dir.join(format!("blob-upload-{}.tmp", uuid::Uuid::new_v4()));
+        tokio::fs::write(&fresh_upload_temp, b"active upload")
+            .await
+            .expect("fresh upload temp should be written");
+        backdate_file(
+            &abandoned_upload_temp,
+            time::OffsetDateTime::now_utc() - time::Duration::hours(2),
+        );
+
         // 模拟服务进程重启：清理器只依赖持久化 SQLite 与 blob 目录识别孤儿。
         pool.close().await;
         let reopened_pool = SqlitePoolFactory::connect(root.join("vfiles.db").as_path())
@@ -6629,7 +6659,20 @@ mod maintenance_tests {
 
         assert_eq!(report.removed, 1);
         assert!(report.freed_bytes > 0);
+        assert_eq!(report.removed_upload_temps, 1);
+        assert_eq!(
+            report.freed_upload_temp_bytes,
+            b"abandoned upload".len() as u64
+        );
         assert!(!orphan_path.exists(), "orphan file should be removed");
+        assert!(
+            !abandoned_upload_temp.exists(),
+            "abandoned upload temp should be removed"
+        );
+        assert!(
+            fresh_upload_temp.exists(),
+            "fresh upload temp should be retained"
+        );
         assert!(
             reopened_blob_store
                 .get_blob_metadata(&referenced_id)

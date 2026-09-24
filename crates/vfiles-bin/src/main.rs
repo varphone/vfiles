@@ -1029,12 +1029,17 @@ async fn run_gc_blobs(args: GcBlobsArgs) -> anyhow::Result<()> {
     let report = service.purge_orphan_blobs(args.grace_seconds).await?;
 
     println!(
-        "Purged {} orphaned blob(s), freed {} bytes",
-        report.removed, report.freed_bytes
+        "Purged {} orphaned blob(s), freed {} bytes; removed {} stale upload temp file(s), freed {} bytes",
+        report.removed,
+        report.freed_bytes,
+        report.removed_upload_temps,
+        report.freed_upload_temp_bytes
     );
     tracing::info!(
         removed = report.removed,
         freed_bytes = report.freed_bytes,
+        removed_upload_temps = report.removed_upload_temps,
+        freed_upload_temp_bytes = report.freed_upload_temp_bytes,
         "Blob garbage collection finished"
     );
 
@@ -1067,14 +1072,21 @@ async fn run_prune_snapshots(args: PruneSnapshotsArgs) -> anyhow::Result<()> {
     let purge = service.purge_orphan_blobs(args.grace_seconds).await?;
 
     println!(
-        "Pruned {} snapshot(s), released {} blob(s); purged {} orphaned blob(s), freed {} bytes",
-        report.pruned_snapshots, report.released_blobs, purge.removed, purge.freed_bytes
+        "Pruned {} snapshot(s), released {} blob(s); purged {} orphaned blob(s), freed {} bytes; removed {} stale upload temp file(s), freed {} bytes",
+        report.pruned_snapshots,
+        report.released_blobs,
+        purge.removed,
+        purge.freed_bytes,
+        purge.removed_upload_temps,
+        purge.freed_upload_temp_bytes
     );
     tracing::info!(
         pruned_snapshots = report.pruned_snapshots,
         released_blobs = report.released_blobs,
         purged_blobs = purge.removed,
         freed_bytes = purge.freed_bytes,
+        removed_upload_temps = purge.removed_upload_temps,
+        freed_upload_temp_bytes = purge.freed_upload_temp_bytes,
         "Snapshot pruning finished"
     );
 
@@ -1663,6 +1675,8 @@ async fn run_maintenance_tick(service: &Maintenance, schedule: &MaintenanceSched
                 released_blobs = report.released_blobs,
                 purged_blobs = report.purged_blobs,
                 freed_bytes = report.freed_bytes,
+                removed_upload_temps = report.removed_upload_temps,
+                freed_upload_temp_bytes = report.freed_upload_temp_bytes,
                 "Periodic maintenance finished"
             );
         }

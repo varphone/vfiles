@@ -1083,6 +1083,11 @@ pub trait BlobStore {
     async fn list_stored_blob_files(
         &self,
     ) -> DomainResult<Vec<(BlobId, time::OffsetDateTime, u64)>>;
+    /// Remove abandoned streaming-upload temp files older than the given cutoff.
+    async fn purge_stale_upload_temps(
+        &self,
+        cutoff: time::OffsetDateTime,
+    ) -> DomainResult<(u64, u64)>;
 }
 
 #[async_trait::async_trait]

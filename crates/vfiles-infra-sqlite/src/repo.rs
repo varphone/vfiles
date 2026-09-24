@@ -7041,6 +7041,79 @@ impl BlobStore for FsBlobStore {
 
         Ok(files)
     }
+
+    async fn purge_stale_upload_temps(
+        &self,
+        cutoff: time::OffsetDateTime,
+    ) -> DomainResult<(u64, u64)> {
+        let temp_dir = self.base_path.join("tmp");
+        let mut entries = match fs::read_dir(&temp_dir).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((0, 0)),
+            Err(error) => {
+                return Err(DomainError::Internal {
+                    message: format!("Failed to read blob temp directory: {error}"),
+                });
+            }
+        };
+
+        let mut removed = 0_u64;
+        let mut freed_bytes = 0_u64;
+        while let Some(entry) =
+            entries
+                .next_entry()
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to read blob temp directory entry: {error}"),
+                })?
+        {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(upload_id) = name
+                .strip_prefix("blob-upload-")
+                .and_then(|name| name.strip_suffix(".tmp"))
+            else {
+                continue;
+            };
+            if uuid::Uuid::parse_str(upload_id).is_err() {
+                continue;
+            }
+
+            let metadata = match fs::symlink_metadata(entry.path()).await {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(DomainError::Internal {
+                        message: format!("Failed to inspect blob temp file: {error}"),
+                    });
+                }
+            };
+            if !metadata.is_file() {
+                continue;
+            }
+            let modified = metadata
+                .modified()
+                .map(time::OffsetDateTime::from)
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+            if modified >= cutoff {
+                continue;
+            }
+
+            match fs::remove_file(entry.path()).await {
+                Ok(()) => {
+                    removed += 1;
+                    freed_bytes += metadata.len();
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(DomainError::Internal {
+                        message: format!("Failed to remove stale blob temp file: {error}"),
+                    });
+                }
+            }
+        }
+
+        Ok((removed, freed_bytes))
+    }
 }
 
 #[derive(Debug)]
@@ -9069,6 +9142,63 @@ mod blob_stream_tests {
             leftovers.is_empty(),
             "中断后不应残留临时文件，实际: {leftovers:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn purge_stale_upload_temps_removes_only_upload_temp_files_before_cutoff() {
+        let storage_root = Utf8PathBuf::from_path_buf(
+            std::env::temp_dir().join(format!("vfiles-blob-temp-gc-{}", uuid::Uuid::new_v4())),
+        )
+        .expect("temp path should be valid utf-8");
+        let temp_dir = storage_root.join("blobs").join("tmp");
+        tokio::fs::create_dir_all(&temp_dir)
+            .await
+            .expect("temp dir should be created");
+        let pool = SqlitePoolFactory::connect(storage_root.join("vfiles.db").as_path())
+            .await
+            .expect("pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should succeed");
+        let store = FsBlobStore::new(pool, storage_root.join("blobs"));
+
+        let abandoned = temp_dir.join(format!("blob-upload-{}.tmp", uuid::Uuid::new_v4()));
+        let recent = temp_dir.join(format!("blob-upload-{}.tmp", uuid::Uuid::new_v4()));
+        tokio::fs::write(&abandoned, b"abandoned")
+            .await
+            .expect("abandoned upload temp should be written");
+        tokio::fs::write(&recent, b"active")
+            .await
+            .expect("active upload temp should be written");
+        tokio::fs::write(temp_dir.join("blob-upload-not-a-uuid.tmp"), b"preserve")
+            .await
+            .expect("unrecognized upload temp should be written");
+        tokio::fs::write(temp_dir.join("unrelated.tmp"), b"keep")
+            .await
+            .expect("unrelated temp should be written");
+
+        let recent_cutoff = time::OffsetDateTime::now_utc() - time::Duration::seconds(60);
+        assert_eq!(
+            store
+                .purge_stale_upload_temps(recent_cutoff)
+                .await
+                .expect("recent upload temps should be retained"),
+            (0, 0)
+        );
+
+        let (removed, freed_bytes) = store
+            .purge_stale_upload_temps(time::OffsetDateTime::now_utc() + time::Duration::seconds(1))
+            .await
+            .expect("stale upload temps should be purged");
+
+        assert_eq!(removed, 2);
+        assert_eq!(freed_bytes, 15);
+        assert!(!abandoned.exists());
+        assert!(!recent.exists());
+        assert!(temp_dir.join("blob-upload-not-a-uuid.tmp").exists());
+        assert!(temp_dir.join("unrelated.tmp").exists());
+
+        let _ = tokio::fs::remove_dir_all(&storage_root).await;
     }
 }
 
