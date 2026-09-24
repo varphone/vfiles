@@ -3195,8 +3195,12 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                             .unwrap();
                     }
                 };
-                if !if_match_values.is_empty() {
-                    let im = if_match_values.join(", ");
+                let if_unmodified_since = single_header_value(&req, &header::IF_UNMODIFIED_SINCE);
+                let if_none_match = joined_header_values(&req, &header::IF_NONE_MATCH);
+                if !if_match_values.is_empty()
+                    || if_unmodified_since.is_some()
+                    || if_none_match.is_some()
+                {
                     let put_rel = uri_owned.trim_start_matches('/').trim_end_matches('/');
                     let put_path = match vfiles_domain::types::NormalizedPath::new(put_rel) {
                         Ok(path) => path,
@@ -3207,15 +3211,33 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                                 .unwrap();
                         }
                     };
-                    let (exists, cur) = match (app_owned.as_ref(), ns_owned.as_ref()) {
+                    let (exists, cur, modified_at) = match (app_owned.as_ref(), ns_owned.as_ref()) {
                         (Some(app), Some(ns_e)) => {
                             match app.entry_repo.find_by_path(ns_e, &put_path).await {
                                 Ok(entry) => {
-                                    let cur = entry
+                                    let exists = entry.is_some();
+                                    let mut cur = None;
+                                    let mut modified_at =
+                                        entry.as_ref().map(|entry| entry.created_at);
+                                    if let Some(version_id) = entry
                                         .as_ref()
                                         .and_then(|entry| entry.current_version_id.as_ref())
-                                        .map(derive_etag);
-                                    (entry.is_some(), cur)
+                                    {
+                                        let version = match app
+                                            .entry_repo
+                                            .find_version(version_id)
+                                            .await
+                                        {
+                                            Ok(version) => version,
+                                            Err(error) => {
+                                                tracing::error!(%error, path = %put_rel, "WebDAV PUT conditional validator lookup failed");
+                                                return internal_error();
+                                            }
+                                        };
+                                        cur = Some(derive_etag(version_id));
+                                        modified_at = Some(version.created_at);
+                                    }
+                                    (exists, cur, modified_at)
                                 }
                                 Err(error) => {
                                     tracing::error!(%error, path = %put_rel, "WebDAV PUT If-Match resource lookup failed");
@@ -3225,7 +3247,22 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                         }
                         _ => return internal_error(),
                     };
-                    if !if_match_satisfied(&im, cur.as_deref(), exists) {
+                    let failed = (!if_match_values.is_empty()
+                        && !if_match_satisfied(
+                            &if_match_values.join(", "),
+                            cur.as_deref(),
+                            exists,
+                        ))
+                        || (if_match_values.is_empty()
+                            && if_unmodified_since.as_deref().is_some_and(|condition| {
+                                modified_at.is_some_and(|modified| {
+                                    if_unmodified_since_failed(condition, modified)
+                                })
+                            }))
+                        || if_none_match.as_deref().is_some_and(|condition| {
+                            if_none_match_satisfied(condition, cur.as_deref(), exists)
+                        });
+                    if failed {
                         return Response::builder()
                             .status(StatusCode::PRECONDITION_FAILED)
                             .body(Body::empty())

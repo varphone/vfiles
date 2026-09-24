@@ -1892,6 +1892,86 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(bare_if_match.status(), 412);
 
+    let stale_if_unmodified_since = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/conditional.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-unmodified-since", "Thu, 01 Jan 1970 00:00:00 GMT")
+                .body(axum::body::Body::from("stale date must not overwrite"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale_if_unmodified_since.status(), 412);
+
+    let future_if_unmodified_since = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/conditional.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-unmodified-since", "Thu, 01 Jan 9999 00:00:00 GMT")
+                .body(axum::body::Body::from("fresh date permits overwrite"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(future_if_unmodified_since.status(), 200);
+
+    let matching_if_none_match = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/conditional.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-none-match", format!("W/{conditional_etag}"))
+                .body(axum::body::Body::from(
+                    "matching weak tag must not overwrite",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(matching_if_none_match.status(), 412);
+
+    let nonmatching_if_none_match = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/conditional.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-none-match", "\"different\"")
+                .body(axum::body::Body::from("nonmatching tag permits overwrite"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(nonmatching_if_none_match.status(), 200);
+
+    let if_match_takes_precedence_over_date = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/conditional.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if-match", &conditional_etag)
+                .header("if-unmodified-since", "Thu, 01 Jan 1970 00:00:00 GMT")
+                .body(axum::body::Body::from(
+                    "If-Match takes precedence over date",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(if_match_takes_precedence_over_date.status(), 200);
+
     let repeated_if_match = router
         .clone()
         .oneshot(
