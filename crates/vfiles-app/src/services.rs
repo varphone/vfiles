@@ -3907,40 +3907,17 @@ where
             });
         }
 
-        let versions = self
+        let page = self
             .entry_repo
-            .get_entry_history(&entry.id, u32::MAX, None)
+            .get_entry_history_page(&entry.id, limit, cursor)
             .await?;
-
-        let start_index = if let Some(cursor) = cursor {
-            let cursor_id =
-                VersionId::from_string(cursor).map_err(|_| DomainError::Validation {
-                    message: "Invalid history cursor".to_string(),
-                })?;
-            versions
-                .iter()
-                .position(|version| version.id == cursor_id)
-                .map(|index| index + 1)
-                .ok_or_else(|| DomainError::Validation {
-                    message: "Unknown history cursor".to_string(),
-                })?
-        } else {
-            0
-        };
-
-        let effective_limit = limit.max(1) as usize;
-        let page_versions = versions
-            .iter()
-            .skip(start_index)
-            .take(effective_limit)
-            .cloned()
-            .collect::<Vec<_>>();
+        let page_versions = page.versions;
         let actor_ids = page_versions
             .iter()
             .map(|version| version.created_by)
             .collect::<Vec<_>>();
         let actor_names = self.resolve_actor_names(actor_ids).await;
-        let next_cursor = if start_index + page_versions.len() < versions.len() {
+        let next_cursor = if page.has_more {
             page_versions.last().map(|version| version.id.to_string())
         } else {
             None
@@ -3971,7 +3948,7 @@ where
                 })
                 .collect(),
             next_cursor,
-            total_items: versions.len(),
+            total_items: usize::try_from(page.total).unwrap_or(usize::MAX),
         })
     }
 
@@ -5076,6 +5053,33 @@ mod tests {
         assert_eq!(history.items.len(), 2);
         assert!(history.items[0].is_current);
         assert_eq!(history.items[0].message.as_deref(), Some("second version"));
+
+        let first_history_page = context
+            .history_service
+            .entry_history(&context.namespace_id, &file_path, None, 1)
+            .await
+            .expect("first history page should load");
+        assert_eq!(first_history_page.total_items, 2);
+        assert_eq!(first_history_page.items.len(), 1);
+        assert_eq!(first_history_page.items[0].version_id, second.version.id);
+        assert_eq!(
+            first_history_page.next_cursor.as_deref(),
+            Some(second.version.id.to_string().as_str())
+        );
+        let older_history_page = context
+            .history_service
+            .entry_history(
+                &context.namespace_id,
+                &file_path,
+                first_history_page.next_cursor.as_deref(),
+                1,
+            )
+            .await
+            .expect("older history page should load");
+        assert_eq!(older_history_page.total_items, 2);
+        assert_eq!(older_history_page.items.len(), 1);
+        assert_eq!(older_history_page.items[0].version_id, first.version.id);
+        assert!(older_history_page.next_cursor.is_none());
 
         let diff = context
             .history_service

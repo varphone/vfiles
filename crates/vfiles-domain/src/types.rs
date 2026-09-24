@@ -192,6 +192,13 @@ pub struct EntryVersion {
     pub source_upload_id: Option<UploadId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryVersionPage {
+    pub versions: Vec<EntryVersion>,
+    pub total: u64,
+    pub has_more: bool,
+}
+
 /// A fully prepared entry to insert during an atomic subtree copy.
 #[derive(Debug, Clone)]
 pub struct CopyEntrySpec {

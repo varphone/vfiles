@@ -4582,6 +4582,77 @@ impl EntryRepo for SqliteEntryRepo {
         rows.into_iter().map(parse_entry_version_row).collect()
     }
 
+    async fn get_entry_history_page(
+        &self,
+        entry_id: &EntryId,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> DomainResult<EntryVersionPage> {
+        let total: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM entry_versions WHERE entry_id = ?")
+                .bind(entry_id.to_string())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to count entry history: {error}"),
+                })?;
+        let cursor_version = if let Some(cursor) = cursor {
+            let cursor_id =
+                VersionId::from_string(cursor).map_err(|_| DomainError::Validation {
+                    message: "Invalid history cursor".to_string(),
+                })?;
+            let version: Option<i64> = sqlx::query_scalar(
+                "SELECT version FROM entry_versions WHERE entry_id = ? AND id = ?",
+            )
+            .bind(entry_id.to_string())
+            .bind(cursor_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to resolve entry history cursor: {error}"),
+            })?;
+            Some(version.ok_or_else(|| DomainError::Validation {
+                message: "Unknown history cursor".to_string(),
+            })?)
+        } else {
+            None
+        };
+
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            r#"SELECT ev.id, ev.entry_id, ev.version, ev.blob_id, ev.size,
+                      ev.content_type, b.content_hash, ev.created_at, ev.created_by, ev.message
+               FROM entry_versions ev
+               LEFT JOIN blobs b ON b.id = ev.blob_id
+               WHERE ev.entry_id = "#,
+        );
+        query.push_bind(entry_id.to_string());
+        if let Some(version) = cursor_version {
+            query.push(" AND ev.version < ").push_bind(version);
+        }
+        query
+            .push(" ORDER BY ev.version DESC LIMIT ")
+            .push_bind(i64::from(limit.max(1).saturating_add(1)));
+        let rows: Vec<EntryVersionRow> = query
+            .build_query_as()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to page entry history: {error}"),
+            })?;
+        let mut versions = rows
+            .into_iter()
+            .map(parse_entry_version_row)
+            .collect::<DomainResult<Vec<_>>>()?;
+        let page_limit = limit.max(1) as usize;
+        let has_more = versions.len() > page_limit;
+        versions.truncate(page_limit);
+        Ok(EntryVersionPage {
+            versions,
+            total: total as u64,
+            has_more,
+        })
+    }
+
     async fn find_version(&self, version_id: &VersionId) -> DomainResult<EntryVersion> {
         let row: EntryVersionRow = sqlx::query_as(
             r#"

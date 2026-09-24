@@ -659,6 +659,43 @@ pub trait EntryRepo {
         limit: u32,
         cursor: Option<&str>,
     ) -> DomainResult<Vec<EntryVersion>>;
+    /// Read a bounded history page and report the full entry version count.
+    async fn get_entry_history_page(
+        &self,
+        entry_id: &EntryId,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> DomainResult<EntryVersionPage> {
+        let versions = self.get_entry_history(entry_id, u32::MAX, None).await?;
+        let total = versions.len() as u64;
+        let start = if let Some(cursor) = cursor {
+            let cursor = VersionId::from_string(cursor).map_err(|_| DomainError::Validation {
+                message: "Invalid history cursor".to_string(),
+            })?;
+            versions
+                .iter()
+                .position(|version| version.id == cursor)
+                .map(|index| index + 1)
+                .ok_or_else(|| DomainError::Validation {
+                    message: "Unknown history cursor".to_string(),
+                })?
+        } else {
+            0
+        };
+        let page_limit = limit.max(1) as usize;
+        let mut versions = versions
+            .into_iter()
+            .skip(start)
+            .take(page_limit.saturating_add(1))
+            .collect::<Vec<_>>();
+        let has_more = versions.len() > page_limit;
+        versions.truncate(page_limit);
+        Ok(EntryVersionPage {
+            total,
+            versions,
+            has_more,
+        })
+    }
     async fn find_version(&self, version_id: &VersionId) -> DomainResult<EntryVersion>;
     /// 删除单个版本（S3 `DeleteObject ?versionId=` ✗ 桩默认返回 false = 拒绝）。
     async fn delete_version(&self, _version_id: &VersionId) -> DomainResult<bool> {
