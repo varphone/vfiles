@@ -4012,15 +4012,10 @@ where
             });
         }
 
-        let versions = self
-            .entry_repo
-            .get_entry_history(&entry.id, u32::MAX, None)
-            .await?;
-        let current_index = versions
-            .iter()
-            .position(|version| version.id == *commit)
-            .ok_or(DomainError::VersionNotFound)?;
-        let current = versions[current_index].clone();
+        let current = self.entry_repo.find_version(commit).await?;
+        if current.entry_id != entry.id {
+            return Err(DomainError::VersionNotFound);
+        }
 
         if !is_text_mime_type(current.mime_type.as_deref()) {
             return Err(DomainError::Validation {
@@ -4029,15 +4024,18 @@ where
         }
 
         let previous = if let Some(parent) = parent {
-            Some(
-                versions
-                    .iter()
-                    .find(|version| version.id == *parent)
-                    .cloned()
-                    .ok_or(DomainError::VersionNotFound)?,
-            )
+            let version = self.entry_repo.find_version(parent).await?;
+            if version.entry_id != entry.id {
+                return Err(DomainError::VersionNotFound);
+            }
+            Some(version)
         } else {
-            versions.get(current_index + 1).cloned()
+            self.entry_repo
+                .get_entry_history_page(&entry.id, 1, Some(&commit.to_string()))
+                .await?
+                .versions
+                .into_iter()
+                .next()
         };
 
         let current_blob = current.blob_id.ok_or_else(|| DomainError::NotFound {
@@ -5088,6 +5086,13 @@ mod tests {
             .expect("diff should load");
         assert!(diff.contains("hello from version one"));
         assert!(diff.contains("hello from version two"));
+        let first_version_diff = context
+            .history_service
+            .diff_entry(&context.namespace_id, &file_path, &first.version.id, None)
+            .await
+            .expect("first version diff should load");
+        assert!(first_version_diff.contains("hello from version one"));
+        assert!(!first_version_diff.contains("hello from version two"));
 
         context
             .history_service
