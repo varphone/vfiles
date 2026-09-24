@@ -16,6 +16,7 @@ roxmltree = "0.21.1"
 time.workspace = true
 tokio.workspace = true
 tokio-util = { workspace = true, features = ["io"] }
+tempfile.workspace = true
 uuid.workspace = true
 tower.workspace = true
 tracing.workspace = true

@@ -9,6 +9,7 @@ use axum::{
     response::Response,
 };
 use http_body::Body as _;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 const MAX_DAV_XML_BODY_BYTES: usize = 1024 * 1024;
 
@@ -2271,7 +2272,8 @@ async fn propfind_owned(
     depth: String,
     body_owned: String,
     user_owned: Option<vfiles_domain::types::User>,
-) -> Result<String, StatusCode> {
+    response_file: &mut tokio::fs::File,
+) -> Result<(), StatusCode> {
     let app = app.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let ns = ns.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let depth = depth.trim();
@@ -2425,11 +2427,20 @@ async fn propfind_owned(
             },
         });
     }
-    let mut xml = String::from(
-        r#"<?xml version="1.0" encoding="utf-8"?>
-<D:multistatus xmlns:D="DAV:">"#,
-    );
-    xml.push_str(&crate::response::multistatus_fragment(&items, &mode));
+    response_file
+        .write_all(b"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:multistatus xmlns:D=\"DAV:\">")
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "WebDAV PROPFIND 临时响应写入失败");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    response_file
+        .write_all(crate::response::multistatus_fragment(&items, &mode).as_bytes())
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "WebDAV PROPFIND 临时响应写入失败");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     if depth != "0" {
         const PAGE_SIZE: u32 = 256;
         let mut after_path: Option<String> = None;
@@ -2602,14 +2613,30 @@ async fn propfind_owned(
                     active_lock: child_locks.remove(child_rel).unwrap_or_default(),
                 });
             }
-            xml.push_str(&crate::response::multistatus_fragment(&page_items, &mode));
+            response_file
+                .write_all(crate::response::multistatus_fragment(&page_items, &mode).as_bytes())
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, "WebDAV PROPFIND 临时响应写入失败");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
             if !has_more {
                 break;
             }
         }
     }
-    xml.push_str("\n</D:multistatus>");
-    Ok(xml)
+    response_file
+        .write_all(b"\n</D:multistatus>")
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "WebDAV PROPFIND 临时响应写入失败");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    response_file.flush().await.map_err(|error| {
+        tracing::error!(%error, "WebDAV PROPFIND 临时响应刷新失败");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(())
 }
 
 async fn active_lock_prop(
@@ -2947,6 +2974,16 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     }
                 }
             };
+            let mut response_file = match tempfile::tempfile() {
+                Ok(file) => tokio::fs::File::from_std(file),
+                Err(error) => {
+                    tracing::error!(%error, "WebDAV PROPFIND 临时响应文件创建失败");
+                    return Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            };
             match propfind_owned(
                 app,
                 ns_owned,
@@ -2956,14 +2993,26 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 req.extensions()
                     .get::<vfiles_domain::types::User>()
                     .cloned(),
+                &mut response_file,
             )
             .await
             {
-                Ok(xml) => Response::builder()
-                    .status(StatusCode::MULTI_STATUS)
-                    .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
-                    .body(Body::from(xml))
-                    .unwrap(),
+                Ok(()) => {
+                    if let Err(error) = response_file.seek(std::io::SeekFrom::Start(0)).await {
+                        tracing::error!(%error, "WebDAV PROPFIND 临时响应回卷失败");
+                        return Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
+                    Response::builder()
+                        .status(StatusCode::MULTI_STATUS)
+                        .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+                        .body(Body::from_stream(tokio_util::io::ReaderStream::new(
+                            response_file,
+                        )))
+                        .unwrap()
+                }
                 Err(status) => Response::builder()
                     .status(status)
                     .body(Body::empty())

@@ -512,6 +512,37 @@ async fn options_advertises_and_propfind_needs_auth() {
         2
     );
 
+    let paged_depth_infinity = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/depth-dir")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "infinity")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propfind xmlns:D="DAV:"><D:prop><D:getcontentlength/></D:prop></D:propfind>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(paged_depth_infinity.status(), 207);
+    let paged_depth_infinity_xml = String::from_utf8(
+        axum::body::to_bytes(paged_depth_infinity.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert_eq!(
+        paged_depth_infinity_xml.matches("<D:response>").count(),
+        1043
+    );
+    assert!(paged_depth_infinity_xml.contains("/depth-dir/child-0519/"));
+    assert!(paged_depth_infinity_xml.contains("/depth-dir/file-0519.txt"));
+
     let allprop_with_include = router
         .clone()
         .oneshot(
