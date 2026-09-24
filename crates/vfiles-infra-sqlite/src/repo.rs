@@ -3701,6 +3701,118 @@ impl EntryRepo for SqliteEntryRepo {
         rows.into_iter().map(parse_entry_row).collect()
     }
 
+    async fn find_subtree_with_meta(
+        &self,
+        namespace_id: &NamespaceId,
+        root_path: &NormalizedPath,
+    ) -> DomainResult<Vec<vfiles_domain::types::EntryChildMeta>> {
+        let root = root_path.as_str().trim_end_matches('/');
+        let lower = format!("{root}/");
+        let upper = format!("{root}0");
+        let rows: Vec<EntryChildMetaRow> = if root.is_empty() {
+            sqlx::query_as(
+                r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id FROM entry_versions ev
+                    WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1
+                ) AS current_version_id,
+                (
+                    SELECT ev.size FROM entry_versions ev
+                    WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1
+                ) AS size_bytes,
+                (
+                    SELECT ev.content_type FROM entry_versions ev
+                    WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1
+                ) AS mime_type,
+                COALESCE((
+                    SELECT ev.source_mtime FROM entry_versions ev
+                    WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1
+                ), e.source_mtime) AS source_mtime
+            FROM entries e
+            WHERE e.namespace_id = ?
+            ORDER BY e.path
+            "#,
+            )
+            .bind(namespace_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+        } else {
+            sqlx::query_as(
+                r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id FROM entry_versions ev
+                    WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1
+                ) AS current_version_id,
+                (
+                    SELECT ev.size FROM entry_versions ev
+                    WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1
+                ) AS size_bytes,
+                (
+                    SELECT ev.content_type FROM entry_versions ev
+                    WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1
+                ) AS mime_type,
+                COALESCE((
+                    SELECT ev.source_mtime FROM entry_versions ev
+                    WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1
+                ), e.source_mtime) AS source_mtime
+            FROM entries e
+            WHERE e.namespace_id = ?
+              AND (e.path = ? OR (e.path >= ? AND e.path < ?))
+            ORDER BY e.path
+            "#,
+            )
+            .bind(namespace_id.to_string())
+            .bind(root)
+            .bind(lower)
+            .bind(upper)
+            .fetch_all(&self.pool)
+            .await
+        }
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to find subtree with metadata: {error}"),
+        })?;
+
+        rows.into_iter()
+            .map(
+                |(
+                    id,
+                    ns,
+                    entry_path,
+                    kind,
+                    created,
+                    updated,
+                    version,
+                    size,
+                    mime,
+                    source_mtime,
+                )| {
+                    let entry =
+                        parse_entry_row((id, ns, entry_path, kind, created, updated, version))?;
+                    Ok(vfiles_domain::types::EntryChildMeta {
+                        entry,
+                        size_bytes: size.map(|size| size.max(0) as u64),
+                        mime_type: mime,
+                        source_mtime,
+                    })
+                },
+            )
+            .collect()
+    }
+
     async fn find_subtree_page(
         &self,
         namespace_id: &NamespaceId,
@@ -10465,6 +10577,7 @@ mod entry_repo_subtree_tests {
         let (db_path, pool, repo, namespace_id, user_id) = setup().await;
 
         for (path, kind) in [
+            ("!root-file", EntryKind::File),
             ("docs", EntryKind::Directory),
             ("docs/a.txt", EntryKind::File),
             ("docs/nested", EntryKind::Directory),
@@ -10483,6 +10596,37 @@ mod entry_repo_subtree_tests {
             .expect("entry should be created");
         }
 
+        let docs_file = repo
+            .find_by_path(
+                &namespace_id,
+                &NormalizedPath::new("docs/a.txt").expect("path should parse"),
+            )
+            .await
+            .expect("file lookup should succeed")
+            .expect("file should exist");
+        let version = repo
+            .create_version(
+                &docs_file.id,
+                None,
+                None,
+                42,
+                Some("application/octet-stream"),
+                &user_id,
+                Some("test version"),
+            )
+            .await
+            .expect("file version should be created");
+        repo.set_version_source_mtime(&version.id, 946_684_800)
+            .await
+            .expect("source mtime should be stored");
+        repo.set_directory_source_mtime(
+            &namespace_id,
+            &NormalizedPath::new("docs").expect("path should parse"),
+            946_684_801,
+        )
+        .await
+        .expect("directory source mtime should be stored");
+
         let docs = repo
             .find_subtree(
                 &namespace_id,
@@ -10494,6 +10638,49 @@ mod entry_repo_subtree_tests {
         assert_eq!(
             paths,
             vec!["docs", "docs/a.txt", "docs/nested", "docs/nested/b.txt"]
+        );
+
+        let docs_with_meta = repo
+            .find_subtree_with_meta(
+                &namespace_id,
+                &NormalizedPath::new("docs").expect("path should parse"),
+            )
+            .await
+            .expect("subtree metadata lookup should succeed");
+        let file_meta = docs_with_meta
+            .iter()
+            .find(|entry| entry.entry.path_norm.as_str() == "docs/a.txt")
+            .expect("file metadata should be returned");
+        assert_eq!(
+            docs_with_meta
+                .iter()
+                .map(|entry| entry.entry.path_norm.as_str())
+                .collect::<Vec<_>>(),
+            vec!["docs", "docs/a.txt", "docs/nested", "docs/nested/b.txt"]
+        );
+        assert_eq!(file_meta.size_bytes, Some(42));
+        assert_eq!(
+            file_meta.mime_type.as_deref(),
+            Some("application/octet-stream")
+        );
+        assert_eq!(file_meta.source_mtime, Some(946_684_800));
+        let docs_meta = docs_with_meta
+            .iter()
+            .find(|entry| entry.entry.path_norm.as_str() == "docs")
+            .expect("root directory metadata should be returned");
+        assert_eq!(docs_meta.source_mtime, Some(946_684_801));
+
+        let root_entries = repo
+            .find_subtree_with_meta(
+                &namespace_id,
+                &NormalizedPath::new("").expect("root path should parse"),
+            )
+            .await
+            .expect("root subtree metadata should load");
+        assert!(
+            root_entries
+                .iter()
+                .any(|entry| { entry.entry.path_norm.as_str() == "!root-file" })
         );
 
         let first_page = repo

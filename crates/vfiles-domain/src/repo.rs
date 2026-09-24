@@ -561,6 +561,26 @@ pub trait EntryRepo {
         root_path: &NormalizedPath,
     ) -> DomainResult<Vec<Entry>>;
 
+    /// Fetch a subtree with each entry's current content metadata.
+    /// SQLite overrides this with one indexed query; the fallback preserves compatibility.
+    async fn find_subtree_with_meta(
+        &self,
+        namespace_id: &NamespaceId,
+        root_path: &NormalizedPath,
+    ) -> DomainResult<Vec<crate::types::EntryChildMeta>> {
+        let entries = self.find_subtree(namespace_id, root_path).await?;
+        let mut result = Vec::with_capacity(entries.len());
+        for entry in entries {
+            if let Some(meta) = self
+                .find_by_path_with_meta(namespace_id, &entry.path_norm)
+                .await?
+            {
+                result.push(meta);
+            }
+        }
+        Ok(result)
+    }
+
     /// 按规范路径分页列出子树，含 root；`after_path` 独占，结果按路径升序。
     async fn find_subtree_page(
         &self,

@@ -3104,8 +3104,69 @@ pub async fn collect_flat(
         .map(|e| e.created_at.unix_timestamp())
         .unwrap_or_else(now_unix);
     let mut out = vec![FlatEntry::dir(".", base_mtime).with_fs_path(base.as_str().to_string())];
-    walk(repo, namespace, &base, "", req.recursive, &mut out).await?;
+    if req.recursive {
+        let subtree = repo
+            .find_subtree_with_meta(namespace, &base)
+            .await
+            .map_err(|error| error.to_string())?;
+        let root = base.as_str();
+        let root_prefix = if root.is_empty() {
+            String::new()
+        } else {
+            format!("{root}/")
+        };
+        let mut by_parent =
+            std::collections::HashMap::<String, Vec<vfiles_domain::types::EntryChildMeta>>::new();
+        for meta in subtree {
+            let full_path = meta.entry.path_norm.as_str();
+            if full_path == root {
+                continue;
+            }
+            let Some(relative_path) = full_path.strip_prefix(&root_prefix) else {
+                continue;
+            };
+            let parent = relative_path
+                .rsplit_once('/')
+                .map_or("", |(parent, _)| parent)
+                .to_string();
+            by_parent.entry(parent).or_default().push(meta);
+        }
+        append_subtree_children("", "", &by_parent, &mut out);
+    } else {
+        walk(repo, namespace, &base, "", false, &mut out).await?;
+    }
     Ok(out)
+}
+
+fn append_subtree_children(
+    parent: &str,
+    prefix: &str,
+    by_parent: &std::collections::HashMap<String, Vec<vfiles_domain::types::EntryChildMeta>>,
+    out: &mut Vec<FlatEntry>,
+) {
+    let Some(children) = by_parent.get(parent) else {
+        return;
+    };
+    for meta in children {
+        let relative_path = if prefix.is_empty() {
+            meta.entry.name.clone()
+        } else {
+            format!("{prefix}/{}", meta.entry.name)
+        };
+        let full_path = meta.entry.path_norm.as_str().to_string();
+        let mtime = meta
+            .source_mtime
+            .unwrap_or_else(|| meta.entry.created_at.unix_timestamp());
+        if meta.entry.entry_type == EntryKind::Directory {
+            out.push(FlatEntry::dir(relative_path.clone(), mtime).with_fs_path(full_path));
+            append_subtree_children(&relative_path, &relative_path, by_parent, out);
+        } else {
+            out.push(
+                FlatEntry::file(relative_path, meta.size_bytes.unwrap_or(0), mtime)
+                    .with_fs_path(full_path),
+            );
+        }
+    }
 }
 
 async fn walk(
