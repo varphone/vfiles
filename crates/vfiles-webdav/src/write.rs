@@ -5,8 +5,6 @@
 //! PUT = `init_upload` + `complete_upload_from_stream`；COPY = workspace 的递归复制服务，
 //! 文件版本复用 blob，目录递归复制。
 
-#![allow(dead_code)]
-
 use async_trait::async_trait;
 use vfiles_domain::DomainResult;
 use vfiles_domain::types::{NamespaceId, NormalizedPath, UserId};

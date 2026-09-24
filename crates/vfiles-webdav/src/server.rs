@@ -1,7 +1,5 @@
 //! WebDAV axum 服务端：读写方法、锁处理、认证与协议错误语义。
 
-#![allow(dead_code)]
-
 use std::sync::Arc;
 
 use axum::{
@@ -11,8 +9,6 @@ use axum::{
     response::Response,
 };
 use http_body::Body as _;
-
-use crate::response::PropResponse;
 
 const MAX_DAV_XML_BODY_BYTES: usize = 1024 * 1024;
 
@@ -268,6 +264,7 @@ fn valid_entity_tag(value: &str) -> bool {
             .any(|ch| ch == '"' || ch.is_control())
 }
 
+#[cfg(test)]
 fn untagged_if_matches(
     header: &str,
     active_lock_token: Option<&str>,
@@ -279,6 +276,7 @@ fn untagged_if_matches(
     Some(if_lists_match(&lists, active_lock_token, etag))
 }
 
+#[cfg(test)]
 fn if_lists_match(
     lists: &[Vec<IfCondition>],
     active_lock_token: Option<&str>,
@@ -1988,6 +1986,7 @@ fn entry_href(prefix: &str, name: &str, is_dir: bool) -> String {
 }
 
 /// 目录前缀（根 = 空 ✗ 子目录 = `rel/`）。
+#[cfg(test)]
 fn child_prefix(rel: &str) -> String {
     let trimmed = rel.trim_matches('/');
     if trimmed.is_empty() {
@@ -4004,10 +4003,6 @@ pub fn spawn_webdav_server(
 pub fn router_for_tests(app: WebdavApplication) -> Router {
     router(app)
 }
-
-// PropResponse 在 server 内暂未消费（r104 PROPFIND 用）——显式引用消除 dead_code 语义含混。
-#[allow(unused_imports)]
-use PropResponse as _PropResponseForR104;
 
 #[cfg(test)]
 mod overwrite_header_tests {

@@ -3,8 +3,6 @@
 //! 认证负责解析 Basic 凭据；服务分派层通过共享 `LoginAttemptLimiter` 限制失败尝试，
 //! 再调用注入的校验器，以便该模块不直接依赖具体认证仓储。
 
-#![allow(dead_code)]
-
 use base64::Engine;
 
 /// 已认证会话（用户名 ✓ per-user 命名空间映射 = r105 TODO（FTP UserDetailProvider 范本））。
@@ -23,17 +21,6 @@ pub type VerifyFn = std::sync::Arc<
         > + Send
         + Sync,
 >;
-
-/// 注入式校验（r104 实件）：Basic 头 → `verify_credentials` → 用户名。
-///
-/// 语义 = Web/FTP 完全一致（禁用校验/哈希透明升级内含 ✓）。
-pub async fn verify<C: Fn(&str, &str) -> F, F: std::future::Future<Output = Option<String>>>(
-    header: Option<&str>,
-    check: C,
-) -> Option<String> {
-    let (username, password) = basic_credentials(header?)?;
-    check(&username, &password).await
-}
 
 /// 解码 `Authorization: Basic <base64>` → `(username, password)`。
 ///

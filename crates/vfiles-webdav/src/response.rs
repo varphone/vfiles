@@ -3,8 +3,6 @@
 //! 207 Multi-Status：每资源一个 `<response>`（href + propfind 响应集：displayname /
 //! resourcetype / getlastmodified / getcontentlength）。时间格式 = RFC1123（`time` crate）。
 
-#![allow(dead_code)]
-
 /// PROPFIND 请求体模式（RFC 4918 §9.1 ✗ r2 P0 协议精度）。
 /// DAV live properties that this server treats as read-only.
 pub const PREDEFINED_READONLY: [&str; 9] = [
@@ -243,7 +241,6 @@ pub enum PropOp {
 pub enum PropPatchStatus {
     Ok,
     Forbidden,
-    Conflict,
     FailedDependency,
     InternalServerError,
 }
@@ -327,7 +324,6 @@ pub fn proppatch_multistatus(href: &str, results: &[(PropOp, PropPatchStatus)]) 
         out.push_str(match status {
             PropPatchStatus::Ok => "200 OK",
             PropPatchStatus::Forbidden => "403 Forbidden",
-            PropPatchStatus::Conflict => "409 Conflict",
             PropPatchStatus::FailedDependency => "424 Failed Dependency",
             PropPatchStatus::InternalServerError => "500 Internal Server Error",
         });
@@ -460,6 +456,7 @@ pub struct ActiveLock {
 }
 
 /// 构造 207 Multi-Status 文档（XML 转义 ✓ 集合无 getcontentlength ✓）。
+#[cfg(test)]
 pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
     let mut out = String::from(
         r#"<?xml version="1.0" encoding="utf-8"?>
