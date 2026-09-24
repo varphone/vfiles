@@ -7,7 +7,7 @@
 - `ListObjectVersions` 合并文件 key 与仅存在删除标记的 key 做游标分页；对象版本和删除标记共享 SQLite 事务内递增的全局事件序号，按序号倒序混排并计算 `IsLatest`（历史行回退到时间顺序），分页上限包含两类条目。
 - `DeleteObject?versionId=<marker>` 和 `DeleteObjects` 的版本定向删除可移除对应标记；普通批量删除在事务内批量创建标记，返回 marker 标志和版本 ID。
 - `GetObject` / `HeadObject?versionId=<marker>` 返回 `405 MethodNotAllowed` 与 `x-amz-delete-marker: true`；普通对象列表用每页批量查询过滤当前标记，避免逐 key 的数据库往返。
-- 自写 SigV4 HTTP 探针在隔离 `/s3` 实例通过 **27/27**；安装到独立临时环境的 boto3 真实客户端探针通过 **54/54**，覆盖对象 API、分页、删除标记前置过滤、multipart、Range、条件请求及严格 region 下的预签名 URL。
+- 自写 SigV4 HTTP 探针在隔离 `/s3` 实例通过 **27/27**；安装到独立临时环境的 boto3 真实客户端探针通过 **58/58**，覆盖根路径与 `/s3` 前缀的 SigV4 path-style endpoint、对象 API、分页、删除标记前置过滤、multipart、Range、条件请求及严格 region 下的预签名 URL。
 - boto3 验证修复了三个问题：CopyObject/UploadPartCopy 源条件误用内部版本 ID 当 ETag；删除标记遮蔽的 key 仍能作为复制源；GetObject/HeadObject 对当前版本返回条目创建时间而非版本修改时间。探针 multipart 用例现按 S3 的 5 MiB 非末片规则构造。
 - 跨存储恢复回归模拟了流式 blob 已耐久发布、SQLite 尚无 blob/version 元数据时服务进程退出：关闭并重开 SQLite 后，维护任务按保护期清除旧孤儿、保留新孤儿和仍被版本引用的 blob。真实断电与底层文件系统故障注入仍未覆盖。
 - 版本事件序号由 `entry_versions` 写事务与删除标记写事务共同递增，使 HTTP/WebDAV 写入也参与同一 key 的 S3 最新状态排序，不依赖系统墙钟精度。

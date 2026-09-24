@@ -77,6 +77,31 @@ def main():
 
     buckets = [b["Name"] for b in s3.list_buckets()["Buckets"]]
     check("boto ListBuckets", buckets == ["default"], buckets)
+
+    # The shared HTTP listener also supports a conventional path-style S3
+    # endpoint. Sign and exercise that exact prefixed path with the real SDK;
+    # testing only the root endpoint would miss canonical-path regressions.
+    mounted_s3 = boto3.client(
+        "s3",
+        endpoint_url=ENDPOINT.rstrip("/") + "/s3",
+        aws_access_key_id=ACCESS,
+        aws_secret_access_key=SECRET,
+        region_name="us-east-1",
+        config=Config(signature_version="s3v4", s3={"addressing_style": "path"},
+                      retries={"max_attempts": 1}),
+    )
+    mounted_key = "boto-mounted-prefix/probe.txt"
+    try:
+        mounted_buckets = [b["Name"] for b in mounted_s3.list_buckets()["Buckets"]]
+        mounted_s3.put_object(Bucket="default", Key=mounted_key, Body=b"signed /s3 path")
+        mounted_body = mounted_s3.get_object(Bucket="default", Key=mounted_key)["Body"].read()
+        mounted_s3.delete_object(Bucket="default", Key=mounted_key)
+        mounted_ok = mounted_buckets == ["default"] and mounted_body == b"signed /s3 path"
+    except ClientError as error:
+        mounted_ok = False
+        mounted_body = error.response.get("Error", {}).get("Code")
+    check("boto SigV4 path-style /s3 endpoint", mounted_ok, mounted_body)
+
     if os.environ.get("VFILES_S3_REGION"):
         wrong_region_client = boto3.client(
             "s3", endpoint_url=ENDPOINT, aws_access_key_id=ACCESS,
