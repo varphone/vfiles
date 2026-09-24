@@ -318,6 +318,34 @@ async fn options_advertises_and_propfind_needs_auth() {
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"))
     };
+    let child_lengths = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PROPFIND")
+                .uri("/")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "1")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:propfind xmlns:D="DAV:"><D:prop><D:getcontentlength/></D:prop></D:propfind>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(child_lengths.status(), 207);
+    let child_lengths_xml = String::from_utf8(
+        axum::body::to_bytes(child_lengths.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(child_lengths_xml.contains(
+        "/persist.txt</D:href><D:propstat><D:prop><D:getcontentlength>0</D:getcontentlength>"
+    ));
+
     let missing_parent_mkcol = router
         .clone()
         .oneshot(

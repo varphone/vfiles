@@ -44,7 +44,7 @@
 | displayname | ✅ | ✓ | - |
 | getlastmodified | ✅ | ✓ | - |
 | **getcontentlength 单目标** | ✅ r213 | ✓ 三属性同框实证 | - |
-| **getcontentlength children** | ❌ | 批量（P0 债 = r213 记档）| **P0** |
+| **getcontentlength children** | ✅ r213 | Depth 1 文件子项从批量 `find_children_with_meta` 结果输出长度；目录省略该属性；真 SQLite e2e 覆盖零字节文件 | - |
 | getcontenttype | ✅ **r3 顺车** | 单目标 + children 双位出 ✓ 检测/扩展名回退 ✓ | - |
 | getetag | ✅ **r14 九式实证** | = current_version_id 派生 `"hex32"`（r4 SQL 零新查询 ✓ 强 ETag 引号式 ✓ XML `&quot;` 转义合法 ✓ None = 目录跳过 ✓ 支持集 5→6 + readonly +1 ✓）| - |
 | creationdate | ✅ **r16 七式实证** | RFC 3339 ISO（≠ lastmod 的 RFC1123 ✓ 恒有值 ✓ 根 = 合成记档（lastmod 同式）✓ children 批量 ✓ readonly 不可写 ✓）| - |
@@ -70,7 +70,7 @@
 
 1. ~~XML 选型~~ ✅ r2（roxmltree）
 2. ~~PROPFIND 请求体解析~~ ✅ r2（五式 + 404 propstat + infinity-403 顺手）
-3. **children getcontentlength 批量**（P0 债，客户端列目录必需 ← 下轮首项）
+3. ~~children getcontentlength 批量~~ ✅ r213（批量元数据查询与零字节子项 e2e 已验证）
 4. ~~children 批量 SQL~~ ✅ r4（0.001s 实测 ✓）
 4a. **认证热验缓存**（0.25s/请求真头 ✗ r4 分层发现）← P1 新债
 5. ~~COPY~~ ✅ r5（八式 + 审计 ✓）
