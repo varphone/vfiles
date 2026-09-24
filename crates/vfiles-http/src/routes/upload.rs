@@ -453,15 +453,15 @@ async fn put_upload_inner(
             .filter(|value| !value.is_empty())
             .unwrap_or("Upload file");
 
-        finish_single_upload(
-            &state,
-            &ctx,
-            temp_path.path(),
-            &path,
-            &filename,
+        finish_single_upload(SingleUploadInput {
+            state: &state,
+            ctx: &ctx,
+            temp_path: temp_path.path(),
+            path: &path,
+            filename: &filename,
             message,
             file_size,
-        )
+        })
         .await
     }
     .await;
@@ -627,20 +627,39 @@ async fn process_single_upload(
         })
     })?;
 
-    finish_single_upload(state, ctx, temp_path, &path, &filename, &message, file_size).await
+    finish_single_upload(SingleUploadInput {
+        state,
+        ctx,
+        temp_path,
+        path: &path,
+        filename: &filename,
+        message: &message,
+        file_size,
+    })
+    .await
 }
 
 /// 校验文件名/路径并把临时文件入库（multipart 与原始 body 上传共用）。
-#[allow(clippy::too_many_arguments)]
-async fn finish_single_upload(
-    state: &AppState,
-    ctx: &crate::routes::RequestContext,
-    temp_path: &std::path::Path,
-    path: &str,
-    filename: &str,
-    message: &str,
+struct SingleUploadInput<'a> {
+    state: &'a AppState,
+    ctx: &'a crate::routes::RequestContext,
+    temp_path: &'a std::path::Path,
+    path: &'a str,
+    filename: &'a str,
+    message: &'a str,
     file_size: u64,
-) -> ApiResult<Json<serde_json::Value>> {
+}
+
+async fn finish_single_upload(input: SingleUploadInput<'_>) -> ApiResult<Json<serde_json::Value>> {
+    let SingleUploadInput {
+        state,
+        ctx,
+        temp_path,
+        path,
+        filename,
+        message,
+        file_size,
+    } = input;
     let filename = filename.to_string();
 
     if filename.is_empty()
