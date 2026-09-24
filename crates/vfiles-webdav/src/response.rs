@@ -461,6 +461,17 @@ pub struct ActiveLock {
 
 /// 构造 207 Multi-Status 文档（XML 转义 ✓ 集合无 getcontentlength ✓）。
 pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
+    let mut out = String::from(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">"#,
+    );
+    out.push_str(&multistatus_fragment(items, mode));
+    out.push_str("\n</D:multistatus>");
+    out
+}
+
+/// Serialize response elements without the surrounding multistatus document.
+pub fn multistatus_fragment(items: &[PropResponse], mode: &PropMode) -> String {
     // r2 协议精度裁剪 ✗ 请求要什么给什么（All=全集 ✗ Names=交集+404 差集 ✗ PropName=只名）
     const SUPPORTED: [&str; 10] = [
         "displayname",
@@ -474,10 +485,7 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
         "supportedlock",
         "lockdiscovery",
     ];
-    let mut out = String::from(
-        r#"<?xml version="1.0" encoding="utf-8"?>
-<D:multistatus xmlns:D="DAV:">"#,
-    );
+    let mut out = String::new();
     for item in items {
         let (wanted, missing): (Vec<&str>, Vec<&str>) = match mode {
             PropMode::All | PropMode::PropName => (SUPPORTED.to_vec(), Vec::new()),
@@ -662,7 +670,6 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
         }
         out.push_str("</D:response>");
     }
-    out.push_str("\n</D:multistatus>");
     out
 }
 

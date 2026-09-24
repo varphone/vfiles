@@ -2415,158 +2415,184 @@ async fn propfind_owned(
             },
         });
     }
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">"#,
+    );
+    xml.push_str(&crate::response::multistatus_fragment(&items, &mode));
     if depth != "0" {
-        // r4 批量版（N+1 消 ✗✗ 一条 SQL 直取 size/mime ✗ 替换每文件 open）
-        let metas: Vec<vfiles_domain::types::EntryChildMeta> = if depth == "1" {
-            if wants_size_or_type {
-                app.entry_repo
-                    .children_with_meta(&ns, &path)
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        const PAGE_SIZE: u32 = 256;
+        let mut after_path: Option<String> = None;
+        loop {
+            // Direct children remain one logical page; infinity walks the subtree using keyset paging.
+            let (metas, has_more) = if depth == "1" {
+                let metas = if wants_size_or_type {
+                    app.entry_repo
+                        .children_with_meta(&ns, &path)
+                        .await
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                } else {
+                    app.entry_repo
+                        .find_children(&ns, &path)
+                        .await
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                        .into_iter()
+                        .map(|entry| vfiles_domain::types::EntryChildMeta {
+                            entry,
+                            size_bytes: None,
+                            mime_type: None,
+                            source_mtime: None,
+                        })
+                        .collect()
+                };
+                (metas, false)
             } else {
-                app.entry_repo
-                    .find_children(&ns, &path)
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                let entries = if rel.is_empty() {
+                    app.entry_repo
+                        .find_all_page(&ns, after_path.as_deref(), PAGE_SIZE)
+                        .await
+                } else {
+                    app.entry_repo
+                        .find_subtree_page(&ns, &path, after_path.as_deref(), PAGE_SIZE)
+                        .await
+                }
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                let has_more = entries.len() == PAGE_SIZE as usize;
+                after_path = entries
+                    .last()
+                    .map(|entry| entry.path_norm.as_str().to_string());
+                let metas = entries
                     .into_iter()
+                    .filter(|entry| entry.path_norm.as_str() != rel)
                     .map(|entry| vfiles_domain::types::EntryChildMeta {
                         entry,
                         size_bytes: None,
                         mime_type: None,
                         source_mtime: None,
                     })
-                    .collect()
-            }
-        } else {
-            let entries = if rel.is_empty() {
-                app.entry_repo.find_all(&ns).await
-            } else {
-                app.entry_repo.find_subtree(&ns, &path).await
-            }
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            entries
-                .into_iter()
-                .filter(|entry| entry.path_norm.as_str() != rel)
-                .map(|entry| vfiles_domain::types::EntryChildMeta {
-                    entry,
-                    size_bytes: None,
-                    mime_type: None,
-                    source_mtime: None,
-                })
-                .collect()
-        };
-        // Subtree metadata is loaded in one version batch so infinity depth does
-        // not issue one metadata query per resource.
-        let child_ids: Vec<vfiles_domain::types::EntryId> =
-            metas.iter().map(|meta| meta.entry.id).collect();
-        let child_props = if wants_custom && !child_ids.is_empty() {
-            app.entry_repo
-                .list_entry_properties(&child_ids)
-                .await
-                .map_err(|error| {
-                    tracing::error!(%error, "WebDAV PROPFIND 子项属性读取失败");
-                    StatusCode::INTERNAL_SERVER_ERROR
-                })?
-        } else {
-            std::collections::HashMap::new()
-        };
-        let version_metadata: std::collections::HashMap<_, _> =
-            if wants_last_modified || (depth == "infinity" && wants_size_or_type) {
-                let version_ids: Vec<_> = metas
-                    .iter()
-                    .filter_map(|meta| meta.entry.current_version_id)
                     .collect();
+                (metas, has_more)
+            };
+            if metas.is_empty() {
+                break;
+            }
+            // Subtree metadata is loaded in one version batch so infinity depth does
+            // not issue one metadata query per resource.
+            let child_ids: Vec<vfiles_domain::types::EntryId> =
+                metas.iter().map(|meta| meta.entry.id).collect();
+            let child_props = if wants_custom && !child_ids.is_empty() {
                 app.entry_repo
-                    .find_versions(&version_ids)
+                    .list_entry_properties(&child_ids)
                     .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                    .map_err(|error| {
+                        tracing::error!(%error, "WebDAV PROPFIND 子项属性读取失败");
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?
+            } else {
+                std::collections::HashMap::new()
+            };
+            let version_metadata: std::collections::HashMap<_, _> =
+                if wants_last_modified || (depth == "infinity" && wants_size_or_type) {
+                    let version_ids: Vec<_> = metas
+                        .iter()
+                        .filter_map(|meta| meta.entry.current_version_id)
+                        .collect();
+                    app.entry_repo
+                        .find_versions(&version_ids)
+                        .await
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                        .into_iter()
+                        .map(|version| (version.id, version))
+                        .collect()
+                } else {
+                    std::collections::HashMap::new()
+                };
+            let child_paths: Vec<String> = metas
+                .iter()
+                .map(|meta| meta.entry.path_norm.as_str().to_string())
+                .collect();
+            let mut child_locks: std::collections::HashMap<_, _> = if wants_lock {
+                app.locks
+                    .blocked_many_all(&ns, &child_paths)
+                    .await
+                    .map_err(|error| {
+                        tracing::error!(%error, "WebDAV PROPFIND 批量锁查询失败");
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?
                     .into_iter()
-                    .map(|version| (version.id, version))
+                    .map(|(path, locks)| {
+                        (
+                            path,
+                            locks
+                                .into_iter()
+                                .map(|lock| active_lock_value(lock, &app.mount_prefix))
+                                .collect(),
+                        )
+                    })
                     .collect()
             } else {
                 std::collections::HashMap::new()
             };
-        let child_paths: Vec<String> = metas
-            .iter()
-            .map(|meta| meta.entry.path_norm.as_str().to_string())
-            .collect();
-        let mut child_locks: std::collections::HashMap<_, _> = if wants_lock {
-            app.locks
-                .blocked_many_all(&ns, &child_paths)
-                .await
-                .map_err(|error| {
-                    tracing::error!(%error, "WebDAV PROPFIND 批量锁查询失败");
-                    StatusCode::INTERNAL_SERVER_ERROR
-                })?
-                .into_iter()
-                .map(|(path, locks)| {
+            let mut page_items = Vec::with_capacity(metas.len());
+            for meta in metas {
+                let child = meta.entry;
+                let child_rel = child.path_norm.as_str();
+                let is_dir = matches!(child.entry_type, vfiles_domain::types::EntryKind::Directory);
+                let (getcontentlength, getcontenttype) = if is_dir {
+                    (None, None)
+                } else {
+                    let version = child
+                        .current_version_id
+                        .as_ref()
+                        .and_then(|version_id| version_metadata.get(version_id));
                     (
-                        path,
-                        locks
-                            .into_iter()
-                            .map(|lock| active_lock_value(lock, &app.mount_prefix))
-                            .collect(),
+                        meta.size_bytes
+                            .or_else(|| version.map(|version| version.size_bytes.as_u64())),
+                        meta.mime_type
+                            .or_else(|| version.and_then(|version| version.mime_type.clone())),
                     )
-                })
-                .collect()
-        } else {
-            std::collections::HashMap::new()
-        };
-        for meta in metas {
-            let child = meta.entry;
-            let child_rel = child.path_norm.as_str();
-            let is_dir = matches!(child.entry_type, vfiles_domain::types::EntryKind::Directory);
-            let (getcontentlength, getcontenttype) = if is_dir {
-                (None, None)
-            } else {
-                let version = child
-                    .current_version_id
-                    .as_ref()
-                    .and_then(|version_id| version_metadata.get(version_id));
-                (
-                    meta.size_bytes
-                        .or_else(|| version.map(|version| version.size_bytes.as_u64())),
-                    meta.mime_type
-                        .or_else(|| version.and_then(|version| version.mime_type.clone())),
-                )
-            };
-            items.push(crate::response::PropResponse {
-                href: href_with_mount(&app.mount_prefix, &entry_href("", child_rel, is_dir)),
-                displayname: child.name,
-                is_collection: is_dir,
-                getlastmodified: if wants_last_modified {
-                    mtime_fmt(
-                        child
-                            .current_version_id
-                            .as_ref()
-                            .map_or(child.created_at, |id| {
+                };
+                page_items.push(crate::response::PropResponse {
+                    href: href_with_mount(&app.mount_prefix, &entry_href("", child_rel, is_dir)),
+                    displayname: child.name,
+                    is_collection: is_dir,
+                    getlastmodified: if wants_last_modified {
+                        mtime_fmt(child.current_version_id.as_ref().map_or(
+                            child.created_at,
+                            |id| {
                                 version_metadata
                                     .get(id)
                                     .map(|version| version.created_at)
                                     .unwrap_or(child.created_at)
-                            }),
-                    )
-                } else {
-                    String::new()
-                },
-                getcontentlength,
-                getcontenttype,
-                custom: child_props.get(&child.id).cloned().unwrap_or_default(),
-                getetag: wants_etag
-                    .then(|| {
-                        child
-                            .current_version_id
-                            .as_ref()
-                            .map(|v| format!("\"{}\"", v.to_string().replace('-', "")))
-                    })
-                    .flatten(),
-                creationdate: cdate_fmt(child.created_at),
-                owner: owner_val.clone(),
-                active_lock: child_locks.remove(child_rel).unwrap_or_default(),
-            });
+                            },
+                        ))
+                    } else {
+                        String::new()
+                    },
+                    getcontentlength,
+                    getcontenttype,
+                    custom: child_props.get(&child.id).cloned().unwrap_or_default(),
+                    getetag: wants_etag
+                        .then(|| {
+                            child
+                                .current_version_id
+                                .as_ref()
+                                .map(|v| format!("\"{}\"", v.to_string().replace('-', "")))
+                        })
+                        .flatten(),
+                    creationdate: cdate_fmt(child.created_at),
+                    owner: owner_val.clone(),
+                    active_lock: child_locks.remove(child_rel).unwrap_or_default(),
+                });
+            }
+            xml.push_str(&crate::response::multistatus_fragment(&page_items, &mode));
+            if !has_more {
+                break;
+            }
         }
     }
-    Ok(crate::response::multistatus(&items, &mode))
+    xml.push_str("\n</D:multistatus>");
+    Ok(xml)
 }
 
 async fn active_lock_prop(

@@ -475,6 +475,19 @@ pub trait EntryRepo {
     /// 一次取回命名空间下的全部条目（含 current_version_id），避免递归列举。
     async fn find_all(&self, namespace_id: &NamespaceId) -> DomainResult<Vec<Entry>>;
 
+    /// 按规范路径分页列出命名空间条目；`after_path` 独占，结果按路径升序。
+    async fn find_all_page(
+        &self,
+        namespace_id: &NamespaceId,
+        after_path: Option<&str>,
+        limit: u32,
+    ) -> DomainResult<Vec<Entry>> {
+        let mut entries = self.find_all(namespace_id).await?;
+        entries.retain(|entry| after_path.is_none_or(|after| entry.path_norm.as_str() > after));
+        entries.truncate(limit as usize);
+        Ok(entries)
+    }
+
     /// 命名空间内的条目统计（文件数、目录数、总字节数），用 SQL 聚合避免全量拉取。
     async fn stats(&self, namespace_id: &NamespaceId) -> DomainResult<NamespaceStats>;
 
@@ -506,6 +519,20 @@ pub trait EntryRepo {
         namespace_id: &NamespaceId,
         root_path: &NormalizedPath,
     ) -> DomainResult<Vec<Entry>>;
+
+    /// 按规范路径分页列出子树，含 root；`after_path` 独占，结果按路径升序。
+    async fn find_subtree_page(
+        &self,
+        namespace_id: &NamespaceId,
+        root_path: &NormalizedPath,
+        after_path: Option<&str>,
+        limit: u32,
+    ) -> DomainResult<Vec<Entry>> {
+        let mut entries = self.find_subtree(namespace_id, root_path).await?;
+        entries.retain(|entry| after_path.is_none_or(|after| entry.path_norm.as_str() > after));
+        entries.truncate(limit as usize);
+        Ok(entries)
+    }
     async fn find_subtree_if_current(
         &self,
         namespace_id: &NamespaceId,

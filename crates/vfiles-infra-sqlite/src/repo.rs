@@ -2874,6 +2874,47 @@ impl EntryRepo for SqliteEntryRepo {
         rows.into_iter().map(parse_entry_row).collect()
     }
 
+    async fn find_all_page(
+        &self,
+        namespace_id: &NamespaceId,
+        after_path: Option<&str>,
+        limit: u32,
+    ) -> DomainResult<Vec<Entry>> {
+        let rows: Vec<EntryRow> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id
+            FROM entries e
+            WHERE e.namespace_id = ?
+              AND (? IS NULL OR e.path > ?)
+            ORDER BY e.path
+            LIMIT ?
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(after_path)
+        .bind(after_path)
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to page namespace entries: {error}"),
+        })?;
+        rows.into_iter().map(parse_entry_row).collect()
+    }
+
     async fn stats(&self, namespace_id: &NamespaceId) -> DomainResult<NamespaceStats> {
         #[derive(sqlx::FromRow)]
         struct StatsRow {
@@ -3164,6 +3205,55 @@ impl EntryRepo for SqliteEntryRepo {
             message: format!("Failed to find subtree: {}", e),
         })?;
 
+        rows.into_iter().map(parse_entry_row).collect()
+    }
+
+    async fn find_subtree_page(
+        &self,
+        namespace_id: &NamespaceId,
+        root_path: &NormalizedPath,
+        after_path: Option<&str>,
+        limit: u32,
+    ) -> DomainResult<Vec<Entry>> {
+        let root = root_path.as_str().trim_end_matches('/');
+        let lower = format!("{root}/");
+        let upper = format!("{root}0");
+        let rows: Vec<EntryRow> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id
+            FROM entries e
+            WHERE e.namespace_id = ?
+              AND (e.path = ? OR (e.path >= ? AND e.path < ?))
+              AND (? IS NULL OR e.path > ?)
+            ORDER BY e.path
+            LIMIT ?
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(root)
+        .bind(lower)
+        .bind(upper)
+        .bind(after_path)
+        .bind(after_path)
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to page entry subtree: {error}"),
+        })?;
         rows.into_iter().map(parse_entry_row).collect()
     }
 
@@ -9306,6 +9396,37 @@ mod entry_repo_subtree_tests {
             paths,
             vec!["docs", "docs/a.txt", "docs/nested", "docs/nested/b.txt"]
         );
+
+        let first_page = repo
+            .find_subtree_page(
+                &namespace_id,
+                &NormalizedPath::new("docs").expect("path should parse"),
+                None,
+                2,
+            )
+            .await
+            .expect("first page should succeed");
+        let cursor = first_page
+            .last()
+            .expect("first page should contain entries")
+            .path_norm
+            .as_str()
+            .to_string();
+        let second_page = repo
+            .find_subtree_page(
+                &namespace_id,
+                &NormalizedPath::new("docs").expect("path should parse"),
+                Some(&cursor),
+                2,
+            )
+            .await
+            .expect("second page should succeed");
+        let paged_paths: Vec<&str> = first_page
+            .iter()
+            .chain(&second_page)
+            .map(|entry| entry.path_norm.as_str())
+            .collect();
+        assert_eq!(paged_paths, paths);
 
         let docs2 = repo
             .find_subtree(
