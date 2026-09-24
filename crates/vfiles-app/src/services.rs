@@ -5141,6 +5141,7 @@ mod tests {
             expected_entry_id: Some(entry.id),
             expected_version_id: Some(initial.version.id),
             expected_lock_tokens: None,
+            expected_additional_lock_states: None,
         };
         let result = context
             .upload_service
@@ -5196,6 +5197,7 @@ mod tests {
             expected_entry_id: None,
             expected_version_id: None,
             expected_lock_tokens: None,
+            expected_additional_lock_states: None,
         };
 
         let completed = context
@@ -5240,6 +5242,7 @@ mod tests {
             expected_entry_id: Some(entry.id),
             expected_version_id: Some(initial.version.id),
             expected_lock_tokens: None,
+            expected_additional_lock_states: None,
         };
         let newer = context
             .upload_file(&root, "conditional-delete.txt", b"newer", "newer")
@@ -5315,6 +5318,7 @@ mod tests {
             expected_entry_id: Some(entry.id),
             expected_version_id: Some(source.version.id),
             expected_lock_tokens: None,
+            expected_additional_lock_states: None,
         };
         let newer = context
             .upload_file(&root, "conditional-move.txt", b"newer", "newer")
@@ -5447,6 +5451,7 @@ mod tests {
             expected_entry_id: Some(entry.id),
             expected_version_id: Some(initial.version.id),
             expected_lock_tokens: None,
+            expected_additional_lock_states: None,
         };
         let newer = context
             .upload_file(&root, "conditional-copy.txt", b"newer", "newer")

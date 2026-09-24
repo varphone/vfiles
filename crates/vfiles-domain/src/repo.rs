@@ -288,6 +288,15 @@ pub enum EntryPropertyChange {
     RemovePrefix { prefix: String },
 }
 
+/// Lock tokens observed for one resource during an atomic conditional write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryLockSnapshot {
+    pub path: NormalizedPath,
+    pub tokens: Vec<String>,
+    /// Include depth-infinity locks inherited from ancestor resources.
+    pub include_ancestors: bool,
+}
+
 /// Snapshot of the resource state required by an atomic conditional write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntryWriteCondition {
@@ -300,6 +309,8 @@ pub struct EntryWriteCondition {
     /// When present, the active WebDAV lock tokens covering `path` must still match
     /// exactly when the entry mutation commits.
     pub expected_lock_tokens: Option<Vec<String>>,
+    /// Exact lock tokens for additional resources affected by a subtree mutation.
+    pub expected_additional_lock_states: Option<Vec<EntryLockSnapshot>>,
 }
 
 #[async_trait::async_trait]
@@ -363,7 +374,10 @@ pub trait EntryRepo {
         changes: &[EntryPropertyChange],
         condition: &EntryWriteCondition,
     ) -> DomainResult<()> {
-        if condition.expected_lock_tokens.is_some() || condition.check_entry_state {
+        if condition.expected_lock_tokens.is_some()
+            || condition.expected_additional_lock_states.is_some()
+            || condition.check_entry_state
+        {
             return Err(DomainError::Internal {
                 message: "Conditional entry property patches are not supported by this repository"
                     .into(),

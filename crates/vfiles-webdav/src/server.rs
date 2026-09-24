@@ -1294,14 +1294,23 @@ async fn write_subtree_precondition(
     rel: &str,
     if_header: Option<&str>,
 ) -> Option<StatusCode> {
-    if let Some(status) = write_precondition(app, ns, rel, if_header).await {
-        return Some(status);
-    }
+    write_subtree_precondition_snapshot(app, ns, rel, if_header)
+        .await
+        .err()
+}
+
+async fn write_subtree_precondition_snapshot(
+    app: &WebdavApplication,
+    ns: &vfiles_domain::types::NamespaceId,
+    rel: &str,
+    if_header: Option<&str>,
+) -> Result<(Vec<String>, Vec<vfiles_domain::EntryLockSnapshot>), StatusCode> {
+    let root_tokens = write_precondition_snapshot(app, ns, rel, if_header).await?;
     let locks = match app.locks.blocked_under_path_all(ns, rel).await {
         Ok(locks) => locks,
         Err(error) => {
             tracing::error!(%error, rel, "WebDAV 子树锁查询失败");
-            return Some(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
     let mut locks_by_path = std::collections::HashMap::<String, Vec<_>>::new();
@@ -1313,12 +1322,12 @@ async fn write_subtree_precondition(
                 .push(lock);
         }
     }
-    for (locked_path, path_locks) in locks_by_path {
+    for (locked_path, path_locks) in &locks_by_path {
         let Some(header) = if_header else {
             tracing::debug!(path = %locked_path, "WebDAV 子树资源被锁且缺少 If token，返回 423");
-            return Some(StatusCode::LOCKED);
+            return Err(StatusCode::LOCKED);
         };
-        let etag = match vfiles_domain::types::NormalizedPath::new(&locked_path) {
+        let etag = match vfiles_domain::types::NormalizedPath::new(locked_path) {
             Ok(path) => match app.entry_repo.find_by_path(ns, &path).await {
                 Ok(entry) => entry
                     .and_then(|entry| entry.current_version_id)
@@ -1326,7 +1335,7 @@ async fn write_subtree_precondition(
                     .map(derive_etag),
                 Err(error) => {
                     tracing::error!(%error, path = %locked_path, "WebDAV 子树 If 条件读取 ETag 失败");
-                    return Some(StatusCode::INTERNAL_SERVER_ERROR);
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
                 }
             },
             Err(_) => None,
@@ -1337,7 +1346,7 @@ async fn write_subtree_precondition(
             .collect::<Vec<_>>();
         match tagged_if_matches_tokens(
             header,
-            &locked_path,
+            locked_path,
             &app.mount_prefix,
             &tokens,
             etag.as_deref(),
@@ -1346,12 +1355,29 @@ async fn write_subtree_precondition(
             Some(true) => {}
             Some(false) => {
                 tracing::debug!(path = %locked_path, "WebDAV 子树 If 条件未匹配，返回 412");
-                return Some(StatusCode::PRECONDITION_FAILED);
+                return Err(StatusCode::PRECONDITION_FAILED);
             }
-            None => return Some(StatusCode::BAD_REQUEST),
+            None => return Err(StatusCode::BAD_REQUEST),
         }
     }
-    None
+    let mut snapshots = std::collections::HashMap::<String, Vec<String>>::new();
+    for lock in locks_by_path.into_values().flatten() {
+        snapshots.entry(lock.path).or_default().push(lock.token);
+    }
+    let snapshots = snapshots
+        .into_iter()
+        .map(|(path, mut tokens)| {
+            tokens.sort_unstable();
+            vfiles_domain::NormalizedPath::new(&path)
+                .map(|path| vfiles_domain::EntryLockSnapshot {
+                    path,
+                    tokens,
+                    include_ancestors: false,
+                })
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((root_tokens, snapshots))
 }
 
 async fn put_op(
@@ -1410,6 +1436,7 @@ async fn put_op(
         expected_entry_id: None,
         expected_version_id: None,
         expected_lock_tokens: None,
+        expected_additional_lock_states: None,
     });
     condition.expected_lock_tokens = Some(active_lock_tokens);
     use futures::{StreamExt, TryStreamExt};
@@ -1523,25 +1550,8 @@ async fn write_op(
     };
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/');
     // 写锁校验（r109a 423 → r7 分码 ✗ 有 If 不匹配 = 412（RFC §9.10.6））
-    let lock_snapshot = if matches!(&op, WriteOp::Delete) {
-        if let Some(status) = write_subtree_precondition(&app, &ns, rel, if_header.as_deref()).await
-        {
-            return Response::builder()
-                .status(status)
-                .body(Body::empty())
-                .unwrap();
-        }
-        match write_precondition_snapshot(&app, &ns, rel, if_header.as_deref()).await {
-            Ok(snapshot) => Some(snapshot),
-            Err(status) => {
-                return Response::builder()
-                    .status(status)
-                    .body(Body::empty())
-                    .unwrap();
-            }
-        }
-    } else if matches!(&op, WriteOp::Move) {
-        match write_precondition_snapshot(&app, &ns, rel, if_header.as_deref()).await {
+    let lock_snapshot = if matches!(&op, WriteOp::Delete | WriteOp::Move) {
+        match write_subtree_precondition_snapshot(&app, &ns, rel, if_header.as_deref()).await {
             Ok(snapshot) => Some(snapshot),
             Err(status) => {
                 return Response::builder()
@@ -1598,7 +1608,76 @@ async fn write_op(
     } else {
         None
     };
-    if let Some(lock_tokens) = lock_snapshot {
+    if let Some((lock_tokens, mut additional_lock_states)) = lock_snapshot {
+        if matches!(op, WriteOp::Move) {
+            let dest_rel = dest_raw
+                .as_deref()
+                .and_then(|destination| {
+                    destination_path_for_request(
+                        destination,
+                        &app.mount_prefix,
+                        &destination_context,
+                    )
+                })
+                .ok_or(StatusCode::BAD_REQUEST);
+            let dest_rel = match dest_rel {
+                Ok(dest_rel) => dest_rel,
+                Err(status) => {
+                    return Response::builder()
+                        .status(status)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            };
+            let destination = match NormalizedPath::new(dest_rel.trim_start_matches('/')) {
+                Ok(destination) => destination,
+                Err(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            };
+            match write_subtree_precondition_snapshot(
+                &app,
+                &ns,
+                destination.as_str(),
+                if_header.as_deref(),
+            )
+            .await
+            {
+                Ok((_, mut snapshots)) => additional_lock_states.append(&mut snapshots),
+                Err(status) => {
+                    return Response::builder()
+                        .status(status)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            }
+            match write_subtree_precondition_snapshot(
+                &app,
+                &ns,
+                destination.as_str(),
+                if_header.as_deref(),
+            )
+            .await
+            {
+                Ok((tokens, mut snapshots)) => {
+                    additional_lock_states.append(&mut snapshots);
+                    additional_lock_states.push(vfiles_domain::EntryLockSnapshot {
+                        path: destination,
+                        tokens,
+                        include_ancestors: true,
+                    });
+                }
+                Err(status) => {
+                    return Response::builder()
+                        .status(status)
+                        .body(Body::empty())
+                        .unwrap();
+                }
+            }
+        }
         let condition = match write_condition.as_mut() {
             Some(condition) => condition,
             None => {
@@ -1616,10 +1695,12 @@ async fn write_op(
                     expected_entry_id: entry.as_ref().map(|entry| entry.id),
                     expected_version_id: entry.as_ref().and_then(|entry| entry.current_version_id),
                     expected_lock_tokens: None,
+                    expected_additional_lock_states: None,
                 })
             }
         };
         condition.expected_lock_tokens = Some(lock_tokens);
+        condition.expected_additional_lock_states = Some(additional_lock_states);
     }
     if matches!(op, WriteOp::Mkcol) {
         if rel.is_empty() {
@@ -1814,6 +1895,7 @@ async fn check_http_write_preconditions(
         expected_entry_id,
         expected_version_id,
         expected_lock_tokens: None,
+        expected_additional_lock_states: None,
     }))
 }
 
@@ -3042,6 +3124,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     expected_entry_id: Some(entry.id),
                     expected_version_id: entry.current_version_id,
                     expected_lock_tokens: Some(expected_lock_tokens),
+                    expected_additional_lock_states: None,
                 };
                 if let Err(error) = app_ref
                     .entry_repo
@@ -3665,6 +3748,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                                             .as_ref()
                                             .and_then(|entry| entry.current_version_id),
                                         expected_lock_tokens: None,
+                                        expected_additional_lock_states: None,
                                     });
                                     let mut cur = None;
                                     let mut modified_at =

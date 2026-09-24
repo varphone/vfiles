@@ -7,33 +7,73 @@ async fn verify_write_lock_snapshot(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
     condition: &vfiles_domain::EntryWriteCondition,
 ) -> DomainResult<()> {
-    let Some(expected_tokens) = &condition.expected_lock_tokens else {
+    if condition.expected_lock_tokens.is_none()
+        && condition.expected_additional_lock_states.is_none()
+    {
         return Ok(());
-    };
+    }
     let now = time::OffsetDateTime::now_utc()
         .unix_timestamp_nanos()
         .div_euclid(1_000_000)
         .clamp(0, i64::MAX as i128) as i64;
-    let current_tokens: Vec<String> = sqlx::query_scalar(
-        r#"SELECT token FROM webdav_locks
+    if let Some(expected_tokens) = &condition.expected_lock_tokens {
+        let current_tokens: Vec<String> = sqlx::query_scalar(
+            r#"SELECT token FROM webdav_locks
            WHERE namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)
              AND (path = ? OR (depth_infinity = 1 AND
                (path = '' OR substr(?, 1, length(path) + 1) = path || '/')))
            ORDER BY token"#,
-    )
-    .bind(condition.namespace_id.to_string())
-    .bind(now)
-    .bind(condition.path.as_str())
-    .bind(condition.path.as_str())
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(|e| DomainError::Internal {
-        message: format!("Failed to verify conditional WebDAV lock state: {e}"),
-    })?;
-    let mut expected_tokens = expected_tokens.clone();
-    expected_tokens.sort_unstable();
-    if current_tokens != expected_tokens {
-        return Err(DomainError::PreconditionFailed);
+        )
+        .bind(condition.namespace_id.to_string())
+        .bind(now)
+        .bind(condition.path.as_str())
+        .bind(condition.path.as_str())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to verify conditional WebDAV lock state: {e}"),
+        })?;
+        let mut expected_tokens = expected_tokens.clone();
+        expected_tokens.sort_unstable();
+        if current_tokens != expected_tokens {
+            return Err(DomainError::PreconditionFailed);
+        }
+    }
+    if let Some(additional_locks) = &condition.expected_additional_lock_states {
+        for snapshot in additional_locks {
+            let current_tokens: Vec<String> = if snapshot.include_ancestors {
+                sqlx::query_scalar(
+                    r#"SELECT token FROM webdav_locks WHERE namespace_id = ?
+                       AND (expires_at IS NULL OR expires_at > ?)
+                       AND (path = ? OR (depth_infinity = 1 AND
+                         (path = '' OR substr(?, 1, length(path) + 1) = path || '/')))
+                       ORDER BY token"#,
+                )
+                .bind(condition.namespace_id.to_string())
+                .bind(now)
+                .bind(snapshot.path.as_str())
+                .bind(snapshot.path.as_str())
+                .fetch_all(&mut **tx)
+                .await
+            } else {
+                sqlx::query_scalar(
+                    "SELECT token FROM webdav_locks WHERE namespace_id = ? AND path = ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY token",
+                )
+                .bind(condition.namespace_id.to_string())
+                .bind(snapshot.path.as_str())
+                .bind(now)
+                .fetch_all(&mut **tx)
+                .await
+            }
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to verify subtree WebDAV locks: {e}"),
+            })?;
+            let mut expected_tokens = snapshot.tokens.clone();
+            expected_tokens.sort_unstable();
+            if current_tokens != expected_tokens {
+                return Err(DomainError::PreconditionFailed);
+            }
+        }
     }
     Ok(())
 }
@@ -8828,6 +8868,7 @@ mod entry_version_batch_tests {
             expected_entry_id: Some(entry_id),
             expected_version_id: Some(first.id),
             expected_lock_tokens: None,
+            expected_additional_lock_states: None,
         };
         let result = repo
             .create_version_with_properties(
@@ -8893,6 +8934,7 @@ mod entry_version_batch_tests {
             expected_entry_id: Some(entry_id),
             expected_version_id: Some(first.id),
             expected_lock_tokens: Some(Vec::new()),
+            expected_additional_lock_states: None,
         };
         let result = repo
             .create_version_with_properties(
@@ -9905,17 +9947,22 @@ mod webdav_lock_repo_tests {
             .await
             .expect("default namespace should be created");
         let entry_repo = SqliteEntryRepo::new(pool.clone());
-        let path = NormalizedPath::new("locked.txt").expect("path should parse");
+        let path = NormalizedPath::new("folder").expect("path should parse");
         let entry_id = entry_repo
-            .create_entry(&namespace_id, &path, EntryKind::File, &user_id)
+            .create_entry(&namespace_id, &path, EntryKind::Directory, &user_id)
             .await
             .expect("entry should be created");
+        let child_path = NormalizedPath::new("folder/child.txt").expect("child path should parse");
+        let child_id = entry_repo
+            .create_entry(&namespace_id, &child_path, EntryKind::File, &user_id)
+            .await
+            .expect("child entry should be created");
         let lock_repo = SqliteWebdavLockRepo::new(pool.clone());
         assert!(
             lock_repo
                 .acquire(
                     &namespace_id,
-                    path.as_str(),
+                    child_path.as_str(),
                     NewWebdavLock {
                         token: "opaquelocktoken:new-lock",
                         owner: "alice",
@@ -9936,6 +9983,11 @@ mod webdav_lock_repo_tests {
             expected_entry_id: Some(entry_id),
             expected_version_id: None,
             expected_lock_tokens: Some(Vec::new()),
+            expected_additional_lock_states: Some(vec![vfiles_domain::EntryLockSnapshot {
+                path: child_path,
+                tokens: Vec::new(),
+                include_ancestors: false,
+            }]),
         };
         let result = entry_repo
             .apply_entry_property_changes_if_current(
@@ -9949,15 +10001,20 @@ mod webdav_lock_repo_tests {
             .await;
         assert!(matches!(result, Err(DomainError::PreconditionFailed)));
         let delete_result = entry_repo
-            .delete_entries_if_current(&[entry_id], &condition)
+            .delete_entries_if_current(&[entry_id, child_id], &condition)
             .await;
         assert!(matches!(
             delete_result,
             Err(DomainError::PreconditionFailed)
         ));
-        let destination = NormalizedPath::new("moved.txt").expect("destination should parse");
+        let destination = NormalizedPath::new("moved").expect("destination should parse");
+        let child_destination =
+            NormalizedPath::new("moved/child.txt").expect("child destination should parse");
         let move_result = entry_repo
-            .move_entries_if_current(&[(entry_id, destination)], &condition)
+            .move_entries_if_current(
+                &[(entry_id, destination), (child_id, child_destination)],
+                &condition,
+            )
             .await;
         assert!(matches!(move_result, Err(DomainError::PreconditionFailed)));
         assert!(
@@ -9967,6 +10024,43 @@ mod webdav_lock_repo_tests {
                 .expect("entry lookup should succeed")
                 .is_some()
         );
+        sqlx::query("DELETE FROM webdav_locks WHERE token = 'opaquelocktoken:new-lock'")
+            .execute(&pool)
+            .await
+            .expect("child lock should be removed for destination race assertion");
+        let destination = NormalizedPath::new("moved").expect("destination should parse");
+        assert!(
+            lock_repo
+                .acquire(
+                    &namespace_id,
+                    destination.as_str(),
+                    NewWebdavLock {
+                        token: "opaquelocktoken:destination-lock",
+                        owner: "alice",
+                        depth_infinity: false,
+                        scope: WebdavLockScope::Exclusive,
+                        expires_at: None,
+                        now: 1_000,
+                    },
+                )
+                .await
+                .expect("destination lock should be created after precheck")
+        );
+        let destination_condition = vfiles_domain::EntryWriteCondition {
+            expected_additional_lock_states: Some(vec![vfiles_domain::EntryLockSnapshot {
+                path: destination.clone(),
+                tokens: Vec::new(),
+                include_ancestors: true,
+            }]),
+            ..condition.clone()
+        };
+        let destination_move_result = entry_repo
+            .move_entries_if_current(&[(entry_id, destination)], &destination_condition)
+            .await;
+        assert!(matches!(
+            destination_move_result,
+            Err(DomainError::PreconditionFailed)
+        ));
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entry_properties")
             .fetch_one(&pool)
             .await
