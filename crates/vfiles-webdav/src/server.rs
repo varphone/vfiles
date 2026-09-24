@@ -113,6 +113,24 @@ fn parse_overwrite_header(headers: &axum::http::HeaderMap) -> Option<bool> {
     }
 }
 
+fn parse_write_depth(headers: &axum::http::HeaderMap) -> Result<Option<bool>, ()> {
+    let mut values = headers.get_all("depth").iter();
+    match (values.next(), values.next()) {
+        (None, None) => Ok(None),
+        (Some(value), None) => {
+            let value = value.to_str().map_err(|_| ())?.trim();
+            if value.eq_ignore_ascii_case("infinity") {
+                Ok(Some(true))
+            } else if value == "0" || value == "1" {
+                Ok(Some(false))
+            } else {
+                Err(())
+            }
+        }
+        _ => Err(()),
+    }
+}
+
 fn parse_if_lists(input: &mut &str) -> Option<Vec<Vec<IfCondition>>> {
     let mut lists = Vec::new();
     while input.starts_with('(') {
@@ -1383,6 +1401,7 @@ async fn write_op(
     overwrite: bool,
     destination_context: DestinationContext,
     http_conditions: Option<HttpWriteConditions>,
+    write_depth_infinity: Option<bool>,
 ) -> Response {
     use vfiles_domain::types::NormalizedPath;
 
@@ -1420,6 +1439,21 @@ async fn write_op(
                 .unwrap();
         }
     };
+    if matches!(op, WriteOp::Delete) && write_depth_infinity == Some(false) {
+        match app.entry_repo.find_by_path(&ns, &path).await {
+            Ok(Some(entry)) if entry.entry_type == vfiles_domain::types::EntryKind::Directory => {
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(Body::empty())
+                    .unwrap();
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::error!(%error, path = %rel, "DELETE Depth 校验读取目标失败");
+                return internal_error();
+            }
+        }
+    }
     let delete_condition = if matches!(op, WriteOp::Delete) {
         match check_delete_http_preconditions(&app, &ns, &path, http_conditions.unwrap_or_default())
             .await
@@ -3103,6 +3137,19 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 "DELETE" => WriteOp::Delete,
                 _ => WriteOp::Move,
             };
+            let write_depth_infinity = if matches!(op, WriteOp::Delete | WriteOp::Move) {
+                match parse_write_depth(req.headers()) {
+                    Ok(depth) => depth,
+                    Err(()) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(Body::empty())
+                            .unwrap();
+                    }
+                }
+            } else {
+                None
+            };
             let mkcol_has_body = req
                 .body()
                 .size_hint()
@@ -3201,6 +3248,15 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                             .unwrap();
                     }
                     match app.entry_repo.find_by_path(ns_ext, &source).await {
+                        Ok(Some(entry))
+                            if entry.entry_type == vfiles_domain::types::EntryKind::Directory
+                                && write_depth_infinity == Some(false) =>
+                        {
+                            return Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body(Body::empty())
+                                .unwrap();
+                        }
                         Ok(Some(_)) => {}
                         Ok(None) => {
                             return Response::builder()
@@ -3256,6 +3312,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                     move_overwrite,
                     DestinationContext::from_request(req.uri(), req.headers()),
                     http_conditions,
+                    write_depth_infinity,
                 )
                 .await;
                 // r11 覆盖成功 204（RFC §9.9.3 ✗ 新建保持 201）——外层改写避免 move 后外尾用旧绑
@@ -3547,6 +3604,39 @@ mod overwrite_header_tests {
         headers.insert("overwrite", "T".parse().unwrap());
         headers.append("overwrite", "F".parse().unwrap());
         assert_eq!(parse_overwrite_header(&headers), None);
+    }
+}
+
+#[cfg(test)]
+mod write_depth_tests {
+    use super::parse_write_depth;
+    use axum::http::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn delete_and_move_depth_accept_only_one_infinity_value() {
+        let headers = HeaderMap::new();
+        assert_eq!(parse_write_depth(&headers), Ok(None));
+
+        let mut headers = HeaderMap::new();
+        headers.insert("depth", HeaderValue::from_static("Infinity"));
+        assert_eq!(parse_write_depth(&headers), Ok(Some(true)));
+
+        for value in ["0", "1"] {
+            let mut headers = HeaderMap::new();
+            headers.insert("depth", HeaderValue::from_str(value).unwrap());
+            assert_eq!(parse_write_depth(&headers), Ok(Some(false)));
+        }
+
+        for value in ["infinity, 0", "invalid"] {
+            let mut headers = HeaderMap::new();
+            headers.insert("depth", HeaderValue::from_str(value).unwrap());
+            assert_eq!(parse_write_depth(&headers), Err(()), "accepted {value:?}");
+        }
+
+        let mut headers = HeaderMap::new();
+        headers.append("depth", HeaderValue::from_static("infinity"));
+        headers.append("depth", HeaderValue::from_static("infinity"));
+        assert_eq!(parse_write_depth(&headers), Err(()));
     }
 }
 

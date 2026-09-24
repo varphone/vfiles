@@ -204,6 +204,15 @@ async fn options_advertises_and_propfind_needs_auth() {
     entry_repo
         .create_entry(
             &namespace_id,
+            &NormalizedPath::new("depth-dir").expect("directory path"),
+            vfiles_domain::types::EntryKind::Directory,
+            &user.id,
+        )
+        .await
+        .expect("depth test directory should be created");
+    entry_repo
+        .create_entry(
+            &namespace_id,
             &NormalizedPath::new("locked-dir/child.txt").expect("child path"),
             vfiles_domain::types::EntryKind::File,
             &user.id,
@@ -1298,7 +1307,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("DELETE")
-                .uri("/persist.txt")
+                .uri("/depth-dir")
                 .header("authorization", format!("Basic {basic}"))
                 .header("if-match", "\"stale\"")
                 .body(axum::body::Body::empty())
@@ -1312,6 +1321,42 @@ async fn options_advertises_and_propfind_needs_auth() {
         delete_count_before,
         "stale If-Match must reject DELETE before reaching the write operation"
     );
+
+    let invalid_depth_delete = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("DELETE")
+                .uri("/depth-dir")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_depth_delete.status(), 400);
+    assert_eq!(
+        deletes.load(std::sync::atomic::Ordering::Relaxed),
+        delete_count_before,
+        "Depth: 0 must not reach recursive DELETE"
+    );
+
+    let invalid_depth_move = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("MOVE")
+                .uri("/depth-dir")
+                .header("authorization", format!("Basic {basic}"))
+                .header("destination", "/moved.txt")
+                .header("depth", "1")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_depth_move.status(), 400);
 
     let weak_if_match = router
         .clone()
