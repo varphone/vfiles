@@ -1086,7 +1086,7 @@ async fn options_advertises_and_propfind_needs_auth() {
                 .body(axum::body::Body::from(
                     r#"<D:propertyupdate xmlns:D="DAV:" xmlns:X="urn:example:x">
                         <D:set><D:prop><X:rejected>must not persist</X:rejected></D:prop></D:set>
-                        <D:set><D:prop><D:displayname>renamed.txt</D:displayname></D:prop></D:set>
+                        <D:set><D:prop><D:displayname>Legal display / title</D:displayname></D:prop></D:set>
                     </D:propertyupdate>"#,
                 ))
                 .unwrap(),
@@ -1126,7 +1126,7 @@ async fn options_advertises_and_propfind_needs_auth() {
             .to_vec(),
     )
     .unwrap();
-    assert!(mixed_check_body.contains("<D:displayname>renamed.txt</D:displayname>"));
+    assert!(mixed_check_body.contains("<D:displayname>Legal display / title</D:displayname>"));
     assert!(mixed_check_body.contains("must not persist"));
 
     let full_get = router
@@ -1134,7 +1134,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("GET")
-                .uri("/renamed.txt")
+                .uri("/persist.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .body(axum::body::Body::empty())
                 .unwrap(),
@@ -1169,7 +1169,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("GET")
-                .uri("/renamed.txt")
+                .uri("/persist.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("if-match", &etag)
                 .body(axum::body::Body::empty())
@@ -1184,7 +1184,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("GET")
-                .uri("/renamed.txt")
+                .uri("/persist.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("if-match", "\"stale\"")
                 .body(axum::body::Body::empty())
@@ -1199,7 +1199,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("GET")
-                .uri("/renamed.txt")
+                .uri("/persist.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("if-match", format!("W/{etag}"))
                 .body(axum::body::Body::empty())
@@ -1214,7 +1214,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("GET")
-                .uri("/renamed.txt")
+                .uri("/persist.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("if-none-match", format!("W/{etag}"))
                 .body(axum::body::Body::empty())
@@ -1229,7 +1229,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("GET")
-                .uri("/renamed.txt")
+                .uri("/persist.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("if-modified-since", &last_modified)
                 .body(axum::body::Body::empty())
@@ -1244,7 +1244,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("GET")
-                .uri("/renamed.txt")
+                .uri("/persist.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("if-unmodified-since", "Thu, 01 Jan 1970 00:00:00 GMT")
                 .body(axum::body::Body::empty())
@@ -1259,7 +1259,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("GET")
-                .uri("/renamed.txt")
+                .uri("/persist.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("if-match", &etag)
                 .header("if-unmodified-since", "Thu, 01 Jan 1970 00:00:00 GMT")
@@ -1275,7 +1275,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("GET")
-                .uri("/renamed.txt")
+                .uri("/persist.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("range", "bytes=0-3")
                 .header("if-range", &etag)
@@ -1298,7 +1298,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("GET")
-                .uri("/renamed.txt")
+                .uri("/persist.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("range", "bytes=0-3")
                 .header("if-range", "\"stale\"")
@@ -1321,7 +1321,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("GET")
-                .uri("/renamed.txt")
+                .uri("/persist.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("range", "bytes=0-3")
                 .header("if-range", &last_modified)
@@ -1508,8 +1508,8 @@ async fn options_advertises_and_propfind_needs_auth() {
         )
         .await
         .unwrap();
-    // persist.txt was renamed earlier, so this request also creates a lock-null resource.
-    assert_eq!(lock.status(), 201);
+    // The display name is a property; the resource remains at persist.txt.
+    assert_eq!(lock.status(), 200);
     let lock_token = lock
         .headers()
         .get("lock-token")
@@ -1600,7 +1600,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .oneshot(
             axum::http::Request::builder()
                 .method("LOCK")
-                .uri("/renamed.txt")
+                .uri("/target.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("depth", "0")
                 .header("timeout", "Second-600")
@@ -2023,7 +2023,7 @@ async fn options_advertises_and_propfind_needs_auth() {
                 .header("depth", "1")
                 .header("content-type", "application/xml")
                 .body(axum::body::Body::from(
-                    r#"<D:propfind xmlns:D="DAV:"><D:prop><D:displayname/></D:prop></D:propfind>"#,
+                    r#"<D:propfind xmlns:D="DAV:"><D:prop><D:getcontentlength/></D:prop></D:propfind>"#,
                 ))
                 .unwrap(),
         )
@@ -2037,14 +2037,14 @@ async fn options_advertises_and_propfind_needs_auth() {
             .to_vec(),
     )
     .unwrap();
-    assert!(selected_builtin_xml.contains("<D:displayname>renamed.txt</D:displayname>"));
+    assert!(selected_builtin_xml.contains("<D:getcontentlength>"));
 
     let property_read_failure = router
         .clone()
         .oneshot(
             axum::http::Request::builder()
                 .method("PROPFIND")
-                .uri("/renamed.txt")
+                .uri("/persist.txt")
                 .header("authorization", format!("Basic {basic}"))
                 .header("depth", "0")
                 .body(axum::body::Body::empty())

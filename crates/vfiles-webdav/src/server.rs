@@ -2127,9 +2127,10 @@ fn prop_mode_needs_custom_properties(mode: &crate::response::PropMode) -> bool {
     match mode {
         crate::response::PropMode::All | crate::response::PropMode::PropName => true,
         crate::response::PropMode::Names(names) => names.iter().any(|name| {
-            !SUPPORTED
-                .iter()
-                .any(|local_name| crate::response::is_dav_property(name, local_name))
+            crate::response::is_dav_property(name, "displayname")
+                || !SUPPORTED
+                    .iter()
+                    .any(|local_name| crate::response::is_dav_property(name, local_name))
         }),
     }
 }
@@ -2525,10 +2526,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
         // 写面由 MKCOL/DELETE/MOVE/COPY 与流式 PUT 分支处理。
         // 同步提取拥有值（借用不跨 await ✓ #46）。
         ref m if m.as_str() == "PROPPATCH" => {
-            // r6 PROPPATCH（RFC 4918 §9.2 ✓ propertyupdate 解析（roxmltree）+ 每操作
-            // propstat（200/403）✗ 可写集 = displayname（set → move 同父改名（r5 单源
-            // 直路径语义复用 ✓）；remove 恒 403（属性不可删）✗ 其余属性 403（403 =
-            // RFC §9.2.1 合规拒码 ✓）；自定义属性持久化 = P1 记债）。
+            // PROPPATCH parses DAV property names and stores changes transactionally.
             let app_owned = req.extensions().get::<WebdavApplication>().cloned();
             let user_owned = req
                 .extensions()
@@ -2598,93 +2596,12 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             };
             let mut results: Vec<(crate::response::PropOp, crate::response::PropPatchStatus)> =
                 Vec::with_capacity(ops.len());
-            let rename_index = ops.iter().position(|op| {
-                matches!(op, crate::response::PropOp::Set { name, .. }
-                    if crate::response::is_dav_property(name, "displayname"))
-            });
-
-            if let Some(index) = rename_index {
-                if let Some(failed_index) = ops.iter().position(|op| match op {
-                    crate::response::PropOp::Set { name, .. } => {
-                        crate::response::is_predefined_readonly(name)
-                    }
-                    crate::response::PropOp::Remove { name } => {
-                        crate::response::is_predefined_readonly(name)
-                            || crate::response::is_dav_property(name, "displayname")
-                    }
-                }) {
-                    results.extend(ops.into_iter().enumerate().map(|(i, op)| {
-                        (
-                            op,
-                            if i == failed_index {
-                                crate::response::PropPatchStatus::Forbidden
-                            } else {
-                                crate::response::PropPatchStatus::FailedDependency
-                            },
-                        )
-                    }));
-                } else {
-                    let crate::response::PropOp::Set { value, .. } = &ops[index] else {
-                        unreachable!("rename index refers to a set operation")
-                    };
-                    let valid_name = !value.is_empty()
-                        && !value.contains('/')
-                        && vfiles_domain::types::NormalizedPath::new(value).is_ok();
-                    let status = if !valid_name {
-                        crate::response::PropPatchStatus::Forbidden
-                    } else {
-                        let parent = path.as_str().rfind('/').map_or("", |i| &path.as_str()[..i]);
-                        let new_rel = if parent.is_empty() {
-                            value.clone()
-                        } else {
-                            format!("{parent}/{value}")
-                        };
-                        match vfiles_domain::types::NormalizedPath::new(&new_rel) {
-                            Ok(dest) => {
-                                let changes: Vec<vfiles_domain::EntryPropertyChange> = ops
-                                    .iter()
-                                    .enumerate()
-                                    .filter(|(i, _)| *i != index)
-                                    .map(|(_, op)| match op {
-                                        crate::response::PropOp::Set { name, value } => {
-                                            vfiles_domain::EntryPropertyChange::Set {
-                                                name: name.clone(),
-                                                value: value.clone(),
-                                            }
-                                        }
-                                        crate::response::PropOp::Remove { name } => {
-                                            vfiles_domain::EntryPropertyChange::Remove {
-                                                name: name.clone(),
-                                            }
-                                        }
-                                    })
-                                    .collect();
-                                match app_ref
-                                    .write
-                                    .move_entry_with_property_changes(
-                                        &ns, &path, &dest, &user.id, &changes,
-                                    )
-                                    .await
-                                {
-                                    Ok(()) => crate::response::PropPatchStatus::Ok,
-                                    Err(error) => {
-                                        tracing::warn!(%error, "WebDAV PROPPATCH displayname 改名失败");
-                                        crate::response::PropPatchStatus::Forbidden
-                                    }
-                                }
-                            }
-                            Err(_) => crate::response::PropPatchStatus::Forbidden,
-                        }
-                    };
-                    results.extend(ops.into_iter().map(|op| (op, status)));
-                }
-            } else if let Some(failed_index) = ops.iter().position(|op| match op {
+            if let Some(failed_index) = ops.iter().position(|op| match op {
                 crate::response::PropOp::Set { name, .. } => {
                     crate::response::is_predefined_readonly(name)
                 }
                 crate::response::PropOp::Remove { name } => {
                     crate::response::is_predefined_readonly(name)
-                        || crate::response::is_dav_property(name, "displayname")
                 }
             }) {
                 results.extend(ops.into_iter().enumerate().map(|(i, op)| {

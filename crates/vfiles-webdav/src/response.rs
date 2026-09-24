@@ -6,7 +6,7 @@
 #![allow(dead_code)]
 
 /// PROPFIND 请求体模式（RFC 4918 §9.1 ✗ r2 P0 协议精度）。
-/// 预定义只读属性集（r13 ✓ 除 displayname（改名语义）外 PROPPATCH set → 403）。
+/// DAV live properties that this server treats as read-only.
 pub const PREDEFINED_READONLY: [&str; 9] = [
     "resourcetype",
     "getlastmodified",
@@ -215,9 +215,9 @@ pub enum PropMode {
 /// PROPPATCH 操作（RFC 4918 §9.2 ✓）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PropOp {
-    /// `<set><prop><name>value</name>`（首版可写集 = displayname ✓ 其余 = 403）。
+    /// `<set><prop><name>value</name>`.
     Set { name: String, value: String },
-    /// `<remove><prop><name/>`（属性不可删 = 403 恒拒；结构支持 ✓）。
+    /// `<remove><prop><name/>`.
     Remove { name: String },
 }
 
@@ -440,7 +440,16 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
             match name {
                 "displayname" if mode != &PropMode::PropName => {
                     out.push_str("<D:displayname>");
-                    out.push_str(&escape_xml(&item.displayname));
+                    let stored = item
+                        .custom
+                        .iter()
+                        .find(|(name, _)| {
+                            canonical_stored_property_key(name)
+                                == property_key(Some("DAV:"), "displayname")
+                        })
+                        .map(|(_, value)| value.as_str())
+                        .unwrap_or(&item.displayname);
+                    out.push_str(&escape_xml(stored));
                     out.push_str("</D:displayname>");
                 }
                 "resourcetype" if mode != &PropMode::PropName => {
@@ -529,6 +538,9 @@ pub fn multistatus(items: &[PropResponse], mode: &PropMode) -> String {
         }
         // r13 自定义属性输出（All = 全出 ✗ Names = 交集 ✗ PropName = 只名无值）
         for (cn, cv) in &item.custom {
+            if canonical_stored_property_key(cn) == property_key(Some("DAV:"), "displayname") {
+                continue;
+            }
             let requested = match mode {
                 PropMode::All => true,
                 PropMode::PropName => true,
