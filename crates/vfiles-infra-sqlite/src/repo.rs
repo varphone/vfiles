@@ -3,6 +3,41 @@ use vfiles_domain::*;
 
 pub type SqlitePool = Pool<Sqlite>;
 
+async fn verify_write_lock_snapshot(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    condition: &vfiles_domain::EntryWriteCondition,
+) -> DomainResult<()> {
+    let Some(expected_tokens) = &condition.expected_lock_tokens else {
+        return Ok(());
+    };
+    let now = time::OffsetDateTime::now_utc()
+        .unix_timestamp_nanos()
+        .div_euclid(1_000_000)
+        .clamp(0, i64::MAX as i128) as i64;
+    let current_tokens: Vec<String> = sqlx::query_scalar(
+        r#"SELECT token FROM webdav_locks
+           WHERE namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)
+             AND (path = ? OR (depth_infinity = 1 AND
+               (path = '' OR substr(?, 1, length(path) + 1) = path || '/')))
+           ORDER BY token"#,
+    )
+    .bind(condition.namespace_id.to_string())
+    .bind(now)
+    .bind(condition.path.as_str())
+    .bind(condition.path.as_str())
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|e| DomainError::Internal {
+        message: format!("Failed to verify conditional WebDAV lock state: {e}"),
+    })?;
+    let mut expected_tokens = expected_tokens.clone();
+    expected_tokens.sort_unstable();
+    if current_tokens != expected_tokens {
+        return Err(DomainError::PreconditionFailed);
+    }
+    Ok(())
+}
+
 fn role_as_str(role: Role) -> &'static str {
     match role {
         Role::Admin => "admin",
@@ -2326,33 +2361,7 @@ impl EntryRepo for SqliteEntryRepo {
                     return Err(DomainError::PreconditionFailed);
                 }
             }
-            if let Some(expected_tokens) = &condition.expected_lock_tokens {
-                let now = time::OffsetDateTime::now_utc()
-                    .unix_timestamp_nanos()
-                    .div_euclid(1_000_000)
-                    .clamp(0, i64::MAX as i128) as i64;
-                let current_tokens: Vec<String> = sqlx::query_scalar(
-                    r#"SELECT token FROM webdav_locks
-                       WHERE namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)
-                         AND (path = ? OR (depth_infinity = 1 AND
-                           (path = '' OR substr(?, 1, length(path) + 1) = path || '/')))
-                       ORDER BY token"#,
-                )
-                .bind(condition.namespace_id.to_string())
-                .bind(now)
-                .bind(condition.path.as_str())
-                .bind(condition.path.as_str())
-                .fetch_all(&mut *tx)
-                .await
-                .map_err(|e| DomainError::Internal {
-                    message: format!("Failed to verify conditional property patch locks: {e}"),
-                })?;
-                let mut expected_tokens = expected_tokens.clone();
-                expected_tokens.sort_unstable();
-                if current_tokens != expected_tokens {
-                    return Err(DomainError::PreconditionFailed);
-                }
-            }
+            verify_write_lock_snapshot(&mut tx, condition).await?;
         }
         for change in changes {
             match change {
@@ -3444,6 +3453,7 @@ impl EntryRepo for SqliteEntryRepo {
         if current != expected {
             return Err(DomainError::PreconditionFailed);
         }
+        verify_write_lock_snapshot(&mut tx, condition).await?;
 
         const CHUNK: usize = 500;
         for chunk in entry_ids.chunks(CHUNK) {
@@ -3659,6 +3669,7 @@ impl EntryRepo for SqliteEntryRepo {
         if current != expected {
             return Err(DomainError::PreconditionFailed);
         }
+        verify_write_lock_snapshot(&mut tx, condition).await?;
         for (entry_id, new_path) in moves {
             sqlx::query("UPDATE entries SET path = ? WHERE id = ?")
                 .bind(new_path.as_str())
@@ -3760,9 +3771,13 @@ impl EntryRepo for SqliteEntryRepo {
             });
         }
 
-        let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
-            message: format!("Failed to begin replace-and-move transaction: {}", e),
-        })?;
+        let mut tx =
+            self.pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to begin replace-and-move transaction: {}", e),
+                })?;
         if let Some(condition) = condition {
             let row: Option<(String, Option<String>)> = sqlx::query_as(
                 "SELECT e.id, (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1) FROM entries e WHERE e.namespace_id = ? AND e.path = ?",
@@ -3797,6 +3812,7 @@ impl EntryRepo for SqliteEntryRepo {
             if current != expected {
                 return Err(DomainError::PreconditionFailed);
             }
+            verify_write_lock_snapshot(&mut tx, condition).await?;
         }
         let replaced_rows: Vec<EntryRow> = sqlx::query_as(
             r#"
@@ -9932,6 +9948,25 @@ mod webdav_lock_repo_tests {
             )
             .await;
         assert!(matches!(result, Err(DomainError::PreconditionFailed)));
+        let delete_result = entry_repo
+            .delete_entries_if_current(&[entry_id], &condition)
+            .await;
+        assert!(matches!(
+            delete_result,
+            Err(DomainError::PreconditionFailed)
+        ));
+        let destination = NormalizedPath::new("moved.txt").expect("destination should parse");
+        let move_result = entry_repo
+            .move_entries_if_current(&[(entry_id, destination)], &condition)
+            .await;
+        assert!(matches!(move_result, Err(DomainError::PreconditionFailed)));
+        assert!(
+            entry_repo
+                .find_by_path(&namespace_id, &condition.path)
+                .await
+                .expect("entry lookup should succeed")
+                .is_some()
+        );
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entry_properties")
             .fetch_one(&pool)
             .await

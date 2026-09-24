@@ -1523,17 +1523,42 @@ async fn write_op(
     };
     let rel = uri_path.trim_start_matches('/').trim_end_matches('/');
     // 写锁校验（r109a 423 → r7 分码 ✗ 有 If 不匹配 = 412（RFC §9.10.6））
-    let precondition = if matches!(&op, WriteOp::Delete) {
-        write_subtree_precondition(&app, &ns, rel, if_header.as_deref()).await
+    let lock_snapshot = if matches!(&op, WriteOp::Delete) {
+        if let Some(status) = write_subtree_precondition(&app, &ns, rel, if_header.as_deref()).await
+        {
+            return Response::builder()
+                .status(status)
+                .body(Body::empty())
+                .unwrap();
+        }
+        match write_precondition_snapshot(&app, &ns, rel, if_header.as_deref()).await {
+            Ok(snapshot) => Some(snapshot),
+            Err(status) => {
+                return Response::builder()
+                    .status(status)
+                    .body(Body::empty())
+                    .unwrap();
+            }
+        }
+    } else if matches!(&op, WriteOp::Move) {
+        match write_precondition_snapshot(&app, &ns, rel, if_header.as_deref()).await {
+            Ok(snapshot) => Some(snapshot),
+            Err(status) => {
+                return Response::builder()
+                    .status(status)
+                    .body(Body::empty())
+                    .unwrap();
+            }
+        }
     } else {
-        write_precondition(&app, &ns, rel, if_header.as_deref()).await
+        if let Some(status) = write_precondition(&app, &ns, rel, if_header.as_deref()).await {
+            return Response::builder()
+                .status(status)
+                .body(Body::empty())
+                .unwrap();
+        }
+        None
     };
-    if let Some(status) = precondition {
-        return Response::builder()
-            .status(status)
-            .body(Body::empty())
-            .unwrap();
-    }
     let path = match NormalizedPath::new(rel) {
         Ok(p) => p,
         Err(_) => {
@@ -1558,7 +1583,7 @@ async fn write_op(
             }
         }
     }
-    let write_condition = if matches!(op, WriteOp::Delete | WriteOp::Move) {
+    let mut write_condition = if matches!(op, WriteOp::Delete | WriteOp::Move) {
         match check_http_write_preconditions(&app, &ns, &path, http_conditions.unwrap_or_default())
             .await
         {
@@ -1573,6 +1598,29 @@ async fn write_op(
     } else {
         None
     };
+    if let Some(lock_tokens) = lock_snapshot {
+        let condition = match write_condition.as_mut() {
+            Some(condition) => condition,
+            None => {
+                let entry = match app.entry_repo.find_by_path(&ns, &path).await {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        tracing::error!(%error, path = %rel, "WebDAV 条件写入快照读取失败");
+                        return internal_error();
+                    }
+                };
+                write_condition.insert(vfiles_domain::EntryWriteCondition {
+                    namespace_id: ns,
+                    path: path.clone(),
+                    check_entry_state: true,
+                    expected_entry_id: entry.as_ref().map(|entry| entry.id),
+                    expected_version_id: entry.as_ref().and_then(|entry| entry.current_version_id),
+                    expected_lock_tokens: None,
+                })
+            }
+        };
+        condition.expected_lock_tokens = Some(lock_tokens);
+    }
     if matches!(op, WriteOp::Mkcol) {
         if rel.is_empty() {
             return Response::builder()
