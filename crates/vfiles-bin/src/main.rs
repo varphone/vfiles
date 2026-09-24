@@ -2189,6 +2189,10 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
             if !is_symlink {
                 continue;
             }
+            entry.mode = 0o120777;
+            if !req.preserve_links {
+                continue;
+            }
             let path = vfiles_domain::NormalizedPath::new(&entry.fs_path)
                 .map_err(|error| error.to_string())?;
             let content = self
@@ -2202,7 +2206,6 @@ impl vfiles_rsync::RsyncBackend for RepoBackend {
                     entry.fs_path
                 ));
             }
-            entry.mode = 0o120777;
             entry.size = content.bytes.len() as u64;
             entry.symlink_target = Some(content.bytes);
         }

@@ -217,6 +217,8 @@ impl FlatEntry {
 pub struct ListRequest {
     /// `-r` / `--recursive`。
     pub recursive: bool,
+    /// Whether symlink target bytes should be loaded and emitted (`-l/--links`).
+    pub preserve_links: bool,
     /// 模块内相对路径（"" = 模块根）。
     pub path: String,
 }
@@ -228,6 +230,14 @@ pub struct ListRequest {
 /// xflags 恒置 `SAME_UID|SAME_GID`（list-only 无 `-o/-g` = 官方同形）+ 首条 `.` 置 `TOP_DIR`；
 /// `SAME_MODE`/`SAME_TIME` 按与前一条差分。**不置 NO_CONTENT_DIR**（真机转录两例均无此位）。
 pub fn encode_flist(entries: &[FlatEntry], varint_flags: bool) -> Vec<u8> {
+    encode_flist_with_links(entries, varint_flags, true)
+}
+
+fn encode_flist_with_links(
+    entries: &[FlatEntry],
+    varint_flags: bool,
+    preserve_links: bool,
+) -> Vec<u8> {
     let mut body = Vec::new();
     let mut last_mode: Option<u32> = None;
     let mut last_mtime: Option<i64> = None;
@@ -279,7 +289,7 @@ pub fn encode_flist(entries: &[FlatEntry], varint_flags: bool) -> Vec<u8> {
         if x & XMIT_SAME_MODE == 0 {
             body.extend_from_slice(&e.mode.to_le_bytes());
         }
-        if e.mode & 0o170000 == 0o120000 {
+        if preserve_links && e.mode & 0o170000 == 0o120000 {
             let target = e
                 .symlink_target
                 .as_deref()
@@ -315,6 +325,14 @@ pub fn encode_flist(entries: &[FlatEntry], varint_flags: bool) -> Vec<u8> {
 /// The compatibility `encode_flist` helper remains infallible for existing callers, while the
 /// daemon uses this function so invalid metadata cannot panic a request task.
 pub fn try_encode_flist(entries: &[FlatEntry], varint_flags: bool) -> std::io::Result<Vec<u8>> {
+    try_encode_flist_with_links(entries, varint_flags, true)
+}
+
+pub fn try_encode_flist_with_links(
+    entries: &[FlatEntry],
+    varint_flags: bool,
+    preserve_links: bool,
+) -> std::io::Result<Vec<u8>> {
     for entry in entries {
         if entry.name.len() > i32::MAX as usize {
             return Err(std::io::Error::new(
@@ -328,7 +346,7 @@ pub fn try_encode_flist(entries: &[FlatEntry], varint_flags: bool) -> std::io::R
                 "rsync entry size exceeds protocol limit",
             ));
         }
-        if entry.mode & 0o170000 == 0o120000 {
+        if preserve_links && entry.mode & 0o170000 == 0o120000 {
             let Some(target) = entry.symlink_target.as_deref() else {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -354,7 +372,11 @@ pub fn try_encode_flist(entries: &[FlatEntry], varint_flags: bool) -> std::io::R
             ));
         }
     }
-    Ok(encode_flist(entries, varint_flags))
+    Ok(encode_flist_with_links(
+        entries,
+        varint_flags,
+        preserve_links,
+    ))
 }
 
 /// 按 rsync `f_name_cmp` 语义排序 flist（ndx = 排序后下标 ✗ 不排序会发错文件）。
@@ -929,6 +951,7 @@ struct ParsedArgs {
     recursive: bool,
     compress: bool,
     list_only: bool,
+    preserve_links: bool,
     /// `--delete*`（镜像：删目标端源端没有的条目）。
     delete: bool,
     /// `--delete-excluded`（连被排除项一起删）。
@@ -968,6 +991,8 @@ fn parse_args(segs: &[String]) -> ParsedArgs {
         if let Some(long) = seg.strip_prefix("--") {
             match long {
                 "list-only" => a.list_only = true,
+                "links" => a.preserve_links = true,
+                "no-links" => a.preserve_links = false,
                 "recursive" => a.recursive = true,
                 "no-r" => a.recursive = false,
                 "delete" | "delete-before" | "delete-during" | "delete-delay" | "delete-after"
@@ -1015,6 +1040,7 @@ fn parse_args(segs: &[String]) -> ParsedArgs {
                         i = bytes.len();
                     }
                     'r' => a.recursive = true,
+                    'l' => a.preserve_links = true,
                     'z' => a.compress = true,
                     'c' => a.checksum = true,
                     'I' => a.ignore_times = true,
@@ -1494,6 +1520,8 @@ pub struct FlistOpts {
     pub preserve_specials: bool,
     /// `-U/--atimes` → 条目含 atime（varlong4 ✗ 目录不附）。
     pub preserve_atimes: bool,
+    /// `-l/--links` → symlink target bytes are present after the metadata fields.
+    pub preserve_links: bool,
 }
 
 const MAX_SYMLINK_TARGET_BYTES: usize = 64 * 1024;
@@ -1606,7 +1634,7 @@ where
             let _minor = data_varint(rw, pending).await?;
         }
         // 符号链接 target（`-l` 时才有 ✗ 位置在 uid/gid/rdev **之后**）
-        if file_type == 0o120000 {
+        if file_type == 0o120000 && opts.preserve_links {
             let target_len = usize::try_from(data_varint(rw, pending).await?).map_err(|_| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -2472,6 +2500,7 @@ where
         // ⑥ flist：收集 → 按 rsync 序排序（ndx 对齐）→ 编码 → 发送
         let req = ListRequest {
             recursive: args.recursive,
+            preserve_links: args.preserve_links,
             path: module_path(&args.paths, module),
         };
         let mut entries = match backend.list(req).await {
@@ -2482,7 +2511,7 @@ where
             }
         };
         sort_flist(&mut entries);
-        let flist = try_encode_flist(&entries, negotiated)?;
+        let flist = try_encode_flist_with_links(&entries, negotiated, args.preserve_links)?;
         let total_size: u64 = entries.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
         write_msg(&mut rw, &flist).await?;
         // `-o`/`-g` 且非 `--numeric-ids`：**本端为发送端** → flist 后紧跟 uid/gid 名列表
@@ -2723,6 +2752,7 @@ where
                 preserve_devices: args.preserve_devices,
                 preserve_specials: args.preserve_specials,
                 preserve_atimes: args.preserve_atimes,
+                preserve_links: args.preserve_links,
             },
         )
         .await?;
@@ -3032,6 +3062,7 @@ where
                 match backend
                     .list(ListRequest {
                         recursive: true,
+                        preserve_links: args.preserve_links,
                         path: base.clone(),
                     })
                     .await
@@ -3614,6 +3645,12 @@ mod tests {
         assert!(a.is_sender && a.list_only && !a.recursive);
         assert_eq!(a.client_info, ".LsfxCIvu");
         assert_eq!(compute_compat(&a.client_info), 0x1FE, "真机 compat 值");
+
+        let links = parse_args(&["--server", "-rl", ".", "files/"].map(str::to_string));
+        assert!(links.preserve_links);
+        let no_links =
+            parse_args(&["--server", "-r", "--no-links", ".", "files/"].map(str::to_string));
+        assert!(!no_links.preserve_links);
 
         let segs2: Vec<String> = ["--server", "--sender", "-rde.iLsfxCIvu", ".", "files/"]
             .iter()
@@ -4502,6 +4539,7 @@ mod tests {
             &mut pending,
             FlistOpts {
                 varint_flags: true,
+                preserve_links: true,
                 ..Default::default()
             },
         )
@@ -4530,6 +4568,7 @@ mod tests {
             FlistOpts {
                 varint_flags: true,
                 always_checksum: true,
+                preserve_links: true,
                 ..Default::default()
             },
         )
@@ -4580,6 +4619,7 @@ mod tests {
                 &mut pending,
                 FlistOpts {
                     varint_flags: true,
+                    preserve_links: true,
                     ..Default::default()
                 },
             )
@@ -4587,6 +4627,35 @@ mod tests {
             .expect_err("invalid symlink target length must be rejected");
             assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         }
+    }
+
+    #[tokio::test]
+    async fn flist_without_link_preservation_omits_target_payload() {
+        let entries = [FlatEntry::symlink("link", b"target".to_vec(), 2)];
+        let encoded = try_encode_flist_with_links(&entries, true, false)
+            .expect("a symlink can be listed without transmitting its target");
+        let (mut client, server) = tokio::io::duplex(128);
+        client
+            .write_all(&mux_frame(&encoded))
+            .await
+            .expect("test frame should be written");
+        client.shutdown().await.expect("test frame should close");
+        let mut reader = BufReader::new(server);
+        let mut pending = Vec::new();
+        let decoded = recv_file_list(
+            &mut reader,
+            &mut pending,
+            FlistOpts {
+                varint_flags: true,
+                preserve_links: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("entry without a target must decode without consuming the terminator");
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].mode & 0o170000, 0o120000);
+        assert_eq!(decoded[0].symlink_target, None);
     }
 
     #[test]

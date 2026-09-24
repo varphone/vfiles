@@ -20,7 +20,11 @@ cleanup() {
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   fi
-  rm -rf -- "$tmpdir"
+  if [[ "${VFILES_RSYNC_PROBE_KEEP_TEMP:-false}" == true ]]; then
+    echo "probe artifacts: $tmpdir" >&2
+  else
+    rm -rf -- "$tmpdir"
+  fi
 }
 trap cleanup EXIT
 
@@ -159,6 +163,23 @@ rsync -a --quiet "$tmpdir/source/" "$module_url"
 rm "$tmpdir/source/supported-link"
 ln -s nested/large.bin "$tmpdir/source/supported-link"
 rsync -a --quiet "$tmpdir/source/" "$module_url"
+if ! timeout 15 rsync --list-only "$module_url" >"$tmpdir/symlink-list-no-links.log" 2>&1; then
+  cat "$tmpdir/symlink-list-no-links.log" >&2
+  cat "$tmpdir/server.log" >&2
+  echo "rsync list-only without --links stalled on a symlink" >&2
+  exit 1
+fi
+grep -Eq '^lrwxrwxrwx[[:space:]].*supported-link$' "$tmpdir/symlink-list-no-links.log"
+if grep -Fq 'supported-link ->' "$tmpdir/symlink-list-no-links.log"; then
+  echo "rsync listed a symlink target although --links was not requested" >&2
+  exit 1
+fi
+if ! timeout 15 rsync --debug=PROTO,IO,GENR,RECV,SEND,FLIST --list-only --links "$module_url" >"$tmpdir/symlink-list.log" 2>&1; then
+  cat "$tmpdir/symlink-list.log" >&2
+  cat "$tmpdir/server.log" >&2
+  echo "rsync list-only stalled or failed after storing a symlink" >&2
+  exit 1
+fi
 mkdir -p "$tmpdir/pull-with-link"
 if ! timeout 15 rsync -a --quiet "$module_url" "$tmpdir/pull-with-link/" >"$tmpdir/symlink-pull.log" 2>&1; then
   cat "$tmpdir/symlink-pull.log" >&2
