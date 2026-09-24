@@ -9,7 +9,7 @@
 - `GetObject` / `HeadObject?versionId=<marker>` 返回 `405 MethodNotAllowed` 与 `x-amz-delete-marker: true`；普通对象列表用每页批量查询过滤当前标记，避免逐 key 的数据库往返。
 - 自写 SigV4 HTTP 探针在隔离 `/s3` 实例通过 **27/27**；安装到独立临时环境的 boto3 真实客户端探针通过 **50/50**，覆盖对象 API、分页、版本、删除标记、multipart、Range 和条件请求。
 - boto3 验证修复了三个问题：CopyObject/UploadPartCopy 源条件误用内部版本 ID 当 ETag；删除标记遮蔽的 key 仍能作为复制源；GetObject/HeadObject 对当前版本返回条目创建时间而非版本修改时间。探针 multipart 用例现按 S3 的 5 MiB 非末片规则构造。
-- **仍待补齐**：文件系统 blob 与 SQLite 事务跨存储故障时的恢复验证。
+- 跨存储恢复回归模拟了流式 blob 已耐久发布、SQLite 尚无 blob/version 元数据时服务进程退出：关闭并重开 SQLite 后，维护任务按保护期清除旧孤儿、保留新孤儿和仍被版本引用的 blob。真实断电与底层文件系统故障注入仍未覆盖。
 - 版本事件序号由 `entry_versions` 写事务与删除标记写事务共同递增，使 HTTP/WebDAV 写入也参与同一 key 的 S3 最新状态排序，不依赖系统墙钟精度。
 - `DeleteObjects` 的 `LastModifiedTime` 条件现在批量只读取涉及条目的当前版本，并与其修改时间比较；此前错误使用条目创建时间，覆盖上传后的正确客户端条件会被拒绝。SQLite 批量接口避免 N+1 和拉取整段历史；boto3 回归验证旧时间拒绝、当前 `HeadObject` 时间接受。
 - 文件系统 blob 在 SQLite 引用写入前先同步临时文件，再通过 no-clobber 硬链接原子发布并同步目标目录；并发相同内容上传只会有一个调用被标记为新建，避免失败清理误删另一事务已引用的 blob。基础设施测试覆盖流式发布可读性与并发同内容写入。

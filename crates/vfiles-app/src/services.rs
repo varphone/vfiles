@@ -5437,9 +5437,19 @@ mod maintenance_tests {
             .await
             .expect("version should be created");
 
-        // 孤儿文件：只有磁盘文件、没有元数据行（模拟上传中断）
-        let (orphan_id, _, _) = blob_store
-            .store_blob(b"orphan", None)
+        // 孤儿文件：流式上传已完成 blob 发布，但模拟进程在 SQLite 建立版本引用前崩溃。
+        let (orphan_id, _, _, _) = blob_store
+            .store_blob_stream(
+                Box::new(tokio::io::BufReader::new(std::io::Cursor::new(
+                    b"orphan-after-crash".to_vec(),
+                ))),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
             .await
             .expect("blob should store");
         let orphan_string = orphan_id.to_string();
@@ -5453,14 +5463,44 @@ mod maintenance_tests {
         );
 
         // 刚写入的孤儿文件应受保护期保护
-        let (fresh_id, _, _) = blob_store
-            .store_blob(b"fresh-orphan", None)
+        let (fresh_id, _, _, _) = blob_store
+            .store_blob_stream(
+                Box::new(tokio::io::BufReader::new(std::io::Cursor::new(
+                    b"fresh-orphan".to_vec(),
+                ))),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
             .await
             .expect("blob should store");
 
-        let snapshot_repo = vfiles_infra_sqlite::SqliteSnapshotRepo::new(pool.clone());
-        let service =
-            MaintenanceService::new(blob_store.clone(), entry_repo.clone(), snapshot_repo);
+        // 模拟服务进程重启：清理器只依赖持久化 SQLite 与 blob 目录识别孤儿。
+        pool.close().await;
+        let reopened_pool = SqlitePoolFactory::connect(root.join("vfiles.db").as_path())
+            .await
+            .expect("database should reopen");
+        SqliteMigrations::run(&reopened_pool)
+            .await
+            .expect("migrations should still succeed");
+        let reopened_entry_repo = SqliteEntryRepo::new(reopened_pool.clone());
+        let reopened_blob_store = FsBlobStore::new(reopened_pool.clone(), root.join("blobs"));
+        let snapshot_repo = vfiles_infra_sqlite::SqliteSnapshotRepo::new(reopened_pool.clone());
+        let service = MaintenanceService::new(
+            reopened_blob_store.clone(),
+            reopened_entry_repo,
+            snapshot_repo,
+        );
+        assert!(
+            reopened_blob_store
+                .get_blob_metadata(&orphan_id)
+                .await
+                .expect("orphan metadata lookup should succeed")
+                .is_none()
+        );
         let report = service
             .purge_orphan_blobs(3600)
             .await
@@ -5470,7 +5510,7 @@ mod maintenance_tests {
         assert!(report.freed_bytes > 0);
         assert!(!orphan_path.exists(), "orphan file should be removed");
         assert!(
-            blob_store
+            reopened_blob_store
                 .get_blob_metadata(&referenced_id)
                 .await
                 .expect("lookup should succeed")
@@ -5484,7 +5524,7 @@ mod maintenance_tests {
             .join(&fresh_string[2..]);
         assert!(fresh_path.exists(), "fresh file should be kept");
 
-        pool.close().await;
+        reopened_pool.close().await;
     }
 
     /// 时间窗口：只裁剪「既不在最新 keep 个之内、又早于窗口」的快照。
