@@ -19,6 +19,8 @@ use vfiles_domain::{DomainError, NewAuditLog, NormalizedPath, UploadId};
 
 const UPLOAD_WRITE_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_MULTIPART_METADATA_FIELD_BYTES: usize = 64 * 1024;
+const MAX_MULTIPART_METADATA_BYTES: usize = 256 * 1024;
+const MAX_MULTIPART_FIELD_COUNT: usize = 16;
 
 struct TempUploadFile(std::path::PathBuf);
 
@@ -55,6 +57,7 @@ struct CompleteUploadRequest {
 async fn read_multipart_metadata_field(
     mut field: axum_extra::extract::multipart::Field,
     name: &'static str,
+    total_size: &mut usize,
 ) -> ApiResult<Vec<u8>> {
     let mut value = Vec::new();
     while let Some(chunk) = field.chunk().await.map_err(|err| {
@@ -63,12 +66,18 @@ async fn read_multipart_metadata_field(
         })
     })? {
         let size_bytes = value.len().saturating_add(chunk.len());
-        if size_bytes > MAX_MULTIPART_METADATA_FIELD_BYTES {
+        let total_size_bytes = total_size.saturating_add(chunk.len());
+        if size_bytes > MAX_MULTIPART_METADATA_FIELD_BYTES
+            || total_size_bytes > MAX_MULTIPART_METADATA_BYTES
+        {
             return Err(ApiError::Validation {
                 field: name.to_string(),
-                message: format!("must not exceed {MAX_MULTIPART_METADATA_FIELD_BYTES} bytes"),
+                message: format!(
+                    "metadata fields must not exceed {MAX_MULTIPART_METADATA_FIELD_BYTES} bytes each or {MAX_MULTIPART_METADATA_BYTES} bytes total"
+                ),
             });
         }
+        *total_size = total_size_bytes;
         value.extend_from_slice(&chunk);
     }
     Ok(value)
@@ -547,6 +556,8 @@ async fn process_single_upload(
     let mut message: String = "Upload file".to_string();
     let mut file_size: u64 = 0;
     let mut saw_file = false;
+    let mut field_count = 0;
+    let mut metadata_size = 0;
     let mut temp_file = Some(temp_file);
     let max_upload_size = max_upload_size_bytes(state);
 
@@ -555,6 +566,13 @@ async fn process_single_upload(
             message: format!("Failed to read multipart field: {}", err),
         })
     })? {
+        field_count += 1;
+        if field_count > MAX_MULTIPART_FIELD_COUNT {
+            return Err(ApiError::Validation {
+                field: "multipart".to_string(),
+                message: format!("must not contain more than {MAX_MULTIPART_FIELD_COUNT} fields"),
+            });
+        }
         let name = field.name().unwrap_or("").to_string();
 
         match name.as_str() {
@@ -598,7 +616,8 @@ async fn process_single_upload(
                 drop(temp_file);
             }
             "path" => {
-                let bytes = read_multipart_metadata_field(field, "path").await?;
+                let bytes =
+                    read_multipart_metadata_field(field, "path", &mut metadata_size).await?;
                 path = String::from_utf8(bytes).map_err(|_| {
                     ApiError::Domain(DomainError::Validation {
                         message: "Invalid path encoding".to_string(),
@@ -606,11 +625,15 @@ async fn process_single_upload(
                 })?;
             }
             "message" => {
-                let bytes = read_multipart_metadata_field(field, "message").await?;
+                let bytes =
+                    read_multipart_metadata_field(field, "message", &mut metadata_size).await?;
                 message = String::from_utf8(bytes).unwrap_or_else(|_| "Upload file".to_string());
             }
             _ => {
-                // Ignore unknown fields.
+                // Ignore unknown fields, but drain them under the same byte limits so
+                // repeated extensions cannot turn the unbounded-body route into a sink.
+                let _ =
+                    read_multipart_metadata_field(field, "metadata", &mut metadata_size).await?;
             }
         }
     }

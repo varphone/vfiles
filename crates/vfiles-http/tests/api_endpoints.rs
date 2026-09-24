@@ -1509,6 +1509,83 @@ async fn multipart_upload_bounds_metadata_fields_and_cleans_temp_file() {
 }
 
 #[tokio::test]
+async fn multipart_upload_bounds_aggregate_unknown_metadata_and_cleans_temp_file() {
+    let app = TestApp::new().await;
+    let boundary = "----vfiles-aggregate-metadata-boundary";
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"bounded-total.txt\"\r\n\r\nfile bytes\r\n"
+    );
+    let field_payload = "x".repeat(60 * 1024);
+    for index in 0..5 {
+        body.push_str(&format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"extension-{index}\"\r\n\r\n{field_payload}\r\n"
+        ));
+    }
+    body.push_str(&format!("--{boundary}--\r\n"));
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/files/upload")
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let error = response_json(response).await;
+    assert_eq!(error["code"], "VALIDATION_FAILED");
+    assert_eq!(error["details"]["field"], "metadata");
+    let temp_files = std::fs::read_dir(app._temp_dir.path().join("tmp"))
+        .expect("upload temp directory should be readable")
+        .count();
+    assert_eq!(temp_files, 0, "rejected upload must remove its temp file");
+}
+
+#[tokio::test]
+async fn multipart_upload_bounds_field_count_and_cleans_temp_file() {
+    let app = TestApp::new().await;
+    let boundary = "----vfiles-field-count-boundary";
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"bounded-count.txt\"\r\n\r\nfile bytes\r\n"
+    );
+    for index in 0..16 {
+        body.push_str(&format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"extension-{index}\"\r\n\r\n\r\n"
+        ));
+    }
+    body.push_str(&format!("--{boundary}--\r\n"));
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/files/upload")
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let error = response_json(response).await;
+    assert_eq!(error["code"], "VALIDATION_FAILED");
+    assert_eq!(error["details"]["field"], "multipart");
+    let temp_files = std::fs::read_dir(app._temp_dir.path().join("tmp"))
+        .expect("upload temp directory should be readable")
+        .count();
+    assert_eq!(temp_files, 0, "rejected upload must remove its temp file");
+}
+
+#[tokio::test]
 async fn multipart_upload_rejects_multiple_file_fields_without_replacing_target() {
     let app = TestApp::new().await;
     app.upload_version("docs", "same.txt", b"original", "original upload")
