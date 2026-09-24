@@ -1108,6 +1108,12 @@ pub struct SqliteS3ObjectKeyRepo {
     pool: SqlitePool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S3ObjectKeyRecord {
+    pub object_key: String,
+    pub entry_id: vfiles_domain::EntryId,
+}
+
 impl SqliteS3ObjectKeyRepo {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -1157,6 +1163,48 @@ impl SqliteS3ObjectKeyRepo {
             message: format!("Failed to bind S3 object key: {e}"),
         })?;
         Ok(())
+    }
+
+    /// Return a lexically ordered page in the flat S3 key namespace.
+    pub async fn page(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        prefix: &str,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<S3ObjectKeyRecord>, vfiles_domain::DomainError> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT object_key, entry_id FROM s3_object_keys \
+             WHERE namespace_id = ? AND object_key >= ? \
+               AND (? IS NULL OR object_key > ?) \
+               AND substr(object_key, 1, length(?)) = ? \
+             ORDER BY object_key LIMIT ?",
+        )
+        .bind(namespace_id.to_string())
+        .bind(prefix)
+        .bind(after)
+        .bind(after)
+        .bind(prefix)
+        .bind(prefix)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to page S3 object keys: {e}"),
+        })?;
+        rows.into_iter()
+            .map(|(object_key, id)| {
+                let entry_id = vfiles_domain::EntryId::from_string(&id).map_err(|_| {
+                    vfiles_domain::DomainError::Internal {
+                        message: "Invalid entry id in S3 object key index".to_string(),
+                    }
+                })?;
+                Ok(S3ObjectKeyRecord {
+                    object_key,
+                    entry_id,
+                })
+            })
+            .collect()
     }
 
     pub async fn unbind(
@@ -1543,6 +1591,40 @@ mod s3_delete_marker_tests {
                 .await
                 .expect("object key lookup should succeed"),
             Some(entry_id)
+        );
+        let earlier_entry_id = EntryId::new();
+        sqlx::query("INSERT INTO entries (id, namespace_id, path, kind) VALUES (?, ?, ?, 'file')")
+            .bind(earlier_entry_id.to_string())
+            .bind(namespace.to_string())
+            .bind("index/earlier")
+            .execute(&pool)
+            .await
+            .expect("second object entry should be inserted");
+        object_keys
+            .bind(&namespace, "folder/a", &earlier_entry_id)
+            .await
+            .expect("second object key should bind");
+        let first_page = object_keys
+            .page(&namespace, "folder/", None, 1)
+            .await
+            .expect("first page should load");
+        assert_eq!(
+            first_page
+                .iter()
+                .map(|record| record.object_key.as_str())
+                .collect::<Vec<_>>(),
+            ["folder/a"]
+        );
+        let second_page = object_keys
+            .page(&namespace, "folder/", Some("folder/a"), 1)
+            .await
+            .expect("second page should load");
+        assert_eq!(
+            second_page
+                .iter()
+                .map(|record| record.object_key.as_str())
+                .collect::<Vec<_>>(),
+            ["folder/z.txt"]
         );
         assert!(
             object_keys
