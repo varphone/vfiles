@@ -1289,6 +1289,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
             default_actor_user_id,
             vfiles_infra_sqlite::SqliteS3DeleteMarkerRepo::new(pool.clone()),
             vfiles_infra_sqlite::SqliteS3ObjectKeyRepo::new(pool.clone()),
+            vfiles_infra_sqlite::SqliteS3MultipartUploadRepo::new(pool.clone()),
         )
         .await;
         if config.s3.embedded {
@@ -2350,6 +2351,7 @@ async fn build_s3_service(
     owner: vfiles_domain::UserId,
     delete_markers: vfiles_infra_sqlite::SqliteS3DeleteMarkerRepo,
     object_keys: vfiles_infra_sqlite::SqliteS3ObjectKeyRepo,
+    multipart_uploads: vfiles_infra_sqlite::SqliteS3MultipartUploadRepo,
 ) -> s3s::service::S3Service {
     // 凭证表（多客户端/轮换 + 只读键 + 命名空间绑定 ✗ 空 = 运行时随机 + warn）
     let keys = load_s3_credentials(cfg);
@@ -2378,6 +2380,7 @@ async fn build_s3_service(
                         entry_repo: entry_repo.clone(),
                         delete_markers: delete_markers.clone(),
                         object_keys: object_keys.clone(),
+                        multipart_uploads: multipart_uploads.clone(),
                         namespace: ns,
                         owner: ns_owner,
                         readonly_keys: if ro {
@@ -2420,6 +2423,7 @@ async fn build_s3_service(
         entry_repo,
         delete_markers,
         object_keys,
+        multipart_uploads,
         namespace,
         owner,
         readonly_keys: default_readonly,

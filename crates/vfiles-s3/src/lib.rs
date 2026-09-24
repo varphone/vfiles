@@ -115,6 +115,7 @@ pub struct VfilesS3 {
     pub entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
     pub delete_markers: vfiles_infra_sqlite::SqliteS3DeleteMarkerRepo,
     pub object_keys: vfiles_infra_sqlite::SqliteS3ObjectKeyRepo,
+    pub multipart_uploads: vfiles_infra_sqlite::SqliteS3MultipartUploadRepo,
     pub namespace: vfiles_domain::NamespaceId,
     pub owner: vfiles_domain::UserId,
     /// 只读凭证（`access:secret:ro` ✗ 变更类操作一律 AccessDenied）。
@@ -2738,10 +2739,27 @@ impl S3 for VfilesS3 {
         {
             let map: std::collections::BTreeMap<String, String> =
                 md.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            self.upload
+            if let Err(error) = self
+                .upload
                 .set_upload_custom_metadata(&view.upload_id, &map)
                 .await
-                .map_err(dom_err)?;
+            {
+                let _ = self.upload.cancel_upload(&view.upload_id).await;
+                return Err(dom_err(error));
+            }
+        }
+        if let Err(error) = self
+            .multipart_uploads
+            .register(
+                &self.namespace,
+                &input.key,
+                &view.upload_id,
+                time::OffsetDateTime::now_utc(),
+            )
+            .await
+        {
+            let _ = self.upload.cancel_upload(&view.upload_id).await;
+            return Err(dom_err(error));
         }
         let out = CreateMultipartUploadOutput {
             bucket: Some(input.bucket),
@@ -3032,6 +3050,12 @@ impl S3 for VfilesS3 {
             )
             .await
             .map_err(dom_err)?;
+        self.multipart_uploads
+            .remove(&self.namespace, &upload_id)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, upload_id = %upload_id, "completed S3 multipart index cleanup failed");
+            });
         self.object_keys
             .bind(&self.namespace, &input.key, &result.version.entry_id)
             .await
@@ -3062,6 +3086,10 @@ impl S3 for VfilesS3 {
             .await?;
         match self.upload.cancel_upload(&upload_id).await {
             Ok(()) | Err(vfiles_domain::DomainError::NotFound { .. }) => {
+                self.multipart_uploads
+                    .remove(&self.namespace, &upload_id)
+                    .await
+                    .map_err(dom_err)?;
                 ok(AbortMultipartUploadOutput::default())
             }
             Err(e) => Err(dom_err(e)),
@@ -3150,156 +3178,77 @@ impl S3 for VfilesS3 {
         let prefix = input.prefix.clone().unwrap_or_default();
         let max = input.max_uploads.unwrap_or(1000).clamp(1, 1000) as usize;
         let delim = input.delimiter.clone();
-        let items = self
-            .upload
-            .list_upload_sessions_page(
-                &self.namespace,
-                &prefix,
-                delim.as_deref(),
-                input.key_marker.as_deref(),
-                input.upload_id_marker.as_deref(),
-                (max + 1) as u32,
-            )
-            .await
-            .map_err(dom_err)?;
         let mut combined: std::collections::BTreeMap<(String, String), Option<MultipartUpload>> =
             std::collections::BTreeMap::new();
-        for item in items {
-            match item {
-                vfiles_domain::UploadSessionListItem::CommonPrefix(prefix) => {
-                    combined.insert((prefix, String::new()), None);
-                }
-                vfiles_domain::UploadSessionListItem::Upload(session) => {
-                    let key = if session.target_path_norm.as_str().is_empty() {
-                        session.filename.clone()
-                    } else {
-                        format!("{}/{}", session.target_path_norm.as_str(), session.filename)
-                    };
-                    let key_path = vfiles_domain::NormalizedPath::new(&key)
-                        .map_err(|e| s3s::s3_error!(InternalError, "{}", e))?;
-                    let key = external_key(&key_path);
-                    let upload_id = session.id.to_string();
-                    combined.insert(
-                        (key.clone(), upload_id.clone()),
-                        Some(MultipartUpload {
-                            key: Some(key),
-                            upload_id: Some(upload_id),
-                            initiated: Some(Timestamp::from(session.created_at)),
-                            ..Default::default()
-                        }),
-                    );
-                }
-            }
-        }
-
-        // Escaped S3 keys do not share their external spelling with the upload store's
-        // filesystem path, so page that disjoint key range and fold delimiters after decoding.
-        let encoded_prefix = format!("{S3_KEY_ESCAPE_PREFIX}{}", hex::encode(prefix.as_bytes()));
-        let mut special_after = input
-            .key_marker
-            .as_deref()
-            .map(|key| format!("{S3_KEY_ESCAPE_PREFIX}{}", hex::encode(key.as_bytes())));
-        let mut special_after_upload = input.upload_id_marker.clone().filter(|_| {
-            input
-                .key_marker
-                .as_deref()
-                .and_then(|key| norm(key).ok())
-                .is_some_and(|path| path.as_str().starts_with(S3_KEY_ESCAPE_PREFIX))
-        });
-        let special_delimiter = delim.as_deref().filter(|value| !value.is_empty());
+        let mut after_key = input.key_marker.clone();
+        let mut after_upload_id = input.upload_id_marker.clone();
         loop {
-            let special_items = self
-                .upload
-                .list_upload_sessions_page(
+            let records = self
+                .multipart_uploads
+                .page(
                     &self.namespace,
-                    &encoded_prefix,
-                    None,
-                    special_after.as_deref(),
-                    special_after_upload.as_deref(),
-                    1000,
+                    &prefix,
+                    after_key.as_deref(),
+                    after_upload_id.as_deref(),
+                    512,
                 )
                 .await
                 .map_err(dom_err)?;
-            let mut last_cursor = None;
-            for item in special_items.iter() {
-                let vfiles_domain::UploadSessionListItem::Upload(session) = item else {
-                    continue;
-                };
-                let internal_key = if session.target_path_norm.as_str().is_empty() {
-                    session.filename.clone()
-                } else {
-                    format!("{}/{}", session.target_path_norm.as_str(), session.filename)
-                };
-                let internal_path = vfiles_domain::NormalizedPath::new(&internal_key)
-                    .map_err(|e| s3s::s3_error!(InternalError, "{}", e))?;
-                last_cursor = Some((internal_key, session.id.to_string()));
-                let key = external_key(&internal_path);
-                if !key.starts_with(&prefix) {
-                    continue;
-                }
-                let listed = if let Some(delimiter) = special_delimiter {
-                    let rest = &key[prefix.len()..];
-                    if let Some(index) = rest.find(delimiter) {
-                        let common_prefix = format!("{}{}{}", prefix, &rest[..index], delimiter);
-                        if input
-                            .key_marker
-                            .as_deref()
-                            .is_some_and(|marker| common_prefix.as_str() <= marker)
-                        {
-                            continue;
+            if records.is_empty() {
+                break;
+            }
+            let count = records.len();
+            for record in &records {
+                after_key = Some(record.object_key.clone());
+                after_upload_id = Some(record.upload_id.clone());
+                let (listed_key, item) =
+                    if let Some(delimiter) = delim.as_deref().filter(|d| !d.is_empty()) {
+                        let remainder = &record.object_key[prefix.len()..];
+                        if let Some(pos) = remainder.find(delimiter) {
+                            (
+                                format!("{}{}{}", prefix, &remainder[..pos], delimiter),
+                                None,
+                            )
+                        } else {
+                            (
+                                record.object_key.clone(),
+                                Some(MultipartUpload {
+                                    key: Some(record.object_key.clone()),
+                                    upload_id: Some(record.upload_id.clone()),
+                                    initiated: Some(Timestamp::from(record.initiated_at)),
+                                    ..Default::default()
+                                }),
+                            )
                         }
-                        combined.insert((common_prefix, String::new()), None);
-                        continue;
-                    }
-                    (
-                        key.clone(),
-                        Some(MultipartUpload {
-                            key: Some(key.clone()),
-                            upload_id: Some(session.id.to_string()),
-                            initiated: Some(Timestamp::from(session.created_at)),
-                            ..Default::default()
-                        }),
-                    )
-                } else {
-                    (
-                        key.clone(),
-                        Some(MultipartUpload {
-                            key: Some(key.clone()),
-                            upload_id: Some(session.id.to_string()),
-                            initiated: Some(Timestamp::from(session.created_at)),
-                            ..Default::default()
-                        }),
-                    )
-                };
-                if let Some(marker) = input.key_marker.as_deref()
-                    && (listed.0.as_str() < marker
-                        || (listed.0.as_str() == marker
-                            && input
-                                .upload_id_marker
-                                .as_deref()
-                                .is_none_or(|upload_marker| {
-                                    listed
-                                        .1
-                                        .as_ref()
-                                        .and_then(|upload| upload.upload_id.as_deref())
-                                        .is_none_or(|upload_id| upload_id <= upload_marker)
-                                })))
+                    } else {
+                        (
+                            record.object_key.clone(),
+                            Some(MultipartUpload {
+                                key: Some(record.object_key.clone()),
+                                upload_id: Some(record.upload_id.clone()),
+                                initiated: Some(Timestamp::from(record.initiated_at)),
+                                ..Default::default()
+                            }),
+                        )
+                    };
+                if input
+                    .key_marker
+                    .as_deref()
+                    .is_some_and(|marker| listed_key.as_str() <= marker)
                 {
                     continue;
                 }
-                let upload_id = listed
-                    .1
+                let id = item
                     .as_ref()
                     .and_then(|upload| upload.upload_id.clone())
                     .unwrap_or_default();
-                combined.insert((listed.0, upload_id), listed.1);
+                combined.entry((listed_key, id)).or_insert(item);
             }
-            if combined.len() > max || special_items.len() < 1000 || last_cursor.is_none() {
+            if combined.len() > max || count < 512 {
                 break;
             }
-            special_after = last_cursor.as_ref().map(|(key, _)| key.clone());
-            special_after_upload = last_cursor.map(|(_, upload_id)| upload_id);
         }
+
         let mut combined: Vec<(String, Option<MultipartUpload>)> = combined
             .into_iter()
             .map(|((key, _), upload)| (key, upload))

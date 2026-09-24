@@ -1183,6 +1183,103 @@ pub struct SqliteS3ObjectKeyRepo {
     pool: SqlitePool,
 }
 
+/// Indexed S3 multipart session returned by the list operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S3MultipartUploadRecord {
+    pub object_key: String,
+    pub upload_id: String,
+    pub initiated_at: time::OffsetDateTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct SqliteS3MultipartUploadRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteS3MultipartUploadRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn register(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        object_key: &str,
+        upload_id: &vfiles_domain::UploadId,
+        initiated_at: time::OffsetDateTime,
+    ) -> Result<(), vfiles_domain::DomainError> {
+        sqlx::query("INSERT INTO s3_multipart_uploads (namespace_id, object_key, upload_id, initiated_at) VALUES (?, ?, ?, ?)")
+            .bind(namespace_id.to_string())
+            .bind(object_key)
+            .bind(upload_id.to_string())
+            .bind(initiated_at.unix_timestamp())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| vfiles_domain::DomainError::Internal { message: format!("Failed to index S3 multipart upload: {e}") })?;
+        Ok(())
+    }
+
+    pub async fn remove(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        upload_id: &vfiles_domain::UploadId,
+    ) -> Result<(), vfiles_domain::DomainError> {
+        sqlx::query("DELETE FROM s3_multipart_uploads WHERE namespace_id = ? AND upload_id = ?")
+            .bind(namespace_id.to_string())
+            .bind(upload_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| vfiles_domain::DomainError::Internal {
+                message: format!("Failed to remove S3 multipart upload index: {e}"),
+            })?;
+        Ok(())
+    }
+
+    pub async fn page(
+        &self,
+        namespace_id: &vfiles_domain::NamespaceId,
+        prefix: &str,
+        after_key: Option<&str>,
+        after_upload_id: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<S3MultipartUploadRecord>, vfiles_domain::DomainError> {
+        let rows: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT object_key, upload_id, initiated_at FROM s3_multipart_uploads \
+             WHERE namespace_id = ? AND object_key >= ? \
+               AND substr(object_key, 1, length(?)) = ? \
+               AND (? IS NULL OR object_key > ? OR (object_key = ? AND upload_id > ?)) \
+             ORDER BY object_key, upload_id LIMIT ?",
+        )
+        .bind(namespace_id.to_string())
+        .bind(prefix)
+        .bind(prefix)
+        .bind(prefix)
+        .bind(after_key)
+        .bind(after_key)
+        .bind(after_key)
+        .bind(after_upload_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to page S3 multipart uploads: {e}"),
+        })?;
+        rows.into_iter()
+            .map(|(object_key, upload_id, initiated_at)| {
+                let initiated_at = time::OffsetDateTime::from_unix_timestamp(initiated_at)
+                    .map_err(|e| vfiles_domain::DomainError::Internal {
+                        message: format!("Invalid S3 multipart timestamp: {e}"),
+                    })?;
+                Ok(S3MultipartUploadRecord {
+                    object_key,
+                    upload_id,
+                    initiated_at,
+                })
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct S3ObjectKeyRecord {
     pub object_key: String,
