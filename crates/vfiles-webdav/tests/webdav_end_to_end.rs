@@ -1418,6 +1418,33 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(invalid_depth_move.status(), 400);
 
+    let invalid_depth_move_file = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("MOVE")
+                .uri("/persist.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("destination", "/moved-file.txt")
+                .header("depth", "0")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_depth_move_file.status(), 400);
+    assert!(
+        entry_repo
+            .find_by_path(
+                &namespace_id,
+                &NormalizedPath::new("persist.txt").expect("fixture path"),
+            )
+            .await
+            .expect("read source entry")
+            .is_some(),
+        "a rejected MOVE depth must preserve the source"
+    );
+
     let weak_if_match = router
         .clone()
         .oneshot(

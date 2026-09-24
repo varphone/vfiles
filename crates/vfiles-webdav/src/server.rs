@@ -3215,6 +3215,12 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             } else {
                 None
             };
+            if matches!(op, WriteOp::Move) && write_depth_infinity == Some(false) {
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(Body::empty())
+                    .unwrap();
+            }
             let mkcol_has_body = if matches!(op, WriteOp::Mkcol) {
                 request_body_is_nonempty(req.body_mut()).await
             } else {
@@ -3678,7 +3684,7 @@ mod write_depth_tests {
     use axum::http::{HeaderMap, HeaderValue};
 
     #[test]
-    fn delete_and_move_depth_accept_only_one_infinity_value() {
+    fn parses_supported_depth_values_and_rejects_duplicates() {
         let headers = HeaderMap::new();
         assert_eq!(parse_write_depth(&headers), Ok(None));
 
