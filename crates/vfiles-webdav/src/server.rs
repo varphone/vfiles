@@ -1952,18 +1952,28 @@ fn percent_decode(input: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let Ok(v) = u8::from_str_radix(&input[i + 1..i + 3], 16)
-        {
-            out.push(v);
-            i += 3;
-            continue;
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let high = hex_value(bytes[i + 1]);
+            let low = hex_value(bytes[i + 2]);
+            if let (Some(high), Some(low)) = (high, low) {
+                out.push((high << 4) | low);
+                i += 3;
+                continue;
+            }
         }
         out.push(bytes[i]);
         i += 1;
     }
     String::from_utf8(out).unwrap_or_else(|_| input.to_string())
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// 条目 href 拼接（纯函数 ✓ 单测覆盖）——**前缀式**（r204 ✗ 真因修复：空 rel 时
@@ -4150,6 +4160,8 @@ mod decode_tests {
     fn falls_back_on_invalid_sequences() {
         assert_eq!(percent_decode("%ZZ%"), "%ZZ%");
         assert_eq!(percent_decode("%E4%B8"), "%E4%B8"); // 截断 UTF-8 → 保留原文
+        assert_eq!(percent_decode("%雪"), "%雪"); // 非 ASCII 后继不得 panic
+        assert_eq!(percent_decode("%Aé"), "%Aé");
     }
 }
 
