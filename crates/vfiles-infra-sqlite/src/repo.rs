@@ -6502,8 +6502,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 async fn sync_blob_directory(path: &camino::Utf8Path) -> DomainResult<()> {
     #[cfg(unix)]
-    if let Some(parent) = path.parent() {
-        let directory = fs::File::open(parent)
+    {
+        let directory = fs::File::open(path)
             .await
             .map_err(|e| DomainError::Internal {
                 message: format!("Failed to open blob directory for sync: {}", e),
@@ -6524,7 +6524,11 @@ async fn publish_blob_file(
 ) -> DomainResult<bool> {
     match fs::hard_link(temp, target).await {
         Ok(()) => {
-            if let Err(error) = sync_blob_directory(target).await {
+            let sync_result = match target.parent() {
+                Some(parent) => sync_blob_directory(parent).await,
+                None => Ok(()),
+            };
+            if let Err(error) = sync_result {
                 let _ = fs::remove_file(temp).await;
                 return Err(error);
             }
@@ -6621,6 +6625,7 @@ impl BlobStore for FsBlobStore {
                     message: format!("Failed to create blob directory: {}", e),
                 })?;
             if !parent_existed && let Some(grandparent) = parent.parent() {
+                // Persist the new hash-directory entry in its containing directory.
                 sync_blob_directory(grandparent).await?;
             }
         }
@@ -6804,6 +6809,7 @@ impl BlobStore for FsBlobStore {
                     message: format!("Failed to create blob directory: {}", e),
                 })?;
             if !parent_existed && let Some(grandparent) = parent.parent() {
+                // Persist the new hash-directory entry in its containing directory.
                 sync_blob_directory(grandparent).await?;
             }
         }
