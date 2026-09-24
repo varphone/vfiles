@@ -2068,6 +2068,25 @@ mod s3_multipart_upload_repo_tests {
         repo.register(&namespace, "folder/b", &third_id, initiated)
             .await
             .expect("third upload should be indexed");
+        let same_key_first = repo
+            .page(&namespace, "folder/", None, None, 1)
+            .await
+            .expect("first same-key upload page should load");
+        assert_eq!(same_key_first.len(), 1);
+        assert_eq!(same_key_first[0].object_key, "folder/a");
+        let same_key_next = repo
+            .page(
+                &namespace,
+                "folder/",
+                Some(&same_key_first[0].object_key),
+                Some(&same_key_first[0].upload_id),
+                1,
+            )
+            .await
+            .expect("next upload for the same key should load");
+        assert_eq!(same_key_next.len(), 1);
+        assert_eq!(same_key_next[0].object_key, "folder/a");
+        assert_ne!(same_key_next[0].upload_id, same_key_first[0].upload_id);
         repo.register(&namespace, "folder/renamed", &first_id, initiated)
             .await
             .expect("reconciliation should safely update an existing upload");

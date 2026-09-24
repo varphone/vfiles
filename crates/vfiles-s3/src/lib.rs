@@ -1094,6 +1094,22 @@ fn resolve_completed_part_indices(stored: &[(i32, u64)], requested: &[i32]) -> S
     Ok(indices)
 }
 
+fn multipart_upload_is_after_marker(
+    listed_key: &str,
+    is_upload: bool,
+    key_marker: Option<&str>,
+    upload_id_marker: Option<&str>,
+) -> bool {
+    let Some(key_marker) = key_marker else {
+        return true;
+    };
+    match listed_key.cmp(key_marker) {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Equal => is_upload && upload_id_marker.is_some(),
+    }
+}
+
 impl VfilesS3 {
     /// Reconcile in-flight sessions created before the indexed S3 listing migration.
     pub async fn backfill_multipart_upload_index(
@@ -3271,11 +3287,12 @@ impl S3 for VfilesS3 {
                             }),
                         )
                     };
-                if input
-                    .key_marker
-                    .as_deref()
-                    .is_some_and(|marker| listed_key.as_str() <= marker)
-                {
+                if !multipart_upload_is_after_marker(
+                    &listed_key,
+                    item.is_some(),
+                    input.key_marker.as_deref(),
+                    input.upload_id_marker.as_deref(),
+                ) {
                     continue;
                 }
                 let id = item
@@ -3714,6 +3731,34 @@ mod tests {
         assert!(resolve_completed_part_indices(&stored, &[1, 4]).is_err());
         assert!(resolve_completed_part_indices(&stored, &[3, 1]).is_err());
         assert!(resolve_completed_part_indices(&stored, &[2, 3]).is_err());
+    }
+
+    #[test]
+    fn multipart_listing_marker_keeps_later_uploads_for_the_same_key() {
+        assert!(multipart_upload_is_after_marker(
+            "same-key",
+            true,
+            Some("same-key"),
+            Some("upload-1")
+        ));
+        assert!(!multipart_upload_is_after_marker(
+            "same-key",
+            true,
+            Some("same-key"),
+            None
+        ));
+        assert!(!multipart_upload_is_after_marker(
+            "same-key/",
+            false,
+            Some("same-key/"),
+            Some("upload-1")
+        ));
+        assert!(multipart_upload_is_after_marker(
+            "z-next-key",
+            true,
+            Some("same-key"),
+            None
+        ));
     }
 
     #[tokio::test]
