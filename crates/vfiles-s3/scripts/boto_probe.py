@@ -131,6 +131,44 @@ def main():
         s3.put_object(Bucket="default", Key=k, Body=b, ContentType="text/plain")
     check("boto put 4 keys", True)
 
+    # S3 has a flat key namespace: leading/trailing slash keys remain distinct
+    # objects and prefix filtering applies to their exact, unmodified spelling.
+    identity_keys = {
+        "boto-key-identity/a": b"plain",
+        "/boto-key-identity/a": b"leading-slash",
+        "boto-key-identity/a/": b"trailing-slash",
+    }
+    for key, body in identity_keys.items():
+        s3.put_object(Bucket="default", Key=key, Body=body)
+    identity_reads = {
+        key: s3.get_object(Bucket="default", Key=key)["Body"].read()
+        for key in identity_keys
+    }
+    identity_list = s3.list_objects_v2(
+        Bucket="default", Prefix="boto-key-identity/"
+    ).get("Contents", [])
+    identity_list_keys = [item["Key"] for item in identity_list]
+    identity_all_keys = {
+        item["Key"]
+        for item in s3.list_objects_v2(Bucket="default").get("Contents", [])
+    }
+    identity_trailing = s3.list_objects_v2(
+        Bucket="default", Prefix="boto-key-identity/a/"
+    ).get("Contents", [])
+    check(
+        "boto preserves leading/trailing slash key identity and exact prefixes",
+        identity_reads == identity_keys
+        and set(identity_keys).issubset(identity_all_keys)
+        and identity_list_keys == ["boto-key-identity/a", "boto-key-identity/a/"]
+        and [item["Key"] for item in identity_trailing] == ["boto-key-identity/a/"],
+        f"reads={identity_reads} all={identity_all_keys} list={identity_list_keys} "
+        f"trailing={identity_trailing}",
+    )
+    s3.delete_objects(
+        Bucket="default",
+        Delete={"Objects": [{"Key": key} for key in identity_keys]},
+    )
+
     try:
         s3.put_object(Bucket="default", Key="k" * 1025, Body=b"invalid")
         long_key_result = (False, "request unexpectedly succeeded")
