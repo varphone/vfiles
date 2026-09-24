@@ -483,6 +483,26 @@ async fn options_advertises_and_propfind_needs_auth() {
         .to_str()
         .unwrap()
         .to_string();
+    let raw_lock_token = lock_token
+        .strip_prefix('<')
+        .and_then(|token| token.strip_suffix('>'))
+        .expect("LOCK response uses a coded URI")
+        .to_string();
+    let malformed_unlock = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("UNLOCK")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("lock-token", raw_lock_token)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(malformed_unlock.status(), 400);
+
     let copy_locked_source = router
         .clone()
         .oneshot(
@@ -1925,7 +1945,7 @@ async fn options_advertises_and_propfind_needs_auth() {
                 .method("UNLOCK")
                 .uri("/locked-dir")
                 .header("authorization", format!("Basic {basic}"))
-                .header("lock-token", format!("<{infinity_token}>"))
+                .header("lock-token", infinity_token)
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )

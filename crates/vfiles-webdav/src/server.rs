@@ -779,14 +779,7 @@ async fn unlock_op(
         .trim_start_matches('/')
         .trim_end_matches('/')
         .to_string();
-    let token = token_raw.and_then(|v| {
-        let trimmed = v.trim().trim_start_matches('<').trim_end_matches('>');
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    });
+    let token = token_raw.as_deref().and_then(parse_lock_token_header);
     let Some(token) = token else {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
@@ -814,6 +807,12 @@ fn internal_error() -> Response {
         .status(StatusCode::INTERNAL_SERVER_ERROR)
         .body(Body::empty())
         .unwrap()
+}
+
+fn parse_lock_token_header(value: &str) -> Option<String> {
+    let value = value.trim();
+    let token = value.strip_prefix('<')?.strip_suffix('>')?;
+    valid_state_token(token).then(|| token.to_string())
 }
 
 struct GetRequestConditions {
@@ -3705,6 +3704,28 @@ mod lockinfo_tests {
             parse_lockinfo(body).map(|lockinfo| lockinfo.scope),
             Ok(vfiles_domain::WebdavLockScope::Shared)
         ));
+    }
+}
+
+#[cfg(test)]
+mod lock_token_tests {
+    use super::parse_lock_token_header;
+
+    #[test]
+    fn accepts_one_coded_uri_and_rejects_malformed_lock_token_fields() {
+        assert_eq!(
+            parse_lock_token_header(" <opaquelocktoken:abc-123> "),
+            Some("opaquelocktoken:abc-123".to_string())
+        );
+        for malformed in [
+            "opaquelocktoken:abc-123",
+            "<<opaquelocktoken:abc-123>>",
+            "<>",
+            "<opaquelocktoken:abc 123>",
+            "<opaquelocktoken:abc-123>>",
+        ] {
+            assert_eq!(parse_lock_token_header(malformed), None, "{malformed:?}");
+        }
     }
 }
 
