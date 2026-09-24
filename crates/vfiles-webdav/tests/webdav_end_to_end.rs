@@ -375,6 +375,60 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap();
     assert_eq!(copy_collection_with_trailing_slash.status(), 201);
 
+    let lock_response = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("LOCK")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("depth", "0")
+                .header("timeout", "Second-600")
+                .header("content-type", "application/xml")
+                .body(axum::body::Body::from(
+                    r#"<D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(lock_response.status(), 200);
+    let lock_token = lock_response
+        .headers()
+        .get("lock-token")
+        .expect("LOCK response includes the lock token")
+        .to_str()
+        .unwrap()
+        .to_string();
+    let copy_locked_source = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("COPY")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("destination", "/copy-locked-target.txt")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(copy_locked_source.status(), 201);
+    let unlock_locked_source = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("UNLOCK")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("lock-token", lock_token)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unlock_locked_source.status(), 204);
+
     let shared_lock = router
         .clone()
         .oneshot(

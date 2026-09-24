@@ -2794,15 +2794,8 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                 .trim_start_matches('/')
                 .trim_end_matches('/')
                 .to_string();
-            // COPY writes/replaces the destination subtree; source is read-only.
-            if let Some(status) =
-                write_precondition(&app_ref, &ns, &src_rel, if_owned.as_deref()).await
-            {
-                return Response::builder()
-                    .status(status)
-                    .body(Body::empty())
-                    .unwrap();
-            }
+            // COPY reads the source without changing it; only the destination subtree
+            // participates in write-lock preconditions.
             if let Some(status) = write_subtree_precondition(
                 &app_ref,
                 &ns,
