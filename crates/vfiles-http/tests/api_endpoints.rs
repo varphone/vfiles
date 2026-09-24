@@ -2520,10 +2520,10 @@ async fn cors_preflight_allows_configured_public_origin_with_credentials() {
                 .method(Method::OPTIONS)
                 .uri("/api/health")
                 .header(header::ORIGIN, "http://example.test:4242")
-                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "PROPFIND")
                 .header(
                     header::ACCESS_CONTROL_REQUEST_HEADERS,
-                    "authorization, content-type, if-none-match, range",
+                    "authorization, content-type, if-none-match, range, depth, destination, overwrite, if, lock-token, timeout",
                 )
                 .body(Body::empty())
                 .expect("request should build"),
@@ -2553,7 +2553,18 @@ async fn cors_preflight_allows_configured_public_origin_with_credentials() {
         .split(',')
         .map(str::trim)
         .collect::<Vec<_>>();
-    for requested_header in ["authorization", "content-type", "if-none-match", "range"] {
+    for requested_header in [
+        "authorization",
+        "content-type",
+        "if-none-match",
+        "range",
+        "depth",
+        "destination",
+        "overwrite",
+        "if",
+        "lock-token",
+        "timeout",
+    ] {
         assert!(
             allowed_headers
                 .iter()
@@ -2561,6 +2572,18 @@ async fn cors_preflight_allows_configured_public_origin_with_credentials() {
             "preflight should allow {requested_header}: {allowed_headers:?}"
         );
     }
+    let allowed_methods = allowed
+        .headers()
+        .get(header::ACCESS_CONTROL_ALLOW_METHODS)
+        .expect("allow-methods should be present")
+        .to_str()
+        .expect("allow-methods should be valid text");
+    assert!(
+        allowed_methods
+            .split(',')
+            .any(|method| method.trim().eq_ignore_ascii_case("PROPFIND")),
+        "preflight should allow PROPFIND: {allowed_methods}"
+    );
 
     app.upload_version("", "cors.txt", b"cors range payload", "CORS download")
         .await;

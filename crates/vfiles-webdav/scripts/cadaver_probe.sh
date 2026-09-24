@@ -37,6 +37,7 @@ export VFILES_STORAGE_ROOT="$tmpdir/storage"
 export VFILES_DATABASE_PATH="$tmpdir/storage/vfiles.db"
 export VFILES_HTTP_HOST=127.0.0.1
 export VFILES_HTTP_PORT="$port"
+export VFILES_HTTP_CORS_ALLOWED_ORIGINS=http://webdav-client.example.invalid
 export VFILES_AUTH_ENABLED=true
 export VFILES_WEBDAV_ENABLED=true
 export VFILES_S3_ENABLED=false
@@ -69,6 +70,28 @@ if [[ "$ready" != true ]]; then
   echo "VFiles did not become ready" >&2
   exit 1
 fi
+
+curl --fail --silent --show-error -D "$tmpdir/preflight.headers" -o /dev/null \
+  -X OPTIONS "http://127.0.0.1:$port/dav" \
+  -H 'Origin: http://webdav-client.example.invalid' \
+  -H 'Access-Control-Request-Method: PROPFIND' \
+  -H 'Access-Control-Request-Headers: authorization,depth,destination,overwrite,if,lock-token,timeout'
+python3 - "$tmpdir/preflight.headers" <<'PY'
+import sys
+
+headers = {}
+for line in open(sys.argv[1], encoding="ascii"):
+    if ":" in line:
+        name, value = line.split(":", 1)
+        headers[name.strip().lower()] = value.strip().lower()
+
+assert headers.get("access-control-allow-origin") == "http://webdav-client.example.invalid", headers
+methods = {item.strip() for item in headers.get("access-control-allow-methods", "").split(",")}
+assert "propfind" in methods, headers
+allowed = {item.strip() for item in headers.get("access-control-allow-headers", "").split(",")}
+required = {"authorization", "depth", "destination", "overwrite", "if", "lock-token", "timeout"}
+assert required <= allowed, (required - allowed, headers)
+PY
 
 mkdir -p "$tmpdir/home"
 printf 'machine 127.0.0.1 login cadprobe password cadprobe-password-123\n' \
@@ -106,4 +129,4 @@ if grep -Eiq "failed|error|aborted" "$tmpdir/cadaver.log"; then
   exit 1
 fi
 
-echo "PASS cadaver $(cadaver --version 2>&1 | awk 'NR == 1 { print $2 }') MKCOL/PUT/COPY/MOVE/GET/list/DELETE/rmcol"
+echo "PASS WebDAV CORS PROPFIND preflight and cadaver $(cadaver --version 2>&1 | awk 'NR == 1 { print $2 }') MKCOL/PUT/COPY/MOVE/GET/list/DELETE/rmcol"

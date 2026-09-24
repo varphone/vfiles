@@ -109,7 +109,7 @@ fn build_router_inner(state: AppState, serve_frontend_fallback: bool) -> Router<
     router
         .layer(build_compression_layer())
         .layer(axum::middleware::from_fn(weaken_compressed_etag))
-        .layer(build_cors_layer(&state.config))
+        .layer(cors_layer(&state.config))
         .layer(axum::middleware::from_fn(request_logger))
         .layer(axum::middleware::from_fn(
             middleware::security_headers_middleware,
@@ -174,16 +174,30 @@ async fn weaken_compressed_etag(request: Request, next: Next) -> Response {
     response
 }
 
-fn build_cors_layer(config: &AppConfig) -> CorsLayer {
+pub fn cors_layer(config: &AppConfig) -> CorsLayer {
+    let mut methods = vec![
+        Method::GET,
+        Method::HEAD,
+        Method::POST,
+        Method::PUT,
+        Method::DELETE,
+        Method::OPTIONS,
+    ];
+    methods.extend(
+        [
+            "PROPFIND",
+            "PROPPATCH",
+            "MKCOL",
+            "COPY",
+            "MOVE",
+            "LOCK",
+            "UNLOCK",
+        ]
+        .into_iter()
+        .map(|method| Method::from_bytes(method.as_bytes()).expect("static DAV method")),
+    );
     let cors = CorsLayer::new()
-        .allow_methods([
-            Method::GET,
-            Method::HEAD,
-            Method::POST,
-            Method::PUT,
-            Method::DELETE,
-            Method::OPTIONS,
-        ])
+        .allow_methods(methods)
         .allow_headers([
             header::ACCEPT,
             header::AUTHORIZATION,
@@ -195,6 +209,15 @@ fn build_cors_layer(config: &AppConfig) -> CorsLayer {
             header::IF_UNMODIFIED_SINCE,
             header::IF_RANGE,
             header::RANGE,
+            header::HeaderName::from_static("depth"),
+            header::HeaderName::from_static("destination"),
+            header::HeaderName::from_static("overwrite"),
+            header::HeaderName::from_static("if"),
+            header::HeaderName::from_static("lock-token"),
+            header::HeaderName::from_static("timeout"),
+            header::HeaderName::from_static("brief"),
+            header::HeaderName::from_static("prefer"),
+            header::HeaderName::from_static("translate"),
         ])
         .expose_headers([
             header::ACCEPT_RANGES,
@@ -204,6 +227,11 @@ fn build_cors_layer(config: &AppConfig) -> CorsLayer {
             header::LAST_MODIFIED,
             header::RETRY_AFTER,
             header::HeaderName::from_static("x-request-id"),
+            header::HeaderName::from_static("dav"),
+            header::HeaderName::from_static("allow"),
+            header::HeaderName::from_static("lock-token"),
+            header::HeaderName::from_static("ms-author-via"),
+            header::LOCATION,
         ]);
 
     if config.http.cors_allow_any_origin {
