@@ -284,13 +284,23 @@ fn if_lists_match(
     active_lock_token: Option<&str>,
     etag: Option<&str>,
 ) -> bool {
+    let active = active_lock_token.into_iter().collect::<Vec<_>>();
+    if_lists_match_tokens(lists, &active, etag, true)
+}
+
+fn if_lists_match_tokens(
+    lists: &[Vec<IfCondition>],
+    active_lock_tokens: &[&str],
+    etag: Option<&str>,
+    require_all_tokens: bool,
+) -> bool {
     lists.iter().any(|conditions| {
-        let mut has_positive_lock_token = false;
+        let mut positive_lock_tokens = std::collections::HashSet::new();
         let conditions_match = conditions.iter().all(|condition| match condition {
             IfCondition::Token { value, negated } => {
-                let matches = active_lock_token.is_some_and(|active| value == active);
+                let matches = active_lock_tokens.iter().any(|active| value == active);
                 if matches && !negated {
-                    has_positive_lock_token = true;
+                    positive_lock_tokens.insert(value.as_str());
                 }
                 matches != *negated
             }
@@ -301,7 +311,11 @@ fn if_lists_match(
                 matches != *negated
             }
         });
-        conditions_match && active_lock_token.is_none_or(|_| has_positive_lock_token)
+        let tokens_satisfied = !require_all_tokens
+            || active_lock_tokens
+                .iter()
+                .all(|token| positive_lock_tokens.contains(token));
+        conditions_match && tokens_satisfied
     })
 }
 
@@ -342,8 +356,25 @@ fn if_header_matches_resource(
     active_lock_token: Option<&str>,
     etag: Option<&str>,
 ) -> Option<bool> {
+    let active = active_lock_token.into_iter().collect::<Vec<_>>();
+    if_header_matches_tokens(header, rel, mount_prefix, &active, etag, true)
+}
+
+fn if_header_matches_tokens(
+    header: &str,
+    rel: &str,
+    mount_prefix: &str,
+    active_lock_tokens: &[&str],
+    etag: Option<&str>,
+    require_all_tokens: bool,
+) -> Option<bool> {
     match parse_if_header(header)? {
-        IfHeader::Untagged(lists) => Some(if_lists_match(&lists, active_lock_token, etag)),
+        IfHeader::Untagged(lists) => Some(if_lists_match_tokens(
+            &lists,
+            active_lock_tokens,
+            etag,
+            require_all_tokens,
+        )),
         IfHeader::Tagged(tagged) => {
             let matching_lists: Vec<_> = tagged
                 .iter()
@@ -351,20 +382,26 @@ fn if_header_matches_resource(
                 .flat_map(|(_, lists)| lists.iter().cloned())
                 .collect();
             Some(if matching_lists.is_empty() {
-                active_lock_token.is_none()
+                active_lock_tokens.is_empty()
             } else {
-                if_lists_match(&matching_lists, active_lock_token, etag)
+                if_lists_match_tokens(
+                    &matching_lists,
+                    active_lock_tokens,
+                    etag,
+                    require_all_tokens,
+                )
             })
         }
     }
 }
 
-fn tagged_if_matches_resource(
+fn tagged_if_matches_tokens(
     header: &str,
     rel: &str,
     mount_prefix: &str,
-    active_lock_token: &str,
+    active_lock_tokens: &[&str],
     etag: Option<&str>,
+    require_all_tokens: bool,
 ) -> Option<bool> {
     let IfHeader::Tagged(tagged) = parse_if_header(header)? else {
         return Some(false);
@@ -376,7 +413,12 @@ fn tagged_if_matches_resource(
         .collect();
     Some(
         !matching_lists.is_empty()
-            && if_lists_match(&matching_lists, Some(active_lock_token), etag),
+            && if_lists_match_tokens(
+                &matching_lists,
+                active_lock_tokens,
+                etag,
+                require_all_tokens,
+            ),
     )
 }
 
@@ -1155,7 +1197,26 @@ async fn write_precondition(
     };
     if locks.is_empty() {
         if let Some(header) = if_header {
-            return match if_header_matches_resource(header, rel, &app.mount_prefix, None, None) {
+            let etag = match vfiles_domain::types::NormalizedPath::new(rel) {
+                Ok(path) => match app.entry_repo.find_by_path(ns, &path).await {
+                    Ok(entry) => entry
+                        .and_then(|entry| entry.current_version_id)
+                        .as_ref()
+                        .map(derive_etag),
+                    Err(error) => {
+                        tracing::error!(%error, rel, "WebDAV If 条件读取实体标签失败");
+                        return Some(StatusCode::INTERNAL_SERVER_ERROR);
+                    }
+                },
+                Err(_) => None,
+            };
+            return match if_header_matches_resource(
+                header,
+                rel,
+                &app.mount_prefix,
+                None,
+                etag.as_deref(),
+            ) {
                 Some(true) => None,
                 Some(false) => Some(StatusCode::PRECONDITION_FAILED),
                 None => Some(StatusCode::BAD_REQUEST),
@@ -1164,11 +1225,15 @@ async fn write_precondition(
         return None;
     }
     if let Some(header) = if_header {
-        let mut matched = false;
-        let mut invalid = false;
-        for lock in &locks {
-            let condition_rel = lock.path.as_str();
-            let etag = if let Ok(path) = vfiles_domain::types::NormalizedPath::new(condition_rel) {
+        let mut locks_by_path = std::collections::HashMap::<String, Vec<_>>::new();
+        for lock in locks {
+            locks_by_path
+                .entry(lock.path.clone())
+                .or_default()
+                .push(lock);
+        }
+        for (condition_rel, path_locks) in locks_by_path {
+            let etag = if let Ok(path) = vfiles_domain::types::NormalizedPath::new(&condition_rel) {
                 match app.entry_repo.find_by_path(ns, &path).await {
                     Ok(entry) => entry
                         .and_then(|entry| entry.current_version_id)
@@ -1182,27 +1247,24 @@ async fn write_precondition(
             } else {
                 None
             };
-            match if_header_matches_resource(
+            let tokens = path_locks
+                .iter()
+                .map(|lock| lock.token.as_str())
+                .collect::<Vec<_>>();
+            match if_header_matches_tokens(
                 header,
-                condition_rel,
+                &condition_rel,
                 &app.mount_prefix,
-                Some(&lock.token),
+                &tokens,
                 etag.as_deref(),
+                true,
             ) {
-                Some(true) => matched = true,
-                Some(false) => {}
-                None => invalid = true,
+                Some(true) => {}
+                Some(false) => return Some(StatusCode::PRECONDITION_FAILED),
+                None => return Some(StatusCode::BAD_REQUEST),
             }
         }
-        if matched {
-            return None;
-        }
-        return Some(if invalid {
-            StatusCode::BAD_REQUEST
-        } else {
-            tracing::debug!(rel = %rel, "WebDAV If 条件未匹配，返回 412");
-            StatusCode::PRECONDITION_FAILED
-        });
+        return None;
     }
     if !locks.is_empty() {
         tracing::debug!(rel = %rel, "WebDAV 写请求缺少锁 token，返回 423");
@@ -1254,28 +1316,24 @@ async fn write_subtree_precondition(
             },
             Err(_) => None,
         };
-        let mut matched = false;
-        let mut invalid = false;
-        for lock in path_locks {
-            match tagged_if_matches_resource(
-                header,
-                &locked_path,
-                &app.mount_prefix,
-                &lock.token,
-                etag.as_deref(),
-            ) {
-                Some(true) => matched = true,
-                Some(false) => {}
-                None => invalid = true,
-            }
-        }
-        if !matched {
-            return Some(if invalid {
-                StatusCode::BAD_REQUEST
-            } else {
+        let tokens = path_locks
+            .iter()
+            .map(|lock| lock.token.as_str())
+            .collect::<Vec<_>>();
+        match tagged_if_matches_tokens(
+            header,
+            &locked_path,
+            &app.mount_prefix,
+            &tokens,
+            etag.as_deref(),
+            true,
+        ) {
+            Some(true) => {}
+            Some(false) => {
                 tracing::debug!(path = %locked_path, "WebDAV 子树 If 条件未匹配，返回 412");
-                StatusCode::PRECONDITION_FAILED
-            });
+                return Some(StatusCode::PRECONDITION_FAILED);
+            }
+            None => return Some(StatusCode::BAD_REQUEST),
         }
     }
     None
@@ -3860,7 +3918,7 @@ mod href_tests {
 
 #[cfg(test)]
 mod if_token_tests {
-    use crate::server::untagged_if_matches;
+    use crate::server::{IfHeader, if_lists_match_tokens, parse_if_header, untagged_if_matches};
 
     #[test]
     fn evaluates_untagged_lists_with_and_or_not_and_entity_tags() {
@@ -3954,6 +4012,39 @@ mod if_token_tests {
         assert_eq!(
             untagged_if_matches("([\"old\"])", None, Some("\"v1\"")),
             Some(false)
+        );
+    }
+
+    #[test]
+    fn every_shared_lock_token_must_be_in_the_same_satisfied_list() {
+        let IfHeader::Untagged(lists) = parse_if_header("(<opaquelocktoken:a>)").unwrap() else {
+            panic!("expected untagged If header");
+        };
+        assert!(!if_lists_match_tokens(
+            &lists,
+            &["opaquelocktoken:a", "opaquelocktoken:b"],
+            None,
+            true,
+        ));
+
+        let IfHeader::Untagged(lists) =
+            parse_if_header("(<opaquelocktoken:a> <opaquelocktoken:b>)").unwrap()
+        else {
+            panic!("expected untagged If header");
+        };
+        assert!(if_lists_match_tokens(
+            &lists,
+            &["opaquelocktoken:a", "opaquelocktoken:b"],
+            None,
+            true,
+        ));
+    }
+
+    #[test]
+    fn entity_tags_use_weak_comparison() {
+        assert_eq!(
+            untagged_if_matches("([W/\"v1\"])", None, Some("\"v1\"")),
+            Some(true)
         );
     }
 }

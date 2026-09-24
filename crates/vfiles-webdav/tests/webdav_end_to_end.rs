@@ -668,6 +668,21 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap()
         .to_string();
 
+    let write_with_only_one_shared_token = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/target.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if", format!("({shared_lock_token})"))
+                .body(axum::body::Body::from("must not be written"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(write_with_only_one_shared_token.status(), 412);
+
     let lock_properties = router
         .clone()
         .oneshot(
@@ -2039,6 +2054,35 @@ async fn options_advertises_and_propfind_needs_auth() {
         ]
     );
 
+    let matching_dav_etag = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/conditional.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if", format!("([{conditional_etag}])"))
+                .body(axum::body::Body::from("matching DAV entity tag"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(matching_dav_etag.status(), 200);
+    let stale_dav_etag = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/conditional.txt")
+                .header("authorization", format!("Basic {basic}"))
+                .header("if", "([\"stale-dav-etag\"])")
+                .body(axum::body::Body::from("stale DAV entity tag"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale_dav_etag.status(), 412);
+
     let replaced_put = router
         .clone()
         .oneshot(
@@ -2626,6 +2670,7 @@ async fn options_advertises_and_propfind_needs_auth() {
         .unwrap()
         .to_string();
     let move_locked_resource = router
+        .clone()
         .oneshot(
             axum::http::Request::builder()
                 .method("MOVE")
