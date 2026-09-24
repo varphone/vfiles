@@ -176,4 +176,21 @@ if grep -Fq 'keep.probe' "$tmpdir/deleted-list.log"; then
   exit 1
 fi
 
+# A receiver-side path conflict must reach the sender as a failed sync. Returning
+# success while logging a rejected upload would silently lose source data.
+mkdir -p "$tmpdir/conflict-source"
+mkdir -p "$tmpdir/conflict-seed/blocked-path"
+printf 'keep this directory\n' >"$tmpdir/conflict-seed/blocked-path/placeholder"
+rsync -a --quiet "$tmpdir/conflict-seed/" "$module_url/conflict-target/"
+printf 'must be reported as failed\n' >"$tmpdir/conflict-source/blocked-path"
+if rsync -a --quiet "$tmpdir/conflict-source/" "$module_url/conflict-target/" >"$tmpdir/conflict.log" 2>&1; then
+  echo "rsync reported success although the receiver path was a directory" >&2
+  exit 1
+fi
+rsync --list-only "$module_url/conflict-target/blocked-path/" >"$tmpdir/conflict-child-list.log"
+if ! grep -Fq 'placeholder' "$tmpdir/conflict-child-list.log"; then
+  echo "receiver path conflict unexpectedly changed the existing directory" >&2
+  exit 1
+fi
+
 echo "PASS rsync $(rsync --version | awk 'NR == 1 { print $3 }') module/push/pull/mtime/delta/delete"

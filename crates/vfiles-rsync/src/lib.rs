@@ -2625,9 +2625,9 @@ where
             };
             // 目录：显式创建（空目录不落地 = 此前债）
             if e.is_dir {
-                if let Err(err) = backend.mkdir(&full).await {
-                    tracing::warn!(path = %full, error = %err, "rsync push：建目录失败");
-                }
+                backend.mkdir(&full).await.map_err(|err| {
+                    std::io::Error::other(format!("rsync push: create directory {full}: {err}"))
+                })?;
                 continue;
             }
             // 快跳（官方 generator `unchanged_file` 语义）：
@@ -2844,7 +2844,11 @@ where
             receive_result?;
             match upload_result {
                 Ok(()) => transferred += 1,
-                Err(err) => tracing::warn!(path = %full, error = %err, "rsync push：写入失败"),
+                Err(err) => {
+                    return Err(std::io::Error::other(format!(
+                        "rsync push: write file {full}: {err}"
+                    )));
+                }
             }
         }
         // 相位收尾（客户端 sender：2 答 + 终结；本端 4 出 / 3 入 ✗ 超时防挂）
