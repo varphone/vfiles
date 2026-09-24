@@ -1915,6 +1915,42 @@ type SnapshotEntryRow = (
     Option<String>,
 );
 
+type SnapshotRow = (String, String, String, Option<String>, String, String);
+
+fn parse_snapshot_row(row: SnapshotRow) -> DomainResult<Snapshot> {
+    let (kind, snapshot_no) = parse_snapshot_name(&row.2);
+    Ok(Snapshot {
+        id: SnapshotId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
+            DomainError::Internal {
+                message: "Invalid snapshot UUID".to_string(),
+            }
+        })?),
+        namespace_id: NamespaceId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(|_| {
+            DomainError::Internal {
+                message: "Invalid namespace UUID".to_string(),
+            }
+        })?),
+        snapshot_no,
+        created_by: UserId::from_uuid(uuid::Uuid::parse_str(&row.5).map_err(|_| {
+            DomainError::Internal {
+                message: "Invalid user UUID".to_string(),
+            }
+        })?),
+        created_at: time::OffsetDateTime::parse(
+            &row.4,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .map_err(|_| DomainError::Internal {
+            message: "Invalid timestamp".to_string(),
+        })?,
+        message: row
+            .3
+            .as_deref()
+            .and_then(|value| NonEmptyMessage::new(value).ok()),
+        kind,
+    })
+}
+
 fn parse_snapshot_entry_row(row: SnapshotEntryRow) -> DomainResult<SnapshotEntry> {
     Ok(SnapshotEntry {
         snapshot_id: SnapshotId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
@@ -5657,6 +5693,70 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         Ok(snapshots)
     }
 
+    async fn list_snapshots_for_path(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        limit: u32,
+    ) -> DomainResult<(Vec<Snapshot>, u64)> {
+        let path = path.as_str();
+        let lower = format!("{path}/");
+        let upper = format!("{path}0");
+        let total: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM snapshots s
+            WHERE s.namespace_id = ?
+              AND (? = '' OR EXISTS (
+                  SELECT 1 FROM snapshot_entries se
+                  WHERE se.snapshot_id = s.id
+                    AND (se.entry_path = ? OR (se.entry_path >= ? AND se.entry_path < ?))
+              ))
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(path)
+        .bind(path)
+        .bind(&lower)
+        .bind(&upper)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to count path snapshots: {error}"),
+        })?;
+        let rows: Vec<SnapshotRow> = sqlx::query_as(
+            r#"
+            SELECT s.id, s.namespace_id, s.name, s.description, s.created_at, s.created_by
+            FROM snapshots s
+            WHERE s.namespace_id = ?
+              AND (? = '' OR EXISTS (
+                  SELECT 1 FROM snapshot_entries se
+                  WHERE se.snapshot_id = s.id
+                    AND (se.entry_path = ? OR (se.entry_path >= ? AND se.entry_path < ?))
+              ))
+            ORDER BY s.created_at DESC, s.id DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(path)
+        .bind(path)
+        .bind(&lower)
+        .bind(&upper)
+        .bind(i64::from(limit.max(1)))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to list path snapshots: {error}"),
+        })?;
+        Ok((
+            rows.into_iter()
+                .map(parse_snapshot_row)
+                .collect::<DomainResult<_>>()?,
+            total as u64,
+        ))
+    }
+
     async fn add_snapshot_entries(
         &self,
         snapshot_id: &SnapshotId,
@@ -8568,6 +8668,75 @@ mod snapshot_repo_tests {
     async fn cleanup_db(pool: SqlitePool, db_path: Utf8PathBuf) {
         pool.close().await;
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn path_snapshot_listing_filters_and_limits_in_sql() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup_snapshot_repo().await;
+        let mut snapshot_ids = Vec::new();
+        for message in ["docs first", "unrelated", "docs deleted"] {
+            snapshot_ids.push(
+                repo.create_snapshot(
+                    &namespace_id,
+                    Some(message),
+                    SnapshotKind::UserCreated,
+                    &user_id,
+                )
+                .await
+                .expect("snapshot should be created"),
+            );
+        }
+        let entries = [
+            (0, "docs/file.txt", ChangeType::Added),
+            (1, "notes/other.txt", ChangeType::Added),
+            (2, "docs/old.txt", ChangeType::Deleted),
+        ]
+        .into_iter()
+        .map(|(snapshot_index, path, change_type)| SnapshotEntry {
+            snapshot_id: snapshot_ids[snapshot_index],
+            entry_id: EntryId::new(),
+            entry_path: NormalizedPath::new(path).expect("fixture path should parse"),
+            entry_kind: EntryKind::File,
+            entry_version_id: None,
+            blob_id: None,
+            size_bytes: None,
+            mime_type: None,
+            version_no: None,
+            change_type,
+            created_by: Some(user_id),
+            created_at: Some(time::OffsetDateTime::now_utc()),
+        })
+        .collect::<Vec<_>>();
+        for (snapshot_id, entry) in snapshot_ids.iter().zip(entries.chunks(1)) {
+            repo.add_snapshot_entries(snapshot_id, entry)
+                .await
+                .expect("snapshot entry should be saved");
+        }
+
+        let (docs_page, docs_total) = repo
+            .list_snapshots_for_path(
+                &namespace_id,
+                &NormalizedPath::new("docs").expect("path should parse"),
+                1,
+            )
+            .await
+            .expect("path snapshot page should load");
+        assert_eq!(docs_total, 2);
+        assert_eq!(docs_page.len(), 1);
+        assert!(docs_page[0].id == snapshot_ids[0] || docs_page[0].id == snapshot_ids[2]);
+
+        let (root_page, root_total) = repo
+            .list_snapshots_for_path(
+                &namespace_id,
+                &NormalizedPath::new("").expect("root should parse"),
+                2,
+            )
+            .await
+            .expect("root snapshot page should load");
+        assert_eq!(root_total, 3);
+        assert_eq!(root_page.len(), 2);
+
+        cleanup_db(pool, db_path).await;
     }
 
     #[tokio::test]

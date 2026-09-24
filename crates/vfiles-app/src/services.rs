@@ -3981,33 +3981,18 @@ where
         path: &NormalizedPath,
         limit: u32,
     ) -> DomainResult<DirectoryHistoryPage> {
-        let snapshots = self
+        let (snapshots, total_items) = self
             .snapshot_repo
-            .list_snapshots(namespace_id, u32::MAX, None)
+            .list_snapshots_for_path(namespace_id, path, limit)
             .await?;
         let actor_ids = snapshots
             .iter()
             .map(|snapshot| snapshot.created_by)
             .collect::<Vec<_>>();
         let actor_names = self.resolve_actor_names(actor_ids).await;
-        let mut items = Vec::new();
-
-        for snapshot in snapshots {
-            let is_relevant = if path.as_str().is_empty() {
-                true
-            } else {
-                self.snapshot_repo
-                    .get_snapshot_entries(&snapshot.id)
-                    .await?
-                    .iter()
-                    .any(|entry| path_matches_scope(&entry.entry_path, path))
-            };
-
-            if !is_relevant {
-                continue;
-            }
-
-            items.push(SnapshotSummary {
+        let items = snapshots
+            .into_iter()
+            .map(|snapshot| SnapshotSummary {
                 snapshot_id: snapshot.id,
                 created_at: snapshot.created_at,
                 actor_name: actor_names
@@ -4019,17 +4004,14 @@ where
                     .as_ref()
                     .map(|value| value.as_str().to_string()),
                 kind: snapshot.kind,
-            });
-        }
-
-        let total_items = items.len();
-        items.truncate(limit.max(1) as usize);
+            })
+            .collect::<Vec<_>>();
 
         Ok(DirectoryHistoryPage {
             path: path.as_str().to_string(),
             current_snapshot_id: items.first().map(|item| item.snapshot_id),
             items,
-            total_items,
+            total_items: usize::try_from(total_items).unwrap_or(usize::MAX),
         })
     }
 

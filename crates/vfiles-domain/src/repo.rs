@@ -823,6 +823,36 @@ pub trait SnapshotRepo {
         limit: u32,
         cursor: Option<&str>,
     ) -> DomainResult<Vec<Snapshot>>;
+    /// List snapshots whose saved tree includes the requested path (or its descendants).
+    async fn list_snapshots_for_path(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        limit: u32,
+    ) -> DomainResult<(Vec<Snapshot>, u64)> {
+        let snapshots = self.list_snapshots(namespace_id, u32::MAX, None).await?;
+        let mut relevant = Vec::new();
+        for snapshot in snapshots {
+            if path.as_str().is_empty()
+                || self
+                    .get_snapshot_entries(&snapshot.id)
+                    .await?
+                    .iter()
+                    .any(|entry| {
+                        entry.entry_path == *path
+                            || entry
+                                .entry_path
+                                .as_str()
+                                .starts_with(&format!("{}/", path.as_str()))
+                    })
+            {
+                relevant.push(snapshot);
+            }
+        }
+        let total = relevant.len() as u64;
+        relevant.truncate(limit.max(1) as usize);
+        Ok((relevant, total))
+    }
     async fn add_snapshot_entries(
         &self,
         snapshot_id: &SnapshotId,
