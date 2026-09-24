@@ -974,9 +974,8 @@ pub struct AuthService {
     user_repo: SqliteUserRepo,
     session_repo: SqliteSessionRepo,
     session_ttl_seconds: u64,
-    /// r9 热验缓存 ✗ key = SHA-256(cred)（原文零落盘 ✗）只存成功 + User clone +
-    /// TTL 30s（改密码 30s 窗记档 ✗ 禁用 = 命中时查 user.disabled 即时生效 ✓
-    /// 失败路径不缓存 = 爆破/timing 防护零损 ✓ Arc<Mutex> = Clone 后共享不分叉 ✓）。
+    /// 热验缓存以 SHA-256 凭据摘要为键，只缓存成功认证；每次命中仍从数据库
+    /// 读取当前账号状态和密码哈希，避免账号变更后继续接受旧凭据。
     verified_cache: VerifiedCredentialCache,
 }
 
@@ -1086,51 +1085,82 @@ impl AuthService {
         hasher.finalize().into()
     }
 
-    pub async fn verify_credentials(
-        &self,
-        username_or_email: &str,
-        password: &str,
-    ) -> DomainResult<User> {
-        // r9 热验缓存命中（TTL 30s ✗ disabled 每命中实时查 = 禁用即时生效 ✓）
-        {
-            let key = Self::cred_key(username_or_email, password);
-            let cache = self.verified_cache.lock().expect("auth cache poisoned");
-            if let Some((user, at)) = cache.get(&key)
-                && at.elapsed().as_secs() < 30
-                && !user.disabled
-            {
-                return Ok(user.clone());
-            }
-        }
-        // 无效标识与口令错误返回同一个错误，避免泄露「用户名是否存在」
-        let user = if username_or_email.contains('@') {
+    async fn find_user_for_credentials(&self, username_or_email: &str) -> DomainResult<User> {
+        if username_or_email.contains('@') {
             let email = EmailAddress::new(username_or_email)
                 .map_err(|_| DomainError::InvalidCredentials)?;
             match self.user_repo.find_by_email(&email).await {
-                Ok(user) => user,
-                Err(DomainError::NotFound { .. }) => return Err(DomainError::InvalidCredentials),
-                Err(err) => return Err(err),
+                Ok(user) => Ok(user),
+                Err(DomainError::NotFound { .. }) => Err(DomainError::InvalidCredentials),
+                Err(error) => Err(error),
             }
         } else {
             let username =
                 Username::new(username_or_email).map_err(|_| DomainError::InvalidCredentials)?;
             match self.user_repo.find_by_username(&username).await {
-                Ok(user) => user,
-                Err(DomainError::NotFound { .. }) => return Err(DomainError::InvalidCredentials),
-                Err(err) => return Err(err),
+                Ok(user) => Ok(user),
+                Err(DomainError::NotFound { .. }) => Err(DomainError::InvalidCredentials),
+                Err(error) => Err(error),
+            }
+        }
+    }
+
+    pub async fn verify_credentials(
+        &self,
+        username_or_email: &str,
+        password: &str,
+    ) -> DomainResult<User> {
+        let key = Self::cred_key(username_or_email, password);
+        let cached_user = {
+            let mut cache = self.verified_cache.lock().expect("auth cache poisoned");
+            match cache.get(&key) {
+                Some((user, at)) if at.elapsed().as_secs() < 30 => Some(user.clone()),
+                Some(_) => {
+                    cache.remove(&key);
+                    None
+                }
+                None => None,
+            }
+        };
+
+        // 每次读取轻量账号记录，确保缓存不会延迟停用、改密、改名或删除生效。
+        // Argon2 只在首次成功验证、凭据变化或缓存过期时运行。
+        let user = match self.find_user_for_credentials(username_or_email).await {
+            Ok(user) => user,
+            Err(error) => {
+                if cached_user.is_some() {
+                    self.verified_cache
+                        .lock()
+                        .expect("auth cache poisoned")
+                        .remove(&key);
+                }
+                return Err(error);
             }
         };
 
         if user.disabled {
+            self.verified_cache
+                .lock()
+                .expect("auth cache poisoned")
+                .remove(&key);
             return Err(DomainError::InvalidCredentials);
+        }
+
+        if let Some(cached_user) = cached_user {
+            if cached_user.id == user.id && cached_user.password_hash == user.password_hash {
+                return Ok(user);
+            }
+            self.verified_cache
+                .lock()
+                .expect("auth cache poisoned")
+                .remove(&key);
         }
 
         if !self.verify_password(password, &user.password_hash)? {
             return Err(DomainError::InvalidCredentials);
         }
-        // r9 成功才入缓存 ✗ 顺手驱逐过期（O(n) 小 n ✓ 失败零缓存 = 爆破防护 ✓）
+        // 仅缓存成功验证结果；命中前仍核对当前账号记录，密码原文从不缓存。
         {
-            let key = Self::cred_key(username_or_email, password);
             let mut cache = self.verified_cache.lock().expect("auth cache poisoned");
             cache.retain(|_, (_, at)| at.elapsed().as_secs() < 30);
             cache.insert(key, (user.clone(), std::time::Instant::now()));
@@ -4701,6 +4731,8 @@ mod tests {
         storage_root: Utf8PathBuf,
         namespace_id: NamespaceId,
         user_id: UserId,
+        user_repo: SqliteUserRepo,
+        auth_service: AuthService,
         entry_repo: SqliteEntryRepo,
         blob_store: FsBlobStore,
         snapshot_repo: SqliteSnapshotRepo,
@@ -4731,6 +4763,11 @@ mod tests {
                 .create_admin("admin", "admin@example.com", "hash")
                 .await
                 .expect("admin should be created");
+            let auth_service = AuthService::new(
+                user_repo.clone(),
+                SqliteSessionRepo::new(pool.clone()),
+                3600,
+            );
 
             let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
             let namespace_id = namespace_repo
@@ -4766,6 +4803,8 @@ mod tests {
                 storage_root,
                 namespace_id,
                 user_id,
+                user_repo,
+                auth_service,
                 entry_repo,
                 blob_store,
                 snapshot_repo,
@@ -4875,6 +4914,57 @@ mod tests {
 
             count_files(self.storage_root.join("blobs").as_std_path())
         }
+    }
+
+    #[tokio::test]
+    async fn verified_credential_cache_rechecks_password_and_disabled_state() {
+        let context = TestContext::new().await;
+        let old_hash = AuthService::hash_password_for_storage("old-password")
+            .expect("old password should hash");
+        context
+            .user_repo
+            .update_password(&context.user_id, &old_hash)
+            .await
+            .expect("old password should be stored");
+
+        context
+            .auth_service
+            .verify_credentials("admin", "old-password")
+            .await
+            .expect("initial credentials should verify");
+
+        let new_hash = AuthService::hash_password_for_storage("new-password")
+            .expect("new password should hash");
+        context
+            .user_repo
+            .update_password(&context.user_id, &new_hash)
+            .await
+            .expect("new password should be stored");
+        assert!(matches!(
+            context
+                .auth_service
+                .verify_credentials("admin", "old-password")
+                .await,
+            Err(DomainError::InvalidCredentials)
+        ));
+        context
+            .auth_service
+            .verify_credentials("admin", "new-password")
+            .await
+            .expect("new password should verify");
+
+        context
+            .user_repo
+            .disable_user(&context.user_id)
+            .await
+            .expect("user should be disabled");
+        assert!(matches!(
+            context
+                .auth_service
+                .verify_credentials("admin", "new-password")
+                .await,
+            Err(DomainError::InvalidCredentials)
+        ));
     }
 
     #[tokio::test]
