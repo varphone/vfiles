@@ -237,6 +237,9 @@ pub fn parse_propertyupdate(body: &str) -> Result<Vec<PropOp>, ()> {
     }
     let doc = roxmltree::Document::parse(body).map_err(|_| ())?;
     let root = doc.root_element();
+    if has_invalid_prefixed_namespace(root) {
+        return Err(());
+    }
     if root.tag_name().namespace() != Some("DAV:") || root.tag_name().name() != "propertyupdate" {
         return Err(());
     }
@@ -313,6 +316,9 @@ pub fn parse_propfind_body(body: &str) -> Result<PropMode, ()> {
     }
     let doc = roxmltree::Document::parse(body).map_err(|_| ())?;
     let root = doc.root_element();
+    if has_invalid_prefixed_namespace(root) {
+        return Err(());
+    }
     if root.tag_name().namespace() != Some("DAV:") || root.tag_name().name() != "propfind" {
         return Err(());
     }
@@ -336,6 +342,15 @@ pub fn parse_propfind_body(body: &str) -> Result<PropMode, ()> {
         },
         Some(_) => Err(()),
     }
+}
+
+fn has_invalid_prefixed_namespace(root: roxmltree::Node<'_, '_>) -> bool {
+    root.descendants()
+        .filter(|node| node.is_element())
+        .any(|node| {
+            node.namespaces()
+                .any(|namespace| namespace.name().is_some() && namespace.uri().is_empty())
+        })
 }
 
 /// 单资源属性（PROPFIND 单元 ✓）。
@@ -705,6 +720,12 @@ mod propmode_tests {
             )]))
         );
         assert_eq!(parse_propfind_body("<broken"), Err(()));
+        assert_eq!(
+            parse_propfind_body(
+                r#"<D:propfind xmlns:D="DAV:"><D:prop><bar:foo xmlns:bar=""/></D:prop></D:propfind>"#
+            ),
+            Err(())
+        );
         assert_eq!(
             parse_propfind_body(r#"<notpropfind><allprop/></notpropfind>"#),
             Err(())
