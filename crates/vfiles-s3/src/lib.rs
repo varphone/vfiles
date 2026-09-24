@@ -101,6 +101,7 @@ pub const S3_REGION: &str = "us-east-1";
 const MAX_KEYS_LIMIT: usize = 1000;
 const MAX_S3_KEY_BYTES: usize = 1024;
 const MAX_S3_PART_SIZE: u64 = 5 * 1024 * 1024 * 1024;
+const S3_KEY_ESCAPE_PREFIX: &str = ".__vfiles_s3_key__/";
 
 /// Vfiles S3 实现（薄组装 ✗ 写面 = app 层 workspace/upload 同 WebDAV 同源链 ✓）。
 pub struct VfilesS3 {
@@ -113,6 +114,7 @@ pub struct VfilesS3 {
     >,
     pub entry_repo: std::sync::Arc<dyn vfiles_domain::EntryRepo + Send + Sync>,
     pub delete_markers: vfiles_infra_sqlite::SqliteS3DeleteMarkerRepo,
+    pub object_keys: vfiles_infra_sqlite::SqliteS3ObjectKeyRepo,
     pub namespace: vfiles_domain::NamespaceId,
     pub owner: vfiles_domain::UserId,
     /// 只读凭证（`access:secret:ro` ✗ 变更类操作一律 AccessDenied）。
@@ -154,11 +156,34 @@ fn norm(key: &str) -> vfiles_domain::DomainResult<vfiles_domain::NormalizedPath>
             message: format!("object key exceeds {MAX_S3_KEY_BYTES} UTF-8 bytes"),
         });
     }
-    vfiles_domain::NormalizedPath::new(key.trim_matches('/')).map_err(|err| {
+    if key.is_empty() {
+        return Err(vfiles_domain::DomainError::Validation {
+            message: "object key must not be empty".to_string(),
+        });
+    }
+    let is_plain_path = !key.starts_with(S3_KEY_ESCAPE_PREFIX)
+        && key.trim_matches('/') == key
+        && vfiles_domain::NormalizedPath::new(key).is_ok();
+    let internal = if is_plain_path {
+        key.to_string()
+    } else {
+        format!("{S3_KEY_ESCAPE_PREFIX}{}", hex::encode(key.as_bytes()))
+    };
+    vfiles_domain::NormalizedPath::new(&internal).map_err(|err| {
         vfiles_domain::DomainError::Validation {
             message: format!("invalid key: {err}"),
         }
     })
+}
+
+fn external_key(path: &vfiles_domain::NormalizedPath) -> String {
+    let Some(encoded) = path.as_str().strip_prefix(S3_KEY_ESCAPE_PREFIX) else {
+        return path.as_str().to_string();
+    };
+    hex::decode(encoded)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_else(|| path.as_str().to_string())
 }
 
 /// 对象元数据（列表/详情共用 ✗ 一次树遍历取全）。
@@ -189,7 +214,7 @@ fn obj_meta(
         .or(version_text)
         .unwrap_or_default();
     ObjMeta {
-        key: m.entry.path_norm.as_str().to_string(),
+        key: external_key(&m.entry.path_norm),
         size: m.size_bytes.unwrap_or(0),
         last_modified: Timestamp::from(object_last_modified(
             m.entry.created_at,
@@ -2064,6 +2089,10 @@ impl S3 for VfilesS3 {
                 });
             }
         };
+        self.object_keys
+            .bind(&self.namespace, &input.key, &result.version.entry_id)
+            .await
+            .map_err(dom_err)?;
         let etag = finish_md5(&md5_digest);
         let out = PutObjectOutput {
             e_tag: Some(s3s::dto::ETag::Strong(etag)),
@@ -2202,6 +2231,10 @@ impl S3 for VfilesS3 {
                 return Err(dom_err(error));
             }
         };
+        self.object_keys
+            .bind(&self.namespace, &input.key, &result.version.entry_id)
+            .await
+            .map_err(dom_err)?;
         let etag = finish_md5(&md5_digest);
         let out = CopyObjectOutput {
             copy_object_result: Some(CopyObjectResult {
@@ -2911,13 +2944,18 @@ impl S3 for VfilesS3 {
             });
             properties
         };
-        self.upload
+        let result = self
+            .upload
             .complete_multipart_upload_with_properties(
                 &upload_id,
                 &selected_indices,
                 Some("S3 multipart"),
                 &version_properties,
             )
+            .await
+            .map_err(dom_err)?;
+        self.object_keys
+            .bind(&self.namespace, &input.key, &result.version.entry_id)
             .await
             .map_err(dom_err)?;
         let location = format!("/{}/{}", input.bucket, input.key);
@@ -3126,6 +3164,22 @@ mod tests {
             s3s::S3ErrorCode::InvalidArgument,
             "invalid S3 keys must map to InvalidArgument rather than InternalError"
         );
+    }
+
+    #[test]
+    fn object_key_mapping_preserves_slashes_and_invalid_filesystem_segments() {
+        let keys = ["a", "/a", "a/", "a//b", "foo..bar", "a/../b"];
+        let paths: Vec<_> = keys
+            .iter()
+            .map(|key| norm(key).expect("S3 object key should be representable"))
+            .collect();
+        let unique: std::collections::HashSet<_> = paths.iter().map(|path| path.as_str()).collect();
+        assert_eq!(unique.len(), keys.len());
+        assert_eq!(external_key(&paths[0]), "a");
+        for (key, path) in keys.iter().zip(paths.iter()) {
+            assert_eq!(external_key(path), *key);
+        }
+        assert_eq!(norm("a").expect("plain key").as_str(), "a");
     }
 
     #[test]
