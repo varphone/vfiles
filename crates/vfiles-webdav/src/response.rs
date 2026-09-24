@@ -22,6 +22,22 @@ pub const PREDEFINED_READONLY: [&str; 9] = [
 const PROPERTY_NAME_SEPARATOR: char = '\u{001f}';
 // XML 1.0 forbids this character, so it cannot collide with a legacy text value.
 const STORED_XML_PREFIX: &str = "\u{001f}vfiles-webdav-xml-v1:";
+const MAX_DEAD_PROPERTY_XML_DEPTH: usize = 128;
+
+fn property_xml_depth_is_bounded(root: roxmltree::Node<'_, '_>) -> bool {
+    let mut pending = vec![(root, 1usize)];
+    while let Some((node, depth)) = pending.pop() {
+        if depth > MAX_DEAD_PROPERTY_XML_DEPTH {
+            return false;
+        }
+        pending.extend(
+            node.children()
+                .filter(|child| child.is_element())
+                .map(|child| (child, depth + 1)),
+        );
+    }
+    true
+}
 
 /// Storage key for an XML property name. XML names are identified by both parts.
 pub fn property_key(namespace: Option<&str>, local_name: &str) -> String {
@@ -271,6 +287,9 @@ pub fn parse_propertyupdate(body: &str) -> Result<Vec<PropOp>, ()> {
                                 .filter_map(|node| node.text())
                                 .collect::<String>()
                         } else {
+                            if !property_xml_depth_is_bounded(child) {
+                                return Err(());
+                            }
                             store_xml_element(child)
                         };
                         ops.push(PropOp::Set { name, value });
@@ -952,6 +971,27 @@ mod proppatch_tests {
         assert!(parse_propertyupdate("<broken").is_err());
         assert!(parse_propertyupdate(r#"<D:propfind xmlns:D="DAV:"/>"#).is_err());
         assert!(parse_propertyupdate(r#"<D:propertyupdate xmlns:D="DAV:"/>"#).is_err());
+    }
+
+    #[test]
+    fn rejects_dead_property_xml_deeper_than_the_serialization_limit() {
+        fn property_update(nested_depth: usize) -> String {
+            let mut xml = String::from(
+                r#"<D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><x:p xmlns:x="urn:test">"#,
+            );
+            for _ in 0..nested_depth {
+                xml.push_str("<x:n>");
+            }
+            xml.push_str("value");
+            for _ in 0..nested_depth {
+                xml.push_str("</x:n>");
+            }
+            xml.push_str("</x:p></D:prop></D:set></D:propertyupdate>");
+            xml
+        }
+
+        assert!(parse_propertyupdate(&property_update(127)).is_ok());
+        assert!(parse_propertyupdate(&property_update(128)).is_err());
     }
 
     #[test]
