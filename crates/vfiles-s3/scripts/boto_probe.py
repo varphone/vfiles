@@ -626,12 +626,21 @@ def main():
             return "ok"
         except ClientError as e:
             return e.response["Error"]["Code"]
-    check("boto bucket lifecycle (create/delete)",
-          bcode(lambda: s3.create_bucket(Bucket="default")) == "BucketAlreadyOwnedByYou"
+    try:
+        create_default = s3.create_bucket(Bucket="default")
+        create_default_status = create_default.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        create_default_location = create_default.get("Location")
+        create_default_ok = create_default_status == 200 and create_default_location == "/default"
+    except ClientError as e:
+        create_default_ok = False
+        create_default_status = e.response["ResponseMetadata"].get("HTTPStatusCode")
+        create_default_location = e.response["Error"]["Code"]
+    check("boto bucket lifecycle (idempotent create/delete)",
+          create_default_ok
           and bcode(lambda: s3.create_bucket(Bucket="other-b")) == "InvalidBucketName"
           and bcode(lambda: s3.delete_bucket(Bucket="missing")) == "NoSuchBucket"
           and bcode(lambda: s3.delete_bucket(Bucket="default")) == "BucketNotEmpty",
-          f"create_owned={bcode(lambda: s3.create_bucket(Bucket='default'))} "
+          f"create_owned={create_default_status}/{create_default_location} "
           f"delete={bcode(lambda: s3.delete_bucket(Bucket='default'))}")
 
     # ── fetch-owner（V2 按需 / V1 恒带 ✗ r33）──

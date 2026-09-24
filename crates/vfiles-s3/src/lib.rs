@@ -1527,7 +1527,7 @@ impl S3 for VfilesS3 {
         ok(out)
     }
 
-    /// 建桶（本网关只有唯一虚拟桶 ✗ 命名冲突按 AWS 语义回 409）。
+    /// 建桶（固定虚拟桶已存在；`us-east-1` 重建自有桶按 AWS 兼容规则返回成功）。
     async fn create_bucket(
         &self,
         req: S3Request<CreateBucketInput>,
@@ -1535,11 +1535,10 @@ impl S3 for VfilesS3 {
         let input = req.input;
         self.require_write(req.credentials.as_ref())?;
         if input.bucket == DEFAULT_BUCKET {
-            // AWS：桶已存在且归本账户 → 409 BucketAlreadyOwnedByYou
-            return Err(s3s::s3_error!(
-                BucketAlreadyOwnedByYou,
-                "your account already owns this bucket"
-            ));
+            return ok(CreateBucketOutput {
+                location: Some(format!("/{DEFAULT_BUCKET}")),
+                ..Default::default()
+            });
         }
         Err(s3s::s3_error!(
             InvalidBucketName,

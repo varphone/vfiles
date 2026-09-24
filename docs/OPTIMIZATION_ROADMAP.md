@@ -2687,6 +2687,9 @@
 
 ### 4.240x S3 桶生命周期（round 42/256 ✨ 建/删桶错误码对齐 AWS）
 
+- **后续纠错**：本条原将 `BucketAlreadyOwnedByYou` 409 写成所有区域的 AWS 同形。AWS 官方定义中，
+  `us-east-1` 重建自有桶返回 200；本服务 `GetBucketLocation` 报告 `us-east-1`，故当前 `CreateBucket(default)`
+  返回 200 和 `/default`。boto3 探针与 S3 计划表均已更正。
 - **实装**：`CreateBucket`（`default` → 409 `BucketAlreadyOwnedByYou`；其他桶名 → 400
   `InvalidBucketName` ✗ 单桶网关）· `DeleteBucket`（不存在 404 / **非空 409 `BucketNotEmpty`** ✗
   `files_with_meta_page(…,1)` **LIMIT 1 判空**不物化整桶 / 空 409 `InvalidBucketState` 固定桶明示拒因）·
