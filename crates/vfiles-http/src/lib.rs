@@ -283,18 +283,57 @@ async fn serve_frontend(
 
 async fn request_logger(req: Request, next: Next) -> Result<Response, StatusCode> {
     let method = req.method().clone();
-    let uri = req.uri().clone();
+    let path = request_path_for_log(req.uri());
     let request_id = req
         .extensions()
         .get::<middleware::RequestId>()
         .map(|id| id.0.clone())
         .unwrap_or_else(|| "-".to_string());
 
-    tracing::info!(request_id = %request_id, "{} {}", method, uri);
+    tracing::info!(request_id = %request_id, "{} {}", method, path);
 
     let response = next.run(req).await;
 
-    tracing::info!(request_id = %request_id, "{} {} -> {}", method, uri, response.status());
+    tracing::info!(request_id = %request_id, "{} {} -> {}", method, path, response.status());
 
     Ok(response)
+}
+
+/// Keep credentials out of access logs. Query strings can contain reset tokens or
+/// signed URLs, and public share codes are bearer credentials carried in the path.
+fn request_path_for_log(uri: &Uri) -> String {
+    let path = uri.path();
+    if path
+        .strip_prefix("/s/")
+        .is_some_and(|code| !code.is_empty() && !code.contains('/'))
+    {
+        "/s/[redacted]".to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+#[cfg(test)]
+mod request_logger_tests {
+    use super::request_path_for_log;
+    use axum::http::Uri;
+
+    #[test]
+    fn request_logs_omit_query_strings_and_redact_share_codes() {
+        let cases = [
+            (
+                "/reset-password?token=secret-reset-token",
+                "/reset-password",
+            ),
+            ("/api/files?signature=secret-signature", "/api/files"),
+            ("/s/secret-share-code", "/s/[redacted]"),
+            ("/s/secret-share-code?download=1", "/s/[redacted]"),
+            ("/s/", "/s/"),
+        ];
+
+        for (request_target, expected) in cases {
+            let uri = request_target.parse::<Uri>().expect("URI should parse");
+            assert_eq!(request_path_for_log(&uri), expected, "{request_target}");
+        }
+    }
 }
