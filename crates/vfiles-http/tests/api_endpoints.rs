@@ -2559,6 +2559,32 @@ async fn login_with_invalid_identifier_format_returns_invalid_credentials() {
 }
 
 #[tokio::test]
+async fn login_rejects_oversized_json_bodies() {
+    const MAX_LOGIN_BODY_BYTES: usize = 16 * 1024;
+    let app = TestApp::new().await;
+    let mut body = serde_json::to_vec(&json!({
+        "username_or_email": "admin",
+        "password": "wrong-password",
+    }))
+    .expect("login request should serialize");
+    body.resize(MAX_LOGIN_BODY_BYTES + 1, b' ');
+
+    let response = app
+        .request(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .expect("oversized login request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(response_json(response).await["code"], "PAYLOAD_TOO_LARGE");
+}
+
+#[tokio::test]
 async fn login_rate_limit_blocks_repeated_failed_attempts() {
     let app = TestApp::new_with_login_rate_limit(3).await;
 

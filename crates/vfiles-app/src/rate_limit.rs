@@ -3,11 +3,14 @@
 //! HTTP 登录与 FTP 认证共用：按「用户名 + 来源」计数，超过阈值后在一段时间内
 //! 直接拒绝，避免离线爆破。计数器是尽力而为的内存状态，进程重启即清空。
 
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     sync::Mutex,
     time::{Duration, Instant},
 };
+
+const MAX_LOGIN_COUNTERS: usize = 50_000;
 
 /// 限流策略（由各协议层从自身配置转换而来，避免这里依赖配置文件解析）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,8 +32,13 @@ struct LoginAttemptCounter {
 }
 
 #[derive(Debug, Default)]
+struct LoginAttemptState {
+    counters: HashMap<[u8; 32], LoginAttemptCounter>,
+}
+
+#[derive(Debug, Default)]
 pub struct LoginAttemptLimiter {
-    counters: Mutex<HashMap<String, LoginAttemptCounter>>,
+    state: Mutex<LoginAttemptState>,
 }
 
 impl LoginAttemptLimiter {
@@ -38,12 +46,16 @@ impl LoginAttemptLimiter {
         Self::default()
     }
 
-    fn lock_counters(&self) -> std::sync::MutexGuard<'_, HashMap<String, LoginAttemptCounter>> {
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, LoginAttemptState> {
         // A poisoned lock must not turn a login rejection into a process panic.
         // The counters are best-effort, so recovering the previous state is safe.
-        self.counters
+        self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn key_digest(key: &str) -> [u8; 32] {
+        Sha256::digest(key.as_bytes()).into()
     }
 
     pub fn check(&self, config: &RateLimitPolicy, key: &str) -> Option<LoginRateLimitBlock> {
@@ -52,10 +64,10 @@ impl LoginAttemptLimiter {
         }
 
         let now = Instant::now();
-        let mut counters = self.lock_counters();
-        Self::prune_expired(&mut counters, now);
+        let key = Self::key_digest(key);
+        let state = self.lock_state();
 
-        let counter = counters.get(key)?;
+        let counter = state.counters.get(&key)?;
         if now >= counter.reset_at || counter.failures < config.max_attempts {
             return None;
         }
@@ -73,47 +85,37 @@ impl LoginAttemptLimiter {
 
         let now = Instant::now();
         let window = Duration::from_millis(config.window_ms.max(1));
-        let mut counters = self.lock_counters();
+        let key = Self::key_digest(key);
+        let mut state = self.lock_state();
 
-        if counters.len() >= 50_000 {
-            Self::prune_expired(&mut counters, now);
-        }
-
-        match counters.get_mut(key) {
-            Some(counter) if now < counter.reset_at => {
+        if let Some(counter) = state.counters.get_mut(&key) {
+            if now < counter.reset_at {
                 counter.failures = counter.failures.saturating_add(1);
-            }
-            Some(counter) => {
+            } else {
                 counter.failures = 1;
                 counter.reset_at = now + window;
             }
-            None => {
-                counters.insert(
-                    key.to_string(),
-                    LoginAttemptCounter {
-                        failures: 1,
-                        reset_at: now + window,
-                    },
-                );
-            }
+            return;
         }
 
-        Self::prune_if_oversized(&mut counters, now);
+        // This is best-effort state. Evict one entry at capacity instead of
+        // retaining attacker-controlled keys or scanning the full map per login.
+        if state.counters.len() >= MAX_LOGIN_COUNTERS
+            && let Some(victim) = state.counters.keys().next().copied()
+        {
+            state.counters.remove(&victim);
+        }
+        state.counters.insert(
+            key,
+            LoginAttemptCounter {
+                failures: 1,
+                reset_at: now + window,
+            },
+        );
     }
 
     pub fn clear(&self, key: &str) {
-        let mut counters = self.lock_counters();
-        counters.remove(key);
-    }
-
-    fn prune_expired(counters: &mut HashMap<String, LoginAttemptCounter>, now: Instant) {
-        counters.retain(|_, counter| now < counter.reset_at);
-    }
-
-    fn prune_if_oversized(counters: &mut HashMap<String, LoginAttemptCounter>, now: Instant) {
-        if counters.len() > 50_000 {
-            Self::prune_expired(counters, now);
-        }
+        self.lock_state().counters.remove(&Self::key_digest(key));
     }
 }
 
@@ -128,7 +130,7 @@ fn ceil_duration_seconds(duration: Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{LoginAttemptLimiter, RateLimitPolicy};
+    use super::{LoginAttemptLimiter, MAX_LOGIN_COUNTERS, RateLimitPolicy};
 
     #[test]
     fn blocks_after_max_failed_attempts() {
@@ -163,5 +165,40 @@ mod tests {
 
         limiter.clear("127.0.0.1|admin");
         assert!(limiter.check(&config, "127.0.0.1|admin").is_none());
+    }
+
+    #[test]
+    fn unique_failed_login_keys_cannot_grow_storage_past_its_cap() {
+        let limiter = LoginAttemptLimiter::new();
+        let config = RateLimitPolicy {
+            enabled: true,
+            window_ms: 60_000,
+            max_attempts: 1,
+        };
+
+        for index in 0..=MAX_LOGIN_COUNTERS {
+            limiter.record_failure(&config, &format!("ip|user-{index}"));
+        }
+
+        let state = limiter.lock_state();
+        assert_eq!(state.counters.len(), MAX_LOGIN_COUNTERS);
+        assert!(state.counters.keys().all(|key| key.len() == 32));
+    }
+
+    #[test]
+    fn long_caller_keys_are_stored_as_fixed_size_digests() {
+        let limiter = LoginAttemptLimiter::new();
+        let config = RateLimitPolicy {
+            enabled: true,
+            window_ms: 60_000,
+            max_attempts: 1,
+        };
+        let long_key = "user".repeat(100_000);
+
+        limiter.record_failure(&config, &long_key);
+
+        let state = limiter.lock_state();
+        assert_eq!(state.counters.len(), 1);
+        assert_eq!(state.counters.keys().next().unwrap().len(), 32);
     }
 }

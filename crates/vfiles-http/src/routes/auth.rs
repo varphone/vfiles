@@ -2,6 +2,7 @@
 
 use axum::{
     Json, Router,
+    extract::DefaultBodyLimit,
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -18,9 +19,14 @@ use crate::{
 };
 use vfiles_domain::{DomainError, NewAuditLog, UserRepo};
 
+const MAX_LOGIN_BODY_BYTES: usize = 16 * 1024;
+
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/login", post(login))
+        .route(
+            "/login",
+            post(login).layer(DefaultBodyLimit::max(MAX_LOGIN_BODY_BYTES)),
+        )
         .route("/register", post(register))
         .route("/logout", post(logout))
         .route("/me", get(me))

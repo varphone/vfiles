@@ -13,6 +13,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use sha2::{Digest, Sha256};
 use vfiles_app::LoginRateLimitBlock;
 
 /// 登录限流实现在 `vfiles-app`（HTTP 与 FTP 共用），这里为既有调用点重新导出。
@@ -49,6 +50,7 @@ pub struct RequestId(pub String);
 
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const RESOLVED_CLIENT_IP_HEADER: &str = "x-vfiles-client-ip";
+const MAX_FIXED_WINDOW_COUNTERS: usize = 50_000;
 
 fn normalize_request_id(value: &str) -> Option<String> {
     let value = value.trim();
@@ -243,8 +245,13 @@ struct FixedWindowCounter {
 }
 
 #[derive(Debug, Default)]
+struct FixedWindowState {
+    counters: HashMap<[u8; 32], FixedWindowCounter>,
+}
+
+#[derive(Debug, Default)]
 pub struct FixedWindowLimiter {
-    counters: Mutex<HashMap<String, FixedWindowCounter>>,
+    state: Mutex<FixedWindowState>,
 }
 
 impl FixedWindowLimiter {
@@ -252,10 +259,14 @@ impl FixedWindowLimiter {
         Self::default()
     }
 
-    fn lock_counters(&self) -> std::sync::MutexGuard<'_, HashMap<String, FixedWindowCounter>> {
-        self.counters
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, FixedWindowState> {
+        self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn key_digest(key: &str) -> [u8; 32] {
+        Sha256::digest(key.as_bytes()).into()
     }
 
     pub fn check_and_record(
@@ -271,39 +282,40 @@ impl FixedWindowLimiter {
         }
 
         let now = Instant::now();
-        let mut counters = self.lock_counters();
+        let key = Self::key_digest(key);
+        let mut state = self.lock_state();
 
-        if counters.len() >= 50_000 {
-            counters.retain(|_, counter| now < counter.reset_at);
-        }
-
-        match counters.get_mut(key) {
-            Some(counter) if now >= counter.reset_at => {
+        if let Some(counter) = state.counters.get_mut(&key) {
+            if now >= counter.reset_at {
                 counter.requests = 1;
                 counter.reset_at = now + window;
-                None
+                return None;
             }
-            Some(counter) if counter.requests >= max_requests => {
+            if counter.requests >= max_requests {
                 let retry_after = counter.reset_at.saturating_duration_since(now);
-                Some(LoginRateLimitBlock {
+                return Some(LoginRateLimitBlock {
                     retry_after_secs: ceil_duration_seconds(retry_after),
-                })
+                });
             }
-            Some(counter) => {
-                counter.requests = counter.requests.saturating_add(1);
-                None
-            }
-            None => {
-                counters.insert(
-                    key.to_string(),
-                    FixedWindowCounter {
-                        requests: 1,
-                        reset_at: now + window,
-                    },
-                );
-                None
-            }
+            counter.requests = counter.requests.saturating_add(1);
+            return None;
         }
+
+        // These counters are best-effort. Evict one entry at capacity so unique
+        // attacker-controlled keys cannot grow or repeatedly scan the table.
+        if state.counters.len() >= MAX_FIXED_WINDOW_COUNTERS
+            && let Some(victim) = state.counters.keys().next().copied()
+        {
+            state.counters.remove(&victim);
+        }
+        state.counters.insert(
+            key,
+            FixedWindowCounter {
+                requests: 1,
+                reset_at: now + window,
+            },
+        );
+        None
     }
 }
 
@@ -313,7 +325,9 @@ mod tests {
 
     use axum::http::{HeaderMap, HeaderValue};
 
-    use super::{client_ip_from_headers, resolve_client_ip};
+    use super::{
+        FixedWindowLimiter, MAX_FIXED_WINDOW_COUNTERS, client_ip_from_headers, resolve_client_ip,
+    };
 
     fn ip(value: &str) -> IpAddr {
         value.parse().expect("IP address should parse")
@@ -377,7 +391,7 @@ mod tests {
 
     #[test]
     fn fixed_window_limiter_blocks_after_limit() {
-        let limiter = super::FixedWindowLimiter::new();
+        let limiter = FixedWindowLimiter::new();
         let window = std::time::Duration::from_secs(60);
 
         assert!(
@@ -399,5 +413,20 @@ mod tests {
                 .check_and_record(2, window, "share:b:127.0.0.1")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn fixed_window_limiter_bounds_unique_key_storage() {
+        let limiter = FixedWindowLimiter::new();
+        let window = std::time::Duration::from_secs(60);
+
+        for index in 0..=MAX_FIXED_WINDOW_COUNTERS {
+            let key = format!("share:{index}:127.0.0.1");
+            limiter.check_and_record(60, window, &key);
+        }
+
+        let state = limiter.lock_state();
+        assert_eq!(state.counters.len(), MAX_FIXED_WINDOW_COUNTERS);
+        assert!(state.counters.keys().all(|key| key.len() == 32));
     }
 }
