@@ -1521,6 +1521,81 @@ async fn single_upload_streams_multipart_file_to_storage() {
 }
 
 #[tokio::test]
+async fn upload_control_json_bodies_are_bounded_and_multipart_stays_streamed() {
+    const MAX_CONTROL_BODY_BYTES: usize = 64 * 1024;
+    let app = TestApp::new().await;
+
+    let mut oversized_init = serde_json::to_vec(&json!({
+        "path": "",
+        "filename": "oversized-control.json",
+        "size": 0,
+    }))
+    .expect("init request should serialize");
+    oversized_init.resize(MAX_CONTROL_BODY_BYTES + 1, b' ');
+    let init = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/files/upload/init")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(oversized_init))
+                .expect("oversized init request should build"),
+        )
+        .await;
+    assert_eq!(init.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(response_json(init).await["code"], "PAYLOAD_TOO_LARGE");
+
+    let valid_init = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/upload/init",
+            json!({
+                "path": "",
+                "filename": "bounded-control.json",
+                "size": 0,
+                "chunk_size": 1,
+            }),
+        )
+        .await;
+    assert_eq!(valid_init.status(), StatusCode::OK);
+    let upload_id = response_json(valid_init).await["upload_id"]
+        .as_str()
+        .expect("upload id should be present")
+        .to_string();
+
+    let mut oversized_complete = serde_json::to_vec(&json!({ "message": "complete" }))
+        .expect("complete request should serialize");
+    oversized_complete.resize(MAX_CONTROL_BODY_BYTES + 1, b' ');
+    let complete = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/files/upload/complete/{upload_id}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(oversized_complete))
+                .expect("oversized complete request should build"),
+        )
+        .await;
+    assert_eq!(complete.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    let large_file = vec![b'x'; 2 * 1024 * 1024 + 1];
+    let (body, content_type) =
+        single_upload_multipart("large-stream.bin", "docs", "large upload", &large_file);
+    let multipart = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/files/upload")
+                .header(header::CONTENT_TYPE, content_type)
+                .body(Body::from(body))
+                .expect("large multipart request should build"),
+        )
+        .await;
+    assert_eq!(multipart.status(), StatusCode::OK);
+    assert_eq!(response_json(multipart).await["size"], large_file.len());
+}
+
+#[tokio::test]
 async fn multipart_upload_bounds_metadata_fields_and_cleans_temp_file() {
     let app = TestApp::new().await;
     let boundary = "----vfiles-oversized-metadata-boundary";

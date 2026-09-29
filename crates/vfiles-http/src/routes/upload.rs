@@ -18,6 +18,7 @@ use crate::{
 use vfiles_domain::{DomainError, NewAuditLog, NormalizedPath, UploadId};
 
 const UPLOAD_WRITE_BUFFER_BYTES: usize = 64 * 1024;
+const MAX_UPLOAD_CONTROL_BODY_BYTES: usize = 64 * 1024;
 const MAX_MULTIPART_METADATA_FIELD_BYTES: usize = 64 * 1024;
 const MAX_MULTIPART_METADATA_BYTES: usize = 256 * 1024;
 const MAX_MULTIPART_FIELD_COUNT: usize = 16;
@@ -85,16 +86,26 @@ async fn read_multipart_metadata_field(
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/upload", post(upload_file).put(put_upload))
+        .route(
+            "/upload",
+            post(upload_file)
+                .layer(DefaultBodyLimit::disable())
+                .merge(put(put_upload)),
+        )
         // curl -T 会把本地文件名拼到 URL 后面：PUT /api/files/upload/ci/app.tar.gz
         .route("/upload/{*path}", put(put_upload_path))
-        .route("/upload/init", post(create_upload))
+        .route(
+            "/upload/init",
+            post(create_upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_CONTROL_BODY_BYTES)),
+        )
         .route(
             "/upload/chunks/{upload_id}/{chunk_index}",
             put(upload_chunk),
         )
-        .route("/upload/complete/{upload_id}", post(complete_upload))
-        .layer(DefaultBodyLimit::disable())
+        .route(
+            "/upload/complete/{upload_id}",
+            post(complete_upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_CONTROL_BODY_BYTES)),
+        )
 }
 
 /// 上传体积上限：取「单文件配置上限」与「上传硬上限」中较小者。

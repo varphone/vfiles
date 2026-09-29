@@ -31,6 +31,9 @@ where
     ) -> Result<Self, Self::Rejection> {
         match axum::Json::<T>::from_request(request, state).await {
             Ok(axum::Json(value)) => Ok(ApiJson(value)),
+            Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+                Err(ApiError::RequestBodyTooLarge)
+            }
             Err(rejection) => Err(ApiError::Validation {
                 field: "body".to_string(),
                 message: rejection.body_text(),
@@ -59,6 +62,7 @@ pub enum ApiError {
         limit_bytes: u64,
         size_bytes: u64,
     },
+    RequestBodyTooLarge,
     Forbidden {
         message: String,
     },
@@ -296,6 +300,12 @@ impl IntoResponse for ApiError {
                     "limit_bytes": limit_bytes,
                     "size_bytes": size_bytes,
                 })),
+            ),
+            ApiError::RequestBodyTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "PAYLOAD_TOO_LARGE".to_string(),
+                "Request body exceeds the configured size limit".to_string(),
+                None,
             ),
             ApiError::Validation { field, message } => {
                 let details = validation_details(Some(&field), &message);
