@@ -67,25 +67,23 @@ async function fetchToBlob(
     return response.blob();
   }
 
-  const reader = response.body.getReader();
-  const chunks: ArrayBuffer[] = [];
   let loaded = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value) continue;
-    // 复制到标准 ArrayBuffer，避免 ArrayBufferLike/SharedArrayBuffer 类型不兼容
-    const buf = new ArrayBuffer(value.byteLength);
-    new Uint8Array(buf).set(value);
-    chunks.push(buf);
-    loaded += value.byteLength;
-    opts.onProgress({ loaded, total });
-  }
-
   const mime =
     response.headers.get("content-type") || "application/octet-stream";
-  return new Blob(chunks, { type: mime });
+  const progressStream = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      loaded += chunk.byteLength;
+      opts.onProgress?.({ loaded, total });
+      controller.enqueue(chunk);
+    },
+  });
+
+  // Keep progress reporting in the stream pipeline. Retaining copied chunks and
+  // then constructing a Blob kept a second full-size copy in JavaScript memory.
+  const body = response.body.pipeThrough(progressStream, {
+    signal: opts.signal,
+  });
+  return new Response(body, { headers: { "content-type": mime } }).blob();
 }
 
 function triggerSaveBlob(blob: Blob, filename: string) {
