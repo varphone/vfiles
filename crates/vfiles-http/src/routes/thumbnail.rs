@@ -19,6 +19,7 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
+use tokio::sync::Semaphore;
 use vfiles_domain::{DomainError, NormalizedPath};
 
 use crate::{
@@ -36,6 +37,10 @@ const MAX_SOURCE_BYTES: u64 = 40 * 1024 * 1024;
 /// Guard against decompression bombs from small files with huge dimensions.
 const MAX_SOURCE_PIXELS: u64 = 50_000_000;
 const MAX_SOURCE_DIMENSION: u32 = 16_384;
+/// Bound decoder allocations per image; concurrent decodes are bounded separately below.
+const MAX_DECODER_ALLOC_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_CONCURRENT_THUMBNAIL_REQUESTS: usize = 64;
+const MAX_CONCURRENT_THUMBNAIL_GENERATIONS: usize = 2;
 const JPEG_QUALITY: u8 = 82;
 const CACHE_CONTROL: &str = "private, max-age=604800";
 
@@ -67,6 +72,10 @@ impl ThumbnailCacheLimits {
 const PRUNE_EVERY_WRITES: u64 = 64;
 
 static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
+static THUMBNAIL_REQUEST_PERMITS: Semaphore =
+    Semaphore::const_new(MAX_CONCURRENT_THUMBNAIL_REQUESTS);
+static THUMBNAIL_GENERATION_PERMITS: Semaphore =
+    Semaphore::const_new(MAX_CONCURRENT_THUMBNAIL_GENERATIONS);
 
 /// 缩略图相关的进程内计数。
 ///
@@ -193,6 +202,13 @@ async fn get_file_thumbnail(
         return Ok(response);
     };
 
+    // Limit open source streams as well as decoder work; queued requests have not
+    // opened a blob or allocated source bytes yet.
+    let _request_permit = THUMBNAIL_REQUEST_PERMITS
+        .acquire()
+        .await
+        .map_err(|_| ApiError::Internal("thumbnail requests unavailable".to_string()))?;
+
     let file = state
         .workspace_service
         .open_file(&ctx.namespace_id, &path, query.commit.as_deref())
@@ -228,6 +244,13 @@ async fn get_file_thumbnail(
         return Ok(thumbnail_response(bytes, &etag, format));
     }
 
+    // Acquire before buffering the source, and move the permit into the blocking
+    // task so disconnecting the HTTP request cannot release it while decoding runs.
+    let generation_permit = THUMBNAIL_GENERATION_PERMITS
+        .acquire()
+        .await
+        .map_err(|_| ApiError::Internal("thumbnail generation unavailable".to_string()))?;
+
     let mut reader = file.reader.take(file.size_bytes.saturating_add(1));
     let mut source = Vec::with_capacity(file.size_bytes as usize);
     let bytes_read = reader
@@ -239,8 +262,13 @@ async fn get_file_thumbnail(
             "Thumbnail source size does not match stored metadata".to_string(),
         ));
     }
-    let generated =
-        tokio::task::spawn_blocking(move || generate_thumbnail(&source, size, format)).await;
+    let generated = tokio::task::spawn_blocking(move || {
+        let result = generate_thumbnail(&source, size, format);
+        drop(source);
+        drop(generation_permit);
+        result
+    })
+    .await;
 
     let bytes = match generated {
         Ok(Ok(bytes)) => bytes,
@@ -576,12 +604,32 @@ fn encode_thumbnail(format: ThumbnailFormat, image: &image::RgbImage) -> Result<
     Ok(output)
 }
 
+fn validate_source_dimensions(width: u32, height: u32) -> Result<(), String> {
+    if width == 0 || height == 0 || width > MAX_SOURCE_DIMENSION || height > MAX_SOURCE_DIMENSION {
+        return Err("image dimensions exceed thumbnail limits".to_string());
+    }
+
+    let pixels = u64::from(width).saturating_mul(u64::from(height));
+    if pixels > MAX_SOURCE_PIXELS {
+        return Err("image exceeds thumbnail pixel limit".to_string());
+    }
+
+    Ok(())
+}
+
 fn generate_thumbnail(
     source: &[u8],
     size: u32,
     format: ThumbnailFormat,
 ) -> Result<Vec<u8>, String> {
     use image::{ImageReader, Limits, Rgb, RgbImage};
+
+    let (width, height) = ImageReader::new(std::io::Cursor::new(source))
+        .with_guessed_format()
+        .map_err(|err| err.to_string())?
+        .into_dimensions()
+        .map_err(|err| err.to_string())?;
+    validate_source_dimensions(width, height)?;
 
     let mut reader = ImageReader::new(std::io::Cursor::new(source))
         .with_guessed_format()
@@ -590,7 +638,7 @@ fn generate_thumbnail(
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_SOURCE_DIMENSION);
     limits.max_image_height = Some(MAX_SOURCE_DIMENSION);
-    limits.max_alloc = Some(MAX_SOURCE_PIXELS.saturating_mul(4));
+    limits.max_alloc = Some(MAX_DECODER_ALLOC_BYTES);
     reader.limits(limits);
 
     let image = reader.decode().map_err(|err| err.to_string())?;
@@ -779,6 +827,86 @@ mod tests {
             .write_to(&mut buffer, format)
             .expect("sample image should encode");
         buffer.into_inner()
+    }
+
+    fn png_with_dimensions(width: u32, height: u32) -> Vec<u8> {
+        let mut png = encode_sample(image::ImageFormat::Png);
+        png[16..20].copy_from_slice(&width.to_be_bytes());
+        png[20..24].copy_from_slice(&height.to_be_bytes());
+        let crc = png_crc32(&png[12..29]);
+        png[29..33].copy_from_slice(&crc.to_be_bytes());
+        png
+    }
+
+    fn png_crc32(bytes: &[u8]) -> u32 {
+        let mut crc = u32::MAX;
+        for byte in bytes {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 0 {
+                    crc >> 1
+                } else {
+                    (crc >> 1) ^ 0xedb8_8320
+                };
+            }
+        }
+        !crc
+    }
+
+    #[test]
+    fn rejects_image_dimensions_over_pixel_budget_before_full_decode() {
+        let source = png_with_dimensions(13_000, 13_000);
+        let error = generate_thumbnail(&source, 64, ThumbnailFormat::Jpeg)
+            .expect_err("image above the pixel budget should be rejected");
+
+        assert_eq!(error, "image exceeds thumbnail pixel limit");
+    }
+
+    #[test]
+    fn accepts_source_dimensions_at_pixel_budget_and_rejects_over_it() {
+        assert!(validate_source_dimensions(5_000, 10_000).is_ok());
+        assert_eq!(
+            validate_source_dimensions(5_001, 10_000),
+            Err("image exceeds thumbnail pixel limit".to_string())
+        );
+        assert_eq!(
+            validate_source_dimensions(MAX_SOURCE_DIMENSION + 1, 1),
+            Err("image dimensions exceed thumbnail limits".to_string())
+        );
+    }
+
+    #[test]
+    fn thumbnail_generation_semaphore_caps_parallel_decoders() {
+        let first = THUMBNAIL_GENERATION_PERMITS
+            .try_acquire()
+            .expect("first decoder permit should be available");
+        let second = THUMBNAIL_GENERATION_PERMITS
+            .try_acquire()
+            .expect("second decoder permit should be available");
+
+        assert!(THUMBNAIL_GENERATION_PERMITS.try_acquire().is_err());
+
+        drop(first);
+        drop(second);
+        assert_eq!(
+            THUMBNAIL_GENERATION_PERMITS.available_permits(),
+            MAX_CONCURRENT_THUMBNAIL_GENERATIONS
+        );
+
+        let mut request_permits = Vec::with_capacity(MAX_CONCURRENT_THUMBNAIL_REQUESTS);
+        for _ in 0..MAX_CONCURRENT_THUMBNAIL_REQUESTS {
+            request_permits.push(
+                THUMBNAIL_REQUEST_PERMITS
+                    .try_acquire()
+                    .expect("thumbnail request permit should be available"),
+            );
+        }
+        assert!(THUMBNAIL_REQUEST_PERMITS.try_acquire().is_err());
+        drop(request_permits);
+        assert_eq!(
+            THUMBNAIL_REQUEST_PERMITS.available_permits(),
+            MAX_CONCURRENT_THUMBNAIL_REQUESTS
+        );
     }
 
     #[test]

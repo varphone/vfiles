@@ -6606,6 +6606,30 @@ fn png_fixture(width: u32, height: u32) -> Vec<u8> {
     cursor.into_inner()
 }
 
+fn png_with_declared_dimensions(width: u32, height: u32) -> Vec<u8> {
+    let mut png = png_fixture(8, 8);
+    png[16..20].copy_from_slice(&width.to_be_bytes());
+    png[20..24].copy_from_slice(&height.to_be_bytes());
+    let crc = png_crc32(&png[12..29]);
+    png[29..33].copy_from_slice(&crc.to_be_bytes());
+    png
+}
+
+fn png_crc32(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = if crc & 1 == 0 {
+                crc >> 1
+            } else {
+                (crc >> 1) ^ 0xedb8_8320
+            };
+        }
+    }
+    !crc
+}
+
 async fn upload_fixture(app: &TestApp, filename: &str, path: &str, bytes: &[u8]) {
     let (body, content_type) = single_upload_multipart(filename, path, "fixture", bytes);
     let response = app
@@ -6741,6 +6765,24 @@ async fn thumbnail_rejects_non_image_files() {
         .request_as_admin(
             Request::builder()
                 .uri("/api/files/thumbnail?path=docs/notes.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[tokio::test]
+async fn thumbnail_rejects_images_over_the_pixel_budget() {
+    let app = TestApp::new().await;
+    let png = png_with_declared_dimensions(13_000, 13_000);
+    upload_fixture(&app, "large-dimensions.png", "docs", &png).await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/thumbnail?path=docs/large-dimensions.png")
                 .body(Body::empty())
                 .expect("request should build"),
         )
