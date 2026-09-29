@@ -96,3 +96,44 @@ impl SqliteHealthProbe {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn share_code_migration_rotates_short_codes() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory database should connect");
+        sqlx::query("CREATE TABLE shares (id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE)")
+            .execute(&pool)
+            .await
+            .expect("shares table should be created");
+        sqlx::query("INSERT INTO shares (id, code) VALUES ('legacy-a', 'deadbeef'), ('legacy-b', '12345678'), ('current', ?)")
+            .bind("a".repeat(32))
+            .execute(&pool)
+            .await
+            .expect("test shares should be inserted");
+
+        sqlx::raw_sql(include_str!("../migrations/0023_share_code_entropy.sql"))
+            .execute(&pool)
+            .await
+            .expect("share code migration should run");
+
+        let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, code FROM shares ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .expect("migrated shares should be readable");
+        assert_eq!(rows[0].0, "current");
+        assert_eq!(rows[0].1, "a".repeat(32));
+        for (id, code) in rows.iter().filter(|(id, _)| id.starts_with("legacy-")) {
+            assert_eq!(code.len(), 32, "{id} should have a full length code");
+            assert!(code.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            assert_ne!(code.as_str(), "deadbeef");
+            assert_ne!(code.as_str(), "12345678");
+        }
+    }
+}

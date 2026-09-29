@@ -41,7 +41,7 @@ async fn create_share(
     let ctx = authenticated_request_context(&state, &jar).await?;
     let user_id = ctx.actor_user_id;
 
-    tracing::info!("Creating share for path: {}", req.path);
+    tracing::info!("Creating share");
 
     // Parse expiration if provided
     let expires_at = if let Some(expires_str) = req.expires_at {
@@ -95,7 +95,7 @@ async fn create_share(
         share_url: share_url.to_string(),
     };
 
-    tracing::info!("Share created with code: {}", response.code);
+    tracing::info!("Share created");
 
     Ok(Json(response))
 }
@@ -131,7 +131,7 @@ async fn access_share(
         return Err(ApiError::Domain(vfiles_domain::DomainError::Forbidden));
     }
 
-    tracing::info!("Accessing share with code: {}", code);
+    tracing::info!("Accessing share");
 
     let share = state.share_service.access_share(&code).await?;
 
@@ -151,14 +151,15 @@ pub async fn download_share(
     }
 
     let max_downloads_per_minute = state.config.limits.rate_limit_requests_per_minute.max(1);
-    let rate_limit_key = format!("share:{}:{}", code, client_ip_from_headers(&headers));
+    // Rate limit guesses across all share codes from one source. Including the
+    // candidate code here would give each guessed code a fresh counter.
+    let rate_limit_key = format!("share-download:{}", client_ip_from_headers(&headers));
     if let Some(block) = state.share_download_limiter.check_and_record(
         max_downloads_per_minute,
         std::time::Duration::from_secs(60),
         &rate_limit_key,
     ) {
         tracing::warn!(
-            share_code = %code,
             retry_after_secs = block.retry_after_secs,
             "share download rate limit exceeded"
         );
@@ -168,13 +169,13 @@ pub async fn download_share(
     let share = state.share_service.access_share(&code).await?;
     let entry = state.entry_repo.find_by_id(&share.entry_id).await?;
 
-    // 分享下载可能是匿名访问，这里只记录分享码与目标路径
+    // The share code is a bearer credential; keep it out of durable audit data.
     crate::audit::record(
         &state,
         &headers,
         NewAuditLog::success(crate::audit::action::SHARE_DOWNLOAD)
-            .target(format!("{}|{}", code, entry.path_norm.as_str()))
-            .detail("通过分享链接下载"),
+            .target(entry.path_norm.as_str())
+            .detail(format!("通过分享链接下载（分享 ID {}）", share.id)),
     )
     .await;
 
@@ -236,20 +237,17 @@ async fn disable_share(
     let ctx = authenticated_request_context(&state, &jar).await?;
     let user_id = ctx.actor_user_id;
 
-    tracing::info!(
-        "Disabling share with code: {} for user: {}",
-        code,
-        user_id.to_string()
-    );
+    tracing::info!(user_id = %user_id, "Disabling share");
 
-    state.share_service.disable_share(&code, &user_id).await?;
+    let share_id = state.share_service.disable_share(&code, &user_id).await?;
+    tracing::info!(share_id = %share_id, "Share disabled");
 
     crate::audit::record_for(
         &state,
         &headers,
         &ctx,
         NewAuditLog::success(crate::audit::action::SHARE_DISABLE)
-            .target(code.clone())
+            .target(share_id.to_string())
             .detail("停止分享"),
     )
     .await;

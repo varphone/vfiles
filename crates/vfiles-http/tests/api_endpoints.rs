@@ -222,6 +222,7 @@ impl TestApp {
             .expect("base url should parse");
         config.http.cookie_secure_override = cookie_secure_override;
         config.features = features;
+        config.limits.rate_limit_requests_per_minute = 60;
         if let Some(max_attempts) = login_rate_limit_max_attempts {
             config.auth.login_rate_limit.enabled = true;
             config.auth.login_rate_limit.window_ms = 300_000;
@@ -3236,10 +3237,39 @@ async fn share_creation_uses_configured_public_base_url() {
     let code = share_payload["code"]
         .as_str()
         .expect("share code should be present");
+    assert_eq!(code.len(), 32, "share codes must retain UUID entropy");
+    assert!(code.bytes().all(|byte| byte.is_ascii_hexdigit()));
     assert_eq!(
         share_payload["share_url"],
         Value::String(format!("http://example.test:4242/s/{}", code))
     );
+}
+
+#[tokio::test]
+async fn share_download_rate_limit_counts_distinct_guesses_per_source() {
+    let app = TestApp::new().await;
+
+    for attempt in 0..60 {
+        let response = app
+            .request(
+                Request::builder()
+                    .uri(format!("/s/guess-{attempt:02}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    let blocked = app
+        .request(
+            Request::builder()
+                .uri("/s/guess-61")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
 /// 已过期的分享，所有者仍然可以停止（否则过期链接无法清理）。
@@ -4016,6 +4046,40 @@ async fn audit_log_records_key_actions_and_is_admin_only() {
         .await;
     assert_eq!(download.status(), StatusCode::OK);
 
+    let share = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/share/shares",
+            json!({ "path": "docs/审计.txt" }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(share.status(), StatusCode::OK);
+    let share_code = response_json(share).await["code"]
+        .as_str()
+        .expect("share code should be present")
+        .to_string();
+    let shared_download = app
+        .request(
+            Request::builder()
+                .uri(format!("/s/{share_code}"))
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(shared_download.status(), StatusCode::OK);
+    let disabled_share = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/share/shares/{share_code}"))
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(disabled_share.status(), StatusCode::NO_CONTENT);
+
     // 非管理员不可访问
     app.register_user("auditor", "viewer@example.com", "viewer-password")
         .await;
@@ -4067,6 +4131,19 @@ async fn audit_log_records_key_actions_and_is_admin_only() {
     assert_eq!(download_entry["target"], "docs/审计.txt");
     assert_eq!(download_entry["result"], "success");
     assert_eq!(download_entry["username"], "admin");
+
+    let shared_download_entry = items
+        .iter()
+        .find(|item| item["action"] == "share.download")
+        .expect("share download entry should exist");
+    assert_eq!(shared_download_entry["target"], "docs/审计.txt");
+    assert!(!shared_download_entry.to_string().contains(&share_code));
+    let share_disable_entry = items
+        .iter()
+        .find(|item| item["action"] == "share.disable")
+        .expect("share disable entry should exist");
+    assert_ne!(share_disable_entry["target"], share_code);
+    assert!(!share_disable_entry.to_string().contains(&share_code));
 
     // 失败登录同样入库
     let failed = app

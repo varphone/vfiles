@@ -4382,7 +4382,7 @@ where
             .await
     }
 
-    pub async fn disable_share(&self, code: &str, user_id: &UserId) -> DomainResult<()> {
+    pub async fn disable_share(&self, code: &str, user_id: &UserId) -> DomainResult<ShareId> {
         // 所有者操作：已过期的链接也必须能找到并停用（否则无法清理过期分享）
         let share = self
             .share_repo
@@ -4394,7 +4394,8 @@ where
             return Err(DomainError::Forbidden);
         }
 
-        self.share_repo.disable_share(&share.id).await
+        self.share_repo.disable_share(&share.id).await?;
+        Ok(share.id)
     }
 
     pub async fn cleanup_expired_shares(&self) -> DomainResult<i64> {
@@ -4403,7 +4404,9 @@ where
 
     async fn generate_share_code(&self) -> DomainResult<String> {
         loop {
-            let code = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+            // A share code is a bearer credential. Keep the full UUID entropy instead
+            // of truncating it to a guessable 32-bit prefix.
+            let code = uuid::Uuid::new_v4().simple().to_string();
 
             // Check if code already exists
             match self.share_repo.find_share_by_code(&code).await {

@@ -308,6 +308,20 @@ fn request_path_for_log(uri: &Uri) -> String {
         .is_some_and(|code| !code.is_empty() && !code.contains('/'))
     {
         "/s/[redacted]".to_string()
+    } else if let Some(redacted_path) =
+        path.strip_prefix("/api/share/shares/")
+            .and_then(|remaining| {
+                let (code, suffix) = remaining.split_once('/').unwrap_or((remaining, ""));
+                (!code.is_empty() && (suffix.is_empty() || suffix == "download")).then_some(
+                    if suffix.is_empty() {
+                        "/api/share/shares/[redacted]"
+                    } else {
+                        "/api/share/shares/[redacted]/download"
+                    },
+                )
+            })
+    {
+        redacted_path.to_string()
     } else {
         path.to_string()
     }
@@ -328,6 +342,14 @@ mod request_logger_tests {
             ("/api/files?signature=secret-signature", "/api/files"),
             ("/s/secret-share-code", "/s/[redacted]"),
             ("/s/secret-share-code?download=1", "/s/[redacted]"),
+            (
+                "/api/share/shares/secret-share-code",
+                "/api/share/shares/[redacted]",
+            ),
+            (
+                "/api/share/shares/secret-share-code/download?raw=1",
+                "/api/share/shares/[redacted]/download",
+            ),
             ("/s/", "/s/"),
         ];
 
