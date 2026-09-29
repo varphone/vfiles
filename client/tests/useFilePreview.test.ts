@@ -4,6 +4,7 @@ import {
   detectPreviewKind,
   escapeHtml,
   guessMimeByExt,
+  previewMaxBytes,
   safeImageSrc,
   safeLinkHref,
   useFilePreview,
@@ -15,7 +16,7 @@ const { getFileContentMock } = vi.hoisted(() => ({
     async (
       _path?: string,
       _commit?: string,
-      _opts?: { signal?: AbortSignal },
+      _opts?: { signal?: AbortSignal; maxBytes?: number },
     ) => new Blob(["hello"]),
   ),
 }));
@@ -57,6 +58,15 @@ describe("detectPreviewKind", () => {
     expect(detectPreviewKind("notes/plain.txt")).toBe("text");
     expect(detectPreviewKind("LICENSE")).toBe("text");
     expect(detectPreviewKind("archive.bin")).toBe("unsupported");
+  });
+});
+
+describe("previewMaxBytes", () => {
+  it("uses a smaller bound for parser input than binary media", () => {
+    expect(previewMaxBytes("markdown")).toBe(2 * 1024 * 1024);
+    expect(previewMaxBytes("code")).toBe(2 * 1024 * 1024);
+    expect(previewMaxBytes("image")).toBe(32 * 1024 * 1024);
+    expect(previewMaxBytes("video")).toBe(32 * 1024 * 1024);
   });
 });
 
@@ -143,6 +153,11 @@ describe("useFilePreview rendering", () => {
     await flush();
 
     expect(preview.preview.value.kind).toBe("code");
+    expect(getFileContentMock).toHaveBeenCalledWith(
+      "src/types.ts",
+      undefined,
+      expect.objectContaining({ maxBytes: 2 * 1024 * 1024 }),
+    );
     expect(preview.preview.value.html).toContain("hljs-keyword");
     // 模板里已经有外层 <pre>，这里只放高亮后的片段
     expect(preview.preview.value.html).not.toContain("<pre>");

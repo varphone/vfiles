@@ -294,6 +294,71 @@ export type FtpHostSource =
   | "detected_address"
   | "loopback";
 
+function previewLimitError(maxBytes: number): Error {
+  const mebibytes = maxBytes / (1024 * 1024);
+  const limit = Number.isInteger(mebibytes)
+    ? `${mebibytes} MiB`
+    : `${maxBytes} 字节`;
+  return new Error(`文件超过预览上限（${limit}），请下载后查看。`);
+}
+
+function knownResponseBytes(response: Response): number | undefined {
+  const contentRange = response.headers.get("content-range");
+  if (contentRange) {
+    const total = contentRange.slice(contentRange.lastIndexOf("/") + 1);
+    if (/^\d+$/.test(total)) return Number(total);
+  }
+
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && /^\d+$/.test(contentLength)) {
+    return Number(contentLength);
+  }
+
+  return undefined;
+}
+
+async function readBlobWithinLimit(
+  response: Response,
+  maxBytes: number,
+): Promise<Blob> {
+  if ((knownResponseBytes(response) ?? 0) > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw previewLimitError(maxBytes);
+  }
+
+  if (!response.body) {
+    const blob = await response.blob();
+    if (blob.size > maxBytes) throw previewLimitError(maxBytes);
+    return blob;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: ArrayBuffer[] = [];
+  let loaded = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      if (loaded + value.byteLength > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw previewLimitError(maxBytes);
+      }
+
+      const chunk = new ArrayBuffer(value.byteLength);
+      new Uint8Array(chunk).set(value);
+      chunks.push(chunk);
+      loaded += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return new Blob(chunks, {
+    type: response.headers.get("content-type") || "application/octet-stream",
+  });
+}
+
 export const filesService = {
   /**
    * 获取文件列表
@@ -613,17 +678,40 @@ export const filesService = {
   async getFileContent(
     path: string,
     commit?: string,
-    opts?: { signal?: AbortSignal },
+    opts?: { signal?: AbortSignal; maxBytes?: number },
   ): Promise<Blob> {
     const params = new URLSearchParams({ path });
     if (commit) params.set("commit", commit);
+    const maxBytes = opts?.maxBytes;
+    if (
+      maxBytes !== undefined &&
+      (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
+    ) {
+      throw new RangeError("maxBytes must be a positive safe integer");
+    }
     const response = await fetchWithRetry(`/api/files/content?${params}`, {
       signal: opts?.signal,
       credentials: "include",
+      headers:
+        maxBytes === undefined
+          ? undefined
+          : { Range: `bytes=0-${maxBytes - 1}` },
     });
+
+    if (
+      maxBytes !== undefined &&
+      response.status === 416 &&
+      response.headers.get("content-range") === "bytes */0"
+    ) {
+      return new Blob();
+    }
 
     if (!response.ok) {
       throw await responseError(response, "获取文件内容失败");
+    }
+
+    if (maxBytes !== undefined) {
+      return await readBlobWithinLimit(response, maxBytes);
     }
 
     return response.blob();

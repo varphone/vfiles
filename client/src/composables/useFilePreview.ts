@@ -25,6 +25,15 @@ export type PreviewKind =
   | "audio"
   | "unsupported";
 
+export const PREVIEW_TEXT_MAX_BYTES = 2 * 1024 * 1024;
+export const PREVIEW_MEDIA_MAX_BYTES = 32 * 1024 * 1024;
+
+export function previewMaxBytes(kind: PreviewKind): number {
+  return ["image", "pdf", "video", "audio"].includes(kind)
+    ? PREVIEW_MEDIA_MAX_BYTES
+    : PREVIEW_TEXT_MAX_BYTES;
+}
+
 function getExtension(p: string): string {
   const name = p.split("/").pop() || "";
   const idx = name.lastIndexOf(".");
@@ -344,7 +353,10 @@ export function useFilePreview(
       const blob = await filesService.getFileContent(
         filePath,
         browseCommit.value,
-        { signal: controller.signal },
+        {
+          signal: controller.signal,
+          maxBytes: previewMaxBytes(preview.value.kind),
+        },
       );
 
       // 期间用户已切换/关闭预览：丢弃这次结果，避免旧内容覆盖新内容
@@ -356,7 +368,7 @@ export function useFilePreview(
         preview.value.kind === "video" ||
         preview.value.kind === "audio"
       ) {
-        const typed = new Blob([await blob.arrayBuffer()], {
+        const typed = new Blob([blob], {
           type: guessMimeByExt(filePath),
         });
         preview.value.objectUrl = URL.createObjectURL(typed);

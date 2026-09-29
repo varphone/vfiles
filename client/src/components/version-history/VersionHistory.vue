@@ -40,7 +40,7 @@
           :hint="error"
         >
           <template #actions>
-            <button class="vf-ghost-button is-primary" @click="loadHistory">
+            <button class="vf-ghost-button is-primary" @click="loadHistory()">
               <IconRefresh :size="16" />
               <span>重试</span>
             </button>
@@ -385,6 +385,7 @@ import SkeletonList from "../common/SkeletonList.vue";
 import { filesService } from "../../services/files.service";
 import { useAppStore } from "../../stores/app.store";
 import { confirmDialog } from "../../composables/dialog";
+import { previewMaxBytes } from "../../composables/useFilePreview";
 import type { FileHistory } from "../../types";
 import { loadHighlight } from "../../utils/highlight";
 import CommitList from "./CommitList.vue";
@@ -901,10 +902,12 @@ async function viewVersion(hash: string) {
       return;
     }
 
-    const blob = await filesService.getFileContent(props.filePath, hash);
+    const blob = await filesService.getFileContent(props.filePath, hash, {
+      maxBytes: previewMaxBytes(preview.value.kind),
+    });
 
     if (preview.value.kind === "image" || preview.value.kind === "pdf") {
-      const typed = new Blob([await blob.arrayBuffer()], {
+      const typed = new Blob([blob], {
         type: guessMimeByExt(props.filePath),
       });
       preview.value.objectUrl = URL.createObjectURL(typed);
@@ -912,7 +915,7 @@ async function viewVersion(hash: string) {
       preview.value.kind === "video" ||
       preview.value.kind === "audio"
     ) {
-      const typed = new Blob([await blob.arrayBuffer()], {
+      const typed = new Blob([blob], {
         type: guessMimeByExt(props.filePath),
       });
       preview.value.objectUrl = URL.createObjectURL(typed);

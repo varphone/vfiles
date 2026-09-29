@@ -318,6 +318,8 @@ class AuthService {
       started_at: string;
       webdav_enabled: boolean;
       webdav_bind: string;
+      webdav_embedded: boolean;
+      webdav_mount: string;
     }>
   > {
     try {
