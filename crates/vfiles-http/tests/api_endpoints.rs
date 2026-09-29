@@ -4308,6 +4308,36 @@ async fn audit_logs_csv_export_respects_filters_and_is_audited() {
     assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
 }
 
+#[tokio::test]
+async fn audit_csv_export_prefixes_formula_like_uploaded_paths() {
+    let app = TestApp::new().await;
+    app.upload_version("", "=1+1", b"formula-looking filename", "seed")
+        .await;
+    let admin_cookie = app.admin_cookie().await;
+
+    let response = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/audit/logs.csv?action=file.upload")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body =
+        String::from_utf8(response_bytes(response).await.to_vec()).expect("csv should be utf-8");
+    assert!(
+        body.contains("file.upload,\"\t=1+1\",success"),
+        "formula-like path should be exported as text: {body:?}"
+    );
+    assert!(
+        !body.contains("file.upload,=1+1,success"),
+        "raw formula-like path should not appear as a CSV cell: {body:?}"
+    );
+}
+
 /// 分享管理列表：必须带上被分享条目的名称、路径与类型（前端要展示文件名而不是 UUID）。
 #[tokio::test]
 async fn share_list_includes_entry_metadata() {

@@ -201,7 +201,8 @@ curl -T app.tar.gz -H "Authorization: Bearer $TOKEN" \
 **导出**：`GET /api/audit/logs.csv`（仅管理员）按同样的筛选参数导出 CSV 附件，
 最多 10000 行；响应为 `text/csv; charset=utf-8`（带 UTF-8 BOM，便于 Excel 识别），
 文件名形如 `audit-logs-20260921.csv`。导出动作本身也会写入一条 `audit.export` 记录
-（说明里包含所用筛选条件）。
+（说明里包含所用筛选条件）。为防止表格公式注入，公式前缀字段会在双引号单元格内增加制表符；
+通过程序读取 CSV 时，这些字段值会保留该制表符。
 
 已记录的动作：
 

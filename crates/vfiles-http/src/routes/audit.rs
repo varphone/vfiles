@@ -10,6 +10,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -213,12 +214,36 @@ async fn list_logs(
     }))
 }
 
-/// CSV 转义：含分隔符/引号/换行的字段用双引号包裹并转义内部引号。
+/// CSV 转义：含分隔符/引号/换行的字段用双引号包裹，并保护表格公式前缀。
 fn csv_field(value: &str) -> String {
-    if value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r') {
-        format!("\"{}\"", value.replace('"', "\"\""))
+    // Audit fields can contain user supplied paths and client metadata. CSV quoting
+    // alone does not stop spreadsheet applications from evaluating formula cells.
+    let formula_prefix = matches!(value.chars().next(), Some('\0' | '\t' | '\r' | '\n'))
+        || matches!(
+            value
+                .trim_start_matches(|character: char| {
+                    character.is_whitespace() || matches!(character, '\0' | '\u{feff}')
+                })
+                .chars()
+                .next(),
+            Some('=' | '+' | '-' | '@' | '＝' | '＋' | '－' | '＠')
+        );
+    let value = if formula_prefix {
+        Cow::Owned(format!("\t{value}"))
     } else {
-        value.to_string()
+        Cow::Borrowed(value)
+    };
+
+    let escaped = value.replace('"', "\"\"");
+    if formula_prefix
+        || value.contains(',')
+        || value.contains('"')
+        || value.contains('\n')
+        || value.contains('\r')
+    {
+        format!("\"{escaped}\"")
+    } else {
+        escaped
     }
 }
 
@@ -414,4 +439,41 @@ async fn list_actions(
         .await
         .map_err(ApiError::Domain)?;
     Ok(Json(actions))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::csv_field;
+
+    #[test]
+    fn csv_fields_are_safe_for_spreadsheet_formula_prefixes() {
+        for value in [
+            "=1+1",
+            "+1+1",
+            "-1+1",
+            "@SUM(A1:A2)",
+            "  =1+1",
+            "\t=1+1",
+            "\r=1+1",
+            "\n=1+1",
+            "\0=1+1",
+            " \0=1+1",
+            "＝1+1",
+            "＋1+1",
+            "－1+1",
+            "＠SUM(A1:A2)",
+        ] {
+            assert_eq!(csv_field(value), format!("\"\t{value}\""));
+        }
+    }
+
+    #[test]
+    fn formula_prefixing_preserves_csv_quoting_and_normal_values() {
+        assert_eq!(csv_field("ordinary value"), "ordinary value");
+        assert_eq!(
+            csv_field("=HYPERLINK(\"https://example.test\",\"open\")"),
+            "\"\t=HYPERLINK(\"\"https://example.test\"\",\"\"open\"\")\""
+        );
+        assert_eq!(csv_field("contains,comma"), "\"contains,comma\"");
+    }
 }
