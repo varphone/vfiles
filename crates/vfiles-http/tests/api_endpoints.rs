@@ -2612,6 +2612,53 @@ async fn login_rate_limit_blocks_repeated_failed_attempts() {
 }
 
 #[tokio::test]
+async fn login_rate_limit_cannot_be_bypassed_with_spoofed_forwarded_ips() {
+    let app = TestApp::new_with_login_rate_limit(1).await;
+    let peer = axum::extract::ConnectInfo(std::net::SocketAddr::from(([192, 0, 2, 10], 4321)));
+
+    let first = app
+        .request(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/auth/login")
+                .extension(peer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-forwarded-for", "198.51.100.1")
+                .body(Body::from(
+                    json!({
+                        "username_or_email": "admin",
+                        "password": "wrong-password",
+                    })
+                    .to_string(),
+                ))
+                .expect("first request should build"),
+        )
+        .await;
+    assert_eq!(first.status(), StatusCode::UNAUTHORIZED);
+
+    let second = app
+        .request(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/auth/login")
+                .extension(peer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-forwarded-for", "198.51.100.2")
+                .body(Body::from(
+                    json!({
+                        "username_or_email": "admin",
+                        "password": "wrong-password",
+                    })
+                    .to_string(),
+                ))
+                .expect("second request should build"),
+        )
+        .await;
+
+    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
 async fn successful_login_clears_failed_attempt_counter() {
     let app = TestApp::new_with_login_rate_limit(3).await;
 

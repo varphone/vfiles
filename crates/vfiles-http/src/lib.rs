@@ -90,6 +90,7 @@ pub fn build_router_without_frontend(state: AppState) -> Router<()> {
 }
 
 fn build_router_inner(state: AppState, serve_frontend_fallback: bool) -> Router<()> {
+    let trusted_proxy_ips = Arc::new(state.config.http.trusted_proxy_ips.clone());
     let mut router = Router::new()
         .route(
             "/s/{code}",
@@ -111,6 +112,10 @@ fn build_router_inner(state: AppState, serve_frontend_fallback: bool) -> Router<
         .layer(axum::middleware::from_fn(weaken_compressed_etag))
         .layer(cors_layer(&state.config))
         .layer(axum::middleware::from_fn(request_logger))
+        .layer(axum::middleware::from_fn_with_state(
+            trusted_proxy_ips,
+            middleware::client_ip_middleware,
+        ))
         .layer(axum::middleware::from_fn(
             middleware::security_headers_middleware,
         ))

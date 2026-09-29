@@ -2,12 +2,13 @@
 
 use std::{
     collections::HashMap,
+    net::{IpAddr, SocketAddr},
     sync::Mutex,
     time::{Duration, Instant},
 };
 
 use axum::{
-    extract::Request,
+    extract::{ConnectInfo, Request, State},
     http::{HeaderName, HeaderValue},
     middleware::Next,
     response::Response,
@@ -47,6 +48,7 @@ tokio::task_local! {
 pub struct RequestId(pub String);
 
 const REQUEST_ID_HEADER: &str = "x-request-id";
+const RESOLVED_CLIENT_IP_HEADER: &str = "x-vfiles-client-ip";
 
 fn normalize_request_id(value: &str) -> Option<String> {
     let value = value.trim();
@@ -126,26 +128,112 @@ pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
     response
 }
 
+/// Read only the internal value installed by `client_ip_middleware`.
 pub(crate) fn client_ip_from_headers(headers: &axum::http::HeaderMap) -> String {
     headers
-        .get("x-forwarded-for")
+        .get(RESOLVED_CLIENT_IP_HEADER)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next().map(str::trim))
+        .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .or_else(|| {
-            ["cf-connecting-ip", "x-real-ip", "x-client-ip"]
-                .iter()
-                .find_map(|header_name| {
-                    headers
-                        .get(*header_name)
-                        .and_then(|value| value.to_str().ok())
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(str::to_string)
-                })
-        })
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Remove caller-supplied IP headers and replace them with a value derived from
+/// the socket peer. Forwarded headers are consulted only when that peer is an
+/// explicitly trusted reverse proxy.
+pub async fn client_ip_middleware(
+    State(trusted_proxy_ips): State<std::sync::Arc<Vec<IpAddr>>>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    let peer_ip = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(address)| address.ip());
+    let client_ip = resolve_client_ip(peer_ip, req.headers(), &trusted_proxy_ips);
+
+    for name in [
+        "x-forwarded-for",
+        "cf-connecting-ip",
+        "x-real-ip",
+        "x-client-ip",
+        RESOLVED_CLIENT_IP_HEADER,
+    ] {
+        req.headers_mut().remove(name);
+    }
+    if let Some(client_ip) = client_ip
+        && let Ok(value) = HeaderValue::from_str(&client_ip.to_string())
+    {
+        req.headers_mut()
+            .insert(HeaderName::from_static(RESOLVED_CLIENT_IP_HEADER), value);
+    }
+
+    next.run(req).await
+}
+
+fn resolve_client_ip(
+    peer_ip: Option<IpAddr>,
+    headers: &axum::http::HeaderMap,
+    trusted_proxy_ips: &[IpAddr],
+) -> Option<IpAddr> {
+    let peer_ip = peer_ip?;
+    if !trusted_proxy_ips.contains(&peer_ip) {
+        return Some(peer_ip);
+    }
+
+    if let Some(mut chain) = forwarded_for_chain(headers) {
+        let mut client_ip = peer_ip;
+        while let Some(hop) = chain.pop() {
+            if !trusted_proxy_ips.contains(&client_ip) {
+                break;
+            }
+            client_ip = hop;
+        }
+        return Some(client_ip);
+    }
+
+    for name in ["cf-connecting-ip", "x-real-ip", "x-client-ip"] {
+        if let Some(client_ip) = single_forwarded_ip(headers, name) {
+            return Some(client_ip);
+        }
+    }
+
+    Some(peer_ip)
+}
+
+fn forwarded_for_chain(headers: &axum::http::HeaderMap) -> Option<Vec<IpAddr>> {
+    let values = headers.get_all("x-forwarded-for");
+    let mut chain = Vec::new();
+    for value in values {
+        let value = value.to_str().ok()?;
+        for hop in value.split(',') {
+            chain.push(parse_forwarded_ip(hop.trim())?);
+        }
+    }
+    (!chain.is_empty()).then_some(chain)
+}
+
+fn single_forwarded_ip(headers: &axum::http::HeaderMap, name: &'static str) -> Option<IpAddr> {
+    let mut values = headers.get_all(name).iter();
+    let value = values.next()?.to_str().ok()?;
+    if values.next().is_some() {
+        return None;
+    }
+    parse_forwarded_ip(value.trim())
+}
+
+fn parse_forwarded_ip(value: &str) -> Option<IpAddr> {
+    if let Ok(ip) = value.parse::<IpAddr>() {
+        return Some(ip);
+    }
+    if let Ok(address) = value.parse::<SocketAddr>() {
+        return Some(address.ip());
+    }
+    value
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .and_then(|value| value.parse::<IpAddr>().ok())
 }
 
 #[derive(Debug)]
@@ -221,6 +309,72 @@ impl FixedWindowLimiter {
 
 #[cfg(test)]
 mod tests {
+    use std::net::IpAddr;
+
+    use axum::http::{HeaderMap, HeaderValue};
+
+    use super::{client_ip_from_headers, resolve_client_ip};
+
+    fn ip(value: &str) -> IpAddr {
+        value.parse().expect("IP address should parse")
+    }
+
+    #[test]
+    fn client_ip_consumers_ignore_untrusted_header_names() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.99"));
+        headers.insert(
+            "cf-connecting-ip",
+            HeaderValue::from_static("198.51.100.99"),
+        );
+
+        assert_eq!(client_ip_from_headers(&headers), "unknown");
+
+        headers.insert("x-vfiles-client-ip", HeaderValue::from_static("192.0.2.10"));
+        assert_eq!(client_ip_from_headers(&headers), "192.0.2.10");
+    }
+
+    #[test]
+    fn ignores_forwarded_headers_from_untrusted_peers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.99"));
+
+        assert_eq!(
+            resolve_client_ip(Some(ip("192.0.2.10")), &headers, &[ip("10.0.0.2")]),
+            Some(ip("192.0.2.10"))
+        );
+    }
+
+    #[test]
+    fn resolves_forwarded_chain_from_the_nearest_untrusted_hop() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.99, 198.51.100.20, 10.0.0.1"),
+        );
+        let trusted_proxies = [ip("10.0.0.1"), ip("10.0.0.2")];
+
+        assert_eq!(
+            resolve_client_ip(Some(ip("10.0.0.2")), &headers, &trusted_proxies),
+            Some(ip("198.51.100.20"))
+        );
+    }
+
+    #[test]
+    fn falls_back_to_the_peer_when_a_trusted_proxy_sends_malformed_forwarding_data() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("attacker-input"),
+        );
+        headers.insert("x-real-ip", HeaderValue::from_static("also-invalid"));
+
+        assert_eq!(
+            resolve_client_ip(Some(ip("10.0.0.2")), &headers, &[ip("10.0.0.2")]),
+            Some(ip("10.0.0.2"))
+        );
+    }
+
     #[test]
     fn fixed_window_limiter_blocks_after_limit() {
         let limiter = super::FixedWindowLimiter::new();

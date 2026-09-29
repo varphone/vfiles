@@ -1,7 +1,7 @@
 use camino::Utf8PathBuf;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
-use std::{env, path::Path};
+use std::{env, net::IpAddr, path::Path};
 use url::Url;
 
 use vfiles_domain::FeatureMatrix;
@@ -43,6 +43,8 @@ pub struct HttpConfig {
     pub cookie_secure_override: Option<bool>,
     pub cors_allowed_origins: Vec<String>,
     pub cors_allow_any_origin: bool,
+    /// 网络层反向代理的地址；只有来自这些地址的转发客户端 IP 头会被信任。
+    pub trusted_proxy_ips: Vec<IpAddr>,
 }
 
 impl HttpConfig {
@@ -521,6 +523,7 @@ impl ConfigLoader {
         let (cors_allowed_origins, cors_allow_any_origin) =
             Self::env_cors_origins(&["VFILES_HTTP_CORS_ALLOWED_ORIGINS", "CORS_ORIGIN"])?
                 .unwrap_or((Vec::new(), false));
+        let trusted_proxy_ips = Self::env_ip_addrs(&["VFILES_HTTP_TRUSTED_PROXIES"])?;
         let storage_root = Self::env_string(&["VFILES_STORAGE_ROOT"])
             .map(Utf8PathBuf::from)
             .unwrap_or_else(|| data_dir.clone());
@@ -651,6 +654,7 @@ impl ConfigLoader {
                 cookie_secure_override,
                 cors_allowed_origins,
                 cors_allow_any_origin,
+                trusted_proxy_ips,
             },
             storage: StorageConfig {
                 root: storage_root,
@@ -921,6 +925,30 @@ impl ConfigLoader {
 
         Ok(Some((origins, allow_any)))
     }
+
+    fn env_ip_addrs(keys: &[&str]) -> Result<Vec<IpAddr>, ConfigError> {
+        let Some(raw) = Self::env_string(keys) else {
+            return Ok(Vec::new());
+        };
+
+        Self::parse_ip_addrs(&raw, keys)
+    }
+
+    fn parse_ip_addrs(raw: &str, keys: &[&str]) -> Result<Vec<IpAddr>, ConfigError> {
+        raw.split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                value.parse::<IpAddr>().map_err(|err| {
+                    ConfigError::LoadError(format!(
+                        "Invalid IP address for {}: {} ({err})",
+                        keys.join("/"),
+                        value
+                    ))
+                })
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -944,6 +972,22 @@ mod tests {
         assert!(config.auth.login_rate_limit.enabled);
         assert_eq!(config.auth.login_rate_limit.window_ms, 300_000);
         assert_eq!(config.auth.login_rate_limit.max_attempts, 10);
+    }
+
+    #[test]
+    fn parses_trusted_proxy_ip_lists_and_rejects_invalid_addresses() {
+        assert_eq!(
+            ConfigLoader::parse_ip_addrs("127.0.0.1, ::1", &["VFILES_HTTP_TRUSTED_PROXIES"])
+                .unwrap(),
+            vec![
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
+                "::1".parse::<IpAddr>().unwrap(),
+            ]
+        );
+        assert!(
+            ConfigLoader::parse_ip_addrs("127.0.0.1,proxy.local", &["VFILES_HTTP_TRUSTED_PROXIES"])
+                .is_err()
+        );
     }
 
     #[test]

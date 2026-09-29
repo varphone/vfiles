@@ -26,6 +26,7 @@ VFILES_HTTP_HOST=0.0.0.0
 VFILES_HTTP_PORT=3000
 VFILES_HTTP_PUBLIC_BASE_URL=https://files.example.com
 VFILES_HTTP_CORS_ALLOWED_ORIGINS=https://files.example.com
+# VFILES_HTTP_TRUSTED_PROXIES=127.0.0.1,10.0.0.5
 # VFILES_HTTP_COOKIE_SECURE=true
 
 VFILES_STORAGE_ROOT=./data
@@ -62,6 +63,7 @@ RUST_LOG=info
 - `VFILES_HTTP_PUBLIC_BASE_URL` 决定对外可见的服务地址；默认情况下，登录/退出 cookie 是否带 `Secure` 也会跟随它的 scheme。
 - `VFILES_HTTP_COOKIE_SECURE` 可显式覆盖 cookie 的 `Secure` 标记；如果公网仍走 `https://` 域名，但本地想直接用 `http://局域网IP:端口` 访问并登录，可临时设为 `false`。
 - `VFILES_HTTP_CORS_ALLOWED_ORIGINS` 留空时，会默认回落到 `VFILES_HTTP_PUBLIC_BASE_URL` 的 origin；如果前端和 API 不同源，请显式写成逗号分隔列表。
+- `VFILES_HTTP_TRUSTED_PROXIES` 是逗号分隔的反向代理 IP 白名单，默认留空。只有连接来源命中白名单时，服务才会采用代理提供的客户端 IP 头；X-Forwarded-For 会从右向左跳过受信代理，使用最近的非受信地址。代理应追加真实连接地址，让客户端传入的更左侧值不会参与限流或审计。
 - `VFILES_STORAGE_ROOT` 下会自动创建 `blobs`、`uploads`、`tmp`、`export`、`logs`、`backups` 等目录。
 - `VFILES_FRONTEND_DIST` 在运行时用于外部静态资源托管；启用 `embed` feature 时，也可在编译期指定待嵌入目录。
 - 仍兼容读取旧别名 `PUBLIC_BASE_URL`、`CORS_ORIGIN`、`HTTP_COOKIE_SECURE`、`AUTH_SECRET`、`ENABLE_AUTH`、`AUTH_ALLOW_REGISTER`，但新部署不建议继续使用旧名字。
