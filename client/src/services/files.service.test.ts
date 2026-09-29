@@ -15,6 +15,7 @@ vi.mock("./api.service", () => ({
     putBinaryWithProgress: putBinaryWithProgressMock,
     postFormNative: postFormNativeMock,
   },
+  waitForRetryDelay: () => Promise.resolve(),
 }));
 
 import { filesService } from "./files.service";

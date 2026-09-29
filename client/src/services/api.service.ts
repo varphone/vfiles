@@ -54,8 +54,37 @@ export function computeRetryDelayMs(
   return base + jitter;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+type RetryAbortSignal = Pick<AbortSignal, "aborted"> &
+  Partial<Pick<AbortSignal, "addEventListener" | "removeEventListener">>;
+
+export function waitForRetryDelay(
+  ms: number,
+  signal?: RetryAbortSignal,
+): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException("Aborted", "AbortError"));
+  }
+
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => signal?.removeEventListener?.("abort", onAbort);
+    const onAbort = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      cleanup();
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+
+    signal?.addEventListener?.("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+
+    timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+  });
 }
 
 export class ApiError extends Error {
@@ -107,7 +136,10 @@ class ApiService {
           const attempt = (config.__retryCount ?? 0) + 1;
           if (attempt <= MAX_RETRIES) {
             config.__retryCount = attempt;
-            await delay(computeRetryDelayMs(attempt));
+            await waitForRetryDelay(
+              computeRetryDelayMs(attempt),
+              config.signal ?? undefined,
+            );
             return this.api.request(config);
           }
         }

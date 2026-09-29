@@ -5,6 +5,7 @@ const { getMock } = vi.hoisted(() => ({ getMock: vi.fn() }));
 vi.mock("../src/services/api.service", () => ({
   apiService: { get: getMock },
   ApiError: class ApiError extends Error {},
+  waitForRetryDelay: () => Promise.resolve(),
 }));
 
 import { filesService } from "../src/services/files.service";

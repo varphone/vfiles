@@ -2,6 +2,7 @@ import {
   MAX_RETRIES,
   RETRYABLE_STATUS_CODES,
   computeRetryDelayMs,
+  waitForRetryDelay,
 } from "./api.service";
 
 /**
@@ -20,7 +21,7 @@ import {
  * 因此流式读取失败由调用方按普通错误处理。
  */
 
-export type SleepFn = (ms: number) => Promise<void>;
+export type SleepFn = (ms: number, signal?: AbortSignal) => Promise<void>;
 
 export interface FetchWithRetryOptions {
   maxRetries?: number;
@@ -28,8 +29,7 @@ export interface FetchWithRetryOptions {
   random?: () => number;
 }
 
-const defaultSleep: SleepFn = (ms) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const defaultSleep: SleepFn = waitForRetryDelay;
 
 export function isRetryableStatus(status: number): boolean {
   return RETRYABLE_STATUS_CODES.includes(
@@ -77,7 +77,10 @@ export async function fetchWithRetry(
       if (attempt === maxRetries) throw error;
     }
 
-    await sleep(computeRetryDelayMs(attempt + 1, options?.random));
+    await sleep(
+      computeRetryDelayMs(attempt + 1, options?.random),
+      signal ?? undefined,
+    );
   }
 
   // 循环要么返回、要么抛出，这里只是让类型完整

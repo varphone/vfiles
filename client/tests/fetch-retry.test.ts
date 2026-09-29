@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { fetchWithRetry, isRetryableStatus } from "../src/services/fetch-retry";
-import { MAX_RETRIES } from "../src/services/api.service";
+import {
+  MAX_RETRIES,
+  waitForRetryDelay,
+} from "../src/services/api.service";
 
 const noSleep = () => Promise.resolve();
 
@@ -39,7 +42,7 @@ describe("fetchWithRetry", () => {
     expect(await result.text()).toBe("ok");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1);
-    expect(sleep).toHaveBeenCalledWith(300);
+    expect(sleep).toHaveBeenCalledWith(300, undefined);
   });
 
   it("does not retry statuses that are not transient", async () => {
@@ -130,6 +133,31 @@ describe("fetchWithRetry", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("stops during retry backoff when the caller cancels", async () => {
+    const controller = new AbortController();
+    let waiting: () => void = () => undefined;
+    const startedWaiting = new Promise<void>((resolve) => {
+      waiting = resolve;
+    });
+    const fetchMock = vi.fn().mockResolvedValue(response(503));
+    const sleep = vi.fn((ms: number, signal?: AbortSignal) => {
+      waiting();
+      return waitForRetryDelay(ms, signal);
+    });
+
+    const pending = fetchWithRetry(
+      "/x",
+      { signal: controller.signal },
+      { sleep },
+      fetchMock,
+    );
+    await startedWaiting;
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("fails fast when the signal is already aborted", async () => {
     const controller = new AbortController();
     controller.abort();
@@ -144,5 +172,22 @@ describe("fetchWithRetry", () => {
       ),
     ).rejects.toBeInstanceOf(DOMException);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("waitForRetryDelay", () => {
+  it("rejects immediately and clears its timer when aborted", async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const pending = waitForRetryDelay(60_000, controller.signal);
+
+      controller.abort();
+
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
