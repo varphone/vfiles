@@ -1067,6 +1067,13 @@ async fn file_content_and_download_support_range_requests() {
     assert_eq!(
         content_partial
             .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("partial file responses should retain private cache policy"),
+        "private, no-cache"
+    );
+    assert_eq!(
+        content_partial
+            .headers()
             .get(header::ACCEPT_RANGES)
             .expect("accept-ranges should be present"),
         "bytes"
@@ -1137,6 +1144,13 @@ async fn file_content_and_download_support_range_requests() {
         )
         .await;
     assert_eq!(stale_if_match.status(), StatusCode::PRECONDITION_FAILED);
+    assert_eq!(
+        stale_if_match
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("precondition responses should retain private cache policy"),
+        "private, no-cache"
+    );
     assert_eq!(
         stale_if_match
             .headers()
@@ -1395,6 +1409,13 @@ async fn file_content_and_download_support_range_requests() {
         )
         .await;
     assert_eq!(unsatisfied.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(
+        unsatisfied
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("range errors should retain private cache policy"),
+        "private, no-cache"
+    );
     assert_eq!(
         unsatisfied
             .headers()
@@ -2987,6 +3008,54 @@ async fn file_content_downloads_active_html_instead_of_rendering_it_same_origin(
             .starts_with("attachment;")
     );
     assert_eq!(response_bytes(response).await.as_ref(), payload);
+}
+
+#[tokio::test]
+async fn authenticated_file_responses_are_private_and_revalidated() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "private.txt", b"private contents", "fixture")
+        .await;
+
+    let first = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/private.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(
+        first
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("authenticated file must not be stored by shared caches"),
+        "private, no-cache"
+    );
+    let etag = first
+        .headers()
+        .get(header::ETAG)
+        .expect("file ETag should be present")
+        .clone();
+    let _ = response_bytes(first).await;
+
+    let revalidated = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/private.txt")
+                .header(header::IF_NONE_MATCH, etag)
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(revalidated.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        revalidated
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("304 must preserve the private revalidation policy"),
+        "private, no-cache"
+    );
 }
 
 #[tokio::test]

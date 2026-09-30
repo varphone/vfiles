@@ -12,6 +12,16 @@ use vfiles_domain::ReadSeek;
 
 use crate::error::{ApiError, ApiResult};
 
+const PRIVATE_FILE_CACHE_CONTROL: &str = "private, no-cache";
+
+fn private_file_response(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(PRIVATE_FILE_CACHE_CONTROL),
+    );
+    response
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RangeRequest {
     Full,
@@ -127,7 +137,7 @@ pub(crate) fn not_modified_response(
     if etag.is_some() {
         insert_vary_accept_encoding(response.headers_mut());
     }
-    Ok(response)
+    Ok(private_file_response(response))
 }
 
 pub(crate) async fn streaming_file_response(
@@ -144,13 +154,19 @@ pub(crate) async fn streaming_file_response(
         modified_at,
     } = options;
     if request_headers.contains_key(header::IF_MATCH) && !if_match(request_headers, etag) {
-        return precondition_failed(etag, modified_at);
+        return Ok(private_file_response(precondition_failed(
+            etag,
+            modified_at,
+        )?));
     }
     if !request_headers.contains_key(header::IF_MATCH)
         && modified_at
             .is_some_and(|modified_at| if_unmodified_since_failed(request_headers, modified_at))
     {
-        return precondition_failed(etag, modified_at);
+        return Ok(private_file_response(precondition_failed(
+            etag,
+            modified_at,
+        )?));
     }
     if if_none_match(request_headers, etag) {
         return not_modified_response(etag, modified_at);
@@ -197,7 +213,7 @@ pub(crate) async fn streaming_file_response(
                     .headers_mut()
                     .insert(header::CONTENT_DISPOSITION, attachment_header(filename)?);
             }
-            Ok(response)
+            Ok(private_file_response(response))
         }
         RangeRequest::Partial { start, end } => {
             reader
@@ -225,7 +241,7 @@ pub(crate) async fn streaming_file_response(
             if let Some(filename) = attachment_filename {
                 headers.insert(header::CONTENT_DISPOSITION, attachment_header(filename)?);
             }
-            Ok(response)
+            Ok(private_file_response(response))
         }
         RangeRequest::Full => {
             let mut response = Response::new(Body::from_stream(ReaderStream::new(reader)));
@@ -244,7 +260,7 @@ pub(crate) async fn streaming_file_response(
             if has_conditional_header(request_headers) {
                 response.extensions_mut().insert(DisableCompression);
             }
-            Ok(response)
+            Ok(private_file_response(response))
         }
     }
 }
