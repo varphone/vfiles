@@ -16,6 +16,7 @@ use tower::ServiceExt;
 
 const MAX_ACTIVE_HTTP_CONNECTIONS: usize = 512;
 const HTTP1_HEADER_READ_TIMEOUT: Duration = Duration::from_secs(15);
+const HTTP2_MAX_CONCURRENT_STREAMS: u32 = 32;
 
 pub async fn serve(
     listener: TcpListener,
@@ -115,7 +116,11 @@ async fn serve_connection(
         .http1()
         .timer(TokioTimer::new())
         .header_read_timeout(header_read_timeout);
-    builder.http2().timer(TokioTimer::new());
+    builder
+        .http2()
+        .timer(TokioTimer::new())
+        .enable_connect_protocol()
+        .max_concurrent_streams(HTTP2_MAX_CONCURRENT_STREAMS);
 
     let mut connection = Box::pin(builder.serve_connection_with_upgrades(io, service));
     let result = tokio::select! {
@@ -150,7 +155,7 @@ mod tests {
         sync::watch,
     };
 
-    use super::serve_with_limits;
+    use super::{HTTP2_MAX_CONCURRENT_STREAMS, serve_with_limits};
 
     async fn start_server(
         max_connections: usize,
@@ -241,6 +246,60 @@ mod tests {
             "remote address should reach ConnectInfo, got {response:?}"
         );
 
+        let _ = shutdown.send(true);
+        server.await.expect("test server task should join");
+    }
+
+    #[tokio::test]
+    async fn advertises_bounded_http2_streams_and_extended_connect() {
+        let (address, shutdown, server) = start_server(2, Duration::from_secs(2)).await;
+        let mut client = TcpStream::connect(address)
+            .await
+            .expect("client should connect");
+        client
+            .write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+            .await
+            .expect("HTTP/2 preface should be sent");
+        client
+            .write_all(&[0, 0, 0, 4, 0, 0, 0, 0, 0])
+            .await
+            .expect("client SETTINGS frame should be sent");
+
+        let mut frame_header = [0; 9];
+        tokio::time::timeout(Duration::from_secs(1), client.read_exact(&mut frame_header))
+            .await
+            .expect("server SETTINGS should arrive")
+            .expect("server SETTINGS should be readable");
+        assert_eq!(frame_header[3], 4, "first server frame should be SETTINGS");
+        let payload_len =
+            u32::from_be_bytes([0, frame_header[0], frame_header[1], frame_header[2]]) as usize;
+        assert_eq!(payload_len % 6, 0, "SETTINGS payload must contain pairs");
+        let mut settings = vec![0; payload_len];
+        client
+            .read_exact(&mut settings)
+            .await
+            .expect("SETTINGS payload should be readable");
+        let (settings, remainder) = settings.as_chunks::<6>();
+        assert!(remainder.is_empty(), "SETTINGS payload must contain pairs");
+        let settings = settings
+            .iter()
+            .map(|setting| {
+                let id = u16::from_be_bytes([setting[0], setting[1]]);
+                let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
+                (id, value)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            settings.contains(&(3, HTTP2_MAX_CONCURRENT_STREAMS)),
+            "server must advertise its stream limit: {settings:?}"
+        );
+        assert!(
+            settings.contains(&(8, 1)),
+            "server must preserve Extended CONNECT support: {settings:?}"
+        );
+
+        drop(client);
         let _ = shutdown.send(true);
         server.await.expect("test server task should join");
     }
