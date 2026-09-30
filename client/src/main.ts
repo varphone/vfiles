@@ -5,6 +5,7 @@ import router from "./router";
 import { useAuthStore } from "./stores/auth.store";
 import { useAppStore } from "./stores/app.store";
 import { useThemeStore } from "./stores/theme.store";
+import { createErrorBoundary } from "./utils/errorBoundary";
 
 const app = createApp(App);
 const pinia = createPinia();
@@ -104,37 +105,23 @@ if (typeof window !== "undefined") {
 app.use(pinia);
 app.use(router);
 
-// 全局错误边界（r177 ✓ 主流兜底：崩而不白屏、收口可记可报）
-let lastBoundaryToast = 0;
-const errorBoundary = (source: string, error: unknown) => {
-  console.error(`[vfiles:${source}]`, error);
-  const g = window as unknown as { __VF_ERROR_COUNT?: number };
-  g.__VF_ERROR_COUNT = (g.__VF_ERROR_COUNT ?? 0) + 1;
-  // 用户面提示（r178 ✓ 崩而不白屏）：3 秒防刷（崩溃风暴只弹一条 ✗✗）
-  const now = Date.now();
-  if (now - lastBoundaryToast > 3000) {
-    lastBoundaryToast = now;
-    try {
-      // 惰性取 store（pinia 激活后生效 ✓ 未激活静默 ✓）
-      void import("./stores/app.store").then(({ useAppStore }) => {
-        useAppStore().error("界面出现异常，操作未受影响，可继续使用");
-      });
-    } catch {
-      // store 不可用时静默（错误边界自身不可再错 ✗）
-    }
-  }
-  // 生产上报（r179 ✓ fire-and-forget + keepalive（页面卸载亦达））
-  try {
+// 全局错误边界：同步通知，不创建错误处理器自身的未处理异步拒绝。
+const errorBoundary = createErrorBoundary({
+  log: (source, error) => console.error(`[vfiles:${source}]`, error),
+  incrementErrorCount: () => {
+    const g = window as unknown as { __VF_ERROR_COUNT?: number };
+    g.__VF_ERROR_COUNT = (g.__VF_ERROR_COUNT ?? 0) + 1;
+  },
+  notify: (message) => appStore.error(message),
+  report: (source, error) => {
     void fetch("/api/client-errors", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ source, message: String(error).slice(0, 500) }),
       keepalive: true,
     }).catch(() => undefined);
-  } catch {
-    // 上报失败不影响用户面
-  }
-};
+  },
+});
 app.config.errorHandler = (err) => errorBoundary("vue", err);
 window.addEventListener("error", (e) =>
   errorBoundary("window", e.error ?? e.message),
