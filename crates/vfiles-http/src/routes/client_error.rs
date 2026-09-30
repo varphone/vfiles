@@ -4,12 +4,15 @@
 //! 不落库 ✗ 简式合理；入库/统计 = 后续按需）。认证复用保护上下文（同文件路由式）。
 
 use axum::extract::{DefaultBodyLimit, State};
-use axum::{Json, Router, http::StatusCode, routing::post};
+use axum::{Router, http::StatusCode, routing::post};
 use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 
 use crate::{
-    AppState, audit::sanitize_log_field, error::ApiResult, routes::protected_request_context,
+    AppState,
+    audit::sanitize_log_field,
+    error::{ApiJson, ApiResult},
+    routes::protected_request_context,
 };
 
 const MAX_CLIENT_ERROR_BODY_BYTES: usize = 16 * 1024;
@@ -32,7 +35,7 @@ pub struct ClientErrorReport {
 async fn report(
     State(state): State<AppState>,
     jar: CookieJar,
-    Json(report): Json<ClientErrorReport>,
+    ApiJson(report): ApiJson<ClientErrorReport>,
 ) -> ApiResult<StatusCode> {
     let _ctx = protected_request_context(&state, &jar).await?;
     let source = sanitize_log_field(&report.source, MAX_CLIENT_ERROR_SOURCE_CHARS);

@@ -2332,6 +2332,28 @@ async fn batch_move_rejects_request_bodies_over_256_kibibytes() {
 }
 
 #[tokio::test]
+async fn client_error_report_uses_the_standard_json_error_envelope() {
+    let app = TestApp::new().await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/client-errors")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{not-json"))
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let payload = response_json(response).await;
+    assert_eq!(payload["code"], Value::from("VALIDATION_FAILED"));
+    assert_eq!(payload["details"]["field"], Value::from("body"));
+    assert!(payload["request_id"].is_string());
+}
+
+#[tokio::test]
 async fn directory_picker_pages_only_direct_child_directories() {
     let app = TestApp::new().await;
     for path in ["zeta", "alpha", "parent", "parent/nested"] {
@@ -3501,6 +3523,10 @@ async fn client_error_report_rejects_oversized_payloads() {
         .await;
 
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        response_json(response).await["code"],
+        Value::from("PAYLOAD_TOO_LARGE")
+    );
 }
 
 #[tokio::test]
