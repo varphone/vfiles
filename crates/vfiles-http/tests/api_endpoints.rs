@@ -4780,6 +4780,16 @@ async fn access_token_authenticates_api_requests() {
         .await;
     assert_eq!(list.status(), StatusCode::OK, "令牌应能列目录");
 
+    // 后续 Bearer 请求应在节流窗口内避免重复写入使用时间。
+    let token_id = payload["token"]["id"].as_str().expect("token id");
+    let sentinel_last_used = "2000-01-01T00:00:00Z";
+    sqlx::query("UPDATE access_tokens SET last_used_at = ? WHERE id = ?")
+        .bind(sentinel_last_used)
+        .bind(token_id)
+        .execute(&app.db_pool)
+        .await
+        .expect("last-used sentinel should be set");
+
     // 3) 用令牌上传（init → chunk → complete）
     let init = app
         .request(
@@ -4810,6 +4820,13 @@ async fn access_token_authenticates_api_requests() {
         .as_str()
         .expect("upload_id")
         .to_string();
+    let last_used_after_repeat: String =
+        sqlx::query_scalar("SELECT last_used_at FROM access_tokens WHERE id = ?")
+            .bind(token_id)
+            .fetch_one(&app.db_pool)
+            .await
+            .expect("last-used timestamp should be present");
+    assert_eq!(last_used_after_repeat, sentinel_last_used);
 
     let chunk = app
         .request(

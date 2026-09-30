@@ -293,7 +293,7 @@ curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci
 - 明文形如 `vfat_<64 位十六进制>`，**只在创建响应里出现一次**；服务端只保存 SHA-256 摘要与展示前缀；
 - 令牌不能读取令牌管理列表、创建令牌或撤销令牌；这些接口只接受会话 Cookie 鉴权，使用 Bearer 令牌时返回 `403`，避免泄露后自我扩权；
 - 撤销、过期或用户被禁用后，令牌立即失效（`401`）；
-- 鉴权时会刷新 `last_used_at`，便于识别长期未用的令牌；
+- 鉴权成功后会记录 `last_used_at`：首次使用时立即写入，同一服务进程内之后最多每分钟刷新一次；
 - 创建与撤销都会写入审计日志（动作 `token.create` / `token.revoke`）。
 
 ## 转移所有权

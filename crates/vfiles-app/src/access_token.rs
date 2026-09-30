@@ -5,7 +5,11 @@
 //! - 鉴权成功后刷新 `last_used_at`（尽力而为，失败不影响请求）；
 //! - 支持可选过期时间与撤销。
 
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use sha2::{Digest, Sha256};
 
@@ -16,6 +20,8 @@ use vfiles_domain::{
 
 /// 明文前缀：便于在日志/界面上识别这是 VFiles 访问令牌。
 const TOKEN_PREFIX: &str = "vfat_";
+const LAST_USED_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+const MAX_TRACKED_TOKEN_REFRESHES: usize = 50_000;
 
 /// 允许的有效期（天）：0 表示永久。
 pub const ALLOWED_EXPIRY_DAYS: [u32; 4] = [0, 30, 90, 365];
@@ -23,6 +29,51 @@ pub const ALLOWED_EXPIRY_DAYS: [u32; 4] = [0, 30, 90, 365];
 #[derive(Clone)]
 pub struct AccessTokenService {
     repo: Arc<dyn AccessTokenRepo + Send + Sync>,
+    last_used_refreshes: Arc<LastUsedRefreshCache>,
+}
+
+#[derive(Default)]
+struct LastUsedRefreshCache {
+    refreshed_at: Mutex<HashMap<AccessTokenId, Instant>>,
+}
+
+impl LastUsedRefreshCache {
+    fn reserve(&self, token_id: AccessTokenId) -> Option<Instant> {
+        self.reserve_at(token_id, Instant::now())
+    }
+
+    fn reserve_at(&self, token_id: AccessTokenId, now: Instant) -> Option<Instant> {
+        let mut refreshed_at = self
+            .refreshed_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        if let Some(last_refresh) = refreshed_at.get_mut(&token_id) {
+            if now.saturating_duration_since(*last_refresh) < LAST_USED_REFRESH_INTERVAL {
+                return None;
+            }
+            *last_refresh = now;
+            return Some(now);
+        }
+
+        if refreshed_at.len() >= MAX_TRACKED_TOKEN_REFRESHES
+            && let Some(victim) = refreshed_at.keys().next().copied()
+        {
+            refreshed_at.remove(&victim);
+        }
+        refreshed_at.insert(token_id, now);
+        Some(now)
+    }
+
+    fn clear_failed(&self, token_id: AccessTokenId, attempted_at: Instant) {
+        let mut refreshed_at = self
+            .refreshed_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if refreshed_at.get(&token_id) == Some(&attempted_at) {
+            refreshed_at.remove(&token_id);
+        }
+    }
 }
 
 /// 创建结果：明文只在这里出现一次。
@@ -34,7 +85,10 @@ pub struct CreatedAccessToken {
 
 impl AccessTokenService {
     pub fn new(repo: Arc<dyn AccessTokenRepo + Send + Sync>) -> Self {
-        Self { repo }
+        Self {
+            repo,
+            last_used_refreshes: Arc::new(LastUsedRefreshCache::default()),
+        }
     }
 
     /// 生成新令牌（明文返回给调用方，库里只留摘要）。
@@ -131,8 +185,13 @@ impl AccessTokenService {
             return Ok(None);
         }
 
-        // 尽力而为：记录最近使用时间
-        let _ = self.repo.touch_last_used(&token.id, now).await;
+        // 高频 API 请求不必每次都把 SQLite 转成写事务；失败时立即允许后续重试。
+        if let Some(attempted_at) = self.last_used_refreshes.reserve(token.id)
+            && self.repo.touch_last_used(&token.id, now).await.is_err()
+        {
+            self.last_used_refreshes
+                .clear_failed(token.id, attempted_at);
+        }
 
         Ok(Some(token))
     }
@@ -143,4 +202,42 @@ pub fn hash_token(plaintext: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(plaintext.as_bytes());
     hex::encode(hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AccessTokenId, LAST_USED_REFRESH_INTERVAL, LastUsedRefreshCache};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn refresh_cache_throttles_touches_and_reopens_after_one_minute() {
+        let cache = LastUsedRefreshCache::default();
+        let token_id = AccessTokenId::new();
+        let first = Instant::now();
+
+        assert_eq!(cache.reserve_at(token_id, first), Some(first));
+        assert_eq!(
+            cache.reserve_at(token_id, first + Duration::from_secs(30)),
+            None
+        );
+        let after_interval = first + LAST_USED_REFRESH_INTERVAL + Duration::from_secs(1);
+        assert_eq!(
+            cache.reserve_at(token_id, after_interval),
+            Some(after_interval)
+        );
+    }
+
+    #[test]
+    fn failed_refresh_can_be_retried_immediately() {
+        let cache = LastUsedRefreshCache::default();
+        let token_id = AccessTokenId::new();
+        let attempted_at = Instant::now();
+
+        assert_eq!(cache.reserve_at(token_id, attempted_at), Some(attempted_at));
+        cache.clear_failed(token_id, attempted_at);
+        assert_eq!(
+            cache.reserve_at(token_id, attempted_at + Duration::from_secs(1)),
+            Some(attempted_at + Duration::from_secs(1))
+        );
+    }
 }
