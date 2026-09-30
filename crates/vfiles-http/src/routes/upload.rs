@@ -19,7 +19,7 @@ use tokio::io::AsyncWriteExt;
 use crate::{
     AppState,
     dto::UploadRequest,
-    error::{ApiError, ApiJson, ApiPath, ApiQuery, ApiResult},
+    error::{ApiError, ApiJson, ApiMultipart, ApiPath, ApiQuery, ApiResult},
     routes::protected_request_context,
 };
 use vfiles_domain::{DomainError, NewAuditLog, NormalizedPath, UploadId};
@@ -620,7 +620,7 @@ async fn upload_file(
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
     headers: axum::http::HeaderMap,
-    multipart: Multipart,
+    ApiMultipart(multipart): ApiMultipart,
 ) -> ApiResult<Json<serde_json::Value>> {
     let ctx = protected_request_context(&state, &jar).await?;
     let temp_dir = state.config.storage.root.join("tmp");

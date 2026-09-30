@@ -36,6 +36,37 @@ where
     }
 }
 
+/// Multipart extraction with the same structured error envelope as the API.
+pub struct ApiMultipart(pub axum_extra::extract::Multipart);
+
+impl<S> axum::extract::FromRequest<S> for ApiMultipart
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(
+        request: axum::extract::Request,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        <axum_extra::extract::Multipart as axum::extract::FromRequest<S>>::from_request(
+            request, state,
+        )
+        .await
+        .map(Self)
+        .map_err(|rejection| {
+            if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                ApiError::RequestBodyTooLarge
+            } else {
+                ApiError::Validation {
+                    field: "multipart".to_string(),
+                    message: rejection.body_text(),
+                }
+            }
+        })
+    }
+}
+
 impl<S, T> axum::extract::OptionalFromRequest<S> for ApiJson<T>
 where
     T: serde::de::DeserializeOwned,
