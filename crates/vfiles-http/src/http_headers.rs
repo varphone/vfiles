@@ -6,13 +6,25 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::Response,
 };
+use std::sync::{Arc, LazyLock};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::io::ReaderStream;
 use vfiles_domain::ReadSeek;
 
 use crate::error::{ApiError, ApiResult};
 
 const PRIVATE_FILE_CACHE_CONTROL: &str = "private, no-cache";
+const MAX_ACTIVE_DIRECTORY_ARCHIVE_DOWNLOADS: usize = 4;
+
+static DIRECTORY_ARCHIVE_DOWNLOAD_PERMITS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(MAX_ACTIVE_DIRECTORY_ARCHIVE_DOWNLOADS)));
+
+pub(crate) fn try_acquire_directory_archive_permit() -> Option<OwnedSemaphorePermit> {
+    Arc::clone(&DIRECTORY_ARCHIVE_DOWNLOAD_PERMITS)
+        .try_acquire_owned()
+        .ok()
+}
 
 fn private_file_response(mut response: Response) -> Response {
     response.headers_mut().insert(
@@ -141,8 +153,24 @@ pub(crate) fn not_modified_response(
 }
 
 pub(crate) async fn streaming_file_response(
+    reader: Box<dyn ReadSeek + Send + Unpin>,
+    options: StreamingFileOptions<'_>,
+) -> ApiResult<Response> {
+    streaming_file_response_inner(reader, options, None).await
+}
+
+pub(crate) async fn streaming_file_response_with_permit(
+    reader: Box<dyn ReadSeek + Send + Unpin>,
+    options: StreamingFileOptions<'_>,
+    permit: OwnedSemaphorePermit,
+) -> ApiResult<Response> {
+    streaming_file_response_inner(reader, options, Some(permit)).await
+}
+
+async fn streaming_file_response_inner(
     mut reader: Box<dyn ReadSeek + Send + Unpin>,
     options: StreamingFileOptions<'_>,
+    mut stream_permit: Option<OwnedSemaphorePermit>,
 ) -> ApiResult<Response> {
     let StreamingFileOptions {
         range_allowed,
@@ -222,8 +250,10 @@ pub(crate) async fn streaming_file_response(
                 .map_err(|e| ApiError::Internal(format!("Failed to seek blob: {}", e)))?;
 
             let length = end - start + 1;
-            let mut response =
-                Response::new(Body::from_stream(ReaderStream::new(reader.take(length))));
+            let mut response = Response::new(reader_stream_body(
+                reader.take(length),
+                stream_permit.take(),
+            ));
             *response.status_mut() = StatusCode::PARTIAL_CONTENT;
             let headers = response.headers_mut();
             headers.insert(header::CONTENT_TYPE, content_type);
@@ -244,7 +274,7 @@ pub(crate) async fn streaming_file_response(
             Ok(private_file_response(response))
         }
         RangeRequest::Full => {
-            let mut response = Response::new(Body::from_stream(ReaderStream::new(reader)));
+            let mut response = Response::new(reader_stream_body(reader, stream_permit.take()));
             let headers = response.headers_mut();
             headers.insert(header::CONTENT_TYPE, content_type);
             headers.insert(header::ACCEPT_RANGES, accept_ranges);
@@ -263,6 +293,19 @@ pub(crate) async fn streaming_file_response(
             Ok(private_file_response(response))
         }
     }
+}
+
+fn reader_stream_body<R>(reader: R, permit: Option<OwnedSemaphorePermit>) -> Body
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    use futures::StreamExt;
+
+    let stream = ReaderStream::new(reader).map(move |chunk| {
+        let _permit = &permit;
+        chunk
+    });
+    Body::from_stream(stream)
 }
 
 /// Build metadata for a directory archive HEAD request without creating or reading the archive.
@@ -554,6 +597,49 @@ fn is_rfc5987_attr_char(byte: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn directory_archive_admission_has_a_fixed_capacity() {
+        let permits = (0..MAX_ACTIVE_DIRECTORY_ARCHIVE_DOWNLOADS)
+            .map(|_| {
+                try_acquire_directory_archive_permit()
+                    .expect("directory archive capacity should be available")
+            })
+            .collect::<Vec<_>>();
+
+        assert!(try_acquire_directory_archive_permit().is_none());
+        drop(permits);
+        assert!(try_acquire_directory_archive_permit().is_some());
+    }
+
+    #[tokio::test]
+    async fn archive_stream_holds_its_permit_until_the_response_body_is_dropped() {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = semaphore
+            .clone()
+            .try_acquire_owned()
+            .expect("the only archive permit should be available");
+        let headers = HeaderMap::new();
+        let response = streaming_file_response_inner(
+            Box::new(std::io::Cursor::new(b"archive".to_vec())),
+            StreamingFileOptions {
+                range_allowed: true,
+                request_headers: &headers,
+                mime_type: Some("application/zip"),
+                size_bytes: 7,
+                attachment_filename: Some("archive.zip"),
+                etag: None,
+                modified_at: None,
+            },
+            Some(permit),
+        )
+        .await
+        .expect("archive response should be built");
+
+        assert!(semaphore.try_acquire().is_err());
+        drop(response.into_body());
+        assert!(semaphore.try_acquire().is_ok());
+    }
 
     #[test]
     fn range_unit_is_case_insensitive() {

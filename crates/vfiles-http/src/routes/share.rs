@@ -14,6 +14,7 @@ use crate::{
     error::{ApiError, ApiJson},
     http_headers::{
         StreamingFileOptions, directory_archive_head_response, streaming_file_response,
+        streaming_file_response_with_permit, try_acquire_directory_archive_permit,
     },
     middleware::client_ip_from_headers,
     routes::authenticated_request_context,
@@ -28,6 +29,15 @@ pub fn router() -> Router<AppState> {
         .route("/shares/{code}/download", get(download_share))
         .route("/shares/{code}", get(access_share))
         .route("/shares/{code}", delete(disable_share))
+}
+
+fn share_download_audit(
+    entry_path: &vfiles_domain::NormalizedPath,
+    share_id: &vfiles_domain::ShareId,
+) -> NewAuditLog {
+    NewAuditLog::success(crate::audit::action::SHARE_DOWNLOAD)
+        .target(entry_path.as_str())
+        .detail(format!("通过分享链接下载（分享 ID {share_id}）"))
 }
 
 async fn create_share(
@@ -171,16 +181,6 @@ pub async fn download_share(
     let share = state.share_service.access_share(&code).await?;
     let entry = state.entry_repo.find_by_id(&share.entry_id).await?;
 
-    // The share code is a bearer credential; keep it out of durable audit data.
-    crate::audit::record(
-        &state,
-        &headers,
-        NewAuditLog::success(crate::audit::action::SHARE_DOWNLOAD)
-            .target(entry.path_norm.as_str())
-            .detail(format!("通过分享链接下载（分享 ID {}）", share.id)),
-    )
-    .await;
-
     match entry.entry_type {
         EntryKind::File => {
             let version = share.entry_version_id.map(|value| value.to_string());
@@ -188,6 +188,14 @@ pub async fn download_share(
                 .workspace_service
                 .open_file(&share.namespace_id, &entry.path_norm, version.as_deref())
                 .await?;
+
+            // The share code is a bearer credential; keep it out of durable audit data.
+            crate::audit::record(
+                &state,
+                &headers,
+                share_download_audit(&entry.path_norm, &share.id),
+            )
+            .await;
 
             streaming_file_response(
                 file.reader,
@@ -209,6 +217,12 @@ pub async fn download_share(
                     .workspace_service
                     .validate_directory_archive_target(&share.namespace_id, &entry.path_norm, None)
                     .await?;
+                crate::audit::record(
+                    &state,
+                    &headers,
+                    share_download_audit(&entry.path_norm, &share.id),
+                )
+                .await;
                 let archive_name = entry
                     .path_norm
                     .as_str()
@@ -219,12 +233,22 @@ pub async fn download_share(
                     .await;
             }
 
+            let archive_permit = try_acquire_directory_archive_permit()
+                .ok_or(ApiError::Domain(DomainError::RateLimited))?;
             let archive = state
                 .workspace_service
                 .download_directory_archive(&share.namespace_id, &entry.path_norm, None)
                 .await?;
 
-            streaming_file_response(
+            // Audit only after archive generation is admitted and completed.
+            crate::audit::record(
+                &state,
+                &headers,
+                share_download_audit(&entry.path_norm, &share.id),
+            )
+            .await;
+
+            streaming_file_response_with_permit(
                 archive.reader,
                 StreamingFileOptions {
                     range_allowed: method == Method::GET,
@@ -235,6 +259,7 @@ pub async fn download_share(
                     etag: None,
                     modified_at: None,
                 },
+                archive_permit,
             )
             .await
         }
