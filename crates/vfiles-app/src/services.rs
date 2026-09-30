@@ -4295,6 +4295,23 @@ pub struct ShareService<R, E> {
     entry_repo: E,
 }
 
+const SHARE_CODE_ALPHABET: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+
+fn generate_short_share_code() -> String {
+    let random_bytes = uuid::Uuid::new_v4().into_bytes();
+    let mut value = 0_u64;
+    for byte in random_bytes.iter().take(5) {
+        value = (value << 8) | u64::from(*byte);
+    }
+
+    let mut code = String::with_capacity(8);
+    for shift in (0..8_u32).rev() {
+        let index = ((value >> (shift * 5)) & 0x1f) as usize;
+        code.push(char::from(SHARE_CODE_ALPHABET[index]));
+    }
+    code
+}
+
 impl<R, E> ShareService<R, E>
 where
     R: ShareRepo + Clone,
@@ -4404,9 +4421,8 @@ where
 
     async fn generate_share_code(&self) -> DomainResult<String> {
         loop {
-            // A share code is a bearer credential. Keep the full UUID entropy instead
-            // of truncating it to a guessable 32-bit prefix.
-            let code = uuid::Uuid::new_v4().simple().to_string();
+            // Keep the user-facing code short while using 40 random bits from UUIDv4.
+            let code = generate_short_share_code();
 
             // Check if code already exists
             match self.share_repo.find_share_by_code(&code).await {

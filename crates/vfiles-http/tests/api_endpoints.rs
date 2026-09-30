@@ -3237,8 +3237,11 @@ async fn share_creation_uses_configured_public_base_url() {
     let code = share_payload["code"]
         .as_str()
         .expect("share code should be present");
-    assert_eq!(code.len(), 32, "share codes must retain UUID entropy");
-    assert!(code.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    assert_eq!(code.len(), 8, "share codes should remain short for users");
+    assert!(
+        code.bytes()
+            .all(|byte| b"0123456789abcdefghjkmnpqrstvwxyz".contains(&byte))
+    );
     assert_eq!(
         share_payload["share_url"],
         Value::String(format!("http://example.test:4242/s/{}", code))
