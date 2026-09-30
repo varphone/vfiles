@@ -110,6 +110,9 @@ fn build_router_inner(state: AppState, serve_frontend_fallback: bool) -> Router<
             Arc::new(write_allowed_origins),
             middleware::write_origin_guard_middleware,
         ))
+        .layer(axum::middleware::from_fn(
+            middleware::api_request_admission_middleware,
+        ))
         .layer(axum::middleware::from_fn(api_response_cache_policy));
     let mut router = Router::new()
         .route(

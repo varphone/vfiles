@@ -6,6 +6,7 @@ use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 use axum::{
     extract::{ConnectInfo, Request, State},
@@ -66,6 +67,22 @@ pub struct RequestId(pub String);
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const RESOLVED_CLIENT_IP_HEADER: &str = "x-vfiles-client-ip";
 const MAX_FIXED_WINDOW_COUNTERS: usize = 50_000;
+/// Bound active API handler work so overload fails fast instead of building an
+/// unbounded queue of tasks waiting on SQLite and storage operations.
+pub(crate) const MAX_CONCURRENT_API_REQUESTS: usize = 128;
+static API_REQUEST_PERMITS: Semaphore = Semaphore::const_new(MAX_CONCURRENT_API_REQUESTS);
+
+fn try_acquire_api_request_permit(semaphore: &Semaphore) -> Option<SemaphorePermit<'_>> {
+    semaphore.try_acquire().ok()
+}
+
+pub async fn api_request_admission_middleware(req: Request, next: Next) -> Response {
+    let Some(_permit) = try_acquire_api_request_permit(&API_REQUEST_PERMITS) else {
+        return crate::error::ApiError::rate_limited(1).into_response();
+    };
+
+    next.run(req).await
+}
 
 fn normalize_request_id(value: &str) -> Option<String> {
     let value = value.trim();
@@ -414,10 +431,12 @@ mod tests {
     use std::net::IpAddr;
 
     use axum::http::{HeaderMap, HeaderValue, Method, header};
+    use tokio::sync::Semaphore;
 
     use super::{
         FixedWindowLimiter, MAX_FIXED_WINDOW_COUNTERS, client_ip_from_headers,
         is_write_origin_allowed, normalize_request_id, resolve_client_ip,
+        try_acquire_api_request_permit,
     };
 
     fn ip(value: &str) -> IpAddr {
@@ -432,6 +451,19 @@ mod tests {
         );
         assert_eq!(normalize_request_id("proxy request"), None);
         assert_eq!(normalize_request_id("proxy\trequest"), None);
+    }
+
+    #[test]
+    fn api_request_admission_fails_fast_at_capacity_and_releases_slots() {
+        let semaphore = Semaphore::new(2);
+        let first = try_acquire_api_request_permit(&semaphore).expect("first permit");
+        let second = try_acquire_api_request_permit(&semaphore).expect("second permit");
+
+        assert!(try_acquire_api_request_permit(&semaphore).is_none());
+
+        drop(first);
+        assert!(try_acquire_api_request_permit(&semaphore).is_some());
+        drop(second);
     }
 
     #[test]
