@@ -11,6 +11,14 @@ use std::{
 };
 
 const MAX_LOGIN_COUNTERS: usize = 50_000;
+const MAX_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+const FALLBACK_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn deadline_after(now: Instant, window: Duration) -> Instant {
+    now.checked_add(window.min(MAX_RATE_LIMIT_WINDOW))
+        .or_else(|| now.checked_add(FALLBACK_RATE_LIMIT_WINDOW))
+        .unwrap_or(now)
+}
 
 /// 限流策略（由各协议层从自身配置转换而来，避免这里依赖配置文件解析）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,7 +101,7 @@ impl LoginAttemptLimiter {
                 counter.failures = counter.failures.saturating_add(1);
             } else {
                 counter.failures = 1;
-                counter.reset_at = now + window;
+                counter.reset_at = deadline_after(now, window);
             }
             return;
         }
@@ -109,7 +117,7 @@ impl LoginAttemptLimiter {
             key,
             LoginAttemptCounter {
                 failures: 1,
-                reset_at: now + window,
+                reset_at: deadline_after(now, window),
             },
         );
     }
@@ -200,5 +208,22 @@ mod tests {
         let state = limiter.lock_state();
         assert_eq!(state.counters.len(), 1);
         assert_eq!(state.counters.keys().next().unwrap().len(), 32);
+    }
+
+    #[test]
+    fn oversized_window_does_not_panic_when_recording_a_failure() {
+        let limiter = LoginAttemptLimiter::new();
+        let config = RateLimitPolicy {
+            enabled: true,
+            window_ms: u64::MAX,
+            max_attempts: 1,
+        };
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            limiter.record_failure(&config, "127.0.0.1|admin");
+        }));
+
+        assert!(result.is_ok());
+        assert_eq!(limiter.lock_state().counters.len(), 1);
     }
 }

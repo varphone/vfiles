@@ -482,6 +482,8 @@ impl AppPaths {
 
 pub struct ConfigLoader;
 
+const MAX_LOGIN_RATE_LIMIT_WINDOW_MS: u64 = 365 * 24 * 60 * 60 * 1000;
+
 impl ConfigLoader {
     pub fn load() -> Result<AppConfig, ConfigError> {
         // Get the current working directory and compute absolute paths
@@ -774,6 +776,13 @@ impl ConfigLoader {
     }
 
     pub fn validate(config: &AppConfig) -> Result<(), ConfigError> {
+        if config.auth.login_rate_limit.enabled
+            && config.auth.login_rate_limit.window_ms > MAX_LOGIN_RATE_LIMIT_WINDOW_MS
+        {
+            return Err(ConfigError::LoadError(format!(
+                "VFILES_AUTH_LOGIN_RATE_LIMIT_WINDOW_MS 不能超过 {MAX_LOGIN_RATE_LIMIT_WINDOW_MS} 毫秒"
+            )));
+        }
         if config.http.cookie_secret.expose_secret().len() < 32 {
             return Err(ConfigError::InvalidCookieSecret);
         }
@@ -972,6 +981,18 @@ mod tests {
         assert!(config.auth.login_rate_limit.enabled);
         assert_eq!(config.auth.login_rate_limit.window_ms, 300_000);
         assert_eq!(config.auth.login_rate_limit.max_attempts, 10);
+    }
+
+    #[test]
+    fn login_rate_limit_rejects_windows_over_one_year() {
+        let mut config = ConfigLoader::load().expect("default config should load");
+        config.auth.login_rate_limit.window_ms = u64::MAX;
+
+        assert!(matches!(
+            ConfigLoader::validate(&config),
+            Err(ConfigError::LoadError(message))
+                if message.contains("VFILES_AUTH_LOGIN_RATE_LIMIT_WINDOW_MS")
+        ));
     }
 
     #[test]
