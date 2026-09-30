@@ -4625,15 +4625,163 @@ impl EntryRepo for SqliteEntryRepo {
         Ok(())
     }
 
+    async fn validate_transfer_subtrees(
+        &self,
+        source_namespace: &NamespaceId,
+        target_namespace: &NamespaceId,
+        roots: &[NormalizedPath],
+    ) -> DomainResult<()> {
+        let source_namespace = source_namespace.to_string();
+        let target_namespace = target_namespace.to_string();
+        for root in roots {
+            let root_path = root.as_str().trim_end_matches('/');
+            let source_exists: Option<i64> = sqlx::query_scalar(
+                "SELECT 1 FROM entries WHERE namespace_id = ? AND path = ? LIMIT 1",
+            )
+            .bind(&source_namespace)
+            .bind(root_path)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to validate transfer source {root_path}: {error}"),
+            })?;
+            if source_exists.is_none() {
+                return Err(DomainError::NotFound {
+                    resource: format!("entry {root_path}"),
+                });
+            }
+
+            let lower = format!("{root_path}/");
+            let upper = format!("{root_path}0");
+            let conflict: Option<String> = sqlx::query_scalar(
+                "SELECT path FROM entries WHERE namespace_id = ? AND (path = ? OR (path >= ? AND path < ?)) ORDER BY path LIMIT 1",
+            )
+            .bind(&target_namespace)
+            .bind(root_path)
+            .bind(&lower)
+            .bind(&upper)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to check target transfer paths for {root_path}: {error}"),
+            })?;
+            if let Some(path) = conflict {
+                return Err(DomainError::Conflict {
+                    message: format!("Target user already has an entry at {path}"),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    async fn transfer_subtrees(
+        &self,
+        source_namespace: &NamespaceId,
+        target_namespace: &NamespaceId,
+        roots: &[NormalizedPath],
+    ) -> DomainResult<u64> {
+        if roots.is_empty() {
+            return Ok(0);
+        }
+
+        let source_namespace = source_namespace.to_string();
+        let target_namespace = target_namespace.to_string();
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to begin subtree transfer transaction: {error}"),
+            })?;
+
+        let now = time::OffsetDateTime::now_utc();
+        let mut transferred = 0_u64;
+        for root in roots {
+            let root_path = root.as_str().trim_end_matches('/');
+            let source_exists: Option<i64> = sqlx::query_scalar(
+                "SELECT 1 FROM entries WHERE namespace_id = ? AND path = ? LIMIT 1",
+            )
+            .bind(&source_namespace)
+            .bind(root_path)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to validate transfer source {root_path}: {error}"),
+            })?;
+            if source_exists.is_none() {
+                return Err(DomainError::NotFound {
+                    resource: format!("entry {root_path}"),
+                });
+            }
+
+            let lower = format!("{root_path}/");
+            let upper = format!("{root_path}0");
+            let conflict: Option<String> = sqlx::query_scalar(
+                "SELECT path FROM entries WHERE namespace_id = ? AND (path = ? OR (path >= ? AND path < ?)) ORDER BY path LIMIT 1",
+            )
+            .bind(&target_namespace)
+            .bind(root_path)
+            .bind(&lower)
+            .bind(&upper)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to recheck target transfer paths for {root_path}: {error}"),
+            })?;
+            if let Some(path) = conflict {
+                return Err(DomainError::Conflict {
+                    message: format!("Target user already has an entry at {path}"),
+                });
+            }
+
+            let result = sqlx::query(
+                "UPDATE entries SET namespace_id = ?, updated_at = ? WHERE namespace_id = ? AND (path = ? OR (path >= ? AND path < ?))",
+            )
+            .bind(&target_namespace)
+            .bind(now)
+            .bind(&source_namespace)
+            .bind(root_path)
+            .bind(&lower)
+            .bind(&upper)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| match error {
+                sqlx::Error::Database(ref db_error) if db_error.is_unique_violation() => {
+                    DomainError::Conflict {
+                        message: "Target user already has an entry at this path".to_string(),
+                    }
+                }
+                _ => DomainError::Internal {
+                    message: format!("Failed to transfer subtree {root_path}: {error}"),
+                },
+            })?;
+            transferred = transferred
+                .checked_add(result.rows_affected())
+                .ok_or_else(|| DomainError::Internal {
+                    message: "Transferred entry count overflow".to_string(),
+                })?;
+        }
+
+        tx.commit().await.map_err(|error| DomainError::Internal {
+            message: format!("Failed to commit subtree transfer transaction: {error}"),
+        })?;
+
+        Ok(transferred)
+    }
+
     async fn transfer_entries(&self, moves: &[(EntryId, NamespaceId)]) -> DomainResult<()> {
         if moves.is_empty() {
             return Ok(());
         }
 
         let now = time::OffsetDateTime::now_utc();
-        let mut tx = self.pool.begin().await.map_err(|e| DomainError::Internal {
-            message: format!("Failed to begin transfer transaction: {}", e),
-        })?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to begin entry transfer transaction: {error}"),
+            })?;
 
         for (entry_id, namespace_id) in moves {
             let result =
@@ -4646,22 +4794,21 @@ impl EntryRepo for SqliteEntryRepo {
 
             match result {
                 Ok(_) => {}
-                // (namespace_id, path) 唯一约束：目标命名空间下已有同名路径
-                Err(sqlx::Error::Database(ref db_err)) if db_err.is_unique_violation() => {
+                Err(sqlx::Error::Database(ref db_error)) if db_error.is_unique_violation() => {
                     return Err(DomainError::PathConflict {
                         message: "target namespace already has an entry at this path".to_string(),
                     });
                 }
-                Err(e) => {
+                Err(error) => {
                     return Err(DomainError::Internal {
-                        message: format!("Failed to transfer entry: {}", e),
+                        message: format!("Failed to transfer entry: {error}"),
                     });
                 }
             }
         }
 
-        tx.commit().await.map_err(|e| DomainError::Internal {
-            message: format!("Failed to commit transfer transaction: {}", e),
+        tx.commit().await.map_err(|error| DomainError::Internal {
+            message: format!("Failed to commit entry transfer transaction: {error}"),
         })?;
 
         Ok(())
@@ -11515,6 +11662,156 @@ mod entry_repo_subtree_tests {
             .expect("subtree lookup should succeed");
         let paths: Vec<&str> = docs2.iter().map(|entry| entry.path_norm.as_str()).collect();
         assert_eq!(paths, vec!["docs2", "docs2/c.txt"]);
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn transfer_subtrees_moves_large_branches_with_path_scoped_updates() {
+        let (db_path, pool, repo, source_namespace, user_id) = setup().await;
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let target_user = user_repo
+            .create_user(
+                &Username::new("receiver").expect("username should be valid"),
+                None,
+                "hashed-password",
+                Role::User,
+            )
+            .await
+            .expect("target user should be created");
+        let target_namespace = SqliteNamespaceRepo::new(pool.clone())
+            .create_default(&target_user, "default")
+            .await
+            .expect("target namespace should be created");
+
+        for (path, kind) in [
+            ("docs", EntryKind::Directory),
+            ("docs/nested", EntryKind::Directory),
+            ("docs/nested/a.txt", EntryKind::File),
+            ("docs/nested/b.txt", EntryKind::File),
+            ("docs-old", EntryKind::File),
+        ] {
+            repo.create_entry(
+                &source_namespace,
+                &NormalizedPath::new(path).expect("path should parse"),
+                kind,
+                &user_id,
+            )
+            .await
+            .expect("entry should be created");
+        }
+        for index in 0..1_000 {
+            repo.create_entry(
+                &source_namespace,
+                &NormalizedPath::new(&format!("docs/nested/generated-{index:04}.txt"))
+                    .expect("generated path should parse"),
+                EntryKind::File,
+                &user_id,
+            )
+            .await
+            .expect("generated entry should be created");
+        }
+
+        let roots = [NormalizedPath::new("docs").expect("root path should parse")];
+        repo.validate_transfer_subtrees(&source_namespace, &target_namespace, &roots)
+            .await
+            .expect("valid subtree transfer should pass preflight");
+        let transferred = repo
+            .transfer_subtrees(&source_namespace, &target_namespace, &roots)
+            .await
+            .expect("subtree transfer should succeed");
+
+        assert_eq!(transferred, 1_004);
+        assert!(
+            repo.find_by_path(&source_namespace, &roots[0])
+                .await
+                .expect("source lookup should succeed")
+                .is_none()
+        );
+        assert!(
+            repo.find_by_path(
+                &source_namespace,
+                &NormalizedPath::new("docs-old").expect("sibling path should parse"),
+            )
+            .await
+            .expect("sibling lookup should succeed")
+            .is_some()
+        );
+        let target_entries = repo
+            .find_subtree(&target_namespace, &roots[0])
+            .await
+            .expect("target subtree should be readable");
+        assert_eq!(target_entries.len(), 1_004);
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn transfer_subtrees_rolls_back_when_a_later_root_conflicts() {
+        let (db_path, pool, repo, source_namespace, user_id) = setup().await;
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let target_user = user_repo
+            .create_user(
+                &Username::new("receiver").expect("username should be valid"),
+                None,
+                "hashed-password",
+                Role::User,
+            )
+            .await
+            .expect("target user should be created");
+        let target_namespace = SqliteNamespaceRepo::new(pool.clone())
+            .create_default(&target_user, "default")
+            .await
+            .expect("target namespace should be created");
+
+        for (namespace_id, path) in [
+            (&source_namespace, "alpha.txt"),
+            (&source_namespace, "zeta.txt"),
+            (&target_namespace, "zeta.txt"),
+        ] {
+            repo.create_entry(
+                namespace_id,
+                &NormalizedPath::new(path).expect("path should parse"),
+                EntryKind::File,
+                &user_id,
+            )
+            .await
+            .expect("entry should be created");
+        }
+        let roots = [
+            NormalizedPath::new("alpha.txt").expect("path should parse"),
+            NormalizedPath::new("zeta.txt").expect("path should parse"),
+        ];
+
+        assert!(matches!(
+            repo.transfer_subtrees(&source_namespace, &target_namespace, &roots)
+                .await,
+            Err(DomainError::Conflict { .. })
+        ));
+        for path in ["alpha.txt", "zeta.txt"] {
+            assert!(
+                repo.find_by_path(
+                    &source_namespace,
+                    &NormalizedPath::new(path).expect("path should parse"),
+                )
+                .await
+                .expect("source lookup should succeed")
+                .is_some(),
+                "source {path} should survive rollback"
+            );
+        }
+        assert!(
+            repo.find_by_path(
+                &target_namespace,
+                &NormalizedPath::new("alpha.txt").expect("path should parse"),
+            )
+            .await
+            .expect("target lookup should succeed")
+            .is_none(),
+            "first root update should roll back"
+        );
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);

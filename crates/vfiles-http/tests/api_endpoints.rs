@@ -4780,6 +4780,64 @@ async fn transfer_moves_entry_and_version_history_to_target_user() {
     assert_eq!(self_transfer.status(), StatusCode::BAD_REQUEST);
 }
 
+#[tokio::test]
+async fn transfer_moves_a_directory_subtree_as_one_path_operation() {
+    let app = TestApp::new().await;
+    let admin_cookie = app.admin_cookie().await;
+    app.upload_version("docs/nested", "first.txt", b"first", "first version")
+        .await;
+    app.upload_version("docs/nested", "second.txt", b"second", "second version")
+        .await;
+
+    app.register_user("receiver", "receiver@example.com", "receiver-password")
+        .await;
+    let receiver_cookie = app.login_cookie("receiver", "receiver-password").await;
+    let bootstrap = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/session/bootstrap")
+                .body(Body::empty())
+                .expect("request should build"),
+            &receiver_cookie,
+        )
+        .await;
+    let target_user_id = response_json(bootstrap).await["current_user"]
+        .as_str()
+        .expect("target user id")
+        .to_string();
+
+    let transfer = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/transfer",
+            json!({ "paths": ["docs"], "target_user_id": target_user_id }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(transfer.status(), StatusCode::OK);
+    let payload = response_json(transfer).await;
+    assert_eq!(payload["transferred"], 4);
+
+    let target_listing = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/files/tree/docs/nested")
+                .body(Body::empty())
+                .expect("request should build"),
+            &receiver_cookie,
+        )
+        .await;
+    let target_payload = response_json(target_listing).await;
+    let names: Vec<&str> = target_payload
+        .as_array()
+        .expect("target subtree listing")
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+    assert!(names.contains(&"first.txt"));
+    assert!(names.contains(&"second.txt"));
+}
+
 /// 转移冲突与鉴权：目标已有同名条目时整体失败；未登录不可调用。
 #[tokio::test]
 async fn transfer_rejects_conflicts_and_requires_auth() {

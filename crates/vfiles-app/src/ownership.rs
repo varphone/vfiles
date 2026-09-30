@@ -161,58 +161,19 @@ impl OwnershipService {
             });
         }
 
-        // 收集待转移条目（目录含整棵子树）并检查目标侧同名路径
-        let mut moves = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
-        // 转移后需要在目标命名空间补齐的祖先目录（不含本次一起转移的目录）
-        let mut needed_parents: HashSet<String> = HashSet::new();
-        let mut transferred_paths: HashSet<String> = HashSet::new();
-        for path in paths {
-            let subtree = self.entry_repo.find_subtree(source_namespace, path).await?;
-            if subtree.is_empty() {
-                return Err(DomainError::NotFound {
-                    resource: format!("entry {}", path.as_str()),
-                });
-            }
+        self.entry_repo
+            .validate_transfer_subtrees(source_namespace, &target_namespace, paths)
+            .await?;
 
-            for entry in subtree {
-                if !seen.insert(entry.path_norm.as_str().to_string()) {
-                    continue;
-                }
-                transferred_paths.insert(entry.path_norm.as_str().to_string());
-                if self
-                    .entry_repo
-                    .find_by_path(&target_namespace, &entry.path_norm)
-                    .await?
-                    .is_some()
-                {
-                    return Err(DomainError::Conflict {
-                        message: format!(
-                            "Target user already has an entry at {}",
-                            entry.path_norm.as_str()
-                        ),
-                    });
-                }
-                // 记录祖先目录（稍后在目标命名空间补齐）
-                for ancestor in ancestors_of(entry.path_norm.as_str()) {
-                    needed_parents.insert(ancestor);
-                }
-                moves.push((entry.id, target_namespace));
-            }
-        }
-
-        if moves.is_empty() {
-            return Err(DomainError::NotFound {
-                resource: "entry".to_string(),
-            });
-        }
+        // 只根据被选中的根路径补齐目标祖先目录，无需先在内存中展开整个子树。
+        let needed_parents: HashSet<String> = paths
+            .iter()
+            .flat_map(|path| ancestors_of(path.as_str()))
+            .collect();
 
         // 目标命名空间里可能没有对应的父目录（例如只转一个 docs/a.txt）：
-        // 先补齐**不属于本次转移集合**的祖先目录，保证转移后条目落在同样的路径下。
-        let mut parents: Vec<&String> = needed_parents
-            .iter()
-            .filter(|path| !transferred_paths.contains(*path))
-            .collect();
+        // 先补齐祖先目录，保证转移后条目落在同样的路径下。
+        let mut parents: Vec<&String> = needed_parents.iter().collect();
         parents.sort();
         for path in parents {
             let parent = NormalizedPath::new(path).map_err(|_| DomainError::Validation {
@@ -227,8 +188,14 @@ impl OwnershipService {
             .await?;
         }
 
-        let transferred = moves.len();
-        self.entry_repo.transfer_entries(&moves).await?;
+        let transferred_count = self
+            .entry_repo
+            .transfer_subtrees(source_namespace, &target_namespace, paths)
+            .await?;
+        let transferred =
+            usize::try_from(transferred_count).map_err(|error| DomainError::Internal {
+                message: format!("Transferred entry count is out of range: {error}"),
+            })?;
 
         // 双方各写一条快照：源侧记录「消失」，目标侧记录「出现」
         let note = message

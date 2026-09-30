@@ -626,7 +626,52 @@ pub trait EntryRepo {
         }
         self.find_subtree(namespace_id, root_path).await
     }
-    /// 转移所有权：把条目迁到另一个命名空间（路径不变，版本历史随条目保留）。
+    /// 转移前校验源路径存在，且目标命名空间没有同路径或后代冲突。
+    async fn validate_transfer_subtrees(
+        &self,
+        source_namespace: &NamespaceId,
+        target_namespace: &NamespaceId,
+        roots: &[NormalizedPath],
+    ) -> DomainResult<()> {
+        for root in roots {
+            if self.find_subtree(source_namespace, root).await?.is_empty() {
+                return Err(DomainError::NotFound {
+                    resource: format!("entry {}", root.as_str()),
+                });
+            }
+            if let Some(conflict) = self.find_subtree(target_namespace, root).await?.first() {
+                return Err(DomainError::Conflict {
+                    message: format!(
+                        "Target user already has an entry at {}",
+                        conflict.path_norm.as_str()
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+    /// 原子地按路径迁移一个或多个完整子树，并返回迁移条目数。
+    async fn transfer_subtrees(
+        &self,
+        source_namespace: &NamespaceId,
+        target_namespace: &NamespaceId,
+        roots: &[NormalizedPath],
+    ) -> DomainResult<u64> {
+        self.validate_transfer_subtrees(source_namespace, target_namespace, roots)
+            .await?;
+        let mut moves = Vec::new();
+        for root in roots {
+            for entry in self.find_subtree(source_namespace, root).await? {
+                moves.push((entry.id, *target_namespace));
+            }
+        }
+        let transferred = u64::try_from(moves.len()).map_err(|error| DomainError::Internal {
+            message: format!("Transferred entry count is out of range: {error}"),
+        })?;
+        self.transfer_entries(&moves).await?;
+        Ok(transferred)
+    }
+    /// 转移一组条目 ID（路径不变，版本历史随条目保留）。
     async fn transfer_entries(&self, moves: &[(EntryId, NamespaceId)]) -> DomainResult<()>;
     /// 批量按路径查询（用于移动前的冲突检查），只返回存在的条目。
     async fn find_paths(
