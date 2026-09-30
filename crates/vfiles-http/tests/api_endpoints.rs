@@ -4155,6 +4155,38 @@ async fn share_download_rate_limit_counts_distinct_guesses_per_source() {
     assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
+#[tokio::test]
+async fn public_share_lookup_rate_limit_is_shared_across_lookup_routes() {
+    let app = TestApp::new().await;
+
+    for attempt in 0..60 {
+        let uri = if attempt % 2 == 0 {
+            format!("/api/share/shares/guess-{attempt:02}")
+        } else {
+            format!("/s/guess-{attempt:02}")
+        };
+        let response = app
+            .request(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("share lookup request should build"),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    let blocked = app
+        .request(
+            Request::builder()
+                .uri("/api/share/shares/guess-over-limit")
+                .body(Body::empty())
+                .expect("share lookup request should build"),
+        )
+        .await;
+    assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
 /// 已过期的分享，所有者仍然可以停止（否则过期链接无法清理）。
 #[tokio::test]
 async fn expired_share_can_still_be_disabled_by_owner() {

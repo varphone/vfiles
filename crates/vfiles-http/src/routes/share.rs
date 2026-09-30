@@ -40,6 +40,26 @@ fn share_download_audit(
         .detail(format!("通过分享链接下载（分享 ID {share_id}）"))
 }
 
+fn enforce_share_lookup_rate_limit(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+    let max_requests_per_minute = state.config.limits.rate_limit_requests_per_minute.max(1);
+    // Share codes are bearer credentials. Count guesses across every public lookup
+    // route for the source, rather than allowing callers to rotate codes or endpoints.
+    let rate_limit_key = format!("share-public:{}", client_ip_from_headers(headers));
+    if let Some(block) = state.share_download_limiter.check_and_record(
+        max_requests_per_minute,
+        std::time::Duration::from_secs(60),
+        &rate_limit_key,
+    ) {
+        tracing::warn!(
+            retry_after_secs = block.retry_after_secs,
+            "public share lookup rate limit exceeded"
+        );
+        return Err(ApiError::Domain(DomainError::RateLimited));
+    }
+
+    Ok(())
+}
+
 async fn create_share(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -137,12 +157,14 @@ async fn list_shares(
 
 async fn access_share(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(code): Path<String>,
 ) -> Result<Json<ShareDto>, ApiError> {
     if !state.config.features.share_enabled {
         return Err(ApiError::Domain(vfiles_domain::DomainError::Forbidden));
     }
 
+    enforce_share_lookup_rate_limit(&state, &headers)?;
     tracing::info!("Accessing share");
 
     let share = state.share_service.access_share(&code).await?;
@@ -162,21 +184,7 @@ pub async fn download_share(
         return Err(ApiError::Domain(DomainError::Forbidden));
     }
 
-    let max_downloads_per_minute = state.config.limits.rate_limit_requests_per_minute.max(1);
-    // Rate limit guesses across all share codes from one source. Including the
-    // candidate code here would give each guessed code a fresh counter.
-    let rate_limit_key = format!("share-download:{}", client_ip_from_headers(&headers));
-    if let Some(block) = state.share_download_limiter.check_and_record(
-        max_downloads_per_minute,
-        std::time::Duration::from_secs(60),
-        &rate_limit_key,
-    ) {
-        tracing::warn!(
-            retry_after_secs = block.retry_after_secs,
-            "share download rate limit exceeded"
-        );
-        return Err(ApiError::Domain(DomainError::RateLimited));
-    }
+    enforce_share_lookup_rate_limit(&state, &headers)?;
 
     let share = state.share_service.access_share(&code).await?;
     let entry = state.entry_repo.find_by_id(&share.entry_id).await?;

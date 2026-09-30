@@ -64,6 +64,7 @@ pub struct AppState {
     pub login_attempt_limiter: Arc<LoginAttemptLimiter>,
     /// FTP 批量导入的运行计数（由 bin 装配注入，HTTP 与 FTP 共用同一实例）。
     pub ingest_stats: Arc<vfiles_app::IngestStats>,
+    /// Public share-code resolution and download limiter.
     pub share_download_limiter: Arc<FixedWindowLimiter>,
     /// 用户仓储（令牌鉴权时补全用户信息）。
     pub user_repo: std::sync::Arc<dyn vfiles_domain::UserRepo + Send + Sync>,
