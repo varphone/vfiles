@@ -28,6 +28,7 @@ use vfiles_infra_sqlite::{
 struct TestApp {
     app: axum::Router<()>,
     db_pool: SqlitePool,
+    browser_origin: String,
     _temp_dir: TempDir,
 }
 
@@ -229,6 +230,7 @@ impl TestApp {
         config.http.cookie_secure_override = cookie_secure_override;
         config.features = features;
         config.limits.rate_limit_requests_per_minute = 60;
+        let browser_origin = config.http.public_base_url.origin().ascii_serialization();
         if let Some(max_attempts) = login_rate_limit_max_attempts {
             config.auth.login_rate_limit.enabled = true;
             config.auth.login_rate_limit.window_ms = 300_000;
@@ -315,6 +317,7 @@ impl TestApp {
         Self {
             app: build_router(state),
             db_pool: pool,
+            browser_origin,
             _temp_dir: temp_dir,
         }
     }
@@ -337,6 +340,8 @@ impl TestApp {
             Request::builder()
                 .method(method)
                 .uri(uri)
+                .header(header::ORIGIN, &self.browser_origin)
+                .header("sec-fetch-site", "same-origin")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(body.to_string()))
                 .expect("request should build"),
@@ -353,6 +358,17 @@ impl TestApp {
             header::COOKIE,
             HeaderValue::from_str(cookie).expect("cookie header should be valid"),
         );
+        request
+            .headers_mut()
+            .entry(header::ORIGIN)
+            .or_insert_with(|| {
+                HeaderValue::from_str(&self.browser_origin)
+                    .expect("test browser origin should be a valid header")
+            });
+        request
+            .headers_mut()
+            .entry("sec-fetch-site")
+            .or_insert(HeaderValue::from_static("same-origin"));
         self.request(request).await
     }
 
@@ -3155,6 +3171,8 @@ async fn login_rejects_oversized_json_bodies() {
             Request::builder()
                 .method(Method::POST)
                 .uri("/api/auth/login")
+                .header(header::ORIGIN, &app.browser_origin)
+                .header("sec-fetch-site", "same-origin")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(body))
                 .expect("oversized login request should build"),
@@ -3175,6 +3193,8 @@ async fn login_rate_limit_blocks_repeated_failed_attempts() {
                 Request::builder()
                     .method(Method::POST)
                     .uri("/api/auth/login")
+                    .header(header::ORIGIN, &app.browser_origin)
+                    .header("sec-fetch-site", "same-origin")
                     .header(header::CONTENT_TYPE, "application/json")
                     .header("x-forwarded-for", "203.0.113.10")
                     .body(Body::from(
@@ -3196,6 +3216,8 @@ async fn login_rate_limit_blocks_repeated_failed_attempts() {
             Request::builder()
                 .method(Method::POST)
                 .uri("/api/auth/login")
+                .header(header::ORIGIN, &app.browser_origin)
+                .header("sec-fetch-site", "same-origin")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header("x-forwarded-for", "203.0.113.10")
                 .body(Body::from(
@@ -3229,6 +3251,8 @@ async fn login_rate_limit_cannot_be_bypassed_with_spoofed_forwarded_ips() {
                 .method(Method::POST)
                 .uri("/api/auth/login")
                 .extension(peer)
+                .header(header::ORIGIN, &app.browser_origin)
+                .header("sec-fetch-site", "same-origin")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header("x-forwarded-for", "198.51.100.1")
                 .body(Body::from(
@@ -3249,6 +3273,8 @@ async fn login_rate_limit_cannot_be_bypassed_with_spoofed_forwarded_ips() {
                 .method(Method::POST)
                 .uri("/api/auth/login")
                 .extension(peer)
+                .header(header::ORIGIN, &app.browser_origin)
+                .header("sec-fetch-site", "same-origin")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header("x-forwarded-for", "198.51.100.2")
                 .body(Body::from(
@@ -3275,6 +3301,8 @@ async fn successful_login_clears_failed_attempt_counter() {
                 Request::builder()
                     .method(Method::POST)
                     .uri("/api/auth/login")
+                    .header(header::ORIGIN, &app.browser_origin)
+                    .header("sec-fetch-site", "same-origin")
                     .header(header::CONTENT_TYPE, "application/json")
                     .header("x-forwarded-for", "203.0.113.10")
                     .body(Body::from(
@@ -3296,6 +3324,8 @@ async fn successful_login_clears_failed_attempt_counter() {
             Request::builder()
                 .method(Method::POST)
                 .uri("/api/auth/login")
+                .header(header::ORIGIN, &app.browser_origin)
+                .header("sec-fetch-site", "same-origin")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header("x-forwarded-for", "203.0.113.10")
                 .body(Body::from(
@@ -3316,6 +3346,8 @@ async fn successful_login_clears_failed_attempt_counter() {
             Request::builder()
                 .method(Method::POST)
                 .uri("/api/auth/login")
+                .header(header::ORIGIN, &app.browser_origin)
+                .header("sec-fetch-site", "same-origin")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header("x-forwarded-for", "203.0.113.10")
                 .body(Body::from(
@@ -3464,7 +3496,7 @@ async fn cors_preflight_allows_configured_public_origin_with_credentials() {
 }
 
 #[tokio::test]
-async fn upload_blocks_untrusted_browser_origins_and_keeps_cli_access() {
+async fn upload_blocks_untrusted_browser_origins_and_cookie_only_originless_writes() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
 
@@ -3502,18 +3534,18 @@ async fn upload_blocks_untrusted_browser_origins_and_keeps_cli_access() {
         .await;
     assert_eq!(allowed.status(), StatusCode::OK);
 
-    let cli_upload = app
-        .request_with_cookie(
+    let originless_cookie_upload = app
+        .request(
             Request::builder()
                 .method(Method::PUT)
                 .uri("/api/files/upload?path=cli-upload.txt")
+                .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/octet-stream")
-                .body(Body::from("CLI upload"))
-                .expect("originless CLI upload request should build"),
-            &cookie,
+                .body(Body::from("originless cookie upload"))
+                .expect("originless cookie upload request should build"),
         )
         .await;
-    assert_eq!(cli_upload.status(), StatusCode::OK);
+    assert_eq!(originless_cookie_upload.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -4720,6 +4752,8 @@ async fn put_upload_accepts_raw_body() {
             Request::builder()
                 .method(Method::PUT)
                 .uri("/api/files/upload?path=ci&filename=a.txt")
+                .header(header::ORIGIN, &app.browser_origin)
+                .header("sec-fetch-site", "same-origin")
                 .body(Body::from("x".as_bytes().to_vec()))
                 .expect("request should build"),
         )
@@ -4995,6 +5029,20 @@ async fn access_token_authenticates_api_requests() {
         )
         .await;
     assert_eq!(list.status(), StatusCode::OK, "令牌应能列目录");
+
+    // CLI 上传不携带浏览器来源元数据，应通过 Bearer 令牌鉴权。
+    let upload = app
+        .request(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/files/upload?path=cli-upload.txt")
+                .header(header::AUTHORIZATION, &bearer)
+                .header(header::CONTENT_TYPE, "application/octet-stream")
+                .body(Body::from("uploaded with an access token"))
+                .expect("token upload request should build"),
+        )
+        .await;
+    assert_eq!(upload.status(), StatusCode::OK, "令牌应能在无来源头时上传");
 
     // 后续 Bearer 请求应在节流窗口内避免重复写入使用时间。
     let token_id = payload["token"]["id"].as_str().expect("token id");
@@ -7216,6 +7264,8 @@ async fn malformed_json_body_uses_the_standard_error_envelope() {
             Request::builder()
                 .method("POST")
                 .uri("/api/auth/login")
+                .header(header::ORIGIN, &app.browser_origin)
+                .header("sec-fetch-site", "same-origin")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("{not-json"))
                 .expect("request should build"),
@@ -8005,6 +8055,8 @@ async fn cancelled_raw_upload_removes_its_temporary_file() {
     let request = Request::builder()
         .method(Method::PUT)
         .uri("/api/files/upload?path=cancelled.txt")
+        .header(header::ORIGIN, &app.browser_origin)
+        .header("sec-fetch-site", "same-origin")
         .header(header::COOKIE, admin_cookie)
         .body(Body::from_stream(body_stream))
         .expect("request should build");
@@ -8056,6 +8108,8 @@ async fn cancelled_multipart_upload_removes_its_temporary_file() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/api/files/upload")
+        .header(header::ORIGIN, &app.browser_origin)
+        .header("sec-fetch-site", "same-origin")
         .header(header::COOKIE, admin_cookie)
         .header(
             header::CONTENT_TYPE,

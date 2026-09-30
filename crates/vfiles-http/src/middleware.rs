@@ -200,7 +200,9 @@ pub async fn security_headers_middleware(
 ///
 /// CORS does not stop HTML forms from submitting `multipart/form-data`; this guard
 /// covers those requests as well as cross-origin fetches. Requests without browser
-/// origin metadata remain available to command-line clients.
+/// origin metadata remain available to command-line clients that authenticate with
+/// an access token; cookie-only writes fail closed when the browser gives no origin
+/// signal.
 pub async fn write_origin_guard_middleware(
     State(allowed_origins): State<std::sync::Arc<Vec<String>>>,
     req: Request,
@@ -243,7 +245,17 @@ fn is_write_origin_allowed(
                 .is_ok_and(|value| value.eq_ignore_ascii_case("same-origin"));
     }
 
-    true
+    has_bearer_access_token(headers)
+}
+
+fn has_bearer_access_token(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split_once(' '))
+        .is_some_and(|(scheme, token)| {
+            scheme.eq_ignore_ascii_case("bearer") && token.trim().starts_with("vfat_")
+        })
 }
 
 /// Read only the internal value installed by `client_ip_middleware`.
@@ -612,12 +624,33 @@ mod tests {
         ));
 
         headers.clear();
+        assert!(!is_write_origin_allowed(
+            &Method::PUT,
+            &headers,
+            &allowed_origins
+        ));
+
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer vfat_command_line_token"),
+        );
         assert!(is_write_origin_allowed(
             &Method::PUT,
             &headers,
             &allowed_origins
         ));
 
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Basic dXNlcjpwYXNz"),
+        );
+        assert!(!is_write_origin_allowed(
+            &Method::PUT,
+            &headers,
+            &allowed_origins
+        ));
+
+        headers.clear();
         headers.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
         assert!(is_write_origin_allowed(
             &Method::DELETE,
