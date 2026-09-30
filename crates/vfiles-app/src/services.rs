@@ -4716,7 +4716,17 @@ where
     }
 
     pub async fn list_users(&self, page: i64, page_size: i64) -> DomainResult<AdminUserList> {
-        let offset = (page - 1) * page_size;
+        if page < 1 || page_size < 1 {
+            return Err(DomainError::Validation {
+                message: "Pagination parameters must be positive".to_string(),
+            });
+        }
+        let offset = page
+            .checked_sub(1)
+            .and_then(|zero_based_page| zero_based_page.checked_mul(page_size))
+            .ok_or_else(|| DomainError::Validation {
+                message: "User list page offset is out of range".to_string(),
+            })?;
         let users = self.admin_repo.list_users(page_size, offset).await?;
         let total_count = self.admin_repo.count_users().await?;
 

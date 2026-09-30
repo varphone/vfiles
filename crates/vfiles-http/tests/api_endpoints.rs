@@ -3007,6 +3007,31 @@ async fn session_bootstrap_and_admin_routes_require_authenticated_admin() {
 }
 
 #[tokio::test]
+async fn admin_user_list_rejects_page_offset_overflow() {
+    let app = TestApp::new().await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+
+    let response = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/admin/users?page=9223372036854775807&page_size=100")
+                .body(Body::empty())
+                .expect("overflowing page request should build"),
+            &admin_cookie,
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let payload = response_json(response).await;
+    assert_eq!(payload["code"], "VALIDATION_FAILED");
+    assert!(
+        payload["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("page offset is out of range"))
+    );
+}
+
+#[tokio::test]
 async fn login_accepts_camel_case_username_field() {
     let app = TestApp::new().await;
 
