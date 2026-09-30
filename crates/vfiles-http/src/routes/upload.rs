@@ -1,5 +1,12 @@
 //! File upload routes.
 
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::{LazyLock, Mutex},
+    time::{Duration, SystemTime},
+};
+
 use axum::{
     Json, Router,
     extract::DefaultBodyLimit,
@@ -23,14 +30,24 @@ const MAX_MULTIPART_METADATA_FIELD_BYTES: usize = 64 * 1024;
 const MAX_MULTIPART_METADATA_BYTES: usize = 256 * 1024;
 const MAX_MULTIPART_FIELD_COUNT: usize = 16;
 
-struct TempUploadFile(std::path::PathBuf);
+static ACTIVE_TEMP_UPLOAD_FILES: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+fn active_temp_upload_files() -> std::sync::MutexGuard<'static, HashSet<PathBuf>> {
+    ACTIVE_TEMP_UPLOAD_FILES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+struct TempUploadFile(PathBuf);
 
 impl TempUploadFile {
-    fn new(path: std::path::PathBuf) -> Self {
+    fn new(path: PathBuf) -> Self {
+        active_temp_upload_files().insert(path.clone());
         Self(path)
     }
 
-    fn path(&self) -> &std::path::Path {
+    fn path(&self) -> &Path {
         &self.0
     }
 }
@@ -38,10 +55,65 @@ impl TempUploadFile {
 impl Drop for TempUploadFile {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
+        active_temp_upload_files().remove(&self.0);
     }
 }
 
-async fn create_temp_upload_file(path: &std::path::Path) -> ApiResult<tokio::fs::File> {
+/// Remove abandoned HTTP upload spool files while preserving active requests.
+pub async fn cleanup_stale_upload_temp_files(
+    temp_dir: &Path,
+    max_age: Duration,
+) -> std::io::Result<(u64, u64)> {
+    let Some(cutoff) = SystemTime::now().checked_sub(max_age) else {
+        return Ok((0, 0));
+    };
+    let mut entries = match tokio::fs::read_dir(temp_dir).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((0, 0)),
+        Err(error) => return Err(error),
+    };
+    let mut removed = 0_u64;
+    let mut freed_bytes = 0_u64;
+
+    while let Some(entry) = entries.next_entry().await? {
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let upload_id = ["put-upload-", "single-upload-"].iter().find_map(|prefix| {
+            name.strip_prefix(prefix)
+                .and_then(|name| name.strip_suffix(".tmp"))
+        });
+        if !upload_id.is_some_and(|upload_id| uuid::Uuid::parse_str(upload_id).is_ok()) {
+            continue;
+        }
+
+        let path = entry.path();
+        if active_temp_upload_files().contains(&path) {
+            continue;
+        }
+        let metadata = match tokio::fs::symlink_metadata(&path).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        if !metadata.is_file() || !metadata.modified().is_ok_and(|modified| modified < cutoff) {
+            continue;
+        }
+
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => {
+                removed = removed.saturating_add(1);
+                freed_bytes = freed_bytes.saturating_add(metadata.len());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    Ok((removed, freed_bytes))
+}
+
+async fn create_temp_upload_file(path: &Path) -> ApiResult<tokio::fs::File> {
     let file = tokio::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -768,4 +840,73 @@ async fn finish_single_upload(input: SingleUploadInput<'_>) -> ApiResult<Json<se
         "path": completed.entry.path_norm.as_str(),
         "version_id": completed.version.id.to_string(),
     })))
+}
+
+#[cfg(test)]
+mod temp_upload_cleanup_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cleanup_removes_only_old_managed_files_not_active_uploads() {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let stale_path = dir
+            .path()
+            .join(format!("put-upload-{}.tmp", uuid::Uuid::new_v4()));
+        let active_path = dir
+            .path()
+            .join(format!("single-upload-{}.tmp", uuid::Uuid::new_v4()));
+        let recent_path = dir
+            .path()
+            .join(format!("put-upload-{}.tmp", uuid::Uuid::new_v4()));
+        let invalid_name_path = dir.path().join("put-upload-invalid.tmp");
+        let unrelated_path = dir.path().join("other-upload.tmp");
+
+        for path in [
+            &stale_path,
+            &active_path,
+            &recent_path,
+            &invalid_name_path,
+            &unrelated_path,
+        ] {
+            std::fs::write(path, b"temporary data").expect("temporary file should be written");
+        }
+        let old = SystemTime::now() - Duration::from_secs(48 * 60 * 60);
+        for path in [
+            &stale_path,
+            &active_path,
+            &invalid_name_path,
+            &unrelated_path,
+        ] {
+            std::fs::File::open(path)
+                .expect("temporary file should open")
+                .set_modified(old)
+                .expect("temporary file mtime should be set");
+        }
+        let active_guard = TempUploadFile::new(active_path.clone());
+
+        let (removed, freed_bytes) =
+            cleanup_stale_upload_temp_files(dir.path(), Duration::from_secs(24 * 60 * 60))
+                .await
+                .expect("stale temporary uploads should be cleaned");
+
+        assert_eq!(removed, 1);
+        assert_eq!(freed_bytes, b"temporary data".len() as u64);
+        assert!(!stale_path.exists(), "abandoned upload should be removed");
+        assert!(active_path.exists(), "active upload should be retained");
+        assert!(recent_path.exists(), "recent upload should be retained");
+        assert!(
+            invalid_name_path.exists(),
+            "unknown upload name should be retained"
+        );
+        assert!(
+            unrelated_path.exists(),
+            "unrelated temp file should be retained"
+        );
+
+        drop(active_guard);
+        assert!(
+            !active_path.exists(),
+            "request guard should remove its temp file"
+        );
+    }
 }

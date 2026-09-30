@@ -1475,6 +1475,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     // 上传会话清理独立于可选的通用维护任务，避免默认关闭维护时遗留过期分片。
     let upload_cleanup_task = tokio::spawn(run_upload_session_cleanup_loop(
         upload_store,
+        paths.tmp.as_std_path().to_path_buf(),
         service_shutdown_rx.clone(),
     ));
 
@@ -1681,6 +1682,7 @@ async fn run_maintenance_loop(
 /// 定期删除已过期且长时间无活动的分片上传会话。
 async fn run_upload_session_cleanup_loop(
     upload_store: FsUploadStore,
+    http_upload_temp_dir: PathBuf,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     let mut ticker = tokio::time::interval(Duration::from_secs(6 * 60 * 60));
@@ -1688,15 +1690,30 @@ async fn run_upload_session_cleanup_loop(
 
     loop {
         tokio::select! {
-            _ = ticker.tick() => match upload_store.cleanup_expired_sessions().await {
-                Ok(removed) if removed > 0 => {
-                    tracing::info!(removed, "Expired upload sessions cleaned up");
+            _ = ticker.tick() => {
+                match vfiles_http::routes::upload::cleanup_stale_upload_temp_files(
+                    &http_upload_temp_dir,
+                    Duration::from_secs(24 * 60 * 60),
+                ).await {
+                    Ok((removed, freed_bytes)) if removed > 0 => {
+                        tracing::info!(removed, freed_bytes, "Abandoned HTTP upload files cleaned up");
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, "Failed to clean abandoned HTTP upload files");
+                    }
                 }
-                Ok(_) => {}
-                Err(error) => {
-                    tracing::warn!(%error, "Failed to clean expired upload sessions");
+
+                match upload_store.cleanup_expired_sessions().await {
+                    Ok(removed) if removed > 0 => {
+                        tracing::info!(removed, "Expired upload sessions cleaned up");
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, "Failed to clean expired upload sessions");
+                    }
                 }
-            },
+            }
             _ = shutdown.changed() => {
                 tracing::info!("Upload session cleanup stopped");
                 return;
