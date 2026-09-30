@@ -7,13 +7,14 @@
     "build": "vite build && node scripts/precompress.mjs",
     "preview": "vite preview",
     "lint": "eslint .",
+    "typecheck": "vue-tsc --noEmit",
     "fmt": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint:styles": "node scripts/check-dead-styles.mjs",
     "ui:sweep": "node scripts/ui-sweep.mjs",
-    "check": "bun run lint && bun run lint:styles && bun run test",
+    "check": "bun run lint && bun run lint:styles && bun run typecheck && bun run test",
     "size:check": "node scripts/check-size.mjs"
   },
   "overrides": {

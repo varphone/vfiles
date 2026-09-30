@@ -179,7 +179,9 @@ describe("files store", () => {
     const slow = deferred<FileInfo[]>();
     getFilesMock.mockReturnValueOnce(slow.promise);
     const pending = store.loadMoreFiles();
-    const slowSignal = getFilesPageMock.mock.calls.at(-1)?.[1]?.signal;
+    const lastPageCall =
+      getFilesPageMock.mock.calls[getFilesPageMock.mock.calls.length - 1];
+    const slowSignal = lastPageCall?.[1]?.signal;
 
     // 用户切到别的目录，旧目录的第二页随后才返回
     getFilesMock.mockImplementation(async () => [file("other.txt")]);

@@ -164,6 +164,7 @@ describe("useFileSearch", () => {
     searchFilesPageMock.mockResolvedValueOnce({
       items: [fileInfo("report-1.txt")],
       hasMore: false,
+      resultsMayBeIncomplete: false,
       limit: 100,
       offset: 0,
     });
@@ -181,6 +182,7 @@ describe("useFileSearch", () => {
     searchFilesPageMock.mockResolvedValueOnce({
       items: [fileInfo("first-1.txt")],
       hasMore: true,
+      resultsMayBeIncomplete: false,
       limit: 100,
       offset: 0,
     });
@@ -199,6 +201,7 @@ describe("useFileSearch", () => {
     searchFilesPageMock.mockResolvedValueOnce({
       items: [fileInfo("second-1.txt")],
       hasMore: false,
+      resultsMayBeIncomplete: false,
       limit: 100,
       offset: 0,
     });

@@ -935,6 +935,7 @@ import ShareDialog from "../common/ShareDialog.vue";
 import { copyText } from "../../utils/clipboard";
 import { useDownloadQueue } from "../../composables/useDownloadQueue";
 import { useFilePreview } from "../../composables/useFilePreview";
+import { useDocumentEventListener } from "../../composables/useDocumentEventListener";
 import {
   useFileSearch,
   type SearchResultFilter,
@@ -970,18 +971,16 @@ let pendingScrollRestore: number | null = null;
 
 // 滚动快照（r139 终修 ✓ 瞬时读 scrollTop 输给点击竞态 ✗ → scroll 事件持续追踪式）
 let lastScrollTop = 0;
-if (typeof document !== "undefined") {
-  document.addEventListener(
-    "scroll",
-    (event) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.classList?.contains("desktop-list-shell")) {
-        lastScrollTop = target.scrollTop;
-      }
-    },
-    true,
-  );
-}
+useDocumentEventListener(
+  "scroll",
+  (event) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.classList?.contains("desktop-list-shell")) {
+      lastScrollTop = target.scrollTop;
+    }
+  },
+  true,
+);
 
 function stashScroll(path: string) {
   scrollMemory.set(path, lastScrollTop);
