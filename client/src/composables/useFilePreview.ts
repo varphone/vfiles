@@ -7,6 +7,11 @@ import {
   loadHighlight,
   renderHighlightedCode,
 } from "../utils/highlight";
+import {
+  escapeHtml,
+  safeImageSrc,
+  safeLinkHref,
+} from "../utils/markdownSecurity";
 import type { FileInfo } from "../types";
 
 // 动态依赖只加载一次，后续预览复用
@@ -118,34 +123,6 @@ export function guessMimeByExt(filePath: string): string {
   if (ext === "flac") return "audio/flac";
 
   return "application/octet-stream";
-}
-
-export function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-export function safeLinkHref(href: string | null | undefined): string {
-  const raw = (href || "").trim();
-  if (!raw) return "#";
-  if (raw.startsWith("#")) return raw;
-  if (raw.startsWith("/")) return raw;
-  if (/^https?:\/\//i.test(raw)) return raw;
-  if (/^mailto:/i.test(raw)) return raw;
-  return "#";
-}
-
-export function safeImageSrc(src: string | null | undefined): string {
-  const raw = (src || "").trim();
-  if (!raw) return "";
-  if (/^https?:\/\//i.test(raw)) return raw;
-  if (/^data:image\//i.test(raw)) return raw;
-  if (raw.startsWith("/")) return raw;
-  return "";
 }
 
 /**

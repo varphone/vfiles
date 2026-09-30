@@ -385,6 +385,11 @@ import { confirmDialog } from "../../composables/dialog";
 import { previewMaxBytes } from "../../composables/useFilePreview";
 import type { FileHistory } from "../../types";
 import { loadHighlight } from "../../utils/highlight";
+import {
+  escapeHtml,
+  safeImageSrc,
+  safeLinkHref,
+} from "../../utils/markdownSecurity";
 import CommitList from "./CommitList.vue";
 
 let cachedMarked: any | null = null;
@@ -676,35 +681,6 @@ function getExtension(p: string): string {
   const idx = name.lastIndexOf(".");
   if (idx <= 0 || idx === name.length - 1) return "";
   return name.slice(idx + 1).toLowerCase();
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function safeLinkHref(href: string | null | undefined): string {
-  const raw = (href || "").trim();
-  if (!raw) return "#";
-  // 允许相对路径、锚点、http(s)、mailto
-  if (raw.startsWith("#")) return raw;
-  if (raw.startsWith("/")) return raw;
-  if (/^https?:\/\//i.test(raw)) return raw;
-  if (/^mailto:/i.test(raw)) return raw;
-  return "#";
-}
-
-function safeImageSrc(src: string | null | undefined): string {
-  const raw = (src || "").trim();
-  if (!raw) return "";
-  if (/^https?:\/\//i.test(raw)) return raw;
-  if (/^data:image\//i.test(raw)) return raw;
-  if (raw.startsWith("/")) return raw;
-  return "";
 }
 
 async function getMarked() {

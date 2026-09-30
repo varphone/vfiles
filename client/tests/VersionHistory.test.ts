@@ -56,9 +56,9 @@ function history() {
   };
 }
 
-function renderHistory() {
+function renderHistory(filePath = "notes.txt") {
   return render(VersionHistory as any, {
-    props: { filePath: "notes.txt" },
+    props: { filePath },
     global: { plugins: [createPinia()] },
   });
 }
@@ -267,6 +267,32 @@ describe("VersionHistory.vue", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(container.querySelector(".history-detail-label")).toBeNull();
     expect(container.querySelector(".preview-text")).toBeNull();
+  });
+
+  it("does not load remote markdown images in historical previews", async () => {
+    contentMock.mockResolvedValueOnce(
+      new Blob([
+        "![remote](https://tracker.example/pixel.png) ![local](/assets/image.png)",
+      ]),
+    );
+    const { container } = renderHistory("notes.md");
+    await waitFor(() =>
+      expect(container.querySelectorAll(".history-row")).toHaveLength(2),
+    );
+
+    const firstRow = container.querySelector(".history-row") as HTMLElement;
+    await fireEvent.click(
+      within(firstRow).getByRole("button", { name: "预览" }),
+    );
+
+    await waitFor(() =>
+      expect(container.querySelector(".markdown-body img")).not.toBeNull(),
+    );
+    const images =
+      container.querySelectorAll<HTMLImageElement>(".markdown-body img");
+    expect(images).toHaveLength(1);
+    expect(images[0].getAttribute("src")).toBe("/assets/image.png");
+    expect(container.innerHTML).not.toContain("tracker.example");
   });
 
   it("aborts stale version diff loads and ignores late responses", async () => {

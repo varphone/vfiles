@@ -2,13 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 import {
   detectPreviewKind,
-  escapeHtml,
   guessMimeByExt,
   previewMaxBytes,
-  safeImageSrc,
-  safeLinkHref,
   useFilePreview,
 } from "../src/composables/useFilePreview";
+import {
+  escapeHtml,
+  safeImageSrc,
+  safeLinkHref,
+} from "../src/utils/markdownSecurity";
 import type { FileInfo } from "../src/types";
 
 const { getFileContentMock } = vi.hoisted(() => ({
@@ -99,13 +101,14 @@ describe("preview sanitizers", () => {
   });
 
   it("only allows safe image sources", () => {
-    expect(safeImageSrc("https://example.com/a.png")).toBe(
-      "https://example.com/a.png",
-    );
+    expect(safeImageSrc("https://example.com/a.png")).toBe("");
+    expect(safeImageSrc("//example.com/a.png")).toBe("");
+    expect(safeImageSrc("/\\example.com/a.png")).toBe("");
     expect(safeImageSrc("/assets/a.png")).toBe("/assets/a.png");
     expect(safeImageSrc("data:image/png;base64,AAAA")).toBe(
       "data:image/png;base64,AAAA",
     );
+    expect(safeImageSrc("data:image/svg+xml;base64,PHN2Zz4=")).toBe("");
     expect(safeImageSrc("javascript:alert(1)")).toBe("");
     expect(safeImageSrc("data:text/html,<b>")).toBe("");
     expect(safeImageSrc("relative.png")).toBe("");
@@ -140,6 +143,23 @@ describe("useFilePreview rendering", () => {
 
     expect(preview.preview.value.html).toContain("<h1");
     expect(preview.preview.value.html).not.toContain("hljs");
+  });
+
+  it("does not render remote markdown images", async () => {
+    getFileContentMock.mockResolvedValueOnce(
+      new Blob([
+        "![remote](https://tracker.example/pixel.png) ![network path](//tracker.example/pixel.png) ![local](/assets/image.png) ![inline](data:image/png;base64,AAAA)",
+      ]),
+    );
+    const preview = useFilePreview(ref(undefined));
+
+    await preview.openPreview("notes/readme.md");
+
+    expect(preview.preview.value.html).not.toContain("tracker.example");
+    expect(preview.preview.value.html).toContain('src="/assets/image.png"');
+    expect(preview.preview.value.html).toContain(
+      'src="data:image/png;base64,AAAA"',
+    );
   });
 
   it("highlights code files by their extension", async () => {
