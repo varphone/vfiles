@@ -273,7 +273,7 @@ async fn complete_upload(
     headers: axum::http::HeaderMap,
     axum::extract::Path(upload_id_str): axum::extract::Path<String>,
     axum::extract::State(state): axum::extract::State<AppState>,
-    req: Option<Json<CompleteUploadRequest>>,
+    req: Option<ApiJson<CompleteUploadRequest>>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let upload_id = upload_id_str
         .parse::<uuid::Uuid>()
@@ -289,7 +289,7 @@ async fn complete_upload(
     let ctx = crate::routes::protected_request_context(&state, &jar).await?;
 
     tracing::info!("Completing upload session: {}", upload_id);
-    let message = req.and_then(|Json(body)| body.message);
+    let message = req.and_then(|ApiJson(body)| body.message);
     let completed = state
         .upload_service
         .complete_upload(&upload_id, None, message.as_deref())

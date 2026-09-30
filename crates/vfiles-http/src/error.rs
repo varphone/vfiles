@@ -31,13 +31,67 @@ where
     ) -> Result<Self, Self::Rejection> {
         match axum::Json::<T>::from_request(request, state).await {
             Ok(axum::Json(value)) => Ok(ApiJson(value)),
-            Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
-                Err(ApiError::RequestBodyTooLarge)
+            Err(rejection) => Err(map_json_rejection(rejection)),
+        }
+    }
+}
+
+impl<S, T> axum::extract::OptionalFromRequest<S> for ApiJson<T>
+where
+    T: serde::de::DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(
+        request: axum::extract::Request,
+        state: &S,
+    ) -> Result<Option<Self>, Self::Rejection> {
+        let content_type = request
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .cloned();
+        let body =
+            <axum::body::Bytes as axum::extract::FromRequest<S>>::from_request(request, state)
+                .await
+                .map_err(|rejection| {
+                    if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                        ApiError::RequestBodyTooLarge
+                    } else {
+                        ApiError::Validation {
+                            field: "body".to_string(),
+                            message: rejection.body_text(),
+                        }
+                    }
+                })?;
+
+        let Some(content_type) = content_type else {
+            if body.is_empty() {
+                return Ok(None);
             }
-            Err(rejection) => Err(ApiError::Validation {
+            return Err(ApiError::Validation {
                 field: "body".to_string(),
-                message: rejection.body_text(),
-            }),
+                message: "A Content-Type header is required for a non-empty JSON body".to_string(),
+            });
+        };
+
+        let mut request = axum::extract::Request::new(axum::body::Body::from(body));
+        request
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_TYPE, content_type);
+        <ApiJson<T> as axum::extract::FromRequest<S>>::from_request(request, state)
+            .await
+            .map(Some)
+    }
+}
+
+fn map_json_rejection(rejection: axum::extract::rejection::JsonRejection) -> ApiError {
+    if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        ApiError::RequestBodyTooLarge
+    } else {
+        ApiError::Validation {
+            field: "body".to_string(),
+            message: rejection.body_text(),
         }
     }
 }

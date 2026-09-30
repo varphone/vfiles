@@ -1636,8 +1636,8 @@ async fn upload_control_json_bodies_are_bounded_and_multipart_stays_streamed() {
             "/api/files/upload/init",
             json!({
                 "path": "",
-                "filename": "bounded-control.json",
-                "size": 0,
+                "filename": "bounded-control.bin",
+                "size": 1,
                 "chunk_size": 1,
             }),
         )
@@ -1647,6 +1647,30 @@ async fn upload_control_json_bodies_are_bounded_and_multipart_stays_streamed() {
         .as_str()
         .expect("upload id should be present")
         .to_string();
+
+    let chunk = app
+        .bytes_request_as_admin(
+            Method::PUT,
+            &format!("/api/files/upload/chunks/{upload_id}/0"),
+            vec![b'x'],
+        )
+        .await;
+    assert_eq!(chunk.status(), StatusCode::OK);
+
+    let malformed_complete = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/files/upload/complete/{upload_id}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{not-json"))
+                .expect("malformed complete request should build"),
+        )
+        .await;
+    assert_eq!(malformed_complete.status(), StatusCode::BAD_REQUEST);
+    let payload = response_json(malformed_complete).await;
+    assert_eq!(payload["code"], "VALIDATION_FAILED");
+    assert_eq!(payload["details"]["field"], "body");
 
     let mut oversized_complete = serde_json::to_vec(&json!({ "message": "complete" }))
         .expect("complete request should serialize");
@@ -1662,6 +1686,37 @@ async fn upload_control_json_bodies_are_bounded_and_multipart_stays_streamed() {
         )
         .await;
     assert_eq!(complete.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(response_json(complete).await["code"], "PAYLOAD_TOO_LARGE");
+
+    let complete_without_content_type = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/files/upload/complete/{upload_id}"))
+                .body(Body::from(vec![b' '; MAX_CONTROL_BODY_BYTES + 1]))
+                .expect("oversized body without content type should build"),
+        )
+        .await;
+    assert_eq!(
+        complete_without_content_type.status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    assert_eq!(
+        response_json(complete_without_content_type).await["code"],
+        "PAYLOAD_TOO_LARGE"
+    );
+
+    let bodyless_complete = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/files/upload/complete/{upload_id}"))
+                .body(Body::empty())
+                .expect("bodyless complete request should build"),
+        )
+        .await;
+    assert_eq!(bodyless_complete.status(), StatusCode::OK);
+    assert_eq!(response_json(bodyless_complete).await["completed"], true);
 
     let large_file = vec![b'x'; 2 * 1024 * 1024 + 1];
     let (body, content_type) =
