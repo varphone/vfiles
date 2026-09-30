@@ -182,6 +182,11 @@ impl TestApp {
                 "GZIP:console.log('vfiles');",
             )
             .expect("gzip variant should be written");
+            std::fs::write(
+                frontend_dist.join("theme-init.js"),
+                "globalThis.vfilesThemeInitialized = true;",
+            )
+            .expect("theme initializer should be written");
             frontend_dist
         });
 
@@ -3555,6 +3560,25 @@ async fn request_id_and_security_headers_are_applied() {
             .expect("referrer policy header should be present"),
         "strict-origin-when-cross-origin"
     );
+    let content_security_policy = response
+        .headers()
+        .get("content-security-policy")
+        .expect("content security policy should be present")
+        .to_str()
+        .expect("content security policy should be valid text");
+    assert!(
+        content_security_policy
+            .split(';')
+            .any(|directive| directive.trim() == "default-src 'self'")
+    );
+    assert!(
+        content_security_policy
+            .split(';')
+            .any(|directive| directive.trim() == "script-src 'self'")
+    );
+    assert!(content_security_policy.contains("object-src 'none'"));
+    assert!(content_security_policy.contains("frame-src 'self' blob:"));
+    assert!(content_security_policy.contains("img-src 'self' blob: data:"));
 }
 
 #[tokio::test]
@@ -7344,6 +7368,26 @@ async fn backend_serves_static_frontend_and_spa_fallback() {
     );
     let root_body = String::from_utf8_lossy(&response_bytes(root_response).await).to_string();
     assert!(root_body.contains("vfiles-ui"));
+
+    let theme_response = app
+        .request(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/theme-init.js")
+                .body(Body::empty())
+                .expect("theme script request should build"),
+        )
+        .await;
+    assert_eq!(theme_response.status(), StatusCode::OK);
+    assert!(
+        theme_response
+            .headers()
+            .contains_key("content-security-policy")
+    );
+    assert!(
+        String::from_utf8_lossy(&response_bytes(theme_response).await)
+            .contains("vfilesThemeInitialized")
+    );
 
     let asset_response = app
         .request(

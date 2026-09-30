@@ -16,6 +16,21 @@ use axum::{
 use sha2::{Digest, Sha256};
 use vfiles_app::LoginRateLimitBlock;
 
+const CONTENT_SECURITY_POLICY: &str = concat!(
+    "default-src 'self'; ",
+    "base-uri 'self'; ",
+    "connect-src 'self'; ",
+    "form-action 'self'; ",
+    "frame-ancestors 'self'; ",
+    "frame-src 'self' blob:; ",
+    "img-src 'self' blob: data:; ",
+    "media-src 'self' blob:; ",
+    "object-src 'none'; ",
+    "script-src 'self'; ",
+    "style-src 'self' 'unsafe-inline'; ",
+    "worker-src 'self' blob:"
+);
+
 /// 登录限流实现在 `vfiles-app`（HTTP 与 FTP 共用），这里为既有调用点重新导出。
 pub use vfiles_app::{LoginAttemptLimiter, RateLimitPolicy};
 
@@ -126,6 +141,9 @@ pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
         .or_insert(HeaderValue::from_static(
             "camera=(), microphone=(), geolocation=()",
         ));
+    headers
+        .entry(HeaderName::from_static("content-security-policy"))
+        .or_insert(HeaderValue::from_static(CONTENT_SECURITY_POLICY));
 
     response
 }
