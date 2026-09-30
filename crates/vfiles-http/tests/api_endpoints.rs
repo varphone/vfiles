@@ -4068,6 +4068,26 @@ async fn share_management_page_bounds_sql_results_and_reports_continuation() {
         assert_eq!(created.status(), StatusCode::OK);
     }
 
+    let legacy = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/share/shares")
+                .body(Body::empty())
+                .expect("legacy share list request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(legacy.status(), StatusCode::OK);
+    let legacy_shares = response_json(legacy).await;
+    assert_eq!(legacy_shares.as_array().map(Vec::len), Some(3));
+    assert!(
+        legacy_shares
+            .as_array()
+            .into_iter()
+            .flatten()
+            .all(|share| share["code"].as_str().is_some_and(|code| code.len() == 8))
+    );
+
     let first = app
         .request_with_cookie(
             Request::builder()
@@ -4124,6 +4144,94 @@ async fn share_management_page_bounds_sql_results_and_reports_continuation() {
     let oversized_page = response_json(oversized_page).await;
     assert_eq!(oversized_page["limit"], 200);
     assert_eq!(oversized_page["items"].as_array().map(Vec::len), Some(3));
+}
+
+#[tokio::test]
+async fn legacy_share_listing_rejects_results_over_its_response_limit() {
+    const SHARE_COUNT: i64 = 201;
+
+    let app = TestApp::new().await;
+    app.upload_version("docs", "share.txt", b"shared file\n", "share source")
+        .await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+
+    let (namespace_id, entry_id): (String, String) =
+        sqlx::query_as("SELECT namespace_id, id FROM entries WHERE path = 'docs/share.txt'")
+            .fetch_one(&app.db_pool)
+            .await
+            .expect("shared entry should exist");
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'admin'")
+        .fetch_one(&app.db_pool)
+        .await
+        .expect("admin user should exist");
+
+    sqlx::query(
+        r#"
+        WITH RECURSIVE generated(number) AS (
+            SELECT 1
+            UNION ALL SELECT number + 1 FROM generated WHERE number < ?
+        )
+        INSERT INTO shares (id, namespace_id, entry_id, code, public_code, created_by)
+        SELECT
+            lower(hex(randomblob(16))),
+            ?,
+            ?,
+            lower(hex(randomblob(16))),
+            printf('s%07d', number),
+            ?
+        FROM generated
+        "#,
+    )
+    .bind(SHARE_COUNT)
+    .bind(&namespace_id)
+    .bind(&entry_id)
+    .bind(&user_id)
+    .execute(&app.db_pool)
+    .await
+    .expect("large share fixture should insert");
+
+    let legacy = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/share/shares")
+                .body(Body::empty())
+                .expect("legacy share list request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(legacy.status(), StatusCode::BAD_REQUEST);
+    let legacy_payload = response_json(legacy).await;
+    assert_eq!(legacy_payload["code"], "VALIDATION_FAILED");
+    assert!(
+        legacy_payload["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("/api/share/shares/page"))
+    );
+
+    let paginated = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/share/shares/page?limit=200&offset=0")
+                .body(Body::empty())
+                .expect("paginated share list request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(paginated.status(), StatusCode::OK);
+    let paginated_payload = response_json(paginated).await;
+    assert_eq!(paginated_payload["total"], SHARE_COUNT);
+    assert_eq!(
+        paginated_payload["items"].as_array().map(Vec::len),
+        Some(200)
+    );
+    assert_eq!(paginated_payload["has_more"], Value::Bool(true));
+    assert!(
+        paginated_payload["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .all(|share| share["code"].as_str().is_some_and(|code| code.len() == 8))
+    );
 }
 
 #[tokio::test]

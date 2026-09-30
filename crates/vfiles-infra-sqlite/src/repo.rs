@@ -9746,15 +9746,6 @@ impl ShareRepo for SqliteShareRepo {
         Ok(shares)
     }
 
-    async fn find_shares_with_entry_by_user(
-        &self,
-        user_id: &UserId,
-    ) -> DomainResult<Vec<ShareWithEntry>> {
-        self.find_shares_with_entry_by_user_page(user_id, u32::MAX, 0)
-            .await
-            .map(|(shares, _)| shares)
-    }
-
     async fn find_shares_with_entry_by_user_page(
         &self,
         user_id: &UserId,

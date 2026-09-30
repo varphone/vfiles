@@ -1437,11 +1437,6 @@ pub trait ShareRepo {
     async fn find_shares_by_entry(&self, entry_id: &EntryId) -> DomainResult<Vec<Share>>;
     async fn find_shares_by_user(&self, user_id: &UserId) -> DomainResult<Vec<Share>>;
 
-    /// 列出用户创建的分享，并附带被分享条目的路径/名称/类型。
-    async fn find_shares_with_entry_by_user(
-        &self,
-        user_id: &UserId,
-    ) -> DomainResult<Vec<ShareWithEntry>>;
     async fn find_shares_with_entry_by_user_page(
         &self,
         user_id: &UserId,

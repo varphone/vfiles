@@ -165,10 +165,17 @@ async fn list_shares(
 
     tracing::info!("Listing shares for user: {}", user_id.to_string());
 
-    let shares = state
+    let (shares, total) = state
         .share_service
-        .list_shares_with_entry_by_user(&user_id)
+        .list_shares_with_entry_by_user_page(&user_id, MAX_SHARE_PAGE_LIMIT, 0)
         .await?;
+    if total > u64::from(MAX_SHARE_PAGE_LIMIT) {
+        return Err(ApiError::Domain(DomainError::Validation {
+            message: format!(
+                "User has more than {MAX_SHARE_PAGE_LIMIT} active shares; use the paginated endpoint /api/share/shares/page"
+            ),
+        }));
+    }
 
     let dtos = shares.into_iter().map(ShareDto::from).collect();
 

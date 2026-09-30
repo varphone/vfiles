@@ -116,7 +116,7 @@ export interface AuditLogQueryParams {
   offset?: number;
 }
 
-/** 分享链接（GET /api/share/shares）。 */
+/** 分享链接（GET /api/share/shares/page）。 */
 export interface ShareLink {
   id: string;
   entry_id: string;

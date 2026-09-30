@@ -581,13 +581,6 @@ export const filesService = {
     return Array.isArray(payload) ? payload : [];
   },
 
-  /** 列出当前用户创建的分享链接（含被分享条目的名称/路径/类型）。 */
-  async listShares(): Promise<ShareLink[]> {
-    const response = await apiService.get<ShareLink[]>("/share/shares");
-    const payload = (response as any)?.data ?? response;
-    return Array.isArray(payload) ? payload : [];
-  },
-
   /** 按需分页读取分享管理列表，避免一次载入全部分享记录。 */
   async listSharesPage(opts: { limit: number; offset: number }): Promise<{
     items: ShareLink[];

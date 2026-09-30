@@ -4603,16 +4603,6 @@ where
         self.share_repo.find_shares_by_user(user_id).await
     }
 
-    /// 分享管理页使用：附带被分享条目的名称/路径/类型。
-    pub async fn list_shares_with_entry_by_user(
-        &self,
-        user_id: &UserId,
-    ) -> DomainResult<Vec<ShareWithEntry>> {
-        self.share_repo
-            .find_shares_with_entry_by_user(user_id)
-            .await
-    }
-
     pub async fn list_shares_with_entry_by_user_page(
         &self,
         user_id: &UserId,

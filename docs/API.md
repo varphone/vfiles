@@ -327,8 +327,9 @@ curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci
 创建分享（`POST /api/share/shares`）时 `expires_at` 可省略或用 `null`——
 服务端将其视为**永久链接**（不会自动失效，只能手动停止分享）。
 
-`GET /api/share/shares`（需要登录）列出当前用户创建且未停用的分享链接，
-结果已包含被分享条目的名称、路径与类型，便于直接展示：
+`GET /api/share/shares`（需要登录）以数组形式列出当前用户创建且未停用的分享链接，
+结果已包含被分享条目的名称、路径与类型，最多返回 200 条；超过上限时返回校验错误。
+旧数组接口的响应示例：
 
 ```json
 [
@@ -346,6 +347,19 @@ curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci
     "last_accessed_at": null
   }
 ]
+```
+
+分页查询使用 `GET /api/share/shares/page`，查询参数 `limit` 默认 100、最大 200，
+`offset` 默认 0；响应包含 `items`、`total`、`limit`、`offset` 和 `has_more`：
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "limit": 100,
+  "offset": 0,
+  "has_more": false
+}
 ```
 
 - `entry_kind` 为 `file` 或 `directory`；`entry_name` 由条目路径末段推导（数据库中条目只有路径）；
@@ -422,6 +436,7 @@ IPv6 字面量在 `example_command` 中带方括号。
 - `POST /api/share/shares`
   - Body: `path`, `expires_at?`（RFC3339）
 - `GET /api/share/shares`
+- `GET /api/share/shares/page?limit=100&offset=0`
 - `GET /api/share/shares/{code}`
 - `DELETE /api/share/shares/{code}`
 - `GET /api/share/shares/{code}/download`
