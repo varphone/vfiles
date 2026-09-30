@@ -9034,6 +9034,7 @@ pub struct SqliteSearchRepo<B> {
     pool: SqlitePool,
     blob_store: B,
     content_search_semaphore: std::sync::Arc<tokio::sync::Semaphore>,
+    content_search_request_semaphore: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl<B> SqliteSearchRepo<B> {
@@ -9043,6 +9044,9 @@ impl<B> SqliteSearchRepo<B> {
             blob_store,
             content_search_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(
                 CONTENT_SEARCH_CONCURRENCY,
+            )),
+            content_search_request_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(
+                MAX_CONCURRENT_CONTENT_SEARCH_REQUESTS,
             )),
         }
     }
@@ -9057,6 +9061,7 @@ where
             pool: self.pool.clone(),
             blob_store: self.blob_store.clone(),
             content_search_semaphore: self.content_search_semaphore.clone(),
+            content_search_request_semaphore: self.content_search_request_semaphore.clone(),
         }
     }
 }
@@ -9065,12 +9070,35 @@ where
 const MAX_FILENAME_SEARCH_CANDIDATES: i64 = 2000;
 /// 内容搜索最多扫描多少个候选文件。
 const MAX_CONTENT_SEARCH_CANDIDATES: i64 = 500;
+/// 内容搜索单文件扫描上限，超出时跳过并在响应中标记结果可能不完整。
+const MAX_CONTENT_SEARCH_BYTES_PER_FILE: u64 = 16 * 1024 * 1024;
+/// 单次内容搜索最多读取的字节数。
+const MAX_CONTENT_SEARCH_BYTES_PER_REQUEST: u64 = 128 * 1024 * 1024;
 /// 同时扫描的内容文件数；有界并发缩短 I/O 等待，同时限制打开的 blob 流。
 const CONTENT_SEARCH_CONCURRENCY: usize = 8;
+/// 同一搜索仓储同时处理的内容搜索请求数；超出时快速返回而不堆积等待任务。
+const MAX_CONCURRENT_CONTENT_SEARCH_REQUESTS: usize = 4;
 /// 每个内容搜索结果最多保留多少条行命中，避免重复关键词膨胀响应。
 const MAX_CONTENT_MATCHES_PER_FILE: usize = 20;
 /// 每个匹配行上下文保留命中附近的字符数。
 const CONTENT_SEARCH_CONTEXT_RADIUS: usize = 64;
+
+fn reserve_content_search_bytes(size_bytes: Option<i64>, remaining: &mut u64) -> Option<u64> {
+    let size = size_bytes.and_then(|value| u64::try_from(value).ok())?;
+    if size > MAX_CONTENT_SEARCH_BYTES_PER_FILE || size > *remaining {
+        return None;
+    }
+    *remaining -= size;
+    Some(size)
+}
+
+fn try_acquire_content_search_request(
+    semaphore: &tokio::sync::Semaphore,
+) -> DomainResult<tokio::sync::SemaphorePermit<'_>> {
+    semaphore
+        .try_acquire()
+        .map_err(|_| DomainError::RateLimited)
+}
 
 #[derive(sqlx::FromRow)]
 struct ContentSearchRow {
@@ -9252,23 +9280,47 @@ impl ContentLineScanner {
     }
 }
 
+#[cfg(test)]
 async fn scan_content_matches<R>(
-    mut reader: R,
+    reader: R,
     search_term: &str,
 ) -> std::io::Result<(Vec<SearchMatch>, bool)>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
+    let (matches, matches_truncated, _) =
+        scan_content_matches_bounded(reader, search_term, u64::MAX).await?;
+    Ok((matches, matches_truncated))
+}
+
+async fn scan_content_matches_bounded<R>(
+    reader: R,
+    search_term: &str,
+    max_bytes: u64,
+) -> std::io::Result<(Vec<SearchMatch>, bool, bool)>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
     const CHUNK_SIZE: usize = 8192;
+    let mut reader = reader.take(max_bytes.saturating_add(1));
     let mut scanner = ContentLineScanner::new(search_term);
     let mut chunk = [0_u8; CHUNK_SIZE];
     let mut pending = Vec::with_capacity(4);
+    let mut bytes_scanned = 0_u64;
+    let mut content_truncated = false;
     loop {
         let read = reader.read(&mut chunk).await?;
         if read == 0 {
             break;
         }
-        pending.extend_from_slice(&chunk[..read]);
+        let remaining = max_bytes.saturating_sub(bytes_scanned);
+        let allowed = usize::try_from(remaining.min(read as u64)).unwrap_or(read);
+        content_truncated = allowed < read;
+        pending.extend_from_slice(&chunk[..allowed]);
+        bytes_scanned = bytes_scanned.saturating_add(allowed as u64);
+        if allowed == 0 {
+            break;
+        }
         let valid_len = match std::str::from_utf8(&pending) {
             Ok(text) => text.len(),
             Err(error) if error.error_len().is_none() => error.valid_up_to(),
@@ -9291,14 +9343,18 @@ where
                 "content search encountered an incomplete UTF-8 sequence",
             ));
         }
+        if content_truncated {
+            break;
+        }
     }
-    if !pending.is_empty() {
+    if !content_truncated && !pending.is_empty() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "content search ended with an incomplete UTF-8 sequence",
         ));
     }
-    Ok(scanner.finish())
+    let (matches, matches_truncated) = scanner.finish();
+    Ok((matches, matches_truncated, content_truncated))
 }
 
 async fn acquire_content_search_permit(
@@ -9315,6 +9371,90 @@ async fn acquire_content_search_permit(
 #[cfg(test)]
 mod content_search_scanner_tests {
     use super::*;
+
+    #[test]
+    fn reserves_only_valid_sizes_within_per_file_and_request_budgets() {
+        let mut remaining = MAX_CONTENT_SEARCH_BYTES_PER_REQUEST;
+
+        assert_eq!(
+            reserve_content_search_bytes(Some(12), &mut remaining),
+            Some(12)
+        );
+        assert_eq!(remaining, MAX_CONTENT_SEARCH_BYTES_PER_REQUEST - 12);
+        assert_eq!(reserve_content_search_bytes(None, &mut remaining), None);
+        assert_eq!(reserve_content_search_bytes(Some(-1), &mut remaining), None);
+        assert_eq!(
+            reserve_content_search_bytes(
+                Some((MAX_CONTENT_SEARCH_BYTES_PER_FILE + 1) as i64),
+                &mut remaining
+            ),
+            None
+        );
+        assert_eq!(remaining, MAX_CONTENT_SEARCH_BYTES_PER_REQUEST - 12);
+
+        remaining = MAX_CONTENT_SEARCH_BYTES_PER_FILE;
+        assert_eq!(
+            reserve_content_search_bytes(
+                Some(MAX_CONTENT_SEARCH_BYTES_PER_FILE as i64),
+                &mut remaining
+            ),
+            Some(MAX_CONTENT_SEARCH_BYTES_PER_FILE)
+        );
+        assert_eq!(remaining, 0);
+        assert_eq!(reserve_content_search_bytes(Some(1), &mut remaining), None);
+    }
+
+    #[test]
+    fn content_search_request_admission_fails_fast_when_saturated() {
+        let semaphore = tokio::sync::Semaphore::new(0);
+        assert!(matches!(
+            try_acquire_content_search_request(&semaphore),
+            Err(DomainError::RateLimited)
+        ));
+
+        let semaphore = tokio::sync::Semaphore::new(1);
+        let permit = try_acquire_content_search_request(&semaphore)
+            .expect("available request capacity should be admitted");
+        assert_eq!(semaphore.available_permits(), 0);
+        drop(permit);
+        assert_eq!(semaphore.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn bounded_scan_reports_truncation_and_keeps_matches_before_the_limit() {
+        let content = b"needle\nmore bytes";
+        let (matches, matches_truncated, content_truncated) =
+            scan_content_matches_bounded(std::io::Cursor::new(content), "needle", 6)
+                .await
+                .expect("valid UTF-8 prefix should scan");
+
+        assert_eq!(matches.len(), 1);
+        assert!(!matches_truncated);
+        assert!(content_truncated);
+    }
+
+    #[tokio::test]
+    async fn bounded_scan_does_not_report_truncation_at_exact_eof() {
+        let (matches, matches_truncated, content_truncated) =
+            scan_content_matches_bounded(std::io::Cursor::new(b"needle"), "needle", 6)
+                .await
+                .expect("complete valid UTF-8 content should scan");
+
+        assert_eq!(matches.len(), 1);
+        assert!(!matches_truncated);
+        assert!(!content_truncated);
+    }
+
+    #[tokio::test]
+    async fn bounded_scan_does_not_find_matches_after_the_limit() {
+        let (matches, _, content_truncated) =
+            scan_content_matches_bounded(std::io::Cursor::new(b"prefix needle"), "needle", 6)
+                .await
+                .expect("valid UTF-8 prefix should scan");
+
+        assert!(matches.is_empty());
+        assert!(content_truncated);
+    }
 
     #[tokio::test]
     async fn scans_large_single_lines_with_bounded_context() {
@@ -9422,27 +9562,29 @@ async fn search_content_candidate<B>(
     semaphore: &std::sync::Arc<tokio::sync::Semaphore>,
     row: ContentSearchRow,
     search_term: &str,
-) -> DomainResult<Option<SearchResult>>
+    max_scan_bytes: u64,
+) -> DomainResult<(Option<SearchResult>, bool)>
 where
     B: BlobStore + Send + Sync,
 {
     let Some(blob_id_str) = row.blob_id.as_deref() else {
-        return Ok(None);
+        return Ok((None, true));
     };
     let Ok(blob_id_uuid) = uuid::Uuid::parse_str(blob_id_str) else {
-        return Ok(None);
+        return Ok((None, true));
     };
     let blob_id = BlobId::from_uuid(blob_id_uuid);
     let _permit = acquire_content_search_permit(std::sync::Arc::clone(semaphore)).await?;
     let Ok(Some(blob_stream)) = blob_store.get_blob_stream(&blob_id).await else {
-        return Ok(None);
+        return Ok((None, true));
     };
-    let Ok((matches, matches_truncated)) = scan_content_matches(blob_stream, search_term).await
+    let Ok((matches, matches_truncated, content_truncated)) =
+        scan_content_matches_bounded(blob_stream, search_term, max_scan_bytes).await
     else {
-        return Ok(None);
+        return Ok((None, true));
     };
     if matches.is_empty() {
-        return Ok(None);
+        return Ok((None, content_truncated));
     }
 
     let entry_id = uuid::Uuid::parse_str(&row.entry_id).map_err(|error| DomainError::Internal {
@@ -9457,7 +9599,7 @@ where
     let entry_type = match row.entry_type.as_str() {
         "file" => EntryKind::File,
         "directory" => EntryKind::Directory,
-        _ => return Ok(None),
+        _ => return Ok((None, true)),
     };
     let current_version_id = row
         .version_id
@@ -9538,13 +9680,16 @@ where
         None
     };
 
-    Ok(Some(SearchResult {
-        entry,
-        version,
-        matches,
-        matches_truncated,
-        score: 0.8, // Content matches get slightly lower score than filename matches
-    }))
+    Ok((
+        Some(SearchResult {
+            entry,
+            version,
+            matches,
+            matches_truncated,
+            score: 0.8, // Content matches get slightly lower score than filename matches
+        }),
+        content_truncated,
+    ))
 }
 
 #[async_trait::async_trait]
@@ -9552,9 +9697,9 @@ impl<B> SearchRepo for SqliteSearchRepo<B>
 where
     B: BlobStore + Send + Sync,
 {
-    async fn search_entries(&self, query: &SearchQuery) -> DomainResult<Vec<SearchResult>> {
+    async fn search_entries(&self, query: &SearchQuery) -> DomainResult<SearchRepositoryResults> {
         if !query.search_files {
-            return Ok(vec![]);
+            return Ok(SearchRepositoryResults::default());
         }
 
         let search_pattern = format!("%{}%", escape_like_literal(&query.query.to_lowercase()));
@@ -9592,7 +9737,7 @@ where
             change_message: Option<String>,
         }
 
-        let rows: Vec<EntrySearchRow> = sqlx::query_as(
+        let mut rows: Vec<EntrySearchRow> = sqlx::query_as(
             r#"
             SELECT
                 e.id as entry_id,
@@ -9633,12 +9778,14 @@ where
         .bind(path_exact.clone())
         .bind(path_exact)
         .bind(path_like)
-        .bind(candidate_limit)
+        .bind(candidate_limit + 1)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DomainError::Internal {
             message: format!("Failed to search entries: {}", e),
         })?;
+        let incomplete = rows.len() as i64 > candidate_limit;
+        rows.truncate(candidate_limit as usize);
 
         let mut results = Vec::new();
         for row in rows {
@@ -9765,16 +9912,22 @@ where
             });
         }
 
-        Ok(results)
+        Ok(SearchRepositoryResults {
+            items: results,
+            incomplete,
+        })
     }
 
-    async fn search_content(&self, query: &SearchQuery) -> DomainResult<Vec<SearchResult>> {
+    async fn search_content(&self, query: &SearchQuery) -> DomainResult<SearchRepositoryResults> {
         if !query.search_content {
-            return Ok(vec![]);
+            return Ok(SearchRepositoryResults::default());
         }
         if matches!(query.entry_kind, Some(EntryKind::Directory)) {
-            return Ok(vec![]);
+            return Ok(SearchRepositoryResults::default());
         }
+
+        let _request_permit =
+            try_acquire_content_search_request(&self.content_search_request_semaphore)?;
 
         let search_term = query.query.to_lowercase();
         let namespace_id = query.namespace_id.to_string();
@@ -9793,7 +9946,7 @@ where
         let candidate_limit = MAX_CONTENT_SEARCH_CANDIDATES;
 
         // Find text files in the namespace
-        let rows: Vec<ContentSearchRow> = sqlx::query_as::<_, ContentSearchRow>(
+        let mut rows: Vec<ContentSearchRow> = sqlx::query_as::<_, ContentSearchRow>(
             r#"
             SELECT
                 e.id as entry_id,
@@ -9834,30 +9987,51 @@ where
         .bind(path_exact.clone())
         .bind(path_exact)
         .bind(path_like)
-        .bind(candidate_limit)
+        .bind(candidate_limit + 1)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DomainError::Internal {
             message: format!("Failed to search content candidates: {}", e),
         })?;
 
+        let mut incomplete = rows.len() as i64 > candidate_limit;
+        rows.truncate(candidate_limit as usize);
+        let mut remaining_bytes = MAX_CONTENT_SEARCH_BYTES_PER_REQUEST;
+        let mut candidates = Vec::with_capacity(rows.len());
+        for row in rows {
+            if let Some(scan_bytes) =
+                reserve_content_search_bytes(row.size_bytes, &mut remaining_bytes)
+            {
+                candidates.push((row, scan_bytes));
+            } else {
+                incomplete = true;
+            }
+        }
+
         use futures::StreamExt;
-        let mut candidates = futures::stream::iter(rows.into_iter().map(|row| {
-            search_content_candidate(
-                &self.blob_store,
-                &self.content_search_semaphore,
-                row,
-                &search_term,
-            )
-        }))
-        .buffer_unordered(CONTENT_SEARCH_CONCURRENCY);
+        let mut candidates =
+            futures::stream::iter(candidates.into_iter().map(|(row, scan_bytes)| {
+                search_content_candidate(
+                    &self.blob_store,
+                    &self.content_search_semaphore,
+                    row,
+                    &search_term,
+                    scan_bytes,
+                )
+            }))
+            .buffer_unordered(CONTENT_SEARCH_CONCURRENCY);
         let mut results = Vec::new();
         while let Some(result) = candidates.next().await {
-            if let Some(result) = result? {
+            let (result, candidate_incomplete) = result?;
+            incomplete |= candidate_incomplete;
+            if let Some(result) = result {
                 results.push(result);
             }
         }
-        Ok(results)
+        Ok(SearchRepositoryResults {
+            items: results,
+            incomplete,
+        })
     }
 }
 

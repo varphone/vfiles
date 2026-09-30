@@ -151,6 +151,9 @@ curl -T app.tar.gz -H "Authorization: Bearer $TOKEN" \
     - `limit` / `offset` 可选
   - 内容命中每个文件最多返回 20 行；`matches_truncated` 表示还有未列出的命中。
     `context` 是命中附近的片段；`context_truncated` 表示该行其余内容已省略。
+  - 文件名/路径搜索最多读取 2,000 个候选项；内容搜索最多扫描 500 个候选文件、每个文件 16 MiB、每次请求合计 128 MiB。
+    同一服务实例最多并发处理 4 个内容搜索请求；超过并发上限时返回 `429`。
+  - 候选数量、读取预算或文件读取错误可能导致结果不完整。响应中的 `results_may_be_incomplete` 为 `true` 时表示可能有结果未列出；可以缩小 `path` 范围或调整搜索词后重试。
 
 ## 审计日志（只读）
 

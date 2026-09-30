@@ -4522,6 +4522,12 @@ pub struct ChangedEntry {
 /// 单次搜索最多参与分页的结果数；按得分取前 N 条，避免超大结果集进入内存。
 pub const MAX_SEARCH_RESULTS: usize = 2000;
 
+#[derive(Debug, Clone, Default)]
+pub struct SearchResultsPage {
+    pub items: Vec<SearchResult>,
+    pub results_may_be_incomplete: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct SearchService<R> {
     search_repo: R,
@@ -4538,22 +4544,28 @@ where
     /// 合并文件名与内容命中、按得分排序后再分页。
     ///
     /// 分页必须发生在**排序之后**：此前 `LIMIT/OFFSET` 由仓储层按 `created_at`
-    /// 各自执行，两路结果合并后被重新按得分排序，导致「下一页」并不是上一页的延续
-    /// —— 同时开启文件名与内容搜索时，内容命中会被同页的文件名命中挤出，
-    /// 翻页时甚至完全取不到。这里改为仓储层返回全部命中，由本层统一排序 + 切片。
+    /// 各自执行，两路结果合并后被重新按得分排序，导致「下一页」并不是上一页的延续。
+    /// 仓储层在候选上限内返回结果，由本层统一排序 + 切片，并透出是否触及资源上限。
     pub async fn search(&self, query: SearchQuery) -> DomainResult<Vec<SearchResult>> {
+        Ok(self.search_page(query).await?.items)
+    }
+
+    pub async fn search_page(&self, query: SearchQuery) -> DomainResult<SearchResultsPage> {
         let mut results = Vec::new();
+        let mut results_may_be_incomplete = false;
+
+        // 内容搜索有并发准入；先执行，超载时避免先做无用的文件名查询。
+        if query.search_content {
+            let content_results = self.search_repo.search_content(&query).await?;
+            results_may_be_incomplete |= content_results.incomplete;
+            results.extend(content_results.items);
+        }
 
         // Search in entries (filenames and paths)
         if query.search_files {
             let entry_results = self.search_repo.search_entries(&query).await?;
-            results.extend(entry_results);
-        }
-
-        // Search in content (if enabled and supported)
-        if query.search_content {
-            let content_results = self.search_repo.search_content(&query).await?;
-            results.extend(content_results);
+            results_may_be_incomplete |= entry_results.incomplete;
+            results.extend(entry_results.items);
         }
 
         // Sort by score (descending)，同分时按路径排序，保证分页结果稳定且可复现
@@ -4567,12 +4579,16 @@ where
         // 只保留前 MAX_SEARCH_RESULTS 条，避免一次搜索把过多结果带进内存/响应
         if results.len() > MAX_SEARCH_RESULTS {
             results.truncate(MAX_SEARCH_RESULTS);
+            results_may_be_incomplete = true;
         }
 
         // Apply offset/limit after sorting so pages are contiguous
         let offset = query.offset as usize;
         if offset >= results.len() {
-            return Ok(Vec::new());
+            return Ok(SearchResultsPage {
+                items: Vec::new(),
+                results_may_be_incomplete,
+            });
         }
 
         results = results.split_off(offset);
@@ -4580,7 +4596,10 @@ where
             results.truncate(query.limit as usize);
         }
 
-        Ok(results)
+        Ok(SearchResultsPage {
+            items: results,
+            results_may_be_incomplete,
+        })
     }
 }
 

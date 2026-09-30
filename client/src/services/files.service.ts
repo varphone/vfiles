@@ -1154,6 +1154,7 @@ export const filesService = {
   ): Promise<{
     items: FileInfo[];
     hasMore: boolean;
+    resultsMayBeIncomplete: boolean;
     limit: number;
     offset: number;
   }> {
@@ -1185,6 +1186,9 @@ export const filesService = {
     return {
       items: mergeSearchResults(rawItems).map(mapSearchResultToFileInfo),
       hasMore: Boolean((payload as any)?.has_more),
+      resultsMayBeIncomplete: Boolean(
+        (payload as any)?.results_may_be_incomplete,
+      ),
       limit,
       offset,
     };

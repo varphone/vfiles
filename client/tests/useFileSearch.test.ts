@@ -14,6 +14,7 @@ const { searchFilesMock, searchFilesPageMock } = vi.hoisted(() => {
       return {
         items,
         hasMore: false,
+        resultsMayBeIncomplete: false,
         limit: 100,
         offset: 0,
       };
@@ -120,6 +121,7 @@ describe("useFileSearch", () => {
     searchFilesPageMock.mockResolvedValueOnce({
       items: [fileInfo("report-1.txt"), fileInfo("report-2.txt")],
       hasMore: true,
+      resultsMayBeIncomplete: false,
       limit: 100,
       offset: 0,
     });
@@ -131,6 +133,7 @@ describe("useFileSearch", () => {
     searchFilesPageMock.mockResolvedValueOnce({
       items: [fileInfo("report-3.txt")],
       hasMore: false,
+      resultsMayBeIncomplete: true,
       limit: 100,
       offset: 2,
     });
@@ -142,6 +145,7 @@ describe("useFileSearch", () => {
       "report-3.txt",
     ]);
     expect(search.searchHasMore.value).toBe(false);
+    expect(search.searchResultsMayBeIncomplete.value).toBe(true);
     expect(search.searchLoadingMore.value).toBe(false);
     // 第二页从已加载条数继续
     expect(searchFilesPageMock).toHaveBeenLastCalledWith("report", "name", {
@@ -218,15 +222,18 @@ describe("useFileSearch", () => {
     searchFilesPageMock.mockResolvedValueOnce({
       items: [fileInfo("report-1.txt")],
       hasMore: true,
+      resultsMayBeIncomplete: true,
       limit: 100,
       offset: 0,
     });
     await search.runSearch();
     expect(search.searchHasMore.value).toBe(true);
+    expect(search.searchResultsMayBeIncomplete.value).toBe(true);
 
     search.clearSearch();
 
     expect(search.searchHasMore.value).toBe(false);
+    expect(search.searchResultsMayBeIncomplete.value).toBe(false);
     expect(search.searchLoadingMore.value).toBe(false);
   });
 

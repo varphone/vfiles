@@ -803,6 +803,13 @@ pub struct SearchQuery {
     pub offset: u32,
 }
 
+/// A bounded set of search candidates and whether repository limits omitted any.
+#[derive(Debug, Clone, Default)]
+pub struct SearchRepositoryResults {
+    pub items: Vec<SearchResult>,
+    pub incomplete: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub entry: Entry,

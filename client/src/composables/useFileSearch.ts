@@ -22,6 +22,7 @@ export type SearchResultFilter =
 export function useFileSearch(currentPath: Ref<string>) {
   const searchQuery = ref("");
   const searchResults = ref<FileInfo[]>([]);
+  const searchResultsMayBeIncomplete = ref(false);
   const searchLoading = ref(false);
   const searchError = ref<string | null>(null);
   const searchActive = ref(false);
@@ -104,6 +105,7 @@ export function useFileSearch(currentPath: Ref<string>) {
     searchError.value = null;
     searchActive.value = false;
     searchHasMore.value = false;
+    searchResultsMayBeIncomplete.value = false;
     searchLoadingMore.value = false;
     resultFilter.value = "all";
   }
@@ -126,6 +128,7 @@ export function useFileSearch(currentPath: Ref<string>) {
     searchActive.value = true;
     // 新一轮搜索重置分页与筛选状态，避免上一轮残留
     searchHasMore.value = false;
+    searchResultsMayBeIncomplete.value = false;
     searchLoadingMore.value = false;
     resultFilter.value = "all";
 
@@ -144,11 +147,13 @@ export function useFileSearch(currentPath: Ref<string>) {
       if (requestId !== searchSequence) return;
       searchResults.value = page.items;
       searchHasMore.value = page.hasMore;
+      searchResultsMayBeIncomplete.value = page.resultsMayBeIncomplete ?? false;
     } catch (err) {
       if (requestId !== searchSequence) return;
       searchError.value = err instanceof Error ? err.message : "搜索失败";
       searchResults.value = [];
       searchHasMore.value = false;
+      searchResultsMayBeIncomplete.value = false;
     } finally {
       if (requestId === searchSequence) searchLoading.value = false;
     }
@@ -175,6 +180,7 @@ export function useFileSearch(currentPath: Ref<string>) {
       if (requestId !== searchSequence) return;
       searchResults.value = [...searchResults.value, ...page.items];
       searchHasMore.value = page.hasMore;
+      searchResultsMayBeIncomplete.value ||= page.resultsMayBeIncomplete ?? false;
     } catch (err) {
       if (requestId === searchSequence) {
         searchError.value = err instanceof Error ? err.message : "加载更多失败";
@@ -210,6 +216,7 @@ export function useFileSearch(currentPath: Ref<string>) {
     setResultFilter,
     searchQuery,
     searchResults,
+    searchResultsMayBeIncomplete,
     searchLoading,
     searchError,
     searchActive,

@@ -1426,8 +1426,8 @@ pub fn retain_upload_session_page_item(
 
 #[async_trait::async_trait]
 pub trait SearchRepo {
-    async fn search_entries(&self, query: &SearchQuery) -> DomainResult<Vec<SearchResult>>;
-    async fn search_content(&self, query: &SearchQuery) -> DomainResult<Vec<SearchResult>>;
+    async fn search_entries(&self, query: &SearchQuery) -> DomainResult<SearchRepositoryResults>;
+    async fn search_content(&self, query: &SearchQuery) -> DomainResult<SearchRepositoryResults>;
 }
 
 #[async_trait::async_trait]

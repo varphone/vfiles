@@ -7555,6 +7555,7 @@ async fn content_search_returns_line_matches_when_feature_enabled() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let payload = response_json(response).await;
+    assert_eq!(payload["results_may_be_incomplete"], Value::Bool(false));
     let results = payload["items"]
         .as_array()
         .expect("search response should carry an items array");
@@ -7576,6 +7577,39 @@ async fn content_search_returns_line_matches_when_feature_enabled() {
         results[0]["matches"][0]["context"],
         Value::String("hello streaming search".to_string())
     );
+}
+
+#[tokio::test]
+async fn content_search_reports_when_file_size_budget_skips_a_candidate() {
+    let mut features = default_features();
+    features.search_content = true;
+    let app = TestApp::new_with_features(features).await;
+    app.upload_version("docs", "large.txt", b"needle", "seed search content")
+        .await;
+
+    // Exercise the repository's metadata-based admission limit without allocating a 16 MiB blob.
+    sqlx::query(
+        "UPDATE entry_versions SET size = ? WHERE entry_id = (SELECT id FROM entries WHERE path = ?)",
+    )
+    .bind(16 * 1024 * 1024 + 1_i64)
+    .bind("docs/large.txt")
+    .execute(&app.db_pool)
+    .await
+    .expect("file size metadata should update");
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/search?q=needle&search_content=true")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let payload = response_json(response).await;
+    assert_eq!(payload["items"].as_array().map(Vec::len), Some(0));
+    assert_eq!(payload["results_may_be_incomplete"], Value::Bool(true));
 }
 
 #[tokio::test]

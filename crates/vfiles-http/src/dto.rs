@@ -353,6 +353,7 @@ pub struct SearchPageDto {
     pub limit: u32,
     pub offset: u32,
     pub has_more: bool,
+    pub results_may_be_incomplete: bool,
 }
 
 #[derive(Debug, Serialize)]

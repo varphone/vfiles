@@ -119,6 +119,14 @@
         </template>
       </div>
 
+      <div
+        v-if="searchActive && searchResultsMayBeIncomplete"
+        class="notification is-warning is-light mb-3"
+        role="status"
+      >
+        搜索已达到资源上限，结果可能不完整。可缩小目录范围或调整搜索词后重试。
+      </div>
+
       <DownloadQueuePanel
         :items="downloadQueue"
         :collapsed="queueCollapsed"
@@ -1351,6 +1359,7 @@ const {
   setResultFilter,
   searchQuery,
   searchResults,
+  searchResultsMayBeIncomplete,
   searchLoading,
   searchError,
   searchActive,

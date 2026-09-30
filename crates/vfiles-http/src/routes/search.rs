@@ -104,13 +104,14 @@ async fn search(
     };
 
     // Perform search
-    let mut results = state.search_service.search(query).await?;
-    let has_more = results.len() > limit as usize;
-    results.truncate(limit as usize);
-    let entry_ids: Vec<_> = results.iter().map(|result| result.entry.id).collect();
+    let mut page = state.search_service.search_page(query).await?;
+    let has_more = page.items.len() > limit as usize;
+    page.items.truncate(limit as usize);
+    let entry_ids: Vec<_> = page.items.iter().map(|result| result.entry.id).collect();
     let favorite_ids =
         super::favorites::favorite_ids(&state, &ctx.namespace_id, &entry_ids).await?;
-    let items = results
+    let items = page
+        .items
         .into_iter()
         .map(|result| {
             let entry_id = result.entry.id;
@@ -125,5 +126,6 @@ async fn search(
         limit,
         offset: params.offset,
         has_more,
+        results_may_be_incomplete: page.results_may_be_incomplete,
     }))
 }
