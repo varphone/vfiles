@@ -41,6 +41,7 @@ const MAX_SOURCE_DIMENSION: u32 = 16_384;
 const MAX_DECODER_ALLOC_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_CONCURRENT_THUMBNAIL_REQUESTS: usize = 64;
 const MAX_CONCURRENT_THUMBNAIL_GENERATIONS: usize = 2;
+const THUMBNAIL_CACHE_LOCK_STRIPES: usize = 64;
 const JPEG_QUALITY: u8 = 82;
 // Paths are scoped to the authenticated user's namespace. Revalidate before
 // reusing a browser cache entry so account switches cannot expose old images.
@@ -80,6 +81,9 @@ static THUMBNAIL_REQUEST_PERMITS: Semaphore =
     Semaphore::const_new(MAX_CONCURRENT_THUMBNAIL_REQUESTS);
 static THUMBNAIL_GENERATION_PERMITS: Semaphore =
     Semaphore::const_new(MAX_CONCURRENT_THUMBNAIL_GENERATIONS);
+static THUMBNAIL_CACHE_LOCKS: std::sync::LazyLock<
+    [tokio::sync::Mutex<()>; THUMBNAIL_CACHE_LOCK_STRIPES],
+> = std::sync::LazyLock::new(|| std::array::from_fn(|_| tokio::sync::Mutex::new(())));
 
 /// 缩略图相关的进程内计数。
 ///
@@ -255,6 +259,20 @@ async fn get_file_thumbnail(
         return Ok(thumbnail_response(bytes, &etag, format));
     }
 
+    // Serialize cache misses for the same key. Fixed stripes avoid an unbounded
+    // lock map when clients request many distinct images.
+    let _cache_lock = thumbnail_cache_lock(&cache_path).lock().await;
+    if let Some(bytes) = read_cache(&cache_path).await {
+        STATS.cache_hits.fetch_add(1, Ordering::Relaxed);
+        tracing::debug!(
+            path = %raw_path,
+            size,
+            format = format.as_str(),
+            "thumbnail cache populated while waiting"
+        );
+        return Ok(thumbnail_response(bytes, &etag, format));
+    }
+
     // Acquire before buffering the source, and move the permit into the blocking
     // task so disconnecting the HTTP request cannot release it while decoding runs.
     let generation_permit = THUMBNAIL_GENERATION_PERMITS
@@ -351,6 +369,15 @@ fn thumbnail_cache_path(
         .join("thumbnails")
         .join(format!("{blob_id}-{size}.{}", format.extension()))
         .into_std_path_buf()
+}
+
+fn thumbnail_cache_lock(path: &Path) -> &'static tokio::sync::Mutex<()> {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hasher);
+    let index = hasher.finish() as usize % THUMBNAIL_CACHE_LOCK_STRIPES;
+    &THUMBNAIL_CACHE_LOCKS[index]
 }
 
 async fn read_cache(path: &PathBuf) -> Option<Vec<u8>> {
@@ -797,6 +824,35 @@ fn unsupported_response() -> Response {
 mod tests {
     use super::*;
     use std::time::{Duration, SystemTime};
+
+    #[tokio::test]
+    async fn thumbnail_cache_misses_for_the_same_key_are_serialized() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let active = std::sync::Arc::new(AtomicUsize::new(0));
+        let peak = std::sync::Arc::new(AtomicUsize::new(0));
+        let tasks = (0..8)
+            .map(|_| {
+                let active = std::sync::Arc::clone(&active);
+                let peak = std::sync::Arc::clone(&peak);
+                tokio::spawn(async move {
+                    let _guard = thumbnail_cache_lock(Path::new("same-thumbnail-key"))
+                        .lock()
+                        .await;
+                    let current = active.fetch_add(1, Ordering::Relaxed) + 1;
+                    peak.fetch_max(current, Ordering::Relaxed);
+                    tokio::task::yield_now().await;
+                    active.fetch_sub(1, Ordering::Relaxed);
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for task in tasks {
+            task.await.expect("thumbnail cache lock task should finish");
+        }
+
+        assert_eq!(peak.load(Ordering::Relaxed), 1);
+    }
 
     #[test]
     fn saturated_thumbnail_admission_fails_without_queueing() {
