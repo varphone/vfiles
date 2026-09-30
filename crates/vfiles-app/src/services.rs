@@ -4613,6 +4613,17 @@ where
             .await
     }
 
+    pub async fn list_shares_with_entry_by_user_page(
+        &self,
+        user_id: &UserId,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<ShareWithEntry>, u64)> {
+        self.share_repo
+            .find_shares_with_entry_by_user_page(user_id, limit, offset)
+            .await
+    }
+
     pub async fn disable_share(&self, code: &str, user_id: &UserId) -> DomainResult<ShareId> {
         // 所有者操作：已过期的链接也必须能找到并停用（否则无法清理过期分享）
         let share = self

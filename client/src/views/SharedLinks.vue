@@ -5,9 +5,9 @@
         <div class="shares-header-titles">
           <h1 class="shares-title vf-page-title">我的分享</h1>
           <p class="shares-subtitle vf-page-subtitle">
-            共 {{ shares.length }} 个链接
+            共 {{ shareTotal }} 个链接 · 已加载 {{ shares.length }} 个
             <template v-if="activeShares.length !== shares.length">
-              · 有效 {{ activeShares.length }} 个
+              · 已加载有效 {{ activeShares.length }} 个
             </template>
           </p>
         </div>
@@ -25,7 +25,7 @@
               {{
                 clearingExpired
                   ? `清理中 ${clearedCount}/${expiredShares.length}`
-                  : `清理过期链接（${expiredShares.length}）`
+                  : `清理已加载的过期链接（${expiredShares.length}）`
               }}
             </span>
           </button>
@@ -100,6 +100,10 @@
           <span class="shares-filter-count">{{ chip.count }}</span>
         </button>
       </div>
+
+      <p v-if="hasMore" class="shares-page-hint">
+        状态筛选和过期链接清理仅作用于已加载的分享链接。
+      </p>
 
       <EmptyState
         v-if="shares.length > 0 && visibleShares.length === 0"
@@ -192,6 +196,22 @@
           </div>
         </li>
       </ul>
+
+      <div v-if="hasMore" class="shares-load-more">
+        <button
+          class="vf-ghost-button"
+          type="button"
+          :disabled="loadingMore || loading"
+          @click="loadMore"
+        >
+          <IconRefresh :size="16" :class="{ 'is-spinning': loadingMore }" />
+          <span>{{
+            loadingMore
+              ? "加载中…"
+              : `加载更多（${shares.length}/${shareTotal}）`
+          }}</span>
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -229,7 +249,7 @@ import type { ShareLink } from "../types";
 /**
  * 「我的分享」：集中管理自己创建的分享链接。
  *
- * 数据来自 `GET /api/share/shares`（服务端已附带条目名称/路径/类型），
+ * 数据来自 `GET /api/share/shares/page`（服务端已附带条目名称/路径/类型），
  * 支持复制、打开与停止分享。
  */
 const auth = useAuthStore();
@@ -237,10 +257,15 @@ const app = useAppStore();
 const router = useRouter();
 
 const shares = ref<ShareLink[]>([]);
+const shareTotal = ref(0);
+const hasMore = ref(false);
 const loading = ref(false);
+const loadingMore = ref(false);
 const error = ref<string | null>(null);
 const copiedCode = ref("");
 const disablingCode = ref("");
+const SHARE_PAGE_SIZE = 100;
+let nextShareOffset = 0;
 
 const featureDisabled = computed(
   () => auth.initialized && auth.features?.shareEnabled === false,
@@ -353,6 +378,7 @@ async function clearExpired() {
   }
 
   clearingExpired.value = false;
+  if (clearedCount.value > 0) await reload();
   if (failed > 0) {
     app.error(`有 ${failed} 个链接未能停止，请重试`);
   } else {
@@ -411,7 +437,7 @@ async function stopSharing(share: ShareLink) {
   disablingCode.value = share.code;
   try {
     await filesService.disableShare(share.code);
-    shares.value = shares.value.filter((item) => item.code !== share.code);
+    await reload();
     app.success("已停止分享");
   } catch (e) {
     app.error(e instanceof Error ? e.message : "停止分享失败");
@@ -427,13 +453,48 @@ function goFiles() {
 async function reload() {
   loading.value = true;
   error.value = null;
+  shares.value = [];
+  shareTotal.value = 0;
+  hasMore.value = false;
+  nextShareOffset = 0;
   try {
-    shares.value = await filesService.listShares();
+    const page = await filesService.listSharesPage({
+      limit: SHARE_PAGE_SIZE,
+      offset: 0,
+    });
+    shares.value = page.items;
+    shareTotal.value = page.total;
+    nextShareOffset = page.offset + page.items.length;
+    hasMore.value = page.has_more;
   } catch (e) {
     shares.value = [];
     error.value = e instanceof Error ? e.message : "加载失败";
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadMore() {
+  if (!hasMore.value || loadingMore.value || loading.value) return;
+
+  loadingMore.value = true;
+  try {
+    const page = await filesService.listSharesPage({
+      limit: SHARE_PAGE_SIZE,
+      offset: nextShareOffset,
+    });
+    const knownIds = new Set(shares.value.map((share) => share.id));
+    shares.value = [
+      ...shares.value,
+      ...page.items.filter((share) => !knownIds.has(share.id)),
+    ];
+    shareTotal.value = page.total;
+    nextShareOffset = page.offset + page.items.length;
+    hasMore.value = page.has_more;
+  } catch (e) {
+    app.error(e instanceof Error ? e.message : "加载更多分享链接失败");
+  } finally {
+    loadingMore.value = false;
   }
 }
 
@@ -486,6 +547,12 @@ onMounted(() => {
   padding: 0.65rem 0 0;
 }
 
+.shares-page-hint {
+  margin: 0.45rem 0 0;
+  color: var(--vf-text-subtle);
+  font-size: 0.75rem;
+}
+
 .shares-filter {
   gap: 0.3rem;
   min-height: 1.75rem;
@@ -509,6 +576,12 @@ onMounted(() => {
   margin: 0.6rem 0 0;
   padding: 0;
   list-style: none;
+}
+
+.shares-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 0.75rem 0 0.25rem;
 }
 
 .shares-row {

@@ -1442,6 +1442,12 @@ pub trait ShareRepo {
         &self,
         user_id: &UserId,
     ) -> DomainResult<Vec<ShareWithEntry>>;
+    async fn find_shares_with_entry_by_user_page(
+        &self,
+        user_id: &UserId,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<ShareWithEntry>, u64)>;
     async fn record_share_access(&self, share_id: &ShareId) -> DomainResult<()>;
     async fn disable_share(&self, share_id: &ShareId) -> DomainResult<()>;
     async fn cleanup_expired_shares(&self) -> DomainResult<i64>;

@@ -9750,6 +9750,17 @@ impl ShareRepo for SqliteShareRepo {
         &self,
         user_id: &UserId,
     ) -> DomainResult<Vec<ShareWithEntry>> {
+        self.find_shares_with_entry_by_user_page(user_id, u32::MAX, 0)
+            .await
+            .map(|(shares, _)| shares)
+    }
+
+    async fn find_shares_with_entry_by_user_page(
+        &self,
+        user_id: &UserId,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<ShareWithEntry>, u64)> {
         #[derive(sqlx::FromRow)]
         struct ShareWithEntryRow {
             id: String,
@@ -9767,6 +9778,22 @@ impl ShareRepo for SqliteShareRepo {
             entry_kind: String,
         }
 
+        let user_id = user_id.to_string();
+        let total: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM shares s
+            JOIN entries e ON e.id = s.entry_id
+            WHERE s.created_by = ? AND s.disabled_at IS NULL
+            "#,
+        )
+        .bind(&user_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to count shares with entry by user: {e}"),
+        })?;
+
         let rows: Vec<ShareWithEntryRow> = sqlx::query_as(
             r#"
             SELECT
@@ -9777,10 +9804,13 @@ impl ShareRepo for SqliteShareRepo {
             FROM shares s
             JOIN entries e ON e.id = s.entry_id
             WHERE s.created_by = ? AND s.disabled_at IS NULL
-            ORDER BY s.created_at DESC
+            ORDER BY s.created_at DESC, s.id DESC
+            LIMIT ? OFFSET ?
             "#,
         )
-        .bind(user_id.to_string())
+        .bind(&user_id)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DomainError::Internal {
@@ -9814,7 +9844,11 @@ impl ShareRepo for SqliteShareRepo {
             });
         }
 
-        Ok(shares)
+        let total = u64::try_from(total).map_err(|error| DomainError::Internal {
+            message: format!("Invalid share count: {error}"),
+        })?;
+
+        Ok((shares, total))
     }
 
     async fn find_share_by_code_including_expired(&self, code: &str) -> DomainResult<Share> {

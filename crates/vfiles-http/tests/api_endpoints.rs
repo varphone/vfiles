@@ -4050,6 +4050,83 @@ async fn share_creation_uses_configured_public_base_url() {
 }
 
 #[tokio::test]
+async fn share_management_page_bounds_sql_results_and_reports_continuation() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "share.txt", b"shared file\n", "share source")
+        .await;
+
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+    for _ in 0..3 {
+        let created = app
+            .json_request_with_cookie(
+                Method::POST,
+                "/api/share/shares",
+                json!({ "path": "docs/share.txt" }),
+                &admin_cookie,
+            )
+            .await;
+        assert_eq!(created.status(), StatusCode::OK);
+    }
+
+    let first = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/share/shares/page?limit=2&offset=0")
+                .body(Body::empty())
+                .expect("first share page request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first_page = response_json(first).await;
+    assert_eq!(first_page["total"], 3);
+    assert_eq!(first_page["limit"], 2);
+    assert_eq!(first_page["offset"], 0);
+    assert_eq!(first_page["has_more"], Value::Bool(true));
+    assert_eq!(first_page["items"].as_array().map(Vec::len), Some(2));
+
+    let second = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/share/shares/page?limit=2&offset=2")
+                .body(Body::empty())
+                .expect("second share page request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let second_page = response_json(second).await;
+    assert_eq!(second_page["total"], 3);
+    assert_eq!(second_page["offset"], 2);
+    assert_eq!(second_page["has_more"], Value::Bool(false));
+    assert_eq!(second_page["items"].as_array().map(Vec::len), Some(1));
+
+    let codes = first_page["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(second_page["items"].as_array().into_iter().flatten())
+        .filter_map(|item| item["code"].as_str())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(codes.len(), 3);
+    assert!(codes.iter().all(|code| code.len() == 8));
+
+    let oversized_page = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/share/shares/page?limit=999&offset=0")
+                .body(Body::empty())
+                .expect("oversized share page request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(oversized_page.status(), StatusCode::OK);
+    let oversized_page = response_json(oversized_page).await;
+    assert_eq!(oversized_page["limit"], 200);
+    assert_eq!(oversized_page["items"].as_array().map(Vec::len), Some(3));
+}
+
+#[tokio::test]
 async fn migrated_long_share_keys_keep_short_public_codes_and_old_links_work() {
     let app = TestApp::new().await;
     app.upload_version("docs", "share.txt", b"shared file\n", "share source")

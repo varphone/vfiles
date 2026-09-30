@@ -2,7 +2,7 @@
 
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, Method, StatusCode},
     response::{Json, Response},
     routing::{delete, get, post},
@@ -20,12 +20,32 @@ use crate::{
     routes::authenticated_request_context,
 };
 use axum_extra::extract::cookie::CookieJar;
+use serde::{Deserialize, Serialize};
 use vfiles_domain::{DomainError, EntryKind, NewAuditLog};
+
+const DEFAULT_SHARE_PAGE_LIMIT: u32 = 100;
+const MAX_SHARE_PAGE_LIMIT: u32 = 200;
+
+#[derive(Debug, Default, Deserialize)]
+struct SharePageQuery {
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+struct SharePageDto {
+    items: Vec<ShareDto>,
+    total: u64,
+    limit: u32,
+    offset: u32,
+    has_more: bool,
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/shares", post(create_share))
         .route("/shares", get(list_shares))
+        .route("/shares/page", get(list_shares_page))
         .route("/shares/{code}/download", get(download_share))
         .route("/shares/{code}", get(access_share))
         .route("/shares/{code}", delete(disable_share))
@@ -153,6 +173,37 @@ async fn list_shares(
     let dtos = shares.into_iter().map(ShareDto::from).collect();
 
     Ok(Json(dtos))
+}
+
+async fn list_shares_page(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Query(query): Query<SharePageQuery>,
+) -> Result<Json<SharePageDto>, ApiError> {
+    if !state.config.features.share_enabled {
+        return Err(ApiError::Domain(vfiles_domain::DomainError::Forbidden));
+    }
+
+    let ctx = authenticated_request_context(&state, &jar).await?;
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_SHARE_PAGE_LIMIT)
+        .clamp(1, MAX_SHARE_PAGE_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let (items, total) = state
+        .share_service
+        .list_shares_with_entry_by_user_page(&ctx.actor_user_id, limit, offset)
+        .await?;
+    let item_count = u64::try_from(items.len()).unwrap_or(u64::MAX);
+    let has_more = u64::from(offset).saturating_add(item_count) < total;
+
+    Ok(Json(SharePageDto {
+        items: items.into_iter().map(ShareDto::from).collect(),
+        total,
+        limit,
+        offset,
+        has_more,
+    }))
 }
 
 async fn access_share(

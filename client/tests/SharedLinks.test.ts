@@ -5,9 +5,9 @@ import { createRouter, createMemoryHistory } from "vue-router";
 import SharedLinks from "../src/views/SharedLinks.vue";
 import type { ShareLink } from "../src/types";
 
-const { listSharesMock, disableShareMock, copyTextMock, confirmMock } =
+const { listSharesPageMock, disableShareMock, copyTextMock, confirmMock } =
   vi.hoisted(() => ({
-    listSharesMock: vi.fn(),
+    listSharesPageMock: vi.fn(),
     disableShareMock: vi.fn(async () => undefined),
     copyTextMock: vi.fn(async () => true),
     confirmMock: vi.fn(async () => true),
@@ -16,7 +16,7 @@ const { listSharesMock, disableShareMock, copyTextMock, confirmMock } =
 vi.mock("../src/services/files.service", () => ({
   SEARCH_PAGE_SIZE: 100,
   filesService: {
-    listShares: listSharesMock,
+    listSharesPage: listSharesPageMock,
     disableShare: disableShareMock,
   },
 }));
@@ -43,6 +43,15 @@ function share(overrides: Partial<ShareLink> = {}): ShareLink {
   };
 }
 
+function sharePage(
+  items: ShareLink[],
+  has_more = false,
+  total = items.length,
+  offset = 0,
+) {
+  return { items, total, limit: 100, offset, has_more };
+}
+
 function renderPage() {
   const pinia = createPinia();
   setActivePinia(pinia);
@@ -52,9 +61,10 @@ function renderPage() {
 
 describe("SharedLinks.vue", () => {
   beforeEach(() => {
-    listSharesMock.mockReset();
-    listSharesMock.mockResolvedValue([share()]);
-    disableShareMock.mockClear();
+    listSharesPageMock.mockReset();
+    listSharesPageMock.mockResolvedValue(sharePage([share()]));
+    disableShareMock.mockReset();
+    disableShareMock.mockResolvedValue(undefined);
     copyTextMock.mockClear();
     confirmMock.mockClear();
   });
@@ -70,6 +80,35 @@ describe("SharedLinks.vue", () => {
       `${window.location.origin}/s/abc123`,
     );
     expect(container.querySelector(".shares-icon svg")).not.toBeNull();
+  });
+
+  it("loads later share pages only when requested", async () => {
+    listSharesPageMock
+      .mockReset()
+      .mockResolvedValueOnce(sharePage([share()], true, 2))
+      .mockResolvedValueOnce(
+        sharePage(
+          [share({ id: "s2", code: "second", entry_name: "第二项.txt" })],
+          false,
+          2,
+          1,
+        ),
+      );
+
+    renderPage();
+    await screen.findByText("报告.txt");
+    expect(screen.queryByText("第二项.txt")).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByText("加载更多（1/2）"));
+    await screen.findByText("第二项.txt");
+    expect(listSharesPageMock).toHaveBeenNthCalledWith(1, {
+      limit: 100,
+      offset: 0,
+    });
+    expect(listSharesPageMock).toHaveBeenNthCalledWith(2, {
+      limit: 100,
+      offset: 1,
+    });
   });
 
   it("copies and opens a link", async () => {
@@ -91,6 +130,9 @@ describe("SharedLinks.vue", () => {
   });
 
   it("stops sharing after confirmation and removes the row", async () => {
+    listSharesPageMock
+      .mockResolvedValueOnce(sharePage([share()]))
+      .mockResolvedValueOnce(sharePage([]));
     renderPage();
     await screen.findByText("报告.txt");
 
@@ -106,13 +148,15 @@ describe("SharedLinks.vue", () => {
   });
 
   it("marks expired shares and keeps them listed", async () => {
-    listSharesMock.mockResolvedValue([
-      share({
-        code: "old",
-        entry_name: "旧文件.txt",
-        expires_at: "2020-01-01T00:00:00.000Z",
-      }),
-    ]);
+    listSharesPageMock.mockResolvedValue(
+      sharePage([
+        share({
+          code: "old",
+          entry_name: "旧文件.txt",
+          expires_at: "2020-01-01T00:00:00.000Z",
+        }),
+      ]),
+    );
     const { container } = renderPage();
 
     await screen.findByText("旧文件.txt");
@@ -123,20 +167,22 @@ describe("SharedLinks.vue", () => {
         ?.textContent?.trim(),
     ).toBe("已过期");
     // 有效数量为 0 时副标题会说明
-    expect(screen.getByText(/有效 0 个/)).toBeInTheDocument();
+    expect(screen.getByText(/已加载有效 0 个/)).toBeInTheDocument();
   });
 
   it("filters by status with counted chips", async () => {
-    listSharesMock.mockResolvedValue([
-      share({ code: "a", entry_name: "有效文件.txt", access_count: 0 }),
-      share({
-        code: "b",
-        entry_name: "过期文件.txt",
-        access_count: 0,
-        expires_at: "2020-01-01T00:00:00.000Z",
-      }),
-      share({ code: "c", entry_name: "被访问.txt", access_count: 5 }),
-    ]);
+    listSharesPageMock.mockResolvedValue(
+      sharePage([
+        share({ code: "a", entry_name: "有效文件.txt", access_count: 0 }),
+        share({
+          code: "b",
+          entry_name: "过期文件.txt",
+          access_count: 0,
+          expires_at: "2020-01-01T00:00:00.000Z",
+        }),
+        share({ code: "c", entry_name: "被访问.txt", access_count: 5 }),
+      ]),
+    );
     const { container } = renderPage();
 
     await screen.findByText("有效文件.txt");
@@ -183,7 +229,7 @@ describe("SharedLinks.vue", () => {
   });
 
   it("shows a filter-specific empty state", async () => {
-    listSharesMock.mockResolvedValue([share({ code: "a" })]);
+    listSharesPageMock.mockResolvedValue(sharePage([share({ code: "a" })]));
     const { container } = renderPage();
     await screen.findByText("报告.txt");
 
@@ -207,19 +253,26 @@ describe("SharedLinks.vue", () => {
   });
 
   it("stops every expired link from the bulk action", async () => {
-    listSharesMock.mockResolvedValue([
-      share({
-        code: "old1",
-        entry_name: "过期一.txt",
-        expires_at: "2020-01-01T00:00:00.000Z",
-      }),
-      share({
-        code: "old2",
-        entry_name: "过期二.txt",
-        expires_at: "2021-01-01T00:00:00.000Z",
-      }),
-      share({ code: "new1", entry_name: "有效.txt" }),
-    ]);
+    listSharesPageMock
+      .mockReset()
+      .mockResolvedValueOnce(
+        sharePage([
+          share({
+            code: "old1",
+            entry_name: "过期一.txt",
+            expires_at: "2020-01-01T00:00:00.000Z",
+          }),
+          share({
+            code: "old2",
+            entry_name: "过期二.txt",
+            expires_at: "2021-01-01T00:00:00.000Z",
+          }),
+          share({ code: "new1", entry_name: "有效.txt" }),
+        ]),
+      )
+      .mockResolvedValueOnce(
+        sharePage([share({ code: "new1", entry_name: "有效.txt" })]),
+      );
     const { container } = renderPage();
     await screen.findByText("过期一.txt");
 
@@ -227,7 +280,7 @@ describe("SharedLinks.vue", () => {
       container.querySelectorAll<HTMLButtonElement>(
         ".shares-header-actions button",
       ),
-    ).find((button) => button.textContent?.includes("清理过期链接"));
+    ).find((button) => button.textContent?.includes("清理已加载的过期链接"));
     expect(bulk?.textContent).toContain("2");
 
     await fireEvent.click(bulk!);
@@ -248,12 +301,12 @@ describe("SharedLinks.vue", () => {
     expect(
       Array.from(
         container.querySelectorAll(".shares-header-actions button"),
-      ).some((button) => button.textContent?.includes("清理过期链接")),
+      ).some((button) => button.textContent?.includes("清理已加载的过期链接")),
     ).toBe(false);
   });
 
   it("shows the empty and error states", async () => {
-    listSharesMock.mockResolvedValue([]);
+    listSharesPageMock.mockResolvedValue(sharePage([]));
     const empty = renderPage();
     // 组件在加载与空态之间会重渲染，统一重新查询当前 DOM
     await waitFor(() =>
@@ -263,7 +316,7 @@ describe("SharedLinks.vue", () => {
     );
     empty.unmount();
 
-    listSharesMock.mockRejectedValue(new Error("服务器内部错误"));
+    listSharesPageMock.mockRejectedValue(new Error("服务器内部错误"));
     const failed = renderPage();
     await waitFor(() =>
       expect(

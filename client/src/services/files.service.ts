@@ -588,6 +588,31 @@ export const filesService = {
     return Array.isArray(payload) ? payload : [];
   },
 
+  /** 按需分页读取分享管理列表，避免一次载入全部分享记录。 */
+  async listSharesPage(opts: { limit: number; offset: number }): Promise<{
+    items: ShareLink[];
+    total: number;
+    limit: number;
+    offset: number;
+    has_more: boolean;
+  }> {
+    const response = await apiService.get<{
+      items: ShareLink[];
+      total: number;
+      limit: number;
+      offset: number;
+      has_more: boolean;
+    }>("/share/shares/page", opts);
+    const payload = (response as any)?.data ?? response;
+    return {
+      items: Array.isArray(payload?.items) ? payload.items : [],
+      total: Number(payload?.total ?? 0),
+      limit: Number(payload?.limit ?? opts.limit),
+      offset: Number(payload?.offset ?? opts.offset),
+      has_more: Boolean(payload?.has_more),
+    };
+  },
+
   /** 停用（删除）分享链接。 */
   async disableShare(code: string): Promise<void> {
     // 分享路由挂在 /api/share 下：写成 /shares/{code} 会落到前端回退并返回 200，
