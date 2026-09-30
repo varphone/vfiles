@@ -165,6 +165,8 @@ pub struct EntryDto {
     pub size_bytes: Option<u64>,
     pub mime_type: Option<String>,
     pub is_text: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_favorite: Option<bool>,
     pub created_at: String,
     pub updated_at: Option<String>,
 }
@@ -192,6 +194,7 @@ impl From<Entry> for EntryDto {
             size_bytes: None, // Will be filled from version if available
             mime_type: None,  // Will be filled from version if available
             is_text: None,    // Will be filled from version if available
+            is_favorite: None,
             created_at: format_timestamp(entry.created_at),
             updated_at: None,
         }
@@ -211,6 +214,7 @@ impl From<TreeItem> for EntryDto {
             size_bytes: item.size_bytes,
             mime_type: item.mime_type,
             is_text: item.is_text,
+            is_favorite: None,
             created_at: format_timestamp(item.created_at),
             updated_at: format_timestamp_opt(item.modified_at),
         }

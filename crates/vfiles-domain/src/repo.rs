@@ -937,8 +937,20 @@ pub trait EntryRepo {
 /// 收藏夹：以条目 ID 记录，重命名/移动后依然有效。
 #[async_trait::async_trait]
 pub trait FavoriteRepo {
-    /// 列出收藏的条目（按收藏时间倒序）。
-    async fn list(&self, namespace_id: &NamespaceId) -> DomainResult<Vec<Entry>>;
+    /// 分页列出收藏的条目（按收藏时间倒序），同时返回收藏总数。
+    async fn list_page(
+        &self,
+        namespace_id: &NamespaceId,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<Entry>, u64)>;
+
+    /// 批量查询收藏状态，调用方应限制每批条目数。
+    async fn contains_many(
+        &self,
+        namespace_id: &NamespaceId,
+        entry_ids: &[EntryId],
+    ) -> DomainResult<std::collections::HashSet<EntryId>>;
 
     /// 添加收藏；已存在时幂等返回 `false`。
     async fn add(&self, namespace_id: &NamespaceId, entry_id: &EntryId) -> DomainResult<bool>;

@@ -153,7 +153,7 @@
               :refresh-key="sidebarVersion"
               @open-file="handleOpenRecentFile"
               @open-favorite="handleOpenFavorite"
-              @favorites-changed="handleFavoritesChanged"
+              @favorite-changed="handleFavoriteChanged"
             />
           </aside>
 
@@ -1091,7 +1091,7 @@ const uploadIndicator = computed(() => {
 
 /** 文件列表重新加载或收藏变化后递增，用于让侧栏概览刷新。 */
 const sidebarVersion = ref(0);
-/** 已收藏的条目路径，用于右键菜单里的星标状态。 */
+/** 来自收藏侧栏的局部状态缓存；文件列表 DTO 会提供准确状态。 */
 const favoritePaths = ref<Set<string>>(new Set());
 const detailsDialogFile = ref<FileInfo | null>(null);
 const showHistory = ref(false);
@@ -1170,18 +1170,22 @@ const {
 /** 左侧目录树：宽屏桌面显示。 */
 const treeVisible = computed(() => !isMobile.value && isWideScreen.value);
 
-function handleFavoritesChanged(entries: { path: string }[]) {
-  const next = new Set(entries.map((entry) => entry.path));
-  // 侧栏自身加载后也会上报；只有集合真的变化时才让侧栏重新拉取，
-  // 否则「加载 → 上报 → 再加载」会形成请求死循环
-  const changed =
-    next.size !== favoritePaths.value.size ||
-    [...next].some((path) => !favoritePaths.value.has(path));
+function handleFavoriteChanged(path: string, isFavorite: boolean) {
+  const next = new Set(favoritePaths.value);
+  if (isFavorite) next.add(path);
+  else next.delete(path);
   favoritePaths.value = next;
-
-  if (changed) {
-    sidebarVersion.value += 1;
+  for (const file of files.value) {
+    if (file.path === path) file.is_favorite = isFavorite;
   }
+  if (contextMenu.value.file?.path === path) {
+    contextMenu.value.file.is_favorite = isFavorite;
+  }
+  sidebarVersion.value += 1;
+}
+
+function isFavorite(file: FileInfo): boolean {
+  return file.is_favorite ?? favoritePaths.value.has(file.path);
 }
 
 /** 点击侧栏「收藏」：跳到该条目所在目录（文件则同时设为活动行）。 */
@@ -1196,14 +1200,17 @@ function handleOpenFavorite(entry: { path: string; kind: string }) {
 
 /** 切换收藏状态（右键菜单与侧栏共用）。 */
 async function toggleFavorite(file: FileInfo) {
-  const isFavorite = favoritePaths.value.has(file.path);
+  const wasFavorite = isFavorite(file);
   try {
-    const entries = isFavorite
-      ? await filesService.removeFavorite(file.path)
-      : await filesService.addFavorite(file.path);
-    handleFavoritesChanged(entries);
+    if (wasFavorite) {
+      await filesService.removeFavorite(file.path);
+    } else {
+      await filesService.addFavorite(file.path);
+    }
+    file.is_favorite = !wasFavorite;
+    handleFavoriteChanged(file.path, !wasFavorite);
     appStore.success(
-      isFavorite ? `已取消收藏「${file.name}」` : `已收藏「${file.name}」`,
+      wasFavorite ? `已取消收藏「${file.name}」` : `已收藏「${file.name}」`,
     );
   } catch (err) {
     appStore.error(err instanceof Error ? err.message : "收藏操作失败");
@@ -1496,12 +1503,12 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
     items.push({ key: "preview", label: "预览", icon: IconEye });
     items.push({ key: "history", label: "历史版本", icon: IconHistory });
   }
-  const isFavorite = favoritePaths.value.has(file.path);
+  const favorite = isFavorite(file);
   items.push({ key: "details", label: "详细信息", icon: IconInfoCircle });
   items.push({
     key: "favorite",
-    label: isFavorite ? "取消收藏" : "加入收藏",
-    icon: isFavorite ? IconStarFilled : IconStar,
+    label: favorite ? "取消收藏" : "加入收藏",
+    icon: favorite ? IconStarFilled : IconStar,
   });
   items.push({ key: "rename", label: "重命名", icon: IconPencil, shortcut: "F2" });
   items.push({ key: "move", label: "移动", icon: IconArrowsDiff });

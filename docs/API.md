@@ -393,12 +393,15 @@ curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci
   - 返回 `file_count`、`directory_count`、`total_bytes` 与 `recent_files`（最近 8 条），
     用于侧栏「存储用量 / 最近更新」
 - `GET /api/files/favorites`
-  - 返回收藏条目 `items[{path,name,kind}]`
+  - 支持 `limit`、`offset`，默认每页 50 条，单页最多 200 条
+  - 返回 `items[{path,name,kind}]`、`total`、`limit`、`offset`、`has_more`
 - `POST /api/files/favorites`
-  - Body: `path`；幂等，返回最新列表
+  - Body: `path`；幂等，响应包含第一页及分页信息
 - `DELETE /api/files/favorites?path=...`
-  - 幂等，返回最新列表
+  - 幂等，响应包含第一页及分页信息
   - 收藏按条目 ID 记录：重命名/移动后仍然有效，条目删除后自动清除
+
+目录列表与搜索结果中的条目包含 `is_favorite`，可用于显示准确的收藏状态。
 
 ## FTP 导入信息
 

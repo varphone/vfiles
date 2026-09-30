@@ -398,7 +398,8 @@ async fn paginated_directory_listing(
             u32::try_from(offset).unwrap_or(u32::MAX),
         )
         .await?;
-    let items: Vec<EntryDto> = items.into_iter().map(Into::into).collect();
+    let mut items: Vec<EntryDto> = items.into_iter().map(Into::into).collect();
+    super::favorites::mark_favorite_status(state, namespace_id, &mut items).await?;
     let total = total as usize;
     let offset = offset.min(total);
     let end = (offset + items.len()).min(total);
@@ -442,7 +443,8 @@ async fn paginated_listing(
                 u32::try_from(offset).unwrap_or(u32::MAX),
             )
             .await?;
-        let items: Vec<EntryDto> = items.into_iter().map(Into::into).collect();
+        let mut items: Vec<EntryDto> = items.into_iter().map(Into::into).collect();
+        super::favorites::mark_favorite_status(state, namespace_id, &mut items).await?;
         let total = total as usize;
         let offset = offset.min(total);
         let end = (offset + items.len()).min(total);
@@ -465,7 +467,8 @@ async fn paginated_listing(
         )
         .await?;
 
-    let items: Vec<EntryDto> = items.into_iter().map(Into::into).collect();
+    let mut items: Vec<EntryDto> = items.into_iter().map(Into::into).collect();
+    super::favorites::mark_favorite_status(state, namespace_id, &mut items).await?;
     let total = total as usize;
     let offset = offset.min(total);
     let end = (offset + items.len()).min(total);

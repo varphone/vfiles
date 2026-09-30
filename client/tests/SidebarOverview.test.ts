@@ -37,11 +37,30 @@ function overview(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function favoritePage(
+  items: unknown[] = [],
+  overrides: Partial<{
+    total: number;
+    limit: number;
+    offset: number;
+    has_more: boolean;
+  }> = {},
+) {
+  return {
+    items,
+    total: items.length,
+    limit: 50,
+    offset: 0,
+    has_more: false,
+    ...overrides,
+  };
+}
+
 describe("SidebarOverview.vue storage breakdown", () => {
   beforeEach(() => {
     getOverviewMock.mockReset();
     getFavoritesMock.mockReset();
-    getFavoritesMock.mockResolvedValue([]);
+    getFavoritesMock.mockResolvedValue(favoritePage());
   });
 
   it("renders a proportional bar and legend for the categories", async () => {
@@ -146,9 +165,9 @@ describe("SidebarOverview.vue", () => {
     getOverviewMock.mockReset();
     getOverviewMock.mockResolvedValue(overview());
     getFavoritesMock.mockReset();
-    getFavoritesMock.mockResolvedValue([]);
+    getFavoritesMock.mockResolvedValue(favoritePage());
     removeFavoriteMock.mockReset();
-    removeFavoriteMock.mockResolvedValue([]);
+    removeFavoriteMock.mockResolvedValue(favoritePage());
   });
 
   it("renders storage usage and recent files", async () => {
@@ -182,9 +201,9 @@ describe("SidebarOverview.vue", () => {
   });
 
   it("lists favorites and removes one from the sidebar", async () => {
-    getFavoritesMock.mockResolvedValue([
+    getFavoritesMock.mockResolvedValue(favoritePage([
       { path: "docs/report.md", name: "report.md", kind: "file" },
-    ]);
+    ]));
 
     const { emitted } = render(SidebarOverview as any);
     expect(await screen.findByText("收藏")).toBeInTheDocument();
@@ -194,21 +213,21 @@ describe("SidebarOverview.vue", () => {
       within(favoriteBlock).getByTitle("docs/report.md"),
     ).toBeInTheDocument();
 
-    removeFavoriteMock.mockResolvedValue([]);
+    removeFavoriteMock.mockResolvedValue(favoritePage());
     (screen.getByLabelText("取消收藏 report.md") as HTMLElement).click();
 
     await waitFor(() =>
       expect(removeFavoriteMock).toHaveBeenCalledWith("docs/report.md"),
     );
     await waitFor(() => expect(screen.queryByText("收藏")).toBeNull());
-    const events = emitted()["favorites-changed"] as unknown[][];
-    expect(events[events.length - 1]?.[0]).toEqual([]);
+    const events = emitted()["favorite-changed"] as unknown[][];
+    expect(events[events.length - 1]).toEqual(["docs/report.md", false]);
   });
 
   it("emits the clicked favorite", async () => {
-    getFavoritesMock.mockResolvedValue([
+    getFavoritesMock.mockResolvedValue(favoritePage([
       { path: "docs", name: "docs", kind: "directory" },
-    ]);
+    ]));
 
     const { emitted } = render(SidebarOverview as any);
     const item = await screen.findByTitle("docs");
@@ -216,6 +235,33 @@ describe("SidebarOverview.vue", () => {
 
     const events = emitted()["open-favorite"] as unknown[][];
     expect(events[0][0]).toMatchObject({ path: "docs", kind: "directory" });
+  });
+
+  it("loads favorites one page at a time", async () => {
+    const firstPage = Array.from({ length: 50 }, (_, index) => ({
+      path: `docs/${index}`,
+      name: `${index}`,
+      kind: "file" as const,
+    }));
+    const lastItem = { path: "docs/50", name: "50", kind: "file" as const };
+    getFavoritesMock
+      .mockResolvedValueOnce(
+        favoritePage(firstPage, { total: 51, has_more: true }),
+      )
+      .mockResolvedValueOnce(
+        favoritePage([lastItem], {
+          total: 51,
+          offset: 50,
+          has_more: false,
+        }),
+      );
+
+    render(SidebarOverview as any);
+    expect(await screen.findByText("第 1–50 项，共 51 项")).toBeInTheDocument();
+    screen.getByRole("button", { name: "下一页" }).click();
+
+    expect(await screen.findByTitle("docs/50")).toBeInTheDocument();
+    expect(getFavoritesMock).toHaveBeenLastCalledWith(50, 50);
   });
 
   it("still shows usage when only the favorites request fails", async () => {

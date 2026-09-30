@@ -6149,7 +6149,25 @@ impl SqliteFavoriteRepo {
 
 #[async_trait::async_trait]
 impl FavoriteRepo for SqliteFavoriteRepo {
-    async fn list(&self, namespace_id: &NamespaceId) -> DomainResult<Vec<Entry>> {
+    async fn list_page(
+        &self,
+        namespace_id: &NamespaceId,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<Entry>, u64)> {
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM favorites f JOIN entries e ON e.id = f.entry_id WHERE f.namespace_id = ?",
+        )
+                .bind(namespace_id.to_string())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to count favorites: {e}"),
+                })?;
+        let total = u64::try_from(total).map_err(|e| DomainError::Internal {
+            message: format!("Invalid favorite count: {e}"),
+        })?;
+
         let rows: Vec<EntryRow> = sqlx::query_as(
             r#"
             SELECT
@@ -6169,16 +6187,63 @@ impl FavoriteRepo for SqliteFavoriteRepo {
             JOIN entries e ON e.id = f.entry_id
             WHERE f.namespace_id = ?
             ORDER BY f.created_at DESC, e.path ASC
+            LIMIT ? OFFSET ?
             "#,
         )
         .bind(namespace_id.to_string())
+        .bind(i64::from(limit.max(1)))
+        .bind(i64::from(offset))
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DomainError::Internal {
-            message: format!("Failed to list favorites: {e}"),
+            message: format!("Failed to page favorites: {e}"),
         })?;
 
-        rows.into_iter().map(parse_entry_row).collect()
+        let entries = rows
+            .into_iter()
+            .map(parse_entry_row)
+            .collect::<DomainResult<Vec<_>>>()?;
+        Ok((entries, total))
+    }
+
+    async fn contains_many(
+        &self,
+        namespace_id: &NamespaceId,
+        entry_ids: &[EntryId],
+    ) -> DomainResult<std::collections::HashSet<EntryId>> {
+        let mut favorites = std::collections::HashSet::new();
+        for batch in entry_ids.chunks(400) {
+            if batch.is_empty() {
+                continue;
+            }
+
+            let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                "SELECT entry_id FROM favorites WHERE namespace_id = ",
+            );
+            query
+                .push_bind(namespace_id.to_string())
+                .push(" AND entry_id IN (");
+            let mut separated = query.separated(",");
+            for entry_id in batch {
+                separated.push_bind(entry_id.to_string());
+            }
+            query.push(")");
+
+            let rows: Vec<String> = query
+                .build_query_scalar()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to check favorite statuses: {e}"),
+                })?;
+            for row in rows {
+                let entry_id = EntryId::from_string(&row).map_err(|e| DomainError::Internal {
+                    message: format!("Invalid favorite entry ID: {e}"),
+                })?;
+                favorites.insert(entry_id);
+            }
+        }
+        Ok(favorites)
     }
 
     async fn add(&self, namespace_id: &NamespaceId, entry_id: &EntryId) -> DomainResult<bool> {

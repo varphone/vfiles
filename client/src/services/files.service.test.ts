@@ -49,6 +49,31 @@ describe("filesService.getFilesPage", () => {
   });
 });
 
+describe("filesService.getFavorites", () => {
+  beforeEach(() => {
+    getMock.mockReset();
+  });
+
+  it("requests a bounded page and preserves pagination metadata", async () => {
+    getMock.mockResolvedValue({
+      items: [{ path: "docs", name: "docs", kind: "directory" }],
+      total: 91,
+      limit: 20,
+      offset: 40,
+      has_more: true,
+    });
+
+    await expect(filesService.getFavorites(20, 40)).resolves.toEqual({
+      items: [{ path: "docs", name: "docs", kind: "directory" }],
+      total: 91,
+      limit: 20,
+      offset: 40,
+      has_more: true,
+    });
+    expect(getMock).toHaveBeenCalledWith("/files/favorites?limit=20&offset=40");
+  });
+});
+
 describe("filesService.transferOwnership", () => {
   beforeEach(() => {
     postMock.mockReset();

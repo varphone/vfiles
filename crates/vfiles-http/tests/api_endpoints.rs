@@ -7033,6 +7033,7 @@ async fn validation_and_size_errors_carry_structured_details() {
 async fn favorites_can_be_added_listed_and_removed() {
     let app = TestApp::new().await;
     app.upload_version("", "keep.txt", b"content", "seed").await;
+    app.upload_version("", "other.txt", b"other", "seed").await;
     app.upload_version("docs", "doc.md", b"doc", "seed").await;
 
     // 初始为空
@@ -7106,6 +7107,66 @@ async fn favorites_can_be_added_listed_and_removed() {
             ("keep.txt".to_string(), "file".to_string()),
         ]
     );
+
+    // 收藏列表使用有限页响应，并提供准确的总数和后续页状态。
+    let first_page = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/favorites?limit=1&offset=0")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let first_payload = response_json(first_page).await;
+    assert_eq!(first_payload["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(first_payload["total"], 2);
+    assert_eq!(first_payload["limit"], 1);
+    assert_eq!(first_payload["offset"], 0);
+    assert_eq!(first_payload["has_more"], true);
+
+    let second_page = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/favorites?limit=1&offset=1")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let second_payload = response_json(second_page).await;
+    assert_eq!(second_payload["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(second_payload["total"], 2);
+    assert_eq!(second_payload["has_more"], false);
+
+    let capped_page = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/favorites?limit=999&offset=0")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let capped_payload = response_json(capped_page).await;
+    assert_eq!(capped_payload["limit"], 200);
+
+    // 文件目录页为每个条目批量标记收藏状态。
+    let tree = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=20&offset=0")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let tree_payload = response_json(tree).await;
+    let listed_items = tree_payload["items"].as_array().expect("items array");
+    let favorite_state = |path: &str| {
+        listed_items
+            .iter()
+            .find(|item| item["path"] == path)
+            .and_then(|item| item["is_favorite"].as_bool())
+    };
+    assert_eq!(favorite_state("keep.txt"), Some(true));
+    assert_eq!(favorite_state("other.txt"), Some(false));
 
     // 取消收藏
     let removed = app

@@ -107,9 +107,21 @@ async fn search(
     let mut results = state.search_service.search(query).await?;
     let has_more = results.len() > limit as usize;
     results.truncate(limit as usize);
+    let entry_ids: Vec<_> = results.iter().map(|result| result.entry.id).collect();
+    let favorite_ids =
+        super::favorites::favorite_ids(&state, &ctx.namespace_id, &entry_ids).await?;
+    let items = results
+        .into_iter()
+        .map(|result| {
+            let entry_id = result.entry.id;
+            let mut dto = SearchResultDto::from(result);
+            dto.entry.is_favorite = Some(favorite_ids.contains(&entry_id));
+            dto
+        })
+        .collect();
 
     Ok(Json(SearchPageDto {
-        items: results.into_iter().map(SearchResultDto::from).collect(),
+        items,
         limit,
         offset: params.offset,
         has_more,

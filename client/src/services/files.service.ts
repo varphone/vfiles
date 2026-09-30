@@ -8,7 +8,7 @@ import type {
   AuditLogSummary,
   ContentMatch,
   CreatedAccessToken,
-  FavoriteEntry,
+  FavoritePage,
   FileInfo,
   FileHistory,
   ShareLink,
@@ -398,32 +398,50 @@ export const filesService = {
     return payload;
   },
 
-  async getFavorites(): Promise<FavoriteEntry[]> {
-    const response = await apiService.get<{ items: FavoriteEntry[] }>(
-      "/files/favorites",
+  async getFavorites(limit = 50, offset = 0): Promise<FavoritePage> {
+    const response = await apiService.get<FavoritePage>(
+      `/files/favorites?limit=${limit}&offset=${offset}`,
     );
     const payload = (response as any)?.data ?? response;
-    return Array.isArray(payload?.items) ? payload.items : [];
+    return {
+      items: Array.isArray(payload?.items) ? payload.items : [],
+      total: Number(payload?.total ?? 0),
+      limit: Number(payload?.limit ?? 50),
+      offset: Number(payload?.offset ?? 0),
+      has_more: Boolean(payload?.has_more),
+    };
   },
 
-  /** 添加收藏（幂等），返回最新列表。 */
-  async addFavorite(path: string): Promise<FavoriteEntry[]> {
-    const response = await apiService.post<{ items: FavoriteEntry[] }>(
+  /** 添加收藏（幂等），响应包含第一页。 */
+  async addFavorite(path: string): Promise<FavoritePage> {
+    const response = await apiService.post<FavoritePage>(
       "/files/favorites",
       { path },
     );
     const payload = (response as any)?.data ?? response;
-    return Array.isArray(payload?.items) ? payload.items : [];
+    return {
+      items: Array.isArray(payload?.items) ? payload.items : [],
+      total: Number(payload?.total ?? 0),
+      limit: Number(payload?.limit ?? 50),
+      offset: Number(payload?.offset ?? 0),
+      has_more: Boolean(payload?.has_more),
+    };
   },
 
-  /** 取消收藏（幂等），返回最新列表。 */
-  async removeFavorite(path: string): Promise<FavoriteEntry[]> {
-    const response = await apiService.delete<{ items: FavoriteEntry[] }>(
+  /** 取消收藏（幂等），响应包含第一页。 */
+  async removeFavorite(path: string): Promise<FavoritePage> {
+    const response = await apiService.delete<FavoritePage>(
       "/files/favorites",
       { path },
     );
     const payload = (response as any)?.data ?? response;
-    return Array.isArray(payload?.items) ? payload.items : [];
+    return {
+      items: Array.isArray(payload?.items) ? payload.items : [],
+      total: Number(payload?.total ?? 0),
+      limit: Number(payload?.limit ?? 50),
+      offset: Number(payload?.offset ?? 0),
+      has_more: Boolean(payload?.has_more),
+    };
   },
 
   /** 侧栏聚合：条目统计 + 最近文件。 */

@@ -7,6 +7,7 @@ export interface FileInfo {
   size_bytes?: number;
   mime_type?: string;
   is_text?: boolean;
+  is_favorite?: boolean;
   created_at: string;
   updated_at?: string;
   matches?: ContentMatch[];
@@ -18,6 +19,15 @@ export interface FavoriteEntry {
   path: string;
   name: string;
   kind: "file" | "directory";
+}
+
+/** 收藏分页（`GET /api/files/favorites`）。 */
+export interface FavoritePage {
+  items: FavoriteEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
 }
 
 /** 侧栏聚合数据（`GET /api/files/overview`）。 */

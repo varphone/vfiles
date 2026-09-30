@@ -7,10 +7,12 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
-use vfiles_domain::{DomainError, NormalizedPath};
+use std::collections::HashSet;
+use vfiles_domain::{DomainError, EntryId, NamespaceId, NormalizedPath};
 
 use crate::{
     AppState,
+    dto::EntryDto,
     error::{ApiError, ApiJson, ApiResult},
     routes::protected_request_context,
 };
@@ -25,7 +27,20 @@ pub struct FavoriteDto {
 #[derive(Debug, Serialize)]
 pub struct FavoriteListDto {
     pub items: Vec<FavoriteDto>,
+    pub total: u64,
+    pub limit: usize,
+    pub offset: usize,
+    pub has_more: bool,
 }
+
+#[derive(Debug, Default, Deserialize)]
+pub struct FavoritePageQuery {
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+const DEFAULT_PAGE_LIMIT: usize = 50;
+const MAX_PAGE_LIMIT: usize = 200;
 
 #[derive(Debug, Deserialize)]
 pub struct FavoriteBody {
@@ -45,6 +60,41 @@ pub fn router() -> axum::Router<AppState> {
     )
 }
 
+/// 查询一批条目的收藏 ID，目录和搜索列表用它批量标记收藏状态。
+pub(crate) async fn favorite_ids(
+    state: &AppState,
+    namespace_id: &NamespaceId,
+    entry_ids: &[EntryId],
+) -> ApiResult<HashSet<EntryId>> {
+    Ok(state
+        .favorite_repo
+        .contains_many(namespace_id, entry_ids)
+        .await?)
+}
+
+/// 为有限大小的文件列表填充收藏状态，避免逐条查询。
+pub(crate) async fn mark_favorite_status(
+    state: &AppState,
+    namespace_id: &NamespaceId,
+    items: &mut [EntryDto],
+) -> ApiResult<()> {
+    let entry_ids = items
+        .iter()
+        .map(|item| {
+            EntryId::from_string(&item.id).map_err(|error| {
+                ApiError::Domain(DomainError::Internal {
+                    message: format!("Invalid entry ID in file listing: {error}"),
+                })
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let favorite_ids = favorite_ids(state, namespace_id, &entry_ids).await?;
+    for (item, entry_id) in items.iter_mut().zip(entry_ids) {
+        item.is_favorite = Some(favorite_ids.contains(&entry_id));
+    }
+    Ok(())
+}
+
 fn to_dto(entry: vfiles_domain::Entry) -> FavoriteDto {
     let path = entry.path_norm.as_str().to_string();
     let name = path.rsplit('/').next().unwrap_or(&path).to_string();
@@ -62,12 +112,27 @@ fn to_dto(entry: vfiles_domain::Entry) -> FavoriteDto {
 pub async fn list(
     State(state): State<AppState>,
     jar: CookieJar,
+    Query(query): Query<FavoritePageQuery>,
 ) -> ApiResult<Json<FavoriteListDto>> {
     let ctx = protected_request_context(&state, &jar).await?;
-    let entries = state.favorite_repo.list(&ctx.namespace_id).await?;
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_PAGE_LIMIT)
+        .clamp(1, MAX_PAGE_LIMIT);
+    let offset = u32::try_from(query.offset.unwrap_or(0)).unwrap_or(u32::MAX);
+    let (entries, total) = state
+        .favorite_repo
+        .list_page(&ctx.namespace_id, limit as u32, offset)
+        .await?;
+    let item_count = entries.len() as u64;
+    let response_offset = u64::from(offset).min(total);
 
     Ok(Json(FavoriteListDto {
         items: entries.into_iter().map(to_dto).collect(),
+        total,
+        limit,
+        offset: usize::try_from(response_offset).unwrap_or(usize::MAX),
+        has_more: response_offset.saturating_add(item_count) < total,
     }))
 }
 
@@ -85,11 +150,18 @@ pub async fn add(
         .add(&ctx.namespace_id, &entry_id)
         .await?;
 
-    let entries = state.favorite_repo.list(&ctx.namespace_id).await?;
+    let (entries, total) = state
+        .favorite_repo
+        .list_page(&ctx.namespace_id, DEFAULT_PAGE_LIMIT as u32, 0)
+        .await?;
     Ok((
         StatusCode::CREATED,
         Json(FavoriteListDto {
             items: entries.into_iter().map(to_dto).collect(),
+            total,
+            limit: DEFAULT_PAGE_LIMIT,
+            offset: 0,
+            has_more: total > DEFAULT_PAGE_LIMIT as u64,
         }),
     ))
 }
@@ -108,9 +180,16 @@ pub async fn remove(
         .remove(&ctx.namespace_id, &entry_id)
         .await?;
 
-    let entries = state.favorite_repo.list(&ctx.namespace_id).await?;
+    let (entries, total) = state
+        .favorite_repo
+        .list_page(&ctx.namespace_id, DEFAULT_PAGE_LIMIT as u32, 0)
+        .await?;
     Ok(Json(FavoriteListDto {
         items: entries.into_iter().map(to_dto).collect(),
+        total,
+        limit: DEFAULT_PAGE_LIMIT,
+        offset: 0,
+        has_more: total > DEFAULT_PAGE_LIMIT as u64,
     }))
 }
 

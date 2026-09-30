@@ -67,8 +67,11 @@
       </ul>
     </div>
 
-    <div v-if="favorites.length > 0" class="sidebar-overview-block">
+    <div v-if="favoritesTotal > 0 || favoritesLoading" class="sidebar-overview-block">
       <p class="sidebar-overview-title">收藏</p>
+      <p v-if="favoritesTotal > 0" class="sidebar-favorites-page">
+        第 {{ favoritesOffset + 1 }}–{{ favoritesOffset + favorites.length }} 项，共 {{ favoritesTotal }} 项
+      </p>
       <ul class="sidebar-recent">
         <li v-for="item in favorites" :key="item.path">
           <div class="sidebar-favorite-row">
@@ -93,6 +96,22 @@
           </div>
         </li>
       </ul>
+      <div v-if="favoritesTotal > FAVORITES_PAGE_SIZE" class="sidebar-favorites-pagination">
+        <button
+          type="button"
+          :disabled="favoritesOffset === 0 || favoritesLoading"
+          @click="changeFavoritesPage(-1)"
+        >
+          上一页
+        </button>
+        <button
+          type="button"
+          :disabled="!favoritesHasMore || favoritesLoading"
+          @click="changeFavoritesPage(1)"
+        >
+          下一页
+        </button>
+      </div>
     </div>
 
     <div
@@ -152,11 +171,16 @@ const emit = defineEmits<{
   (e: "open-file", file: RecentFile): void;
   (e: "open-favorite", entry: FavoriteEntry): void;
   /// 收藏增删后通知父组件，便于同步右键菜单里的星标状态
-  (e: "favorites-changed", entries: FavoriteEntry[]): void;
+  (e: "favorite-changed", path: string, isFavorite: boolean): void;
 }>();
 
+const FAVORITES_PAGE_SIZE = 50;
 const overview = ref<WorkspaceOverview | null>(null);
 const favorites = ref<FavoriteEntry[]>([]);
+const favoritesTotal = ref(0);
+const favoritesOffset = ref(0);
+const favoritesHasMore = ref(false);
+const favoritesLoading = ref(false);
 const loading = ref(false);
 const error = ref("");
 
@@ -237,10 +261,51 @@ function favoriteAsFileInfo(item: FavoriteEntry) {
 
 async function removeFavorite(item: FavoriteEntry) {
   try {
-    favorites.value = await filesService.removeFavorite(item.path);
-    emit("favorites-changed", favorites.value);
+    await filesService.removeFavorite(item.path);
+    favorites.value = favorites.value.filter((favorite) => favorite.path !== item.path);
+    favoritesTotal.value = Math.max(0, favoritesTotal.value - 1);
+    if (favoritesTotal.value === 0) {
+      favoritesOffset.value = 0;
+    } else {
+      const lastOffset =
+        Math.floor((favoritesTotal.value - 1) / FAVORITES_PAGE_SIZE) *
+        FAVORITES_PAGE_SIZE;
+      favoritesOffset.value = Math.min(favoritesOffset.value, lastOffset);
+    }
+    favoritesHasMore.value =
+      favoritesOffset.value + favorites.value.length < favoritesTotal.value;
+    emit("favorite-changed", item.path, false);
   } catch {
     // 取消失败时保持原样，下一次刷新会恢复
+  }
+}
+
+async function fetchFavoritesPage(offset: number) {
+  let page = await filesService.getFavorites(FAVORITES_PAGE_SIZE, offset);
+  if (page.total > 0 && offset >= page.total) {
+    const lastOffset =
+      Math.floor((page.total - 1) / FAVORITES_PAGE_SIZE) * FAVORITES_PAGE_SIZE;
+    page = await filesService.getFavorites(FAVORITES_PAGE_SIZE, lastOffset);
+  }
+  return page;
+}
+
+async function changeFavoritesPage(direction: -1 | 1) {
+  const offset = Math.max(
+    0,
+    favoritesOffset.value + direction * FAVORITES_PAGE_SIZE,
+  );
+  favoritesLoading.value = true;
+  try {
+    const page = await fetchFavoritesPage(offset);
+    favorites.value = page.items;
+    favoritesTotal.value = page.total;
+    favoritesOffset.value = page.offset;
+    favoritesHasMore.value = page.has_more;
+  } catch {
+    // 页面切换失败时保留当前页，后续刷新可再次加载。
+  } finally {
+    favoritesLoading.value = false;
   }
 }
 
@@ -252,7 +317,7 @@ async function load() {
   // 存储用量与最近更新仍应正常显示，反之亦然。
   const [overviewResult, favoritesResult] = await Promise.allSettled([
     filesService.getOverview(),
-    filesService.getFavorites(),
+    fetchFavoritesPage(favoritesOffset.value),
   ]);
 
   if (overviewResult.status === "fulfilled") {
@@ -264,10 +329,15 @@ async function load() {
   }
 
   if (favoritesResult.status === "fulfilled") {
-    favorites.value = favoritesResult.value;
-    emit("favorites-changed", favoritesResult.value);
+    favorites.value = favoritesResult.value.items;
+    favoritesTotal.value = favoritesResult.value.total;
+    favoritesOffset.value = favoritesResult.value.offset;
+    favoritesHasMore.value = favoritesResult.value.has_more;
   } else {
     favorites.value = [];
+    favoritesTotal.value = 0;
+    favoritesOffset.value = 0;
+    favoritesHasMore.value = false;
   }
 
   loading.value = false;
@@ -470,6 +540,34 @@ watch(
 
 .sidebar-favorite-row .sidebar-recent-item {
   flex: 1 1 auto;
+}
+
+.sidebar-favorites-page {
+  margin: 0 0 0.35rem;
+  color: var(--vf-text-subtle);
+  font-size: 0.75rem;
+}
+
+.sidebar-favorites-pagination {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.sidebar-favorites-pagination button {
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--vf-border);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-surface);
+  color: var(--vf-text);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.sidebar-favorites-pagination button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .sidebar-favorite-remove {
