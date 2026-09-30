@@ -13,6 +13,9 @@ export const RETRYABLE_STATUS_CODES = [429, 502, 503, 504] as const;
 /** 最多重试次数（首次请求之外）。 */
 export const MAX_RETRIES = 2;
 
+/** Automatic retries stay responsive when a server asks for a very long wait. */
+export const MAX_AUTOMATIC_RETRY_AFTER_MS = 30_000;
+
 type RetryableErrorLike = {
   code?: string;
   response?: { status?: number };
@@ -52,6 +55,45 @@ export function computeRetryDelayMs(
   const base = Math.min(2000, 300 * 2 ** Math.max(0, attempt - 1));
   const jitter = Math.floor(random() * 100);
   return base + jitter;
+}
+
+/** Parse Retry-After delta-seconds or HTTP-date. Invalid values return undefined. */
+export function parseRetryAfterMs(
+  value: string | null | undefined,
+  nowMs = Date.now(),
+): number | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return Math.min(seconds * 1000, Number.MAX_SAFE_INTEGER);
+  }
+
+  const retryAtMs = Date.parse(trimmed);
+  if (!Number.isFinite(retryAtMs)) return undefined;
+  return Math.max(0, retryAtMs - nowMs);
+}
+
+/** Use Retry-After as a minimum delay; skip automatic retries for longer waits. */
+export function computeRetryDelayForResponse(
+  attempt: number,
+  retryAfter: string | null | undefined,
+  random: () => number = Math.random,
+  nowMs = Date.now(),
+): number | null {
+  const serverDelayMs = parseRetryAfterMs(retryAfter, nowMs);
+  if (
+    serverDelayMs !== undefined &&
+    serverDelayMs > MAX_AUTOMATIC_RETRY_AFTER_MS
+  ) {
+    return null;
+  }
+
+  return Math.max(
+    computeRetryDelayMs(attempt, random),
+    serverDelayMs ?? 0,
+  );
 }
 
 type RetryAbortSignal = Pick<AbortSignal, "aborted"> &
@@ -135,12 +177,16 @@ class ApiService {
         if (config && isRetryableError(error)) {
           const attempt = (config.__retryCount ?? 0) + 1;
           if (attempt <= MAX_RETRIES) {
-            config.__retryCount = attempt;
-            await waitForRetryDelay(
-              computeRetryDelayMs(attempt),
-              config.signal ?? undefined,
+            const retryAfter = error.response?.headers["retry-after"];
+            const retryDelayMs = computeRetryDelayForResponse(
+              attempt,
+              typeof retryAfter === "string" ? retryAfter : undefined,
             );
-            return this.api.request(config);
+            if (retryDelayMs !== null) {
+              config.__retryCount = attempt;
+              await waitForRetryDelay(retryDelayMs, config.signal ?? undefined);
+              return this.api.request(config);
+            }
           }
         }
 

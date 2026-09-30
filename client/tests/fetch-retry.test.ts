@@ -7,8 +7,8 @@ import {
 
 const noSleep = () => Promise.resolve();
 
-function response(status: number, body = "x") {
-  return new Response(body, { status });
+function response(status: number, body = "x", headers?: HeadersInit) {
+  return new Response(body, { status, headers });
 }
 
 describe("isRetryableStatus", () => {
@@ -43,6 +43,46 @@ describe("fetchWithRetry", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1);
     expect(sleep).toHaveBeenCalledWith(300, undefined);
+  });
+
+  it("honors Retry-After before retrying a transient response", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response(429, "slow down", { "Retry-After": "4" }),
+      )
+      .mockResolvedValueOnce(response(200, "ok"));
+    const sleep = vi.fn(noSleep);
+
+    const result = await fetchWithRetry(
+      "/api/files/content",
+      undefined,
+      { sleep, random: () => 0 },
+      fetchMock,
+    );
+
+    expect(result.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(4000, undefined);
+  });
+
+  it("returns the response without retrying when Retry-After is too long", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      response(503, "maintenance", { "Retry-After": "31" }),
+    );
+    const sleep = vi.fn(noSleep);
+
+    const result = await fetchWithRetry(
+      "/api/files/content",
+      undefined,
+      { sleep, random: () => 0 },
+      fetchMock,
+    );
+
+    expect(result.status).toBe(503);
+    expect(await result.text()).toBe("maintenance");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it("does not retry statuses that are not transient", async () => {

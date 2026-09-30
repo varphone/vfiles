@@ -2,6 +2,7 @@ import {
   MAX_RETRIES,
   RETRYABLE_STATUS_CODES,
   computeRetryDelayMs,
+  computeRetryDelayForResponse,
   waitForRetryDelay,
 } from "./api.service";
 
@@ -64,23 +65,30 @@ export async function fetchWithRetry(
       throw lastError ?? new DOMException("Aborted", "AbortError");
     }
 
+    let retryDelayMs: number;
     try {
       const response = await fetchImpl(input, init);
       if (!isRetryableStatus(response.status) || attempt === maxRetries) {
         return response;
       }
+      const responseRetryDelayMs = computeRetryDelayForResponse(
+        attempt + 1,
+        response.headers.get("Retry-After"),
+        options?.random,
+      );
+      if (responseRetryDelayMs === null) return response;
+      retryDelayMs = responseRetryDelayMs;
+
       // 该响应不会被使用，释放连接
       await response.body?.cancel().catch(() => undefined);
     } catch (error) {
       if (isAborted(signal)) throw error;
       lastError = error;
       if (attempt === maxRetries) throw error;
+      retryDelayMs = computeRetryDelayMs(attempt + 1, options?.random);
     }
 
-    await sleep(
-      computeRetryDelayMs(attempt + 1, options?.random),
-      signal ?? undefined,
-    );
+    await sleep(retryDelayMs, signal ?? undefined);
   }
 
   // 循环要么返回、要么抛出，这里只是让类型完整
