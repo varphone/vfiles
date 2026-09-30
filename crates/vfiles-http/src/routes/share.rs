@@ -12,7 +12,9 @@ use crate::{
     AppState,
     dto::{CreateShareRequest, CreateShareResponse, ShareDto},
     error::{ApiError, ApiJson},
-    http_headers::{StreamingFileOptions, streaming_file_response},
+    http_headers::{
+        StreamingFileOptions, directory_archive_head_response, streaming_file_response,
+    },
     middleware::client_ip_from_headers,
     routes::authenticated_request_context,
 };
@@ -202,6 +204,21 @@ pub async fn download_share(
             .await
         }
         EntryKind::Directory => {
+            if method == Method::HEAD {
+                state
+                    .workspace_service
+                    .validate_directory_archive_target(&share.namespace_id, &entry.path_norm, None)
+                    .await?;
+                let archive_name = entry
+                    .path_norm
+                    .as_str()
+                    .split('/')
+                    .rfind(|segment| !segment.is_empty())
+                    .unwrap_or("root");
+                return directory_archive_head_response(&headers, &format!("{archive_name}.zip"))
+                    .await;
+            }
+
             let archive = state
                 .workspace_service
                 .download_directory_archive(&share.namespace_id, &entry.path_norm, None)

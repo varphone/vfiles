@@ -5556,6 +5556,70 @@ async fn share_download_supports_files_and_directories() {
 }
 
 #[tokio::test]
+async fn head_directory_share_returns_metadata_without_reading_archive_blobs() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "share.txt", b"shared file\n", "share source")
+        .await;
+
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+    let directory_share = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/share/shares",
+            json!({ "path": "docs" }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(directory_share.status(), StatusCode::OK);
+    let code = response_json(directory_share).await["code"]
+        .as_str()
+        .expect("directory share code should be present")
+        .to_string();
+
+    let blob_id: String = sqlx::query_scalar(
+        "SELECT ev.blob_id FROM entries e JOIN entry_versions ev ON ev.entry_id = e.id WHERE e.path = 'docs/share.txt' ORDER BY ev.version DESC LIMIT 1",
+    )
+    .fetch_one(&app.db_pool)
+    .await
+    .expect("uploaded file should have a blob");
+    let blob_path = app
+        ._temp_dir
+        .path()
+        .join("blobs")
+        .join(&blob_id[..2])
+        .join(&blob_id[2..]);
+    tokio::fs::remove_file(blob_path)
+        .await
+        .expect("test should remove the archive source blob");
+
+    let head = app
+        .request(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri(format!("/s/{code}"))
+                .body(Body::empty())
+                .expect("directory share HEAD request should build"),
+        )
+        .await;
+
+    assert_eq!(head.status(), StatusCode::OK);
+    assert_eq!(
+        head.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/zip"
+    );
+    assert!(
+        head.headers()
+            .get(header::CONTENT_DISPOSITION)
+            .is_some_and(|value| value.to_str().is_ok_and(|value| value.contains("docs.zip")))
+    );
+    assert!(
+        !head.headers().contains_key(header::CONTENT_LENGTH),
+        "HEAD should not build the archive just to calculate its size"
+    );
+    assert!(response_bytes(head).await.is_empty());
+}
+
+#[tokio::test]
 async fn share_download_supports_unicode_filenames() {
     let app = TestApp::new().await;
 
