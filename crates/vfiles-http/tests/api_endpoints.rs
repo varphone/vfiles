@@ -5163,6 +5163,42 @@ async fn access_token_authenticates_api_requests() {
 }
 
 #[tokio::test]
+async fn api_json_responses_are_private_and_not_stored() {
+    let app = TestApp::new().await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+
+    let session = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/session/bootstrap")
+                .body(Body::empty())
+                .expect("session request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(session.status(), StatusCode::OK);
+    assert_eq!(
+        session.headers().get(header::CACHE_CONTROL),
+        Some(&HeaderValue::from_static("private, no-store"))
+    );
+
+    let created_token = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/tokens",
+            json!({ "name": "one-time-secret" }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(created_token.status(), StatusCode::OK);
+    assert_eq!(
+        created_token.headers().get(header::CACHE_CONTROL),
+        Some(&HeaderValue::from_static("private, no-store"))
+    );
+    assert!(response_json(created_token).await["plaintext"].is_string());
+}
+
+#[tokio::test]
 async fn access_token_listing_is_paginated_and_caps_page_size() {
     let app = TestApp::new().await;
     let admin_cookie = app.login_cookie("admin", "admin-password").await;

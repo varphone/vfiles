@@ -105,10 +105,12 @@ fn build_router_inner(state: AppState, serve_frontend_fallback: bool) -> Router<
     }
     write_allowed_origins.sort_unstable();
     write_allowed_origins.dedup();
-    let api_router = routes::api_router().layer(axum::middleware::from_fn_with_state(
-        Arc::new(write_allowed_origins),
-        middleware::write_origin_guard_middleware,
-    ));
+    let api_router = routes::api_router()
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::new(write_allowed_origins),
+            middleware::write_origin_guard_middleware,
+        ))
+        .layer(axum::middleware::from_fn(api_response_cache_policy));
     let mut router = Router::new()
         .route(
             "/s/{code}",
@@ -143,6 +145,18 @@ fn build_router_inner(state: AppState, serve_frontend_fallback: bool) -> Router<
             middleware::bearer_token_middleware,
         ))
         .with_state(state)
+}
+
+/// API JSON and error responses contain user-scoped data; make them private and
+/// non-storable unless a handler explicitly supplies a cache policy. File and
+/// thumbnail handlers set their own private revalidation policy for ETag support.
+async fn api_response_cache_policy(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .entry(header::CACHE_CONTROL)
+        .or_insert(HeaderValue::from_static("private, no-store"));
+    response
 }
 
 /// 压缩层作用于整个路由（含静态前端资源与 `/api`）。
