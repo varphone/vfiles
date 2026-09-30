@@ -102,23 +102,7 @@ impl FrontendAssets {
             Self::Filesystem(base_path) => {
                 let candidate = filesystem_candidate(base_path, &request_path.segments);
                 let hint = candidate.to_string_lossy().into_owned();
-
-                if !candidate.is_file() {
-                    return None;
-                }
-                for encoding in &preferences.precompressed {
-                    let variant = append_suffix(&candidate, encoding.suffix());
-                    if let Some(response) =
-                        serve_filesystem_file(&variant, &hint, Some(*encoding)).await
-                    {
-                        return Some(response);
-                    }
-                }
-                if preferences.identity_allowed {
-                    serve_filesystem_file(&candidate, &hint, None).await
-                } else {
-                    Some(StatusCode::NOT_ACCEPTABLE.into_response())
-                }
+                serve_filesystem_path(&candidate, &hint, preferences).await
             }
             #[cfg(feature = "embed")]
             Self::Embedded => {
@@ -147,23 +131,7 @@ impl FrontendAssets {
             Self::Filesystem(base_path) => {
                 let candidate = base_path.join("index.html");
                 let hint = candidate.to_string_lossy().into_owned();
-
-                if !candidate.is_file() {
-                    return None;
-                }
-                for encoding in &preferences.precompressed {
-                    let variant = append_suffix(&candidate, encoding.suffix());
-                    if let Some(response) =
-                        serve_filesystem_file(&variant, &hint, Some(*encoding)).await
-                    {
-                        return Some(response);
-                    }
-                }
-                if preferences.identity_allowed {
-                    serve_filesystem_file(&candidate, &hint, None).await
-                } else {
-                    Some(StatusCode::NOT_ACCEPTABLE.into_response())
-                }
+                serve_filesystem_path(&candidate, &hint, preferences).await
             }
             #[cfg(feature = "embed")]
             Self::Embedded => {
@@ -335,17 +303,47 @@ fn embedded_candidate(segments: &[String]) -> String {
     segments.join("/")
 }
 
-async fn serve_filesystem_file(
-    path: &Path,
+async fn open_filesystem_file(path: &Path) -> Option<(tokio::fs::File, u64)> {
+    let file = tokio::fs::File::open(path).await.ok()?;
+    let metadata = file.metadata().await.ok()?;
+    metadata.is_file().then_some((file, metadata.len()))
+}
+
+async fn serve_filesystem_path(
+    candidate: &Path,
     hint: &str,
-    encoding: Option<Precompressed>,
+    preferences: &EncodingPreferences,
 ) -> Option<Response> {
-    if !path.is_file() {
-        return None;
+    let (identity_file, identity_size) = open_filesystem_file(candidate).await?;
+
+    for encoding in &preferences.precompressed {
+        let variant = append_suffix(candidate, encoding.suffix());
+        if let Some((file, size)) = open_filesystem_file(&variant).await {
+            return Some(filesystem_file_response(file, size, hint, Some(*encoding)));
+        }
     }
 
-    let bytes = tokio::fs::read(path).await.ok()?;
-    Some(static_file_response(bytes, hint, encoding))
+    if preferences.identity_allowed {
+        Some(filesystem_file_response(
+            identity_file,
+            identity_size,
+            hint,
+            None,
+        ))
+    } else {
+        Some(StatusCode::NOT_ACCEPTABLE.into_response())
+    }
+}
+
+fn filesystem_file_response(
+    file: tokio::fs::File,
+    size: u64,
+    hint: &str,
+    encoding: Option<Precompressed>,
+) -> Response {
+    const STREAM_BUFFER_BYTES: usize = 64 * 1024;
+    let stream = tokio_util::io::ReaderStream::with_capacity(file, STREAM_BUFFER_BYTES);
+    static_file_response(Body::from_stream(stream), size, hint, encoding)
 }
 
 #[cfg(feature = "embed")]
@@ -355,15 +353,19 @@ fn serve_embedded_file(
     encoding: Option<Precompressed>,
 ) -> Option<Response> {
     let file = EMBEDDED_FRONTEND.get_file(path)?;
+    let contents = bytes::Bytes::from_static(file.contents());
+    let size = u64::try_from(contents.len()).ok()?;
     Some(static_file_response(
-        file.contents().to_vec(),
+        Body::from(contents),
+        size,
         hint,
         encoding,
     ))
 }
 
 fn static_file_response(
-    bytes: Vec<u8>,
+    body: Body,
+    content_length: u64,
     path_hint: &str,
     encoding: Option<Precompressed>,
 ) -> Response {
@@ -381,7 +383,6 @@ fn static_file_response(
 
     // 显式设置 Content-Length：压缩中间件会把已知长度的 body 包成流式 body，
     // 若不声明长度就会退化为 chunked 传输。
-    let content_length = bytes.len();
     let mut builder = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime.as_ref())
@@ -394,13 +395,14 @@ fn static_file_response(
     }
 
     builder
-        .body(Body::from(bytes))
+        .body(body)
         .expect("static file response should build")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http_body_util::BodyExt;
 
     #[test]
     fn accepts_encoding_handles_quality_and_wildcards() {
@@ -463,6 +465,29 @@ mod tests {
             .await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+    }
+
+    #[tokio::test]
+    async fn streams_filesystem_assets_with_a_known_content_length() {
+        let dir = tempfile::tempdir().expect("temporary frontend directory");
+        std::fs::write(dir.path().join("index.html"), b"index").unwrap();
+        let content = vec![b'x'; 2 * 1024 * 1024];
+        std::fs::write(dir.path().join("large.js"), &content).unwrap();
+        let frontend = FrontendAssets::Filesystem(dir.path().to_path_buf());
+
+        let response = frontend.serve("/large.js", None).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_LENGTH],
+            content.len().to_string()
+        );
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("static asset should stream")
+            .to_bytes();
+        assert_eq!(body.as_ref(), content.as_slice());
     }
 }
 
