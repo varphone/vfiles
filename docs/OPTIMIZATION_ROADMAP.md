@@ -1,5 +1,11 @@
 # VFiles 优化路线图（审计 + 迭代记录）
 
+### HTTP：异步创建上传临时文件
+
+- 原始 body 与 multipart 上传曾在 Tokio 工作线程同步执行 `std::fs::OpenOptions::open`；慢速或繁忙存储会让该工作线程停顿。
+- 临时文件创建改用 `tokio::fs::OpenOptions`，保留 `create_new` 的独占创建语义。
+- 回归：原始上传、multipart 上传及两类上传取消清理用例通过；完整工作区测试、严格 clippy 和 fmt 检查通过。
+
 ### HTTP：限制异步请求中的密码哈希工作
 
 - HTTP/FTP 登录验证、注册、管理员创建账号和密码重置原先直接在 Tokio 工作线程执行

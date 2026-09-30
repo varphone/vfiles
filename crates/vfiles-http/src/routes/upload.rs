@@ -41,13 +41,14 @@ impl Drop for TempUploadFile {
     }
 }
 
-fn create_temp_upload_file(path: &std::path::Path) -> ApiResult<tokio::fs::File> {
-    let file = std::fs::OpenOptions::new()
+async fn create_temp_upload_file(path: &std::path::Path) -> ApiResult<tokio::fs::File> {
+    let file = tokio::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
+        .await
         .map_err(|err| ApiError::Internal(format!("Failed to create upload temp file: {err}")))?;
-    Ok(tokio::fs::File::from_std(file))
+    Ok(file)
 }
 
 #[derive(Debug, Deserialize)]
@@ -434,7 +435,7 @@ async fn put_upload_inner(
     let temp_path: std::path::PathBuf = temp_dir
         .join(format!("put-upload-{}.tmp", uuid::Uuid::new_v4()))
         .into();
-    let temp_file = create_temp_upload_file(&temp_path)?;
+    let temp_file = create_temp_upload_file(&temp_path).await?;
     let temp_path = TempUploadFile::new(temp_path);
 
     // 流式写入临时文件，边写边校验上限
@@ -522,7 +523,7 @@ async fn upload_file(
     let temp_path: std::path::PathBuf = temp_dir
         .join(format!("single-upload-{}.tmp", uuid::Uuid::new_v4()))
         .into();
-    let temp_file = create_temp_upload_file(&temp_path)?;
+    let temp_file = create_temp_upload_file(&temp_path).await?;
     let temp_path = TempUploadFile::new(temp_path);
 
     let result = process_single_upload(&state, &ctx, multipart, temp_file, temp_path.path()).await;
