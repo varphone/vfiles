@@ -19,7 +19,7 @@ use tokio::io::AsyncWriteExt;
 use crate::{
     AppState,
     dto::UploadRequest,
-    error::{ApiError, ApiJson, ApiQuery, ApiResult},
+    error::{ApiError, ApiJson, ApiPath, ApiQuery, ApiResult},
     routes::protected_request_context,
 };
 use vfiles_domain::{DomainError, NewAuditLog, NormalizedPath, UploadId};
@@ -306,7 +306,7 @@ fn expected_upload_part_size(
 
 async fn upload_chunk(
     jar: CookieJar,
-    axum::extract::Path((upload_id_str, chunk_index_str)): axum::extract::Path<(String, String)>,
+    ApiPath((upload_id_str, chunk_index_str)): ApiPath<(String, String)>,
     axum::extract::State(state): axum::extract::State<AppState>,
     request: axum::extract::Request,
 ) -> ApiResult<Json<serde_json::Value>> {
@@ -378,7 +378,7 @@ async fn upload_chunk(
 async fn complete_upload(
     jar: CookieJar,
     headers: axum::http::HeaderMap,
-    axum::extract::Path(upload_id_str): axum::extract::Path<String>,
+    ApiPath(upload_id_str): ApiPath<String>,
     axum::extract::State(state): axum::extract::State<AppState>,
     req: Option<ApiJson<CompleteUploadRequest>>,
 ) -> ApiResult<Json<serde_json::Value>> {
@@ -457,7 +457,7 @@ async fn put_upload_path(
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
     headers: axum::http::HeaderMap,
-    axum::extract::Path(path): axum::extract::Path<String>,
+    ApiPath(path): ApiPath<String>,
     ApiQuery(query): ApiQuery<PutUploadQuery>,
     request: axum::extract::Request,
 ) -> ApiResult<Json<serde_json::Value>> {

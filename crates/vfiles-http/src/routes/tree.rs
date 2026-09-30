@@ -11,7 +11,7 @@ use axum_extra::extract::cookie::CookieJar;
 use crate::{
     AppState,
     dto::{CreateDirectoryRequest, EntryDto, EntryPageDto, MoveEntriesRequest, MoveEntryRequest},
-    error::{ApiError, ApiJson, ApiQuery, ApiResult},
+    error::{ApiError, ApiJson, ApiPath, ApiQuery, ApiResult},
     routes::protected_request_context,
 };
 use vfiles_domain::{DomainError, NamespaceId, NewAuditLog, NormalizedPath, SnapshotId};
@@ -257,7 +257,7 @@ async fn list_root(
 }
 
 async fn list_directory(
-    axum::extract::Path(path): axum::extract::Path<String>,
+    ApiPath(path): ApiPath<String>,
     ApiQuery(query): ApiQuery<TreeQuery>,
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
@@ -332,7 +332,7 @@ async fn list_root_page(
 
 /// 分页列出目录：`GET /api/files/list/{path}?limit=&offset=&commit=`
 async fn list_directory_page(
-    axum::extract::Path(path): axum::extract::Path<String>,
+    ApiPath(path): ApiPath<String>,
     ApiQuery(query): ApiQuery<TreePageQuery>,
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
@@ -363,7 +363,7 @@ async fn list_root_directories_page(
 }
 
 async fn list_directory_directories_page(
-    axum::extract::Path(path): axum::extract::Path<String>,
+    ApiPath(path): ApiPath<String>,
     ApiQuery(query): ApiQuery<DirectoryPageQuery>,
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,

@@ -2,7 +2,7 @@
 
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::State,
     http::{HeaderMap, Method, StatusCode},
     response::{Json, Response},
     routing::{delete, get, post},
@@ -11,7 +11,7 @@ use axum::{
 use crate::{
     AppState,
     dto::{CreateShareRequest, CreateShareResponse, ShareDto},
-    error::{ApiError, ApiJson, ApiQuery},
+    error::{ApiError, ApiJson, ApiPath, ApiQuery},
     http_headers::{
         StreamingFileOptions, directory_archive_head_response, streaming_file_response,
         streaming_file_response_with_permit, try_acquire_directory_archive_permit,
@@ -216,7 +216,7 @@ async fn list_shares_page(
 async fn access_share(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(code): Path<String>,
+    ApiPath(code): ApiPath<String>,
 ) -> Result<Json<ShareDto>, ApiError> {
     if !state.config.features.share_enabled {
         return Err(ApiError::Domain(vfiles_domain::DomainError::Forbidden));
@@ -236,7 +236,7 @@ pub async fn download_share(
     State(state): State<AppState>,
     method: Method,
     headers: HeaderMap,
-    Path(code): Path<String>,
+    ApiPath(code): ApiPath<String>,
 ) -> Result<Response, ApiError> {
     if !state.config.features.share_enabled {
         return Err(ApiError::Domain(DomainError::Forbidden));
@@ -336,7 +336,7 @@ async fn disable_share(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
-    Path(code): Path<String>,
+    ApiPath(code): ApiPath<String>,
 ) -> Result<StatusCode, ApiError> {
     if !state.config.features.share_enabled {
         return Err(ApiError::Domain(vfiles_domain::DomainError::Forbidden));

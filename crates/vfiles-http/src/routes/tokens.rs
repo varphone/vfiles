@@ -3,7 +3,7 @@
 //! 这些接口**只接受会话（Cookie）鉴权**：即使某个令牌泄露，也无法用它创建
 //! 新令牌或撤销他人的令牌。明文令牌只在创建响应里返回一次。
 
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::routing::{delete, get};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
@@ -13,7 +13,7 @@ use vfiles_app::ALLOWED_EXPIRY_DAYS;
 use vfiles_domain::{AccessToken, DomainError, NewAuditLog};
 
 use crate::AppState;
-use crate::error::{ApiError, ApiJson, ApiQuery, ApiResult};
+use crate::error::{ApiError, ApiJson, ApiPath, ApiQuery, ApiResult};
 use crate::routes::require_session_auth_user;
 
 pub fn router() -> Router<AppState> {
@@ -173,7 +173,7 @@ async fn revoke_token(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     jar: CookieJar,
-    Path(id): Path<String>,
+    ApiPath(id): ApiPath<String>,
 ) -> ApiResult<axum::http::StatusCode> {
     let auth_user = require_session_auth_user(&state, &jar).await?;
 

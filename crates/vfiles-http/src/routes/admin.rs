@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::State,
     http::StatusCode,
     response::Json,
     routing::{delete, get, post, put},
@@ -12,7 +12,7 @@ use vfiles_domain::*;
 use crate::{
     AppState,
     dto::AdminUserSummaryDto,
-    error::{ApiError, ApiJson, ApiQuery, ApiResult},
+    error::{ApiError, ApiJson, ApiPath, ApiQuery, ApiResult},
 };
 
 #[derive(Debug, Deserialize)]
@@ -267,7 +267,7 @@ async fn create_user(
 async fn get_user(
     State(state): State<AppState>,
     jar: CookieJar,
-    Path(user_id): Path<String>,
+    ApiPath(user_id): ApiPath<String>,
 ) -> ApiResult<Json<AdminUserSummaryDto>> {
     let _actor = require_admin(&state, &jar).await?;
     let admin_service = state
@@ -288,7 +288,7 @@ async fn update_user(
     headers: axum::http::HeaderMap,
     State(state): State<AppState>,
     jar: CookieJar,
-    Path(user_id): Path<String>,
+    ApiPath(user_id): ApiPath<String>,
     ApiJson(req): ApiJson<UpdateUserRequest>,
 ) -> ApiResult<StatusCode> {
     let actor = require_admin(&state, &jar).await?;
@@ -347,7 +347,7 @@ async fn revoke_user_sessions(
     headers: axum::http::HeaderMap,
     State(state): State<AppState>,
     jar: CookieJar,
-    Path(user_id): Path<String>,
+    ApiPath(user_id): ApiPath<String>,
 ) -> ApiResult<StatusCode> {
     let actor = require_admin(&state, &jar).await?;
     let admin_service = state
@@ -387,7 +387,7 @@ async fn revoke_user_sessions(
 async fn delete_user(
     State(state): State<AppState>,
     jar: CookieJar,
-    Path(user_id): Path<String>,
+    ApiPath(user_id): ApiPath<String>,
 ) -> ApiResult<StatusCode> {
     let actor = require_admin(&state, &jar).await?;
     let admin_service = state
@@ -415,7 +415,7 @@ async fn delete_user(
 async fn reset_password(
     State(state): State<AppState>,
     jar: CookieJar,
-    Path(user_id): Path<String>,
+    ApiPath(user_id): ApiPath<String>,
     ApiJson(req): ApiJson<ResetPasswordRequest>,
 ) -> ApiResult<StatusCode> {
     let actor = require_admin(&state, &jar).await?;
