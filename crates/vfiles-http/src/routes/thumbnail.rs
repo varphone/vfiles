@@ -204,12 +204,19 @@ async fn get_file_thumbnail(
         return Ok(response);
     };
 
-    // Limit open source streams as well as decoder work; queued requests have not
-    // opened a blob or allocated source bytes yet.
-    let _request_permit = THUMBNAIL_REQUEST_PERMITS
-        .acquire()
-        .await
-        .map_err(|_| ApiError::Internal("thumbnail requests unavailable".to_string()))?;
+    // Bound both active work and waiting tasks. An unbounded semaphore queue would
+    // still let a burst of thumbnail requests consume memory without opening blobs.
+    let _request_permit = match try_thumbnail_request_permit(&THUMBNAIL_REQUEST_PERMITS) {
+        Ok(permit) => permit,
+        Err(tokio::sync::TryAcquireError::NoPermits) => {
+            return Ok(thumbnail_overloaded_response());
+        }
+        Err(tokio::sync::TryAcquireError::Closed) => {
+            return Err(ApiError::Internal(
+                "thumbnail requests unavailable".to_string(),
+            ));
+        }
+    };
 
     let file = state
         .workspace_service
@@ -751,6 +758,21 @@ fn thumbnail_response(bytes: Vec<u8>, etag: &str, format: ThumbnailFormat) -> Re
     response
 }
 
+fn thumbnail_overloaded_response() -> Response {
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+    response
+}
+
+fn try_thumbnail_request_permit(
+    semaphore: &Semaphore,
+) -> Result<tokio::sync::SemaphorePermit<'_>, tokio::sync::TryAcquireError> {
+    semaphore.try_acquire()
+}
+
 fn not_modified_response(etag: &str) -> Response {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = StatusCode::NOT_MODIFIED;
@@ -773,6 +795,23 @@ fn unsupported_response() -> Response {
 mod tests {
     use super::*;
     use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn saturated_thumbnail_admission_fails_without_queueing() {
+        let semaphore = Semaphore::new(1);
+        let _permit = semaphore
+            .try_acquire()
+            .expect("the only admission permit should be available");
+
+        assert!(matches!(
+            try_thumbnail_request_permit(&semaphore),
+            Err(tokio::sync::TryAcquireError::NoPermits)
+        ));
+
+        let response = thumbnail_overloaded_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()[header::RETRY_AFTER], "1");
+    }
 
     fn set_modified(path: &PathBuf, modified: SystemTime) {
         let file = std::fs::File::options()
