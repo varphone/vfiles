@@ -5,7 +5,7 @@
 //! cached on disk keyed by blob id and requested size, and revalidated with an
 //! `ETag` so browsers can keep them in their HTTP cache.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::{
@@ -18,7 +18,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Semaphore;
 use vfiles_domain::{DomainError, NormalizedPath};
 
@@ -70,8 +70,10 @@ impl ThumbnailCacheLimits {
 
 /// 每写入多少次尝试一次后台清理。
 const PRUNE_EVERY_WRITES: u64 = 64;
+const STALE_TEMP_FILE_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 
 static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
+static CACHE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 static THUMBNAIL_REQUEST_PERMITS: Semaphore =
     Semaphore::const_new(MAX_CONCURRENT_THUMBNAIL_REQUESTS);
 static THUMBNAIL_GENERATION_PERMITS: Semaphore =
@@ -349,7 +351,17 @@ async fn read_cache(path: &PathBuf) -> Option<Vec<u8>> {
     }
 }
 
-async fn write_cache(path: &PathBuf, bytes: &[u8]) {
+fn cache_temporary_path(path: &Path) -> Option<PathBuf> {
+    let file_name = path.file_name()?.to_str()?;
+    let sequence = CACHE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    Some(path.with_file_name(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        sequence
+    )))
+}
+
+async fn write_cache(path: &Path, bytes: &[u8]) {
     let Some(parent) = path.parent() else {
         return;
     };
@@ -357,12 +369,39 @@ async fn write_cache(path: &PathBuf, bytes: &[u8]) {
         return;
     }
 
-    let temp_path = path.with_extension("jpg.tmp");
-    if tokio::fs::write(&temp_path, bytes).await.is_err() {
+    let (temp_path, mut temp_file) = loop {
+        let Some(temp_path) = cache_temporary_path(path) else {
+            return;
+        };
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .await
+        {
+            Ok(file) => break (temp_path, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                tracing::debug!(error = %error, "failed to create temporary thumbnail cache file");
+                return;
+            }
+        }
+    };
+
+    let write_result = async {
+        temp_file.write_all(bytes).await?;
+        temp_file.flush().await
+    }
+    .await;
+    drop(temp_file);
+    if let Err(err) = write_result {
+        tracing::debug!(error = %err, "failed to write temporary thumbnail cache file");
+        let _ = tokio::fs::remove_file(&temp_path).await;
         return;
     }
+
     // Rename is atomic on the same filesystem, so concurrent readers never see
-    // a partially written thumbnail.
+    // a partially written thumbnail. Each request owns a distinct temp file.
     if let Err(err) = tokio::fs::rename(&temp_path, path).await {
         tracing::debug!(error = %err, "failed to persist thumbnail cache entry");
         let _ = tokio::fs::remove_file(&temp_path).await;
@@ -385,14 +424,19 @@ fn maybe_schedule_prune(dir: Option<PathBuf>, limits: ThumbnailCacheLimits) {
 
 /// 按 mtime 从旧到新删除缩略图，直到条目数与总字节数都不超过清理目标。
 ///
-/// 只统计普通文件；孤儿缩略图（源文件已删除）与失败留下的 `.tmp` 会自然变旧并被回收。
+/// 只统计 JPEG/AVIF 普通文件；写入中的 `.tmp` 不计入缓存限额，超过 24 小时的遗留文件会被清理。
 pub(crate) async fn prune_thumbnail_cache(dir: &PathBuf, limits: ThumbnailCacheLimits) {
     let Ok(mut read_dir) = tokio::fs::read_dir(dir).await else {
         return;
     };
 
     let mut entries: Vec<(PathBuf, std::time::SystemTime, u64)> = Vec::new();
+    let now = std::time::SystemTime::now();
+    let mut removed_temp_entries = 0_u64;
+    let mut removed_temp_bytes = 0_u64;
     while let Ok(Some(entry)) = read_dir.next_entry().await {
+        let path = entry.path();
+        let extension = path.extension().and_then(|extension| extension.to_str());
         let Ok(metadata) = entry.metadata().await else {
             continue;
         };
@@ -400,7 +444,30 @@ pub(crate) async fn prune_thumbnail_cache(dir: &PathBuf, limits: ThumbnailCacheL
             continue;
         }
         let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
+        if extension == Some("tmp") {
+            if now
+                .duration_since(modified)
+                .is_ok_and(|age| age >= STALE_TEMP_FILE_MAX_AGE)
+                && tokio::fs::remove_file(&path).await.is_ok()
+            {
+                removed_temp_entries += 1;
+                removed_temp_bytes = removed_temp_bytes.saturating_add(metadata.len());
+            }
+            continue;
+        }
+        if !matches!(extension, Some("jpg" | "avif")) {
+            continue;
+        }
         entries.push((entry.path(), modified, metadata.len()));
+    }
+
+    if removed_temp_entries > 0 {
+        STATS
+            .pruned_entries
+            .fetch_add(removed_temp_entries, Ordering::Relaxed);
+        STATS
+            .pruned_bytes
+            .fetch_add(removed_temp_bytes, Ordering::Relaxed);
     }
 
     let mut remaining_entries = entries.len();
@@ -725,6 +792,41 @@ mod tests {
         names
     }
 
+    #[test]
+    fn cache_temporary_paths_are_unique_for_the_same_entry() {
+        let cache_path = Path::new("/cache/blob-256.jpg");
+        let first = cache_temporary_path(cache_path).expect("temp path");
+        let second = cache_temporary_path(cache_path).expect("temp path");
+
+        assert_ne!(first, second);
+        assert_eq!(first.parent(), cache_path.parent());
+        assert_eq!(
+            first.extension().and_then(|extension| extension.to_str()),
+            Some("tmp")
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_jpeg_and_avif_writes_keep_their_cache_entries_separate() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let jpeg_path = dir.path().join("blob-256.jpg");
+        let avif_path = dir.path().join("blob-256.avif");
+        let jpeg = vec![b'J'; 256 * 1024];
+        let avif = vec![b'A'; 256 * 1024];
+
+        let ((), ()) = tokio::join!(
+            write_cache(&jpeg_path, &jpeg),
+            write_cache(&avif_path, &avif)
+        );
+
+        assert_eq!(tokio::fs::read(jpeg_path).await.expect("jpeg cache"), jpeg);
+        assert_eq!(tokio::fs::read(avif_path).await.expect("avif cache"), avif);
+        assert_eq!(
+            cached_names(&dir.path().to_path_buf()),
+            ["blob-256.avif", "blob-256.jpg"]
+        );
+    }
+
     /// 写入 `count` 个固定大小的条目，mtime 依次递增（越大越新）。
     async fn seed_cache(dir: &std::path::Path, count: usize, bytes: usize) -> Vec<PathBuf> {
         let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
@@ -763,6 +865,55 @@ mod tests {
         prune_thumbnail_cache(&dir_path, ThumbnailCacheLimits::new(3, 1024)).await;
 
         assert_eq!(cached_names(&dir_path), vec!["only.jpg"]);
+    }
+
+    #[tokio::test]
+    async fn prune_does_not_count_in_progress_temporary_files() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let dir_path = dir.path().to_path_buf();
+        let cache_path = dir_path.join("only.jpg");
+        tokio::fs::write(&cache_path, b"thumbnail")
+            .await
+            .expect("cache entry should be written");
+        let temporary_path = cache_temporary_path(&cache_path).expect("temp path");
+        tokio::fs::write(&temporary_path, b"in progress")
+            .await
+            .expect("temporary entry should be written");
+        set_modified(&temporary_path, SystemTime::now() + Duration::from_secs(60));
+
+        prune_thumbnail_cache(&dir_path, ThumbnailCacheLimits::new(1, u64::MAX)).await;
+
+        assert!(cache_path.is_file(), "the final cache entry must remain");
+        assert!(
+            temporary_path.is_file(),
+            "an active temp file must be ignored"
+        );
+    }
+
+    #[tokio::test]
+    async fn prune_removes_stale_temporary_files() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let dir_path = dir.path().to_path_buf();
+        let cache_path = dir_path.join("only.jpg");
+        tokio::fs::write(&cache_path, b"thumbnail")
+            .await
+            .expect("cache entry should be written");
+        let temporary_path = cache_temporary_path(&cache_path).expect("temp path");
+        tokio::fs::write(&temporary_path, b"stale temp")
+            .await
+            .expect("temporary entry should be written");
+        set_modified(
+            &temporary_path,
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000),
+        );
+
+        prune_thumbnail_cache(&dir_path, ThumbnailCacheLimits::new(1, u64::MAX)).await;
+
+        assert!(cache_path.is_file(), "the final cache entry must remain");
+        assert!(
+            !temporary_path.exists(),
+            "stale temp file should be removed"
+        );
     }
 
     #[tokio::test]
