@@ -162,7 +162,11 @@ pub async fn bearer_token_middleware(mut req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
-pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
+pub async fn security_headers_middleware(
+    State(hsts_enabled): State<bool>,
+    req: Request,
+    next: Next,
+) -> Response {
     let mut response = next.run(req).await;
     let headers = response.headers_mut();
 
@@ -183,6 +187,11 @@ pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
     headers
         .entry(HeaderName::from_static("content-security-policy"))
         .or_insert(HeaderValue::from_static(CONTENT_SECURITY_POLICY));
+    if hsts_enabled {
+        headers
+            .entry(HeaderName::from_static("strict-transport-security"))
+            .or_insert(HeaderValue::from_static("max-age=31536000"));
+    }
 
     response
 }

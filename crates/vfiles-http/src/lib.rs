@@ -97,6 +97,12 @@ pub fn build_router_without_frontend(state: AppState) -> Router<()> {
 
 fn build_router_inner(state: AppState, serve_frontend_fallback: bool) -> Router<()> {
     let trusted_proxy_ips = Arc::new(state.config.http.trusted_proxy_ips.clone());
+    let hsts_enabled = state
+        .config
+        .http
+        .public_base_url
+        .scheme()
+        .eq_ignore_ascii_case("https");
     let mut write_allowed_origins = vec![
         state
             .config
@@ -148,7 +154,8 @@ fn build_router_inner(state: AppState, serve_frontend_fallback: bool) -> Router<
             trusted_proxy_ips,
             middleware::client_ip_middleware,
         ))
-        .layer(axum::middleware::from_fn(
+        .layer(axum::middleware::from_fn_with_state(
+            hsts_enabled,
             middleware::security_headers_middleware,
         ))
         .layer(axum::middleware::from_fn(middleware::request_id_middleware))

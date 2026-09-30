@@ -3647,6 +3647,10 @@ async fn request_id_and_security_headers_are_applied() {
             .expect("referrer policy header should be present"),
         "strict-origin-when-cross-origin"
     );
+    assert!(
+        !response.headers().contains_key("strict-transport-security"),
+        "HTTP public base URL should not enable HSTS"
+    );
     let content_security_policy = response
         .headers()
         .get("content-security-policy")
@@ -3666,6 +3670,29 @@ async fn request_id_and_security_headers_are_applied() {
     assert!(content_security_policy.contains("object-src 'none'"));
     assert!(content_security_policy.contains("frame-src 'self' blob:"));
     assert!(content_security_policy.contains("img-src 'self' blob: data:"));
+}
+
+#[tokio::test]
+async fn hsts_is_enabled_for_https_public_base_url() {
+    let app = TestApp::new_with_public_base_url("https://files.example.test").await;
+    let response = app
+        .request(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/auth/me")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("strict-transport-security")
+            .expect("HTTPS deployments should receive HSTS"),
+        "max-age=31536000"
+    );
 }
 
 #[tokio::test]
