@@ -23,11 +23,7 @@ export interface FavoriteEntry {
 /** 侧栏聚合数据（`GET /api/files/overview`）。 */
 /** 存储占用的分类：与后端 FileCategory 对应。 */
 export type StorageCategory =
-  | "document"
-  | "image"
-  | "video"
-  | "audio"
-  | "other";
+  "document" | "image" | "video" | "audio" | "other";
 
 export interface CategoryUsage {
   category: StorageCategory;
@@ -35,7 +31,7 @@ export interface CategoryUsage {
   file_count: number;
 }
 
-/** 访问令牌（GET /api/tokens；明文只在创建时返回一次）。 */
+/** 访问令牌（`GET /api/tokens`；明文只在创建时返回一次）。 */
 export interface AccessToken {
   id: string;
   name: string;
@@ -46,6 +42,13 @@ export interface AccessToken {
   last_used_at: string | null;
   revoked_at: string | null;
   active: boolean;
+}
+
+export interface AccessTokenPage {
+  items: AccessToken[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface CreatedAccessToken {

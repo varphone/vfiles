@@ -23,7 +23,7 @@
             class="vf-ghost-button"
             type="button"
             :disabled="loading"
-            @click="reload"
+            @click="reloadCurrentPage"
           >
             <IconRefresh :size="16" />
             <span>刷新</span>
@@ -50,7 +50,7 @@
         :hint="error"
       >
         <template #actions>
-          <button class="vf-ghost-button is-primary" @click="reload">
+          <button class="vf-ghost-button is-primary" @click="reloadCurrentPage">
             <IconRefresh :size="16" />
             <span>重试</span>
           </button>
@@ -132,7 +132,34 @@
         </table>
       </div>
 
-      <section v-if="tokens.length > 0" class="tokens-usage">
+      <footer
+        v-if="totalTokens > pageSize"
+        class="tokens-pager"
+        aria-label="访问令牌分页"
+      >
+        <button
+          class="vf-ghost-button"
+          type="button"
+          :disabled="currentPage === 0 || loading"
+          @click="goToPage(currentPage - 1)"
+        >
+          上一页
+        </button>
+        <span class="tokens-pager-info">
+          第 {{ currentPage + 1 }} / {{ pageCount }} 页，共
+          {{ totalTokens }} 个令牌
+        </span>
+        <button
+          class="vf-ghost-button"
+          type="button"
+          :disabled="currentPage + 1 >= pageCount || loading"
+          @click="goToPage(currentPage + 1)"
+        >
+          下一页
+        </button>
+      </footer>
+
+      <section v-if="totalTokens > 0" class="tokens-usage">
         <h2 class="tokens-usage-title">用法示例</h2>
         <pre class="tokens-usage-code"><code>{{ usageSnippet }}</code></pre>
         <button class="vf-ghost-button" type="button" @click="copySnippet">
@@ -273,6 +300,9 @@ const app = useAppStore();
 const router = useRouter();
 
 const tokens = ref<AccessToken[]>([]);
+const currentPage = ref(0);
+const totalTokens = ref(0);
+const pageSize = 50;
 const expiryOptions = ref<TokenExpiryOption[]>([{ days: 0, label: "永久" }]);
 const loading = ref(false);
 const error = ref("");
@@ -285,6 +315,9 @@ const form = ref({ name: "", expiresInDays: 0 });
 const plaintext = ref("");
 const copied = ref(false);
 const plaintextInput = ref<HTMLInputElement | null>(null);
+const pageCount = computed(() =>
+  Math.max(1, Math.ceil(totalTokens.value / pageSize)),
+);
 
 const usageSnippet = computed(
   () => `# 上传（单请求，最简单）
@@ -305,16 +338,38 @@ curl -sS -H "Authorization: Bearer $VFILES_TOKEN" \
 curl -sS -H "Authorization: Bearer $VFILES_TOKEN" "$VFILES/api/files/tree?path=ci"`,
 );
 
-async function reload() {
+async function reload(requestedPage = currentPage.value) {
   loading.value = true;
   error.value = "";
   try {
-    tokens.value = await filesService.listAccessTokens();
+    let page = await filesService.listAccessTokens(
+      pageSize,
+      requestedPage * pageSize,
+    );
+    const lastPage = Math.max(0, Math.ceil(page.total / pageSize) - 1);
+    if (requestedPage > lastPage) {
+      requestedPage = lastPage;
+      page = await filesService.listAccessTokens(
+        pageSize,
+        requestedPage * pageSize,
+      );
+    }
+    currentPage.value = requestedPage;
+    totalTokens.value = page.total;
+    tokens.value = page.items;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "加载访问令牌失败";
   } finally {
     loading.value = false;
   }
+}
+
+function reloadCurrentPage() {
+  void reload();
+}
+
+function goToPage(page: number) {
+  void reload(page);
 }
 
 function goFiles() {
@@ -351,7 +406,7 @@ async function submitCreate() {
     plaintext.value = created.plaintext;
     copied.value = false;
     createOpen.value = false;
-    await reload();
+    await reload(0);
     app.success(`已创建令牌「${created.token?.name ?? form.value.name}」`);
   } catch (e) {
     createError.value = e instanceof Error ? e.message : "创建失败";
@@ -469,6 +524,20 @@ onMounted(async () => {
 .tokens-table-wrap {
   margin-top: 0.6rem;
   overflow-x: auto;
+}
+
+.tokens-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.tokens-pager-info {
+  color: var(--vf-text-muted);
+  font-size: 0.8rem;
+  text-align: center;
 }
 
 .tokens-table {

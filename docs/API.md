@@ -238,10 +238,40 @@ curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/tokens` | 列出自己的令牌（只返回前缀，不含明文） |
+| GET | `/api/tokens` | 分页列出自己的令牌（只返回前缀，不含明文） |
 | POST | `/api/tokens` | 创建令牌，**响应里返回一次明文** |
 | DELETE | `/api/tokens/{id}` | 撤销令牌（立即失效） |
 | GET | `/api/tokens/expiry-options` | 可选有效期（`0/30/90/365` 天，0 表示永久） |
+
+`GET /api/tokens` 分页参数：
+
+- `limit`：可选整数，默认 `50`，有效范围为 `1` 至 `100`；小于 `1` 的值按 `1` 处理，大于 `100` 的值按 `100` 处理；
+- `offset`：可选非负整数，默认 `0`，表示跳过的记录数；
+- 结果按创建时间倒序排列；创建时间相同时按令牌 ID 倒序排列；
+- 响应包含 `items`、`total`、`limit` 和 `offset`；超出总数的 `offset` 返回空 `items`，`total` 仍为令牌总数。
+
+分页响应示例：
+
+```json
+{
+  "items": [
+    {
+      "id": "…",
+      "name": "CI 构建",
+      "token_prefix": "vfat_1a2b3c4d",
+      "scopes": "full",
+      "created_at": "…",
+      "expires_at": null,
+      "last_used_at": null,
+      "revoked_at": null,
+      "active": true
+    }
+  ],
+  "total": 123,
+  "limit": 50,
+  "offset": 0
+}
+```
 
 `POST /api/tokens` 请求/响应：
 
@@ -262,7 +292,7 @@ curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci
 安全约定：
 
 - 明文形如 `vfat_<64 位十六进制>`，**只在创建响应里出现一次**；服务端只保存 SHA-256 摘要与展示前缀；
-- 令牌**不能创建或撤销令牌**（这些接口只接受会话 Cookie 鉴权，返回 `403`），避免泄露后自我扩权；
+- 令牌不能读取令牌管理列表、创建令牌或撤销令牌；这些接口只接受会话 Cookie 鉴权，使用 Bearer 令牌时返回 `403`，避免泄露后自我扩权；
 - 撤销、过期或用户被禁用后，令牌立即失效（`401`）；
 - 鉴权时会刷新 `last_used_at`，便于识别长期未用的令牌；
 - 创建与撤销都会写入审计日志（动作 `token.create` / `token.revoke`）。

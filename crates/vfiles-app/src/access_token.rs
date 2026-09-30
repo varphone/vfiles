@@ -10,7 +10,8 @@ use std::sync::Arc;
 use sha2::{Digest, Sha256};
 
 use vfiles_domain::{
-    AccessToken, AccessTokenId, AccessTokenRepo, DomainError, DomainResult, NewAccessToken, UserId,
+    AccessToken, AccessTokenId, AccessTokenPage, AccessTokenRepo, DomainError, DomainResult,
+    NewAccessToken, UserId,
 };
 
 /// 明文前缀：便于在日志/界面上识别这是 VFiles 访问令牌。
@@ -92,9 +93,14 @@ impl AccessTokenService {
         Ok(CreatedAccessToken { token, plaintext })
     }
 
-    /// 列出某用户的令牌。
-    pub async fn list(&self, user_id: &UserId) -> DomainResult<Vec<AccessToken>> {
-        self.repo.list_for_user(user_id).await
+    /// 分页列出某用户的令牌。
+    pub async fn list(
+        &self,
+        user_id: &UserId,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<AccessTokenPage> {
+        self.repo.list_for_user(user_id, limit, offset).await
     }
 
     /// 撤销令牌（只能撤销自己的）。

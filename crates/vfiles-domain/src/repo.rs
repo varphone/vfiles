@@ -37,8 +37,13 @@ pub trait UserRepo {
 #[async_trait::async_trait]
 pub trait AccessTokenRepo {
     async fn create(&self, token: &NewAccessToken) -> DomainResult<AccessToken>;
-    /// 列出某用户的令牌（含已撤销，按创建时间倒序）。
-    async fn list_for_user(&self, user_id: &UserId) -> DomainResult<Vec<AccessToken>>;
+    /// 分页列出某用户的令牌（含已撤销，按创建时间倒序）。
+    async fn list_for_user(
+        &self,
+        user_id: &UserId,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<AccessTokenPage>;
     /// 按 SHA-256 摘要查找（鉴权热路径）。
     async fn find_by_hash(&self, token_hash: &str) -> DomainResult<Option<AccessToken>>;
     /// 记录最近使用时间（鉴权时尽力而为，失败不影响请求）。

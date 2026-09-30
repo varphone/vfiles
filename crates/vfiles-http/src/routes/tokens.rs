@@ -3,7 +3,7 @@
 //! 这些接口**只接受会话（Cookie）鉴权**：即使某个令牌泄露，也无法用它创建
 //! 新令牌或撤销他人的令牌。明文令牌只在创建响应里返回一次。
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::routing::{delete, get};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
@@ -14,13 +14,22 @@ use vfiles_domain::{AccessToken, DomainError, NewAuditLog};
 
 use crate::AppState;
 use crate::error::{ApiError, ApiJson, ApiResult};
-use crate::routes::{protected_request_context, require_session_auth_user};
+use crate::routes::require_session_auth_user;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/tokens", get(list_tokens).post(create_token))
         .route("/tokens/{id}", delete(revoke_token))
         .route("/tokens/expiry-options", get(list_expiry_options))
+}
+
+const DEFAULT_LIMIT: u32 = 50;
+const MAX_LIMIT: u32 = 100;
+
+#[derive(Debug, Deserialize)]
+pub struct ListTokensQuery {
+    limit: Option<u32>,
+    offset: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,6 +83,14 @@ pub struct ExpiryOptionDto {
     pub label: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AccessTokenListDto {
+    pub items: Vec<AccessTokenDto>,
+    pub total: u64,
+    pub limit: u32,
+    pub offset: u32,
+}
+
 async fn list_expiry_options() -> Json<Vec<ExpiryOptionDto>> {
     let options = ALLOWED_EXPIRY_DAYS
         .into_iter()
@@ -94,18 +111,24 @@ async fn list_expiry_options() -> Json<Vec<ExpiryOptionDto>> {
 async fn list_tokens(
     State(state): State<AppState>,
     jar: CookieJar,
-) -> ApiResult<Json<Vec<AccessTokenDto>>> {
-    let ctx = protected_request_context(&state, &jar).await?;
+    Query(query): Query<ListTokensQuery>,
+) -> ApiResult<Json<AccessTokenListDto>> {
+    let auth_user = require_session_auth_user(&state, &jar).await?;
     let now = time::OffsetDateTime::now_utc();
-    let tokens = state
+    let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let page = state
         .access_token_service
-        .list(&ctx.actor_user_id)
+        .list(&auth_user.id, limit, offset)
         .await
         .map_err(ApiError::Domain)?;
 
-    Ok(Json(
-        tokens.iter().map(|token| to_dto(token, now)).collect(),
-    ))
+    Ok(Json(AccessTokenListDto {
+        items: page.items.iter().map(|token| to_dto(token, now)).collect(),
+        total: page.total,
+        limit,
+        offset,
+    }))
 }
 
 async fn create_token(

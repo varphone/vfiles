@@ -4462,7 +4462,8 @@ async fn access_token_authenticates_api_requests() {
         )
         .await;
     let tokens = response_json(list_response).await;
-    let items = tokens.as_array().expect("token list");
+    let items = tokens["items"].as_array().expect("token list items");
+    assert_eq!(tokens["total"], 1);
     assert_eq!(items.len(), 1, "应只有一个令牌: {tokens:?}");
     assert!(
         items[0]["last_used_at"].is_string(),
@@ -4484,6 +4485,21 @@ async fn access_token_authenticates_api_requests() {
         )
         .await;
     assert_eq!(escalate.status(), StatusCode::FORBIDDEN);
+
+    let list_tokens_with_bearer = app
+        .request(
+            Request::builder()
+                .uri("/api/tokens")
+                .header(header::AUTHORIZATION, &bearer)
+                .body(Body::empty())
+                .expect("token list request should build"),
+        )
+        .await;
+    assert_eq!(
+        list_tokens_with_bearer.status(),
+        StatusCode::FORBIDDEN,
+        "access tokens must not read token-management metadata"
+    );
 
     // 7) 撤销后令牌立即失效
     let token_id = items[0]["id"].as_str().expect("token id").to_string();
@@ -4529,6 +4545,100 @@ async fn access_token_authenticates_api_requests() {
         .json_request(Method::POST, "/api/tokens", json!({ "name": "anon" }))
         .await;
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn access_token_listing_is_paginated_and_caps_page_size() {
+    let app = TestApp::new().await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+
+    for index in 0..3 {
+        let response = app
+            .json_request_with_cookie(
+                Method::POST,
+                "/api/tokens",
+                json!({ "name": format!("token-{index}") }),
+                &admin_cookie,
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let first_page = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/tokens?limit=2&offset=0")
+                .body(Body::empty())
+                .expect("first page request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let first_page = response_json(first_page).await;
+    let first_items = first_page["items"].as_array().expect("first page items");
+    assert_eq!(first_items.len(), 2);
+    assert_eq!(first_page["total"], 3);
+    assert_eq!(first_page["limit"], 2);
+    assert_eq!(first_page["offset"], 0);
+
+    let second_page = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/tokens?limit=2&offset=2")
+                .body(Body::empty())
+                .expect("second page request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let second_page = response_json(second_page).await;
+    let second_items = second_page["items"].as_array().expect("second page items");
+    assert_eq!(second_items.len(), 1);
+    assert_eq!(second_page["total"], 3);
+    let first_ids: Vec<_> = first_items
+        .iter()
+        .map(|item| item["id"].as_str().expect("token id"))
+        .collect();
+    let second_id = second_items[0]["id"].as_str().expect("token id");
+    assert!(!first_ids.contains(&second_id));
+
+    let oversized_limit = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/tokens?limit=1000")
+                .body(Body::empty())
+                .expect("oversized page request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let oversized_limit = response_json(oversized_limit).await;
+    assert_eq!(oversized_limit["limit"], 100);
+    assert_eq!(oversized_limit["items"].as_array().map(Vec::len), Some(3));
+
+    let user_id: String = sqlx::query_scalar("SELECT user_id FROM access_tokens LIMIT 1")
+        .fetch_one(&app.db_pool)
+        .await
+        .expect("test token should have an owner");
+    let query_plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+        "EXPLAIN QUERY PLAN SELECT id, user_id, name, token_prefix, scopes, expires_at, last_used_at, revoked_at, created_at \
+         FROM access_tokens WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+    )
+    .bind(user_id)
+    .bind(2_i64)
+    .bind(0_i64)
+    .fetch_all(&app.db_pool)
+    .await
+    .expect("access token listing query plan should be available");
+    assert!(
+        query_plan
+            .iter()
+            .any(|(_, _, _, detail)| detail.contains("access_tokens_user_listing_idx")),
+        "access token pages should use the composite ordering index: {query_plan:?}"
+    );
+    assert!(
+        query_plan
+            .iter()
+            .all(|(_, _, _, detail)| !detail.contains("USE TEMP B-TREE")),
+        "access token pages should not sort matching rows in a temporary B-tree: {query_plan:?}"
+    );
 }
 
 /// 所有权转移：文件连同版本历史转给另一个用户，双方各自能看到应有的内容。

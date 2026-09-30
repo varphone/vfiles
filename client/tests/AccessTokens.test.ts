@@ -55,7 +55,12 @@ function renderPage() {
 describe("AccessTokens.vue", () => {
   beforeEach(() => {
     listTokensMock.mockReset();
-    listTokensMock.mockResolvedValue([token]);
+    listTokensMock.mockResolvedValue({
+      items: [token],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
     expiryOptionsMock.mockReset();
     expiryOptionsMock.mockResolvedValue([
       { days: 0, label: "永久" },
@@ -90,7 +95,12 @@ describe("AccessTokens.vue", () => {
   });
 
   it("shows the empty state with a create action", async () => {
-    listTokensMock.mockResolvedValue([]);
+    listTokensMock.mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0,
+    });
     renderPage();
 
     await waitFor(() =>
@@ -203,7 +213,12 @@ describe("AccessTokens.vue", () => {
     await waitFor(() =>
       expect(screen.getByText("加载失败")).toBeInTheDocument(),
     );
-    listTokensMock.mockResolvedValue([token]);
+    listTokensMock.mockResolvedValue({
+      items: [token],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
     await fireEvent.click(screen.getByText("重试"));
     await waitFor(() =>
       expect(screen.getByText("CI 构建")).toBeInTheDocument(),
@@ -211,16 +226,21 @@ describe("AccessTokens.vue", () => {
   });
 
   it("marks revoked and expired tokens", async () => {
-    listTokensMock.mockResolvedValue([
-      { ...token, revoked_at: new Date().toISOString(), active: false },
-      {
-        ...token,
-        id: "t-2",
-        name: "过期的",
-        active: false,
-        expires_at: new Date(Date.now() - 86400000).toISOString(),
-      },
-    ]);
+    listTokensMock.mockResolvedValue({
+      items: [
+        { ...token, revoked_at: new Date().toISOString(), active: false },
+        {
+          ...token,
+          id: "t-2",
+          name: "过期的",
+          active: false,
+          expires_at: new Date(Date.now() - 86400000).toISOString(),
+        },
+      ],
+      total: 2,
+      limit: 50,
+      offset: 0,
+    });
     const { container } = renderPage();
 
     // 状态徽标「已撤销」与操作列的「已撤销」文案都会出现
@@ -236,5 +256,29 @@ describe("AccessTokens.vue", () => {
     ).toHaveLength(1);
     // 已撤销的令牌不再显示撤销按钮，只剩一个
     expect(container.querySelectorAll(".tokens-revoke")).toHaveLength(1);
+  });
+
+  it("loads subsequent pages on demand", async () => {
+    const laterToken = { ...token, id: "t-51", name: "后一页令牌" };
+    listTokensMock.mockImplementation(
+      async (limit: number, offset: number) => ({
+        items: offset === 0 ? [token] : [laterToken],
+        total: 51,
+        limit,
+        offset,
+      }),
+    );
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText("第 1 / 2 页，共 51 个令牌")).toBeInTheDocument(),
+    );
+    await fireEvent.click(screen.getByText("下一页"));
+
+    await waitFor(() =>
+      expect(listTokensMock).toHaveBeenLastCalledWith(50, 50),
+    );
+    expect(screen.getByText("后一页令牌")).toBeInTheDocument();
+    expect(screen.getByText("第 2 / 2 页，共 51 个令牌")).toBeInTheDocument();
   });
 });

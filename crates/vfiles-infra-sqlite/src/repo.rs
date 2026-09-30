@@ -12011,24 +12011,60 @@ impl AccessTokenRepo for SqliteAccessTokenRepo {
         })
     }
 
-    async fn list_for_user(&self, user_id: &UserId) -> DomainResult<Vec<AccessToken>> {
+    async fn list_for_user(
+        &self,
+        user_id: &UserId,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<AccessTokenPage> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to start access token listing: {error}"),
+            })?;
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM access_tokens WHERE user_id = ?")
+            .bind(user_id.to_string())
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to count access tokens: {error}"),
+            })?;
         let rows: Vec<AccessTokenRow> = sqlx::query_as(
             r#"
             SELECT id, user_id, name, token_prefix, scopes,
                    expires_at, last_used_at, revoked_at, created_at
             FROM access_tokens
             WHERE user_id = ?
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, id DESC
+            LIMIT ? OFFSET ?
             "#,
         )
         .bind(user_id.to_string())
-        .fetch_all(&self.pool)
+        .bind(i64::from(limit))
+        .bind(i64::from(offset))
+        .fetch_all(&mut *transaction)
         .await
         .map_err(|e| DomainError::Internal {
             message: format!("Failed to list access tokens: {e}"),
         })?;
 
-        rows.into_iter().map(access_token_from_row).collect()
+        let items = rows
+            .into_iter()
+            .map(access_token_from_row)
+            .collect::<DomainResult<Vec<_>>>()?;
+        let total = u64::try_from(count).map_err(|error| DomainError::Internal {
+            message: format!("Invalid access token count: {error}"),
+        })?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to finish access token listing: {error}"),
+            })?;
+
+        Ok(AccessTokenPage { items, total })
     }
 
     async fn find_by_hash(&self, token_hash: &str) -> DomainResult<Option<AccessToken>> {

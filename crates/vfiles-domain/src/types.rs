@@ -524,6 +524,13 @@ pub struct AccessToken {
     pub created_at: time::OffsetDateTime,
 }
 
+/// 某用户访问令牌的分页结果。
+#[derive(Debug, Clone)]
+pub struct AccessTokenPage {
+    pub items: Vec<AccessToken>,
+    pub total: u64,
+}
+
 impl AccessToken {
     /// 是否仍然可用（未撤销、未过期）。
     pub fn is_active(&self, now: time::OffsetDateTime) -> bool {

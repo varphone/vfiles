@@ -2,7 +2,7 @@ import { apiService } from "./api.service";
 import { fetchWithRetry } from "./fetch-retry";
 import { extractErrorPayload, localizeApiError } from "../utils/apiErrors";
 import type {
-  AccessToken,
+  AccessTokenPage,
   AuditLogPage,
   AuditLogQueryParams,
   AuditLogSummary,
@@ -452,10 +452,21 @@ export const filesService = {
   },
 
   /** 当前用户的访问令牌（不含明文）。 */
-  async listAccessTokens(): Promise<AccessToken[]> {
-    const response = await apiService.get<AccessToken[]>("/tokens");
+  async listAccessTokens(
+    limit: number,
+    offset: number,
+  ): Promise<AccessTokenPage> {
+    const response = await apiService.get<AccessTokenPage>("/tokens", {
+      limit,
+      offset,
+    });
     const payload = (response as any)?.data ?? response;
-    return Array.isArray(payload) ? payload : [];
+    return {
+      items: Array.isArray(payload?.items) ? payload.items : [],
+      total: Number(payload?.total ?? 0),
+      limit: Number(payload?.limit ?? limit),
+      offset: Number(payload?.offset ?? offset),
+    };
   },
 
   /** 令牌有效期选项（由服务端定义，前端不硬编码）。 */
