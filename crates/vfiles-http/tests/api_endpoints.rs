@@ -4363,6 +4363,15 @@ async fn share_download_rate_limit_counts_distinct_guesses_per_source() {
         )
         .await;
     assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
+    let retry_after = blocked
+        .headers()
+        .get(header::RETRY_AFTER)
+        .expect("rate limit should tell clients when to retry")
+        .to_str()
+        .expect("retry-after should be numeric")
+        .parse::<u64>()
+        .expect("retry-after should contain seconds");
+    assert!((1..=60).contains(&retry_after));
 }
 
 #[tokio::test]

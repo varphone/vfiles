@@ -142,7 +142,7 @@ async fn download_folder(
     }
 
     let archive_permit =
-        try_acquire_directory_archive_permit().ok_or(ApiError::Domain(DomainError::RateLimited))?;
+        try_acquire_directory_archive_permit().ok_or_else(|| ApiError::rate_limited(1))?;
     let archive = state
         .workspace_service
         .download_directory_archive(&ctx.namespace_id, &path, query.commit.as_deref())

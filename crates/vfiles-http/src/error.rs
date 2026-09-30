@@ -2,7 +2,7 @@
 
 use axum::{
     Json,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
@@ -117,6 +117,9 @@ pub enum ApiError {
         size_bytes: u64,
     },
     RequestBodyTooLarge,
+    RateLimited {
+        retry_after_secs: u64,
+    },
     Forbidden {
         message: String,
     },
@@ -129,6 +132,10 @@ impl ApiError {
         Self::Forbidden {
             message: message.into(),
         }
+    }
+
+    pub fn rate_limited(retry_after_secs: u64) -> Self {
+        Self::RateLimited { retry_after_secs }
     }
 }
 
@@ -179,6 +186,11 @@ fn path_conflict_detail(message: &str) -> Option<serde_json::Value> {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        let retry_after_secs = match &self {
+            ApiError::Domain(DomainError::RateLimited) => Some(1),
+            ApiError::RateLimited { retry_after_secs } => Some(*retry_after_secs),
+            _ => None,
+        };
         let (status, code, message, details) = match self {
             ApiError::Domain(DomainError::NotFound { resource }) => (
                 StatusCode::NOT_FOUND,
@@ -307,7 +319,7 @@ impl IntoResponse for ApiError {
                 "Search index is not ready".to_string(),
                 None,
             ),
-            ApiError::Domain(DomainError::RateLimited) => (
+            ApiError::Domain(DomainError::RateLimited) | ApiError::RateLimited { .. } => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "RATE_LIMITED".to_string(),
                 "Rate limit exceeded".to_string(),
@@ -397,7 +409,13 @@ impl IntoResponse for ApiError {
             request_id: REQUEST_ID.try_with(|request_id| request_id.clone()).ok(),
         };
 
-        (status, Json(error_response)).into_response()
+        let mut response = (status, Json(error_response)).into_response();
+        if let Some(retry_after_secs) = retry_after_secs
+            && let Ok(value) = HeaderValue::from_str(&retry_after_secs.max(1).to_string())
+        {
+            response.headers_mut().insert(header::RETRY_AFTER, value);
+        }
+        response
     }
 }
 
@@ -407,6 +425,17 @@ mod tests {
     use axum::{http::StatusCode, response::IntoResponse};
     use http_body_util::BodyExt;
     use vfiles_domain::DomainError;
+
+    #[test]
+    fn rate_limited_responses_include_retry_after() {
+        let generic = ApiError::Domain(DomainError::RateLimited).into_response();
+        assert_eq!(generic.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(generic.headers()[axum::http::header::RETRY_AFTER], "1");
+
+        let windowed = ApiError::rate_limited(42).into_response();
+        assert_eq!(windowed.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(windowed.headers()[axum::http::header::RETRY_AFTER], "42");
+    }
 
     #[test]
     fn path_conflict_details_carry_the_offending_path() {

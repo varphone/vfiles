@@ -74,7 +74,7 @@ fn enforce_share_lookup_rate_limit(state: &AppState, headers: &HeaderMap) -> Res
             retry_after_secs = block.retry_after_secs,
             "public share lookup rate limit exceeded"
         );
-        return Err(ApiError::Domain(DomainError::RateLimited));
+        return Err(ApiError::rate_limited(block.retry_after_secs));
     }
 
     Ok(())
@@ -299,8 +299,8 @@ pub async fn download_share(
                     .await;
             }
 
-            let archive_permit = try_acquire_directory_archive_permit()
-                .ok_or(ApiError::Domain(DomainError::RateLimited))?;
+            let archive_permit =
+                try_acquire_directory_archive_permit().ok_or_else(|| ApiError::rate_limited(1))?;
             let archive = state
                 .workspace_service
                 .download_directory_archive(&share.namespace_id, &entry.path_norm, None)
