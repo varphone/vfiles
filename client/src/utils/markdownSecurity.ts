@@ -11,10 +11,36 @@ export function escapeHtml(input: string): string {
 export function safeLinkHref(href: string | null | undefined): string {
   const raw = (href || "").trim();
   if (!raw) return "#";
+  const hasUnsafeCharacter = [...raw].some((character) => {
+    const code = character.charCodeAt(0);
+    return character === "\\" || code <= 0x1f || code === 0x7f;
+  });
+  if (hasUnsafeCharacter) return "#";
   if (raw.startsWith("#")) return raw;
-  if (raw.startsWith("/")) return raw;
-  if (/^https?:\/\//i.test(raw)) return raw;
-  if (/^mailto:/i.test(raw)) return raw;
+  if (raw.startsWith("/")) return raw.startsWith("//") ? "#" : raw;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return "#";
+  }
+
+  if (
+    (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+    parsed.hostname &&
+    !parsed.username &&
+    !parsed.password
+  ) {
+    return raw;
+  }
+  if (
+    parsed.protocol === "mailto:" &&
+    parsed.pathname &&
+    !/\s/.test(parsed.pathname)
+  ) {
+    return raw;
+  }
   return "#";
 }
 
