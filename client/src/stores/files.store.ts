@@ -106,7 +106,7 @@ export const useFilesStore = defineStore("files", () => {
         signal: controller.signal,
       });
       if (requestId !== loadSequence) return;
-      files.value = [...files.value, ...page.items];
+      files.value.push(...page.items);
       totalFiles.value = page.total;
       hasMoreFiles.value = page.has_more;
     } catch (err) {

@@ -129,6 +129,7 @@ describe("useFileSearch", () => {
 
     expect(search.searchResults.value).toHaveLength(2);
     expect(search.searchHasMore.value).toBe(true);
+    const firstPageItems = search.searchResults.value;
 
     searchFilesPageMock.mockResolvedValueOnce({
       items: [fileInfo("report-3.txt")],
@@ -139,6 +140,7 @@ describe("useFileSearch", () => {
     });
     await search.loadMoreSearchResults();
 
+    expect(search.searchResults.value).toBe(firstPageItems);
     expect(search.searchResults.value.map((item) => item.name)).toEqual([
       "report-1.txt",
       "report-2.txt",

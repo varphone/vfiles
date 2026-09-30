@@ -178,7 +178,7 @@ export function useFileSearch(currentPath: Ref<string>) {
         offset: searchResults.value.length,
       });
       if (requestId !== searchSequence) return;
-      searchResults.value = [...searchResults.value, ...page.items];
+      searchResults.value.push(...page.items);
       searchHasMore.value = page.hasMore;
       searchResultsMayBeIncomplete.value ||= page.resultsMayBeIncomplete ?? false;
     } catch (err) {

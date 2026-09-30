@@ -146,8 +146,10 @@ describe("files store", () => {
       }),
     );
 
+    const firstPageItems = store.files;
     await store.loadMoreFiles();
 
+    expect(store.files).toBe(firstPageItems);
     expect(store.files).toHaveLength(400);
     expect(store.files[399].name).toBe("f399.txt");
     expect(store.hasMoreFiles).toBe(true);
