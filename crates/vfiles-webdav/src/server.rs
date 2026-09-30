@@ -1906,6 +1906,7 @@ fn write_error_status(error: &vfiles_domain::DomainError) -> StatusCode {
         | DomainError::UploadPartInvalid
         | DomainError::UploadPartChecksumMismatch
         | DomainError::BlobChecksumMismatch => StatusCode::BAD_REQUEST,
+        DomainError::DiffTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
         DomainError::Conflict { .. }
         | DomainError::PathConflict { .. }
         | DomainError::UploadExpired

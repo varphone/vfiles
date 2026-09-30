@@ -13,6 +13,9 @@ describe("localizeApiError", () => {
     expect(localizeApiError({ code: "rate_limited" }, "兜底")).toBe(
       API_ERROR_MESSAGES.RATE_LIMITED,
     );
+    expect(localizeApiError({ code: "diff_too_large" }, "兜底")).toBe(
+      API_ERROR_MESSAGES.DIFF_TOO_LARGE,
+    );
   });
 
   it("appends the conflicting path when the server provides it", () => {

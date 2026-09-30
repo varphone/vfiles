@@ -1,11 +1,27 @@
 use std::{collections::HashMap, io::Write, sync::Arc};
 
 use tokio::io::AsyncReadExt;
+use tokio::sync::Semaphore;
 use vfiles_domain::*;
 use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteEntryRepo, SqliteSessionRepo, SqliteSnapshotRepo,
     SqliteUserRepo,
 };
+
+const MAX_DIFF_INPUT_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_DIFF_INPUT_LINES: usize = 100_000;
+const DIFF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+const MAX_CONCURRENT_DIFFS: usize = 4;
+static DIFF_GENERATION_PERMITS: Semaphore = Semaphore::const_new(MAX_CONCURRENT_DIFFS);
+
+fn diff_line_count(bytes: &[u8]) -> usize {
+    if bytes.is_empty() {
+        return 0;
+    }
+
+    let newline_count = bytes.iter().filter(|byte| **byte == b'\n').count();
+    newline_count + usize::from(!bytes.ends_with(b"\n"))
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct CopyOptions {
@@ -4062,13 +4078,50 @@ where
         names
     }
 
-    async fn load_blob_bytes(&self, blob_id: &BlobId) -> DomainResult<Vec<u8>> {
-        self.blob_store
-            .get_blob(blob_id)
+    async fn load_diff_blob_bytes(
+        &self,
+        blob_id: &BlobId,
+        expected_size: u64,
+        max_size: u64,
+    ) -> DomainResult<Vec<u8>> {
+        if expected_size > max_size {
+            return Err(DomainError::DiffTooLarge {
+                message: format!(
+                    "Version size is {expected_size} bytes; diff generation is limited to {max_size} bytes"
+                ),
+            });
+        }
+
+        let reader = self
+            .blob_store
+            .get_blob_stream(blob_id)
             .await?
             .ok_or_else(|| DomainError::NotFound {
                 resource: "blob data".to_string(),
-            })
+            })?;
+        let mut bytes = Vec::new();
+        let bytes_read = reader
+            .take(max_size.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to read diff blob: {error}"),
+            })?;
+        let actual_size = bytes_read as u64;
+        if actual_size > max_size {
+            return Err(DomainError::DiffTooLarge {
+                message: format!(
+                    "Version data exceeds the remaining diff input budget of {max_size} bytes"
+                ),
+            });
+        }
+        if actual_size != expected_size {
+            return Err(DomainError::Internal {
+                message: "Diff blob size does not match version metadata".to_string(),
+            });
+        }
+
+        Ok(bytes)
     }
 
     pub async fn entry_history(
@@ -4184,6 +4237,16 @@ where
         commit: &VersionId,
         parent: Option<&VersionId>,
     ) -> DomainResult<String> {
+        // Bound concurrent blob reads and diff generation. Waiting requests do not
+        // allocate file buffers until a permit becomes available.
+        let diff_permit =
+            DIFF_GENERATION_PERMITS
+                .acquire()
+                .await
+                .map_err(|_| DomainError::Internal {
+                    message: "Diff generation is unavailable".to_string(),
+                })?;
+
         let entry = self
             .entry_repo
             .find_by_path(namespace_id, path)
@@ -4223,13 +4286,38 @@ where
                 .next()
         };
 
+        let input_size_bytes = current.size_bytes.as_u64().saturating_add(
+            previous
+                .as_ref()
+                .map_or(0, |version| version.size_bytes.as_u64()),
+        );
+        if input_size_bytes > MAX_DIFF_INPUT_BYTES {
+            return Err(DomainError::DiffTooLarge {
+                message: format!(
+                    "Combined version size is {input_size_bytes} bytes; diff generation is limited to {MAX_DIFF_INPUT_BYTES} bytes"
+                ),
+            });
+        }
+
         let current_blob = current.blob_id.ok_or_else(|| DomainError::NotFound {
             resource: "blob".to_string(),
         })?;
-        let current_bytes = self.load_blob_bytes(&current_blob).await?;
+        let current_bytes = self
+            .load_diff_blob_bytes(
+                &current_blob,
+                current.size_bytes.as_u64(),
+                MAX_DIFF_INPUT_BYTES,
+            )
+            .await?;
+        let remaining_input_bytes = MAX_DIFF_INPUT_BYTES.saturating_sub(current_bytes.len() as u64);
         let previous_bytes = if let Some(previous) = previous.as_ref() {
             if let Some(blob_id) = previous.blob_id {
-                self.load_blob_bytes(&blob_id).await?
+                self.load_diff_blob_bytes(
+                    &blob_id,
+                    previous.size_bytes.as_u64(),
+                    remaining_input_bytes,
+                )
+                .await?
             } else {
                 Vec::new()
             }
@@ -4237,22 +4325,38 @@ where
             Vec::new()
         };
 
-        let previous_text = String::from_utf8_lossy(&previous_bytes);
-        let current_text = String::from_utf8_lossy(&current_bytes);
-        Ok(
-            similar::TextDiff::from_lines(previous_text.as_ref(), current_text.as_ref())
+        let input_line_count =
+            diff_line_count(&previous_bytes).saturating_add(diff_line_count(&current_bytes));
+        if input_line_count > MAX_DIFF_INPUT_LINES {
+            return Err(DomainError::DiffTooLarge {
+                message: format!(
+                    "Combined version line count is {input_line_count} lines; diff generation is limited to {MAX_DIFF_INPUT_LINES} lines"
+                ),
+            });
+        }
+
+        let previous_header = previous
+            .as_ref()
+            .map(|value| value.id.to_string())
+            .unwrap_or_else(|| "empty".to_string());
+        let current_header = current.id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let _permit = diff_permit;
+            let previous_text = String::from_utf8_lossy(&previous_bytes);
+            let current_text = String::from_utf8_lossy(&current_bytes);
+
+            similar::TextDiff::configure()
+                .timeout(DIFF_TIMEOUT)
+                .diff_lines(previous_text.as_ref(), current_text.as_ref())
                 .unified_diff()
                 .context_radius(3)
-                .header(
-                    previous
-                        .as_ref()
-                        .map(|value| value.id.to_string())
-                        .as_deref()
-                        .unwrap_or("empty"),
-                    &current.id.to_string(),
-                )
-                .to_string(),
-        )
+                .header(&previous_header, &current_header)
+                .to_string()
+        })
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Diff generation task failed: {error}"),
+        })
     }
 
     pub async fn restore_version(

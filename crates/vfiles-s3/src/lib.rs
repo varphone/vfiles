@@ -147,6 +147,9 @@ fn dom_err(e: vfiles_domain::DomainError) -> s3s::S3Error {
         vfiles_domain::DomainError::Validation { message } => {
             s3s::s3_error!(InvalidArgument, "{}", message)
         }
+        vfiles_domain::DomainError::DiffTooLarge { message } => {
+            s3s::s3_error!(EntityTooLarge, "{}", message)
+        }
         other => s3s::s3_error!(InternalError, "{}", other),
     }
 }

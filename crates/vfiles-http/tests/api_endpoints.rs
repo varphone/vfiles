@@ -1056,6 +1056,68 @@ async fn chunked_upload_history_and_download_round_trip() {
 }
 
 #[tokio::test]
+async fn history_diff_rejects_combined_version_inputs_over_its_memory_budget() {
+    let app = TestApp::new().await;
+    let oversized_version = vec![b'x'; 4 * 1024 * 1024 + 1];
+    app.upload_version("docs", "large.txt", &oversized_version, "first")
+        .await;
+    let current_version = app
+        .upload_version("docs", "large.txt", &oversized_version, "second")
+        .await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri(format!(
+                    "/api/history/diff?path=docs/large.txt&commit={current_version}"
+                ))
+                .body(Body::empty())
+                .expect("diff request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let payload = response_json(response).await;
+    assert_eq!(payload["code"], "DIFF_TOO_LARGE");
+    assert!(
+        payload["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("8388608 bytes"))
+    );
+}
+
+#[tokio::test]
+async fn history_diff_rejects_excessive_line_counts() {
+    let app = TestApp::new().await;
+    let many_lines = "x\n".repeat(50_001);
+    app.upload_version("docs", "many-lines.txt", many_lines.as_bytes(), "first")
+        .await;
+    let current_version = app
+        .upload_version("docs", "many-lines.txt", many_lines.as_bytes(), "second")
+        .await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri(format!(
+                    "/api/history/diff?path=docs/many-lines.txt&commit={current_version}"
+                ))
+                .body(Body::empty())
+                .expect("diff request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let payload = response_json(response).await;
+    assert_eq!(payload["code"], "DIFF_TOO_LARGE");
+    assert!(
+        payload["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("100002 lines"))
+    );
+}
+
+#[tokio::test]
 async fn file_content_and_download_support_range_requests() {
     let app = TestApp::new().await;
     app.upload_version("docs", "range.txt", b"0123456789", "range upload")

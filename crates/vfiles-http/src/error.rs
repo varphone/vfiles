@@ -328,6 +328,12 @@ impl IntoResponse for ApiError {
                     details,
                 )
             }
+            ApiError::Domain(DomainError::DiffTooLarge { message }) => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "DIFF_TOO_LARGE".to_string(),
+                message,
+                None,
+            ),
             ApiError::Domain(DomainError::Conflict { message }) => {
                 let details = reason_details(&message);
                 (

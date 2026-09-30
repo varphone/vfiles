@@ -24,6 +24,7 @@ pub fn to_ftp_error(err: DomainError) -> Error {
             (ErrorKind::PermanentFileNotAvailable, err.to_string())
         }
         DomainError::Validation { .. } => (ErrorKind::PermissionDenied, err.to_string()),
+        DomainError::DiffTooLarge { .. } => (ErrorKind::PermanentFileNotAvailable, err.to_string()),
         DomainError::Unauthorized
         | DomainError::Forbidden
         | DomainError::Authentication { .. }

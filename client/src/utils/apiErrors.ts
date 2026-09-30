@@ -44,6 +44,7 @@ export const API_ERROR_MESSAGES: Record<string, string> = {
   RATE_LIMITED: "操作过于频繁，请稍后重试",
   VALIDATION_FAILED: "输入内容不合法",
   FILE_TOO_LARGE: "文件过大，已超过上限",
+  DIFF_TOO_LARGE: "版本差异超出处理上限，请下载文件后使用本地工具对比",
   CONFLICT: "操作冲突，请刷新后重试",
   NOT_IMPLEMENTED: "该功能尚未开放",
   INTERNAL_ERROR: "服务器内部错误，请稍后重试",

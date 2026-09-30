@@ -5,6 +5,9 @@ pub enum DomainError {
     #[error("Validation failed: {message}")]
     Validation { message: String },
 
+    #[error("Diff input exceeds processing limits: {message}")]
+    DiffTooLarge { message: String },
+
     #[error("Conflict: {message}")]
     Conflict { message: String },
 
