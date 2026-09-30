@@ -24,6 +24,6 @@ vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }
 
 camino.workspace = true
 sqlx.workspace = true
-suppaftp = { version = "6", features = ["async"] }
+suppaftp = "10.0.2"
 tempfile.workspace = true
 tokio.workspace = true

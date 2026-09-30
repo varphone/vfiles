@@ -8820,6 +8820,30 @@ async fn thumbnail_requires_authentication() {
 }
 
 #[tokio::test]
+async fn static_frontend_head_requests_return_metadata_without_a_body() {
+    let app = TestApp::new_with_static_frontend("<html><body>vfiles-ui</body></html>").await;
+    let response = app
+        .request(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/assets/app.js")
+                .body(Body::empty())
+                .expect("HEAD request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_LENGTH],
+        "console.log('vfiles');".len().to_string()
+    );
+    assert!(
+        response_bytes(response).await.is_empty(),
+        "HEAD responses must not include the representation body"
+    );
+}
+
+#[tokio::test]
 async fn static_frontend_is_compressed_for_clients_that_accept_it() {
     let app = TestApp::new_with_static_frontend(
         "<html><body>vfiles-ui-compression-check-that-is-long-enough</body></html>",
