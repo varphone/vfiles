@@ -1005,6 +1005,8 @@ pub struct AuthService {
     /// 热验缓存以 SHA-256 凭据摘要为键，只缓存成功认证；每次命中仍从数据库
     /// 读取当前账号状态和密码哈希，避免账号变更后继续接受旧凭据。
     verified_cache: VerifiedCredentialCache,
+    /// 会话活动时间只用于展示，限制鉴权热路径上的 SQLite 写入频率。
+    session_last_seen_refreshes: Arc<SessionLastSeenRefreshCache>,
 }
 
 type VerifiedCredentialCache = std::sync::Arc<
@@ -1012,6 +1014,56 @@ type VerifiedCredentialCache = std::sync::Arc<
 >;
 
 const MAX_CONCURRENT_PASSWORD_JOBS: usize = 4;
+const SESSION_LAST_SEEN_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+const MAX_TRACKED_SESSION_LAST_SEEN_REFRESHES: usize = 50_000;
+
+#[derive(Debug, Default)]
+struct SessionLastSeenRefreshCache {
+    refreshed_at: std::sync::Mutex<HashMap<SessionId, std::time::Instant>>,
+}
+
+impl SessionLastSeenRefreshCache {
+    fn reserve(&self, session_id: SessionId) -> Option<std::time::Instant> {
+        self.reserve_at(session_id, std::time::Instant::now())
+    }
+
+    fn reserve_at(
+        &self,
+        session_id: SessionId,
+        now: std::time::Instant,
+    ) -> Option<std::time::Instant> {
+        let mut refreshed_at = self
+            .refreshed_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        if let Some(last_refresh) = refreshed_at.get_mut(&session_id) {
+            if now.saturating_duration_since(*last_refresh) < SESSION_LAST_SEEN_REFRESH_INTERVAL {
+                return None;
+            }
+            *last_refresh = now;
+            return Some(now);
+        }
+
+        if refreshed_at.len() >= MAX_TRACKED_SESSION_LAST_SEEN_REFRESHES
+            && let Some(victim) = refreshed_at.keys().next().copied()
+        {
+            refreshed_at.remove(&victim);
+        }
+        refreshed_at.insert(session_id, now);
+        Some(now)
+    }
+
+    fn clear_failed(&self, session_id: SessionId, attempted_at: std::time::Instant) {
+        let mut refreshed_at = self
+            .refreshed_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if refreshed_at.get(&session_id) == Some(&attempted_at) {
+            refreshed_at.remove(&session_id);
+        }
+    }
+}
 
 /// Keep memory-hard password work off Tokio workers and cap its per-process concurrency.
 #[derive(Debug, Clone)]
@@ -1102,6 +1154,7 @@ impl AuthService {
             verified_cache: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
+            session_last_seen_refreshes: Arc::new(SessionLastSeenRefreshCache::default()),
         }
     }
 
@@ -1298,13 +1351,23 @@ impl AuthService {
             return Err(DomainError::SessionExpired);
         }
 
-        // Update last seen
-        self.session_repo.update_last_seen(&session.id).await?;
-
         let user = self.user_repo.find_by_id(&session.user_id).await?;
 
         if user.disabled {
             return Err(DomainError::UserDisabled);
+        }
+
+        // 活跃会话的鉴权仍读取最新撤销、过期和用户状态；仅把展示用活动时间写入
+        // 限制为每会话每分钟一次。该辅助写入失败不影响请求，下次请求可立即重试。
+        if let Some(attempted_at) = self.session_last_seen_refreshes.reserve(session.id)
+            && self
+                .session_repo
+                .update_last_seen(&session.id)
+                .await
+                .is_err()
+        {
+            self.session_last_seen_refreshes
+                .clear_failed(session.id, attempted_at);
         }
 
         Ok(AuthUser {
@@ -1402,6 +1465,7 @@ impl Clone for AuthService {
             password_work_gate: self.password_work_gate.clone(),
             // r9 Clone = Arc 共享缓存（新建空 = 分叉 ✗ 共享才免疫 clone 分叉 ✓）
             verified_cache: self.verified_cache.clone(),
+            session_last_seen_refreshes: self.session_last_seen_refreshes.clone(),
         }
     }
 }
@@ -5202,6 +5266,36 @@ mod tests {
 
             count_files(self.storage_root.join("blobs").as_std_path())
         }
+    }
+
+    #[test]
+    fn session_last_seen_refresh_cache_throttles_and_reopens() {
+        let cache = SessionLastSeenRefreshCache::default();
+        let session_id = SessionId::new();
+        let start = std::time::Instant::now();
+
+        assert_eq!(cache.reserve_at(session_id, start), Some(start));
+        assert_eq!(
+            cache.reserve_at(session_id, start + std::time::Duration::from_secs(59)),
+            None
+        );
+        let next_refresh = start + SESSION_LAST_SEEN_REFRESH_INTERVAL;
+        assert_eq!(
+            cache.reserve_at(session_id, next_refresh),
+            Some(next_refresh)
+        );
+    }
+
+    #[test]
+    fn failed_session_last_seen_refresh_can_retry_immediately() {
+        let cache = SessionLastSeenRefreshCache::default();
+        let session_id = SessionId::new();
+        let start = std::time::Instant::now();
+
+        assert_eq!(cache.reserve_at(session_id, start), Some(start));
+        cache.clear_failed(session_id, start);
+        let retry_at = start + std::time::Duration::from_secs(1);
+        assert_eq!(cache.reserve_at(session_id, retry_at), Some(retry_at));
     }
 
     #[tokio::test]

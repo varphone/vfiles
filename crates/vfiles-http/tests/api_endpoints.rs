@@ -4731,6 +4731,112 @@ async fn chunk_upload_streams_and_rejects_a_part_over_its_configured_size() {
     assert_eq!(valid.status(), StatusCode::OK);
 }
 
+/// 会话鉴权在节流窗口内不重复写入只用于展示的最近活动时间。
+#[tokio::test]
+async fn session_authentication_throttles_last_seen_writes() {
+    let app = TestApp::new().await;
+    let cookie = app.login_cookie("admin", "admin-password").await;
+
+    let first = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/auth/me")
+                .body(Body::empty())
+                .expect("request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let sentinel_last_seen = "2000-01-01T00:00:00Z";
+    sqlx::query(
+        "UPDATE user_sessions SET last_seen_at = ? WHERE user_id = (SELECT id FROM users WHERE username = ?)",
+    )
+        .bind(sentinel_last_seen)
+        .bind("admin")
+        .execute(&app.db_pool)
+        .await
+        .expect("last-seen sentinel should be set");
+
+    let second = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/auth/me")
+                .body(Body::empty())
+                .expect("request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(second.status(), StatusCode::OK);
+
+    let last_seen: String = sqlx::query_scalar(
+        "SELECT last_seen_at FROM user_sessions WHERE user_id = (SELECT id FROM users WHERE username = ?) ORDER BY issued_at DESC LIMIT 1",
+    )
+    .bind("admin")
+    .fetch_one(&app.db_pool)
+    .await
+    .expect("session timestamp should be readable");
+    assert_eq!(last_seen, sentinel_last_seen);
+}
+
+/// 活动时间写入失败不应拒绝有效会话，且后续请求应能重试。
+#[tokio::test]
+async fn session_last_seen_write_failure_does_not_fail_authentication() {
+    let app = TestApp::new().await;
+    let cookie = app.login_cookie("admin", "admin-password").await;
+    sqlx::query(
+        "CREATE TRIGGER fail_session_activity_update BEFORE UPDATE OF last_seen_at ON user_sessions BEGIN SELECT RAISE(FAIL, 'forced activity update failure'); END",
+    )
+    .execute(&app.db_pool)
+    .await
+    .expect("failure trigger should be installed");
+
+    let first = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/auth/me")
+                .body(Body::empty())
+                .expect("request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(first.status(), StatusCode::OK);
+
+    sqlx::query("DROP TRIGGER fail_session_activity_update")
+        .execute(&app.db_pool)
+        .await
+        .expect("failure trigger should be removed");
+    let sentinel_last_seen = "2000-01-01T00:00:00Z";
+    sqlx::query(
+        "UPDATE user_sessions SET last_seen_at = ? WHERE user_id = (SELECT id FROM users WHERE username = ?)",
+    )
+    .bind(sentinel_last_seen)
+    .bind("admin")
+    .execute(&app.db_pool)
+    .await
+    .expect("last-seen sentinel should be set");
+
+    let retry = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/auth/me")
+                .body(Body::empty())
+                .expect("request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(retry.status(), StatusCode::OK);
+
+    let last_seen: String = sqlx::query_scalar(
+        "SELECT last_seen_at FROM user_sessions WHERE user_id = (SELECT id FROM users WHERE username = ?) ORDER BY issued_at DESC LIMIT 1",
+    )
+    .bind("admin")
+    .fetch_one(&app.db_pool)
+    .await
+    .expect("session timestamp should be readable");
+    assert_ne!(last_seen, sentinel_last_seen);
+}
+
 /// 访问令牌：可用来上传/下载（CLI、构建系统场景），撤销后失效，且不能自我扩权。
 #[tokio::test]
 async fn access_token_authenticates_api_requests() {
