@@ -8646,8 +8646,136 @@ impl UploadStore for FsUploadStore {
     }
 
     async fn cleanup_expired_sessions(&self) -> DomainResult<i64> {
-        // Simplified implementation - would need to check metadata timestamps
-        Ok(0)
+        const CLEANUP_GRACE_SECONDS: i64 = 24 * 60 * 60;
+
+        let now = time::OffsetDateTime::now_utc();
+        let stale_before = now - time::Duration::seconds(CLEANUP_GRACE_SECONDS);
+        let file_stale_before = std::time::SystemTime::now()
+            .checked_sub(std::time::Duration::from_secs(CLEANUP_GRACE_SECONDS as u64))
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let mut entries = match fs::read_dir(&self.base_path).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => {
+                return Err(DomainError::Internal {
+                    message: format!("Failed to read upload sessions for cleanup: {error}"),
+                });
+            }
+        };
+
+        let mut removed = 0i64;
+        while let Some(entry) =
+            entries
+                .next_entry()
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to read upload session entry: {error}"),
+                })?
+        {
+            let entry_type = match entry.file_type().await {
+                Ok(entry_type) => entry_type,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(DomainError::Internal {
+                        message: format!("Failed to inspect upload session entry: {error}"),
+                    });
+                }
+            };
+            if !entry_type.is_dir() {
+                continue;
+            }
+
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let Ok(uuid) = uuid::Uuid::parse_str(&name) else {
+                continue;
+            };
+            let upload_id = UploadId::from_uuid(uuid);
+            let metadata = match self.read_metadata(&upload_id).await {
+                Ok(metadata) => metadata,
+                // A partial or corrupt session is preserved for manual inspection.
+                Err(DomainError::NotFound { .. } | DomainError::Internal { .. }) => continue,
+                Err(error) => return Err(error),
+            };
+            let metadata_upload_id = upload_id.to_string();
+            if metadata
+                .get("upload_id")
+                .and_then(serde_json::Value::as_str)
+                != Some(metadata_upload_id.as_str())
+            {
+                continue;
+            }
+
+            let expires_at = match Self::parse_timestamp(&metadata["expires_at"], "expires_at") {
+                Ok(timestamp) => timestamp,
+                Err(_) => continue,
+            };
+            let updated_at = match Self::parse_timestamp(&metadata["updated_at"], "updated_at") {
+                Ok(timestamp) => timestamp,
+                Err(_) => continue,
+            };
+            if expires_at > now || updated_at > stale_before {
+                continue;
+            }
+
+            let mut session_files = match fs::read_dir(entry.path()).await {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(DomainError::Internal {
+                        message: format!("Failed to inspect upload session files: {error}"),
+                    });
+                }
+            };
+            let mut has_recent_file = false;
+            while let Some(file) =
+                session_files
+                    .next_entry()
+                    .await
+                    .map_err(|error| DomainError::Internal {
+                        message: format!("Failed to read upload session file entry: {error}"),
+                    })?
+            {
+                let file_metadata = match fs::symlink_metadata(file.path()).await {
+                    Ok(metadata) => metadata,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        return Err(DomainError::Internal {
+                            message: format!("Failed to inspect upload session file: {error}"),
+                        });
+                    }
+                };
+                match file_metadata.modified() {
+                    Ok(modified) if modified <= file_stale_before => {}
+                    Ok(_) | Err(_) => {
+                        has_recent_file = true;
+                        break;
+                    }
+                }
+            }
+            if has_recent_file {
+                continue;
+            }
+
+            match fs::remove_dir_all(entry.path()).await {
+                Ok(()) => {
+                    removed = removed
+                        .checked_add(1)
+                        .ok_or_else(|| DomainError::Internal {
+                            message: "Expired upload session count overflowed".to_string(),
+                        })?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(DomainError::Internal {
+                        message: format!("Failed to remove expired upload session: {error}"),
+                    });
+                }
+            }
+        }
+
+        Ok(removed)
     }
 }
 
@@ -8676,6 +8804,115 @@ mod selected_upload_part_tests {
             .expect_err("chunk count must not wrap into the metadata field");
 
         assert!(matches!(error, DomainError::Validation { .. }));
+    }
+
+    #[tokio::test]
+    async fn cleanup_expired_sessions_removes_only_stale_sessions() {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let base = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).expect("utf8 path");
+        let store = FsUploadStore::new(base);
+        let stale_upload = store
+            .create_upload_session(
+                &NamespaceId::new(),
+                &NormalizedPath::new("").expect("root path"),
+                "stale.bin",
+                None,
+                0,
+                0,
+                &UserId::new(),
+            )
+            .await
+            .expect("create stale upload session");
+        let recent_upload = store
+            .create_upload_session(
+                &NamespaceId::new(),
+                &NormalizedPath::new("").expect("root path"),
+                "recent.bin",
+                None,
+                0,
+                0,
+                &UserId::new(),
+            )
+            .await
+            .expect("create recent upload session");
+        let active_upload = store
+            .create_upload_session(
+                &NamespaceId::new(),
+                &NormalizedPath::new("").expect("root path"),
+                "active.bin",
+                None,
+                0,
+                0,
+                &UserId::new(),
+            )
+            .await
+            .expect("create active upload session");
+
+        let now = time::OffsetDateTime::now_utc();
+        let stale_time = now - time::Duration::hours(48);
+        for upload_id in [&stale_upload, &recent_upload, &active_upload] {
+            let mut metadata = store
+                .read_metadata(upload_id)
+                .await
+                .expect("read upload metadata");
+            metadata["expires_at"] = stale_time
+                .format(&time::format_description::well_known::Rfc3339)
+                .expect("format expiry")
+                .into();
+            let updated_at = if upload_id == &recent_upload {
+                now
+            } else {
+                stale_time
+            };
+            metadata["updated_at"] = updated_at
+                .format(&time::format_description::well_known::Rfc3339)
+                .expect("format update")
+                .into();
+            store
+                .write_metadata(upload_id, &metadata)
+                .await
+                .expect("write test timestamps");
+            if upload_id != &recent_upload {
+                let metadata_path = store.get_upload_path(upload_id, None);
+                let metadata_file = std::fs::File::open(metadata_path).expect("open metadata file");
+                metadata_file
+                    .set_modified(
+                        std::time::SystemTime::now() - std::time::Duration::from_secs(48 * 60 * 60),
+                    )
+                    .expect("set old metadata mtime");
+            }
+        }
+
+        // Expired metadata alone is insufficient while a part is still being written.
+        fs::write(
+            store
+                .base_path
+                .join(active_upload.to_string())
+                .join("part_0.tmp-active"),
+            b"in progress",
+        )
+        .await
+        .expect("write active part marker");
+
+        assert_eq!(
+            store
+                .cleanup_expired_sessions()
+                .await
+                .expect("clean expired uploads"),
+            1
+        );
+        assert!(
+            !store.base_path.join(stale_upload.to_string()).exists(),
+            "stale session should be removed"
+        );
+        assert!(
+            store.base_path.join(recent_upload.to_string()).exists(),
+            "session with recent metadata should be retained"
+        );
+        assert!(
+            store.base_path.join(active_upload.to_string()).exists(),
+            "session with a recently modified part should be retained"
+        );
     }
 
     #[tokio::test]

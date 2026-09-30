@@ -1027,19 +1027,24 @@ async fn run_gc_blobs(args: GcBlobsArgs) -> anyhow::Result<()> {
     let snapshot_repo = SqliteSnapshotRepo::new(pool.clone());
     let service = MaintenanceService::new(blob_store, entry_repo, snapshot_repo);
     let report = service.purge_orphan_blobs(args.grace_seconds).await?;
+    let expired_upload_sessions = FsUploadStore::new(paths.uploads.clone())
+        .cleanup_expired_sessions()
+        .await?;
 
     println!(
-        "Purged {} orphaned blob(s), freed {} bytes; removed {} stale upload temp file(s), freed {} bytes",
+        "Purged {} orphaned blob(s), freed {} bytes; removed {} stale upload temp file(s), freed {} bytes; removed {} expired upload session(s)",
         report.removed,
         report.freed_bytes,
         report.removed_upload_temps,
-        report.freed_upload_temp_bytes
+        report.freed_upload_temp_bytes,
+        expired_upload_sessions
     );
     tracing::info!(
         removed = report.removed,
         freed_bytes = report.freed_bytes,
         removed_upload_temps = report.removed_upload_temps,
         freed_upload_temp_bytes = report.freed_upload_temp_bytes,
+        expired_upload_sessions,
         "Blob garbage collection finished"
     );
 
@@ -1070,15 +1075,19 @@ async fn run_prune_snapshots(args: PruneSnapshotsArgs) -> anyhow::Result<()> {
         .prune_snapshots_with_age(args.keep, older_than)
         .await?;
     let purge = service.purge_orphan_blobs(args.grace_seconds).await?;
+    let expired_upload_sessions = FsUploadStore::new(paths.uploads.clone())
+        .cleanup_expired_sessions()
+        .await?;
 
     println!(
-        "Pruned {} snapshot(s), released {} blob(s); purged {} orphaned blob(s), freed {} bytes; removed {} stale upload temp file(s), freed {} bytes",
+        "Pruned {} snapshot(s), released {} blob(s); purged {} orphaned blob(s), freed {} bytes; removed {} stale upload temp file(s), freed {} bytes; removed {} expired upload session(s)",
         report.pruned_snapshots,
         report.released_blobs,
         purge.removed,
         purge.freed_bytes,
         purge.removed_upload_temps,
-        purge.freed_upload_temp_bytes
+        purge.freed_upload_temp_bytes,
+        expired_upload_sessions
     );
     tracing::info!(
         pruned_snapshots = report.pruned_snapshots,
@@ -1087,6 +1096,7 @@ async fn run_prune_snapshots(args: PruneSnapshotsArgs) -> anyhow::Result<()> {
         freed_bytes = purge.freed_bytes,
         removed_upload_temps = purge.removed_upload_temps,
         freed_upload_temp_bytes = purge.freed_upload_temp_bytes,
+        expired_upload_sessions,
         "Snapshot pruning finished"
     );
 
@@ -1408,7 +1418,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         ),
         snapshot_repo: Arc::clone(&snapshot_repo_arc),
         blob_store: Arc::clone(&blob_store_arc),
-        upload_store: std::sync::Arc::new(upload_store),
+        upload_store: std::sync::Arc::new(upload_store.clone()),
         login_attempt_limiter: Arc::clone(&login_attempt_limiter),
         ingest_stats: Arc::clone(&ingest_stats),
         share_download_limiter: Arc::new(vfiles_http::FixedWindowLimiter::new()),
@@ -1461,6 +1471,12 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     tracing::info!("Binding to address: {}", addr);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("Server listening on http://{}", addr);
+
+    // 上传会话清理独立于可选的通用维护任务，避免默认关闭维护时遗留过期分片。
+    let upload_cleanup_task = tokio::spawn(run_upload_session_cleanup_loop(
+        upload_store,
+        service_shutdown_rx.clone(),
+    ));
 
     // 周期性维护：与 HTTP 服务并行运行，停机时先取消再关闭连接池
     let (maintenance_shutdown_tx, maintenance_shutdown_rx) = tokio::sync::watch::channel(false);
@@ -1583,6 +1599,9 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     {
         tracing::warn!(error = %err, "maintenance task did not stop cleanly");
     }
+    if let Err(err) = upload_cleanup_task.await {
+        tracing::warn!(error = %err, "upload session cleanup task did not stop cleanly");
+    }
     pool.close().await;
     tracing::info!("VFiles server stopped");
 
@@ -1653,6 +1672,33 @@ async fn run_maintenance_loop(
             _ = ticker.tick() => run_maintenance_tick(&service, &schedule).await,
             _ = shutdown.changed() => {
                 tracing::info!("Periodic maintenance stopped");
+                return;
+            }
+        }
+    }
+}
+
+/// 定期删除已过期且长时间无活动的分片上传会话。
+async fn run_upload_session_cleanup_loop(
+    upload_store: FsUploadStore,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    let mut ticker = tokio::time::interval(Duration::from_secs(6 * 60 * 60));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => match upload_store.cleanup_expired_sessions().await {
+                Ok(removed) if removed > 0 => {
+                    tracing::info!(removed, "Expired upload sessions cleaned up");
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "Failed to clean expired upload sessions");
+                }
+            },
+            _ = shutdown.changed() => {
+                tracing::info!("Upload session cleanup stopped");
                 return;
             }
         }
