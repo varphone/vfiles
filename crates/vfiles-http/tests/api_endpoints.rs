@@ -2975,6 +2975,29 @@ async fn request_id_and_security_headers_are_applied() {
 }
 
 #[tokio::test]
+async fn client_error_report_rejects_oversized_payloads() {
+    let app = TestApp::new().await;
+    let body = serde_json::to_vec(&json!({
+        "source": "x".repeat(20 * 1024),
+        "message": "client error",
+    }))
+    .expect("client error report should serialize");
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/client-errors")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
 async fn file_content_downloads_active_html_instead_of_rendering_it_same_origin() {
     let app = TestApp::new().await;
     let payload = b"<script>document.body.dataset.executed = 'yes'</script>";
