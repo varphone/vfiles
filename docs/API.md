@@ -56,6 +56,8 @@
   - 下载单文件
 - `GET /api/download/folder?path=...&commit=...`
   - 下载目录 ZIP
+- `HEAD /api/download/folder?path=...&commit=...`
+  - 验证目录并返回 ZIP 下载响应头，不读取文件内容或生成归档；归档大小未知，因此不返回 `Content-Length`。
 
 ## 上传
 

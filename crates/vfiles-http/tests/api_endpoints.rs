@@ -1426,6 +1426,67 @@ async fn file_content_and_download_support_range_requests() {
 }
 
 #[tokio::test]
+async fn head_directory_download_returns_metadata_without_building_archive() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "readme.txt", b"directory archive payload", "upload")
+        .await;
+
+    let get_response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/download/folder?path=docs")
+                .body(Body::empty())
+                .expect("directory download request should build"),
+        )
+        .await;
+    assert_eq!(get_response.status(), StatusCode::OK);
+    let expected_disposition = get_response
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .expect("GET should return the archive filename")
+        .clone();
+    assert!(get_response.headers().contains_key(header::CONTENT_LENGTH));
+    let _ = response_bytes(get_response).await;
+
+    let head_response = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/api/download/folder?path=docs")
+                .body(Body::empty())
+                .expect("directory HEAD request should build"),
+        )
+        .await;
+
+    assert_eq!(head_response.status(), StatusCode::OK);
+    assert_eq!(
+        head_response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/zip"
+    );
+    assert_eq!(
+        head_response
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .expect("HEAD should return the GET filename"),
+        &expected_disposition
+    );
+    assert_eq!(
+        head_response.headers().get(header::CACHE_CONTROL).unwrap(),
+        "private, no-cache"
+    );
+    assert_eq!(
+        head_response.headers().get(header::ACCEPT_RANGES).unwrap(),
+        "bytes"
+    );
+    assert!(
+        !head_response.headers().contains_key(header::CONTENT_LENGTH),
+        "HEAD omits the unknown archive size instead of building the ZIP to calculate it: {:?}",
+        head_response.headers()
+    );
+    assert!(response_bytes(head_response).await.is_empty());
+}
+
+#[tokio::test]
 async fn history_restore_endpoint_creates_new_current_version() {
     let app = TestApp::new().await;
 

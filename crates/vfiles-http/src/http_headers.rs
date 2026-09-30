@@ -265,6 +265,29 @@ pub(crate) async fn streaming_file_response(
     }
 }
 
+/// Build metadata for a directory archive HEAD request without creating or reading the archive.
+pub(crate) async fn directory_archive_head_response(
+    request_headers: &HeaderMap,
+    filename: &str,
+) -> ApiResult<Response> {
+    let mut response = streaming_file_response(
+        Box::new(std::io::Cursor::new(Vec::<u8>::new())),
+        StreamingFileOptions {
+            range_allowed: false,
+            request_headers,
+            mime_type: Some("application/zip"),
+            size_bytes: 0,
+            attachment_filename: Some(filename),
+            etag: None,
+            modified_at: None,
+        },
+    )
+    .await?;
+
+    response.headers_mut().remove(header::CONTENT_LENGTH);
+    Ok(response)
+}
+
 fn precondition_failed(
     etag: Option<&str>,
     modified_at: Option<time::OffsetDateTime>,

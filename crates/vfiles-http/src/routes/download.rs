@@ -2,8 +2,8 @@ use crate::{
     AppState,
     error::{ApiError, ApiResult},
     http_headers::{
-        StreamingFileOptions, if_none_match_is_wildcard, not_modified_response,
-        streaming_file_response,
+        StreamingFileOptions, directory_archive_head_response, if_none_match_is_wildcard,
+        not_modified_response, streaming_file_response,
     },
     routes::protected_request_context,
 };
@@ -112,6 +112,32 @@ async fn download_folder(
         )
         .await;
         return not_modified_response(None, None);
+    }
+
+    if method == Method::HEAD {
+        state
+            .workspace_service
+            .validate_directory_archive_target(&ctx.namespace_id, &path, query.commit.as_deref())
+            .await?;
+        let archive_name = path
+            .as_str()
+            .split('/')
+            .rfind(|segment| !segment.is_empty())
+            .unwrap_or("root");
+        let response =
+            directory_archive_head_response(&headers, &format!("{archive_name}.zip")).await?;
+
+        crate::audit::record_for(
+            &state,
+            &headers,
+            &ctx,
+            NewAuditLog::success(crate::audit::action::FILE_DOWNLOAD)
+                .target(path.as_str())
+                .detail("HEAD 请求目录下载元数据"),
+        )
+        .await;
+
+        return Ok(response);
     }
 
     let archive = state
