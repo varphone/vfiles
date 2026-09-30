@@ -16,6 +16,7 @@ use crate::error::{ApiError, ApiResult};
 
 const PRIVATE_FILE_CACHE_CONTROL: &str = "private, no-cache";
 const MAX_ACTIVE_DIRECTORY_ARCHIVE_DOWNLOADS: usize = 4;
+const FILE_STREAM_BUFFER_BYTES: usize = 64 * 1024;
 
 static DIRECTORY_ARCHIVE_DOWNLOAD_PERMITS: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(MAX_ACTIVE_DIRECTORY_ARCHIVE_DOWNLOADS)));
@@ -301,7 +302,7 @@ where
 {
     use futures::StreamExt;
 
-    let stream = ReaderStream::new(reader).map(move |chunk| {
+    let stream = ReaderStream::with_capacity(reader, FILE_STREAM_BUFFER_BYTES).map(move |chunk| {
         let _permit = &permit;
         chunk
     });
@@ -596,6 +597,8 @@ fn is_rfc5987_attr_char(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use futures::StreamExt;
+
     use super::*;
 
     #[test]
@@ -639,6 +642,28 @@ mod tests {
         assert!(semaphore.try_acquire().is_err());
         drop(response.into_body());
         assert!(semaphore.try_acquire().is_ok());
+    }
+
+    #[tokio::test]
+    async fn file_response_streams_with_bounded_64k_chunks() {
+        let size = FILE_STREAM_BUFFER_BYTES * 3 + 17;
+        let body = reader_stream_body(Box::new(std::io::Cursor::new(vec![42; size])), None);
+        let mut chunks = body.into_data_stream();
+        let mut total_bytes = 0;
+        let mut chunk_count = 0;
+
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk.expect("file chunk should be readable");
+            assert!(chunk.len() <= FILE_STREAM_BUFFER_BYTES);
+            total_bytes += chunk.len();
+            chunk_count += 1;
+        }
+
+        assert_eq!(total_bytes, size);
+        assert!(
+            chunk_count <= 4,
+            "expected 64 KiB chunks, got {chunk_count}"
+        );
     }
 
     #[test]
