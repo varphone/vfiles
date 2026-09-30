@@ -42,6 +42,18 @@ function isAborted(signal: AbortSignal | null | undefined): boolean {
   return Boolean(signal?.aborted);
 }
 
+function requestMethod(input: RequestInfo | URL, init?: RequestInit): string {
+  const inputMethod =
+    typeof input === "object" &&
+    input !== null &&
+    "method" in input &&
+    typeof input.method === "string"
+      ? input.method
+      : "GET";
+
+  return (init?.method ?? inputMethod).toUpperCase();
+}
+
 /**
  * 发起 GET 并在可重试的失败上重试。
  *
@@ -54,6 +66,10 @@ export async function fetchWithRetry(
   options?: FetchWithRetryOptions,
   fetchImpl: typeof fetch = fetch,
 ): Promise<Response> {
+  if (requestMethod(input, init) !== "GET") {
+    return fetchImpl(input, init);
+  }
+
   const maxRetries = options?.maxRetries ?? MAX_RETRIES;
   const sleep = options?.sleep ?? defaultSleep;
   const signal = init?.signal ?? null;

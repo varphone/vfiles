@@ -24,6 +24,42 @@ describe("isRetryableStatus", () => {
 });
 
 describe("fetchWithRetry", () => {
+  it("does not retry a non-GET Request after a retryable response", async () => {
+    const request = new Request("https://example.test/upload", {
+      method: "POST",
+      body: "upload payload",
+    });
+    const fetchMock = vi.fn().mockResolvedValue(response(503));
+    const sleep = vi.fn(noSleep);
+
+    const result = await fetchWithRetry(
+      request,
+      undefined,
+      { sleep },
+      fetchMock,
+    );
+
+    expect(result.status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("does not retry a non-GET method supplied in RequestInit", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(503));
+    const sleep = vi.fn(noSleep);
+
+    const result = await fetchWithRetry(
+      "https://example.test/upload",
+      { method: "POST" },
+      { sleep },
+      fetchMock,
+    );
+
+    expect(result.status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("retries a transient status and returns the successful response", async () => {
     const fetchMock = vi
       .fn()
