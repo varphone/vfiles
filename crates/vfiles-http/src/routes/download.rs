@@ -3,8 +3,8 @@ use crate::{
     error::{ApiError, ApiQuery, ApiResult},
     http_headers::{
         StreamingFileOptions, directory_archive_head_response, if_none_match_is_wildcard,
-        not_modified_response, streaming_file_response, streaming_file_response_with_permit,
-        try_acquire_directory_archive_permit,
+        not_modified_response, streaming_file_response, streaming_file_response_with_permits,
+        try_acquire_directory_archive_permit, try_acquire_file_stream_permit,
     },
     routes::protected_request_context,
 };
@@ -141,6 +141,8 @@ async fn download_folder(
         return Ok(response);
     }
 
+    let stream_permit =
+        try_acquire_file_stream_permit().ok_or_else(|| ApiError::rate_limited(1))?;
     let archive_permit =
         try_acquire_directory_archive_permit().ok_or_else(|| ApiError::rate_limited(1))?;
     let archive = state
@@ -158,7 +160,7 @@ async fn download_folder(
     )
     .await;
 
-    streaming_file_response_with_permit(
+    streaming_file_response_with_permits(
         archive.reader,
         StreamingFileOptions {
             range_allowed: method == Method::GET,
@@ -169,6 +171,7 @@ async fn download_folder(
             etag: None,
             modified_at: None,
         },
+        stream_permit,
         archive_permit,
     )
     .await

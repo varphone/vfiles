@@ -15,11 +15,20 @@ use vfiles_domain::ReadSeek;
 use crate::error::{ApiError, ApiResult};
 
 const PRIVATE_FILE_CACHE_CONTROL: &str = "private, no-cache";
+const MAX_ACTIVE_FILE_DOWNLOAD_STREAMS: usize = 128;
 const MAX_ACTIVE_DIRECTORY_ARCHIVE_DOWNLOADS: usize = 4;
 const FILE_STREAM_BUFFER_BYTES: usize = 64 * 1024;
 
+static FILE_DOWNLOAD_STREAM_PERMITS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(MAX_ACTIVE_FILE_DOWNLOAD_STREAMS)));
 static DIRECTORY_ARCHIVE_DOWNLOAD_PERMITS: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(MAX_ACTIVE_DIRECTORY_ARCHIVE_DOWNLOADS)));
+
+pub(crate) fn try_acquire_file_stream_permit() -> Option<OwnedSemaphorePermit> {
+    Arc::clone(&FILE_DOWNLOAD_STREAM_PERMITS)
+        .try_acquire_owned()
+        .ok()
+}
 
 pub(crate) fn try_acquire_directory_archive_permit() -> Option<OwnedSemaphorePermit> {
     Arc::clone(&DIRECTORY_ARCHIVE_DOWNLOAD_PERMITS)
@@ -157,21 +166,29 @@ pub(crate) async fn streaming_file_response(
     reader: Box<dyn ReadSeek + Send + Unpin>,
     options: StreamingFileOptions<'_>,
 ) -> ApiResult<Response> {
-    streaming_file_response_inner(reader, options, None).await
+    streaming_file_response_inner(reader, options, None, None).await
 }
 
-pub(crate) async fn streaming_file_response_with_permit(
+pub(crate) async fn streaming_file_response_with_permits(
     reader: Box<dyn ReadSeek + Send + Unpin>,
     options: StreamingFileOptions<'_>,
-    permit: OwnedSemaphorePermit,
+    stream_permit: OwnedSemaphorePermit,
+    additional_permit: OwnedSemaphorePermit,
 ) -> ApiResult<Response> {
-    streaming_file_response_inner(reader, options, Some(permit)).await
+    streaming_file_response_inner(
+        reader,
+        options,
+        Some(stream_permit),
+        Some(additional_permit),
+    )
+    .await
 }
 
 async fn streaming_file_response_inner(
     mut reader: Box<dyn ReadSeek + Send + Unpin>,
     options: StreamingFileOptions<'_>,
     mut stream_permit: Option<OwnedSemaphorePermit>,
+    additional_permit: Option<OwnedSemaphorePermit>,
 ) -> ApiResult<Response> {
     let StreamingFileOptions {
         range_allowed,
@@ -245,6 +262,10 @@ async fn streaming_file_response_inner(
             Ok(private_file_response(response))
         }
         RangeRequest::Partial { start, end } => {
+            let stream_permit = stream_permit
+                .take()
+                .or_else(try_acquire_file_stream_permit)
+                .ok_or_else(|| ApiError::rate_limited(1))?;
             reader
                 .seek(SeekFrom::Start(start))
                 .await
@@ -253,7 +274,8 @@ async fn streaming_file_response_inner(
             let length = end - start + 1;
             let mut response = Response::new(reader_stream_body(
                 reader.take(length),
-                stream_permit.take(),
+                Some(stream_permit),
+                additional_permit,
             ));
             *response.status_mut() = StatusCode::PARTIAL_CONTENT;
             let headers = response.headers_mut();
@@ -275,7 +297,15 @@ async fn streaming_file_response_inner(
             Ok(private_file_response(response))
         }
         RangeRequest::Full => {
-            let mut response = Response::new(reader_stream_body(reader, stream_permit.take()));
+            let stream_permit = stream_permit
+                .take()
+                .or_else(try_acquire_file_stream_permit)
+                .ok_or_else(|| ApiError::rate_limited(1))?;
+            let mut response = Response::new(reader_stream_body(
+                reader,
+                Some(stream_permit),
+                additional_permit,
+            ));
             let headers = response.headers_mut();
             headers.insert(header::CONTENT_TYPE, content_type);
             headers.insert(header::ACCEPT_RANGES, accept_ranges);
@@ -296,14 +326,18 @@ async fn streaming_file_response_inner(
     }
 }
 
-fn reader_stream_body<R>(reader: R, permit: Option<OwnedSemaphorePermit>) -> Body
+fn reader_stream_body<R>(
+    reader: R,
+    stream_permit: Option<OwnedSemaphorePermit>,
+    additional_permit: Option<OwnedSemaphorePermit>,
+) -> Body
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
     use futures::StreamExt;
 
     let stream = ReaderStream::with_capacity(reader, FILE_STREAM_BUFFER_BYTES).map(move |chunk| {
-        let _permit = &permit;
+        let _permits = (&stream_permit, &additional_permit);
         chunk
     });
     Body::from_stream(stream)
@@ -615,10 +649,26 @@ mod tests {
         assert!(try_acquire_directory_archive_permit().is_some());
     }
 
+    #[test]
+    fn file_stream_admission_has_a_fixed_capacity() {
+        let permits = (0..MAX_ACTIVE_FILE_DOWNLOAD_STREAMS)
+            .map(|_| try_acquire_file_stream_permit().expect("file stream slot is available"))
+            .collect::<Vec<_>>();
+
+        assert!(try_acquire_file_stream_permit().is_none());
+        drop(permits);
+        assert!(try_acquire_file_stream_permit().is_some());
+    }
+
     #[tokio::test]
-    async fn archive_stream_holds_its_permit_until_the_response_body_is_dropped() {
-        let semaphore = Arc::new(Semaphore::new(1));
-        let permit = semaphore
+    async fn file_stream_holds_admission_permits_until_the_response_body_is_dropped() {
+        let stream_semaphore = Arc::new(Semaphore::new(1));
+        let stream_permit = stream_semaphore
+            .clone()
+            .try_acquire_owned()
+            .expect("the only stream permit should be available");
+        let archive_semaphore = Arc::new(Semaphore::new(1));
+        let archive_permit = archive_semaphore
             .clone()
             .try_acquire_owned()
             .expect("the only archive permit should be available");
@@ -634,20 +684,23 @@ mod tests {
                 etag: None,
                 modified_at: None,
             },
-            Some(permit),
+            Some(stream_permit),
+            Some(archive_permit),
         )
         .await
-        .expect("archive response should be built");
+        .expect("stream response should be built");
 
-        assert!(semaphore.try_acquire().is_err());
+        assert!(stream_semaphore.try_acquire().is_err());
+        assert!(archive_semaphore.try_acquire().is_err());
         drop(response.into_body());
-        assert!(semaphore.try_acquire().is_ok());
+        assert!(stream_semaphore.try_acquire().is_ok());
+        assert!(archive_semaphore.try_acquire().is_ok());
     }
 
     #[tokio::test]
     async fn file_response_streams_with_bounded_64k_chunks() {
         let size = FILE_STREAM_BUFFER_BYTES * 3 + 17;
-        let body = reader_stream_body(Box::new(std::io::Cursor::new(vec![42; size])), None);
+        let body = reader_stream_body(Box::new(std::io::Cursor::new(vec![42; size])), None, None);
         let mut chunks = body.into_data_stream();
         let mut total_bytes = 0;
         let mut chunk_count = 0;

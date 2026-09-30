@@ -14,7 +14,8 @@ use crate::{
     error::{ApiError, ApiJson, ApiPath, ApiQuery},
     http_headers::{
         StreamingFileOptions, directory_archive_head_response, streaming_file_response,
-        streaming_file_response_with_permit, try_acquire_directory_archive_permit,
+        streaming_file_response_with_permits, try_acquire_directory_archive_permit,
+        try_acquire_file_stream_permit,
     },
     middleware::client_ip_from_headers,
     routes::authenticated_request_context,
@@ -299,6 +300,8 @@ pub async fn download_share(
                     .await;
             }
 
+            let stream_permit =
+                try_acquire_file_stream_permit().ok_or_else(|| ApiError::rate_limited(1))?;
             let archive_permit =
                 try_acquire_directory_archive_permit().ok_or_else(|| ApiError::rate_limited(1))?;
             let archive = state
@@ -314,7 +317,7 @@ pub async fn download_share(
             )
             .await;
 
-            streaming_file_response_with_permit(
+            streaming_file_response_with_permits(
                 archive.reader,
                 StreamingFileOptions {
                     range_allowed: method == Method::GET,
@@ -325,6 +328,7 @@ pub async fn download_share(
                     etag: None,
                     modified_at: None,
                 },
+                stream_permit,
                 archive_permit,
             )
             .await
