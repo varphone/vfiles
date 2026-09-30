@@ -18,7 +18,25 @@ vi.mock("./api.service", () => ({
   waitForRetryDelay: () => Promise.resolve(),
 }));
 
-import { filesService } from "./files.service";
+import { filesService, MAX_TRANSFER_PATHS } from "./files.service";
+
+describe("filesService.transferOwnership", () => {
+  beforeEach(() => {
+    postMock.mockReset();
+  });
+
+  it("rejects oversized path lists before sending a request", async () => {
+    const paths = Array.from(
+      { length: MAX_TRANSFER_PATHS + 1 },
+      (_, index) => `item-${index}`,
+    );
+
+    await expect(
+      filesService.transferOwnership(paths, "target-user"),
+    ).rejects.toThrow(`一次最多转移 ${MAX_TRANSFER_PATHS} 个项目`);
+    expect(postMock).not.toHaveBeenCalled();
+  });
+});
 
 describe("filesService.createShareLink", () => {
   beforeEach(() => {

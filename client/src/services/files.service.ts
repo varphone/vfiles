@@ -21,6 +21,7 @@ import type {
 
 type DownloadProgress = { loaded: number; total?: number };
 export const MAX_MOVE_BATCH_ITEMS = 500;
+export const MAX_TRANSFER_PATHS = 500;
 
 async function responseError(
   response: Response,
@@ -516,6 +517,9 @@ export const filesService = {
     targetUserId: string,
     message?: string,
   ): Promise<TransferOwnershipResult> {
+    if (paths.length > MAX_TRANSFER_PATHS) {
+      throw new Error(`一次最多转移 ${MAX_TRANSFER_PATHS} 个项目`);
+    }
     const response = await apiService.post<TransferOwnershipResult>(
       "/files/transfer",
       { paths, target_user_id: targetUserId, message },

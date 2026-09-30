@@ -893,7 +893,7 @@ import {
   IconStar,
   IconStarFilled,
 } from "@tabler/icons-vue";
-import { filesService } from "../../services/files.service";
+import { filesService, MAX_TRANSFER_PATHS } from "../../services/files.service";
 import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
@@ -1105,6 +1105,12 @@ const transferDialogRef = ref<{ finish: () => void } | null>(null);
 function openTransferDialog(items: FileInfo[]) {
   const targets = items.filter((item) => item.path !== "");
   if (targets.length === 0) return;
+  if (targets.length > MAX_TRANSFER_PATHS) {
+    appStore.error(
+      `一次最多转移 ${MAX_TRANSFER_PATHS} 个项目，请减少所选项目后重试`,
+    );
+    return;
+  }
   transferItems.value = targets;
   showTransferDialog.value = true;
 }

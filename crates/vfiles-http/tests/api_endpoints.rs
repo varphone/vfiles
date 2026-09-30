@@ -12,8 +12,8 @@ use tempfile::TempDir;
 use time::format_description::well_known::Rfc3339;
 use tower::util::ServiceExt;
 use vfiles_app::{
-    AdminService, AuthService, HealthService, HistoryService, SearchService, SessionService,
-    ShareService, UploadService, WorkspaceService,
+    AdminService, AuthService, HealthService, HistoryService, MAX_TRANSFER_PATHS, SearchService,
+    SessionService, ShareService, UploadService, WorkspaceService,
 };
 use vfiles_config::ConfigLoader;
 use vfiles_domain::{FeatureMatrix, NamespaceRepo, UserRepo};
@@ -4849,6 +4849,38 @@ async fn transfer_rejects_conflicts_and_requires_auth() {
         .collect();
     assert!(names.contains(&"owner2"), "应列出其他用户: {names:?}");
     assert!(!names.contains(&"admin"), "不应包含自己: {names:?}");
+}
+
+#[tokio::test]
+async fn transfer_rejects_oversized_path_lists_and_request_bodies() {
+    let app = TestApp::new().await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+    let paths: Vec<String> = (0..=MAX_TRANSFER_PATHS)
+        .map(|index| format!("item-{index}"))
+        .collect();
+
+    let too_many_paths = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/transfer",
+            json!({ "paths": paths, "target_user_id": "invalid" }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(too_many_paths.status(), StatusCode::BAD_REQUEST);
+
+    let too_large = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/transfer",
+            json!({
+                "paths": ["x".repeat(300 * 1024)],
+                "target_user_id": "invalid"
+            }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(too_large.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
 /// 审计日志：登录/上传/下载都会被记录，只有管理员可读，且接口不提供修改入口。

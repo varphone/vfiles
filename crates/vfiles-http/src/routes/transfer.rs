@@ -4,7 +4,7 @@
 //! 版本历史随条目一起转移（`entry_versions` 按条目 ID 关联）。
 //! `GET /api/users/directory` 提供选择目标用户所需的最小用户列表。
 
-use axum::extract::{Query, State};
+use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
@@ -14,10 +14,16 @@ use vfiles_domain::{DomainError, NewAuditLog, NormalizedPath};
 
 use crate::error::{ApiError, ApiJson, ApiResult};
 use crate::{AppState, routes::protected_request_context};
+use vfiles_app::MAX_TRANSFER_PATHS;
+
+const MAX_TRANSFER_BODY_BYTES: usize = 256 * 1024;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/transfer", post(transfer_ownership))
+        .route(
+            "/transfer",
+            post(transfer_ownership).layer(DefaultBodyLimit::max(MAX_TRANSFER_BODY_BYTES)),
+        )
         .route("/users/directory", get(list_transfer_targets))
 }
 
@@ -47,6 +53,12 @@ async fn transfer_ownership(
     ApiJson(req): ApiJson<TransferRequest>,
 ) -> ApiResult<Json<TransferResponse>> {
     let ctx = protected_request_context(&state, &jar).await?;
+
+    if req.paths.len() > MAX_TRANSFER_PATHS {
+        return Err(ApiError::Domain(DomainError::Validation {
+            message: format!("At most {MAX_TRANSFER_PATHS} paths can be transferred at once"),
+        }));
+    }
 
     let target_user_id = vfiles_domain::UserId::from_string(&req.target_user_id).map_err(|_| {
         ApiError::Domain(DomainError::Validation {

@@ -314,6 +314,7 @@ curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci
 
 行为约定：
 
+- 单次请求最多指定 `500` 个源路径，请求体不得超过 `256 KiB`；
 - **版本历史随条目一起转移**（`entry_versions` 按条目 ID 关联，blob 为全局内容寻址存储，无需复制）；
 - 目录会连同整棵子树一起转移；
 - 目标命名空间缺少的祖先目录会自动补齐（例如只转 `docs/a.txt` 时会为对方创建 `docs`）；

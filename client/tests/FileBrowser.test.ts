@@ -86,6 +86,7 @@ getFilesPageMock.mockImplementation(
 vi.mock("../src/services/files.service", () => ({
   SEARCH_PAGE_SIZE: 100,
   MAX_MOVE_BATCH_ITEMS: 500,
+  MAX_TRANSFER_PATHS: 500,
   filesService: {
     getFiles: getFilesMock,
     getFilesPage: getFilesPageMock,

@@ -17,6 +17,9 @@ use vfiles_domain::{
 use crate::services::{create_snapshot_record, ensure_directory_path};
 use crate::{NamespaceService, collect_snapshot_state};
 
+/// 单次所有权转移允许指定的源路径数量。
+pub const MAX_TRANSFER_PATHS: usize = 500;
+
 /// 转移结果：实际转移的条目数与目标用户名（用于提示与审计）。
 #[derive(Debug, Clone)]
 pub struct TransferOutcome {
@@ -40,6 +43,46 @@ fn ancestors_of(path: &str) -> Vec<String> {
         ancestors.push(current.clone());
     }
     ancestors
+}
+
+fn validate_transfer_paths(paths: &[NormalizedPath]) -> DomainResult<()> {
+    if paths.is_empty() {
+        return Err(DomainError::Validation {
+            message: "At least one path is required".to_string(),
+        });
+    }
+    if paths.len() > MAX_TRANSFER_PATHS {
+        return Err(DomainError::Validation {
+            message: format!("At most {MAX_TRANSFER_PATHS} paths can be transferred at once"),
+        });
+    }
+    if paths.iter().any(|path| path.as_str().is_empty()) {
+        return Err(DomainError::Validation {
+            message: "The root directory cannot be transferred".to_string(),
+        });
+    }
+
+    let selected_paths: HashSet<&str> = paths.iter().map(|path| path.as_str()).collect();
+    if selected_paths.len() != paths.len() {
+        return Err(DomainError::Conflict {
+            message: "Source paths must not overlap".to_string(),
+        });
+    }
+
+    // 检查每个路径的祖先集合，避免原先逐对比较带来的 O(n²) 放大。
+    for path in paths {
+        let mut current = path.as_str();
+        while let Some((parent, _)) = current.rsplit_once('/') {
+            if selected_paths.contains(parent) {
+                return Err(DomainError::Conflict {
+                    message: "Source paths must not overlap".to_string(),
+                });
+            }
+            current = parent;
+        }
+    }
+
+    Ok(())
 }
 
 /// 所有权转移服务。
@@ -92,31 +135,7 @@ impl OwnershipService {
         actor_username: &str,
         message: Option<&str>,
     ) -> DomainResult<TransferOutcome> {
-        if paths.is_empty() {
-            return Err(DomainError::Validation {
-                message: "At least one path is required".to_string(),
-            });
-        }
-
-        if paths.iter().any(|path| path.as_str().is_empty()) {
-            return Err(DomainError::Validation {
-                message: "The root directory cannot be transferred".to_string(),
-            });
-        }
-
-        // 源路径之间不允许重叠（避免同一子树被转移两次）
-        for (index, source) in paths.iter().enumerate() {
-            for other in paths.iter().skip(index + 1) {
-                if source.as_str() == other.as_str()
-                    || source.as_str().starts_with(&format!("{}/", other.as_str()))
-                    || other.as_str().starts_with(&format!("{}/", source.as_str()))
-                {
-                    return Err(DomainError::Conflict {
-                        message: "Source paths must not overlap".to_string(),
-                    });
-                }
-            }
-        }
+        validate_transfer_paths(paths)?;
 
         if target_user_id == actor_user_id {
             return Err(DomainError::Validation {
@@ -253,5 +272,54 @@ impl OwnershipService {
             transferred,
             target_username: target_user.username.to_string(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_TRANSFER_PATHS, validate_transfer_paths};
+    use vfiles_domain::{DomainError, NormalizedPath};
+
+    fn paths(values: &[&str]) -> Vec<NormalizedPath> {
+        values
+            .iter()
+            .map(|value| NormalizedPath::new(value).expect("test path should be valid"))
+            .collect()
+    }
+
+    #[test]
+    fn transfer_path_validation_caps_count_before_work() {
+        let values: Vec<String> = (0..=MAX_TRANSFER_PATHS)
+            .map(|index| format!("item-{index}"))
+            .collect();
+        let paths: Vec<NormalizedPath> = values
+            .iter()
+            .map(|value| NormalizedPath::new(value).expect("test path should be valid"))
+            .collect();
+
+        assert!(validate_transfer_paths(&paths[..MAX_TRANSFER_PATHS]).is_ok());
+        assert!(matches!(
+            validate_transfer_paths(&paths),
+            Err(DomainError::Validation { .. })
+        ));
+    }
+
+    #[test]
+    fn transfer_path_validation_rejects_duplicate_and_nested_paths() {
+        for values in [
+            ["docs", "docs"],
+            ["docs", "docs/a.txt"],
+            ["docs/a.txt", "docs"],
+        ] {
+            assert!(matches!(
+                validate_transfer_paths(&paths(&values)),
+                Err(DomainError::Conflict { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn transfer_path_validation_allows_sibling_names() {
+        assert!(validate_transfer_paths(&paths(&["docs", "docs-old", "docs2/a.txt"])).is_ok());
     }
 }
