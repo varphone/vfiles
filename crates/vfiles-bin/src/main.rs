@@ -1,4 +1,5 @@
 mod copy_cmd;
+mod http_server;
 mod import_cmd;
 
 use anyhow::{anyhow, bail};
@@ -1577,16 +1578,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     }
 
     tracing::info!("VFiles server started successfully!");
-    let mut http_shutdown = service_shutdown_rx.clone();
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .with_graceful_shutdown(async move {
-        // 收到信号或 FTP 侧触发停机时都结束 HTTP 服务
-        let _ = http_shutdown.changed().await;
-    })
-    .await?;
+    http_server::serve(listener, app, service_shutdown_rx.clone()).await?;
 
     // 收到 SIGTERM/SIGINT 后先停止接收新请求，再停止 FTP 与维护任务，最后关闭连接池。
     let _ = service_shutdown_tx.send(true);
