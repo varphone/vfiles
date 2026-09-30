@@ -196,7 +196,7 @@ const props = withDefaults(
     /** 批量选择中的条目；多于 1 项时展示选择摘要而不是单条详情。 */
     selection?: FileInfo[];
   }>(),
-  { selection: () => [] },
+  { item: undefined, commit: undefined, selection: () => [] },
 );
 
 const emit = defineEmits<{

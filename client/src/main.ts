@@ -29,7 +29,12 @@ router.beforeEach(async (to) => {
     await authStore.fetchMe();
   }
 
-  const publicRoutes = new Set(["login", "forgot-password", "reset-password", "not-found"]);
+  const publicRoutes = new Set([
+    "login",
+    "forgot-password",
+    "reset-password",
+    "not-found",
+  ]);
 
   // 未启用认证：不做拦截
   if (!authStore.enabled) {
@@ -99,11 +104,9 @@ if (typeof window !== "undefined") {
 app.use(pinia);
 app.use(router);
 
-
 // 全局错误边界（r177 ✓ 主流兜底：崩而不白屏、收口可记可报）
 let lastBoundaryToast = 0;
 const errorBoundary = (source: string, error: unknown) => {
-  // eslint-disable-next-line no-console
   console.error(`[vfiles:${source}]`, error);
   const g = window as unknown as { __VF_ERROR_COUNT?: number };
   g.__VF_ERROR_COUNT = (g.__VF_ERROR_COUNT ?? 0) + 1;
@@ -133,7 +136,11 @@ const errorBoundary = (source: string, error: unknown) => {
   }
 };
 app.config.errorHandler = (err) => errorBoundary("vue", err);
-window.addEventListener("error", (e) => errorBoundary("window", e.error ?? e.message));
-window.addEventListener("unhandledrejection", (e) => errorBoundary("promise", e.reason));
+window.addEventListener("error", (e) =>
+  errorBoundary("window", e.error ?? e.message),
+);
+window.addEventListener("unhandledrejection", (e) =>
+  errorBoundary("promise", e.reason),
+);
 
 app.mount("#app");

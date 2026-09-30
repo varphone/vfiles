@@ -20,7 +20,8 @@
               />
             </label>
           </th>
-          <th scope="col"
+          <th
+            scope="col"
             v-for="column in columns"
             :key="column.field"
             :class="[column.narrow ? 'is-narrow' : '', column.align || '']"
@@ -47,7 +48,8 @@
               />
             </button>
           </th>
-          <th scope="col"
+          <th
+            scope="col"
             v-if="showActionColumn"
             class="is-narrow has-text-right file-list-actions-header"
           >
