@@ -106,7 +106,7 @@ impl FrontendAssets {
                 } else {
                     request_path.segments.join("/")
                 };
-                serve_filesystem_path(&candidate, &hint, preferences).await
+                serve_filesystem_path(base_path, &candidate, &hint, preferences).await
             }
             #[cfg(feature = "embed")]
             Self::Embedded => {
@@ -134,7 +134,7 @@ impl FrontendAssets {
         match self {
             Self::Filesystem(base_path) => {
                 let candidate = base_path.join("index.html");
-                serve_filesystem_path(&candidate, "index.html", preferences).await
+                serve_filesystem_path(base_path, &candidate, "index.html", preferences).await
             }
             #[cfg(feature = "embed")]
             Self::Embedded => {
@@ -306,22 +306,32 @@ fn embedded_candidate(segments: &[String]) -> String {
     segments.join("/")
 }
 
-async fn open_filesystem_file(path: &Path) -> Option<(tokio::fs::File, u64)> {
-    let file = tokio::fs::File::open(path).await.ok()?;
+async fn open_filesystem_file(
+    canonical_base: &Path,
+    path: &Path,
+) -> Option<(tokio::fs::File, u64)> {
+    let canonical_path = tokio::fs::canonicalize(path).await.ok()?;
+    if !canonical_path.starts_with(canonical_base) {
+        return None;
+    }
+
+    let file = tokio::fs::File::open(canonical_path).await.ok()?;
     let metadata = file.metadata().await.ok()?;
     metadata.is_file().then_some((file, metadata.len()))
 }
 
 async fn serve_filesystem_path(
+    base_path: &Path,
     candidate: &Path,
     hint: &str,
     preferences: &EncodingPreferences,
 ) -> Option<Response> {
-    let (identity_file, identity_size) = open_filesystem_file(candidate).await?;
+    let canonical_base = tokio::fs::canonicalize(base_path).await.ok()?;
+    let (identity_file, identity_size) = open_filesystem_file(&canonical_base, candidate).await?;
 
     for encoding in &preferences.precompressed {
         let variant = append_suffix(candidate, encoding.suffix());
-        if let Some((file, size)) = open_filesystem_file(&variant).await {
+        if let Some((file, size)) = open_filesystem_file(&canonical_base, &variant).await {
             return Some(filesystem_file_response(file, size, hint, Some(*encoding)));
         }
     }
@@ -491,6 +501,53 @@ mod tests {
             .expect("static asset should stream")
             .to_bytes();
         assert_eq!(body.as_ref(), content.as_slice());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn refuses_filesystem_symlinks_outside_frontend_root() {
+        use std::os::unix::fs::symlink;
+
+        let frontend_dir = tempfile::tempdir().expect("temporary frontend directory");
+        let outside_dir = tempfile::tempdir().expect("temporary outside directory");
+        std::fs::write(frontend_dir.path().join("index.html"), b"index")
+            .expect("index should be written");
+        std::fs::write(outside_dir.path().join("private.txt"), b"private data")
+            .expect("outside file should be written");
+        std::fs::write(
+            outside_dir.path().join("app.js.gz"),
+            b"private compressed data",
+        )
+        .expect("outside compressed file should be written");
+        std::fs::write(frontend_dir.path().join("app.js"), b"safe script")
+            .expect("frontend asset should be written");
+        symlink(
+            outside_dir.path().join("private.txt"),
+            frontend_dir.path().join("public.txt"),
+        )
+        .expect("outside symlink should be created");
+        symlink(
+            outside_dir.path().join("app.js.gz"),
+            frontend_dir.path().join("app.js.gz"),
+        )
+        .expect("outside compressed symlink should be created");
+        let frontend = FrontendAssets::filesystem(frontend_dir.path().to_path_buf())
+            .expect("frontend should be available");
+
+        let response = frontend.serve("/public.txt", None).await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let response = frontend.serve("/app.js", Some("gzip")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!response.headers().contains_key(header::CONTENT_ENCODING));
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("identity response should collect")
+            .to_bytes();
+        assert_eq!(body.as_ref(), b"safe script");
     }
 
     #[tokio::test]
