@@ -185,6 +185,25 @@ describe("useFilePreview rendering", () => {
 });
 
 describe("useFilePreview cancellation", () => {
+  it("discards text that finishes loading after a newer preview", async () => {
+    const staleText = deferred<string>();
+    getFileContentMock.mockResolvedValueOnce({
+      text: () => staleText.promise,
+    } as Blob);
+    getFileContentMock.mockResolvedValueOnce(new Blob(["current file"]));
+    const preview = useFilePreview(ref(undefined));
+
+    const staleRequest = preview.openPreview("old.md");
+    await flush();
+    await preview.openPreview("current.txt");
+    staleText.resolve("stale markdown");
+    await staleRequest;
+
+    expect(preview.preview.value.path).toBe("current.txt");
+    expect(preview.preview.value.kind).toBe("text");
+    expect(preview.preview.value.text).toBe("current file");
+  });
+
   it("discards a response that arrives after a newer preview", async () => {
     const slow = deferred<Blob>();
     getFileContentMock.mockReturnValueOnce(slow.promise);

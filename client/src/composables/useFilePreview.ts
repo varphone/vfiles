@@ -315,14 +315,15 @@ export function useFilePreview(
     const requestId = previewSequence;
     const controller = new AbortController();
     pendingAbort = controller;
+    const kind = detectPreviewKind(filePath);
 
     preview.value.open = true;
     preview.value.loading = true;
     preview.value.path = filePath;
-    preview.value.kind = detectPreviewKind(filePath);
+    preview.value.kind = kind;
 
     try {
-      if (preview.value.kind === "unsupported") {
+      if (kind === "unsupported") {
         preview.value.loading = false;
         return;
       }
@@ -340,10 +341,10 @@ export function useFilePreview(
       if (requestId !== previewSequence) return;
 
       if (
-        preview.value.kind === "image" ||
-        preview.value.kind === "pdf" ||
-        preview.value.kind === "video" ||
-        preview.value.kind === "audio"
+        kind === "image" ||
+        kind === "pdf" ||
+        kind === "video" ||
+        kind === "audio"
       ) {
         const typed = new Blob([blob], {
           type: guessMimeByExt(filePath),
@@ -351,12 +352,18 @@ export function useFilePreview(
         preview.value.objectUrl = URL.createObjectURL(typed);
       } else {
         const text = await blob.text();
-        if (preview.value.kind === "markdown") {
+        if (requestId !== previewSequence || controller.signal.aborted) return;
+
+        if (kind === "markdown") {
           // 只有真的出现围栏代码块时才加载高亮包（约 150KB）。
           const markedApi = await getMarked(hasFencedCodeBlock(text));
+          if (requestId !== previewSequence || controller.signal.aborted)
+            return;
           preview.value.html = markedApi.parse(text) as string;
-        } else if (preview.value.kind === "code") {
+        } else if (kind === "code") {
           const hljsApi = await getHljs();
+          if (requestId !== previewSequence || controller.signal.aborted)
+            return;
           // 按扩展名指定语言（比自动识别更准），未知语言回退到自动识别。
           preview.value.html = highlightCode(
             hljsApi,
