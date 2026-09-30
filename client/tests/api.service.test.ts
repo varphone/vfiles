@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import type { AxiosInstance } from "axios";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_AUTOMATIC_RETRY_AFTER_MS,
   MAX_RETRIES,
@@ -7,7 +8,32 @@ import {
   computeRetryDelayForResponse,
   isRetryableError,
   parseRetryAfterMs,
+  apiService,
 } from "../src/services/api.service";
+
+const axiosInstance = Reflect.get(apiService, "api") as AxiosInstance;
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("ApiService.get", () => {
+  it("forwards an abort signal to Axios", async () => {
+    const getSpy = vi
+      .spyOn(axiosInstance, "get")
+      .mockResolvedValue({ data: { ok: true } } as never);
+    const controller = new AbortController();
+
+    await apiService.get("/files/list", undefined, {
+      signal: controller.signal,
+    });
+
+    expect(getSpy).toHaveBeenCalledWith("/files/list", {
+      params: undefined,
+      signal: controller.signal,
+    });
+  });
+});
 
 describe("isRetryableError", () => {
   it("retries idempotent GETs on network errors and timeouts", () => {
@@ -89,24 +115,20 @@ describe("Retry-After handling", () => {
 
   it("parses delta-seconds and HTTP-date values", () => {
     expect(parseRetryAfterMs(" 4 ", fixedNow)).toBe(4000);
-    expect(
-      parseRetryAfterMs("Wed, 21 Oct 2015 07:28:10 GMT", fixedNow),
-    ).toBe(10_000);
+    expect(parseRetryAfterMs("Wed, 21 Oct 2015 07:28:10 GMT", fixedNow)).toBe(
+      10_000,
+    );
     expect(parseRetryAfterMs("invalid", fixedNow)).toBeUndefined();
   });
 
   it("waits at least as long as the server requests", () => {
-    expect(computeRetryDelayForResponse(1, "2", () => 0, fixedNow)).toBe(
-      2000,
-    );
+    expect(computeRetryDelayForResponse(1, "2", () => 0, fixedNow)).toBe(2000);
     expect(computeRetryDelayForResponse(1, "0", () => 0, fixedNow)).toBe(300);
   });
 
   it("skips automatic retries when the server requests an excessive delay", () => {
     expect(MAX_AUTOMATIC_RETRY_AFTER_MS).toBe(30_000);
-    expect(
-      computeRetryDelayForResponse(1, "31", () => 0, fixedNow),
-    ).toBeNull();
+    expect(computeRetryDelayForResponse(1, "31", () => 0, fixedNow)).toBeNull();
     expect(
       computeRetryDelayForResponse(
         1,

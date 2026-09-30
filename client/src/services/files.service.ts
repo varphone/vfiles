@@ -631,7 +631,12 @@ export const filesService = {
    */
   async getFilesPage(
     path: string = "",
-    opts?: { commit?: string; limit?: number; offset?: number },
+    opts?: {
+      commit?: string;
+      limit?: number;
+      offset?: number;
+      signal?: AbortSignal;
+    },
   ): Promise<{
     items: FileInfo[];
     total: number;
@@ -654,7 +659,7 @@ export const filesService = {
       limit: number;
       offset: number;
       has_more: boolean;
-    }>(url);
+    }>(url, undefined, { signal: opts?.signal });
     const payload = (response as any)?.data ?? response;
     return {
       items: Array.isArray(payload?.items) ? payload.items : [],

@@ -47,9 +47,13 @@ export const useFilesStore = defineStore("files", () => {
   // 递增的请求序号：并发或快速切换目录时只接受最新一次请求的结果，
   // 避免先发出的旧请求后返回而覆盖新目录的数据（也避免 loading 被提前置否）。
   let loadSequence = 0;
+  let activePageController: AbortController | null = null;
 
   async function loadFiles(path: string = "") {
     const requestId = ++loadSequence;
+    activePageController?.abort();
+    const controller = new AbortController();
+    activePageController = controller;
     const commit = browseCommit.value;
     loading.value = true;
     error.value = null;
@@ -61,6 +65,7 @@ export const useFilesStore = defineStore("files", () => {
         commit,
         limit: PAGE_SIZE,
         offset: 0,
+        signal: controller.signal,
       });
       if (requestId !== loadSequence) return;
       files.value = page.items;
@@ -74,16 +79,22 @@ export const useFilesStore = defineStore("files", () => {
       totalFiles.value = 0;
       hasMoreFiles.value = false;
     } finally {
-      if (requestId === loadSequence) loading.value = false;
+      if (requestId === loadSequence) {
+        loading.value = false;
+        if (activePageController === controller) activePageController = null;
+      }
     }
   }
 
   /** 加载下一页并追加到当前列表（目录未切换时才生效）。 */
   async function loadMoreFiles() {
-    if (!hasMoreFiles.value || loadingMoreFiles.value) return;
+    if (!hasMoreFiles.value || loading.value || loadingMoreFiles.value) return;
 
     const requestId = loadSequence;
     const path = currentPath.value;
+    activePageController?.abort();
+    const controller = new AbortController();
+    activePageController = controller;
     loadingMoreFiles.value = true;
     loadMoreError.value = null;
 
@@ -92,6 +103,7 @@ export const useFilesStore = defineStore("files", () => {
         commit: browseCommit.value,
         limit: PAGE_SIZE,
         offset: files.value.length,
+        signal: controller.signal,
       });
       if (requestId !== loadSequence) return;
       files.value = [...files.value, ...page.items];
@@ -103,7 +115,10 @@ export const useFilesStore = defineStore("files", () => {
           err instanceof Error ? err.message : "加载更多失败";
       }
     } finally {
-      if (requestId === loadSequence) loadingMoreFiles.value = false;
+      if (requestId === loadSequence) {
+        loadingMoreFiles.value = false;
+        if (activePageController === controller) activePageController = null;
+      }
     }
   }
 

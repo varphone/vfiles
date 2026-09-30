@@ -3,7 +3,12 @@ import { createPinia, setActivePinia } from "pinia";
 import { useFilesStore } from "../src/stores/files.store";
 import type { FileInfo } from "../src/types";
 
-type PageOpts = { commit?: string; limit?: number; offset?: number };
+type PageOpts = {
+  commit?: string;
+  limit?: number;
+  offset?: number;
+  signal?: AbortSignal;
+};
 type PageResult = {
   items: FileInfo[];
   total: number;
@@ -22,24 +27,19 @@ const { getFilesMock, getFilesPageMock } = vi.hoisted(() => ({
 
 // 服务端分页：测试里以 getFilesMock 作为“全量数据源”，getFilesPage 据此切片，
 // 这样既保留原有断言（调用次数、延迟、拒绝），又覆盖分页字段。
-getFilesPageMock.mockImplementation(
-  async (
-    path: string,
-    opts?: { commit?: string; limit?: number; offset?: number },
-  ) => {
-    const all = await getFilesMock(path, opts?.commit);
-    const offset = opts?.offset ?? 0;
-    const limit = opts?.limit ?? all.length;
-    const items = all.slice(offset, offset + limit);
-    return {
-      items,
-      total: all.length,
-      limit,
-      offset,
-      has_more: offset + items.length < all.length,
-    };
-  },
-);
+getFilesPageMock.mockImplementation(async (path: string, opts?: PageOpts) => {
+  const all = await getFilesMock(path, opts?.commit);
+  const offset = opts?.offset ?? 0;
+  const limit = opts?.limit ?? all.length;
+  const items = all.slice(offset, offset + limit);
+  return {
+    items,
+    total: all.length,
+    limit,
+    offset,
+    has_more: offset + items.length < all.length,
+  };
+});
 
 vi.mock("../src/services/files.service", () => ({
   filesService: {
@@ -101,6 +101,32 @@ describe("files store", () => {
     expect(store.loading).toBe(false);
   });
 
+  it("aborts an in-flight page request when navigation changes directory", async () => {
+    getFilesPageMock.mockImplementationOnce(
+      (_path, opts) =>
+        new Promise((_resolve, reject) => {
+          opts?.signal?.addEventListener(
+            "abort",
+            () => reject(new Error("request aborted")),
+            { once: true },
+          );
+        }),
+    );
+    getFilesMock.mockResolvedValueOnce([file("b.txt")]);
+
+    const store = useFilesStore();
+    const first = store.loadFiles("a");
+    const firstSignal = getFilesPageMock.mock.calls[0][1]?.signal;
+    const second = store.loadFiles("b");
+
+    expect(firstSignal?.aborted).toBe(true);
+    await Promise.all([first, second]);
+
+    expect(store.currentPath).toBe("b");
+    expect(store.files.map((entry) => entry.name)).toEqual(["b.txt"]);
+    expect(store.loading).toBe(false);
+  });
+
   it("exposes total/hasMore from the first page and appends the next page", async () => {
     const all = Array.from({ length: 450 }, (_, i) => file(`f${i}.txt`));
     getFilesMock.mockImplementation(async () => all);
@@ -111,11 +137,14 @@ describe("files store", () => {
     expect(store.files).toHaveLength(200);
     expect(store.totalFiles).toBe(450);
     expect(store.hasMoreFiles).toBe(true);
-    expect(getFilesPageMock).toHaveBeenLastCalledWith("", {
-      commit: undefined,
-      limit: 200,
-      offset: 0,
-    });
+    expect(getFilesPageMock).toHaveBeenLastCalledWith(
+      "",
+      expect.objectContaining({
+        commit: undefined,
+        limit: 200,
+        offset: 0,
+      }),
+    );
 
     await store.loadMoreFiles();
 
@@ -123,11 +152,14 @@ describe("files store", () => {
     expect(store.files[399].name).toBe("f399.txt");
     expect(store.hasMoreFiles).toBe(true);
     expect(store.loadingMoreFiles).toBe(false);
-    expect(getFilesPageMock).toHaveBeenLastCalledWith("", {
-      commit: undefined,
-      limit: 200,
-      offset: 200,
-    });
+    expect(getFilesPageMock).toHaveBeenLastCalledWith(
+      "",
+      expect.objectContaining({
+        commit: undefined,
+        limit: 200,
+        offset: 200,
+      }),
+    );
 
     await store.loadMoreFiles();
 
@@ -145,11 +177,13 @@ describe("files store", () => {
     const slow = deferred<FileInfo[]>();
     getFilesMock.mockReturnValueOnce(slow.promise);
     const pending = store.loadMoreFiles();
+    const slowSignal = getFilesPageMock.mock.calls.at(-1)?.[1]?.signal;
 
     // 用户切到别的目录，旧目录的第二页随后才返回
     getFilesMock.mockImplementation(async () => [file("other.txt")]);
     await store.loadFiles("other");
 
+    expect(slowSignal?.aborted).toBe(true);
     slow.resolve(all);
     await pending;
 

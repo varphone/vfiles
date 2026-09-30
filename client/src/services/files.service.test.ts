@@ -20,6 +20,35 @@ vi.mock("./api.service", () => ({
 
 import { filesService, MAX_TRANSFER_PATHS } from "./files.service";
 
+describe("filesService.getFilesPage", () => {
+  beforeEach(() => {
+    getMock.mockReset();
+  });
+
+  it("passes the abort signal to the HTTP request", async () => {
+    getMock.mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 200,
+      offset: 0,
+      has_more: false,
+    });
+    const controller = new AbortController();
+
+    await filesService.getFilesPage("docs", {
+      limit: 200,
+      offset: 0,
+      signal: controller.signal,
+    });
+
+    expect(getMock).toHaveBeenCalledWith(
+      "/files/list/docs?limit=200&offset=0",
+      undefined,
+      { signal: controller.signal },
+    );
+  });
+});
+
 describe("filesService.transferOwnership", () => {
   beforeEach(() => {
     postMock.mockReset();

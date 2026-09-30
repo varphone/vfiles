@@ -90,10 +90,7 @@ export function computeRetryDelayForResponse(
     return null;
   }
 
-  return Math.max(
-    computeRetryDelayMs(attempt, random),
-    serverDelayMs ?? 0,
-  );
+  return Math.max(computeRetryDelayMs(attempt, random), serverDelayMs ?? 0);
 }
 
 type RetryAbortSignal = Pick<AbortSignal, "aborted"> &
@@ -171,8 +168,7 @@ class ApiService {
       },
       async (error: AxiosError) => {
         const config = error.config as
-          | (typeof error.config & { __retryCount?: number })
-          | undefined;
+          (typeof error.config & { __retryCount?: number }) | undefined;
 
         if (config && isRetryableError(error)) {
           const attempt = (config.__retryCount ?? 0) + 1;
@@ -297,8 +293,12 @@ class ApiService {
     return config;
   }
 
-  get<T = any>(url: string, params?: any): Promise<ApiResponse<T>> {
-    return this.api.get(url, { params });
+  get<T = any>(
+    url: string,
+    params?: any,
+    opts?: RequestOptions,
+  ): Promise<ApiResponse<T>> {
+    return this.api.get(url, { params, ...this.buildAxiosConfig(opts) });
   }
 
   post<T = any>(

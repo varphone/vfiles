@@ -6,7 +6,12 @@ import { useAuthStore } from "../src/stores/auth.store";
 import FileBrowser from "../src/components/file-browser/FileBrowser.vue";
 import { confirmDialog } from "../src/composables/dialog";
 
-type PageOpts = { commit?: string; limit?: number; offset?: number };
+type PageOpts = {
+  commit?: string;
+  limit?: number;
+  offset?: number;
+  signal?: AbortSignal;
+};
 type PageResult = {
   items: unknown[];
   total: number;
@@ -64,24 +69,19 @@ vi.mock("../src/composables/dialog", () => ({
 }));
 
 // 服务端分页：以 getFilesMock 为全量数据源切片，保持既有断言不变。
-getFilesPageMock.mockImplementation(
-  async (
-    path: string,
-    opts?: { commit?: string; limit?: number; offset?: number },
-  ) => {
-    const all = (await getFilesMock(path, opts?.commit)) as unknown[];
-    const offset = opts?.offset ?? 0;
-    const limit = opts?.limit ?? all.length;
-    const items = all.slice(offset, offset + limit);
-    return {
-      items,
-      total: all.length,
-      limit,
-      offset,
-      has_more: offset + items.length < all.length,
-    };
-  },
-);
+getFilesPageMock.mockImplementation(async (path: string, opts?: PageOpts) => {
+  const all = (await getFilesMock(path, opts?.commit)) as unknown[];
+  const offset = opts?.offset ?? 0;
+  const limit = opts?.limit ?? all.length;
+  const items = all.slice(offset, offset + limit);
+  return {
+    items,
+    total: all.length,
+    limit,
+    offset,
+    has_more: offset + items.length < all.length,
+  };
+});
 
 vi.mock("../src/services/files.service", () => ({
   SEARCH_PAGE_SIZE: 100,
@@ -1290,11 +1290,14 @@ describe("FileBrowser.vue directory tree", () => {
     await fireEvent.click(within(tree).getByText("docs"));
 
     await waitFor(() => {
-      expect(getFilesPageMock).toHaveBeenCalledWith("docs", {
-        commit: undefined,
-        limit: 200,
-        offset: 0,
-      });
+      expect(getFilesPageMock).toHaveBeenCalledWith(
+        "docs",
+        expect.objectContaining({
+          commit: undefined,
+          limit: 200,
+          offset: 0,
+        }),
+      );
     });
   });
 });
