@@ -943,10 +943,12 @@ export const filesService = {
     path: string,
     commit: string,
     parent?: string,
+    opts?: { signal?: AbortSignal },
   ): Promise<string> {
     const params = new URLSearchParams({ path, commit });
     if (parent) params.set("parent", parent);
     const response = await fetchWithRetry(`/api/history/diff?${params}`, {
+      signal: opts?.signal,
       credentials: "include",
     });
     if (!response.ok) {

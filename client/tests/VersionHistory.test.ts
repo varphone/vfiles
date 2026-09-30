@@ -269,6 +269,74 @@ describe("VersionHistory.vue", () => {
     expect(container.querySelector(".preview-text")).toBeNull();
   });
 
+  it("aborts stale version diff loads and ignores late responses", async () => {
+    const olderRequest = deferred<string>();
+    const newerRequest = deferred<string>();
+    diffMock
+      .mockReturnValueOnce(olderRequest.promise)
+      .mockReturnValueOnce(newerRequest.promise);
+    const { container } = renderHistory();
+    await waitFor(() =>
+      expect(container.querySelectorAll(".history-row")).toHaveLength(2),
+    );
+
+    const rows = container.querySelectorAll(".history-row");
+    await fireEvent.click(
+      within(rows[0] as HTMLElement).getByRole("button", { name: "对比" }),
+    );
+    await fireEvent.click(
+      within(rows[1] as HTMLElement).getByRole("button", { name: "对比" }),
+    );
+
+    const olderSignal = diffMock.mock.calls[0][3]?.signal as AbortSignal;
+    expect(olderSignal).toBeInstanceOf(AbortSignal);
+    expect(olderSignal.aborted).toBe(true);
+
+    newerRequest.resolve(
+      "--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-old\n+newer diff",
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".diff-block")?.textContent).toContain(
+        "newer diff",
+      ),
+    );
+
+    // 模拟传输层忽略取消并晚到，旧 diff 也不能覆盖当前版本。
+    olderRequest.resolve(
+      "--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-old\n+stale diff",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector(".diff-block")?.textContent).toContain(
+      "newer diff",
+    );
+    expect(container.querySelector(".diff-block")?.textContent).not.toContain(
+      "stale diff",
+    );
+    expect(
+      container.querySelector(".history-detail-title code")?.textContent,
+    ).toBe(PREVIOUS.substring(0, 8));
+  });
+
+  it("aborts a version diff load when the detail pane is closed", async () => {
+    const pendingRequest = deferred<string>();
+    diffMock.mockReturnValueOnce(pendingRequest.promise);
+    const { container, getByRole } = renderHistory();
+    await waitFor(() =>
+      expect(container.querySelectorAll(".history-row")).toHaveLength(2),
+    );
+
+    const row = container.querySelector(".history-row") as HTMLElement;
+    await fireEvent.click(within(row).getByRole("button", { name: "对比" }));
+    const signal = diffMock.mock.calls[0][3]?.signal as AbortSignal;
+    await fireEvent.click(getByRole("button", { name: "关闭" }));
+
+    expect(signal.aborted).toBe(true);
+    pendingRequest.resolve("--- a/notes.txt\n+++ b/notes.txt\n");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector(".history-detail-label")).toBeNull();
+    expect(container.querySelector(".diff-block")).toBeNull();
+  });
+
   it("switches the detail pane between preview and diff", async () => {
     const { container } = renderHistory();
     await waitFor(() =>

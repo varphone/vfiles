@@ -564,6 +564,8 @@ const preview = ref({
 
 let previewRequestId = 0;
 let pendingPreviewAbort: AbortController | null = null;
+let diffRequestId = 0;
+let pendingDiffAbort: AbortController | null = null;
 
 const previewFilename = computed(
   () => props.filePath.split("/").pop() || "file",
@@ -875,6 +877,9 @@ function closePreview() {
 }
 
 function closeDiff() {
+  diffRequestId += 1;
+  pendingDiffAbort?.abort();
+  pendingDiffAbort = null;
   diff.value = {
     open: false,
     loading: false,
@@ -955,6 +960,7 @@ async function viewVersion(hash: string) {
 async function viewDiff(hash: string, parent?: string) {
   closePreview();
   closeDiff();
+  const requestId = diffRequestId;
 
   const kind = detectPreviewKind(props.filePath);
   if (kind !== "text" && kind !== "markdown" && kind !== "code") {
@@ -963,24 +969,30 @@ async function viewDiff(hash: string, parent?: string) {
     return;
   }
 
+  const controller = new AbortController();
+  pendingDiffAbort = controller;
   diff.value.open = true;
   diff.value.loading = true;
   diff.value.hash = hash;
   diff.value.parent = parent;
 
   try {
-    diff.value.text = await filesService.getFileDiff(
-      props.filePath,
-      hash,
-      parent,
-    );
-    if (!diff.value.text.trim()) {
+    const text = await filesService.getFileDiff(props.filePath, hash, parent, {
+      signal: controller.signal,
+    });
+    if (requestId !== diffRequestId || controller.signal.aborted) return;
+    diff.value.text = text;
+    if (!text.trim()) {
       diff.value.text = "(无差异输出)";
     }
   } catch (err) {
+    if (requestId !== diffRequestId || controller.signal.aborted) return;
     diff.value.error = err instanceof Error ? err.message : "获取 diff 失败";
   } finally {
-    diff.value.loading = false;
+    if (requestId === diffRequestId) {
+      diff.value.loading = false;
+      pendingDiffAbort = null;
+    }
   }
 }
 
