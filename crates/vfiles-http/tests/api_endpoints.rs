@@ -6907,10 +6907,14 @@ async fn ftp_info_reports_configuration_for_authenticated_users() {
     assert_eq!(payload["port"], Value::from(2121));
     assert_eq!(payload["passive_ports"]["start"], Value::from(50000));
     assert_eq!(payload["passive_ports"]["end"], Value::from(50100));
-    assert_eq!(payload["tls"]["enabled"], Value::from(false));
+    assert_eq!(payload["tls"]["enabled"], Value::from(true));
+    assert_eq!(payload["tls"]["required"], Value::from(true));
+    assert_eq!(payload["tls"]["self_signed"], Value::from(true));
     assert!(
-        payload["example_command"].is_string(),
-        "开启时应给出连接示例"
+        payload["example_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("--ssl-reqd --cacert ftp-cert.pem")),
+        "自签名证书示例必须要求 TLS 并指定本地信任证书"
     );
     // 不泄露口令
     assert!(

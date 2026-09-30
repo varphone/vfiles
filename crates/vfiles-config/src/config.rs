@@ -106,7 +106,8 @@ pub struct SearchConfig {
 
 /// FTP 批量导入配置。
 ///
-/// 默认关闭：FTP 是明文协议，需要运维显式开启（并推荐同时配置 FTPS）。
+/// 认证开启时默认启用；未配置 FTPS 证书则生成并持久化自签名证书。
+/// 启用时强制加密控制与数据通道。
 #[derive(Debug, Clone)]
 pub struct FtpConfig {
     pub enabled: bool,
@@ -122,6 +123,8 @@ pub struct FtpConfig {
     pub allowed_roles: Vec<String>,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
+    /// 是否由服务端首次启动时生成并持久化的自签名证书。
+    pub tls_self_signed: bool,
     pub tls_required: bool,
     /// 快照提交策略：`batch`（默认）/ `per-file` / `off`。
     pub snapshot_mode: String,
@@ -602,12 +605,24 @@ impl ConfigLoader {
         let thumbnail_avif =
             Self::env_parse_bool(&["VFILES_THUMBNAIL_AVIF", "THUMBNAIL_AVIF"])?.unwrap_or(false);
 
-        // FTP 默认开启（客户端批量导入最常用的通道）；认证关闭时无法安全提供 FTP，
-        // 因此下面的 ftp_enabled 计算会把「默认开启」在无认证场景下降级为关闭。
+        // FTP 默认启用，但必须通过 FTPS 加密控制与数据通道。未配置证书时，
+        // 服务端在存储根目录中生成并持久化自签名证书。
         let ftp_enabled_raw = Self::env_parse_bool(&["VFILES_FTP_ENABLED", "FTP_ENABLED"])?;
         let webdav_enabled_raw =
             Self::env_parse_bool(&["VFILES_WEBDAV_ENABLED", "WEBDAV_ENABLED"])?;
         let ftp_enabled = Self::resolve_ftp_enabled(ftp_enabled_raw, auth_enabled)?;
+        let configured_ftp_tls_cert = Self::env_string(&["VFILES_FTP_TLS_CERT"]);
+        let configured_ftp_tls_key = Self::env_string(&["VFILES_FTP_TLS_KEY"]);
+        let ftp_tls_self_signed =
+            configured_ftp_tls_cert.is_none() && configured_ftp_tls_key.is_none();
+        let (ftp_tls_cert, ftp_tls_key) = if ftp_tls_self_signed {
+            (
+                Some(storage_root.join("ftp-tls/ftp-cert.pem").to_string()),
+                Some(storage_root.join("ftp-tls/ftp-key.pem").to_string()),
+            )
+        } else {
+            (configured_ftp_tls_cert, configured_ftp_tls_key)
+        };
 
         let ftp = FtpConfig {
             enabled: ftp_enabled,
@@ -631,9 +646,10 @@ impl ConfigLoader {
                 .map(|value| value.trim().to_ascii_lowercase())
                 .filter(|value| !value.is_empty())
                 .collect(),
-            tls_cert: Self::env_string(&["VFILES_FTP_TLS_CERT"]),
-            tls_key: Self::env_string(&["VFILES_FTP_TLS_KEY"]),
-            tls_required: Self::env_parse_bool(&["VFILES_FTP_TLS_REQUIRED"])?.unwrap_or(false),
+            tls_cert: ftp_tls_cert,
+            tls_key: ftp_tls_key,
+            tls_self_signed: ftp_tls_self_signed,
+            tls_required: Self::env_parse_bool(&["VFILES_FTP_TLS_REQUIRED"])?.unwrap_or(true),
             snapshot_mode: Self::env_string(&["VFILES_FTP_SNAPSHOT_MODE"])
                 .unwrap_or_else(|| "batch".to_string())
                 .to_ascii_lowercase(),
@@ -728,7 +744,7 @@ impl ConfigLoader {
         mb.saturating_mul(1024 * 1024)
     }
 
-    /// 解析 FTP 开关：默认开启，但认证关闭时无法安全提供 FTP。
+    /// 解析 FTP 开关与认证的关系；FTPS 证书要求在配置加载和校验阶段执行。
     ///
     /// - 显式 `true` + 认证关闭 ⇒ 报错（用户明确要求，必须说明原因）；
     /// - 未显式设置 + 认证关闭 ⇒ 自动停用并告警（不阻塞 `serve` 启动）；
@@ -790,6 +806,12 @@ impl ConfigLoader {
             return Err(ConfigError::InvalidStorageRoot);
         }
 
+        if (config.ftp.tls_cert.is_some()) != (config.ftp.tls_key.is_some()) {
+            return Err(ConfigError::LoadError(
+                "FTPS 需要同时配置 VFILES_FTP_TLS_CERT 与 VFILES_FTP_TLS_KEY".to_string(),
+            ));
+        }
+
         if config.ftp.enabled {
             if config.ftp.port == 0 {
                 return Err(ConfigError::LoadError(
@@ -801,15 +823,27 @@ impl ConfigLoader {
                     "VFILES_FTP_PORT 不能与 VFILES_HTTP_PORT 相同".to_string(),
                 ));
             }
-            if (config.ftp.tls_cert.is_some()) != (config.ftp.tls_key.is_some()) {
+            if config.ftp.tls_cert.is_none() {
                 return Err(ConfigError::LoadError(
-                    "FTPS 需要同时配置 VFILES_FTP_TLS_CERT 与 VFILES_FTP_TLS_KEY".to_string(),
+                    "启用 FTP 需要配置 FTPS 证书与私钥或使用自动生成的自签名证书；明文 FTP 不受支持"
+                        .to_string(),
                 ));
             }
-            if config.ftp.tls_required && config.ftp.tls_cert.is_none() {
+            if !config.ftp.tls_required {
                 return Err(ConfigError::LoadError(
-                    "VFILES_FTP_TLS_REQUIRED=true 需要配置证书与私钥".to_string(),
+                    "启用 FTP 时必须设置 VFILES_FTP_TLS_REQUIRED=true；明文或可降级连接不受支持"
+                        .to_string(),
                 ));
+            }
+            if let Some(role) = config
+                .ftp
+                .allowed_roles
+                .iter()
+                .find(|role| !matches!(role.as_str(), "admin" | "manager" | "user"))
+            {
+                return Err(ConfigError::LoadError(format!(
+                    "VFILES_FTP_ALLOWED_ROLES 包含未知角色: {role}"
+                )));
             }
             if !matches!(
                 config.ftp.snapshot_mode.as_str(),
@@ -1012,20 +1046,31 @@ mod tests {
     }
 
     #[test]
-    fn test_ftp_defaults_are_enabled_and_sane() {
+    fn test_ftp_defaults_enable_ftps_with_persistent_self_signed_certificate() {
         let config = ConfigLoader::load().unwrap();
 
-        assert!(
-            config.ftp.enabled,
-            "FTP 默认开启（认证开启时），以便直接批量导入"
-        );
+        assert!(config.ftp.enabled, "FTP 默认开启（认证开启时）");
         assert_eq!(config.ftp.port, 2121);
         assert_eq!(config.ftp.passive_ports, (50_000, 50_100));
         assert_eq!(config.ftp.allowed_roles, vec!["admin", "manager"]);
         assert_eq!(config.ftp.snapshot_mode, "batch");
         assert_eq!(config.ftp.snapshot_flush_files, 200);
-        assert!(!config.ftp.tls_required);
-        assert!(config.ftp.tls_cert.is_none());
+        assert!(config.ftp.tls_required);
+        assert!(config.ftp.tls_self_signed);
+        assert!(
+            config
+                .ftp
+                .tls_cert
+                .as_deref()
+                .is_some_and(|path| path.ends_with("ftp-tls/ftp-cert.pem"))
+        );
+        assert!(
+            config
+                .ftp
+                .tls_key
+                .as_deref()
+                .is_some_and(|path| path.ends_with("ftp-tls/ftp-key.pem"))
+        );
     }
 
     #[test]
@@ -1091,17 +1136,31 @@ mod tests {
         // 只配置证书不配置私钥
         let mut half_tls = ftp.clone();
         half_tls.tls_cert = Some("/etc/vfiles/cert.pem".to_string());
+        half_tls.tls_key = None;
         assert!(ConfigLoader::validate(&config_with_ftp(half_tls, 3000, true)).is_err());
         // 要求 FTPS 但没有证书
         let mut required = ftp.clone();
+        required.tls_cert = None;
+        required.tls_key = None;
         required.tls_required = true;
         assert!(ConfigLoader::validate(&config_with_ftp(required, 3000, true)).is_err());
         // 非法快照策略
         let mut bad_mode = ftp.clone();
         bad_mode.snapshot_mode = "sometimes".to_string();
         assert!(ConfigLoader::validate(&config_with_ftp(bad_mode, 3000, true)).is_err());
-        // 合法配置
-        assert!(ConfigLoader::validate(&config_with_ftp(ftp, 3000, true)).is_ok());
+        let mut bad_role = ftp.clone();
+        bad_role.allowed_roles = vec!["admn".to_string()];
+        assert!(ConfigLoader::validate(&config_with_ftp(bad_role, 3000, true)).is_err());
+        // 启用 FTP 时必须同时配置 FTPS 证书/私钥并拒绝明文降级
+        let mut secure = ftp.clone();
+        secure.tls_cert = Some("/etc/vfiles/cert.pem".to_string());
+        secure.tls_key = Some("/etc/vfiles/key.pem".to_string());
+        secure.tls_self_signed = false;
+        secure.tls_required = true;
+        assert!(ConfigLoader::validate(&config_with_ftp(secure.clone(), 3000, true)).is_ok());
+
+        secure.tls_required = false;
+        assert!(ConfigLoader::validate(&config_with_ftp(secure, 3000, true)).is_err());
     }
 
     #[test]

@@ -6,8 +6,18 @@
 use std::sync::Arc;
 
 use camino::Utf8PathBuf;
-use suppaftp::FtpStream;
+use suppaftp::{
+    FtpStream, RustlsConnector, RustlsFtpStream,
+    rustls::{
+        ClientConfig, RootCertStore,
+        pki_types::{CertificateDer, pem::PemObject},
+    },
+};
 use tokio::sync::watch;
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    net::TcpStream,
+};
 use vfiles_app::{
     AuthService, DefaultWorkspaceService, IngestStats, LoginAttemptLimiter, NamespaceService,
     RateLimitPolicy, SnapshotMode,
@@ -37,6 +47,14 @@ struct Harness {
 
 impl Harness {
     async fn start(snapshot_mode: SnapshotMode, flush_threshold: usize) -> Self {
+        Self::start_with_max_connections(snapshot_mode, flush_threshold, 8).await
+    }
+
+    async fn start_with_max_connections(
+        snapshot_mode: SnapshotMode,
+        flush_threshold: usize,
+        max_connections: u32,
+    ) -> Self {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let storage_root =
             Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).expect("utf8 tempdir");
@@ -116,15 +134,22 @@ impl Harness {
             flush_threshold,
         };
 
+        let cert_path = temp_dir.path().join("ftp-tls/ftp-cert.pem");
+        let key_path = temp_dir.path().join("ftp-tls/ftp-key.pem");
+        let tls_subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
+
         let settings = FtpSettings {
             bind: "127.0.0.1:0".parse().expect("bind addr"),
             passive_ports: (0, 0),
+            max_connections,
             passive_host: None,
             greeting: "VFiles FTP test",
             idle_timeout_secs: 60,
-            tls_cert: None,
-            tls_key: None,
-            tls_required: false,
+            tls_cert: Some(cert_path.to_string_lossy().into_owned()),
+            tls_key: Some(key_path.to_string_lossy().into_owned()),
+            tls_self_signed: true,
+            tls_subject_alt_names,
+            tls_required: true,
         };
 
         let app = FtpApplication {
@@ -149,9 +174,30 @@ impl Harness {
         }
     }
 
-    /// 建立并登录一个同步 FTP 连接（在 blocking 线程中使用）。
-    fn client(&self) -> FtpStream {
-        let mut stream = FtpStream::connect(self.handle.local_addr()).expect("client connect");
+    /// 建立一个已升级到 FTPS 的同步连接（在 blocking 线程中使用）。
+    fn secure_client(&self) -> RustlsFtpStream {
+        let certificate_path = self._temp_dir.path().join("ftp-tls/ftp-cert.pem");
+        let certificate_pem = std::fs::read(certificate_path).expect("test certificate");
+        let certificate = CertificateDer::pem_slice_iter(&certificate_pem)
+            .next()
+            .expect("PEM certificate should be present")
+            .expect("PEM certificate should parse");
+        let mut roots = RootCertStore::empty();
+        roots
+            .add(certificate)
+            .expect("test certificate should be trusted");
+        let tls_config = ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        RustlsFtpStream::connect(self.handle.local_addr())
+            .expect("client connect")
+            .into_secure(RustlsConnector::from(Arc::new(tls_config)), "localhost")
+            .expect("control channel should use FTPS")
+    }
+
+    /// 建立并登录一个同步 FTPS 连接。
+    fn client(&self) -> RustlsFtpStream {
+        let mut stream = self.secure_client();
         stream
             .login(USERNAME, PASSWORD)
             .expect("login should succeed");
@@ -186,6 +232,62 @@ impl Harness {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rejects_new_control_connections_at_the_configured_limit() {
+    let harness = Harness::start_with_max_connections(SnapshotMode::Off, 1, 1).await;
+    let address = harness.handle.local_addr();
+
+    let first = TcpStream::connect(address).await.expect("first connection");
+    let mut first_reader = BufReader::new(first);
+    let mut first_greeting = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        first_reader.read_line(&mut first_greeting),
+    )
+    .await
+    .expect("first greeting timeout")
+    .expect("first greeting read");
+    assert!(first_greeting.starts_with("220 "));
+
+    let second = TcpStream::connect(address)
+        .await
+        .expect("second TCP connect");
+    let mut second_reader = BufReader::new(second);
+    let mut second_greeting = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        second_reader.read_line(&mut second_greeting),
+    )
+    .await
+    .expect("rejected connection close timeout")
+    .expect("rejected connection read");
+    assert!(
+        second_greeting.is_empty(),
+        "会话数达到上限后服务端应立即关闭新连接"
+    );
+
+    drop(first_reader);
+    let mut admitted = false;
+    for _ in 0..20 {
+        let candidate = TcpStream::connect(address).await.expect("retry connect");
+        let mut reader = BufReader::new(candidate);
+        let mut greeting = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            reader.read_line(&mut greeting),
+        )
+        .await
+        .expect("retry greeting timeout")
+        .expect("retry greeting read");
+        if greeting.starts_with("220 ") {
+            admitted = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(admitted, "释放会话后应接纳新连接");
+}
+
 fn payload(size: usize, seed: u8) -> Vec<u8> {
     (0..size)
         .map(|index| seed.wrapping_add(index as u8))
@@ -193,7 +295,7 @@ fn payload(size: usize, seed: u8) -> Vec<u8> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn uploads_downloads_and_manages_files_over_real_ftp() {
+async fn uploads_downloads_and_manages_files_over_ftps() {
     let harness = Harness::start(SnapshotMode::PerFile, 1).await;
     let mut client = harness.client();
 
@@ -288,7 +390,13 @@ async fn batch_mode_commits_far_fewer_snapshots_than_files() {
 async fn rejects_wrong_password_and_path_traversal() {
     let harness = Harness::start(SnapshotMode::PerFile, 1).await;
 
-    let mut anonymous = FtpStream::connect(harness.handle.local_addr()).expect("connect");
+    let mut plaintext = FtpStream::connect(harness.handle.local_addr()).expect("plain connect");
+    assert!(
+        plaintext.login(USERNAME, PASSWORD).is_err(),
+        "服务端必须拒绝明文登录"
+    );
+
+    let mut anonymous = harness.secure_client();
     let failed = anonymous.login(USERNAME, "wrong-password");
     assert!(failed.is_err(), "错误口令必须被拒绝");
 

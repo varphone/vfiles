@@ -28,9 +28,14 @@ const enabledInfo = {
   remote_reachable: true,
   port: 2121,
   passive_ports: { start: 50000, end: 50100 },
-  tls: { enabled: true, required: true },
+  tls: {
+    enabled: true,
+    required: true,
+    self_signed: true,
+    certificate_file_sha256: "abcdef0123456789",
+  },
   example_command:
-    "curl --ftp-ssl -T 本地文件 ftp://files.example.com:2121/目录/",
+    "curl --ssl-reqd --cacert ftp-cert.pem -T 本地文件 ftp://files.example.com:2121/目录/",
   path_mapping: "登录后 / 即该用户的命名空间根目录",
 };
 
@@ -65,7 +70,7 @@ describe("FtpImportHint.vue", () => {
   });
 
   it("loads the connection info only after expanding", async () => {
-    const { getByRole, findByText } = render(FtpImportHint as any, {
+    const { getByRole, findByText, container } = render(FtpImportHint as any, {
       global: { plugins: [createPinia()] },
     });
 
@@ -76,6 +81,7 @@ describe("FtpImportHint.vue", () => {
     expect(await findByText("files.example.com")).toBeInTheDocument();
     expect(await findByText("2121")).toBeInTheDocument();
     expect(await findByText("必须使用 FTPS")).toBeInTheDocument();
+    expect(container.textContent).toContain("abcdef0123456789");
   });
 
   it("shows the passive range, path mapping and copies the command", async () => {
@@ -89,7 +95,7 @@ describe("FtpImportHint.vue", () => {
 
     expect(await findByText("50000-50100")).toBeInTheDocument();
     expect(container.textContent).toContain("docs/2026");
-    expect(container.textContent).toContain("curl --ftp-ssl");
+    expect(container.textContent).toContain("curl --ssl-reqd --cacert ftp-cert.pem");
 
     const copyButtons = container.querySelectorAll(".ftp-import-copy");
     await fireEvent.click(copyButtons[0]);
@@ -100,7 +106,7 @@ describe("FtpImportHint.vue", () => {
   });
 
   it("explains where the address came from", async () => {
-    const { getByRole, findByText } = render(FtpImportHint as any, {
+    const { getByRole, findByText, container } = render(FtpImportHint as any, {
       global: { plugins: [createPinia()] },
     });
 
@@ -108,7 +114,8 @@ describe("FtpImportHint.vue", () => {
     await waitFor(() => expect(ftpInfoMock).toHaveBeenCalled());
 
     expect(await findByText("管理员指定")).toBeInTheDocument();
-    expect(document.querySelectorAll(".ftp-import-warning")).toHaveLength(0);
+    expect(container.textContent).not.toContain("仅本机可访问");
+    expect(container.textContent).toContain("服务端使用自动生成的自签名证书");
   });
 
   it("warns when the address is only reachable from this machine", async () => {
@@ -126,7 +133,7 @@ describe("FtpImportHint.vue", () => {
     await waitFor(() => expect(ftpInfoMock).toHaveBeenCalled());
 
     expect(await findByText(/仅本机可访问/)).toBeInTheDocument();
-    expect(container.querySelectorAll(".ftp-import-warning")).toHaveLength(1);
+    expect(container.querySelectorAll(".ftp-import-warning")).toHaveLength(2);
     expect(await findByText("当前访问地址")).toBeInTheDocument();
   });
 

@@ -90,6 +90,22 @@
           </span>
         </p>
 
+        <p
+          v-if="info.tls.self_signed"
+          class="ftp-import-warning"
+          role="note"
+        >
+          <IconAlertTriangle :size="16" class="ftp-import-warning-icon" />
+          <span>
+            服务端使用自动生成的自签名证书。首次连接前，请让管理员通过可信渠道提供
+            <code>ftp-cert.pem</code>，核对下方 SHA-256 并将证书加入客户端信任；示例命令要求
+            当前目录中有该证书文件。
+            <br />
+            证书文件 SHA-256：
+            <code>{{ info.tls.certificate_file_sha256 || "服务启动后可用" }}</code>
+          </span>
+        </p>
+
         <p class="ftp-import-note">
           登录后 <code>/</code> 就是你的文件根目录，上传到
           <code>{{ targetPath || "/" }}</code>
@@ -156,7 +172,12 @@ export type FtpConnectionInfo = {
   remote_reachable?: boolean;
   port: number;
   passive_ports?: PassivePorts;
-  tls: { enabled: boolean; required: boolean };
+  tls: {
+    enabled: boolean;
+    required: boolean;
+    self_signed: boolean;
+    certificate_file_sha256?: string | null;
+  };
   example_command?: string | null;
   path_mapping?: string;
 };

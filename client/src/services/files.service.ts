@@ -376,7 +376,12 @@ export const filesService = {
     remote_reachable?: boolean;
     port: number;
     passive_ports?: { start: number; end: number };
-    tls: { enabled: boolean; required: boolean };
+    tls: {
+      enabled: boolean;
+      required: boolean;
+      self_signed: boolean;
+      certificate_file_sha256?: string | null;
+    };
     example_command?: string | null;
     path_mapping?: string;
   }> {
@@ -387,7 +392,12 @@ export const filesService = {
       remote_reachable?: boolean;
       port: number;
       passive_ports?: { start: number; end: number };
-      tls: { enabled: boolean; required: boolean };
+      tls: {
+        enabled: boolean;
+        required: boolean;
+        self_signed: boolean;
+        certificate_file_sha256?: string | null;
+      };
       example_command?: string | null;
       path_mapping?: string;
     }>("/files/ftp-info");

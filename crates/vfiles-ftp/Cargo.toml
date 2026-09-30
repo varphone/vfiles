@@ -13,6 +13,9 @@ vfiles-domain = { path = "../vfiles-domain" }
 
 async-trait.workspace = true
 libunftp = { version = "0.23", default-features = false, features = ["ring"] }
+rcgen = "0.14.10"
+sha2.workspace = true
+hex.workspace = true
 # libunftp 0.23 把 StorageBackend/Authenticator 放在 unftp-core 中且不再公开 re-export，
 # 自定义后端必须直接依赖同一份 core（版本与 libunftp 的依赖保持一致）。
 unftp-core = "0.1"
@@ -24,6 +27,6 @@ vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }
 
 camino.workspace = true
 sqlx.workspace = true
-suppaftp = "10.0.2"
+suppaftp = { version = "10.0.2", features = ["rustls-ring"] }
 tempfile.workspace = true
 tokio.workspace = true

@@ -1541,7 +1541,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
 
     let ftp_handle = match ftp_runtime {
         Some((settings, application)) => {
-            // FTP 默认开启：启动失败（例如端口被占用）不能让整个站点起不来，
+            // FTPS 启动失败（例如端口被占用）不能让整个站点起不来，
             // 这里降级为错误日志并继续提供 HTTP 服务。
             let bind = settings.bind;
             match vfiles_ftp::spawn_ftp_server(settings, application, service_shutdown_rx.clone())
@@ -2961,21 +2961,15 @@ fn build_ftp_runtime(
         allowed => {
             let parsed: Vec<Role> = allowed
                 .iter()
-                .filter_map(|value| match value.as_str() {
+                .map(|value| match value.as_str() {
                     "admin" => Some(Role::Admin),
                     "manager" => Some(Role::Manager),
                     "user" => Some(Role::User),
-                    other => {
-                        tracing::warn!(role = other, "忽略未知的 FTP 允许角色");
-                        None
-                    }
+                    _ => None,
                 })
-                .collect();
-            if parsed.is_empty() {
-                RoleFilter::all()
-            } else {
-                RoleFilter::new(parsed)
-            }
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| anyhow!("VFILES_FTP_ALLOWED_ROLES 包含未知角色"))?;
+            RoleFilter::new(parsed)
         }
     };
 
@@ -2988,19 +2982,16 @@ fn build_ftp_runtime(
     let settings = FtpSettings {
         bind,
         passive_ports: config.ftp.passive_ports,
+        max_connections: config.ftp.max_connections,
         passive_host: config.ftp.passive_host.clone(),
         greeting: "VFiles FTP 批量导入",
         idle_timeout_secs: config.ftp.idle_timeout_seconds,
         tls_cert: config.ftp.tls_cert.clone(),
         tls_key: config.ftp.tls_key.clone(),
+        tls_self_signed: config.ftp.tls_self_signed,
+        tls_subject_alt_names: ftp_tls_subject_alt_names(config),
         tls_required: config.ftp.tls_required,
     };
-
-    if config.ftp.tls_cert.is_none() {
-        tracing::warn!(
-            "FTP 未启用 TLS，凭据与数据为明文；建议仅在可信内网使用或配置 VFILES_FTP_TLS_CERT/KEY"
-        );
-    }
 
     let namespaces = vfiles_app::NamespaceService::new(Arc::clone(&deps.namespace_repo));
     let authenticator = Arc::new(VfilesAuthenticator::new(
@@ -3039,6 +3030,49 @@ fn build_ftp_runtime(
             user_detail_provider,
         },
     )))
+}
+
+/// 为自动生成的 FTPS 证书收集部署声明的主机名和本机默认出站地址。
+fn ftp_tls_subject_alt_names(config: &vfiles_config::AppConfig) -> Vec<String> {
+    fn add_name(names: &mut Vec<String>, candidate: &str) {
+        let name = candidate
+            .trim()
+            .trim_matches(['[', ']'])
+            .to_ascii_lowercase();
+        if name.is_empty() || name == "0.0.0.0" || name == "::" {
+            return;
+        }
+        if !names
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(&name))
+        {
+            names.push(name);
+        }
+    }
+
+    let mut names = vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ];
+    if let Some(host) = config.ftp.passive_host.as_deref() {
+        add_name(&mut names, host);
+    }
+    if let Some(host) = config.http.public_base_url.host_str() {
+        add_name(&mut names, host);
+    }
+    add_name(&mut names, &config.ftp.host);
+
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0")
+        && socket.connect("203.0.113.1:9").is_ok()
+        && let Ok(address) = socket.local_addr()
+        && !address.ip().is_loopback()
+        && !address.ip().is_unspecified()
+    {
+        add_name(&mut names, &address.ip().to_string());
+    }
+
+    names
 }
 
 /// 等待停机信号（r206 排障增强 ✗ 用户报告"连接即退出"却无法分辨信号源）：

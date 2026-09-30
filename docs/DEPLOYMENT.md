@@ -43,8 +43,8 @@ VFILES_AUTH_COOKIE_SECRET=replace-with-a-random-secret-at-least-32-chars
 # 功能开关（默认关闭；开启后前端会同步解锁对应入口）
 VFILES_FEATURES_SEARCH_CONTENT=false
 
-# FTP(S) 批量导入（默认开启；仅在需要彻底关闭时设为 false）
-VFILES_FTP_ENABLED=true
+# FTPS 批量导入（认证开启时默认启用；没有证书时自动生成自签名证书）
+# VFILES_FTP_ENABLED=true
 VFILES_FTP_HOST=0.0.0.0
 VFILES_FTP_PORT=2121
 VFILES_FTP_PASSIVE_PORTS=50000-50100
@@ -74,10 +74,11 @@ RUST_LOG=info
 - 仍兼容读取旧别名 `PUBLIC_BASE_URL`、`CORS_ORIGIN`、`HTTP_COOKIE_SECURE`、`AUTH_SECRET`、`ENABLE_AUTH`、`AUTH_ALLOW_REGISTER`，但新部署不建议继续使用旧名字。
 - `VFILES_FEATURES_SEARCH_CONTENT` 控制**全文（内容）搜索**：默认关闭，因为它需要逐个读取并扫描文件内容，代价明显高于文件名搜索。开启后 `/api/session/bootstrap` 会把 `features.search_content` 置为 `true`，前端「高级搜索 → 全文搜索」才会解锁；服务端仍会对未开启时携带 `search_content=true` 的请求返回 403。
 - 上传限额、分块大小、会话 TTL 等参数当前仍使用程序内建默认值，尚未开放成环境变量。
-- `VFILES_FTP_*` 一组变量控制批量导入：`VFILES_FTP_ENABLED` **默认 `true`**（认证开启时），
-  因此默认部署就会在 `2121` 端口提供批量导入；若 `VFILES_AUTH_ENABLED=false`，则不显式设置时
-  FTP 会自动停用并打告警（显式写 `true` 会直接报配置错误），避免出现「无需认证即可写入」的通道。
-  不需要该功能时请显式设置 `VFILES_FTP_ENABLED=false`。其余参数见下文「FTP 批量导入」。
+- `VFILES_FTP_*` 一组变量控制批量导入：认证开启时 FTP 默认启用。未配置证书/私钥时，服务端会
+  在 `${VFILES_STORAGE_ROOT:-data}/ftp-tls/` 下生成并复用自签名证书与私钥；也可配置受信任的
+  证书/私钥。FTPS 强制加密控制通道和数据通道，`VFILES_FTP_TLS_REQUIRED` 默认 `true`，启用 FTP
+  时不能关闭。认证关闭时 FTP 自动停用；显式写 `VFILES_FTP_ENABLED=true` 会报配置错误。
+  不需要该功能时可设置 `VFILES_FTP_ENABLED=false`。其余参数见下文「FTP 批量导入」。
 
 ## 构建与启动
 
@@ -246,7 +247,9 @@ RUST_LOG=vfiles_http=warn ./vfiles serve  # 只看 HTTP 层告警
 
 面向「一次导入几百到几万个文件」的场景：与其在浏览器里逐个上传，不如让运维/用户用
 FileZilla、WinSCP、`lftp`、`curl` 等客户端直接连到 VFiles 的 FTP 端口，递归上传整个目录。
-该功能**默认开启**（`VFILES_FTP_ENABLED=true`）；如不需要，请显式设为 `false`。
+认证开启时该功能默认启用。未配置证书时，服务会在 `VFILES_STORAGE_ROOT/ftp-tls/` 下生成并持久化
+自签名证书和私钥；配置正式证书和私钥可替代自签名证书。启用 FTP 必须使用 FTPS，明文 FTP 和
+TLS 降级均不受支持。
 
 ```
 VFILES_FTP_ENABLED=true
@@ -255,25 +258,33 @@ VFILES_FTP_PORT=2121              # 非特权端口，无需 root；不能与 VF
 VFILES_FTP_PASSIVE_PORTS=50000-50100
 VFILES_FTP_PASSIVE_HOST=files.example.com   # NAT/端口映射时对外通告的地址
 VFILES_FTP_ALLOWED_ROLES=admin,manager      # 空值表示不限制角色
-VFILES_FTP_MAX_CONNECTIONS=8                # 并发会话上限（SQLite 单写者）
+VFILES_FTP_MAX_CONNECTIONS=8                # 并发连接上限，包含尚未认证的连接
 VFILES_FTP_IDLE_TIMEOUT_SECONDS=300
 VFILES_FTP_SNAPSHOT_MODE=batch              # batch（默认）/ per-file / off
 VFILES_FTP_SNAPSHOT_FLUSH_FILES=200         # batch 模式下每累积多少个文件提交一次快照
+VFILES_FTP_TLS_CERT=/etc/vfiles/ftp-cert.pem
+VFILES_FTP_TLS_KEY=/etc/vfiles/ftp-key.pem
+VFILES_FTP_TLS_REQUIRED=true
 ```
+
+不配置 `VFILES_FTP_TLS_CERT`/`VFILES_FTP_TLS_KEY` 时，服务会自动创建
+`${VFILES_STORAGE_ROOT:-data}/ftp-tls/ftp-cert.pem` 和 `ftp-key.pem`。私钥权限为 `0600`，
+目录权限为 `0700`；自签名证书只在首次启动时生成，后续启动沿用同一证书。启动日志和
+`/api/files/ftp-info` 会提供证书文件 SHA-256。客户端应通过可信渠道获取证书并核对指纹后安装信任；
+客户端尚未信任自签名证书时，TLS 可以加密链路，但不能可靠确认服务器身份。
 
 要点：
 
 - **只能看到自己的文件**：登录后 `/` 就是该用户的命名空间根目录，`..` 在根之上会被夹取，
   因此不存在跨用户或跨宿主机目录的访问路径。
-- **加密**：默认明文（启动日志会告警）。如需加密，配置 PEM 证书与私钥即启用显式 FTPS，
-  并可用 `VFILES_FTP_TLS_REQUIRED=true` 拒绝明文连接：
-  ```
-  VFILES_FTP_TLS_CERT=/etc/vfiles/ftp-cert.pem
-  VFILES_FTP_TLS_KEY=/etc/vfiles/ftp-key.pem
-  VFILES_FTP_TLS_REQUIRED=true
-  ```
+- **加密**：服务端始终要求客户端先升级控制通道至 TLS，且所有数据连接都使用 TLS；明文登录、
+  未加密数据传输及 TLS 降级都会被拒绝。`/api/files/ftp-info` 返回的 `curl` 示例使用
+  `--ssl-reqd` 强制 FTPS；自签名模式还会指定 `--cacert ftp-cert.pem`。
 - **防火墙**：除控制端口外，还需放行整个被动端口段（上例 `50000-50100`）。
   客户端务必使用被动模式；服务端只接受被动模式。
+- **连接上限**：`VFILES_FTP_MAX_CONNECTIONS` 会限制控制连接总数，尚未认证的连接也计入上限；
+  达到上限时新连接会立即关闭，防止连接洪泛占用会话资源。空闲会话由
+  `VFILES_FTP_IDLE_TIMEOUT_SECONDS` 超时回收。
 - **快照策略**：
   - `batch`（默认）：一个会话内每 `VFILES_FTP_SNAPSHOT_FLUSH_FILES` 个文件提交一次快照，
     会话结束时再提交剩余部分。历史里会出现「FTP 导入（N 个文件）」条目。

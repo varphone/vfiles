@@ -57,6 +57,9 @@ pub struct PassivePorts {
 pub struct FtpTlsInfo {
     pub enabled: bool,
     pub required: bool,
+    pub self_signed: bool,
+    /// 证书 PEM 文件 SHA-256，用于通过可信渠道核对服务端证书。
+    pub certificate_file_sha256: Option<String>,
 }
 
 /// `GET /api/files/ftp-info`
@@ -113,8 +116,10 @@ pub(crate) fn build_ftp_info(
     let host = selection.value.clone();
 
     let example_command = if ftp.enabled {
-        let tls_flag = if ftp.tls_cert.is_some() {
-            " --ftp-ssl"
+        let tls_flag = if ftp.tls_required && ftp.tls_self_signed {
+            " --ssl-reqd --cacert ftp-cert.pem"
+        } else if ftp.tls_required {
+            " --ssl-reqd"
         } else {
             ""
         };
@@ -132,6 +137,12 @@ pub(crate) fn build_ftp_info(
         None
     };
 
+    let certificate_file_sha256 = if ftp.enabled {
+        ftp.tls_cert.as_deref().and_then(certificate_file_sha256)
+    } else {
+        None
+    };
+
     FtpInfoResponse {
         enabled: ftp.enabled,
         host,
@@ -143,12 +154,21 @@ pub(crate) fn build_ftp_info(
             end: ftp.passive_ports.1,
         },
         tls: FtpTlsInfo {
-            enabled: ftp.tls_cert.is_some(),
-            required: ftp.tls_required,
+            enabled: ftp.enabled && ftp.tls_cert.is_some(),
+            required: ftp.enabled && ftp.tls_required,
+            self_signed: ftp.enabled && ftp.tls_self_signed,
+            certificate_file_sha256,
         },
         example_command,
         path_mapping: "登录后 / 即该用户的命名空间根目录".to_string(),
     }
+}
+
+fn certificate_file_sha256(path: &str) -> Option<String> {
+    use sha2::{Digest, Sha256};
+
+    let certificate = std::fs::read(path).ok()?;
+    Some(hex::encode(Sha256::digest(certificate)))
 }
 
 /// 地址候选。
@@ -287,12 +307,22 @@ mod tests {
         vfiles_config::ConfigLoader::load().expect("config should load")
     }
 
+    fn enabled_ftps_config() -> vfiles_config::AppConfig {
+        let mut config = config();
+        config.ftp.enabled = true;
+        config.ftp.tls_cert = Some("/etc/vfiles/cert.pem".to_string());
+        config.ftp.tls_key = Some("/etc/vfiles/key.pem".to_string());
+        config.ftp.tls_self_signed = false;
+        config.ftp.tls_required = true;
+        config
+    }
+
     fn ip(value: &str) -> IpAddr {
         value.parse().expect("ip should parse")
     }
 
     #[test]
-    fn reports_enabled_default_configuration() {
+    fn reports_enabled_ftps_default_with_self_signed_certificate() {
         let config = config();
         let info = build_ftp_info(&config, None, None);
 
@@ -300,14 +330,13 @@ mod tests {
         assert_eq!(info.port, 2121);
         assert_eq!(info.passive_ports.start, 50_000);
         assert_eq!(info.passive_ports.end, 50_100);
-        assert!(!info.tls.enabled);
-        assert!(info.example_command.is_some(), "开启时给出示例命令");
+        assert!(info.tls.enabled);
+        assert!(info.tls.required);
+        assert!(info.tls.self_signed);
         assert!(
-            !info
-                .example_command
-                .unwrap_or_default()
-                .contains("--ftp-ssl"),
-            "未启用 TLS 时示例命令不应带 --ftp-ssl"
+            info.example_command
+                .as_deref()
+                .is_some_and(|command| { command.contains("--ssl-reqd --cacert ftp-cert.pem") })
         );
     }
 
@@ -322,12 +351,29 @@ mod tests {
     }
 
     #[test]
+    fn reports_self_signed_certificate_file_fingerprint() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let certificate_path = directory.path().join("ftp-cert.pem");
+        let certificate = b"test certificate PEM";
+        std::fs::write(&certificate_path, certificate).expect("certificate should be written");
+
+        let mut config = enabled_ftps_config();
+        config.ftp.tls_cert = Some(certificate_path.to_string_lossy().into_owned());
+        config.ftp.tls_key = Some("unused-test-key.pem".to_string());
+        config.ftp.tls_self_signed = true;
+        let info = build_ftp_info(&config, None, None);
+
+        use sha2::{Digest, Sha256};
+        assert_eq!(
+            info.tls.certificate_file_sha256,
+            Some(hex::encode(Sha256::digest(certificate)))
+        );
+    }
+
+    #[test]
     fn uses_passive_host_and_tls_flags_when_configured() {
-        let mut config = config();
+        let mut config = enabled_ftps_config();
         config.ftp.passive_host = Some("files.example.com".to_string());
-        config.ftp.tls_cert = Some("/etc/vfiles/cert.pem".to_string());
-        config.ftp.tls_key = Some("/etc/vfiles/key.pem".to_string());
-        config.ftp.tls_required = true;
         let info = build_ftp_info(&config, Some("192.168.1.5:3000"), None);
 
         assert_eq!(info.host, "files.example.com");
@@ -338,14 +384,14 @@ mod tests {
         assert!(
             info.example_command
                 .unwrap_or_default()
-                .contains("--ftp-ssl"),
-            "启用 TLS 时示例命令应带 --ftp-ssl"
+                .contains("--ssl-reqd"),
+            "启用 FTPS 时示例命令应强制要求 TLS"
         );
     }
 
     #[test]
     fn prefers_the_address_the_client_actually_used() {
-        let config = config();
+        let config = enabled_ftps_config();
         // 默认 public_base_url 是 localhost；客户端用局域网地址访问时应展示该地址
         let info = build_ftp_info(&config, Some("192.168.1.5:3000"), Some(ip("10.0.0.7")));
 
@@ -362,7 +408,7 @@ mod tests {
 
     #[test]
     fn ignores_wildcard_and_never_shows_zero_address() {
-        let mut config = config();
+        let mut config = enabled_ftps_config();
         config.ftp.host = "0.0.0.0".to_string();
         let info = build_ftp_info(&config, Some("0.0.0.0:3000"), Some(ip("192.168.1.20")));
 
@@ -409,7 +455,7 @@ mod tests {
 
     #[test]
     fn formats_ipv6_hosts_with_brackets_in_the_example() {
-        let mut config = config();
+        let mut config = enabled_ftps_config();
         config.ftp.host = "fd00::5".to_string();
         config.http.public_base_url = url::Url::parse("http://[fd00::5]:3000").expect("url");
         let info = build_ftp_info(&config, Some("[fd00::5]:3000"), None);

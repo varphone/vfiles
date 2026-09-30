@@ -3,7 +3,10 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use libunftp::{Server, ServerBuilder};
-use tokio::{net::TcpListener, sync::watch};
+use tokio::{
+    net::TcpListener,
+    sync::{Semaphore, watch},
+};
 use tracing::{debug, info, warn};
 use unftp_core::auth::{Authenticator, UserDetailProvider};
 
@@ -16,14 +19,20 @@ pub struct FtpSettings {
     pub bind: SocketAddr,
     /// 被动模式端口段（含两端）。
     pub passive_ports: (u16, u16),
+    /// 控制连接并发上限（包含尚未认证的连接）。
+    pub max_connections: u32,
     /// 对外通告的被动模式地址（NAT/端口映射场景）；支持 IP 或域名。
     pub passive_host: Option<String>,
     pub greeting: &'static str,
     pub idle_timeout_secs: u64,
-    /// PEM 证书与私钥；两者都有时启用 FTPS。
+    /// FTPS 所需的 PEM 证书与私钥。
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
-    /// 是否拒绝明文连接（仅在启用 FTPS 时有意义）。
+    /// 证书和私钥由服务端生成并持久化，而不是管理员配置的证书。
+    pub tls_self_signed: bool,
+    /// 自动生成证书需要覆盖的主机名和 IP 地址。
+    pub tls_subject_alt_names: Vec<String>,
+    /// 是否强制控制通道和数据通道使用 FTPS；安全模式要求为 `true`。
     pub tls_required: bool,
 }
 
@@ -95,19 +104,19 @@ fn build_server(
 
     match (&settings.tls_cert, &settings.tls_key) {
         (Some(cert), Some(key)) => {
-            builder = builder.ftps(cert.clone(), key.clone());
-            if settings.tls_required {
-                builder = builder.ftps_required(true, true);
+            if !settings.tls_required {
+                return Err(
+                    std::io::Error::other("FTP 必须要求 FTPS，禁止明文或可降级连接").into(),
+                );
             }
+            builder = builder.ftps(cert.clone(), key.clone());
+            // 控制通道及数据通道都必须加密，防止口令、命令与文件内容泄露。
+            builder = builder.ftps_required(true, true);
         }
         (None, None) => {
-            if settings.tls_required {
-                return Err(std::io::Error::other(
-                    "VFILES_FTP_TLS_REQUIRED=true 但未配置证书与私钥",
-                )
-                .into());
-            }
-            warn!("FTP 未启用 TLS：凭据与数据均为明文，建议仅在可信内网使用");
+            return Err(
+                std::io::Error::other("FTP 必须配置 FTPS 证书与私钥，明文 FTP 不受支持").into(),
+            );
         }
         _ => {
             return Err(std::io::Error::other("FTPS 需要同时配置证书与私钥").into());
@@ -125,8 +134,29 @@ pub async fn spawn_ftp_server(
     app: FtpApplication,
     mut shutdown: watch::Receiver<bool>,
 ) -> std::io::Result<FtpServerHandle> {
+    if settings.tls_self_signed {
+        let (Some(certificate), Some(private_key)) = (&settings.tls_cert, &settings.tls_key) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "自动生成 FTPS 证书需要证书和私钥路径",
+            ));
+        };
+        let fingerprint = crate::certificate::ensure_self_signed_certificate(
+            std::path::Path::new(certificate),
+            std::path::Path::new(private_key),
+            &settings.tls_subject_alt_names,
+        )?;
+        warn!(
+            certificate,
+            certificate_file_sha256 = %fingerprint,
+            "已生成或复用 FTPS 自签名证书；客户端首次连接前应通过可信渠道核对证书指纹并安装信任"
+        );
+    }
+
     let listener = TcpListener::bind(settings.bind).await?;
     let local_addr = listener.local_addr()?;
+    let max_connections = settings.max_connections.max(1);
+    let sessions = Arc::new(Semaphore::new(max_connections as usize));
 
     // 预先构建一次以尽早暴露配置错误（证书等），随后按连接重建
     build_server(&settings, &app).map_err(|err| std::io::Error::other(err.to_string()))?;
@@ -149,6 +179,14 @@ pub async fn spawn_ftp_server(
                 accepted = listener.accept() => {
                     match accepted {
                         Ok((stream, peer)) => {
+                            let permit = match Arc::clone(&sessions).try_acquire_owned() {
+                                Ok(permit) => permit,
+                                Err(_) => {
+                                    debug!(peer = %peer, max_connections, "FTP 连接数达到上限，拒绝新连接");
+                                    drop(stream);
+                                    continue;
+                                }
+                            };
                             let server = match build_server(&settings, &app) {
                                 Ok(server) => server,
                                 Err(err) => {
@@ -157,6 +195,7 @@ pub async fn spawn_ftp_server(
                                 }
                             };
                             tokio::spawn(async move {
+                                let _permit = permit;
                                 debug!(peer = %peer, "FTP 会话开始");
                                 if let Err(err) = server.service(stream).await {
                                     debug!(peer = %peer, error = %err, "FTP 会话结束（异常）");

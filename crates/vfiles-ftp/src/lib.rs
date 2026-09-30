@@ -13,10 +13,12 @@
 
 pub mod auth;
 pub mod backend;
+pub mod certificate;
 pub mod error;
 pub mod path;
 pub mod server;
 
 pub use auth::{RoleFilter, VfilesAuthenticator, VfilesFtpUser, VfilesUserDetailProvider};
 pub use backend::{BackendDeps, VfilesMetadata, VfilesStorageBackend};
+pub use certificate::ensure_self_signed_certificate;
 pub use server::{FtpApplication, FtpServerHandle, FtpSettings, run_ftp_server, spawn_ftp_server};

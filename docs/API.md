@@ -421,14 +421,22 @@ curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci
   "remote_reachable": true,
   "port": 2121,
   "passive_ports": { "start": 50000, "end": 50100 },
-  "tls": { "enabled": true, "required": true },
-  "example_command": "curl --ftp-ssl -T 本地文件 ftp://files.example.com:2121/目录/",
+  "tls": {
+    "enabled": true,
+    "required": true,
+    "self_signed": true,
+    "certificate_file_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "example_command": "curl --ssl-reqd --cacert ftp-cert.pem -T 本地文件 ftp://files.example.com:2121/目录/",
   "path_mapping": "登录后 / 即该用户的命名空间根目录"
 }
 ```
 
-FTP 默认启用；显式关闭（`VFILES_FTP_ENABLED=false`）或认证关闭时 `enabled` 为 `false`，
-`example_command` 为 `null`。未登录访问返回 401。
+认证开启时 FTP 默认启用；没有配置证书时会自动生成并持久化自签名证书。显式关闭
+（`VFILES_FTP_ENABLED=false`）或认证关闭时 `enabled` 为 `false`，`example_command` 为 `null`。
+启用时 `tls.enabled` 和 `tls.required` 均为 `true`，控制通道与数据通道必须加密。自签名证书的
+`certificate_file_sha256` 是 PEM 文件 SHA-256；客户端应通过可信渠道获取证书、核对指纹并导入信任。
+未登录访问返回 401。
 
 `host` 按「客户端最可能连得上」的顺序选取，并用 `host_source` 说明来源：
 `passive_host`（`VFILES_FTP_PASSIVE_HOST`）→ `request`（当前请求的 Host 头）→
