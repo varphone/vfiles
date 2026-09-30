@@ -7968,15 +7968,17 @@ impl UploadStore for FsUploadStore {
         chunk_size: u64,
         user_id: &UserId,
     ) -> DomainResult<UploadId> {
+        let total_chunks = if chunk_size == 0 {
+            0
+        } else {
+            u32::try_from(size_bytes.div_ceil(chunk_size)).map_err(|_| DomainError::Validation {
+                message: "Upload chunk count exceeds the supported range".to_string(),
+            })?
+        };
         let upload_id = UploadId::new();
         let upload_dir = self.base_path.join(upload_id.to_string());
         let now = time::OffsetDateTime::now_utc();
         let expires_at = now + time::Duration::hours(24);
-        let total_chunks = if chunk_size == 0 {
-            0
-        } else {
-            size_bytes.div_ceil(chunk_size) as u32
-        };
 
         // Create upload directory
         fs::create_dir_all(&upload_dir)
@@ -8636,6 +8638,28 @@ impl UploadStore for FsUploadStore {
 mod selected_upload_part_tests {
     use super::*;
     use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    async fn create_upload_session_rejects_chunk_count_overflow() {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let base = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).expect("utf8 path");
+        let store = FsUploadStore::new(base);
+
+        let error = store
+            .create_upload_session(
+                &NamespaceId::new(),
+                &NormalizedPath::new("").expect("root path"),
+                "object.bin",
+                None,
+                u64::from(u32::MAX) + 1,
+                1,
+                &UserId::new(),
+            )
+            .await
+            .expect_err("chunk count must not wrap into the metadata field");
+
+        assert!(matches!(error, DomainError::Validation { .. }));
+    }
 
     #[tokio::test]
     async fn assembles_only_requested_parts_in_the_given_order() {

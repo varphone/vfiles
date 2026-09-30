@@ -3150,6 +3150,9 @@ pub struct UploadCompleteResponse {
     pub mutation: Option<MutationResult>,
 }
 
+/// Bound per-session file count and prevent tiny requested chunks from exhausting inodes.
+const MAX_UPLOAD_CHUNKS_PER_SESSION: u64 = 10_000;
+
 #[derive(Debug, Clone)]
 pub struct UploadService<E, S, B, U> {
     entry_repo: E,
@@ -3187,8 +3190,20 @@ where
     ) -> DomainResult<UploadSessionView> {
         validate_filename(filename)?;
 
-        if size_bytes > 0 {
-            // No extra validation needed here, but keep chunk math explicit.
+        let chunk_size =
+            requested_chunk_size.unwrap_or_else(|| size_bytes.clamp(1, 5 * 1024 * 1024));
+        if chunk_size == 0 {
+            return Err(DomainError::Validation {
+                message: "Chunk size must be greater than zero".to_string(),
+            });
+        }
+        let total_chunks = size_bytes.div_ceil(chunk_size);
+        if total_chunks > MAX_UPLOAD_CHUNKS_PER_SESSION {
+            return Err(DomainError::Validation {
+                message: format!(
+                    "Upload would require {total_chunks} chunks; the maximum is {MAX_UPLOAD_CHUNKS_PER_SESSION}. Increase chunk_size."
+                ),
+            });
         }
 
         let file_path = uploaded_file_path(target_path, filename)?;
@@ -3203,13 +3218,6 @@ where
             });
         }
 
-        let chunk_size =
-            requested_chunk_size.unwrap_or_else(|| size_bytes.clamp(1, 5 * 1024 * 1024));
-        if chunk_size == 0 {
-            return Err(DomainError::Validation {
-                message: "Chunk size must be greater than zero".to_string(),
-            });
-        }
         let upload_id = self
             .upload_store
             .create_upload_session(

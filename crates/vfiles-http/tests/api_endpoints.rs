@@ -7266,6 +7266,44 @@ async fn upload_init_allows_files_up_to_4_gib_and_rejects_larger_sizes() {
 }
 
 #[tokio::test]
+async fn upload_init_rejects_chunk_counts_that_would_exhaust_storage_metadata() {
+    let app = TestApp::new().await;
+    let response = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/upload/init",
+            json!({
+                "path": "docs",
+                "filename": "too-many-chunks.bin",
+                "size": 4_u64 * 1024 * 1024 * 1024,
+                "chunk_size": 1,
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let payload = response_json(response).await;
+    assert_eq!(
+        payload["code"],
+        Value::String("VALIDATION_FAILED".to_string())
+    );
+    assert!(
+        payload["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("10000") && message.contains("chunk_size"))
+    );
+
+    let upload_dir = app._temp_dir.path().join("uploads");
+    let session_count = std::fs::read_dir(upload_dir)
+        .map(|entries| entries.count())
+        .unwrap_or_default();
+    assert_eq!(
+        session_count, 0,
+        "invalid chunk counts must not create sessions"
+    );
+}
+
+#[tokio::test]
 async fn file_routes_require_authenticated_user_when_auth_enabled() {
     let app = TestApp::new().await;
 
