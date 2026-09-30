@@ -4,7 +4,7 @@
 //! 版本历史随条目一起转移（`entry_versions` 按条目 ID 关联）。
 //! `GET /api/users/directory` 提供选择目标用户所需的最小用户列表。
 
-use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::extract::{DefaultBodyLimit, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use vfiles_domain::{DomainError, NewAuditLog, NormalizedPath};
 
-use crate::error::{ApiError, ApiJson, ApiResult};
+use crate::error::{ApiError, ApiJson, ApiQuery, ApiResult};
 use crate::{AppState, routes::protected_request_context};
 use vfiles_app::MAX_TRANSFER_PATHS;
 
@@ -114,7 +114,7 @@ async fn transfer_ownership(
 async fn list_transfer_targets(
     State(state): State<AppState>,
     jar: CookieJar,
-    Query(_query): Query<serde_json::Value>,
+    ApiQuery(_query): ApiQuery<serde_json::Value>,
 ) -> ApiResult<Json<Vec<TransferTargetDto>>> {
     let ctx = protected_request_context(&state, &jar).await?;
     let targets = state

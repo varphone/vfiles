@@ -3,7 +3,7 @@
 //! 这些接口**只接受会话（Cookie）鉴权**：即使某个令牌泄露，也无法用它创建
 //! 新令牌或撤销他人的令牌。明文令牌只在创建响应里返回一次。
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::routing::{delete, get};
 use axum::{Json, Router};
 use axum_extra::extract::cookie::CookieJar;
@@ -13,7 +13,7 @@ use vfiles_app::ALLOWED_EXPIRY_DAYS;
 use vfiles_domain::{AccessToken, DomainError, NewAuditLog};
 
 use crate::AppState;
-use crate::error::{ApiError, ApiJson, ApiResult};
+use crate::error::{ApiError, ApiJson, ApiQuery, ApiResult};
 use crate::routes::require_session_auth_user;
 
 pub fn router() -> Router<AppState> {
@@ -111,7 +111,7 @@ async fn list_expiry_options() -> Json<Vec<ExpiryOptionDto>> {
 async fn list_tokens(
     State(state): State<AppState>,
     jar: CookieJar,
-    Query(query): Query<ListTokensQuery>,
+    ApiQuery(query): ApiQuery<ListTokensQuery>,
 ) -> ApiResult<Json<AccessTokenListDto>> {
     let auth_user = require_session_auth_user(&state, &jar).await?;
     let now = time::OffsetDateTime::now_utc();

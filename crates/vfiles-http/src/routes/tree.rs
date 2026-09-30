@@ -2,7 +2,7 @@
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Query},
+    extract::DefaultBodyLimit,
     http::StatusCode,
     routing::{delete, get, post},
 };
@@ -11,7 +11,7 @@ use axum_extra::extract::cookie::CookieJar;
 use crate::{
     AppState,
     dto::{CreateDirectoryRequest, EntryDto, EntryPageDto, MoveEntriesRequest, MoveEntryRequest},
-    error::{ApiError, ApiJson, ApiResult},
+    error::{ApiError, ApiJson, ApiQuery, ApiResult},
     routes::protected_request_context,
 };
 use vfiles_domain::{DomainError, NamespaceId, NewAuditLog, NormalizedPath, SnapshotId};
@@ -189,7 +189,7 @@ async fn move_entries(
 }
 
 async fn delete_entry(
-    Query(query): Query<DeleteQuery>,
+    ApiQuery(query): ApiQuery<DeleteQuery>,
     axum::extract::State(state): axum::extract::State<AppState>,
     headers: axum::http::HeaderMap,
     jar: CookieJar,
@@ -236,7 +236,7 @@ async fn delete_entry(
 }
 
 async fn list_root(
-    Query(query): Query<TreeQuery>,
+    ApiQuery(query): ApiQuery<TreeQuery>,
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
 ) -> ApiResult<Json<Vec<EntryDto>>> {
@@ -258,7 +258,7 @@ async fn list_root(
 
 async fn list_directory(
     axum::extract::Path(path): axum::extract::Path<String>,
-    Query(query): Query<TreeQuery>,
+    ApiQuery(query): ApiQuery<TreeQuery>,
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
 ) -> ApiResult<Json<Vec<EntryDto>>> {
@@ -316,7 +316,7 @@ async fn list_directory_impl(
 
 /// 分页列出根目录：`GET /api/files/list?limit=&offset=&commit=`
 async fn list_root_page(
-    Query(query): Query<TreePageQuery>,
+    ApiQuery(query): ApiQuery<TreePageQuery>,
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
 ) -> ApiResult<Json<EntryPageDto>> {
@@ -333,7 +333,7 @@ async fn list_root_page(
 /// 分页列出目录：`GET /api/files/list/{path}?limit=&offset=&commit=`
 async fn list_directory_page(
     axum::extract::Path(path): axum::extract::Path<String>,
-    Query(query): Query<TreePageQuery>,
+    ApiQuery(query): ApiQuery<TreePageQuery>,
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
 ) -> ApiResult<Json<EntryPageDto>> {
@@ -348,7 +348,7 @@ async fn list_directory_page(
 }
 
 async fn list_root_directories_page(
-    Query(query): Query<DirectoryPageQuery>,
+    ApiQuery(query): ApiQuery<DirectoryPageQuery>,
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
 ) -> ApiResult<Json<EntryPageDto>> {
@@ -364,7 +364,7 @@ async fn list_root_directories_page(
 
 async fn list_directory_directories_page(
     axum::extract::Path(path): axum::extract::Path<String>,
-    Query(query): Query<DirectoryPageQuery>,
+    ApiQuery(query): ApiQuery<DirectoryPageQuery>,
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
 ) -> ApiResult<Json<EntryPageDto>> {

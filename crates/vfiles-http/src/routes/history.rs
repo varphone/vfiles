@@ -2,7 +2,7 @@
 
 use axum::{
     Json, Router,
-    extract::{Query, State},
+    extract::State,
     response::IntoResponse,
     routing::{get, post},
 };
@@ -12,7 +12,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
     AppState,
-    error::{ApiError, ApiJson, ApiResult},
+    error::{ApiError, ApiJson, ApiQuery, ApiResult},
     routes::protected_request_context,
 };
 use vfiles_app::{DirectoryHistoryPage, EntryHistoryPage};
@@ -134,7 +134,7 @@ fn directory_history_payload(page: DirectoryHistoryPage) -> serde_json::Value {
 async fn get_entry_history(
     State(state): State<AppState>,
     jar: CookieJar,
-    Query(query): Query<HistoryQuery>,
+    ApiQuery(query): ApiQuery<HistoryQuery>,
 ) -> ApiResult<impl IntoResponse> {
     let ctx = protected_request_context(&state, &jar).await?;
     if !state.config.features.history_enabled {
@@ -183,7 +183,7 @@ async fn get_entry_history(
 async fn get_entry_diff(
     State(state): State<AppState>,
     jar: CookieJar,
-    Query(query): Query<DiffQuery>,
+    ApiQuery(query): ApiQuery<DiffQuery>,
 ) -> ApiResult<impl IntoResponse> {
     let ctx = protected_request_context(&state, &jar).await?;
     if !state.config.features.history_enabled {

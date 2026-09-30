@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
     response::Json,
     routing::{delete, get, post, put},
@@ -12,7 +12,7 @@ use vfiles_domain::*;
 use crate::{
     AppState,
     dto::AdminUserSummaryDto,
-    error::{ApiError, ApiJson, ApiResult},
+    error::{ApiError, ApiJson, ApiQuery, ApiResult},
 };
 
 #[derive(Debug, Deserialize)]
@@ -193,7 +193,7 @@ async fn record_admin_action(
 async fn list_users(
     State(state): State<AppState>,
     jar: CookieJar,
-    Query(query): Query<ListUsersQuery>,
+    ApiQuery(query): ApiQuery<ListUsersQuery>,
 ) -> ApiResult<Json<AdminUserListResponse>> {
     let _actor = require_admin(&state, &jar).await?;
     let admin_service = state

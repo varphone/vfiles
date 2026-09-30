@@ -19,7 +19,7 @@ use tokio::io::AsyncWriteExt;
 use crate::{
     AppState,
     dto::UploadRequest,
-    error::{ApiError, ApiJson, ApiResult},
+    error::{ApiError, ApiJson, ApiQuery, ApiResult},
     routes::protected_request_context,
 };
 use vfiles_domain::{DomainError, NewAuditLog, NormalizedPath, UploadId};
@@ -458,7 +458,7 @@ async fn put_upload_path(
     jar: CookieJar,
     headers: axum::http::HeaderMap,
     axum::extract::Path(path): axum::extract::Path<String>,
-    axum::extract::Query(query): axum::extract::Query<PutUploadQuery>,
+    ApiQuery(query): ApiQuery<PutUploadQuery>,
     request: axum::extract::Request,
 ) -> ApiResult<Json<serde_json::Value>> {
     let (directory, filename) = split_target(&path, query.filename.as_deref());
@@ -482,7 +482,7 @@ async fn put_upload(
     axum::extract::State(state): axum::extract::State<AppState>,
     jar: CookieJar,
     headers: axum::http::HeaderMap,
-    axum::extract::Query(query): axum::extract::Query<PutUploadQuery>,
+    ApiQuery(query): ApiQuery<PutUploadQuery>,
     request: axum::extract::Request,
 ) -> ApiResult<Json<serde_json::Value>> {
     let (directory, filename) = split_target(

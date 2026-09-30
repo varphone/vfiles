@@ -7203,6 +7203,26 @@ async fn malformed_json_body_uses_the_standard_error_envelope() {
     assert!(payload["request_id"].is_string(), "统一信封应带 request_id");
 }
 
+#[tokio::test]
+async fn malformed_query_parameters_use_the_standard_error_envelope() {
+    let app = TestApp::new().await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=not-a-number")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let payload = response_json(response).await;
+    assert_eq!(payload["code"], Value::from("VALIDATION_FAILED"));
+    assert_eq!(payload["details"]["field"], Value::from("query"));
+    assert!(payload["request_id"].is_string());
+}
+
 /// 校验失败与超限都返回结构化的 `details`，便于客户端本地化展示。
 #[tokio::test]
 async fn validation_and_size_errors_carry_structured_details() {

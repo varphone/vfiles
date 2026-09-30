@@ -85,6 +85,32 @@ where
     }
 }
 
+/// Query-string extraction with the same structured error envelope as the API.
+pub struct ApiQuery<T>(pub T);
+
+impl<S, T> axum::extract::FromRequestParts<S> for ApiQuery<T>
+where
+    T: serde::de::DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        <axum::extract::Query<T> as axum::extract::FromRequestParts<S>>::from_request_parts(
+            parts, state,
+        )
+        .await
+        .map(|axum::extract::Query(value)| Self(value))
+        .map_err(|rejection| ApiError::Validation {
+            field: "query".to_string(),
+            message: rejection.body_text(),
+        })
+    }
+}
+
 fn map_json_rejection(rejection: axum::extract::rejection::JsonRejection) -> ApiError {
     if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
         ApiError::RequestBodyTooLarge

@@ -1,12 +1,12 @@
 use crate::{
     AppState,
-    error::{ApiError, ApiResult},
+    error::{ApiError, ApiQuery, ApiResult},
     http_headers::{StreamingFileOptions, streaming_file_response},
     routes::protected_request_context,
 };
 use axum::{
     Router,
-    extract::{Query, State},
+    extract::State,
     http::{HeaderMap, Method},
     response::Response,
     routing::get,
@@ -30,7 +30,7 @@ async fn get_file_content(
     method: Method,
     headers: HeaderMap,
     jar: CookieJar,
-    Query(query): Query<ContentQuery>,
+    ApiQuery(query): ApiQuery<ContentQuery>,
 ) -> ApiResult<Response> {
     let ctx = protected_request_context(&state, &jar).await?;
     let raw_path = query.path.ok_or_else(|| {

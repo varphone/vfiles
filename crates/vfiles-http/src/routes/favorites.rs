@@ -1,10 +1,6 @@
 //! 收藏夹：把常用条目固定在侧栏。
 
-use axum::{
-    extract::{Query, State},
-    http::StatusCode,
-    response::Json,
-};
+use axum::{extract::State, http::StatusCode, response::Json};
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -13,7 +9,7 @@ use vfiles_domain::{DomainError, EntryId, NamespaceId, NormalizedPath};
 use crate::{
     AppState,
     dto::EntryDto,
-    error::{ApiError, ApiJson, ApiResult},
+    error::{ApiError, ApiJson, ApiQuery, ApiResult},
     routes::protected_request_context,
 };
 
@@ -112,7 +108,7 @@ fn to_dto(entry: vfiles_domain::Entry) -> FavoriteDto {
 pub async fn list(
     State(state): State<AppState>,
     jar: CookieJar,
-    Query(query): Query<FavoritePageQuery>,
+    ApiQuery(query): ApiQuery<FavoritePageQuery>,
 ) -> ApiResult<Json<FavoriteListDto>> {
     let ctx = protected_request_context(&state, &jar).await?;
     let limit = query
@@ -170,7 +166,7 @@ pub async fn add(
 pub async fn remove(
     State(state): State<AppState>,
     jar: CookieJar,
-    Query(query): Query<FavoriteQuery>,
+    ApiQuery(query): ApiQuery<FavoriteQuery>,
 ) -> ApiResult<Json<FavoriteListDto>> {
     let ctx = protected_request_context(&state, &jar).await?;
     let entry_id = resolve_entry(&state, &ctx.namespace_id, &query.path).await?;

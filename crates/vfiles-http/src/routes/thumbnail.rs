@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use axum::{
     Router,
     body::Body,
-    extract::{Query, State},
+    extract::State,
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
@@ -24,7 +24,7 @@ use vfiles_domain::{DomainError, NormalizedPath};
 
 use crate::{
     AppState,
-    error::{ApiError, ApiResult},
+    error::{ApiError, ApiQuery, ApiResult},
     http_headers::if_none_match,
     routes::protected_request_context,
 };
@@ -179,7 +179,7 @@ async fn get_file_thumbnail(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
-    Query(query): Query<ThumbnailQuery>,
+    ApiQuery(query): ApiQuery<ThumbnailQuery>,
 ) -> ApiResult<Response> {
     let ctx = protected_request_context(&state, &jar).await?;
     let raw_path = query.path.ok_or_else(|| {

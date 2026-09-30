@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    error::{ApiError, ApiResult},
+    error::{ApiError, ApiQuery, ApiResult},
     http_headers::{
         StreamingFileOptions, directory_archive_head_response, if_none_match_is_wildcard,
         not_modified_response, streaming_file_response, streaming_file_response_with_permit,
@@ -10,7 +10,7 @@ use crate::{
 };
 use axum::{
     Router,
-    extract::{Query, State},
+    extract::State,
     http::{HeaderMap, Method, header},
     response::Response,
     routing::get,
@@ -36,7 +36,7 @@ async fn download_file(
     method: Method,
     headers: HeaderMap,
     jar: CookieJar,
-    Query(query): Query<DownloadQuery>,
+    ApiQuery(query): ApiQuery<DownloadQuery>,
 ) -> ApiResult<Response> {
     let ctx = protected_request_context(&state, &jar).await?;
     let raw_path = query.path.ok_or_else(|| {
@@ -85,7 +85,7 @@ async fn download_folder(
     method: Method,
     headers: HeaderMap,
     jar: CookieJar,
-    Query(query): Query<DownloadQuery>,
+    ApiQuery(query): ApiQuery<DownloadQuery>,
 ) -> ApiResult<Response> {
     let ctx = protected_request_context(&state, &jar).await?;
     let raw_path = query.path.unwrap_or_default();

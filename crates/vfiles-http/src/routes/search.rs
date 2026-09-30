@@ -1,7 +1,4 @@
-use axum::{
-    extract::{Query, State},
-    response::Json,
-};
+use axum::{extract::State, response::Json};
 use axum_extra::extract::cookie::CookieJar;
 use serde::Deserialize;
 use vfiles_domain::{EntryKind, NormalizedPath, SearchQuery};
@@ -9,7 +6,7 @@ use vfiles_domain::{EntryKind, NormalizedPath, SearchQuery};
 use crate::{
     AppState,
     dto::{SearchPageDto, SearchResultDto},
-    error::ApiError,
+    error::{ApiError, ApiQuery},
     routes::protected_request_context,
 };
 
@@ -44,7 +41,7 @@ const MAX_SEARCH_LIMIT: u32 = 500;
 async fn search(
     State(state): State<AppState>,
     jar: CookieJar,
-    Query(params): Query<SearchParams>,
+    ApiQuery(params): ApiQuery<SearchParams>,
 ) -> Result<Json<SearchPageDto>, ApiError> {
     let ctx = protected_request_context(&state, &jar).await?;
     if params.search_content && !state.config.features.search_content {

@@ -4,7 +4,7 @@
 //! 任何 UPDATE / DELETE，双重保证审计记录不可篡改。
 
 use axum::body::Body;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
@@ -19,7 +19,7 @@ use vfiles_domain::{AuditLog, AuditLogQuery, AuditResult, DomainError, NewAuditL
 use crate::{
     AppState,
     dto::format_timestamp,
-    error::{ApiError, ApiResult},
+    error::{ApiError, ApiQuery, ApiResult},
     routes::admin::require_admin,
 };
 
@@ -197,7 +197,7 @@ fn describe_filter(query: &ListAuditQuery) -> String {
 async fn list_logs(
     State(state): State<AppState>,
     jar: CookieJar,
-    Query(query): Query<ListAuditQuery>,
+    ApiQuery(query): ApiQuery<ListAuditQuery>,
 ) -> ApiResult<Json<AuditLogListDto>> {
     require_admin(&state, &jar).await?;
 
@@ -272,7 +272,7 @@ async fn export_logs_csv(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: axum::http::HeaderMap,
-    Query(query): Query<ListAuditQuery>,
+    ApiQuery(query): ApiQuery<ListAuditQuery>,
 ) -> ApiResult<Response> {
     let actor = require_admin(&state, &jar).await?;
 
@@ -395,7 +395,7 @@ const SUMMARY_TOP: u32 = 5;
 async fn summarize_logs(
     State(state): State<AppState>,
     jar: CookieJar,
-    Query(query): Query<ListAuditQuery>,
+    ApiQuery(query): ApiQuery<ListAuditQuery>,
 ) -> ApiResult<Json<AuditLogSummaryDto>> {
     require_admin(&state, &jar).await?;
 
