@@ -15,6 +15,7 @@ use axum::{
 use axum_extra::extract::{Multipart, cookie::CookieJar};
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 use crate::{
     AppState,
@@ -29,6 +30,18 @@ const MAX_UPLOAD_CONTROL_BODY_BYTES: usize = 64 * 1024;
 const MAX_MULTIPART_METADATA_FIELD_BYTES: usize = 64 * 1024;
 const MAX_MULTIPART_METADATA_BYTES: usize = 256 * 1024;
 const MAX_MULTIPART_FIELD_COUNT: usize = 16;
+/// Large upload requests hold a connection, a temporary file and storage write capacity.
+/// Reject excess work instead of queueing an unbounded number of streams.
+const MAX_CONCURRENT_UPLOAD_REQUESTS: usize = 8;
+static UPLOAD_REQUEST_PERMITS: Semaphore = Semaphore::const_new(MAX_CONCURRENT_UPLOAD_REQUESTS);
+
+fn try_acquire_upload_permit(semaphore: &Semaphore) -> Option<SemaphorePermit<'_>> {
+    semaphore.try_acquire().ok()
+}
+
+fn try_acquire_upload_request_permit() -> ApiResult<SemaphorePermit<'static>> {
+    try_acquire_upload_permit(&UPLOAD_REQUEST_PERMITS).ok_or_else(|| ApiError::rate_limited(1))
+}
 
 static ACTIVE_TEMP_UPLOAD_FILES: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -310,6 +323,7 @@ async fn upload_chunk(
     axum::extract::State(state): axum::extract::State<AppState>,
     request: axum::extract::Request,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let _upload_permit = try_acquire_upload_request_permit()?;
     let upload_id = upload_id_str
         .parse::<uuid::Uuid>()
         .map(vfiles_domain::UploadId::from_uuid)
@@ -382,6 +396,7 @@ async fn complete_upload(
     axum::extract::State(state): axum::extract::State<AppState>,
     req: Option<ApiJson<CompleteUploadRequest>>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let _upload_permit = try_acquire_upload_request_permit()?;
     let upload_id = upload_id_str
         .parse::<uuid::Uuid>()
         .map(vfiles_domain::UploadId::from_uuid)
@@ -511,6 +526,7 @@ async fn put_upload_inner(
     message: Option<String>,
     request: axum::extract::Request,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let _upload_permit = try_acquire_upload_request_permit()?;
     let ctx = protected_request_context(&state, &jar).await?;
 
     if filename.is_empty() {
@@ -622,6 +638,7 @@ async fn upload_file(
     headers: axum::http::HeaderMap,
     ApiMultipart(multipart): ApiMultipart,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let _upload_permit = try_acquire_upload_request_permit()?;
     let ctx = protected_request_context(&state, &jar).await?;
     let temp_dir = state.config.storage.root.join("tmp");
     tokio::fs::create_dir_all(&temp_dir).await.map_err(|err| {
@@ -880,6 +897,19 @@ async fn finish_single_upload(input: SingleUploadInput<'_>) -> ApiResult<Json<se
 #[cfg(test)]
 mod temp_upload_cleanup_tests {
     use super::*;
+
+    #[test]
+    fn upload_admission_is_bounded_and_permits_are_released() {
+        let semaphore = Semaphore::new(2);
+        let first = try_acquire_upload_permit(&semaphore).expect("first permit");
+        let second = try_acquire_upload_permit(&semaphore).expect("second permit");
+
+        assert!(try_acquire_upload_permit(&semaphore).is_none());
+
+        drop(first);
+        assert!(try_acquire_upload_permit(&semaphore).is_some());
+        drop(second);
+    }
 
     #[tokio::test]
     async fn cleanup_removes_only_old_managed_files_not_active_uploads() {

@@ -113,6 +113,7 @@ curl -T app.tar.gz -H "Authorization: Bearer $TOKEN" \
 - 请求体**流式落盘**，边写边校验大小：超过单文件上限（`VFILES_MAX_FILE_SIZE_MB`，
   同时受 4096MB 上传硬上限约束）立即返回 `413 FILE_TOO_LARGE`（带 `limit_bytes`/`size_bytes`）；
   `Content-Length` 已知时会**提前拒绝**，不白传一遍；
+- 单个服务进程最多同时处理 8 个上传数据请求（multipart、原始 body、分片和完成请求）；超额时立即返回 `429 RATE_LIMITED` 和 `Retry-After: 1`，至少等待 1 秒后再重试；
 - 同名文件会写成新版本（可用 `message` 作为版本说明）；
 - 目标是已存在的目录时返回 `400`（提示不要用目录路径当文件名）；
 - 与 multipart（`POST /api/files/upload`，`curl -F "file=@…"`）共用同一套入库逻辑，
