@@ -76,10 +76,7 @@
             @download-version="downloadVersion"
           />
 
-          <div
-            v-if="nextCursor"
-            class="history-more"
-          >
+          <div v-if="nextCursor" class="history-more">
             <button
               class="vf-ghost-button"
               type="button"
@@ -565,6 +562,9 @@ const preview = ref({
   mime: "",
 });
 
+let previewRequestId = 0;
+let pendingPreviewAbort: AbortController | null = null;
+
 const previewFilename = computed(
   () => props.filePath.split("/").pop() || "file",
 );
@@ -857,6 +857,9 @@ function guessMimeByExt(filePath: string): string {
 }
 
 function closePreview() {
+  previewRequestId += 1;
+  pendingPreviewAbort?.abort();
+  pendingPreviewAbort = null;
   if (preview.value.objectUrl) URL.revokeObjectURL(preview.value.objectUrl);
   preview.value = {
     open: false,
@@ -891,41 +894,47 @@ async function viewVersion(hash: string) {
   // 打开预览并加载内容；预览与对比共用右侧面板，需先关掉对比
   closePreview();
   closeDiff();
+  const requestId = previewRequestId;
+  const controller = new AbortController();
+  pendingPreviewAbort = controller;
+  const kind = detectPreviewKind(props.filePath);
   preview.value.open = true;
   preview.value.loading = true;
   preview.value.hash = hash;
-  preview.value.kind = detectPreviewKind(props.filePath);
+  preview.value.kind = kind;
 
   try {
-    if (preview.value.kind === "unsupported") {
+    if (kind === "unsupported") {
       preview.value.loading = false;
       return;
     }
 
     const blob = await filesService.getFileContent(props.filePath, hash, {
-      maxBytes: previewMaxBytes(preview.value.kind),
+      signal: controller.signal,
+      maxBytes: previewMaxBytes(kind),
     });
+    if (requestId !== previewRequestId || controller.signal.aborted) return;
 
-    if (preview.value.kind === "image" || preview.value.kind === "pdf") {
+    if (kind === "image" || kind === "pdf") {
       const typed = new Blob([blob], {
         type: guessMimeByExt(props.filePath),
       });
       preview.value.objectUrl = URL.createObjectURL(typed);
-    } else if (
-      preview.value.kind === "video" ||
-      preview.value.kind === "audio"
-    ) {
+    } else if (kind === "video" || kind === "audio") {
       const typed = new Blob([blob], {
         type: guessMimeByExt(props.filePath),
       });
       preview.value.objectUrl = URL.createObjectURL(typed);
     } else {
       const text = await blob.text();
-      if (preview.value.kind === "markdown") {
+      if (requestId !== previewRequestId || controller.signal.aborted) return;
+      if (kind === "markdown") {
         const markedApi = await getMarked();
+        if (requestId !== previewRequestId || controller.signal.aborted) return;
         preview.value.html = markedApi.parse(text) as string;
-      } else if (preview.value.kind === "code") {
+      } else if (kind === "code") {
         const hljsApi = await getHljs();
+        if (requestId !== previewRequestId || controller.signal.aborted) return;
         const highlighted = hljsApi.highlightAuto(text);
         preview.value.html = highlighted.value;
       } else {
@@ -933,9 +942,13 @@ async function viewVersion(hash: string) {
       }
     }
   } catch (err) {
+    if (requestId !== previewRequestId || controller.signal.aborted) return;
     preview.value.error = err instanceof Error ? err.message : "预览失败";
   } finally {
-    preview.value.loading = false;
+    if (requestId === previewRequestId) {
+      preview.value.loading = false;
+      pendingPreviewAbort = null;
+    }
   }
 }
 

@@ -63,6 +63,14 @@ function renderHistory() {
   });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe("VersionHistory.vue", () => {
   beforeEach(() => {
     historyMock.mockReset();
@@ -109,9 +117,13 @@ describe("VersionHistory.vue", () => {
         nextCursor: null,
       });
     const { container, getByRole } = renderHistory();
-    await waitFor(() => expect(container.querySelectorAll(".history-row")).toHaveLength(1));
+    await waitFor(() =>
+      expect(container.querySelectorAll(".history-row")).toHaveLength(1),
+    );
     await fireEvent.click(getByRole("button", { name: /加载更多/ }));
-    await waitFor(() => expect(container.querySelectorAll(".history-row")).toHaveLength(2));
+    await waitFor(() =>
+      expect(container.querySelectorAll(".history-row")).toHaveLength(2),
+    );
     expect(historyMock).toHaveBeenNthCalledWith(2, "notes.txt", 20, PREVIOUS);
     expect(container.querySelector(".history-more")).toBeNull();
   });
@@ -194,6 +206,67 @@ describe("VersionHistory.vue", () => {
       .map((el) => el.textContent?.trim());
 
     expect(labels).toEqual(["预览", "对比", "下载"]);
+  });
+
+  it("aborts stale version preview loads and ignores late responses", async () => {
+    const olderRequest = deferred<Blob>();
+    const newerRequest = deferred<Blob>();
+    contentMock
+      .mockReturnValueOnce(olderRequest.promise)
+      .mockReturnValueOnce(newerRequest.promise);
+    const { container } = renderHistory();
+    await waitFor(() =>
+      expect(container.querySelectorAll(".history-row")).toHaveLength(2),
+    );
+
+    const rows = container.querySelectorAll(".history-row");
+    await fireEvent.click(
+      within(rows[0] as HTMLElement).getByRole("button", { name: "预览" }),
+    );
+    await fireEvent.click(
+      within(rows[1] as HTMLElement).getByRole("button", { name: "预览" }),
+    );
+
+    const olderSignal = contentMock.mock.calls[0][2]?.signal as AbortSignal;
+    expect(olderSignal).toBeInstanceOf(AbortSignal);
+    expect(olderSignal.aborted).toBe(true);
+
+    newerRequest.resolve(new Blob(["newer version"]));
+    await waitFor(() =>
+      expect(container.querySelector(".preview-text")?.textContent).toBe(
+        "newer version",
+      ),
+    );
+
+    // 模拟一个忽略 AbortSignal、仍然返回的传输层，确保序号校验也能挡住旧结果。
+    olderRequest.resolve(new Blob(["stale version"]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector(".preview-text")?.textContent).toBe(
+      "newer version",
+    );
+    expect(
+      container.querySelector(".history-detail-title code")?.textContent,
+    ).toBe(PREVIOUS.substring(0, 8));
+  });
+
+  it("aborts a version preview load when the preview is closed", async () => {
+    const pendingRequest = deferred<Blob>();
+    contentMock.mockReturnValueOnce(pendingRequest.promise);
+    const { container, getByRole } = renderHistory();
+    await waitFor(() =>
+      expect(container.querySelectorAll(".history-row")).toHaveLength(2),
+    );
+
+    const row = container.querySelector(".history-row") as HTMLElement;
+    await fireEvent.click(within(row).getByRole("button", { name: "预览" }));
+    const signal = contentMock.mock.calls[0][2]?.signal as AbortSignal;
+    await fireEvent.click(getByRole("button", { name: "关闭" }));
+
+    expect(signal.aborted).toBe(true);
+    pendingRequest.resolve(new Blob(["closed preview"]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector(".history-detail-label")).toBeNull();
+    expect(container.querySelector(".preview-text")).toBeNull();
   });
 
   it("switches the detail pane between preview and diff", async () => {
