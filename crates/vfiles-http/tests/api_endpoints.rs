@@ -6374,6 +6374,96 @@ async fn file_search_pages_results_with_has_more() {
     assert_eq!(pages, 3, "5 条命中按每页 2 条应为 3 页");
 }
 
+#[tokio::test]
+async fn file_search_treats_like_metacharacters_as_literals() {
+    let mut features = default_features();
+    features.search_content = true;
+    let app = TestApp::new_with_features(features).await;
+    for filename in ["literal%_name.txt", "literalXYname.txt"] {
+        app.upload_version("", filename, b"fixture", "seed literal search")
+            .await;
+    }
+    app.upload_version("scope%_", "report.txt", b"fixture", "seed literal path")
+        .await;
+    app.upload_version("scopeXX", "report.txt", b"fixture", "seed wildcard path")
+        .await;
+    app.upload_version(
+        "scope%_",
+        "content.txt",
+        b"needle body",
+        "seed literal content path",
+    )
+    .await;
+    app.upload_version(
+        "scopeXX",
+        "content.txt",
+        b"needle body",
+        "seed wildcard content path",
+    )
+    .await;
+
+    let literal_query = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/search?q=%25_&search_files=true&type=file")
+                .body(Body::empty())
+                .expect("literal search request should build"),
+        )
+        .await;
+    assert_eq!(literal_query.status(), StatusCode::OK);
+    let literal_payload = response_json(literal_query).await;
+    let literal_paths = literal_payload["items"]
+        .as_array()
+        .expect("search should return an item array")
+        .iter()
+        .filter_map(|item| item["entry"]["path"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        literal_paths,
+        [
+            "literal%_name.txt",
+            "scope%_/content.txt",
+            "scope%_/report.txt"
+        ]
+    );
+
+    let literal_prefix = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/search?q=report&search_files=true&type=file&path=scope%25_")
+                .body(Body::empty())
+                .expect("literal path filter request should build"),
+        )
+        .await;
+    assert_eq!(literal_prefix.status(), StatusCode::OK);
+    let filtered_payload = response_json(literal_prefix).await;
+    let filtered_paths = filtered_payload["items"]
+        .as_array()
+        .expect("filtered search should return an item array")
+        .iter()
+        .filter_map(|item| item["entry"]["path"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(filtered_paths, ["scope%_/report.txt"]);
+
+    let literal_content_prefix = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/search?q=needle&search_content=true&type=file&path=scope%25_")
+                .body(Body::empty())
+                .expect("literal content path filter request should build"),
+        )
+        .await;
+    assert_eq!(literal_content_prefix.status(), StatusCode::OK);
+    let content_payload = response_json(literal_content_prefix).await;
+    let content_paths = content_payload["items"]
+        .as_array()
+        .expect("content search should return an item array")
+        .iter()
+        .filter_map(|item| item["entry"]["path"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(content_paths, ["scope%_/content.txt"]);
+}
+
 /// 同时开启文件名与内容搜索时，翻页必须是同一份「按得分排序」结果的连续切片。
 ///
 /// 回归用例：此前 `LIMIT/OFFSET` 由仓储层按 `created_at` 分别执行，两路结果合并后

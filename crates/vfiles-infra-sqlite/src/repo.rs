@@ -2650,6 +2650,16 @@ fn escape_like_literal(value: &str) -> String {
     escaped
 }
 
+#[cfg(test)]
+mod like_escape_tests {
+    use super::escape_like_literal;
+
+    #[test]
+    fn escapes_wildcards_and_the_escape_character() {
+        assert_eq!(escape_like_literal(r"\%_"), r"\\\%\_");
+    }
+}
+
 fn default_content_hash() -> ContentHash {
     ContentHash::new(&"0".repeat(64)).expect("64 zeros should be a valid sha256 string")
 }
@@ -9245,7 +9255,7 @@ where
             return Ok(vec![]);
         }
 
-        let search_pattern = format!("%{}%", query.query.to_lowercase());
+        let search_pattern = format!("%{}%", escape_like_literal(&query.query.to_lowercase()));
         let namespace_id = query.namespace_id.to_string();
         let entry_kind = query.entry_kind.map(|kind| match kind {
             EntryKind::File => "file".to_string(),
@@ -9255,7 +9265,9 @@ where
             .path_prefix
             .as_ref()
             .map(|path| path.as_str().to_string());
-        let path_like = path_exact.as_ref().map(|path| format!("{path}/%"));
+        let path_like = path_exact
+            .as_ref()
+            .map(|path| format!("{}/%", escape_like_literal(path)));
         // 分页由应用层在按得分排序后统一处理：这里返回候选范围内的全部文件名命中，
         // 否则「下一页」会按 created_at 而不是最终得分排序，页与页之间会出现重复/遗漏。
         let candidate_limit = MAX_FILENAME_SEARCH_CANDIDATES;
@@ -9305,9 +9317,9 @@ where
              )
             LEFT JOIN blobs b ON b.id = ev.blob_id
             WHERE e.namespace_id = ?
-              AND (LOWER(e.path) LIKE ?)
+              AND (LOWER(e.path) LIKE ? ESCAPE '\')
                             AND (? IS NULL OR e.kind = ?)
-                            AND (? IS NULL OR e.path = ? OR e.path LIKE ?)
+                            AND (? IS NULL OR e.path = ? OR e.path LIKE ? ESCAPE '\')
             ORDER BY e.created_at DESC, e.path ASC
             LIMIT ?
             "#,
@@ -9472,7 +9484,9 @@ where
             .path_prefix
             .as_ref()
             .map(|path| path.as_str().to_string());
-        let path_like = path_exact.as_ref().map(|path| format!("{path}/%"));
+        let path_like = path_exact
+            .as_ref()
+            .map(|path| format!("{}/%", escape_like_literal(path)));
         // 分页统一由应用层在排序后处理；这里先限制候选文件数，再并发扫描这些候选。
         let candidate_limit = MAX_CONTENT_SEARCH_CANDIDATES;
 
@@ -9507,7 +9521,7 @@ where
               AND ev.blob_id IS NOT NULL
               AND (ev.content_type LIKE 'text/%' OR ev.content_type LIKE 'application/json%')
                             AND (? IS NULL OR e.kind = ?)
-                            AND (? IS NULL OR e.path = ? OR e.path LIKE ?)
+                            AND (? IS NULL OR e.path = ? OR e.path LIKE ? ESCAPE '\')
             ORDER BY e.created_at DESC, e.path ASC
             LIMIT ?
             "#,
