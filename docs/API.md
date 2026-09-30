@@ -14,6 +14,8 @@
 
 - `GET /api/health`
 - `GET /api/ready`
+  - HTTP `200` 表示数据库可连接，且 `blobs`、`uploads`、`tmp` 目录可写；检查失败时返回 HTTP `503`。
+  - 响应中的 `status` 为 `ready` 或 `not_ready`，`checks` 提供各项检查状态。
 
 ## 会话与认证
 

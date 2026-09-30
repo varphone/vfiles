@@ -1,6 +1,6 @@
 //! Health check endpoints.
 
-use axum::{Json, extract::State};
+use axum::{Json, extract::State, http::StatusCode};
 use serde::Serialize;
 use time::OffsetDateTime;
 
@@ -48,7 +48,9 @@ pub async fn health_check(State(state): State<AppState>) -> ApiResult<Json<Healt
     }))
 }
 
-pub async fn readiness_check(State(state): State<AppState>) -> ApiResult<Json<ReadinessResponse>> {
+pub async fn readiness_check(
+    State(state): State<AppState>,
+) -> ApiResult<(StatusCode, Json<ReadinessResponse>)> {
     tracing::debug!("Readiness check requested");
     let mut checks = Vec::new();
 
@@ -68,18 +70,16 @@ pub async fn readiness_check(State(state): State<AppState>) -> ApiResult<Json<Re
             checks.push(HealthCheck {
                 name: "database".to_string(),
                 status: "error".to_string(),
-                message: Some(format!("Database check failed: {}", e)),
+                message: Some("Database is unavailable".to_string()),
             });
         }
     }
 
-    // Check that the storage root still exists and is a directory. A missing
-    // storage root would make uploads/downloads fail even though the API process
-    // itself is alive.
+    // Check that the writable storage directories used by uploads and blobs are
+    // available, not only that the root directory exists.
     tracing::debug!("Checking storage readiness...");
-    let storage_root = state.config.storage.root.as_std_path();
-    match tokio::fs::metadata(storage_root).await {
-        Ok(metadata) if metadata.is_dir() => {
+    match vfiles_infra_fs::FsHealthProbe::check_readiness(&state.config.storage.root).await {
+        Ok(()) => {
             tracing::debug!("Storage check passed");
             checks.push(HealthCheck {
                 name: "storage".to_string(),
@@ -87,38 +87,32 @@ pub async fn readiness_check(State(state): State<AppState>) -> ApiResult<Json<Re
                 message: None,
             });
         }
-        Ok(_) => {
-            tracing::error!(
-                "Storage root is not a directory: {}",
-                storage_root.display()
-            );
+        Err(error) => {
+            tracing::error!("Storage check failed: {}", error);
             checks.push(HealthCheck {
                 name: "storage".to_string(),
                 status: "error".to_string(),
-                message: Some("Storage root is not a directory".to_string()),
-            });
-        }
-        Err(e) => {
-            tracing::error!("Storage check failed: {}", e);
-            checks.push(HealthCheck {
-                name: "storage".to_string(),
-                status: "error".to_string(),
-                message: Some(format!("Storage root is unavailable: {}", e)),
+                message: Some("Storage is unavailable or not writable".to_string()),
             });
         }
     }
 
-    let overall_status = if checks.iter().all(|c| c.status == "ok") {
-        "ready"
+    let ready = checks.iter().all(|check| check.status == "ok");
+    let overall_status = if ready { "ready" } else { "not_ready" };
+    let http_status = if ready {
+        StatusCode::OK
     } else {
-        "not_ready"
+        StatusCode::SERVICE_UNAVAILABLE
     };
 
-    Ok(Json(ReadinessResponse {
-        status: overall_status.to_string(),
-        checks,
-        timestamp: OffsetDateTime::now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap(),
-    }))
+    Ok((
+        http_status,
+        Json(ReadinessResponse {
+            status: overall_status.to_string(),
+            checks,
+            timestamp: OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default(),
+        }),
+    ))
 }

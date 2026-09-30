@@ -3025,6 +3025,69 @@ async fn health_json_response_supports_gzip_when_requested() {
 }
 
 #[tokio::test]
+async fn readiness_checks_writable_storage_without_clobbering_files_concurrently() {
+    let app = TestApp::new().await;
+    let temp_dir = app._temp_dir.path();
+    let sentinels = ["blobs", "uploads", "tmp"]
+        .map(|directory| temp_dir.join(directory).join("health_check.tmp"));
+    for sentinel in &sentinels {
+        std::fs::write(sentinel, b"preserve this file").expect("sentinel should be written");
+    }
+
+    let request = || {
+        Request::builder()
+            .uri("/api/ready")
+            .body(Body::empty())
+            .expect("readiness request should build")
+    };
+    let (first, second) = tokio::join!(app.request(request()), app.request(request()));
+
+    for response in [first, second] {
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response_json(response).await["status"], "ready");
+    }
+    for sentinel in sentinels {
+        assert_eq!(
+            std::fs::read(sentinel).expect("sentinel should remain"),
+            b"preserve this file"
+        );
+    }
+}
+
+#[tokio::test]
+async fn readiness_returns_service_unavailable_when_storage_is_not_writable() {
+    let app = TestApp::new().await;
+    let storage_root = app._temp_dir.path();
+    std::fs::rename(storage_root.join("tmp"), storage_root.join("tmp-disabled"))
+        .expect("storage temp directory should be moved");
+
+    let response = app
+        .request(
+            Request::builder()
+                .uri("/api/ready")
+                .body(Body::empty())
+                .expect("readiness request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let payload = response_json(response).await;
+    assert_eq!(payload["status"], "not_ready");
+    assert_eq!(payload["checks"][0]["status"], "ok");
+    assert_eq!(payload["checks"][1]["status"], "error");
+    assert_eq!(
+        payload["checks"][1]["message"],
+        "Storage is unavailable or not writable"
+    );
+    assert!(
+        !payload["checks"][1]["message"]
+            .as_str()
+            .expect("storage message should be text")
+            .contains(storage_root.to_str().expect("temp path should be UTF-8"))
+    );
+}
+
+#[tokio::test]
 async fn request_id_and_security_headers_are_applied() {
     let app = TestApp::new().await;
 

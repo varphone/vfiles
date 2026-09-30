@@ -11,6 +11,7 @@ build = "build.rs"
 vfiles-app = { path = "../vfiles-app" }
 vfiles-config = { path = "../vfiles-config" }
 vfiles-domain = { path = "../vfiles-domain" }
+vfiles-infra-fs = { path = "../vfiles-infra-fs" }
 vfiles-infra-sqlite = { path = "../vfiles-infra-sqlite" }
 
 axum-extra.workspace = true
@@ -45,4 +46,3 @@ camino.workspace = true
 http-body-util.workspace = true
 tempfile.workspace = true
 tower = { workspace = true, features = ["util"] }
-vfiles-infra-fs = { path = "../vfiles-infra-fs" }
