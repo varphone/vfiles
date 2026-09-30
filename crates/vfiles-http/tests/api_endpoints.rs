@@ -2954,6 +2954,42 @@ async fn request_id_and_security_headers_are_applied() {
 }
 
 #[tokio::test]
+async fn file_content_downloads_active_html_instead_of_rendering_it_same_origin() {
+    let app = TestApp::new().await;
+    let payload = b"<script>document.body.dataset.executed = 'yes'</script>";
+    app.upload_version("docs", "payload.html", payload, "HTML fixture")
+        .await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/payload.html")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .expect("stored MIME type should remain available"),
+        "text/html"
+    );
+    assert!(
+        response
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .expect("content should be forced to download")
+            .to_str()
+            .expect("content disposition should be ASCII")
+            .starts_with("attachment;")
+    );
+    assert_eq!(response_bytes(response).await.as_ref(), payload);
+}
+
+#[tokio::test]
 async fn admin_errors_return_structured_json_with_request_id() {
     let app = TestApp::new().await;
 

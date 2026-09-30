@@ -56,7 +56,10 @@ async fn get_file_content(
             request_headers: &headers,
             mime_type: file.mime_type.as_deref(),
             size_bytes: file.size_bytes,
-            attachment_filename: None,
+            // This endpoint is fetched by the SPA for previews. If navigated to
+            // directly, user supplied HTML/SVG must download instead of running
+            // with the application's same-origin privileges.
+            attachment_filename: Some(&file.filename),
             etag: Some(&file.etag),
             modified_at: file.modified_at,
         },
