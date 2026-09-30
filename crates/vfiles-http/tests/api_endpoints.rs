@@ -8330,7 +8330,7 @@ async fn backend_serves_static_frontend_and_spa_fallback() {
             .headers()
             .get(header::CACHE_CONTROL)
             .expect("asset cache control should be present"),
-        "public, max-age=31536000, immutable"
+        "public, max-age=3600"
     );
     let asset_body = String::from_utf8_lossy(&response_bytes(asset_response).await).to_string();
     assert!(asset_body.contains("console.log"));

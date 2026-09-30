@@ -386,9 +386,9 @@ fn static_file_response(
     let cache_control = if path_hint.ends_with("index.html") {
         // The SPA shell must be revalidated so new asset hashes are picked up.
         "no-cache"
-    } else if path_hint.contains("assets/") {
-        // Vite emits content-hashed asset filenames; they are safe to cache
-        // aggressively.
+    } else if is_hashed_frontend_asset(path_hint) {
+        // Only content-hashed files in the exact Vite assets directory are safe
+        // to cache aggressively. Public files may also live under assets/.
         "public, max-age=31536000, immutable"
     } else {
         "public, max-age=3600"
@@ -410,6 +410,31 @@ fn static_file_response(
     builder
         .body(body)
         .expect("static file response should build")
+}
+
+fn is_hashed_frontend_asset(path_hint: &str) -> bool {
+    let path = Path::new(path_hint);
+    let has_assets_segment = path
+        .components()
+        .any(|component| matches!(component, Component::Normal(segment) if segment == "assets"));
+    if !has_assets_segment {
+        return false;
+    }
+
+    let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some((stem, _extension)) = filename.rsplit_once('.') else {
+        return false;
+    };
+    let Some((_, hash)) = stem.rsplit_once('-') else {
+        return false;
+    };
+
+    hash.len() >= 8
+        && hash
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 #[cfg(test)]
@@ -560,6 +585,13 @@ mod tests {
         std::fs::write(dist.join("settings.json"), b"{}").expect("settings should be written");
         std::fs::write(asset_dir.join("app-abcdef12.js"), b"script")
             .expect("hashed asset should be written");
+        std::fs::write(asset_dir.join("app.js"), b"unhashed script")
+            .expect("unhashed asset should be written");
+        let similarly_named_dir = dist.join("not-assets");
+        std::fs::create_dir_all(&similarly_named_dir)
+            .expect("similarly named directory should be created");
+        std::fs::write(similarly_named_dir.join("app-abcdef12.js"), b"script")
+            .expect("similarly named asset should be written");
         let frontend = FrontendAssets::filesystem(dist).expect("frontend should be available");
 
         let index = frontend.serve("/", None).await;
@@ -575,6 +607,18 @@ mod tests {
         assert_eq!(
             hashed_asset.headers()[header::CACHE_CONTROL],
             "public, max-age=31536000, immutable"
+        );
+
+        let unhashed_asset = frontend.serve("/assets/app.js", None).await;
+        assert_eq!(
+            unhashed_asset.headers()[header::CACHE_CONTROL],
+            "public, max-age=3600"
+        );
+
+        let similarly_named_asset = frontend.serve("/not-assets/app-abcdef12.js", None).await;
+        assert_eq!(
+            similarly_named_asset.headers()[header::CACHE_CONTROL],
+            "public, max-age=3600"
         );
     }
 }
