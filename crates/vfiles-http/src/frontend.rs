@@ -101,7 +101,11 @@ impl FrontendAssets {
         match self {
             Self::Filesystem(base_path) => {
                 let candidate = filesystem_candidate(base_path, &request_path.segments);
-                let hint = candidate.to_string_lossy().into_owned();
+                let hint = if request_path.segments.is_empty() {
+                    "index.html".to_string()
+                } else {
+                    request_path.segments.join("/")
+                };
                 serve_filesystem_path(&candidate, &hint, preferences).await
             }
             #[cfg(feature = "embed")]
@@ -130,8 +134,7 @@ impl FrontendAssets {
         match self {
             Self::Filesystem(base_path) => {
                 let candidate = base_path.join("index.html");
-                let hint = candidate.to_string_lossy().into_owned();
-                serve_filesystem_path(&candidate, &hint, preferences).await
+                serve_filesystem_path(&candidate, "index.html", preferences).await
             }
             #[cfg(feature = "embed")]
             Self::Embedded => {
@@ -488,6 +491,34 @@ mod tests {
             .expect("static asset should stream")
             .to_bytes();
         assert_eq!(body.as_ref(), content.as_slice());
+    }
+
+    #[tokio::test]
+    async fn cache_policy_uses_the_request_path_not_the_install_directory() {
+        let temp_dir = tempfile::tempdir().expect("temporary directory");
+        let dist = temp_dir.path().join("assets").join("frontend");
+        let asset_dir = dist.join("assets");
+        std::fs::create_dir_all(&asset_dir).expect("asset directory should be created");
+        std::fs::write(dist.join("index.html"), b"index").expect("index should be written");
+        std::fs::write(dist.join("settings.json"), b"{}").expect("settings should be written");
+        std::fs::write(asset_dir.join("app-abcdef12.js"), b"script")
+            .expect("hashed asset should be written");
+        let frontend = FrontendAssets::filesystem(dist).expect("frontend should be available");
+
+        let index = frontend.serve("/", None).await;
+        assert_eq!(index.headers()[header::CACHE_CONTROL], "no-cache");
+
+        let mutable_file = frontend.serve("/settings.json", None).await;
+        assert_eq!(
+            mutable_file.headers()[header::CACHE_CONTROL],
+            "public, max-age=3600"
+        );
+
+        let hashed_asset = frontend.serve("/assets/app-abcdef12.js", None).await;
+        assert_eq!(
+            hashed_asset.headers()[header::CACHE_CONTROL],
+            "public, max-age=31536000, immutable"
+        );
     }
 }
 
