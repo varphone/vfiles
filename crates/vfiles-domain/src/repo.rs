@@ -1312,7 +1312,7 @@ pub trait ShareRepo {
         namespace_id: &NamespaceId,
         entry_id: &EntryId,
         entry_version_id: Option<&VersionId>,
-        code: &str,
+        public_code: &str,
         expires_at: Option<time::OffsetDateTime>,
         created_by: &UserId,
     ) -> DomainResult<ShareId>;

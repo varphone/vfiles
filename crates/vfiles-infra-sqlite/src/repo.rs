@@ -9320,24 +9320,29 @@ impl ShareRepo for SqliteShareRepo {
         namespace_id: &NamespaceId,
         entry_id: &EntryId,
         entry_version_id: Option<&VersionId>,
-        code: &str,
+        public_code: &str,
         expires_at: Option<time::OffsetDateTime>,
         created_by: &UserId,
     ) -> DomainResult<ShareId> {
         let id = ShareId::new();
+        let internal_code = uuid::Uuid::new_v4().simple().to_string();
         let now = time::OffsetDateTime::now_utc();
 
         sqlx::query(
             r#"
-            INSERT INTO shares (id, namespace_id, entry_id, entry_version_id, code, expires_at, created_by, created_at, access_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+            INSERT INTO shares (
+                id, namespace_id, entry_id, entry_version_id, code, public_code,
+                expires_at, created_by, created_at, access_count
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
             "#,
         )
         .bind(id.to_string())
         .bind(namespace_id.to_string())
         .bind(entry_id.to_string())
         .bind(entry_version_id.map(|id| id.to_string()))
-        .bind(code)
+        .bind(internal_code)
+        .bind(public_code)
         .bind(expires_at)
         .bind(created_by.to_string())
         .bind(now)
@@ -9355,12 +9360,15 @@ impl ShareRepo for SqliteShareRepo {
         let row: ShareRow = sqlx::query_as(
             r#"
             SELECT
-                id, namespace_id, entry_id, entry_version_id, code, expires_at,
+                id, namespace_id, entry_id, entry_version_id, COALESCE(public_code, code), expires_at,
                 created_by, created_at, access_count, last_accessed_at, disabled_at
             FROM shares
-            WHERE code = ? AND (expires_at IS NULL OR expires_at > ?) AND disabled_at IS NULL
+            WHERE (code = ? OR public_code = ?)
+                AND (expires_at IS NULL OR expires_at > ?)
+                AND disabled_at IS NULL
             "#,
         )
+        .bind(code)
         .bind(code)
         .bind(now)
         .fetch_optional(&self.pool)
@@ -9380,7 +9388,7 @@ impl ShareRepo for SqliteShareRepo {
         let rows: Vec<ShareRow> = sqlx::query_as(
             r#"
             SELECT
-                id, namespace_id, entry_id, entry_version_id, code, expires_at,
+                id, namespace_id, entry_id, entry_version_id, COALESCE(public_code, code), expires_at,
                 created_by, created_at, access_count, last_accessed_at, disabled_at
             FROM shares
             WHERE entry_id = ? AND disabled_at IS NULL
@@ -9407,7 +9415,7 @@ impl ShareRepo for SqliteShareRepo {
         let rows: Vec<ShareRow> = sqlx::query_as(
             r#"
             SELECT
-                id, namespace_id, entry_id, entry_version_id, code, expires_at,
+                id, namespace_id, entry_id, entry_version_id, COALESCE(public_code, code), expires_at,
                 created_by, created_at, access_count, last_accessed_at, disabled_at
             FROM shares
             WHERE created_by = ? AND disabled_at IS NULL
@@ -9453,7 +9461,7 @@ impl ShareRepo for SqliteShareRepo {
         let rows: Vec<ShareWithEntryRow> = sqlx::query_as(
             r#"
             SELECT
-                s.id, s.namespace_id, s.entry_id, s.entry_version_id, s.code,
+                s.id, s.namespace_id, s.entry_id, s.entry_version_id, COALESCE(s.public_code, s.code) AS code,
                 s.expires_at, s.created_by, s.created_at, s.access_count,
                 s.last_accessed_at, s.disabled_at,
                 e.path AS entry_path, e.kind AS entry_kind
@@ -9504,12 +9512,13 @@ impl ShareRepo for SqliteShareRepo {
         let row: ShareRow = sqlx::query_as(
             r#"
             SELECT
-                id, namespace_id, entry_id, entry_version_id, code, expires_at,
+                id, namespace_id, entry_id, entry_version_id, COALESCE(public_code, code), expires_at,
                 created_by, created_at, access_count, last_accessed_at, disabled_at
             FROM shares
-            WHERE code = ? AND disabled_at IS NULL
+            WHERE (code = ? OR public_code = ?) AND disabled_at IS NULL
             "#,
         )
+        .bind(code)
         .bind(code)
         .fetch_optional(&self.pool)
         .await

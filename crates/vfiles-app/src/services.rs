@@ -4414,23 +4414,6 @@ pub struct ShareService<R, E> {
     entry_repo: E,
 }
 
-const SHARE_CODE_ALPHABET: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
-
-fn generate_short_share_code() -> String {
-    let random_bytes = uuid::Uuid::new_v4().into_bytes();
-    let mut value = 0_u64;
-    for byte in random_bytes.iter().take(5) {
-        value = (value << 8) | u64::from(*byte);
-    }
-
-    let mut code = String::with_capacity(8);
-    for shift in (0..8_u32).rev() {
-        let index = ((value >> (shift * 5)) & 0x1f) as usize;
-        code.push(char::from(SHARE_CODE_ALPHABET[index]));
-    }
-    code
-}
-
 impl<R, E> ShareService<R, E>
 where
     R: ShareRepo + Clone,
@@ -4459,7 +4442,7 @@ where
                 resource: "entry".to_string(),
             })?;
 
-        // Generate a unique share code (simple random string for now)
+        // Generate a unique short code for user-facing links.
         let code = self.generate_share_code().await?;
 
         // Create the share

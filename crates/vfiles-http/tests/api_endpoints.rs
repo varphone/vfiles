@@ -21,12 +21,13 @@ use vfiles_http::{AppState, FrontendAssets, build_router, middleware::LoginAttem
 use vfiles_infra_fs::FsStorageBootstrap;
 use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteAdminRepo, SqliteEntryRepo, SqliteMigrations,
-    SqliteNamespaceRepo, SqlitePoolFactory, SqliteSearchRepo, SqliteSessionRepo, SqliteShareRepo,
-    SqliteSnapshotRepo, SqliteUserRepo,
+    SqliteNamespaceRepo, SqlitePool, SqlitePoolFactory, SqliteSearchRepo, SqliteSessionRepo,
+    SqliteShareRepo, SqliteSnapshotRepo, SqliteUserRepo,
 };
 
 struct TestApp {
     app: axum::Router<()>,
+    db_pool: SqlitePool,
     _temp_dir: TempDir,
 }
 
@@ -308,6 +309,7 @@ impl TestApp {
 
         Self {
             app: build_router(state),
+            db_pool: pool,
             _temp_dir: temp_dir,
         }
     }
@@ -3878,6 +3880,85 @@ async fn share_creation_uses_configured_public_base_url() {
         share_payload["share_url"],
         Value::String(format!("http://example.test:4242/s/{}", code))
     );
+}
+
+#[tokio::test]
+async fn migrated_long_share_keys_keep_short_public_codes_and_old_links_work() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "share.txt", b"shared file\n", "share source")
+        .await;
+
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+    let created = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/share/shares",
+            json!({ "path": "docs/share.txt" }),
+            &admin_cookie,
+        )
+        .await;
+    let created_payload = response_json(created).await;
+    let original_short_code = created_payload["code"]
+        .as_str()
+        .expect("new shares should expose a short code")
+        .to_string();
+    let (share_id, legacy_long_code): (String, String) =
+        sqlx::query_as("SELECT id, code FROM shares WHERE public_code = ?")
+            .bind(&original_short_code)
+            .fetch_one(&app.db_pool)
+            .await
+            .expect("share should have a separate internal lookup key");
+    assert_eq!(legacy_long_code.len(), 32);
+
+    sqlx::query("UPDATE shares SET public_code = NULL WHERE id = ?")
+        .bind(&share_id)
+        .execute(&app.db_pool)
+        .await
+        .expect("legacy share should lose its public alias before backfill");
+    sqlx::query(
+        "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (23, 'share_code_entropy', 1, X'00', 1)",
+    )
+    .execute(&app.db_pool)
+    .await
+    .expect("database should simulate the removed migration record");
+
+    SqliteMigrations::run(&app.db_pool)
+        .await
+        .expect("migration runner should tolerate the removed migration and restore aliases");
+
+    let shares = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/share/shares")
+                .body(Body::empty())
+                .expect("share list request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let listed_shares = response_json(shares).await;
+    let listed_code = listed_shares[0]["code"]
+        .as_str()
+        .expect("management API should expose a public code")
+        .to_string();
+    assert_eq!(listed_code.len(), 8);
+    assert!(
+        listed_code
+            .bytes()
+            .all(|byte| b"0123456789abcdefghjkmnpqrstvwxyz".contains(&byte))
+    );
+
+    for code in [listed_code.as_str(), legacy_long_code.as_str()] {
+        let access = app
+            .request(
+                Request::builder()
+                    .uri(format!("/api/share/shares/{code}"))
+                    .body(Body::empty())
+                    .expect("share access request should build"),
+            )
+            .await;
+        assert_eq!(access.status(), StatusCode::OK);
+        assert_eq!(response_json(access).await["code"], listed_code);
+    }
 }
 
 #[tokio::test]
