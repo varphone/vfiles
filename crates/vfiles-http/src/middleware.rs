@@ -69,7 +69,29 @@ const MAX_FIXED_WINDOW_COUNTERS: usize = 50_000;
 
 fn normalize_request_id(value: &str) -> Option<String> {
     let value = value.trim();
-    if value.is_empty() || value.len() > 128 || !value.is_ascii() {
+    if value.is_empty()
+        || value.len() > 128
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'|'
+                        | b'~'
+                )
+        })
+    {
         return None;
     }
     Some(value.to_string())
@@ -395,11 +417,21 @@ mod tests {
 
     use super::{
         FixedWindowLimiter, MAX_FIXED_WINDOW_COUNTERS, client_ip_from_headers,
-        is_write_origin_allowed, resolve_client_ip,
+        is_write_origin_allowed, normalize_request_id, resolve_client_ip,
     };
 
     fn ip(value: &str) -> IpAddr {
         value.parse().expect("IP address should parse")
+    }
+
+    #[test]
+    fn request_ids_reject_whitespace_and_keep_common_trace_tokens() {
+        assert_eq!(
+            normalize_request_id("proxy-req_01.2-ab"),
+            Some("proxy-req_01.2-ab".to_string())
+        );
+        assert_eq!(normalize_request_id("proxy request"), None);
+        assert_eq!(normalize_request_id("proxy\trequest"), None);
     }
 
     #[test]
