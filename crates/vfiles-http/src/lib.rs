@@ -17,10 +17,11 @@ use axum::{
     response::IntoResponse,
     response::Response,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tower_http::compression::CompressionLayer;
 use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use tower_http::timeout::RequestBodyTimeoutLayer;
 use vfiles_app::{
     AdminService, AuthService, HealthService, HistoryService, SearchService, SessionService,
     ShareService, UploadService, WorkspaceService,
@@ -34,6 +35,8 @@ use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteAdminRepo, SqliteEntryRepo, SqlitePool, SqliteSearchRepo,
     SqliteShareRepo, SqliteSnapshotRepo, SqliteUserRepo,
 };
+
+const API_REQUEST_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub use frontend::FrontendAssets;
 pub use middleware::{
@@ -114,6 +117,7 @@ fn build_router_inner(state: AppState, serve_frontend_fallback: bool) -> Router<
             middleware::api_request_admission_middleware,
         ))
         .layer(axum::middleware::from_fn(api_response_cache_policy));
+    let api_router = api_router.layer(RequestBodyTimeoutLayer::new(API_REQUEST_BODY_IDLE_TIMEOUT));
     let mut router = Router::new()
         .route(
             "/s/{code}",
@@ -399,5 +403,38 @@ mod request_logger_tests {
             let uri = request_target.parse::<Uri>().expect("URI should parse");
             assert_eq!(request_path_for_log(&uri), expected, "{request_target}");
         }
+    }
+}
+
+#[cfg(test)]
+mod request_body_timeout_tests {
+    use std::{convert::Infallible, time::Duration};
+
+    use axum::{
+        Router,
+        body::{Body, Bytes},
+        http::{Request, StatusCode},
+        routing::post,
+    };
+    use tower::ServiceExt;
+    use tower_http::timeout::RequestBodyTimeoutLayer;
+
+    async fn consume_body(_body: Bytes) -> StatusCode {
+        StatusCode::NO_CONTENT
+    }
+
+    #[tokio::test]
+    async fn aborts_a_request_body_that_stalls_between_frames() {
+        let app = Router::new()
+            .route("/upload", post(consume_body))
+            .layer(RequestBodyTimeoutLayer::new(Duration::from_millis(10)));
+        let body = Body::from_stream(futures::stream::pending::<Result<Bytes, Infallible>>());
+        let request = Request::post("/upload")
+            .body(body)
+            .expect("request should build");
+
+        let response = app.oneshot(request).await.expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
