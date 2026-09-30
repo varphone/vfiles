@@ -69,19 +69,18 @@ export function useMoveDialog(deps: MoveDialogDeps) {
     const normalizedTargetDir = normalizeTargetDirectory(targetDir);
 
     try {
-      const targetEntries = await filesService.getFiles(normalizedTargetDir);
-      const operations = planMoveOperations(
-        items,
+      const operations = planMoveOperations(items, normalizedTargetDir);
+      const message =
+        items.length === 1
+          ? `移动${items[0]?.kind === "directory" ? "目录" : "文件"}: ${items[0]?.path} -> ${normalizedTargetDir}`
+          : `批量移动 ${items.length} 个项目到 ${normalizedTargetDir || "根目录"}`;
+      await filesService.movePaths(
+        items.map((item) => item.path),
         normalizedTargetDir,
-        targetEntries,
+        message,
       );
 
       for (const { file, to } of operations) {
-        await filesService.movePath(
-          file.path,
-          to,
-          `移动${file.kind === "directory" ? "目录" : "文件"}: ${file.path} -> ${to}`,
-        );
         deps.replaceSelectedPath(file.path, to);
         if (deps.getActivePath() === file.path) {
           deps.setActivePath(

@@ -2,7 +2,7 @@
 
 use axum::{
     Json, Router,
-    extract::Query,
+    extract::{DefaultBodyLimit, Query},
     http::StatusCode,
     routing::{delete, get, post},
 };
@@ -10,7 +10,7 @@ use axum_extra::extract::cookie::CookieJar;
 
 use crate::{
     AppState,
-    dto::{CreateDirectoryRequest, EntryDto, EntryPageDto, MoveEntryRequest},
+    dto::{CreateDirectoryRequest, EntryDto, EntryPageDto, MoveEntriesRequest, MoveEntryRequest},
     error::{ApiError, ApiJson, ApiResult},
     routes::protected_request_context,
 };
@@ -29,8 +29,16 @@ struct TreePageQuery {
     offset: Option<usize>,
 }
 
+#[derive(Debug, Default, serde::Deserialize)]
+struct DirectoryPageQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
 const DEFAULT_PAGE_LIMIT: usize = 200;
 const MAX_PAGE_LIMIT: usize = 1000;
+const MAX_MOVE_BATCH_ITEMS: usize = 500;
+const MAX_MOVE_BATCH_BODY_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Default, serde::Deserialize)]
 struct DeleteQuery {
@@ -42,11 +50,19 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", delete(delete_entry))
         .route("/move", post(move_entry))
+        .route(
+            "/move/batch",
+            post(move_entries).layer(DefaultBodyLimit::max(MAX_MOVE_BATCH_BODY_BYTES)),
+        )
         .route("/tree", get(list_root))
         .route("/tree/{*path}", get(list_directory))
         .route("/list", get(list_root_page))
         .route("/list/{*path}", get(list_directory_page))
-        .route("/directories", post(create_directory))
+        .route(
+            "/directories",
+            post(create_directory).get(list_root_directories_page),
+        )
+        .route("/directories/{*path}", get(list_directory_directories_page))
 }
 
 pub async fn move_entry(
@@ -81,7 +97,7 @@ pub async fn move_entry(
             &destination_path,
             req.message.as_deref(),
             &ctx.actor_user_id,
-            false, // Path（测试真形证：to = archive/note.txt 完整路径 ✗ r12 判定勘误 ✓）
+            false, // The single-item route accepts the complete destination path.
         )
         .await?;
 
@@ -96,6 +112,76 @@ pub async fn move_entry(
                 destination_path.as_str()
             ))
             .detail("移动条目"),
+    )
+    .await;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn move_entries(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    headers: axum::http::HeaderMap,
+    jar: CookieJar,
+    ApiJson(req): ApiJson<MoveEntriesRequest>,
+) -> ApiResult<StatusCode> {
+    let ctx = protected_request_context(&state, &jar).await?;
+    if req.sources.is_empty() {
+        return Err(ApiError::Domain(DomainError::Validation {
+            message: "At least one source path is required".to_string(),
+        }));
+    }
+    if req.sources.len() > MAX_MOVE_BATCH_ITEMS {
+        return Err(ApiError::Domain(DomainError::Validation {
+            message: format!("At most {MAX_MOVE_BATCH_ITEMS} source paths can be moved at once"),
+        }));
+    }
+
+    let sources = req
+        .sources
+        .iter()
+        .map(|source| {
+            let path = NormalizedPath::new(source).map_err(|_| {
+                ApiError::Domain(DomainError::Validation {
+                    message: "Invalid source path format".to_string(),
+                })
+            })?;
+            if path.as_str().is_empty() {
+                return Err(ApiError::Domain(DomainError::Validation {
+                    message: "Source paths cannot target the root directory".to_string(),
+                }));
+            }
+            Ok(path)
+        })
+        .collect::<ApiResult<Vec<_>>>()?;
+    let destination = NormalizedPath::new(&req.destination).map_err(|_| {
+        ApiError::Domain(DomainError::Validation {
+            message: "Invalid destination path format".to_string(),
+        })
+    })?;
+
+    state
+        .workspace_service
+        .move_entries(
+            &ctx.namespace_id,
+            &sources,
+            &destination,
+            req.message.as_deref(),
+            &ctx.actor_user_id,
+            true,
+        )
+        .await?;
+
+    crate::audit::record_for(
+        &state,
+        &headers,
+        &ctx,
+        NewAuditLog::success(crate::audit::action::FILE_MOVE)
+            .target(format!(
+                "{} 个条目 → {}",
+                sources.len(),
+                destination.as_str()
+            ))
+            .detail("批量移动条目"),
     )
     .await;
 
@@ -250,6 +336,71 @@ async fn list_directory_page(
     })?;
 
     paginated_listing(&state, &ctx.namespace_id, &normalized_path, &query).await
+}
+
+async fn list_root_directories_page(
+    Query(query): Query<DirectoryPageQuery>,
+    axum::extract::State(state): axum::extract::State<AppState>,
+    jar: CookieJar,
+) -> ApiResult<Json<EntryPageDto>> {
+    let ctx = protected_request_context(&state, &jar).await?;
+    let root_path = NormalizedPath::new("").map_err(|_| {
+        ApiError::Domain(DomainError::Validation {
+            message: "Invalid root path".to_string(),
+        })
+    })?;
+
+    paginated_directory_listing(&state, &ctx.namespace_id, &root_path, &query).await
+}
+
+async fn list_directory_directories_page(
+    axum::extract::Path(path): axum::extract::Path<String>,
+    Query(query): Query<DirectoryPageQuery>,
+    axum::extract::State(state): axum::extract::State<AppState>,
+    jar: CookieJar,
+) -> ApiResult<Json<EntryPageDto>> {
+    let ctx = protected_request_context(&state, &jar).await?;
+    let normalized_path = NormalizedPath::new(&path).map_err(|_| {
+        ApiError::Domain(DomainError::Validation {
+            message: "Invalid path format".to_string(),
+        })
+    })?;
+
+    paginated_directory_listing(&state, &ctx.namespace_id, &normalized_path, &query).await
+}
+
+async fn paginated_directory_listing(
+    state: &AppState,
+    namespace_id: &NamespaceId,
+    path: &NormalizedPath,
+    query: &DirectoryPageQuery,
+) -> ApiResult<Json<EntryPageDto>> {
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_PAGE_LIMIT)
+        .clamp(1, MAX_PAGE_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let (items, total) = state
+        .workspace_service
+        .live_directory_children_page(
+            namespace_id,
+            path,
+            limit as u32,
+            u32::try_from(offset).unwrap_or(u32::MAX),
+        )
+        .await?;
+    let items: Vec<EntryDto> = items.into_iter().map(Into::into).collect();
+    let total = total as usize;
+    let offset = offset.min(total);
+    let end = (offset + items.len()).min(total);
+
+    Ok(Json(EntryPageDto {
+        items,
+        total,
+        limit,
+        offset,
+        has_more: end < total,
+    }))
 }
 
 /// 分页列目录：HEAD 走 SQL 分页（大目录不再全量拉取），

@@ -2137,6 +2137,38 @@ where
         Ok((items, total))
     }
 
+    /// Read a page of direct child directories without loading sibling files.
+    pub async fn live_directory_children_page(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<TreeItem>, u64)> {
+        if !path.as_str().is_empty() {
+            let entry = self
+                .entry_repo
+                .find_by_path(namespace_id, path)
+                .await?
+                .ok_or_else(|| DomainError::NotFound {
+                    resource: "entry".to_string(),
+                })?;
+
+            if entry.entry_type != EntryKind::Directory {
+                return Err(DomainError::Validation {
+                    message: "Path is not a directory".to_string(),
+                });
+            }
+        }
+
+        let (children, total) = self
+            .entry_repo
+            .find_directory_children_page(namespace_id, path, limit, offset)
+            .await?;
+        let items = self.build_tree_items(children).await?;
+        Ok((items, total))
+    }
+
     /// Read one historical directory page directly from the snapshot index.
     pub async fn snapshot_children_page(
         &self,

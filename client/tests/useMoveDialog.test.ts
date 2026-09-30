@@ -4,15 +4,13 @@ import { ref } from "vue";
 import { useMoveDialog } from "../src/composables/useMoveDialog";
 import type { FileInfo } from "../src/types";
 
-const { getFilesMock, movePathMock } = vi.hoisted(() => ({
-  getFilesMock: vi.fn(async () => [] as unknown[]),
-  movePathMock: vi.fn(async () => ({})),
+const { movePathsMock } = vi.hoisted(() => ({
+  movePathsMock: vi.fn(async () => undefined),
 }));
 
 vi.mock("../src/services/files.service", () => ({
   filesService: {
-    getFiles: getFilesMock,
-    movePath: movePathMock,
+    movePaths: movePathsMock,
   },
 }));
 
@@ -59,10 +57,8 @@ function setup() {
 describe("useMoveDialog", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
-    getFilesMock.mockReset();
-    movePathMock.mockReset();
-    getFilesMock.mockResolvedValue([]);
-    movePathMock.mockResolvedValue({});
+    movePathsMock.mockReset();
+    movePathsMock.mockResolvedValue(undefined);
   });
 
   it("normalizes the initial path when opening", () => {
@@ -91,7 +87,7 @@ describe("useMoveDialog", () => {
     expect(dialog.showMoveDialog.value).toBe(true);
   });
 
-  it("moves every selected entry and refreshes", async () => {
+  it("moves selected entries atomically and refreshes once", async () => {
     const harness = setup();
     harness.dialog.openMoveDialog(
       [entry("docs/a.txt"), entry("docs/b.txt")],
@@ -100,11 +96,11 @@ describe("useMoveDialog", () => {
 
     await harness.dialog.submitMoveDialog("photos");
 
-    expect(movePathMock).toHaveBeenCalledTimes(2);
-    expect(movePathMock).toHaveBeenCalledWith(
-      "docs/a.txt",
-      "photos/a.txt",
-      expect.stringContaining("移动文件"),
+    expect(movePathsMock).toHaveBeenCalledTimes(1);
+    expect(movePathsMock).toHaveBeenCalledWith(
+      ["docs/a.txt", "docs/b.txt"],
+      "photos",
+      expect.stringContaining("批量移动 2 个项目"),
     );
     expect(harness.replaceSelectedPath).toHaveBeenCalledWith(
       "docs/a.txt",
@@ -116,14 +112,14 @@ describe("useMoveDialog", () => {
     expect(harness.dialog.moveDialogSubmitting.value).toBe(false);
   });
 
-  it("keeps the dialog open and reports collisions", async () => {
+  it("keeps the dialog open when the server rejects a destination collision", async () => {
     const harness = setup();
-    getFilesMock.mockResolvedValueOnce([{ path: "photos/a.txt" }]);
+    movePathsMock.mockRejectedValueOnce(new Error("目标目录已存在同名项目"));
     harness.dialog.openMoveDialog([entry("docs/a.txt")], "photos");
 
     await harness.dialog.submitMoveDialog("photos");
 
-    expect(movePathMock).not.toHaveBeenCalled();
+    expect(movePathsMock).toHaveBeenCalledTimes(1);
     expect(harness.dialog.showMoveDialog.value).toBe(true);
     expect(harness.dialog.moveDialogSubmitting.value).toBe(false);
     expect(harness.refreshAfterMutation).not.toHaveBeenCalled();
@@ -148,9 +144,9 @@ describe("useMoveDialog", () => {
     );
 
     expect(ok).toBe(true);
-    expect(movePathMock).toHaveBeenCalledWith(
-      "docs/a.txt",
-      "photos/a.txt",
+    expect(movePathsMock).toHaveBeenCalledWith(
+      ["docs/a.txt"],
+      "photos",
       expect.stringContaining("移动文件"),
     );
     expect(harness.dialog.showMoveDialog.value).toBe(false);
@@ -166,7 +162,7 @@ describe("useMoveDialog", () => {
     );
 
     expect(ok).toBe(false);
-    expect(movePathMock).not.toHaveBeenCalled();
+    expect(movePathsMock).not.toHaveBeenCalled();
     expect(harness.refreshAfterMutation).not.toHaveBeenCalled();
   });
 });

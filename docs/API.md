@@ -41,11 +41,20 @@
   - Query: `limit`（默认 200，夹取到 1..1000）、`offset`（默认 0）、`commit` 可选
   - 历史快照页在 SQLite 中按直属子项分页；快照必须属于当前工作区
   - 响应：`{ items, total, limit, offset, has_more }`
+- `GET /api/files/directories` / `GET /api/files/directories/{path}`
+  - 仅分页列出目录的直属子目录，不读取同级文件
+  - Query: `limit`（默认 200，夹取到 1..1000）、`offset`（默认 0）
+  - 响应：`{ items, total, limit, offset, has_more }`
 - `POST /api/files/directories`
   - Body: `path`
   - 创建目录；会自动补齐缺失父目录
 - `POST /api/files/move`
   - Body: `from`, `to`, `message?`
+  - 移动单个条目；`to` 是完整目标路径
+- `POST /api/files/move/batch`
+  - Body: `sources`（1 至 500 个源路径）、`destination`（目标目录）、`message?`
+  - 请求体上限为 256 KiB
+  - 在一次操作中移动全部条目；目标冲突时整批失败
 - `DELETE /api/files?path=...&message=...`
 
 ## 文件内容与下载

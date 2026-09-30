@@ -2234,6 +2234,290 @@ async fn move_route_moves_entry_between_directories() {
 }
 
 #[tokio::test]
+async fn batch_move_is_atomic_when_any_destination_path_conflicts() {
+    let app = TestApp::new().await;
+    for path in ["docs", "archive"] {
+        let response = app
+            .json_request_as_admin(
+                Method::POST,
+                "/api/files/directories",
+                json!({ "path": path }),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    app.upload_version("docs", "first.txt", b"first", "seed")
+        .await;
+    app.upload_version("docs", "second.txt", b"second", "seed")
+        .await;
+    app.upload_version("archive", "second.txt", b"existing", "seed")
+        .await;
+
+    let response = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/move/batch",
+            json!({
+                "sources": ["docs/first.txt", "docs/second.txt"],
+                "destination": "archive",
+                "message": "batch move"
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    for path in ["docs/first.txt", "docs/second.txt", "archive/second.txt"] {
+        let response = app
+            .request_as_admin(
+                Request::builder()
+                    .uri(format!("/api/files/content?path={path}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "entry should remain: {path}"
+        );
+    }
+    let archive_first = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=archive/first.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(archive_first.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn batch_move_rejects_more_than_500_source_paths() {
+    let app = TestApp::new().await;
+    let sources = (0..501)
+        .map(|index| format!("source-{index}.txt"))
+        .collect::<Vec<_>>();
+    let response = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/move/batch",
+            json!({ "sources": sources, "destination": "archive" }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn batch_move_rejects_request_bodies_over_256_kibibytes() {
+    let app = TestApp::new().await;
+    let body = serde_json::to_vec(&json!({
+        "sources": ["x".repeat(256 * 1024)],
+        "destination": "archive"
+    }))
+    .expect("request body should serialize");
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/files/move/batch")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn directory_picker_pages_only_direct_child_directories() {
+    let app = TestApp::new().await;
+    for path in ["zeta", "alpha", "parent", "parent/nested"] {
+        let response = app
+            .json_request_as_admin(
+                Method::POST,
+                "/api/files/directories",
+                json!({ "path": path }),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let nested_child = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/directories",
+            json!({ "path": "parent/nested/leaf" }),
+        )
+        .await;
+    assert_eq!(nested_child.status(), StatusCode::OK);
+    app.upload_version("", "readme.txt", b"file", "seed").await;
+    app.upload_version("parent", "child.txt", b"file", "seed")
+        .await;
+
+    let first = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/directories?limit=1&offset=0")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let payload = response_json(first).await;
+    assert_eq!(payload["total"], Value::from(3));
+    assert_eq!(payload["has_more"], Value::Bool(true));
+    assert_eq!(payload["items"][0]["path"], Value::from("alpha"));
+    assert_eq!(payload["items"][0]["kind"], Value::from("directory"));
+
+    let nested = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/directories/parent%2Fnested")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(nested.status(), StatusCode::OK);
+    let payload = response_json(nested).await;
+    let paths: Vec<&str> = payload["items"]
+        .as_array()
+        .expect("directory items")
+        .iter()
+        .filter_map(|item| item["path"].as_str())
+        .collect();
+    assert_eq!(paths, vec!["parent/nested/leaf"]);
+
+    let file_path = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/directories/readme.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(file_path.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn paged_directory_queries_treat_like_metacharacters_as_path_text() {
+    let app = TestApp::new().await;
+    for path in ["folder%_name", "folderABname"] {
+        let response = app
+            .json_request_as_admin(
+                Method::POST,
+                "/api/files/directories",
+                json!({ "path": path }),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    for path in ["folder%_name/child", "folderABname/other"] {
+        let response = app
+            .json_request_as_admin(
+                Method::POST,
+                "/api/files/directories",
+                json!({ "path": path }),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    app.upload_version("folder%_name", "inside.txt", b"inside", "seed")
+        .await;
+    app.upload_version("folderABname", "outside.txt", b"outside", "seed")
+        .await;
+
+    let children = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/directories/folder%25_name")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(children.status(), StatusCode::OK);
+    let payload = response_json(children).await;
+    assert_eq!(payload["total"], Value::from(1));
+    assert_eq!(
+        payload["items"][0]["path"],
+        Value::from("folder%_name/child")
+    );
+
+    let entries = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list/folder%25_name?limit=10")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(entries.status(), StatusCode::OK);
+    let payload = response_json(entries).await;
+    let paths: Vec<&str> = payload["items"]
+        .as_array()
+        .expect("directory entries")
+        .iter()
+        .filter_map(|item| item["path"].as_str())
+        .collect();
+    assert_eq!(paths, vec!["folder%_name/child", "folder%_name/inside.txt"]);
+}
+
+#[tokio::test]
+async fn batch_move_moves_all_sources_into_the_destination_directory() {
+    let app = TestApp::new().await;
+    for path in ["docs", "archive"] {
+        let response = app
+            .json_request_as_admin(
+                Method::POST,
+                "/api/files/directories",
+                json!({ "path": path }),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    app.upload_version("docs", "first.txt", b"first", "seed")
+        .await;
+    app.upload_version("docs", "second.txt", b"second", "seed")
+        .await;
+
+    let response = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/move/batch",
+            json!({
+                "sources": ["docs/first.txt", "docs/second.txt"],
+                "destination": "archive"
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    for path in ["archive/first.txt", "archive/second.txt"] {
+        let response = app
+            .request_as_admin(
+                Request::builder()
+                    .uri(format!("/api/files/content?path={path}"))
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "entry should move: {path}"
+        );
+    }
+    let original = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/content?path=docs/first.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(original.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn multi_user_mode_isolates_tree_and_content_by_authenticated_user() {
     let app = TestApp::new().await;
 

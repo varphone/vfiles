@@ -20,6 +20,7 @@ import type {
 } from "../types";
 
 type DownloadProgress = { loaded: number; total?: number };
+export const MAX_MOVE_BATCH_ITEMS = 500;
 
 async function responseError(
   response: Response,
@@ -593,8 +594,7 @@ export const filesService = {
   /**
    * 分页获取目录列表（`GET /api/files/list`）。
    *
-   * 返回 `total` 用于展示总数与判断是否还有更多；`getFiles` 仍保留给需要完整列表的
-   * 场景（如移动对话框的重名检查）。
+   * 返回 `total` 用于展示总数与判断是否还有更多；`getFiles` 保留给需要完整列表的调用方。
    */
   async getFilesPage(
     path: string = "",
@@ -632,6 +632,42 @@ export const filesService = {
     };
   },
 
+  /** 分页获取目录的直接子目录，不拉取同级文件。 */
+  async getDirectoriesPage(
+    path: string = "",
+    opts?: { limit?: number; offset?: number },
+  ): Promise<{
+    items: FileInfo[];
+    total: number;
+    limit: number;
+    offset: number;
+    has_more: boolean;
+  }> {
+    const endpoint = path
+      ? `/files/directories/${encodeURIComponent(path)}`
+      : "/files/directories";
+    const search = new URLSearchParams();
+    if (opts?.limit !== undefined) search.set("limit", String(opts.limit));
+    if (opts?.offset !== undefined) search.set("offset", String(opts.offset));
+    const url = search.size > 0 ? `${endpoint}?${search.toString()}` : endpoint;
+
+    const response = await apiService.get<{
+      items: FileInfo[];
+      total: number;
+      limit: number;
+      offset: number;
+      has_more: boolean;
+    }>(url);
+    const payload = (response as any)?.data ?? response;
+    return {
+      items: Array.isArray(payload?.items) ? payload.items : [],
+      total: Number(payload?.total ?? 0),
+      limit: Number(payload?.limit ?? 0),
+      offset: Number(payload?.offset ?? 0),
+      has_more: Boolean(payload?.has_more),
+    };
+  },
+
   /**
    * 移动/重命名文件或目录
    */
@@ -641,6 +677,25 @@ export const filesService = {
     message: string = "移动/重命名",
   ): Promise<any> {
     return await apiService.post("/files/move", { from, to, message });
+  },
+
+  /** 原子地把多个条目移动到目标目录。 */
+  async movePaths(
+    sources: string[],
+    destination: string,
+    message?: string,
+  ): Promise<void> {
+    if (sources.length === 0) {
+      throw new Error("请选择要移动的项目");
+    }
+    if (sources.length > MAX_MOVE_BATCH_ITEMS) {
+      throw new Error(`一次最多移动 ${MAX_MOVE_BATCH_ITEMS} 个项目`);
+    }
+    await apiService.post("/files/move/batch", {
+      sources,
+      destination,
+      message,
+    });
   },
 
   /**
@@ -789,8 +844,7 @@ export const filesService = {
       );
 
       const initData = ((initResp as any)?.data ?? initResp) as
-        | UploadInitResponse
-        | undefined;
+        UploadInitResponse | undefined;
       const uploadId = initData?.uploadId ?? initData?.upload_id;
       const chunkSize = initData?.chunkSize ?? initData?.chunk_size;
       const totalChunks = initData?.totalChunks ?? initData?.total_chunks;

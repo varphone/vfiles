@@ -18,10 +18,12 @@ type PageResult = {
 const {
   getFilesMock,
   getFilesPageMock,
+  getDirectoriesPageMock,
   searchFilesMock,
   deleteFileMock,
   getFileContentMock,
   movePathMock,
+  movePathsMock,
   listTransferTargetsMock,
   transferOwnershipMock,
 } = vi.hoisted(() => ({
@@ -30,10 +32,25 @@ const {
   ),
   getFilesPageMock:
     vi.fn<(path: string, opts?: PageOpts) => Promise<PageResult>>(),
+  getDirectoriesPageMock: vi.fn(async (path: string, opts?: PageOpts) => {
+    const all = (await getFilesMock(path)) as Array<{ kind?: string }>;
+    const items = all.filter((item) => item.kind === "directory");
+    const offset = opts?.offset ?? 0;
+    const limit = opts?.limit ?? items.length;
+    const page = items.slice(offset, offset + limit);
+    return {
+      items: page,
+      total: items.length,
+      limit,
+      offset,
+      has_more: offset + page.length < items.length,
+    };
+  }),
   searchFilesMock: vi.fn(async (): Promise<unknown[]> => []),
   deleteFileMock: vi.fn(async () => ({ success: true })),
   getFileContentMock: vi.fn(async () => new Blob(["hello preview"])),
   movePathMock: vi.fn(async () => ({ success: true })),
+  movePathsMock: vi.fn(async () => undefined),
   listTransferTargetsMock: vi.fn(async (): Promise<unknown[]> => []),
   transferOwnershipMock: vi.fn(async () => ({
     transferred: 1,
@@ -68,9 +85,11 @@ getFilesPageMock.mockImplementation(
 
 vi.mock("../src/services/files.service", () => ({
   SEARCH_PAGE_SIZE: 100,
+  MAX_MOVE_BATCH_ITEMS: 500,
   filesService: {
     getFiles: getFilesMock,
     getFilesPage: getFilesPageMock,
+    getDirectoriesPage: getDirectoriesPageMock,
     listTransferTargets: listTransferTargetsMock,
     transferOwnership: transferOwnershipMock,
     // 侧栏概览与收藏：不 stub 时会在挂载后产生未处理的 rejection
@@ -94,6 +113,7 @@ vi.mock("../src/services/files.service", () => ({
     deleteFile: deleteFileMock,
     getFileContent: getFileContentMock,
     movePath: movePathMock,
+    movePaths: movePathsMock,
   },
 }));
 
@@ -157,11 +177,14 @@ beforeEach(() => {
   setDetailsVisible(false);
   getFilesMock.mockReset();
   getFilesPageMock.mockClear();
+  getDirectoriesPageMock.mockClear();
   searchFilesMock.mockReset();
   deleteFileMock.mockReset();
   getFileContentMock.mockReset();
   movePathMock.mockReset();
+  movePathsMock.mockReset();
   movePathMock.mockResolvedValue({ success: true });
+  movePathsMock.mockResolvedValue(undefined);
   getFilesMock.mockResolvedValue([]);
   searchFilesMock.mockResolvedValue([]);
   deleteFileMock.mockResolvedValue({ success: true });
@@ -649,9 +672,9 @@ describe("FileBrowser.vue drag and drop", () => {
     await fireEvent.drop(dirRow);
 
     await waitFor(() => {
-      expect(movePathMock).toHaveBeenCalledWith(
-        "a.txt",
-        "docs/a.txt",
+      expect(movePathsMock).toHaveBeenCalledWith(
+        ["a.txt"],
+        "docs",
         expect.stringContaining("移动文件"),
       );
     });
@@ -2189,7 +2212,6 @@ describe("FileBrowser.vue drop hint", () => {
       expect(document.querySelector(".desktop-drag-chip")).toBeNull(),
     );
   });
-
 
   it("sets a dynamic document title (r147)", async () => {
     renderWithProviders(FileBrowser as any);

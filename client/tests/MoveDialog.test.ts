@@ -3,11 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import MoveDialog from "../src/components/file-browser/MoveDialog.vue";
 import type { FileInfo } from "../src/types";
 
-const { getFilesMock } = vi.hoisted(() => ({ getFilesMock: vi.fn() }));
+const { getDirectoriesPageMock } = vi.hoisted(() => ({
+  getDirectoriesPageMock: vi.fn(),
+}));
 
 vi.mock("../src/services/files.service", () => ({
   SEARCH_PAGE_SIZE: 100,
-  filesService: { getFiles: getFilesMock },
+  MAX_MOVE_BATCH_ITEMS: 500,
+  filesService: { getDirectoriesPage: getDirectoriesPageMock },
 }));
 
 function entry(overrides: Partial<FileInfo>): FileInfo {
@@ -27,6 +30,16 @@ const rootEntries = [
   entry({ name: "文档", path: "文档" }),
 ];
 
+function directoryPage(items: FileInfo[], total = items.length, offset = 0) {
+  return {
+    items,
+    total,
+    limit: 100,
+    offset,
+    has_more: offset + items.length < total,
+  };
+}
+
 function renderDialog(overrides: Record<string, unknown> = {}) {
   return render(MoveDialog as any, {
     props: {
@@ -40,8 +53,8 @@ function renderDialog(overrides: Record<string, unknown> = {}) {
 
 describe("MoveDialog.vue", () => {
   beforeEach(() => {
-    getFilesMock.mockReset();
-    getFilesMock.mockResolvedValue(rootEntries);
+    getDirectoriesPageMock.mockReset();
+    getDirectoriesPageMock.mockResolvedValue(directoryPage(rootEntries));
   });
 
   it("summarises the items and lists only directories", async () => {
@@ -69,7 +82,12 @@ describe("MoveDialog.vue", () => {
     });
 
     await fireEvent.click(await screen.findByText("图片"));
-    await waitFor(() => expect(getFilesMock).toHaveBeenLastCalledWith("图片"));
+    await waitFor(() =>
+      expect(getDirectoriesPageMock).toHaveBeenLastCalledWith("图片", {
+        limit: 100,
+        offset: 0,
+      }),
+    );
 
     // 面包屑显示当前目标
     const crumbs = document.querySelectorAll(".move-dialog-crumb");
@@ -118,17 +136,54 @@ describe("MoveDialog.vue", () => {
   });
 
   it("shows the empty and error states inside the picker", async () => {
-    getFilesMock.mockResolvedValue([
-      entry({ name: "报告.txt", path: "报告.txt", kind: "file" }),
-    ]);
+    getDirectoriesPageMock.mockResolvedValue(directoryPage([]));
     const { unmount } = renderDialog();
     expect(await screen.findByText("此处没有子文件夹")).toBeInTheDocument();
     unmount();
 
-    getFilesMock.mockRejectedValue(new Error("服务器内部错误"));
+    getDirectoriesPageMock.mockRejectedValue(new Error("服务器内部错误"));
     renderDialog();
     expect(await screen.findByText("目录加载失败")).toBeInTheDocument();
     expect(screen.getByText("服务器内部错误")).toBeInTheDocument();
     expect(screen.getByText("重试")).toBeInTheDocument();
+  });
+
+  it("loads the next directory page on demand", async () => {
+    getDirectoriesPageMock.mockResolvedValueOnce(
+      directoryPage([rootEntries[0]], 101),
+    );
+    getDirectoriesPageMock.mockResolvedValueOnce(
+      directoryPage([rootEntries[1]], 101, 100),
+    );
+    renderDialog();
+
+    expect(await screen.findByText("图片")).toBeInTheDocument();
+    expect(
+      screen.getByText("第 1 / 2 页，共 101 个子文件夹"),
+    ).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+
+    expect(await screen.findByText("文档")).toBeInTheDocument();
+    expect(getDirectoriesPageMock).toHaveBeenLastCalledWith("", {
+      limit: 100,
+      offset: 100,
+    });
+  });
+
+  it("blocks batches above the server move limit", async () => {
+    renderDialog({
+      items: Array.from({ length: 501 }, (_, index) => ({
+        name: `file-${index}.txt`,
+        path: `docs/file-${index}.txt`,
+        kind: "file" as const,
+      })),
+    });
+
+    expect(
+      await screen.findByText("一次最多移动 500 个项目"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "移动到当前目录" }),
+    ).toBeDisabled();
   });
 });

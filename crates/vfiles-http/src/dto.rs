@@ -292,6 +292,13 @@ pub struct MoveEntryRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct MoveEntriesRequest {
+    pub sources: Vec<String>,
+    pub destination: String,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CreateSnapshotRequest {
     pub message: Option<String>,
 }

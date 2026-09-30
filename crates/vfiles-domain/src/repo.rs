@@ -526,6 +526,15 @@ pub trait EntryRepo {
         offset: u32,
     ) -> DomainResult<(Vec<Entry>, u64)>;
 
+    /// Return one indexed page of direct child directories and their total count.
+    async fn find_directory_children_page(
+        &self,
+        namespace_id: &NamespaceId,
+        parent_path: &NormalizedPath,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<Entry>, u64)>;
+
     /// Fetch the next bounded page of direct children in directory-first path order.
     /// The cursor contains `(is_directory, path)` from the last result.
     async fn find_children_after(

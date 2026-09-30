@@ -121,6 +121,44 @@
               </button>
             </li>
           </ul>
+
+          <div
+            v-if="directoryTotal > DIRECTORY_PAGE_SIZE"
+            class="move-dialog-pagination"
+            aria-label="子目录分页"
+          >
+            <button
+              class="vf-ghost-button"
+              type="button"
+              :disabled="loading || directoryOffset === 0"
+              @click="
+                loadDirectories(
+                  browserPath,
+                  directoryOffset - DIRECTORY_PAGE_SIZE,
+                )
+              "
+            >
+              上一页
+            </button>
+            <span>
+              第 {{ Math.floor(directoryOffset / DIRECTORY_PAGE_SIZE) + 1 }} /
+              {{ Math.ceil(directoryTotal / DIRECTORY_PAGE_SIZE) }} 页，共
+              {{ directoryTotal }} 个子文件夹
+            </span>
+            <button
+              class="vf-ghost-button"
+              type="button"
+              :disabled="loading || !directoryHasMore"
+              @click="
+                loadDirectories(
+                  browserPath,
+                  directoryOffset + DIRECTORY_PAGE_SIZE,
+                )
+              "
+            >
+              下一页
+            </button>
+          </div>
         </div>
 
         <!-- 仅在当前目录不可用时提示一行，而不是常驻状态卡片 -->
@@ -166,10 +204,14 @@ import Modal from "../common/Modal.vue";
 import EmptyState from "../common/EmptyState.vue";
 import SkeletonList from "../common/SkeletonList.vue";
 import FileTypeIcon from "./FileTypeIcon.vue";
-import { filesService } from "../../services/files.service";
+import {
+  filesService,
+  MAX_MOVE_BATCH_ITEMS,
+} from "../../services/files.service";
 import type { FileInfo } from "../../types";
 
 type MoveDialogItem = Pick<FileInfo, "name" | "path" | "kind">;
+const DIRECTORY_PAGE_SIZE = 100;
 
 type BreadcrumbItem = {
   name: string;
@@ -196,8 +238,12 @@ const emit = defineEmits<{
 
 const browserPath = ref("");
 const browserEntries = ref<FileInfo[]>([]);
+const directoryOffset = ref(0);
+const directoryTotal = ref(0);
+const directoryHasMore = ref(false);
 const loading = ref(false);
 const error = ref("");
+let directoryRequestId = 0;
 
 const dialogTitle = computed(() => {
   if (props.items.length === 1) {
@@ -252,10 +298,11 @@ const validationMessages = computed(() => {
   if (loading.value) return [] as string[];
 
   const issues = new Set<string>();
+  if (props.items.length > MAX_MOVE_BATCH_ITEMS) {
+    issues.add(`一次最多移动 ${MAX_MOVE_BATCH_ITEMS} 个项目`);
+    return Array.from(issues);
+  }
   const usedTargets = new Set<string>();
-  const existingPaths = new Set(
-    browserEntries.value.map((entry) => entry.path),
-  );
 
   for (const item of props.items) {
     if (
@@ -275,11 +322,6 @@ const validationMessages = computed(() => {
 
     if (usedTargets.has(targetPath)) {
       issues.add(`移动后会产生重名项：${item.name}`);
-      continue;
-    }
-
-    if (existingPaths.has(targetPath)) {
-      issues.add(`目标目录已存在同名项目：${item.name}`);
       continue;
     }
 
@@ -315,17 +357,32 @@ function normalizePath(rawPath: string): string {
     .replace(/\/+$/, "");
 }
 
-async function loadDirectories(path: string) {
+async function loadDirectories(path: string, offset = 0) {
+  const requestId = ++directoryRequestId;
+  const normalizedPath = normalizePath(path);
   loading.value = true;
   error.value = "";
 
   try {
-    browserEntries.value = await filesService.getFiles(path);
+    const page = await filesService.getDirectoriesPage(normalizedPath, {
+      limit: DIRECTORY_PAGE_SIZE,
+      offset: Math.max(0, offset),
+    });
+    if (requestId !== directoryRequestId) return;
+    browserPath.value = normalizedPath;
+    browserEntries.value = page.items;
+    directoryOffset.value = page.offset;
+    directoryTotal.value = page.total;
+    directoryHasMore.value = page.has_more;
   } catch (err) {
+    if (requestId !== directoryRequestId) return;
     browserEntries.value = [];
+    directoryOffset.value = 0;
+    directoryTotal.value = 0;
+    directoryHasMore.value = false;
     error.value = err instanceof Error ? err.message : "目录加载失败";
   } finally {
-    loading.value = false;
+    if (requestId === directoryRequestId) loading.value = false;
   }
 }
 
@@ -483,6 +540,20 @@ async function goUp() {
   margin: 0;
   padding: 0.25rem;
   list-style: none;
+}
+
+.move-dialog-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+  color: var(--vf-text-subtle);
+  font-size: 0.8rem;
+}
+
+.move-dialog-pagination .vf-ghost-button {
+  flex: 0 0 auto;
 }
 
 .move-dialog-row {
