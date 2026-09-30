@@ -277,9 +277,16 @@ pub fn cors_layer(config: &AppConfig) -> CorsLayer {
 
 async fn serve_frontend(
     State(state): State<AppState>,
+    method: Method,
     uri: Uri,
     headers: axum::http::HeaderMap,
 ) -> Response {
+    if (uri.path() == "/api" || uri.path().starts_with("/api/"))
+        || !(method == Method::GET || method == Method::HEAD)
+    {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
     let Some(frontend_assets) = state.frontend_assets.as_ref() else {
         return StatusCode::NOT_FOUND.into_response();
     };

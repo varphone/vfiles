@@ -8135,6 +8135,30 @@ async fn backend_serves_static_frontend_and_spa_fallback() {
     assert_eq!(spa_response.status(), StatusCode::OK);
     let spa_body = String::from_utf8_lossy(&response_bytes(spa_response).await).to_string();
     assert!(spa_body.contains("vfiles-ui"));
+
+    let unknown_api_response = app
+        .request(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/unknown-route")
+                .body(Body::empty())
+                .expect("unknown API request should build"),
+        )
+        .await;
+    assert_eq!(unknown_api_response.status(), StatusCode::NOT_FOUND);
+    assert!(response_bytes(unknown_api_response).await.is_empty());
+
+    let unsupported_method_response = app
+        .request(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/login")
+                .body(Body::empty())
+                .expect("non-GET SPA request should build"),
+        )
+        .await;
+    assert_eq!(unsupported_method_response.status(), StatusCode::NOT_FOUND);
+    assert!(response_bytes(unsupported_method_response).await.is_empty());
 }
 
 #[tokio::test]
