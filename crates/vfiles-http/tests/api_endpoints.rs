@@ -4740,6 +4740,80 @@ async fn chunk_upload_streams_and_rejects_a_part_over_its_configured_size() {
     assert_eq!(valid.status(), StatusCode::OK);
 }
 
+#[tokio::test]
+async fn chunked_upload_limits_requested_chunk_size_and_enforces_exact_part_lengths() {
+    let app = TestApp::new().await;
+    let oversized_init = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/upload/init",
+            json!({
+                "path": "docs",
+                "filename": "oversized-chunk.bin",
+                "size": 1,
+                "chunk_size": 5 * 1024 * 1024 + 1,
+            }),
+        )
+        .await;
+    assert_eq!(oversized_init.status(), StatusCode::BAD_REQUEST);
+    let payload = response_json(oversized_init).await;
+    assert_eq!(payload["details"]["field"], "chunk_size");
+
+    let init = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/upload/init",
+            json!({
+                "path": "docs",
+                "filename": "exact-parts.bin",
+                "size": 5,
+                "chunk_size": 4,
+            }),
+        )
+        .await;
+    assert_eq!(init.status(), StatusCode::OK);
+    let upload_id = response_json(init).await["upload_id"]
+        .as_str()
+        .expect("upload id should be present")
+        .to_string();
+
+    let first_part = app
+        .bytes_request_as_admin(
+            Method::PUT,
+            &format!("/api/files/upload/chunks/{upload_id}/0"),
+            b"1234".to_vec(),
+        )
+        .await;
+    assert_eq!(first_part.status(), StatusCode::OK);
+
+    let oversized_final_part = app
+        .bytes_request_as_admin(
+            Method::PUT,
+            &format!("/api/files/upload/chunks/{upload_id}/1"),
+            b"12".to_vec(),
+        )
+        .await;
+    assert_eq!(oversized_final_part.status(), StatusCode::BAD_REQUEST);
+
+    let out_of_range_part = app
+        .bytes_request_as_admin(
+            Method::PUT,
+            &format!("/api/files/upload/chunks/{upload_id}/2"),
+            b"1".to_vec(),
+        )
+        .await;
+    assert_eq!(out_of_range_part.status(), StatusCode::BAD_REQUEST);
+
+    let final_part = app
+        .bytes_request_as_admin(
+            Method::PUT,
+            &format!("/api/files/upload/chunks/{upload_id}/1"),
+            b"5".to_vec(),
+        )
+        .await;
+    assert_eq!(final_part.status(), StatusCode::OK);
+}
+
 /// 会话鉴权在节流窗口内不重复写入只用于展示的最近活动时间。
 #[tokio::test]
 async fn session_authentication_throttles_last_seen_writes() {

@@ -121,10 +121,11 @@ curl -T app.tar.gz -H "Authorization: Bearer $TOKEN" \
 ### 分块上传
 
 - `POST /api/files/upload/init`
-  - JSON: `path`, `filename`, `size`, `chunk_size?`, `last_modified?`, `mime?`
+  - JSON：`path`, `filename`, `size`, `chunk_size?`, `last_modified?`, `mime?`
+  - `chunk_size` 必须大于 0 且不超过服务端分片上限；省略时使用服务端配置值
   - 返回：`upload_id`, `chunk_size`, `total_chunks`
 - `PUT /api/files/upload/chunks/{upload_id}/{chunk_index}`
-  - Body: 当前分块的二进制内容
+  - Body: 当前分块的二进制内容；每块长度必须与文件大小、分片大小及索引对应
 - `POST /api/files/upload/complete/{upload_id}`
   - JSON: `message?`
 

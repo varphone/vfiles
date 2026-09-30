@@ -232,9 +232,14 @@ async fn create_upload(
         })
     })?;
 
-    let chunk_size = req
-        .chunk_size
-        .unwrap_or(state.config.limits.upload_chunk_size_bytes);
+    let max_chunk_size = state.config.limits.upload_chunk_size_bytes;
+    let chunk_size = req.chunk_size.unwrap_or(max_chunk_size);
+    if chunk_size > max_chunk_size {
+        return Err(ApiError::Validation {
+            field: "chunk_size".to_string(),
+            message: format!("must not exceed {max_chunk_size} bytes"),
+        });
+    }
 
     let upload = state
         .upload_service
@@ -262,7 +267,7 @@ async fn ensure_upload_owner(
     state: &AppState,
     jar: &CookieJar,
     upload_id: &UploadId,
-) -> ApiResult<u64> {
+) -> ApiResult<vfiles_domain::UploadSession> {
     let ctx = protected_request_context(state, jar).await?;
     let session = state.upload_store.get_upload_session(upload_id).await?;
 
@@ -270,7 +275,33 @@ async fn ensure_upload_owner(
         return Err(ApiError::Domain(DomainError::Forbidden));
     }
 
-    Ok(session.chunk_size)
+    Ok(session)
+}
+
+fn expected_upload_part_size(
+    state: &AppState,
+    session: &vfiles_domain::UploadSession,
+    part_index: u32,
+) -> ApiResult<u64> {
+    if session.chunk_size == 0
+        || session.chunk_size > state.config.limits.upload_chunk_size_bytes
+        || part_index >= session.total_chunks
+    {
+        return Err(ApiError::Domain(DomainError::UploadPartInvalid));
+    }
+
+    let part_offset = u64::from(part_index)
+        .checked_mul(session.chunk_size)
+        .ok_or(ApiError::Domain(DomainError::UploadPartInvalid))?;
+    let expected_part_size = session
+        .declared_size
+        .as_u64()
+        .checked_sub(part_offset)
+        .map(|remaining| remaining.min(session.chunk_size))
+        .filter(|size| *size > 0)
+        .ok_or(ApiError::Domain(DomainError::UploadPartInvalid))?;
+
+    Ok(expected_part_size)
 }
 
 async fn upload_chunk(
@@ -294,19 +325,23 @@ async fn upload_chunk(
         })
     })?;
 
-    let max_part_size = ensure_upload_owner(&state, &jar, &upload_id).await?;
+    let session = ensure_upload_owner(&state, &jar, &upload_id).await?;
+    let expected_part_size = expected_upload_part_size(&state, &session, chunk_index)?;
 
-    let expected_size = request
+    let declared_part_size = request
         .headers()
         .get(axum::http::header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok());
+    if declared_part_size.is_some_and(|size| size != expected_part_size) {
+        return Err(ApiError::Domain(DomainError::UploadPartInvalid));
+    }
 
     tracing::debug!(
         "Uploading chunk {} for upload {} (size: {} bytes)",
         chunk_index,
         upload_id,
-        expected_size.map_or_else(|| "streamed".to_string(), |size| size.to_string())
+        declared_part_size.map_or_else(|| "streamed".to_string(), |size| size.to_string())
     );
 
     use futures::TryStreamExt;
@@ -320,8 +355,8 @@ async fn upload_chunk(
         .upload_part_from_stream(
             &upload_id,
             chunk_index,
-            expected_size,
-            Some(max_part_size),
+            Some(expected_part_size),
+            Some(expected_part_size),
             None,
             None,
             None,
