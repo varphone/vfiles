@@ -31,13 +31,12 @@
 
 ## 文件树与目录操作
 
-- `GET /api/files/tree`
-  - 列出根目录直属子项
-- `GET /api/files/tree/{path}`
-  - 列出指定目录直属子项
+- `GET /api/files/tree` / `GET /api/files/tree/{path}`
+  - 列出根目录或指定目录的直属子项
   - Query: `commit` 可选，值为 snapshot/version 兼容标识；快照只允许在所属工作区读取
+  - 兼容接口最多返回 1000 个子项；超过上限时返回校验错误，请改用分页接口
 - `GET /api/files/list` / `GET /api/files/list/{path}`
-  - 分页列出目录直属子项（大目录推荐使用）
+  - 分页列出目录直属子项；目录超过 1000 项时应使用此接口
   - Query: `limit`（默认 200，夹取到 1..1000）、`offset`（默认 0）、`commit` 可选
   - 历史快照页在 SQLite 中按直属子项分页；快照必须属于当前工作区
   - 响应：`{ items, total, limit, offset, has_more }`

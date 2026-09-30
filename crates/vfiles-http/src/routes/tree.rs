@@ -296,13 +296,22 @@ async fn list_directory_impl(
     path: &NormalizedPath,
     commit: Option<&str>,
 ) -> ApiResult<Json<Vec<EntryDto>>> {
-    let snapshot_id = parse_snapshot_id(commit)?;
-    let tree = state
-        .workspace_service
-        .tree(namespace_id, path, snapshot_id.as_ref())
-        .await?;
+    let query = TreePageQuery {
+        commit: commit.map(str::to_owned),
+        limit: Some(MAX_PAGE_LIMIT),
+        offset: Some(0),
+    };
+    let Json(page) = paginated_listing(state, namespace_id, path, &query).await?;
 
-    Ok(Json(tree.items.into_iter().map(Into::into).collect()))
+    if page.total > MAX_PAGE_LIMIT {
+        return Err(ApiError::Domain(DomainError::Validation {
+            message: format!(
+                "Directory has more than {MAX_PAGE_LIMIT} entries; use the paginated endpoint /api/files/list"
+            ),
+        }));
+    }
+
+    Ok(Json(page.items))
 }
 
 /// 分页列出根目录：`GET /api/files/list?limit=&offset=&commit=`

@@ -6646,6 +6646,66 @@ async fn directory_listing_pages_in_sql_with_directory_first_order() {
     assert_eq!(payload["total"], Value::from(0));
 }
 
+#[tokio::test]
+async fn legacy_directory_listing_rejects_directories_over_its_response_limit() {
+    const ENTRY_COUNT: usize = 1001;
+
+    let app = TestApp::new().await;
+    let namespace_id: String = sqlx::query_scalar("SELECT id FROM namespaces LIMIT 1")
+        .fetch_one(&app.db_pool)
+        .await
+        .expect("default namespace should exist");
+
+    let mut insert = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+        "INSERT INTO entries (id, namespace_id, path, kind) ",
+    );
+    insert.push_values(0..ENTRY_COUNT, |mut row, index| {
+        row.push_bind(uuid::Uuid::new_v4().to_string())
+            .push_bind(&namespace_id)
+            .push_bind(format!("entry-{index:04}.txt"))
+            .push_bind("file");
+    });
+    insert
+        .build()
+        .execute(&app.db_pool)
+        .await
+        .expect("large directory fixture should insert");
+
+    let legacy = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/tree")
+                .body(Body::empty())
+                .expect("legacy tree request should build"),
+        )
+        .await;
+    assert_eq!(legacy.status(), StatusCode::BAD_REQUEST);
+    let legacy_payload = response_json(legacy).await;
+    assert_eq!(legacy_payload["code"], "VALIDATION_FAILED");
+    assert!(
+        legacy_payload["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("/api/files/list"))
+    );
+
+    let paginated = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=1000&offset=0")
+                .body(Body::empty())
+                .expect("paginated tree request should build"),
+        )
+        .await;
+    assert_eq!(paginated.status(), StatusCode::OK);
+    let paginated_payload = response_json(paginated).await;
+    assert_eq!(paginated_payload["total"], ENTRY_COUNT);
+    assert_eq!(
+        paginated_payload["items"].as_array().map(Vec::len),
+        Some(1000)
+    );
+    assert_eq!(paginated_payload["has_more"], Value::Bool(true));
+}
+
 /// 请求体本身非法时，也要返回统一的错误信封（而不是 axum 的 422 纯文本）。
 #[tokio::test]
 async fn malformed_json_body_uses_the_standard_error_envelope() {
