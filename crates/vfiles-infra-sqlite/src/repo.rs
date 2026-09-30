@@ -358,9 +358,9 @@ impl UserRepo for SqliteUserRepo {
         Ok(users)
     }
 
-    async fn list_transfer_targets(&self, exclude: &UserId) -> DomainResult<Vec<User>> {
-        let rows: Vec<UserRow> = sqlx::query_as(
-            "SELECT id, username, email, password_hash, role, disabled, created_at, updated_at, password_changed_at FROM users WHERE id != ? AND disabled = 0 ORDER BY username ASC LIMIT 500"
+    async fn list_transfer_targets(&self, exclude: &UserId) -> DomainResult<Vec<(UserId, String)>> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT id, username FROM users WHERE id != ? AND disabled = 0 ORDER BY username ASC LIMIT 500"
         )
         .bind(exclude.to_string())
         .fetch_all(&self.pool)
@@ -369,7 +369,14 @@ impl UserRepo for SqliteUserRepo {
             message: format!("Failed to list transfer targets: {}", e),
         })?;
 
-        rows.into_iter().map(user_from_row).collect()
+        rows.into_iter()
+            .map(|(id, username)| {
+                let id = UserId::from_string(&id).map_err(|error| DomainError::Internal {
+                    message: format!("Invalid transfer target user ID: {error}"),
+                })?;
+                Ok((id, username))
+            })
+            .collect()
     }
 }
 

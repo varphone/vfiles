@@ -114,11 +114,7 @@ impl OwnershipService {
 
     /// 可用作转移目标的其他用户（启用中，排除自己）。
     pub async fn list_targets(&self, actor: &UserId) -> DomainResult<Vec<(UserId, String)>> {
-        let users = self.user_repo.list_transfer_targets(actor).await?;
-        Ok(users
-            .into_iter()
-            .map(|user| (user.id, user.username.to_string()))
-            .collect())
+        self.user_repo.list_transfer_targets(actor).await
     }
 
     /// 把 `source_namespace` 下的若干路径（含目录子树）转给 `target_user_id`。

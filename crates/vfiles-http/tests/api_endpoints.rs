@@ -5283,9 +5283,13 @@ async fn transfer_rejects_conflicts_and_requires_auth() {
         )
         .await;
     let target_payload = response_json(targets).await;
-    let names: Vec<&str> = target_payload
-        .as_array()
-        .expect("targets")
+    let target_items = target_payload.as_array().expect("targets");
+    assert!(target_items.iter().all(|target| {
+        target.as_object().is_some_and(|fields| {
+            fields.len() == 2 && fields.contains_key("id") && fields.contains_key("username")
+        })
+    }));
+    let names: Vec<&str> = target_items
         .iter()
         .filter_map(|item| item["username"].as_str())
         .collect();

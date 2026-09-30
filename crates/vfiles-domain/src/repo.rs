@@ -30,7 +30,7 @@ pub trait UserRepo {
     async fn disable_user(&self, id: &UserId) -> DomainResult<()>;
     async fn list_users(&self, limit: i64, offset: i64) -> DomainResult<Vec<User>>;
     /// 列出可用作用户间转移目标的其他用户（启用中，排除自己）。
-    async fn list_transfer_targets(&self, exclude: &UserId) -> DomainResult<Vec<User>>;
+    async fn list_transfer_targets(&self, exclude: &UserId) -> DomainResult<Vec<(UserId, String)>>;
 }
 
 /// 访问令牌仓储（只存摘要；明文不落库）。
