@@ -42,7 +42,9 @@ const MAX_DECODER_ALLOC_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_CONCURRENT_THUMBNAIL_REQUESTS: usize = 64;
 const MAX_CONCURRENT_THUMBNAIL_GENERATIONS: usize = 2;
 const JPEG_QUALITY: u8 = 82;
-const CACHE_CONTROL: &str = "private, max-age=604800";
+// Paths are scoped to the authenticated user's namespace. Revalidate before
+// reusing a browser cache entry so account switches cannot expose old images.
+const CACHE_CONTROL: &str = "private, no-cache";
 
 /// 缩略图磁盘缓存上限与清理目标（按 mtime 回收最旧的条目）。
 ///

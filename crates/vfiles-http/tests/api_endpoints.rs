@@ -8263,7 +8263,7 @@ async fn thumbnail_generates_cached_jpeg_and_supports_conditional_requests() {
         .expect("cache-control should be present")
         .to_str()
         .expect("cache-control should be ascii");
-    assert!(cache_control.contains("max-age"));
+    assert_eq!(cache_control, "private, no-cache");
     let etag = response
         .headers()
         .get(header::ETAG)
@@ -8301,6 +8301,13 @@ async fn thumbnail_generates_cached_jpeg_and_supports_conditional_requests() {
         )
         .await;
     assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        not_modified
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("304 cache-control should be present"),
+        "private, no-cache"
+    );
 
     let weak_etag = format!("W/{}", etag.to_str().expect("etag should be ascii"));
     let weak_match = app
