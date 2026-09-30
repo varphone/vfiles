@@ -8,7 +8,9 @@ use axum::{Json, Router, http::StatusCode, routing::post};
 use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 
-use crate::{AppState, error::ApiResult, routes::protected_request_context};
+use crate::{
+    AppState, audit::sanitize_log_field, error::ApiResult, routes::protected_request_context,
+};
 
 const MAX_CLIENT_ERROR_BODY_BYTES: usize = 16 * 1024;
 const MAX_CLIENT_ERROR_SOURCE_CHARS: usize = 200;
@@ -41,38 +43,4 @@ async fn report(
         "客户端错误上报（前端边界收口）"
     );
     Ok(StatusCode::NO_CONTENT)
-}
-
-fn sanitize_log_field(value: &str, max_chars: usize) -> String {
-    value
-        .chars()
-        .take(max_chars)
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::sanitize_log_field;
-
-    #[test]
-    fn sanitizes_line_breaks_and_other_control_characters() {
-        assert_eq!(
-            sanitize_log_field("ui\r\nchunk\tload\0failed", 100),
-            "ui  chunk load failed"
-        );
-    }
-
-    #[test]
-    fn bounds_logged_fields_by_unicode_character_count() {
-        let sanitized = sanitize_log_field(&"界".repeat(600), 500);
-
-        assert_eq!(sanitized.chars().count(), 500);
-    }
 }

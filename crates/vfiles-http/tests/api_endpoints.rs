@@ -2558,6 +2558,49 @@ async fn login_for_unknown_user_returns_invalid_credentials() {
 }
 
 #[tokio::test]
+async fn failed_login_audit_identifier_is_bounded_and_single_line() {
+    let app = TestApp::new().await;
+    let login_identifier = format!("bad\r\n{}", "x".repeat(300));
+
+    let response = app
+        .json_request(
+            Method::POST,
+            "/api/auth/login",
+            json!({
+                "username_or_email": login_identifier,
+                "password": "wrong-password",
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let audit_response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/audit/logs?result=failure&limit=10")
+                .body(Body::empty())
+                .expect("audit request should build"),
+        )
+        .await;
+    assert_eq!(audit_response.status(), StatusCode::OK);
+    let payload = response_json(audit_response).await;
+    let items = payload["items"]
+        .as_array()
+        .expect("audit items should be an array");
+    let failed_login = items
+        .iter()
+        .find(|item| item["action"] == "login.failure")
+        .expect("failed login audit entry should exist");
+    let identifier = failed_login["username"]
+        .as_str()
+        .expect("sanitized identifier should be present");
+
+    assert_eq!(identifier, format!("bad  {}", "x".repeat(249)));
+    assert!(!identifier.contains('\r'));
+    assert!(!identifier.contains('\n'));
+}
+
+#[tokio::test]
 async fn login_with_invalid_identifier_format_returns_invalid_credentials() {
     let app = TestApp::new().await;
 

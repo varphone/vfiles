@@ -11,6 +11,28 @@ use vfiles_infra_sqlite::SqliteAuditLogRepo;
 use crate::AppState;
 use crate::middleware::client_ip_from_headers;
 
+const MAX_AUDIT_USER_AGENT_CHARS: usize = 512;
+
+/// Bound untrusted text before it is copied into logs or audit display fields.
+pub(crate) fn sanitize_log_field(value: &str, max_chars: usize) -> String {
+    value
+        .chars()
+        .take(max_chars)
+        .map(|character| {
+            if character.is_control()
+                || matches!(
+                    character,
+                    '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+                )
+            {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
 /// 动作标识常量：与前端筛选、文档保持一致。
 pub mod action {
     pub const LOGIN_SUCCESS: &str = "login.success";
@@ -46,7 +68,7 @@ pub fn request_meta(headers: &HeaderMap) -> (Option<String>, Option<String>) {
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_string);
+        .map(|value| sanitize_log_field(value, MAX_AUDIT_USER_AGENT_CHARS));
 
     (ip, user_agent)
 }
@@ -76,3 +98,45 @@ pub(crate) async fn record_for(
 
 /// 便于测试与装配处引用具体服务类型。
 pub type Audit = AuditService<SqliteAuditLogRepo>;
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{HeaderMap, HeaderValue, header};
+
+    use super::{MAX_AUDIT_USER_AGENT_CHARS, request_meta, sanitize_log_field};
+
+    #[test]
+    fn sanitizes_line_breaks_and_other_control_characters() {
+        assert_eq!(
+            sanitize_log_field("ui\r\nchunk\tload\0failed\u{2028}entry\u{202e}", 100),
+            "ui  chunk load failed entry "
+        );
+    }
+
+    #[test]
+    fn bounds_logged_fields_by_unicode_character_count() {
+        let sanitized = sanitize_log_field(&"界".repeat(600), 500);
+
+        assert_eq!(sanitized.chars().count(), 500);
+    }
+
+    #[test]
+    fn bounds_user_agent_in_audit_metadata() {
+        let user_agent = format!("browser/{}", "x".repeat(600));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::USER_AGENT,
+            HeaderValue::from_str(&user_agent).expect("user agent should be a valid header"),
+        );
+
+        let (_, recorded_user_agent) = request_meta(&headers);
+
+        assert_eq!(
+            recorded_user_agent
+                .expect("user agent should be recorded")
+                .chars()
+                .count(),
+            MAX_AUDIT_USER_AGENT_CHARS
+        );
+    }
+}
