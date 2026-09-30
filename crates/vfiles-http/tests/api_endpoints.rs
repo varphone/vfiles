@@ -2948,6 +2948,59 @@ async fn cors_preflight_allows_configured_public_origin_with_credentials() {
 }
 
 #[tokio::test]
+async fn upload_blocks_untrusted_browser_origins_and_keeps_cli_access() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+
+    let (blocked_body, blocked_content_type) =
+        single_upload_multipart("blocked.txt", "", "cross-origin upload", b"blocked");
+    let blocked = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/files/upload")
+                .header(header::ORIGIN, "http://evil.example.test")
+                .header("sec-fetch-site", "same-site")
+                .header(header::CONTENT_TYPE, blocked_content_type)
+                .body(Body::from(blocked_body))
+                .expect("cross-origin upload request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(blocked.status(), StatusCode::FORBIDDEN);
+
+    let (allowed_body, allowed_content_type) =
+        single_upload_multipart("allowed.txt", "", "same-origin upload", b"allowed");
+    let allowed = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/files/upload")
+                .header(header::ORIGIN, "http://example.test:4242")
+                .header("sec-fetch-site", "same-origin")
+                .header(header::CONTENT_TYPE, allowed_content_type)
+                .body(Body::from(allowed_body))
+                .expect("configured-origin upload request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(allowed.status(), StatusCode::OK);
+
+    let cli_upload = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/files/upload?path=cli-upload.txt")
+                .header(header::CONTENT_TYPE, "application/octet-stream")
+                .body(Body::from("CLI upload"))
+                .expect("originless CLI upload request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(cli_upload.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn health_json_response_supports_gzip_when_requested() {
     let app = TestApp::new().await;
 

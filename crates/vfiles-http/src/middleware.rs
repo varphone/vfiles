@@ -9,9 +9,9 @@ use std::{
 
 use axum::{
     extract::{ConnectInfo, Request, State},
-    http::{HeaderName, HeaderValue},
+    http::{HeaderName, HeaderValue, Method, header},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use sha2::{Digest, Sha256};
 use vfiles_app::LoginRateLimitBlock;
@@ -128,6 +128,56 @@ pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
         ));
 
     response
+}
+
+/// Reject browser write requests from origins that are not configured for this API.
+///
+/// CORS does not stop HTML forms from submitting `multipart/form-data`; this guard
+/// covers those requests as well as cross-origin fetches. Requests without browser
+/// origin metadata remain available to command-line clients.
+pub async fn write_origin_guard_middleware(
+    State(allowed_origins): State<std::sync::Arc<Vec<String>>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if !is_write_origin_allowed(req.method(), req.headers(), &allowed_origins) {
+        return crate::error::ApiError::forbidden("Cross-origin write requests are not allowed")
+            .into_response();
+    }
+
+    next.run(req).await
+}
+
+fn is_write_origin_allowed(
+    method: &Method,
+    headers: &axum::http::HeaderMap,
+    allowed_origins: &[String],
+) -> bool {
+    if method == Method::GET || method == Method::HEAD || method == Method::OPTIONS {
+        return true;
+    }
+
+    let mut origins = headers.get_all(header::ORIGIN).iter();
+    if let Some(origin) = origins.next() {
+        return origins.next().is_none()
+            && origin.to_str().is_ok_and(|origin| {
+                allowed_origins
+                    .iter()
+                    .any(|allowed| origin.eq_ignore_ascii_case(allowed))
+            });
+    }
+
+    // `same-site` is insufficient because an untrusted sibling domain shares cookies.
+    // When Origin is absent, only an explicit same-origin Fetch Metadata value is safe.
+    let mut fetch_sites = headers.get_all("sec-fetch-site").iter();
+    if let Some(fetch_site) = fetch_sites.next() {
+        return fetch_sites.next().is_none()
+            && fetch_site
+                .to_str()
+                .is_ok_and(|value| value.eq_ignore_ascii_case("same-origin"));
+    }
+
+    true
 }
 
 /// Read only the internal value installed by `client_ip_middleware`.
@@ -323,10 +373,11 @@ impl FixedWindowLimiter {
 mod tests {
     use std::net::IpAddr;
 
-    use axum::http::{HeaderMap, HeaderValue};
+    use axum::http::{HeaderMap, HeaderValue, Method, header};
 
     use super::{
-        FixedWindowLimiter, MAX_FIXED_WINDOW_COUNTERS, client_ip_from_headers, resolve_client_ip,
+        FixedWindowLimiter, MAX_FIXED_WINDOW_COUNTERS, client_ip_from_headers,
+        is_write_origin_allowed, resolve_client_ip,
     };
 
     fn ip(value: &str) -> IpAddr {
@@ -428,5 +479,64 @@ mod tests {
         let state = limiter.lock_state();
         assert_eq!(state.counters.len(), MAX_FIXED_WINDOW_COUNTERS);
         assert!(state.counters.keys().all(|key| key.len() == 32));
+    }
+
+    #[test]
+    fn write_origin_guard_rejects_untrusted_and_sibling_origins() {
+        let allowed_origins = vec!["https://files.example.test".to_string()];
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://evil.test"),
+        );
+        headers.insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
+
+        assert!(!is_write_origin_allowed(
+            &Method::POST,
+            &headers,
+            &allowed_origins
+        ));
+
+        headers.remove(header::ORIGIN);
+        headers.insert("sec-fetch-site", HeaderValue::from_static("same-site"));
+        assert!(!is_write_origin_allowed(
+            &Method::POST,
+            &headers,
+            &allowed_origins
+        ));
+    }
+
+    #[test]
+    fn write_origin_guard_allows_configured_and_non_browser_requests() {
+        let allowed_origins = vec!["https://files.example.test".to_string()];
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("HTTPS://FILES.EXAMPLE.TEST"),
+        );
+        assert!(is_write_origin_allowed(
+            &Method::POST,
+            &headers,
+            &allowed_origins
+        ));
+
+        headers.clear();
+        assert!(is_write_origin_allowed(
+            &Method::PUT,
+            &headers,
+            &allowed_origins
+        ));
+
+        headers.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
+        assert!(is_write_origin_allowed(
+            &Method::DELETE,
+            &headers,
+            &allowed_origins
+        ));
+        assert!(is_write_origin_allowed(
+            &Method::GET,
+            &HeaderMap::new(),
+            &allowed_origins
+        ));
     }
 }

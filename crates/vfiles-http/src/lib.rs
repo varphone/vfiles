@@ -91,12 +91,29 @@ pub fn build_router_without_frontend(state: AppState) -> Router<()> {
 
 fn build_router_inner(state: AppState, serve_frontend_fallback: bool) -> Router<()> {
     let trusted_proxy_ips = Arc::new(state.config.http.trusted_proxy_ips.clone());
+    let mut write_allowed_origins = vec![
+        state
+            .config
+            .http
+            .public_base_url
+            .origin()
+            .ascii_serialization(),
+    ];
+    if !state.config.http.cors_allow_any_origin {
+        write_allowed_origins.extend(state.config.http.effective_cors_allowed_origins());
+    }
+    write_allowed_origins.sort_unstable();
+    write_allowed_origins.dedup();
+    let api_router = routes::api_router().layer(axum::middleware::from_fn_with_state(
+        Arc::new(write_allowed_origins),
+        middleware::write_origin_guard_middleware,
+    ));
     let mut router = Router::new()
         .route(
             "/s/{code}",
             axum::routing::get(routes::share::download_share),
         )
-        .nest("/api", routes::api_router());
+        .nest("/api", api_router);
 
     if serve_frontend_fallback
         && state
