@@ -10,6 +10,7 @@ pub mod routes;
 
 use axum::{
     Router,
+    body::Body,
     extract::Request,
     extract::State,
     http::{Extensions, HeaderValue, Method, StatusCode, Uri, header},
@@ -21,7 +22,7 @@ use std::{sync::Arc, time::Duration};
 use tower_http::compression::CompressionLayer;
 use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
-use tower_http::timeout::RequestBodyTimeoutLayer;
+use tower_http::timeout::{DeadlineBody, RequestBodyTimeoutLayer};
 use vfiles_app::{
     AdminService, AuthService, HealthService, HistoryService, SearchService, SessionService,
     ShareService, UploadService, WorkspaceService,
@@ -37,6 +38,7 @@ use vfiles_infra_sqlite::{
 };
 
 const API_REQUEST_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const API_REQUEST_BODY_DEADLINE: Duration = Duration::from_secs(120);
 
 pub use frontend::FrontendAssets;
 pub use middleware::{
@@ -116,6 +118,9 @@ fn build_router_inner(state: AppState, serve_frontend_fallback: bool) -> Router<
         .layer(axum::middleware::from_fn(
             middleware::api_request_admission_middleware,
         ))
+        .layer(axum::middleware::from_fn(
+            api_request_body_deadline_middleware,
+        ))
         .layer(axum::middleware::from_fn(api_response_cache_policy));
     let api_router = api_router.layer(RequestBodyTimeoutLayer::new(API_REQUEST_BODY_IDLE_TIMEOUT));
     let mut router = Router::new()
@@ -164,6 +169,31 @@ async fn api_response_cache_policy(request: Request, next: Next) -> Response {
         .entry(header::CACHE_CONTROL)
         .or_insert(HeaderValue::from_static("private, no-store"));
     response
+}
+
+fn request_body_uses_total_deadline(method: &Method, uri: &Uri) -> bool {
+    let path = uri.path().strip_prefix("/api").unwrap_or(uri.path());
+    let is_streamed_upload = (method == Method::POST && path == "/files/upload")
+        || (method == Method::PUT
+            && (path == "/files/upload" || path.starts_with("/files/upload/")));
+    !is_streamed_upload
+}
+
+fn apply_request_body_deadline(request: Request, timeout: Duration) -> Request {
+    if !request_body_uses_total_deadline(request.method(), request.uri()) {
+        return request;
+    }
+
+    let (parts, body) = request.into_parts();
+    Request::from_parts(parts, Body::new(DeadlineBody::new(timeout, body)))
+}
+
+async fn api_request_body_deadline_middleware(request: Request, next: Next) -> Response {
+    next.run(apply_request_body_deadline(
+        request,
+        API_REQUEST_BODY_DEADLINE,
+    ))
+    .await
 }
 
 /// 压缩层作用于整个路由（含静态前端资源与 `/api`）。
@@ -419,6 +449,8 @@ mod request_body_timeout_tests {
     use tower::ServiceExt;
     use tower_http::timeout::RequestBodyTimeoutLayer;
 
+    use super::{apply_request_body_deadline, request_body_uses_total_deadline};
+
     async fn consume_body(_body: Bytes) -> StatusCode {
         StatusCode::NO_CONTENT
     }
@@ -436,5 +468,52 @@ mod request_body_timeout_tests {
         let response = app.oneshot(request).await.expect("request should complete");
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn total_deadline_aborts_a_slow_drip_control_body() {
+        let body_stream = futures::stream::unfold(0, |chunk_index| async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            Some((
+                Ok::<_, Infallible>(Bytes::from_static(b"x")),
+                chunk_index + 1,
+            ))
+        });
+        let body = Body::from_stream(body_stream);
+        let request = Request::post("/api/files/move")
+            .body(body)
+            .expect("request should build");
+        let request = apply_request_body_deadline(request, Duration::from_millis(25));
+        let app = Router::new().route("/api/files/move", post(consume_body));
+
+        let response = app.oneshot(request).await.expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn total_request_body_deadline_exempts_streamed_upload_routes() {
+        for (method, path, expected) in [
+            (axum::http::Method::POST, "/api/files/upload", false),
+            (axum::http::Method::POST, "/files/upload", false),
+            (axum::http::Method::PUT, "/api/files/upload", false),
+            (axum::http::Method::PUT, "/files/upload", false),
+            (
+                axum::http::Method::PUT,
+                "/api/files/upload/chunks/id/0",
+                false,
+            ),
+            (axum::http::Method::PUT, "/files/upload/chunks/id/0", false),
+            (axum::http::Method::POST, "/api/files/upload/init", true),
+            (
+                axum::http::Method::POST,
+                "/api/files/upload/complete/id",
+                true,
+            ),
+            (axum::http::Method::POST, "/api/files/move", true),
+        ] {
+            let uri = path.parse::<axum::http::Uri>().expect("URI should parse");
+            assert_eq!(request_body_uses_total_deadline(&method, &uri), expected);
+        }
     }
 }
