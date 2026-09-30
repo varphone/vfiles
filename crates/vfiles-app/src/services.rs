@@ -985,6 +985,7 @@ pub struct AuthService {
     user_repo: SqliteUserRepo,
     session_repo: SqliteSessionRepo,
     session_ttl_seconds: u64,
+    password_work_gate: PasswordWorkGate,
     /// 热验缓存以 SHA-256 凭据摘要为键，只缓存成功认证；每次命中仍从数据库
     /// 读取当前账号状态和密码哈希，避免账号变更后继续接受旧凭据。
     verified_cache: VerifiedCredentialCache,
@@ -993,6 +994,83 @@ pub struct AuthService {
 type VerifiedCredentialCache = std::sync::Arc<
     std::sync::Mutex<std::collections::HashMap<[u8; 32], (User, std::time::Instant)>>,
 >;
+
+const MAX_CONCURRENT_PASSWORD_JOBS: usize = 4;
+
+/// Keep memory-hard password work off Tokio workers and cap its per-process concurrency.
+#[derive(Debug, Clone)]
+struct PasswordWorkGate {
+    permits: std::sync::Arc<tokio::sync::Semaphore>,
+}
+
+impl PasswordWorkGate {
+    fn new(max_parallel: usize) -> Self {
+        Self {
+            permits: std::sync::Arc::new(tokio::sync::Semaphore::new(max_parallel)),
+        }
+    }
+
+    async fn run<T, F>(&self, work: F) -> DomainResult<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> DomainResult<T> + Send + 'static,
+    {
+        let permit = self
+            .permits
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| DomainError::RateLimited)?;
+
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            work()
+        })
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Password worker failed: {error}"),
+        })?
+    }
+}
+
+#[cfg(test)]
+mod password_work_gate_tests {
+    use super::PasswordWorkGate;
+    use std::{sync::mpsc, thread};
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn password_jobs_run_off_runtime_and_reject_when_saturated() {
+        let gate = PasswordWorkGate::new(1);
+        let runtime_thread = thread::current().id();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let first_gate = gate.clone();
+
+        let first = tokio::spawn(async move {
+            first_gate
+                .run(move || {
+                    let _ = started_tx.send(thread::current().id());
+                    let _ = release_rx.recv();
+                    Ok(1)
+                })
+                .await
+        });
+
+        let password_thread = started_rx
+            .await
+            .expect("password work should start on a blocking thread");
+        assert_ne!(password_thread, runtime_thread);
+        assert!(matches!(
+            gate.run(|| Ok(2)).await,
+            Err(vfiles_domain::DomainError::RateLimited)
+        ));
+
+        release_tx
+            .send(())
+            .expect("the blocking password job should still be waiting");
+        assert_eq!(first.await.expect("password task should join").unwrap(), 1);
+        assert_eq!(gate.run(|| Ok(3)).await.unwrap(), 3);
+    }
+}
 
 impl AuthService {
     pub fn new(
@@ -1004,6 +1082,7 @@ impl AuthService {
             user_repo,
             session_repo,
             session_ttl_seconds,
+            password_work_gate: PasswordWorkGate::new(MAX_CONCURRENT_PASSWORD_JOBS),
             verified_cache: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
@@ -1030,8 +1109,8 @@ impl AuthService {
             });
         }
 
-        // Hash password (placeholder - in real impl, use proper hashing)
-        let password_hash = self.hash_password(&req.password)?;
+        // Password hashing runs in the bounded blocking pool.
+        let password_hash = self.hash_password(&req.password).await?;
 
         let user_id = self
             .user_repo
@@ -1167,7 +1246,7 @@ impl AuthService {
                 .remove(&key);
         }
 
-        if !self.verify_password(password, &user.password_hash)? {
+        if !self.verify_password(password, &user.password_hash).await? {
             return Err(DomainError::InvalidCredentials);
         }
         // 仅缓存成功验证结果；命中前仍核对当前账号记录，密码原文从不缓存。
@@ -1179,7 +1258,7 @@ impl AuthService {
 
         // 旧 SHA-256 哈希在成功校验后透明升级；失败不得影响本次登录
         if !user.password_hash.starts_with("$argon2")
-            && let Ok(new_hash) = self.hash_password(password)
+            && let Ok(new_hash) = self.hash_password(password).await
         {
             let _ = self.user_repo.update_password(&user.id, &new_hash).await;
         }
@@ -1272,12 +1351,19 @@ impl AuthService {
         hex::encode(hasher.finalize()) == hash
     }
 
-    fn hash_password(&self, password: &str) -> DomainResult<String> {
-        Self::hash_password_for_storage(password)
+    async fn hash_password(&self, password: &str) -> DomainResult<String> {
+        let password = password.to_string();
+        self.password_work_gate
+            .run(move || Self::hash_password_for_storage(&password))
+            .await
     }
 
-    fn verify_password(&self, password: &str, hash: &str) -> DomainResult<bool> {
-        Ok(Self::verify_password_for_storage(password, hash))
+    async fn verify_password(&self, password: &str, hash: &str) -> DomainResult<bool> {
+        let password = password.to_string();
+        let hash = hash.to_string();
+        self.password_work_gate
+            .run(move || Ok(Self::verify_password_for_storage(&password, &hash)))
+            .await
     }
 
     fn hash_token(&self, token: &str) -> DomainResult<String> {
@@ -1297,6 +1383,7 @@ impl Clone for AuthService {
             user_repo: self.user_repo.clone(),
             session_repo: self.session_repo.clone(),
             session_ttl_seconds: self.session_ttl_seconds,
+            password_work_gate: self.password_work_gate.clone(),
             // r9 Clone = Arc 共享缓存（新建空 = 分叉 ✗ 共享才免疫 clone 分叉 ✓）
             verified_cache: self.verified_cache.clone(),
         }
@@ -4572,7 +4659,7 @@ where
         }
 
         // Hash password
-        let password_hash = self.auth_service.hash_password(&req.password)?;
+        let password_hash = self.auth_service.hash_password(&req.password).await?;
 
         self.admin_repo
             .create_user(&username, &email, &password_hash, req.role)
@@ -4677,7 +4764,7 @@ where
         // 先确认用户存在（不存在的 id 直接 NotFound）
         self.auth_service.user_repo().find_by_id(user_id).await?;
 
-        let hash = AuthService::hash_password_for_storage(password)?;
+        let hash = self.auth_service.hash_password(password).await?;
         self.auth_service
             .user_repo()
             .update_password(user_id, &hash)
@@ -4735,7 +4822,7 @@ where
         // Check if user exists
         self.auth_service.user_repo().find_by_id(user_id).await?;
 
-        let password_hash = self.auth_service.hash_password(new_password)?;
+        let password_hash = self.auth_service.hash_password(new_password).await?;
         self.admin_repo
             .reset_user_password(user_id, &password_hash)
             .await
