@@ -6642,6 +6642,144 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         })
     }
 
+    async fn create_snapshot_from_namespace(
+        &self,
+        namespace_id: &NamespaceId,
+        message: Option<&str>,
+        kind: SnapshotKind,
+        user_id: &UserId,
+        _entry_repo: &(dyn EntryRepo + Send + Sync),
+    ) -> DomainResult<SnapshotId> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to begin namespace snapshot transaction: {error}"),
+            })?;
+        let namespace_id_str = namespace_id.to_string();
+        let user_id_str = user_id.to_string();
+        let snapshot_no: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COALESCE(
+                MAX(
+                    CASE
+                        WHEN instr(name, '-') > 0 THEN CAST(substr(name, instr(name, '-') + 1) AS INTEGER)
+                        ELSE 0
+                    END
+                ),
+                0
+            ) + 1
+            FROM snapshots
+            WHERE namespace_id = ?
+            "#,
+        )
+        .bind(&namespace_id_str)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to calculate next snapshot number: {error}"),
+        })?;
+        let snapshot_no = u32::try_from(snapshot_no).map_err(|_| DomainError::Internal {
+            message: format!("Invalid snapshot number: {snapshot_no}"),
+        })?;
+        let snapshot_id = SnapshotId::new();
+        let snapshot_id_str = snapshot_id.to_string();
+        let created_at = time::OffsetDateTime::now_utc();
+
+        sqlx::query(
+            "INSERT INTO snapshots (id, namespace_id, name, description, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&snapshot_id_str)
+        .bind(&namespace_id_str)
+        .bind(snapshot_name(kind, snapshot_no))
+        .bind(message)
+        .bind(created_at)
+        .bind(&user_id_str)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to create namespace snapshot: {error}"),
+        })?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO snapshot_entries (
+                snapshot_id,
+                entry_id,
+                entry_version_id,
+                entry_path,
+                entry_kind,
+                blob_id,
+                size,
+                content_type,
+                version_no,
+                change_type,
+                created_by,
+                created_at
+            )
+            SELECT
+                ?,
+                e.id,
+                ev.id,
+                e.path,
+                e.kind,
+                ev.blob_id,
+                CASE WHEN ev.id IS NULL THEN NULL ELSE COALESCE(ev.size, 0) END,
+                ev.content_type,
+                ev.version,
+                CASE WHEN ev.version IS NULL OR ev.version <= 1 THEN 'added' ELSE 'modified' END,
+                COALESCE(ev.created_by, ?),
+                COALESCE(ev.created_at, ?)
+            FROM entries e
+            LEFT JOIN entry_versions ev ON ev.id = (
+                SELECT latest.id
+                FROM entry_versions latest
+                WHERE latest.entry_id = e.id AND e.kind = 'file'
+                ORDER BY latest.version DESC
+                LIMIT 1
+            )
+            WHERE e.namespace_id = ?
+            ORDER BY e.path ASC
+            "#,
+        )
+        .bind(&snapshot_id_str)
+        .bind(&user_id_str)
+        .bind(created_at)
+        .bind(&namespace_id_str)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to copy namespace entries into snapshot: {error}"),
+        })?;
+
+        sqlx::query(
+            r#"
+            UPDATE blobs
+            SET ref_count = ref_count + snapshot_blob_refs.reference_count
+            FROM (
+                SELECT blob_id, COUNT(*) AS reference_count
+                FROM snapshot_entries
+                WHERE snapshot_id = ? AND blob_id IS NOT NULL
+                GROUP BY blob_id
+            ) AS snapshot_blob_refs
+            WHERE blobs.id = snapshot_blob_refs.blob_id
+            "#,
+        )
+        .bind(&snapshot_id_str)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to update snapshot blob reference counts: {error}"),
+        })?;
+
+        tx.commit().await.map_err(|error| DomainError::Internal {
+            message: format!("Failed to commit namespace snapshot: {error}"),
+        })?;
+
+        Ok(snapshot_id)
+    }
+
     async fn find_snapshot(&self, snapshot_id: &SnapshotId) -> DomainResult<Snapshot> {
         let row: (String, String, String, Option<String>, String, String) = sqlx::query_as(
             "SELECT id, namespace_id, name, description, created_at, created_by FROM snapshots WHERE id = ?"
@@ -10296,6 +10434,153 @@ mod snapshot_repo_tests {
     async fn cleanup_db(pool: SqlitePool, db_path: Utf8PathBuf) {
         pool.close().await;
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn namespace_snapshot_copies_current_tree_and_updates_blob_refs_atomically() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup_snapshot_repo().await;
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+        let now = time::OffsetDateTime::now_utc();
+        let previous_version_at = now - time::Duration::days(2);
+        let current_version_at = now - time::Duration::days(1);
+        let directory_id = EntryId::new();
+        let file_id = EntryId::new();
+        let shared_file_id = EntryId::new();
+        let empty_file_id = EntryId::new();
+        let previous_version_id = VersionId::new();
+        let current_version_id = VersionId::new();
+        let shared_version_id = VersionId::new();
+        let blob_id = BlobId::new();
+
+        for (entry_id, path, kind) in [
+            (directory_id, "docs", "directory"),
+            (file_id, "docs/current.txt", "file"),
+            (shared_file_id, "shared.txt", "file"),
+            (empty_file_id, "empty.txt", "file"),
+        ] {
+            sqlx::query(
+                "INSERT INTO entries (id, namespace_id, path, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(entry_id.to_string())
+            .bind(namespace_id.to_string())
+            .bind(path)
+            .bind(kind)
+            .bind(now)
+            .bind(now)
+            .execute(&pool)
+            .await
+            .expect("entry fixture should be inserted");
+        }
+
+        sqlx::query(
+            "INSERT INTO blobs (id, content_hash, storage_key, size, ref_count, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(blob_id.to_string())
+        .bind("snapshot-test-hash")
+        .bind("snapshot-test-key")
+        .bind(37_i64)
+        .bind(11_i64)
+        .bind(user_id.to_string())
+        .execute(&pool)
+        .await
+        .expect("blob fixture should be inserted");
+
+        for (version_id, entry_id, version_no, version_blob, size, created_at) in [
+            (
+                previous_version_id,
+                file_id,
+                1_i64,
+                None,
+                12_i64,
+                previous_version_at,
+            ),
+            (
+                current_version_id,
+                file_id,
+                2_i64,
+                Some(blob_id),
+                37_i64,
+                current_version_at,
+            ),
+            (
+                shared_version_id,
+                shared_file_id,
+                1_i64,
+                Some(blob_id),
+                5_i64,
+                previous_version_at,
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO entry_versions (id, entry_id, version, blob_id, size, content_type, created_at, created_by, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(version_id.to_string())
+            .bind(entry_id.to_string())
+            .bind(version_no)
+            .bind(version_blob.map(|value| value.to_string()))
+            .bind(size)
+            .bind("text/plain")
+            .bind(created_at)
+            .bind(user_id.to_string())
+            .bind(None::<String>)
+            .execute(&pool)
+            .await
+            .expect("version fixture should be inserted");
+        }
+
+        let snapshot_id = repo
+            .create_snapshot_from_namespace(
+                &namespace_id,
+                Some("namespace snapshot"),
+                SnapshotKind::UserCreated,
+                &user_id,
+                &entry_repo,
+            )
+            .await
+            .expect("namespace snapshot should be created");
+        let entries = repo
+            .get_snapshot_entries(&snapshot_id)
+            .await
+            .expect("snapshot entries should be readable");
+
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.entry_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["docs", "docs/current.txt", "empty.txt", "shared.txt"]
+        );
+        assert_eq!(entries[0].entry_kind, EntryKind::Directory);
+        assert_eq!(entries[0].change_type, ChangeType::Added);
+        assert_eq!(entries[0].created_by, Some(user_id));
+        assert!(entries[0].created_at.is_some());
+
+        let current_file = &entries[1];
+        assert_eq!(current_file.entry_id, file_id);
+        assert_eq!(current_file.entry_version_id, Some(current_version_id));
+        assert_eq!(current_file.blob_id, Some(blob_id));
+        assert_eq!(current_file.size_bytes, Some(ByteSize::new(37)));
+        assert_eq!(current_file.mime_type.as_deref(), Some("text/plain"));
+        assert_eq!(current_file.version_no, Some(2));
+        assert_eq!(current_file.change_type, ChangeType::Modified);
+        assert_eq!(current_file.created_at, Some(current_version_at));
+
+        let empty_file = &entries[2];
+        assert_eq!(empty_file.entry_id, empty_file_id);
+        assert_eq!(empty_file.entry_version_id, None);
+        assert_eq!(empty_file.blob_id, None);
+        assert_eq!(empty_file.size_bytes, None);
+        assert_eq!(empty_file.change_type, ChangeType::Added);
+        assert_eq!(empty_file.created_by, Some(user_id));
+
+        let blob_ref_count: i64 = sqlx::query_scalar("SELECT ref_count FROM blobs WHERE id = ?")
+            .bind(blob_id.to_string())
+            .fetch_one(&pool)
+            .await
+            .expect("blob reference count should be readable");
+        assert_eq!(blob_ref_count, 13);
+
+        cleanup_db(pool, db_path).await;
     }
 
     #[tokio::test]

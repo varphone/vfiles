@@ -14,8 +14,8 @@ use vfiles_domain::{
     SnapshotRepo, UserId, UserRepo,
 };
 
-use crate::services::{create_snapshot_record, ensure_directory_path};
-use crate::{NamespaceService, collect_snapshot_state};
+use crate::services::ensure_directory_path;
+use crate::{NamespaceService, normalize_message};
 
 /// 单次所有权转移允许指定的源路径数量。
 pub const MAX_TRANSFER_PATHS: usize = 500;
@@ -211,29 +211,25 @@ impl OwnershipService {
             None => format!("接收来自 {actor_username} 的文件"),
         };
 
-        let source_entries =
-            collect_snapshot_state(self.entry_repo.as_ref(), source_namespace, Vec::new()).await?;
-        create_snapshot_record(
-            self.snapshot_repo.as_ref(),
-            source_namespace,
-            Some(&source_message),
-            SnapshotKind::UserCreated,
-            actor_user_id,
-            source_entries,
-        )
-        .await?;
+        self.snapshot_repo
+            .create_snapshot_from_namespace(
+                source_namespace,
+                normalize_message(Some(&source_message)).as_deref(),
+                SnapshotKind::UserCreated,
+                actor_user_id,
+                self.entry_repo.as_ref(),
+            )
+            .await?;
 
-        let target_entries =
-            collect_snapshot_state(self.entry_repo.as_ref(), &target_namespace, Vec::new()).await?;
-        create_snapshot_record(
-            self.snapshot_repo.as_ref(),
-            &target_namespace,
-            Some(&target_message),
-            SnapshotKind::UserCreated,
-            actor_user_id,
-            target_entries,
-        )
-        .await?;
+        self.snapshot_repo
+            .create_snapshot_from_namespace(
+                &target_namespace,
+                normalize_message(Some(&target_message)).as_deref(),
+                SnapshotKind::UserCreated,
+                actor_user_id,
+                self.entry_repo.as_ref(),
+            )
+            .await?;
 
         Ok(TransferOutcome {
             transferred,

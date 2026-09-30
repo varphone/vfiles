@@ -975,6 +975,69 @@ pub trait SnapshotRepo {
         kind: SnapshotKind,
         user_id: &UserId,
     ) -> DomainResult<SnapshotId>;
+    /// Create a snapshot of the namespace's current tree. Implementations may write the tree
+    /// directly in their storage engine; the default keeps compatibility with repositories that
+    /// only implement the primitive snapshot methods.
+    async fn create_snapshot_from_namespace(
+        &self,
+        namespace_id: &NamespaceId,
+        message: Option<&str>,
+        kind: SnapshotKind,
+        user_id: &UserId,
+        entry_repo: &(dyn EntryRepo + Send + Sync),
+    ) -> DomainResult<SnapshotId> {
+        let created_at = time::OffsetDateTime::now_utc();
+        let snapshot_id = self
+            .create_snapshot(namespace_id, message, kind, user_id)
+            .await?;
+        let entries = entry_repo.find_all(namespace_id).await?;
+        let version_ids = entries
+            .iter()
+            .filter_map(|entry| match entry.entry_type {
+                EntryKind::File => entry.current_version_id,
+                EntryKind::Directory => None,
+            })
+            .collect::<Vec<_>>();
+        let versions = entry_repo
+            .find_versions(&version_ids)
+            .await?
+            .into_iter()
+            .map(|version| (version.id, version))
+            .collect::<std::collections::HashMap<_, _>>();
+        let mut snapshot_entries = entries
+            .into_iter()
+            .map(|entry| {
+                let version = (entry.entry_type == EntryKind::File)
+                    .then_some(entry.current_version_id)
+                    .flatten()
+                    .and_then(|version_id| versions.get(&version_id));
+                let change_type = version
+                    .map(|version| version.change_type)
+                    .unwrap_or(ChangeType::Added);
+                SnapshotEntry {
+                    snapshot_id,
+                    entry_id: entry.id,
+                    entry_path: entry.path_norm,
+                    entry_kind: entry.entry_type,
+                    entry_version_id: version.map(|version| version.id),
+                    blob_id: version.and_then(|version| version.blob_id),
+                    size_bytes: version.map(|version| version.size_bytes),
+                    mime_type: version.and_then(|version| version.mime_type.clone()),
+                    version_no: version.map(|version| version.version_no),
+                    change_type,
+                    created_by: Some(version.map_or(*user_id, |version| version.created_by)),
+                    created_at: Some(version.map_or(created_at, |version| version.created_at)),
+                }
+            })
+            .collect::<Vec<_>>();
+        snapshot_entries
+            .sort_by(|left, right| left.entry_path.as_str().cmp(right.entry_path.as_str()));
+        if !snapshot_entries.is_empty() {
+            self.add_snapshot_entries(&snapshot_id, &snapshot_entries)
+                .await?;
+        }
+        Ok(snapshot_id)
+    }
     async fn find_snapshot(&self, snapshot_id: &SnapshotId) -> DomainResult<Snapshot>;
     async fn list_snapshots(
         &self,
