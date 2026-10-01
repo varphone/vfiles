@@ -242,14 +242,10 @@ impl VfilesStorageBackend {
         namespace_id: &NamespaceId,
         path: &NormalizedPath,
     ) -> Result<Vec<String>> {
-        let now = time::OffsetDateTime::now_utc()
-            .unix_timestamp_nanos()
-            .div_euclid(1_000_000)
-            .clamp(0, i64::MAX as i128) as i64;
         let locks = self
             .deps
             .lock_repo
-            .find_active_covering_all(namespace_id, path.as_str(), now)
+            .find_active_covering_all(namespace_id, path.as_str(), Self::lock_now_ms())
             .await
             .map_err(to_ftp_error)?;
         if !locks.is_empty() {
@@ -259,6 +255,13 @@ impl VfilesStorageBackend {
             ));
         }
         Ok(Vec::new())
+    }
+
+    fn lock_now_ms() -> i64 {
+        time::OffsetDateTime::now_utc()
+            .unix_timestamp_nanos()
+            .div_euclid(1_000_000)
+            .clamp(0, i64::MAX as i128) as i64
     }
 
     fn entry_metadata(entry: &TreeItem) -> VfilesMetadata {
@@ -777,15 +780,83 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         }
 
         self.flush_batch().await?;
+        let source_entry = self
+            .find_entry(&user.namespace_id, &from)
+            .await?
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::PermanentFileNotAvailable,
+                    format!("路径不存在: {}", from.as_str()),
+                )
+            })?;
+        let source_subtree = self
+            .deps
+            .entry_repo
+            .find_subtree(&user.namespace_id, &from)
+            .await
+            .map_err(to_ftp_error)?;
+        let mut affected_paths = Vec::with_capacity(source_subtree.len().saturating_mul(2));
+        let mut destination_paths = Vec::with_capacity(source_subtree.len());
+        for entry in &source_subtree {
+            affected_paths.push(entry.path_norm.as_str().to_string());
+            let suffix = &entry.path_norm.as_str()[from.as_str().len()..];
+            let destination_path = NormalizedPath::new(&format!("{}{}", to.as_str(), suffix))
+                .map_err(|message| Error::new(ErrorKind::PermissionDenied, message))?;
+            affected_paths.push(destination_path.as_str().to_string());
+            destination_paths.push(destination_path);
+        }
+        if self
+            .deps
+            .lock_repo
+            .find_active_covering_many_all(&user.namespace_id, &affected_paths, Self::lock_now_ms())
+            .await
+            .map_err(to_ftp_error)?
+            .values()
+            .any(|locks| !locks.is_empty())
+        {
+            return Err(Error::new(
+                ErrorKind::PermissionDenied,
+                "源或目标路径受 WebDAV 写锁保护",
+            ));
+        }
+        let mut additional_lock_states = source_subtree
+            .iter()
+            .filter(|entry| entry.path_norm != from)
+            .map(|entry| vfiles_domain::EntryLockSnapshot {
+                path: entry.path_norm.clone(),
+                tokens: Vec::new(),
+                include_ancestors: true,
+            })
+            .collect::<Vec<_>>();
+        additional_lock_states.extend(destination_paths.into_iter().map(|path| {
+            vfiles_domain::EntryLockSnapshot {
+                path,
+                tokens: Vec::new(),
+                include_ancestors: true,
+            }
+        }));
+        let condition = EntryWriteCondition {
+            namespace_id: user.namespace_id,
+            path: from.clone(),
+            check_entry_state: true,
+            expected_entry_id: Some(source_entry.id),
+            expected_version_id: source_entry.current_version_id,
+            expected_lock_tokens: Some(Vec::new()),
+            expected_additional_lock_states: Some(additional_lock_states),
+        };
         self.deps
             .workspace
-            .move_entries(
+            .move_entry_overwriting_with_condition(
                 &user.namespace_id,
-                std::slice::from_ref(&from),
+                &from,
                 &to,
                 Some("FTP 重命名"),
                 &user.id,
-                false, // Path（RNTO = 完整目标路径 ✗ r12）
+                vfiles_app::MoveOptions {
+                    destination_is_container: false,
+                    condition: Some(&condition),
+                    ..Default::default()
+                },
             )
             .await
             .map_err(to_ftp_error)?;
