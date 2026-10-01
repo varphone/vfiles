@@ -245,7 +245,7 @@ where
                 None => {} // Loop again
                 Some(Ok(Event::InternalMsg(ControlChanMsg::ExitControlLoop))) => {
                     let _ = event_chain.handle(Event::InternalMsg(ControlChanMsg::ExitControlLoop)).await;
-                    cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), logger.clone()).await;
+                    cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), control_msg_rx, logger.clone()).await;
                     slog::debug!(logger, "Exiting control loop");
                     return;
                 }
@@ -280,12 +280,12 @@ where
                             }
                             Ok(Err(err)) => {
                                 slog::warn!(logger, "Closing control channel. Could not upgrade to TLS: {}", err);
-                                cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), logger.clone()).await;
+                                cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), control_msg_rx, logger.clone()).await;
                                 return;
                             }
                             Err(_) => {
                                 slog::warn!(logger, "Closing control channel. TLS handshake timed out");
-                                cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), logger.clone()).await;
+                                cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), control_msg_rx, logger.clone()).await;
                                 return;
                             }
                         };
@@ -313,7 +313,7 @@ where
 
                     if let Err(chan_err) = handle_result {
                         slog::warn!(logger, "Event handler chain error: {:?}. Closing control connection", chan_err);
-                        cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), logger.clone()).await;
+                        cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), control_msg_rx, logger.clone()).await;
                         return;
                     }
                 }
@@ -322,11 +322,11 @@ where
                     let result = reply_sink.send(reply).await;
                     if result.is_err() {
                         slog::warn!(logger, "Could not send error reply to client");
-                        cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), logger.clone()).await;
+                        cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), control_msg_rx, logger.clone()).await;
                         return;
                     }
                     if close_connection {
-                        cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), logger.clone()).await;
+                        cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), control_msg_rx, logger.clone()).await;
                         return;
                     }
                 }
@@ -340,12 +340,16 @@ where
 async fn cleanup_data_session<Storage, User>(
     session: SharedSession<Storage, User>,
     switchboard_msg_tx: Option<SwitchboardSender<Storage, User>>,
+    mut control_msg_rx: Receiver<ControlChanMsg>,
     logger: slog::Logger,
 ) where
     User: UserDetail + 'static,
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: Metadata,
 {
+    // The control loop no longer drains this bounded channel once cleanup starts. Close it before
+    // joining the data worker so a worker blocked while reporting its result cannot deadlock us.
+    control_msg_rx.close();
     if let Some(tx) = switchboard_msg_tx
         && let Err(err) = tx.send(SwitchboardMessage::CloseDataPortCommand(session.clone())).await
     {
