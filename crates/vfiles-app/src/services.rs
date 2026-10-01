@@ -6616,7 +6616,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_reclaims_blob_when_no_snapshot_references_remain() {
+    async fn delete_defers_blob_reclamation_when_no_snapshot_references_remain() {
         let context = TestContext::new().await;
         let docs = TestContext::path("docs");
 
@@ -6648,7 +6648,7 @@ mod tests {
             .expect("delete should succeed");
 
         assert!(result.warnings.is_empty());
-        assert_eq!(context.blob_file_count(), 0);
+        assert_eq!(context.blob_file_count(), 1);
         let metadata = context
             .blob_store
             .get_blob_metadata(&blob_id)
