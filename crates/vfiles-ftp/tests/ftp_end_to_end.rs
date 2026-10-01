@@ -364,6 +364,23 @@ async fn ftps_rejects_control_and_data_channel_downgrades() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftps_rejects_repeated_control_channel_upgrade() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.client();
+
+    assert!(
+        client
+            .custom_command("AUTH TLS", &[Status::AuthOk])
+            .is_err(),
+        "an already encrypted control channel must reject a second TLS upgrade"
+    );
+    client
+        .noop()
+        .expect("the existing FTPS control channel should remain usable");
+    client.quit().expect("quit should succeed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn disabled_user_stops_receiving_a_directory_listing_in_progress() {
     const ENTRY_COUNT: usize = 3_500;
     const NAME_PADDING: usize = 850;
