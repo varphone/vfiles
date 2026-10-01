@@ -62,13 +62,30 @@ struct Harness {
 
 impl Harness {
     async fn start(snapshot_mode: SnapshotMode, flush_threshold: usize) -> Self {
-        Self::start_with_max_connections(snapshot_mode, flush_threshold, 8).await
+        Self::start_with_limits(snapshot_mode, flush_threshold, 8, 60).await
+    }
+
+    async fn start_with_idle_timeout(
+        snapshot_mode: SnapshotMode,
+        flush_threshold: usize,
+        idle_timeout_secs: u64,
+    ) -> Self {
+        Self::start_with_limits(snapshot_mode, flush_threshold, 8, idle_timeout_secs).await
     }
 
     async fn start_with_max_connections(
         snapshot_mode: SnapshotMode,
         flush_threshold: usize,
         max_connections: u32,
+    ) -> Self {
+        Self::start_with_limits(snapshot_mode, flush_threshold, max_connections, 60).await
+    }
+
+    async fn start_with_limits(
+        snapshot_mode: SnapshotMode,
+        flush_threshold: usize,
+        max_connections: u32,
+        idle_timeout_secs: u64,
     ) -> Self {
         // The certificate guard intentionally rejects non-sticky shared-writable ancestors;
         // this environment's configured temp root is such a directory, so use sticky /tmp directly.
@@ -170,7 +187,7 @@ impl Harness {
             max_connections,
             passive_host: None,
             greeting: "VFiles FTP test",
-            idle_timeout_secs: 60,
+            idle_timeout_secs,
             tls_cert: Some(cert_path.to_string_lossy().into_owned()),
             tls_key: Some(key_path.to_string_lossy().into_owned()),
             tls_self_signed: true,
@@ -322,6 +339,28 @@ async fn rejects_new_control_connections_at_the_configured_limit() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert!(admitted, "释放会话后应接纳新连接");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn unauthenticated_noop_cannot_extend_the_absolute_login_deadline() {
+    let harness = Harness::start_with_idle_timeout(SnapshotMode::Off, 1, 2).await;
+    let mut client = harness.secure_client();
+
+    for _ in 0..4 {
+        client
+            .noop()
+            .expect("unauthenticated NOOP should work before the login deadline");
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(1_300)).await;
+
+    let result = tokio::task::spawn_blocking(move || client.noop())
+        .await
+        .expect("FTP client task should finish");
+    assert!(
+        result.is_err(),
+        "repeated NOOP must not keep an unauthenticated control session alive"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
