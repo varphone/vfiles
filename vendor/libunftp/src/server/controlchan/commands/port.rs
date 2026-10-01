@@ -34,7 +34,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio_util::sync::CancellationToken;
@@ -47,6 +47,31 @@ pub struct Port {
 impl Port {
     pub fn new(addr: String) -> Self {
         Port { addr }
+    }
+
+    fn parse_address(addr: &str) -> Option<SocketAddrV4> {
+        let mut parts = addr.split(',');
+        let mut octets = [0_u8; 6];
+        for octet in &mut octets {
+            let part = parts.next()?;
+            if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            *octet = part.parse().ok()?;
+        }
+        if parts.next().is_some() {
+            return None;
+        }
+
+        let port = (u16::from(octets[4]) << 8) | u16::from(octets[5]);
+        Some(SocketAddrV4::new(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]), port))
+    }
+
+    fn matches_control_peer(control_peer: IpAddr, target: Ipv4Addr) -> bool {
+        match control_peer {
+            IpAddr::V4(peer) => peer == target,
+            IpAddr::V6(peer) => peer.to_ipv4_mapped() == Some(target),
+        }
     }
 
     // modifies the session by adding channels that are used to communicate with the data connection
@@ -86,12 +111,23 @@ where
             ..
         } = args;
 
-        let bytes: Vec<u8> = self.addr.split(',').map(|x| x.parse::<u8>()).filter_map(Result::ok).collect();
-        if bytes.len() != 6 {
+        let Some(addr) = Self::parse_address(&self.addr) else {
             return Ok(Reply::new(ReplyCode::ParameterSyntaxError, "Invalid address format"));
+        };
+
+        let control_peer_ip = session.lock().await.source.ip();
+        if !Self::matches_control_peer(control_peer_ip, *addr.ip()) {
+            slog::debug!(
+                logger,
+                "Rejecting active data connection to {:?}: target IP does not match control peer {:?}",
+                addr,
+                control_peer_ip
+            );
+            return Ok(Reply::new(
+                ReplyCode::CantOpenDataConnection,
+                "Active data address must match the control connection",
+            ));
         }
-        let port = ((bytes[4] as u16) << 8) | bytes[5] as u16;
-        let addr = SocketAddrV4::new(Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]), port);
 
         let stream: io::Result<TcpStream> = TcpStream::connect(addr).await;
 
