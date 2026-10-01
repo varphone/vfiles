@@ -137,6 +137,14 @@ pub async fn spawn_ftp_server(
     app: FtpApplication,
     mut shutdown: watch::Receiver<bool>,
 ) -> std::io::Result<FtpServerHandle> {
+    let (passive_start, passive_end) = settings.passive_ports;
+    if passive_start == 0 || passive_end == 0 || passive_end < passive_start {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "FTP 被动端口区间必须满足 1 <= 起始端口 <= 结束端口",
+        ));
+    }
+
     if settings.tls_self_signed {
         let (Some(certificate), Some(private_key)) = (&settings.tls_cert, &settings.tls_key) else {
             return Err(std::io::Error::new(
