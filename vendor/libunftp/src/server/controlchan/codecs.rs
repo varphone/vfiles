@@ -124,4 +124,23 @@ mod tests {
         let error = codec.decode(&mut frame).expect_err("fragmented oversized frame should be rejected");
         assert_eq!(error.kind(), &ControlChanErrorKind::ParseError);
     }
+
+    #[test]
+    fn reply_text_cannot_inject_control_channel_lines() {
+        let mut codec = FtpCodec::new();
+        let mut single_line = BytesMut::new();
+        codec
+            .encode(Reply::new(super::super::ReplyCode::CommandOkay, "ok\r\n230 forged"), &mut single_line)
+            .expect("single-line reply should encode");
+        assert_eq!(&single_line[..], b"200 ok  230 forged\r\n");
+
+        let mut multiline = BytesMut::new();
+        codec
+            .encode(
+                Reply::new_multiline(super::super::ReplyCode::SystemStatus, ["211\r\n230 forged", "done"]),
+                &mut multiline,
+            )
+            .expect("multiline reply should encode");
+        assert_eq!(&multiline[..], b"211- 211  230 forged\r\n211 done\r\n");
+    }
 }
