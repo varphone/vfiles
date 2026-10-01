@@ -1,4 +1,5 @@
 use sqlx::{Pool, Sqlite};
+use std::collections::HashMap;
 use vfiles_domain::*;
 
 pub type SqlitePool = Pool<Sqlite>;
@@ -98,6 +99,65 @@ async fn verify_write_lock_snapshot(
             if current_tokens != expected_tokens {
                 return Err(DomainError::PreconditionFailed);
             }
+        }
+    }
+    Ok(())
+}
+
+async fn verify_source_subtree_move_snapshot(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    namespace_id: &NamespaceId,
+    source_root: &NormalizedPath,
+    source_root_id: Option<EntryId>,
+    moves: &[(EntryId, NormalizedPath)],
+) -> DomainResult<()> {
+    let Some(source_root_id) = source_root_id else {
+        return Err(DomainError::PreconditionFailed);
+    };
+    let mut destinations = HashMap::with_capacity(moves.len());
+    for (entry_id, destination) in moves {
+        if destinations
+            .insert(entry_id.to_string(), destination.as_str())
+            .is_some()
+        {
+            return Err(DomainError::PreconditionFailed);
+        }
+    }
+    let Some(destination_root) = destinations.get(&source_root_id.to_string()) else {
+        return Err(DomainError::PreconditionFailed);
+    };
+
+    let root = source_root.as_str();
+    let lower = format!("{root}/");
+    let upper = format!("{root}0");
+    let current_entries: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, path FROM entries WHERE namespace_id = ? AND (path = ? OR (path >= ? AND path < ?))",
+    )
+    .bind(namespace_id.to_string())
+    .bind(root)
+    .bind(lower)
+    .bind(upper)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|error| DomainError::Internal {
+        message: format!("Failed to verify source subtree before move: {error}"),
+    })?;
+
+    if current_entries.len() != destinations.len() {
+        return Err(DomainError::PreconditionFailed);
+    }
+    for (entry_id, current_path) in current_entries {
+        let Some(destination) = destinations.get(&entry_id) else {
+            return Err(DomainError::PreconditionFailed);
+        };
+        let Some(suffix) = current_path.strip_prefix(root) else {
+            return Err(DomainError::PreconditionFailed);
+        };
+        if !suffix.is_empty() && !suffix.starts_with('/') {
+            return Err(DomainError::PreconditionFailed);
+        }
+        if *destination != format!("{destination_root}{suffix}") {
+            return Err(DomainError::PreconditionFailed);
         }
     }
     Ok(())
@@ -5191,6 +5251,14 @@ impl EntryRepo for SqliteEntryRepo {
             return Err(DomainError::PreconditionFailed);
         }
         verify_write_lock_snapshot(&mut tx, condition).await?;
+        verify_source_subtree_move_snapshot(
+            &mut tx,
+            &condition.namespace_id,
+            &condition.path,
+            condition.expected_entry_id,
+            moves,
+        )
+        .await?;
         for (entry_id, new_path) in moves {
             sqlx::query("UPDATE entries SET path = ? WHERE id = ?")
                 .bind(new_path.as_str())
@@ -5300,6 +5368,9 @@ impl EntryRepo for SqliteEntryRepo {
                     message: format!("Failed to begin replace-and-move transaction: {}", e),
                 })?;
         if let Some(condition) = condition {
+            if condition.namespace_id != *namespace_id {
+                return Err(DomainError::PreconditionFailed);
+            }
             let row: Option<(String, Option<String>)> = sqlx::query_as(
                 "SELECT e.id, (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1) FROM entries e WHERE e.namespace_id = ? AND e.path = ?",
             )
@@ -5334,6 +5405,14 @@ impl EntryRepo for SqliteEntryRepo {
                 return Err(DomainError::PreconditionFailed);
             }
             verify_write_lock_snapshot(&mut tx, condition).await?;
+            verify_source_subtree_move_snapshot(
+                &mut tx,
+                namespace_id,
+                &condition.path,
+                condition.expected_entry_id,
+                moves,
+            )
+            .await?;
         }
         let replaced_rows: Vec<EntryRow> = sqlx::query_as(
             r#"
