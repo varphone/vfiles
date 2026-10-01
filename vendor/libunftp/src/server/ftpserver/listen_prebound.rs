@@ -163,27 +163,31 @@ where
         // 3. put expiry time in LIFO list
         // 4. send reply to the client: "Entering Passive Mode ({},{},{},{},{},{})"
 
+        let connection = match session_arc.lock().await.control_connection {
+            Some(connection) => connection,
+            None => {
+                slog::error!(self.logger, "Could not allocate data port for session without connection details");
+                let _ = tx.send(Err(PortAllocationError));
+                return;
+            }
+        };
+        let destination_ip = match connection.destination.ip() {
+            IpAddr::V4(ip) => ip,
+            IpAddr::V6(_) => {
+                slog::warn!(self.logger, "PASV is unavailable on an IPv6 control connection");
+                let _ = tx.send(Err(PortAllocationError));
+                return;
+            }
+        };
+
         let port = self.switchboard.reserve(session_arc.clone()).await;
-        let session = session_arc.lock().await;
-        if let Some(connection) = session.control_connection {
-            let destination_ip = match connection.destination.ip() {
-                IpAddr::V4(ip) => ip,
-                IpAddr::V6(_) => panic!("Won't happen since PASV only does IP V4."),
-            };
+        let result = match port {
+            Ok(port) => Ok(super::controlchan::commands::make_pasv_reply(&self.logger, self.options.passive_host.clone(), &destination_ip, port).await),
+            Err(_) => Err(PortAllocationError),
+        };
 
-            let result = match port {
-                Ok(port) => Ok(super::controlchan::commands::make_pasv_reply(&self.logger, self.options.passive_host.clone(), &destination_ip, port).await),
-                Err(_) => Err(PortAllocationError),
-            };
-
-            if tx.send(result).is_err() {
-                slog::error!(self.logger, "Could not send port allocation reply to PASV handler");
-            }
-        } else {
-            slog::error!(self.logger, "Could not allocate port for session without connection details");
-            if tx.send(Err(PortAllocationError)).is_err() {
-                slog::error!(self.logger, "Could not send port allocation error to PASV handler");
-            }
+        if tx.send(result).is_err() {
+            slog::error!(self.logger, "Could not send port allocation reply to PASV handler");
         }
     }
 }
