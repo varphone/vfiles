@@ -42,6 +42,7 @@ pub struct MoveOptions<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MoveSubtreeLimits {
     pub max_entries: usize,
+    /// Maximum bytes across source paths and their generated move targets.
     pub max_path_bytes: usize,
 }
 
@@ -357,6 +358,29 @@ fn compute_move_target(
         .trim_start_matches('/');
 
     join_path(target_root, suffix)
+}
+
+fn compute_move_target_len(
+    source_root: &NormalizedPath,
+    entry_path: &NormalizedPath,
+    target_root: &NormalizedPath,
+) -> usize {
+    if entry_path == source_root {
+        return target_root.as_str().len();
+    }
+
+    let suffix = entry_path
+        .as_str()
+        .strip_prefix(source_root.as_str())
+        .unwrap_or(entry_path.as_str())
+        .trim_start_matches('/');
+
+    let parent = target_root.as_str().trim_end_matches('/');
+    if parent.is_empty() {
+        suffix.len()
+    } else {
+        parent.len().saturating_add(1).saturating_add(suffix.len())
+    }
 }
 
 fn upload_view_from_session(upload: &UploadSession, parts: &[UploadPart]) -> UploadSessionView {
@@ -3077,6 +3101,7 @@ where
         let mut moving_entries = Vec::new();
         let mut changed_entries = Vec::new();
         let mut replaced_entries = Vec::new();
+        let mut limited_move_path_bytes = 0usize;
 
         for source in sources {
             let source_entry = self
@@ -3089,6 +3114,26 @@ where
 
             // r12 dest 语义参数化 ✗ Path = dest 即 target（RFC 完整路径 ✓ 同名目录
             // 覆盖打通 ✗ 原 join 由 dest_目录判定 = 违 RFC 二义（r11 结构债正解））
+            let target_root_len = if dest_as_container {
+                let parent = destination.as_str().trim_end_matches('/');
+                let child = basename(source);
+                if parent.is_empty() {
+                    child.len()
+                } else {
+                    parent.len().saturating_add(1).saturating_add(child.len())
+                }
+            } else {
+                destination.as_str().len()
+            };
+            if let Some(limits) = source_subtree_limits
+                && target_root_len > limits.max_path_bytes
+            {
+                return Err(DomainError::Validation {
+                    message: "Destination subtree exceeds the configured move path limit"
+                        .to_string(),
+                });
+            }
+
             let target_root = if dest_as_container {
                 join_path(destination, basename(source))?
             } else {
@@ -3132,6 +3177,23 @@ where
                 collect_descendants(&self.entry_repo, namespace_id, &source_entry).await?
             };
             for entry in subtree {
+                if let Some(limits) = source_subtree_limits {
+                    let source_path_bytes = entry.path_norm.as_str().len();
+                    let target_path_bytes =
+                        compute_move_target_len(source, &entry.path_norm, &target_root);
+                    let next_path_bytes = limited_move_path_bytes
+                        .saturating_add(source_path_bytes)
+                        .saturating_add(target_path_bytes);
+                    if next_path_bytes > limits.max_path_bytes {
+                        return Err(DomainError::Validation {
+                            message:
+                                "Source and destination subtrees exceed the configured move path limit"
+                                    .to_string(),
+                        });
+                    }
+                    limited_move_path_bytes = next_path_bytes;
+                }
+
                 let new_path = compute_move_target(source, &entry.path_norm, &target_root)?;
                 moving_entries.push((entry, new_path));
             }
