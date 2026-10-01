@@ -95,3 +95,33 @@ impl Encoder<Reply> for FtpCodec {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_line_limit_accepts_the_boundary_and_rejects_oversized_frames() {
+        let max_username_len = MAX_COMMAND_LINE_BYTES - b"USER \r\n".len();
+        let maximum_line = format!("USER {}\r\n", "a".repeat(max_username_len));
+        let mut codec = FtpCodec::new();
+        let mut frame = BytesMut::from(maximum_line.as_bytes());
+
+        let command = codec.decode(&mut frame).expect("maximum frame should decode");
+        assert!(matches!(command, Some(Command::User { username }) if username.len() == max_username_len));
+        assert!(frame.is_empty());
+
+        let oversized_line = format!("USER {}\r\n", "a".repeat(max_username_len + 1));
+        let mut codec = FtpCodec::new();
+        let mut frame = BytesMut::from(oversized_line.as_bytes());
+        let error = codec.decode(&mut frame).expect_err("oversized frame should be rejected");
+        assert_eq!(error.kind(), &ControlChanErrorKind::ParseError);
+
+        let mut codec = FtpCodec::new();
+        let mut frame = BytesMut::from(&oversized_line.as_bytes()[..MAX_COMMAND_LINE_BYTES]);
+        assert!(codec.decode(&mut frame).expect("partial frame should wait").is_none());
+        frame.extend_from_slice(&oversized_line.as_bytes()[MAX_COMMAND_LINE_BYTES..]);
+        let error = codec.decode(&mut frame).expect_err("fragmented oversized frame should be rejected");
+        assert_eq!(error.kind(), &ControlChanErrorKind::ParseError);
+    }
+}
