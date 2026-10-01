@@ -133,6 +133,8 @@ pub enum ControlChanMsg {
     PlaintextControlChannel,
     /// Errors coming from the storage backend
     StorageError(storage::Error),
+    /// A data transfer failed; clear any REST offset before replying.
+    TransferFailed(storage::Error),
     /// Reply on the command channel
     CommandChannelReply(Reply),
 }

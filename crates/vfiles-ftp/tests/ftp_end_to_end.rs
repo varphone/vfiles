@@ -531,6 +531,45 @@ async fn uploads_downloads_and_manages_files_over_ftps() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rejected_rest_upload_does_not_leak_its_offset_to_later_retr() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.client();
+    let original = b"0123456789".to_vec();
+    let mut original_reader = std::io::Cursor::new(original.clone());
+    client
+        .put_file("restart.bin", &mut original_reader)
+        .expect("initial upload should succeed");
+
+    client
+        .custom_command("REST 4", &[Status::RequestFilePending])
+        .expect("RETR restart should be accepted");
+    let suffix = client
+        .retr_as_buffer("restart.bin")
+        .expect("resumed RETR should succeed")
+        .into_inner();
+    assert_eq!(suffix, original[4..]);
+
+    let mut replacement = std::io::Cursor::new(b"replacement".to_vec());
+    client
+        .custom_command("REST 4", &[Status::RequestFilePending])
+        .expect("REST before upload should be accepted by the protocol layer");
+    assert!(
+        client.put_file("restart.bin", &mut replacement).is_err(),
+        "the VFiles backend does not support resumed uploads"
+    );
+
+    let after_rejected_upload = client
+        .retr_as_buffer("restart.bin")
+        .expect("full RETR after the rejected upload should succeed")
+        .into_inner();
+    assert_eq!(
+        after_rejected_upload, original,
+        "a rejected STOR must clear REST state so it cannot truncate the next RETR"
+    );
+    client.quit().ok();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn batch_mode_commits_far_fewer_snapshots_than_files() {
     let harness = Harness::start(SnapshotMode::Batch, 25).await;
     let mut client = harness.client();

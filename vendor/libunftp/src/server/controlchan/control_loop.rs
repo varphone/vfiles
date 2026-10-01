@@ -30,7 +30,7 @@ use crate::{
         shutdown,
         tls::FtpsConfig,
     },
-    storage::{ErrorKind, Metadata, StorageBackend},
+    storage::{Error, ErrorKind, Metadata, StorageBackend},
 };
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
@@ -434,6 +434,23 @@ where
     sitemd5: SiteMd5,
 }
 
+fn storage_error_reply(error: &Error) -> Reply {
+    match error.kind() {
+        ErrorKind::ExceededStorageAllocationError => Reply::new(ReplyCode::ExceededStorageAllocation, "Exceeded storage allocation"),
+        ErrorKind::FileNameNotAllowedError => Reply::new(ReplyCode::BadFileName, "File name not allowed"),
+        ErrorKind::InsufficientStorageSpaceError => Reply::new(ReplyCode::OutOfSpace, "Insufficient storage space"),
+        ErrorKind::LocalError => Reply::new(ReplyCode::LocalError, "Local error"),
+        ErrorKind::PageTypeUnknown => Reply::new(ReplyCode::PageTypeUnknown, "Page type unknown"),
+        ErrorKind::TransientFileNotAvailable => Reply::new(ReplyCode::TransientFileError, "File not found"),
+        ErrorKind::PermanentFileNotAvailable => Reply::new(ReplyCode::FileError, "File not found"),
+        ErrorKind::PermanentDirectoryNotAvailable => Reply::new(ReplyCode::FileError, "Directory not found"),
+        ErrorKind::PermanentDirectoryNotEmpty => Reply::new(ReplyCode::FileError, "Directory not empty"),
+        ErrorKind::PermissionDenied => Reply::new(ReplyCode::FileError, "Permission denied"),
+        ErrorKind::CommandNotImplemented => Reply::new(ReplyCode::CommandNotImplemented, "Command not implemented"),
+        ErrorKind::ConnectionClosed => Reply::new(ReplyCode::ConnectionClosed, "Connection closed"),
+    }
+}
+
 impl<Storage, User> PrimaryEventHandler<Storage, User>
 where
     User: UserDetail + 'static,
@@ -500,20 +517,11 @@ where
                 session.state = New; // According to RFC 959, a PASS command MUST precede a USER command
                 Ok(Reply::new(ReplyCode::NotLoggedIn, "Authentication failed"))
             }
-            StorageError(error_type) => match error_type.kind() {
-                ErrorKind::ExceededStorageAllocationError => Ok(Reply::new(ReplyCode::ExceededStorageAllocation, "Exceeded storage allocation")),
-                ErrorKind::FileNameNotAllowedError => Ok(Reply::new(ReplyCode::BadFileName, "File name not allowed")),
-                ErrorKind::InsufficientStorageSpaceError => Ok(Reply::new(ReplyCode::OutOfSpace, "Insufficient storage space")),
-                ErrorKind::LocalError => Ok(Reply::new(ReplyCode::LocalError, "Local error")),
-                ErrorKind::PageTypeUnknown => Ok(Reply::new(ReplyCode::PageTypeUnknown, "Page type unknown")),
-                ErrorKind::TransientFileNotAvailable => Ok(Reply::new(ReplyCode::TransientFileError, "File not found")),
-                ErrorKind::PermanentFileNotAvailable => Ok(Reply::new(ReplyCode::FileError, "File not found")),
-                ErrorKind::PermanentDirectoryNotAvailable => Ok(Reply::new(ReplyCode::FileError, "Directory not found")),
-                ErrorKind::PermanentDirectoryNotEmpty => Ok(Reply::new(ReplyCode::FileError, "Directory not empty")),
-                ErrorKind::PermissionDenied => Ok(Reply::new(ReplyCode::FileError, "Permission denied")),
-                ErrorKind::CommandNotImplemented => Ok(Reply::new(ReplyCode::CommandNotImplemented, "Command not implemented")),
-                ErrorKind::ConnectionClosed => Ok(Reply::new(ReplyCode::ConnectionClosed, "Connection closed")),
-            },
+            StorageError(error_type) => Ok(storage_error_reply(&error_type)),
+            TransferFailed(error_type) => {
+                self.session.lock().await.start_pos = 0;
+                Ok(storage_error_reply(&error_type))
+            }
             CommandChannelReply(reply) => Ok(reply),
         }
     }

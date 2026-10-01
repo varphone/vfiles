@@ -720,7 +720,7 @@ where
                     categorize_and_register_error(&self.logger, &err, "retr");
                 }
 
-                if let Err(_err) = tx.send(ControlChanMsg::StorageError(err)).await {
+                if let Err(_err) = tx.send(ControlChanMsg::TransferFailed(err)).await {
                     slog::warn!(self.logger, "Could not notify control channel of error with RETR");
                 }
             }
@@ -776,7 +776,7 @@ where
                     categorize_and_register_error(&self.logger, &err, "stor");
                 }
 
-                if let Err(_err) = tx.send(ControlChanMsg::StorageError(err)).await {
+                if let Err(_err) = tx.send(ControlChanMsg::TransferFailed(err)).await {
                     slog::error!(self.logger, "Could not notify control channel of error with STOR");
                 }
             }
@@ -797,7 +797,7 @@ where
             Err(err) => {
                 slog::warn!(self.logger, "APPE refused because the existing file size could not be determined");
                 categorize_and_register_error(&self.logger, &err, "appe");
-                if let Err(_send_err) = tx.send(ControlChanMsg::StorageError(err)).await {
+                if let Err(_send_err) = tx.send(ControlChanMsg::TransferFailed(err)).await {
                     slog::warn!(self.logger, "Could not notify control channel of APPE metadata error");
                 }
                 return;
@@ -841,7 +841,7 @@ where
 
                 categorize_and_register_error(&self.logger, &err, "appe");
 
-                if let Err(_err) = tx.send(ControlChanMsg::StorageError(err)).await {
+                if let Err(_err) = tx.send(ControlChanMsg::TransferFailed(err)).await {
                     slog::error!(self.logger, "Could not notify control channel of error with APPE");
                 }
             }
@@ -924,7 +924,7 @@ where
 
                         let err = listing_error_from_io(e);
                         categorize_and_register_error(&self.logger, &err, command.as_lower_str());
-                        if let Err(_send_error) = tx.send(ControlChanMsg::StorageError(err)).await {
+                        if let Err(_send_error) = tx.send(ControlChanMsg::TransferFailed(err)).await {
                             slog::warn!(self.logger, "Could not notify control channel about failed {}", command.as_str());
                         }
                     }
@@ -945,7 +945,7 @@ where
 
                 categorize_and_register_error(&self.logger, &err, command.as_lower_str());
 
-                if let Err(_err) = tx.send(ControlChanMsg::StorageError(err)).await {
+                if let Err(_err) = tx.send(ControlChanMsg::TransferFailed(err)).await {
                     slog::error!(self.logger, "Could not notify control channel of error with {}", command.as_str());
                 }
             }
@@ -1035,7 +1035,7 @@ where
                             log_error
                         );
                         let control_error = listing_error_from_io(err);
-                        if let Err(_err) = tx.send(ControlChanMsg::StorageError(control_error)).await {
+                        if let Err(_err) = tx.send(ControlChanMsg::TransferFailed(control_error)).await {
                             slog::error!(self.logger, "Could not notify control channel of failed MLSD");
                         }
                     }
@@ -1054,7 +1054,7 @@ where
 
                 categorize_and_register_error(&self.logger, &err, "mlsd");
 
-                if let Err(_err) = tx.send(ControlChanMsg::StorageError(err)).await {
+                if let Err(_err) = tx.send(ControlChanMsg::TransferFailed(err)).await {
                     slog::error!(self.logger, "Could not notify control channel of error with MLSD");
                 }
             }
