@@ -1909,6 +1909,7 @@ fn write_error_status(error: &vfiles_domain::DomainError) -> StatusCode {
         DomainError::DiffTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
         DomainError::Conflict { .. }
         | DomainError::PathConflict { .. }
+        | DomainError::DirectoryNotEmpty
         | DomainError::UploadExpired
         | DomainError::UploadConflict => StatusCode::CONFLICT,
         DomainError::PreconditionFailed => StatusCode::PRECONDITION_FAILED,

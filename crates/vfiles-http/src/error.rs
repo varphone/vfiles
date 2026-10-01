@@ -354,6 +354,12 @@ impl IntoResponse for ApiError {
                 // 冲突路径对用户最有用：抽出来放进 details，客户端可拼成中文提示
                 path_conflict_detail(&message),
             ),
+            ApiError::Domain(DomainError::DirectoryNotEmpty) => (
+                StatusCode::CONFLICT,
+                "DIRECTORY_NOT_EMPTY".to_string(),
+                "Directory is not empty".to_string(),
+                None,
+            ),
             ApiError::Domain(DomainError::UploadExpired) => (
                 StatusCode::GONE,
                 "UPLOAD_EXPIRED".to_string(),
