@@ -504,3 +504,36 @@ async fn disabled_user_cannot_bypass_revalidation_with_invalid_commands() {
         "revoked session must be closed instead of accepting an invalid command"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn disabled_user_cannot_bypass_revalidation_with_ftps_policy_commands() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut ccc_client = harness.client();
+    let mut prot_client = harness.client();
+    ccc_client
+        .noop()
+        .expect("initial CCC client NOOP should succeed");
+    prot_client
+        .noop()
+        .expect("initial PROT client NOOP should succeed");
+
+    harness.disable_user().await;
+    tokio::time::sleep(std::time::Duration::from_millis(5_100)).await;
+
+    let (ccc_result, prot_result) = tokio::task::spawn_blocking(move || {
+        (
+            ccc_client.custom_command("CCC", &[Status::Unknown]),
+            prot_client.custom_command("PROT C", &[Status::Unknown]),
+        )
+    })
+    .await
+    .expect("FTP client task should finish");
+    assert!(
+        ccc_result.is_err(),
+        "revoked session must close before FTPS control-channel policy replies"
+    );
+    assert!(
+        prot_result.is_err(),
+        "revoked session must close before FTPS data-channel policy replies"
+    );
+}

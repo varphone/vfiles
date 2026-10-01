@@ -25,7 +25,6 @@ where
 {
     pub session: SharedSession<Storage, User>,
     pub next: Next,
-    pub(super) last_revalidation: Arc<tokio::sync::Mutex<Option<tokio::time::Instant>>>,
 }
 
 pub(super) async fn revalidate_authenticated_user<Storage, User>(
@@ -67,6 +66,34 @@ where
     Ok(())
 }
 
+pub(super) struct SessionRevalidationMiddleware<Storage, User, Next>
+where
+    User: UserDetail + 'static,
+    Storage: StorageBackend<User> + 'static,
+    Storage::Metadata: Metadata,
+    Next: ControlChanMiddleware,
+{
+    pub session: SharedSession<Storage, User>,
+    pub last_revalidation: Arc<tokio::sync::Mutex<Option<tokio::time::Instant>>>,
+    pub next: Next,
+}
+
+#[async_trait]
+impl<Storage, User, Next> ControlChanMiddleware for SessionRevalidationMiddleware<Storage, User, Next>
+where
+    User: UserDetail + 'static,
+    Storage: StorageBackend<User> + 'static,
+    Storage::Metadata: Metadata,
+    Next: ControlChanMiddleware,
+{
+    async fn handle(&mut self, event: Event) -> Result<Reply, ControlChanError> {
+        if !matches!(event, Event::InternalMsg(_) | Event::Command(Command::Quit)) {
+            revalidate_authenticated_user(&self.session, &self.last_revalidation).await?;
+        }
+        self.next.handle(event).await
+    }
+}
+
 #[async_trait]
 impl<Storage, User, Next> ControlChanMiddleware for AuthMiddleware<Storage, User, Next>
 where
@@ -78,11 +105,6 @@ where
     async fn handle(&mut self, event: Event) -> Result<Reply, ControlChanError> {
         if matches!(event, Event::InternalMsg(_)) {
             return self.next.handle(event).await;
-        }
-
-        let is_quit = matches!(&event, Event::Command(Command::Quit));
-        if !is_quit {
-            revalidate_authenticated_user(&self.session, &self.last_revalidation).await?;
         }
 
         match event {

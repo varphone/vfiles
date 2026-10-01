@@ -10,7 +10,9 @@ use crate::{
         controlchan::{
             Reply, ReplyCode,
             active_passive::ActivePassiveEnforcerMiddleware,
-            auth::{AuthMiddleware, revalidate_authenticated_user},
+            auth::{
+                AuthMiddleware, SessionRevalidationMiddleware, revalidate_authenticated_user,
+            },
             codecs::FtpCodec,
             command::Command,
             commands,
@@ -160,7 +162,6 @@ where
     let event_chain = AuthMiddleware {
         session: shared_session.clone(),
         next: event_chain,
-        last_revalidation: Arc::clone(&last_revalidation),
     };
 
     let event_chain = FtpsControlChanEnforcerMiddleware {
@@ -172,6 +173,12 @@ where
     let event_chain = FtpsDataChanEnforcerMiddleware {
         session: shared_session.clone(),
         ftps_requirement: ftps_required_data_chan,
+        next: event_chain,
+    };
+
+    let event_chain = SessionRevalidationMiddleware {
+        session: shared_session.clone(),
+        last_revalidation: Arc::clone(&last_revalidation),
         next: event_chain,
     };
 
