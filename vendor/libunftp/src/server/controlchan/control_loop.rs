@@ -46,6 +46,7 @@ use tokio::{
 use tokio_util::codec::{Decoder, Framed};
 
 const MAX_AUTHENTICATION_DURATION: Duration = Duration::from_secs(60);
+const CONTROL_CHANNEL_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
 
 trait AsyncReadAsyncWriteSendUnpin: AsyncRead + AsyncWrite + Send + Unpin {}
 
@@ -186,8 +187,15 @@ where
     let cmd_and_reply_stream: Framed<Box<dyn AsyncReadAsyncWriteSendUnpin>, FtpCodec> = codec.framed(Box::new(tcp_stream));
     let (mut reply_sink, mut command_source) = cmd_and_reply_stream.split();
 
-    reply_sink.send(Reply::new(ReplyCode::ServiceReady, config.greeting)).await?;
-    reply_sink.flush().await?;
+    match tokio::time::timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, async {
+        reply_sink.send(Reply::new(ReplyCode::ServiceReady, config.greeting)).await?;
+        reply_sink.flush().await
+    })
+    .await
+    {
+        Ok(result) => result?,
+        Err(_) => return Err(ControlChanError::new(ControlChanErrorKind::ControlChannelTimeout)),
+    }
 
     // The idle timeout alone can be kept alive indefinitely with unauthenticated NOOP commands.
     // Keep one absolute deadline for login and the initial TLS handshake.
@@ -308,7 +316,10 @@ where
 
                     let handle_result = match event_chain.handle(event).await {
                         Err(e) => Err(e),
-                        Ok(reply) => reply_sink.send(reply).await,
+                        Ok(reply) => match tokio::time::timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, reply_sink.send(reply)).await {
+                            Ok(result) => result,
+                            Err(_) => Err(ControlChanError::new(ControlChanErrorKind::ControlChannelTimeout)),
+                        },
                     };
 
                     if let Err(chan_err) = handle_result {
@@ -319,8 +330,8 @@ where
                 }
                 Some(Err(e)) => {
                     let (reply, close_connection) = handle_control_channel_error(logger.clone(), e);
-                    let result = reply_sink.send(reply).await;
-                    if result.is_err() {
+                    let result = tokio::time::timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, reply_sink.send(reply)).await;
+                    if !matches!(result, Ok(Ok(()))) {
                         slog::warn!(logger, "Could not send error reply to client");
                         cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), control_msg_rx, logger.clone()).await;
                         return;
