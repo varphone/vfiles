@@ -127,12 +127,13 @@ where
     ///
     //#[tracing_attributes::instrument]
     pub async fn reserve(&mut self, session_arc: SharedSession<S, U>) -> Result<u16, SwitchboardError> {
-        let range_size = self.port_range.end() - self.port_range.start();
+        let range_start = u32::from(*self.port_range.start());
+        let range_size = u32::from(*self.port_range.end()) - range_start + 1;
 
         let randomized_initial_port = {
             let mut data = [0; 2];
             getrandom::fill(&mut data).expect("Error generating random free port to reserve");
-            u16::from_ne_bytes(data)
+            u32::from(u16::from_ne_bytes(data)) % range_size
         };
 
         // Claims the next available listening port
@@ -146,8 +147,8 @@ where
                 .expect("BUG: reserve() called on a session with no control_connection details");
             control_connection.source.ip()
         };
-        for i in 0..=range_size {
-            let port = self.port_range.start() + ((randomized_initial_port + i) % range_size);
+        for i in 0..range_size {
+            let port = (range_start + ((randomized_initial_port + i) % range_size)) as u16;
             slog::debug!(self.logger, "Trying if port {} is available", port);
             let key = SwitchboardKey::new(control_ip, port);
 
