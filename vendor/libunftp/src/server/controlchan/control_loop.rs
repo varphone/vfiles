@@ -452,7 +452,13 @@ where
                 session.cmd_tls = false;
                 Ok(Reply::none())
             }
-            MkDirSuccess { path } => Ok(Reply::new_with_string(ReplyCode::DirCreated, path)),
+            MkDirSuccess { path } => {
+                let escaped_path = path.replace('"', "\"\"");
+                Ok(Reply::new_with_string(
+                    ReplyCode::DirCreated,
+                    format!("\"{escaped_path}\" directory created"),
+                ))
+            }
             MkdirFail => Ok(Reply::new(ReplyCode::FileError, "Failed to create directory")),
             RenameSuccess { .. } => Ok(Reply::new(ReplyCode::FileActionOkay, "Renamed")),
             AuthSuccess { .. } => {
