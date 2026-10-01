@@ -159,6 +159,7 @@ where
     let event_chain = AuthMiddleware {
         session: shared_session.clone(),
         next: event_chain,
+        last_revalidation: None,
     };
 
     let event_chain = FtpsControlChanEnforcerMiddleware {
