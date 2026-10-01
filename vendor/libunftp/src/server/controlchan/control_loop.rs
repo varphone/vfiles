@@ -47,6 +47,7 @@ use tokio_util::codec::{Decoder, Framed};
 
 const MAX_AUTHENTICATION_DURATION: Duration = Duration::from_secs(60);
 const CONTROL_CHANNEL_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
+const CONTROL_CHANNEL_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
 trait AsyncReadAsyncWriteSendUnpin: AsyncRead + AsyncWrite + Send + Unpin {}
 
@@ -314,12 +315,13 @@ where
 
                     // TODO: Handle Event::InternalMsg(InternalMsg::PlaintextControlChannel)
 
-                    let handle_result = match event_chain.handle(event).await {
-                        Err(e) => Err(e),
-                        Ok(reply) => match tokio::time::timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, reply_sink.send(reply)).await {
+                    let handle_result = match tokio::time::timeout(CONTROL_CHANNEL_COMMAND_TIMEOUT, event_chain.handle(event)).await {
+                        Ok(Err(e)) => Err(e),
+                        Ok(Ok(reply)) => match tokio::time::timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, reply_sink.send(reply)).await {
                             Ok(result) => result,
                             Err(_) => Err(ControlChanError::new(ControlChanErrorKind::ControlChannelTimeout)),
                         },
+                        Err(_) => Err(ControlChanError::new(ControlChanErrorKind::ControlChannelTimeout)),
                     };
 
                     if let Err(chan_err) = handle_result {
