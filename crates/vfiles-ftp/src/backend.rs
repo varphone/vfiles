@@ -127,6 +127,8 @@ pub struct VfilesStorageBackend {
     batch: Arc<AsyncMutex<Option<ImportBatch>>>,
     /// 已提交的快照数，用于统计增量。
     snapshots_committed: Arc<AsyncMutex<u64>>,
+    /// `active_sessions` 只统计完成认证并进入后端的会话。
+    session_started: bool,
     /// 保证会话结束统计只记一次。
     session_finished: Arc<AtomicBool>,
 }
@@ -152,6 +154,7 @@ impl VfilesStorageBackend {
             session_permit,
             batch: Arc::new(AsyncMutex::new(None)),
             snapshots_committed: Arc::new(AsyncMutex::new(0)),
+            session_started: false,
             session_finished: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -417,7 +420,7 @@ impl VfilesStorageBackend {
         if let Err(err) = self.flush_batch().await {
             warn!(error = %err, "FTP 会话结束时提交批次失败");
         }
-        if !self.session_finished.swap(true, Ordering::SeqCst) {
+        if self.session_started && !self.session_finished.swap(true, Ordering::SeqCst) {
             self.deps.stats.session_finished();
         }
     }
@@ -437,6 +440,7 @@ impl Drop for VfilesStorageBackend {
         let batch = Arc::clone(&self.batch);
         let committed = Arc::clone(&self.snapshots_committed);
         let finished = Arc::clone(&self.session_finished);
+        let session_started = self.session_started;
         let stats = Arc::clone(&self.deps.stats);
         let session_permit = self.session_permit.clone();
 
@@ -461,7 +465,7 @@ impl Drop for VfilesStorageBackend {
                     }
                 }
             }
-            if !finished.swap(true, Ordering::SeqCst) {
+            if session_started && !finished.swap(true, Ordering::SeqCst) {
                 stats.session_finished();
             }
         });
@@ -498,6 +502,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
             .try_lock()
             .map_err(|_| std::io::Error::other("导入批次状态不可用"))?;
         *guard = Some(batch);
+        self.session_started = true;
         self.deps.stats.session_started();
         debug!(user = %user_detail.username, "FTP 会话已进入存储后端");
         Ok(())
