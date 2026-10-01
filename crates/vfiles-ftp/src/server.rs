@@ -138,12 +138,7 @@ pub async fn spawn_ftp_server(
     mut shutdown: watch::Receiver<bool>,
 ) -> std::io::Result<FtpServerHandle> {
     let (passive_start, passive_end) = settings.passive_ports;
-    if passive_start == 0 || passive_end == 0 || passive_end < passive_start {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "FTP 被动端口区间必须满足 1 <= 起始端口 <= 结束端口",
-        ));
-    }
+    validate_passive_ports(passive_start, passive_end)?;
 
     if settings.tls_self_signed {
         let (Some(certificate), Some(private_key)) = (&settings.tls_cert, &settings.tls_key) else {
@@ -250,6 +245,16 @@ pub async fn spawn_ftp_server(
     Ok(FtpServerHandle { local_addr, join })
 }
 
+fn validate_passive_ports(start: u16, end: u16) -> std::io::Result<()> {
+    if start == 0 || end == 0 || end < start {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "FTP 被动端口区间必须满足 1 <= 起始端口 <= 结束端口",
+        ));
+    }
+    Ok(())
+}
+
 async fn wait_for_shutdown(mut shutdown: watch::Receiver<bool>) {
     loop {
         if *shutdown.borrow() || shutdown.changed().await.is_err() {
@@ -267,4 +272,23 @@ pub async fn run_ftp_server(
     let handle = spawn_ftp_server(settings, app, shutdown).await?;
     handle.wait().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_passive_ports;
+
+    #[test]
+    fn passive_port_range_validation_accepts_inclusive_boundaries() {
+        assert!(validate_passive_ports(50_000, 50_000).is_ok());
+        assert!(validate_passive_ports(1, u16::MAX).is_ok());
+    }
+
+    #[test]
+    fn passive_port_range_validation_rejects_zero_and_reversed_ranges() {
+        for (start, end) in [(0, 1), (1, 0), (0, 0), (50_001, 50_000)] {
+            let error = validate_passive_ports(start, end).expect_err("invalid passive range");
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        }
+    }
 }
