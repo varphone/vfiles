@@ -58,6 +58,9 @@ use std::time::{Duration, Instant};
 const DATA_CHANNEL_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const DATA_CHANNEL_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
 const DATA_CHANNEL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const DATA_CHANNEL_PROGRESS_GRACE_PERIOD: Duration = Duration::from_secs(60);
+const MIN_DATA_CHANNEL_RATE_BYTES_PER_SEC: u64 = 32 * 1024;
+const MAX_DATA_CHANNEL_TRANSFER_DURATION: Duration = Duration::from_secs(48 * 60 * 60);
 const PASSIVE_CANDIDATE_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
@@ -126,16 +129,57 @@ fn require_control_session_resumption(stream: &tokio_rustls::server::TlsStream<T
     }
 }
 
+struct DataTransferTimeout {
+    idle_deadline: Pin<Box<tokio::time::Sleep>>,
+    progress_deadline: Pin<Box<tokio::time::Sleep>>,
+    started_at: tokio::time::Instant,
+    bytes_transferred: u64,
+}
+
+impl DataTransferTimeout {
+    fn new() -> Self {
+        let started_at = tokio::time::Instant::now();
+        Self {
+            idle_deadline: Box::pin(tokio::time::sleep(DATA_CHANNEL_IDLE_TIMEOUT)),
+            progress_deadline: Box::pin(tokio::time::sleep(DATA_CHANNEL_PROGRESS_GRACE_PERIOD)),
+            started_at,
+            bytes_transferred: 0,
+        }
+    }
+
+    fn poll_expiration(&mut self, cx: &mut Context<'_>) -> Option<&'static str> {
+        if self.idle_deadline.as_mut().poll(cx).is_ready() {
+            return Some("FTP data-channel transfer timed out while idle");
+        }
+        if self.progress_deadline.as_mut().poll(cx).is_ready() {
+            return Some("FTP data-channel transfer made insufficient progress");
+        }
+        None
+    }
+
+    fn record_progress(&mut self, bytes: usize) {
+        self.bytes_transferred = self.bytes_transferred.saturating_add(bytes as u64);
+        let now = tokio::time::Instant::now();
+        self.idle_deadline.as_mut().reset(now + DATA_CHANNEL_IDLE_TIMEOUT);
+
+        let transferred_millis = self.bytes_transferred.saturating_mul(1_000) / MIN_DATA_CHANNEL_RATE_BYTES_PER_SEC;
+        let progress_budget = DATA_CHANNEL_PROGRESS_GRACE_PERIOD
+            .saturating_add(Duration::from_millis(transferred_millis))
+            .min(MAX_DATA_CHANNEL_TRANSFER_DURATION);
+        self.progress_deadline.as_mut().reset(self.started_at + progress_budget);
+    }
+}
+
 struct IdleTimeoutReader<R> {
     inner: R,
-    deadline: Pin<Box<tokio::time::Sleep>>,
+    timeout: DataTransferTimeout,
 }
 
 impl<R> IdleTimeoutReader<R> {
     fn new(inner: R) -> Self {
         Self {
             inner,
-            deadline: Box::pin(tokio::time::sleep(DATA_CHANNEL_IDLE_TIMEOUT)),
+            timeout: DataTransferTimeout::new(),
         }
     }
 }
@@ -143,16 +187,13 @@ impl<R> IdleTimeoutReader<R> {
 impl<R: AsyncRead + Unpin> AsyncRead for IdleTimeoutReader<R> {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
         let this = self.as_mut().get_mut();
-        if this.deadline.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "FTP data-channel read timed out while idle",
-            )));
+        if let Some(message) = this.timeout.poll_expiration(cx) {
+            return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::TimedOut, message)));
         }
         match Pin::new(&mut this.inner).poll_read(cx, buf) {
             Poll::Ready(Ok(())) => {
                 if !buf.filled().is_empty() {
-                    this.deadline.as_mut().reset(tokio::time::Instant::now() + DATA_CHANNEL_IDLE_TIMEOUT);
+                    this.timeout.record_progress(buf.filled().len());
                 }
                 Poll::Ready(Ok(()))
             }
@@ -164,14 +205,14 @@ impl<R: AsyncRead + Unpin> AsyncRead for IdleTimeoutReader<R> {
 
 struct IdleTimeoutWriter<W> {
     inner: W,
-    deadline: Pin<Box<tokio::time::Sleep>>,
+    timeout: DataTransferTimeout,
 }
 
 impl<W> IdleTimeoutWriter<W> {
     fn new(inner: W) -> Self {
         Self {
             inner,
-            deadline: Box::pin(tokio::time::sleep(DATA_CHANNEL_IDLE_TIMEOUT)),
+            timeout: DataTransferTimeout::new(),
         }
     }
 }
@@ -179,16 +220,13 @@ impl<W> IdleTimeoutWriter<W> {
 impl<W: AsyncWrite + Unpin> AsyncWrite for IdleTimeoutWriter<W> {
     fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
         let this = self.as_mut().get_mut();
-        if this.deadline.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "FTP data-channel write timed out while idle",
-            )));
+        if let Some(message) = this.timeout.poll_expiration(cx) {
+            return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::TimedOut, message)));
         }
         match Pin::new(&mut this.inner).poll_write(cx, buf) {
             Poll::Ready(Ok(bytes_written)) => {
                 if bytes_written > 0 {
-                    this.deadline.as_mut().reset(tokio::time::Instant::now() + DATA_CHANNEL_IDLE_TIMEOUT);
+                    this.timeout.record_progress(bytes_written);
                 }
                 Poll::Ready(Ok(bytes_written))
             }
@@ -199,11 +237,8 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for IdleTimeoutWriter<W> {
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.as_mut().get_mut();
-        if this.deadline.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "FTP data-channel flush timed out while idle",
-            )));
+        if let Some(message) = this.timeout.poll_expiration(cx) {
+            return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::TimedOut, message)));
         }
         match Pin::new(&mut this.inner).poll_flush(cx) {
             Poll::Ready(result) => Poll::Ready(result),
@@ -213,11 +248,8 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for IdleTimeoutWriter<W> {
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.as_mut().get_mut();
-        if this.deadline.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "FTP data-channel shutdown timed out while idle",
-            )));
+        if let Some(message) = this.timeout.poll_expiration(cx) {
+            return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::TimedOut, message)));
         }
         match Pin::new(&mut this.inner).poll_shutdown(cx) {
             Poll::Ready(result) => Poll::Ready(result),
