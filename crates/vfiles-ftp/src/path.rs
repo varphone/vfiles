@@ -48,13 +48,10 @@ pub fn to_normalized(path: &Path) -> Result<NormalizedPath, Error> {
                         "路径不允许包含反斜杠",
                     ));
                 }
-                if part
-                    .chars()
-                    .any(|ch| ch.is_control() || matches!(ch, '\u{2028}' | '\u{2029}'))
-                {
+                if part.chars().any(is_unsafe_path_char) {
                     return Err(Error::new(
                         ErrorKind::PermissionDenied,
-                        "路径不允许包含控制字符或 Unicode 行分隔符",
+                        "路径不允许包含控制字符、行分隔符或双向文本控制符",
                     ));
                 }
                 segments.push(part);
@@ -65,6 +62,20 @@ pub fn to_normalized(path: &Path) -> Result<NormalizedPath, Error> {
     let joined = segments.join("/");
     NormalizedPath::new(&joined)
         .map_err(|message| Error::new(ErrorKind::PermissionDenied, format!("非法路径: {message}")))
+}
+
+fn is_unsafe_path_char(ch: char) -> bool {
+    ch.is_control()
+        || matches!(
+            ch,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
 }
 
 /// 把命名空间内路径渲染成 FTP 客户端看到的绝对路径（列表用）。
