@@ -13,13 +13,14 @@ members = [
     "crates/vfiles-infra-fs",
     "crates/vfiles-test-kit",
 ]
-exclude = ["vendor/s3s", "vendor/hyper", "vendor/h2"]
+exclude = ["vendor/s3s", "vendor/hyper", "vendor/h2", "vendor/libunftp"]
 resolver = "3"
 
 [patch.crates-io]
 s3s = { path = "vendor/s3s" }
 hyper = { path = "vendor/hyper" }
 h2 = { path = "vendor/h2" }
+libunftp = { path = "vendor/libunftp" }
 
 [workspace.package]
 version = "2.6.10"
