@@ -10,18 +10,21 @@
 use std::{
     collections::HashMap,
     fmt,
+    future::Future,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::{
         Arc, Mutex as SyncMutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::SystemTime,
+    task::{Context, Poll},
+    time::{Duration, SystemTime},
 };
 
 use tokio::sync::Mutex as AsyncMutex;
 
 use async_trait::async_trait;
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, ReadBuf};
 use tracing::{debug, warn};
 use unftp_core::storage::{
     Error, ErrorKind, FEATURE_RESTART, Fileinfo, Metadata, Result, StorageBackend,
@@ -46,6 +49,119 @@ const MAX_LIST_METADATA_BYTES: usize = 8 * 1024 * 1024;
 /// RNTO builds source, destination and lock snapshots for the whole moved subtree.
 const MAX_RENAME_SUBTREE_ENTRIES: usize = 20_000;
 const MAX_RENAME_SUBTREE_PATH_BYTES: usize = 4 * 1024 * 1024;
+const FTP_ACCOUNT_RECHECK_INTERVAL: Duration = Duration::from_secs(5);
+const FTP_ACCOUNT_RECHECK_TIMEOUT: Duration = Duration::from_secs(5);
+
+type AccountCheckFuture = Pin<Box<dyn Future<Output = std::io::Result<()>> + Send>>;
+
+struct AccountRevalidatingReader<R> {
+    inner: R,
+    user_repo: Arc<dyn UserRepo + Send + Sync>,
+    user: VfilesFtpUser,
+    next_check: Pin<Box<tokio::time::Sleep>>,
+    pending_check: SyncMutex<Option<AccountCheckFuture>>,
+    at_eof: bool,
+    eof_validated: bool,
+}
+
+impl<R> AccountRevalidatingReader<R> {
+    fn new(inner: R, user_repo: Arc<dyn UserRepo + Send + Sync>, user: VfilesFtpUser) -> Self {
+        Self {
+            inner,
+            user_repo,
+            user,
+            next_check: Box::pin(tokio::time::sleep(FTP_ACCOUNT_RECHECK_INTERVAL)),
+            pending_check: SyncMutex::new(None),
+            at_eof: false,
+            eof_validated: false,
+        }
+    }
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for AccountRevalidatingReader<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let this = self.as_mut().get_mut();
+        loop {
+            if this.eof_validated {
+                return Poll::Ready(Ok(()));
+            }
+
+            let check_due = this.at_eof || this.next_check.as_mut().poll(cx).is_ready();
+            let needs_check = {
+                let pending = this
+                    .pending_check
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                pending.is_none() && check_due
+            };
+            if needs_check {
+                let user_repo = Arc::clone(&this.user_repo);
+                let user = this.user.clone();
+                let future = async move {
+                    match validate_ftp_user_current(user_repo.as_ref(), &user).await {
+                        Ok(()) => Ok(()),
+                        Err(_) => Err(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            "FTP account is no longer authorized",
+                        )),
+                    }
+                };
+                let mut pending = this
+                    .pending_check
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                *pending = Some(Box::pin(future));
+            }
+
+            let check_result = {
+                let mut pending = this
+                    .pending_check
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(future) = pending.as_mut() {
+                    match future.as_mut().poll(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(result) => {
+                            *pending = None;
+                            Some(result)
+                        }
+                    }
+                } else {
+                    None
+                }
+            };
+
+            if let Some(result) = check_result {
+                if let Err(err) = result {
+                    return Poll::Ready(Err(err));
+                }
+                this.next_check
+                    .as_mut()
+                    .reset(tokio::time::Instant::now() + FTP_ACCOUNT_RECHECK_INTERVAL);
+                if this.at_eof {
+                    this.eof_validated = true;
+                    return Poll::Ready(Ok(()));
+                }
+                continue;
+            }
+
+            let filled_before = buf.filled().len();
+            let remaining_before = buf.remaining();
+            match Pin::new(&mut this.inner).poll_read(cx, buf) {
+                Poll::Ready(Ok(()))
+                    if remaining_before > 0 && buf.filled().len() == filled_before =>
+                {
+                    this.at_eof = true;
+                }
+                result => return result,
+            }
+        }
+    }
+}
 
 /// FTP 文件元数据。
 #[derive(Debug, Clone, Copy)]
@@ -93,6 +209,31 @@ impl Metadata for VfilesMetadata {
     fn uid(&self) -> u32 {
         0
     }
+}
+
+async fn validate_ftp_user_current(
+    user_repo: &(dyn UserRepo + Send + Sync),
+    user: &VfilesFtpUser,
+) -> vfiles_domain::DomainResult<()> {
+    if user.anonymous {
+        return Ok(());
+    }
+
+    let current = tokio::time::timeout(FTP_ACCOUNT_RECHECK_TIMEOUT, user_repo.find_by_id(&user.id))
+        .await
+        .map_err(|_| DomainError::Internal {
+            message: "FTP 账户状态校验超时".to_string(),
+        })??;
+    if current.disabled
+        || current.username.as_str() != user.username
+        || current.role != user.role
+        || current.updated_at != user.account_updated_at
+        || current.password_changed_at != user.password_changed_at
+    {
+        return Err(DomainError::SessionRevoked);
+    }
+
+    Ok(())
 }
 
 /// 后端共享依赖（每个会话克隆一份，内部用 `Arc` 共享）。
@@ -199,6 +340,7 @@ impl VfilesStorageBackend {
 
     async fn import_file<R>(
         &self,
+        user: &VfilesFtpUser,
         path: &NormalizedPath,
         input: R,
         conditions: &[EntryWriteCondition],
@@ -216,14 +358,23 @@ impl VfilesStorageBackend {
 
         let name = path.as_str().rsplit('/').next().unwrap_or(path.as_str());
         let message = format!("FTP 上传: {name}");
+        let user_repo = Arc::clone(&self.deps.user_repo);
+        let expected_user = user.clone();
+        let before_commit =
+            move || -> Pin<Box<dyn Future<Output = vfiles_domain::DomainResult<()>> + Send>> {
+                Box::pin(async move {
+                    validate_ftp_user_current(user_repo.as_ref(), &expected_user).await
+                })
+            };
 
         let result = batch
-            .import_file_stream_with_conditions(
+            .import_file_stream_with_conditions_and_precommit(
                 path,
                 Box::new(input),
                 self.deps.max_file_size_bytes,
                 Some(&message),
                 conditions,
+                before_commit,
             )
             .await;
 
@@ -392,29 +543,9 @@ impl VfilesStorageBackend {
     }
 
     async fn ensure_user_current(&self, user: &VfilesFtpUser) -> Result<()> {
-        if user.anonymous {
-            return Ok(());
-        }
-
-        let current = self
-            .deps
-            .user_repo
-            .find_by_id(&user.id)
+        validate_ftp_user_current(self.deps.user_repo.as_ref(), user)
             .await
-            .map_err(to_ftp_error)?;
-        if current.disabled
-            || current.username.as_str() != user.username
-            || current.role != user.role
-            || current.updated_at != user.account_updated_at
-            || current.password_changed_at != user.password_changed_at
-        {
-            return Err(Error::new(
-                ErrorKind::PermissionDenied,
-                "FTP 账户状态已变更，请重新登录",
-            ));
-        }
-
-        Ok(())
+            .map_err(to_ftp_error)
     }
 
     async fn validate_upload_path(
@@ -663,7 +794,11 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
             .stats
             .record_download(content.size_bytes.saturating_sub(start_pos));
 
-        Ok(Box::new(SyncReader::new(reader)))
+        Ok(Box::new(AccountRevalidatingReader::new(
+            SyncReader::new(reader),
+            Arc::clone(&self.deps.user_repo),
+            user.clone(),
+        )))
     }
 
     async fn put<P, R>(
@@ -761,7 +896,9 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
                 expected_additional_lock_states: None,
             });
         }
-        let bytes = self.import_file(&path, input, &conditions).await?;
+        let input =
+            AccountRevalidatingReader::new(input, Arc::clone(&self.deps.user_repo), user.clone());
+        let bytes = self.import_file(user, &path, input, &conditions).await?;
         debug!(user = %user, path = path.as_str(), bytes, "FTP 上传完成");
         Ok(bytes)
     }

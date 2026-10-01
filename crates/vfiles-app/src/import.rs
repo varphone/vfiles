@@ -9,7 +9,7 @@
 //! - 只有**快照**被延后到 `flush`，用于历史回放与变更记录；
 //! - 批次未 flush 就中断时，数据仍然有效，只是这些变更会体现在下一次快照里。
 
-use std::sync::Arc;
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use tokio::io::AsyncReadExt;
 
@@ -19,6 +19,9 @@ use crate::services::{
     ChangedEntry, MutationResult, ensure_directory_path, ensure_directory_path_with_conditions,
     finalize_mutation_from_namespace, guess_mime_type, normalize_message,
 };
+
+type ImportPrecommit =
+    Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = DomainResult<()>> + Send>> + Send>;
 
 /// 单个文件导入结果。
 #[derive(Debug)]
@@ -197,7 +200,7 @@ impl ImportBatch {
         max_bytes: Option<u64>,
         message: Option<&str>,
     ) -> DomainResult<ImportedFile> {
-        self.import_file_stream_inner(path, reader, max_bytes, message, None)
+        self.import_file_stream_inner(path, reader, max_bytes, message, None, None)
             .await
     }
 
@@ -216,6 +219,7 @@ impl ImportBatch {
             max_bytes,
             message,
             Some(std::slice::from_ref(condition)),
+            None,
         )
         .await
     }
@@ -229,8 +233,32 @@ impl ImportBatch {
         message: Option<&str>,
         conditions: &[EntryWriteCondition],
     ) -> DomainResult<ImportedFile> {
-        self.import_file_stream_inner(path, reader, max_bytes, message, Some(conditions))
+        self.import_file_stream_inner(path, reader, max_bytes, message, Some(conditions), None)
             .await
+    }
+
+    /// Import one file with path conditions and a final authorization check after streaming the blob.
+    pub async fn import_file_stream_with_conditions_and_precommit<F>(
+        &mut self,
+        path: &NormalizedPath,
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        max_bytes: Option<u64>,
+        message: Option<&str>,
+        conditions: &[EntryWriteCondition],
+        before_commit: F,
+    ) -> DomainResult<ImportedFile>
+    where
+        F: FnOnce() -> Pin<Box<dyn Future<Output = DomainResult<()>> + Send>> + Send + 'static,
+    {
+        self.import_file_stream_inner(
+            path,
+            reader,
+            max_bytes,
+            message,
+            Some(conditions),
+            Some(Box::new(before_commit)),
+        )
+        .await
     }
 
     async fn import_file_stream_inner(
@@ -240,6 +268,7 @@ impl ImportBatch {
         max_bytes: Option<u64>,
         message: Option<&str>,
         conditions: Option<&[EntryWriteCondition]>,
+        before_commit: Option<ImportPrecommit>,
     ) -> DomainResult<ImportedFile> {
         if path.as_str().is_empty() {
             return Err(DomainError::Validation {
@@ -256,6 +285,10 @@ impl ImportBatch {
             .blob_store
             .store_blob_stream(reader, None, None, None, None, None, None)
             .await?;
+
+        if let Some(before_commit) = before_commit {
+            before_commit().await?;
+        }
 
         // The blob is content-addressed and may already be referenced by a concurrent import
         // after publication. Failed imports leave it for the grace-period orphan collector
