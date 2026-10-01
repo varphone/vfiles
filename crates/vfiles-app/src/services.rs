@@ -6551,13 +6551,15 @@ mod tests {
             .await
             .expect_err("the concurrent directory must reject the file upload");
         assert!(matches!(error, DomainError::PathConflict { .. }));
-        assert!(
-            context
-                .blob_store
-                .list_stored_blob_files()
-                .await
-                .expect("blob listing should succeed")
-                .is_empty()
+        let deferred_blobs = context
+            .blob_store
+            .list_stored_blob_files()
+            .await
+            .expect("blob listing should succeed");
+        assert_eq!(
+            deferred_blobs.len(),
+            1,
+            "a rejected upload should defer blob deletion through the grace period"
         );
         assert_eq!(
             context
@@ -6749,13 +6751,15 @@ mod tests {
                 .expect("entry lookup should succeed")
                 .is_none()
         );
-        assert!(
-            context
-                .blob_store
-                .list_stored_blob_files()
-                .await
-                .expect("blob listing should succeed")
-                .is_empty()
+        let deferred_blobs = context
+            .blob_store
+            .list_stored_blob_files()
+            .await
+            .expect("blob listing should succeed");
+        assert_eq!(
+            deferred_blobs.len(),
+            1,
+            "a rolled-back version should leave its blob for deferred collection"
         );
         fault_pool.close().await;
     }
@@ -7850,11 +7854,28 @@ mod maintenance_tests {
         // 旧快照被裁剪 → 其 blob 引用归零 → 行与文件一并清理
         assert_eq!(report.pruned_snapshots, 1);
         assert_eq!(report.released_blobs, 1);
-        assert!(!released_path.exists(), "released blob file should be gone");
-        // 同一轮里孤儿文件也被回收
+        assert!(
+            released_path.exists(),
+            "newly released blob should remain during the grace period"
+        );
+        // 同一轮里已超过保护期的孤儿文件被回收。
         assert_eq!(report.purged_blobs, 1);
         assert!(!orphan_path.exists(), "orphan file should be gone");
         assert!(report.freed_bytes > 0);
+
+        backdate_file(
+            &released_path,
+            time::OffsetDateTime::now_utc() - time::Duration::hours(2),
+        );
+        let deferred_purge = service
+            .purge_orphan_blobs(3600)
+            .await
+            .expect("deferred blob purge should succeed");
+        assert_eq!(deferred_purge.removed, 1);
+        assert!(
+            !released_path.exists(),
+            "released blob should be collected after the grace period"
+        );
 
         let snapshots = snapshot_repo
             .list_all_snapshots()
