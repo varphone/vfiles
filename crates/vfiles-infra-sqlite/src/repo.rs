@@ -41,6 +41,31 @@ async fn verify_write_lock_snapshot(
     }
     if let Some(additional_locks) = &condition.expected_additional_lock_states {
         for snapshot in additional_locks {
+            if snapshot.require_subtree_unlocked {
+                let has_lock: i64 = sqlx::query_scalar(
+                    r#"SELECT EXISTS(
+                        SELECT 1 FROM webdav_locks
+                        WHERE namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)
+                          AND (? = '' OR path = ? OR
+                            substr(path, 1, length(?) + 1) = ? || '/')
+                    )"#,
+                )
+                .bind(condition.namespace_id.to_string())
+                .bind(now)
+                .bind(snapshot.path.as_str())
+                .bind(snapshot.path.as_str())
+                .bind(snapshot.path.as_str())
+                .bind(snapshot.path.as_str())
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to verify lock-free subtree: {e}"),
+                })?;
+                if has_lock != 0 || !snapshot.tokens.is_empty() {
+                    return Err(DomainError::PreconditionFailed);
+                }
+                continue;
+            }
             let current_tokens: Vec<String> = if snapshot.include_ancestors {
                 sqlx::query_scalar(
                     r#"SELECT token FROM webdav_locks WHERE namespace_id = ?
@@ -13624,6 +13649,7 @@ mod webdav_lock_repo_tests {
                 path: child_path,
                 tokens: Vec::new(),
                 include_ancestors: false,
+                require_subtree_unlocked: false,
             }]),
         };
         let result = entry_repo
@@ -13688,6 +13714,7 @@ mod webdav_lock_repo_tests {
                 path: destination.clone(),
                 tokens: Vec::new(),
                 include_ancestors: true,
+                require_subtree_unlocked: false,
             }]),
             ..condition.clone()
         };
@@ -13713,6 +13740,7 @@ mod webdav_lock_repo_tests {
                         path: destination.clone(),
                         tokens: Vec::new(),
                         include_ancestors: true,
+                        require_subtree_unlocked: false,
                     }],
                 },
                 true,

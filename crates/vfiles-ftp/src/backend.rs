@@ -783,6 +783,18 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         let expected_lock_tokens = self
             .expected_unlocked_tokens(&user.namespace_id, &path)
             .await?;
+        let descendant_locks = self
+            .deps
+            .lock_repo
+            .find_active_under_path_all(&user.namespace_id, path.as_str(), Self::lock_now_ms())
+            .await
+            .map_err(to_ftp_error)?;
+        if !descendant_locks.is_empty() {
+            return Err(Error::new(
+                ErrorKind::PermissionDenied,
+                "目录子树中存在 WebDAV 写锁",
+            ));
+        }
         let condition = EntryWriteCondition {
             namespace_id: user.namespace_id,
             path: path.clone(),
@@ -790,7 +802,12 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
             expected_entry_id: Some(entry.id),
             expected_version_id: entry.current_version_id,
             expected_lock_tokens: Some(expected_lock_tokens),
-            expected_additional_lock_states: None,
+            expected_additional_lock_states: Some(vec![vfiles_domain::EntryLockSnapshot {
+                path: path.clone(),
+                tokens: Vec::new(),
+                include_ancestors: false,
+                require_subtree_unlocked: true,
+            }]),
         };
         self.deps
             .workspace
@@ -970,6 +987,20 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
             .map_err(to_ftp_error)?
             .values()
             .any(|locks| !locks.is_empty())
+            || !self
+                .deps
+                .lock_repo
+                .find_active_under_path_all(&user.namespace_id, from.as_str(), Self::lock_now_ms())
+                .await
+                .map_err(to_ftp_error)?
+                .is_empty()
+            || !self
+                .deps
+                .lock_repo
+                .find_active_under_path_all(&user.namespace_id, to.as_str(), Self::lock_now_ms())
+                .await
+                .map_err(to_ftp_error)?
+                .is_empty()
         {
             return Err(Error::new(
                 ErrorKind::PermissionDenied,
@@ -983,6 +1014,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
                 path: entry.path_norm.clone(),
                 tokens: Vec::new(),
                 include_ancestors: true,
+                require_subtree_unlocked: false,
             })
             .collect::<Vec<_>>();
         additional_lock_states.extend(destination_paths.into_iter().map(|path| {
@@ -990,8 +1022,21 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
                 path,
                 tokens: Vec::new(),
                 include_ancestors: true,
+                require_subtree_unlocked: false,
             }
         }));
+        additional_lock_states.push(vfiles_domain::EntryLockSnapshot {
+            path: from.clone(),
+            tokens: Vec::new(),
+            include_ancestors: false,
+            require_subtree_unlocked: true,
+        });
+        additional_lock_states.push(vfiles_domain::EntryLockSnapshot {
+            path: to.clone(),
+            tokens: Vec::new(),
+            include_ancestors: false,
+            require_subtree_unlocked: true,
+        });
         let condition = EntryWriteCondition {
             namespace_id: user.namespace_id,
             path: from.clone(),

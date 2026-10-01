@@ -300,6 +300,8 @@ pub struct EntryLockSnapshot {
     pub tokens: Vec<String>,
     /// Include depth-infinity locks inherited from ancestor resources.
     pub include_ancestors: bool,
+    /// Require the active lock set on this path and every descendant to remain empty.
+    pub require_subtree_unlocked: bool,
 }
 
 /// Snapshot of the resource state required by an atomic conditional write.

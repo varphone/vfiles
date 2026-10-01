@@ -1372,6 +1372,7 @@ async fn write_subtree_precondition_snapshot(
                     path,
                     tokens,
                     include_ancestors: false,
+                    require_subtree_unlocked: false,
                 })
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
         })
@@ -1667,6 +1668,7 @@ async fn write_op(
                         path: destination,
                         tokens,
                         include_ancestors: true,
+                        require_subtree_unlocked: false,
                     });
                 }
                 Err(status) => {
@@ -3537,6 +3539,7 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
                                 path: dest_path.clone(),
                                 tokens: destination_lock_tokens,
                                 include_ancestors: true,
+                                require_subtree_unlocked: false,
                             });
                             destination_lock_states
                         },
