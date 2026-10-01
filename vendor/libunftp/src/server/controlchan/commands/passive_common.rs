@@ -14,7 +14,10 @@ use crate::{
 use async_trait::async_trait;
 use std::{fmt::Debug, io, net::SocketAddr, ops::RangeInclusive, time::Duration};
 use tokio::net::TcpSocket;
-use tokio::sync::{mpsc::{Receiver, Sender, channel}, oneshot};
+use tokio::sync::{
+    mpsc::{Receiver, Sender, channel},
+    oneshot,
+};
 use tokio_util::sync::CancellationToken;
 
 const BIND_RETRIES: u8 = 10;
@@ -128,6 +131,7 @@ where
     let reply = cmd.build_reply(&args, port).await?;
     if reply.is_positive() {
         setup_inter_loop_comms(args.session.clone(), args.tx_control_chan.clone()).await;
+        let control_peer_ip = args.session.lock().await.source.ip();
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
         {
@@ -145,7 +149,16 @@ where
                     drop(listener);
                     return;
                 }
-                result = tokio::time::timeout(Duration::from_secs(15), listener.accept()) => result,
+                result = tokio::time::timeout(Duration::from_secs(15), async {
+                    loop {
+                        let (socket, peer) = listener.accept().await?;
+                        if peer.ip() == control_peer_ip {
+                            return Ok::<_, io::Error>((socket, peer));
+                        }
+                        slog::debug!(args.logger, "Ignoring passive data connection from unexpected peer {:?}; expected {:?}", peer.ip(), control_peer_ip);
+                        drop(socket);
+                    }
+                }) => result,
             };
 
             // Do not keep the passive listening port occupied during the data transfer itself.
