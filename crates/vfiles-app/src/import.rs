@@ -197,6 +197,31 @@ impl ImportBatch {
         max_bytes: Option<u64>,
         message: Option<&str>,
     ) -> DomainResult<ImportedFile> {
+        self.import_file_stream_inner(path, reader, max_bytes, message, None)
+            .await
+    }
+
+    /// Import one file while atomically checking an observed write condition at version commit.
+    pub async fn import_file_stream_with_condition(
+        &mut self,
+        path: &NormalizedPath,
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        max_bytes: Option<u64>,
+        message: Option<&str>,
+        condition: &EntryWriteCondition,
+    ) -> DomainResult<ImportedFile> {
+        self.import_file_stream_inner(path, reader, max_bytes, message, Some(condition))
+            .await
+    }
+
+    async fn import_file_stream_inner(
+        &mut self,
+        path: &NormalizedPath,
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        max_bytes: Option<u64>,
+        message: Option<&str>,
+        condition: Option<&EntryWriteCondition>,
+    ) -> DomainResult<ImportedFile> {
         if path.as_str().is_empty() {
             return Err(DomainError::Validation {
                 message: "Import path must not be empty".to_string(),
@@ -248,6 +273,7 @@ impl ImportBatch {
             )
             .await?;
 
+            let mut created_entry_id = None;
             let entry = match self
                 .entry_repo
                 .find_by_path(&self.namespace_id, path)
@@ -261,7 +287,7 @@ impl ImportBatch {
                 Some(existing) => existing,
                 None => {
                     // create_entry 只返回 id，随后重新读取完整条目（与 HTTP 上传一致）
-                    if let Err(err) = self
+                    let entry_id = match self
                         .entry_repo
                         .create_entry(
                             &self.namespace_id,
@@ -271,8 +297,10 @@ impl ImportBatch {
                         )
                         .await
                     {
-                        return Err(err);
-                    }
+                        Ok(entry_id) => entry_id,
+                        Err(err) => return Err(err),
+                    };
+                    created_entry_id = Some(entry_id);
 
                     self.entry_repo
                         .find_by_path(&self.namespace_id, path)
@@ -311,9 +339,17 @@ impl ImportBatch {
 
             let mime_type = guess_mime_type(filename);
             let normalized_message = normalize_message(message);
+            let mut effective_condition = condition.cloned();
+            if let Some(condition) = effective_condition.as_mut()
+                && condition.expected_entry_id.is_none()
+                && created_entry_id == Some(entry.id)
+            {
+                condition.expected_entry_id = Some(entry.id);
+            }
+            let no_properties = |_version_id| Vec::new();
             let version = match self
                 .entry_repo
-                .create_version(
+                .create_version_with_properties(
                     &entry.id,
                     Some(&blob_id),
                     Some(&content_hash),
@@ -321,6 +357,9 @@ impl ImportBatch {
                     mime_type.as_deref(),
                     &self.actor_user_id,
                     normalized_message.as_deref(),
+                    false,
+                    &no_properties,
+                    effective_condition.as_ref(),
                 )
                 .await
             {

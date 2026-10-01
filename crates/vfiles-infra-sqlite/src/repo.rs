@@ -6011,34 +6011,7 @@ impl EntryRepo for SqliteEntryRepo {
         })?;
 
         if let Some(condition) = condition {
-            if let Some(expected_tokens) = &condition.expected_lock_tokens {
-                let now = time::OffsetDateTime::now_utc()
-                    .unix_timestamp_nanos()
-                    .div_euclid(1_000_000)
-                    .clamp(0, i64::MAX as i128) as i64;
-                let current_tokens: Vec<String> = sqlx::query_scalar(
-                    r#"SELECT token FROM webdav_locks
-                       WHERE namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)
-                         AND (path = ? OR (depth_infinity = 1 AND
-                           (path = '' OR substr(?, 1, length(path) + 1) = path || '/')))
-                       ORDER BY token"#,
-                )
-                .bind(condition.namespace_id.to_string())
-                .bind(now)
-                .bind(condition.path.as_str())
-                .bind(condition.path.as_str())
-                .fetch_all(&mut *tx)
-                .await
-                .map_err(|e| DomainError::Internal {
-                    message: format!("Failed to verify conditional WebDAV lock state: {e}"),
-                })?;
-                let mut expected_tokens = expected_tokens.clone();
-                expected_tokens.sort_unstable();
-                if current_tokens != expected_tokens {
-                    return Err(DomainError::PreconditionFailed);
-                }
-            }
-
+            verify_write_lock_snapshot(&mut tx, condition).await?;
             if condition.check_entry_state {
                 let row: Option<(String, Option<String>)> = sqlx::query_as(
                     "SELECT e.id, (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1) FROM entries e WHERE e.namespace_id = ? AND e.path = ?",

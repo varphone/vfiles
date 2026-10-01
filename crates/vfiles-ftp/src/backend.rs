@@ -188,7 +188,12 @@ impl VfilesStorageBackend {
         }
     }
 
-    async fn import_file<R>(&self, path: &NormalizedPath, input: R) -> Result<u64>
+    async fn import_file<R>(
+        &self,
+        path: &NormalizedPath,
+        input: R,
+        condition: &EntryWriteCondition,
+    ) -> Result<u64>
     where
         R: AsyncRead + Send + Sync + Unpin + 'static,
     {
@@ -204,11 +209,12 @@ impl VfilesStorageBackend {
         let message = format!("FTP 上传: {name}");
 
         let result = batch
-            .import_file_stream(
+            .import_file_stream_with_condition(
                 path,
                 Box::new(input),
                 self.deps.max_file_size_bytes,
                 Some(&message),
+                condition,
             )
             .await;
 
@@ -625,7 +631,25 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
 
         // Reject deterministic path conflicts before consuming the data stream into a blob.
         self.validate_upload_path(&user.namespace_id, &path).await?;
-        let bytes = self.import_file(&path, input).await?;
+        let existing = self
+            .deps
+            .entry_repo
+            .find_by_path(&user.namespace_id, &path)
+            .await
+            .map_err(to_ftp_error)?;
+        let expected_lock_tokens = self
+            .expected_unlocked_tokens(&user.namespace_id, &path)
+            .await?;
+        let condition = EntryWriteCondition {
+            namespace_id: user.namespace_id,
+            path: path.clone(),
+            check_entry_state: true,
+            expected_entry_id: existing.as_ref().map(|entry| entry.id),
+            expected_version_id: existing.and_then(|entry| entry.current_version_id),
+            expected_lock_tokens: Some(expected_lock_tokens),
+            expected_additional_lock_states: None,
+        };
+        let bytes = self.import_file(&path, input, &condition).await?;
         debug!(user = %user, path = path.as_str(), bytes, "FTP 上传完成");
         Ok(bytes)
     }
