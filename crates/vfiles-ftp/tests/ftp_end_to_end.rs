@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use camino::Utf8PathBuf;
+use sqlx::{QueryBuilder, Sqlite};
 use suppaftp::{
     FtpStream, RustlsConnector, RustlsFtpStream, Status,
     rustls::{
@@ -18,14 +19,15 @@ use tokio::{
     io::{AsyncBufReadExt, BufReader},
     net::TcpStream,
 };
+use unftp_core::storage::{ErrorKind, StorageBackend};
 use vfiles_app::{
     AuthService, DefaultWorkspaceService, IngestStats, LoginAttemptLimiter, NamespaceService,
     RateLimitPolicy, SnapshotMode,
 };
 use vfiles_domain::{DomainResult, EntryRepo, NamespaceRepo, NormalizedPath, Role, UserRepo};
 use vfiles_ftp::{
-    BackendDeps, FtpApplication, FtpSettings, RoleFilter, VfilesAuthenticator,
-    VfilesUserDetailProvider, spawn_ftp_server,
+    BackendDeps, FtpApplication, FtpSettings, RoleFilter, VfilesAuthenticator, VfilesFtpUser,
+    VfilesStorageBackend, VfilesUserDetailProvider, spawn_ftp_server,
 };
 use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteEntryRepo, SqliteMigrations, SqliteNamespaceRepo,
@@ -43,6 +45,7 @@ struct Harness {
     user_repo: SqliteUserRepo,
     entry_repo: SqliteEntryRepo,
     workspace: Arc<DefaultWorkspaceService>,
+    backend: BackendDeps,
     _shutdown: watch::Sender<bool>,
     handle: vfiles_ftp::FtpServerHandle,
 }
@@ -166,7 +169,7 @@ impl Harness {
         };
 
         let app = FtpApplication {
-            backend,
+            backend: backend.clone(),
             authenticator,
             user_detail_provider: provider,
         };
@@ -184,6 +187,7 @@ impl Harness {
             user_repo,
             entry_repo,
             workspace,
+            backend,
             _shutdown: shutdown_tx,
             handle,
         }
@@ -536,4 +540,59 @@ async fn disabled_user_cannot_bypass_revalidation_with_ftps_policy_commands() {
         prot_result.is_err(),
         "revoked session must close before FTPS data-channel policy replies"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_listing_rejects_directories_over_its_bounded_entry_limit() {
+    const CHILD_COUNT: usize = 20_001;
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+
+    let rows: Vec<(String, String)> = (0..CHILD_COUNT)
+        .map(|index| {
+            (
+                format!("00000000-0000-4000-8000-{index:012x}"),
+                format!("ftp-list-limit-{index:05}"),
+            )
+        })
+        .collect();
+    let mut transaction = harness.pool.begin().await.expect("transaction");
+    for chunk in rows.chunks(1_000) {
+        let mut query =
+            QueryBuilder::<Sqlite>::new("INSERT INTO entries (id, namespace_id, path, kind) ");
+        query.push_values(chunk, |mut builder, (id, path)| {
+            builder
+                .push_bind(id)
+                .push_bind(harness.namespace_id.to_string())
+                .push_bind(path)
+                .push_bind("directory");
+        });
+        query
+            .build()
+            .execute(&mut *transaction)
+            .await
+            .expect("directory fixtures should be inserted");
+    }
+    transaction.commit().await.expect("fixture transaction");
+
+    let record = harness
+        .user_repo
+        .find_by_id(&harness.user_id)
+        .await
+        .expect("FTP user");
+    let user = VfilesFtpUser {
+        id: record.id,
+        username: record.username.to_string(),
+        role: record.role,
+        namespace_id: harness.namespace_id,
+        account_updated_at: record.updated_at,
+        password_changed_at: record.password_changed_at,
+        anonymous: false,
+    };
+    let backend = VfilesStorageBackend::new(harness.backend.clone());
+
+    let error = match backend.list(&user, ".").await {
+        Ok(_) => panic!("FTP must refuse the oversized directory listing"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), ErrorKind::LocalError);
 }
