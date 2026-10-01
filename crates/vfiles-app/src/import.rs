@@ -213,12 +213,13 @@ impl ImportBatch {
             .store_blob_stream(reader, None, None, None, None, None, None)
             .await?;
 
+        // The blob is content-addressed and may already be referenced by a concurrent import
+        // after publication. Failed imports leave it for the grace-period orphan collector
+        // instead of deleting shared content here.
+
         if let Some(limit) = max_bytes
             && stored_size > limit
         {
-            if blob_created {
-                let _ = self.blob_store.delete_blob(&blob_id).await;
-            }
             return Err(DomainError::StorageQuotaExceeded);
         }
 
@@ -252,9 +253,6 @@ impl ImportBatch {
             .await?
         {
             Some(existing) if existing.entry_type != EntryKind::File => {
-                if blob_created {
-                    let _ = self.blob_store.delete_blob(&blob_id).await;
-                }
                 return Err(DomainError::PathConflict {
                     message: format!("Path is occupied by a directory: {}", path.as_str()),
                 });
@@ -272,9 +270,6 @@ impl ImportBatch {
                     )
                     .await
                 {
-                    if blob_created {
-                        let _ = self.blob_store.delete_blob(&blob_id).await;
-                    }
                     return Err(err);
                 }
 
@@ -329,12 +324,7 @@ impl ImportBatch {
             .await
         {
             Ok(version) => version,
-            Err(err) => {
-                if blob_created {
-                    let _ = self.blob_store.delete_blob(&blob_id).await;
-                }
-                return Err(err);
-            }
+            Err(err) => return Err(err),
         };
 
         self.changed.extend(changed_directories);
