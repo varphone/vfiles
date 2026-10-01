@@ -14,10 +14,8 @@ use crate::{
 use async_trait::async_trait;
 use std::{fmt::Debug, io, net::SocketAddr, ops::RangeInclusive, time::Duration};
 use tokio::net::TcpSocket;
-use tokio::sync::{
-    mpsc::{Receiver, Sender, channel},
-    oneshot,
-};
+use tokio::sync::{mpsc::{Receiver, Sender, channel}, oneshot};
+use tokio_util::sync::CancellationToken;
 
 const BIND_RETRIES: u8 = 10;
 
@@ -69,13 +67,12 @@ where
     S::Metadata: Metadata,
 {
     let (cmd_tx, cmd_rx): (Sender<DataChanCmd>, Receiver<DataChanCmd>) = channel(1);
-    let (data_abort_tx, data_abort_rx): (Sender<()>, Receiver<()>) = channel(1);
+    let data_abort_tx = CancellationToken::new();
 
     let mut session = session.lock().await;
     session.data_cmd_tx = Some(cmd_tx);
     session.data_cmd_rx = Some(cmd_rx);
     session.data_abort_tx = Some(data_abort_tx);
-    session.data_abort_rx = Some(data_abort_rx);
     session.control_msg_tx = Some(control_loop_tx);
 }
 

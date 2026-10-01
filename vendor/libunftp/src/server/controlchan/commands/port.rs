@@ -37,6 +37,7 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug)]
 pub struct Port {
@@ -59,13 +60,12 @@ impl Port {
     {
         cancel_legacy_passive_listener(session.clone()).await;
         let (cmd_tx, cmd_rx): (Sender<DataChanCmd>, Receiver<DataChanCmd>) = channel(1);
-        let (data_abort_tx, data_abort_rx): (Sender<()>, Receiver<()>) = channel(1);
+        let data_abort_tx = CancellationToken::new();
 
         let mut session = session.lock().await;
         session.data_cmd_tx = Some(cmd_tx);
         session.data_cmd_rx = Some(cmd_rx);
         session.data_abort_tx = Some(data_abort_tx);
-        session.data_abort_rx = Some(data_abort_rx);
         session.control_msg_tx = Some(control_loop_tx);
     }
 }

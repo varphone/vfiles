@@ -31,14 +31,9 @@ where
     #[tracing_attributes::instrument]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let mut session = args.session.lock().await;
-        let logger = args.logger;
         match session.data_abort_tx.take() {
-            Some(tx) => {
-                tokio::spawn(async move {
-                    if let Err(err) = tx.send(()).await {
-                        slog::warn!(logger, "abort failed: {}", err);
-                    }
-                });
+            Some(token) => {
+                token.cancel();
                 Ok(Reply::new(ReplyCode::ClosingDataConnection, "Closed data channel"))
             }
             None => Ok(Reply::new(ReplyCode::ClosingDataConnection, "Data channel already closed")),

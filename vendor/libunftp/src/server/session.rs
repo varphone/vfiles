@@ -18,6 +18,7 @@ use tokio::sync::{
     mpsc::{Receiver, Sender},
     oneshot,
 };
+use tokio_util::sync::CancellationToken;
 use unftp_core::auth::UserDetail;
 use unftp_core::storage::{Metadata, StorageBackend};
 
@@ -81,9 +82,7 @@ where
     // The data loop uses this receive messages from the control loop
     pub data_cmd_rx: Option<Receiver<DataChanCmd>>,
     // The control loop uses this to ask the data loop to exit.
-    pub data_abort_tx: Option<Sender<()>>,
-    // The data loop listens to this so it can know when to exit.
-    pub data_abort_rx: Option<Receiver<()>>,
+    pub data_abort_tx: Option<CancellationToken>,
     // This may not be needed here...
     pub control_msg_tx: Option<Sender<ControlChanMsg>>,
     // The socket address of the client on the control channel
@@ -147,7 +146,6 @@ where
             data_cmd_tx: None,
             data_cmd_rx: None,
             data_abort_tx: None,
-            data_abort_rx: None,
             control_msg_tx: None,
             source,
             control_connection: None,

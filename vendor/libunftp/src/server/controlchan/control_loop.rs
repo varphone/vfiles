@@ -356,12 +356,12 @@ async fn cleanup_data_session<Storage, User>(
         slog::warn!(logger, "Could not send CloseDataPortCommand to channel: {}", err);
     }
     commands::passive_common::cancel_legacy_passive_listener(session.clone()).await;
-    let (data_abort_tx, data_task) = {
+    let (data_abort_token, data_task) = {
         let mut session = session.lock().await;
         (session.data_abort_tx.take(), session.data_task.take())
     };
-    if let Some(data_abort_tx) = data_abort_tx {
-        let _ = data_abort_tx.send(()).await;
+    if let Some(data_abort_token) = data_abort_token {
+        data_abort_token.cancel();
     }
     if let Some(data_task) = data_task
         && let Err(err) = data_task.await
