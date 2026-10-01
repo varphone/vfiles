@@ -166,7 +166,21 @@ fn reject_symlinked_parents(parent: &Path) -> io::Result<()> {
                             "FTPS 证书与私钥目录路径必须由目录组成",
                         ));
                     }
-                    Ok(_) => {}
+                    Ok(metadata) => {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            let mode = metadata.permissions().mode();
+                            let writable_by_others = mode & 0o022 != 0;
+                            let sticky = mode & 0o1000 != 0;
+                            if writable_by_others && !sticky {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::PermissionDenied,
+                                    "FTPS 证书与私钥目录路径不能经过组用户或其他用户可写目录",
+                                ));
+                            }
+                        }
+                    }
                     Err(err) if err.kind() == io::ErrorKind::NotFound => {}
                     Err(err) => return Err(err),
                 }
