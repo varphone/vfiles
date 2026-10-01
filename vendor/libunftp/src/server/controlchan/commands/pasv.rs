@@ -21,9 +21,11 @@ use crate::{
     storage::{Metadata, StorageBackend},
 };
 use async_trait::async_trait;
-use std::net::Ipv4Addr;
+use std::{net::Ipv4Addr, time::Duration};
 
 use super::passive_common::{self, LegacyReplyProducer};
+
+const PASV_DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub struct Pasv {}
@@ -76,14 +78,20 @@ pub async fn make_pasv_reply(logger: &slog::Logger, passive_host: PassiveHost, c
         PassiveHost::Ip(ip) => ip.octets(),
         PassiveHost::FromConnection => conn_ip.octets(),
         PassiveHost::Dns(ref dns_name) => {
-            let x = dns_name.split(':').take(1).map(|s| format!("{}:2121", s)).next().unwrap();
-            match tokio::net::lookup_host(x).await {
-                Err(e) => {
-                    slog::warn!(logger, "make_pasv_reply: Could not look up host for pasv reply: {}", e);
+            let dns_host = dns_name.split(':').next().unwrap_or(dns_name.as_str());
+            let lookup = tokio::time::timeout(PASV_DNS_LOOKUP_TIMEOUT, tokio::net::lookup_host(format!("{dns_host}:2121"))).await;
+            match lookup {
+                Err(_) => {
+                    slog::warn!(logger, "make_pasv_reply: Timed out looking up host for pasv reply");
+
+                    return Reply::new_with_string(ReplyCode::CantOpenDataConnection, format!("Timed out resolving DNS address '{}'", dns_name));
+                }
+                Ok(Err(err)) => {
+                    slog::warn!(logger, "make_pasv_reply: Could not look up host for pasv reply: {}", err);
 
                     return Reply::new_with_string(ReplyCode::CantOpenDataConnection, format!("Could not resolve DNS address '{}'", dns_name));
                 }
-                Ok(mut ip_iter) => loop {
+                Ok(Ok(mut ip_iter)) => loop {
                     match ip_iter.next() {
                         None => return Reply::new_with_string(ReplyCode::CantOpenDataConnection, format!("Could not resolve DNS address '{}'", dns_name)),
                         Some(std::net::SocketAddr::V4(ip)) => break ip.ip().octets(),
