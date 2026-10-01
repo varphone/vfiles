@@ -34,8 +34,11 @@ use crate::auth::VfilesFtpUser;
 use crate::error::{to_ftp_error, transfer_aborted};
 use crate::path::{to_client_path, to_normalized};
 
-/// 单次 `LIST`/`NLST` 的分页大小：内部按页取全量，避免大目录被截断。
-const LIST_PAGE_SIZE: u32 = 1000;
+/// 单次目录列表按较小页面读取，以限制构建结果期间的瞬时内存。
+const LIST_PAGE_SIZE: u32 = 100;
+/// libunftp 的存储接口要求返回完整 Vec，因此限制单次目录列表的总量。
+const MAX_LIST_ENTRIES: u64 = 20_000;
+const MAX_LIST_METADATA_BYTES: usize = 8 * 1024 * 1024;
 
 /// FTP 文件元数据。
 #[derive(Debug, Clone, Copy)]
@@ -231,6 +234,7 @@ impl VfilesStorageBackend {
         path: &NormalizedPath,
     ) -> Result<Vec<TreeItem>> {
         let mut items = Vec::new();
+        let mut metadata_bytes = 0usize;
         let mut offset = 0_u32;
         loop {
             let (page, total) = self
@@ -239,8 +243,28 @@ impl VfilesStorageBackend {
                 .live_children_page(namespace_id, path, LIST_PAGE_SIZE, offset)
                 .await
                 .map_err(to_ftp_error)?;
+            if total > MAX_LIST_ENTRIES {
+                return Err(Error::new(
+                    ErrorKind::LocalError,
+                    "FTP 目录列表超过安全上限",
+                ));
+            }
+
+            let next_count = (items.len() as u64).saturating_add(page.len() as u64);
+            let page_metadata_bytes = page.iter().fold(0usize, |total, item| {
+                total.saturating_add(tree_item_memory_hint(item))
+            });
+            let next_metadata_bytes = metadata_bytes.saturating_add(page_metadata_bytes);
+            if next_count > MAX_LIST_ENTRIES || next_metadata_bytes > MAX_LIST_METADATA_BYTES {
+                return Err(Error::new(
+                    ErrorKind::LocalError,
+                    "FTP 目录列表超过安全上限",
+                ));
+            }
+
             let page_len = page.len() as u32;
             items.extend(page);
+            metadata_bytes = next_metadata_bytes;
             offset += page_len;
             if page_len == 0 || u64::from(offset) >= total {
                 break;
@@ -634,6 +658,25 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
             )),
         }
     }
+}
+
+fn tree_item_memory_hint(item: &TreeItem) -> usize {
+    let mut bytes = std::mem::size_of::<TreeItem>()
+        .saturating_add(item.name.len())
+        .saturating_add(item.path.len());
+    if let Some(mime_type) = item.mime_type.as_ref() {
+        bytes = bytes.saturating_add(mime_type.len());
+    }
+    if let Some(preview_kind) = item.preview_kind.as_ref() {
+        bytes = bytes.saturating_add(preview_kind.len());
+    }
+    if let Some(last_change) = item.last_change.as_ref() {
+        bytes = bytes.saturating_add(last_change.actor_name.len());
+        if let Some(message) = last_change.message.as_ref() {
+            bytes = bytes.saturating_add(message.len());
+        }
+    }
+    bytes
 }
 
 /// 包装领域读取器，使其满足 libunftp 要求的 `Send + Sync`。
