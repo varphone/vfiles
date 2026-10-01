@@ -27,9 +27,9 @@ where
     #[tracing_attributes::instrument]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let session = args.session.lock().await;
-        // TODO: properly escape double quotes in `cwd`
-
-        let result = format!("\"{}\"", session.cwd.as_path().display());
+        let cwd = session.cwd.as_path().to_string_lossy();
+        let escaped_cwd = cwd.replace('"', "\"\"");
+        let result = format!("\"{escaped_cwd}\"");
 
         // On Windows systems, the path will be formatted with Windows style separators ('\')
         // Most FTP clients expect normal UNIX separators ('/'), and they have trouble handling
