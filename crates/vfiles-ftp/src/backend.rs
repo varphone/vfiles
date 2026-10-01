@@ -26,7 +26,9 @@ use tracing::{debug, warn};
 use unftp_core::storage::{
     Error, ErrorKind, FEATURE_RESTART, Fileinfo, Metadata, Result, StorageBackend,
 };
-use vfiles_app::{DefaultWorkspaceService, ImportBatch, IngestStats, SnapshotMode, TreeItem};
+use vfiles_app::{
+    DefaultWorkspaceService, ImportBatch, IngestStats, MoveSubtreeLimits, SnapshotMode, TreeItem,
+};
 use vfiles_domain::{
     BlobStore, DomainError, EntryKind, EntryRepo, EntryWriteCondition, NamespaceId, NormalizedPath,
     SnapshotRepo, UserRepo, WebdavLockRepo,
@@ -1112,7 +1114,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         };
         self.deps
             .workspace
-            .move_entry_overwriting_with_condition(
+            .move_entry_overwriting_with_condition_and_limits(
                 &user.namespace_id,
                 &from,
                 &to,
@@ -1122,6 +1124,10 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
                     destination_is_container: false,
                     condition: Some(&condition),
                     ..Default::default()
+                },
+                MoveSubtreeLimits {
+                    max_entries: MAX_RENAME_SUBTREE_ENTRIES,
+                    max_path_bytes: MAX_RENAME_SUBTREE_PATH_BYTES,
                 },
             )
             .await

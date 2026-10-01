@@ -39,6 +39,12 @@ pub struct MoveOptions<'a> {
     pub condition: Option<&'a EntryWriteCondition>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MoveSubtreeLimits {
+    pub max_entries: usize,
+    pub max_path_bytes: usize,
+}
+
 pub(crate) fn normalize_message(message: Option<&str>) -> Option<String> {
     message.and_then(|value| {
         let trimmed = value.trim();
@@ -384,6 +390,56 @@ async fn collect_descendants(
 ) -> DomainResult<Vec<Entry>> {
     // 单次范围查询取回 root 及其全部后代，避免按目录递归（O(目录数) 次查询）。
     entry_repo.find_subtree(namespace_id, &root.path_norm).await
+}
+
+async fn collect_descendants_with_limits(
+    entry_repo: &(dyn EntryRepo + Send + Sync),
+    namespace_id: &NamespaceId,
+    root: &Entry,
+    limits: MoveSubtreeLimits,
+) -> DomainResult<Vec<Entry>> {
+    const PAGE_SIZE: u32 = 100;
+
+    let mut entries = Vec::new();
+    let mut path_bytes = 0usize;
+    let mut after_path: Option<String> = None;
+
+    loop {
+        let remaining_with_overflow = limits
+            .max_entries
+            .saturating_add(1)
+            .saturating_sub(entries.len());
+        let limit = remaining_with_overflow.min(PAGE_SIZE as usize) as u32;
+        let page = entry_repo
+            .find_subtree_page(namespace_id, &root.path_norm, after_path.as_deref(), limit)
+            .await?;
+        if page.is_empty() {
+            break;
+        }
+
+        if entries.len().saturating_add(page.len()) > limits.max_entries {
+            return Err(DomainError::Validation {
+                message: "Source subtree exceeds the configured move entry limit".to_string(),
+            });
+        }
+        let page_path_bytes = page.iter().fold(0usize, |total, entry| {
+            total.saturating_add(entry.path_norm.as_str().len())
+        });
+        let next_path_bytes = path_bytes.saturating_add(page_path_bytes);
+        if next_path_bytes > limits.max_path_bytes {
+            return Err(DomainError::Validation {
+                message: "Source subtree exceeds the configured move path limit".to_string(),
+            });
+        }
+
+        path_bytes = next_path_bytes;
+        after_path = page
+            .last()
+            .map(|entry| entry.path_norm.as_str().to_string());
+        entries.extend(page);
+    }
+
+    Ok(entries)
 }
 
 async fn collect_namespace_entries(
@@ -2962,6 +3018,28 @@ where
         .await
     }
 
+    pub async fn move_entry_overwriting_with_condition_and_limits(
+        &self,
+        namespace_id: &NamespaceId,
+        source: &NormalizedPath,
+        destination: &NormalizedPath,
+        message: Option<&str>,
+        user_id: &UserId,
+        options: MoveOptions<'_>,
+        source_subtree_limits: MoveSubtreeLimits,
+    ) -> DomainResult<MutationResult> {
+        self.move_entries_with_overwrite_and_limits(
+            namespace_id,
+            std::slice::from_ref(source),
+            destination,
+            message,
+            user_id,
+            options,
+            Some(source_subtree_limits),
+        )
+        .await
+    }
+
     pub async fn move_entry_with_property_changes(
         &self,
         namespace_id: &NamespaceId,
@@ -2993,6 +3071,28 @@ where
         message: Option<&str>,
         user_id: &UserId,
         options: MoveOptions<'_>,
+    ) -> DomainResult<MutationResult> {
+        self.move_entries_with_overwrite_and_limits(
+            namespace_id,
+            sources,
+            destination,
+            message,
+            user_id,
+            options,
+            None,
+        )
+        .await
+    }
+
+    async fn move_entries_with_overwrite_and_limits(
+        &self,
+        namespace_id: &NamespaceId,
+        sources: &[NormalizedPath],
+        destination: &NormalizedPath,
+        message: Option<&str>,
+        user_id: &UserId,
+        options: MoveOptions<'_>,
+        source_subtree_limits: Option<MoveSubtreeLimits>,
     ) -> DomainResult<MutationResult> {
         let MoveOptions {
             destination_is_container: dest_as_container,
@@ -3071,8 +3171,17 @@ where
                 );
             }
 
-            let subtree =
-                collect_descendants(&self.entry_repo, namespace_id, &source_entry).await?;
+            let subtree = if let Some(limits) = source_subtree_limits {
+                collect_descendants_with_limits(
+                    &self.entry_repo,
+                    namespace_id,
+                    &source_entry,
+                    limits,
+                )
+                .await?
+            } else {
+                collect_descendants(&self.entry_repo, namespace_id, &source_entry).await?
+            };
             for entry in subtree {
                 let new_path = compute_move_target(source, &entry.path_norm, &target_root)?;
                 moving_entries.push((entry, new_path));
