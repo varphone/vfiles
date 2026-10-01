@@ -858,7 +858,7 @@ where
                 let references = counts.into_iter().collect::<Vec<_>>();
                 let removable = self.entry_repo.release_blob_references(&references).await?;
                 for blob_id in removable {
-                    self.blob_store.delete_blob(&blob_id).await?;
+                    self.blob_store.defer_blob_deletion(&blob_id).await?;
                     report.released_blobs += 1;
                 }
             }
@@ -2759,8 +2759,8 @@ where
             )
             .await?;
         for blob_id in orphaned_blobs {
-            if let Err(error) = self.blob_store.delete_blob(&blob_id).await {
-                tracing::warn!(%blob_id, %error, "failed to remove blob released by COPY overwrite");
+            if let Err(error) = self.blob_store.defer_blob_deletion(&blob_id).await {
+                tracing::warn!(%blob_id, %error, "failed to defer blob released by COPY overwrite");
             }
         }
         Ok(())
@@ -3050,9 +3050,9 @@ where
         let mut cleanup_warnings = Vec::new();
         let released_blobs = self.entry_repo.release_blob_references(&blob_refs).await?;
         for blob_id in released_blobs {
-            if let Err(err) = self.blob_store.delete_blob(&blob_id).await {
+            if let Err(err) = self.blob_store.defer_blob_deletion(&blob_id).await {
                 cleanup_warnings.push(format!(
-                    "Failed to delete unreferenced blob {}: {}",
+                    "Failed to defer unreferenced blob {} for cleanup: {}",
                     blob_id, err
                 ));
             }
@@ -3226,9 +3226,9 @@ where
 
         let released_blobs = self.entry_repo.release_blob_references(&blob_refs).await?;
         for blob_id in released_blobs {
-            if let Err(err) = self.blob_store.delete_blob(&blob_id).await {
+            if let Err(err) = self.blob_store.defer_blob_deletion(&blob_id).await {
                 cleanup_warnings.push(format!(
-                    "Failed to delete unreferenced blob {}: {}",
+                    "Failed to defer unreferenced blob {} for cleanup: {}",
                     blob_id, err
                 ));
             }
@@ -3895,7 +3895,7 @@ where
 
         if enforce_size && stored_size != session.declared_size.as_u64() {
             if created_blob {
-                let _ = self.blob_store.delete_blob(&blob_id).await;
+                let _ = self.blob_store.defer_blob_deletion(&blob_id).await;
             }
             return Err(DomainError::UploadConflict);
         }
@@ -3946,9 +3946,9 @@ where
                     tracing::warn!(%cleanup_error, %entry_id, "failed to rollback empty upload entry");
                 }
                 if created_blob
-                    && let Err(cleanup_error) = self.blob_store.delete_blob(&blob_id).await
+                    && let Err(cleanup_error) = self.blob_store.defer_blob_deletion(&blob_id).await
                 {
-                    tracing::warn!(%cleanup_error, %blob_id, "failed to rollback unpublished upload blob");
+                    tracing::warn!(%cleanup_error, %blob_id, "failed to defer unpublished upload blob");
                 }
                 return Err(error);
             }
@@ -3995,9 +3995,9 @@ where
                     tracing::warn!(%cleanup_error, %entry_id, "failed to rollback empty upload entry");
                 }
                 if created_blob
-                    && let Err(cleanup_error) = self.blob_store.delete_blob(&blob_id).await
+                    && let Err(cleanup_error) = self.blob_store.defer_blob_deletion(&blob_id).await
                 {
-                    tracing::warn!(%cleanup_error, %blob_id, "failed to rollback unpublished upload blob");
+                    tracing::warn!(%cleanup_error, %blob_id, "failed to defer unpublished upload blob");
                 }
                 return Err(err);
             }

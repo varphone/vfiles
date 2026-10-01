@@ -7771,6 +7771,29 @@ impl BlobStore for FsBlobStore {
         }
     }
 
+    async fn defer_blob_deletion(&self, blob_id: &BlobId) -> DomainResult<()> {
+        let blob_path = self.get_blob_path(blob_id).into_std_path_buf();
+        tokio::task::spawn_blocking(move || {
+            let file = match std::fs::OpenOptions::new().read(true).open(&blob_path) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => {
+                    return Err(DomainError::Internal {
+                        message: format!("Failed to defer blob deletion: {error}"),
+                    });
+                }
+            };
+            file.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()))
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to defer blob deletion: {error}"),
+                })
+        })
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to defer blob deletion: {error}"),
+        })?
+    }
+
     async fn blob_exists(&self, sha256: &ContentHash) -> DomainResult<bool> {
         let blob_id = Self::blob_id_for_hash(sha256.as_str());
         fs::try_exists(self.get_blob_path(&blob_id))

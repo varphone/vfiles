@@ -1232,6 +1232,8 @@ pub trait BlobStore {
         blob_id: &BlobId,
     ) -> DomainResult<Option<Box<dyn ReadSeek + Send + Unpin>>>;
     async fn delete_blob(&self, blob_id: &BlobId) -> DomainResult<()>;
+    /// Move an unreferenced blob into the grace period before orphan collection.
+    async fn defer_blob_deletion(&self, blob_id: &BlobId) -> DomainResult<()>;
     async fn blob_exists(&self, sha256: &ContentHash) -> DomainResult<bool>;
     async fn get_blob_metadata(&self, blob_id: &BlobId) -> DomainResult<Option<Blob>>;
     /// 列出全部 blob 元数据（维护任务使用）。

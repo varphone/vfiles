@@ -217,154 +217,165 @@ impl ImportBatch {
         // after publication. Failed imports leave it for the grace-period orphan collector
         // instead of deleting shared content here.
 
-        if let Some(limit) = max_bytes
-            && stored_size > limit
-        {
-            return Err(DomainError::StorageQuotaExceeded);
-        }
+        let result = async {
+            if let Some(limit) = max_bytes
+                && stored_size > limit
+            {
+                return Err(DomainError::StorageQuotaExceeded);
+            }
 
-        let parent_path = path
-            .as_str()
-            .rsplit_once('/')
-            .map(|(parent, _)| parent)
-            .unwrap_or("");
-        let filename = path
-            .as_str()
-            .rsplit_once('/')
-            .map(|(_, name)| name)
-            .unwrap_or_else(|| path.as_str());
-        crate::services::validate_filename(filename)?;
-        let parent_path =
-            NormalizedPath::new(parent_path).map_err(|_| DomainError::Validation {
-                message: "Invalid parent path".to_string(),
-            })?;
+            let parent_path = path
+                .as_str()
+                .rsplit_once('/')
+                .map(|(parent, _)| parent)
+                .unwrap_or("");
+            let filename = path
+                .as_str()
+                .rsplit_once('/')
+                .map(|(_, name)| name)
+                .unwrap_or_else(|| path.as_str());
+            crate::services::validate_filename(filename)?;
+            let parent_path =
+                NormalizedPath::new(parent_path).map_err(|_| DomainError::Validation {
+                    message: "Invalid parent path".to_string(),
+                })?;
 
-        let changed_directories = ensure_directory_path(
-            &*self.entry_repo,
-            &self.namespace_id,
-            &parent_path,
-            &self.actor_user_id,
-        )
-        .await?;
+            let changed_directories = ensure_directory_path(
+                &*self.entry_repo,
+                &self.namespace_id,
+                &parent_path,
+                &self.actor_user_id,
+            )
+            .await?;
 
-        let entry = match self
-            .entry_repo
-            .find_by_path(&self.namespace_id, path)
-            .await?
-        {
-            Some(existing) if existing.entry_type != EntryKind::File => {
-                return Err(DomainError::PathConflict {
-                    message: format!("Path is occupied by a directory: {}", path.as_str()),
+            let entry = match self
+                .entry_repo
+                .find_by_path(&self.namespace_id, path)
+                .await?
+            {
+                Some(existing) if existing.entry_type != EntryKind::File => {
+                    return Err(DomainError::PathConflict {
+                        message: format!("Path is occupied by a directory: {}", path.as_str()),
+                    });
+                }
+                Some(existing) => existing,
+                None => {
+                    // create_entry 只返回 id，随后重新读取完整条目（与 HTTP 上传一致）
+                    if let Err(err) = self
+                        .entry_repo
+                        .create_entry(
+                            &self.namespace_id,
+                            path,
+                            EntryKind::File,
+                            &self.actor_user_id,
+                        )
+                        .await
+                    {
+                        return Err(err);
+                    }
+
+                    self.entry_repo
+                        .find_by_path(&self.namespace_id, path)
+                        .await?
+                        .ok_or_else(|| DomainError::NotFound {
+                            resource: "entry".to_string(),
+                        })?
+                }
+            };
+
+            // 内容与当前版本一致时跳过（CLI 目录导入默认开启，避免重复导入污染历史）
+            let current_version = match entry.current_version_id {
+                Some(version_id) => self.entry_repo.find_version(&version_id).await.ok(),
+                None => None,
+            };
+            let unchanged = self.skip_unchanged
+                && current_version
+                    .as_ref()
+                    .is_some_and(|version| version.blob_id.as_ref() == Some(&blob_id));
+
+            if unchanged {
+                // 新建的父目录仍属于本次导入，需要进入快照
+                self.changed.extend(changed_directories);
+                self.unchanged_files += 1;
+                let version = current_version.expect("unchanged implies an existing version");
+                return Ok(ImportedFile {
+                    entry,
+                    version_no: version.version_no,
+                    version_id: version.id,
+                    blob_created,
+                    size_bytes: stored_size,
+                    content_hash: content_hash.as_str().to_string(),
+                    unchanged: true,
                 });
             }
-            Some(existing) => existing,
-            None => {
-                // create_entry 只返回 id，随后重新读取完整条目（与 HTTP 上传一致）
-                if let Err(err) = self
-                    .entry_repo
-                    .create_entry(
-                        &self.namespace_id,
-                        path,
-                        EntryKind::File,
-                        &self.actor_user_id,
-                    )
-                    .await
-                {
-                    return Err(err);
-                }
 
-                self.entry_repo
-                    .find_by_path(&self.namespace_id, path)
-                    .await?
-                    .ok_or_else(|| DomainError::NotFound {
-                        resource: "entry".to_string(),
-                    })?
-            }
-        };
+            let mime_type = guess_mime_type(filename);
+            let normalized_message = normalize_message(message);
+            let version = match self
+                .entry_repo
+                .create_version(
+                    &entry.id,
+                    Some(&blob_id),
+                    Some(&content_hash),
+                    stored_size,
+                    mime_type.as_deref(),
+                    &self.actor_user_id,
+                    normalized_message.as_deref(),
+                )
+                .await
+            {
+                Ok(version) => version,
+                Err(err) => return Err(err),
+            };
 
-        // 内容与当前版本一致时跳过（CLI 目录导入默认开启，避免重复导入污染历史）
-        let current_version = match entry.current_version_id {
-            Some(version_id) => self.entry_repo.find_version(&version_id).await.ok(),
-            None => None,
-        };
-        let unchanged = self.skip_unchanged
-            && current_version
-                .as_ref()
-                .is_some_and(|version| version.blob_id.as_ref() == Some(&blob_id));
-
-        if unchanged {
-            // 新建的父目录仍属于本次导入，需要进入快照
             self.changed.extend(changed_directories);
-            self.unchanged_files += 1;
-            let version = current_version.expect("unchanged implies an existing version");
-            return Ok(ImportedFile {
+            self.changed.push(ChangedEntry {
+                entry_id: entry.id,
+                path: path.as_str().to_string(),
+                kind: EntryKind::File,
+                current_version_id: Some(version.id),
+                change_type: if version.version_no == 1 {
+                    ChangeType::Added
+                } else {
+                    ChangeType::Modified
+                },
+            });
+            self.files_imported += 1;
+            self.files_since_flush += 1;
+            self.bytes_imported += stored_size;
+            if self.snapshot_mode == SnapshotMode::Off {
+                // 不产生快照时无需保留变更列表，避免大批量导入时空耗内存
+                self.changed.clear();
+            }
+
+            let should_flush = match self.snapshot_mode {
+                SnapshotMode::PerFile => true,
+                SnapshotMode::Batch => self.files_since_flush >= self.flush_threshold as u64,
+                SnapshotMode::Off => false,
+            };
+            if should_flush {
+                self.flush().await?;
+            }
+
+            Ok(ImportedFile {
                 entry,
                 version_no: version.version_no,
                 version_id: version.id,
                 blob_created,
                 size_bytes: stored_size,
                 content_hash: content_hash.as_str().to_string(),
-                unchanged: true,
-            });
+                unchanged: false,
+            })
         }
+        .await;
 
-        let mime_type = guess_mime_type(filename);
-        let normalized_message = normalize_message(message);
-        let version = match self
-            .entry_repo
-            .create_version(
-                &entry.id,
-                Some(&blob_id),
-                Some(&content_hash),
-                stored_size,
-                mime_type.as_deref(),
-                &self.actor_user_id,
-                normalized_message.as_deref(),
-            )
-            .await
+        if result.is_err()
+            && let Err(error) = self.blob_store.defer_blob_deletion(&blob_id).await
         {
-            Ok(version) => version,
-            Err(err) => return Err(err),
-        };
-
-        self.changed.extend(changed_directories);
-        self.changed.push(ChangedEntry {
-            entry_id: entry.id,
-            path: path.as_str().to_string(),
-            kind: EntryKind::File,
-            current_version_id: Some(version.id),
-            change_type: if version.version_no == 1 {
-                ChangeType::Added
-            } else {
-                ChangeType::Modified
-            },
-        });
-        self.files_imported += 1;
-        self.files_since_flush += 1;
-        self.bytes_imported += stored_size;
-        if self.snapshot_mode == SnapshotMode::Off {
-            // 不产生快照时无需保留变更列表，避免大批量导入时空耗内存
-            self.changed.clear();
+            tracing::warn!(%blob_id, %error, "failed to defer cleanup of rejected import blob");
         }
 
-        let should_flush = match self.snapshot_mode {
-            SnapshotMode::PerFile => true,
-            SnapshotMode::Batch => self.files_since_flush >= self.flush_threshold as u64,
-            SnapshotMode::Off => false,
-        };
-        if should_flush {
-            self.flush().await?;
-        }
-
-        Ok(ImportedFile {
-            entry,
-            version_no: version.version_no,
-            version_id: version.id,
-            blob_created,
-            size_bytes: stored_size,
-            content_hash: content_hash.as_str().to_string(),
-            unchanged: false,
-        })
+        result
     }
 
     /// 在批次内创建目录（父目录按需补齐），不单独提交快照。
