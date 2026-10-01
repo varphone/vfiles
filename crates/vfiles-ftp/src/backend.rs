@@ -27,7 +27,7 @@ use unftp_core::storage::{
 };
 use vfiles_app::{DefaultWorkspaceService, ImportBatch, IngestStats, SnapshotMode, TreeItem};
 use vfiles_domain::{
-    BlobStore, EntryKind, EntryRepo, NamespaceId, NormalizedPath, SnapshotRepo, UserId,
+    BlobStore, DomainError, EntryKind, EntryRepo, NamespaceId, NormalizedPath, SnapshotRepo, UserId,
 };
 
 use crate::auth::VfilesFtpUser;
@@ -541,39 +541,27 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
             return Err(Error::new(ErrorKind::PermissionDenied, "不能删除根目录"));
         }
 
-        match self.find_entry(&user.namespace_id, &path).await? {
-            Some(entry) if entry.entry_type == EntryKind::Directory => {}
-            Some(_) => {
-                return Err(Error::new(
-                    ErrorKind::PermanentDirectoryNotAvailable,
-                    format!("不是目录: {}", path.as_str()),
-                ));
-            }
-            None => {
-                return Err(Error::new(
+        self.flush_batch().await?;
+        self.deps
+            .workspace
+            .delete_empty_directory(&user.namespace_id, &path, Some("FTP 删除目录"), &user.id)
+            .await
+            .map(|_| ())
+            .map_err(|err| match err {
+                DomainError::DirectoryNotEmpty => Error::new(
+                    ErrorKind::PermanentDirectoryNotEmpty,
+                    format!("目录非空: {}", path.as_str()),
+                ),
+                DomainError::NotFound { .. } => Error::new(
                     ErrorKind::PermanentDirectoryNotAvailable,
                     format!("目录不存在: {}", path.as_str()),
-                ));
-            }
-        }
-
-        // FTP 语义：RMD 只能删除空目录
-        let (children, _) = self
-            .deps
-            .workspace
-            .live_children_page(&user.namespace_id, &path, 1, 0)
-            .await
-            .map_err(to_ftp_error)?;
-        if !children.is_empty() {
-            return Err(Error::new(
-                ErrorKind::PermanentDirectoryNotEmpty,
-                format!("目录非空: {}", path.as_str()),
-            ));
-        }
-
-        self.flush_batch().await?;
-        self.delete(&user.namespace_id, &path, &user.id, "FTP 删除目录")
-            .await
+                ),
+                DomainError::PathConflict { .. } => Error::new(
+                    ErrorKind::PermanentDirectoryNotAvailable,
+                    format!("不是目录: {}", path.as_str()),
+                ),
+                err => to_ftp_error(err),
+            })
     }
 
     async fn mkd<P: AsRef<Path> + Send + fmt::Debug>(

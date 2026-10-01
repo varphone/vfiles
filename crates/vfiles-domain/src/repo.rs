@@ -696,6 +696,13 @@ pub trait EntryRepo {
     async fn delete_entry(&self, entry_id: &EntryId) -> DomainResult<()>;
     /// 批量删除条目，避免逐个删除造成 N 次查询。
     async fn delete_entries(&self, entry_ids: &[EntryId]) -> DomainResult<()>;
+    /// Atomically delete a directory only when it has no descendants.
+    /// Implementations must serialize the emptiness check with the deletion.
+    async fn delete_empty_directory(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+    ) -> DomainResult<Entry>;
     /// Delete a subtree only if the target path still has the observed entry/version.
     /// Repositories with transactional support must compare and delete atomically.
     async fn delete_entries_if_current(

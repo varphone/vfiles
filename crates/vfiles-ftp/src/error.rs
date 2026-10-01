@@ -23,6 +23,7 @@ pub fn to_ftp_error(err: DomainError) -> Error {
         | DomainError::PreconditionFailed => {
             (ErrorKind::PermanentFileNotAvailable, err.to_string())
         }
+        DomainError::DirectoryNotEmpty => (ErrorKind::PermanentDirectoryNotEmpty, err.to_string()),
         DomainError::Validation { .. } => (ErrorKind::PermissionDenied, err.to_string()),
         DomainError::DiffTooLarge { .. } => (ErrorKind::PermanentFileNotAvailable, err.to_string()),
         DomainError::Unauthorized

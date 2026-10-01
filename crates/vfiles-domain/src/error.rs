@@ -47,6 +47,9 @@ pub enum DomainError {
     #[error("Path conflict: {message}")]
     PathConflict { message: String },
 
+    #[error("Directory is not empty")]
+    DirectoryNotEmpty,
+
     #[error("Upload expired")]
     UploadExpired,
 
