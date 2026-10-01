@@ -229,7 +229,11 @@ pub async fn spawn_ftp_server(
                 warn!(error = %err, "FTP 会话任务未正常结束");
             }
         }
-        info!("FTP 会话已全部清理");
+        info!("FTP 会话已退出，等待后台提交完成");
+        let _all_session_slots = Arc::clone(&sessions)
+            .acquire_many_owned(max_connections)
+            .await;
+        info!("FTP 会话与后台提交已全部完成");
     });
 
     Ok(FtpServerHandle { local_addr, join })
