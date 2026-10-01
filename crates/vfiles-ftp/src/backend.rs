@@ -296,6 +296,50 @@ impl VfilesStorageBackend {
             .map_err(to_ftp_error)
     }
 
+    async fn validate_upload_parent(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+    ) -> Result<()> {
+        let Some((parent, _)) = path.as_str().rsplit_once('/') else {
+            return Ok(());
+        };
+
+        let mut current = String::new();
+        let mut ancestors = Vec::new();
+        for segment in parent.split('/') {
+            if !current.is_empty() {
+                current.push('/');
+            }
+            current.push_str(segment);
+            let current_path = NormalizedPath::new(&current)
+                .map_err(|message| Error::new(ErrorKind::PermissionDenied, message))?;
+            ancestors.push(current_path);
+        }
+
+        let entries = self
+            .deps
+            .entry_repo
+            .find_paths(namespace_id, &ancestors)
+            .await
+            .map_err(to_ftp_error)?;
+        let file_paths = entries
+            .into_iter()
+            .filter(|entry| entry.entry_type != EntryKind::Directory)
+            .map(|entry| entry.path_norm.as_str().to_string())
+            .collect::<std::collections::HashSet<_>>();
+        if ancestors
+            .iter()
+            .any(|ancestor| file_paths.contains(ancestor.as_str()))
+        {
+            return Err(Error::new(
+                ErrorKind::PermanentFileNotAvailable,
+                "上传路径中的父级不是目录",
+            ));
+        }
+        Ok(())
+    }
+
     /// 会话结束：提交剩余批次并记录汇总（幂等）。
     pub async fn finish_session(&self) {
         if let Err(err) = self.flush_batch().await {
@@ -513,6 +557,9 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
             ));
         }
 
+        // Reject deterministic path conflicts before consuming the data stream into a blob.
+        self.validate_upload_parent(&user.namespace_id, &path)
+            .await?;
         let bytes = self.import_file(&path, input).await?;
         debug!(user = %user, path = path.as_str(), bytes, "FTP 上传完成");
         Ok(bytes)
