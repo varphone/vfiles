@@ -26,12 +26,22 @@ pub(crate) use event::Event;
 pub(crate) use middleware::ControlChanMiddleware;
 pub(crate) use reply::{Reply, ReplyCode};
 
+pub(crate) fn is_unsafe_log_char(ch: char) -> bool {
+    ch.is_control()
+        || matches!(
+            ch,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
 pub(crate) fn sanitize_control_text(text: &str) -> String {
     text.chars()
-        .map(|ch| match ch {
-            '\u{2028}' | '\u{2029}' => ' ',
-            _ if ch.is_control() => ' ',
-            _ => ch,
-        })
+        .map(|ch| if is_unsafe_log_char(ch) { ' ' } else { ch })
         .collect()
 }
