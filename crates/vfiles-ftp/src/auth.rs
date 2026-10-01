@@ -14,7 +14,9 @@ use unftp_core::auth::{
 use vfiles_app::{
     AuthService, IngestStats, LoginAttemptLimiter, NamespaceService, RateLimitPolicy,
 };
-use vfiles_domain::{DomainError, NamespaceId, Role, UserId, UserRepo, Username};
+use vfiles_domain::{DomainError, NamespaceId, Role, UserId, UserRepo};
+
+const AUTHENTICATED_USER_PRINCIPAL_PREFIX: &str = "vfiles-user-id:";
 
 /// 登录后使用的用户信息：包含命名空间，决定该会话能看到哪些文件。
 #[derive(Debug, Clone)]
@@ -156,7 +158,10 @@ impl Authenticator for VfilesAuthenticator {
                 self.limiter.clear_login_success(&source_ip, username);
                 self.stats.record_login_success();
                 Ok(Principal {
-                    username: user.username.as_str().to_string(),
+                    // Preserve the identity checked above across the separate user-detail
+                    // lookup. Resolving the presented username a second time could bind a
+                    // concurrent rename and username reuse to a different account.
+                    username: format!("{AUTHENTICATED_USER_PRINCIPAL_PREFIX}{}", user.id),
                 })
             }
             Err(DomainError::InvalidCredentials) => {
@@ -234,15 +239,22 @@ impl UserDetailProvider for VfilesUserDetailProvider {
             });
         }
 
-        let username =
-            Username::new(&principal.username).map_err(|_| UserDetailError::UserNotFound {
+        let user_id = principal
+            .username
+            .strip_prefix(AUTHENTICATED_USER_PRINCIPAL_PREFIX)
+            .and_then(|value| UserId::from_string(value).ok())
+            .ok_or_else(|| UserDetailError::UserNotFound {
                 username: principal.username.clone(),
             })?;
-        let user = self
-            .user_repo
-            .find_by_username(&username)
-            .await
-            .map_err(|err| UserDetailError::Generic(err.to_string()))?;
+        let user = match self.user_repo.find_by_id(&user_id).await {
+            Ok(user) => user,
+            Err(DomainError::NotFound { .. }) => {
+                return Err(UserDetailError::UserNotFound {
+                    username: principal.username.clone(),
+                });
+            }
+            Err(err) => return Err(UserDetailError::Generic(err.to_string())),
+        };
 
         if user.disabled || !self.roles.is_allowed(user.role) {
             return Err(UserDetailError::UserNotFound {
