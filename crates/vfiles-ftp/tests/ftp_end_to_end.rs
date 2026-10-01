@@ -3,7 +3,10 @@
 //! 覆盖登录、目录创建、批量上传、下载、重命名、删除，以及
 //! 「批量上传只提交一次快照」这一批量导入的关键行为。
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU16, Ordering},
+};
 
 use camino::Utf8PathBuf;
 use sqlx::{QueryBuilder, Sqlite};
@@ -36,6 +39,13 @@ use vfiles_infra_sqlite::{
 
 const USERNAME: &str = "ftpuser";
 const PASSWORD: &str = "ftp-password-123456";
+const TEST_PASSIVE_PORT_BLOCK_SIZE: u16 = 8;
+static NEXT_TEST_PASSIVE_PORT: AtomicU16 = AtomicU16::new(50_000);
+
+fn next_test_passive_ports() -> (u16, u16) {
+    let start = NEXT_TEST_PASSIVE_PORT.fetch_add(TEST_PASSIVE_PORT_BLOCK_SIZE, Ordering::Relaxed);
+    (start, start + TEST_PASSIVE_PORT_BLOCK_SIZE - 1)
+}
 
 struct Harness {
     _temp_dir: tempfile::TempDir,
@@ -156,7 +166,7 @@ impl Harness {
 
         let settings = FtpSettings {
             bind: "127.0.0.1:0".parse().expect("bind addr"),
-            passive_ports: (50_000, 50_100),
+            passive_ports: next_test_passive_ports(),
             max_connections,
             passive_host: None,
             greeting: "VFiles FTP test",
@@ -625,6 +635,32 @@ async fn rejects_wrong_password_and_path_traversal() {
     // CDUP / CWD .. 是客户端常用操作，必须仍然可用
     client.cwd("..").expect("cwd .. 应可用（夹取在根）");
     client.quit().ok();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_login_rate_limit_combines_email_case_variants() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let identifiers = [
+        "ftp@example.com",
+        "FTP@EXAMPLE.COM",
+        "Ftp@Example.Com",
+        "ftp@example.com",
+        "FTP@EXAMPLE.COM",
+    ];
+
+    for identifier in identifiers {
+        let mut client = harness.secure_client();
+        assert!(
+            client.login(identifier, "wrong-password").is_err(),
+            "invalid credentials must fail for {identifier}"
+        );
+    }
+
+    let mut client = harness.secure_client();
+    assert!(
+        client.login("ftp@example.com", PASSWORD).is_err(),
+        "email casing must not create fresh FTP failure counters"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
