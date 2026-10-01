@@ -635,3 +635,64 @@ fn parse_appe() {
         assert_eq!(parse(test.input), test.expected);
     }
 }
+
+#[test]
+fn parser_does_not_panic_on_bounded_adversarial_parameters() {
+    let commands: &[&[u8]] = &[
+        b"USER ",
+        b"PASS ",
+        b"ACCT ",
+        b"STAT ",
+        b"TYPE ",
+        b"STRU ",
+        b"MODE ",
+        b"NOOP ",
+        b"PASV ",
+        b"EPSV ",
+        b"PORT ",
+        b"RETR ",
+        b"STOR ",
+        b"APPE ",
+        b"LIST ",
+        b"NLST ",
+        b"MLST ",
+        b"MLSD ",
+        b"FEAT ",
+        b"PWD ",
+        b"CWD ",
+        b"CDUP ",
+        b"OPTS ",
+        b"DELE ",
+        b"RMD ",
+        b"MKD ",
+        b"RNFR ",
+        b"RNTO ",
+        b"AUTH ",
+        b"PBSZ ",
+        b"PROT ",
+        b"CCC ",
+        b"SIZE ",
+        b"REST ",
+        b"MDTM ",
+        b"SITE MD5 ",
+        b"QUIT ",
+    ];
+    let mut state = 0x9e37_79b9_u32;
+
+    for round in 0..512 {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let command = commands[(state as usize) % commands.len()];
+        let max_param_len = 8 * 1024 - command.len() - 2;
+        let param_len = (state.rotate_left(11) as usize) % (max_param_len + 1);
+        let mut frame = Vec::with_capacity(command.len() + param_len + 2);
+        frame.extend_from_slice(command);
+        for _ in 0..param_len {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            frame.push((state >> 24) as u8);
+        }
+        frame.extend_from_slice(b"\r\n");
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse(frame)));
+        assert!(result.is_ok(), "parser panicked for generated frame {round}");
+    }
+}
