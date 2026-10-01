@@ -83,10 +83,13 @@ impl FtpServerHandle {
 fn build_server(
     settings: &FtpSettings,
     app: &FtpApplication,
+    session_permit: Option<Arc<tokio::sync::OwnedSemaphorePermit>>,
 ) -> Result<Server<VfilesStorageBackend, VfilesFtpUser>, libunftp::ServerError> {
     let deps = app.backend.clone();
-    let generator: Box<dyn Fn() -> VfilesStorageBackend + Send + Sync> =
-        Box::new(move || VfilesStorageBackend::new(deps.clone()));
+    let backend_permit = session_permit.clone();
+    let generator: Box<dyn Fn() -> VfilesStorageBackend + Send + Sync> = Box::new(move || {
+        VfilesStorageBackend::new_with_session_permit(deps.clone(), backend_permit.clone())
+    });
 
     let provider = Arc::clone(&app.user_detail_provider)
         as Arc<dyn UserDetailProvider<User = VfilesFtpUser> + Send + Sync>;
@@ -159,7 +162,7 @@ pub async fn spawn_ftp_server(
     let sessions = Arc::new(Semaphore::new(max_connections as usize));
 
     // 预先构建一次以尽早暴露配置错误（证书等），随后按连接重建
-    build_server(&settings, &app).map_err(|err| std::io::Error::other(err.to_string()))?;
+    build_server(&settings, &app, None).map_err(|err| std::io::Error::other(err.to_string()))?;
 
     info!(
         address = %local_addr,
@@ -187,7 +190,8 @@ pub async fn spawn_ftp_server(
                                     continue;
                                 }
                             };
-                            let server = match build_server(&settings, &app) {
+                            let permit = Arc::new(permit);
+                            let server = match build_server(&settings, &app, Some(Arc::clone(&permit))) {
                                 Ok(server) => server,
                                 Err(err) => {
                                     warn!(error = %err, "构建 FTP 会话失败");

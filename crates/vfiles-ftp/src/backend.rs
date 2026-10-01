@@ -115,6 +115,8 @@ impl fmt::Debug for BackendDeps {
 /// 每个登录会话一个实例：批次状态挂在实例上（libunftp 每个会话构造一次后端）。
 pub struct VfilesStorageBackend {
     deps: BackendDeps,
+    /// Keeps the FTP connection slot occupied while `Drop` commits a pending batch.
+    session_permit: Option<Arc<tokio::sync::OwnedSemaphorePermit>>,
     /// 当前会话的导入批次（`enter` 之后可用）；与 `Drop` 的收尾任务共享。
     ///
     /// 用异步锁：批次操作是 async 且必须在持锁期间 await（否则并发 put 会丢变更）。
@@ -134,8 +136,16 @@ impl fmt::Debug for VfilesStorageBackend {
 
 impl VfilesStorageBackend {
     pub fn new(deps: BackendDeps) -> Self {
+        Self::new_with_session_permit(deps, None)
+    }
+
+    pub(crate) fn new_with_session_permit(
+        deps: BackendDeps,
+        session_permit: Option<Arc<tokio::sync::OwnedSemaphorePermit>>,
+    ) -> Self {
         Self {
             deps,
+            session_permit,
             batch: Arc::new(AsyncMutex::new(None)),
             snapshots_committed: Arc::new(AsyncMutex::new(0)),
             session_finished: Arc::new(AtomicBool::new(false)),
@@ -331,8 +341,10 @@ impl Drop for VfilesStorageBackend {
         let committed = Arc::clone(&self.snapshots_committed);
         let finished = Arc::clone(&self.session_finished);
         let stats = Arc::clone(&self.deps.stats);
+        let session_permit = self.session_permit.clone();
 
         handle.spawn(async move {
+            let _session_permit = session_permit;
             let mut guard = batch.lock().await;
             if let Some(batch) = guard.as_mut()
                 && batch.has_pending()
