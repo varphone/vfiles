@@ -58,6 +58,7 @@ use std::time::{Duration, Instant};
 const DATA_CHANNEL_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const DATA_CHANNEL_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
 const DATA_CHANNEL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const DATA_CHANNEL_ACCOUNT_REVALIDATION_INTERVAL: Duration = Duration::from_secs(5);
 const DATA_CHANNEL_PROGRESS_GRACE_PERIOD: Duration = Duration::from_secs(60);
 const MIN_DATA_CHANNEL_RATE_BYTES_PER_SEC: u64 = 32 * 1024;
 const MAX_DATA_CHANNEL_TRANSFER_DURATION: Duration = Duration::from_secs(48 * 60 * 60);
@@ -253,6 +254,149 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for IdleTimeoutWriter<W> {
         }
         match Pin::new(&mut this.inner).poll_shutdown(cx) {
             Poll::Ready(result) => Poll::Ready(result),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+type UserRevalidationFuture = Pin<Box<dyn Future<Output = std::io::Result<()>> + Send>>;
+
+#[derive(Debug)]
+struct UserRevalidationFailure(ErrorKind);
+
+impl fmt::Display for UserRevalidationFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FTP user revalidation failed: {}", self.0)
+    }
+}
+
+impl std::error::Error for UserRevalidationFailure {}
+
+fn listing_error_from_io(error: std::io::Error) -> Error {
+    if let Some(failure) = error.get_ref().and_then(|source| source.downcast_ref::<UserRevalidationFailure>()) {
+        Error::from(failure.0)
+    } else {
+        Error::from(error)
+    }
+}
+
+/// Revalidate account state while a directory listing is being sent. LIST and MLSD are
+/// materialized before writing, so validating only in StorageBackend::list leaves slow clients
+/// able to receive the buffered names after their account has been revoked.
+struct UserRevalidatingWriter<W, Storage, User> {
+    inner: W,
+    storage: Arc<Storage>,
+    user: Arc<Option<User>>,
+    next_check: Pin<Box<tokio::time::Sleep>>,
+    pending_check: Option<UserRevalidationFuture>,
+    failed: bool,
+}
+
+impl<W, Storage, User> UserRevalidatingWriter<W, Storage, User> {
+    fn new(inner: W, storage: Arc<Storage>, user: Arc<Option<User>>) -> Self {
+        Self {
+            inner,
+            storage,
+            user,
+            next_check: Box::pin(tokio::time::sleep(Duration::ZERO)),
+            pending_check: None,
+            failed: false,
+        }
+    }
+}
+
+impl<W, Storage, User> UserRevalidatingWriter<W, Storage, User>
+where
+    Storage: StorageBackend<User> + 'static,
+    User: UserDetail + 'static,
+{
+    fn poll_revalidation(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        loop {
+            if self.failed {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "FTP account is no longer authorized",
+                )));
+            }
+
+            if let Some(check) = self.pending_check.as_mut() {
+                match check.as_mut().poll(cx) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Ok(())) => {
+                        self.pending_check = None;
+                        self.next_check
+                            .as_mut()
+                            .reset(tokio::time::Instant::now() + DATA_CHANNEL_ACCOUNT_REVALIDATION_INTERVAL);
+                        continue;
+                    }
+                    Poll::Ready(Err(_)) => {
+                        self.pending_check = None;
+                        self.failed = true;
+                        return Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            "FTP account is no longer authorized",
+                        )));
+                    }
+                }
+            }
+
+            if self.next_check.as_mut().poll(cx).is_ready() {
+                let storage = Arc::clone(&self.storage);
+                let user = Arc::clone(&self.user);
+                self.pending_check = Some(Box::pin(async move {
+                    let Some(user) = user.as_ref() else {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            UserRevalidationFailure(ErrorKind::PermissionDenied),
+                        ));
+                    };
+                    storage.revalidate_user(user).await.map_err(|error| {
+                        let io_kind = if error.kind() == ErrorKind::PermissionDenied {
+                            std::io::ErrorKind::PermissionDenied
+                        } else {
+                            std::io::ErrorKind::Other
+                        };
+                        std::io::Error::new(io_kind, UserRevalidationFailure(error.kind()))
+                    })
+                }));
+                continue;
+            }
+
+            return Poll::Ready(Ok(()));
+        }
+    }
+}
+
+impl<W, Storage, User> AsyncWrite for UserRevalidatingWriter<W, Storage, User>
+where
+    W: AsyncWrite + Unpin,
+    Storage: StorageBackend<User> + 'static,
+    Storage::Metadata: Metadata,
+    User: UserDetail + 'static,
+{
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
+        let this = self.as_mut().get_mut();
+        match this.poll_revalidation(cx) {
+            Poll::Ready(Ok(())) => Pin::new(&mut this.inner).poll_write(cx, buf),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.as_mut().get_mut();
+        match this.poll_revalidation(cx) {
+            Poll::Ready(Ok(())) => Pin::new(&mut this.inner).poll_flush(cx),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.as_mut().get_mut();
+        match this.poll_revalidation(cx) {
+            Poll::Ready(Ok(())) => Pin::new(&mut this.inner).poll_shutdown(cx),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -707,13 +851,16 @@ where
         let log_path = crate::server::controlchan::sanitize_control_path(&path);
         let tx = self.control_msg_tx.clone();
         let logger = self.logger.clone();
-        let mut output = match Self::writer(self.socket, self.ftps_mode.clone(), command.as_lower_str(), self.abort_token.clone()).await {
+        let storage = Arc::clone(&self.storage);
+        let user = Arc::clone(&self.user);
+        let output = match Self::writer(self.socket, self.ftps_mode.clone(), command.as_lower_str(), self.abort_token.clone()).await {
             Ok(output) => output,
             Err(err) => {
                 Self::report_tls_handshake_failure(logger, tx, command.as_str(), err).await;
                 return;
             }
         };
+        let mut output = UserRevalidatingWriter::new(output, storage, user);
 
         let start_time = Instant::now();
 
@@ -772,8 +919,11 @@ where
                             log_error,
                         );
 
-                        let err = Error::from(e);
+                        let err = listing_error_from_io(e);
                         categorize_and_register_error(&self.logger, &err, command.as_lower_str());
+                        if let Err(_send_error) = tx.send(ControlChanMsg::StorageError(err)).await {
+                            slog::warn!(self.logger, "Could not notify control channel about failed {}", command.as_str());
+                        }
                     }
                 }
             }
@@ -805,13 +955,16 @@ where
         let log_path = crate::server::controlchan::sanitize_control_path(&path);
         let tx = self.control_msg_tx.clone();
         let logger = self.logger.clone();
-        let mut output = match Self::writer(self.socket, self.ftps_mode.clone(), "mlsd", self.abort_token.clone()).await {
+        let storage = Arc::clone(&self.storage);
+        let user = Arc::clone(&self.user);
+        let output = match Self::writer(self.socket, self.ftps_mode.clone(), "mlsd", self.abort_token.clone()).await {
             Ok(output) => output,
             Err(err) => {
                 Self::report_tls_handshake_failure(logger, tx, "MLSD", err).await;
                 return;
             }
         };
+        let mut output = UserRevalidatingWriter::new(output, storage, user);
 
         let start_time = Instant::now();
 
@@ -878,7 +1031,8 @@ where
                             HumanDuration(duration),
                             log_error
                         );
-                        if let Err(_err) = tx.send(ControlChanMsg::WriteFailed).await {
+                        let control_error = listing_error_from_io(err);
+                        if let Err(_err) = tx.send(ControlChanMsg::StorageError(control_error)).await {
                             slog::error!(self.logger, "Could not notify control channel of failed MLSD");
                         }
                     }

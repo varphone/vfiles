@@ -672,6 +672,10 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         FEATURE_RESTART
     }
 
+    async fn revalidate_user(&self, user: &VfilesFtpUser) -> Result<()> {
+        self.ensure_user_current(user).await
+    }
+
     fn enter(&mut self, user_detail: &VfilesFtpUser) -> std::io::Result<()> {
         let batch = ImportBatch::new(
             Arc::clone(&self.deps.entry_repo),

@@ -91,7 +91,16 @@ where
 
                 tokio::spawn(async move {
                     let _task_permit = task_permit;
-                    let Some(result) = super::while_control_channel_open(&tx_success, storage.list_vec((*user).as_ref().unwrap(), path)).await else {
+                    let Some(result) = super::while_control_channel_open(&tx_success, async move {
+                        let Some(user_detail) = user.as_ref() else {
+                            return Err(Error::from(ErrorKind::PermissionDenied));
+                        };
+                        let lines = storage.list_vec(user_detail, path).await?;
+                        storage.revalidate_user(user_detail).await?;
+                        Ok(lines)
+                    })
+                    .await
+                    else {
                         return;
                     };
                     match result {
@@ -106,7 +115,7 @@ where
                         }
                         Err(e) => {
                             slog::info!(logger, "STAT: Failure listing file or directory {:?}", path_str);
-                            if let Err(err) = tx_fail.send(ControlChanMsg::StorageError(Error::new(ErrorKind::LocalError, e))).await {
+                            if let Err(err) = tx_fail.send(ControlChanMsg::StorageError(e)).await {
                                 slog::warn!(logger, "STAT: Could not send internal message to notify of STAT failure: {}", err);
                             }
                         }
