@@ -296,7 +296,7 @@ impl VfilesStorageBackend {
             .map_err(to_ftp_error)
     }
 
-    async fn validate_upload_parent(
+    async fn validate_upload_path(
         &self,
         namespace_id: &NamespaceId,
         path: &NormalizedPath,
@@ -317,12 +317,22 @@ impl VfilesStorageBackend {
             ancestors.push(current_path);
         }
 
+        let mut checked_paths = ancestors.clone();
+        checked_paths.push(path.clone());
         let entries = self
             .deps
             .entry_repo
-            .find_paths(namespace_id, &ancestors)
+            .find_paths(namespace_id, &checked_paths)
             .await
             .map_err(to_ftp_error)?;
+        if entries.iter().any(|entry| {
+            entry.path_norm.as_str() == path.as_str() && entry.entry_type != EntryKind::File
+        }) {
+            return Err(Error::new(
+                ErrorKind::PermanentFileNotAvailable,
+                "上传目标已是目录",
+            ));
+        }
         let file_paths = entries
             .into_iter()
             .filter(|entry| entry.entry_type != EntryKind::Directory)
@@ -558,8 +568,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         }
 
         // Reject deterministic path conflicts before consuming the data stream into a blob.
-        self.validate_upload_parent(&user.namespace_id, &path)
-            .await?;
+        self.validate_upload_path(&user.namespace_id, &path).await?;
         let bytes = self.import_file(&path, input).await?;
         debug!(user = %user, path = path.as_str(), bytes, "FTP 上传完成");
         Ok(bytes)
