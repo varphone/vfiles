@@ -130,7 +130,7 @@ where
     control_command_tasks: Arc<Semaphore>,
 }
 
-const MAX_CONTROL_COMMAND_TASKS: usize = 4;
+pub(crate) const MAX_CONTROL_COMMAND_TASKS: usize = 4;
 
 impl<Storage, User> Session<Storage, User>
 where
@@ -173,6 +173,10 @@ where
 
     pub(crate) fn try_control_command_permit(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
         self.control_command_tasks.clone().try_acquire_owned().ok()
+    }
+
+    pub(crate) fn control_command_task_semaphore(&self) -> Arc<Semaphore> {
+        self.control_command_tasks.clone()
     }
 
     pub fn ftps(mut self, mode: FtpsConfig) -> Self {
