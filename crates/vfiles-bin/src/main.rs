@@ -2903,7 +2903,7 @@ fn build_webdav_runtime(
         let auth = std::sync::Arc::new(auth_service.clone());
         std::sync::Arc::new(move |u: String, pw: String| {
             let auth = std::sync::Arc::clone(&auth);
-            Box::pin(async move { auth.verify_credentials(&u, &pw).await.ok() })
+            Box::pin(async move { auth.verify_credentials(&u, &pw).await })
         })
     };
     let app = vfiles_webdav::WebdavApplication {

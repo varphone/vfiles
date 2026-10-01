@@ -14,6 +14,7 @@ vfiles-domain = { path = "../vfiles-domain" }
 async-trait.workspace = true
 libunftp = { version = "0.23", default-features = false, features = ["ring"] }
 rcgen = "0.14.10"
+secrecy.workspace = true
 sha2.workspace = true
 hex.workspace = true
 # libunftp 0.23 把 StorageBackend/Authenticator 放在 unftp-core 中且不再公开 re-export，

@@ -49,6 +49,24 @@ pub struct LoginAttemptLimiter {
     state: Mutex<LoginAttemptState>,
 }
 
+/// Build a shared key for HTTP, WebDAV, and FTP login throttling.
+///
+/// Login identifiers are normalized the same way at every protocol boundary so
+/// case variants cannot create independent failure counters (notably for
+/// email-based logins).
+pub fn login_attempt_key(source_ip: &str, login_identifier: &str) -> String {
+    let normalized_login = login_identifier.trim().to_lowercase();
+    if normalized_login.is_empty() {
+        format!("ip:{source_ip}|login")
+    } else {
+        format!("ip:{source_ip}|login:{normalized_login}")
+    }
+}
+
+fn login_source_attempt_key(source_ip: &str) -> String {
+    format!("ip:{source_ip}|login-source")
+}
+
 impl LoginAttemptLimiter {
     pub fn new() -> Self {
         Self::default()
@@ -84,6 +102,51 @@ impl LoginAttemptLimiter {
         Some(LoginRateLimitBlock {
             retry_after_secs: ceil_duration_seconds(retry_after),
         })
+    }
+
+    /// Check both the per-login counter and a shared per-source counter. The aggregate source
+    /// threshold is ten times the configured per-login threshold to make username spraying
+    /// materially more expensive without applying the per-account limit to every user behind a
+    /// shared NAT address.
+    pub fn check_login(
+        &self,
+        config: &RateLimitPolicy,
+        source_ip: &str,
+        login_identifier: &str,
+    ) -> Option<LoginRateLimitBlock> {
+        let login_key = login_attempt_key(source_ip, login_identifier);
+        if let Some(block) = self.check(config, &login_key) {
+            return Some(block);
+        }
+
+        let source_config = RateLimitPolicy {
+            max_attempts: config.max_attempts.saturating_mul(10),
+            ..*config
+        };
+        self.check(&source_config, &login_source_attempt_key(source_ip))
+    }
+
+    /// Record a failed attempt in both the per-login and per-source counters.
+    pub fn record_login_failure(
+        &self,
+        config: &RateLimitPolicy,
+        source_ip: &str,
+        login_identifier: &str,
+    ) {
+        let login_key = login_attempt_key(source_ip, login_identifier);
+        self.record_failure(config, &login_key);
+
+        let source_config = RateLimitPolicy {
+            max_attempts: config.max_attempts.saturating_mul(10),
+            ..*config
+        };
+        self.record_failure(&source_config, &login_source_attempt_key(source_ip));
+    }
+
+    /// Clear only the successful login's own counter; unrelated failed logins from the same
+    /// source remain part of the aggregate source budget.
+    pub fn clear_login_success(&self, source_ip: &str, login_identifier: &str) {
+        self.clear(&login_attempt_key(source_ip, login_identifier));
     }
 
     pub fn record_failure(&self, config: &RateLimitPolicy, key: &str) {

@@ -58,13 +58,14 @@ pub async fn login(
     let login_identifier = req.username_or_email.clone();
     let logged_login_identifier =
         sanitize_log_field(&login_identifier, MAX_LOGIN_IDENTIFIER_LOG_CHARS);
-    let login_key = login_rate_limit_key(&headers, &login_identifier);
+    let login_source_ip = client_ip_from_headers(&headers);
     let login_rate_limit = login_rate_limit_policy(&state.config.auth.login_rate_limit);
 
-    if let Some(block) = state
-        .login_attempt_limiter
-        .check(&login_rate_limit, &login_key)
-    {
+    if let Some(block) = state.login_attempt_limiter.check_login(
+        &login_rate_limit,
+        &login_source_ip,
+        &login_identifier,
+    ) {
         tracing::warn!(
             "Blocked login attempt for {} due to repeated failures; retry after {}s",
             logged_login_identifier,
@@ -93,13 +94,17 @@ pub async fn login(
 
     let response: vfiles_domain::LoginResponse = match auth_service.login(req).await {
         Ok(response) => {
-            state.login_attempt_limiter.clear(&login_key);
+            state
+                .login_attempt_limiter
+                .clear_login_success(&login_source_ip, &login_identifier);
             response
         }
         Err(DomainError::InvalidCredentials) => {
-            state
-                .login_attempt_limiter
-                .record_failure(&login_rate_limit, &login_key);
+            state.login_attempt_limiter.record_login_failure(
+                &login_rate_limit,
+                &login_source_ip,
+                &login_identifier,
+            );
             tracing::warn!("Rejected login attempt for {}", logged_login_identifier);
             crate::audit::record(
                 &state,
@@ -139,17 +144,6 @@ pub async fn login(
     let jar = jar.add(cookie);
 
     Ok((jar, Json(response_dto)).into_response())
-}
-
-fn login_rate_limit_key(headers: &HeaderMap, username_or_email: &str) -> String {
-    let ip = client_ip_from_headers(headers);
-    let normalized_login = username_or_email.trim().to_ascii_lowercase();
-
-    if normalized_login.is_empty() {
-        format!("ip:{}|login", ip)
-    } else {
-        format!("ip:{}|login:{}", ip, normalized_login)
-    }
 }
 
 fn login_rate_limited_response(retry_after_secs: u64) -> Response {

@@ -35,7 +35,7 @@ VFILES_DATABASE_PATH=./data/vfiles.db
 VFILES_AUTH_ENABLED=true
 VFILES_AUTH_ALLOW_REGISTER=true
 VFILES_AUTH_COOKIE_SECRET=replace-with-a-random-secret-at-least-32-chars
-# 登录失败限流：默认 5 分钟内最多失败 10 次；窗口最大为 365 天
+# 登录失败限流：默认 5 分钟内单账号最多失败 10 次、单来源最多失败 100 次；窗口最大为 365 天
 # VFILES_AUTH_LOGIN_RATE_LIMIT_ENABLED=true
 # VFILES_AUTH_LOGIN_RATE_LIMIT_WINDOW_MS=300000
 # VFILES_AUTH_LOGIN_RATE_LIMIT_MAX=10
@@ -68,7 +68,7 @@ RUST_LOG=info
 - `VFILES_HTTP_COOKIE_SECURE` 可显式覆盖 cookie 的 `Secure` 标记；如果公网仍走 `https://` 域名，但本地想直接用 `http://局域网IP:端口` 访问并登录，可临时设为 `false`。
 - `VFILES_HTTP_CORS_ALLOWED_ORIGINS` 留空时，会默认回落到 `VFILES_HTTP_PUBLIC_BASE_URL` 的 origin；如果前端和 API 不同源，请显式写成逗号分隔列表。
 - `VFILES_HTTP_TRUSTED_PROXIES` 是逗号分隔的反向代理 IP 白名单，默认留空。只有连接来源命中白名单时，服务才会采用代理提供的客户端 IP 头；X-Forwarded-For 会从右向左跳过受信代理，使用最近的非受信地址。代理应追加真实连接地址，让客户端传入的更左侧值不会参与限流或审计。
-- 登录失败限流由 `VFILES_AUTH_LOGIN_RATE_LIMIT_ENABLED`、`VFILES_AUTH_LOGIN_RATE_LIMIT_WINDOW_MS` 和 `VFILES_AUTH_LOGIN_RATE_LIMIT_MAX` 控制；启用时窗口必须不超过 365 天。
+- 登录失败限流由 `VFILES_AUTH_LOGIN_RATE_LIMIT_ENABLED`、`VFILES_AUTH_LOGIN_RATE_LIMIT_WINDOW_MS` 和 `VFILES_AUTH_LOGIN_RATE_LIMIT_MAX` 控制；启用时窗口必须不超过 365 天。失败次数同时按规范化账号和来源 IP 计数，来源 IP 汇总上限为单账号上限的 10 倍，且 FTP、HTTP、WebDAV 共用计数。
 - `VFILES_STORAGE_ROOT` 下会自动创建 `blobs`、`uploads`、`tmp`、`export`、`logs`、`backups` 等目录。
 - `VFILES_FRONTEND_DIST` 在运行时用于外部静态资源托管；启用 `embed` feature 时，也可在编译期指定待嵌入目录。
 - 仍兼容读取旧别名 `PUBLIC_BASE_URL`、`CORS_ORIGIN`、`HTTP_COOKIE_SECURE`、`AUTH_SECRET`、`ENABLE_AUTH`、`AUTH_ALLOW_REGISTER`，但新部署不建议继续使用旧名字。

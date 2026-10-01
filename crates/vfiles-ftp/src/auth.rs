@@ -14,7 +14,7 @@ use unftp_core::auth::{
 use vfiles_app::{
     AuthService, IngestStats, LoginAttemptLimiter, NamespaceService, RateLimitPolicy,
 };
-use vfiles_domain::{NamespaceId, Role, UserId, UserRepo, Username};
+use vfiles_domain::{DomainError, NamespaceId, Role, UserId, UserRepo, Username};
 
 /// 登录后使用的用户信息：包含命名空间，决定该会话能看到哪些文件。
 #[derive(Debug, Clone)]
@@ -118,10 +118,14 @@ impl Authenticator for VfilesAuthenticator {
             return Err(AuthenticationError::BadUser);
         }
 
-        let password = creds.password.clone().unwrap_or_default();
-        let key = format!("{}|{username}", creds.source_ip);
+        let password = creds.password.as_deref().unwrap_or_default();
+        let source_ip = creds.source_ip.to_string();
 
-        if self.limiter.check(&self.policy, &key).is_some() {
+        if self
+            .limiter
+            .check_login(&self.policy, &source_ip, username)
+            .is_some()
+        {
             self.stats.record_login_failure();
             warn!(username, "FTP 登录被限流拒绝");
             return Err(AuthenticationError::BadPassword);
@@ -129,30 +133,42 @@ impl Authenticator for VfilesAuthenticator {
 
         match self
             .auth_service
-            .verify_credentials(username, &password)
+            .verify_credentials(username, password)
             .await
         {
             Ok(user) => {
                 if user.disabled {
+                    self.limiter
+                        .record_login_failure(&self.policy, &source_ip, username);
                     self.stats.record_login_failure();
                     return Err(AuthenticationError::BadUser);
                 }
                 if !self.roles.is_allowed(user.role) {
+                    self.limiter
+                        .record_login_failure(&self.policy, &source_ip, username);
                     self.stats.record_login_failure();
                     warn!(username, role = ?user.role, "FTP 登录角色不被允许");
                     return Err(AuthenticationError::BadUser);
                 }
-                self.limiter.clear(&key);
+                self.limiter.clear_login_success(&source_ip, username);
                 self.stats.record_login_success();
                 Ok(Principal {
                     username: user.username.as_str().to_string(),
                 })
             }
-            Err(err) => {
-                self.limiter.record_failure(&self.policy, &key);
+            Err(DomainError::InvalidCredentials) => {
+                self.limiter
+                    .record_login_failure(&self.policy, &source_ip, username);
                 self.stats.record_login_failure();
-                warn!(username, error = %err, "FTP 登录失败");
+                warn!(username, "FTP 登录失败");
                 Err(AuthenticationError::BadPassword)
+            }
+            Err(err) => {
+                self.stats.record_login_failure();
+                warn!(username, error = %err, "FTP 认证后端暂不可用");
+                Err(AuthenticationError::new(
+                    "Authentication is temporarily unavailable",
+                ))
             }
         }
     }

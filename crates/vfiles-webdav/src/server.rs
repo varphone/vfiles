@@ -2846,26 +2846,42 @@ async fn dav_inner(mut req: axum::extract::Request) -> Response {
             .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
             .map(|axum::extract::ConnectInfo(peer)| peer.ip().to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        let login_key = format!("ip:{peer_ip}|login:{}", u.trim().to_ascii_lowercase());
-        if let Some(block) = app_ref
-            .login_attempt_limiter
-            .check(&app_ref.login_rate_limit, &login_key)
+        if let Some(block) =
+            app_ref
+                .login_attempt_limiter
+                .check_login(&app_ref.login_rate_limit, &peer_ip, &u)
         {
             app_ref.ingest_stats.record_login_failure();
             tracing::warn!(username = %u, retry_after_secs = block.retry_after_secs, "WebDAV 认证尝试被限流拒绝");
             return login_rate_limited(block.retry_after_secs);
         }
         let log_name = u.clone(); // 日志副本（u move 进 verify ✗ 先留名）
-        let Some(user) = (app_ref.verify)(u, pw).await else {
-            app_ref
-                .login_attempt_limiter
-                .record_failure(&app_ref.login_rate_limit, &login_key);
-            app_ref.ingest_stats.record_login_failure();
-            // 认证失败 = warn（用户排查关键行 ✗ 服务端日志记 username 不回客户端 ✓）
-            tracing::warn!(username = %log_name, "WebDAV 认证失败（401）——检查用户名/密码，或账号是否被禁用");
-            return www_authenticate();
+        let user = match (app_ref.verify)(u, pw).await {
+            Ok(user) => user,
+            Err(vfiles_domain::DomainError::InvalidCredentials) => {
+                app_ref.login_attempt_limiter.record_login_failure(
+                    &app_ref.login_rate_limit,
+                    &peer_ip,
+                    &log_name,
+                );
+                app_ref.ingest_stats.record_login_failure();
+                // 认证失败 = warn（用户排查关键行 ✗ 服务端日志记 username 不回客户端 ✓）
+                tracing::warn!(username = %log_name, "WebDAV 认证失败（401）——检查用户名/密码，或账号是否被禁用");
+                return www_authenticate();
+            }
+            Err(vfiles_domain::DomainError::RateLimited) => {
+                app_ref.ingest_stats.record_login_failure();
+                tracing::debug!(username = %log_name, "WebDAV 认证因密码校验资源繁忙而暂缓");
+                return login_rate_limited(1);
+            }
+            Err(error) => {
+                tracing::error!(username = %log_name, %error, "WebDAV 认证服务失败");
+                return internal_error();
+            }
         };
-        app_ref.login_attempt_limiter.clear(&login_key);
+        app_ref
+            .login_attempt_limiter
+            .clear_login_success(&peer_ip, &log_name);
         // 首次成功 = info（连接可见 ✓）后续 debug（不每请求刷 ✗✗ r210 用户刷屏抱怨）
         if !AUTH_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
             tracing::info!(username = %user.username.as_str(), "WebDAV 认证成功（本次连接后归 debug）");
