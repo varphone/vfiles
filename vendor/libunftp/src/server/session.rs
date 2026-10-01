@@ -125,11 +125,16 @@ where
     pub(crate) legacy_passive_done: Option<oneshot::Receiver<()>>,
     // Keep the control session's connection permit alive until its data worker has ended.
     pub(crate) data_task: Option<tokio::task::JoinHandle<()>>,
+    // Serialize prebound FTPS passive candidate handshakes per session.
+    pub(crate) passive_candidate_lock: Arc<tokio::sync::Mutex<()>>,
+    // Bound queued FTPS passive candidates for one session.
+    pub(crate) passive_candidate_slots: Arc<Semaphore>,
     // Bound detached control-command work such as SIZE, MDTM, DELE and MKD.
     control_command_tasks: Arc<Semaphore>,
 }
 
 const MAX_CONTROL_COMMAND_TASKS: usize = 4;
+const MAX_PASSIVE_CANDIDATE_TASKS: usize = 2;
 
 impl<Storage, User> Session<Storage, User>
 where
@@ -165,6 +170,8 @@ where
             legacy_passive_cancel: None,
             legacy_passive_done: None,
             data_task: None,
+            passive_candidate_lock: Arc::new(tokio::sync::Mutex::new(())),
+            passive_candidate_slots: Arc::new(Semaphore::new(MAX_PASSIVE_CANDIDATE_TASKS)),
             control_command_tasks: Arc::new(Semaphore::new(MAX_CONTROL_COMMAND_TASKS)),
         }
     }

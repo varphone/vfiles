@@ -44,6 +44,20 @@ where
     logger: slog::Logger,
 }
 
+impl<S, U> Clone for Switchboard<S, U>
+where
+    S: StorageBackend<U>,
+    U: UserDetail,
+{
+    fn clone(&self) -> Self {
+        Self {
+            switchboard: Arc::clone(&self.switchboard),
+            port_range: self.port_range.clone(),
+            logger: self.logger.clone(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(in crate::server) enum SwitchboardError {
     // SwitchBoardNotInitialized,

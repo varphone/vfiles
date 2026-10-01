@@ -872,6 +872,7 @@ where
                         external_control_port,
                         options: (&self).into(),
                         switchboard,
+                        passive_handshake_slots: Arc::new(tokio::sync::Semaphore::new(listen_prebound::MAX_PENDING_PASSIVE_TLS_HANDSHAKES)),
                         shutdown_topic: shutdown_notifier.clone(),
                         failed_logins: failed_logins.clone(),
                     }
@@ -888,6 +889,7 @@ where
                         external_control_port: None,
                         options: (&self).into(),
                         switchboard,
+                        passive_handshake_slots: Arc::new(tokio::sync::Semaphore::new(listen_prebound::MAX_PENDING_PASSIVE_TLS_HANDSHAKES)),
                         shutdown_topic: shutdown_notifier.clone(),
                         failed_logins: failed_logins.clone(),
                     }
