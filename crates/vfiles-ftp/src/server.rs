@@ -181,6 +181,14 @@ pub async fn spawn_ftp_server(
                         break;
                     }
                 }
+                // Reap completed tasks before accepting more connections. With `biased`, a
+                // continuously ready listener would otherwise starve this branch and let
+                // completed JoinSet entries accumulate without bound.
+                Some(result) = session_tasks.join_next(), if !session_tasks.is_empty() => {
+                    if let Err(err) = result {
+                        warn!(error = %err, "FTP 会话任务未正常结束");
+                    }
+                }
                 accepted = listener.accept() => {
                     match accepted {
                         Ok((stream, peer)) => {
@@ -214,11 +222,6 @@ pub async fn spawn_ftp_server(
                             warn!(error = %err, "FTP 监听接受连接失败");
                             tokio::time::sleep(Duration::from_millis(100)).await;
                         }
-                    }
-                }
-                Some(result) = session_tasks.join_next(), if !session_tasks.is_empty() => {
-                    if let Err(err) = result {
-                        warn!(error = %err, "FTP 会话任务未正常结束");
                     }
                 }
             }
