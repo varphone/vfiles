@@ -1297,6 +1297,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
             snapshot_repo: Arc::clone(&snapshot_repo_arc),
             blob_store: Arc::clone(&blob_store_arc),
             user_repo: Arc::clone(&user_repo_arc),
+            lock_repo: Arc::new(vfiles_infra_sqlite::SqliteWebdavLockRepo::new(pool.clone())),
             // SqliteNamespaceRepo 不派生 Clone，这里用同一个连接池重建
             namespace_repo: Arc::new(SqliteNamespaceRepo::new(pool.clone())),
             login_attempt_limiter: Arc::clone(&login_attempt_limiter),
@@ -1749,6 +1750,7 @@ struct FtpRuntimeDeps {
     snapshot_repo: Arc<dyn SnapshotRepo + Send + Sync>,
     blob_store: Arc<dyn BlobStore + Send + Sync>,
     user_repo: Arc<dyn UserRepo + Send + Sync>,
+    lock_repo: Arc<dyn vfiles_domain::WebdavLockRepo>,
     namespace_repo: Arc<dyn NamespaceRepo + Send + Sync>,
     login_attempt_limiter: Arc<LoginAttemptLimiter>,
     stats: Arc<vfiles_app::IngestStats>,
@@ -3010,6 +3012,7 @@ fn build_ftp_runtime(
         snapshot_repo: deps.snapshot_repo,
         blob_store: deps.blob_store,
         user_repo: backend_user_repo,
+        lock_repo: deps.lock_repo,
         stats: deps.stats,
         max_file_size_bytes: Some(config.limits.max_file_size_bytes),
         snapshot_mode,

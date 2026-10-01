@@ -29,7 +29,7 @@ use vfiles_ftp::{
 };
 use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteEntryRepo, SqliteMigrations, SqliteNamespaceRepo,
-    SqlitePoolFactory, SqliteSessionRepo, SqliteSnapshotRepo, SqliteUserRepo,
+    SqlitePoolFactory, SqliteSessionRepo, SqliteSnapshotRepo, SqliteUserRepo, SqliteWebdavLockRepo,
 };
 
 const USERNAME: &str = "ftpuser";
@@ -130,6 +130,7 @@ impl Harness {
             snapshot_repo: Arc::new(snapshot_repo),
             blob_store: Arc::new(blob_store),
             user_repo: backend_user_repo,
+            lock_repo: Arc::new(SqliteWebdavLockRepo::new(pool.clone())),
             stats,
             max_file_size_bytes: Some(1024 * 1024),
             snapshot_mode,

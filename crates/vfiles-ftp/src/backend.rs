@@ -28,7 +28,7 @@ use unftp_core::storage::{
 use vfiles_app::{DefaultWorkspaceService, ImportBatch, IngestStats, SnapshotMode, TreeItem};
 use vfiles_domain::{
     BlobStore, DomainError, EntryKind, EntryRepo, EntryWriteCondition, NamespaceId, NormalizedPath,
-    SnapshotRepo, UserRepo,
+    SnapshotRepo, UserRepo, WebdavLockRepo,
 };
 
 use crate::auth::VfilesFtpUser;
@@ -97,6 +97,7 @@ pub struct BackendDeps {
     pub snapshot_repo: Arc<dyn SnapshotRepo + Send + Sync>,
     pub blob_store: Arc<dyn BlobStore + Send + Sync>,
     pub user_repo: Arc<dyn UserRepo + Send + Sync>,
+    pub lock_repo: Arc<dyn WebdavLockRepo>,
     pub stats: Arc<IngestStats>,
     /// 单文件大小上限（`None` 表示不限制）。
     pub max_file_size_bytes: Option<u64>,
@@ -228,6 +229,30 @@ impl VfilesStorageBackend {
                 Err(to_ftp_error(err))
             }
         }
+    }
+
+    async fn expected_unlocked_tokens(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+    ) -> Result<Vec<String>> {
+        let now = time::OffsetDateTime::now_utc()
+            .unix_timestamp_nanos()
+            .div_euclid(1_000_000)
+            .clamp(0, i64::MAX as i128) as i64;
+        let locks = self
+            .deps
+            .lock_repo
+            .find_active_covering_all(namespace_id, path.as_str(), now)
+            .await
+            .map_err(to_ftp_error)?;
+        if !locks.is_empty() {
+            return Err(Error::new(
+                ErrorKind::PermissionDenied,
+                "资源受 WebDAV 写锁保护",
+            ));
+        }
+        Ok(Vec::new())
     }
 
     fn entry_metadata(entry: &TreeItem) -> VfilesMetadata {
@@ -633,13 +658,16 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         };
 
         self.flush_batch().await?;
+        let expected_lock_tokens = self
+            .expected_unlocked_tokens(&user.namespace_id, &path)
+            .await?;
         let condition = EntryWriteCondition {
             namespace_id: user.namespace_id,
             path: path.clone(),
             check_entry_state: true,
             expected_entry_id: Some(entry.id),
             expected_version_id: entry.current_version_id,
-            expected_lock_tokens: None,
+            expected_lock_tokens: Some(expected_lock_tokens),
             expected_additional_lock_states: None,
         };
         self.deps
