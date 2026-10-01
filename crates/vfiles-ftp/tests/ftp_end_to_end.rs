@@ -353,6 +353,119 @@ async fn ftps_rejects_control_and_data_channel_downgrades() {
     client.quit().expect("quit should succeed");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn disabled_user_stops_receiving_a_directory_listing_in_progress() {
+    const ENTRY_COUNT: usize = 3_500;
+    const NAME_PADDING: usize = 850;
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let rows: Vec<(String, String)> = (0..ENTRY_COUNT)
+        .map(|index| {
+            (
+                format!("00000000-0000-4000-8000-{index:012x}"),
+                format!("slow-list-{index:05}-{}", "x".repeat(NAME_PADDING)),
+            )
+        })
+        .collect();
+    let mut transaction = harness.pool.begin().await.expect("transaction");
+    for chunk in rows.chunks(1_000) {
+        let mut query =
+            QueryBuilder::<Sqlite>::new("INSERT INTO entries (id, namespace_id, path, kind) ");
+        query.push_values(chunk, |mut builder, (id, path)| {
+            builder
+                .push_bind(id)
+                .push_bind(harness.namespace_id.to_string())
+                .push_bind(path)
+                .push_bind("directory");
+        });
+        query
+            .build()
+            .execute(&mut *transaction)
+            .await
+            .expect("directory fixtures should be inserted");
+    }
+    transaction.commit().await.expect("fixture transaction");
+
+    let record = harness
+        .user_repo
+        .find_by_id(&harness.user_id)
+        .await
+        .expect("FTP user");
+    let user = VfilesFtpUser {
+        id: record.id,
+        username: record.username.to_string(),
+        role: record.role,
+        namespace_id: harness.namespace_id,
+        account_updated_at: record.updated_at,
+        password_changed_at: record.password_changed_at,
+        anonymous: false,
+    };
+    let backend = VfilesStorageBackend::new(harness.backend.clone());
+    backend
+        .list(&user, ".")
+        .await
+        .expect("slow-list fixture should remain under the listing limit");
+
+    let mut client = harness.client();
+    let (listing_started_tx, listing_started_rx) = tokio::sync::oneshot::channel();
+    let (resume_reading_tx, resume_reading_rx) = std::sync::mpsc::channel();
+    let transfer = tokio::task::spawn_blocking(move || {
+        let (_, mut data_stream) = client
+            .custom_data_command("NLST .", &[Status::AboutToSend])
+            .expect("NLST should start");
+        data_stream
+            .get_ref()
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("data read timeout should be set");
+        client
+            .get_ref()
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .expect("control read timeout should be set");
+        let mut data = vec![0; 1_024];
+        std::io::Read::read_exact(&mut data_stream, &mut data)
+            .expect("listing should write data before account revocation");
+        listing_started_tx
+            .send(())
+            .expect("test should still be waiting for NLST");
+        resume_reading_rx
+            .recv()
+            .expect("test should resume data reading");
+
+        let data_result = std::io::Read::read_to_end(&mut data_stream, &mut data);
+        let data_bytes = data.len();
+        let control_result = client.close_data_connection(data_stream);
+        (data_result, data_bytes, control_result)
+    });
+
+    listing_started_rx
+        .await
+        .expect("NLST should reach the data phase");
+    harness.disable_user().await;
+    tokio::time::sleep(std::time::Duration::from_millis(5_200)).await;
+    resume_reading_tx
+        .send(())
+        .expect("data reader should still be alive");
+
+    let (data_result, data_bytes, control_result) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), transfer)
+            .await
+            .expect("revoked listing should stop promptly")
+            .expect("FTP client task should finish");
+    let expected_bytes =
+        ENTRY_COUNT * (format!("slow-list-{:05}-{}", 0, "x".repeat(NAME_PADDING)).len() + 2);
+    assert!(
+        data_result.is_ok(),
+        "FTPS should close the listing stream cleanly after revocation: {data_result:?}"
+    );
+    assert!(
+        (1_024..expected_bytes).contains(&data_bytes),
+        "a revoked account must not receive the buffered directory listing ({data_bytes}/{expected_bytes} bytes)"
+    );
+    assert!(
+        control_result.is_err(),
+        "the control channel should report the revoked listing instead of success"
+    );
+}
+
 fn payload(size: usize, seed: u8) -> Vec<u8> {
     (0..size)
         .map(|index| seed.wrapping_add(index as u8))

@@ -396,7 +396,10 @@ where
         let this = self.as_mut().get_mut();
         match this.poll_revalidation(cx) {
             Poll::Ready(Ok(())) => Pin::new(&mut this.inner).poll_shutdown(cx),
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Err(err)) => match Pin::new(&mut this.inner).poll_shutdown(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(_) => Poll::Ready(Err(err)),
+            },
             Poll::Pending => Poll::Pending,
         }
     }
