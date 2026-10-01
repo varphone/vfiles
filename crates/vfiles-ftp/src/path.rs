@@ -12,6 +12,8 @@ use vfiles_domain::NormalizedPath;
 
 /// Bound FTP session paths so repeated CWD commands cannot grow per-session state without limit.
 const MAX_FTP_PATH_BYTES: usize = 4 * 1024;
+/// Bound per-command ancestor work when STOR/MKD create missing parent directories.
+const MAX_FTP_PATH_SEGMENTS: usize = 256;
 
 /// 把 FTP 路径转换为命名空间内的相对路径。
 pub fn to_normalized(path: &Path) -> Result<NormalizedPath, Error> {
@@ -57,6 +59,13 @@ pub fn to_normalized(path: &Path) -> Result<NormalizedPath, Error> {
                 segments.push(part);
             }
         }
+    }
+
+    if segments.len() > MAX_FTP_PATH_SEGMENTS {
+        return Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "FTP 路径超过安全目录深度上限",
+        ));
     }
 
     let joined = segments.join("/");
