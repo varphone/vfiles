@@ -33,11 +33,12 @@ use crate::{
     storage::{Metadata, StorageBackend},
 };
 use async_trait::async_trait;
-use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio_util::sync::CancellationToken;
+
+const ACTIVE_DATA_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 #[derive(Debug)]
 pub struct Port {
@@ -129,14 +130,16 @@ where
             ));
         }
 
-        let stream: io::Result<TcpStream> = TcpStream::connect(addr).await;
-
-        let stream = match stream {
-            Err(e) => {
-                slog::error!(logger, "Could not connect to client for active mode: {}", e);
+        let stream = match tokio::time::timeout(ACTIVE_DATA_CONNECT_TIMEOUT, TcpStream::connect(addr)).await {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(err)) => {
+                slog::warn!(logger, "Could not connect to client for active mode: {}", err);
                 return Ok(Reply::new(ReplyCode::CantOpenDataConnection, "Could not establish data connection"));
             }
-            Ok(s) => s,
+            Err(_) => {
+                slog::warn!(logger, "Timed out connecting to client for active data connection");
+                return Ok(Reply::new(ReplyCode::CantOpenDataConnection, "Active data connection timed out"));
+            }
         };
 
         self.setup_inter_loop_comms(session.clone(), tx).await;
