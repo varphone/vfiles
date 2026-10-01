@@ -921,6 +921,21 @@ where
     /// Use this method instead of [`listen`](Server::listen) if you want to listen for and accept
     /// new connections yourself, instead of using libunftp to do it.
     pub async fn service(self, tcp_stream: tokio::net::TcpStream) -> std::result::Result<(), crate::server::ControlChanError> {
+        self.service_with_shutdown(tcp_stream, futures_util::future::pending()).await
+    }
+
+    /// Service a newly established connection and close it when `shutdown` completes.
+    ///
+    /// The control loop receives libunftp's normal shutdown notification, so passive listeners and
+    /// active data transfers are cleaned up before this method returns.
+    pub async fn service_with_shutdown<F>(
+        self,
+        tcp_stream: tokio::net::TcpStream,
+        shutdown: F,
+    ) -> std::result::Result<(), crate::server::ControlChanError>
+    where
+        F: std::future::Future<Output = ()> + Send,
+    {
         let failed_logins = self.failed_logins_policy.as_ref().map(|policy| FailedLoginsCache::new(policy.clone()));
         let options: chosen::OptionsHolder<Storage, User> = (&self).into();
         let shutdown_notifier = Arc::new(shutdown::Notifier::new());
@@ -931,9 +946,19 @@ where
             Err(err) => {
                 slog::error!(self.logger, "Could not spawn control channel loop: {:?}", err);
             }
-            Ok(jh) => {
-                if let Err(e) = jh.await {
-                    slog::error!(self.logger, "Control loop failed to complete: {:?}", e);
+            Ok(mut jh) => {
+                tokio::select! {
+                    result = &mut jh => {
+                        if let Err(e) = result {
+                            slog::error!(self.logger, "Control loop failed to complete: {:?}", e);
+                        }
+                    }
+                    _ = shutdown => {
+                        shutdown_notifier.notify().await;
+                        if let Err(e) = jh.await {
+                            slog::error!(self.logger, "Control loop failed to complete: {:?}", e);
+                        }
+                    }
                 }
             }
         }

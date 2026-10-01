@@ -131,7 +131,7 @@ fn build_server(
 
 /// 启动 FTP 服务（后台任务），返回句柄。
 ///
-/// `shutdown` 变为 `true` 时停止接受新连接；已在传输的会话自行结束。
+/// `shutdown` 变为 `true` 时停止接受新连接，并等待现有会话清理完成。
 pub async fn spawn_ftp_server(
     settings: FtpSettings,
     app: FtpApplication,
@@ -172,8 +172,10 @@ pub async fn spawn_ftp_server(
     );
 
     let join = tokio::spawn(async move {
+        let mut session_tasks = tokio::task::JoinSet::new();
         loop {
             tokio::select! {
+                biased;
                 changed = shutdown.changed() => {
                     if changed.is_err() || *shutdown.borrow() {
                         break;
@@ -198,10 +200,12 @@ pub async fn spawn_ftp_server(
                                     continue;
                                 }
                             };
-                            tokio::spawn(async move {
+                            let session_shutdown = shutdown.clone();
+                            session_tasks.spawn(async move {
                                 let _permit = permit;
                                 debug!(peer = %peer, "FTP 会话开始");
-                                if let Err(err) = server.service(stream).await {
+                                let stop_session = wait_for_shutdown(session_shutdown);
+                                if let Err(err) = server.service_with_shutdown(stream, stop_session).await {
                                     debug!(peer = %peer, error = %err, "FTP 会话结束（异常）");
                                 }
                             });
@@ -212,12 +216,31 @@ pub async fn spawn_ftp_server(
                         }
                     }
                 }
+                Some(result) = session_tasks.join_next(), if !session_tasks.is_empty() => {
+                    if let Err(err) = result {
+                        warn!(error = %err, "FTP 会话任务未正常结束");
+                    }
+                }
             }
         }
         info!("FTP 服务停止接受新连接");
+        while let Some(result) = session_tasks.join_next().await {
+            if let Err(err) = result {
+                warn!(error = %err, "FTP 会话任务未正常结束");
+            }
+        }
+        info!("FTP 会话已全部清理");
     });
 
     Ok(FtpServerHandle { local_addr, join })
+}
+
+async fn wait_for_shutdown(mut shutdown: watch::Receiver<bool>) {
+    loop {
+        if *shutdown.borrow() || shutdown.changed().await.is_err() {
+            return;
+        }
+    }
 }
 
 /// 阻塞式运行：直到 `shutdown` 触发后返回。
