@@ -24,7 +24,7 @@ where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let mut feat_text = vec![" SIZE", " MDTM", " UTF8", " EPSV", " MLST", " MLSD"];
 

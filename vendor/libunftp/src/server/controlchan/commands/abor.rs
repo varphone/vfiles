@@ -28,7 +28,7 @@ where
     Storage::Metadata: Metadata,
     User: UserDetail + 'static,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let mut session = args.session.lock().await;
         match session.data_abort_tx.take() {

@@ -24,7 +24,7 @@ where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let session = args.session.lock().await;
         let cwd = session.cwd.as_path().to_string_lossy();

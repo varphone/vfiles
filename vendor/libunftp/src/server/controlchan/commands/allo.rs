@@ -39,7 +39,7 @@ where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, _args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         // ALLO is obsolete and we'll just ignore it.
         Ok(Reply::new(ReplyCode::CommandOkayNotImplemented, "Ignored"))

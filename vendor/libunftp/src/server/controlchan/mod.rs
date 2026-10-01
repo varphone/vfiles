@@ -41,7 +41,9 @@ pub(crate) fn is_unsafe_log_char(ch: char) -> bool {
 }
 
 pub(crate) fn sanitize_control_text(text: &str) -> String {
-    text.chars()
-        .map(|ch| if is_unsafe_log_char(ch) { ' ' } else { ch })
-        .collect()
+    text.chars().map(|ch| if is_unsafe_log_char(ch) { ' ' } else { ch }).collect()
+}
+
+pub(crate) fn sanitize_control_path(path: &std::path::Path) -> String {
+    sanitize_control_text(&path.to_string_lossy())
 }

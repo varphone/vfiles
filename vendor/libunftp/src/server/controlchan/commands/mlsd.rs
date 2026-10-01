@@ -28,7 +28,7 @@ where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let mut session = args.session.lock().await;
         let (cmd, path_opt): (DataChanCmd, Option<String>) = match args.parsed_command.clone() {
@@ -50,7 +50,11 @@ where
             }
             None => {
                 if let Some(path) = path_opt {
-                    slog::warn!(logger, "MLSD: no data connection established for MLSDing {:?}", path);
+                    slog::warn!(
+                        logger,
+                        "MLSD: no data connection established for MLSDing {:?}",
+                        crate::server::controlchan::sanitize_control_text(&path)
+                    );
                 } else {
                     slog::warn!(logger, "MLSD: no data connection established for MLSD");
                 }

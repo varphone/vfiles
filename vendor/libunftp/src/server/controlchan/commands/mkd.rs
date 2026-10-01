@@ -39,7 +39,7 @@ where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let session = args.session.lock().await;
         let Some(task_permit) = session.try_control_command_permit() else {
@@ -49,19 +49,20 @@ where
         let storage = Arc::clone(&session.storage);
         let path: PathBuf = session.cwd.join(self.path.clone());
         let path_str = path.to_string_lossy().to_string();
+        let log_path = crate::server::controlchan::sanitize_control_path(&path);
         let tx: Sender<ControlChanMsg> = args.tx_control_chan.clone();
         let logger = args.logger;
         tokio::spawn(async move {
             let _task_permit = task_permit;
             match storage.mkd((*user).as_ref().unwrap(), &path).await {
                 Err(err) => {
-                    slog::warn!(logger, "MKD: Failure creating directory {:?} {}", path_str, err);
+                    slog::warn!(logger, "MKD: Failure creating directory {:?} {}", log_path, err);
                     if let Err(err) = tx.send(ControlChanMsg::StorageError(err)).await {
                         slog::warn!(logger, "MKD: Could not send internal message to notify of MKD failure: {}", err);
                     }
                 }
                 _ => {
-                    slog::info!(logger, "MKD: Successfully created directory {:?}", path_str);
+                    slog::info!(logger, "MKD: Successfully created directory {:?}", log_path);
                     if let Err(err) = tx.send(ControlChanMsg::MkDirSuccess { path: path_str }).await {
                         slog::warn!(logger, "MKD: Could not send internal message to notify of MKD success: {}", err);
                     }

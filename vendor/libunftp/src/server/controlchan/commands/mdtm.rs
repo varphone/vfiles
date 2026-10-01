@@ -35,7 +35,7 @@ where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: 'static + Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let session = args.session.lock().await;
         let Some(task_permit) = session.try_control_command_permit() else {
@@ -44,6 +44,7 @@ where
         let user = session.user.clone();
         let storage = Arc::clone(&session.storage);
         let path = session.cwd.join(self.path.clone());
+        let log_path = crate::server::controlchan::sanitize_control_path(&path);
         let tx_success: Sender<ControlChanMsg> = args.tx_control_chan.clone();
         let tx_fail: Sender<ControlChanMsg> = args.tx_control_chan.clone();
         let logger = args.logger;
@@ -58,7 +59,7 @@ where
                             slog::warn!(
                                 logger,
                                 "MDTM: Could not get the modified time from the fetched metadata for path {:?}: {}",
-                                path,
+                                log_path,
                                 err
                             );
                             if let Err(err) = tx_fail.send(ControlChanMsg::StorageError(err)).await {
@@ -69,7 +70,7 @@ where
                     };
 
                     if let Some(mtime) = modification_time {
-                        slog::info!(logger, "MDTM: Successfully fetched modification time for path {:?}", path);
+                        slog::info!(logger, "MDTM: Successfully fetched modification time for path {:?}", log_path);
                         if let Err(err) = tx_success
                             .send(ControlChanMsg::CommandChannelReply(Reply::new_with_string(
                                 ReplyCode::FileStatus,

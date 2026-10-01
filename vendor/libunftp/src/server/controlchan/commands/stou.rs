@@ -25,7 +25,7 @@ where
     Storager: StorageBackend<User> + 'static,
     Storager::Metadata: Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storager, User>) -> Result<Reply, ControlChanError> {
         let mut session = args.session.lock().await;
         let uuid: String = Uuid::new_v4().to_string();
@@ -42,7 +42,11 @@ where
                 Ok(Reply::new_with_string(ReplyCode::FileStatusOkay, filename.to_string_lossy().to_string()))
             }
             None => {
-                slog::warn!(logger, "STOU: no data connection established for STOU file {:?}", path);
+                slog::warn!(
+                    logger,
+                    "STOU: no data connection established for STOU file {:?}",
+                    crate::server::controlchan::sanitize_control_text(&path)
+                );
                 Ok(Reply::new(ReplyCode::CantOpenDataConnection, "No data connection established"))
             }
         }

@@ -38,24 +38,25 @@ where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let session = args.session.lock().await;
         let storage: Arc<Storage> = Arc::clone(&session.storage);
         let path = session.cwd.join(self.path.clone());
         let path_str = path.to_string_lossy().to_string();
+        let log_path = crate::server::controlchan::sanitize_control_path(&path);
         let tx = args.tx_control_chan.clone();
         let logger = args.logger;
         match storage.rmd((*session.user).as_ref().unwrap(), path).await {
             Err(err) => {
-                slog::warn!(logger, "RMD: Failed to delete directory {}: {}", path_str, err);
+                slog::warn!(logger, "RMD: Failed to delete directory {}: {}", log_path, err);
                 let r = tx.send(ControlChanMsg::StorageError(err)).await;
                 if let Err(e) = r {
                     slog::warn!(logger, "RMD: Could not send internal message to notify of RMD error: {}", e);
                 }
             }
             _ => {
-                slog::info!(logger, "RMD: Successfully removed directory {:?}", path_str);
+                slog::info!(logger, "RMD: Successfully removed directory {:?}", log_path);
                 let r = tx.send(ControlChanMsg::RmDirSuccess { path: path_str }).await;
                 if let Err(e) = r {
                     slog::warn!(logger, "RMD: Could not send internal message to notify of RMD success: {}", e);

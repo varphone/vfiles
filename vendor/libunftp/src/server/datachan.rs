@@ -379,7 +379,7 @@ where
         session.data_busy = false;
     }
 
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle_incoming(self, incoming: DataChanMsg, start_pos: u64) {
         match incoming {
             DataChanMsg::Abort => {
@@ -387,13 +387,21 @@ where
             }
             DataChanMsg::ExternalCommand(command) => {
                 let p = command.path().unwrap_or_default();
-                slog::debug!(self.logger, "Data channel command received: {:?}", command; "path" => sanitize_control_text(&p));
+                let command_name = match &command {
+                    DataChanCmd::Retr { .. } => "RETR",
+                    DataChanCmd::Stor { .. } => "STOR",
+                    DataChanCmd::Appe { .. } => "APPE",
+                    DataChanCmd::List { .. } => "LIST",
+                    DataChanCmd::Nlst { .. } => "NLST",
+                    DataChanCmd::Mlsd { .. } => "MLSD",
+                };
+                slog::debug!(self.logger, "Data channel command received: {}", command_name; "path" => sanitize_control_text(&p));
                 self.execute_command(command, start_pos).await;
             }
         }
     }
 
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn execute_command(self, cmd: DataChanCmd, start_pos: u64) {
         match cmd {
             DataChanCmd::Retr { path } => {
@@ -417,9 +425,10 @@ where
         }
     }
 
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn exec_retr(self, path: String, start_pos: u64) {
         let path_copy = path.clone();
+        let log_path = sanitize_control_text(&path_copy);
         let path = self.cwd.join(path);
         let tx: Sender<ControlChanMsg> = self.control_msg_tx.clone();
         let logger = self.logger.clone();
@@ -452,7 +461,7 @@ where
                 slog::info!(
                     self.logger,
                     "Successful RETR {:?}; Duration {}; Bytes copied {}; Transfer speed {}; start_pos={}",
-                    &path_copy,
+                    &log_path,
                     HumanDuration(duration),
                     HumanBytes(bytes_copied),
                     TransferSpeed(bytes_copied as f64 / duration.as_secs_f64()),
@@ -464,14 +473,14 @@ where
                     metrics::inc_transferred("retr", "success");
                 }
 
-                if let Err(err) = tx
+                if let Err(_err) = tx
                     .send(ControlChanMsg::SentData {
                         bytes: bytes_copied,
                         path: path_copy,
                     })
                     .await
                 {
-                    slog::error!(self.logger, "Could not notify control channel of successful RETR: {:?}", err);
+                    slog::error!(self.logger, "Could not notify control channel of successful RETR");
                 }
             }
             Err(err) => {
@@ -482,25 +491,26 @@ where
                         slog::warn!(
                             self.logger,
                             "Client halted RETR transfer (BrokenPipe). Certain FTP clients may do this to download file sections separately, in which case RESTarts may occur and will be logged at DEBUG level. Refer to your FTP client's documentation if this causes issues. Path {:?}; Duration {} (number of bytes copied unknown).",
-                            &path_copy,
+                            &log_path,
                             HumanDuration(duration)
                         );
                     } else {
                         slog::debug!(
                             self.logger,
                             "RETR transfer stopped by client (BrokenPipe). Remember, this could be standard for some FTP clients. Path {:?}; Duration {} (number of bytes copied unknown); start_pos {}",
-                            &path_copy,
+                            &log_path,
                             HumanDuration(duration),
                             start_pos
                         );
                     }
                 } else {
+                    let log_error = sanitize_control_text(&format!("{err:?}"));
                     slog::warn!(
                         self.logger,
-                        "Error during RETR {:?} transfer after {}: {:?}; start_pos={}",
-                        &path_copy,
+                        "Error during RETR {:?} transfer after {}: {}; start_pos={}",
+                        &log_path,
                         HumanDuration(duration),
-                        err,
+                        log_error,
                         start_pos
                     );
                 }
@@ -510,16 +520,17 @@ where
                     categorize_and_register_error(&self.logger, &err, "retr");
                 }
 
-                if let Err(err) = tx.send(ControlChanMsg::StorageError(err)).await {
-                    slog::warn!(self.logger, "Could not notify control channel of error with RETR: {:?}", err);
+                if let Err(_err) = tx.send(ControlChanMsg::StorageError(err)).await {
+                    slog::warn!(self.logger, "Could not notify control channel of error with RETR");
                 }
             }
         }
     }
 
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn exec_stor(self, path: String, start_pos: u64) {
         let path_copy = path.clone();
+        let log_path = sanitize_control_text(&path_copy);
         let path = self.cwd.join(path);
         let tx = self.control_msg_tx.clone();
         let logger = self.logger.clone();
@@ -540,7 +551,7 @@ where
                 slog::info!(
                     self.logger,
                     "Successful STOR {:?}; Duration {}; Bytes copied {}; Transfer speed {}; start_pos={}",
-                    &path_copy,
+                    &log_path,
                     HumanDuration(duration),
                     HumanBytes(bytes),
                     TransferSpeed(bytes as f64 / duration.as_secs_f64()),
@@ -552,28 +563,30 @@ where
                     metrics::inc_transferred("stor", "success");
                 }
 
-                if let Err(err) = tx.send(ControlChanMsg::WrittenData { bytes, path: path_copy }).await {
-                    slog::error!(self.logger, "Could not notify control channel of successful STOR: {:?}", err);
+                if let Err(_err) = tx.send(ControlChanMsg::WrittenData { bytes, path: path_copy }).await {
+                    slog::error!(self.logger, "Could not notify control channel of successful STOR");
                 }
             }
             Err(err) => {
-                slog::warn!(self.logger, "Error during STOR transfer after {}: {:?}", HumanDuration(duration), err);
+                let log_error = sanitize_control_text(&format!("{err:?}"));
+                slog::warn!(self.logger, "Error during STOR transfer after {}: {}", HumanDuration(duration), log_error);
 
                 // only register transfer errors for a single file transfer once
                 if start_pos == 0 {
                     categorize_and_register_error(&self.logger, &err, "stor");
                 }
 
-                if let Err(err) = tx.send(ControlChanMsg::StorageError(err)).await {
-                    slog::error!(self.logger, "Could not notify control channel of error with STOR: {:?}", err);
+                if let Err(_err) = tx.send(ControlChanMsg::StorageError(err)).await {
+                    slog::error!(self.logger, "Could not notify control channel of error with STOR");
                 }
             }
         }
     }
 
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn exec_appe(self, path: String) {
         let path_copy = path.clone();
+        let log_path = sanitize_control_text(&path_copy);
         let full_path = self.cwd.join(&path);
         let tx = self.control_msg_tx.clone();
 
@@ -584,8 +597,8 @@ where
             Err(err) => {
                 slog::warn!(self.logger, "APPE refused because the existing file size could not be determined");
                 categorize_and_register_error(&self.logger, &err, "appe");
-                if let Err(send_err) = tx.send(ControlChanMsg::StorageError(err)).await {
-                    slog::warn!(self.logger, "Could not notify control channel of APPE metadata error: {:?}", send_err);
+                if let Err(_send_err) = tx.send(ControlChanMsg::StorageError(err)).await {
+                    slog::warn!(self.logger, "Could not notify control channel of APPE metadata error");
                 }
                 return;
             }
@@ -609,7 +622,7 @@ where
                 slog::info!(
                     self.logger,
                     "Successful APPE {:?}; Duration {}; Bytes copied {}; Transfer speed {}; start_pos={}",
-                    &path_copy,
+                    &log_path,
                     HumanDuration(duration),
                     HumanBytes(bytes),
                     TransferSpeed(bytes as f64 / duration.as_secs_f64()),
@@ -618,25 +631,27 @@ where
 
                 metrics::inc_transferred("appe", "success");
 
-                if let Err(err) = tx.send(ControlChanMsg::WrittenData { bytes, path: path_copy }).await {
-                    slog::error!(self.logger, "Could not notify control channel of successful APPE: {:?}", err);
+                if let Err(_err) = tx.send(ControlChanMsg::WrittenData { bytes, path: path_copy }).await {
+                    slog::error!(self.logger, "Could not notify control channel of successful APPE");
                 }
             }
             Err(err) => {
-                slog::warn!(self.logger, "Error during APPE transfer after {}: {:?}", HumanDuration(duration), err);
+                let log_error = sanitize_control_text(&format!("{err:?}"));
+                slog::warn!(self.logger, "Error during APPE transfer after {}: {}", HumanDuration(duration), log_error);
 
                 categorize_and_register_error(&self.logger, &err, "appe");
 
-                if let Err(err) = tx.send(ControlChanMsg::StorageError(err)).await {
-                    slog::error!(self.logger, "Could not notify control channel of error with APPE: {:?}", err);
+                if let Err(_err) = tx.send(ControlChanMsg::StorageError(err)).await {
+                    slog::error!(self.logger, "Could not notify control channel of error with APPE");
                 }
             }
         }
     }
 
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn exec_list_variant(self, path: Option<String>, command: ListCommand) {
         let path = self.resolve_path(path);
+        let log_path = crate::server::controlchan::sanitize_control_path(&path);
         let tx = self.control_msg_tx.clone();
         let logger = self.logger.clone();
         let mut output = match Self::writer(self.socket, self.ftps_mode.clone(), command.as_lower_str(), self.abort_token.clone()).await {
@@ -682,25 +697,26 @@ where
                         slog::info!(
                             self.logger,
                             "Successful LIST {:?}; Duration {}; Bytes copied {}; Transfer speed {}",
-                            path,
+                            log_path,
                             HumanDuration(duration),
                             HumanBytes(bytes),
                             TransferSpeed(bytes as f64 / duration.as_secs_f64()),
                         );
                         metrics::inc_transferred(command.as_lower_str(), "success");
-                        if let Err(err) = tx.send(ControlChanMsg::DirectorySuccessfullyListed).await {
-                            slog::error!(self.logger, "Could not notify control channel of error with {}: {:?}", command.as_str(), err);
+                        if let Err(_err) = tx.send(ControlChanMsg::DirectorySuccessfullyListed).await {
+                            slog::error!(self.logger, "Could not notify control channel of successful {}", command.as_str());
                         }
                     }
                     Err(e) => {
                         let duration = start_time.elapsed();
+                        let log_error = sanitize_control_text(&format!("{e:?}"));
                         slog::warn!(
                             self.logger,
-                            "Failed to send directory list for path {:?} ({} command) after {}: {:?}",
-                            path,
+                            "Failed to send directory list for path {:?} ({} command) after {}: {}",
+                            log_path,
                             command.as_str(),
                             HumanDuration(duration),
-                            e,
+                            log_error,
                         );
 
                         let err = Error::from(e);
@@ -710,28 +726,30 @@ where
             }
             Err(err) => {
                 let duration = start_time.elapsed();
+                let log_error = sanitize_control_text(&format!("{err:?}"));
 
                 slog::warn!(
                     self.logger,
                     "Failed to retrieve directory list for path {:?} ({} command) from storage backend after {}: {:?}",
-                    path,
+                    log_path,
                     command.as_str(),
                     HumanDuration(duration),
-                    err,
+                    log_error,
                 );
 
                 categorize_and_register_error(&self.logger, &err, command.as_lower_str());
 
-                if let Err(err) = tx.send(ControlChanMsg::StorageError(err)).await {
-                    slog::error!(self.logger, "Could not notify control channel of error with {}: {:?}", command.as_str(), err);
+                if let Err(_err) = tx.send(ControlChanMsg::StorageError(err)).await {
+                    slog::error!(self.logger, "Could not notify control channel of error with {}", command.as_str());
                 }
             }
         }
     }
 
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn exec_mlsd(self, path: Option<String>) {
         let path = self.resolve_path(path);
+        let log_path = crate::server::controlchan::sanitize_control_path(&path);
         let tx = self.control_msg_tx.clone();
         let logger = self.logger.clone();
         let mut output = match Self::writer(self.socket, self.ftps_mode.clone(), "mlsd", self.abort_token.clone()).await {
@@ -787,7 +805,7 @@ where
                         slog::info!(
                             self.logger,
                             "Successful MLSD {:?}; Duration {}; Bytes copied {}; Transfer speed {}",
-                            path,
+                            log_path,
                             HumanDuration(duration),
                             HumanBytes(bytes),
                             TransferSpeed(bytes as f64 / duration.as_secs_f64())
@@ -795,43 +813,45 @@ where
 
                         metrics::inc_transferred("mlsd", "success");
 
-                        if let Err(err) = tx.send(ControlChanMsg::DirectorySuccessfullyListed).await {
-                            slog::error!(self.logger, "Could not notify control channel of successful MLSD: {:?}", err);
+                        if let Err(_err) = tx.send(ControlChanMsg::DirectorySuccessfullyListed).await {
+                            slog::error!(self.logger, "Could not notify control channel of successful MLSD");
                         }
                     }
                     Err(err) => {
+                        let log_error = sanitize_control_text(&format!("{err:?}"));
                         slog::warn!(
                             self.logger,
-                            "Failed to copy MLSD data to client after {}. Error: {:?}",
+                            "Failed to copy MLSD data to client after {}. Error: {}",
                             HumanDuration(duration),
-                            err
+                            log_error
                         );
-                        if let Err(err) = tx.send(ControlChanMsg::WriteFailed).await {
-                            slog::error!(self.logger, "Could not notify control channel of failed MLSD: {:?}", err);
+                        if let Err(_err) = tx.send(ControlChanMsg::WriteFailed).await {
+                            slog::error!(self.logger, "Could not notify control channel of failed MLSD");
                         }
                     }
                 }
             }
             Err(err) => {
                 let duration = start_time.elapsed();
+                let log_error = sanitize_control_text(&format!("{err:?}"));
                 slog::warn!(
                     self.logger,
                     "Failed to retrieve directory list for path {:?} (MLSD command) from storage backend after {}: {:?}",
-                    path,
+                    log_path,
                     HumanDuration(duration),
-                    err,
+                    log_error,
                 );
 
                 categorize_and_register_error(&self.logger, &err, "mlsd");
 
-                if let Err(err) = tx.send(ControlChanMsg::StorageError(err)).await {
-                    slog::error!(self.logger, "Could not notify control channel of error with MLSD: {:?}", err);
+                if let Err(_err) = tx.send(ControlChanMsg::StorageError(err)).await {
+                    slog::error!(self.logger, "Could not notify control channel of error with MLSD");
                 }
             }
         }
     }
 
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn writer(
         socket: DataSocket,
         ftps_mode: FtpsConfig,
@@ -876,7 +896,7 @@ where
         Ok(Box::new(IdleTimeoutWriter::new(AbortableWriter::new(writer, abort_token))))
     }
 
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn reader(
         socket: DataSocket,
         ftps_mode: FtpsConfig,
@@ -954,7 +974,7 @@ where
 /// logger: logger set up with needed context for use by the data channel.
 /// session_arc: the user session that is also shared with the control channel.
 /// socket: the data socket we'll be working with.
-#[tracing_attributes::instrument]
+#[tracing_attributes::instrument(skip_all)]
 pub async fn spawn_processing<Storage, User>(logger: slog::Logger, session_arc: SharedSession<Storage, User>, socket: TcpStream)
 where
     Storage: StorageBackend<User> + 'static,
@@ -1153,14 +1173,16 @@ fn categorize_and_register_error(logger: &slog::Logger, err: &Error, command: &'
                     }
                     std::io::ErrorKind::ConnectionAborted => metrics::inc_transferred(command, "network-error"), // Could be a network issue
                     _ => {
-                        slog::debug!(logger, "Unmapped ConnectionClosed io error: {:?}", io_error);
+                        let log_error = sanitize_control_text(&format!("{io_error:?}"));
+                        slog::debug!(logger, "Unmapped ConnectionClosed io error: {}", log_error);
                         metrics::inc_transferred(command, "server-error")
                     }
                 }
             }
         }
         _ => {
-            slog::debug!(logger, "Unmapped error: {:?}", err);
+            let log_error = sanitize_control_text(&format!("{err:?}"));
+            slog::debug!(logger, "Unmapped error: {}", log_error);
             metrics::inc_transferred(command, "unknown-error")
         }
     }

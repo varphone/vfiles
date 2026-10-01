@@ -52,7 +52,7 @@ where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: 'static + Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         match self.path.clone() {
             None => {
@@ -75,7 +75,7 @@ where
             }
             Some(path) => {
                 let path: &str = std::str::from_utf8(&path)?;
-                let path_str = path.to_string();
+                let path_str = crate::server::controlchan::sanitize_control_text(path);
                 let path = path.to_owned();
 
                 let session = args.session.lock().await;

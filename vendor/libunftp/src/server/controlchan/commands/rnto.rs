@@ -29,7 +29,7 @@ where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let CommandContext {
             logger,
@@ -50,9 +50,11 @@ where
         let user = (*session.user).as_ref().unwrap();
         let old_path = from.to_string_lossy().to_string();
         let new_path = to.to_string_lossy().to_string();
+        let log_old_path = crate::server::controlchan::sanitize_control_path(&from);
+        let log_new_path = crate::server::controlchan::sanitize_control_path(&to);
         match storage.rename(user, &from, &to).await {
             Ok(_) => {
-                slog::info!(logger, "RNTO: Successfully renamed {:?} to {:?}", from, to);
+                slog::info!(logger, "RNTO: Successfully renamed {:?} to {:?}", log_old_path, log_new_path);
                 if let Err(err) = tx_control_chan.send(ControlChanMsg::RenameSuccess { old_path, new_path }).await {
                     slog::warn!(logger, "RNTO: Could not send internal message to notify of RNTO success: {}", err);
                 }

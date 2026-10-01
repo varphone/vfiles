@@ -43,7 +43,7 @@ where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         if args.session.lock().await.cmd_tls {
             return Ok(Reply::new(ReplyCode::BadCommandSequence, "The control channel is already protected"));

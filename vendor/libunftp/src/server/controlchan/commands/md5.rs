@@ -32,12 +32,13 @@ where
     User: UserDetail,
     Storage: StorageBackend<User> + 'static,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let session = args.session.lock().await;
         let user = session.user.clone();
         let storage = Arc::clone(&session.storage);
         let path = session.cwd.join(self.path.clone());
+        let log_path = crate::server::controlchan::sanitize_control_path(&path);
         let tx_success: Sender<ControlChanMsg> = args.tx_control_chan.clone();
         let tx_fail: Sender<ControlChanMsg> = args.tx_control_chan.clone();
         let logger = args.logger;
@@ -82,7 +83,7 @@ where
                     }
                 }
                 Err(err) => {
-                    slog::warn!(logger, "MD5: Failed to retrieve MD5 sum for {:?} from backend: {}", path, err);
+                    slog::warn!(logger, "MD5: Failed to retrieve MD5 sum for {:?} from backend: {}", log_path, err);
                     if let Err(err) = tx_fail.send(ControlChanMsg::StorageError(err)).await {
                         slog::warn!(logger, "MD5: Could not send internal message to notify of MD5 failure: {}", err);
                     }

@@ -35,7 +35,7 @@ where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: 'static + Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         if args.storage_features & FEATURE_RESTART == 0 {
             return Ok(Reply::new(ReplyCode::CommandNotImplemented, "Not supported by the selected storage back-end."));

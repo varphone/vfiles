@@ -32,7 +32,7 @@ where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: 'static + Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let session = args.session.lock().await;
         let Some(task_permit) = session.try_control_command_permit() else {
@@ -41,6 +41,7 @@ where
         let user = session.user.clone();
         let storage: Arc<Storage> = Arc::clone(&session.storage);
         let path = session.cwd.join(self.path.clone());
+        let log_path = crate::server::controlchan::sanitize_control_path(&path);
         let tx_success: Sender<ControlChanMsg> = args.tx_control_chan.clone();
         let tx_fail: Sender<ControlChanMsg> = args.tx_control_chan.clone();
         let logger = args.logger;
@@ -50,7 +51,7 @@ where
             match storage.metadata((*user).as_ref().unwrap(), &path).await {
                 Ok(metadata) => {
                     let file_len = metadata.len();
-                    slog::info!(logger, "SIZE: Successful size command for file {:?}: (size: {})", &path, file_len);
+                    slog::info!(logger, "SIZE: Successful size command for file {:?}: (size: {})", log_path, file_len);
                     if let Err(err) = tx_success
                         .send(ControlChanMsg::CommandChannelReply(Reply::new_with_string(
                             ReplyCode::FileStatus,
@@ -62,7 +63,7 @@ where
                     }
                 }
                 Err(err) => {
-                    slog::warn!(logger, "SIZE: Command failed for file {:?}: {}", &path, err);
+                    slog::warn!(logger, "SIZE: Command failed for file {:?}: {}", log_path, err);
                     if let Err(err) = tx_fail.send(ControlChanMsg::StorageError(err)).await {
                         slog::warn!(logger, "SIZE: Could not send internal message to notify of SIZE failure: {}", err);
                     }

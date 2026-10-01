@@ -77,7 +77,7 @@ where
 }
 
 /// Does TCP processing when an FTP client connects
-#[tracing_attributes::instrument]
+#[tracing_attributes::instrument(skip_all)]
 pub(crate) async fn spawn<Storage, User>(
     config: Config<Storage, User>,
     tcp_stream: TcpStream,
@@ -422,7 +422,7 @@ where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: Metadata,
 {
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle_internal_msg(&self, msg: ControlChanMsg) -> Result<Reply, ControlChanError> {
         use self::ControlChanMsg::*;
         use SessionState::*;
@@ -500,7 +500,7 @@ where
         }
     }
 
-    #[tracing_attributes::instrument]
+    #[tracing_attributes::instrument(skip_all)]
     async fn handle_command(&self, cmd: Command) -> Result<Reply, ControlChanError> {
         let args = CommandContext {
             parsed_command: cmd.clone(),

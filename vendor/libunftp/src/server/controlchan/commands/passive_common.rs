@@ -32,7 +32,7 @@ where
     async fn build_reply(&self, args: &CommandContext<Storage, User>, port: u16) -> Result<Reply, ControlChanError>;
 }
 
-#[tracing_attributes::instrument]
+#[tracing_attributes::instrument(skip_all)]
 pub(crate) fn try_port_range(local_addr: SocketAddr, passive_ports: RangeInclusive<u16>) -> io::Result<TcpSocket> {
     let ip = local_addr.ip();
     let rng_length = passive_ports.end() - passive_ports.start() + 1;
@@ -63,7 +63,7 @@ pub(crate) fn try_port_range(local_addr: SocketAddr, passive_ports: RangeInclusi
 
 // modifies the session by adding channels that are used to communicate with the data connection
 // processing loop.
-#[tracing_attributes::instrument]
+#[tracing_attributes::instrument(skip_all)]
 pub(crate) async fn setup_inter_loop_comms<S, U>(session: SharedSession<S, U>, control_loop_tx: Sender<ControlChanMsg>)
 where
     U: UserDetail + 'static,
@@ -103,7 +103,7 @@ where
 
 // For legacy mode we choose a data port here and start listening on it while letting the control
 // channel know (via method return) what the address is that the client should connect to.
-#[tracing_attributes::instrument]
+#[tracing_attributes::instrument(skip_all)]
 pub(crate) async fn handle_legacy_mode<S, U, T>(cmd: &T, args: CommandContext<S, U>) -> Result<Reply, ControlChanError>
 where
     U: UserDetail + 'static,
@@ -203,7 +203,7 @@ where
 
 // For delegated mode, we prepare the session and let the listener loop know (via channel) that it
 // should choose a data port and check for connections on it.
-#[tracing_attributes::instrument]
+#[tracing_attributes::instrument(skip_all)]
 pub(crate) async fn handle_delegated_mode<S, U>(args: CommandContext<S, U>, tx: SwitchboardSender<S, U>) -> Result<Reply, ControlChanError>
 where
     U: UserDetail + 'static,
