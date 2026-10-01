@@ -3262,6 +3262,45 @@ where
         .await
     }
 
+    pub async fn delete_empty_directory_with_condition(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        message: Option<&str>,
+        user_id: &UserId,
+        condition: &vfiles_domain::EntryWriteCondition,
+    ) -> DomainResult<MutationResult> {
+        let entry = self
+            .entry_repo
+            .delete_empty_directory_if_current(namespace_id, path, condition)
+            .await?;
+        let deleted_entry = pending_snapshot_entry(
+            entry.id,
+            &entry.path_norm,
+            entry.entry_type,
+            None,
+            ChangeType::Deleted,
+        );
+        let snapshot_entries =
+            collect_snapshot_state(&self.entry_repo, namespace_id, vec![deleted_entry]).await?;
+        finalize_mutation(
+            &self.snapshot_repo,
+            namespace_id,
+            message,
+            user_id,
+            vec![ChangedEntry {
+                entry_id: entry.id,
+                path: entry.path_norm.as_str().to_string(),
+                kind: entry.entry_type,
+                current_version_id: entry.current_version_id,
+                change_type: ChangeType::Deleted,
+            }],
+            snapshot_entries,
+            Vec::new(),
+        )
+        .await
+    }
+
     pub async fn delete_entries_with_condition(
         &self,
         namespace_id: &NamespaceId,

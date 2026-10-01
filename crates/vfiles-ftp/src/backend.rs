@@ -724,9 +724,36 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         }
 
         self.flush_batch().await?;
+        let entry = self
+            .find_entry(&user.namespace_id, &path)
+            .await?
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::PermanentDirectoryNotAvailable,
+                    format!("目录不存在: {}", path.as_str()),
+                )
+            })?;
+        let expected_lock_tokens = self
+            .expected_unlocked_tokens(&user.namespace_id, &path)
+            .await?;
+        let condition = EntryWriteCondition {
+            namespace_id: user.namespace_id,
+            path: path.clone(),
+            check_entry_state: true,
+            expected_entry_id: Some(entry.id),
+            expected_version_id: entry.current_version_id,
+            expected_lock_tokens: Some(expected_lock_tokens),
+            expected_additional_lock_states: None,
+        };
         self.deps
             .workspace
-            .delete_empty_directory(&user.namespace_id, &path, Some("FTP 删除目录"), &user.id)
+            .delete_empty_directory_with_condition(
+                &user.namespace_id,
+                &path,
+                Some("FTP 删除目录"),
+                &user.id,
+                &condition,
+            )
             .await
             .map(|_| ())
             .map_err(|err| match err {

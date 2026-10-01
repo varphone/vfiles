@@ -717,6 +717,36 @@ pub trait EntryRepo {
         namespace_id: &NamespaceId,
         path: &NormalizedPath,
     ) -> DomainResult<Entry>;
+    /// Delete an empty directory only if its observed entry and lock state remain current.
+    async fn delete_empty_directory_if_current(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        condition: &EntryWriteCondition,
+    ) -> DomainResult<Entry> {
+        if condition.namespace_id != *namespace_id
+            || condition.path != *path
+            || condition.expected_lock_tokens.is_some()
+            || condition.expected_additional_lock_states.is_some()
+        {
+            return Err(DomainError::NotImplemented {
+                feature: "conditional empty-directory deletion".to_string(),
+            });
+        }
+        let entry = self
+            .find_by_path(namespace_id, path)
+            .await?
+            .ok_or_else(|| DomainError::NotFound {
+                resource: format!("directory {}", path.as_str()),
+            })?;
+        if !condition.check_entry_state
+            || Some(entry.id) != condition.expected_entry_id
+            || entry.current_version_id != condition.expected_version_id
+        {
+            return Err(DomainError::PreconditionFailed);
+        }
+        self.delete_empty_directory(namespace_id, path).await
+    }
     /// Delete a subtree only if the target path still has the observed entry/version.
     /// Repositories with transactional support must compare and delete atomically.
     async fn delete_entries_if_current(

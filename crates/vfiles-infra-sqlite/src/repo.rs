@@ -4660,6 +4660,105 @@ impl EntryRepo for SqliteEntryRepo {
         Ok(entry)
     }
 
+    async fn delete_empty_directory_if_current(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        condition: &vfiles_domain::EntryWriteCondition,
+    ) -> DomainResult<Entry> {
+        if condition.namespace_id != *namespace_id
+            || condition.path != *path
+            || !condition.check_entry_state
+        {
+            return Err(DomainError::PreconditionFailed);
+        }
+
+        let mut tx =
+            self.pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to begin conditional directory delete: {e}"),
+                })?;
+        let row: Option<EntryRow> = sqlx::query_as(
+            r#"
+            SELECT
+                e.id,
+                e.namespace_id,
+                e.path,
+                e.kind,
+                e.created_at,
+                e.updated_at,
+                (
+                    SELECT ev.id
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ) AS current_version_id
+            FROM entries e
+            WHERE e.namespace_id = ? AND e.path = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(path.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to find directory for conditional delete: {e}"),
+        })?;
+        let entry = row
+            .map(parse_entry_row)
+            .transpose()?
+            .ok_or_else(|| DomainError::NotFound {
+                resource: format!("directory {}", path.as_str()),
+            })?;
+        if Some(entry.id) != condition.expected_entry_id
+            || entry.current_version_id != condition.expected_version_id
+        {
+            return Err(DomainError::PreconditionFailed);
+        }
+        verify_write_lock_snapshot(&mut tx, condition).await?;
+        if entry.entry_type != EntryKind::Directory {
+            return Err(DomainError::PathConflict {
+                message: format!("Path is not a directory: {}", path.as_str()),
+            });
+        }
+        let has_descendants: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM entries WHERE namespace_id = ? AND substr(path, 1, length(?) + 1) = ? || '/')",
+        )
+        .bind(namespace_id.to_string())
+        .bind(path.as_str())
+        .bind(path.as_str())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to check directory contents: {e}"),
+        })?;
+        if has_descendants != 0 {
+            return Err(DomainError::DirectoryNotEmpty);
+        }
+        let result = sqlx::query(
+            "DELETE FROM entries WHERE id = ? AND namespace_id = ? AND path = ? AND kind = 'directory'",
+        )
+        .bind(entry.id.to_string())
+        .bind(namespace_id.to_string())
+        .bind(path.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to delete empty directory: {e}"),
+        })?;
+        if result.rows_affected() != 1 {
+            return Err(DomainError::PreconditionFailed);
+        }
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to commit conditional directory delete: {e}"),
+        })?;
+        Ok(entry)
+    }
+
     async fn delete_entries_if_current(
         &self,
         entry_ids: &[EntryId],
