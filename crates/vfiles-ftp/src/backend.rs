@@ -979,8 +979,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         for entry in &source_subtree {
             affected_paths.push(entry.path_norm.as_str().to_string());
             let suffix = &entry.path_norm.as_str()[from.as_str().len()..];
-            let destination_path = NormalizedPath::new(&format!("{}{}", to.as_str(), suffix))
-                .map_err(|message| Error::new(ErrorKind::PermissionDenied, message))?;
+            let destination_path = to_normalized(Path::new(&format!("{}{}", to.as_str(), suffix)))?;
             affected_paths.push(destination_path.as_str().to_string());
             destination_paths.push(destination_path);
         }
