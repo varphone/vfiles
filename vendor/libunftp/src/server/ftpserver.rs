@@ -330,8 +330,14 @@ where
             FtpsConfig::Off => FtpsConfig::Off,
             FtpsConfig::Building { certs_file, key_file } => FtpsConfig::On {
                 tls_config: tls::new_config(certs_file, key_file, self.ftps_tls_flags, self.ftps_client_auth, self.ftps_trust_store.clone())?,
+                data_tls_config: None,
+                data_resumption: None,
             },
-            FtpsConfig::On { tls_config } => FtpsConfig::On { tls_config },
+            FtpsConfig::On { tls_config, .. } => FtpsConfig::On {
+                tls_config,
+                data_tls_config: None,
+                data_resumption: None,
+            },
         };
         let binder = Arc::new(std::sync::Mutex::new(self.binder));
         Ok(Server {
@@ -396,7 +402,11 @@ where
     /// ```
     #[cfg(feature = "experimental")]
     pub fn ftps_manual<P: Into<PathBuf>>(mut self, config: Arc<ServerConfig>) -> Self {
-        self.ftps_mode = FtpsConfig::On { tls_config: config };
+        self.ftps_mode = FtpsConfig::On {
+            tls_config: config,
+            data_tls_config: None,
+            data_resumption: None,
+        };
         self
     }
 

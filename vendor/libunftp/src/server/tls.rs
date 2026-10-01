@@ -5,7 +5,10 @@ use rustls::{
         CertificateDer, PrivateKeyDer,
         pem::{self, PemObject},
     },
-    server::{ClientCertVerifierBuilder, NoServerSessionStorage, StoresServerSessions, WebPkiClientVerifier},
+    server::{
+        ClientCertVerifierBuilder, NoServerSessionStorage, ProducesTickets, StoresServerSessions,
+        WebPkiClientVerifier,
+    },
     version::{TLS12, TLS13},
 };
 
@@ -21,7 +24,10 @@ use std::{
     fs::File,
     io::{self, BufReader},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use thiserror::Error;
@@ -31,7 +37,11 @@ use thiserror::Error;
 pub enum FtpsConfig {
     Off,
     Building { certs_file: PathBuf, key_file: PathBuf },
-    On { tls_config: Arc<ServerConfig> },
+    On {
+        tls_config: Arc<ServerConfig>,
+        data_tls_config: Option<Arc<ServerConfig>>,
+        data_resumption: Option<Arc<AtomicBool>>,
+    },
 }
 
 impl fmt::Debug for FtpsConfig {
@@ -45,10 +55,10 @@ impl fmt::Debug for FtpsConfig {
 }
 
 impl FtpsConfig {
-    /// Give each FTP control session its own TLS resumption state. A resumed data-channel
-    /// handshake can then only present a ticket or session ID created by that control channel.
+    /// Give each FTP control session its own TLS resumption state. The data-channel view is
+    /// read-only and only accepts tickets or session IDs issued by the control handshake.
     pub(crate) fn for_control_session(&self) -> Result<Self, rustls::Error> {
-        let Self::On { tls_config } = self else {
+        let Self::On { tls_config, .. } = self else {
             return Ok(self.clone());
         };
 
@@ -62,9 +72,91 @@ impl FtpsConfig {
             session_config.ticketer = Ticketer::new()?;
         }
 
+        let control_tls_config = Arc::new(session_config);
+        let data_resumption = Arc::new(AtomicBool::new(false));
+        let mut data_config = (*control_tls_config).clone();
+        data_config.session_storage = Arc::new(ReadOnlySessionStore {
+            inner: Arc::clone(&control_tls_config.session_storage),
+            resumed_control_session: Arc::clone(&data_resumption),
+        });
+        data_config.ticketer = Arc::new(ControlSessionTicketGate {
+            inner: Arc::clone(&control_tls_config.ticketer),
+            resumed_control_session: Arc::clone(&data_resumption),
+        });
+        // TLS 1.3 does not need a replacement ticket for a data connection. Keeping the
+        // control ticket lets clients reuse it for each transfer.
+        data_config.send_tls13_tickets = 0;
+
         Ok(Self::On {
-            tls_config: Arc::new(session_config),
+            tls_config: control_tls_config,
+            data_tls_config: Some(Arc::new(data_config)),
+            data_resumption: Some(data_resumption),
         })
+    }
+}
+
+#[derive(Debug)]
+struct ReadOnlySessionStore {
+    inner: Arc<dyn StoresServerSessions>,
+    resumed_control_session: Arc<AtomicBool>,
+}
+
+impl StoresServerSessions for ReadOnlySessionStore {
+    fn put(&self, _key: Vec<u8>, _value: Vec<u8>) -> bool {
+        // A full data-channel handshake must not create resumption state that can later pass
+        // the data-channel session-reuse check.
+        false
+    }
+
+    fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+        let value = self.inner.get(key);
+        if value.is_some() {
+            self.resumed_control_session.store(true, Ordering::SeqCst);
+        }
+        value
+    }
+
+    fn take(&self, key: &[u8]) -> Option<Vec<u8>> {
+        let value = self.inner.take(key);
+        if value.is_some() {
+            self.resumed_control_session.store(true, Ordering::SeqCst);
+        }
+        value
+    }
+
+    fn can_cache(&self) -> bool {
+        self.inner.can_cache()
+    }
+}
+
+#[derive(Debug)]
+struct ControlSessionTicketGate {
+    inner: Arc<dyn ProducesTickets>,
+    resumed_control_session: Arc<AtomicBool>,
+}
+
+impl ProducesTickets for ControlSessionTicketGate {
+    fn enabled(&self) -> bool {
+        self.inner.enabled()
+    }
+
+    fn lifetime(&self) -> u32 {
+        self.inner.lifetime()
+    }
+
+    fn encrypt(&self, plaintext: &[u8]) -> Option<Vec<u8>> {
+        self.resumed_control_session
+            .load(Ordering::SeqCst)
+            .then(|| self.inner.encrypt(plaintext))
+            .flatten()
+    }
+
+    fn decrypt(&self, ticket: &[u8]) -> Option<Vec<u8>> {
+        let plaintext = self.inner.decrypt(ticket);
+        if plaintext.is_some() {
+            self.resumed_control_session.store(true, Ordering::SeqCst);
+        }
+        plaintext
     }
 }
 

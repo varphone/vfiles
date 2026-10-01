@@ -267,7 +267,7 @@ where
 
                         // Wrap in TLS Stream
                         let acceptor: tokio_rustls::TlsAcceptor = match ftps_config.clone() {
-                            FtpsConfig::On { tls_config } => tls_config.into(),
+                            FtpsConfig::On { tls_config, .. } => tls_config.into(),
                             _ => panic!("Could not create TLS acceptor. Illegal program state"),
                         };
                         let session_state = shared_session.lock().await.state;
