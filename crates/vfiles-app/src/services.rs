@@ -177,14 +177,8 @@ pub(crate) struct PendingSnapshotEntry {
 }
 
 impl PendingSnapshotEntry {
-    fn into_snapshot_entry(
-        self,
-        snapshot_id: SnapshotId,
-        default_actor: &UserId,
-        default_at: time::OffsetDateTime,
-    ) -> SnapshotEntry {
-        SnapshotEntry {
-            snapshot_id,
+    fn into_draft(self) -> SnapshotEntryDraft {
+        SnapshotEntryDraft {
             entry_id: self.entry_id,
             entry_path: self.entry_path,
             entry_kind: self.entry_kind,
@@ -194,8 +188,8 @@ impl PendingSnapshotEntry {
             mime_type: self.mime_type,
             version_no: self.version_no,
             change_type: self.change_type,
-            created_by: self.created_by.or(Some(*default_actor)),
-            created_at: self.created_at.or(Some(default_at)),
+            created_by: self.created_by,
+            created_at: self.created_at,
         }
     }
 }
@@ -452,57 +446,6 @@ async fn collect_namespace_entries(
     Ok(entries)
 }
 
-fn snapshot_change_type(entry_kind: EntryKind, version: Option<&EntryVersion>) -> ChangeType {
-    version
-        .map(|value| value.change_type)
-        .unwrap_or(match entry_kind {
-            EntryKind::Directory => ChangeType::Added,
-            EntryKind::File => ChangeType::Added,
-        })
-}
-
-pub(crate) async fn collect_snapshot_state(
-    entry_repo: &(dyn EntryRepo + Send + Sync),
-    namespace_id: &NamespaceId,
-    extra_entries: Vec<PendingSnapshotEntry>,
-) -> DomainResult<Vec<PendingSnapshotEntry>> {
-    let entries = collect_namespace_entries(entry_repo, namespace_id).await?;
-
-    // 批量取当前版本，避免每个条目一次查询（每次变更都会走这里）。
-    let version_ids: Vec<VersionId> = entries
-        .iter()
-        .filter_map(|entry| match (entry.entry_type, entry.current_version_id) {
-            (EntryKind::File, Some(version_id)) => Some(version_id),
-            _ => None,
-        })
-        .collect();
-    let versions_by_id: HashMap<VersionId, EntryVersion> = entry_repo
-        .find_versions(&version_ids)
-        .await?
-        .into_iter()
-        .map(|version| (version.id, version))
-        .collect();
-
-    let mut snapshot_entries = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let version = match (entry.entry_type, entry.current_version_id) {
-            (EntryKind::File, Some(version_id)) => versions_by_id.get(&version_id),
-            _ => None,
-        };
-        snapshot_entries.push(pending_snapshot_entry(
-            entry.id,
-            &entry.path_norm,
-            entry.entry_type,
-            version,
-            snapshot_change_type(entry.entry_type, version),
-        ));
-    }
-
-    snapshot_entries.extend(extra_entries);
-    snapshot_entries.sort_by(|left, right| left.entry_path.as_str().cmp(right.entry_path.as_str()));
-    Ok(snapshot_entries)
-}
-
 pub(crate) async fn ensure_directory_path(
     entry_repo: &(dyn EntryRepo + Send + Sync),
     namespace_id: &NamespaceId,
@@ -606,31 +549,37 @@ pub(crate) async fn ensure_directory_path_with_conditions(
     Ok(changed_entries)
 }
 
-pub(crate) async fn create_snapshot_record(
+pub(crate) async fn create_namespace_snapshot_record(
     snapshot_repo: &(dyn SnapshotRepo + Send + Sync),
+    entry_repo: &(dyn EntryRepo + Send + Sync),
     namespace_id: &NamespaceId,
     message: Option<&str>,
     kind: SnapshotKind,
     user_id: &UserId,
-    snapshot_entries: Vec<PendingSnapshotEntry>,
+    changed_entries: &[ChangedEntry],
+    additional_entries: Vec<PendingSnapshotEntry>,
 ) -> DomainResult<SnapshotId> {
     let normalized_message = normalize_message(message);
-    let applied_at = time::OffsetDateTime::now_utc();
-    let snapshot_id = snapshot_repo
-        .create_snapshot(namespace_id, normalized_message.as_deref(), kind, user_id)
-        .await?;
-
-    if !snapshot_entries.is_empty() {
-        let snapshot_entries = snapshot_entries
-            .into_iter()
-            .map(|entry| entry.into_snapshot_entry(snapshot_id, user_id, applied_at))
-            .collect::<Vec<_>>();
-        snapshot_repo
-            .add_snapshot_entries(&snapshot_id, &snapshot_entries)
-            .await?;
-    }
-
-    Ok(snapshot_id)
+    let renamed_entry_ids = changed_entries
+        .iter()
+        .filter(|entry| entry.change_type == ChangeType::Renamed)
+        .map(|entry| entry.entry_id)
+        .collect::<Vec<_>>();
+    let additional_entries = additional_entries
+        .into_iter()
+        .map(PendingSnapshotEntry::into_draft)
+        .collect::<Vec<_>>();
+    snapshot_repo
+        .create_snapshot_from_namespace_with_changes(
+            namespace_id,
+            normalized_message.as_deref(),
+            kind,
+            user_id,
+            entry_repo,
+            &renamed_entry_ids,
+            &additional_entries,
+        )
+        .await
 }
 
 fn path_matches_scope(path: &NormalizedPath, scope: &NormalizedPath) -> bool {
@@ -673,23 +622,26 @@ fn validate_snapshot_directory_scope(
     Ok(())
 }
 
-pub(crate) async fn finalize_mutation(
+pub(crate) async fn finalize_mutation_from_namespace(
     snapshot_repo: &(dyn SnapshotRepo + Send + Sync),
+    entry_repo: &(dyn EntryRepo + Send + Sync),
     namespace_id: &NamespaceId,
     message: Option<&str>,
     user_id: &UserId,
     changed_entries: Vec<ChangedEntry>,
-    snapshot_entries: Vec<PendingSnapshotEntry>,
+    additional_entries: Vec<PendingSnapshotEntry>,
     warnings: Vec<String>,
 ) -> DomainResult<MutationResult> {
     let applied_at = time::OffsetDateTime::now_utc();
-    let snapshot_id = create_snapshot_record(
+    let snapshot_id = create_namespace_snapshot_record(
         snapshot_repo,
+        entry_repo,
         namespace_id,
         message,
         SnapshotKind::AutoCommit,
         user_id,
-        snapshot_entries,
+        &changed_entries,
+        additional_entries,
     )
     .await?;
 
@@ -2598,15 +2550,15 @@ where
         message: Option<&str>,
         user_id: &UserId,
     ) -> DomainResult<Snapshot> {
-        let snapshot_entries =
-            collect_snapshot_state(&self.entry_repo, namespace_id, Vec::new()).await?;
-        let snapshot_id = create_snapshot_record(
+        let snapshot_id = create_namespace_snapshot_record(
             &self.snapshot_repo,
+            &self.entry_repo,
             namespace_id,
             message,
             SnapshotKind::UserCreated,
             user_id,
-            snapshot_entries,
+            &[],
+            Vec::new(),
         )
         .await?;
 
@@ -2663,16 +2615,14 @@ where
             current_version_id: None,
             change_type: ChangeType::Added,
         });
-        let snapshot_entries =
-            collect_snapshot_state(&self.entry_repo, namespace_id, Vec::new()).await?;
-
-        finalize_mutation(
+        finalize_mutation_from_namespace(
             &self.snapshot_repo,
+            &self.entry_repo,
             namespace_id,
             message,
             user_id,
             changed_entries,
-            snapshot_entries,
+            Vec::new(),
             Vec::new(),
         )
         .await
@@ -2735,15 +2685,14 @@ where
             current_version_id: None,
             change_type: ChangeType::Added,
         });
-        let snapshot_entries =
-            collect_snapshot_state(&self.entry_repo, namespace_id, Vec::new()).await?;
-        finalize_mutation(
+        finalize_mutation_from_namespace(
             &self.snapshot_repo,
+            &self.entry_repo,
             namespace_id,
             message,
             user_id,
             changed_entries,
-            snapshot_entries,
+            Vec::new(),
             Vec::new(),
         )
         .await
@@ -3293,27 +3242,14 @@ where
                 ));
             }
         }
-        let mut snapshot_entries =
-            collect_snapshot_state(&self.entry_repo, namespace_id, deleted_snapshot_entries)
-                .await?;
-        let rename_changes: HashMap<EntryId, ChangeType> = changed_entries
-            .iter()
-            .filter(|entry| entry.change_type == ChangeType::Renamed)
-            .map(|entry| (entry.entry_id, entry.change_type))
-            .collect();
-        for entry in &mut snapshot_entries {
-            if let Some(change_type) = rename_changes.get(&entry.entry_id) {
-                entry.change_type = *change_type;
-            }
-        }
-
-        finalize_mutation(
+        finalize_mutation_from_namespace(
             &self.snapshot_repo,
+            &self.entry_repo,
             namespace_id,
             message,
             user_id,
             changed_entries,
-            snapshot_entries,
+            deleted_snapshot_entries,
             cleanup_warnings,
         )
         .await
@@ -3356,16 +3292,14 @@ where
             None,
             ChangeType::Deleted,
         );
-        let snapshot_entries =
-            collect_snapshot_state(&self.entry_repo, namespace_id, vec![deleted_entry]).await?;
-
-        finalize_mutation(
+        finalize_mutation_from_namespace(
             &self.snapshot_repo,
+            &self.entry_repo,
             namespace_id,
             message,
             user_id,
             changed_entries,
-            snapshot_entries,
+            vec![deleted_entry],
             Vec::new(),
         )
         .await
@@ -3390,10 +3324,9 @@ where
             None,
             ChangeType::Deleted,
         );
-        let snapshot_entries =
-            collect_snapshot_state(&self.entry_repo, namespace_id, vec![deleted_entry]).await?;
-        finalize_mutation(
+        finalize_mutation_from_namespace(
             &self.snapshot_repo,
+            &self.entry_repo,
             namespace_id,
             message,
             user_id,
@@ -3404,7 +3337,7 @@ where
                 current_version_id: entry.current_version_id,
                 change_type: ChangeType::Deleted,
             }],
-            snapshot_entries,
+            vec![deleted_entry],
             Vec::new(),
         )
         .await
@@ -3509,16 +3442,14 @@ where
             }
         }
 
-        let snapshot_entries =
-            collect_snapshot_state(&self.entry_repo, namespace_id, deleted_entries).await?;
-
-        finalize_mutation(
+        finalize_mutation_from_namespace(
             &self.snapshot_repo,
+            &self.entry_repo,
             namespace_id,
             message,
             user_id,
             changed_entries,
-            snapshot_entries,
+            deleted_entries,
             cleanup_warnings,
         )
         .await
@@ -4314,15 +4245,14 @@ where
         });
 
         let mutation_result = async {
-            let snapshot_entries =
-                collect_snapshot_state(&self.entry_repo, &session.namespace_id, Vec::new()).await?;
-            finalize_mutation(
+            finalize_mutation_from_namespace(
                 &self.snapshot_repo,
+                &self.entry_repo,
                 &session.namespace_id,
                 message,
                 &session.owner_user_id,
                 changed_entries,
-                snapshot_entries,
+                Vec::new(),
                 Vec::new(),
             )
             .await
@@ -4796,11 +4726,9 @@ where
                 None,
             )
             .await?;
-        let snapshot_entries =
-            collect_snapshot_state(&self.entry_repo, namespace_id, Vec::new()).await?;
-
-        finalize_mutation(
+        finalize_mutation_from_namespace(
             &self.snapshot_repo,
+            &self.entry_repo,
             namespace_id,
             message,
             user_id,
@@ -4811,7 +4739,7 @@ where
                 current_version_id: Some(restored.id),
                 change_type: ChangeType::Modified,
             }],
-            snapshot_entries,
+            Vec::new(),
             Vec::new(),
         )
         .await

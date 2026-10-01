@@ -7065,7 +7065,29 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         message: Option<&str>,
         kind: SnapshotKind,
         user_id: &UserId,
+        entry_repo: &(dyn EntryRepo + Send + Sync),
+    ) -> DomainResult<SnapshotId> {
+        self.create_snapshot_from_namespace_with_changes(
+            namespace_id,
+            message,
+            kind,
+            user_id,
+            entry_repo,
+            &[],
+            &[],
+        )
+        .await
+    }
+
+    async fn create_snapshot_from_namespace_with_changes(
+        &self,
+        namespace_id: &NamespaceId,
+        message: Option<&str>,
+        kind: SnapshotKind,
+        user_id: &UserId,
         _entry_repo: &(dyn EntryRepo + Send + Sync),
+        renamed_entry_ids: &[EntryId],
+        additional_entries: &[SnapshotEntryDraft],
     ) -> DomainResult<SnapshotId> {
         let mut tx = self
             .pool
@@ -7169,6 +7191,58 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         .map_err(|error| DomainError::Internal {
             message: format!("Failed to copy namespace entries into snapshot: {error}"),
         })?;
+
+        for chunk in renamed_entry_ids.chunks(500) {
+            if chunk.is_empty() {
+                continue;
+            }
+            let mut query = sqlx::QueryBuilder::new(
+                "UPDATE snapshot_entries SET change_type = 'renamed' WHERE snapshot_id = ",
+            );
+            query.push_bind(&snapshot_id_str);
+            query.push(" AND entry_id IN (");
+            {
+                let mut separated = query.separated(", ");
+                for entry_id in chunk {
+                    separated.push_bind(entry_id.to_string());
+                }
+            }
+            query.push(")");
+            query
+                .build()
+                .execute(&mut *tx)
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to mark renamed snapshot entries: {error}"),
+                })?;
+        }
+
+        for chunk in additional_entries.chunks(50) {
+            let mut query = sqlx::QueryBuilder::new(
+                "INSERT INTO snapshot_entries (snapshot_id, entry_id, entry_version_id, entry_path, entry_kind, blob_id, size, content_type, version_no, change_type, created_by, created_at) ",
+            );
+            query.push_values(chunk, |mut row, entry| {
+                row.push_bind(&snapshot_id_str)
+                    .push_bind(entry.entry_id.to_string())
+                    .push_bind(entry.entry_version_id.map(|id| id.to_string()))
+                    .push_bind(entry.entry_path.as_str())
+                    .push_bind(entry_kind_as_str(entry.entry_kind))
+                    .push_bind(entry.blob_id.map(|id| id.to_string()))
+                    .push_bind(entry.size_bytes.map(|size| size.as_u64() as i64))
+                    .push_bind(entry.mime_type.as_deref())
+                    .push_bind(entry.version_no.map(i64::from))
+                    .push_bind(change_type_as_str(entry.change_type))
+                    .push_bind(entry.created_by.unwrap_or(*user_id).to_string())
+                    .push_bind(entry.created_at.unwrap_or(created_at));
+            });
+            query
+                .build()
+                .execute(&mut *tx)
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to add changed snapshot entries: {error}"),
+                })?;
+        }
 
         sqlx::query(
             r#"

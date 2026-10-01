@@ -1051,10 +1051,39 @@ pub trait SnapshotRepo {
         user_id: &UserId,
         entry_repo: &(dyn EntryRepo + Send + Sync),
     ) -> DomainResult<SnapshotId> {
+        self.create_snapshot_from_namespace_with_changes(
+            namespace_id,
+            message,
+            kind,
+            user_id,
+            entry_repo,
+            &[],
+            &[],
+        )
+        .await
+    }
+
+    /// Create a namespace snapshot with protocol-level rename markers and deleted entries.
+    /// Storage engines can apply these changes while writing the live tree without building it
+    /// in application memory.
+    async fn create_snapshot_from_namespace_with_changes(
+        &self,
+        namespace_id: &NamespaceId,
+        message: Option<&str>,
+        kind: SnapshotKind,
+        user_id: &UserId,
+        entry_repo: &(dyn EntryRepo + Send + Sync),
+        renamed_entry_ids: &[EntryId],
+        additional_entries: &[SnapshotEntryDraft],
+    ) -> DomainResult<SnapshotId> {
         let created_at = time::OffsetDateTime::now_utc();
         let snapshot_id = self
             .create_snapshot(namespace_id, message, kind, user_id)
             .await?;
+        let renamed_entry_ids = renamed_entry_ids
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
         let entries = entry_repo.find_all(namespace_id).await?;
         let version_ids = entries
             .iter()
@@ -1076,9 +1105,13 @@ pub trait SnapshotRepo {
                     .then_some(entry.current_version_id)
                     .flatten()
                     .and_then(|version_id| versions.get(&version_id));
-                let change_type = version
-                    .map(|version| version.change_type)
-                    .unwrap_or(ChangeType::Added);
+                let change_type = if renamed_entry_ids.contains(&entry.id) {
+                    ChangeType::Renamed
+                } else {
+                    version
+                        .map(|version| version.change_type)
+                        .unwrap_or(ChangeType::Added)
+                };
                 SnapshotEntry {
                     snapshot_id,
                     entry_id: entry.id,
@@ -1095,6 +1128,20 @@ pub trait SnapshotRepo {
                 }
             })
             .collect::<Vec<_>>();
+        snapshot_entries.extend(additional_entries.iter().map(|entry| SnapshotEntry {
+            snapshot_id,
+            entry_id: entry.entry_id,
+            entry_path: entry.entry_path.clone(),
+            entry_kind: entry.entry_kind,
+            entry_version_id: entry.entry_version_id,
+            blob_id: entry.blob_id,
+            size_bytes: entry.size_bytes,
+            mime_type: entry.mime_type.clone(),
+            version_no: entry.version_no,
+            change_type: entry.change_type,
+            created_by: Some(entry.created_by.unwrap_or(*user_id)),
+            created_at: Some(entry.created_at.unwrap_or(created_at)),
+        }));
         snapshot_entries
             .sort_by(|left, right| left.entry_path.as_str().cmp(right.entry_path.as_str()));
         if !snapshot_entries.is_empty() {

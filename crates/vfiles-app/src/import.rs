@@ -16,8 +16,8 @@ use tokio::io::AsyncReadExt;
 use vfiles_domain::*;
 
 use crate::services::{
-    ChangedEntry, MutationResult, collect_snapshot_state, ensure_directory_path,
-    ensure_directory_path_with_conditions, finalize_mutation, guess_mime_type, normalize_message,
+    ChangedEntry, MutationResult, ensure_directory_path, ensure_directory_path_with_conditions,
+    finalize_mutation_from_namespace, guess_mime_type, normalize_message,
 };
 
 /// 单个文件导入结果。
@@ -549,15 +549,14 @@ impl ImportBatch {
         let count = self.changed.len();
         let message = self.snapshot_message(count);
         let changed_entries = std::mem::take(&mut self.changed);
-        let snapshot_entries =
-            collect_snapshot_state(&*self.entry_repo, &self.namespace_id, Vec::new()).await?;
-        let mutation = finalize_mutation(
+        let mutation = finalize_mutation_from_namespace(
             &*self.snapshot_repo,
+            &*self.entry_repo,
             &self.namespace_id,
             Some(&message),
             &self.actor_user_id,
             changed_entries,
-            snapshot_entries,
+            Vec::new(),
             Vec::new(),
         )
         .await?;

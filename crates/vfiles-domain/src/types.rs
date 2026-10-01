@@ -264,6 +264,22 @@ pub struct SnapshotEntry {
     pub created_at: Option<time::OffsetDateTime>,
 }
 
+/// Snapshot entry data before a repository assigns its snapshot ID.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotEntryDraft {
+    pub entry_id: EntryId,
+    pub entry_path: NormalizedPath,
+    pub entry_kind: EntryKind,
+    pub entry_version_id: Option<VersionId>,
+    pub blob_id: Option<BlobId>,
+    pub size_bytes: Option<ByteSize>,
+    pub mime_type: Option<String>,
+    pub version_no: Option<u32>,
+    pub change_type: ChangeType,
+    pub created_by: Option<UserId>,
+    pub created_at: Option<time::OffsetDateTime>,
+}
+
 /// One immediate child in a snapshot tree. Direct snapshot records retain their metadata;
 /// implicit directories synthesized from descendant paths have no backing entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
