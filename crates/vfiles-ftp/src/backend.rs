@@ -193,7 +193,7 @@ impl VfilesStorageBackend {
         &self,
         path: &NormalizedPath,
         input: R,
-        condition: &EntryWriteCondition,
+        conditions: &[EntryWriteCondition],
     ) -> Result<u64>
     where
         R: AsyncRead + Send + Sync + Unpin + 'static,
@@ -210,12 +210,12 @@ impl VfilesStorageBackend {
         let message = format!("FTP 上传: {name}");
 
         let result = batch
-            .import_file_stream_with_condition(
+            .import_file_stream_with_conditions(
                 path,
                 Box::new(input),
                 self.deps.max_file_size_bytes,
                 Some(&message),
-                condition,
+                conditions,
             )
             .await;
 
@@ -635,25 +635,72 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
 
         // Reject deterministic path conflicts before consuming the data stream into a blob.
         self.validate_upload_path(&user.namespace_id, &path).await?;
-        let existing = self
+        let mut paths = Vec::new();
+        let mut current = String::new();
+        if !path.as_str().contains('/') {
+            paths.push(path.clone());
+        } else {
+            let (parent, _) = path.as_str().rsplit_once('/').expect("nested path");
+            for segment in parent.split('/') {
+                if !current.is_empty() {
+                    current.push('/');
+                }
+                current.push_str(segment);
+                paths.push(
+                    NormalizedPath::new(&current)
+                        .map_err(|message| Error::new(ErrorKind::PermissionDenied, message))?,
+                );
+            }
+            paths.push(path.clone());
+        }
+        let observed_entries = self
             .deps
             .entry_repo
-            .find_by_path(&user.namespace_id, &path)
+            .find_paths(&user.namespace_id, &paths)
             .await
             .map_err(to_ftp_error)?;
-        let expected_lock_tokens = self
-            .expected_unlocked_tokens(&user.namespace_id, &path)
-            .await?;
-        let condition = EntryWriteCondition {
-            namespace_id: user.namespace_id,
-            path: path.clone(),
-            check_entry_state: true,
-            expected_entry_id: existing.as_ref().map(|entry| entry.id),
-            expected_version_id: existing.and_then(|entry| entry.current_version_id),
-            expected_lock_tokens: Some(expected_lock_tokens),
-            expected_additional_lock_states: None,
-        };
-        let bytes = self.import_file(&path, input, &condition).await?;
+        let entries_by_path = observed_entries
+            .into_iter()
+            .map(|entry| (entry.path_norm.as_str().to_string(), entry))
+            .collect::<HashMap<_, _>>();
+        let path_strings = paths
+            .iter()
+            .map(|path| path.as_str().to_string())
+            .collect::<Vec<_>>();
+        let active_locks = self
+            .deps
+            .lock_repo
+            .find_active_covering_many_all(&user.namespace_id, &path_strings, Self::lock_now_ms())
+            .await
+            .map_err(to_ftp_error)?;
+        let mut conditions = Vec::with_capacity(paths.len());
+        for path_component in paths {
+            let observed_entry = entries_by_path.get(path_component.as_str());
+            let locks = active_locks
+                .get(path_component.as_str())
+                .cloned()
+                .unwrap_or_default();
+            if (path_component == path || observed_entry.is_none()) && !locks.is_empty() {
+                return Err(Error::new(
+                    ErrorKind::PermissionDenied,
+                    "上传目标或新建父目录受 WebDAV 写锁保护",
+                ));
+            }
+            let expected_lock_tokens = locks
+                .into_iter()
+                .map(|(_, lock)| lock.token)
+                .collect::<Vec<_>>();
+            conditions.push(EntryWriteCondition {
+                namespace_id: user.namespace_id,
+                path: path_component.clone(),
+                check_entry_state: true,
+                expected_entry_id: observed_entry.map(|entry| entry.id),
+                expected_version_id: observed_entry.and_then(|entry| entry.current_version_id),
+                expected_lock_tokens: Some(expected_lock_tokens),
+                expected_additional_lock_states: None,
+            });
+        }
+        let bytes = self.import_file(&path, input, &conditions).await?;
         debug!(user = %user, path = path.as_str(), bytes, "FTP 上传完成");
         Ok(bytes)
     }

@@ -16,8 +16,8 @@ use tokio::io::AsyncReadExt;
 use vfiles_domain::*;
 
 use crate::services::{
-    ChangedEntry, MutationResult, collect_snapshot_state, ensure_directory_path, finalize_mutation,
-    guess_mime_type, normalize_message,
+    ChangedEntry, MutationResult, collect_snapshot_state, ensure_directory_path,
+    ensure_directory_path_with_conditions, finalize_mutation, guess_mime_type, normalize_message,
 };
 
 /// 单个文件导入结果。
@@ -210,7 +210,26 @@ impl ImportBatch {
         message: Option<&str>,
         condition: &EntryWriteCondition,
     ) -> DomainResult<ImportedFile> {
-        self.import_file_stream_inner(path, reader, max_bytes, message, Some(condition))
+        self.import_file_stream_inner(
+            path,
+            reader,
+            max_bytes,
+            message,
+            Some(std::slice::from_ref(condition)),
+        )
+        .await
+    }
+
+    /// Import one file while atomically checking conditions for its target and any new parents.
+    pub async fn import_file_stream_with_conditions(
+        &mut self,
+        path: &NormalizedPath,
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        max_bytes: Option<u64>,
+        message: Option<&str>,
+        conditions: &[EntryWriteCondition],
+    ) -> DomainResult<ImportedFile> {
+        self.import_file_stream_inner(path, reader, max_bytes, message, Some(conditions))
             .await
     }
 
@@ -220,7 +239,7 @@ impl ImportBatch {
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         max_bytes: Option<u64>,
         message: Option<&str>,
-        condition: Option<&EntryWriteCondition>,
+        conditions: Option<&[EntryWriteCondition]>,
     ) -> DomainResult<ImportedFile> {
         if path.as_str().is_empty() {
             return Err(DomainError::Validation {
@@ -265,13 +284,27 @@ impl ImportBatch {
                     message: "Invalid parent path".to_string(),
                 })?;
 
-            let changed_directories = ensure_directory_path(
-                &*self.entry_repo,
-                &self.namespace_id,
-                &parent_path,
-                &self.actor_user_id,
-            )
-            .await?;
+            let changed_directories = match conditions {
+                Some(conditions) => {
+                    ensure_directory_path_with_conditions(
+                        &*self.entry_repo,
+                        &self.namespace_id,
+                        &parent_path,
+                        &self.actor_user_id,
+                        conditions,
+                    )
+                    .await?
+                }
+                None => {
+                    ensure_directory_path(
+                        &*self.entry_repo,
+                        &self.namespace_id,
+                        &parent_path,
+                        &self.actor_user_id,
+                    )
+                    .await?
+                }
+            };
 
             let mut created_entry_id = None;
             let entry = match self
@@ -287,16 +320,36 @@ impl ImportBatch {
                 Some(existing) => existing,
                 None => {
                     // create_entry 只返回 id，随后重新读取完整条目（与 HTTP 上传一致）
-                    let entry_id = match self
-                        .entry_repo
-                        .create_entry(
-                            &self.namespace_id,
-                            path,
-                            EntryKind::File,
-                            &self.actor_user_id,
-                        )
-                        .await
-                    {
+                    let create_entry = async {
+                        match conditions {
+                            Some(conditions) => {
+                                let condition = conditions
+                                    .iter()
+                                    .find(|condition| condition.path == *path)
+                                    .ok_or(DomainError::PreconditionFailed)?;
+                                self.entry_repo
+                                    .create_entry_if_current(
+                                        &self.namespace_id,
+                                        path,
+                                        EntryKind::File,
+                                        &self.actor_user_id,
+                                        condition,
+                                    )
+                                    .await
+                            }
+                            None => {
+                                self.entry_repo
+                                    .create_entry(
+                                        &self.namespace_id,
+                                        path,
+                                        EntryKind::File,
+                                        &self.actor_user_id,
+                                    )
+                                    .await
+                            }
+                        }
+                    };
+                    let entry_id = match create_entry.await {
                         Ok(entry_id) => entry_id,
                         Err(err) => return Err(err),
                     };
@@ -339,7 +392,9 @@ impl ImportBatch {
 
             let mime_type = guess_mime_type(filename);
             let normalized_message = normalize_message(message);
-            let mut effective_condition = condition.cloned();
+            let mut effective_condition = conditions
+                .and_then(|conditions| conditions.iter().find(|condition| condition.path == *path))
+                .cloned();
             if let Some(condition) = effective_condition.as_mut()
                 && condition.expected_entry_id.is_none()
                 && created_entry_id == Some(entry.id)
