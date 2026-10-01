@@ -3,9 +3,10 @@
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
-    path::Path,
+    path::{Component, Path, PathBuf},
 };
 
+use secrecy::{ExposeSecret, SecretBox};
 use sha2::{Digest, Sha256};
 
 /// 确保证书与私钥存在；仅首次启动生成，后续启动复用同一身份。
@@ -26,7 +27,9 @@ pub fn ensure_self_signed_certificate(
     prepare_private_directory(certificate_path)?;
     prepare_private_directory(private_key_path)?;
 
-    if certificate_path.is_file() && private_key_path.is_file() {
+    let certificate_exists = regular_file_exists(certificate_path)?;
+    let private_key_exists = regular_file_exists(private_key_path)?;
+    if certificate_exists && private_key_exists {
         restrict_private_file(private_key_path)?;
         return fingerprint(certificate_path);
     }
@@ -42,11 +45,12 @@ pub fn ensure_self_signed_certificate(
     let generated = rcgen::generate_simple_self_signed(names)
         .map_err(|err| io::Error::other(format!("生成 FTPS 自签名证书失败: {err}")))?;
     let certificate = generated.cert.pem();
-    let private_key = generated.signing_key.serialize_pem();
+    let private_key = SecretBox::new(Box::new(generated.signing_key.serialize_pem()));
+    drop(generated);
 
     let mut key_file = create_private_file(private_key_path)?;
     if let Err(err) = key_file
-        .write_all(private_key.as_bytes())
+        .write_all(private_key.expose_secret().as_bytes())
         .and_then(|()| key_file.sync_all())
     {
         remove_if_exists(private_key_path)?;
@@ -85,13 +89,89 @@ fn remove_if_exists(path: &Path) -> io::Result<()> {
     }
 }
 
+fn regular_file_exists(path: &Path) -> io::Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(true),
+        Ok(_) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "FTPS 证书与私钥路径必须指向普通文件，不能是符号链接",
+        )),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
 fn prepare_private_directory(path: &Path) -> io::Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    reject_symlinked_parents(parent)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true).mode(0o700).create(parent)?;
+    }
+    #[cfg(not(unix))]
     fs::create_dir_all(parent)?;
+    reject_symlinked_parents(parent)?;
+    let metadata = fs::symlink_metadata(parent)?;
+    if !metadata.file_type().is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "FTPS 证书与私钥目录不能是符号链接，且必须是目录",
+        ));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+        if metadata.permissions().mode() & 0o022 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "FTPS 证书与私钥目录不能允许组用户或其他用户写入",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn reject_symlinked_parents(parent: &Path) -> io::Result<()> {
+    let mut current = if parent.is_absolute() {
+        PathBuf::new()
+    } else {
+        std::env::current_dir()?
+    };
+
+    for component in parent.components() {
+        match component {
+            Component::Prefix(prefix) => current.push(prefix.as_os_str()),
+            Component::RootDir => current.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                current.pop();
+            }
+            Component::Normal(name) => {
+                current.push(name);
+                match fs::symlink_metadata(&current) {
+                    Ok(metadata) if metadata.file_type().is_symlink() => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "FTPS 证书与私钥目录路径不能经过符号链接",
+                        ));
+                    }
+                    Ok(metadata) if !metadata.file_type().is_dir() => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "FTPS 证书与私钥目录路径必须由目录组成",
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                    Err(err) => return Err(err),
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -119,10 +199,18 @@ fn create_certificate_file(path: &Path) -> io::Result<File> {
 }
 
 fn restrict_private_file(path: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "FTPS 私钥路径必须指向普通文件，不能是符号链接",
+        ));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        let file = OpenOptions::new().read(true).open(path)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
 }
