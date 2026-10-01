@@ -41,6 +41,9 @@ const LIST_PAGE_SIZE: u32 = 100;
 /// libunftp 的存储接口要求返回完整 Vec，因此限制单次目录列表的总量。
 const MAX_LIST_ENTRIES: u64 = 20_000;
 const MAX_LIST_METADATA_BYTES: usize = 8 * 1024 * 1024;
+/// RNTO builds source, destination and lock snapshots for the whole moved subtree.
+const MAX_RENAME_SUBTREE_ENTRIES: usize = 20_000;
+const MAX_RENAME_SUBTREE_PATH_BYTES: usize = 4 * 1024 * 1024;
 
 /// FTP 文件元数据。
 #[derive(Debug, Clone, Copy)]
@@ -333,6 +336,57 @@ impl VfilesStorageBackend {
             .find_by_path(namespace_id, path)
             .await
             .map_err(to_ftp_error)
+    }
+
+    async fn find_rename_subtree(
+        &self,
+        namespace_id: &NamespaceId,
+        root: &NormalizedPath,
+    ) -> Result<Vec<vfiles_domain::Entry>> {
+        let mut entries = Vec::new();
+        let mut path_bytes = 0usize;
+        let mut after_path: Option<String> = None;
+
+        loop {
+            let remaining_with_overflow = MAX_RENAME_SUBTREE_ENTRIES
+                .saturating_add(1)
+                .saturating_sub(entries.len());
+            let limit = remaining_with_overflow.min(LIST_PAGE_SIZE as usize) as u32;
+            let page = self
+                .deps
+                .entry_repo
+                .find_subtree_page(namespace_id, root, after_path.as_deref(), limit)
+                .await
+                .map_err(to_ftp_error)?;
+            if page.is_empty() {
+                break;
+            }
+
+            let next_count = entries.len().saturating_add(page.len());
+            if next_count > MAX_RENAME_SUBTREE_ENTRIES {
+                return Err(Error::new(
+                    ErrorKind::LocalError,
+                    "FTP 重命名目录超过安全条目上限",
+                ));
+            }
+            let page_path_bytes = page.iter().fold(0usize, |total, entry| {
+                total.saturating_add(entry.path_norm.as_str().len())
+            });
+            let next_path_bytes = path_bytes.saturating_add(page_path_bytes);
+            if next_path_bytes > MAX_RENAME_SUBTREE_PATH_BYTES {
+                return Err(Error::new(
+                    ErrorKind::LocalError,
+                    "FTP 重命名目录路径数据超过安全上限",
+                ));
+            }
+            path_bytes = next_path_bytes;
+            after_path = page
+                .last()
+                .map(|entry| entry.path_norm.as_str().to_string());
+            entries.extend(page);
+        }
+
+        Ok(entries)
     }
 
     async fn ensure_user_current(&self, user: &VfilesFtpUser) -> Result<()> {
@@ -968,18 +1022,24 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
                     format!("路径不存在: {}", from.as_str()),
                 )
             })?;
-        let source_subtree = self
-            .deps
-            .entry_repo
-            .find_subtree(&user.namespace_id, &from)
-            .await
-            .map_err(to_ftp_error)?;
+        let source_subtree = self.find_rename_subtree(&user.namespace_id, &from).await?;
         let mut affected_paths = Vec::with_capacity(source_subtree.len().saturating_mul(2));
         let mut destination_paths = Vec::with_capacity(source_subtree.len());
+        let mut affected_path_bytes = 0usize;
         for entry in &source_subtree {
-            affected_paths.push(entry.path_norm.as_str().to_string());
             let suffix = &entry.path_norm.as_str()[from.as_str().len()..];
             let destination_path = to_normalized(Path::new(&format!("{}{}", to.as_str(), suffix)))?;
+            let next_path_bytes = affected_path_bytes
+                .saturating_add(entry.path_norm.as_str().len())
+                .saturating_add(destination_path.as_str().len());
+            if next_path_bytes > MAX_RENAME_SUBTREE_PATH_BYTES {
+                return Err(Error::new(
+                    ErrorKind::LocalError,
+                    "FTP 重命名目录路径数据超过安全上限",
+                ));
+            }
+            affected_path_bytes = next_path_bytes;
+            affected_paths.push(entry.path_norm.as_str().to_string());
             affected_paths.push(destination_path.as_str().to_string());
             destination_paths.push(destination_path);
         }
