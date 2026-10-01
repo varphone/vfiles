@@ -314,6 +314,22 @@ async fn rejects_new_control_connections_at_the_configured_limit() {
     assert!(admitted, "释放会话后应接纳新连接");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn repeated_epsv_commands_do_not_exhaust_the_passive_port_range() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.client();
+
+    for index in 0..120 {
+        client
+            .custom_command("EPSV", &[Status::ExtendedPassiveMode])
+            .unwrap_or_else(|error| {
+                panic!("EPSV request {index} should release the previous listener: {error}")
+            });
+    }
+
+    client.quit().expect("quit should succeed");
+}
+
 fn payload(size: usize, seed: u8) -> Vec<u8> {
     (0..size)
         .map(|index| seed.wrapping_add(index as u8))
