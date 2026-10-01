@@ -48,10 +48,13 @@ pub fn to_normalized(path: &Path) -> Result<NormalizedPath, Error> {
                         "路径不允许包含反斜杠",
                     ));
                 }
-                if part.chars().any(char::is_control) {
+                if part
+                    .chars()
+                    .any(|ch| ch.is_control() || matches!(ch, '\u{2028}' | '\u{2029}'))
+                {
                     return Err(Error::new(
                         ErrorKind::PermissionDenied,
-                        "路径不允许包含控制字符",
+                        "路径不允许包含控制字符或 Unicode 行分隔符",
                     ));
                 }
                 segments.push(part);
