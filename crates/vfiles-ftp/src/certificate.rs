@@ -236,6 +236,12 @@ mod tests {
     #[test]
     fn generates_persistent_certificate_and_restricts_private_key() {
         let directory = tempfile::tempdir().expect("tempdir");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+                .expect("private test directory");
+        }
         let certificate_path = directory.path().join("ftp-tls/ftp-cert.pem");
         let private_key_path = directory.path().join("ftp-tls/ftp-key.pem");
         let names = vec!["localhost".to_string(), "127.0.0.1".to_string()];

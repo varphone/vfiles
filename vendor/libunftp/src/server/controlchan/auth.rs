@@ -25,7 +25,46 @@ where
 {
     pub session: SharedSession<Storage, User>,
     pub next: Next,
-    pub(super) last_revalidation: Option<tokio::time::Instant>,
+    pub(super) last_revalidation: Arc<tokio::sync::Mutex<Option<tokio::time::Instant>>>,
+}
+
+pub(super) async fn revalidate_authenticated_user<Storage, User>(
+    session: &SharedSession<Storage, User>,
+    last_revalidation: &Arc<tokio::sync::Mutex<Option<tokio::time::Instant>>>,
+) -> Result<(), ControlChanError>
+where
+    User: UserDetail + 'static,
+    Storage: StorageBackend<User> + 'static,
+    Storage::Metadata: Metadata,
+{
+    let (session_state, storage, user) = {
+        let session = session.lock().await;
+        (
+            session.state,
+            Arc::clone(&session.storage),
+            Arc::clone(&session.user),
+        )
+    };
+    if session_state != SessionState::WaitCmd {
+        return Ok(());
+    }
+
+    let mut last_revalidation = last_revalidation.lock().await;
+    if last_revalidation.is_none_or(|last| last.elapsed() >= USER_REVALIDATION_INTERVAL) {
+        let Some(user) = user.as_ref() else {
+            return Err(ControlChanError::new(
+                crate::server::controlchan::error::ControlChanErrorKind::IllegalState,
+            ));
+        };
+        storage.revalidate_user(user).await.map_err(|_| {
+            ControlChanError::new(
+                crate::server::controlchan::error::ControlChanErrorKind::AuthenticationError,
+            )
+        })?;
+        *last_revalidation = Some(tokio::time::Instant::now());
+    }
+
+    Ok(())
 }
 
 #[async_trait]
@@ -41,32 +80,9 @@ where
             return self.next.handle(event).await;
         }
 
-        let (session_state, storage, user) = {
-            let session = self.session.lock().await;
-            (
-                session.state,
-                Arc::clone(&session.storage),
-                Arc::clone(&session.user),
-            )
-        };
         let is_quit = matches!(&event, Event::Command(Command::Quit));
-        if session_state == SessionState::WaitCmd
-            && !is_quit
-            && self.last_revalidation.is_none_or(|last| {
-                last.elapsed() >= USER_REVALIDATION_INTERVAL
-            })
-        {
-            let Some(user) = user.as_ref() else {
-                return Err(ControlChanError::new(
-                    crate::server::controlchan::error::ControlChanErrorKind::IllegalState,
-                ));
-            };
-            storage.revalidate_user(user).await.map_err(|_| {
-                ControlChanError::new(
-                    crate::server::controlchan::error::ControlChanErrorKind::AuthenticationError,
-                )
-            })?;
-            self.last_revalidation = Some(tokio::time::Instant::now());
+        if !is_quit {
+            revalidate_authenticated_user(&self.session, &self.last_revalidation).await?;
         }
 
         match event {

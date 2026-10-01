@@ -10,7 +10,7 @@ use crate::{
         controlchan::{
             Reply, ReplyCode,
             active_passive::ActivePassiveEnforcerMiddleware,
-            auth::AuthMiddleware,
+            auth::{AuthMiddleware, revalidate_authenticated_user},
             codecs::FtpCodec,
             command::Command,
             commands,
@@ -134,6 +134,7 @@ where
     );
 
     let shared_session: SharedSession<Storage, User> = Arc::new(Mutex::new(session));
+    let last_revalidation = Arc::new(Mutex::new(None));
 
     let event_chain = PrimaryEventHandler {
         logger: logger.clone(),
@@ -159,7 +160,7 @@ where
     let event_chain = AuthMiddleware {
         session: shared_session.clone(),
         next: event_chain,
-        last_revalidation: None,
+        last_revalidation: Arc::clone(&last_revalidation),
     };
 
     let event_chain = FtpsControlChanEnforcerMiddleware {
@@ -332,6 +333,13 @@ where
                     }
                 }
                 Some(Err(e)) => {
+                    if let Err(revalidation_error) =
+                        revalidate_authenticated_user(&shared_session, &last_revalidation).await
+                    {
+                        slog::warn!(logger, "Closing control connection after account revalidation failed: {:?}", revalidation_error);
+                        cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), control_msg_rx, logger.clone()).await;
+                        return;
+                    }
                     let (reply, close_connection) = handle_control_channel_error(logger.clone(), e);
                     let result = tokio::time::timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, reply_sink.send(reply)).await;
                     if !matches!(result, Ok(Ok(()))) {

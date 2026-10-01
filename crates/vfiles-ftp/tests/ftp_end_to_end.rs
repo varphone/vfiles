@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use camino::Utf8PathBuf;
 use suppaftp::{
-    FtpStream, RustlsConnector, RustlsFtpStream,
+    FtpStream, RustlsConnector, RustlsFtpStream, Status,
     rustls::{
         ClientConfig, RootCertStore,
         pki_types::{CertificateDer, pem::PemObject},
@@ -39,6 +39,8 @@ struct Harness {
     _temp_dir: tempfile::TempDir,
     pool: sqlx::SqlitePool,
     namespace_id: vfiles_domain::NamespaceId,
+    user_id: vfiles_domain::UserId,
+    user_repo: SqliteUserRepo,
     entry_repo: SqliteEntryRepo,
     workspace: Arc<DefaultWorkspaceService>,
     _shutdown: watch::Sender<bool>,
@@ -55,7 +57,15 @@ impl Harness {
         flush_threshold: usize,
         max_connections: u32,
     ) -> Self {
-        let temp_dir = tempfile::tempdir().expect("tempdir");
+        // The certificate guard intentionally rejects non-sticky shared-writable ancestors;
+        // this environment's configured temp root is such a directory, so use sticky /tmp directly.
+        let temp_dir = tempfile::tempdir_in("/tmp").expect("private tempdir");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(temp_dir.path(), std::fs::Permissions::from_mode(0o700))
+                .expect("private test directory");
+        }
         let storage_root =
             Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).expect("utf8 tempdir");
         let pool = SqlitePoolFactory::connect(storage_root.join("vfiles.db").as_path())
@@ -119,7 +129,7 @@ impl Harness {
         ));
         let backend_user_repo = Arc::new(user_repo.clone());
         let provider = Arc::new(VfilesUserDetailProvider::new(
-            Arc::new(user_repo),
+            Arc::new(user_repo.clone()),
             namespaces,
             roles,
         ));
@@ -143,7 +153,7 @@ impl Harness {
 
         let settings = FtpSettings {
             bind: "127.0.0.1:0".parse().expect("bind addr"),
-            passive_ports: (0, 0),
+            passive_ports: (50_000, 50_100),
             max_connections,
             passive_host: None,
             greeting: "VFiles FTP test",
@@ -170,6 +180,8 @@ impl Harness {
             _temp_dir: temp_dir,
             pool,
             namespace_id,
+            user_id,
+            user_repo,
             entry_repo,
             workspace,
             _shutdown: shutdown_tx,
@@ -232,6 +244,13 @@ impl Harness {
         self.workspace
             .read_file_bytes(&self.namespace_id, &path, None)
             .await
+    }
+
+    async fn disable_user(&self) {
+        self.user_repo
+            .disable_user(&self.user_id)
+            .await
+            .expect("user should be disabled");
     }
 }
 
@@ -449,4 +468,39 @@ async fn non_empty_directory_cannot_be_removed() {
     assert!(removed.is_err(), "非空目录的 RMD 必须失败");
 
     client.quit().ok();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn disabled_user_cannot_keep_control_session_alive_with_noop() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.client();
+    client.noop().expect("initial NOOP should succeed");
+
+    harness.disable_user().await;
+    tokio::time::sleep(std::time::Duration::from_millis(5_100)).await;
+
+    let result = tokio::task::spawn_blocking(move || client.noop())
+        .await
+        .expect("FTP client task should finish");
+    assert!(result.is_err(), "revoked session must be closed on NOOP");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn disabled_user_cannot_bypass_revalidation_with_invalid_commands() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.client();
+    client.noop().expect("initial NOOP should succeed");
+
+    harness.disable_user().await;
+    tokio::time::sleep(std::time::Duration::from_millis(5_100)).await;
+
+    let result = tokio::task::spawn_blocking(move || {
+        client.custom_command("NOOP INVALID", &[Status::BadArguments])
+    })
+    .await
+    .expect("FTP client task should finish");
+    assert!(
+        result.is_err(),
+        "revoked session must be closed instead of accepting an invalid command"
+    );
 }
