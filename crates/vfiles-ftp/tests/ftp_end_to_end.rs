@@ -330,6 +330,29 @@ async fn repeated_epsv_commands_do_not_exhaust_the_passive_port_range() {
     client.quit().expect("quit should succeed");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftps_rejects_control_and_data_channel_downgrades() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.client();
+
+    assert!(
+        client.custom_command("CCC", &[Status::CommandOk]).is_err(),
+        "FTPS must reject clearing the protected control channel"
+    );
+    assert!(
+        client
+            .custom_command("PROT C", &[Status::CommandOk])
+            .is_err(),
+        "FTPS must reject clearing data-channel protection"
+    );
+    assert!(
+        client.nlst(Some(".")).is_ok(),
+        "the session should retain protected data transfers after downgrade attempts"
+    );
+
+    client.quit().expect("quit should succeed");
+}
+
 fn payload(size: usize, seed: u8) -> Vec<u8> {
     (0..size)
         .map(|index| seed.wrapping_add(index as u8))
