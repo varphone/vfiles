@@ -10,11 +10,21 @@ use std::path::{Component, Path};
 use unftp_core::storage::{Error, ErrorKind};
 use vfiles_domain::NormalizedPath;
 
+/// Bound FTP session paths so repeated CWD commands cannot grow per-session state without limit.
+const MAX_FTP_PATH_BYTES: usize = 4 * 1024;
+
 /// 把 FTP 路径转换为命名空间内的相对路径。
 pub fn to_normalized(path: &Path) -> Result<NormalizedPath, Error> {
     let raw = path
         .to_str()
         .ok_or_else(|| Error::new(ErrorKind::PermissionDenied, "文件名不是合法的 UTF-8 字符串"))?;
+
+    if raw.len() > MAX_FTP_PATH_BYTES {
+        return Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "FTP 路径超过安全长度上限",
+        ));
+    }
 
     if raw.contains('\0') {
         return Err(Error::new(ErrorKind::PermissionDenied, "路径包含非法字符"));
