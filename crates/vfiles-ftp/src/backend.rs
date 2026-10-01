@@ -27,7 +27,8 @@ use unftp_core::storage::{
 };
 use vfiles_app::{DefaultWorkspaceService, ImportBatch, IngestStats, SnapshotMode, TreeItem};
 use vfiles_domain::{
-    BlobStore, DomainError, EntryKind, EntryRepo, NamespaceId, NormalizedPath, SnapshotRepo, UserId,
+    BlobStore, DomainError, EntryKind, EntryRepo, EntryWriteCondition, NamespaceId, NormalizedPath,
+    SnapshotRepo,
 };
 
 use crate::auth::VfilesFtpUser;
@@ -295,26 +296,6 @@ impl VfilesStorageBackend {
             .map_err(to_ftp_error)
     }
 
-    async fn delete(
-        &self,
-        namespace_id: &NamespaceId,
-        path: &NormalizedPath,
-        user_id: &UserId,
-        message: &str,
-    ) -> Result<()> {
-        self.deps
-            .workspace
-            .delete_entries(
-                namespace_id,
-                std::slice::from_ref(path),
-                Some(message),
-                user_id,
-            )
-            .await
-            .map_err(to_ftp_error)?;
-        Ok(())
-    }
-
     /// 会话结束：提交剩余批次并记录汇总（幂等）。
     pub async fn finish_session(&self) {
         if let Err(err) = self.flush_batch().await {
@@ -544,8 +525,8 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
             return Err(Error::new(ErrorKind::PermissionDenied, "不能删除根目录"));
         }
 
-        match self.find_entry(&user.namespace_id, &path).await? {
-            Some(entry) if entry.entry_type == EntryKind::File => {}
+        let entry = match self.find_entry(&user.namespace_id, &path).await? {
+            Some(entry) if entry.entry_type == EntryKind::File => entry,
             Some(_) => {
                 return Err(Error::new(
                     ErrorKind::PermanentFileNotAvailable,
@@ -558,11 +539,30 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
                     format!("文件不存在: {}", path.as_str()),
                 ));
             }
-        }
+        };
 
         self.flush_batch().await?;
-        self.delete(&user.namespace_id, &path, &user.id, "FTP 删除文件")
+        let condition = EntryWriteCondition {
+            namespace_id: user.namespace_id,
+            path: path.clone(),
+            check_entry_state: true,
+            expected_entry_id: Some(entry.id),
+            expected_version_id: entry.current_version_id,
+            expected_lock_tokens: None,
+            expected_additional_lock_states: None,
+        };
+        self.deps
+            .workspace
+            .delete_entries_with_condition(
+                &user.namespace_id,
+                std::slice::from_ref(&path),
+                Some("FTP 删除文件"),
+                &user.id,
+                &condition,
+            )
             .await
+            .map(|_| ())
+            .map_err(to_ftp_error)
     }
 
     async fn rmd<P: AsRef<Path> + Send + fmt::Debug>(
