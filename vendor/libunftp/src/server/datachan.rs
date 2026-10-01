@@ -39,7 +39,7 @@ where
     User: UserDetail,
 {
     pub user: Arc<Option<User>>,
-    pub socket: TcpStream,
+    pub socket: DataSocket,
     pub control_msg_tx: Sender<ControlChanMsg>,
     pub storage: Arc<Storage>,
     pub cwd: PathBuf,
@@ -58,6 +58,73 @@ use std::time::{Duration, Instant};
 const DATA_CHANNEL_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const DATA_CHANNEL_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
 const DATA_CHANNEL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const PASSIVE_CANDIDATE_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Debug)]
+pub(crate) enum DataSocket {
+    Tcp(TcpStream),
+    Tls(tokio_rustls::server::TlsStream<TcpStream>),
+}
+
+impl DataSocket {
+    fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        match self {
+            Self::Tcp(socket) => socket.peer_addr(),
+            Self::Tls(stream) => stream.get_ref().0.peer_addr(),
+        }
+    }
+
+    async fn shutdown(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(socket) => socket.shutdown().await,
+            Self::Tls(stream) => stream.shutdown().await,
+        }
+    }
+}
+
+pub(crate) async fn accept_passive_data_socket(socket: TcpStream, ftps_mode: FtpsConfig, abort_token: CancellationToken) -> std::io::Result<DataSocket> {
+    match ftps_mode {
+        FtpsConfig::Off => Ok(DataSocket::Tcp(socket)),
+        FtpsConfig::Building { .. } => Err(std::io::Error::other("Illegal FTPS data-channel state")),
+        FtpsConfig::On {
+            data_tls_config: Some(tls_config),
+            data_resumption: Some(data_resumption),
+            ..
+        } => {
+            let acceptor: TlsAcceptor = tls_config.into();
+            let reset_resumption = Arc::clone(&data_resumption);
+            let tls_stream = tokio::select! {
+                accepted = tokio::time::timeout(
+                    PASSIVE_CANDIDATE_TLS_HANDSHAKE_TIMEOUT,
+                    acceptor.accept_with(socket, move |_| {
+                        reset_resumption.store(false, Ordering::SeqCst);
+                    }),
+                ) => {
+                    accepted
+                        .map_err(|_| std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "FTPS passive candidate handshake timed out",
+                        ))?
+                        .map_err(std::io::Error::other)?
+                }
+                _ = abort_token.cancelled() => return Err(aborted_io_error()),
+            };
+            require_control_session_resumption(&tls_stream, &data_resumption)?;
+            Ok(DataSocket::Tls(tls_stream))
+        }
+        FtpsConfig::On { .. } => Err(std::io::Error::other("Missing per-session FTPS data configuration")),
+    }
+}
+
+fn require_control_session_resumption(stream: &tokio_rustls::server::TlsStream<TcpStream>, data_resumption: &AtomicBool) -> std::io::Result<()> {
+    match (stream.get_ref().1.handshake_kind(), data_resumption.load(Ordering::SeqCst)) {
+        (Some(HandshakeKind::Resumed), true) => Ok(()),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "FTPS data channel did not resume the control-channel TLS session",
+        )),
+    }
+}
 
 struct IdleTimeoutReader<R> {
     inner: R,
@@ -766,13 +833,16 @@ where
 
     #[tracing_attributes::instrument]
     async fn writer(
-        socket: TcpStream,
+        socket: DataSocket,
         ftps_mode: FtpsConfig,
         command: &'static str,
         abort_token: CancellationToken,
     ) -> std::io::Result<Box<dyn AsyncWrite + Send + Unpin + Sync>> {
         let writer: Box<dyn AsyncWrite + Send + Unpin + Sync> = match ftps_mode {
-            FtpsConfig::Off => Box::new(MeasuringWriter::new(socket, command)),
+            FtpsConfig::Off => match socket {
+                DataSocket::Tcp(socket) => Box::new(MeasuringWriter::new(socket, command)),
+                DataSocket::Tls(_) => return Err(std::io::Error::other("Unexpected TLS data channel")),
+            },
             FtpsConfig::Building { .. } => {
                 return Err(std::io::Error::other("Illegal FTPS data-channel state"));
             }
@@ -781,19 +851,24 @@ where
                 data_resumption: Some(data_resumption),
                 ..
             } => {
-                let acceptor: TlsAcceptor = tls_config.into();
-                let reset_resumption = Arc::clone(&data_resumption);
-                let tls_stream = tokio::select! {
-                    accepted = tokio::time::timeout(DATA_CHANNEL_TLS_HANDSHAKE_TIMEOUT, acceptor.accept_with(socket, move |_| {
-                        reset_resumption.store(false, Ordering::SeqCst);
-                    })) => {
-                        accepted
-                            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "FTPS data-channel handshake timed out"))?
-                            .map_err(std::io::Error::other)?
+                let tls_stream = match socket {
+                    DataSocket::Tls(stream) => stream,
+                    DataSocket::Tcp(socket) => {
+                        let acceptor: TlsAcceptor = tls_config.into();
+                        let reset_resumption = Arc::clone(&data_resumption);
+                        tokio::select! {
+                            accepted = tokio::time::timeout(DATA_CHANNEL_TLS_HANDSHAKE_TIMEOUT, acceptor.accept_with(socket, move |_| {
+                                reset_resumption.store(false, Ordering::SeqCst);
+                            })) => {
+                                accepted
+                                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "FTPS data-channel handshake timed out"))?
+                                    .map_err(std::io::Error::other)?
+                            }
+                            _ = abort_token.cancelled() => return Err(aborted_io_error()),
+                        }
                     }
-                    _ = abort_token.cancelled() => return Err(aborted_io_error()),
                 };
-                Self::require_control_session_resumption(&tls_stream, &data_resumption)?;
+                require_control_session_resumption(&tls_stream, &data_resumption)?;
                 Box::new(MeasuringWriter::new(tls_stream, command))
             }
             FtpsConfig::On { .. } => return Err(std::io::Error::other("Missing per-session FTPS data configuration")),
@@ -803,13 +878,16 @@ where
 
     #[tracing_attributes::instrument]
     async fn reader(
-        socket: TcpStream,
+        socket: DataSocket,
         ftps_mode: FtpsConfig,
         command: &'static str,
         abort_token: CancellationToken,
     ) -> std::io::Result<Box<dyn AsyncRead + Send + Unpin + Sync>> {
         let reader: Box<dyn AsyncRead + Send + Unpin + Sync> = match ftps_mode {
-            FtpsConfig::Off => Box::new(MeasuringReader::new(socket, command)),
+            FtpsConfig::Off => match socket {
+                DataSocket::Tcp(socket) => Box::new(MeasuringReader::new(socket, command)),
+                DataSocket::Tls(_) => return Err(std::io::Error::other("Unexpected TLS data channel")),
+            },
             FtpsConfig::Building { .. } => {
                 return Err(std::io::Error::other("Illegal FTPS data-channel state"));
             }
@@ -818,37 +896,29 @@ where
                 data_resumption: Some(data_resumption),
                 ..
             } => {
-                let acceptor: TlsAcceptor = tls_config.into();
-                let reset_resumption = Arc::clone(&data_resumption);
-                let tls_stream = tokio::select! {
-                    accepted = tokio::time::timeout(DATA_CHANNEL_TLS_HANDSHAKE_TIMEOUT, acceptor.accept_with(socket, move |_| {
-                        reset_resumption.store(false, Ordering::SeqCst);
-                    })) => {
-                        accepted
-                            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "FTPS data-channel handshake timed out"))?
-                            .map_err(std::io::Error::other)?
+                let tls_stream = match socket {
+                    DataSocket::Tls(stream) => stream,
+                    DataSocket::Tcp(socket) => {
+                        let acceptor: TlsAcceptor = tls_config.into();
+                        let reset_resumption = Arc::clone(&data_resumption);
+                        tokio::select! {
+                            accepted = tokio::time::timeout(DATA_CHANNEL_TLS_HANDSHAKE_TIMEOUT, acceptor.accept_with(socket, move |_| {
+                                reset_resumption.store(false, Ordering::SeqCst);
+                            })) => {
+                                accepted
+                                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "FTPS data-channel handshake timed out"))?
+                                    .map_err(std::io::Error::other)?
+                            }
+                            _ = abort_token.cancelled() => return Err(aborted_io_error()),
+                        }
                     }
-                    _ = abort_token.cancelled() => return Err(aborted_io_error()),
                 };
-                Self::require_control_session_resumption(&tls_stream, &data_resumption)?;
+                require_control_session_resumption(&tls_stream, &data_resumption)?;
                 Box::new(MeasuringReader::new(tls_stream, command))
             }
             FtpsConfig::On { .. } => return Err(std::io::Error::other("Missing per-session FTPS data configuration")),
         };
         Ok(Box::new(IdleTimeoutReader::new(AbortableReader::new(reader, abort_token))))
-    }
-
-    fn require_control_session_resumption(
-        stream: &tokio_rustls::server::TlsStream<TcpStream>,
-        data_resumption: &AtomicBool,
-    ) -> std::io::Result<()> {
-        match (stream.get_ref().1.handshake_kind(), data_resumption.load(Ordering::SeqCst)) {
-            (Some(HandshakeKind::Resumed), true) => Ok(()),
-            _ => Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "FTPS data channel did not resume the control-channel TLS session",
-            )),
-        }
     }
 
     async fn report_tls_handshake_failure(logger: slog::Logger, tx: Sender<ControlChanMsg>, command: &'static str, err: std::io::Error) {
@@ -885,7 +955,16 @@ where
 /// session_arc: the user session that is also shared with the control channel.
 /// socket: the data socket we'll be working with.
 #[tracing_attributes::instrument]
-pub async fn spawn_processing<Storage, User>(logger: slog::Logger, session_arc: SharedSession<Storage, User>, mut socket: TcpStream)
+pub async fn spawn_processing<Storage, User>(logger: slog::Logger, session_arc: SharedSession<Storage, User>, socket: TcpStream)
+where
+    Storage: StorageBackend<User> + 'static,
+    Storage::Metadata: Metadata,
+    User: UserDetail + 'static,
+{
+    spawn_processing_with_socket(logger, session_arc, DataSocket::Tcp(socket)).await;
+}
+
+pub(crate) async fn spawn_processing_with_socket<Storage, User>(logger: slog::Logger, session_arc: SharedSession<Storage, User>, mut socket: DataSocket)
 where
     Storage: StorageBackend<User> + 'static,
     Storage::Metadata: Metadata,

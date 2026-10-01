@@ -8,6 +8,7 @@ use crate::{
         controlchan::{Reply, ReplyCode, error::ControlChanError, handler::CommandContext},
         datachan,
         session::SharedSession,
+        tls::FtpsConfig,
     },
     storage::{Metadata, StorageBackend},
 };
@@ -131,7 +132,19 @@ where
     let reply = cmd.build_reply(&args, port).await?;
     if reply.is_positive() {
         setup_inter_loop_comms(args.session.clone(), args.tx_control_chan.clone()).await;
-        let control_peer_ip = args.session.lock().await.source.ip();
+        let (control_peer_ip, ftps_mode, abort_token) = {
+            let session = args.session.lock().await;
+            (
+                session.source.ip(),
+                if session.data_tls { session.ftps_config.clone() } else { FtpsConfig::Off },
+                session.data_abort_tx.as_ref().cloned(),
+            )
+        };
+        let Some(abort_token) = abort_token else {
+            slog::error!(args.logger, "Data channel abort token expected to be set up. Aborting passive listener.");
+            drop(listener);
+            return Ok(reply);
+        };
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
         {
@@ -151,12 +164,25 @@ where
                 }
                 result = tokio::time::timeout(Duration::from_secs(15), async {
                     loop {
-                        let (socket, peer) = listener.accept().await?;
-                        if peer.ip() == control_peer_ip {
-                            return Ok::<_, io::Error>((socket, peer));
+                        let (socket, peer) = tokio::select! {
+                            _ = abort_token.cancelled() => {
+                                return Err(io::Error::new(io::ErrorKind::Interrupted, "Passive data connection cancelled"));
+                            }
+                            accepted = listener.accept() => accepted?,
+                        };
+                        if peer.ip() != control_peer_ip {
+                            slog::debug!(args.logger, "Ignoring passive data connection from unexpected peer {:?}; expected {:?}", peer.ip(), control_peer_ip);
+                            drop(socket);
+                            continue;
                         }
-                        slog::debug!(args.logger, "Ignoring passive data connection from unexpected peer {:?}; expected {:?}", peer.ip(), control_peer_ip);
-                        drop(socket);
+
+                        match datachan::accept_passive_data_socket(socket, ftps_mode.clone(), abort_token.clone()).await {
+                            Ok(socket) => return Ok::<_, io::Error>((socket, peer)),
+                            Err(err) if abort_token.is_cancelled() => return Err(err),
+                            Err(err) => {
+                                slog::debug!(args.logger, "Ignoring invalid passive FTPS data connection from {:?}: {}", peer, err);
+                            }
+                        }
                     }
                 }) => result,
             };
@@ -164,7 +190,7 @@ where
             // Do not keep the passive listening port occupied during the data transfer itself.
             drop(listener);
             match accept_result {
-                Ok(Ok((socket, _socket_addr))) => datachan::spawn_processing(args.logger, args.session, socket).await,
+                Ok(Ok((socket, _socket_addr))) => datachan::spawn_processing_with_socket(args.logger, args.session, socket).await,
                 Ok(Err(e)) => slog::error!(args.logger, "Error waiting for data connection: {}", e),
                 Err(_) => slog::warn!(args.logger, "Client did not connect to data port in time"),
             }
