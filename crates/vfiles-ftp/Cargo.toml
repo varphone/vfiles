@@ -21,6 +21,7 @@ hex.workspace = true
 # 自定义后端必须直接依赖同一份 core（版本与 libunftp 的依赖保持一致）。
 unftp-core = "0.1"
 tokio.workspace = true
+time.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

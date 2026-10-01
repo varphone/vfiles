@@ -28,7 +28,7 @@ use unftp_core::storage::{
 use vfiles_app::{DefaultWorkspaceService, ImportBatch, IngestStats, SnapshotMode, TreeItem};
 use vfiles_domain::{
     BlobStore, DomainError, EntryKind, EntryRepo, EntryWriteCondition, NamespaceId, NormalizedPath,
-    SnapshotRepo,
+    SnapshotRepo, UserRepo,
 };
 
 use crate::auth::VfilesFtpUser;
@@ -96,6 +96,7 @@ pub struct BackendDeps {
     pub entry_repo: Arc<dyn EntryRepo + Send + Sync>,
     pub snapshot_repo: Arc<dyn SnapshotRepo + Send + Sync>,
     pub blob_store: Arc<dyn BlobStore + Send + Sync>,
+    pub user_repo: Arc<dyn UserRepo + Send + Sync>,
     pub stats: Arc<IngestStats>,
     /// 单文件大小上限（`None` 表示不限制）。
     pub max_file_size_bytes: Option<u64>,
@@ -296,6 +297,32 @@ impl VfilesStorageBackend {
             .map_err(to_ftp_error)
     }
 
+    async fn ensure_user_current(&self, user: &VfilesFtpUser) -> Result<()> {
+        if user.anonymous {
+            return Ok(());
+        }
+
+        let current = self
+            .deps
+            .user_repo
+            .find_by_id(&user.id)
+            .await
+            .map_err(to_ftp_error)?;
+        if current.disabled
+            || current.username.as_str() != user.username
+            || current.role != user.role
+            || current.updated_at != user.account_updated_at
+            || current.password_changed_at != user.password_changed_at
+        {
+            return Err(Error::new(
+                ErrorKind::PermissionDenied,
+                "FTP 账户状态已变更，请重新登录",
+            ));
+        }
+
+        Ok(())
+    }
+
     async fn validate_upload_path(
         &self,
         namespace_id: &NamespaceId,
@@ -446,6 +473,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         user: &VfilesFtpUser,
         path: P,
     ) -> Result<Self::Metadata> {
+        self.ensure_user_current(user).await?;
         let path = to_normalized(path.as_ref())?;
 
         if path.as_str().is_empty() {
@@ -490,6 +518,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         user: &VfilesFtpUser,
         path: P,
     ) -> Result<Vec<Fileinfo<PathBuf, Self::Metadata>>> {
+        self.ensure_user_current(user).await?;
         let path = to_normalized(path.as_ref())?;
         let entries = self.list_all(&user.namespace_id, &path).await?;
         let mut items = Vec::with_capacity(entries.len());
@@ -509,6 +538,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         path: P,
         start_pos: u64,
     ) -> Result<Box<dyn AsyncRead + Send + Sync + Unpin>> {
+        self.ensure_user_current(user).await?;
         let path = to_normalized(path.as_ref())?;
         if path.as_str().is_empty() {
             return Err(Error::new(
@@ -551,6 +581,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         P: AsRef<Path> + Send + fmt::Debug,
         R: AsyncRead + Send + Sync + Unpin + 'static,
     {
+        self.ensure_user_current(user).await?;
         if start_pos > 0 {
             // 不声明上传续传能力：追加语义无法安全映射到「生成新版本」
             return Err(Error::new(
@@ -579,6 +610,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         user: &VfilesFtpUser,
         path: P,
     ) -> Result<()> {
+        self.ensure_user_current(user).await?;
         let path = to_normalized(path.as_ref())?;
         if path.as_str().is_empty() {
             return Err(Error::new(ErrorKind::PermissionDenied, "不能删除根目录"));
@@ -629,6 +661,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         user: &VfilesFtpUser,
         path: P,
     ) -> Result<()> {
+        self.ensure_user_current(user).await?;
         let path = to_normalized(path.as_ref())?;
         if path.as_str().is_empty() {
             return Err(Error::new(ErrorKind::PermissionDenied, "不能删除根目录"));
@@ -662,6 +695,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         user: &VfilesFtpUser,
         path: P,
     ) -> Result<()> {
+        self.ensure_user_current(user).await?;
         let path = to_normalized(path.as_ref())?;
         if path.as_str().is_empty() {
             return Err(Error::new(ErrorKind::PermissionDenied, "不能创建根目录"));
@@ -683,6 +717,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         from: P,
         to: P,
     ) -> Result<()> {
+        self.ensure_user_current(user).await?;
         let from = to_normalized(from.as_ref())?;
         let to = to_normalized(to.as_ref())?;
         if from.as_str().is_empty() || to.as_str().is_empty() {
@@ -710,6 +745,7 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         user: &VfilesFtpUser,
         path: P,
     ) -> Result<()> {
+        self.ensure_user_current(user).await?;
         let path = to_normalized(path.as_ref())?;
         if path.as_str().is_empty() {
             return Ok(());

@@ -2997,6 +2997,7 @@ fn build_ftp_runtime(
         },
         Arc::clone(&deps.stats),
     ));
+    let backend_user_repo = Arc::clone(&deps.user_repo);
     let user_detail_provider = Arc::new(VfilesUserDetailProvider::new(
         deps.user_repo,
         namespaces,
@@ -3008,6 +3009,7 @@ fn build_ftp_runtime(
         entry_repo: deps.entry_repo,
         snapshot_repo: deps.snapshot_repo,
         blob_store: deps.blob_store,
+        user_repo: backend_user_repo,
         stats: deps.stats,
         max_file_size_bytes: Some(config.limits.max_file_size_bytes),
         snapshot_mode,

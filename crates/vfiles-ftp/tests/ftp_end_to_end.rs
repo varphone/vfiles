@@ -117,6 +117,7 @@ impl Harness {
             policy,
             Arc::clone(&stats),
         ));
+        let backend_user_repo = Arc::new(user_repo.clone());
         let provider = Arc::new(VfilesUserDetailProvider::new(
             Arc::new(user_repo),
             namespaces,
@@ -128,6 +129,7 @@ impl Harness {
             entry_repo: Arc::new(entry_repo.clone()),
             snapshot_repo: Arc::new(snapshot_repo),
             blob_store: Arc::new(blob_store),
+            user_repo: backend_user_repo,
             stats,
             max_file_size_bytes: Some(1024 * 1024),
             snapshot_mode,

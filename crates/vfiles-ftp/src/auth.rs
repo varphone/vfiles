@@ -23,6 +23,9 @@ pub struct VfilesFtpUser {
     pub username: String,
     pub role: Role,
     pub namespace_id: NamespaceId,
+    pub account_updated_at: time::OffsetDateTime,
+    pub password_changed_at: Option<time::OffsetDateTime>,
+    pub anonymous: bool,
 }
 
 impl fmt::Display for VfilesFtpUser {
@@ -225,6 +228,9 @@ impl UserDetailProvider for VfilesUserDetailProvider {
                 username: principal.username.clone(),
                 role: Role::Admin,
                 namespace_id,
+                account_updated_at: time::OffsetDateTime::UNIX_EPOCH,
+                password_changed_at: None,
+                anonymous: true,
             });
         }
 
@@ -255,6 +261,9 @@ impl UserDetailProvider for VfilesUserDetailProvider {
             username: user.username.as_str().to_string(),
             role: user.role,
             namespace_id,
+            account_updated_at: user.updated_at,
+            password_changed_at: user.password_changed_at,
+            anonymous: false,
         })
     }
 }
