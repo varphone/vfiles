@@ -45,6 +45,10 @@ where
 {
     #[tracing_attributes::instrument]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
+        if args.session.lock().await.cmd_tls {
+            return Ok(Reply::new(ReplyCode::BadCommandSequence, "The control channel is already protected"));
+        }
+
         let tx = args.tx_control_chan.clone();
         let logger = args.logger;
         match (args.tls_configured, self.protocol.clone()) {

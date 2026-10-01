@@ -35,6 +35,9 @@ where
     #[tracing_attributes::instrument]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let session = args.session.lock().await;
+        let Some(task_permit) = session.try_control_command_permit() else {
+            return Ok(Reply::new(ReplyCode::LocalError, "Too many FTP commands are still in progress"));
+        };
         let user = session.user.clone();
         let storage: Arc<Storage> = Arc::clone(&session.storage);
         let path = session.cwd.join(self.path.clone());
@@ -43,6 +46,7 @@ where
         let logger = args.logger;
 
         tokio::spawn(async move {
+            let _task_permit = task_permit;
             match storage.metadata((*user).as_ref().unwrap(), &path).await {
                 Ok(metadata) => {
                     let file_len = metadata.len();

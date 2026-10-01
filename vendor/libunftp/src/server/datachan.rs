@@ -11,13 +11,18 @@ use crate::{
 };
 
 use crate::server::chancomms::DataChanCmd;
+use crate::server::controlchan::sanitize_control_text;
 use std::{path::PathBuf, sync::Arc};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{
+    mpsc::{Receiver, Sender},
+    oneshot,
+};
 use tokio_rustls::TlsAcceptor;
 
 use crate::metrics;
+use rustls::HandshakeKind;
 
 #[derive(Debug)]
 struct DataCommandExecutor<Storage, User>
@@ -38,9 +43,114 @@ where
 }
 
 use std::fmt;
+use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+const DATA_CHANNEL_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+const DATA_CHANNEL_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+const DATA_CHANNEL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+struct IdleTimeoutReader<R> {
+    inner: R,
+    deadline: Pin<Box<tokio::time::Sleep>>,
+}
+
+impl<R> IdleTimeoutReader<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            deadline: Box::pin(tokio::time::sleep(DATA_CHANNEL_IDLE_TIMEOUT)),
+        }
+    }
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for IdleTimeoutReader<R> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.as_mut().get_mut();
+        if this.deadline.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "FTP data-channel read timed out while idle",
+            )));
+        }
+        match Pin::new(&mut this.inner).poll_read(cx, buf) {
+            Poll::Ready(Ok(())) => {
+                if !buf.filled().is_empty() {
+                    this.deadline.as_mut().reset(tokio::time::Instant::now() + DATA_CHANNEL_IDLE_TIMEOUT);
+                }
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+struct IdleTimeoutWriter<W> {
+    inner: W,
+    deadline: Pin<Box<tokio::time::Sleep>>,
+}
+
+impl<W> IdleTimeoutWriter<W> {
+    fn new(inner: W) -> Self {
+        Self {
+            inner,
+            deadline: Box::pin(tokio::time::sleep(DATA_CHANNEL_IDLE_TIMEOUT)),
+        }
+    }
+}
+
+impl<W: AsyncWrite + Unpin> AsyncWrite for IdleTimeoutWriter<W> {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
+        let this = self.as_mut().get_mut();
+        if this.deadline.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "FTP data-channel write timed out while idle",
+            )));
+        }
+        match Pin::new(&mut this.inner).poll_write(cx, buf) {
+            Poll::Ready(Ok(bytes_written)) => {
+                if bytes_written > 0 {
+                    this.deadline.as_mut().reset(tokio::time::Instant::now() + DATA_CHANNEL_IDLE_TIMEOUT);
+                }
+                Poll::Ready(Ok(bytes_written))
+            }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.as_mut().get_mut();
+        if this.deadline.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "FTP data-channel flush timed out while idle",
+            )));
+        }
+        match Pin::new(&mut this.inner).poll_flush(cx) {
+            Poll::Ready(result) => Poll::Ready(result),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.as_mut().get_mut();
+        if this.deadline.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "FTP data-channel shutdown timed out while idle",
+            )));
+        }
+        match Pin::new(&mut this.inner).poll_shutdown(cx) {
+            Poll::Ready(result) => Poll::Ready(result),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
 
 struct MeasuringWriter<W> {
     writer: W,
@@ -108,8 +218,7 @@ where
     async fn execute(mut self, session_arc: SharedSession<Storage, User>) {
         let mut data_cmd_rx = self.data_cmd_rx.take().unwrap();
         let mut data_abort_rx = self.data_abort_rx.take().unwrap();
-        let mut timeout_delay = Box::pin(tokio::time::sleep(std::time::Duration::from_secs(5 * 60)));
-        // TODO: Use configured timeout
+        let mut timeout_delay = Box::pin(tokio::time::sleep(DATA_CHANNEL_COMMAND_TIMEOUT));
         tokio::select! {
             Some(command) = data_cmd_rx.recv() => {
                 let session = session_arc.lock().await;
@@ -134,7 +243,7 @@ where
             }
             DataChanMsg::ExternalCommand(command) => {
                 let p = command.path().unwrap_or_default();
-                slog::debug!(self.logger, "Data channel command received: {:?}", command; "path" => p);
+                slog::debug!(self.logger, "Data channel command received: {:?}", command; "path" => sanitize_control_text(&p));
                 self.execute_command(command, start_pos).await;
             }
         }
@@ -169,7 +278,14 @@ where
         let path_copy = path.clone();
         let path = self.cwd.join(path);
         let tx: Sender<ControlChanMsg> = self.control_msg_tx.clone();
-        let mut output = Self::writer(self.socket, self.ftps_mode, "retr").await;
+        let logger = self.logger.clone();
+        let mut output = match Self::writer(self.socket, self.ftps_mode, "retr").await {
+            Ok(output) => output,
+            Err(err) => {
+                Self::report_tls_handshake_failure(logger, tx, "RETR", err).await;
+                return;
+            }
+        };
 
         let start_time = Instant::now();
         let result = self.storage.get_into((*self.user).as_ref().unwrap(), path, start_pos, &mut output).await;
@@ -262,17 +378,17 @@ where
         let path_copy = path.clone();
         let path = self.cwd.join(path);
         let tx = self.control_msg_tx.clone();
+        let logger = self.logger.clone();
+        let input = match Self::reader(self.socket, self.ftps_mode, "stor").await {
+            Ok(input) => input,
+            Err(err) => {
+                Self::report_tls_handshake_failure(logger, tx, "STOR", err).await;
+                return;
+            }
+        };
 
         let start_time = Instant::now();
-        let put_result = self
-            .storage
-            .put(
-                (*self.user).as_ref().unwrap(),
-                Self::reader(self.socket, self.ftps_mode, "stor").await,
-                path,
-                start_pos,
-            )
-            .await;
+        let put_result = self.storage.put((*self.user).as_ref().unwrap(), input, path, start_pos).await;
         let duration = start_time.elapsed();
 
         match put_result {
@@ -323,16 +439,17 @@ where
             Err(_) => 0,
         };
 
+        let logger = self.logger.clone();
+        let input = match Self::reader(self.socket, self.ftps_mode, "appe").await {
+            Ok(input) => input,
+            Err(err) => {
+                Self::report_tls_handshake_failure(logger, tx, "APPE", err).await;
+                return;
+            }
+        };
+
         let start_time = Instant::now();
-        let put_result = self
-            .storage
-            .put(
-                (*self.user).as_ref().unwrap(),
-                Self::reader(self.socket, self.ftps_mode, "appe").await,
-                full_path,
-                start_pos,
-            )
-            .await;
+        let put_result = self.storage.put((*self.user).as_ref().unwrap(), input, full_path, start_pos).await;
         let duration = start_time.elapsed();
 
         match put_result {
@@ -369,7 +486,14 @@ where
     async fn exec_list_variant(self, path: Option<String>, command: ListCommand) {
         let path = self.resolve_path(path);
         let tx = self.control_msg_tx.clone();
-        let mut output = Self::writer(self.socket, self.ftps_mode.clone(), command.as_lower_str()).await;
+        let logger = self.logger.clone();
+        let mut output = match Self::writer(self.socket, self.ftps_mode.clone(), command.as_lower_str()).await {
+            Ok(output) => output,
+            Err(err) => {
+                Self::report_tls_handshake_failure(logger, tx, command.as_str(), err).await;
+                return;
+            }
+        };
 
         let start_time = Instant::now();
 
@@ -457,7 +581,14 @@ where
     async fn exec_mlsd(self, path: Option<String>) {
         let path = self.resolve_path(path);
         let tx = self.control_msg_tx.clone();
-        let mut output = Self::writer(self.socket, self.ftps_mode.clone(), "mlsd").await;
+        let logger = self.logger.clone();
+        let mut output = match Self::writer(self.socket, self.ftps_mode.clone(), "mlsd").await {
+            Ok(output) => output,
+            Err(err) => {
+                Self::report_tls_handshake_failure(logger, tx, "MLSD", err).await;
+                return;
+            }
+        };
 
         let start_time = Instant::now();
 
@@ -549,36 +680,64 @@ where
     }
 
     #[tracing_attributes::instrument]
-    async fn writer(socket: TcpStream, ftps_mode: FtpsConfig, command: &'static str) -> Box<dyn AsyncWrite + Send + Unpin + Sync> {
-        match ftps_mode {
-            FtpsConfig::Off => Box::new(MeasuringWriter::new(socket, command)) as Box<dyn AsyncWrite + Send + Unpin + Sync>,
-            FtpsConfig::Building { .. } => panic!("Illegal state"),
-            FtpsConfig::On { tls_config } => {
-                let io = async move {
-                    let acceptor: TlsAcceptor = tls_config.into();
-                    let tls_stream = acceptor.accept(socket).await.unwrap();
-                    MeasuringWriter::new(tls_stream, command)
-                }
-                .await;
-                Box::new(io) as Box<dyn AsyncWrite + Send + Unpin + Sync>
+    async fn writer(socket: TcpStream, ftps_mode: FtpsConfig, command: &'static str) -> std::io::Result<Box<dyn AsyncWrite + Send + Unpin + Sync>> {
+        let writer: Box<dyn AsyncWrite + Send + Unpin + Sync> = match ftps_mode {
+            FtpsConfig::Off => Box::new(MeasuringWriter::new(socket, command)),
+            FtpsConfig::Building { .. } => {
+                return Err(std::io::Error::other("Illegal FTPS data-channel state"));
             }
-        }
+            FtpsConfig::On { tls_config } => {
+                let acceptor: TlsAcceptor = tls_config.into();
+                let tls_stream = tokio::time::timeout(DATA_CHANNEL_TLS_HANDSHAKE_TIMEOUT, acceptor.accept(socket))
+                    .await
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "FTPS data-channel handshake timed out"))?
+                    .map_err(std::io::Error::other)?;
+                Self::require_control_session_resumption(&tls_stream)?;
+                Box::new(MeasuringWriter::new(tls_stream, command))
+            }
+        };
+        Ok(Box::new(IdleTimeoutWriter::new(writer)))
     }
 
     #[tracing_attributes::instrument]
-    async fn reader(socket: TcpStream, ftps_mode: FtpsConfig, command: &'static str) -> Box<dyn AsyncRead + Send + Unpin + Sync> {
-        match ftps_mode {
-            FtpsConfig::Off => Box::new(MeasuringReader::new(socket, command)) as Box<dyn AsyncRead + Send + Unpin + Sync>,
-            FtpsConfig::Building { .. } => panic!("Illegal state"),
-            FtpsConfig::On { tls_config } => {
-                let io = async move {
-                    let acceptor: TlsAcceptor = tls_config.into();
-                    let tls_stream = acceptor.accept(socket).await.unwrap();
-                    MeasuringReader::new(tls_stream, command)
-                }
-                .await;
-                Box::new(io) as Box<dyn AsyncRead + Send + Unpin + Sync>
+    async fn reader(socket: TcpStream, ftps_mode: FtpsConfig, command: &'static str) -> std::io::Result<Box<dyn AsyncRead + Send + Unpin + Sync>> {
+        let reader: Box<dyn AsyncRead + Send + Unpin + Sync> = match ftps_mode {
+            FtpsConfig::Off => Box::new(MeasuringReader::new(socket, command)),
+            FtpsConfig::Building { .. } => {
+                return Err(std::io::Error::other("Illegal FTPS data-channel state"));
             }
+            FtpsConfig::On { tls_config } => {
+                let acceptor: TlsAcceptor = tls_config.into();
+                let tls_stream = tokio::time::timeout(DATA_CHANNEL_TLS_HANDSHAKE_TIMEOUT, acceptor.accept(socket))
+                    .await
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "FTPS data-channel handshake timed out"))?
+                    .map_err(std::io::Error::other)?;
+                Self::require_control_session_resumption(&tls_stream)?;
+                Box::new(MeasuringReader::new(tls_stream, command))
+            }
+        };
+        Ok(Box::new(IdleTimeoutReader::new(reader)))
+    }
+
+    fn require_control_session_resumption(stream: &tokio_rustls::server::TlsStream<TcpStream>) -> std::io::Result<()> {
+        match stream.get_ref().1.handshake_kind() {
+            Some(HandshakeKind::Resumed) => Ok(()),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "FTPS data channel did not resume the control-channel TLS session",
+            )),
+        }
+    }
+
+    async fn report_tls_handshake_failure(logger: slog::Logger, tx: Sender<ControlChanMsg>, command: &'static str, err: std::io::Error) {
+        slog::warn!(logger, "{} data-channel TLS handshake failed: {}", command, err);
+        if let Err(send_error) = tx.send(ControlChanMsg::ConnectionReset).await {
+            slog::warn!(
+                logger,
+                "Could not notify control channel about the {} data-channel failure: {}",
+                command,
+                send_error
+            );
         }
     }
 
@@ -645,6 +804,11 @@ where
             }
         }
 
+        if session.data_busy {
+            slog::warn!(logger, "Closing additional data connection while this session is busy");
+            return;
+        }
+
         let username = session.username.as_ref().cloned().unwrap_or_else(|| String::from("unknown"));
         let logger = logger.new(slog::o!("username" => username));
         let control_msg_tx: Sender<ControlChanMsg> = match session.control_msg_tx {
@@ -688,10 +852,16 @@ where
         command_executor
     };
 
-    tokio::spawn(command_executor.execute(session_arc));
+    let (start_tx, start_rx) = oneshot::channel();
+    let task_session = session_arc.clone();
+    let task = tokio::spawn(async move {
+        if start_rx.await.is_ok() {
+            command_executor.execute(task_session).await;
+        }
+    });
+    session_arc.lock().await.data_task = Some(task);
+    let _ = start_tx.send(());
 }
-
-use std::time::Duration;
 
 struct HumanDuration(Duration);
 

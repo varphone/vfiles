@@ -45,6 +45,8 @@ use tokio::{
 };
 use tokio_util::codec::{Decoder, Framed};
 
+const MAX_AUTHENTICATION_DURATION: Duration = Duration::from_secs(60);
+
 trait AsyncReadAsyncWriteSendUnpin: AsyncRead + AsyncWrite + Send + Unpin {}
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> AsyncReadAsyncWriteSendUnpin for T {}
@@ -106,6 +108,10 @@ where
         binder,
         ..
     } = config;
+
+    let ftps_config = ftps_config
+        .for_control_session()
+        .map_err(|err| ControlChanError::from(std::io::Error::other(err)))?;
 
     let tls_configured = matches!(ftps_config, FtpsConfig::On { .. });
     let storage_features = storage.supported_features();
@@ -183,6 +189,10 @@ where
     reply_sink.send(Reply::new(ReplyCode::ServiceReady, config.greeting)).await?;
     reply_sink.flush().await?;
 
+    // The idle timeout alone can be kept alive indefinitely with unauthenticated NOOP commands.
+    // Keep one absolute deadline for login and the initial TLS handshake.
+    let authentication_deadline = tokio::time::Instant::now() + idle_session_timeout.min(MAX_AUTHENTICATION_DURATION);
+
     let jh = tokio::spawn(async move {
         // The control channel event loop
         slog::info!(logger, "Starting control loop");
@@ -190,7 +200,16 @@ where
             let incoming = {
                 #[allow(unused_assignments)]
                 let mut incoming = None;
-                let mut timeout_delay = Box::pin(tokio::time::sleep(idle_session_timeout));
+                let (state_at_timer_start, authentication_time_remaining) = {
+                    let session = shared_session.lock().await;
+                    (session.state, authentication_deadline.saturating_duration_since(tokio::time::Instant::now()))
+                };
+                let timeout_duration = if state_at_timer_start == SessionState::WaitCmd {
+                    idle_session_timeout
+                } else {
+                    authentication_time_remaining.min(idle_session_timeout)
+                };
+                let mut timeout_delay = Box::pin(tokio::time::sleep(timeout_duration));
                 tokio::select! {
                     cmd = command_source.next() => {
                         match cmd {
@@ -206,9 +225,12 @@ where
                     },
                     _ = &mut timeout_delay => {
                         let session = shared_session.lock().await;
-                        match session.data_busy {
-                            true => incoming = None,
-                            false => incoming = Some(Err(ControlChanError::new(ControlChanErrorKind::ControlChannelTimeout)))
+                        let authentication_completed = state_at_timer_start != SessionState::WaitCmd
+                            && session.state == SessionState::WaitCmd;
+                        if session.data_busy || authentication_completed {
+                            incoming = None;
+                        } else {
+                            incoming = Some(Err(ControlChanError::new(ControlChanErrorKind::ControlChannelTimeout)));
                         };
                     },
                     _ = shutdown.listen() => {
@@ -223,12 +245,7 @@ where
                 None => {} // Loop again
                 Some(Ok(Event::InternalMsg(ControlChanMsg::ExitControlLoop))) => {
                     let _ = event_chain.handle(Event::InternalMsg(ControlChanMsg::ExitControlLoop)).await;
-                    if let Some(tx) = switchboard_msg_tx
-                        && let Err(err) = tx.send(SwitchboardMessage::CloseDataPortCommand(shared_session.clone())).await
-                    {
-                        slog::warn!(logger, "Could not send CloseDataPortCommand to channel: {}", err);
-                        return;
-                    };
+                    cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), logger.clone()).await;
                     slog::debug!(logger, "Exiting control loop");
                     return;
                 }
@@ -245,9 +262,15 @@ where
                             FtpsConfig::On { tls_config } => tls_config.into(),
                             _ => panic!("Could not create TLS acceptor. Illegal program state"),
                         };
-                        let accepted = acceptor.accept(io).await;
+                        let session_state = shared_session.lock().await.state;
+                        let handshake_timeout = if session_state == SessionState::WaitCmd {
+                            idle_session_timeout
+                        } else {
+                            authentication_deadline.saturating_duration_since(tokio::time::Instant::now())
+                        };
+                        let accepted = tokio::time::timeout(handshake_timeout, acceptor.accept(io)).await;
                         let io: Box<dyn AsyncReadAsyncWriteSendUnpin> = match accepted {
-                            Ok(stream) => {
+                            Ok(Ok(stream)) => {
                                 let s: &ServerConnection = stream.get_ref().1;
                                 if let Some(certs) = s.peer_certificates() {
                                     let mut session = shared_session.lock().await;
@@ -255,8 +278,14 @@ where
                                 }
                                 Box::new(stream)
                             }
-                            Err(err) => {
+                            Ok(Err(err)) => {
                                 slog::warn!(logger, "Closing control channel. Could not upgrade to TLS: {}", err);
+                                cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), logger.clone()).await;
+                                return;
+                            }
+                            Err(_) => {
+                                slog::warn!(logger, "Closing control channel. TLS handshake timed out");
+                                cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), logger.clone()).await;
                                 return;
                             }
                         };
@@ -270,7 +299,8 @@ where
                     }
 
                     if let Event::Command(Command::User { username }) = &event {
-                        let s: String = String::from_utf8_lossy(username).into();
+                        let username = String::from_utf8_lossy(username);
+                        let s = super::sanitize_control_text(&username);
                         logger = logger.new(slog::o!("username" => s));
                     }
 
@@ -283,6 +313,7 @@ where
 
                     if let Err(chan_err) = handle_result {
                         slog::warn!(logger, "Event handler chain error: {:?}. Closing control connection", chan_err);
+                        cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), logger.clone()).await;
                         return;
                     }
                 }
@@ -291,9 +322,11 @@ where
                     let result = reply_sink.send(reply).await;
                     if result.is_err() {
                         slog::warn!(logger, "Could not send error reply to client");
+                        cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), logger.clone()).await;
                         return;
                     }
                     if close_connection {
+                        cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), logger.clone()).await;
                         return;
                     }
                 }
@@ -302,6 +335,29 @@ where
     });
 
     Ok(jh)
+}
+
+async fn cleanup_data_session<Storage, User>(
+    session: SharedSession<Storage, User>,
+    switchboard_msg_tx: Option<SwitchboardSender<Storage, User>>,
+    logger: slog::Logger,
+) where
+    User: UserDetail + 'static,
+    Storage: StorageBackend<User> + 'static,
+    Storage::Metadata: Metadata,
+{
+    if let Some(tx) = switchboard_msg_tx
+        && let Err(err) = tx.send(SwitchboardMessage::CloseDataPortCommand(session.clone())).await
+    {
+        slog::warn!(logger, "Could not send CloseDataPortCommand to channel: {}", err);
+    }
+    commands::passive_common::cancel_legacy_passive_listener(session.clone()).await;
+    let data_task = session.lock().await.data_task.take();
+    if let Some(data_task) = data_task
+        && let Err(err) = data_task.await
+    {
+        slog::warn!(logger, "Data channel task did not complete cleanly: {}", err);
+    }
 }
 
 // gets the reply to be sent to the client and tells if the connection should be closed.
@@ -359,7 +415,11 @@ where
                 Ok(Reply::new(ReplyCode::ClosingDataConnection, "Successfully sent"))
             }
             WriteFailed => Ok(Reply::new(ReplyCode::TransientFileError, "Failed to write file")),
-            ConnectionReset => Ok(Reply::new(ReplyCode::ConnectionClosed, "Datachannel unexpectedly closed")),
+            ConnectionReset => {
+                let mut session = self.session.lock().await;
+                session.start_pos = 0;
+                Ok(Reply::new(ReplyCode::ConnectionClosed, "Datachannel unexpectedly closed"))
+            }
             WrittenData { .. } => {
                 let mut session = self.session.lock().await;
                 session.start_pos = 0;

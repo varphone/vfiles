@@ -44,6 +44,30 @@ impl fmt::Debug for FtpsConfig {
     }
 }
 
+impl FtpsConfig {
+    /// Give each FTP control session its own TLS resumption state. A resumed data-channel
+    /// handshake can then only present a ticket or session ID created by that control channel.
+    pub(crate) fn for_control_session(&self) -> Result<Self, rustls::Error> {
+        let Self::On { tls_config } = self else {
+            return Ok(self.clone());
+        };
+
+        let mut session_config = (**tls_config).clone();
+        session_config.session_storage = if tls_config.session_storage.can_cache() {
+            TlsSessionCache::new(1024)
+        } else {
+            Arc::new(NoServerSessionStorage {})
+        };
+        if tls_config.ticketer.enabled() {
+            session_config.ticketer = Ticketer::new()?;
+        }
+
+        Ok(Self::On {
+            tls_config: Arc::new(session_config),
+        })
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Copy, Clone)]
 pub struct FtpsNotAvailable;

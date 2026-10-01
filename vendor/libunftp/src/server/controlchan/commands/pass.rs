@@ -47,9 +47,9 @@ where
 {
     #[tracing_attributes::instrument]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
-        let session = args.session.lock().await;
+        let mut session = args.session.lock().await;
         let logger = args.logger;
-        match &session.state {
+        match session.state {
             SessionState::WaitPass => {
                 let pass: &str = std::str::from_utf8(self.password.as_ref())?;
                 let pass: String = pass.to_string();
@@ -79,99 +79,114 @@ where
                 };
                 let failed_logins = session.failed_logins.clone();
                 let source_ip = session.source.ip();
+                let tx_closed = tx.clone();
+                // Do not spawn another authentication task for this session while this attempt is
+                // waiting on database or password-hash work.
+                session.state = SessionState::Authenticating;
+                drop(session);
                 tokio::spawn(async move {
-                    let msg = match auth_pipeline.authenticate_and_get_user(&username, &creds).await {
-                        Ok(user) => {
-                            let is_locked = match failed_logins {
-                                Some(failed_logins) => {
-                                    let result = failed_logins.success(source_ip, username.clone()).await;
-                                    if let Some(state) = result {
-                                        slog::warn!(
-                                            logger,
-                                            "PASS: User authenticated but currently locked out due to previous failed login attempts according to the policy! (Username={}. Note: the account automatically unlocks after the configured period if no further failed login attempts occur. state={:?})",
-                                            username,
-                                            state
-                                        );
-                                        true
-                                    } else {
-                                        false
-                                    }
+                    let authentication = async move {
+                        let msg = match auth_pipeline.authenticate_and_get_user(&username, &creds).await {
+                            Ok(user) => {
+                                if tx.is_closed() {
+                                    return;
                                 }
-                                None => false,
-                            };
-
-                            if is_locked {
-                                sleep(Duration::from_millis(1500)).await;
-                                ControlChanMsg::AuthFailed
-                            } else if user.account_enabled() {
-                                let mut session = session2clone.lock().await;
-                                // Using Arc::get_mut means that this won't work if the Session is
-                                // currently servicing multiple commands concurrently.  But it
-                                // shouldn't ever be servicing PASS at the same time as another
-                                // command.
-                                match Arc::get_mut(&mut session.storage).map(|s| s.enter(&user)) {
-                                    Some(Err(e)) => {
-                                        slog::error!(logger, "{}", e);
-                                        ControlChanMsg::AuthFailed
-                                    }
-                                    None => {
-                                        slog::error!(logger, "Failed to lock Session::storage during PASS.");
-                                        ControlChanMsg::AuthFailed
-                                    }
-                                    Some(Ok(())) => {
-                                        slog::info!(logger, "PASS: User {} logged in", user);
-                                        session.user = Arc::new(Some(user));
-                                        ControlChanMsg::AuthSuccess {
-                                            username,
-                                            trace_id: session.trace_id,
-                                        }
-                                    }
-                                }
-                            } else {
-                                slog::warn!(logger, "PASS: User {} authenticated but account is disabled", user);
-                                ControlChanMsg::AuthFailed
-                            }
-                        }
-                        Err(unftp_core::auth::AuthenticationError::BadUser) => {
-                            slog::warn!(logger, "PASS: Login attempt for unknown user {}", username);
-                            ControlChanMsg::AuthFailed
-                        }
-                        Err(err) => {
-                            slog::warn!(logger, "PASS: Failed login attempt for user {}, reason={}", username, err);
-                            if let Some(failed_logins) = failed_logins {
-                                let result = failed_logins.failed(source_ip, username.clone()).await;
-                                if let Some(state) = result {
-                                    match state {
-                                        LockState::MaxFailuresReached => {
+                                let is_locked = match failed_logins {
+                                    Some(failed_logins) => {
+                                        let result = failed_logins.success(source_ip, username.clone()).await;
+                                        if let Some(state) = result {
                                             slog::warn!(
                                                 logger,
-                                                "PASS: Maximum number bad login attempts reached according to the policy so the locking policy is now active (Username={}, IP={}, LockState={:?})",
+                                                "PASS: User authenticated but currently locked out due to previous failed login attempts according to the policy! (Username={}. Note: the account automatically unlocks after the configured period if no further failed login attempts occur. state={:?})",
                                                 username,
-                                                source_ip,
                                                 state
                                             );
+                                            true
+                                        } else {
+                                            false
                                         }
-                                        LockState::AlreadyLocked => {
-                                            slog::info!(
-                                                logger,
-                                                "PASS: Another bad login attempt but the locking policy is already active (Username={}, IP={}, LockState={:?})",
+                                    }
+                                    None => false,
+                                };
+
+                                if tx.is_closed() {
+                                    return;
+                                }
+                                if is_locked {
+                                    sleep(Duration::from_millis(1500)).await;
+                                    ControlChanMsg::AuthFailed
+                                } else if user.account_enabled() {
+                                    let mut session = session2clone.lock().await;
+                                    // Using Arc::get_mut means that this won't work if the Session is
+                                    // currently servicing multiple commands concurrently.  But it
+                                    // shouldn't ever be servicing PASS at the same time as another
+                                    // command.
+                                    match Arc::get_mut(&mut session.storage).map(|s| s.enter(&user)) {
+                                        Some(Err(e)) => {
+                                            slog::error!(logger, "{}", e);
+                                            ControlChanMsg::AuthFailed
+                                        }
+                                        None => {
+                                            slog::error!(logger, "Failed to lock Session::storage during PASS.");
+                                            ControlChanMsg::AuthFailed
+                                        }
+                                        Some(Ok(())) => {
+                                            slog::info!(logger, "PASS: User {} logged in", user);
+                                            session.user = Arc::new(Some(user));
+                                            ControlChanMsg::AuthSuccess {
                                                 username,
-                                                source_ip,
-                                                state
-                                            );
+                                                trace_id: session.trace_id,
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    slog::warn!(logger, "PASS: User {} authenticated but account is disabled", user);
+                                    ControlChanMsg::AuthFailed
+                                }
+                            }
+                            Err(unftp_core::auth::AuthenticationError::BadUser) => {
+                                slog::warn!(logger, "PASS: Login attempt for unknown user {}", username);
+                                ControlChanMsg::AuthFailed
+                            }
+                            Err(err) => {
+                                slog::warn!(logger, "PASS: Failed login attempt for user {}, reason={}", username, err);
+                                if let Some(failed_logins) = failed_logins {
+                                    let result = failed_logins.failed(source_ip, username.clone()).await;
+                                    if let Some(state) = result {
+                                        match state {
+                                            LockState::MaxFailuresReached => {
+                                                slog::warn!(
+                                                    logger,
+                                                    "PASS: Maximum number bad login attempts reached according to the policy so the locking policy is now active (Username={}, IP={}, LockState={:?})",
+                                                    username,
+                                                    source_ip,
+                                                    state
+                                                );
+                                            }
+                                            LockState::AlreadyLocked => {
+                                                slog::info!(
+                                                    logger,
+                                                    "PASS: Another bad login attempt but the locking policy is already active (Username={}, IP={}, LockState={:?})",
+                                                    username,
+                                                    source_ip,
+                                                    state
+                                                );
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            ControlChanMsg::AuthFailed
-                        }
-                    };
-                    tokio::spawn(async move {
+                                ControlChanMsg::AuthFailed
+                            }
+                        };
                         if let Err(err) = tx.send(msg).await {
                             slog::warn!(logger, "PASS: Could not send internal message: {}", err);
                         }
-                    });
+                    };
+                    tokio::select! {
+                        _ = tx_closed.closed() => {},
+                        _ = authentication => {},
+                    }
                 });
                 Ok(Reply::none())
             }

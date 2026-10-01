@@ -77,7 +77,8 @@ RUST_LOG=info
 - `VFILES_FTP_*` 一组变量控制批量导入：认证开启时 FTP 默认启用。未配置证书/私钥时，服务端会
   在 `${VFILES_STORAGE_ROOT:-data}/ftp-tls/` 下生成并复用自签名证书与私钥；也可配置受信任的
   证书/私钥。FTPS 强制加密控制通道和数据通道，`VFILES_FTP_TLS_REQUIRED` 默认 `true`，启用 FTP
-  时不能关闭。认证关闭时 FTP 自动停用；显式写 `VFILES_FTP_ENABLED=true` 会报配置错误。
+  时不能关闭。数据通道还要求 TLS 会话恢复到同一控制连接；FTP 客户端需要支持 FTPS TLS session reuse。
+  认证关闭时 FTP 自动停用；显式写 `VFILES_FTP_ENABLED=true` 会报配置错误。
   不需要该功能时可设置 `VFILES_FTP_ENABLED=false`。其余参数见下文「FTP 批量导入」。
 
 ## 构建与启动
@@ -284,7 +285,12 @@ VFILES_FTP_TLS_REQUIRED=true
   客户端务必使用被动模式；服务端只接受被动模式。
 - **连接上限**：`VFILES_FTP_MAX_CONNECTIONS` 会限制控制连接总数，尚未认证的连接也计入上限；
   达到上限时新连接会立即关闭，防止连接洪泛占用会话资源。空闲会话由
-  `VFILES_FTP_IDLE_TIMEOUT_SECONDS` 超时回收。
+  `VFILES_FTP_IDLE_TIMEOUT_SECONDS` 超时回收。未认证会话最多存活 60 秒；若空闲超时更短，则按较短时间关闭。
+  NOOP 不会延长该期限，初始 AUTH TLS 握手也计入期限。每个会话同时只允许一个活动数据连接；控制连接结束时，连接名额会保留到对应的数据任务和被动监听结束。
+- **目录列表上限**：单次 `LIST`/`NLST` 最多返回 20,000 个条目，按结构体和字符串长度估算的元数据最多 8 MiB；
+  超限会中止本次列表，避免大型目录耗尽会话内存。
+- **路径长度上限**：FTP 路径最多 4 KiB（按 UTF-8 字节计）。服务拒绝超限的路径操作，并将会话当前目录限制在此长度内。
+- **数据连接超时**：数据 socket 接通后，客户端需在 60 秒内开始传输；传输读写连续空闲 60 秒也会中断，持续传输会按实际数据进度续期；FTPS 数据通道握手最多等待 15 秒。超时连接会关闭并报告传输失败。
 - **快照策略**：
   - `batch`（默认）：一个会话内每 `VFILES_FTP_SNAPSHOT_FLUSH_FILES` 个文件提交一次快照，
     会话结束时再提交剩余部分。历史里会出现「FTP 导入（N 个文件）」条目。

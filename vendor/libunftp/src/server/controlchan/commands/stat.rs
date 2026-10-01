@@ -79,6 +79,9 @@ where
                 let path = path.to_owned();
 
                 let session = args.session.lock().await;
+                let Some(task_permit) = session.try_control_command_permit() else {
+                    return Ok(Reply::new(ReplyCode::LocalError, "Too many FTP commands are still in progress"));
+                };
                 let user = session.user.clone();
                 let storage = Arc::clone(&session.storage);
 
@@ -87,6 +90,7 @@ where
                 let logger = args.logger;
 
                 tokio::spawn(async move {
+                    let _task_permit = task_permit;
                     match storage.list_vec((*user).as_ref().unwrap(), path).await {
                         Ok(lines) => {
                             slog::info!(logger, "STAT: Successfully listed file or directory {:?}", path_str);

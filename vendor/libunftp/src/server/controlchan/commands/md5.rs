@@ -63,7 +63,12 @@ where
             return Ok(Reply::new(ReplyCode::CommandNotImplemented, "Not supported by the selected storage back-end."));
         }
 
+        let Some(task_permit) = session.try_control_command_permit() else {
+            return Ok(Reply::new(ReplyCode::LocalError, "Too many FTP commands are still in progress"));
+        };
+
         tokio::spawn(async move {
+            let _task_permit = task_permit;
             match storage.md5((*user).as_ref().unwrap(), &path).await {
                 Ok(md5) => {
                     if let Err(err) = tx_success

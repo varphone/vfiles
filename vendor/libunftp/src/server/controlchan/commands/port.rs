@@ -16,6 +16,7 @@
 // where h1 is the high order 8 bits of the internet host
 // address.
 
+use super::passive_common::cancel_legacy_passive_listener;
 use crate::{
     auth::UserDetail,
     server::{
@@ -56,6 +57,7 @@ impl Port {
         S: StorageBackend<U> + 'static,
         S::Metadata: Metadata,
     {
+        cancel_legacy_passive_listener(session.clone()).await;
         let (cmd_tx, cmd_rx): (Sender<DataChanCmd>, Receiver<DataChanCmd>) = channel(1);
         let (data_abort_tx, data_abort_rx): (Sender<()>, Receiver<()>) = channel(1);
 

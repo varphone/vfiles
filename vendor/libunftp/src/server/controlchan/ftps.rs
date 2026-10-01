@@ -110,7 +110,10 @@ where
         match (self.ftps_requirement, event) {
             (FtpsRequired::None, event) => self.next.handle(event).await,
             (FtpsRequired::All, event) => match event {
-                Event::Command(Command::Pasv) => {
+                Event::Command(Command::Prot {
+                    param: crate::server::controlchan::commands::ProtParam::Clear,
+                }) => Ok(Reply::new(ReplyCode::FtpsRequired, "TLS is required on the data channel")),
+                event @ Event::Command(Command::Pasv | Command::Epsv | Command::Port { .. }) => {
                     let is_tls = async {
                         let session = self.session.lock().await;
                         session.data_tls
@@ -124,10 +127,28 @@ where
                 _ => self.next.handle(event).await,
             },
             (FtpsRequired::Accounts, event) => match event {
-                Event::Command(Command::Pasv) => {
+                event @ Event::Command(Command::Prot {
+                    param: crate::server::controlchan::commands::ProtParam::Clear,
+                }) => {
+                    let username = async {
+                        let session = self.session.lock().await;
+                        session.username.clone()
+                    }
+                    .await;
+                    let account_requires_tls = match username {
+                        Some(username) => !is_anonymous_user(username)?,
+                        None => false,
+                    };
+                    if account_requires_tls {
+                        Ok(Reply::new(ReplyCode::FtpsRequired, "A TLS connection is required on the data channel"))
+                    } else {
+                        self.next.handle(event).await
+                    }
+                }
+                event @ Event::Command(Command::Pasv | Command::Epsv | Command::Port { .. }) => {
                     let (is_tls, username_opt) = async {
                         let session = self.session.lock().await;
-                        (session.cmd_tls, session.username.clone())
+                        (session.data_tls, session.username.clone())
                     }
                     .await;
 

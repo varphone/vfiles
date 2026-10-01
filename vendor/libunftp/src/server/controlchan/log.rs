@@ -23,7 +23,8 @@ where
     async fn handle(&mut self, event: Event) -> Result<Reply, ControlChanError> {
         self.sequence_nr += 1;
         if let Event::Command(Command::User { username }) = &event {
-            let s: String = String::from_utf8_lossy(username).into();
+            let username = String::from_utf8_lossy(username);
+            let s = super::sanitize_control_text(&username);
             self.logger = self.logger.new(slog::o!("username" => s));
         }
         slog::debug!(self.logger, "Control channel event {:?}", event; "seq" => self.sequence_nr);

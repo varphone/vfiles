@@ -13,7 +13,11 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{
+    Semaphore,
+    mpsc::{Receiver, Sender},
+    oneshot,
+};
 use unftp_core::auth::UserDetail;
 use unftp_core::storage::{Metadata, StorageBackend};
 
@@ -47,6 +51,7 @@ impl std::fmt::Debug for TraceId {
 pub enum SessionState {
     New,
     WaitPass,
+    Authenticating,
     WaitCmd,
 }
 
@@ -114,7 +119,18 @@ where
     pub failed_logins: Option<Arc<FailedLoginsCache>>,
     // An optional functor that can bind a socket
     pub binder: Option<Box<dyn crate::options::Binder>>,
+    // Cancels the current legacy passive listener when another data connection is requested.
+    pub(crate) legacy_passive_cancel: Option<oneshot::Sender<()>>,
+    // Completes after the current legacy passive listener has stopped accepting and any accepted
+    // connection has entered its data worker.
+    pub(crate) legacy_passive_done: Option<oneshot::Receiver<()>>,
+    // Keep the control session's connection permit alive until its data worker has ended.
+    pub(crate) data_task: Option<tokio::task::JoinHandle<()>>,
+    // Bound detached control-command work such as SIZE, MDTM, DELE and MKD.
+    control_command_tasks: Arc<Semaphore>,
 }
+
+const MAX_CONTROL_COMMAND_TASKS: usize = 4;
 
 impl<Storage, User> Session<Storage, User>
 where
@@ -148,7 +164,15 @@ where
             cert_chain: None,
             failed_logins: None,
             binder: None,
+            legacy_passive_cancel: None,
+            legacy_passive_done: None,
+            data_task: None,
+            control_command_tasks: Arc::new(Semaphore::new(MAX_CONTROL_COMMAND_TASKS)),
         }
+    }
+
+    pub(crate) fn try_control_command_permit(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.control_command_tasks.clone().try_acquire_owned().ok()
     }
 
     pub fn ftps(mut self, mode: FtpsConfig) -> Self {

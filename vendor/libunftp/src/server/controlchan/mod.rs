@@ -25,3 +25,13 @@ pub(crate) use error::{ControlChanError, ControlChanErrorKind};
 pub(crate) use event::Event;
 pub(crate) use middleware::ControlChanMiddleware;
 pub(crate) use reply::{Reply, ReplyCode};
+
+pub(crate) fn sanitize_control_text(text: &str) -> String {
+    text.chars()
+        .map(|ch| match ch {
+            '\u{2028}' | '\u{2029}' => ' ',
+            _ if ch.is_control() => ' ',
+            _ => ch,
+        })
+        .collect()
+}

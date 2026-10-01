@@ -79,6 +79,27 @@ where
     session.control_msg_tx = Some(control_loop_tx);
 }
 
+// Stop the previous legacy passive listener and wait until it has dropped its socket. This keeps
+// repeated PASV/EPSV commands from holding every port in a configured passive range.
+pub(crate) async fn cancel_legacy_passive_listener<S, U>(session: SharedSession<S, U>)
+where
+    U: UserDetail + 'static,
+    S: StorageBackend<U> + 'static,
+    S::Metadata: Metadata,
+{
+    let (cancel_tx, done_rx) = {
+        let mut session = session.lock().await;
+        (session.legacy_passive_cancel.take(), session.legacy_passive_done.take())
+    };
+
+    if let Some(cancel_tx) = cancel_tx {
+        let _ = cancel_tx.send(());
+    }
+    if let Some(done_rx) = done_rx {
+        let _ = done_rx.await;
+    }
+}
+
 // For legacy mode we choose a data port here and start listening on it while letting the control
 // channel know (via method return) what the address is that the client should connect to.
 #[tracing_attributes::instrument]
@@ -89,6 +110,12 @@ where
     S::Metadata: Metadata,
     T: LegacyReplyProducer<S, U>,
 {
+    cancel_legacy_passive_listener(args.session.clone()).await;
+
+    if args.session.lock().await.data_busy {
+        return Ok(Reply::new(ReplyCode::CantOpenDataConnection, "A data transfer is already in progress"));
+    }
+
     let listener = match args.session.lock().await.binder {
         Some(ref mut binder) => binder.bind(args.local_addr.ip(), args.passive_ports.clone()).await,
         _ => try_port_range(args.local_addr, args.passive_ports.clone()),
@@ -104,16 +131,34 @@ where
     let reply = cmd.build_reply(&args, port).await?;
     if reply.is_positive() {
         setup_inter_loop_comms(args.session.clone(), args.tx_control_chan.clone()).await;
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        {
+            let mut session = args.session.lock().await;
+            session.legacy_passive_cancel = Some(cancel_tx);
+            session.legacy_passive_done = Some(done_rx);
+        }
         // Open the data connection in a new task and process it.
         // We cannot await this since we first need to let the client know where to connect :-)
         tokio::spawn(async move {
             // Timeout if the client doesn't connect to the socket in a while, to avoid leaving the socket hanging open permanently.
-            let r = tokio::time::timeout(Duration::from_secs(15), listener.accept()).await;
-            match r {
+            // A later PASV/EPSV (or PORT) can cancel this listener sooner.
+            let accept_result = tokio::select! {
+                _ = cancel_rx => {
+                    drop(listener);
+                    return;
+                }
+                result = tokio::time::timeout(Duration::from_secs(15), listener.accept()) => result,
+            };
+
+            // Do not keep the passive listening port occupied during the data transfer itself.
+            drop(listener);
+            match accept_result {
                 Ok(Ok((socket, _socket_addr))) => datachan::spawn_processing(args.logger, args.session, socket).await,
                 Ok(Err(e)) => slog::error!(args.logger, "Error waiting for data connection: {}", e),
                 Err(_) => slog::warn!(args.logger, "Client did not connect to data port in time"),
             }
+            drop(done_tx);
         });
     }
 

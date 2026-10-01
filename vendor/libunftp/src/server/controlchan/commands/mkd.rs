@@ -10,7 +10,7 @@ use crate::{
     server::{
         chancomms::ControlChanMsg,
         controlchan::{
-            Reply,
+            Reply, ReplyCode,
             error::ControlChanError,
             handler::{CommandContext, CommandHandler},
         },
@@ -42,6 +42,9 @@ where
     #[tracing_attributes::instrument]
     async fn handle(&self, args: CommandContext<Storage, User>) -> Result<Reply, ControlChanError> {
         let session = args.session.lock().await;
+        let Some(task_permit) = session.try_control_command_permit() else {
+            return Ok(Reply::new(ReplyCode::LocalError, "Too many FTP commands are still in progress"));
+        };
         let user = session.user.clone();
         let storage = Arc::clone(&session.storage);
         let path: PathBuf = session.cwd.join(self.path.clone());
@@ -49,6 +52,7 @@ where
         let tx: Sender<ControlChanMsg> = args.tx_control_chan.clone();
         let logger = args.logger;
         tokio::spawn(async move {
+            let _task_permit = task_permit;
             match storage.mkd((*user).as_ref().unwrap(), &path).await {
                 Err(err) => {
                     slog::warn!(logger, "MKD: Failure creating directory {:?} {}", path_str, err);

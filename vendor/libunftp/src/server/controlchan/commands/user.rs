@@ -34,6 +34,9 @@ where
     async fn handle(&self, args: CommandContext<Storage, Usr>) -> Result<Reply, ControlChanError> {
         let mut session = args.session.lock().await;
         let username_str = std::str::from_utf8(&self.username)?;
+        if username_str.chars().any(char::is_control) {
+            return Ok(Reply::new(ReplyCode::NotLoggedIn, "Invalid credentials"));
+        }
         let cert_auth_sufficient = args.auth_pipeline.cert_auth_sufficient(username_str).await;
         match (session.state, &session.cert_chain, cert_auth_sufficient) {
             (SessionState::New, Some(_), true) => {
