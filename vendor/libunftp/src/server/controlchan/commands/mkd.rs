@@ -54,7 +54,10 @@ where
         let logger = args.logger;
         tokio::spawn(async move {
             let _task_permit = task_permit;
-            match storage.mkd((*user).as_ref().unwrap(), &path).await {
+            let Some(result) = super::while_control_channel_open(&tx, storage.mkd((*user).as_ref().unwrap(), &path)).await else {
+                return;
+            };
+            match result {
                 Err(err) => {
                     slog::warn!(logger, "MKD: Failure creating directory {:?} {}", log_path, err);
                     if let Err(err) = tx.send(ControlChanMsg::StorageError(err)).await {

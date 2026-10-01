@@ -70,7 +70,10 @@ where
 
         tokio::spawn(async move {
             let _task_permit = task_permit;
-            match storage.md5((*user).as_ref().unwrap(), &path).await {
+            let Some(result) = super::while_control_channel_open(&tx_success, storage.md5((*user).as_ref().unwrap(), &path)).await else {
+                return;
+            };
+            match result {
                 Ok(md5) => {
                     if let Err(err) = tx_success
                         .send(ControlChanMsg::CommandChannelReply(Reply::new_with_string(

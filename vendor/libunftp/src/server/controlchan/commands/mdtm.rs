@@ -51,7 +51,10 @@ where
 
         tokio::spawn(async move {
             let _task_permit = task_permit;
-            match storage.metadata((*user).as_ref().unwrap(), &path).await {
+            let Some(result) = super::while_control_channel_open(&tx_success, storage.metadata((*user).as_ref().unwrap(), &path)).await else {
+                return;
+            };
+            match result {
                 Ok(metadata) => {
                     let modification_time = match metadata.modified() {
                         Ok(v) => Some(v),

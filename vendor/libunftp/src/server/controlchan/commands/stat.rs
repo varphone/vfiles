@@ -91,7 +91,10 @@ where
 
                 tokio::spawn(async move {
                     let _task_permit = task_permit;
-                    match storage.list_vec((*user).as_ref().unwrap(), path).await {
+                    let Some(result) = super::while_control_channel_open(&tx_success, storage.list_vec((*user).as_ref().unwrap(), path)).await else {
+                        return;
+                    };
+                    match result {
                         Ok(lines) => {
                             slog::info!(logger, "STAT: Successfully listed file or directory {:?}", path_str);
                             if let Err(err) = tx_success

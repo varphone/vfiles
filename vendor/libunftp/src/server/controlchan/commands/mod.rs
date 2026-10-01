@@ -4,6 +4,11 @@
 //! - [RFC 3659 - Extensions to FTP](https://tools.ietf.org/html/rfc3659)
 //! - [RFC 2228 - FTP Security Extensions](https://tools.ietf.org/html/rfc2228)
 
+use std::future::Future;
+
+use crate::server::chancomms::ControlChanMsg;
+use tokio::sync::mpsc::Sender;
+
 mod abor;
 mod acct;
 mod allo;
@@ -91,3 +96,14 @@ pub use stru::{Stru, StruParam};
 pub use syst::Syst;
 pub use type_::Type;
 pub use user::User;
+
+/// Run detached control-command work only while its control session is still open.
+pub(crate) async fn while_control_channel_open<F>(tx: &Sender<ControlChanMsg>, future: F) -> Option<F::Output>
+where
+    F: Future + Send,
+{
+    tokio::select! {
+        result = future => Some(result),
+        _ = tx.closed() => None,
+    }
+}

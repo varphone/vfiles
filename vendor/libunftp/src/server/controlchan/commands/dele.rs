@@ -55,7 +55,10 @@ where
         let logger = args.logger;
         tokio::spawn(async move {
             let _task_permit = task_permit;
-            match storage.del((*user).as_ref().unwrap(), path).await {
+            let Some(result) = super::while_control_channel_open(&tx_success, storage.del((*user).as_ref().unwrap(), path)).await else {
+                return;
+            };
+            match result {
                 Ok(_) => {
                     slog::info!(logger, "DELE: Successfully removed file {:?}", log_path);
                     if let Err(err) = tx_success.send(ControlChanMsg::DelFileSuccess { path: path_str }).await {
