@@ -1091,7 +1091,7 @@ pub struct AuthService {
     session_ttl_seconds: u64,
     password_work_gate: PasswordWorkGate,
     /// 热验缓存以 SHA-256 凭据摘要为键，只缓存成功认证；每次命中仍从数据库
-    /// 读取当前账号状态和密码哈希，避免账号变更后继续接受旧凭据。
+    /// 读取当前账号状态和密码哈希，避免账号变更后继续接受旧凭据，并限制条目数。
     verified_cache: VerifiedCredentialCache,
     /// 会话活动时间只用于展示，限制鉴权热路径上的 SQLite 写入频率。
     session_last_seen_refreshes: Arc<SessionLastSeenRefreshCache>,
@@ -1102,6 +1102,7 @@ type VerifiedCredentialCache = std::sync::Arc<
 >;
 
 const MAX_CONCURRENT_PASSWORD_JOBS: usize = 4;
+const MAX_VERIFIED_CREDENTIAL_CACHE_ENTRIES: usize = 50_000;
 const SESSION_LAST_SEEN_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 const MAX_TRACKED_SESSION_LAST_SEEN_REFRESHES: usize = 50_000;
 
@@ -1410,6 +1411,12 @@ impl AuthService {
         {
             let mut cache = self.verified_cache.lock().expect("auth cache poisoned");
             cache.retain(|_, (_, at)| at.elapsed().as_secs() < 30);
+            if cache.len() >= MAX_VERIFIED_CREDENTIAL_CACHE_ENTRIES
+                && !cache.contains_key(&key)
+                && let Some(victim) = cache.keys().next().copied()
+            {
+                cache.remove(&victim);
+            }
             cache.insert(key, (user.clone(), std::time::Instant::now()));
         }
 
