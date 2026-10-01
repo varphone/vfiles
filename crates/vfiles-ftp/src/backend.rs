@@ -454,17 +454,15 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
     ) -> Result<Vec<Fileinfo<PathBuf, Self::Metadata>>> {
         let path = to_normalized(path.as_ref())?;
         let entries = self.list_all(&user.namespace_id, &path).await?;
-
-        Ok(entries
-            .iter()
-            .map(|entry| {
-                let entry_path = NormalizedPath::new(&entry.path).unwrap_or_else(|_| path.clone());
-                Fileinfo {
-                    path: PathBuf::from(to_client_path(&entry_path)),
-                    metadata: Self::entry_metadata(entry),
-                }
-            })
-            .collect())
+        let mut items = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let entry_path = to_normalized(Path::new(&entry.path))?;
+            items.push(Fileinfo {
+                path: PathBuf::from(to_client_path(&entry_path)),
+                metadata: Self::entry_metadata(&entry),
+            });
+        }
+        Ok(items)
     }
 
     async fn get<P: AsRef<Path> + Send + fmt::Debug>(

@@ -38,6 +38,12 @@ pub fn to_normalized(path: &Path) -> Result<NormalizedPath, Error> {
                         "路径不允许包含反斜杠",
                     ));
                 }
+                if part.chars().any(char::is_control) {
+                    return Err(Error::new(
+                        ErrorKind::PermissionDenied,
+                        "路径不允许包含控制字符",
+                    ));
+                }
                 segments.push(part);
             }
         }
