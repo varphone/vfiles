@@ -405,10 +405,10 @@ impl VfilesStorageBackend {
         let locks = self
             .deps
             .lock_repo
-            .find_active_covering_all(namespace_id, path.as_str(), Self::lock_now_ms())
+            .find_active_covering(namespace_id, path.as_str(), Self::lock_now_ms())
             .await
             .map_err(to_ftp_error)?;
-        if !locks.is_empty() {
+        if locks.is_some() {
             return Err(Error::new(
                 ErrorKind::PermissionDenied,
                 "资源受 WebDAV 写锁保护",
@@ -859,40 +859,44 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
             .into_iter()
             .map(|entry| (entry.path_norm.as_str().to_string(), entry))
             .collect::<HashMap<_, _>>();
-        let path_strings = paths
+        let mutation_paths = paths
+            .iter()
+            .filter(|path_component| {
+                **path_component == path || !entries_by_path.contains_key(path_component.as_str())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let path_strings = mutation_paths
             .iter()
             .map(|path| path.as_str().to_string())
             .collect::<Vec<_>>();
-        let active_locks = self
+        let locked_paths = self
             .deps
             .lock_repo
-            .find_active_covering_many_all(&user.namespace_id, &path_strings, Self::lock_now_ms())
+            .find_paths_with_active_covering_locks(
+                &user.namespace_id,
+                &path_strings,
+                Self::lock_now_ms(),
+            )
             .await
             .map_err(to_ftp_error)?;
-        let mut conditions = Vec::with_capacity(paths.len());
-        for path_component in paths {
+        if !locked_paths.is_empty() {
+            return Err(Error::new(
+                ErrorKind::PermissionDenied,
+                "上传目标或新建父目录受 WebDAV 写锁保护",
+            ));
+        }
+
+        let mut conditions = Vec::with_capacity(mutation_paths.len());
+        for path_component in mutation_paths {
             let observed_entry = entries_by_path.get(path_component.as_str());
-            let locks = active_locks
-                .get(path_component.as_str())
-                .cloned()
-                .unwrap_or_default();
-            if (path_component == path || observed_entry.is_none()) && !locks.is_empty() {
-                return Err(Error::new(
-                    ErrorKind::PermissionDenied,
-                    "上传目标或新建父目录受 WebDAV 写锁保护",
-                ));
-            }
-            let expected_lock_tokens = locks
-                .into_iter()
-                .map(|(_, lock)| lock.token)
-                .collect::<Vec<_>>();
             conditions.push(EntryWriteCondition {
                 namespace_id: user.namespace_id,
                 path: path_component.clone(),
                 check_entry_state: true,
                 expected_entry_id: observed_entry.map(|entry| entry.id),
                 expected_version_id: observed_entry.and_then(|entry| entry.current_version_id),
-                expected_lock_tokens: Some(expected_lock_tokens),
+                expected_lock_tokens: Some(Vec::new()),
                 expected_additional_lock_states: None,
             });
         }
@@ -981,13 +985,13 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         let expected_lock_tokens = self
             .expected_unlocked_tokens(&user.namespace_id, &path)
             .await?;
-        let descendant_locks = self
+        let has_descendant_locks = self
             .deps
             .lock_repo
-            .find_active_under_path_all(&user.namespace_id, path.as_str(), Self::lock_now_ms())
+            .has_active_under_path(&user.namespace_id, path.as_str(), Self::lock_now_ms())
             .await
             .map_err(to_ftp_error)?;
-        if !descendant_locks.is_empty() {
+        if has_descendant_locks {
             return Err(Error::new(
                 ErrorKind::PermissionDenied,
                 "目录子树中存在 WebDAV 写锁",
@@ -1086,40 +1090,44 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
                 format!("目录已存在: {}", path.as_str()),
             ));
         }
-        let path_strings = paths
+        let mutation_paths = paths
+            .iter()
+            .filter(|path_component| {
+                **path_component == path || !entries_by_path.contains_key(path_component.as_str())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let path_strings = mutation_paths
             .iter()
             .map(|path| path.as_str().to_string())
             .collect::<Vec<_>>();
-        let active_locks = self
+        let locked_paths = self
             .deps
             .lock_repo
-            .find_active_covering_many_all(&user.namespace_id, &path_strings, Self::lock_now_ms())
+            .find_paths_with_active_covering_locks(
+                &user.namespace_id,
+                &path_strings,
+                Self::lock_now_ms(),
+            )
             .await
             .map_err(to_ftp_error)?;
-        let mut conditions = Vec::with_capacity(paths.len());
-        for path_component in paths {
+        if !locked_paths.is_empty() {
+            return Err(Error::new(
+                ErrorKind::PermissionDenied,
+                "新目录路径受 WebDAV 写锁保护",
+            ));
+        }
+
+        let mut conditions = Vec::with_capacity(mutation_paths.len());
+        for path_component in mutation_paths {
             let observed_entry = entries_by_path.get(path_component.as_str());
-            let locks = active_locks
-                .get(path_component.as_str())
-                .cloned()
-                .unwrap_or_default();
-            if observed_entry.is_none() && !locks.is_empty() {
-                return Err(Error::new(
-                    ErrorKind::PermissionDenied,
-                    "新目录路径受 WebDAV 写锁保护",
-                ));
-            }
-            let expected_lock_tokens = locks
-                .into_iter()
-                .map(|(_, lock)| lock.token)
-                .collect::<Vec<_>>();
             conditions.push(EntryWriteCondition {
                 namespace_id: user.namespace_id,
                 path: path_component.clone(),
                 check_entry_state: true,
                 expected_entry_id: observed_entry.map(|entry| entry.id),
                 expected_version_id: observed_entry.and_then(|entry| entry.current_version_id),
-                expected_lock_tokens: Some(expected_lock_tokens),
+                expected_lock_tokens: Some(Vec::new()),
                 expected_additional_lock_states: None,
             });
         }
@@ -1162,7 +1170,6 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
                 )
             })?;
         let source_subtree = self.find_rename_subtree(&user.namespace_id, &from).await?;
-        let mut affected_paths = Vec::with_capacity(source_subtree.len().saturating_mul(2));
         let mut destination_paths = Vec::with_capacity(source_subtree.len());
         let mut affected_path_bytes = 0usize;
         for entry in &source_subtree {
@@ -1178,33 +1185,36 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
                 ));
             }
             affected_path_bytes = next_path_bytes;
-            affected_paths.push(entry.path_norm.as_str().to_string());
-            affected_paths.push(destination_path.as_str().to_string());
             destination_paths.push(destination_path);
         }
-        if self
+        let lock_now = Self::lock_now_ms();
+        let source_has_locks = self
             .deps
             .lock_repo
-            .find_active_covering_many_all(&user.namespace_id, &affected_paths, Self::lock_now_ms())
+            .has_active_under_path(&user.namespace_id, from.as_str(), lock_now)
             .await
             .map_err(to_ftp_error)?
-            .values()
-            .any(|locks| !locks.is_empty())
-            || !self
+            || self
                 .deps
                 .lock_repo
-                .find_active_under_path_all(&user.namespace_id, from.as_str(), Self::lock_now_ms())
+                .find_active_covering(&user.namespace_id, from.as_str(), lock_now)
                 .await
                 .map_err(to_ftp_error)?
-                .is_empty()
-            || !self
+                .is_some();
+        let destination_has_locks = self
+            .deps
+            .lock_repo
+            .has_active_under_path(&user.namespace_id, to.as_str(), lock_now)
+            .await
+            .map_err(to_ftp_error)?
+            || self
                 .deps
                 .lock_repo
-                .find_active_under_path_all(&user.namespace_id, to.as_str(), Self::lock_now_ms())
+                .find_active_covering(&user.namespace_id, to.as_str(), lock_now)
                 .await
                 .map_err(to_ftp_error)?
-                .is_empty()
-        {
+                .is_some();
+        if source_has_locks || destination_has_locks {
             return Err(Error::new(
                 ErrorKind::PermissionDenied,
                 "源或目标路径受 WebDAV 写锁保护",

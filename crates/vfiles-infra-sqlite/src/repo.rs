@@ -18,26 +18,49 @@ async fn verify_write_lock_snapshot(
         .div_euclid(1_000_000)
         .clamp(0, i64::MAX as i128) as i64;
     if let Some(expected_tokens) = &condition.expected_lock_tokens {
-        let current_tokens: Vec<String> = sqlx::query_scalar(
-            r#"SELECT token FROM webdav_locks
-           WHERE namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)
-             AND (path = ? OR (depth_infinity = 1 AND
-               (path = '' OR substr(?, 1, length(path) + 1) = path || '/')))
-           ORDER BY token"#,
-        )
-        .bind(condition.namespace_id.to_string())
-        .bind(now)
-        .bind(condition.path.as_str())
-        .bind(condition.path.as_str())
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to verify conditional WebDAV lock state: {e}"),
-        })?;
-        let mut expected_tokens = expected_tokens.clone();
-        expected_tokens.sort_unstable();
-        if current_tokens != expected_tokens {
-            return Err(DomainError::PreconditionFailed);
+        if expected_tokens.is_empty() {
+            let has_lock: i64 = sqlx::query_scalar(
+                r#"SELECT EXISTS(
+                    SELECT 1 FROM webdav_locks
+                    WHERE namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)
+                      AND (path = ? OR (depth_infinity = 1 AND
+                        (path = '' OR substr(?, 1, length(path) + 1) = path || '/')))
+                )"#,
+            )
+            .bind(condition.namespace_id.to_string())
+            .bind(now)
+            .bind(condition.path.as_str())
+            .bind(condition.path.as_str())
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to verify conditional WebDAV lock state: {e}"),
+            })?;
+            if has_lock != 0 {
+                return Err(DomainError::PreconditionFailed);
+            }
+        } else {
+            let current_tokens: Vec<String> = sqlx::query_scalar(
+                r#"SELECT token FROM webdav_locks
+               WHERE namespace_id = ? AND (expires_at IS NULL OR expires_at > ?)
+                 AND (path = ? OR (depth_infinity = 1 AND
+                   (path = '' OR substr(?, 1, length(path) + 1) = path || '/')))
+               ORDER BY token"#,
+            )
+            .bind(condition.namespace_id.to_string())
+            .bind(now)
+            .bind(condition.path.as_str())
+            .bind(condition.path.as_str())
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to verify conditional WebDAV lock state: {e}"),
+            })?;
+            let mut expected_tokens = expected_tokens.clone();
+            expected_tokens.sort_unstable();
+            if current_tokens != expected_tokens {
+                return Err(DomainError::PreconditionFailed);
+            }
         }
     }
     if let Some(additional_locks) = &condition.expected_additional_lock_states {
@@ -63,6 +86,43 @@ async fn verify_write_lock_snapshot(
                     message: format!("Failed to verify lock-free subtree: {e}"),
                 })?;
                 if has_lock != 0 || !snapshot.tokens.is_empty() {
+                    return Err(DomainError::PreconditionFailed);
+                }
+                continue;
+            }
+            if snapshot.tokens.is_empty() {
+                let has_lock: i64 = if snapshot.include_ancestors {
+                    sqlx::query_scalar(
+                        r#"SELECT EXISTS(
+                            SELECT 1 FROM webdav_locks WHERE namespace_id = ?
+                              AND (expires_at IS NULL OR expires_at > ?)
+                              AND (path = ? OR (depth_infinity = 1 AND
+                                (path = '' OR substr(?, 1, length(path) + 1) = path || '/')))
+                        )"#,
+                    )
+                    .bind(condition.namespace_id.to_string())
+                    .bind(now)
+                    .bind(snapshot.path.as_str())
+                    .bind(snapshot.path.as_str())
+                    .fetch_one(&mut **tx)
+                    .await
+                } else {
+                    sqlx::query_scalar(
+                        r#"SELECT EXISTS(
+                            SELECT 1 FROM webdav_locks WHERE namespace_id = ?
+                              AND path = ? AND (expires_at IS NULL OR expires_at > ?)
+                        )"#,
+                    )
+                    .bind(condition.namespace_id.to_string())
+                    .bind(snapshot.path.as_str())
+                    .bind(now)
+                    .fetch_one(&mut **tx)
+                    .await
+                }
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to verify subtree WebDAV lock state: {e}"),
+                })?;
+                if has_lock != 0 {
                     return Err(DomainError::PreconditionFailed);
                 }
                 continue;
@@ -731,6 +791,39 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
         Ok(locks)
     }
 
+    async fn find_paths_with_active_covering_locks(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[String],
+        now: i64,
+    ) -> DomainResult<std::collections::HashSet<String>> {
+        let mut locked_paths = std::collections::HashSet::new();
+        for chunk in paths.chunks(300) {
+            if chunk.is_empty() {
+                continue;
+            }
+            let mut query = sqlx::QueryBuilder::new("WITH requested(path) AS (");
+            query.push_values(chunk.iter(), |mut row, path| {
+                row.push_bind(path);
+            });
+            query.push(") SELECT requested.path FROM requested WHERE EXISTS (");
+            query.push("SELECT 1 FROM webdav_locks AS locks WHERE locks.namespace_id = ");
+            query.push_bind(namespace_id.to_string());
+            query.push(" AND (locks.expires_at IS NULL OR locks.expires_at > ");
+            query.push_bind(now);
+            query.push(" ) AND (locks.path = requested.path OR (locks.depth_infinity = 1 AND (locks.path = '' OR substr(requested.path, 1, length(locks.path) + 1) = locks.path || '/'))))");
+            let rows = query
+                .build_query_as::<(String,)>()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to check covering WebDAV locks: {e}"),
+                })?;
+            locked_paths.extend(rows.into_iter().map(|(path,)| path));
+        }
+        Ok(locked_paths)
+    }
+
     async fn find_active_many(
         &self,
         namespace_id: &NamespaceId,
@@ -818,6 +911,34 @@ impl WebdavLockRepo for SqliteWebdavLockRepo {
                 )
             })
             .collect())
+    }
+
+    async fn has_active_under_path(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        now: i64,
+    ) -> DomainResult<bool> {
+        let has_lock: i64 = sqlx::query_scalar(
+            r#"SELECT EXISTS(
+                SELECT 1 FROM webdav_locks
+                WHERE namespace_id = ?
+                  AND (expires_at IS NULL OR expires_at > ?)
+                  AND (? = '' OR path = ? OR substr(path, 1, length(?) + 1) = ? || '/')
+            )"#,
+        )
+        .bind(namespace_id.to_string())
+        .bind(now)
+        .bind(path)
+        .bind(path)
+        .bind(path)
+        .bind(path)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to check WebDAV subtree locks: {e}"),
+        })?;
+        Ok(has_lock != 0)
     }
 
     async fn find_active_under_path_all(

@@ -213,6 +213,25 @@ pub trait WebdavLockRepo: Send + Sync {
         }
         Ok(locks)
     }
+    /// Return only requested paths that have an active covering lock.
+    async fn find_paths_with_active_covering_locks(
+        &self,
+        namespace_id: &NamespaceId,
+        paths: &[String],
+        now: i64,
+    ) -> DomainResult<std::collections::HashSet<String>> {
+        let mut locked_paths = std::collections::HashSet::new();
+        for path in paths {
+            if self
+                .find_active_covering(namespace_id, path, now)
+                .await?
+                .is_some()
+            {
+                locked_paths.insert(path.clone());
+            }
+        }
+        Ok(locked_paths)
+    }
     async fn find_active_covering_many(
         &self,
         namespace_id: &NamespaceId,
@@ -249,6 +268,17 @@ pub trait WebdavLockRepo: Send + Sync {
         path: &str,
         now: i64,
     ) -> DomainResult<std::collections::HashMap<String, WebdavLock>>;
+    async fn has_active_under_path(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &str,
+        now: i64,
+    ) -> DomainResult<bool> {
+        Ok(!self
+            .find_active_under_path(namespace_id, path, now)
+            .await?
+            .is_empty())
+    }
     async fn find_active_under_path_all(
         &self,
         namespace_id: &NamespaceId,
