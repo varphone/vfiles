@@ -286,4 +286,82 @@ mod tests {
             );
         }
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_private_key_symlink_without_changing_its_target() {
+        use std::os::unix::{fs::PermissionsExt, fs::symlink};
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+            .expect("test directory should be private");
+        let certificate_path = directory.path().join("ftp-tls/ftp-cert.pem");
+        let private_key_path = directory.path().join("ftp-tls/ftp-key.pem");
+        let target_path = directory.path().join("unrelated-file");
+        ensure_self_signed_certificate(&certificate_path, &private_key_path, &["localhost".into()])
+            .expect("certificate should be generated");
+
+        fs::write(&target_path, b"keep this unrelated file").expect("target should be written");
+        fs::set_permissions(&target_path, fs::Permissions::from_mode(0o644))
+            .expect("target permissions should be set");
+        fs::remove_file(&private_key_path).expect("generated key should be removed");
+        symlink(&target_path, &private_key_path).expect("key path should become a symlink");
+
+        let error = ensure_self_signed_certificate(&certificate_path, &private_key_path, &[])
+            .expect_err("a symlinked private key must be rejected");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            fs::read(&target_path).expect("target should remain"),
+            b"keep this unrelated file"
+        );
+        assert_eq!(
+            fs::metadata(&target_path)
+                .expect("target metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o644
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_certificate_directory_symlink_without_touching_its_target() {
+        use std::os::unix::{fs::PermissionsExt, fs::symlink};
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+            .expect("test directory should be private");
+        let target_directory = directory.path().join("unrelated-directory");
+        fs::create_dir(&target_directory).expect("target directory should be created");
+        fs::set_permissions(&target_directory, fs::Permissions::from_mode(0o755))
+            .expect("target directory permissions should be set");
+        let certificate_directory = directory.path().join("ftp-tls");
+        symlink(&target_directory, &certificate_directory)
+            .expect("certificate directory should become a symlink");
+
+        let error = ensure_self_signed_certificate(
+            &certificate_directory.join("ftp-cert.pem"),
+            &certificate_directory.join("ftp-key.pem"),
+            &["localhost".into()],
+        )
+        .expect_err("a symlinked certificate directory must be rejected");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            fs::metadata(&target_directory)
+                .expect("target directory metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
+        assert_eq!(
+            fs::read_dir(&target_directory)
+                .expect("target directory should remain readable")
+                .count(),
+            0
+        );
+    }
 }
