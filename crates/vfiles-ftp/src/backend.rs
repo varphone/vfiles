@@ -410,13 +410,16 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
 
         let (size, modified) = match (entry.entry_type, entry.current_version_id) {
             (EntryKind::File, Some(version_id)) => {
-                match self.deps.entry_repo.find_version(&version_id).await {
-                    Ok(version) => (
-                        version.size_bytes.as_u64(),
-                        SystemTime::from(version.created_at),
-                    ),
-                    Err(_) => (0, SystemTime::UNIX_EPOCH),
-                }
+                let version = self
+                    .deps
+                    .entry_repo
+                    .find_version(&version_id)
+                    .await
+                    .map_err(to_ftp_error)?;
+                (
+                    version.size_bytes.as_u64(),
+                    SystemTime::from(version.created_at),
+                )
             }
             _ => (0, SystemTime::from(entry.created_at)),
         };
