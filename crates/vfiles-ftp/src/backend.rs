@@ -8,6 +8,7 @@
 //! - 路径全部落在登录用户自己的命名空间内，无法越权。
 
 use std::{
+    collections::HashMap,
     fmt,
     path::{Path, PathBuf},
     sync::{
@@ -757,9 +758,91 @@ impl StorageBackend<VfilesFtpUser> for VfilesStorageBackend {
         }
 
         self.flush_batch().await?;
+        let mut paths = Vec::new();
+        let mut current = String::new();
+        for segment in path.as_str().split('/') {
+            if !current.is_empty() {
+                current.push('/');
+            }
+            current.push_str(segment);
+            paths.push(
+                NormalizedPath::new(&current)
+                    .map_err(|message| Error::new(ErrorKind::PermissionDenied, message))?,
+            );
+        }
+        let entries = self
+            .deps
+            .entry_repo
+            .find_paths(&user.namespace_id, &paths)
+            .await
+            .map_err(to_ftp_error)?;
+        let entries_by_path = entries
+            .into_iter()
+            .map(|entry| (entry.path_norm.as_str().to_string(), entry))
+            .collect::<HashMap<_, _>>();
+        for ancestor in paths.iter().take(paths.len().saturating_sub(1)) {
+            if entries_by_path
+                .get(ancestor.as_str())
+                .is_some_and(|entry| entry.entry_type != EntryKind::Directory)
+            {
+                return Err(Error::new(
+                    ErrorKind::PermanentDirectoryNotAvailable,
+                    format!("不是目录: {}", ancestor.as_str()),
+                ));
+            }
+        }
+        if entries_by_path.contains_key(path.as_str()) {
+            return Err(Error::new(
+                ErrorKind::PermanentDirectoryNotAvailable,
+                format!("目录已存在: {}", path.as_str()),
+            ));
+        }
+        let path_strings = paths
+            .iter()
+            .map(|path| path.as_str().to_string())
+            .collect::<Vec<_>>();
+        let active_locks = self
+            .deps
+            .lock_repo
+            .find_active_covering_many_all(&user.namespace_id, &path_strings, Self::lock_now_ms())
+            .await
+            .map_err(to_ftp_error)?;
+        let mut conditions = Vec::with_capacity(paths.len());
+        for path_component in paths {
+            let observed_entry = entries_by_path.get(path_component.as_str());
+            let locks = active_locks
+                .get(path_component.as_str())
+                .cloned()
+                .unwrap_or_default();
+            if observed_entry.is_none() && !locks.is_empty() {
+                return Err(Error::new(
+                    ErrorKind::PermissionDenied,
+                    "新目录路径受 WebDAV 写锁保护",
+                ));
+            }
+            let expected_lock_tokens = locks
+                .into_iter()
+                .map(|(_, lock)| lock.token)
+                .collect::<Vec<_>>();
+            conditions.push(EntryWriteCondition {
+                namespace_id: user.namespace_id,
+                path: path_component.clone(),
+                check_entry_state: true,
+                expected_entry_id: observed_entry.map(|entry| entry.id),
+                expected_version_id: observed_entry.and_then(|entry| entry.current_version_id),
+                expected_lock_tokens: Some(expected_lock_tokens),
+                expected_additional_lock_states: None,
+            });
+        }
         self.deps
             .workspace
-            .create_directory(&user.namespace_id, &path, Some("FTP 创建目录"), &user.id)
+            .create_directory_with_conditions(
+                &user.namespace_id,
+                &path,
+                Some("FTP 创建目录"),
+                &user.id,
+                &conditions,
+            )
             .await
             .map_err(to_ftp_error)?;
         debug!(user = %user, path = path.as_str(), "FTP 创建目录");

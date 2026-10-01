@@ -4412,6 +4412,75 @@ impl EntryRepo for SqliteEntryRepo {
         Ok(id)
     }
 
+    async fn create_entry_if_current(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        kind: EntryKind,
+        _user_id: &UserId,
+        condition: &vfiles_domain::EntryWriteCondition,
+    ) -> DomainResult<EntryId> {
+        if condition.namespace_id != *namespace_id
+            || condition.path != *path
+            || !condition.check_entry_state
+            || condition.expected_entry_id.is_some()
+            || condition.expected_version_id.is_some()
+        {
+            return Err(DomainError::PreconditionFailed);
+        }
+
+        let mut tx =
+            self.pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to begin conditional entry creation: {e}"),
+                })?;
+        verify_write_lock_snapshot(&mut tx, condition).await?;
+        let exists: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM entries WHERE namespace_id = ? AND path = ?)",
+        )
+        .bind(namespace_id.to_string())
+        .bind(path.as_str())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to check conditional entry path: {e}"),
+        })?;
+        if exists != 0 {
+            return Err(DomainError::PreconditionFailed);
+        }
+
+        let id = EntryId::new();
+        let now = time::OffsetDateTime::now_utc();
+        let kind_str = match kind {
+            EntryKind::File => "file",
+            EntryKind::Directory => "directory",
+        };
+        sqlx::query(
+            "INSERT INTO entries (id, namespace_id, path, kind, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(namespace_id.to_string())
+        .bind(path.as_str())
+        .bind(kind_str)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
+                DomainError::PreconditionFailed
+            }
+            _ => DomainError::Internal {
+                message: format!("Failed to conditionally create entry: {e}"),
+            },
+        })?;
+        tx.commit().await.map_err(|e| DomainError::Internal {
+            message: format!("Failed to commit conditional entry creation: {e}"),
+        })?;
+        Ok(id)
+    }
+
     async fn set_version_source_mtime(
         &self,
         version_id: &VersionId,

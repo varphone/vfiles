@@ -494,6 +494,62 @@ pub(crate) async fn ensure_directory_path(
     Ok(changed_entries)
 }
 
+pub(crate) async fn ensure_directory_path_with_conditions(
+    entry_repo: &(dyn EntryRepo + Send + Sync),
+    namespace_id: &NamespaceId,
+    directory_path: &NormalizedPath,
+    user_id: &UserId,
+    conditions: &[EntryWriteCondition],
+) -> DomainResult<Vec<ChangedEntry>> {
+    if directory_path.as_str().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut current = String::new();
+    let mut changed_entries = Vec::new();
+    for segment in directory_path.as_str().split('/') {
+        if !current.is_empty() {
+            current.push('/');
+        }
+        current.push_str(segment);
+        let current_path = NormalizedPath::new(&current).map_err(|_| DomainError::Validation {
+            message: format!("Invalid path: {}", current),
+        })?;
+
+        if let Some(entry) = entry_repo.find_by_path(namespace_id, &current_path).await? {
+            if entry.entry_type != EntryKind::Directory {
+                return Err(DomainError::PathConflict {
+                    message: format!("Path is occupied by a file: {}", current_path.as_str()),
+                });
+            }
+            continue;
+        }
+
+        let condition = conditions
+            .iter()
+            .find(|condition| condition.path == current_path)
+            .ok_or_else(|| DomainError::PreconditionFailed)?;
+        let entry_id = entry_repo
+            .create_entry_if_current(
+                namespace_id,
+                &current_path,
+                EntryKind::Directory,
+                user_id,
+                condition,
+            )
+            .await?;
+        changed_entries.push(ChangedEntry {
+            entry_id,
+            path: current.clone(),
+            kind: EntryKind::Directory,
+            current_version_id: None,
+            change_type: ChangeType::Added,
+        });
+    }
+
+    Ok(changed_entries)
+}
+
 pub(crate) async fn create_snapshot_record(
     snapshot_repo: &(dyn SnapshotRepo + Send + Sync),
     namespace_id: &NamespaceId,
@@ -2554,6 +2610,77 @@ where
         let snapshot_entries =
             collect_snapshot_state(&self.entry_repo, namespace_id, Vec::new()).await?;
 
+        finalize_mutation(
+            &self.snapshot_repo,
+            namespace_id,
+            message,
+            user_id,
+            changed_entries,
+            snapshot_entries,
+            Vec::new(),
+        )
+        .await
+    }
+
+    /// Create a directory hierarchy using path and lock snapshots for every new entry.
+    pub async fn create_directory_with_conditions(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        message: Option<&str>,
+        user_id: &UserId,
+        conditions: &[EntryWriteCondition],
+    ) -> DomainResult<MutationResult> {
+        if path.as_str().is_empty() {
+            return Err(DomainError::Validation {
+                message: "Cannot create the root directory".to_string(),
+            });
+        }
+
+        let parent_path = path
+            .as_str()
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .unwrap_or("");
+        let parent_path =
+            NormalizedPath::new(parent_path).map_err(|_| DomainError::Validation {
+                message: "Invalid parent path".to_string(),
+            })?;
+        let mut changed_entries = ensure_directory_path_with_conditions(
+            &self.entry_repo,
+            namespace_id,
+            &parent_path,
+            user_id,
+            conditions,
+        )
+        .await?;
+        if self
+            .entry_repo
+            .find_by_path(namespace_id, path)
+            .await?
+            .is_some()
+        {
+            return Err(DomainError::PathConflict {
+                message: format!("Path already exists: {}", path.as_str()),
+            });
+        }
+        let condition = conditions
+            .iter()
+            .find(|condition| condition.path == *path)
+            .ok_or(DomainError::PreconditionFailed)?;
+        let entry_id = self
+            .entry_repo
+            .create_entry_if_current(namespace_id, path, EntryKind::Directory, user_id, condition)
+            .await?;
+        changed_entries.push(ChangedEntry {
+            entry_id,
+            path: path.as_str().to_string(),
+            kind: EntryKind::Directory,
+            current_version_id: None,
+            change_type: ChangeType::Added,
+        });
+        let snapshot_entries =
+            collect_snapshot_state(&self.entry_repo, namespace_id, Vec::new()).await?;
         finalize_mutation(
             &self.snapshot_repo,
             namespace_id,

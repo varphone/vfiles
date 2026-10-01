@@ -688,6 +688,20 @@ pub trait EntryRepo {
         kind: EntryKind,
         user_id: &UserId,
     ) -> DomainResult<EntryId>;
+    /// Create a new entry only if the path is still absent and its observed lock state matches.
+    /// Repositories used for protocol lock enforcement must perform both checks atomically.
+    async fn create_entry_if_current(
+        &self,
+        _namespace_id: &NamespaceId,
+        _path: &NormalizedPath,
+        _kind: EntryKind,
+        _user_id: &UserId,
+        _condition: &EntryWriteCondition,
+    ) -> DomainResult<EntryId> {
+        Err(DomainError::NotImplemented {
+            feature: "conditional entry creation".to_string(),
+        })
+    }
     async fn update_current_version(
         &self,
         entry_id: &EntryId,
