@@ -142,7 +142,7 @@ where
     //#[tracing_attributes::instrument]
     pub async fn reserve(&mut self, session_arc: SharedSession<S, U>) -> Result<u16, SwitchboardError> {
         let range_start = u32::from(*self.port_range.start());
-        let range_size = u32::from(*self.port_range.end()) - range_start + 1;
+        let range_size = passive_port_range_size(&self.port_range);
 
         let randomized_initial_port = {
             let mut data = [0; 2];
@@ -162,7 +162,7 @@ where
             control_connection.source.ip()
         };
         for i in 0..range_size {
-            let port = (range_start + ((randomized_initial_port + i) % range_size)) as u16;
+            let port = passive_port_candidate(range_start, range_size, randomized_initial_port, i);
             slog::debug!(self.logger, "Trying if port {} is available", port);
             let key = SwitchboardKey::new(control_ip, port);
 
@@ -193,8 +193,40 @@ where
     }
 }
 
+fn passive_port_range_size(range: &RangeInclusive<u16>) -> u32 {
+    u32::from(*range.end()) - u32::from(*range.start()) + 1
+}
+
+fn passive_port_candidate(range_start: u32, range_size: u32, randomized_initial_port: u32, offset: u32) -> u16 {
+    (range_start + ((randomized_initial_port + offset) % range_size)) as u16
+}
+
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct SocketAddrPair {
     pub source: SocketAddr,
     pub destination: SocketAddr,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{passive_port_candidate, passive_port_range_size};
+
+    #[test]
+    fn passive_port_selection_handles_a_single_port_range() {
+        let range = 50_000..=50_000;
+        let range_size = passive_port_range_size(&range);
+
+        assert_eq!(range_size, 1);
+        assert_eq!(passive_port_candidate(50_000, range_size, 0, 0), 50_000);
+    }
+
+    #[test]
+    fn passive_port_selection_includes_the_configured_upper_endpoint() {
+        let range = 50_000..=50_002;
+        let range_size = passive_port_range_size(&range);
+
+        assert_eq!(range_size, 3);
+        assert_eq!(passive_port_candidate(50_000, range_size, 2, 0), 50_002);
+        assert_eq!(passive_port_candidate(50_000, range_size, 2, 1), 50_000);
+    }
 }
