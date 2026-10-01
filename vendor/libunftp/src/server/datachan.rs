@@ -436,7 +436,15 @@ where
         // Get current file size, or 0 if file doesn't exist
         let start_pos = match self.storage.metadata((*self.user).as_ref().unwrap(), &full_path).await {
             Ok(meta) => meta.len(),
-            Err(_) => 0,
+            Err(err) if err.kind() == ErrorKind::PermanentFileNotAvailable => 0,
+            Err(err) => {
+                slog::warn!(self.logger, "APPE refused because the existing file size could not be determined");
+                categorize_and_register_error(&self.logger, &err, "appe");
+                if let Err(send_err) = tx.send(ControlChanMsg::StorageError(err)).await {
+                    slog::warn!(self.logger, "Could not notify control channel of APPE metadata error: {:?}", send_err);
+                }
+                return;
+            }
         };
 
         let logger = self.logger.clone();
