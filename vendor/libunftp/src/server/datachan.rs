@@ -403,7 +403,28 @@ where
         if let Some(command) = command {
             // Copy the restart offset, then release the session lock before storage or network I/O.
             let start_pos = session_arc.lock().await.start_pos;
-            self.handle_incoming(DataChanMsg::ExternalCommand(command), start_pos).await;
+            let abort_token = self.abort_token.clone();
+            let control_msg_tx = self.control_msg_tx.clone();
+            let logger = self.logger.clone();
+            tokio::select! {
+                _ = abort_token.cancelled() => {
+                    slog::info!(logger, "Data channel operation cancelled");
+                }
+                result = tokio::time::timeout(
+                    MAX_DATA_CHANNEL_TRANSFER_DURATION,
+                    self.handle_incoming(DataChanMsg::ExternalCommand(command), start_pos),
+                ) => {
+                    if result.is_err() {
+                        slog::warn!(logger, "Data channel operation exceeded its maximum duration");
+                        if !abort_token.is_cancelled() {
+                            session_arc.lock().await.start_pos = 0;
+                            if let Err(err) = control_msg_tx.try_send(ControlChanMsg::ConnectionReset) {
+                                slog::warn!(logger, "Could not notify control channel about the data operation timeout: {}", err);
+                            }
+                        }
+                    }
+                }
+            }
         } else if self.abort_token.is_cancelled() {
             slog::info!(self.logger, "Data channel abort received");
         }
