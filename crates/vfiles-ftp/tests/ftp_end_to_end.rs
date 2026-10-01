@@ -748,3 +748,63 @@ async fn ftp_listing_rejects_directories_over_its_bounded_entry_limit() {
     };
     assert_eq!(error.kind(), ErrorKind::LocalError);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_rename_rejects_subtrees_over_its_bounded_entry_limit() {
+    const DESCENDANT_COUNT: usize = 20_001;
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut rows = Vec::with_capacity(DESCENDANT_COUNT + 1);
+    rows.push((
+        "ffffffff-ffff-4fff-bfff-ffffffffffff".to_string(),
+        "large".to_string(),
+    ));
+    rows.extend((0..DESCENDANT_COUNT).map(|index| {
+        (
+            format!("00000000-0000-4000-8000-{index:012x}"),
+            format!("large/item-{index:05}"),
+        )
+    }));
+
+    let mut transaction = harness.pool.begin().await.expect("transaction");
+    for chunk in rows.chunks(1_000) {
+        let mut query =
+            QueryBuilder::<Sqlite>::new("INSERT INTO entries (id, namespace_id, path, kind) ");
+        query.push_values(chunk, |mut builder, (id, path)| {
+            builder
+                .push_bind(id)
+                .push_bind(harness.namespace_id.to_string())
+                .push_bind(path)
+                .push_bind("directory");
+        });
+        query
+            .build()
+            .execute(&mut *transaction)
+            .await
+            .expect("subtree fixtures should be inserted");
+    }
+    transaction.commit().await.expect("fixture transaction");
+
+    let mut client = harness.client();
+    assert!(
+        client.rename("large", "renamed").is_err(),
+        "RNTO must refuse a subtree above its entry budget"
+    );
+    client.quit().ok();
+
+    let original_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM entries WHERE namespace_id = ? AND (path = 'large' OR path LIKE 'large/%')",
+    )
+    .bind(harness.namespace_id.to_string())
+    .fetch_one(&harness.pool)
+    .await
+    .expect("original subtree count");
+    let renamed_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM entries WHERE namespace_id = ? AND (path = 'renamed' OR path LIKE 'renamed/%')",
+    )
+    .bind(harness.namespace_id.to_string())
+    .fetch_one(&harness.pool)
+    .await
+    .expect("renamed subtree count");
+    assert_eq!(original_count, (DESCENDANT_COUNT + 1) as i64);
+    assert_eq!(renamed_count, 0);
+}
