@@ -553,6 +553,101 @@ async fn ftps_rejects_passive_data_connections_from_another_control_session() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftps_keeps_passive_listener_after_rejecting_another_sessions_tls() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let certificate_path = harness._temp_dir.path().join("ftp-tls/ftp-cert.pem");
+    let certificate_pem = std::fs::read(certificate_path).expect("test certificate");
+    let certificate = CertificateDer::pem_slice_iter(&certificate_pem)
+        .next()
+        .expect("PEM certificate should be present")
+        .expect("PEM certificate should parse");
+    let mut roots = RootCertStore::empty();
+    roots
+        .add(certificate)
+        .expect("test certificate should be trusted");
+    let victim_tls_config = Arc::new(
+        ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
+    );
+    let mut victim = RustlsFtpStream::connect(harness.handle.local_addr())
+        .expect("victim should connect")
+        .into_secure(
+            RustlsConnector::from(Arc::clone(&victim_tls_config)),
+            "localhost",
+        )
+        .expect("victim control channel should use FTPS");
+    victim
+        .login(USERNAME, PASSWORD)
+        .expect("victim should log in");
+
+    let passive_response = victim
+        .custom_command("EPSV", &[Status::ExtendedPassiveMode])
+        .expect("victim should allocate a passive data port");
+    let passive_text = String::from_utf8_lossy(&passive_response.body);
+    let passive_port = passive_text
+        .split('(')
+        .nth(1)
+        .and_then(|value| value.split(')').next())
+        .and_then(|value| value.split('|').find_map(|part| part.parse::<u16>().ok()))
+        .expect("EPSV response should contain a port");
+    let victim_data_addr = std::net::SocketAddr::new(
+        harness.handle.local_addr().ip(),
+        passive_port,
+    );
+
+    let mut attacker = harness
+        .secure_client()
+        .passive_stream_builder(move |_| {
+            std::net::TcpStream::connect_timeout(
+                &victim_data_addr,
+                std::time::Duration::from_secs(2),
+            )
+            .map_err(suppaftp::FtpError::ConnectionError)
+        });
+    attacker
+        .login(USERNAME, PASSWORD)
+        .expect("attacker control session should log in");
+    let (_, mut candidate) = attacker
+        .custom_data_command("NLST", &[Status::AboutToSend])
+        .expect("attacker should be able to attempt the victim's passive port");
+    candidate
+        .get_ref()
+        .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+        .expect("attacker data socket should accept a read timeout");
+    let mut probe = [0_u8; 1];
+    let _ = std::io::Read::read(&mut candidate, &mut probe);
+    drop(candidate);
+    drop(attacker);
+
+    // Start the transfer on the already allocated listener, then connect with the ticket from
+    // the victim's control session. Success proves the invalid candidate did not consume EPSV.
+    victim
+        .custom_command("NLST", &[Status::AboutToSend])
+        .expect("victim should start a transfer on its existing EPSV listener");
+    let data_socket = std::net::TcpStream::connect_timeout(
+        &victim_data_addr,
+        std::time::Duration::from_secs(2),
+    )
+    .expect("the original passive listener should still accept a valid candidate");
+    data_socket
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .expect("victim data socket should accept a read timeout");
+    let server_name = suppaftp::rustls::pki_types::ServerName::try_from("localhost")
+        .expect("server name should parse");
+    let data_tls = suppaftp::rustls::ClientConnection::new(
+        Arc::clone(&victim_tls_config),
+        server_name,
+    )
+    .expect("victim data TLS session should build");
+    let mut data_stream = suppaftp::rustls::StreamOwned::new(data_tls, data_socket);
+    let mut listing = Vec::new();
+    std::io::Read::read_to_end(&mut data_stream, &mut listing)
+        .expect("the original EPSV listener should accept the victim's resumed TLS session");
+    assert!(listing.is_empty(), "new namespace should have no files");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn disabled_user_stops_receiving_a_directory_listing_in_progress() {
     const ENTRY_COUNT: usize = 3_500;
     const NAME_PADDING: usize = 850;
