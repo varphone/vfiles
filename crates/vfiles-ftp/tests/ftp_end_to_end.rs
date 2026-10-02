@@ -40,6 +40,9 @@ use vfiles_infra_sqlite::{
 const USERNAME: &str = "ftpuser";
 const PASSWORD: &str = "ftp-password-123456";
 const TEST_PASSIVE_PORT_BLOCK_SIZE: u16 = 8;
+// Bound simultaneously active FTP/FTPS fixtures; unrestricted parallel runs intermittently failed
+// during initial control-channel handshakes.
+static TEST_HARNESS_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 static NEXT_TEST_PASSIVE_PORT: AtomicU16 = AtomicU16::new(50_000);
 
 fn next_test_passive_ports() -> (u16, u16) {
@@ -58,6 +61,7 @@ struct Harness {
     backend: BackendDeps,
     _shutdown: watch::Sender<bool>,
     handle: vfiles_ftp::FtpServerHandle,
+    _test_slot: tokio::sync::SemaphorePermit<'static>,
 }
 
 impl Harness {
@@ -87,6 +91,10 @@ impl Harness {
         max_connections: u32,
         idle_timeout_secs: u64,
     ) -> Self {
+        let test_slot = TEST_HARNESS_SLOTS
+            .acquire()
+            .await
+            .expect("test harness limiter should remain open");
         // The certificate guard intentionally rejects non-sticky shared-writable ancestors;
         // this environment's configured temp root is such a directory, so use sticky /tmp directly.
         let temp_dir = tempfile::tempdir_in("/tmp").expect("private tempdir");
@@ -217,6 +225,7 @@ impl Harness {
             backend,
             _shutdown: shutdown_tx,
             handle,
+            _test_slot: test_slot,
         }
     }
 
