@@ -914,6 +914,18 @@ fn payload(size: usize, seed: u8) -> Vec<u8> {
         .collect()
 }
 
+fn blob_file_count(root: &std::path::Path) -> usize {
+    std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|shard| std::fs::read_dir(shard.path()).ok())
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .count()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn uploads_downloads_and_manages_files_over_ftps() {
     let harness = Harness::start(SnapshotMode::PerFile, 1).await;
@@ -970,6 +982,33 @@ async fn uploads_downloads_and_manages_files_over_ftps() {
     assert!(harness.entry_paths().await.is_empty());
 
     client.quit().expect("quit should succeed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rejected_upload_below_a_file_does_not_leave_an_orphan_blob() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.client();
+    let mut existing = std::io::Cursor::new(b"file ancestor".to_vec());
+    client
+        .put_file("occupied", &mut existing)
+        .expect("ancestor file should upload");
+
+    let blob_root = harness._temp_dir.path().join("blobs");
+    let blobs_before = blob_file_count(&blob_root);
+    let mut rejected_payload = std::io::Cursor::new(b"must not be ingested".to_vec());
+    assert!(
+        client
+            .put_file("occupied/child.bin", &mut rejected_payload)
+            .is_err(),
+        "STOR must reject a file path used as an ancestor"
+    );
+    assert_eq!(
+        blob_file_count(&blob_root),
+        blobs_before,
+        "path-conflict uploads must be rejected before publishing a blob"
+    );
+    assert_eq!(harness.entry_paths().await, vec!["occupied"]);
+    client.quit().expect("control session should remain usable");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
