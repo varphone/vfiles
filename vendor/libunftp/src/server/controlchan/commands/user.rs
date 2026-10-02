@@ -348,6 +348,7 @@ mod tests {
     #[derive(Debug)]
     struct DelayedAuth {
         attempts: Arc<AtomicUsize>,
+        completions: Arc<AtomicUsize>,
         delay: Duration,
     }
 
@@ -356,6 +357,7 @@ mod tests {
         async fn authenticate(&self, _username: &str, _creds: &Credentials) -> std::result::Result<Principal, AuthenticationError> {
             self.attempts.fetch_add(1, Ordering::Relaxed);
             tokio::time::sleep(self.delay).await;
+            self.completions.fetch_add(1, Ordering::Relaxed);
             Err(AuthenticationError::new("bad credentials"))
         }
 
@@ -367,8 +369,10 @@ mod tests {
     #[tokio::test]
     async fn repeated_pass_during_authentication_starts_only_one_attempt() {
         let attempts = Arc::new(AtomicUsize::new(0));
+        let completions = Arc::new(AtomicUsize::new(0));
         let authenticator: Arc<dyn Authenticator> = Arc::new(DelayedAuth {
             attempts: Arc::clone(&attempts),
+            completions: Arc::clone(&completions),
             delay: Duration::from_millis(100),
         });
         let session = Session::new(Arc::new(Vfs {}), "127.0.0.1:8080".parse().unwrap());
@@ -398,8 +402,41 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(150)).await;
         assert_eq!(attempts.load(Ordering::Relaxed), 1);
+        assert_eq!(completions.load(Ordering::Relaxed), 1);
         assert_eq!(session_arc.lock().await.state, SessionState::Authenticating);
         drop(control_receivers);
+    }
+
+    #[tokio::test]
+    async fn disconnect_cancels_pending_password_authentication() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let completions = Arc::new(AtomicUsize::new(0));
+        let authenticator: Arc<dyn Authenticator> = Arc::new(DelayedAuth {
+            attempts: Arc::clone(&attempts),
+            completions: Arc::clone(&completions),
+            delay: Duration::from_millis(100),
+        });
+        let session = Session::new(Arc::new(Vfs {}), "127.0.0.1:8080".parse().unwrap());
+        let session_arc = Arc::new(Mutex::new(session));
+        {
+            let mut session = session_arc.lock().await;
+            session.username = Some("test-user".to_string());
+            session.state = SessionState::WaitPass;
+        }
+        let (ctx, control_receiver) = super::CommandContext::test_with_open_control_channel(session_arc, authenticator, Arc::new(DefaultUserDetailProvider {}));
+
+        let reply = super::super::Pass::new(crate::server::password::Password::from("wrong"))
+            .handle(ctx)
+            .await
+            .expect("PASS should return without waiting for authentication");
+        assert!(matches!(reply, Reply::None));
+        tokio::task::yield_now().await;
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+
+        drop(control_receiver);
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        assert_eq!(completions.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]
