@@ -792,6 +792,69 @@ async fn ftps_keeps_passive_listener_after_rejecting_another_sessions_tls() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftps_rejects_malformed_and_stalled_candidates_without_losing_listener() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let tls_config = harness.client_tls_config();
+    let mut client = harness
+        .secure_client_with_config(Arc::clone(&tls_config))
+        .passive_stream_builder(move |passive_addr| {
+            let mut malformed = std::net::TcpStream::connect_timeout(
+                &passive_addr,
+                std::time::Duration::from_secs(2),
+            )
+            .expect("malformed TLS candidate should reach the listener");
+            malformed
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .expect("malformed candidate should have a bounded read");
+            std::io::Write::write_all(&mut malformed, b"not a TLS ClientHello\r\n")
+                .expect("malformed handshake bytes should be sent");
+            let mut rejected = Vec::new();
+            let malformed_result = std::io::Read::read_to_end(&mut malformed, &mut rejected);
+            assert!(
+                !matches!(
+                    malformed_result,
+                    Err(ref error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        )
+                ),
+                "malformed TLS candidate should be rejected promptly: {malformed_result:?}"
+            );
+
+            let mut stalled = std::net::TcpStream::connect_timeout(
+                &passive_addr,
+                std::time::Duration::from_secs(2),
+            )
+            .expect("stalled TLS candidate should reach the listener");
+            stalled
+                .set_read_timeout(Some(std::time::Duration::from_secs(8)))
+                .expect("stalled candidate should have a bounded read");
+            let mut probe = [0_u8; 1];
+            let stalled_result = std::io::Read::read(&mut stalled, &mut probe);
+            assert!(
+                !matches!(
+                    stalled_result,
+                    Err(ref error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        )
+                ),
+                "stalled TLS candidate should be closed by the handshake deadline: {stalled_result:?}"
+            );
+
+            std::net::TcpStream::connect_timeout(&passive_addr, std::time::Duration::from_secs(2))
+                .map_err(suppaftp::FtpError::ConnectionError)
+        });
+    client.login(USERNAME, PASSWORD).expect("client should log in");
+    let names = client.nlst(Some(".")).expect("NLST should complete");
+    let listing = names.join("\n");
+    assert!(listing.is_empty(), "new namespace should have no files");
+    client.quit().expect("control session should remain usable");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ftps_data_handshake_tickets_cannot_replace_control_session_resumption() {
     let harness = Harness::start(SnapshotMode::Off, 1).await;
     let certificate_path = harness._temp_dir.path().join("ftp-tls/ftp-cert.pem");
