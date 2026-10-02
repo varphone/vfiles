@@ -474,6 +474,24 @@ async fn ftp_authentication_keeps_verified_identity_when_username_is_reused() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dropping_an_unentered_backend_does_not_decrement_active_sessions() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let stats = Arc::clone(&harness.backend.stats);
+    stats.session_started();
+    assert_eq!(stats.snapshot().active_sessions, 1);
+
+    drop(VfilesStorageBackend::new(harness.backend.clone()));
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    assert_eq!(
+        stats.snapshot().active_sessions,
+        1,
+        "dropping a session that never entered must not decrement another session"
+    );
+    stats.session_finished();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn unauthenticated_noop_cannot_extend_the_absolute_login_deadline() {
     let harness = Harness::start_with_idle_timeout(SnapshotMode::Off, 1, 2).await;
     let mut client = harness.secure_client();
