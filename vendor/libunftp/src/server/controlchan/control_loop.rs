@@ -385,7 +385,7 @@ async fn cleanup_data_session<Storage, User>(
 {
     // The control loop no longer drains this bounded channel once cleanup starts. Close it before
     // joining the data worker so a worker blocked while reporting its result cannot deadlock us.
-    control_msg_rx.close();
+    close_control_message_channel(&mut control_msg_rx);
     if let Some(tx) = switchboard_msg_tx
         && let Err(err) = tx.send(SwitchboardMessage::CloseDataPortCommand(session.clone())).await
     {
@@ -404,6 +404,10 @@ async fn cleanup_data_session<Storage, User>(
     {
         slog::warn!(logger, "Data channel task did not complete cleanly: {}", err);
     }
+}
+
+fn close_control_message_channel(control_msg_rx: &mut Receiver<ControlChanMsg>) {
+    control_msg_rx.close();
 }
 
 // gets the reply to be sent to the client and tells if the connection should be closed.
@@ -617,13 +621,36 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{CONTROL_CHANNEL_WRITE_TIMEOUT, write_with_timeout};
+    use super::{
+        CONTROL_CHANNEL_WRITE_TIMEOUT, ControlChanMsg, close_control_message_channel,
+        write_with_timeout,
+    };
     use std::time::Duration;
+    use tokio::sync::mpsc::channel;
 
     #[tokio::test]
     async fn control_channel_write_times_out_when_the_sink_stalls() {
         let result = write_with_timeout(Duration::from_millis(5), std::future::pending::<()>()).await;
         assert!(result.is_err(), "a stalled control-channel write must time out");
         assert_eq!(CONTROL_CHANNEL_WRITE_TIMEOUT, Duration::from_secs(60));
+    }
+
+    #[tokio::test]
+    async fn closing_control_messages_unblocks_a_worker_sending_its_result() {
+        let (sender, mut receiver) = channel(1);
+        sender
+            .send(ControlChanMsg::NotFound)
+            .await
+            .expect("first message should fill the bounded channel");
+        let blocked_sender = tokio::spawn(async move { sender.send(ControlChanMsg::WriteFailed).await });
+        tokio::task::yield_now().await;
+        assert!(!blocked_sender.is_finished(), "second message should be blocked by the full channel");
+
+        close_control_message_channel(&mut receiver);
+        let result = tokio::time::timeout(Duration::from_millis(100), blocked_sender)
+            .await
+            .expect("closing the receiver should release the blocked send")
+            .expect("sender task should finish cleanly");
+        assert!(result.is_err(), "the pending worker result should fail after cleanup closes the channel");
     }
 }
