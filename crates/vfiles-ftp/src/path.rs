@@ -143,6 +143,12 @@ mod tests {
     }
 
     #[test]
+    fn rejects_bidirectional_formatting_controls_in_paths() {
+        assert!(normalize("safe\u{202e}txt").is_err());
+        assert!(normalize("safe\u{2066}txt\u{2069}").is_err());
+    }
+
+    #[test]
     fn enforces_path_byte_and_segment_limits() {
         let at_byte_limit = "é".repeat(2_048);
         assert_eq!(at_byte_limit.len(), 4 * 1024);
