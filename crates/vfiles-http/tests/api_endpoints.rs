@@ -5273,6 +5273,38 @@ async fn api_json_responses_are_private_and_not_stored() {
         Some(&HeaderValue::from_static("private, no-store"))
     );
 
+    let tree = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/files/tree")
+                .body(Body::empty())
+                .expect("tree request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(tree.status(), StatusCode::OK);
+    assert_eq!(
+        tree.headers().get(header::CACHE_CONTROL),
+        Some(&HeaderValue::from_static("private, no-store"))
+    );
+    let _ = response_bytes(tree).await;
+
+    let search = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/files/search?q=absent&search_files=true")
+                .body(Body::empty())
+                .expect("search request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(search.status(), StatusCode::OK);
+    assert_eq!(
+        search.headers().get(header::CACHE_CONTROL),
+        Some(&HeaderValue::from_static("private, no-store"))
+    );
+    let _ = response_bytes(search).await;
+
     let created_token = app
         .json_request_with_cookie(
             Method::POST,
