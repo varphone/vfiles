@@ -3,6 +3,23 @@
 本文件记录主要版本的变更；更早的历史可直接查看 `git log`。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)（`主版本.次版本.修订号`）。
 
+## v2.6.12
+
+HTTP 性能与大目录分页改进版本。
+
+### 性能改进
+
+- **HTTP/2 小响应延迟**：服务端对新接受的 TCP 连接启用 `TCP_NODELAY`，减少小响应等待 TCP 合并数据的时间。
+- **大目录分页**：根目录计数使用部分覆盖索引；实时目录列表增加 `(kind, path)` 游标分页，前端加载更多使用服务端返回的 `next_cursor`。原有 `offset` 参数继续可用。
+- **目录选择器计数**：新增目录部分索引，减少按命名空间扫描非目录记录的工作量。
+- **ZIP 归档**：JPEG、PNG、WebP、AVIF、音视频和常见压缩文件直接写入 ZIP，不再重复 Deflate；其他文件仍使用 Deflate。
+- **静态资源和请求日志**：静态资源优先读取预压缩变体；每个 HTTP 请求合并为一条结构化完成日志，并记录 handler 返回响应的耗时。
+
+### 升级说明
+
+- 启动时自动执行 SQLite 迁移 `0026_entries_namespace_directories_path`、`0027_entries_namespace_root_path` 和 `0028_entries_namespace_root_directories_path`。迁移会为现有条目创建索引；升级前建议备份数据库，并为迁移预留磁盘空间和启动时间。
+- `GET /api/files/list` 和实时目录列表路径新增可选的 `after_kind`、`after_path` 查询参数及响应字段 `next_cursor`。现有 offset 分页调用方无需修改。
+
 ## v2.6.11
 
 安全性、协议完整性与大规模数据处理改进版本。
