@@ -45,7 +45,7 @@ pub fn ensure_self_signed_certificate(
     let generated = rcgen::generate_simple_self_signed(names)
         .map_err(|err| io::Error::other(format!("生成 FTPS 自签名证书失败: {err}")))?;
     let certificate = generated.cert.pem();
-    let private_key = SecretBox::new(Box::new(generated.signing_key.serialize_pem()));
+    let private_key = private_key_pem(generated.signing_key.serialize_pem());
     drop(generated);
 
     let mut key_file = create_private_file(private_key_path)?;
@@ -74,6 +74,10 @@ pub fn ensure_self_signed_certificate(
     }
 
     fingerprint(certificate_path)
+}
+
+fn private_key_pem(pem: String) -> SecretBox<String> {
+    SecretBox::new(Box::new(pem))
 }
 
 fn fingerprint(certificate_path: &Path) -> io::Result<String> {
@@ -232,6 +236,16 @@ fn restrict_private_file(path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_zeroize_on_drop<T: secrecy::zeroize::ZeroizeOnDrop>() {}
+
+    #[test]
+    fn private_key_pem_uses_zeroizing_secret_storage() {
+        let secret: SecretBox<String> = private_key_pem(String::from("test private key"));
+
+        assert_eq!(secret.expose_secret(), "test private key");
+        assert_zeroize_on_drop::<SecretBox<String>>();
+    }
 
     #[test]
     fn generates_persistent_certificate_and_restricts_private_key() {

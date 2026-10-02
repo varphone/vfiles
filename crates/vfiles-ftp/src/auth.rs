@@ -146,7 +146,7 @@ impl Authenticator for VfilesAuthenticator {
             return Err(AuthenticationError::BadUser);
         }
 
-        let password = creds.password.as_deref().unwrap_or_default();
+        let password = credentials_password(creds);
         let source_ip = creds.source_ip.to_string();
 
         if self
@@ -199,11 +199,32 @@ impl Authenticator for VfilesAuthenticator {
     }
 }
 
+fn credentials_password(credentials: &Credentials) -> &str {
+    credentials.password.as_deref().unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::auth_service_failure;
+    use super::{auth_service_failure, credentials_password};
+    use unftp_core::auth::{ChannelEncryptionState, Credentials};
     use vfiles_app::{IngestStats, LoginAttemptLimiter, RateLimitPolicy};
     use vfiles_domain::DomainError;
+
+    #[test]
+    fn authentication_uses_borrowed_credentials_password() {
+        let credentials = Credentials {
+            password: Some(String::from("test-secret")),
+            certificate_chain: None,
+            source_ip: "127.0.0.1".parse().expect("test IP address"),
+            command_channel_security: ChannelEncryptionState::Tls,
+        };
+        let stored_password = credentials.password.as_deref().expect("password");
+
+        let verified_password = credentials_password(&credentials);
+
+        assert_eq!(verified_password, stored_password);
+        assert_eq!(verified_password.as_ptr(), stored_password.as_ptr());
+    }
 
     #[test]
     fn password_work_saturation_does_not_increment_the_login_limiter() {
@@ -226,9 +247,7 @@ mod tests {
             &stats,
         );
         assert!(
-            limiter
-                .check_login(&policy, source_ip, username)
-                .is_none(),
+            limiter.check_login(&policy, source_ip, username).is_none(),
             "temporary password-work saturation must not lock out the valid account"
         );
 
@@ -241,9 +260,7 @@ mod tests {
             &stats,
         );
         assert!(
-            limiter
-                .check_login(&policy, source_ip, username)
-                .is_some(),
+            limiter.check_login(&policy, source_ip, username).is_some(),
             "an actual invalid credential must still count toward the login limit"
         );
     }
