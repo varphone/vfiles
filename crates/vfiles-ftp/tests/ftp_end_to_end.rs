@@ -1723,6 +1723,24 @@ async fn pwd_doubles_quotes_in_the_current_path_reply() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mkd_doubles_quotes_in_the_created_path_reply() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.client();
+    let response = client
+        .custom_command("MKD mkd\"dir", &[Status::PathCreated])
+        .expect("quoted directory should be created");
+    assert_eq!(
+        String::from_utf8_lossy(&response.body),
+        "257 \"/mkd\"\"dir\" directory created\r\n",
+        "RFC 959 requires the created pathname to be quoted with embedded quotes doubled"
+    );
+    client
+        .cwd("mkd\"dir")
+        .expect("the exact created pathname should remain usable");
+    client.quit().expect("quit should succeed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ftp_login_rate_limit_combines_email_case_variants() {
     let harness = Harness::start(SnapshotMode::Off, 1).await;
     let identifiers = [
