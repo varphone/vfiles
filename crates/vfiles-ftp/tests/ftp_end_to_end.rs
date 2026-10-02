@@ -250,6 +250,10 @@ impl Harness {
 
     /// 建立一个已升级到 FTPS 的同步连接（在 blocking 线程中使用）。
     fn secure_client(&self) -> RustlsFtpStream {
+        self.secure_client_with_config(self.client_tls_config())
+    }
+
+    fn client_tls_config(&self) -> Arc<ClientConfig> {
         let certificate_path = self._temp_dir.path().join("ftp-tls/ftp-cert.pem");
         let certificate_pem = std::fs::read(certificate_path).expect("test certificate");
         let certificate = CertificateDer::pem_slice_iter(&certificate_pem)
@@ -260,12 +264,17 @@ impl Harness {
         roots
             .add(certificate)
             .expect("test certificate should be trusted");
-        let tls_config = ClientConfig::builder()
+        Arc::new(
+            ClientConfig::builder()
             .with_root_certificates(roots)
-            .with_no_client_auth();
+                .with_no_client_auth(),
+        )
+    }
+
+    fn secure_client_with_config(&self, tls_config: Arc<ClientConfig>) -> RustlsFtpStream {
         RustlsFtpStream::connect(self.handle.local_addr())
             .expect("client connect")
-            .into_secure(RustlsConnector::from(Arc::new(tls_config)), "localhost")
+            .into_secure(RustlsConnector::from(tls_config), "localhost")
             .expect("control channel should use FTPS")
     }
 
@@ -405,6 +414,63 @@ async fn repeated_epsv_commands_do_not_exhaust_the_passive_port_range() {
     }
 
     client.quit().expect("quit should succeed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftps_refuses_new_passive_listeners_while_a_data_socket_waits_for_a_command() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let victim_tls_config = harness.client_tls_config();
+    let mut client = harness.secure_client_with_config(Arc::clone(&victim_tls_config));
+    client.login(USERNAME, PASSWORD).expect("victim should log in");
+    let passive_response = client
+        .custom_command("EPSV", &[Status::ExtendedPassiveMode])
+        .expect("EPSV should allocate a passive listener");
+    let passive_text = String::from_utf8_lossy(&passive_response.body);
+    let passive_port = passive_text
+        .split('(')
+        .nth(1)
+        .and_then(|value| value.split(')').next())
+        .and_then(|value| value.split('|').find_map(|part| part.parse::<u16>().ok()))
+        .expect("EPSV response should contain a port");
+    let passive_addr = std::net::SocketAddr::new(harness.handle.local_addr().ip(), passive_port);
+    let data_socket = std::net::TcpStream::connect_timeout(
+        &passive_addr,
+        std::time::Duration::from_secs(2),
+    )
+    .expect("victim should connect its data socket");
+    data_socket
+        .set_read_timeout(Some(std::time::Duration::from_millis(250)))
+        .expect("data read timeout should be set");
+    let server_name = suppaftp::rustls::pki_types::ServerName::try_from("localhost")
+        .expect("server name should parse");
+    let mut data_stream = suppaftp::rustls::StreamOwned::new(
+        suppaftp::rustls::ClientConnection::new(victim_tls_config, server_name)
+            .expect("resumed data TLS session should build"),
+        data_socket,
+    );
+    let mut probe = [0_u8; 1];
+    let _ = std::io::Read::read(&mut data_stream, &mut probe);
+    assert_eq!(
+        data_stream.conn.handshake_kind(),
+        Some(suppaftp::rustls::HandshakeKind::Resumed),
+        "the data socket should be accepted for this control session"
+    );
+
+    for index in 0..12 {
+        let result = client.custom_command("EPSV", &[Status::ExtendedPassiveMode]);
+        match result {
+            Err(suppaftp::FtpError::UnexpectedResponse(response)) => assert_eq!(
+                response.status,
+                Status::CannotOpenDataConnection,
+                "request {index} should not allocate another passive listener"
+            ),
+            Err(error) => panic!("request {index} returned the wrong error: {error}"),
+            Ok(_) => panic!("request {index} allocated a listener while a data worker was busy"),
+        }
+    }
+
+    drop(data_stream);
+    client.quit().expect("QUIT should cancel the waiting data worker");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
