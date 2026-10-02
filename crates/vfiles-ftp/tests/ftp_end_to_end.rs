@@ -20,7 +20,7 @@ use suppaftp::{
 use tokio::sync::watch;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
-    net::TcpStream,
+    net::{TcpListener, TcpStream},
 };
 use unftp_core::storage::{ErrorKind, StorageBackend};
 use vfiles_app::{
@@ -377,6 +377,74 @@ async fn repeated_epsv_commands_do_not_exhaust_the_passive_port_range() {
     }
 
     client.quit().expect("quit should succeed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn quit_closes_a_pending_passive_listener() {
+    let harness = Harness::start_with_max_connections(SnapshotMode::Off, 1, 1).await;
+    let mut client = harness.client();
+    let response = client
+        .custom_command("EPSV", &[Status::ExtendedPassiveMode])
+        .expect("EPSV should allocate a passive listener");
+    let passive_port = response
+        .as_string()
+        .expect("EPSV response should be UTF-8")
+        .split("|||")
+        .nth(1)
+        .and_then(|port| port.split('|').next())
+        .expect("EPSV response should contain its port")
+        .parse::<u16>()
+        .expect("EPSV port should be a number");
+    let passive_address = std::net::SocketAddr::new(harness.handle.local_addr().ip(), passive_port);
+
+    client.quit().expect("quit should succeed");
+    drop(client);
+
+    let mut listener_closed = false;
+    for _ in 0..40 {
+        match TcpListener::bind(passive_address).await {
+            Ok(listener) => {
+                listener_closed = true;
+                drop(listener);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            Err(error) => panic!("could not check passive listener cleanup: {error}"),
+        }
+    }
+
+    assert!(
+        listener_closed,
+        "QUIT must release a passive port before its 15-second accept timeout"
+    );
+
+    let address = harness.handle.local_addr();
+    let mut replacement_accepted = false;
+    for _ in 0..20 {
+        let candidate = TcpStream::connect(address)
+            .await
+            .expect("replacement TCP connection should open");
+        let mut reader = BufReader::new(candidate);
+        let mut greeting = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            reader.read_line(&mut greeting),
+        )
+        .await
+        .expect("replacement greeting timeout")
+        .expect("replacement greeting read");
+        if greeting.starts_with("220 ") {
+            replacement_accepted = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        replacement_accepted,
+        "QUIT cleanup must release the session slot after closing its passive listener"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
