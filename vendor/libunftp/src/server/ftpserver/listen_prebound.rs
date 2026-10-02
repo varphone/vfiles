@@ -191,3 +191,227 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        auth::AnonymousAuthenticator,
+        notification::{DataListener, PresenceListener, nop::NopListener},
+        options::{ActivePassiveMode, FtpsRequired, PassiveHost, SiteMd5},
+        server::{ftpserver::chosen::OptionsHolder, session::Session, tls::FtpsConfig},
+    };
+    use rcgen::generate_simple_self_signed;
+    use rustls::{
+        ClientConfig, RootCertStore, ServerConfig,
+        pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName},
+    };
+    use std::{
+        fmt::Debug,
+        path::{Path, PathBuf},
+        time::{Duration, SystemTime},
+    };
+    use tokio::{
+        io::{AsyncRead, AsyncReadExt},
+        net::{TcpListener, TcpStream},
+        sync::Mutex,
+        time::timeout,
+    };
+    use tokio_rustls::TlsConnector;
+    use unftp_core::{
+        auth::{DefaultUser, DefaultUserDetailProvider},
+        storage::{Fileinfo, Metadata, Result, StorageBackend},
+    };
+
+    #[derive(Debug)]
+    struct TestMetadata;
+
+    impl Metadata for TestMetadata {
+        fn len(&self) -> u64 {
+            0
+        }
+
+        fn is_dir(&self) -> bool {
+            false
+        }
+
+        fn is_file(&self) -> bool {
+            false
+        }
+
+        fn is_symlink(&self) -> bool {
+            false
+        }
+
+        fn modified(&self) -> Result<SystemTime> {
+            Ok(SystemTime::UNIX_EPOCH)
+        }
+
+        fn gid(&self) -> u32 {
+            0
+        }
+
+        fn uid(&self) -> u32 {
+            0
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestStorage;
+
+    #[async_trait::async_trait]
+    impl StorageBackend<DefaultUser> for TestStorage {
+        type Metadata = TestMetadata;
+
+        async fn metadata<P: AsRef<Path> + Send + Debug>(&self, _: &DefaultUser, _: P) -> Result<Self::Metadata> {
+            unreachable!("invalid FTPS candidates must not reach storage")
+        }
+
+        async fn list<P: AsRef<Path> + Send + Debug>(&self, _: &DefaultUser, _: P) -> Result<Vec<Fileinfo<PathBuf, Self::Metadata>>> {
+            unreachable!("invalid FTPS candidates must not reach storage")
+        }
+
+        async fn get<P: AsRef<Path> + Send + Debug>(&self, _: &DefaultUser, _: P, _: u64) -> Result<Box<dyn AsyncRead + Send + Sync + Unpin>> {
+            unreachable!("invalid FTPS candidates must not reach storage")
+        }
+
+        async fn put<P: AsRef<Path> + Send + Debug, R: AsyncRead + Send + Sync + Unpin + 'static>(&self, _: &DefaultUser, _: R, _: P, _: u64) -> Result<u64> {
+            unreachable!("invalid FTPS candidates must not reach storage")
+        }
+
+        async fn del<P: AsRef<Path> + Send + Debug>(&self, _: &DefaultUser, _: P) -> Result<()> {
+            unreachable!("invalid FTPS candidates must not reach storage")
+        }
+
+        async fn mkd<P: AsRef<Path> + Send + Debug>(&self, _: &DefaultUser, _: P) -> Result<()> {
+            unreachable!("invalid FTPS candidates must not reach storage")
+        }
+
+        async fn rename<P: AsRef<Path> + Send + Debug>(&self, _: &DefaultUser, _: P, _: P) -> Result<()> {
+            unreachable!("invalid FTPS candidates must not reach storage")
+        }
+
+        async fn rmd<P: AsRef<Path> + Send + Debug>(&self, _: &DefaultUser, _: P) -> Result<()> {
+            unreachable!("invalid FTPS candidates must not reach storage")
+        }
+
+        async fn cwd<P: AsRef<Path> + Send + Debug>(&self, _: &DefaultUser, _: P) -> Result<()> {
+            unreachable!("invalid FTPS candidates must not reach storage")
+        }
+    }
+
+    fn ftps_config() -> (FtpsConfig, Arc<ClientConfig>) {
+        let generated = generate_simple_self_signed(vec!["localhost".to_string()]).expect("test certificate");
+        let certificate = CertificateDer::from(generated.cert.der().clone());
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(generated.signing_key.serialize_der()));
+        let server_tls = Arc::new(
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(vec![certificate.clone()], key)
+                .expect("server TLS config"),
+        );
+        let mut roots = RootCertStore::empty();
+        roots.add(certificate).expect("test certificate should be trusted");
+        let client_tls = Arc::new(ClientConfig::builder().with_root_certificates(roots).with_no_client_auth());
+        let config = FtpsConfig::On {
+            tls_config: Arc::clone(&server_tls),
+            data_tls_config: None,
+            data_resumption: None,
+        }
+        .for_control_session()
+        .expect("per-session FTPS config");
+        (config, client_tls)
+    }
+
+    #[tokio::test]
+    async fn full_tls_handshake_does_not_consume_prebound_passive_mapping() {
+        let ftps = ftps_config();
+        let logger = slog::Logger::root(slog::Discard {}, slog::o!());
+        let passive_listener = TcpListener::bind("127.0.0.1:0").await.expect("passive test listener");
+        let passive_address = passive_listener.local_addr().expect("passive listener address");
+        let connection = SocketAddrPair {
+            source: "127.0.0.1:30000".parse().expect("test source address"),
+            destination: passive_address,
+        };
+        let session = Arc::new(Mutex::new(Session::new(Arc::new(TestStorage), connection.source).ftps(ftps.0.clone())));
+        {
+            let mut state = session.lock().await;
+            state.data_tls = true;
+            state.data_abort_tx = Some(tokio_util::sync::CancellationToken::new());
+            state.switchboard_active_datachan = Some((&connection).into());
+        }
+        let mut switchboard = Switchboard::new(logger.clone(), passive_address.port()..=passive_address.port());
+        switchboard
+            .try_and_claim((&connection).into(), Arc::clone(&session))
+            .await
+            .expect("passive mapping should be registered");
+
+        let storage: Arc<dyn Fn() -> TestStorage + Send + Sync> = Arc::new(|| TestStorage);
+        let data_listener: Arc<dyn DataListener> = Arc::new(NopListener {});
+        let presence_listener: Arc<dyn PresenceListener> = Arc::new(NopListener {});
+        let options = OptionsHolder {
+            storage,
+            greeting: "test",
+            authenticator: Arc::new(AnonymousAuthenticator {}),
+            user_detail_provider: Arc::new(DefaultUserDetailProvider {}),
+            passive_ports: passive_address.port()..=passive_address.port(),
+            passive_host: PassiveHost::default(),
+            ftps_config: ftps.0,
+            collect_metrics: false,
+            idle_session_timeout: Duration::from_secs(30),
+            logger: logger.clone(),
+            ftps_required_control_chan: FtpsRequired::All,
+            ftps_required_data_chan: FtpsRequired::All,
+            site_md5: SiteMd5::None,
+            data_listener,
+            presence_listener,
+            active_passive_mode: ActivePassiveMode::PassiveOnly,
+            binder: Arc::new(std::sync::Mutex::new(None)),
+        };
+        let mut listener = PreboundListener {
+            bind_address: "127.0.0.1:0".parse().expect("test bind address"),
+            logger,
+            external_control_port: None,
+            options,
+            switchboard: switchboard.clone(),
+            passive_handshake_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+            shutdown_topic: Arc::new(crate::server::shutdown::Notifier::new()),
+            failed_logins: None,
+        };
+
+        for _ in 0..2 {
+            let client_stream = TcpStream::connect(passive_address).await.expect("candidate should connect");
+            let (server_stream, peer) = passive_listener.accept().await.expect("candidate should be accepted");
+            let candidate = SocketAddrPair {
+                source: peer,
+                destination: passive_address,
+            };
+            listener.dispatch_data_connection(server_stream, candidate.clone()).await;
+
+            let connector = TlsConnector::from(Arc::clone(&ftps.1));
+            let mut tls_stream = connector
+                .connect(ServerName::try_from("localhost").expect("server name"), client_stream)
+                .await
+                .expect("a valid full TLS handshake should complete before resumption rejection");
+            assert_eq!(tls_stream.get_ref().1.handshake_kind(), Some(rustls::HandshakeKind::Full));
+            let mut byte = [0_u8; 1];
+            let read_result = timeout(Duration::from_secs(2), tls_stream.read(&mut byte))
+                .await
+                .expect("rejected candidate should be closed promptly");
+            assert!(!matches!(read_result, Ok(count) if count > 0), "rejected candidate must not receive data");
+
+            timeout(Duration::from_secs(2), async {
+                while session.lock().await.passive_candidate_slots.available_permits() != 2 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("candidate semaphore permit should be released");
+            assert!(
+                switchboard.get_session_by_connection_pair(&candidate).await.is_some(),
+                "a full handshake that did not resume the control session must leave the passive mapping available"
+            );
+            assert!(!session.lock().await.data_busy, "rejected candidate must not start a data worker");
+        }
+    }
+}
