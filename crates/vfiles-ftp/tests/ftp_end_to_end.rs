@@ -1383,6 +1383,141 @@ async fn ftp_login_rate_limit_aggregates_password_spraying_across_usernames() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_control_command_tasks_are_bounded_per_session() {
+    use std::io::Write as _;
+
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let certificate_path = harness._temp_dir.path().join("ftp-tls/ftp-cert.pem");
+    let certificate_pem = std::fs::read(certificate_path).expect("test certificate");
+    let certificate = CertificateDer::pem_slice_iter(&certificate_pem)
+        .next()
+        .expect("PEM certificate should be present")
+        .expect("PEM certificate should parse");
+    let mut roots = RootCertStore::empty();
+    roots
+        .add(certificate)
+        .expect("test certificate should be trusted");
+    let tls_config = Arc::new(
+        ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
+    );
+    let address = harness.handle.local_addr();
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let (start_commands_tx, start_commands_rx) = std::sync::mpsc::channel();
+    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+    let client_task = tokio::task::spawn_blocking(move || {
+        let socket = std::net::TcpStream::connect(address).expect("control socket should connect");
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .expect("control read timeout should be set");
+        socket
+            .set_write_timeout(Some(std::time::Duration::from_secs(3)))
+            .expect("control write timeout should be set");
+        let mut plaintext = std::io::BufReader::new(socket);
+        let mut line = String::new();
+        std::io::BufRead::read_line(&mut plaintext, &mut line)
+            .expect("FTP greeting should arrive");
+        assert!(line.starts_with("220 "), "unexpected greeting: {line:?}");
+        plaintext
+            .get_mut()
+            .write_all(b"AUTH TLS\r\n")
+            .expect("AUTH TLS should be sent");
+        plaintext
+            .get_mut()
+            .flush()
+            .expect("AUTH TLS should be flushed");
+        line.clear();
+        std::io::BufRead::read_line(&mut plaintext, &mut line)
+            .expect("AUTH TLS response should arrive");
+        assert!(line.starts_with("234 "), "unexpected TLS reply: {line:?}");
+
+        let socket = plaintext.into_inner();
+        let server_name = suppaftp::rustls::pki_types::ServerName::try_from("localhost")
+            .expect("server name should parse");
+        let connection = suppaftp::rustls::ClientConnection::new(tls_config, server_name)
+            .expect("control TLS session should build");
+        let mut control = std::io::BufReader::new(suppaftp::rustls::StreamOwned::new(
+            connection, socket,
+        ));
+        let setup_commands = [
+            ("PBSZ 0\r\n".to_string(), "200 "),
+            ("PROT P\r\n".to_string(), "200 "),
+            (format!("USER {USERNAME}\r\n"), "331 "),
+            (format!("PASS {PASSWORD}\r\n"), "230 "),
+            ("NOOP\r\n".to_string(), "200 "),
+        ];
+        for (command, expected) in setup_commands {
+            control
+                .get_mut()
+                .write_all(command.as_bytes())
+                .expect("FTP command should be sent");
+            control
+                .get_mut()
+                .flush()
+                .expect("FTP command should be flushed");
+            line.clear();
+            std::io::BufRead::read_line(&mut control, &mut line)
+                .expect("FTP command reply should arrive");
+            assert!(
+                line.starts_with(expected),
+                "unexpected reply to {command:?}: {line:?}"
+            );
+        }
+        ready_tx.send(()).expect("test should be ready to hold the DB pool");
+        start_commands_rx
+            .recv()
+            .expect("test should release the pipelined SIZE commands");
+
+        let commands = (0..5)
+            .map(|index| format!("SIZE blocked-{index}\r\n"))
+            .collect::<String>();
+        control
+            .get_mut()
+            .write_all(commands.as_bytes())
+            .expect("pipelined SIZE commands should be sent");
+        control
+            .get_mut()
+            .flush()
+            .expect("pipelined SIZE commands should be flushed");
+        line.clear();
+        let response = std::io::BufRead::read_line(&mut control, &mut line).map(|_| line);
+        let _ = reply_tx.send(response);
+    });
+
+    ready_rx
+        .await
+        .expect("control session should authenticate before pool saturation");
+    let max_connections = harness.pool.options().get_max_connections();
+    let mut held_connections = Vec::with_capacity(max_connections as usize);
+    for _ in 0..max_connections {
+        held_connections.push(
+            harness
+                .pool
+                .acquire()
+                .await
+                .expect("database connection should be acquired"),
+        );
+    }
+    start_commands_tx
+        .send(())
+        .expect("control client should send SIZE commands");
+    let reply = tokio::time::timeout(std::time::Duration::from_secs(2), reply_rx)
+        .await
+        .expect("the saturated command should receive a prompt response")
+        .expect("control client should return its response")
+        .expect("FTP reply should be readable");
+    assert!(
+        reply.starts_with("451 "),
+        "the fifth in-flight storage command should be rejected at the per-session limit: {reply:?}"
+    );
+    drop(held_connections);
+    client_task
+        .await
+        .expect("raw FTPS client task should finish");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn enforces_max_file_size() {
     let harness = Harness::start(SnapshotMode::PerFile, 1).await;
     let mut client = harness.client();
