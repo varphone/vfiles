@@ -1,8 +1,8 @@
 <template>
-  <div class="admin-page">
+  <div class="admin-page vf-page-shell">
     <div class="admin-card vf-page-card">
       <!-- 页头：标题 + 概览 + 搜索/刷新（与文件浏览器的卡片语言一致） -->
-      <header class="admin-header">
+      <header class="admin-header vf-page-header">
         <div class="admin-header-titles">
           <h1 class="admin-title vf-page-title">用户管理</h1>
           <p class="admin-subtitle vf-page-subtitle">
@@ -13,7 +13,7 @@
           </p>
         </div>
 
-        <div class="admin-header-actions">
+        <div class="admin-header-actions vf-page-header-actions">
           <div class="admin-search">
             <IconSearch :size="16" class="admin-search-icon" />
             <input
@@ -648,27 +648,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.admin-page {
-  padding: 1.25rem 1rem 3rem;
-}
-
-.admin-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.8rem;
-  flex-wrap: wrap;
-  padding-bottom: 0.8rem;
-  border-bottom: 1px solid var(--vf-border-weak);
-}
-
-.admin-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
 .admin-search {
   position: relative;
   display: flex;
@@ -898,10 +877,6 @@ onMounted(() => {
 }
 
 @media screen and (max-width: 768px) {
-  .admin-page {
-    padding: 0.75rem 0.5rem 2rem;
-  }
-
   .admin-card {
     padding: 0.9rem 0.85rem 1.1rem;
   }

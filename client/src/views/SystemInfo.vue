@@ -1,267 +1,273 @@
 <template>
-  <main class="vf-page-card system-info-page">
-    <header class="system-info-header">
-      <div>
-        <h1 class="vf-page-title">系统信息</h1>
-        <p class="vf-page-subtitle">
-          查看服务运行状态、协议配置和所有用户的存储用量
-        </p>
-      </div>
-      <div class="system-info-header-actions">
-        <button
-          class="vf-ghost-button"
-          type="button"
-          :disabled="loading"
-          @click="load"
-        >
-          <span :class="{ 'is-spinning': loading }" aria-hidden="true">↻</span>
-          <span>刷新</span>
-        </button>
-        <RouterLink class="vf-ghost-button" to="/">返回文件</RouterLink>
-      </div>
-    </header>
-
-    <p v-if="error" class="system-info-error" role="alert">{{ error }}</p>
-
-    <SkeletonList v-if="loading && !info" :rows="4" label="加载系统信息" />
-
-    <template v-if="info">
-      <section class="system-info-stats" aria-label="系统统计">
-        <article class="system-info-stat">
-          <span class="system-info-stat-label">用户</span>
-          <strong>{{ numberLabel(info.storage.user_count) }}</strong>
-          <span class="system-info-stat-detail">个账号</span>
-        </article>
-        <article class="system-info-stat is-accent">
-          <span class="system-info-stat-label">当前存储用量</span>
-          <strong>{{ formatSize(info.storage.total_bytes) }}</strong>
-          <span class="system-info-stat-detail">
-            {{ numberLabel(info.storage.file_count) }} 个文件
-          </span>
-        </article>
-        <article class="system-info-stat">
-          <span class="system-info-stat-label">目录</span>
-          <strong>{{ numberLabel(info.storage.directory_count) }}</strong>
-          <span class="system-info-stat-detail">个目录</span>
-        </article>
-        <article class="system-info-stat">
-          <span class="system-info-stat-label">启用协议</span>
-          <strong>{{ enabledProtocolCount }}</strong>
-          <span class="system-info-stat-detail">项协议配置已启用</span>
-        </article>
-      </section>
-
-      <div class="system-info-main-grid">
-        <section class="system-info-panel" aria-labelledby="protocols-title">
-          <div class="system-info-section-heading">
-            <div>
-              <h2 id="protocols-title" class="system-info-card-title">
-                接入协议
-              </h2>
-              <p class="system-info-section-description">
-                各协议配置及可获取的启动结果
-              </p>
-            </div>
-            <span class="system-info-section-count">
-              {{ enabledProtocolCount }} / {{ info.protocols.length }}
-            </span>
-          </div>
-
-          <p class="system-info-note">
-            协议开关反映配置；FTPS
-            展示本次启动结果，其他独立监听器请结合服务日志确认。
-            连接地址使用当前访问域名。
+  <div class="system-info-page vf-page-shell">
+    <main class="vf-page-card system-info-card">
+      <header class="system-info-header vf-page-header">
+        <div>
+          <h1 class="vf-page-title">系统信息</h1>
+          <p class="vf-page-subtitle">
+            查看服务运行状态、协议配置和所有用户的存储用量
           </p>
-
-          <ul class="system-info-protocols">
-            <li
-              v-for="protocol in info.protocols"
-              :key="protocol.id"
-              class="system-info-protocol"
-              :class="{ 'is-disabled': !protocol.enabled }"
+        </div>
+        <div class="system-info-header-actions vf-page-header-actions">
+          <button
+            class="vf-ghost-button"
+            type="button"
+            :disabled="loading"
+            @click="load"
+          >
+            <span :class="{ 'is-spinning': loading }" aria-hidden="true"
+              >↻</span
             >
-              <div class="system-info-protocol-heading">
-                <div class="system-info-protocol-name-wrap">
-                  <span
-                    class="system-info-protocol-indicator"
-                    :class="protocolStatusClass(protocol)"
-                    aria-hidden="true"
-                  />
-                  <div>
-                    <h3>{{ protocolLabel(protocol.id) }}</h3>
-                    <p>{{ protocolDescription(protocol.id) }}</p>
-                  </div>
-                </div>
-                <span
-                  class="system-info-status"
-                  :class="protocolStatusClass(protocol)"
-                >
-                  {{ protocolStatusLabel(protocol) }}
-                </span>
-              </div>
+            <span>刷新</span>
+          </button>
+          <RouterLink class="vf-ghost-button" to="/">返回文件</RouterLink>
+        </div>
+      </header>
 
-              <dl class="system-info-protocol-details">
-                <template v-if="protocol.enabled">
-                  <dt>监听地址</dt>
-                  <dd class="system-info-mono">{{ protocol.bind }}</dd>
-                  <dt>连接地址</dt>
-                  <dd class="system-info-mono">
-                    {{ protocolConnectionAddress(protocol) }}
-                  </dd>
-                  <dt>接入方式</dt>
-                  <dd>{{ protocolMode(protocol) }}</dd>
-                  <template v-if="protocol.passive_ports">
-                    <dt>被动端口</dt>
-                    <dd class="system-info-mono">
-                      {{ protocol.passive_ports }}
-                    </dd>
-                  </template>
-                  <template v-if="protocol.module">
-                    <dt>模块</dt>
-                    <dd class="system-info-mono">{{ protocol.module }}</dd>
-                  </template>
-                  <template v-if="protocol.writable !== null">
-                    <dt>写入权限</dt>
-                    <dd>{{ protocol.writable ? "允许写入" : "只读" }}</dd>
-                  </template>
-                </template>
-                <template v-else>
-                  <dt>配置</dt>
-                  <dd>已关闭</dd>
-                </template>
-              </dl>
-              <p
-                v-if="protocol.runtime_status === 'failed'"
-                class="system-info-protocol-error"
-                role="status"
-              >
-                启动失败：{{ protocol.runtime_error || "详情请查看服务日志" }}
-              </p>
-            </li>
-          </ul>
+      <p v-if="error" class="system-info-error" role="alert">{{ error }}</p>
+
+      <SkeletonList v-if="loading && !info" :rows="4" label="加载系统信息" />
+
+      <template v-if="info">
+        <section class="system-info-stats" aria-label="系统统计">
+          <article class="system-info-stat">
+            <span class="system-info-stat-label">用户</span>
+            <strong>{{ numberLabel(info.storage.user_count) }}</strong>
+            <span class="system-info-stat-detail">个账号</span>
+          </article>
+          <article class="system-info-stat is-accent">
+            <span class="system-info-stat-label">当前存储用量</span>
+            <strong>{{ formatSize(info.storage.total_bytes) }}</strong>
+            <span class="system-info-stat-detail">
+              {{ numberLabel(info.storage.file_count) }} 个文件
+            </span>
+          </article>
+          <article class="system-info-stat">
+            <span class="system-info-stat-label">目录</span>
+            <strong>{{ numberLabel(info.storage.directory_count) }}</strong>
+            <span class="system-info-stat-detail">个目录</span>
+          </article>
+          <article class="system-info-stat">
+            <span class="system-info-stat-label">启用协议</span>
+            <strong>{{ enabledProtocolCount }}</strong>
+            <span class="system-info-stat-detail">项协议配置已启用</span>
+          </article>
         </section>
+
+        <div class="system-info-main-grid">
+          <section class="system-info-panel" aria-labelledby="protocols-title">
+            <div class="system-info-section-heading">
+              <div>
+                <h2 id="protocols-title" class="system-info-card-title">
+                  接入协议
+                </h2>
+                <p class="system-info-section-description">
+                  各协议配置及可获取的启动结果
+                </p>
+              </div>
+              <span class="system-info-section-count">
+                {{ enabledProtocolCount }} / {{ info.protocols.length }}
+              </span>
+            </div>
+
+            <p class="system-info-note">
+              协议开关反映配置；FTPS
+              展示本次启动结果，其他独立监听器请结合服务日志确认。
+              连接地址使用当前访问域名。
+            </p>
+
+            <ul class="system-info-protocols">
+              <li
+                v-for="protocol in info.protocols"
+                :key="protocol.id"
+                class="system-info-protocol"
+                :class="{ 'is-disabled': !protocol.enabled }"
+              >
+                <div class="system-info-protocol-heading">
+                  <div class="system-info-protocol-name-wrap">
+                    <span
+                      class="system-info-protocol-indicator"
+                      :class="protocolStatusClass(protocol)"
+                      aria-hidden="true"
+                    />
+                    <div>
+                      <h3>{{ protocolLabel(protocol.id) }}</h3>
+                      <p>{{ protocolDescription(protocol.id) }}</p>
+                    </div>
+                  </div>
+                  <span
+                    class="system-info-status"
+                    :class="protocolStatusClass(protocol)"
+                  >
+                    {{ protocolStatusLabel(protocol) }}
+                  </span>
+                </div>
+
+                <dl class="system-info-protocol-details">
+                  <template v-if="protocol.enabled">
+                    <dt>监听地址</dt>
+                    <dd class="system-info-mono">{{ protocol.bind }}</dd>
+                    <dt>连接地址</dt>
+                    <dd class="system-info-mono">
+                      {{ protocolConnectionAddress(protocol) }}
+                    </dd>
+                    <dt>接入方式</dt>
+                    <dd>{{ protocolMode(protocol) }}</dd>
+                    <template v-if="protocol.passive_ports">
+                      <dt>被动端口</dt>
+                      <dd class="system-info-mono">
+                        {{ protocol.passive_ports }}
+                      </dd>
+                    </template>
+                    <template v-if="protocol.module">
+                      <dt>模块</dt>
+                      <dd class="system-info-mono">{{ protocol.module }}</dd>
+                    </template>
+                    <template v-if="protocol.writable !== null">
+                      <dt>写入权限</dt>
+                      <dd>{{ protocol.writable ? "允许写入" : "只读" }}</dd>
+                    </template>
+                  </template>
+                  <template v-else>
+                    <dt>配置</dt>
+                    <dd>已关闭</dd>
+                  </template>
+                </dl>
+                <p
+                  v-if="protocol.runtime_status === 'failed'"
+                  class="system-info-protocol-error"
+                  role="status"
+                >
+                  启动失败：{{ protocol.runtime_error || "详情请查看服务日志" }}
+                </p>
+              </li>
+            </ul>
+          </section>
+
+          <section
+            class="system-info-panel system-info-runtime"
+            aria-label="运行信息"
+          >
+            <div class="system-info-section-heading">
+              <div>
+                <h2 class="system-info-card-title">运行信息</h2>
+                <p class="system-info-section-description">
+                  服务实例与构建信息
+                </p>
+              </div>
+              <span class="system-info-version">{{ info.version }}</span>
+            </div>
+            <dl class="system-info-runtime-list">
+              <div>
+                <dt>运行环境</dt>
+                <dd>{{ runtimeLabel }}</dd>
+              </div>
+              <div>
+                <dt>启动时间</dt>
+                <dd>{{ startedAtLabel }}</dd>
+              </div>
+              <div>
+                <dt>已运行</dt>
+                <dd>{{ uptimeLabel }}</dd>
+              </div>
+            </dl>
+          </section>
+        </div>
 
         <section
-          class="system-info-panel system-info-runtime"
-          aria-label="运行信息"
+          class="system-info-panel system-info-storage"
+          aria-labelledby="storage-title"
         >
-          <div class="system-info-section-heading">
+          <div class="system-info-section-heading system-info-storage-heading">
             <div>
-              <h2 class="system-info-card-title">运行信息</h2>
-              <p class="system-info-section-description">服务实例与构建信息</p>
+              <h2 id="storage-title" class="system-info-card-title">
+                存储与用量
+              </h2>
+              <p class="system-info-section-description">
+                按用户汇总所有命名空间当前版本的文件大小（逻辑用量）
+              </p>
             </div>
-            <span class="system-info-version">{{ info.version }}</span>
+            <label class="system-info-search">
+              <span class="sr-only">搜索用户名</span>
+              <input
+                v-model.trim="searchQuery"
+                type="search"
+                placeholder="搜索用户"
+                aria-label="搜索用户名"
+              />
+            </label>
           </div>
-          <dl class="system-info-runtime-list">
-            <div>
-              <dt>运行环境</dt>
-              <dd>{{ runtimeLabel }}</dd>
-            </div>
-            <div>
-              <dt>启动时间</dt>
-              <dd>{{ startedAtLabel }}</dd>
-            </div>
-            <div>
-              <dt>已运行</dt>
-              <dd>{{ uptimeLabel }}</dd>
-            </div>
-          </dl>
-        </section>
-      </div>
 
-      <section
-        class="system-info-panel system-info-storage"
-        aria-labelledby="storage-title"
-      >
-        <div class="system-info-section-heading system-info-storage-heading">
-          <div>
-            <h2 id="storage-title" class="system-info-card-title">
-              存储与用量
-            </h2>
-            <p class="system-info-section-description">
-              按用户汇总所有命名空间当前版本的文件大小（逻辑用量）
-            </p>
-          </div>
-          <label class="system-info-search">
-            <span class="sr-only">搜索用户名</span>
-            <input
-              v-model.trim="searchQuery"
-              type="search"
-              placeholder="搜索用户"
-              aria-label="搜索用户名"
-            />
-          </label>
-        </div>
-
-        <div v-if="filteredUsers.length" class="system-info-table-wrap">
-          <table class="system-info-table">
-            <thead>
-              <tr>
-                <th scope="col">用户</th>
-                <th scope="col">角色 / 状态</th>
-                <th scope="col">文件与目录</th>
-                <th scope="col" class="system-info-usage-column">存储用量</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="user in filteredUsers" :key="user.user_id">
-                <td>
-                  <div class="system-info-user">
-                    <span class="system-info-avatar" aria-hidden="true">
-                      {{ (user.username || "?").slice(0, 1).toUpperCase() }}
+          <div v-if="filteredUsers.length" class="system-info-table-wrap">
+            <table class="system-info-table">
+              <thead>
+                <tr>
+                  <th scope="col">用户</th>
+                  <th scope="col">角色 / 状态</th>
+                  <th scope="col">文件与目录</th>
+                  <th scope="col" class="system-info-usage-column">存储用量</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="user in filteredUsers" :key="user.user_id">
+                  <td>
+                    <div class="system-info-user">
+                      <span class="system-info-avatar" aria-hidden="true">
+                        {{ (user.username || "?").slice(0, 1).toUpperCase() }}
+                      </span>
+                      <span>{{ user.username }}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="system-info-user-status">
+                      <span class="system-info-role">{{
+                        roleLabel(user.role)
+                      }}</span>
+                      <span
+                        class="system-info-account-state"
+                        :class="user.disabled ? 'is-disabled' : 'is-enabled'"
+                      >
+                        {{ user.disabled ? "已停用" : "正常" }}
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="system-info-count-line">
+                      {{ numberLabel(user.file_count) }} 个文件
                     </span>
-                    <span>{{ user.username }}</span>
-                  </div>
-                </td>
-                <td>
-                  <div class="system-info-user-status">
-                    <span class="system-info-role">{{
-                      roleLabel(user.role)
-                    }}</span>
-                    <span
-                      class="system-info-account-state"
-                      :class="user.disabled ? 'is-disabled' : 'is-enabled'"
+                    <span class="system-info-muted-line">
+                      {{ numberLabel(user.directory_count) }} 个目录
+                    </span>
+                  </td>
+                  <td class="system-info-usage-cell">
+                    <div class="system-info-usage-value">
+                      <strong>{{ formatSize(user.total_bytes) }}</strong>
+                      <span>{{ usagePercent(user.total_bytes) }}%</span>
+                    </div>
+                    <div
+                      class="system-info-usage-track"
+                      role="meter"
+                      :aria-label="`${user.username} 的存储用量占比`"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      :aria-valuenow="usagePercent(user.total_bytes)"
                     >
-                      {{ user.disabled ? "已停用" : "正常" }}
-                    </span>
-                  </div>
-                </td>
-                <td>
-                  <span class="system-info-count-line">
-                    {{ numberLabel(user.file_count) }} 个文件
-                  </span>
-                  <span class="system-info-muted-line">
-                    {{ numberLabel(user.directory_count) }} 个目录
-                  </span>
-                </td>
-                <td class="system-info-usage-cell">
-                  <div class="system-info-usage-value">
-                    <strong>{{ formatSize(user.total_bytes) }}</strong>
-                    <span>{{ usagePercent(user.total_bytes) }}%</span>
-                  </div>
-                  <div
-                    class="system-info-usage-track"
-                    role="meter"
-                    :aria-label="`${user.username} 的存储用量占比`"
-                    aria-valuemin="0"
-                    aria-valuemax="100"
-                    :aria-valuenow="usagePercent(user.total_bytes)"
-                  >
-                    <span
-                      :style="{ width: `${usagePercent(user.total_bytes)}%` }"
-                    />
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p v-else class="system-info-empty">
-          {{ searchQuery ? "没有匹配的用户" : "暂无用户用量" }}
-        </p>
-      </section>
-    </template>
-  </main>
+                      <span
+                        :style="{ width: `${usagePercent(user.total_bytes)}%` }"
+                      />
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p v-else class="system-info-empty">
+            {{ searchQuery ? "没有匹配的用户" : "暂无用户用量" }}
+          </p>
+        </section>
+      </template>
+    </main>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -448,11 +454,8 @@ onMounted(load);
   --system-info-accent: var(--vf-accent, #5267df);
   --system-info-good: var(--vf-success, #24875a);
   --system-info-muted: var(--vf-text-muted);
-  max-width: 1120px;
-  margin: 0 auto;
 }
 
-.system-info-header,
 .system-info-section-heading {
   display: flex;
   align-items: flex-start;
@@ -460,18 +463,8 @@ onMounted(load);
   gap: 1rem;
 }
 
-.system-info-header {
-  margin-bottom: 1.4rem;
-}
-
 .system-info-header .vf-page-subtitle {
   margin-top: 0.35rem;
-}
-
-.system-info-header-actions {
-  display: flex;
-  flex-shrink: 0;
-  gap: 0.55rem;
 }
 
 .is-spinning {
@@ -500,6 +493,7 @@ onMounted(load);
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.8rem;
+  margin-top: 0.6rem;
   margin-bottom: 1rem;
 }
 
@@ -943,21 +937,13 @@ onMounted(load);
   }
 }
 
+@media screen and (max-width: 768px) {
+  .system-info-card {
+    padding: 0.9rem 0.85rem 1.1rem;
+  }
+}
+
 @media (max-width: 560px) {
-  .system-info-header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .system-info-header-actions {
-    width: 100%;
-  }
-
-  .system-info-header-actions > * {
-    flex: 1;
-    justify-content: center;
-  }
-
   .system-info-protocols {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -49,6 +49,11 @@ describe("AdminUsers.vue", () => {
     const { findByText, findByPlaceholderText, getAllByText, getByLabelText } =
       renderWithProviders(AdminUsers);
 
+    expect(
+      document.querySelector(
+        ".vf-page-shell > .vf-page-card > .vf-page-header",
+      ),
+    ).toBeInTheDocument();
     await findByText("用户管理");
     await findByText("alice");
 
@@ -184,7 +189,6 @@ describe("AdminUsers.vue header actions", () => {
       expect(authService.deleteUser).toHaveBeenCalledWith("u1"),
     );
   });
-
 
   it("sorts users by column header (r118)", async () => {
     renderWithProviders(AdminUsers);

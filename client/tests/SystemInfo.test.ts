@@ -117,6 +117,17 @@ vi.mock("../src/services/auth.service", async () => {
 });
 
 describe("SystemInfo.vue", () => {
+  it("uses the shared management page shell and header layout", async () => {
+    renderWithProviders(SystemInfo);
+
+    expect(
+      document.querySelector(
+        ".vf-page-shell > .vf-page-card > .vf-page-header",
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("2.2.0")).toBeInTheDocument());
+  });
+
   it("shows enabled protocols and per-user storage in a system overview", async () => {
     renderWithProviders(SystemInfo);
     await waitFor(() => expect(screen.getByText("2.2.0")).toBeInTheDocument());
