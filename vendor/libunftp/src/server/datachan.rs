@@ -64,6 +64,30 @@ const MIN_DATA_CHANNEL_RATE_BYTES_PER_SEC: u64 = 32 * 1024;
 const MAX_DATA_CHANNEL_TRANSFER_DURATION: Duration = Duration::from_secs(48 * 60 * 60);
 const PASSIVE_CANDIDATE_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[derive(Debug, PartialEq, Eq)]
+enum DataOperationResult {
+    Completed,
+    Cancelled,
+    TimedOut,
+}
+
+async fn run_data_operation<F>(
+    abort_token: &CancellationToken,
+    timeout: Duration,
+    operation: F,
+) -> DataOperationResult
+where
+    F: Future<Output = ()>,
+{
+    tokio::select! {
+        _ = abort_token.cancelled() => DataOperationResult::Cancelled,
+        result = tokio::time::timeout(timeout, operation) => match result {
+            Ok(()) => DataOperationResult::Completed,
+            Err(_) => DataOperationResult::TimedOut,
+        },
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum DataSocket {
     Tcp(TcpStream),
@@ -569,24 +593,26 @@ where
             let abort_token = self.abort_token.clone();
             let control_msg_tx = self.control_msg_tx.clone();
             let logger = self.logger.clone();
-            tokio::select! {
-                _ = abort_token.cancelled() => {
+            match run_data_operation(
+                &abort_token,
+                MAX_DATA_CHANNEL_TRANSFER_DURATION,
+                self.handle_incoming(DataChanMsg::ExternalCommand(command), start_pos),
+            )
+            .await
+            {
+                DataOperationResult::Cancelled => {
                     slog::info!(logger, "Data channel operation cancelled");
                 }
-                result = tokio::time::timeout(
-                    MAX_DATA_CHANNEL_TRANSFER_DURATION,
-                    self.handle_incoming(DataChanMsg::ExternalCommand(command), start_pos),
-                ) => {
-                    if result.is_err() {
-                        slog::warn!(logger, "Data channel operation exceeded its maximum duration");
-                        if !abort_token.is_cancelled() {
-                            session_arc.lock().await.start_pos = 0;
-                            if let Err(err) = control_msg_tx.try_send(ControlChanMsg::ConnectionReset) {
-                                slog::warn!(logger, "Could not notify control channel about the data operation timeout: {}", err);
-                            }
+                DataOperationResult::TimedOut => {
+                    slog::warn!(logger, "Data channel operation exceeded its maximum duration");
+                    if !abort_token.is_cancelled() {
+                        session_arc.lock().await.start_pos = 0;
+                        if let Err(err) = control_msg_tx.try_send(ControlChanMsg::ConnectionReset) {
+                            slog::warn!(logger, "Could not notify control channel about the data operation timeout: {}", err);
                         }
                     }
                 }
+                DataOperationResult::Completed => {}
             }
         } else if self.abort_token.is_cancelled() {
             slog::info!(self.logger, "Data channel abort received");
@@ -1437,7 +1463,10 @@ impl ListCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{DataTransferTimeout, IdleTimeoutReader, IdleTimeoutWriter};
+    use super::{
+        DataOperationResult, DataTransferTimeout, IdleTimeoutReader, IdleTimeoutWriter,
+        MAX_DATA_CHANNEL_TRANSFER_DURATION, run_data_operation,
+    };
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -1471,5 +1500,28 @@ mod tests {
         let error = writer.write_all(b"b").await.expect_err("low-rate transfer must fail");
 
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn abort_cancels_a_data_command_waiting_on_storage() {
+        let abort_token = tokio_util::sync::CancellationToken::new();
+        let task_token = abort_token.clone();
+        let task = tokio::spawn(async move {
+            run_data_operation(
+                &task_token,
+                MAX_DATA_CHANNEL_TRANSFER_DURATION,
+                std::future::pending(),
+            )
+            .await
+        });
+        tokio::task::yield_now().await;
+        abort_token.cancel();
+
+        let result = tokio::time::timeout(Duration::from_millis(100), task)
+            .await
+            .expect("ABOR should cancel the stalled data command")
+            .expect("data operation task should finish");
+        assert_eq!(result, DataOperationResult::Cancelled);
+        assert_eq!(MAX_DATA_CHANNEL_TRANSFER_DURATION, Duration::from_secs(48 * 60 * 60));
     }
 }
