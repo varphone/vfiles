@@ -1813,6 +1813,29 @@ async fn ftp_dele_cannot_remove_a_webdav_locked_file() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_mkd_cannot_create_a_webdav_locked_null_resource() {
+    let harness = Harness::start(SnapshotMode::PerFile, 1).await;
+    let mut client = harness.client();
+    lock_webdav_path(
+        &harness,
+        "locked-null",
+        "opaquelocktoken:ftp-mkd-null",
+        false,
+    )
+    .await;
+
+    assert!(
+        client.mkdir("locked-null").is_err(),
+        "MKD must not create a directory at a locked null resource"
+    );
+    assert!(
+        harness.entry_paths().await.is_empty(),
+        "rejected MKD must not create the locked path"
+    );
+    client.quit().expect("control session should remain usable");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ftp_rmd_cannot_remove_a_webdav_locked_directory() {
     let harness = Harness::start(SnapshotMode::PerFile, 1).await;
     let mut client = harness.client();
