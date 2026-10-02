@@ -553,20 +553,18 @@ impl VfilesStorageBackend {
         namespace_id: &NamespaceId,
         path: &NormalizedPath,
     ) -> Result<()> {
-        let Some((parent, _)) = path.as_str().rsplit_once('/') else {
-            return Ok(());
-        };
-
-        let mut current = String::new();
         let mut ancestors = Vec::new();
-        for segment in parent.split('/') {
-            if !current.is_empty() {
-                current.push('/');
+        if let Some((parent, _)) = path.as_str().rsplit_once('/') {
+            let mut current = String::new();
+            for segment in parent.split('/') {
+                if !current.is_empty() {
+                    current.push('/');
+                }
+                current.push_str(segment);
+                let current_path = NormalizedPath::new(&current)
+                    .map_err(|message| Error::new(ErrorKind::PermissionDenied, message))?;
+                ancestors.push(current_path);
             }
-            current.push_str(segment);
-            let current_path = NormalizedPath::new(&current)
-                .map_err(|message| Error::new(ErrorKind::PermissionDenied, message))?;
-            ancestors.push(current_path);
         }
 
         let mut checked_paths = ancestors.clone();

@@ -1012,6 +1012,30 @@ async fn rejected_upload_below_a_file_does_not_leave_an_orphan_blob() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rejected_upload_to_a_directory_does_not_ingest_its_body() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.client();
+    client.mkdir("destination").expect("directory should be created");
+
+    let blob_root = harness._temp_dir.path().join("blobs");
+    let blobs_before = blob_file_count(&blob_root);
+    let mut rejected_payload = std::io::Cursor::new(b"directory target body".to_vec());
+    assert!(
+        client
+            .put_file("destination", &mut rejected_payload)
+            .is_err(),
+        "STOR must reject an existing directory"
+    );
+    assert_eq!(
+        blob_file_count(&blob_root),
+        blobs_before,
+        "a directory target must be rejected before its upload body is ingested"
+    );
+    assert_eq!(harness.entry_paths().await, vec!["destination"]);
+    client.quit().expect("control session should remain usable");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rejected_rest_upload_does_not_leak_its_offset_to_later_retr() {
     let harness = Harness::start(SnapshotMode::Off, 1).await;
     let mut client = harness.client();
