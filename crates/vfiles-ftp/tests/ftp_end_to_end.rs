@@ -1445,6 +1445,65 @@ async fn abrupt_disconnect_keeps_the_session_slot_until_batch_commit_finishes() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_shutdown_waits_for_an_abrupt_sessions_pending_batch_commit() {
+    let harness = Harness::start_with_max_connections(SnapshotMode::Batch, 100, 1).await;
+    let snapshots_before = harness.snapshot_count().await;
+    let mut client = harness.client();
+    let mut payload = std::io::Cursor::new(b"shutdown must wait for this batch".to_vec());
+    client
+        .put_file("shutdown-pending.bin", &mut payload)
+        .expect("upload should enter the pending batch");
+    assert_eq!(
+        harness.snapshot_count().await,
+        snapshots_before,
+        "below-threshold upload should remain pending before shutdown"
+    );
+
+    let max_connections = harness.pool.options().get_max_connections();
+    let mut held_connections = Vec::with_capacity(max_connections as usize);
+    for _ in 0..max_connections {
+        held_connections.push(
+            harness
+                .pool
+                .acquire()
+                .await
+                .expect("database connection should be acquired"),
+        );
+    }
+    drop(client);
+    harness
+        ._shutdown
+        .send(true)
+        .expect("shutdown signal should be delivered");
+    let server_handle = harness.handle;
+    let mut server_wait = tokio::spawn(server_handle.wait());
+
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            &mut server_wait,
+        )
+        .await
+        .is_err(),
+        "server shutdown must wait while the final batch commit cannot acquire SQLite"
+    );
+
+    drop(held_connections);
+    tokio::time::timeout(std::time::Duration::from_secs(5), &mut server_wait)
+        .await
+        .expect("server should finish after the database becomes available")
+        .expect("server task should finish cleanly");
+    let snapshots_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM snapshots")
+        .fetch_one(&harness.pool)
+        .await
+        .expect("snapshot count should be queryable after shutdown");
+    assert!(
+        snapshots_after > snapshots_before,
+        "server shutdown should not finish before the pending snapshot commits"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rejects_wrong_password_and_path_traversal() {
     let harness = Harness::start(SnapshotMode::PerFile, 1).await;
 
