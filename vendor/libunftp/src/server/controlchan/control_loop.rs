@@ -50,11 +50,11 @@ use tokio_util::codec::{Decoder, Framed};
 const MAX_AUTHENTICATION_DURATION: Duration = Duration::from_secs(60);
 const CONTROL_CHANNEL_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
 
-async fn write_with_timeout<T, F>(timeout: Duration, write: F) -> Result<T, tokio::time::error::Elapsed>
+async fn with_control_timeout<T, F>(timeout: Duration, operation: F) -> Result<T, tokio::time::error::Elapsed>
 where
     F: Future<Output = T>,
 {
-    tokio::time::timeout(timeout, write).await
+    tokio::time::timeout(timeout, operation).await
 }
 const CONTROL_CHANNEL_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -204,7 +204,7 @@ where
     let cmd_and_reply_stream: Framed<Box<dyn AsyncReadAsyncWriteSendUnpin>, FtpCodec> = codec.framed(Box::new(tcp_stream));
     let (mut reply_sink, mut command_source) = cmd_and_reply_stream.split();
 
-    match write_with_timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, async {
+    match with_control_timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, async {
         reply_sink.send(Reply::new(ReplyCode::ServiceReady, config.greeting)).await?;
         reply_sink.flush().await
     })
@@ -331,9 +331,9 @@ where
 
                     // TODO: Handle Event::InternalMsg(InternalMsg::PlaintextControlChannel)
 
-                    let handle_result = match tokio::time::timeout(CONTROL_CHANNEL_COMMAND_TIMEOUT, event_chain.handle(event)).await {
+                    let handle_result = match with_control_timeout(CONTROL_CHANNEL_COMMAND_TIMEOUT, event_chain.handle(event)).await {
                         Ok(Err(e)) => Err(e),
-                        Ok(Ok(reply)) => match write_with_timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, reply_sink.send(reply)).await {
+                        Ok(Ok(reply)) => match with_control_timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, reply_sink.send(reply)).await {
                             Ok(result) => result,
                             Err(_) => Err(ControlChanError::new(ControlChanErrorKind::ControlChannelTimeout)),
                         },
@@ -355,7 +355,7 @@ where
                         return;
                     }
                     let (reply, close_connection) = handle_control_channel_error(logger.clone(), e);
-                    let result = write_with_timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, reply_sink.send(reply)).await;
+                    let result = with_control_timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, reply_sink.send(reply)).await;
                     if !matches!(result, Ok(Ok(()))) {
                         slog::warn!(logger, "Could not send error reply to client");
                         cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), control_msg_rx, logger.clone()).await;
@@ -622,17 +622,24 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        CONTROL_CHANNEL_WRITE_TIMEOUT, ControlChanMsg, close_control_message_channel,
-        write_with_timeout,
+        CONTROL_CHANNEL_COMMAND_TIMEOUT, CONTROL_CHANNEL_WRITE_TIMEOUT, ControlChanMsg,
+        close_control_message_channel, with_control_timeout,
     };
     use std::time::Duration;
     use tokio::sync::mpsc::channel;
 
     #[tokio::test]
     async fn control_channel_write_times_out_when_the_sink_stalls() {
-        let result = write_with_timeout(Duration::from_millis(5), std::future::pending::<()>()).await;
+        let result = with_control_timeout(Duration::from_millis(5), std::future::pending::<()>()).await;
         assert!(result.is_err(), "a stalled control-channel write must time out");
         assert_eq!(CONTROL_CHANNEL_WRITE_TIMEOUT, Duration::from_secs(60));
+    }
+
+    #[tokio::test]
+    async fn control_command_times_out_when_the_handler_stalls() {
+        let result = with_control_timeout(Duration::from_millis(5), std::future::pending::<()>()).await;
+        assert!(result.is_err(), "a stalled inline command must time out");
+        assert_eq!(CONTROL_CHANNEL_COMMAND_TIMEOUT, Duration::from_secs(60));
     }
 
     #[tokio::test]
