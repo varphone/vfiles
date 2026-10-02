@@ -1701,6 +1701,28 @@ async fn rejects_wrong_password_and_path_traversal() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pwd_doubles_quotes_in_the_current_path_reply() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.client();
+    client
+        .custom_command("MKD quote\"dir", &[Status::PathCreated])
+        .expect("quoted directory should be created");
+    client
+        .cwd("quote\"dir")
+        .expect("client should enter the quoted directory");
+
+    let response = client
+        .custom_command("PWD", &[Status::PathCreated])
+        .expect("PWD should return the current path");
+    assert_eq!(
+        String::from_utf8_lossy(&response.body),
+        "257 \"/quote\"\"dir\"\r\n",
+        "RFC 959 requires embedded pathname quotes to be doubled"
+    );
+    client.quit().expect("quit should succeed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ftp_login_rate_limit_combines_email_case_variants() {
     let harness = Harness::start(SnapshotMode::Off, 1).await;
     let identifiers = [
