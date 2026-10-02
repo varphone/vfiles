@@ -13575,6 +13575,79 @@ mod entry_move_batch_tests {
     }
 
     #[tokio::test]
+    async fn conditional_move_rejects_a_descendant_added_after_subtree_preflight() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+        let source = NormalizedPath::new("source").expect("source path");
+        let child = NormalizedPath::new("source/initial.txt").expect("child path");
+        let root_id = repo
+            .create_entry(&namespace_id, &source, EntryKind::Directory, &user_id)
+            .await
+            .expect("source directory should be created");
+        let child_id = repo
+            .create_entry(&namespace_id, &child, EntryKind::File, &user_id)
+            .await
+            .expect("initial child should be created");
+
+        // This is the move plan captured by the application during its subtree preflight.
+        let moves = vec![
+            (
+                root_id,
+                NormalizedPath::new("moved").expect("destination root"),
+            ),
+            (
+                child_id,
+                NormalizedPath::new("moved/initial.txt").expect("destination child"),
+            ),
+        ];
+        let condition = EntryWriteCondition {
+            namespace_id,
+            path: source.clone(),
+            check_entry_state: true,
+            expected_entry_id: Some(root_id),
+            expected_version_id: None,
+            expected_lock_tokens: Some(Vec::new()),
+            expected_additional_lock_states: Some(Vec::new()),
+        };
+
+        repo.create_entry(
+            &namespace_id,
+            &NormalizedPath::new("source/late.txt").expect("late child path"),
+            EntryKind::File,
+            &user_id,
+        )
+        .await
+        .expect("concurrent child should be created after preflight");
+
+        let result = repo.move_entries_if_current(&moves, &condition).await;
+        assert!(
+            matches!(result, Err(DomainError::PreconditionFailed)),
+            "conditional move must reject a source subtree that changed after preflight: {result:?}"
+        );
+        for path in ["source", "source/initial.txt", "source/late.txt"] {
+            assert!(
+                repo.find_by_path(&namespace_id, &NormalizedPath::new(path).expect("path"))
+                    .await
+                    .expect("source lookup should work")
+                    .is_some(),
+                "rejected move must preserve {path}"
+            );
+        }
+        assert!(
+            repo.find_by_path(
+                &namespace_id,
+                &NormalizedPath::new("moved").expect("destination path"),
+            )
+            .await
+            .expect("destination lookup should work")
+            .is_none(),
+            "rejected move must not leave a partial destination"
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
     async fn replace_subtree_and_move_rolls_back_replacement_on_move_conflict() {
         let (db_path, pool, repo, namespace_id, user_id) = setup().await;
         let source = create(&repo, &namespace_id, &user_id, "docs/source.txt").await;
