@@ -106,7 +106,8 @@ mod tests {
     use std::fmt::Debug;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
-    use std::time::SystemTime;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, SystemTime};
     use tokio::io::AsyncRead;
     use tokio::sync::Mutex;
     use tokio::sync::mpsc;
@@ -262,6 +263,37 @@ mod tests {
                 sitemd5: Default::default(),
             }
         }
+
+        fn test_with_open_control_channel<P>(
+            session_arc: SharedSession<Storage, User>,
+            auther: Arc<dyn Authenticator>,
+            user_provider: Arc<P>,
+        ) -> (super::CommandContext<Storage, User>, mpsc::Receiver<ControlChanMsg>)
+        where
+            P: unftp_core::auth::UserDetailProvider<User = User> + Send + Sync + 'static,
+        {
+            let (tx, rx) = mpsc::channel::<ControlChanMsg>(1);
+            let auth_pipeline = Arc::new(crate::auth::AuthenticationPipeline::new(auther, user_provider));
+            (
+                super::CommandContext {
+                    parsed_command: Command::User {
+                        username: Bytes::from("test-user"),
+                    },
+                    session: session_arc,
+                    auth_pipeline,
+                    tls_configured: true,
+                    passive_ports: 0..=0,
+                    passive_host: Default::default(),
+                    tx_control_chan: tx,
+                    local_addr: "127.0.0.1:8080".parse().unwrap(),
+                    storage_features: 0,
+                    tx_prebound_loop: None,
+                    logger: slog::Logger::root(slog::Discard {}, o!()),
+                    sitemd5: Default::default(),
+                },
+                rx,
+            )
+        }
     }
 
     struct Test {
@@ -311,6 +343,63 @@ mod tests {
 
         assert!(reply.matches_code(ReplyCode::NotLoggedIn));
         assert_eq!(session_arc.lock().await.state, SessionState::New);
+    }
+
+    #[derive(Debug)]
+    struct DelayedAuth {
+        attempts: Arc<AtomicUsize>,
+        delay: Duration,
+    }
+
+    #[async_trait]
+    impl Authenticator for DelayedAuth {
+        async fn authenticate(&self, _username: &str, _creds: &Credentials) -> std::result::Result<Principal, AuthenticationError> {
+            self.attempts.fetch_add(1, Ordering::Relaxed);
+            tokio::time::sleep(self.delay).await;
+            Err(AuthenticationError::new("bad credentials"))
+        }
+
+        async fn cert_auth_sufficient(&self, _username: &str) -> bool {
+            false
+        }
+    }
+
+    #[tokio::test]
+    async fn repeated_pass_during_authentication_starts_only_one_attempt() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let authenticator: Arc<dyn Authenticator> = Arc::new(DelayedAuth {
+            attempts: Arc::clone(&attempts),
+            delay: Duration::from_millis(100),
+        });
+        let session = Session::new(Arc::new(Vfs {}), "127.0.0.1:8080".parse().unwrap());
+        let session_arc = Arc::new(Mutex::new(session));
+        {
+            let mut session = session_arc.lock().await;
+            session.username = Some("test-user".to_string());
+            session.state = SessionState::WaitPass;
+        }
+
+        let mut control_receivers = Vec::new();
+        for attempt in 0..32 {
+            let (ctx, receiver) =
+                super::CommandContext::test_with_open_control_channel(session_arc.clone(), Arc::clone(&authenticator), Arc::new(DefaultUserDetailProvider {}));
+            control_receivers.push(receiver);
+            let reply = super::super::Pass::new(crate::server::password::Password::from("wrong"))
+                .handle(ctx)
+                .await
+                .expect("PASS should return a reply");
+
+            if attempt == 0 {
+                assert!(matches!(reply, Reply::None));
+            } else {
+                assert!(reply.matches_code(ReplyCode::NotLoggedIn));
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+        assert_eq!(session_arc.lock().await.state, SessionState::Authenticating);
+        drop(control_receivers);
     }
 
     #[tokio::test]
