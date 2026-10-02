@@ -2000,6 +2000,43 @@ async fn ftp_dele_cannot_remove_a_webdav_locked_file() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_dele_does_not_remove_a_directory_that_replaces_its_target() {
+    let harness = Harness::start(SnapshotMode::Batch, 100).await;
+    let mut client = harness.client();
+    client
+        .put_file("victim.txt", &mut std::io::Cursor::new(b"original".to_vec()))
+        .expect("original file should upload into the pending batch");
+    let namespace_id = harness.namespace_id.to_string();
+    let replacement_dir_id = vfiles_domain::EntryId::new();
+    let replacement_child_id = vfiles_domain::EntryId::new();
+    let replacement = format!(
+        "CREATE TRIGGER replace_dele_target_after_snapshot AFTER INSERT ON snapshots \
+         WHEN NEW.namespace_id = '{namespace_id}' BEGIN \
+         DELETE FROM entries WHERE namespace_id = '{namespace_id}' AND path = 'victim.txt'; \
+         INSERT INTO entries (id, namespace_id, path, kind) \
+             VALUES ('{replacement_dir_id}', '{namespace_id}', 'victim.txt', 'directory'); \
+         INSERT INTO entries (id, namespace_id, path, kind) \
+             VALUES ('{replacement_child_id}', '{namespace_id}', 'victim.txt/keep.txt', 'file'); \
+         END"
+    );
+    sqlx::query(sqlx::AssertSqlSafe(replacement.as_str()))
+        .execute(&harness.pool)
+        .await
+        .expect("snapshot trigger should replace the file with a non-empty directory");
+
+    assert!(
+        client.rm("victim.txt").is_err(),
+        "DELE must fail when its observed file is replaced before the conditional delete"
+    );
+    assert_eq!(
+        harness.entry_paths().await,
+        vec!["victim.txt", "victim.txt/keep.txt"],
+        "DELE must preserve the concurrently replaced directory and its child"
+    );
+    client.quit().expect("control session should remain usable");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ftp_mkd_cannot_create_a_webdav_locked_null_resource() {
     let harness = Harness::start(SnapshotMode::PerFile, 1).await;
     let mut client = harness.client();
