@@ -327,7 +327,6 @@ async fn serve_filesystem_path(
     preferences: &EncodingPreferences,
 ) -> Option<Response> {
     let canonical_base = tokio::fs::canonicalize(base_path).await.ok()?;
-    let (identity_file, identity_size) = open_filesystem_file(&canonical_base, candidate).await?;
 
     for encoding in &preferences.precompressed {
         let variant = append_suffix(candidate, encoding.suffix());
@@ -337,6 +336,8 @@ async fn serve_filesystem_path(
     }
 
     if preferences.identity_allowed {
+        let (identity_file, identity_size) =
+            open_filesystem_file(&canonical_base, candidate).await?;
         Some(filesystem_file_response(
             identity_file,
             identity_size,
@@ -344,7 +345,9 @@ async fn serve_filesystem_path(
             None,
         ))
     } else {
-        Some(StatusCode::NOT_ACCEPTABLE.into_response())
+        open_filesystem_file(&canonical_base, candidate)
+            .await
+            .map(|_| StatusCode::NOT_ACCEPTABLE.into_response())
     }
 }
 
@@ -503,6 +506,25 @@ mod tests {
             .await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+    }
+
+    #[tokio::test]
+    async fn serves_a_valid_precompressed_representation_without_opening_identity() {
+        let dir = tempfile::tempdir().expect("temporary frontend directory");
+        std::fs::write(dir.path().join("index.html"), b"index").unwrap();
+        std::fs::write(dir.path().join("app.js.gz"), b"compressed script").unwrap();
+        let frontend = FrontendAssets::Filesystem(dir.path().to_path_buf());
+
+        let response = frontend.serve("/app.js", Some("gzip")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("compressed representation should collect")
+            .to_bytes();
+        assert_eq!(body.as_ref(), b"compressed script");
     }
 
     #[tokio::test]
