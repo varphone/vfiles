@@ -2693,6 +2693,52 @@ async fn ftp_metadata_propagates_current_version_lookup_failure() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_appe_aborts_instead_of_replacing_when_metadata_lookup_fails() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let path = "corrupt-append.bin";
+    let original = b"original file contents";
+    let mut client = harness.client();
+    client
+        .put_file(path, &mut std::io::Cursor::new(original.to_vec()))
+        .expect("original file should upload");
+    let (version_id, blob_id) = corrupt_current_file_size(&harness, path).await;
+
+    let mut append_body = std::io::Cursor::new(b"replacement contents".to_vec());
+    assert!(
+        client.append_file(path, &mut append_body).is_err(),
+        "APPE must abort when it cannot determine the existing file size"
+    );
+    client.quit().ok();
+
+    let entry = harness
+        .entry_repo
+        .find_by_path(
+            &harness.namespace_id,
+            &NormalizedPath::new(path).expect("file path"),
+        )
+        .await
+        .expect("file lookup should work")
+        .expect("original file should remain");
+    assert_eq!(
+        entry.current_version_id,
+        Some(version_id),
+        "failed APPE must not create a replacement version"
+    );
+    let blob_string = blob_id.to_string();
+    let blob_path = harness
+        ._temp_dir
+        .path()
+        .join("blobs")
+        .join(&blob_string[..2])
+        .join(&blob_string[2..]);
+    assert_eq!(
+        std::fs::read(blob_path).expect("original blob should remain readable"),
+        original,
+        "failed APPE must preserve the original bytes"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ftp_listing_rejects_directories_over_its_bounded_entry_limit() {
     const CHILD_COUNT: usize = 20_001;
     let harness = Harness::start(SnapshotMode::Off, 1).await;
