@@ -27,7 +27,10 @@ use vfiles_app::{
     AuthService, DefaultWorkspaceService, ImportBatch, IngestStats, LoginAttemptLimiter,
     NamespaceService, RateLimitPolicy, SnapshotMode,
 };
-use vfiles_domain::{DomainResult, EntryRepo, NamespaceRepo, NormalizedPath, Role, UserRepo};
+use vfiles_domain::{
+    DomainResult, EntryRepo, NamespaceRepo, NewWebdavLock, NormalizedPath, Role, UserRepo,
+    WebdavLockRepo, WebdavLockScope,
+};
 use vfiles_ftp::{
     BackendDeps, FtpApplication, FtpSettings, RoleFilter, VfilesAuthenticator, VfilesFtpUser,
     VfilesStorageBackend, VfilesUserDetailProvider, spawn_ftp_server,
@@ -1741,6 +1744,49 @@ async fn enforces_max_file_size() {
         "超限文件不应留下条目"
     );
     client.quit().ok();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_dele_cannot_remove_a_webdav_locked_file() {
+    let harness = Harness::start(SnapshotMode::PerFile, 1).await;
+    let mut client = harness.client();
+    let content = b"protected by a WebDAV lock".to_vec();
+    let mut reader = std::io::Cursor::new(content.clone());
+    client
+        .put_file("locked.txt", &mut reader)
+        .expect("file should upload before it is locked");
+
+    let lock_repo = SqliteWebdavLockRepo::new(harness.pool.clone());
+    let now = (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64;
+    assert!(
+        lock_repo
+            .acquire(
+                &harness.namespace_id,
+                "locked.txt",
+                NewWebdavLock {
+                    token: "opaquelocktoken:ftp-dele-protection",
+                    owner: "ftp-compatibility-test",
+                    depth_infinity: false,
+                    scope: WebdavLockScope::Exclusive,
+                    expires_at: None,
+                    now,
+                },
+            )
+            .await
+            .expect("WebDAV lock should be stored"),
+        "the test should acquire an exclusive lock"
+    );
+
+    assert!(
+        client.rm("locked.txt").is_err(),
+        "FTP DELE must reject a resource with an active WebDAV lock"
+    );
+    assert_eq!(
+        harness.read("locked.txt").await.expect("locked file remains").bytes,
+        content,
+        "rejected DELE must preserve the locked file content"
+    );
+    client.quit().expect("control session should remain usable");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
