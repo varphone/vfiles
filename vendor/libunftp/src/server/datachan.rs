@@ -135,16 +135,31 @@ struct DataTransferTimeout {
     progress_deadline: Pin<Box<tokio::time::Sleep>>,
     started_at: tokio::time::Instant,
     bytes_transferred: u64,
+    progress_grace_period: Duration,
+    minimum_rate_bytes_per_sec: u64,
+    maximum_duration: Duration,
 }
 
 impl DataTransferTimeout {
     fn new() -> Self {
+        Self::with_limits(
+            DATA_CHANNEL_IDLE_TIMEOUT,
+            DATA_CHANNEL_PROGRESS_GRACE_PERIOD,
+            MIN_DATA_CHANNEL_RATE_BYTES_PER_SEC,
+            MAX_DATA_CHANNEL_TRANSFER_DURATION,
+        )
+    }
+
+    fn with_limits(idle_timeout: Duration, progress_grace_period: Duration, minimum_rate_bytes_per_sec: u64, maximum_duration: Duration) -> Self {
         let started_at = tokio::time::Instant::now();
         Self {
-            idle_deadline: Box::pin(tokio::time::sleep(DATA_CHANNEL_IDLE_TIMEOUT)),
-            progress_deadline: Box::pin(tokio::time::sleep(DATA_CHANNEL_PROGRESS_GRACE_PERIOD)),
+            idle_deadline: Box::pin(tokio::time::sleep(idle_timeout)),
+            progress_deadline: Box::pin(tokio::time::sleep(progress_grace_period)),
             started_at,
             bytes_transferred: 0,
+            progress_grace_period,
+            minimum_rate_bytes_per_sec,
+            maximum_duration,
         }
     }
 
@@ -163,10 +178,11 @@ impl DataTransferTimeout {
         let now = tokio::time::Instant::now();
         self.idle_deadline.as_mut().reset(now + DATA_CHANNEL_IDLE_TIMEOUT);
 
-        let transferred_millis = self.bytes_transferred.saturating_mul(1_000) / MIN_DATA_CHANNEL_RATE_BYTES_PER_SEC;
-        let progress_budget = DATA_CHANNEL_PROGRESS_GRACE_PERIOD
+        let transferred_millis = self.bytes_transferred.saturating_mul(1_000) / self.minimum_rate_bytes_per_sec;
+        let progress_budget = self
+            .progress_grace_period
             .saturating_add(Duration::from_millis(transferred_millis))
-            .min(MAX_DATA_CHANNEL_TRANSFER_DURATION);
+            .min(self.maximum_duration);
         self.progress_deadline.as_mut().reset(self.started_at + progress_budget);
     }
 }
@@ -1416,5 +1432,44 @@ impl ListCommand {
             ListCommand::List => "list",
             ListCommand::Nlst => "nlst",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DataTransferTimeout, IdleTimeoutReader, IdleTimeoutWriter};
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn data_reader_times_out_when_the_peer_stops_sending() {
+        let (_writer, reader) = tokio::io::duplex(8);
+        let mut reader = IdleTimeoutReader {
+            inner: reader,
+            timeout: DataTransferTimeout::with_limits(Duration::from_millis(20), Duration::from_secs(1), 1_000, Duration::from_secs(2)),
+        };
+        let mut byte = [0_u8; 1];
+
+        let error = tokio::time::timeout(Duration::from_secs(1), reader.read_exact(&mut byte))
+            .await
+            .expect("reader should time out promptly")
+            .expect_err("a stalled reader must fail");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn data_writer_times_out_when_average_progress_is_too_slow() {
+        let (_reader, writer) = tokio::io::duplex(8);
+        let mut writer = IdleTimeoutWriter {
+            inner: writer,
+            timeout: DataTransferTimeout::with_limits(Duration::from_millis(200), Duration::from_millis(20), 1_000, Duration::from_secs(2)),
+        };
+
+        writer.write_all(b"a").await.expect("initial progress should succeed");
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        let error = writer.write_all(b"b").await.expect_err("low-rate transfer must fail");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
     }
 }
