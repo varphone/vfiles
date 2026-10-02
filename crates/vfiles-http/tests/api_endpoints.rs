@@ -900,14 +900,21 @@ async fn chunked_upload_history_and_download_round_trip() {
         folder_download.headers().get(header::CONTENT_TYPE),
         Some(&HeaderValue::from_static("application/zip"))
     );
-    let archive_size = folder_download
-        .headers()
-        .get(header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<usize>().ok())
-        .expect("archive response should declare its length");
+    assert!(
+        folder_download
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .is_none(),
+        "streamed archive size is unknown before generation"
+    );
+    assert!(
+        folder_download
+            .headers()
+            .get(header::ACCEPT_RANGES)
+            .is_none(),
+        "streamed archives do not advertise byte ranges"
+    );
     let zip_bytes = response_bytes(folder_download).await;
-    assert_eq!(zip_bytes.len(), archive_size);
     let cursor = Cursor::new(zip_bytes.to_vec());
     let mut archive = zip::ZipArchive::new(cursor).expect("zip archive should open");
     assert_eq!(archive.len(), 1);
@@ -959,12 +966,17 @@ async fn chunked_upload_history_and_download_round_trip() {
         )
         .await;
     assert_eq!(ranged_folder_download.status(), StatusCode::PARTIAL_CONTENT);
-    assert_eq!(
-        ranged_folder_download
-            .headers()
-            .get(header::CONTENT_RANGE)
-            .and_then(|value| value.to_str().ok()),
-        Some(format!("bytes 0-3/{archive_size}").as_str())
+    let ranged_content_range = ranged_folder_download
+        .headers()
+        .get(header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .expect("range response should include its total size");
+    assert!(ranged_content_range.starts_with("bytes 0-3/"));
+    assert!(
+        ranged_content_range
+            .split_once('/')
+            .and_then(|(_, total)| total.parse::<usize>().ok())
+            .is_some_and(|total| total >= 4)
     );
     assert_eq!(
         response_bytes(ranged_folder_download).await.as_ref(),
@@ -1530,7 +1542,10 @@ async fn head_directory_download_returns_metadata_without_building_archive() {
         .get(header::CONTENT_DISPOSITION)
         .expect("GET should return the archive filename")
         .clone();
-    assert!(get_response.headers().contains_key(header::CONTENT_LENGTH));
+    assert!(
+        !get_response.headers().contains_key(header::CONTENT_LENGTH),
+        "streamed GET omits the length until the archive is generated"
+    );
     let _ = response_bytes(get_response).await;
 
     let head_response = app
@@ -1561,7 +1576,8 @@ async fn head_directory_download_returns_metadata_without_building_archive() {
     );
     assert_eq!(
         head_response.headers().get(header::ACCEPT_RANGES).unwrap(),
-        "bytes"
+        "bytes",
+        "HEAD reports that a follow-up Range GET is supported"
     );
     assert!(
         !head_response.headers().contains_key(header::CONTENT_LENGTH),

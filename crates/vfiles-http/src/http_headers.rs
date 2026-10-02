@@ -6,6 +6,8 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::Response,
 };
+use bytes::Bytes;
+use futures::StreamExt;
 use std::sync::{Arc, LazyLock};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -34,6 +36,19 @@ pub(crate) fn try_acquire_directory_archive_permit() -> Option<OwnedSemaphorePer
     Arc::clone(&DIRECTORY_ARCHIVE_DOWNLOAD_PERMITS)
         .try_acquire_owned()
         .ok()
+}
+
+pub(crate) fn archive_request_needs_seekable_response(headers: &HeaderMap) -> bool {
+    [
+        header::RANGE,
+        header::IF_RANGE,
+        header::IF_MATCH,
+        header::IF_UNMODIFIED_SINCE,
+        header::IF_NONE_MATCH,
+        header::IF_MODIFIED_SINCE,
+    ]
+    .iter()
+    .any(|name| headers.contains_key(name))
 }
 
 fn private_file_response(mut response: Response) -> Response {
@@ -364,6 +379,31 @@ pub(crate) async fn directory_archive_head_response(
 
     response.headers_mut().remove(header::CONTENT_LENGTH);
     Ok(response)
+}
+
+/// Build an unknown-length ZIP response from a bounded archive stream. Byte ranges use the
+/// seekable tempfile path instead, so this response deliberately omits `Accept-Ranges`.
+pub(crate) fn directory_archive_stream_response(
+    chunks: tokio::sync::mpsc::Receiver<Result<Vec<u8>, std::io::Error>>,
+    filename: &str,
+    stream_permit: OwnedSemaphorePermit,
+    archive_permit: OwnedSemaphorePermit,
+) -> ApiResult<Response> {
+    let chunks = futures::stream::unfold(chunks, |mut receiver| async move {
+        receiver.recv().await.map(|chunk| (chunk, receiver))
+    })
+    .map(move |chunk| {
+        let _permits = (&stream_permit, &archive_permit);
+        chunk.map(Bytes::from)
+    });
+    let mut response = Response::new(Body::from_stream(chunks));
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/zip"),
+    );
+    headers.insert(header::CONTENT_DISPOSITION, attachment_header(filename)?);
+    Ok(private_file_response(response))
 }
 
 fn precondition_failed(

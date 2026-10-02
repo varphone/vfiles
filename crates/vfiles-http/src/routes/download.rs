@@ -2,9 +2,11 @@ use crate::{
     AppState,
     error::{ApiError, ApiQuery, ApiResult},
     http_headers::{
-        StreamingFileOptions, directory_archive_head_response, if_none_match_is_wildcard,
-        not_modified_response, streaming_file_response, streaming_file_response_with_permits,
-        try_acquire_directory_archive_permit, try_acquire_file_stream_permit,
+        StreamingFileOptions, archive_request_needs_seekable_response,
+        directory_archive_head_response, directory_archive_stream_response,
+        if_none_match_is_wildcard, not_modified_response, streaming_file_response,
+        streaming_file_response_with_permits, try_acquire_directory_archive_permit,
+        try_acquire_file_stream_permit,
     },
     routes::protected_request_context,
 };
@@ -145,6 +147,31 @@ async fn download_folder(
         try_acquire_file_stream_permit().ok_or_else(|| ApiError::rate_limited(1))?;
     let archive_permit =
         try_acquire_directory_archive_permit().ok_or_else(|| ApiError::rate_limited(1))?;
+
+    if method == Method::GET && !archive_request_needs_seekable_response(&headers) {
+        let archive = state
+            .workspace_service
+            .download_directory_archive_stream(&ctx.namespace_id, &path, query.commit.as_deref())
+            .await?;
+
+        crate::audit::record_for(
+            &state,
+            &headers,
+            &ctx,
+            NewAuditLog::success(crate::audit::action::FILE_DOWNLOAD)
+                .target(path.as_str())
+                .detail("下载目录（流式打包）"),
+        )
+        .await;
+
+        return directory_archive_stream_response(
+            archive.chunks,
+            &archive.filename,
+            stream_permit,
+            archive_permit,
+        );
+    }
+
     let archive = state
         .workspace_service
         .download_directory_archive(&ctx.namespace_id, &path, query.commit.as_deref())

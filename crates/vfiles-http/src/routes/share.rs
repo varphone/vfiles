@@ -13,9 +13,10 @@ use crate::{
     dto::{CreateShareRequest, CreateShareResponse, ShareDto},
     error::{ApiError, ApiJson, ApiPath, ApiQuery},
     http_headers::{
-        StreamingFileOptions, directory_archive_head_response, streaming_file_response,
-        streaming_file_response_with_permits, try_acquire_directory_archive_permit,
-        try_acquire_file_stream_permit,
+        StreamingFileOptions, archive_request_needs_seekable_response,
+        directory_archive_head_response, directory_archive_stream_response,
+        streaming_file_response, streaming_file_response_with_permits,
+        try_acquire_directory_archive_permit, try_acquire_file_stream_permit,
     },
     middleware::client_ip_from_headers,
     routes::authenticated_request_context,
@@ -304,6 +305,28 @@ pub async fn download_share(
                 try_acquire_file_stream_permit().ok_or_else(|| ApiError::rate_limited(1))?;
             let archive_permit =
                 try_acquire_directory_archive_permit().ok_or_else(|| ApiError::rate_limited(1))?;
+
+            if method == Method::GET && !archive_request_needs_seekable_response(&headers) {
+                let archive = state
+                    .workspace_service
+                    .download_directory_archive_stream(&share.namespace_id, &entry.path_norm, None)
+                    .await?;
+
+                crate::audit::record(
+                    &state,
+                    &headers,
+                    share_download_audit(&entry.path_norm, &share.id),
+                )
+                .await;
+
+                return directory_archive_stream_response(
+                    archive.chunks,
+                    &archive.filename,
+                    stream_permit,
+                    archive_permit,
+                );
+            }
+
             let archive = state
                 .workspace_service
                 .download_directory_archive(&share.namespace_id, &entry.path_norm, None)

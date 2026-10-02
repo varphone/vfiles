@@ -1,4 +1,11 @@
-use std::{collections::HashMap, io::Write, sync::Arc};
+use std::{
+    collections::HashMap,
+    io::{self, Write},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use tokio::io::AsyncReadExt;
 use tokio::sync::Semaphore;
@@ -1674,10 +1681,75 @@ pub struct DirectoryArchive {
     pub reader: Box<dyn ReadSeek + Send + Unpin>,
 }
 
+pub struct DirectoryArchiveStream {
+    pub filename: String,
+    pub chunks: tokio::sync::mpsc::Receiver<Result<Vec<u8>, io::Error>>,
+}
+
 enum ArchiveWriterMessage {
     StartFile(String, zip::CompressionMethod),
     Data(Vec<u8>),
+    Failure(String),
     Finish,
+}
+
+struct ArchiveChunkWriter {
+    sender: tokio::sync::mpsc::Sender<Result<Vec<u8>, io::Error>>,
+    buffer: Vec<u8>,
+    aborted: Arc<AtomicBool>,
+}
+
+impl ArchiveChunkWriter {
+    const CHUNK_SIZE: usize = 64 * 1024;
+
+    fn new(
+        sender: tokio::sync::mpsc::Sender<Result<Vec<u8>, io::Error>>,
+        aborted: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            sender,
+            buffer: Vec::with_capacity(Self::CHUNK_SIZE),
+            aborted,
+        }
+    }
+
+    fn send_buffer(&mut self) -> io::Result<()> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        let bytes = std::mem::replace(&mut self.buffer, Vec::with_capacity(Self::CHUNK_SIZE));
+        self.sender.blocking_send(Ok(bytes)).map_err(|_| {
+            self.aborted.store(true, Ordering::Relaxed);
+            io::Error::new(io::ErrorKind::BrokenPipe, "archive response was cancelled")
+        })
+    }
+}
+
+impl Write for ArchiveChunkWriter {
+    fn write(&mut self, mut bytes: &[u8]) -> io::Result<usize> {
+        if self.aborted.load(Ordering::Relaxed) {
+            return Ok(bytes.len());
+        }
+        let original_len = bytes.len();
+        while !bytes.is_empty() {
+            let available = Self::CHUNK_SIZE - self.buffer.len();
+            let count = available.min(bytes.len());
+            self.buffer.extend_from_slice(&bytes[..count]);
+            bytes = &bytes[count..];
+            if self.buffer.len() == Self::CHUNK_SIZE {
+                self.send_buffer()?;
+            }
+        }
+        Ok(original_len)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if self.aborted.load(Ordering::Relaxed) {
+            self.buffer.clear();
+            return Ok(());
+        }
+        self.send_buffer()
+    }
 }
 
 fn archive_compression_method(path: &NormalizedPath) -> zip::CompressionMethod {
@@ -1984,6 +2056,7 @@ where
                     Some(ArchiveWriterMessage::Data(bytes)) => zip
                         .write_all(&bytes)
                         .map_err(|e| format!("Failed to write zip entry: {e}"))?,
+                    Some(ArchiveWriterMessage::Failure(message)) => return Err(message),
                     Some(ArchiveWriterMessage::Finish) => break,
                     None => return Err("Archive input stream closed before finishing".to_string()),
                 }
@@ -2069,6 +2142,153 @@ where
             }
         })?;
         Ok((Box::new(tokio::fs::File::from_std(output)), size_bytes))
+    }
+
+    async fn build_directory_archive_stream(
+        &self,
+        archive_name: String,
+        requested_path: NormalizedPath,
+        files: Vec<(NormalizedPath, BlobId)>,
+    ) -> DomainResult<DirectoryArchiveStream>
+    where
+        B: Clone + 'static,
+    {
+        let (writer_tx, mut writer_rx) = tokio::sync::mpsc::channel(2);
+        let (output_tx, output_rx) = tokio::sync::mpsc::channel(2);
+        let error_tx = output_tx.clone();
+        let aborted = Arc::new(AtomicBool::new(false));
+        let writer_aborted = aborted.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let mut zip = Some(
+                zip::ZipWriter::new_stream(ArchiveChunkWriter::new(
+                    output_tx,
+                    writer_aborted.clone(),
+                ))
+                .set_auto_large_file(),
+            );
+            let result = loop {
+                match writer_rx.blocking_recv() {
+                    Some(ArchiveWriterMessage::StartFile(path, compression_method)) => {
+                        let options = zip::write::SimpleFileOptions::default()
+                            .compression_method(compression_method);
+                        if let Err(error) = zip
+                            .as_mut()
+                            .expect("ZIP writer remains available before finish")
+                            .start_file(path, options)
+                        {
+                            break Err(format!("Failed to create zip entry: {error}"));
+                        }
+                    }
+                    Some(ArchiveWriterMessage::Data(bytes)) => {
+                        if let Err(error) = zip
+                            .as_mut()
+                            .expect("ZIP writer remains available before finish")
+                            .write_all(&bytes)
+                        {
+                            break Err(format!("Failed to write zip entry: {error}"));
+                        }
+                    }
+                    Some(ArchiveWriterMessage::Failure(message)) => break Err(message),
+                    Some(ArchiveWriterMessage::Finish) => {
+                        let mut output = match zip
+                            .take()
+                            .expect("ZIP writer remains available before finish")
+                            .finish()
+                        {
+                            Ok(output) => output,
+                            Err(error) => {
+                                break Err(format!("Failed to finalize zip archive: {error}"));
+                            }
+                        };
+                        if let Err(error) = output.flush() {
+                            break Err(format!("Failed to flush zip archive: {error}"));
+                        }
+                        break Ok(());
+                    }
+                    None => break Err("Archive input stream closed before finishing".to_string()),
+                }
+            };
+
+            if let Err(message) = result {
+                // Signal the stream error first. ZipWriter finalizes on drop, so switch its
+                // output to discard mode before dropping it; no fabricated footer reaches the
+                // response and cancellation cannot emit noisy BrokenPipe diagnostics.
+                let error = io::Error::other(message);
+                let _ = error_tx.blocking_send(Err(error));
+                writer_aborted.store(true, Ordering::Relaxed);
+                drop(zip);
+            }
+        });
+
+        let blob_store = self.blob_store.clone();
+        let producer_archive_name = archive_name.clone();
+        tokio::spawn(async move {
+            let result = async {
+                for (full_path, blob_id) in files {
+                    let mut reader =
+                        blob_store.get_blob_stream(&blob_id).await?.ok_or_else(|| {
+                            DomainError::NotFound {
+                                resource: "blob data".to_string(),
+                            }
+                        })?;
+                    let relative = relative_path_for_directory(&requested_path, &full_path);
+                    let zip_path = if relative.is_empty() {
+                        producer_archive_name.clone()
+                    } else {
+                        format!("{producer_archive_name}/{relative}")
+                    };
+                    writer_tx
+                        .send(ArchiveWriterMessage::StartFile(
+                            zip_path,
+                            archive_compression_method(&full_path),
+                        ))
+                        .await
+                        .map_err(|_| DomainError::Internal {
+                            message: "Archive writer stopped unexpectedly".to_string(),
+                        })?;
+
+                    let mut buffer = [0_u8; 64 * 1024];
+                    loop {
+                        let read = reader.read(&mut buffer).await.map_err(|error| {
+                            DomainError::Internal {
+                                message: format!("Failed to stream blob data: {error}"),
+                            }
+                        })?;
+                        if read == 0 {
+                            break;
+                        }
+                        writer_tx
+                            .send(ArchiveWriterMessage::Data(buffer[..read].to_vec()))
+                            .await
+                            .map_err(|_| DomainError::Internal {
+                                message: "Archive writer stopped unexpectedly".to_string(),
+                            })?;
+                    }
+                }
+                Ok::<(), DomainError>(())
+            }
+            .await;
+
+            match result {
+                Ok(()) => {
+                    let _ = writer_tx.send(ArchiveWriterMessage::Finish).await;
+                }
+                Err(error) => {
+                    if !writer_tx.is_closed() {
+                        let _ = writer_tx
+                            .send(ArchiveWriterMessage::Failure(error.to_string()))
+                            .await;
+                        tracing::warn!(error = %error, "Directory archive streaming failed");
+                    }
+                }
+            }
+        });
+
+        Ok(DirectoryArchiveStream {
+            filename: format!("{archive_name}.zip"),
+            chunks: output_rx,
+        })
     }
 
     async fn resolve_file_blob(
@@ -2229,6 +2449,39 @@ where
             size_bytes,
             reader,
         })
+    }
+
+    /// Build an archive into a bounded response stream. The ZIP is emitted as it is generated;
+    /// callers must not advertise a content length or byte-range support for this response.
+    pub async fn download_directory_archive_stream(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        raw_commit: Option<&str>,
+    ) -> DomainResult<DirectoryArchiveStream>
+    where
+        B: Clone + 'static,
+    {
+        let archive_name = archive_name_for(path);
+        let files = match self
+            .resolve_requested_file_revision(namespace_id, raw_commit)
+            .await?
+        {
+            RequestedFileRevision::Live => {
+                self.collect_live_directory_files(namespace_id, path)
+                    .await?
+            }
+            RequestedFileRevision::Version(version_id) => {
+                self.collect_versioned_directory_files(namespace_id, path, &version_id)
+                    .await?
+            }
+            RequestedFileRevision::Snapshot(snapshot_id) => {
+                self.collect_snapshot_directory_files(path, &snapshot_id)
+                    .await?
+            }
+        };
+        self.build_directory_archive_stream(archive_name, path.clone(), files)
+            .await
     }
 
     /// Validate the selected directory archive target without reading blobs or building a ZIP.
@@ -5757,6 +6010,71 @@ mod tests {
                 .compression(),
             zip::CompressionMethod::Deflated
         );
+    }
+
+    #[tokio::test]
+    async fn streamed_directory_archive_is_a_valid_zip() {
+        let context = TestContext::new().await;
+        let root = TestContext::path("");
+        context
+            .upload_file(
+                &root,
+                "streamed.txt",
+                b"streamed archive payload",
+                "streamed",
+            )
+            .await;
+
+        let archive = context
+            .workspace_service
+            .download_directory_archive_stream(&context.namespace_id, &root, None)
+            .await
+            .expect("streamed directory archive should start");
+        let mut chunks = archive.chunks;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = chunks.recv().await {
+            bytes.extend(chunk.expect("archive chunk should be readable"));
+        }
+
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+            .expect("streamed archive should be a valid zip");
+        let mut file = zip
+            .by_name("root/streamed.txt")
+            .expect("streamed file should exist");
+        let mut contents = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut contents)
+            .expect("streamed file contents should read");
+        assert_eq!(contents, b"streamed archive payload");
+    }
+
+    #[tokio::test]
+    async fn archive_writer_stops_emitting_after_response_cancellation() {
+        let (sender, receiver) = tokio::sync::mpsc::channel(1);
+        drop(receiver);
+        let aborted = Arc::new(AtomicBool::new(false));
+        let outcomes = tokio::task::spawn_blocking(move || {
+            let mut writer = ArchiveChunkWriter::new(sender, aborted.clone());
+            let first_write = writer
+                .write(&vec![b'x'; ArchiveChunkWriter::CHUNK_SIZE])
+                .expect_err("closed response should stop archive output")
+                .kind();
+            let aborted_after_disconnect = aborted.load(Ordering::Relaxed);
+            let discard_write = writer.write(b"discarded").map_err(|error| error.kind());
+            let discard_flush = writer.flush().map_err(|error| error.kind());
+            (
+                first_write,
+                aborted_after_disconnect,
+                discard_write,
+                discard_flush,
+            )
+        })
+        .await
+        .expect("blocking writer task should finish");
+
+        assert_eq!(outcomes.0, io::ErrorKind::BrokenPipe);
+        assert!(outcomes.1);
+        assert_eq!(outcomes.2, Ok(9));
+        assert_eq!(outcomes.3, Ok(()));
     }
 
     #[tokio::test]
