@@ -44,13 +44,33 @@ vi.mock("../src/services/auth.service", async () => {
               passive_ports: null,
             },
             {
-              id: "s3",
-              enabled: false,
-              bind: "0.0.0.0:9000",
-              embedded: true,
+              id: "ftps",
+              enabled: true,
+              bind: "0.0.0.0:2121",
+              embedded: false,
               mount_path: null,
               writable: null,
               module: null,
+              passive_ports: "50000-50100",
+            },
+            {
+              id: "s3",
+              enabled: true,
+              bind: "0.0.0.0:8080",
+              embedded: true,
+              mount_path: "/s3",
+              writable: null,
+              module: null,
+              passive_ports: null,
+            },
+            {
+              id: "rsync",
+              enabled: true,
+              bind: "0.0.0.0:873",
+              embedded: false,
+              mount_path: null,
+              writable: false,
+              module: "files",
               passive_ports: null,
             },
           ],
@@ -102,8 +122,12 @@ describe("SystemInfo.vue", () => {
     expect(screen.getByText("HTTP API")).toBeInTheDocument();
     expect(screen.getByText("WebDAV")).toBeInTheDocument();
     expect(screen.getByText("S3 兼容存储")).toBeInTheDocument();
+    expect(screen.getByText("http://localhost:3000/")).toBeInTheDocument();
+    expect(screen.getByText("http://localhost:3000/dav/")).toBeInTheDocument();
+    expect(screen.getByText("ftps://localhost:2121")).toBeInTheDocument();
+    expect(screen.getByText("http://localhost:3000/s3")).toBeInTheDocument();
+    expect(screen.getByText("rsync://localhost:873/files")).toBeInTheDocument();
     expect(screen.getAllByText("已启用").length).toBeGreaterThan(0);
-    expect(screen.getByText("未启用")).toBeInTheDocument();
     expect(screen.getByText(/启动配置/)).toBeInTheDocument();
     // 标准工具条（刷新 + 返回文件）
     expect(screen.getByText("刷新")).toBeInTheDocument();

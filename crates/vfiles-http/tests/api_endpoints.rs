@@ -3108,6 +3108,11 @@ async fn system_info_reports_protocol_configuration_and_per_user_storage() {
             .iter()
             .all(|protocol| protocol["enabled"].is_boolean())
     );
+    let s3 = protocols
+        .iter()
+        .find(|protocol| protocol["id"] == "s3")
+        .expect("S3 protocol should be included");
+    assert_eq!(s3["mount_path"], Value::from("/s3"));
 
     let storage = &payload["storage"];
     assert_eq!(storage["user_count"], Value::from(3));

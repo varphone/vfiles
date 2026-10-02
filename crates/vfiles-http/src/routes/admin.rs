@@ -182,7 +182,7 @@ async fn system_info(
                 listener_address("0.0.0.0", config.s3.port)
             },
             embedded: config.s3.embedded,
-            mount_path: None,
+            mount_path: Some("/s3".to_string()),
             writable: None,
             module: None,
             passive_ports: None,

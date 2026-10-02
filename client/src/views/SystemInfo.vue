@@ -2,7 +2,6 @@
   <main class="vf-page-card system-info-page">
     <header class="system-info-header">
       <div>
-        <p class="system-info-eyebrow">管理控制台</p>
         <h1 class="vf-page-title">系统信息</h1>
         <p class="vf-page-subtitle">
           查看服务运行状态、协议配置和所有用户的存储用量
@@ -69,7 +68,8 @@
           </div>
 
           <p class="system-info-note">
-            状态反映启动配置；监听器是否成功启动，请结合服务日志确认。
+            状态反映启动配置；连接地址使用当前访问域名，独立端口模式也需对外开放对应端口。
+            监听器是否成功启动，请结合服务日志确认。
           </p>
 
           <ul class="system-info-protocols">
@@ -103,6 +103,10 @@
                 <template v-if="protocol.enabled">
                   <dt>监听地址</dt>
                   <dd class="system-info-mono">{{ protocol.bind }}</dd>
+                  <dt>连接地址</dt>
+                  <dd class="system-info-mono">
+                    {{ protocolConnectionAddress(protocol) }}
+                  </dd>
                   <dt>接入方式</dt>
                   <dd>{{ protocolMode(protocol) }}</dd>
                   <template v-if="protocol.passive_ports">
@@ -336,6 +340,42 @@ function protocolMode(protocol: SystemProtocolInfo) {
   return "独立监听端口";
 }
 
+function protocolConnectionAddress(protocol: SystemProtocolInfo) {
+  const origin = window.location.origin;
+  const authority = connectionAuthority(protocol);
+  switch (protocol.id) {
+    case "http":
+      return `${origin}/`;
+    case "webdav": {
+      if (protocol.embedded) {
+        const mount = (protocol.mount_path || "/dav").replace(/\/+$/, "");
+        return `${origin}${mount}/`;
+      }
+      return `http://${authority}/`;
+    }
+    case "ftps":
+      return `ftps://${authority}`;
+    case "s3": {
+      const path = (protocol.mount_path || "/s3").replace(/\/+$/, "");
+      return protocol.embedded
+        ? `${origin}${path}`
+        : `http://${authority}${path}`;
+    }
+    case "rsync":
+      return `rsync://${authority}/${protocol.module || "files"}`;
+  }
+}
+
+function connectionAuthority(protocol: SystemProtocolInfo) {
+  if (protocol.embedded) return window.location.host;
+  const port = protocol.bind.match(/:(\d+)$/)?.[1];
+  const hostname = window.location.hostname;
+  const formattedHostname = hostname.includes(":")
+    ? `[${hostname.replace(/^\[|\]$/g, "")}]`
+    : hostname;
+  return port ? `${formattedHostname}:${port}` : window.location.host;
+}
+
 function roleLabel(role: SystemUserStorageUsage["role"]) {
   const labels = { admin: "管理员", manager: "管理者", user: "普通用户" };
   return labels[role];
@@ -388,15 +428,6 @@ onMounted(load);
 
 .system-info-header {
   margin-bottom: 1.4rem;
-}
-
-.system-info-eyebrow {
-  margin: 0 0 0.35rem;
-  color: var(--system-info-accent);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .system-info-header .vf-page-subtitle {
