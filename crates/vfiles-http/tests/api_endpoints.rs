@@ -2980,6 +2980,16 @@ async fn session_bootstrap_and_admin_routes_require_authenticated_admin() {
         .await;
     assert_eq!(anonymous_admin.status(), StatusCode::UNAUTHORIZED);
 
+    let anonymous_system_info = app
+        .request(
+            Request::builder()
+                .uri("/api/admin/system-info")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(anonymous_system_info.status(), StatusCode::UNAUTHORIZED);
+
     app.register_user("member", "member@example.com", "member-password")
         .await;
     let member_cookie = app.login_cookie("member", "member-password").await;
@@ -2993,6 +3003,17 @@ async fn session_bootstrap_and_admin_routes_require_authenticated_admin() {
         )
         .await;
     assert_eq!(member_admin.status(), StatusCode::FORBIDDEN);
+
+    let member_system_info = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/admin/system-info")
+                .body(Body::empty())
+                .expect("request should build"),
+            &member_cookie,
+        )
+        .await;
+    assert_eq!(member_system_info.status(), StatusCode::FORBIDDEN);
 
     let admin_cookie = app.login_cookie("admin", "admin-password").await;
     let bootstrap = app
@@ -3036,6 +3057,81 @@ async fn session_bootstrap_and_admin_routes_require_authenticated_admin() {
             .len(),
         2
     );
+}
+
+#[tokio::test]
+async fn system_info_reports_protocol_configuration_and_per_user_storage() {
+    let app = TestApp::new().await;
+    app.register_user("member", "member@example.com", "member-password")
+        .await;
+    app.register_user("empty", "empty@example.com", "empty-password")
+        .await;
+
+    let member_cookie = app.login_cookie("member", "member-password").await;
+    app.upload_version_with_cookie(&member_cookie, "docs", "note.txt", b"abc", "first")
+        .await;
+    app.upload_version_with_cookie(
+        &member_cookie,
+        "docs",
+        "note.txt",
+        b"abcdef",
+        "latest version",
+    )
+    .await;
+    app.upload_version_with_cookie(&member_cookie, "", "other.bin", b"xy", "second file")
+        .await;
+    app.upload_version("", "admin.txt", b"1234", "admin file")
+        .await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/admin/system-info")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = response_json(response).await;
+
+    let protocols = payload["protocols"]
+        .as_array()
+        .expect("protocol configuration should be included");
+    for id in ["http", "webdav", "ftps", "s3", "rsync"] {
+        assert!(
+            protocols.iter().any(|protocol| protocol["id"] == id),
+            "missing protocol {id}: {protocols:?}"
+        );
+    }
+    assert!(
+        protocols
+            .iter()
+            .all(|protocol| protocol["enabled"].is_boolean())
+    );
+
+    let storage = &payload["storage"];
+    assert_eq!(storage["user_count"], Value::from(3));
+    assert_eq!(storage["file_count"], Value::from(3));
+    assert_eq!(storage["directory_count"], Value::from(1));
+    assert_eq!(storage["total_bytes"], Value::from(12));
+    let users = storage["users"].as_array().expect("user usage array");
+    assert_eq!(users.len(), 3);
+
+    let member = users
+        .iter()
+        .find(|user| user["username"] == "member")
+        .expect("member usage row should exist");
+    assert_eq!(member["file_count"], Value::from(2));
+    assert_eq!(member["directory_count"], Value::from(1));
+    assert_eq!(member["total_bytes"], Value::from(8));
+
+    let empty = users
+        .iter()
+        .find(|user| user["username"] == "empty")
+        .expect("zero-usage user should be included");
+    assert_eq!(empty["file_count"], Value::from(0));
+    assert_eq!(empty["directory_count"], Value::from(0));
+    assert_eq!(empty["total_bytes"], Value::from(0));
 }
 
 #[tokio::test]

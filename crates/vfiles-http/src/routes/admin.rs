@@ -56,7 +56,7 @@ pub struct ResetPasswordRequest {
     pub new_password: String,
 }
 
-/// 系统信息（r106 看板 ✓ 管理员专属 ✓ 零依赖段：版本/运行时/uptime）。
+/// 系统信息（管理员专属；协议来自启动配置，用量按用户聚合）。
 #[derive(Debug, Serialize)]
 pub struct SystemInfoResponse {
     pub version: String,
@@ -70,6 +70,40 @@ pub struct SystemInfoResponse {
     pub webdav_embedded: bool,
     /// 嵌入挂载路径（standalone 忽略 ✗ 默认 /dav）。
     pub webdav_mount: String,
+    pub protocols: Vec<ProtocolInfoResponse>,
+    pub storage: SystemStorageSummaryResponse,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProtocolInfoResponse {
+    pub id: String,
+    pub enabled: bool,
+    pub bind: String,
+    pub embedded: bool,
+    pub mount_path: Option<String>,
+    pub writable: Option<bool>,
+    pub module: Option<String>,
+    pub passive_ports: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserStorageUsageResponse {
+    pub user_id: String,
+    pub username: String,
+    pub role: String,
+    pub disabled: bool,
+    pub file_count: u64,
+    pub directory_count: u64,
+    pub total_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SystemStorageSummaryResponse {
+    pub user_count: u64,
+    pub file_count: u64,
+    pub directory_count: u64,
+    pub total_bytes: u64,
+    pub users: Vec<UserStorageUsageResponse>,
 }
 
 fn process_start() -> std::time::Instant {
@@ -78,18 +112,120 @@ fn process_start() -> std::time::Instant {
     *START.get_or_init(std::time::Instant::now)
 }
 
+fn listener_address(host: &str, port: u16) -> String {
+    let unwrapped_host = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
+    if unwrapped_host.parse::<std::net::Ipv6Addr>().is_ok() {
+        format!("[{unwrapped_host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 async fn system_info(
     State(state): State<AppState>,
     jar: CookieJar,
 ) -> ApiResult<Json<SystemInfoResponse>> {
     let _actor = require_admin(&state, &jar).await?;
     let uptime = process_start().elapsed().as_secs();
-    // WebDAV 接入信息（管理员看板 ✓ 与 config 层一致（r109b））。
-    let (webdav_enabled, webdav_bind, webdav_embedded, webdav_mount) =
-        match vfiles_config::ConfigLoader::load().map(|c| c.webdav) {
-            Ok(w) => (w.enabled, w.bind_address(), w.embedded, w.mount_path),
-            Err(_) => (false, String::new(), false, "/dav".to_string()),
-        };
+    let config = &state.config;
+    let http_bind = listener_address(&config.http.host, config.http.port);
+    let protocols = vec![
+        ProtocolInfoResponse {
+            id: "http".to_string(),
+            enabled: true,
+            bind: http_bind.clone(),
+            embedded: false,
+            mount_path: None,
+            writable: None,
+            module: None,
+            passive_ports: None,
+        },
+        ProtocolInfoResponse {
+            id: "webdav".to_string(),
+            enabled: config.webdav.enabled,
+            bind: if config.webdav.embedded {
+                http_bind.clone()
+            } else {
+                listener_address(&config.webdav.host, config.webdav.port)
+            },
+            embedded: config.webdav.embedded,
+            mount_path: config
+                .webdav
+                .embedded
+                .then(|| config.webdav.mount_path.clone()),
+            writable: None,
+            module: None,
+            passive_ports: None,
+        },
+        ProtocolInfoResponse {
+            id: "ftps".to_string(),
+            enabled: config.ftp.enabled,
+            bind: listener_address(&config.ftp.host, config.ftp.port),
+            embedded: false,
+            mount_path: None,
+            writable: None,
+            module: None,
+            passive_ports: Some(format!(
+                "{}-{}",
+                config.ftp.passive_ports.0, config.ftp.passive_ports.1
+            )),
+        },
+        ProtocolInfoResponse {
+            id: "s3".to_string(),
+            enabled: config.s3.enabled,
+            bind: if config.s3.embedded {
+                http_bind.clone()
+            } else {
+                listener_address("0.0.0.0", config.s3.port)
+            },
+            embedded: config.s3.embedded,
+            mount_path: None,
+            writable: None,
+            module: None,
+            passive_ports: None,
+        },
+        ProtocolInfoResponse {
+            id: "rsync".to_string(),
+            enabled: config.rsync.enabled,
+            bind: listener_address("0.0.0.0", config.rsync.port),
+            embedded: false,
+            mount_path: None,
+            writable: Some(config.rsync.writable),
+            module: Some(config.rsync.module.clone()),
+            passive_ports: None,
+        },
+    ];
+
+    let admin_service = state
+        .admin_service
+        .as_ref()
+        .ok_or_else(|| ApiError::forbidden("Admin access not available"))?;
+    let users = admin_service.list_user_storage_usage().await?;
+    let mut storage = SystemStorageSummaryResponse {
+        user_count: users.len() as u64,
+        file_count: 0,
+        directory_count: 0,
+        total_bytes: 0,
+        users: Vec::with_capacity(users.len()),
+    };
+    for user in users {
+        storage.file_count += user.file_count;
+        storage.directory_count += user.directory_count;
+        storage.total_bytes += user.total_bytes;
+        storage.users.push(UserStorageUsageResponse {
+            user_id: user.user_id.to_string(),
+            username: user.username,
+            role: user.role.to_string(),
+            disabled: user.disabled,
+            file_count: user.file_count,
+            directory_count: user.directory_count,
+            total_bytes: user.total_bytes,
+        });
+    }
+
     Ok(Json(SystemInfoResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
         os: std::env::consts::OS.to_string(),
@@ -98,10 +234,12 @@ async fn system_info(
         started_at: time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_default(),
-        webdav_enabled,
-        webdav_bind,
-        webdav_embedded,
-        webdav_mount,
+        webdav_enabled: config.webdav.enabled,
+        webdav_bind: listener_address(&config.webdav.host, config.webdav.port),
+        webdav_embedded: config.webdav.embedded,
+        webdav_mount: config.webdav.mount_path.clone(),
+        protocols,
+        storage,
     }))
 }
 

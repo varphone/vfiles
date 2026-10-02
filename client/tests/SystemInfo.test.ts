@@ -22,35 +22,91 @@ vi.mock("../src/services/auth.service", async () => {
           webdav_bind: "0.0.0.0:18080",
           webdav_embedded: true,
           webdav_mount: "/dav",
+          protocols: [
+            {
+              id: "http",
+              enabled: true,
+              bind: "0.0.0.0:8080",
+              embedded: false,
+              mount_path: null,
+              writable: null,
+              module: null,
+              passive_ports: null,
+            },
+            {
+              id: "webdav",
+              enabled: true,
+              bind: "0.0.0.0:18080",
+              embedded: true,
+              mount_path: "/dav",
+              writable: null,
+              module: null,
+              passive_ports: null,
+            },
+            {
+              id: "s3",
+              enabled: false,
+              bind: "0.0.0.0:9000",
+              embedded: true,
+              mount_path: null,
+              writable: null,
+              module: null,
+              passive_ports: null,
+            },
+          ],
+          storage: {
+            user_count: 2,
+            file_count: 3,
+            directory_count: 1,
+            total_bytes: 1536,
+            users: [
+              {
+                user_id: "u-alice",
+                username: "alice",
+                role: "user",
+                disabled: false,
+                file_count: 2,
+                directory_count: 1,
+                total_bytes: 1024,
+              },
+              {
+                user_id: "u-empty",
+                username: "empty",
+                role: "manager",
+                disabled: true,
+                file_count: 1,
+                directory_count: 0,
+                total_bytes: 512,
+              },
+            ],
+          },
         },
-      })),
-      listUsers: vi.fn(async () => ({
-        success: true,
-        data: { users: [], total_count: 2, page: 1, page_size: 20 },
       })),
     },
   };
 });
 
-describe("SystemInfo.vue (r106 看板)", () => {
-  it("renders system, storage and user cards", async () => {
+describe("SystemInfo.vue", () => {
+  it("shows enabled protocols and per-user storage in a system overview", async () => {
     renderWithProviders(SystemInfo);
     await waitFor(() => expect(screen.getByText("2.2.0")).toBeInTheDocument());
     expect(screen.getByText("linux/x86_64")).toBeInTheDocument();
-    // r-new 嵌入模式端点 = 当前页 host + mount（jsdom host = localhost:3000 ✓
-    // getAllByText：端点 dd 与 rclone 示例 pre 双处命中 = 渲染面实证 ✓）
-    expect(screen.getAllByText(/localhost:3000\/dav\//).length).toBeGreaterThan(0);
     // uptime 格式化（3661s = 1 小时 1 分）
     expect(screen.getByText("1 小时 1 分")).toBeInTheDocument();
-    // 存储卡标题（组件嵌入 ✓ SidebarOverview 自足）
     expect(screen.getByText("存储与用量")).toBeInTheDocument();
-    // 用户统计（listUsers total_count ✓）
-    await waitFor(() => expect(screen.getByText("2")).toBeInTheDocument());
+    expect(screen.getByText("1.5 KB")).toBeInTheDocument();
+    expect(screen.getByText("alice")).toBeInTheDocument();
+    expect(screen.getByText("1 KB")).toBeInTheDocument();
+    expect(screen.getByText("empty")).toBeInTheDocument();
+    expect(screen.getByText("2 个文件")).toBeInTheDocument();
+    expect(screen.getByText("HTTP API")).toBeInTheDocument();
+    expect(screen.getByText("WebDAV")).toBeInTheDocument();
+    expect(screen.getByText("S3 兼容存储")).toBeInTheDocument();
+    expect(screen.getAllByText("已启用").length).toBeGreaterThan(0);
+    expect(screen.getByText("未启用")).toBeInTheDocument();
+    expect(screen.getByText(/启动配置/)).toBeInTheDocument();
     // 标准工具条（刷新 + 返回文件）
     expect(screen.getByText("刷新")).toBeInTheDocument();
     expect(screen.getByText("返回文件")).toBeInTheDocument();
-    // WebDAV 接入卡（r115 ✓ 端点与挂载指引）
-    expect(screen.getByText("WebDAV 接入")).toBeInTheDocument();
-    expect(screen.getByText("端点地址", { selector: "dt" })).toBeInTheDocument();
   });
 });

@@ -33,6 +33,47 @@ export interface AdminUsersPayload {
   page_size?: number;
 }
 
+export interface SystemProtocolInfo {
+  id: "http" | "webdav" | "ftps" | "s3" | "rsync";
+  enabled: boolean;
+  bind: string;
+  embedded: boolean;
+  mount_path: string | null;
+  writable: boolean | null;
+  module: string | null;
+  passive_ports: string | null;
+}
+
+export interface SystemUserStorageUsage {
+  user_id: string;
+  username: string;
+  role: UserRole;
+  disabled: boolean;
+  file_count: number;
+  directory_count: number;
+  total_bytes: number;
+}
+
+export interface SystemInfoPayload {
+  version: string;
+  os: string;
+  arch: string;
+  uptime_secs: number;
+  started_at: string;
+  webdav_enabled: boolean;
+  webdav_bind: string;
+  webdav_embedded: boolean;
+  webdav_mount: string;
+  protocols: SystemProtocolInfo[];
+  storage: {
+    user_count: number;
+    file_count: number;
+    directory_count: number;
+    total_bytes: number;
+    users: SystemUserStorageUsage[];
+  };
+}
+
 export interface SessionFeatures {
   authEnabled: boolean;
   multiUser: boolean;
@@ -309,19 +350,7 @@ class AuthService {
   }
 
   /** 系统信息（管理端 ✓ r106 看板系统卡数据源）。 */
-  async systemInfo(): Promise<
-    ApiResponse<{
-      version: string;
-      os: string;
-      arch: string;
-      uptime_secs: number;
-      started_at: string;
-      webdav_enabled: boolean;
-      webdav_bind: string;
-      webdav_embedded: boolean;
-      webdav_mount: string;
-    }>
-  > {
+  async systemInfo(): Promise<ApiResponse<SystemInfoPayload>> {
     try {
       const response = await apiService.get<unknown>("/admin/system-info");
       return { success: true, data: response as never };

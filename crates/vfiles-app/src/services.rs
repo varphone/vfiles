@@ -5461,6 +5461,11 @@ where
         })
     }
 
+    /// Return one storage aggregate per user, including users with no files.
+    pub async fn list_user_storage_usage(&self) -> DomainResult<Vec<UserStorageUsage>> {
+        self.admin_repo.list_user_storage_usage().await
+    }
+
     /// 按 ID 查用户（管理员视角，供 CLI 恢复流程展示账号信息）。
     pub async fn find_user(&self, user_id: &UserId) -> DomainResult<AdminUserSummary> {
         self.auth_service

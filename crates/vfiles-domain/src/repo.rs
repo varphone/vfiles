@@ -81,6 +81,18 @@ pub struct NamespaceStats {
     pub total_bytes: u64,
 }
 
+/// Current storage usage grouped by user across all of their namespaces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserStorageUsage {
+    pub user_id: UserId,
+    pub username: String,
+    pub role: Role,
+    pub disabled: bool,
+    pub file_count: u64,
+    pub directory_count: u64,
+    pub total_bytes: u64,
+}
+
 /// 按类型聚合的占用统计，用于侧栏「存储用量」的占比条。
 ///
 /// 分类依据是当前版本的 MIME 类型（缺失时归入 `Other`），与主流网盘的
@@ -1620,6 +1632,7 @@ pub trait ShareRepo {
 pub trait AdminRepo {
     async fn list_users(&self, limit: i64, offset: i64) -> DomainResult<Vec<User>>;
     async fn count_users(&self) -> DomainResult<i64>;
+    async fn list_user_storage_usage(&self) -> DomainResult<Vec<UserStorageUsage>>;
     async fn create_user(
         &self,
         username: &Username,

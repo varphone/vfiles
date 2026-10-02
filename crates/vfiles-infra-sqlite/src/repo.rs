@@ -11175,6 +11175,55 @@ impl AdminRepo for SqliteAdminRepo {
         Ok(count)
     }
 
+    async fn list_user_storage_usage(&self) -> DomainResult<Vec<UserStorageUsage>> {
+        let rows: Vec<(String, String, String, bool, i64, i64, i64)> = sqlx::query_as(
+            r#"SELECT
+                u.id,
+                u.username,
+                u.role,
+                u.disabled,
+                COUNT(CASE WHEN e.kind = 'file' THEN 1 END),
+                COUNT(CASE WHEN e.kind = 'directory' THEN 1 END),
+                COALESCE(SUM(CASE WHEN e.kind = 'file' THEN COALESCE((
+                    SELECT ev.size
+                    FROM entry_versions ev
+                    WHERE ev.entry_id = e.id
+                    ORDER BY ev.version DESC
+                    LIMIT 1
+                ), 0) ELSE 0 END), 0) AS total_bytes
+            FROM users u
+            LEFT JOIN namespaces n ON n.owner_user_id = u.id
+            LEFT JOIN entries e ON e.namespace_id = n.id
+            GROUP BY u.id, u.username, u.role, u.disabled
+            ORDER BY total_bytes DESC, u.username COLLATE NOCASE ASC"#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list user storage usage: {e}"),
+        })?;
+
+        rows.into_iter()
+            .map(
+                |(id, username, role, disabled, file_count, directory_count, total_bytes)| {
+                    let user_id =
+                        UserId::from_string(&id).map_err(|error| DomainError::Internal {
+                            message: format!("Invalid user ID in storage report: {error}"),
+                        })?;
+                    Ok(UserStorageUsage {
+                        user_id,
+                        username,
+                        role: parse_role(&role)?,
+                        disabled,
+                        file_count: u64::try_from(file_count).unwrap_or(0),
+                        directory_count: u64::try_from(directory_count).unwrap_or(0),
+                        total_bytes: u64::try_from(total_bytes).unwrap_or(0),
+                    })
+                },
+            )
+            .collect()
+    }
+
     async fn create_user(
         &self,
         username: &Username,
