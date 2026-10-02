@@ -14487,6 +14487,73 @@ mod webdav_lock_repo_tests {
         pool.close().await;
         let _ = std::fs::remove_file(db_path);
     }
+
+    #[tokio::test]
+    async fn has_active_under_path_returns_a_bounded_boolean_for_many_locks() {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-webdav-lock-exists-test-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_id = UserId::new();
+        let namespace_id = NamespaceId::new();
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, 'hash', 'user')",
+        )
+        .bind(user_id.to_string())
+        .bind(format!("lock-many-{}", uuid::Uuid::new_v4()))
+        .execute(&pool)
+        .await
+        .expect("user should be inserted");
+        sqlx::query("INSERT INTO namespaces (id, slug, owner_user_id) VALUES (?, 'default', ?)")
+            .bind(namespace_id.to_string())
+            .bind(user_id.to_string())
+            .execute(&pool)
+            .await
+            .expect("namespace should be inserted");
+
+        let mut query = sqlx::QueryBuilder::<Sqlite>::new(
+            "INSERT INTO webdav_locks (namespace_id, path, token, owner, expires_at, depth_infinity, scope) ",
+        );
+        query.push_values(0..2_000, |mut row, index| {
+            row.push_bind(namespace_id.to_string())
+                .push_bind("folder/file")
+                .push_bind(format!("shared-{index}"))
+                .push_bind("owner")
+                .push_bind(None::<i64>)
+                .push_bind(false)
+                .push_bind("shared");
+        });
+        query
+            .build()
+            .execute(&pool)
+            .await
+            .expect("many shared locks should be inserted");
+
+        let repo = SqliteWebdavLockRepo::new(pool.clone());
+        assert!(
+            repo.has_active_under_path(&namespace_id, "folder", 1_000)
+                .await
+                .expect("subtree lock existence query should succeed")
+        );
+        assert!(
+            !repo
+                .has_active_under_path(&namespace_id, "folderish", 1_000)
+                .await
+                .expect("sibling lock existence query should succeed"),
+            "slash-delimited path checks must not match similarly prefixed siblings"
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
 }
 
 #[cfg(test)]
