@@ -50,11 +50,17 @@ pub(crate) fn sanitize_control_path(path: &std::path::Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_control_text;
+    use super::{sanitize_control_path, sanitize_control_text};
 
     #[test]
     fn log_text_replaces_control_and_bidirectional_formatting_characters() {
         let text = "USER\r\nname\u{202e}hidden\u{2066}value\u{2069}\u{001b}";
         assert_eq!(sanitize_control_text(text), "USER  name hidden value  ");
+    }
+
+    #[test]
+    fn log_paths_replace_bidirectional_formatting_characters() {
+        let path = std::path::Path::new("reports/\u{202e}txt.exe");
+        assert_eq!(sanitize_control_path(path), "reports/ txt.exe");
     }
 }
