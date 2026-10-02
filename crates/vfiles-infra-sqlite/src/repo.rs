@@ -3922,8 +3922,7 @@ impl EntryRepo for SqliteEntryRepo {
     ) -> DomainResult<(Vec<Entry>, u64)> {
         // sqlx 要求静态 SQL，因此根目录与子目录各写一份完整语句（均命中
         // (namespace_id, path) 索引）；排序与 live tree 的「目录优先 + 名称升序」一致。
-        const TOTAL_ROOT: &str =
-            "SELECT COUNT(*) FROM entries e WHERE e.namespace_id = ? AND instr(e.path, '/') = 0";
+        const TOTAL_ROOT: &str = "SELECT COUNT(*) FROM entries e INDEXED BY idx_entries_namespace_root_path WHERE e.namespace_id = ? AND instr(e.path, '/') = 0";
         // 只统计**直接子条目**：用 LIKE 前缀 + 「前缀之后不再含 /」过滤，
         // 否则会把整棵子树都算进来（`a/` 的范围匹配会命中 `a/docs/x`）。
         const TOTAL_PREFIX: &str = r#"SELECT COUNT(*) FROM entries e WHERE e.namespace_id = ? AND e.path LIKE ? ESCAPE '\' AND instr(substr(e.path, length(?) + 1), '/') = 0"#;
@@ -4016,7 +4015,7 @@ impl EntryRepo for SqliteEntryRepo {
         limit: u32,
         offset: u32,
     ) -> DomainResult<(Vec<Entry>, u64)> {
-        const TOTAL_ROOT: &str = "SELECT COUNT(*) FROM entries e WHERE e.namespace_id = ? AND e.kind = 'directory' AND instr(e.path, '/') = 0";
+        const TOTAL_ROOT: &str = "SELECT COUNT(*) FROM entries e INDEXED BY idx_entries_namespace_root_directories_path WHERE e.namespace_id = ? AND e.kind = 'directory' AND instr(e.path, '/') = 0";
         const TOTAL_PREFIX: &str = r#"SELECT COUNT(*) FROM entries e WHERE e.namespace_id = ? AND e.kind = 'directory' AND e.path LIKE ? ESCAPE '\' AND instr(substr(e.path, length(?) + 1), '/') = 0"#;
         const PAGE_ROOT: &str = r#"
             SELECT
@@ -14626,10 +14625,14 @@ mod tree_page_query_plan_tests {
 
         let plan = sqlx::query(
             r#"EXPLAIN QUERY PLAN
-            SELECT COUNT(*) FROM entries e
-            WHERE e.namespace_id = ? AND e.kind = 'directory' AND instr(e.path, '/') = 0"#,
+            SELECT COUNT(*) FROM entries e INDEXED BY idx_entries_namespace_directories_path
+            WHERE e.namespace_id = ? AND e.kind = 'directory'
+              AND e.path LIKE ? ESCAPE '\\'
+              AND instr(substr(e.path, length(?) + 1), '/') = 0"#,
         )
         .bind("plan-test")
+        .bind("parent/%")
+        .bind("parent/")
         .fetch_all(&pool)
         .await
         .expect("query plan should be available");
@@ -14643,6 +14646,84 @@ mod tree_page_query_plan_tests {
                     && detail.contains("COVERING INDEX")
             }),
             "directory count should use the covering namespace/kind/path index: {details:?}"
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn root_child_count_uses_covering_root_entries_index() {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-root-count-plan-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let plan = sqlx::query(
+            r#"EXPLAIN QUERY PLAN
+            SELECT COUNT(*) FROM entries e INDEXED BY idx_entries_namespace_root_path
+            WHERE e.namespace_id = ? AND instr(e.path, '/') = 0"#,
+        )
+        .bind("plan-test")
+        .fetch_all(&pool)
+        .await
+        .expect("query plan should be available");
+        let details = plan
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>();
+        assert!(
+            details.iter().any(|detail| {
+                detail.contains("idx_entries_namespace_root_path")
+                    && detail.contains("COVERING INDEX")
+            }),
+            "root child count should use the covering root-path index: {details:?}"
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn root_directory_count_uses_covering_root_directory_index() {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-root-directory-count-plan-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let plan = sqlx::query(
+            r#"EXPLAIN QUERY PLAN
+            SELECT COUNT(*) FROM entries e INDEXED BY idx_entries_namespace_root_directories_path
+            WHERE e.namespace_id = ? AND e.kind = 'directory' AND instr(e.path, '/') = 0"#,
+        )
+        .bind("plan-test")
+        .fetch_all(&pool)
+        .await
+        .expect("query plan should be available");
+        let details = plan
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>();
+        assert!(
+            details.iter().any(|detail| {
+                detail.contains("idx_entries_namespace_root_directories_path")
+                    && detail.contains("COVERING INDEX")
+            }),
+            "root directory count should use its covering partial index: {details:?}"
         );
 
         pool.close().await;
