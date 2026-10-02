@@ -2409,6 +2409,95 @@ async fn disabled_user_cannot_bypass_revalidation_with_ftps_policy_commands() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn control_disconnect_cancels_active_stor_and_releases_session_slot() {
+    let harness = Harness::start_with_max_connections(SnapshotMode::Off, 1, 1).await;
+    let blob_root = harness._temp_dir.path().join("blobs");
+    let blobs_before = blob_file_count(&blob_root);
+    let mut client = harness.client();
+    let (transfer_started_tx, transfer_started_rx) = tokio::sync::oneshot::channel();
+    let (drop_control_tx, drop_control_rx) = std::sync::mpsc::channel();
+    let transfer = tokio::task::spawn_blocking(move || {
+        let (_, mut data_stream) = client
+            .custom_data_command("STOR interrupted.bin", &[Status::AboutToSend])
+            .expect("STOR should start");
+        data_stream
+            .get_ref()
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .expect("data read timeout should be set");
+        std::io::Write::write_all(&mut data_stream, &[0x61; 1_024])
+            .expect("partial upload should reach the server");
+        transfer_started_tx
+            .send(())
+            .expect("test should still be waiting for the active STOR");
+        drop_control_rx
+            .recv()
+            .expect("test should request the control disconnect");
+        drop(client);
+
+        let mut probe = [0_u8; 1];
+        std::io::Read::read(&mut data_stream, &mut probe)
+    });
+
+    transfer_started_rx
+        .await
+        .expect("STOR should reach the active data phase");
+    drop_control_tx
+        .send(())
+        .expect("FTP client should close its control connection");
+
+    let address = harness.handle.local_addr();
+    let mut replacement_accepted = false;
+    for _ in 0..40 {
+        let candidate = TcpStream::connect(address)
+            .await
+            .expect("replacement TCP connection should open");
+        let mut reader = BufReader::new(candidate);
+        let mut greeting = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            reader.read_line(&mut greeting),
+        )
+        .await
+        .expect("replacement greeting timeout")
+        .expect("replacement greeting read");
+        if greeting.starts_with("220 ") {
+            replacement_accepted = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(
+        replacement_accepted,
+        "control disconnect should cancel STOR and release the session slot"
+    );
+
+    let data_result = tokio::time::timeout(std::time::Duration::from_secs(5), transfer)
+        .await
+        .expect("active STOR data socket should close promptly")
+        .expect("FTP data task should finish");
+    assert!(
+        !matches!(
+            data_result,
+            Err(ref error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                )
+        ),
+        "control disconnect should close the data socket: {data_result:?}"
+    );
+    assert!(
+        harness.entry_paths().await.is_empty(),
+        "an interrupted partial STOR must not create a file entry"
+    );
+    assert_eq!(
+        blob_file_count(&blob_root),
+        blobs_before,
+        "an interrupted partial STOR must not publish a blob"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ftp_listing_rejects_directories_over_its_bounded_entry_limit() {
     const CHILD_COUNT: usize = 20_001;
     let harness = Harness::start(SnapshotMode::Off, 1).await;
