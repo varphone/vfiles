@@ -325,6 +325,29 @@ impl Harness {
     }
 }
 
+async fn lock_webdav_path(harness: &Harness, path: &str, token: &str, depth_infinity: bool) {
+    let lock_repo = SqliteWebdavLockRepo::new(harness.pool.clone());
+    let now = (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64;
+    assert!(
+        lock_repo
+            .acquire(
+                &harness.namespace_id,
+                path,
+                NewWebdavLock {
+                    token,
+                    owner: "ftp-compatibility-test",
+                    depth_infinity,
+                    scope: WebdavLockScope::Exclusive,
+                    expires_at: None,
+                    now,
+                },
+            )
+            .await
+            .expect("WebDAV lock should be stored"),
+        "test lock should be acquired for {path}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rejects_new_control_connections_at_the_configured_limit() {
     let harness = Harness::start_with_max_connections(SnapshotMode::Off, 1, 1).await;
@@ -1826,6 +1849,67 @@ async fn ftp_rmd_cannot_remove_a_webdav_locked_directory() {
         harness.entry_paths().await,
         vec!["locked-directory"],
         "rejected RMD must preserve the locked directory"
+    );
+    client.quit().expect("control session should remain usable");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_rnto_respects_webdav_locks_on_sources_and_destinations() {
+    let harness = Harness::start(SnapshotMode::PerFile, 1).await;
+    let mut client = harness.client();
+    for (path, content) in [
+        ("locked-source.txt", b"source stays".as_slice()),
+        ("free-source.txt", b"destination stays".as_slice()),
+        ("locked-destination.txt", b"locked target stays".as_slice()),
+    ] {
+        let mut reader = std::io::Cursor::new(content.to_vec());
+        client
+            .put_file(path, &mut reader)
+            .expect("rename fixtures should upload");
+    }
+    lock_webdav_path(
+        &harness,
+        "locked-source.txt",
+        "opaquelocktoken:ftp-rnto-source",
+        false,
+    )
+    .await;
+    lock_webdav_path(
+        &harness,
+        "locked-destination.txt",
+        "opaquelocktoken:ftp-rnto-destination",
+        false,
+    )
+    .await;
+
+    assert!(
+        client
+            .rename("locked-source.txt", "moved-source.txt")
+            .is_err(),
+        "RNTO must not move a locked source"
+    );
+    assert!(
+        client
+            .rename("free-source.txt", "locked-destination.txt")
+            .is_err(),
+        "RNTO must not overwrite a locked destination"
+    );
+    assert_eq!(
+        harness.entry_paths().await,
+        vec![
+            "free-source.txt",
+            "locked-destination.txt",
+            "locked-source.txt"
+        ],
+        "rejected renames must preserve source and destination entries"
+    );
+    assert_eq!(
+        harness
+            .read("locked-destination.txt")
+            .await
+            .expect("locked destination should remain")
+            .bytes,
+        b"locked target stays"
     );
     client.quit().expect("control session should remain usable");
 }
