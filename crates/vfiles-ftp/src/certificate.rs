@@ -364,4 +364,37 @@ mod tests {
             0
         );
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_group_writable_ancestor_before_creating_certificate_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+            .expect("test directory should be private");
+        let shared_directory = directory.path().join("shared");
+        fs::create_dir(&shared_directory).expect("shared directory should be created");
+        fs::set_permissions(&shared_directory, fs::Permissions::from_mode(0o770))
+            .expect("shared directory permissions should be set");
+        let certificate_directory = shared_directory.join("nested/ftp-tls");
+
+        let error = ensure_self_signed_certificate(
+            &certificate_directory.join("ftp-cert.pem"),
+            &certificate_directory.join("ftp-key.pem"),
+            &["localhost".into()],
+        )
+        .expect_err("a group-writable ancestor must be rejected");
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(!certificate_directory.exists());
+        assert_eq!(
+            fs::metadata(&shared_directory)
+                .expect("shared directory metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o770
+        );
+    }
 }
