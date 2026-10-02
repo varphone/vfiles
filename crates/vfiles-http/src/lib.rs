@@ -18,7 +18,10 @@ use axum::{
     response::IntoResponse,
     response::Response,
 };
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tower_http::compression::CompressionLayer;
 use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
@@ -365,6 +368,7 @@ async fn serve_frontend(
 }
 
 async fn request_logger(req: Request, next: Next) -> Result<Response, StatusCode> {
+    let started = Instant::now();
     let method = req.method().clone();
     let path = request_path_for_log(req.uri());
     let request_id = req
@@ -373,11 +377,17 @@ async fn request_logger(req: Request, next: Next) -> Result<Response, StatusCode
         .map(|id| id.0.clone())
         .unwrap_or_else(|| "-".to_string());
 
-    tracing::info!(request_id = %request_id, "{} {}", method, path);
-
     let response = next.run(req).await;
-
-    tracing::info!(request_id = %request_id, "{} {} -> {}", method, path, response.status());
+    let status = response.status();
+    let response_ready_us = started.elapsed().as_micros().min(u64::MAX as u128) as u64;
+    tracing::info!(
+        request_id = %request_id,
+        method = %method,
+        path = %path,
+        status = %status,
+        response_ready_us,
+        "HTTP request completed"
+    );
 
     Ok(response)
 }
@@ -412,8 +422,97 @@ fn request_path_for_log(uri: &Uri) -> String {
 
 #[cfg(test)]
 mod request_logger_tests {
+    use std::{
+        fmt,
+        sync::{Arc, Mutex},
+    };
+
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        routing::get,
+    };
+    use tower::ServiceExt;
+    use tracing::{
+        Event,
+        field::{Field, Visit},
+    };
+    use tracing_subscriber::{Layer, layer::Context, prelude::*, registry::Registry};
+
+    use super::request_logger;
     use super::request_path_for_log;
     use axum::http::Uri;
+
+    #[derive(Clone)]
+    struct CapturedEvents(Arc<Mutex<Vec<Vec<String>>>>);
+
+    struct FieldNames(Vec<String>);
+
+    impl Visit for FieldNames {
+        fn record_debug(&mut self, field: &Field, _value: &dyn fmt::Debug) {
+            self.0.push(field.name().to_string());
+        }
+
+        fn record_str(&mut self, field: &Field, _value: &str) {
+            self.0.push(field.name().to_string());
+        }
+
+        fn record_u64(&mut self, field: &Field, _value: u64) {
+            self.0.push(field.name().to_string());
+        }
+    }
+
+    impl<S> Layer<S> for CapturedEvents
+    where
+        S: tracing::Subscriber,
+    {
+        fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
+            let mut fields = FieldNames(Vec::new());
+            event.record(&mut fields);
+            self.0
+                .lock()
+                .expect("event lock should be available")
+                .push(fields.0);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn logs_one_structured_completion_event_with_handler_duration() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(CapturedEvents(Arc::clone(&events)));
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let _guard = tracing::dispatcher::set_default(&dispatch);
+        let app = Router::new()
+            .route("/", get(|| async { StatusCode::NO_CONTENT }))
+            .layer(axum::middleware::from_fn(request_logger));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should complete");
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let events = events.lock().expect("event lock should be available");
+        assert_eq!(events.len(), 1, "one access record should be emitted");
+        for field in [
+            "request_id",
+            "method",
+            "path",
+            "status",
+            "response_ready_us",
+        ] {
+            assert!(
+                events[0].iter().any(|name| name == field),
+                "missing {field}"
+            );
+        }
+    }
 
     #[test]
     fn request_logs_omit_query_strings_and_redact_share_codes() {
