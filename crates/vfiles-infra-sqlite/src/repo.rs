@@ -4113,14 +4113,23 @@ impl EntryRepo for SqliteEntryRepo {
         const ROOT_AFTER_DIRECTORY: &str = r#"
             SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
                 (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
-            FROM entries e WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
-              AND (e.kind = 'file' OR (e.kind = 'directory' AND e.path > ?))
-            ORDER BY (e.kind = 'directory') DESC, e.path ASC LIMIT ?
+            FROM entries e INDEXED BY idx_entries_namespace_root_directories_path
+            WHERE e.namespace_id = ? AND e.kind = 'directory' AND instr(e.path, '/') = 0
+              AND e.path > ?
+            ORDER BY e.path ASC LIMIT ?
+        "#;
+        const ROOT_FILES_FROM_START: &str = r#"
+            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
+            FROM entries e INDEXED BY idx_entries_namespace_root_path
+            WHERE e.namespace_id = ? AND instr(e.path, '/') = 0 AND e.kind = 'file'
+            ORDER BY e.path ASC LIMIT ?
         "#;
         const ROOT_AFTER_FILE: &str = r#"
             SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
                 (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
-            FROM entries e WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
+            FROM entries e INDEXED BY idx_entries_namespace_root_path
+            WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
               AND e.kind = 'file' AND e.path > ?
             ORDER BY e.path ASC LIMIT ?
         "#;
@@ -4134,10 +4143,17 @@ impl EntryRepo for SqliteEntryRepo {
         const PREFIX_AFTER_DIRECTORY: &str = r#"
             SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
                 (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
-            FROM entries e WHERE e.namespace_id = ? AND e.path >= ? AND e.path < ?
+            FROM entries e INDEXED BY idx_entries_namespace_directories_path
+            WHERE e.namespace_id = ? AND e.path > ? AND e.path < ? AND e.kind = 'directory'
               AND instr(substr(e.path, length(?) + 1), '/') = 0
-              AND (e.kind = 'file' OR (e.kind = 'directory' AND e.path > ?))
-            ORDER BY (e.kind = 'directory') DESC, e.path ASC LIMIT ?
+            ORDER BY e.path ASC LIMIT ?
+        "#;
+        const PREFIX_FILES_FROM_START: &str = r#"
+            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
+            FROM entries e WHERE e.namespace_id = ? AND e.path >= ? AND e.path < ?
+              AND instr(substr(e.path, length(?) + 1), '/') = 0 AND e.kind = 'file'
+            ORDER BY e.path ASC LIMIT ?
         "#;
         const PREFIX_AFTER_FILE: &str = r#"
             SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
@@ -4152,63 +4168,103 @@ impl EntryRepo for SqliteEntryRepo {
         let is_root = parent_path.as_str().is_empty();
         let prefix = format!("{}/", parent_path.as_str().trim_end_matches('/'));
         let upper = format!("{}0", parent_path.as_str().trim_end_matches('/'));
-        let rows: Vec<EntryRow> = match (is_root, after) {
-            (true, None) => {
-                sqlx::query_as(ROOT_FIRST)
-                    .bind(namespace_id.to_string())
-                    .bind(limit)
-                    .fetch_all(&self.pool)
-                    .await
-            }
-            (true, Some((true, path))) => {
-                sqlx::query_as(ROOT_AFTER_DIRECTORY)
-                    .bind(namespace_id.to_string())
-                    .bind(path)
-                    .bind(limit)
-                    .fetch_all(&self.pool)
-                    .await
-            }
-            (true, Some((false, path))) => {
-                sqlx::query_as(ROOT_AFTER_FILE)
-                    .bind(namespace_id.to_string())
-                    .bind(path)
-                    .bind(limit)
-                    .fetch_all(&self.pool)
-                    .await
-            }
-            (false, None) => {
-                sqlx::query_as(PREFIX_FIRST)
-                    .bind(namespace_id.to_string())
-                    .bind(&prefix)
-                    .bind(&upper)
-                    .bind(&prefix)
-                    .bind(limit)
-                    .fetch_all(&self.pool)
-                    .await
-            }
-            (false, Some((true, path))) => {
-                sqlx::query_as(PREFIX_AFTER_DIRECTORY)
-                    .bind(namespace_id.to_string())
-                    .bind(&prefix)
-                    .bind(&upper)
-                    .bind(&prefix)
-                    .bind(path)
-                    .bind(limit)
-                    .fetch_all(&self.pool)
-                    .await
-            }
-            (false, Some((false, path))) => {
-                sqlx::query_as(PREFIX_AFTER_FILE)
-                    .bind(namespace_id.to_string())
-                    .bind(&prefix)
-                    .bind(&upper)
-                    .bind(&prefix)
-                    .bind(path)
-                    .bind(limit)
-                    .fetch_all(&self.pool)
-                    .await
+        if let Some((_, path)) = after.as_ref() {
+            let is_direct_child = if is_root {
+                !path.is_empty() && !path.contains('/')
+            } else {
+                path.strip_prefix(&prefix)
+                    .is_some_and(|name| !name.is_empty() && !name.contains('/'))
+            };
+            if !is_direct_child {
+                return Err(DomainError::Validation {
+                    message: "Listing cursor must identify a direct child of the requested path"
+                        .to_string(),
+                });
             }
         }
+
+        let rows: Vec<EntryRow> = async {
+            match (is_root, after) {
+                (true, None) => {
+                    sqlx::query_as(ROOT_FIRST)
+                        .bind(namespace_id.to_string())
+                        .bind(limit)
+                        .fetch_all(&self.pool)
+                        .await
+                }
+                (true, Some((true, path))) => {
+                    let mut rows = sqlx::query_as::<_, EntryRow>(ROOT_AFTER_DIRECTORY)
+                        .bind(namespace_id.to_string())
+                        .bind(path)
+                        .bind(limit)
+                        .fetch_all(&self.pool)
+                        .await?;
+                    if (rows.len() as i64) < limit {
+                        let remaining = limit - rows.len() as i64;
+                        let mut files = sqlx::query_as::<_, EntryRow>(ROOT_FILES_FROM_START)
+                            .bind(namespace_id.to_string())
+                            .bind(remaining)
+                            .fetch_all(&self.pool)
+                            .await?;
+                        rows.append(&mut files);
+                    }
+                    Ok(rows)
+                }
+                (true, Some((false, path))) => {
+                    sqlx::query_as(ROOT_AFTER_FILE)
+                        .bind(namespace_id.to_string())
+                        .bind(path)
+                        .bind(limit)
+                        .fetch_all(&self.pool)
+                        .await
+                }
+                (false, None) => {
+                    sqlx::query_as(PREFIX_FIRST)
+                        .bind(namespace_id.to_string())
+                        .bind(&prefix)
+                        .bind(&upper)
+                        .bind(&prefix)
+                        .bind(limit)
+                        .fetch_all(&self.pool)
+                        .await
+                }
+                (false, Some((true, path))) => {
+                    let mut rows = sqlx::query_as::<_, EntryRow>(PREFIX_AFTER_DIRECTORY)
+                        .bind(namespace_id.to_string())
+                        .bind(path)
+                        .bind(&upper)
+                        .bind(&prefix)
+                        .bind(limit)
+                        .fetch_all(&self.pool)
+                        .await?;
+                    if (rows.len() as i64) < limit {
+                        let remaining = limit - rows.len() as i64;
+                        let mut files = sqlx::query_as::<_, EntryRow>(PREFIX_FILES_FROM_START)
+                            .bind(namespace_id.to_string())
+                            .bind(&prefix)
+                            .bind(&upper)
+                            .bind(&prefix)
+                            .bind(remaining)
+                            .fetch_all(&self.pool)
+                            .await?;
+                        rows.append(&mut files);
+                    }
+                    Ok(rows)
+                }
+                (false, Some((false, path))) => {
+                    sqlx::query_as(PREFIX_AFTER_FILE)
+                        .bind(namespace_id.to_string())
+                        .bind(&prefix)
+                        .bind(&upper)
+                        .bind(&prefix)
+                        .bind(path)
+                        .bind(limit)
+                        .fetch_all(&self.pool)
+                        .await
+                }
+            }
+        }
+        .await
         .map_err(|error| DomainError::Internal {
             message: format!("Failed to list children cursor page: {error}"),
         })?;
@@ -14724,6 +14780,106 @@ mod tree_page_query_plan_tests {
                     && detail.contains("COVERING INDEX")
             }),
             "root directory count should use its covering partial index: {details:?}"
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn directory_cursor_seeks_root_directory_index() {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-root-directory-cursor-plan-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let plan = sqlx::query(
+            r#"EXPLAIN QUERY PLAN
+            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at
+            FROM entries e INDEXED BY idx_entries_namespace_root_directories_path
+            WHERE e.namespace_id = ? AND e.kind = 'directory' AND instr(e.path, '/') = 0
+              AND e.path > ?
+            ORDER BY e.path ASC LIMIT ?"#,
+        )
+        .bind("plan-test")
+        .bind("entry-05000")
+        .bind(201_i64)
+        .fetch_all(&pool)
+        .await
+        .expect("query plan should be available");
+        let details = plan
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>();
+        assert!(
+            details.iter().any(|detail| {
+                detail.contains("idx_entries_namespace_root_directories_path")
+                    && detail.contains("path>?")
+            }),
+            "directory cursor must seek from its path in the root directory index: {details:?}"
+        );
+
+        let file_plan = sqlx::query(
+            r#"EXPLAIN QUERY PLAN
+            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at
+            FROM entries e INDEXED BY idx_entries_namespace_root_path
+            WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
+              AND e.kind = 'file' AND e.path > ?
+            ORDER BY e.path ASC LIMIT ?"#,
+        )
+        .bind("plan-test")
+        .bind("entry-05000")
+        .bind(201_i64)
+        .fetch_all(&pool)
+        .await
+        .expect("root file query plan should be available");
+        let file_details = file_plan
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>();
+        assert!(
+            file_details
+                .iter()
+                .any(|detail| detail.contains("idx_entries_namespace_root_path")
+                    && detail.contains("path>?")),
+            "root file cursor must seek from its path: {file_details:?}"
+        );
+
+        let nested_plan = sqlx::query(
+            r#"EXPLAIN QUERY PLAN
+            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at
+            FROM entries e INDEXED BY idx_entries_namespace_directories_path
+            WHERE e.namespace_id = ? AND e.path > ? AND e.path < ?
+              AND e.kind = 'directory'
+              AND instr(substr(e.path, length(?) + 1), '/') = 0
+            ORDER BY e.path ASC LIMIT ?"#,
+        )
+        .bind("plan-test")
+        .bind("parent/entry-05000")
+        .bind("parent0")
+        .bind("parent/")
+        .bind(201_i64)
+        .fetch_all(&pool)
+        .await
+        .expect("nested directory query plan should be available");
+        let nested_details = nested_plan
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>();
+        assert!(
+            nested_details.iter().any(|detail| {
+                detail.contains("idx_entries_namespace_directories_path")
+                    && detail.contains("path>?")
+                    && detail.contains("path<?")
+            }),
+            "nested directory cursor must seek within the parent path range: {nested_details:?}"
         );
 
         pool.close().await;

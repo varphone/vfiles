@@ -7281,6 +7281,77 @@ async fn live_directory_listing_rejects_malformed_or_ambiguous_cursors() {
 }
 
 #[tokio::test]
+async fn live_nested_listing_cursor_returns_remaining_directories_then_files() {
+    let app = TestApp::new().await;
+    app.upload_version("zdir", "b.txt", b"b", "seed").await;
+    app.upload_version("zdir", "a.txt", b"a", "seed").await;
+    app.upload_version("zdir", "c.txt", b"c", "seed").await;
+    let created = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/directories",
+            json!({ "path": "zdir/subdir" }),
+        )
+        .await;
+    assert_eq!(created.status(), StatusCode::OK);
+
+    let first = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list/zdir?limit=1&offset=0")
+                .body(Body::empty())
+                .expect("first nested page request should build"),
+        )
+        .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first = response_json(first).await;
+    assert_eq!(first["items"][0]["kind"], "directory");
+    assert_eq!(first["next_cursor"]["path"], "zdir/subdir");
+
+    let next = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list/zdir?limit=2&after_kind=directory&after_path=zdir%2Fsubdir")
+                .body(Body::empty())
+                .expect("cursor page request should build"),
+        )
+        .await;
+    assert_eq!(next.status(), StatusCode::OK);
+    let next = response_json(next).await;
+    let names: Vec<String> = next["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| item["name"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(names, vec!["a.txt", "b.txt"]);
+    assert_eq!(next["next_cursor"]["kind"], "file");
+    assert_eq!(next["next_cursor"]["path"], "zdir/b.txt");
+
+    let final_page = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list/zdir?limit=2&after_kind=file&after_path=zdir%2Fb.txt")
+                .body(Body::empty())
+                .expect("final cursor page request should build"),
+        )
+        .await;
+    let final_page = response_json(final_page).await;
+    assert_eq!(final_page["items"][0]["name"], "c.txt");
+    assert_eq!(final_page["has_more"], Value::Bool(false));
+
+    let out_of_scope = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list/zdir?limit=2&after_kind=directory&after_path=other")
+                .body(Body::empty())
+                .expect("out-of-scope cursor request should build"),
+        )
+        .await;
+    assert_eq!(out_of_scope.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn legacy_directory_listing_rejects_directories_over_its_response_limit() {
     const ENTRY_COUNT: usize = 1001;
 
