@@ -18,6 +18,7 @@ use std::{collections::HashSet, str::FromStr};
 use vfiles_domain::DomainResult;
 
 pub type SqlitePool = Pool<Sqlite>;
+const SQLITE_POOL_MAX_CONNECTIONS: u32 = 10;
 
 #[derive(Debug)]
 pub struct SqlitePoolFactory;
@@ -59,11 +60,34 @@ impl SqlitePoolFactory {
             .busy_timeout(Duration::from_secs(5));
 
         SqlitePoolOptions::new()
+            .max_connections(SQLITE_POOL_MAX_CONNECTIONS)
             .connect_with(options)
             .await
             .map_err(|e| vfiles_domain::DomainError::Internal {
                 message: format!("Failed to connect to database: {}", e),
             })
+    }
+}
+
+#[cfg(test)]
+mod pool_limit_tests {
+    use super::{SQLITE_POOL_MAX_CONNECTIONS, SqlitePoolFactory};
+    use camino::Utf8PathBuf;
+
+    #[tokio::test]
+    async fn sqlite_pool_connection_limit_is_explicit() {
+        let directory = tempfile::tempdir().expect("temp directory should be created");
+        let database_path = Utf8PathBuf::from_path_buf(directory.path().join("pool-limit.db"))
+            .expect("temporary database path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&database_path)
+            .await
+            .expect("database pool should connect");
+
+        assert_eq!(
+            pool.options().get_max_connections(),
+            SQLITE_POOL_MAX_CONNECTIONS
+        );
+        pool.close().await;
     }
 }
 
