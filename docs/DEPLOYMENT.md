@@ -42,6 +42,8 @@ VFILES_AUTH_COOKIE_SECRET=replace-with-a-random-secret-at-least-32-chars
 
 # 功能开关（默认关闭；开启后前端会同步解锁对应入口）
 VFILES_FEATURES_SEARCH_CONTENT=false
+# 文件名子串搜索 trigram 索引（默认关闭；读多写少且数据库空间充足时再启用）
+# VFILES_SEARCH_FILENAME_TRIGRAM_INDEX=true
 
 # FTPS 批量导入（认证开启时默认启用；没有证书时自动生成自签名证书）
 # VFILES_FTP_ENABLED=true
@@ -73,6 +75,7 @@ RUST_LOG=info
 - `VFILES_FRONTEND_DIST` 在运行时用于外部静态资源托管；启用 `embed` feature 时，也可在编译期指定待嵌入目录。
 - 仍兼容读取旧别名 `PUBLIC_BASE_URL`、`CORS_ORIGIN`、`HTTP_COOKIE_SECURE`、`AUTH_SECRET`、`ENABLE_AUTH`、`AUTH_ALLOW_REGISTER`，但新部署不建议继续使用旧名字。
 - `VFILES_FEATURES_SEARCH_CONTENT` 控制**全文（内容）搜索**：默认关闭，因为它需要逐个读取并扫描文件内容，代价明显高于文件名搜索。开启后 `/api/session/bootstrap` 会把 `features.search_content` 置为 `true`，前端「高级搜索 → 全文搜索」才会解锁；服务端仍会对未开启时携带 `search_content=true` 的请求返回 403。
+- `VFILES_SEARCH_FILENAME_TRIGRAM_INDEX` 默认 `false`。设为 `true` 后，服务会在启动时建立并维护文件路径 trigram 索引，以加速较大目录集合中的文件名子串搜索；初次建立会扫描全部路径并占用额外数据库空间，条目新增、删除或重命名的写入成本也会增加。关闭开关会在启动时移除索引及维护触发器；SQLite 文件不会自动缩小，如需回收已释放空间需在备份后单独执行 `VACUUM`。
 - 上传限额、分块大小、会话 TTL 等参数当前仍使用程序内建默认值，尚未开放成环境变量。
 - `VFILES_FTP_*` 一组变量控制批量导入：认证开启时 FTP 默认启用。未配置证书/私钥时，服务端会
   在 `${VFILES_STORAGE_ROOT:-data}/ftp-tls/` 下生成并复用自签名证书与私钥；也可配置受信任的

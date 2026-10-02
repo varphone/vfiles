@@ -9640,6 +9640,7 @@ mod selected_upload_part_tests {
 pub struct SqliteSearchRepo<B> {
     pool: SqlitePool,
     blob_store: B,
+    filename_trigram_index: bool,
     content_search_semaphore: std::sync::Arc<tokio::sync::Semaphore>,
     content_search_request_semaphore: std::sync::Arc<tokio::sync::Semaphore>,
 }
@@ -9649,6 +9650,7 @@ impl<B> SqliteSearchRepo<B> {
         Self {
             pool,
             blob_store,
+            filename_trigram_index: false,
             content_search_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(
                 CONTENT_SEARCH_CONCURRENCY,
             )),
@@ -9656,6 +9658,11 @@ impl<B> SqliteSearchRepo<B> {
                 MAX_CONCURRENT_CONTENT_SEARCH_REQUESTS,
             )),
         }
+    }
+
+    pub fn with_filename_trigram_index(mut self, enabled: bool) -> Self {
+        self.filename_trigram_index = enabled;
+        self
     }
 }
 
@@ -9667,6 +9674,7 @@ where
         Self {
             pool: self.pool.clone(),
             blob_store: self.blob_store.clone(),
+            filename_trigram_index: self.filename_trigram_index,
             content_search_semaphore: self.content_search_semaphore.clone(),
             content_search_request_semaphore: self.content_search_request_semaphore.clone(),
         }
@@ -9677,6 +9685,29 @@ where
 const MAX_FILENAME_SEARCH_CANDIDATES: i64 = 2000;
 /// 内容搜索最多扫描多少个候选文件。
 const MAX_CONTENT_SEARCH_CANDIDATES: i64 = 500;
+
+#[cfg(test)]
+mod filename_trigram_query_tests {
+    use super::filename_trigram_query;
+
+    #[test]
+    fn uses_distinct_three_character_terms_for_compact_fts() {
+        assert_eq!(
+            filename_trigram_query("needle").as_deref(),
+            Some("\"dle\" AND \"edl\" AND \"eed\" AND \"nee\"")
+        );
+    }
+
+    #[test]
+    fn quotes_fts_operators_and_returns_none_for_short_queries() {
+        assert_eq!(filename_trigram_query("ab"), None);
+        assert_eq!(filename_trigram_query("a*b").as_deref(), Some("\"a*b\""));
+        assert_eq!(
+            filename_trigram_query("a\"b").as_deref(),
+            Some("\"a\"\"b\"")
+        );
+    }
+}
 /// 内容搜索单文件扫描上限，超出时跳过并在响应中标记结果可能不完整。
 const MAX_CONTENT_SEARCH_BYTES_PER_FILE: u64 = 16 * 1024 * 1024;
 /// 单次内容搜索最多读取的字节数。
@@ -9689,6 +9720,28 @@ const MAX_CONCURRENT_CONTENT_SEARCH_REQUESTS: usize = 4;
 const MAX_CONTENT_MATCHES_PER_FILE: usize = 20;
 /// 每个匹配行上下文保留命中附近的字符数。
 const CONTENT_SEARCH_CONTEXT_RADIUS: usize = 64;
+
+fn filename_trigram_query(query: &str) -> Option<String> {
+    let characters = query.chars().collect::<Vec<_>>();
+    if characters.len() < 3 {
+        return None;
+    }
+
+    let mut grams = characters
+        .windows(3)
+        .map(|gram| gram.iter().collect::<String>())
+        .collect::<Vec<_>>();
+    grams.sort_unstable();
+    grams.dedup();
+
+    Some(
+        grams
+            .into_iter()
+            .map(|gram| format!("\"{}\"", gram.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" AND "),
+    )
+}
 
 fn reserve_content_search_bytes(size_bytes: Option<i64>, remaining: &mut u64) -> Option<u64> {
     let size = size_bytes.and_then(|value| u64::try_from(value).ok())?;
@@ -10309,7 +10362,8 @@ where
             return Ok(SearchRepositoryResults::default());
         }
 
-        let search_pattern = format!("%{}%", escape_like_literal(&query.query.to_lowercase()));
+        let query_lower = query.query.to_lowercase();
+        let search_pattern = format!("%{}%", escape_like_literal(&query_lower));
         let namespace_id = query.namespace_id.to_string();
         let entry_kind = query.entry_kind.map(|kind| match kind {
             EntryKind::File => "file".to_string(),
@@ -10344,7 +10398,12 @@ where
             change_message: Option<String>,
         }
 
-        let mut rows: Vec<EntrySearchRow> = sqlx::query_as(
+        let trigram_query = self
+            .filename_trigram_index
+            .then(|| filename_trigram_query(&query_lower))
+            .flatten();
+        let use_trigram_index = trigram_query.is_some();
+        let mut builder = sqlx::QueryBuilder::<Sqlite>::new(
             r#"
             SELECT
                 e.id as entry_id,
@@ -10357,12 +10416,23 @@ where
                 ev.blob_id,
                 ev.size as size_bytes,
                 ev.content_type as mime_type,
-                                b.content_hash,
+                b.content_hash,
                 ev.created_at as version_created_at,
                 ev.created_by,
                 ev.message as change_message
-            FROM entries e
-            LEFT JOIN entry_versions ev
+            "#,
+        );
+        if use_trigram_index {
+            builder.push(
+                r#"FROM entries_path_trigram path_fts
+            JOIN entries e ON e.rowid = path_fts.rowid
+            "#,
+            );
+        } else {
+            builder.push("FROM entries e ");
+        }
+        builder.push(
+            r#"LEFT JOIN entry_versions ev
               ON ev.entry_id = e.id
              AND ev.version = (
                  SELECT MAX(current_ev.version)
@@ -10370,27 +10440,47 @@ where
                  WHERE current_ev.entry_id = e.id
              )
             LEFT JOIN blobs b ON b.id = ev.blob_id
-            WHERE e.namespace_id = ?
-              AND (LOWER(e.path) LIKE ? ESCAPE '\')
-                            AND (? IS NULL OR e.kind = ?)
-                            AND (? IS NULL OR e.path = ? OR e.path LIKE ? ESCAPE '\')
-            ORDER BY e.created_at DESC, e.path ASC
-            LIMIT ?
-            "#,
-        )
-        .bind(namespace_id)
-        .bind(search_pattern)
-        .bind(entry_kind.clone())
-        .bind(entry_kind)
-        .bind(path_exact.clone())
-        .bind(path_exact)
-        .bind(path_like)
-        .bind(candidate_limit + 1)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to search entries: {}", e),
-        })?;
+            WHERE "#,
+        );
+        if let Some(trigram_query) = trigram_query {
+            builder
+                .push("entries_path_trigram MATCH ")
+                .push_bind(trigram_query)
+                .push(" AND e.namespace_id = ")
+                .push_bind(namespace_id.clone())
+                // Recheck the exact LIKE expression: trigrams narrow candidates while the
+                // existing predicate preserves case and escaped wildcard semantics.
+                .push(r#" AND LOWER(e.path) LIKE "#)
+                .push_bind(search_pattern)
+                .push(r#" ESCAPE '\' "#);
+        } else {
+            builder
+                .push("e.namespace_id = ")
+                .push_bind(namespace_id)
+                .push(r#" AND (LOWER(e.path) LIKE "#)
+                .push_bind(search_pattern)
+                .push(r#" ESCAPE '\')"#);
+        }
+        builder
+            .push(" AND (")
+            .push_bind(entry_kind.clone())
+            .push(" IS NULL OR e.kind = ")
+            .push_bind(entry_kind)
+            .push(") AND (")
+            .push_bind(path_exact.clone())
+            .push(" IS NULL OR e.path = ")
+            .push_bind(path_exact)
+            .push(" OR e.path LIKE ")
+            .push_bind(path_like)
+            .push(r#" ESCAPE '\') ORDER BY e.created_at DESC, e.path ASC LIMIT "#)
+            .push_bind(candidate_limit + 1);
+        let mut rows: Vec<EntrySearchRow> = builder
+            .build_query_as()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to search entries: {}", e),
+            })?;
         let incomplete = rows.len() as i64 > candidate_limit;
         rows.truncate(candidate_limit as usize);
 
@@ -14884,5 +14974,232 @@ mod tree_page_query_plan_tests {
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);
+    }
+}
+
+#[cfg(test)]
+mod filename_trigram_search_tests {
+    use super::{SqliteSearchRepo, filename_trigram_query};
+    use crate::{
+        FsBlobStore, SqliteMigrations, SqliteNamespaceRepo, SqlitePoolFactory, SqliteUserRepo,
+        configure_filename_trigram_index,
+    };
+    use camino::Utf8PathBuf;
+    use sqlx::Row;
+    use vfiles_domain::{
+        EntryKind, NamespaceRepo, NormalizedPath, SearchQuery, SearchRepo, UserRepo,
+    };
+
+    #[tokio::test]
+    async fn optional_trigram_search_matches_like_and_tracks_path_mutations() {
+        let root = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-filename-trigram-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&root)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let user_id = SqliteUserRepo::new(pool.clone())
+            .create_admin("search-admin", "search-admin@example.test", "hash")
+            .await
+            .expect("admin should be created");
+        let namespace_id = SqliteNamespaceRepo::new(pool.clone())
+            .create_default(&user_id, "search")
+            .await
+            .expect("namespace should be created");
+
+        configure_filename_trigram_index(&pool, true)
+            .await
+            .expect("optional trigram index should be enabled");
+        let paths = [
+            "notes/Needle.txt",
+            "notes/100%_done.txt",
+            "notes/a\"b.txt",
+            "notes/ÄBC.txt",
+            "other/nested-needle.txt",
+        ];
+        for path in paths {
+            sqlx::query(
+                "INSERT INTO entries (id, namespace_id, path, kind) VALUES (?, ?, ?, 'file')",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(namespace_id.to_string())
+            .bind(path)
+            .execute(&pool)
+            .await
+            .expect("entry should be inserted after index setup");
+        }
+
+        let blob_store = FsBlobStore::new(pool.clone(), root.parent().unwrap().join("blobs"));
+        let plain_repo = SqliteSearchRepo::new(pool.clone(), blob_store.clone());
+        let indexed_repo =
+            SqliteSearchRepo::new(pool.clone(), blob_store).with_filename_trigram_index(true);
+        for term in ["needle", "NEEDLE", "%_", "%_d", "a\"b", "äbc", "ab", ".txt"] {
+            let query = SearchQuery {
+                query: term.to_string(),
+                namespace_id,
+                search_files: true,
+                search_content: false,
+                path_prefix: None,
+                entry_kind: None,
+                limit: 100,
+                offset: 0,
+            };
+            let plain = plain_repo
+                .search_entries(&query)
+                .await
+                .expect("LIKE search should succeed");
+            let indexed = indexed_repo
+                .search_entries(&query)
+                .await
+                .expect("trigram search should succeed");
+            let plain_paths = plain
+                .items
+                .iter()
+                .map(|item| item.entry.path_norm.as_str())
+                .collect::<Vec<_>>();
+            let indexed_paths = indexed
+                .items
+                .iter()
+                .map(|item| item.entry.path_norm.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(indexed_paths, plain_paths, "query {term:?}");
+        }
+
+        let scoped_query = SearchQuery {
+            query: "needle".to_string(),
+            namespace_id,
+            search_files: true,
+            search_content: false,
+            path_prefix: Some(NormalizedPath::new("notes").expect("path prefix should parse")),
+            entry_kind: Some(EntryKind::File),
+            limit: 100,
+            offset: 0,
+        };
+        let scoped = indexed_repo
+            .search_entries(&scoped_query)
+            .await
+            .expect("scoped trigram search should succeed");
+        assert_eq!(scoped.items.len(), 1);
+        assert_eq!(scoped.items[0].entry.path_norm.as_str(), "notes/Needle.txt");
+
+        let plan = sqlx::query(
+            r#"EXPLAIN QUERY PLAN
+            SELECT e.id FROM entries_path_trigram
+            JOIN entries e ON e.rowid = entries_path_trigram.rowid
+            WHERE entries_path_trigram MATCH ? AND e.namespace_id = ?
+              AND LOWER(e.path) LIKE ? ESCAPE '\'"#,
+        )
+        .bind(filename_trigram_query("needle").expect("query should have trigrams"))
+        .bind(namespace_id.to_string())
+        .bind("%needle%")
+        .fetch_all(&pool)
+        .await
+        .expect("trigram query plan should be available");
+        let plan_details = plan
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>();
+        assert!(
+            plan_details
+                .iter()
+                .any(|detail| detail.contains("VIRTUAL TABLE INDEX")),
+            "search should use the trigram virtual table index: {plan_details:?}"
+        );
+
+        let target_id: String = sqlx::query_scalar("SELECT id FROM entries WHERE path = ?")
+            .bind("notes/Needle.txt")
+            .fetch_one(&pool)
+            .await
+            .expect("target entry should exist");
+        sqlx::query("UPDATE entries SET path = ? WHERE id = ?")
+            .bind("notes/changed.txt")
+            .bind(target_id)
+            .execute(&pool)
+            .await
+            .expect("path update should succeed");
+        configure_filename_trigram_index(&pool, true)
+            .await
+            .expect("re-enabling an intact index should be idempotent");
+
+        let old_query = SearchQuery {
+            query: "needle".to_string(),
+            namespace_id,
+            search_files: true,
+            search_content: false,
+            path_prefix: None,
+            entry_kind: None,
+            limit: 100,
+            offset: 0,
+        };
+        let indexed = indexed_repo
+            .search_entries(&old_query)
+            .await
+            .expect("updated index should search");
+        assert_eq!(
+            indexed
+                .items
+                .iter()
+                .map(|item| item.entry.path_norm.as_str())
+                .collect::<Vec<_>>(),
+            vec!["other/nested-needle.txt"]
+        );
+
+        let new_query = SearchQuery {
+            query: "changed".to_string(),
+            ..old_query
+        };
+        let indexed = indexed_repo
+            .search_entries(&new_query)
+            .await
+            .expect("new indexed path should search");
+        assert_eq!(
+            indexed.items[0].entry.path_norm.as_str(),
+            "notes/changed.txt"
+        );
+
+        let nested_trigram_query =
+            filename_trigram_query("nested").expect("query should have trigrams");
+        let nested_matches: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM entries_path_trigram WHERE entries_path_trigram MATCH ?",
+        )
+        .bind(&nested_trigram_query)
+        .fetch_one(&pool)
+        .await
+        .expect("nested trigram should match before delete");
+        assert_eq!(nested_matches, 1);
+        sqlx::query("DELETE FROM entries WHERE path = ?")
+            .bind("other/nested-needle.txt")
+            .execute(&pool)
+            .await
+            .expect("entry delete should succeed");
+        let nested_matches: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM entries_path_trigram WHERE entries_path_trigram MATCH ?",
+        )
+        .bind(&nested_trigram_query)
+        .fetch_one(&pool)
+        .await
+        .expect("nested trigram should be queryable after delete");
+        assert_eq!(nested_matches, 0);
+
+        configure_filename_trigram_index(&pool, false)
+            .await
+            .expect("optional trigram index should be disabled");
+        let table_exists: i64 = sqlx::query(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='entries_path_trigram') AS present",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("index metadata query should work")
+        .get("present");
+        assert_eq!(table_exists, 0);
+
+        pool.close().await;
+        let _ = std::fs::remove_file(&root);
     }
 }

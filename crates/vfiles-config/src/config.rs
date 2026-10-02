@@ -102,6 +102,9 @@ pub struct MailConfig {
 pub struct SearchConfig {
     pub enabled: bool,
     pub max_results: usize,
+    /// Opt-in SQLite trigram index for substring path searches. It trades extra
+    /// database storage and entry-write work for lower filename-search latency.
+    pub filename_trigram_index: bool,
 }
 
 /// FTP 批量导入配置。
@@ -560,6 +563,8 @@ impl ConfigLoader {
         let search_content_enabled =
             Self::env_parse_bool(&["VFILES_FEATURES_SEARCH_CONTENT", "FEATURES_SEARCH_CONTENT"])?
                 .unwrap_or(false);
+        let filename_trigram_index =
+            Self::env_parse_bool(&["VFILES_SEARCH_FILENAME_TRIGRAM_INDEX"])?.unwrap_or(false);
         let maintenance_snapshot_max_age_days = Self::env_parse::<u32>(&[
             "VFILES_MAINTENANCE_SNAPSHOT_MAX_AGE_DAYS",
             "MAINTENANCE_SNAPSHOT_MAX_AGE_DAYS",
@@ -700,6 +705,7 @@ impl ConfigLoader {
             search: SearchConfig {
                 enabled: false,
                 max_results: 100,
+                filename_trigram_index,
             },
             limits: LimitsConfig {
                 max_upload_size_bytes: 4_u64 * 1024 * 1024 * 1024, // 4096MB
@@ -1015,6 +1021,7 @@ mod tests {
         assert!(config.auth.login_rate_limit.enabled);
         assert_eq!(config.auth.login_rate_limit.window_ms, 300_000);
         assert_eq!(config.auth.login_rate_limit.max_attempts, 10);
+        assert!(!config.search.filename_trigram_index);
     }
 
     #[test]

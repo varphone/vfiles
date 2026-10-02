@@ -70,6 +70,146 @@ impl SqlitePoolFactory {
 #[derive(Debug)]
 pub struct SqliteMigrations;
 
+/// Create or remove the optional filename trigram index as an atomic unit.
+///
+/// The index is deliberately opt-in because it materially increases path-write
+/// cost and database size. Enabling it backfills existing paths before install;
+/// future entry inserts, deletes, and path updates are maintained by triggers.
+pub async fn configure_filename_trigram_index(
+    pool: &SqlitePool,
+    enabled: bool,
+) -> DomainResult<()> {
+    const TABLE: &str = "entries_path_trigram";
+    const TRIGGERS: [&str; 3] = [
+        "entries_path_trigram_insert",
+        "entries_path_trigram_delete",
+        "entries_path_trigram_update",
+    ];
+    const DROP_TRIGGER_SQL: [&str; 3] = [
+        "DROP TRIGGER IF EXISTS entries_path_trigram_insert",
+        "DROP TRIGGER IF EXISTS entries_path_trigram_delete",
+        "DROP TRIGGER IF EXISTS entries_path_trigram_update",
+    ];
+
+    let mut transaction =
+        pool.begin()
+            .await
+            .map_err(|error| vfiles_domain::DomainError::Internal {
+                message: format!("Failed to configure filename trigram index: {error}"),
+            })?;
+    let table_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)",
+    )
+    .bind(TABLE)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|error| vfiles_domain::DomainError::Internal {
+        message: format!("Failed to inspect filename trigram index: {error}"),
+    })?;
+
+    let trigger_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN (?, ?, ?)",
+    )
+    .bind(TRIGGERS[0])
+    .bind(TRIGGERS[1])
+    .bind(TRIGGERS[2])
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|error| vfiles_domain::DomainError::Internal {
+        message: format!("Failed to inspect filename trigram maintenance: {error}"),
+    })?;
+
+    if enabled && (!table_exists || trigger_count != TRIGGERS.len() as i64) {
+        for query in DROP_TRIGGER_SQL {
+            sqlx::query(query)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| vfiles_domain::DomainError::Internal {
+                    message: format!("Failed to repair filename trigram maintenance: {error}"),
+                })?;
+        }
+        sqlx::query("DROP TABLE IF EXISTS entries_path_trigram")
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| vfiles_domain::DomainError::Internal {
+                message: format!("Failed to reset filename trigram index: {error}"),
+            })?;
+        sqlx::query(
+            "CREATE VIRTUAL TABLE entries_path_trigram USING fts5(\
+                path_lower, content = '', tokenize = 'trigram case_sensitive 1', detail = none\
+            )",
+        )
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to create filename trigram index: {error}"),
+        })?;
+        sqlx::query(
+            "INSERT INTO entries_path_trigram(rowid, path_lower) \
+             SELECT rowid, lower(path) FROM entries",
+        )
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to backfill filename trigram index: {error}"),
+        })?;
+        sqlx::query(
+            "CREATE TRIGGER entries_path_trigram_insert AFTER INSERT ON entries BEGIN \
+             INSERT INTO entries_path_trigram(rowid, path_lower) VALUES(new.rowid, lower(new.path)); \
+             END",
+        )
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to create filename trigram insert trigger: {error}"),
+        })?;
+        sqlx::query(
+            "CREATE TRIGGER entries_path_trigram_delete AFTER DELETE ON entries BEGIN \
+             INSERT INTO entries_path_trigram(entries_path_trigram, rowid, path_lower) \
+             VALUES('delete', old.rowid, lower(old.path)); END",
+        )
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to create filename trigram delete trigger: {error}"),
+        })?;
+        sqlx::query(
+            "CREATE TRIGGER entries_path_trigram_update AFTER UPDATE OF path ON entries BEGIN \
+             INSERT INTO entries_path_trigram(entries_path_trigram, rowid, path_lower) \
+             VALUES('delete', old.rowid, lower(old.path)); \
+             INSERT INTO entries_path_trigram(rowid, path_lower) VALUES(new.rowid, lower(new.path)); \
+             END",
+        )
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to create filename trigram update trigger: {error}"),
+        })?;
+    } else if !enabled && (table_exists || trigger_count != 0) {
+        for query in DROP_TRIGGER_SQL {
+            sqlx::query(query)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| vfiles_domain::DomainError::Internal {
+                    message: format!("Failed to remove filename trigram maintenance: {error}"),
+                })?;
+        }
+        sqlx::query("DROP TABLE IF EXISTS entries_path_trigram")
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| vfiles_domain::DomainError::Internal {
+                message: format!("Failed to remove filename trigram index: {error}"),
+            })?;
+    }
+
+    transaction
+        .commit()
+        .await
+        .map_err(|error| vfiles_domain::DomainError::Internal {
+            message: format!("Failed to commit filename trigram index setup: {error}"),
+        })
+}
+
 impl SqliteMigrations {
     pub async fn run(pool: &SqlitePool) -> DomainResult<()> {
         let mut migrator = sqlx::migrate!("./migrations");

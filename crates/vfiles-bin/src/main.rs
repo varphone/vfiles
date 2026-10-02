@@ -1198,6 +1198,16 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     tracing::info!("Running database migrations...");
     SqliteMigrations::run(&pool).await?;
     tracing::info!("Database migrations up to date");
+    if config.search.filename_trigram_index {
+        tracing::warn!(
+            "Filename trigram search index enabled; startup will backfill it if needed and entry writes will cost more"
+        );
+    }
+    vfiles_infra_sqlite::configure_filename_trigram_index(
+        &pool,
+        config.search.filename_trigram_index,
+    )
+    .await?;
 
     // Create repos
     tracing::debug!("Creating repository instances...");
@@ -1213,7 +1223,8 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     let admin_repo = SqliteAdminRepo::new(pool.clone());
     let blob_store = FsBlobStore::new(pool.clone(), paths.blobs.clone());
     let upload_store = FsUploadStore::new(paths.uploads.clone());
-    let search_repo = SqliteSearchRepo::new(pool.clone(), blob_store.clone());
+    let search_repo = SqliteSearchRepo::new(pool.clone(), blob_store.clone())
+        .with_filename_trigram_index(config.search.filename_trigram_index);
     let favorite_repo = SqliteFavoriteRepo::new(pool.clone());
 
     // Create services
