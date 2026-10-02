@@ -1675,9 +1675,24 @@ pub struct DirectoryArchive {
 }
 
 enum ArchiveWriterMessage {
-    StartFile(String),
+    StartFile(String, zip::CompressionMethod),
     Data(Vec<u8>),
     Finish,
+}
+
+fn archive_compression_method(path: &NormalizedPath) -> zip::CompressionMethod {
+    let extension = path
+        .as_str()
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase());
+    match extension.as_deref() {
+        Some(
+            "7z" | "aac" | "avif" | "bz2" | "flac" | "gif" | "gz" | "heic" | "heif" | "jpeg"
+            | "jpg" | "m4a" | "mkv" | "mov" | "mp3" | "mp4" | "ogg" | "opus" | "pdf" | "png"
+            | "rar" | "webm" | "webp" | "woff" | "woff2" | "xz" | "zip" | "zst",
+        ) => zip::CompressionMethod::Stored,
+        _ => zip::CompressionMethod::Deflated,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1958,11 +1973,11 @@ where
             let output = tempfile::tempfile()
                 .map_err(|e| format!("Failed to create temporary archive: {e}"))?;
             let mut zip = zip::ZipWriter::new(output);
-            let options = zip::write::SimpleFileOptions::default()
-                .compression_method(zip::CompressionMethod::Deflated);
             loop {
                 match writer_rx.blocking_recv() {
-                    Some(ArchiveWriterMessage::StartFile(path)) => {
+                    Some(ArchiveWriterMessage::StartFile(path, compression_method)) => {
+                        let options = zip::write::SimpleFileOptions::default()
+                            .compression_method(compression_method);
                         zip.start_file(path, options)
                             .map_err(|e| format!("Failed to create zip entry: {e}"))?;
                     }
@@ -2000,7 +2015,10 @@ where
             };
 
             writer_tx
-                .send(ArchiveWriterMessage::StartFile(zip_path))
+                .send(ArchiveWriterMessage::StartFile(
+                    zip_path,
+                    archive_compression_method(&full_path),
+                ))
                 .await
                 .map_err(|_| DomainError::Internal {
                     message: "Archive writer stopped unexpectedly".to_string(),
@@ -5701,6 +5719,44 @@ mod tests {
             "updating an existing key must not evict another entry"
         );
         assert_eq!(cache.get(&4), Some(&"updated"));
+    }
+
+    #[tokio::test]
+    async fn directory_archive_stores_precompressed_media_and_deflates_text() {
+        let context = TestContext::new().await;
+        let root = TestContext::path("");
+        context
+            .upload_file(&root, "photo.jpg", &[7_u8; 16 * 1024], "photo")
+            .await;
+        context
+            .upload_file(&root, "notes.txt", &[b'x'; 16 * 1024], "notes")
+            .await;
+
+        let archive = context
+            .workspace_service
+            .download_directory_archive(&context.namespace_id, &root, None)
+            .await
+            .expect("directory archive should build");
+        let mut bytes = Vec::new();
+        let mut reader = archive.reader;
+        reader
+            .read_to_end(&mut bytes)
+            .await
+            .expect("archive bytes should be readable");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+            .expect("archive should be a valid zip");
+        assert_eq!(
+            zip.by_name("root/photo.jpg")
+                .expect("photo should exist")
+                .compression(),
+            zip::CompressionMethod::Stored
+        );
+        assert_eq!(
+            zip.by_name("root/notes.txt")
+                .expect("text file should exist")
+                .compression(),
+            zip::CompressionMethod::Deflated
+        );
     }
 
     #[tokio::test]
