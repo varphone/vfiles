@@ -573,6 +573,8 @@ pub(crate) async fn ensure_directory_path_with_conditions(
     Ok(changed_entries)
 }
 
+// Keep repository handles, snapshot identity, and the two independent change sets explicit.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn create_namespace_snapshot_record(
     snapshot_repo: &(dyn SnapshotRepo + Send + Sync),
     entry_repo: &(dyn EntryRepo + Send + Sync),
@@ -649,6 +651,8 @@ fn validate_snapshot_directory_scope(
     Ok(())
 }
 
+// These inputs describe the complete namespace mutation passed to snapshot finalization.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn finalize_mutation_from_namespace(
     snapshot_repo: &(dyn SnapshotRepo + Send + Sync),
     entry_repo: &(dyn EntryRepo + Send + Sync),
@@ -3008,6 +3012,8 @@ where
         .await
     }
 
+    // Mirrors MOVE's explicit source, destination, conditional policy, and subtree bounds.
+    #[allow(clippy::too_many_arguments)]
     pub async fn move_entry_overwriting_with_condition_and_limits(
         &self,
         namespace_id: &NamespaceId,
@@ -3074,6 +3080,8 @@ where
         .await
     }
 
+    // Keep protocol policy and resource bounds explicit at the mutation boundary.
+    #[allow(clippy::too_many_arguments)]
     async fn move_entries_with_overwrite_and_limits(
         &self,
         namespace_id: &NamespaceId,
