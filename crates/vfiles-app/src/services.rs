@@ -1106,6 +1106,18 @@ const MAX_VERIFIED_CREDENTIAL_CACHE_ENTRIES: usize = 50_000;
 const SESSION_LAST_SEEN_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 const MAX_TRACKED_SESSION_LAST_SEEN_REFRESHES: usize = 50_000;
 
+fn evict_cache_entry_if_full<K, V>(cache: &mut HashMap<K, V>, key: &K, capacity: usize)
+where
+    K: Copy + Eq + std::hash::Hash,
+{
+    if cache.len() >= capacity
+        && !cache.contains_key(key)
+        && let Some(victim) = cache.keys().next().copied()
+    {
+        cache.remove(&victim);
+    }
+}
+
 #[derive(Debug, Default)]
 struct SessionLastSeenRefreshCache {
     refreshed_at: std::sync::Mutex<HashMap<SessionId, std::time::Instant>>,
@@ -1411,12 +1423,7 @@ impl AuthService {
         {
             let mut cache = self.verified_cache.lock().expect("auth cache poisoned");
             cache.retain(|_, (_, at)| at.elapsed().as_secs() < 30);
-            if cache.len() >= MAX_VERIFIED_CREDENTIAL_CACHE_ENTRIES
-                && !cache.contains_key(&key)
-                && let Some(victim) = cache.keys().next().copied()
-            {
-                cache.remove(&victim);
-            }
+            evict_cache_entry_if_full(&mut cache, &key, MAX_VERIFIED_CREDENTIAL_CACHE_ENTRIES);
             cache.insert(key, (user.clone(), std::time::Instant::now()));
         }
 
@@ -5628,6 +5635,21 @@ mod tests {
         cache.clear_failed(session_id, start);
         let retry_at = start + std::time::Duration::from_secs(1);
         assert_eq!(cache.reserve_at(session_id, retry_at), Some(retry_at));
+    }
+
+    #[test]
+    fn verified_credential_cache_evicts_one_entry_at_capacity() {
+        assert_eq!(MAX_VERIFIED_CREDENTIAL_CACHE_ENTRIES, 50_000);
+        let mut cache = HashMap::from([(1_u8, "one"), (2, "two"), (3, "three")]);
+        evict_cache_entry_if_full(&mut cache, &4, 3);
+        cache.insert(4, "four");
+        assert_eq!(cache.len(), 3);
+        assert!(cache.contains_key(&4));
+
+        evict_cache_entry_if_full(&mut cache, &4, 3);
+        cache.insert(4, "updated");
+        assert_eq!(cache.len(), 3, "updating an existing key must not evict another entry");
+        assert_eq!(cache.get(&4), Some(&"updated"));
     }
 
     #[tokio::test]
