@@ -1790,6 +1790,47 @@ async fn ftp_dele_cannot_remove_a_webdav_locked_file() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_rmd_cannot_remove_a_webdav_locked_directory() {
+    let harness = Harness::start(SnapshotMode::PerFile, 1).await;
+    let mut client = harness.client();
+    client
+        .mkdir("locked-directory")
+        .expect("directory should be created before locking");
+
+    let lock_repo = SqliteWebdavLockRepo::new(harness.pool.clone());
+    let now = (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64;
+    assert!(
+        lock_repo
+            .acquire(
+                &harness.namespace_id,
+                "locked-directory",
+                NewWebdavLock {
+                    token: "opaquelocktoken:ftp-rmd-protection",
+                    owner: "ftp-compatibility-test",
+                    depth_infinity: true,
+                    scope: WebdavLockScope::Exclusive,
+                    expires_at: None,
+                    now,
+                },
+            )
+            .await
+            .expect("WebDAV lock should be stored"),
+        "the test should acquire an exclusive depth-infinity lock"
+    );
+
+    assert!(
+        client.rmdir("locked-directory").is_err(),
+        "FTP RMD must reject an active lock on an empty directory"
+    );
+    assert_eq!(
+        harness.entry_paths().await,
+        vec!["locked-directory"],
+        "rejected RMD must preserve the locked directory"
+    );
+    client.quit().expect("control session should remain usable");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn non_empty_directory_cannot_be_removed() {
     let harness = Harness::start(SnapshotMode::PerFile, 1).await;
     let mut client = harness.client();
