@@ -22,14 +22,17 @@ use tokio::{
     io::{AsyncBufReadExt, BufReader},
     net::{TcpListener, TcpStream},
 };
-use unftp_core::storage::{ErrorKind, StorageBackend};
+use unftp_core::{
+    auth::{Authenticator, Credentials, UserDetailProvider},
+    storage::{ErrorKind, StorageBackend},
+};
 use vfiles_app::{
     AuthService, DefaultWorkspaceService, ImportBatch, IngestStats, LoginAttemptLimiter,
     NamespaceService, RateLimitPolicy, SnapshotMode,
 };
 use vfiles_domain::{
-    AdminRepo, DomainResult, EntryRepo, NamespaceRepo, NewWebdavLock, NormalizedPath, Role, UserRepo,
-    WebdavLockRepo, WebdavLockScope,
+    AdminRepo, DomainResult, EmailAddress, EntryRepo, NamespaceRepo, NewWebdavLock,
+    NormalizedPath, Role, UserRepo, Username, WebdavLockRepo, WebdavLockScope,
 };
 use vfiles_ftp::{
     BackendDeps, FtpApplication, FtpSettings, RoleFilter, VfilesAuthenticator, VfilesFtpUser,
@@ -60,6 +63,8 @@ struct Harness {
     namespace_id: vfiles_domain::NamespaceId,
     user_id: vfiles_domain::UserId,
     user_repo: SqliteUserRepo,
+    authenticator: Arc<VfilesAuthenticator>,
+    user_detail_provider: Arc<VfilesUserDetailProvider>,
     entry_repo: SqliteEntryRepo,
     workspace: Arc<DefaultWorkspaceService>,
     backend: BackendDeps,
@@ -228,8 +233,8 @@ impl Harness {
 
         let app = FtpApplication {
             backend: backend.clone(),
-            authenticator,
-            user_detail_provider: provider,
+            authenticator: Arc::clone(&authenticator),
+            user_detail_provider: Arc::clone(&provider),
         };
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -243,6 +248,8 @@ impl Harness {
             namespace_id,
             user_id,
             user_repo,
+            authenticator,
+            user_detail_provider: provider,
             entry_repo,
             workspace,
             backend,
@@ -431,6 +438,39 @@ async fn rejects_new_control_connections_at_the_configured_limit() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert!(admitted, "释放会话后应接纳新连接");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_authentication_keeps_verified_identity_when_username_is_reused() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let principal = harness
+        .authenticator
+        .authenticate(USERNAME, &Credentials::from(PASSWORD))
+        .await
+        .expect("original account credentials should authenticate");
+
+    let admin_repo = SqliteAdminRepo::new(harness.pool.clone());
+    let renamed_username = Username::new("renamed_ftpuser").expect("valid replacement name");
+    admin_repo
+        .update_user_username(&harness.user_id, &renamed_username)
+        .await
+        .expect("original account should be renamed");
+
+    let reused_username = Username::new(USERNAME).expect("valid reused name");
+    let replacement_email = EmailAddress::new("replacement@example.com").expect("valid email");
+    let replacement_id = admin_repo
+        .create_user(&reused_username, &replacement_email, "unused-password-hash", Role::Admin)
+        .await
+        .expect("another account should be able to reuse the old name");
+
+    let user = harness
+        .user_detail_provider
+        .provide_user_detail(&principal)
+        .await
+        .expect("details should still load for the verified account id");
+    assert_eq!(user.id, harness.user_id);
+    assert_ne!(user.id, replacement_id);
+    assert_eq!(user.username, "renamed_ftpuser");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
