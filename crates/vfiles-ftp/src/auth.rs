@@ -203,69 +203,6 @@ fn credentials_password(credentials: &Credentials) -> &str {
     credentials.password.as_deref().unwrap_or_default()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{auth_service_failure, credentials_password};
-    use unftp_core::auth::{ChannelEncryptionState, Credentials};
-    use vfiles_app::{IngestStats, LoginAttemptLimiter, RateLimitPolicy};
-    use vfiles_domain::DomainError;
-
-    #[test]
-    fn authentication_uses_borrowed_credentials_password() {
-        let credentials = Credentials {
-            password: Some(String::from("test-secret")),
-            certificate_chain: None,
-            source_ip: "127.0.0.1".parse().expect("test IP address"),
-            command_channel_security: ChannelEncryptionState::Tls,
-        };
-        let stored_password = credentials.password.as_deref().expect("password");
-
-        let verified_password = credentials_password(&credentials);
-
-        assert_eq!(verified_password, stored_password);
-        assert_eq!(verified_password.as_ptr(), stored_password.as_ptr());
-    }
-
-    #[test]
-    fn password_work_saturation_does_not_increment_the_login_limiter() {
-        let limiter = LoginAttemptLimiter::new();
-        let stats = IngestStats::new();
-        let policy = RateLimitPolicy {
-            enabled: true,
-            window_ms: 60_000,
-            max_attempts: 1,
-        };
-        let source_ip = "192.0.2.10";
-        let username = "valid@example.com";
-
-        let _ = auth_service_failure(
-            DomainError::RateLimited,
-            &limiter,
-            &policy,
-            source_ip,
-            username,
-            &stats,
-        );
-        assert!(
-            limiter.check_login(&policy, source_ip, username).is_none(),
-            "temporary password-work saturation must not lock out the valid account"
-        );
-
-        let _ = auth_service_failure(
-            DomainError::InvalidCredentials,
-            &limiter,
-            &policy,
-            source_ip,
-            username,
-            &stats,
-        );
-        assert!(
-            limiter.check_login(&policy, source_ip, username).is_some(),
-            "an actual invalid credential must still count toward the login limit"
-        );
-    }
-}
-
 /// 把 `Principal` 补全为用户信息（角色 + 命名空间）。
 pub struct VfilesUserDetailProvider {
     user_repo: Arc<dyn UserRepo + Send + Sync>,
@@ -361,5 +298,68 @@ impl UserDetailProvider for VfilesUserDetailProvider {
             password_changed_at: user.password_changed_at,
             anonymous: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{auth_service_failure, credentials_password};
+    use unftp_core::auth::{ChannelEncryptionState, Credentials};
+    use vfiles_app::{IngestStats, LoginAttemptLimiter, RateLimitPolicy};
+    use vfiles_domain::DomainError;
+
+    #[test]
+    fn authentication_uses_borrowed_credentials_password() {
+        let credentials = Credentials {
+            password: Some(String::from("test-secret")),
+            certificate_chain: None,
+            source_ip: "127.0.0.1".parse().expect("test IP address"),
+            command_channel_security: ChannelEncryptionState::Tls,
+        };
+        let stored_password = credentials.password.as_deref().expect("password");
+
+        let verified_password = credentials_password(&credentials);
+
+        assert_eq!(verified_password, stored_password);
+        assert_eq!(verified_password.as_ptr(), stored_password.as_ptr());
+    }
+
+    #[test]
+    fn password_work_saturation_does_not_increment_the_login_limiter() {
+        let limiter = LoginAttemptLimiter::new();
+        let stats = IngestStats::new();
+        let policy = RateLimitPolicy {
+            enabled: true,
+            window_ms: 60_000,
+            max_attempts: 1,
+        };
+        let source_ip = "192.0.2.10";
+        let username = "valid@example.com";
+
+        let _ = auth_service_failure(
+            DomainError::RateLimited,
+            &limiter,
+            &policy,
+            source_ip,
+            username,
+            &stats,
+        );
+        assert!(
+            limiter.check_login(&policy, source_ip, username).is_none(),
+            "temporary password-work saturation must not lock out the valid account"
+        );
+
+        let _ = auth_service_failure(
+            DomainError::InvalidCredentials,
+            &limiter,
+            &policy,
+            source_ip,
+            username,
+            &stats,
+        );
+        assert!(
+            limiter.check_login(&policy, source_ip, username).is_some(),
+            "an actual invalid credential must still count toward the login limit"
+        );
     }
 }
