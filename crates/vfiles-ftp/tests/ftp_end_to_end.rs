@@ -1530,6 +1530,68 @@ async fn ftp_shutdown_waits_for_an_abrupt_sessions_pending_batch_commit() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_shutdown_closes_sessions_and_releases_pending_passive_ports() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.client();
+    client
+        .get_ref()
+        .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+        .expect("control read timeout should be set");
+    let response = client
+        .custom_command("EPSV", &[Status::ExtendedPassiveMode])
+        .expect("EPSV should allocate a passive listener");
+    let passive_text = String::from_utf8_lossy(&response.body);
+    let passive_port = passive_text
+        .split('(')
+        .nth(1)
+        .and_then(|value| value.split(')').next())
+        .and_then(|value| value.split('|').find_map(|part| part.parse::<u16>().ok()))
+        .expect("EPSV response should contain a port");
+    let passive_address = std::net::SocketAddr::new(harness.handle.local_addr().ip(), passive_port);
+
+    harness
+        ._shutdown
+        .send(true)
+        .expect("shutdown signal should be delivered");
+    let client_task = tokio::task::spawn_blocking(move || client.noop());
+    let server_handle = harness.handle;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::spawn(server_handle.wait()),
+    )
+    .await
+    .expect("server should wait for and close its active session")
+    .expect("server task should finish cleanly");
+    let client_result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client_task,
+    )
+    .await
+    .expect("client should observe shutdown")
+    .expect("FTP client task should finish");
+    assert!(
+        client_result.is_err(),
+        "shutdown should close the active control channel"
+    );
+
+    let mut port_released = false;
+    for _ in 0..20 {
+        match TcpListener::bind(passive_address).await {
+            Ok(listener) => {
+                port_released = true;
+                drop(listener);
+                break;
+            }
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
+        }
+    }
+    assert!(
+        port_released,
+        "shutdown should release the session's pending passive port"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rejects_wrong_password_and_path_traversal() {
     let harness = Harness::start(SnapshotMode::PerFile, 1).await;
 
