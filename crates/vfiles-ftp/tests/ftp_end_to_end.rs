@@ -1707,7 +1707,6 @@ async fn ftp_shutdown_closes_sessions_and_releases_pending_passive_ports() {
         ._shutdown
         .send(true)
         .expect("shutdown signal should be delivered");
-    let client_task = tokio::task::spawn_blocking(move || client.noop());
     let server_handle = harness.handle;
     tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -1716,6 +1715,7 @@ async fn ftp_shutdown_closes_sessions_and_releases_pending_passive_ports() {
     .await
     .expect("server should wait for and close its active session")
     .expect("server task should finish cleanly");
+    let client_task = tokio::task::spawn_blocking(move || client.noop());
     let client_result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         client_task,
