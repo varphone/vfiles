@@ -91,6 +91,23 @@ impl Harness {
         max_connections: u32,
         idle_timeout_secs: u64,
     ) -> Self {
+        Self::start_with_limits_and_file_size(
+            snapshot_mode,
+            flush_threshold,
+            max_connections,
+            idle_timeout_secs,
+            Some(1024 * 1024),
+        )
+        .await
+    }
+
+    async fn start_with_limits_and_file_size(
+        snapshot_mode: SnapshotMode,
+        flush_threshold: usize,
+        max_connections: u32,
+        idle_timeout_secs: u64,
+        max_file_size_bytes: Option<u64>,
+    ) -> Self {
         let test_slot = TEST_HARNESS_SLOTS
             .acquire()
             .await
@@ -180,7 +197,7 @@ impl Harness {
             user_repo: backend_user_repo,
             lock_repo: Arc::new(SqliteWebdavLockRepo::new(pool.clone())),
             stats,
-            max_file_size_bytes: Some(1024 * 1024),
+            max_file_size_bytes,
             snapshot_mode,
             flush_threshold,
         };
@@ -996,6 +1013,85 @@ async fn disabled_user_stops_receiving_a_file_during_retr() {
     assert!(
         control_result.is_err(),
         "the control channel should report the revoked RETR instead of success"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn disabled_user_cannot_finish_a_stor_started_before_revocation() {
+    const FILE_BYTES: usize = 16 * 1024 * 1024;
+    let harness = Harness::start_with_limits_and_file_size(SnapshotMode::Off, 1, 8, 60, None).await;
+    let mut client = harness.client();
+    let (upload_started_tx, upload_started_rx) = tokio::sync::oneshot::channel();
+    let (resume_writing_tx, resume_writing_rx) = std::sync::mpsc::channel();
+    let transfer = tokio::task::spawn_blocking(move || {
+        let (_, mut data_stream) = client
+            .custom_data_command("STOR revoked-upload.bin", &[Status::AboutToSend])
+            .expect("STOR should start");
+        data_stream
+            .get_ref()
+            .set_write_timeout(Some(std::time::Duration::from_secs(8)))
+            .expect("data write timeout should be set");
+        client
+            .get_ref()
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .expect("control read timeout should be set");
+        let first_chunk = vec![0x73; 1_024];
+        std::io::Write::write_all(&mut data_stream, &first_chunk)
+            .expect("initial upload bytes should reach the server");
+        upload_started_tx
+            .send(())
+            .expect("test should still be waiting for STOR");
+        resume_writing_rx
+            .recv()
+            .expect("test should resume the upload writer");
+
+        let body = vec![0x73; FILE_BYTES - first_chunk.len()];
+        let mut sent_bytes = first_chunk.len();
+        let mut offset = 0;
+        while offset < body.len() {
+            match std::io::Write::write(&mut data_stream, &body[offset..]) {
+                Ok(0) => break,
+                Ok(written) => {
+                    offset += written;
+                    sent_bytes += written;
+                }
+                Err(_) => break,
+            }
+        }
+        let control_result = client.close_data_connection(data_stream);
+        (sent_bytes, control_result)
+    });
+
+    upload_started_rx
+        .await
+        .expect("STOR should reach its data phase");
+    harness.disable_user().await;
+    tokio::time::sleep(std::time::Duration::from_millis(5_200)).await;
+    resume_writing_tx
+        .send(())
+        .expect("upload writer should still be alive");
+
+    let (sent_bytes, control_result) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), transfer)
+            .await
+            .expect("revoked STOR should stop promptly")
+            .expect("FTP client task should finish");
+    assert!(
+        sent_bytes < FILE_BYTES,
+        "a revoked account must not send a complete upload ({sent_bytes}/{FILE_BYTES} bytes)"
+    );
+    assert!(
+        control_result.is_err(),
+        "the control channel should reject the revoked upload"
+    );
+    assert!(
+        harness.entry_paths().await.is_empty(),
+        "revoked uploads must not create a file entry"
+    );
+    assert_eq!(
+        blob_file_count(&harness._temp_dir.path().join("blobs")),
+        0,
+        "revoked uploads interrupted during ingestion must not publish a blob"
     );
 }
 
