@@ -31,16 +31,16 @@ use vfiles_app::{
     NamespaceService, RateLimitPolicy, SnapshotMode,
 };
 use vfiles_domain::{
-    AdminRepo, DomainResult, EmailAddress, EntryRepo, NamespaceRepo, NewWebdavLock,
-    NormalizedPath, Role, UserRepo, Username, WebdavLockRepo, WebdavLockScope,
+    AdminRepo, DomainResult, EmailAddress, EntryRepo, NamespaceRepo, NewWebdavLock, NormalizedPath,
+    Role, UserRepo, Username, WebdavLockRepo, WebdavLockScope,
 };
 use vfiles_ftp::{
     BackendDeps, FtpApplication, FtpSettings, RoleFilter, VfilesAuthenticator, VfilesFtpUser,
     VfilesStorageBackend, VfilesUserDetailProvider, spawn_ftp_server,
 };
 use vfiles_infra_sqlite::{
-    FsBlobStore, FsUploadStore, SqliteEntryRepo, SqliteMigrations, SqliteNamespaceRepo,
-    SqliteAdminRepo, SqlitePoolFactory, SqliteSessionRepo, SqliteSnapshotRepo, SqliteUserRepo,
+    FsBlobStore, FsUploadStore, SqliteAdminRepo, SqliteEntryRepo, SqliteMigrations,
+    SqliteNamespaceRepo, SqlitePoolFactory, SqliteSessionRepo, SqliteSnapshotRepo, SqliteUserRepo,
     SqliteWebdavLockRepo,
 };
 
@@ -277,7 +277,7 @@ impl Harness {
             .expect("test certificate should be trusted");
         Arc::new(
             ClientConfig::builder()
-            .with_root_certificates(roots)
+                .with_root_certificates(roots)
                 .with_no_client_auth(),
         )
     }
@@ -459,7 +459,12 @@ async fn ftp_authentication_keeps_verified_identity_when_username_is_reused() {
     let reused_username = Username::new(USERNAME).expect("valid reused name");
     let replacement_email = EmailAddress::new("replacement@example.com").expect("valid email");
     let replacement_id = admin_repo
-        .create_user(&reused_username, &replacement_email, "unused-password-hash", Role::Admin)
+        .create_user(
+            &reused_username,
+            &replacement_email,
+            "unused-password-hash",
+            Role::Admin,
+        )
         .await
         .expect("another account should be able to reuse the old name");
 
@@ -534,7 +539,9 @@ async fn ftps_refuses_new_listeners_and_quit_cancels_idle_data_worker() {
     let harness = Harness::start(SnapshotMode::Off, 1).await;
     let victim_tls_config = harness.client_tls_config();
     let mut client = harness.secure_client_with_config(Arc::clone(&victim_tls_config));
-    client.login(USERNAME, PASSWORD).expect("victim should log in");
+    client
+        .login(USERNAME, PASSWORD)
+        .expect("victim should log in");
     let passive_response = client
         .custom_command("EPSV", &[Status::ExtendedPassiveMode])
         .expect("EPSV should allocate a passive listener");
@@ -546,11 +553,9 @@ async fn ftps_refuses_new_listeners_and_quit_cancels_idle_data_worker() {
         .and_then(|value| value.split('|').find_map(|part| part.parse::<u16>().ok()))
         .expect("EPSV response should contain a port");
     let passive_addr = std::net::SocketAddr::new(harness.handle.local_addr().ip(), passive_port);
-    let data_socket = std::net::TcpStream::connect_timeout(
-        &passive_addr,
-        std::time::Duration::from_secs(2),
-    )
-    .expect("victim should connect its data socket");
+    let data_socket =
+        std::net::TcpStream::connect_timeout(&passive_addr, std::time::Duration::from_secs(2))
+            .expect("victim should connect its data socket");
     data_socket
         .set_read_timeout(Some(std::time::Duration::from_millis(250)))
         .expect("data read timeout should be set");
@@ -587,13 +592,11 @@ async fn ftps_refuses_new_listeners_and_quit_cancels_idle_data_worker() {
         let data_result = std::io::Read::read(&mut data_stream, &mut probe);
         (quit_result, data_result)
     });
-    let (quit_result, data_result) = tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        cleanup,
-    )
-    .await
-    .expect("QUIT should not wait for the idle data command timeout")
-    .expect("FTP client task should finish");
+    let (quit_result, data_result) =
+        tokio::time::timeout(std::time::Duration::from_secs(3), cleanup)
+            .await
+            .expect("QUIT should not wait for the idle data command timeout")
+            .expect("FTP client task should finish");
     quit_result.expect("QUIT should cancel the waiting data worker");
     match data_result {
         Ok(0) => {}
@@ -730,22 +733,15 @@ async fn ftps_rejects_passive_data_connections_from_another_control_session() {
         .and_then(|value| value.split(')').next())
         .and_then(|value| value.split('|').find_map(|part| part.parse::<u16>().ok()))
         .expect("EPSV response should contain a port");
-    let victim_data_addr = std::net::SocketAddr::new(
-        harness.handle.local_addr().ip(),
-        passive_port,
-    );
+    let victim_data_addr =
+        std::net::SocketAddr::new(harness.handle.local_addr().ip(), passive_port);
 
     // The attacker uses a separate Rustls client configuration and control session, but points
     // its next passive data socket at the victim's EPSV listener.
-    let mut attacker = harness
-        .secure_client()
-        .passive_stream_builder(move |_| {
-            std::net::TcpStream::connect_timeout(
-                &victim_data_addr,
-                std::time::Duration::from_secs(2),
-            )
+    let mut attacker = harness.secure_client().passive_stream_builder(move |_| {
+        std::net::TcpStream::connect_timeout(&victim_data_addr, std::time::Duration::from_secs(2))
             .map_err(suppaftp::FtpError::ConnectionError)
-        });
+    });
     attacker
         .login(USERNAME, PASSWORD)
         .expect("attacker control session should log in");
@@ -768,8 +764,13 @@ async fn ftps_rejects_passive_data_connections_from_another_control_session() {
     let names = victim
         .nlst(Some("."))
         .expect("invalid same-IP TLS session must not consume the victim's passive listener");
-    assert!(names.is_empty(), "new namespace should have no files: {names:?}");
-    victim.quit().expect("victim control session should remain usable");
+    assert!(
+        names.is_empty(),
+        "new namespace should have no files: {names:?}"
+    );
+    victim
+        .quit()
+        .expect("victim control session should remain usable");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -811,10 +812,8 @@ async fn ftps_keeps_passive_listener_after_rejecting_another_sessions_tls() {
         .and_then(|value| value.split(')').next())
         .and_then(|value| value.split('|').find_map(|part| part.parse::<u16>().ok()))
         .expect("EPSV response should contain a port");
-    let victim_data_addr = std::net::SocketAddr::new(
-        harness.handle.local_addr().ip(),
-        passive_port,
-    );
+    let victim_data_addr =
+        std::net::SocketAddr::new(harness.handle.local_addr().ip(), passive_port);
 
     // A foreign source IP must be dropped before TLS negotiation without consuming EPSV.
     let foreign_socket = tokio::net::TcpSocket::new_v4().expect("foreign IPv4 socket");
@@ -827,15 +826,10 @@ async fn ftps_keeps_passive_listener_after_rejecting_another_sessions_tls() {
         .expect("foreign peer should reach the passive port");
     drop(foreign_candidate);
 
-    let mut attacker = harness
-        .secure_client()
-        .passive_stream_builder(move |_| {
-            std::net::TcpStream::connect_timeout(
-                &victim_data_addr,
-                std::time::Duration::from_secs(2),
-            )
+    let mut attacker = harness.secure_client().passive_stream_builder(move |_| {
+        std::net::TcpStream::connect_timeout(&victim_data_addr, std::time::Duration::from_secs(2))
             .map_err(suppaftp::FtpError::ConnectionError)
-        });
+    });
     attacker
         .login(USERNAME, PASSWORD)
         .expect("attacker control session should log in");
@@ -856,21 +850,17 @@ async fn ftps_keeps_passive_listener_after_rejecting_another_sessions_tls() {
     victim
         .custom_command("NLST", &[Status::AboutToSend])
         .expect("victim should start a transfer on its existing EPSV listener");
-    let data_socket = std::net::TcpStream::connect_timeout(
-        &victim_data_addr,
-        std::time::Duration::from_secs(2),
-    )
-    .expect("the original passive listener should still accept a valid candidate");
+    let data_socket =
+        std::net::TcpStream::connect_timeout(&victim_data_addr, std::time::Duration::from_secs(2))
+            .expect("the original passive listener should still accept a valid candidate");
     data_socket
         .set_read_timeout(Some(std::time::Duration::from_secs(2)))
         .expect("victim data socket should accept a read timeout");
     let server_name = suppaftp::rustls::pki_types::ServerName::try_from("localhost")
         .expect("server name should parse");
-    let data_tls = suppaftp::rustls::ClientConnection::new(
-        Arc::clone(&victim_tls_config),
-        server_name,
-    )
-    .expect("victim data TLS session should build");
+    let data_tls =
+        suppaftp::rustls::ClientConnection::new(Arc::clone(&victim_tls_config), server_name)
+            .expect("victim data TLS session should build");
     let mut data_stream = suppaftp::rustls::StreamOwned::new(data_tls, data_socket);
     let mut listing = Vec::new();
     std::io::Read::read_to_end(&mut data_stream, &mut listing)
@@ -934,7 +924,9 @@ async fn ftps_rejects_malformed_and_stalled_candidates_without_losing_listener()
             std::net::TcpStream::connect_timeout(&passive_addr, std::time::Duration::from_secs(2))
                 .map_err(suppaftp::FtpError::ConnectionError)
         });
-    client.login(USERNAME, PASSWORD).expect("client should log in");
+    client
+        .login(USERNAME, PASSWORD)
+        .expect("client should log in");
     let names = client.nlst(Some(".")).expect("NLST should complete");
     let listing = names.join("\n");
     assert!(listing.is_empty(), "new namespace should have no files");
@@ -993,21 +985,16 @@ async fn ftps_data_handshake_tickets_cannot_replace_control_session_resumption()
         .and_then(|value| value.split(')').next())
         .and_then(|value| value.split('|').find_map(|part| part.parse::<u16>().ok()))
         .expect("EPSV response should contain a port");
-    let victim_data_addr = std::net::SocketAddr::new(
-        harness.handle.local_addr().ip(),
-        passive_port,
-    );
+    let victim_data_addr =
+        std::net::SocketAddr::new(harness.handle.local_addr().ip(), passive_port);
 
     let server_name = || {
         suppaftp::rustls::pki_types::ServerName::try_from("localhost")
             .expect("server name should parse")
     };
     let mut first_candidate = suppaftp::rustls::StreamOwned::new(
-        suppaftp::rustls::ClientConnection::new(
-            Arc::clone(&attacker_tls_config),
-            server_name(),
-        )
-        .expect("first attacker TLS session should build"),
+        suppaftp::rustls::ClientConnection::new(Arc::clone(&attacker_tls_config), server_name())
+            .expect("first attacker TLS session should build"),
         std::net::TcpStream::connect_timeout(&victim_data_addr, std::time::Duration::from_secs(2))
             .expect("attacker should reach the passive port"),
     );
@@ -1025,11 +1012,8 @@ async fn ftps_data_handshake_tickets_cannot_replace_control_session_resumption()
     drop(first_candidate);
 
     let mut second_candidate = suppaftp::rustls::StreamOwned::new(
-        suppaftp::rustls::ClientConnection::new(
-            Arc::clone(&attacker_tls_config),
-            server_name(),
-        )
-        .expect("second attacker TLS session should build"),
+        suppaftp::rustls::ClientConnection::new(Arc::clone(&attacker_tls_config), server_name())
+            .expect("second attacker TLS session should build"),
         std::net::TcpStream::connect_timeout(&victim_data_addr, std::time::Duration::from_secs(2))
             .expect("the passive listener should continue accepting candidates"),
     );
@@ -1048,20 +1032,15 @@ async fn ftps_data_handshake_tickets_cannot_replace_control_session_resumption()
     victim
         .custom_command("NLST", &[Status::AboutToSend])
         .expect("victim should start the transfer on its existing passive listener");
-    let data_socket = std::net::TcpStream::connect_timeout(
-        &victim_data_addr,
-        std::time::Duration::from_secs(2),
-    )
-    .expect("invalid attacker tickets must not consume the victim's listener");
+    let data_socket =
+        std::net::TcpStream::connect_timeout(&victim_data_addr, std::time::Duration::from_secs(2))
+            .expect("invalid attacker tickets must not consume the victim's listener");
     data_socket
         .set_read_timeout(Some(std::time::Duration::from_secs(2)))
         .expect("victim data socket should accept a read timeout");
     let mut data_stream = suppaftp::rustls::StreamOwned::new(
-        suppaftp::rustls::ClientConnection::new(
-            Arc::clone(&victim_tls_config),
-            server_name(),
-        )
-        .expect("victim data TLS session should build"),
+        suppaftp::rustls::ClientConnection::new(Arc::clone(&victim_tls_config), server_name())
+            .expect("victim data TLS session should build"),
         data_socket,
     );
     let mut listing = Vec::new();
@@ -1469,7 +1448,9 @@ async fn rejected_upload_below_a_file_does_not_leave_an_orphan_blob() {
 async fn rejected_upload_to_a_directory_does_not_ingest_its_body() {
     let harness = Harness::start(SnapshotMode::Off, 1).await;
     let mut client = harness.client();
-    client.mkdir("destination").expect("directory should be created");
+    client
+        .mkdir("destination")
+        .expect("directory should be created");
 
     let blob_root = harness._temp_dir.path().join("blobs");
     let blobs_before = blob_file_count(&blob_root);
@@ -1617,7 +1598,10 @@ async fn abrupt_disconnect_keeps_the_session_slot_until_batch_commit_finishes() 
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    assert!(committed, "disconnect cleanup should commit its pending batch");
+    assert!(
+        committed,
+        "disconnect cleanup should commit its pending batch"
+    );
 
     let mut admitted = false;
     for _ in 0..20 {
@@ -1639,7 +1623,10 @@ async fn abrupt_disconnect_keeps_the_session_slot_until_batch_commit_finishes() 
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    assert!(admitted, "the session slot should be released after the commit");
+    assert!(
+        admitted,
+        "the session slot should be released after the commit"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1677,12 +1664,9 @@ async fn ftp_shutdown_waits_for_an_abrupt_sessions_pending_batch_commit() {
     let mut server_wait = tokio::spawn(server_handle.wait());
 
     assert!(
-        tokio::time::timeout(
-            std::time::Duration::from_millis(150),
-            &mut server_wait,
-        )
-        .await
-        .is_err(),
+        tokio::time::timeout(std::time::Duration::from_millis(150), &mut server_wait,)
+            .await
+            .is_err(),
         "server shutdown must wait while the final batch commit cannot acquire SQLite"
     );
 
@@ -1734,13 +1718,10 @@ async fn ftp_shutdown_closes_sessions_and_releases_pending_passive_ports() {
     .expect("server should wait for and close its active session")
     .expect("server task should finish cleanly");
     let client_task = tokio::task::spawn_blocking(move || client.noop());
-    let client_result = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        client_task,
-    )
-    .await
-    .expect("client should observe shutdown")
-    .expect("FTP client task should finish");
+    let client_result = tokio::time::timeout(std::time::Duration::from_secs(5), client_task)
+        .await
+        .expect("client should observe shutdown")
+        .expect("FTP client task should finish");
     assert!(
         client_result.is_err(),
         "shutdown should close the active control channel"
@@ -1897,15 +1878,9 @@ async fn ftp_login_rate_limit_combines_email_case_variants() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ftp_login_rate_limit_aggregates_password_spraying_across_usernames() {
-    let harness = Harness::start_with_limits_and_file_size(
-        SnapshotMode::Off,
-        1,
-        8,
-        60,
-        Some(1024 * 1024),
-        1,
-    )
-    .await;
+    let harness =
+        Harness::start_with_limits_and_file_size(SnapshotMode::Off, 1, 8, 60, Some(1024 * 1024), 1)
+            .await;
     let mut client = harness.secure_client();
 
     // The per-login limit is one attempt; the aggregate source limit is ten attempts.
@@ -1963,8 +1938,7 @@ async fn ftp_control_command_tasks_are_bounded_per_session() {
             .expect("control write timeout should be set");
         let mut plaintext = std::io::BufReader::new(socket);
         let mut line = String::new();
-        std::io::BufRead::read_line(&mut plaintext, &mut line)
-            .expect("FTP greeting should arrive");
+        std::io::BufRead::read_line(&mut plaintext, &mut line).expect("FTP greeting should arrive");
         assert!(line.starts_with("220 "), "unexpected greeting: {line:?}");
         plaintext
             .get_mut()
@@ -1984,9 +1958,8 @@ async fn ftp_control_command_tasks_are_bounded_per_session() {
             .expect("server name should parse");
         let connection = suppaftp::rustls::ClientConnection::new(tls_config, server_name)
             .expect("control TLS session should build");
-        let mut control = std::io::BufReader::new(suppaftp::rustls::StreamOwned::new(
-            connection, socket,
-        ));
+        let mut control =
+            std::io::BufReader::new(suppaftp::rustls::StreamOwned::new(connection, socket));
         let setup_commands = [
             ("PBSZ 0\r\n".to_string(), "200 "),
             ("PROT P\r\n".to_string(), "200 "),
@@ -2011,7 +1984,9 @@ async fn ftp_control_command_tasks_are_bounded_per_session() {
                 "unexpected reply to {command:?}: {line:?}"
             );
         }
-        ready_tx.send(()).expect("test should be ready to hold the DB pool");
+        ready_tx
+            .send(())
+            .expect("test should be ready to hold the DB pool");
         start_commands_rx
             .recv()
             .expect("test should release the pipelined SIZE commands");
@@ -2121,7 +2096,11 @@ async fn ftp_dele_cannot_remove_a_webdav_locked_file() {
         "FTP DELE must reject a resource with an active WebDAV lock"
     );
     assert_eq!(
-        harness.read("locked.txt").await.expect("locked file remains").bytes,
+        harness
+            .read("locked.txt")
+            .await
+            .expect("locked file remains")
+            .bytes,
         content,
         "rejected DELE must preserve the locked file content"
     );
@@ -2133,7 +2112,10 @@ async fn ftp_dele_does_not_remove_a_directory_that_replaces_its_target() {
     let harness = Harness::start(SnapshotMode::Batch, 100).await;
     let mut client = harness.client();
     client
-        .put_file("victim.txt", &mut std::io::Cursor::new(b"original".to_vec()))
+        .put_file(
+            "victim.txt",
+            &mut std::io::Cursor::new(b"original".to_vec()),
+        )
         .expect("original file should upload into the pending batch");
     let namespace_id = harness.namespace_id.to_string();
     let replacement_dir_id = vfiles_domain::EntryId::new();
@@ -2429,9 +2411,7 @@ async fn ftp_rmd_and_rnto_respect_locked_null_descendants() {
         "RMD must reject a lock-null child below an otherwise empty directory"
     );
     assert!(
-        client
-            .rename("rename-parent", "moved-parent")
-            .is_err(),
+        client.rename("rename-parent", "moved-parent").is_err(),
         "RNTO must reject a lock-null descendant inside the source subtree"
     );
     assert_eq!(
@@ -2541,7 +2521,10 @@ async fn password_rotation_revokes_existing_ftp_session_and_old_credentials() {
     let operation = tokio::task::spawn_blocking(move || established.mkdir("must-not-be-created"))
         .await
         .expect("FTP client task should finish");
-    assert!(operation.is_err(), "password rotation must revoke the live session");
+    assert!(
+        operation.is_err(),
+        "password rotation must revoke the live session"
+    );
     assert!(
         harness.entry_paths().await.is_empty(),
         "revoked session must not create entries"
@@ -2557,8 +2540,12 @@ async fn password_rotation_revokes_existing_ftp_session_and_old_credentials() {
     replacement
         .login(USERNAME, new_password)
         .expect("rotated password should authenticate");
-    replacement.noop().expect("replacement session should remain usable");
-    replacement.quit().expect("replacement session should close");
+    replacement
+        .noop()
+        .expect("replacement session should remain usable");
+    replacement
+        .quit()
+        .expect("replacement session should close");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2709,7 +2696,10 @@ async fn ftp_metadata_propagates_current_version_lookup_failure() {
     let path = "corrupt-metadata.bin";
     let mut client = harness.client();
     client
-        .put_file(path, &mut std::io::Cursor::new(b"preserve this version".to_vec()))
+        .put_file(
+            path,
+            &mut std::io::Cursor::new(b"preserve this version".to_vec()),
+        )
         .expect("file should upload");
     client.quit().expect("control session should close");
     let (version_id, _) = corrupt_current_file_size(&harness, path).await;
