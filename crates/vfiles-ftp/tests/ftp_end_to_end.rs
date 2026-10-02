@@ -1770,6 +1770,20 @@ async fn ftp_role_rejections_count_toward_the_login_limit() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_user_rejects_bidi_controls_without_poisoning_the_session() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.secure_client();
+    client
+        .custom_command("USER attacker\u{202e}resu", &[Status::NotLoggedIn])
+        .expect("USER must reject a bidirectional formatting control");
+    client
+        .login(USERNAME, PASSWORD)
+        .expect("a rejected malformed USER must leave the session available for valid login");
+    client.noop().expect("valid session should remain usable");
+    client.quit().expect("quit should succeed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ftp_login_rate_limit_combines_email_case_variants() {
     let harness = Harness::start(SnapshotMode::Off, 1).await;
     let identifiers = [
