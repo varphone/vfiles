@@ -82,6 +82,29 @@ pub struct VfilesAuthenticator {
     anonymous_username: Option<String>,
 }
 
+fn auth_service_failure(
+    error: DomainError,
+    limiter: &LoginAttemptLimiter,
+    policy: &RateLimitPolicy,
+    source_ip: &str,
+    username: &str,
+    stats: &IngestStats,
+) -> AuthenticationError {
+    match error {
+        DomainError::InvalidCredentials => {
+            limiter.record_login_failure(policy, source_ip, username);
+            stats.record_login_failure();
+            warn!(username, "FTP 登录失败");
+            AuthenticationError::BadPassword
+        }
+        error => {
+            stats.record_login_failure();
+            warn!(username, error = %error, "FTP 认证后端暂不可用");
+            AuthenticationError::new("Authentication is temporarily unavailable")
+        }
+    }
+}
+
 impl VfilesAuthenticator {
     pub fn new(
         auth_service: Arc<AuthService>,
@@ -164,21 +187,65 @@ impl Authenticator for VfilesAuthenticator {
                     username: format!("{AUTHENTICATED_USER_PRINCIPAL_PREFIX}{}", user.id),
                 })
             }
-            Err(DomainError::InvalidCredentials) => {
-                self.limiter
-                    .record_login_failure(&self.policy, &source_ip, username);
-                self.stats.record_login_failure();
-                warn!(username, "FTP 登录失败");
-                Err(AuthenticationError::BadPassword)
-            }
-            Err(err) => {
-                self.stats.record_login_failure();
-                warn!(username, error = %err, "FTP 认证后端暂不可用");
-                Err(AuthenticationError::new(
-                    "Authentication is temporarily unavailable",
-                ))
-            }
+            Err(error) => Err(auth_service_failure(
+                error,
+                &self.limiter,
+                &self.policy,
+                &source_ip,
+                username,
+                &self.stats,
+            )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::auth_service_failure;
+    use vfiles_app::{IngestStats, LoginAttemptLimiter, RateLimitPolicy};
+    use vfiles_domain::DomainError;
+
+    #[test]
+    fn password_work_saturation_does_not_increment_the_login_limiter() {
+        let limiter = LoginAttemptLimiter::new();
+        let stats = IngestStats::new();
+        let policy = RateLimitPolicy {
+            enabled: true,
+            window_ms: 60_000,
+            max_attempts: 1,
+        };
+        let source_ip = "192.0.2.10";
+        let username = "valid@example.com";
+
+        let _ = auth_service_failure(
+            DomainError::RateLimited,
+            &limiter,
+            &policy,
+            source_ip,
+            username,
+            &stats,
+        );
+        assert!(
+            limiter
+                .check_login(&policy, source_ip, username)
+                .is_none(),
+            "temporary password-work saturation must not lock out the valid account"
+        );
+
+        let _ = auth_service_failure(
+            DomainError::InvalidCredentials,
+            &limiter,
+            &policy,
+            source_ip,
+            username,
+            &stats,
+        );
+        assert!(
+            limiter
+                .check_login(&policy, source_ip, username)
+                .is_some(),
+            "an actual invalid credential must still count toward the login limit"
+        );
     }
 }
 
