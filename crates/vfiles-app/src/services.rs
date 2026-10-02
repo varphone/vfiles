@@ -551,7 +551,7 @@ pub(crate) async fn ensure_directory_path_with_conditions(
         let condition = conditions
             .iter()
             .find(|condition| condition.path == current_path)
-            .ok_or_else(|| DomainError::PreconditionFailed)?;
+            .ok_or(DomainError::PreconditionFailed)?;
         let entry_id = entry_repo
             .create_entry_if_current(
                 namespace_id,
