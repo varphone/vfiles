@@ -177,56 +177,50 @@ pub async fn spawn_ftp_server(
     let join = tokio::spawn(async move {
         let mut session_tasks = tokio::task::JoinSet::new();
         loop {
-            tokio::select! {
-                biased;
-                changed = shutdown.changed() => {
-                    if changed.is_err() || *shutdown.borrow() {
-                        break;
-                    }
-                }
-                // Reap completed tasks before accepting more connections. With `biased`, a
-                // continuously ready listener would otherwise starve this branch and let
-                // completed JoinSet entries accumulate without bound.
-                Some(result) = session_tasks.join_next(), if !session_tasks.is_empty() => {
+            match next_listener_event(&mut shutdown, &listener, &mut session_tasks).await {
+                ListenerEvent::Shutdown => break,
+                ListenerEvent::Continue => continue,
+                ListenerEvent::SessionFinished(result) => {
                     if let Err(err) = result {
                         warn!(error = %err, "FTP 会话任务未正常结束");
                     }
                 }
-                accepted = listener.accept() => {
-                    match accepted {
-                        Ok((stream, peer)) => {
-                            let permit = match Arc::clone(&sessions).try_acquire_owned() {
-                                Ok(permit) => permit,
-                                Err(_) => {
-                                    debug!(peer = %peer, max_connections, "FTP 连接数达到上限，拒绝新连接");
-                                    drop(stream);
-                                    continue;
-                                }
-                            };
-                            let permit = Arc::new(permit);
-                            let server = match build_server(&settings, &app, Some(Arc::clone(&permit))) {
-                                Ok(server) => server,
-                                Err(err) => {
-                                    warn!(error = %err, "构建 FTP 会话失败");
-                                    continue;
-                                }
-                            };
-                            let session_shutdown = shutdown.clone();
-                            session_tasks.spawn(async move {
-                                let _permit = permit;
-                                debug!(peer = %peer, "FTP 会话开始");
-                                let stop_session = wait_for_shutdown(session_shutdown);
-                                if let Err(err) = server.service_with_shutdown(stream, stop_session).await {
-                                    debug!(peer = %peer, error = %err, "FTP 会话结束（异常）");
-                                }
-                            });
-                        }
-                        Err(err) => {
-                            warn!(error = %err, "FTP 监听接受连接失败");
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        }
+                ListenerEvent::Accepted(accepted) => match accepted {
+                    Ok((stream, peer)) => {
+                        let permit = match Arc::clone(&sessions).try_acquire_owned() {
+                            Ok(permit) => permit,
+                            Err(_) => {
+                                debug!(peer = %peer, max_connections, "FTP 连接数达到上限，拒绝新连接");
+                                drop(stream);
+                                continue;
+                            }
+                        };
+                        let permit = Arc::new(permit);
+                        let server = match build_server(&settings, &app, Some(Arc::clone(&permit)))
+                        {
+                            Ok(server) => server,
+                            Err(err) => {
+                                warn!(error = %err, "构建 FTP 会话失败");
+                                continue;
+                            }
+                        };
+                        let session_shutdown = shutdown.clone();
+                        session_tasks.spawn(async move {
+                            let _permit = permit;
+                            debug!(peer = %peer, "FTP 会话开始");
+                            let stop_session = wait_for_shutdown(session_shutdown);
+                            if let Err(err) =
+                                server.service_with_shutdown(stream, stop_session).await
+                            {
+                                debug!(peer = %peer, error = %err, "FTP 会话结束（异常）");
+                            }
+                        });
                     }
-                }
+                    Err(err) => {
+                        warn!(error = %err, "FTP 监听接受连接失败");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                },
             }
         }
         info!("FTP 服务停止接受新连接");
@@ -243,6 +237,37 @@ pub async fn spawn_ftp_server(
     });
 
     Ok(FtpServerHandle { local_addr, join })
+}
+
+enum ListenerEvent {
+    Shutdown,
+    Continue,
+    SessionFinished(Result<(), tokio::task::JoinError>),
+    Accepted(std::io::Result<(tokio::net::TcpStream, SocketAddr)>),
+}
+
+async fn next_listener_event(
+    shutdown: &mut watch::Receiver<bool>,
+    listener: &TcpListener,
+    session_tasks: &mut tokio::task::JoinSet<()>,
+) -> ListenerEvent {
+    tokio::select! {
+        biased;
+        changed = shutdown.changed() => {
+            if changed.is_err() || *shutdown.borrow() {
+                ListenerEvent::Shutdown
+            } else {
+                ListenerEvent::Continue
+            }
+        }
+        // Reap completed tasks before accepting more connections. With `biased`, a
+        // continuously ready listener would otherwise starve this branch and let
+        // completed JoinSet entries accumulate without bound.
+        Some(result) = session_tasks.join_next(), if !session_tasks.is_empty() => {
+            ListenerEvent::SessionFinished(result)
+        }
+        accepted = listener.accept() => ListenerEvent::Accepted(accepted),
+    }
 }
 
 fn validate_passive_ports(start: u16, end: u16) -> std::io::Result<()> {
@@ -276,7 +301,16 @@ pub async fn run_ftp_server(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_passive_ports;
+    use super::{ListenerEvent, next_listener_event, validate_passive_ports};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use tokio::{
+        net::{TcpListener, TcpStream},
+        sync::watch,
+        task::JoinSet,
+    };
 
     #[test]
     fn passive_port_range_validation_accepts_inclusive_boundaries() {
@@ -289,6 +323,36 @@ mod tests {
         for (start, end) in [(0, 1), (1, 0), (0, 0), (50_001, 50_000)] {
             let error = validate_passive_ports(start, end).expect_err("invalid passive range");
             assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        }
+    }
+
+    #[tokio::test]
+    async fn reaps_completed_sessions_before_accepting_ready_connections() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let _pending_connection = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .expect("connection should become ready for accept");
+        let (_shutdown_tx, mut shutdown) = watch::channel(false);
+        let mut session_tasks = JoinSet::new();
+        let completed = Arc::new(AtomicBool::new(false));
+        let task_completed = Arc::clone(&completed);
+        session_tasks.spawn(async move {
+            task_completed.store(true, Ordering::Release);
+        });
+        while !completed.load(Ordering::Acquire) {
+            tokio::task::yield_now().await;
+        }
+
+        match next_listener_event(&mut shutdown, &listener, &mut session_tasks).await {
+            ListenerEvent::SessionFinished(Ok(())) => {}
+            _ => panic!("completed session should be reaped before the ready connection"),
+        }
+
+        match next_listener_event(&mut shutdown, &listener, &mut session_tasks).await {
+            ListenerEvent::Accepted(Ok((_stream, _peer))) => {}
+            _ => panic!("ready connection should be accepted after reaping"),
         }
     }
 }
