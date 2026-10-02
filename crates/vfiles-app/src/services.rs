@@ -7133,6 +7133,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn limited_move_rechecks_generated_paths_against_aggregate_budget() {
+        let context = TestContext::new().await;
+        let source = TestContext::path("src");
+        let destination = TestContext::path("dst");
+        context
+            .workspace_service
+            .create_directory(
+                &context.namespace_id,
+                &source,
+                Some("create move source"),
+                &context.user_id,
+            )
+            .await
+            .expect("source directory should be created");
+        context
+            .upload_file(&source, "file.txt", b"move content", "seed move source")
+            .await;
+
+        let result = context
+            .workspace_service
+            .move_entry_overwriting_with_condition_and_limits(
+                &context.namespace_id,
+                &source,
+                &destination,
+                Some("bounded move"),
+                &context.user_id,
+                MoveOptions::default(),
+                MoveSubtreeLimits {
+                    max_entries: 10,
+                    // Source paths total 15 bytes; generated target paths push the combined
+                    // source plus destination total over this budget.
+                    max_path_bytes: 20,
+                },
+            )
+            .await;
+        assert!(matches!(result, Err(DomainError::Validation { .. })));
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &source)
+                .await
+                .expect("source lookup should succeed")
+                .is_some(),
+            "an over-budget move must preserve the source subtree"
+        );
+        assert!(
+            context
+                .entry_repo
+                .find_by_path(&context.namespace_id, &destination)
+                .await
+                .expect("destination lookup should succeed")
+                .is_none(),
+            "an over-budget move must not create the destination"
+        );
+    }
+
+    #[tokio::test]
     async fn workspace_service_overwrites_move_in_one_entry_transaction() {
         use tokio::io::AsyncReadExt;
 
