@@ -24,8 +24,8 @@ use tokio::{
 };
 use unftp_core::storage::{ErrorKind, StorageBackend};
 use vfiles_app::{
-    AuthService, DefaultWorkspaceService, IngestStats, LoginAttemptLimiter, NamespaceService,
-    RateLimitPolicy, SnapshotMode,
+    AuthService, DefaultWorkspaceService, ImportBatch, IngestStats, LoginAttemptLimiter,
+    NamespaceService, RateLimitPolicy, SnapshotMode,
 };
 use vfiles_domain::{DomainResult, EntryRepo, NamespaceRepo, NormalizedPath, Role, UserRepo};
 use vfiles_ftp::{
@@ -905,6 +905,97 @@ async fn disabled_user_stops_receiving_a_directory_listing_in_progress() {
     assert!(
         control_result.is_err(),
         "the control channel should report the revoked listing instead of success"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn disabled_user_stops_receiving_a_file_during_retr() {
+    const FILE_BYTES: usize = 16 * 1024 * 1024;
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut import = ImportBatch::new(
+        Arc::clone(&harness.backend.entry_repo),
+        Arc::clone(&harness.backend.snapshot_repo),
+        Arc::clone(&harness.backend.blob_store),
+        harness.namespace_id,
+        harness.user_id,
+        "FTP RETR revocation fixture",
+        SnapshotMode::Off,
+        1,
+    );
+    let path = NormalizedPath::new("large-download.bin").expect("fixture path");
+    let (mut fixture_writer, fixture_reader) = tokio::io::duplex(64 * 1024);
+    let fixture_bytes = vec![0x6d; FILE_BYTES];
+    let fixture_writer_task = tokio::spawn(async move {
+        tokio::io::AsyncWriteExt::write_all(&mut fixture_writer, &fixture_bytes)
+            .await
+            .expect("fixture bytes should stream into import");
+    });
+    import
+        .import_file_stream(
+            &path,
+            Box::new(fixture_reader),
+            Some(FILE_BYTES as u64),
+            None,
+        )
+        .await
+        .expect("large RETR fixture should import");
+    fixture_writer_task
+        .await
+        .expect("fixture writer should finish");
+    import.flush().await.expect("fixture should commit");
+
+    let mut client = harness.client();
+    let (transfer_started_tx, transfer_started_rx) = tokio::sync::oneshot::channel();
+    let (resume_reading_tx, resume_reading_rx) = std::sync::mpsc::channel();
+    let transfer = tokio::task::spawn_blocking(move || {
+        let mut data_stream = client
+            .retr_as_stream("large-download.bin")
+            .expect("RETR should start");
+        data_stream
+            .get_ref()
+            .set_read_timeout(Some(std::time::Duration::from_secs(8)))
+            .expect("data read timeout should be set");
+        client
+            .get_ref()
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .expect("control read timeout should be set");
+        let mut data = vec![0; 1_024];
+        std::io::Read::read_exact(&mut data_stream, &mut data)
+            .expect("file data should arrive before account revocation");
+        transfer_started_tx
+            .send(())
+            .expect("test should still be waiting for RETR");
+        resume_reading_rx
+            .recv()
+            .expect("test should resume the file reader");
+
+        let data_result = std::io::Read::read_to_end(&mut data_stream, &mut data);
+        let data_bytes = data.len();
+        let control_result = client.finalize_retr_stream(data_stream);
+        (data_result, data_bytes, control_result)
+    });
+
+    transfer_started_rx
+        .await
+        .expect("RETR should reach the data phase");
+    harness.disable_user().await;
+    tokio::time::sleep(std::time::Duration::from_millis(5_200)).await;
+    resume_reading_tx
+        .send(())
+        .expect("data reader should still be alive");
+
+    let (data_result, data_bytes, control_result) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), transfer)
+            .await
+            .expect("revoked RETR should stop promptly")
+            .expect("FTP client task should finish");
+    assert!(
+        (1_024..FILE_BYTES).contains(&data_bytes),
+        "a revoked account must not receive the entire file ({data_bytes}/{FILE_BYTES} bytes); read result: {data_result:?}"
+    );
+    assert!(
+        control_result.is_err(),
+        "the control channel should report the revoked RETR instead of success"
     );
 }
 
