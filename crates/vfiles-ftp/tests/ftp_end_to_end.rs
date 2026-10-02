@@ -1365,6 +1365,86 @@ async fn batch_mode_commits_far_fewer_snapshots_than_files() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn abrupt_disconnect_keeps_the_session_slot_until_batch_commit_finishes() {
+    let harness = Harness::start_with_max_connections(SnapshotMode::Batch, 100, 1).await;
+    let snapshots_before = harness.snapshot_count().await;
+    let mut client = harness.client();
+    let mut payload = std::io::Cursor::new(b"pending batch content".to_vec());
+    client
+        .put_file("pending.bin", &mut payload)
+        .expect("upload should enter the pending batch");
+    assert_eq!(
+        harness.snapshot_count().await,
+        snapshots_before,
+        "below-threshold upload should remain pending before disconnect"
+    );
+
+    let max_connections = harness.pool.options().get_max_connections();
+    let mut held_connections = Vec::with_capacity(max_connections as usize);
+    for _ in 0..max_connections {
+        held_connections.push(
+            harness
+                .pool
+                .acquire()
+                .await
+                .expect("database connection should be acquired"),
+        );
+    }
+    drop(client);
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let rejected = TcpStream::connect(harness.handle.local_addr())
+        .await
+        .expect("new TCP connection should reach the listener");
+    let mut rejected_reader = BufReader::new(rejected);
+    let mut greeting = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        rejected_reader.read_line(&mut greeting),
+    )
+    .await
+    .expect("connection-limit response should not stall")
+    .expect("connection-limit response should be readable");
+    assert!(
+        greeting.is_empty(),
+        "the detached batch commit must retain the only FTP session slot"
+    );
+
+    drop(held_connections);
+    let mut committed = false;
+    for _ in 0..100 {
+        if harness.snapshot_count().await > snapshots_before {
+            committed = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(committed, "disconnect cleanup should commit its pending batch");
+
+    let mut admitted = false;
+    for _ in 0..20 {
+        let candidate = TcpStream::connect(harness.handle.local_addr())
+            .await
+            .expect("replacement connection should reach the listener");
+        let mut reader = BufReader::new(candidate);
+        let mut greeting = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            reader.read_line(&mut greeting),
+        )
+        .await
+        .expect("replacement greeting should not stall")
+        .expect("replacement greeting should be readable");
+        if greeting.starts_with("220 ") {
+            admitted = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(admitted, "the session slot should be released after the commit");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rejects_wrong_password_and_path_traversal() {
     let harness = Harness::start(SnapshotMode::PerFile, 1).await;
 
