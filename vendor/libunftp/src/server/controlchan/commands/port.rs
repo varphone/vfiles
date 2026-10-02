@@ -34,11 +34,29 @@ use crate::{
 };
 use async_trait::async_trait;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
+use std::{future::Future, io, time::Duration};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio_util::sync::CancellationToken;
 
 const ACTIVE_DATA_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+#[derive(Debug)]
+enum ActiveConnectError {
+    Failed(io::Error),
+    Timeout,
+}
+
+async fn connect_with_timeout<T, F>(timeout: Duration, connect: F) -> Result<T, ActiveConnectError>
+where
+    F: Future<Output = io::Result<T>>,
+{
+    match tokio::time::timeout(timeout, connect).await {
+        Ok(Ok(stream)) => Ok(stream),
+        Ok(Err(error)) => Err(ActiveConnectError::Failed(error)),
+        Err(_) => Err(ActiveConnectError::Timeout),
+    }
+}
 
 #[derive(Debug)]
 pub struct Port {
@@ -140,13 +158,13 @@ where
             }
         };
 
-        let stream = match tokio::time::timeout(ACTIVE_DATA_CONNECT_TIMEOUT, TcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => stream,
-            Ok(Err(err)) => {
+        let stream = match connect_with_timeout(ACTIVE_DATA_CONNECT_TIMEOUT, TcpStream::connect(addr)).await {
+            Ok(stream) => stream,
+            Err(ActiveConnectError::Failed(err)) => {
                 slog::warn!(logger, "Could not connect to client for active mode: {}", err);
                 return Ok(Reply::new(ReplyCode::CantOpenDataConnection, "Could not establish data connection"));
             }
-            Err(_) => {
+            Err(ActiveConnectError::Timeout) => {
                 slog::warn!(logger, "Timed out connecting to client for active data connection");
                 return Ok(Reply::new(ReplyCode::CantOpenDataConnection, "Active data connection timed out"));
             }
@@ -167,8 +185,9 @@ enum PortAddressError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Port, PortAddressError};
+    use super::{ActiveConnectError, Port, PortAddressError, connect_with_timeout};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use std::time::Duration;
 
     #[test]
     fn port_accepts_only_a_well_formed_address_for_the_control_peer() {
@@ -199,5 +218,12 @@ mod tests {
                 "invalid PORT target should be rejected: {malformed}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn active_data_connect_returns_timeout_when_the_connect_stalls() {
+        let result = connect_with_timeout(Duration::from_millis(5), std::future::pending::<std::io::Result<()>>()).await;
+        assert!(matches!(result, Err(ActiveConnectError::Timeout)));
+        assert_eq!(super::ACTIVE_DATA_CONNECT_TIMEOUT, Duration::from_secs(15));
     }
 }
