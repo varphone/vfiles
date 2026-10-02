@@ -7188,14 +7188,14 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         user_id: &UserId,
         entry_repo: &(dyn EntryRepo + Send + Sync),
     ) -> DomainResult<SnapshotId> {
+        let changes = SnapshotNamespaceChanges::default();
         self.create_snapshot_from_namespace_with_changes(
             namespace_id,
             message,
             kind,
             user_id,
             entry_repo,
-            &[],
-            &[],
+            &changes,
         )
         .await
     }
@@ -7207,8 +7207,7 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         kind: SnapshotKind,
         user_id: &UserId,
         _entry_repo: &(dyn EntryRepo + Send + Sync),
-        renamed_entry_ids: &[EntryId],
-        additional_entries: &[SnapshotEntryDraft],
+        changes: &SnapshotNamespaceChanges,
     ) -> DomainResult<SnapshotId> {
         let mut tx = self
             .pool
@@ -7313,7 +7312,7 @@ impl SnapshotRepo for SqliteSnapshotRepo {
             message: format!("Failed to copy namespace entries into snapshot: {error}"),
         })?;
 
-        for chunk in renamed_entry_ids.chunks(500) {
+        for chunk in changes.renamed_entry_ids.chunks(500) {
             if chunk.is_empty() {
                 continue;
             }
@@ -7338,7 +7337,7 @@ impl SnapshotRepo for SqliteSnapshotRepo {
                 })?;
         }
 
-        for chunk in additional_entries.chunks(50) {
+        for chunk in changes.additional_entries.chunks(50) {
             let mut query = sqlx::QueryBuilder::new(
                 "INSERT INTO snapshot_entries (snapshot_id, entry_id, entry_version_id, entry_path, entry_kind, blob_id, size, content_type, version_no, change_type, created_by, created_at) ",
             );

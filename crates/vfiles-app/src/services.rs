@@ -593,6 +593,10 @@ pub(crate) async fn create_namespace_snapshot_record(
         .into_iter()
         .map(PendingSnapshotEntry::into_draft)
         .collect::<Vec<_>>();
+    let changes = SnapshotNamespaceChanges {
+        renamed_entry_ids,
+        additional_entries,
+    };
     snapshot_repo
         .create_snapshot_from_namespace_with_changes(
             namespace_id,
@@ -600,8 +604,7 @@ pub(crate) async fn create_namespace_snapshot_record(
             kind,
             user_id,
             entry_repo,
-            &renamed_entry_ids,
-            &additional_entries,
+            &changes,
         )
         .await
 }
@@ -5648,7 +5651,11 @@ mod tests {
 
         evict_cache_entry_if_full(&mut cache, &4, 3);
         cache.insert(4, "updated");
-        assert_eq!(cache.len(), 3, "updating an existing key must not evict another entry");
+        assert_eq!(
+            cache.len(),
+            3,
+            "updating an existing key must not evict another entry"
+        );
         assert_eq!(cache.get(&4), Some(&"updated"));
     }
 

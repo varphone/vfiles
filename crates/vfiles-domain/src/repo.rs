@@ -1081,14 +1081,14 @@ pub trait SnapshotRepo {
         user_id: &UserId,
         entry_repo: &(dyn EntryRepo + Send + Sync),
     ) -> DomainResult<SnapshotId> {
+        let changes = SnapshotNamespaceChanges::default();
         self.create_snapshot_from_namespace_with_changes(
             namespace_id,
             message,
             kind,
             user_id,
             entry_repo,
-            &[],
-            &[],
+            &changes,
         )
         .await
     }
@@ -1103,14 +1103,14 @@ pub trait SnapshotRepo {
         kind: SnapshotKind,
         user_id: &UserId,
         entry_repo: &(dyn EntryRepo + Send + Sync),
-        renamed_entry_ids: &[EntryId],
-        additional_entries: &[SnapshotEntryDraft],
+        changes: &SnapshotNamespaceChanges,
     ) -> DomainResult<SnapshotId> {
         let created_at = time::OffsetDateTime::now_utc();
         let snapshot_id = self
             .create_snapshot(namespace_id, message, kind, user_id)
             .await?;
-        let renamed_entry_ids = renamed_entry_ids
+        let renamed_entry_ids = changes
+            .renamed_entry_ids
             .iter()
             .copied()
             .collect::<std::collections::HashSet<_>>();
@@ -1158,20 +1158,25 @@ pub trait SnapshotRepo {
                 }
             })
             .collect::<Vec<_>>();
-        snapshot_entries.extend(additional_entries.iter().map(|entry| SnapshotEntry {
-            snapshot_id,
-            entry_id: entry.entry_id,
-            entry_path: entry.entry_path.clone(),
-            entry_kind: entry.entry_kind,
-            entry_version_id: entry.entry_version_id,
-            blob_id: entry.blob_id,
-            size_bytes: entry.size_bytes,
-            mime_type: entry.mime_type.clone(),
-            version_no: entry.version_no,
-            change_type: entry.change_type,
-            created_by: Some(entry.created_by.unwrap_or(*user_id)),
-            created_at: Some(entry.created_at.unwrap_or(created_at)),
-        }));
+        snapshot_entries.extend(
+            changes
+                .additional_entries
+                .iter()
+                .map(|entry| SnapshotEntry {
+                    snapshot_id,
+                    entry_id: entry.entry_id,
+                    entry_path: entry.entry_path.clone(),
+                    entry_kind: entry.entry_kind,
+                    entry_version_id: entry.entry_version_id,
+                    blob_id: entry.blob_id,
+                    size_bytes: entry.size_bytes,
+                    mime_type: entry.mime_type.clone(),
+                    version_no: entry.version_no,
+                    change_type: entry.change_type,
+                    created_by: Some(entry.created_by.unwrap_or(*user_id)),
+                    created_at: Some(entry.created_at.unwrap_or(created_at)),
+                }),
+        );
         snapshot_entries
             .sort_by(|left, right| left.entry_path.as_str().cmp(right.entry_path.as_str()));
         if !snapshot_entries.is_empty() {
@@ -1329,6 +1334,13 @@ pub trait SnapshotRepo {
     async fn list_all_snapshots(&self) -> DomainResult<Vec<Snapshot>>;
     /// 删除快照及其条目（条目通过外键级联删除）。
     async fn delete_snapshot(&self, snapshot_id: &SnapshotId) -> DomainResult<()>;
+}
+
+/// Protocol-specific changes applied while creating a full namespace snapshot.
+#[derive(Debug, Clone, Default)]
+pub struct SnapshotNamespaceChanges {
+    pub renamed_entry_ids: Vec<EntryId>,
+    pub additional_entries: Vec<SnapshotEntryDraft>,
 }
 
 #[async_trait::async_trait]
