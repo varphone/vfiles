@@ -48,6 +48,15 @@ pub use middleware::{
     FixedWindowLimiter, LoginAttemptLimiter, RateLimitPolicy, login_rate_limit_policy,
 };
 
+#[derive(Debug, Clone, Default)]
+pub enum FtpsStartupStatus {
+    #[default]
+    Unknown,
+    Disabled,
+    Started,
+    Failed(String),
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub health_service: HealthService,
@@ -72,6 +81,8 @@ pub struct AppState {
     pub login_attempt_limiter: Arc<LoginAttemptLimiter>,
     /// FTP 批量导入的运行计数（由 bin 装配注入，HTTP 与 FTP 共用同一实例）。
     pub ingest_stats: Arc<vfiles_app::IngestStats>,
+    /// FTPS 启动结果；HTTP 系统信息页据此区分配置开关与启动状态。
+    pub ftps_startup_status: Arc<tokio::sync::RwLock<FtpsStartupStatus>>,
     /// Public share-code resolution and download limiter.
     pub share_download_limiter: Arc<FixedWindowLimiter>,
     /// 用户仓储（令牌鉴权时补全用户信息）。

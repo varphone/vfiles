@@ -35,7 +35,10 @@ export interface AdminUsersPayload {
 
 export interface SystemProtocolInfo {
   id: "http" | "webdav" | "ftps" | "s3" | "rsync";
+  /** Configuration switch; runtime_status reports the observed startup result. */
   enabled: boolean;
+  runtime_status: "unknown" | "disabled" | "started" | "failed";
+  runtime_error: string | null;
   bind: string;
   embedded: boolean;
   mount_path: string | null;

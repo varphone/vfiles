@@ -1283,6 +1283,9 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
 
     // FTP 与 HTTP 共用同一份限流器与统计实例（计数、封禁策略一致）
     let ingest_stats = Arc::new(vfiles_app::IngestStats::new());
+    let ftps_startup_status = Arc::new(tokio::sync::RwLock::new(
+        vfiles_http::FtpsStartupStatus::Unknown,
+    ));
     let login_attempt_limiter = Arc::new(LoginAttemptLimiter::new());
 
     // FTP 需要与 HTTP 相同的仓储视图：这里先建立共享 Arc，AppState 与 FTP 各持一份
@@ -1434,6 +1437,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
         upload_store: std::sync::Arc::new(upload_store.clone()),
         login_attempt_limiter: Arc::clone(&login_attempt_limiter),
         ingest_stats: Arc::clone(&ingest_stats),
+        ftps_startup_status: Arc::clone(&ftps_startup_status),
         share_download_limiter: Arc::new(vfiles_http::FixedWindowLimiter::new()),
         default_namespace_id,
         default_actor_user_id,
@@ -1561,10 +1565,13 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
                 .await
             {
                 Ok(handle) => {
+                    *ftps_startup_status.write().await = vfiles_http::FtpsStartupStatus::Started;
                     tracing::info!("FTP 批量导入已启用: {}", handle.local_addr());
                     Some(handle)
                 }
                 Err(err) => {
+                    *ftps_startup_status.write().await =
+                        vfiles_http::FtpsStartupStatus::Failed(err.to_string());
                     tracing::error!(
                         %bind,
                         error = %err,
@@ -1575,6 +1582,7 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
             }
         }
         None => {
+            *ftps_startup_status.write().await = vfiles_http::FtpsStartupStatus::Disabled;
             tracing::debug!("FTP 未启用（VFILES_FTP_ENABLED=false 或认证已关闭）");
             None
         }

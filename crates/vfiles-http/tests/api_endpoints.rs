@@ -17,7 +17,9 @@ use vfiles_app::{
 };
 use vfiles_config::ConfigLoader;
 use vfiles_domain::{FeatureMatrix, NamespaceRepo, UserRepo};
-use vfiles_http::{AppState, FrontendAssets, build_router, middleware::LoginAttemptLimiter};
+use vfiles_http::{
+    AppState, FrontendAssets, FtpsStartupStatus, build_router, middleware::LoginAttemptLimiter,
+};
 use vfiles_infra_fs::FsStorageBootstrap;
 use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteAdminRepo, SqliteEntryRepo, SqliteMigrations,
@@ -29,6 +31,7 @@ struct TestApp {
     app: axum::Router<()>,
     db_pool: SqlitePool,
     browser_origin: String,
+    ftps_startup_status: Arc<tokio::sync::RwLock<FtpsStartupStatus>>,
     _temp_dir: TempDir,
 }
 
@@ -273,6 +276,7 @@ impl TestApp {
             upload_store.clone(),
         );
 
+        let ftps_startup_status = Arc::new(tokio::sync::RwLock::new(FtpsStartupStatus::Unknown));
         let state = AppState {
             health_service: HealthService,
             session_service,
@@ -305,6 +309,7 @@ impl TestApp {
             upload_store: Arc::new(upload_store),
             login_attempt_limiter: Arc::new(LoginAttemptLimiter::new()),
             ingest_stats: Arc::new(vfiles_app::IngestStats::new()),
+            ftps_startup_status: Arc::clone(&ftps_startup_status),
             share_download_limiter: Arc::new(vfiles_http::FixedWindowLimiter::new()),
             default_namespace_id,
             default_actor_user_id: admin_user_id,
@@ -318,6 +323,7 @@ impl TestApp {
             app: build_router(state),
             db_pool: pool,
             browser_origin,
+            ftps_startup_status,
             _temp_dir: temp_dir,
         }
     }
@@ -3062,6 +3068,8 @@ async fn session_bootstrap_and_admin_routes_require_authenticated_admin() {
 #[tokio::test]
 async fn system_info_reports_protocol_configuration_and_per_user_storage() {
     let app = TestApp::new().await;
+    *app.ftps_startup_status.write().await =
+        FtpsStartupStatus::Failed("FTPS certificate directory is writable".to_string());
     app.register_user("member", "member@example.com", "member-password")
         .await;
     app.register_user("empty", "empty@example.com", "empty-password")
@@ -3113,6 +3121,16 @@ async fn system_info_reports_protocol_configuration_and_per_user_storage() {
         .find(|protocol| protocol["id"] == "s3")
         .expect("S3 protocol should be included");
     assert_eq!(s3["mount_path"], Value::from("/s3"));
+    let ftps = protocols
+        .iter()
+        .find(|protocol| protocol["id"] == "ftps")
+        .expect("FTPS protocol should be included");
+    assert_eq!(ftps["enabled"], Value::Bool(true));
+    assert_eq!(ftps["runtime_status"], Value::from("failed"));
+    assert_eq!(
+        ftps["runtime_error"],
+        Value::from("FTPS certificate directory is writable")
+    );
 
     let storage = &payload["storage"];
     assert_eq!(storage["user_count"], Value::from(3));

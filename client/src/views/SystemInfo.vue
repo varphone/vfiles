@@ -59,7 +59,7 @@
                 接入协议
               </h2>
               <p class="system-info-section-description">
-                服务启动时读取的协议配置
+                各协议配置及可获取的启动结果
               </p>
             </div>
             <span class="system-info-section-count">
@@ -68,8 +68,9 @@
           </div>
 
           <p class="system-info-note">
-            状态反映启动配置；连接地址使用当前访问域名，独立端口模式也需对外开放对应端口。
-            监听器是否成功启动，请结合服务日志确认。
+            协议开关反映配置；FTPS
+            展示本次启动结果，其他独立监听器请结合服务日志确认。
+            连接地址使用当前访问域名。
           </p>
 
           <ul class="system-info-protocols">
@@ -83,7 +84,7 @@
                 <div class="system-info-protocol-name-wrap">
                   <span
                     class="system-info-protocol-indicator"
-                    :class="protocol.enabled ? 'is-enabled' : 'is-disabled'"
+                    :class="protocolStatusClass(protocol)"
                     aria-hidden="true"
                   />
                   <div>
@@ -93,9 +94,9 @@
                 </div>
                 <span
                   class="system-info-status"
-                  :class="protocol.enabled ? 'is-enabled' : 'is-disabled'"
+                  :class="protocolStatusClass(protocol)"
                 >
-                  {{ protocol.enabled ? "已启用" : "未启用" }}
+                  {{ protocolStatusLabel(protocol) }}
                 </span>
               </div>
 
@@ -129,6 +130,13 @@
                   <dd>已关闭</dd>
                 </template>
               </dl>
+              <p
+                v-if="protocol.runtime_status === 'failed'"
+                class="system-info-protocol-error"
+                role="status"
+              >
+                启动失败：{{ protocol.runtime_error || "详情请查看服务日志" }}
+              </p>
             </li>
           </ul>
         </section>
@@ -338,6 +346,32 @@ function protocolMode(protocol: SystemProtocolInfo) {
       : "共享 HTTP 端口";
   }
   return "独立监听端口";
+}
+
+function protocolStatusLabel(protocol: SystemProtocolInfo) {
+  switch (protocol.runtime_status) {
+    case "started":
+      return "启动成功";
+    case "failed":
+      return "启动失败";
+    case "disabled":
+      return "未启用";
+    case "unknown":
+      return protocol.enabled ? "仅配置启用" : "未启用";
+  }
+}
+
+function protocolStatusClass(protocol: SystemProtocolInfo) {
+  switch (protocol.runtime_status) {
+    case "started":
+      return "is-enabled";
+    case "failed":
+      return "is-failed";
+    case "unknown":
+      return "is-unknown";
+    case "disabled":
+      return "is-disabled";
+  }
 }
 
 function protocolConnectionAddress(protocol: SystemProtocolInfo) {
@@ -625,6 +659,11 @@ onMounted(load);
     color-mix(in srgb, var(--system-info-good) 13%, transparent);
 }
 
+.system-info-protocol-indicator.is-failed {
+  background: var(--vf-danger-text, #b42318);
+  box-shadow: 0 0 0 3px color-mix(in srgb, #b42318 13%, transparent);
+}
+
 .system-info-status,
 .system-info-account-state {
   flex-shrink: 0;
@@ -644,6 +683,27 @@ onMounted(load);
 .system-info-account-state.is-disabled {
   background: var(--vf-surface-sunken, #f1f2f4);
   color: var(--vf-text-muted);
+}
+
+.system-info-status.is-unknown {
+  background: var(--vf-surface-sunken, #f1f2f4);
+  color: var(--vf-text-muted);
+}
+
+.system-info-status.is-failed {
+  background: var(--vf-danger-soft, #fff1f0);
+  color: var(--vf-danger-text, #b42318);
+}
+
+.system-info-protocol-error {
+  margin: 0.65rem 0 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: calc(var(--vf-radius) - 3px);
+  background: var(--vf-danger-soft, #fff1f0);
+  color: var(--vf-danger-text, #b42318);
+  font-size: 0.71rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .system-info-protocol-details {

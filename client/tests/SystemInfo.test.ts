@@ -26,6 +26,8 @@ vi.mock("../src/services/auth.service", async () => {
             {
               id: "http",
               enabled: true,
+              runtime_status: "started",
+              runtime_error: null,
               bind: "0.0.0.0:8080",
               embedded: false,
               mount_path: null,
@@ -36,6 +38,8 @@ vi.mock("../src/services/auth.service", async () => {
             {
               id: "webdav",
               enabled: true,
+              runtime_status: "started",
+              runtime_error: null,
               bind: "0.0.0.0:18080",
               embedded: true,
               mount_path: "/dav",
@@ -46,6 +50,8 @@ vi.mock("../src/services/auth.service", async () => {
             {
               id: "ftps",
               enabled: true,
+              runtime_status: "failed",
+              runtime_error: "证书目录权限不安全",
               bind: "0.0.0.0:2121",
               embedded: false,
               mount_path: null,
@@ -56,6 +62,8 @@ vi.mock("../src/services/auth.service", async () => {
             {
               id: "s3",
               enabled: true,
+              runtime_status: "started",
+              runtime_error: null,
               bind: "0.0.0.0:8080",
               embedded: true,
               mount_path: "/s3",
@@ -66,6 +74,8 @@ vi.mock("../src/services/auth.service", async () => {
             {
               id: "rsync",
               enabled: true,
+              runtime_status: "unknown",
+              runtime_error: null,
               bind: "0.0.0.0:873",
               embedded: false,
               mount_path: null,
@@ -127,8 +137,11 @@ describe("SystemInfo.vue", () => {
     expect(screen.getByText("ftps://localhost:2121")).toBeInTheDocument();
     expect(screen.getByText("http://localhost:3000/s3")).toBeInTheDocument();
     expect(screen.getByText("rsync://localhost:873/files")).toBeInTheDocument();
-    expect(screen.getAllByText("已启用").length).toBeGreaterThan(0);
-    expect(screen.getByText(/启动配置/)).toBeInTheDocument();
+    expect(screen.getByText("启动失败")).toBeInTheDocument();
+    expect(screen.getByText(/证书目录权限不安全/)).toBeInTheDocument();
+    expect(screen.getAllByText("启动成功").length).toBeGreaterThan(0);
+    expect(screen.getByText("仅配置启用")).toBeInTheDocument();
+    expect(screen.getByText(/协议开关反映配置/)).toBeInTheDocument();
     // 标准工具条（刷新 + 返回文件）
     expect(screen.getByText("刷新")).toBeInTheDocument();
     expect(screen.getByText("返回文件")).toBeInTheDocument();

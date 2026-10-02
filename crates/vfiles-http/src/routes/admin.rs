@@ -78,6 +78,8 @@ pub struct SystemInfoResponse {
 pub struct ProtocolInfoResponse {
     pub id: String,
     pub enabled: bool,
+    pub runtime_status: String,
+    pub runtime_error: Option<String>,
     pub bind: String,
     pub embedded: bool,
     pub mount_path: Option<String>,
@@ -132,10 +134,22 @@ async fn system_info(
     let uptime = process_start().elapsed().as_secs();
     let config = &state.config;
     let http_bind = listener_address(&config.http.host, config.http.port);
+    let (ftps_runtime_status, ftps_runtime_error) = if config.ftp.enabled {
+        match state.ftps_startup_status.read().await.clone() {
+            crate::FtpsStartupStatus::Unknown => ("unknown", None),
+            crate::FtpsStartupStatus::Disabled => ("disabled", None),
+            crate::FtpsStartupStatus::Started => ("started", None),
+            crate::FtpsStartupStatus::Failed(error) => ("failed", Some(error)),
+        }
+    } else {
+        ("disabled", None)
+    };
     let protocols = vec![
         ProtocolInfoResponse {
             id: "http".to_string(),
             enabled: true,
+            runtime_status: "started".to_string(),
+            runtime_error: None,
             bind: http_bind.clone(),
             embedded: false,
             mount_path: None,
@@ -146,6 +160,15 @@ async fn system_info(
         ProtocolInfoResponse {
             id: "webdav".to_string(),
             enabled: config.webdav.enabled,
+            runtime_status: if !config.webdav.enabled {
+                "disabled"
+            } else if config.webdav.embedded {
+                "started"
+            } else {
+                "unknown"
+            }
+            .to_string(),
+            runtime_error: None,
             bind: if config.webdav.embedded {
                 http_bind.clone()
             } else {
@@ -163,6 +186,8 @@ async fn system_info(
         ProtocolInfoResponse {
             id: "ftps".to_string(),
             enabled: config.ftp.enabled,
+            runtime_status: ftps_runtime_status.to_string(),
+            runtime_error: ftps_runtime_error,
             bind: listener_address(&config.ftp.host, config.ftp.port),
             embedded: false,
             mount_path: None,
@@ -176,6 +201,15 @@ async fn system_info(
         ProtocolInfoResponse {
             id: "s3".to_string(),
             enabled: config.s3.enabled,
+            runtime_status: if !config.s3.enabled {
+                "disabled"
+            } else if config.s3.embedded {
+                "started"
+            } else {
+                "unknown"
+            }
+            .to_string(),
+            runtime_error: None,
             bind: if config.s3.embedded {
                 http_bind.clone()
             } else {
@@ -190,6 +224,13 @@ async fn system_info(
         ProtocolInfoResponse {
             id: "rsync".to_string(),
             enabled: config.rsync.enabled,
+            runtime_status: if config.rsync.enabled {
+                "unknown"
+            } else {
+                "disabled"
+            }
+            .to_string(),
+            runtime_error: None,
             bind: listener_address("0.0.0.0", config.rsync.port),
             embedded: false,
             mount_path: None,
