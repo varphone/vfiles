@@ -35,7 +35,7 @@ use crate::{
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use rustls::ServerConnection;
-use std::{net::SocketAddr, ops::RangeInclusive, sync::Arc, time::Duration};
+use std::{future::Future, net::SocketAddr, ops::RangeInclusive, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
@@ -49,6 +49,13 @@ use tokio_util::codec::{Decoder, Framed};
 
 const MAX_AUTHENTICATION_DURATION: Duration = Duration::from_secs(60);
 const CONTROL_CHANNEL_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
+
+async fn write_with_timeout<T, F>(timeout: Duration, write: F) -> Result<T, tokio::time::error::Elapsed>
+where
+    F: Future<Output = T>,
+{
+    tokio::time::timeout(timeout, write).await
+}
 const CONTROL_CHANNEL_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
 trait AsyncReadAsyncWriteSendUnpin: AsyncRead + AsyncWrite + Send + Unpin {}
@@ -197,7 +204,7 @@ where
     let cmd_and_reply_stream: Framed<Box<dyn AsyncReadAsyncWriteSendUnpin>, FtpCodec> = codec.framed(Box::new(tcp_stream));
     let (mut reply_sink, mut command_source) = cmd_and_reply_stream.split();
 
-    match tokio::time::timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, async {
+    match write_with_timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, async {
         reply_sink.send(Reply::new(ReplyCode::ServiceReady, config.greeting)).await?;
         reply_sink.flush().await
     })
@@ -326,7 +333,7 @@ where
 
                     let handle_result = match tokio::time::timeout(CONTROL_CHANNEL_COMMAND_TIMEOUT, event_chain.handle(event)).await {
                         Ok(Err(e)) => Err(e),
-                        Ok(Ok(reply)) => match tokio::time::timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, reply_sink.send(reply)).await {
+                        Ok(Ok(reply)) => match write_with_timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, reply_sink.send(reply)).await {
                             Ok(result) => result,
                             Err(_) => Err(ControlChanError::new(ControlChanErrorKind::ControlChannelTimeout)),
                         },
@@ -348,7 +355,7 @@ where
                         return;
                     }
                     let (reply, close_connection) = handle_control_channel_error(logger.clone(), e);
-                    let result = tokio::time::timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, reply_sink.send(reply)).await;
+                    let result = write_with_timeout(CONTROL_CHANNEL_WRITE_TIMEOUT, reply_sink.send(reply)).await;
                     if !matches!(result, Ok(Ok(()))) {
                         slog::warn!(logger, "Could not send error reply to client");
                         cleanup_data_session(shared_session.clone(), switchboard_msg_tx.clone(), control_msg_rx, logger.clone()).await;
@@ -605,5 +612,18 @@ where
             Event::Command(cmd) => self.handle_command(cmd).await,
             Event::InternalMsg(msg) => self.handle_internal_msg(msg).await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CONTROL_CHANNEL_WRITE_TIMEOUT, write_with_timeout};
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn control_channel_write_times_out_when_the_sink_stalls() {
+        let result = write_with_timeout(Duration::from_millis(5), std::future::pending::<()>()).await;
+        assert!(result.is_err(), "a stalled control-channel write must time out");
+        assert_eq!(CONTROL_CHANNEL_WRITE_TIMEOUT, Duration::from_secs(60));
     }
 }
