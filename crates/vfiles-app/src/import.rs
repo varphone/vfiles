@@ -951,4 +951,69 @@ mod tests {
             "与目录同名应返回 PathConflict，实际: {result:?}"
         );
     }
+
+    #[tokio::test]
+    async fn failed_import_does_not_delete_blob_committed_by_concurrent_deduplication() {
+        let fixture = Fixture::new().await;
+        let mut failing_batch = fixture.batch(SnapshotMode::Off, 1);
+        let mut successful_batch = fixture.batch(SnapshotMode::Off, 1);
+        let entry_repo = fixture.entry_repo.clone();
+        let namespace_id = fixture.namespace_id;
+        let user_id = fixture.user_id;
+
+        let result = failing_batch
+            .import_file_stream_with_conditions_and_precommit(
+                &path("racing-target"),
+                reader("shared content"),
+                None,
+                None,
+                &[],
+                move || {
+                    Box::pin(async move {
+                        successful_batch
+                            .import_file_stream(
+                                &path("successful-copy.txt"),
+                                reader("shared content"),
+                                None,
+                                None,
+                            )
+                            .await?;
+                        entry_repo
+                            .create_entry(
+                                &namespace_id,
+                                &path("racing-target"),
+                                EntryKind::Directory,
+                                &user_id,
+                            )
+                            .await?;
+                        Ok(())
+                    })
+                },
+            )
+            .await;
+        assert!(
+            matches!(result, Err(DomainError::PathConflict { .. })),
+            "the directory created during precommit should reject the first import: {result:?}"
+        );
+
+        let winning_entry = fixture
+            .entry_repo
+            .find_by_path(&fixture.namespace_id, &path("successful-copy.txt"))
+            .await
+            .expect("successful copy lookup should work")
+            .expect("concurrent successful copy should remain committed");
+        let winning_version = fixture
+            .entry_repo
+            .find_version(&winning_entry.current_version_id.expect("file version"))
+            .await
+            .expect("successful version lookup should work");
+        let blob_id = winning_version.blob_id.expect("successful version blob");
+        let content = fixture
+            .blob_store
+            .get_blob(&blob_id)
+            .await
+            .expect("shared blob lookup should work")
+            .expect("failed import cleanup must preserve the successful upload's blob");
+        assert_eq!(content, b"shared content");
+    }
 }
