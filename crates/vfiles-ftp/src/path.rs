@@ -131,6 +131,9 @@ mod tests {
     fn rejects_invalid_characters() {
         assert!(normalize("a\\b").is_err());
         assert!(normalize("a\0b").is_err());
+        assert!(normalize("line\nbreak").is_err());
+        assert!(normalize("carriage\rreturn").is_err());
+        assert!(normalize("escape\u{001b}sequence").is_err());
     }
 
     #[test]
