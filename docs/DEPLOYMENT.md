@@ -277,6 +277,15 @@ VFILES_FTP_TLS_REQUIRED=true
 `/api/files/ftp-info` 会提供证书文件 SHA-256。客户端应通过可信渠道获取证书并核对指纹后安装信任；
 客户端尚未信任自签名证书时，TLS 可以加密链路，但不能可靠确认服务器身份。
 
+如果启动日志提示 FTPS 证书路径经过组用户或其他用户可写目录，FTP 会跳过启动，HTTP 服务仍会继续运行。日志会显示违规目录及权限模式。可用 `namei -l` 检查证书和私钥路径中的每一级目录：
+
+```bash
+namei -l "${VFILES_FTP_TLS_CERT:-${VFILES_STORAGE_ROOT:-data}/ftp-tls/ftp-cert.pem}"
+namei -l "${VFILES_FTP_TLS_KEY:-${VFILES_STORAGE_ROOT:-data}/ftp-tls/ftp-key.pem}"
+```
+
+移除违规目录的组用户或其他用户写权限，或将证书和私钥移到父目录均不可由组用户或其他用户写入的专用目录。粘滞目录（例如 `/tmp`）可作为受保护目录的上级路径；不要为绕过检查而放宽服务端权限校验。
+
 要点：
 
 - **只能看到自己的文件**：登录后 `/` 就是该用户的命名空间根目录，`..` 在根之上会被夹取，

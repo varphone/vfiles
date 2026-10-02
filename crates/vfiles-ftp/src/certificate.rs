@@ -180,7 +180,11 @@ fn reject_symlinked_parents(parent: &Path) -> io::Result<()> {
                             if writable_by_others && !sticky {
                                 return Err(io::Error::new(
                                     io::ErrorKind::PermissionDenied,
-                                    "FTPS 证书与私钥目录路径不能经过组用户或其他用户可写目录",
+                                    format!(
+                                        "FTPS 证书与私钥目录路径经过组用户或其他用户可写目录 {} (权限 {:04o})",
+                                        current.display(),
+                                        mode & 0o7777,
+                                    ),
                                 ));
                             }
                         }
@@ -401,6 +405,12 @@ mod tests {
         .expect_err("a group-writable ancestor must be rejected");
 
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            error
+                .to_string()
+                .contains(&shared_directory.display().to_string())
+        );
+        assert!(error.to_string().contains("0770"));
         assert!(!certificate_directory.exists());
         assert_eq!(
             fs::metadata(&shared_directory)
