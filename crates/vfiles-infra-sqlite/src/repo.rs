@@ -14609,4 +14609,43 @@ mod tree_page_query_plan_tests {
         pool.close().await;
         let _ = std::fs::remove_file(db_path);
     }
+
+    #[tokio::test]
+    async fn directory_picker_count_uses_covering_partial_index() {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-directory-count-plan-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should run");
+
+        let plan = sqlx::query(
+            r#"EXPLAIN QUERY PLAN
+            SELECT COUNT(*) FROM entries e
+            WHERE e.namespace_id = ? AND e.kind = 'directory' AND instr(e.path, '/') = 0"#,
+        )
+        .bind("plan-test")
+        .fetch_all(&pool)
+        .await
+        .expect("query plan should be available");
+        let details = plan
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>();
+        assert!(
+            details.iter().any(|detail| {
+                detail.contains("idx_entries_namespace_directories_path")
+                    && detail.contains("COVERING INDEX")
+            }),
+            "directory count should use the covering namespace/kind/path index: {details:?}"
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
 }
