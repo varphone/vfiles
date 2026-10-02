@@ -293,6 +293,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_unicode_line_separators_before_password_authentication() {
+        let username = Bytes::from("account\u{2028}suffix");
+        let user_cmd = super::User::new(username);
+        let session = Session::new(Arc::new(Vfs {}), "127.0.0.1:8080".parse().unwrap());
+        let session_arc = Arc::new(Mutex::new(session));
+        let ctx = super::CommandContext::test(
+            session_arc.clone(),
+            Arc::new(Auth {
+                short_auth: false,
+                auth_ok: false,
+            }),
+            Arc::new(DefaultUserDetailProvider {}),
+        );
+
+        let reply = user_cmd.handle(ctx).await.expect("USER should return a rejection");
+
+        assert!(reply.matches_code(ReplyCode::NotLoggedIn));
+        assert_eq!(session_arc.lock().await.state, SessionState::New);
+    }
+
+    #[tokio::test]
     async fn login_user_pass_no_cert() {
         test(Test {
             short_auth: false,
