@@ -65,3 +65,31 @@ describe("filesService.listAuditLogs", () => {
     });
   });
 });
+
+describe("filesService.getFilesPage cursor", () => {
+  it("sends and preserves the keyset cursor", async () => {
+    getMock.mockResolvedValue({
+      items: [],
+      total: 8,
+      limit: 2,
+      offset: 0,
+      has_more: true,
+      next_cursor: { kind: "file", path: "docs/a & b.txt" },
+    });
+
+    await expect(
+      filesService.getFilesPage("", {
+        limit: 2,
+        after: { kind: "file", path: "docs/a & b.txt" },
+      }),
+    ).resolves.toMatchObject({
+      next_cursor: { kind: "file", path: "docs/a & b.txt" },
+      has_more: true,
+    });
+    expect(getMock).toHaveBeenCalledWith(
+      "/files/list?limit=2&after_kind=file&after_path=docs%2Fa+%26+b.txt",
+      undefined,
+      { signal: undefined },
+    );
+  });
+});

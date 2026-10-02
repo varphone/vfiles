@@ -179,6 +179,14 @@ pub struct EntryPageDto {
     pub limit: usize,
     pub offset: usize,
     pub has_more: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<EntryCursorDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EntryCursorDto {
+    pub kind: String,
+    pub path: String,
 }
 
 impl From<Entry> for EntryDto {

@@ -7,6 +7,7 @@ type PageOpts = {
   commit?: string;
   limit?: number;
   offset?: number;
+  after?: { kind: "directory" | "file"; path: string };
   signal?: AbortSignal;
 };
 type PageResult = {
@@ -15,6 +16,7 @@ type PageResult = {
   limit: number;
   offset: number;
   has_more: boolean;
+  next_cursor?: { kind: "directory" | "file"; path: string };
 };
 
 const { getFilesMock, getFilesPageMock } = vi.hoisted(() => ({
@@ -167,6 +169,39 @@ describe("files store", () => {
 
     expect(store.files).toHaveLength(450);
     expect(store.hasMoreFiles).toBe(false);
+  });
+
+  it("uses the returned keyset cursor when loading the next page", async () => {
+    getFilesPageMock
+      .mockResolvedValueOnce({
+        items: [file("a.txt")],
+        total: 2,
+        limit: 200,
+        offset: 0,
+        has_more: true,
+        next_cursor: { kind: "file", path: "a.txt" },
+      })
+      .mockResolvedValueOnce({
+        items: [file("b.txt")],
+        total: 2,
+        limit: 200,
+        offset: 0,
+        has_more: false,
+      });
+
+    const store = useFilesStore();
+    await store.loadFiles("");
+    await store.loadMoreFiles();
+
+    expect(getFilesPageMock).toHaveBeenLastCalledWith(
+      "",
+      expect.objectContaining({
+        commit: undefined,
+        limit: 200,
+        after: { kind: "file", path: "a.txt" },
+      }),
+    );
+    expect(store.files.map((entry) => entry.name)).toEqual(["a.txt", "b.txt"]);
   });
 
   it("drops a page that resolves after the directory changed", async () => {

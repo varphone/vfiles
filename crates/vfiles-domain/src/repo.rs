@@ -563,6 +563,18 @@ pub trait EntryRepo {
         offset: u32,
     ) -> DomainResult<(Vec<Entry>, u64)>;
 
+    /// Count direct children without returning a page.
+    async fn count_children(
+        &self,
+        namespace_id: &NamespaceId,
+        parent_path: &NormalizedPath,
+    ) -> DomainResult<u64> {
+        let (_, total) = self
+            .find_children_page(namespace_id, parent_path, 0, 0)
+            .await?;
+        Ok(total)
+    }
+
     /// Return one indexed page of direct child directories and their total count.
     async fn find_directory_children_page(
         &self,

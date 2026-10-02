@@ -14,6 +14,9 @@ export const useFilesStore = defineStore("files", () => {
   // 服务端分页状态：total 为当前目录全量条目数，hasMoreFiles 表示还有未加载的页。
   const totalFiles = ref(0);
   const hasMoreFiles = ref(false);
+  const nextCursor = ref<
+    { kind: "directory" | "file"; path: string } | undefined
+  >();
   const loadingMoreFiles = ref(false);
   // 追加分页失败单独记录：已加载的条目不应因“加载更多”失败而整屏报错。
   const loadMoreError = ref<string | null>(null);
@@ -71,6 +74,7 @@ export const useFilesStore = defineStore("files", () => {
       files.value = page.items;
       totalFiles.value = page.total;
       hasMoreFiles.value = page.has_more;
+      nextCursor.value = page.next_cursor;
       currentPath.value = path;
     } catch (err) {
       if (requestId !== loadSequence) return;
@@ -78,6 +82,7 @@ export const useFilesStore = defineStore("files", () => {
       files.value = [];
       totalFiles.value = 0;
       hasMoreFiles.value = false;
+      nextCursor.value = undefined;
     } finally {
       if (requestId === loadSequence) {
         loading.value = false;
@@ -99,16 +104,18 @@ export const useFilesStore = defineStore("files", () => {
     loadMoreError.value = null;
 
     try {
+      const cursor = nextCursor.value;
       const page = await filesService.getFilesPage(path, {
         commit: browseCommit.value,
         limit: PAGE_SIZE,
-        offset: files.value.length,
+        ...(cursor ? { after: cursor } : { offset: files.value.length }),
         signal: controller.signal,
       });
       if (requestId !== loadSequence) return;
       files.value.push(...page.items);
       totalFiles.value = page.total;
       hasMoreFiles.value = page.has_more;
+      nextCursor.value = page.next_cursor;
     } catch (err) {
       if (requestId === loadSequence) {
         loadMoreError.value =

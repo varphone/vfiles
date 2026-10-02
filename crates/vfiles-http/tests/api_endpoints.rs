@@ -7195,6 +7195,70 @@ async fn directory_listing_pages_in_sql_with_directory_first_order() {
 }
 
 #[tokio::test]
+async fn live_directory_listing_pages_accept_a_path_cursor() {
+    let app = TestApp::new().await;
+    app.upload_version("", "c.txt", b"c", "seed").await;
+    app.upload_version("", "a.txt", b"a", "seed").await;
+    app.upload_version("", "b.txt", b"b", "seed").await;
+    let created = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/directories",
+            json!({ "path": "zdir" }),
+        )
+        .await;
+    assert_eq!(created.status(), StatusCode::OK);
+
+    let first = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=1&offset=0")
+                .body(Body::empty())
+                .expect("first page request should build"),
+        )
+        .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first = response_json(first).await;
+    let next_cursor = first["next_cursor"].clone();
+    assert_eq!(next_cursor["kind"], "directory");
+    assert_eq!(next_cursor["path"], "zdir");
+
+    let second = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=2&after_kind=directory&after_path=zdir")
+                .body(Body::empty())
+                .expect("cursor page request should build"),
+        )
+        .await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let second = response_json(second).await;
+    let names: Vec<String> = second["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| item["name"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(names, vec!["a.txt", "b.txt"]);
+    assert_eq!(second["total"], Value::from(4));
+    assert_eq!(second["has_more"], Value::Bool(true));
+    assert_eq!(second["next_cursor"]["kind"], "file");
+    assert_eq!(second["next_cursor"]["path"], "b.txt");
+
+    let final_page = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=2&after_kind=file&after_path=b.txt")
+                .body(Body::empty())
+                .expect("final cursor page request should build"),
+        )
+        .await;
+    let final_page = response_json(final_page).await;
+    assert_eq!(final_page["items"][0]["name"], "c.txt");
+    assert_eq!(final_page["has_more"], Value::Bool(false));
+}
+
+#[tokio::test]
 async fn legacy_directory_listing_rejects_directories_over_its_response_limit() {
     const ENTRY_COUNT: usize = 1001;
 

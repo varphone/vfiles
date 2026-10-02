@@ -663,6 +663,7 @@ export const filesService = {
       commit?: string;
       limit?: number;
       offset?: number;
+      after?: { kind: "directory" | "file"; path: string };
       signal?: AbortSignal;
     },
   ): Promise<{
@@ -671,6 +672,7 @@ export const filesService = {
     limit: number;
     offset: number;
     has_more: boolean;
+    next_cursor?: { kind: "directory" | "file"; path: string };
   }> {
     const endpoint = path
       ? `/files/list/${encodeURIComponent(path)}`
@@ -678,7 +680,12 @@ export const filesService = {
     const search = new URLSearchParams();
     if (opts?.commit) search.set("commit", opts.commit);
     if (opts?.limit !== undefined) search.set("limit", String(opts.limit));
-    if (opts?.offset !== undefined) search.set("offset", String(opts.offset));
+    if (opts?.after) {
+      search.set("after_kind", opts.after.kind);
+      search.set("after_path", opts.after.path);
+    } else if (opts?.offset !== undefined) {
+      search.set("offset", String(opts.offset));
+    }
     const url = search.size > 0 ? `${endpoint}?${search.toString()}` : endpoint;
 
     const response = await apiService.get<{
@@ -687,6 +694,7 @@ export const filesService = {
       limit: number;
       offset: number;
       has_more: boolean;
+      next_cursor?: { kind: "directory" | "file"; path: string };
     }>(url, undefined, { signal: opts?.signal });
     const payload = (response as any)?.data ?? response;
     return {
@@ -695,6 +703,12 @@ export const filesService = {
       limit: Number(payload?.limit ?? 0),
       offset: Number(payload?.offset ?? 0),
       has_more: Boolean(payload?.has_more),
+      next_cursor:
+        (payload?.next_cursor?.kind === "directory" ||
+          payload?.next_cursor?.kind === "file") &&
+        typeof payload.next_cursor.path === "string"
+          ? payload.next_cursor
+          : undefined,
     };
   },
 

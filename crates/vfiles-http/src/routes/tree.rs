@@ -10,7 +10,10 @@ use axum_extra::extract::cookie::CookieJar;
 
 use crate::{
     AppState,
-    dto::{CreateDirectoryRequest, EntryDto, EntryPageDto, MoveEntriesRequest, MoveEntryRequest},
+    dto::{
+        CreateDirectoryRequest, EntryCursorDto, EntryDto, EntryPageDto, MoveEntriesRequest,
+        MoveEntryRequest,
+    },
     error::{ApiError, ApiJson, ApiPath, ApiQuery, ApiResult},
     routes::protected_request_context,
 };
@@ -27,6 +30,8 @@ struct TreePageQuery {
     commit: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
+    after_kind: Option<String>,
+    after_path: Option<String>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -300,6 +305,8 @@ async fn list_directory_impl(
         commit: commit.map(str::to_owned),
         limit: Some(MAX_PAGE_LIMIT),
         offset: Some(0),
+        after_kind: None,
+        after_path: None,
     };
     let Json(page) = paginated_listing(state, namespace_id, path, &query).await?;
 
@@ -410,6 +417,7 @@ async fn paginated_directory_listing(
         limit,
         offset,
         has_more: end < total,
+        next_cursor: None,
     }))
 }
 
@@ -426,6 +434,37 @@ async fn paginated_listing(
         .unwrap_or(DEFAULT_PAGE_LIMIT)
         .clamp(1, MAX_PAGE_LIMIT);
     let offset = query.offset.unwrap_or(0);
+
+    let cursor = parse_tree_cursor(query)?;
+    if cursor.is_some() && (query.commit.is_some() || query.offset.is_some()) {
+        return Err(ApiError::Domain(DomainError::Validation {
+            message: "A live listing cursor cannot be combined with commit or offset".to_string(),
+        }));
+    }
+
+    if let Some(cursor) = cursor {
+        let (items, total, has_more) = state
+            .workspace_service
+            .live_children_after(namespace_id, path, Some(cursor), limit as u32)
+            .await?;
+        let mut items: Vec<EntryDto> = items.into_iter().map(Into::into).collect();
+        super::favorites::mark_favorite_status(state, namespace_id, &mut items).await?;
+        let next_cursor = has_more
+            .then(|| items.last())
+            .flatten()
+            .map(|item| EntryCursorDto {
+                kind: item.kind.clone(),
+                path: item.path.clone(),
+            });
+        return Ok(Json(EntryPageDto {
+            items,
+            total: total as usize,
+            limit,
+            offset: 0,
+            has_more,
+            next_cursor,
+        }));
+    }
 
     if let Some(commit) = query.commit.as_deref() {
         let snapshot_id = parse_snapshot_id(Some(commit))?.ok_or_else(|| {
@@ -454,6 +493,7 @@ async fn paginated_listing(
             limit,
             offset,
             has_more: end < total,
+            next_cursor: None,
         }));
     }
 
@@ -472,14 +512,45 @@ async fn paginated_listing(
     let total = total as usize;
     let offset = offset.min(total);
     let end = (offset + items.len()).min(total);
+    let has_more = end < total;
+    let next_cursor = has_more
+        .then(|| items.last())
+        .flatten()
+        .map(|item| EntryCursorDto {
+            kind: item.kind.clone(),
+            path: item.path.clone(),
+        });
 
     Ok(Json(EntryPageDto {
         items,
         total,
         limit,
         offset,
-        has_more: end < total,
+        has_more,
+        next_cursor,
     }))
+}
+
+fn parse_tree_cursor(query: &TreePageQuery) -> ApiResult<Option<(bool, String)>> {
+    match (query.after_kind.as_deref(), query.after_path.as_deref()) {
+        (None, None) => Ok(None),
+        (Some(kind), Some(path)) if kind == "directory" || kind == "file" => {
+            let normalized = NormalizedPath::new(path).map_err(|_| {
+                ApiError::Domain(DomainError::Validation {
+                    message: "Invalid listing cursor path".to_string(),
+                })
+            })?;
+            if normalized.as_str() != path {
+                return Err(ApiError::Domain(DomainError::Validation {
+                    message: "Invalid listing cursor path".to_string(),
+                }));
+            }
+            Ok(Some((kind == "directory", path.to_string())))
+        }
+        _ => Err(ApiError::Domain(DomainError::Validation {
+            message: "Listing cursor requires a valid after_kind and after_path".to_string(),
+        })),
+    }
 }
 
 pub async fn create_directory(

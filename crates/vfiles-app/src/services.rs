@@ -2326,6 +2326,42 @@ where
         Ok((items, total))
     }
 
+    /// Read a keyset page of live direct children. The cursor is the last
+    /// `(is_directory, path)` pair returned to the client.
+    pub async fn live_children_after(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+        after: Option<(bool, String)>,
+        limit: u32,
+    ) -> DomainResult<(Vec<TreeItem>, u64, bool)> {
+        if !path.as_str().is_empty() {
+            let entry = self
+                .entry_repo
+                .find_by_path(namespace_id, path)
+                .await?
+                .ok_or_else(|| DomainError::NotFound {
+                    resource: "entry".to_string(),
+                })?;
+
+            if entry.entry_type != EntryKind::Directory {
+                return Err(DomainError::Validation {
+                    message: "Path is not a directory".to_string(),
+                });
+            }
+        }
+
+        let total = self.entry_repo.count_children(namespace_id, path).await?;
+        let mut children = self
+            .entry_repo
+            .find_children_after(namespace_id, path, after, limit.saturating_add(1))
+            .await?;
+        let has_more = children.len() > limit as usize;
+        children.truncate(limit as usize);
+        let items = self.build_tree_items(children).await?;
+        Ok((items, total, has_more))
+    }
+
     /// Read a page of direct child directories without loading sibling files.
     pub async fn live_directory_children_page(
         &self,
