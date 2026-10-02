@@ -75,6 +75,14 @@ impl Port {
         }
     }
 
+    fn validate_address(addr: &str, control_peer: IpAddr) -> Result<SocketAddrV4, PortAddressError> {
+        let addr = Self::parse_address(addr).ok_or(PortAddressError::InvalidFormat)?;
+        if !Self::matches_control_peer(control_peer, *addr.ip()) {
+            return Err(PortAddressError::PeerMismatch(addr));
+        }
+        Ok(addr)
+    }
+
     // modifies the session by adding channels that are used to communicate with the data connection
     // processing loop.
     #[tracing_attributes::instrument(skip_all)]
@@ -112,23 +120,25 @@ where
             ..
         } = args;
 
-        let Some(addr) = Self::parse_address(&self.addr) else {
-            return Ok(Reply::new(ReplyCode::ParameterSyntaxError, "Invalid address format"));
-        };
-
         let control_peer_ip = session.lock().await.source.ip();
-        if !Self::matches_control_peer(control_peer_ip, *addr.ip()) {
-            slog::debug!(
-                logger,
-                "Rejecting active data connection to {:?}: target IP does not match control peer {:?}",
-                addr,
-                control_peer_ip
-            );
-            return Ok(Reply::new(
-                ReplyCode::CantOpenDataConnection,
-                "Active data address must match the control connection",
-            ));
-        }
+        let addr = match Self::validate_address(&self.addr, control_peer_ip) {
+            Ok(addr) => addr,
+            Err(PortAddressError::InvalidFormat) => {
+                return Ok(Reply::new(ReplyCode::ParameterSyntaxError, "Invalid address format"));
+            }
+            Err(PortAddressError::PeerMismatch(addr)) => {
+                slog::debug!(
+                    logger,
+                    "Rejecting active data connection to {:?}: target IP does not match control peer {:?}",
+                    addr,
+                    control_peer_ip
+                );
+                return Ok(Reply::new(
+                    ReplyCode::CantOpenDataConnection,
+                    "Active data address must match the control connection",
+                ));
+            }
+        };
 
         let stream = match tokio::time::timeout(ACTIVE_DATA_CONNECT_TIMEOUT, TcpStream::connect(addr)).await {
             Ok(Ok(stream)) => stream,
@@ -146,5 +156,48 @@ where
         datachan::spawn_processing(logger, session, stream).await;
 
         Ok(Reply::new(ReplyCode::CommandOkay, "PORT command successful"))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PortAddressError {
+    InvalidFormat,
+    PeerMismatch(SocketAddrV4),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Port, PortAddressError};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn port_accepts_only_a_well_formed_address_for_the_control_peer() {
+        let peer = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 4));
+        let address = Port::validate_address("192,0,2,4,7,138", peer).expect("client address should be accepted");
+        assert_eq!(address.ip(), &Ipv4Addr::new(192, 0, 2, 4));
+        assert_eq!(address.port(), 1930);
+
+        let mapped_peer = IpAddr::V6(Ipv6Addr::from((0xffff_u128 << 32) | u128::from(Ipv4Addr::new(192, 0, 2, 4).to_bits())));
+        assert!(Port::validate_address("192,0,2,4,7,138", mapped_peer).is_ok());
+    }
+
+    #[test]
+    fn port_rejects_third_party_and_malformed_targets_before_connecting() {
+        let control_peer = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 4));
+        assert!(
+            matches!(
+                Port::validate_address("198,51,100,9,7,138", control_peer),
+                Err(PortAddressError::PeerMismatch(_))
+            ),
+            "PORT must not authorize a connection to another host"
+        );
+
+        for malformed in ["192,0,2,4,7", "192,0,2,4,7,138,1", "192,0,2,256,7,138", "192,0,2,-1,7,138", "192.0.2.4,7,138"] {
+            assert_eq!(
+                Port::validate_address(malformed, control_peer),
+                Err(PortAddressError::InvalidFormat),
+                "invalid PORT target should be rejected: {malformed}"
+            );
+        }
     }
 }
