@@ -28,7 +28,7 @@ use vfiles_app::{
     NamespaceService, RateLimitPolicy, SnapshotMode,
 };
 use vfiles_domain::{
-    DomainResult, EntryRepo, NamespaceRepo, NewWebdavLock, NormalizedPath, Role, UserRepo,
+    AdminRepo, DomainResult, EntryRepo, NamespaceRepo, NewWebdavLock, NormalizedPath, Role, UserRepo,
     WebdavLockRepo, WebdavLockScope,
 };
 use vfiles_ftp::{
@@ -37,7 +37,8 @@ use vfiles_ftp::{
 };
 use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteEntryRepo, SqliteMigrations, SqliteNamespaceRepo,
-    SqlitePoolFactory, SqliteSessionRepo, SqliteSnapshotRepo, SqliteUserRepo, SqliteWebdavLockRepo,
+    SqliteAdminRepo, SqlitePoolFactory, SqliteSessionRepo, SqliteSnapshotRepo, SqliteUserRepo,
+    SqliteWebdavLockRepo,
 };
 
 const USERNAME: &str = "ftpuser";
@@ -1738,6 +1739,34 @@ async fn mkd_doubles_quotes_in_the_created_path_reply() {
         .cwd("mkd\"dir")
         .expect("the exact created pathname should remain usable");
     client.quit().expect("quit should succeed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_role_rejections_count_toward_the_login_limit() {
+    let harness =
+        Harness::start_with_limits_and_file_size(SnapshotMode::Off, 1, 8, 60, None, 1).await;
+    let admin_repo = SqliteAdminRepo::new(harness.pool.clone());
+    admin_repo
+        .update_user_role(&harness.user_id, Role::User)
+        .await
+        .expect("test user should become a disallowed role");
+
+    let mut role_rejected = harness.secure_client();
+    assert!(
+        role_rejected.login(USERNAME, PASSWORD).is_err(),
+        "valid credentials with a disallowed role must not log in"
+    );
+    drop(role_rejected);
+
+    admin_repo
+        .update_user_role(&harness.user_id, Role::Admin)
+        .await
+        .expect("test user should become an allowed role");
+    let mut after_role_change = harness.secure_client();
+    assert!(
+        after_role_change.login(USERNAME, PASSWORD).is_err(),
+        "the role rejection must have consumed the per-login failure allowance"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
