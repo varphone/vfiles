@@ -497,6 +497,62 @@ async fn ftps_rejects_repeated_control_channel_upgrade() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftps_rejects_passive_data_connections_from_another_control_session() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut victim = harness.client();
+    let passive_response = victim
+        .custom_command("EPSV", &[Status::ExtendedPassiveMode])
+        .expect("victim should allocate a passive data port");
+    let passive_text = String::from_utf8_lossy(&passive_response.body);
+    let passive_port = passive_text
+        .split('(')
+        .nth(1)
+        .and_then(|value| value.split(')').next())
+        .and_then(|value| value.split('|').find_map(|part| part.parse::<u16>().ok()))
+        .expect("EPSV response should contain a port");
+    let victim_data_addr = std::net::SocketAddr::new(
+        harness.handle.local_addr().ip(),
+        passive_port,
+    );
+
+    // The attacker uses a separate Rustls client configuration and control session, but points
+    // its next passive data socket at the victim's EPSV listener.
+    let mut attacker = harness
+        .secure_client()
+        .passive_stream_builder(move |_| {
+            std::net::TcpStream::connect_timeout(
+                &victim_data_addr,
+                std::time::Duration::from_secs(2),
+            )
+            .map_err(suppaftp::FtpError::ConnectionError)
+        });
+    attacker
+        .login(USERNAME, PASSWORD)
+        .expect("attacker control session should log in");
+    let (_, mut candidate) = attacker
+        .custom_data_command("NLST", &[Status::AboutToSend])
+        .expect("attacker should be able to attempt a passive data connection");
+
+    // A full handshake is enough to exercise the server's session-reuse check. The read timeout
+    // also bounds this probe if a vulnerable server mistakenly accepts the attacker's TLS session
+    // and waits for the victim's transfer command.
+    candidate
+        .get_ref()
+        .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+        .expect("attacker data socket should accept a read timeout");
+    let mut probe = [0_u8; 1];
+    let _ = std::io::Read::read(&mut candidate, &mut probe);
+    drop(candidate);
+    drop(attacker);
+
+    let names = victim
+        .nlst(Some("."))
+        .expect("invalid same-IP TLS session must not consume the victim's passive listener");
+    assert!(names.is_empty(), "new namespace should have no files: {names:?}");
+    victim.quit().expect("victim control session should remain usable");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn disabled_user_stops_receiving_a_directory_listing_in_progress() {
     const ENTRY_COUNT: usize = 3_500;
     const NAME_PADDING: usize = 850;
