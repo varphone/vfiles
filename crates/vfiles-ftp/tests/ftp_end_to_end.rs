@@ -1869,6 +1869,82 @@ async fn ftp_stor_cannot_create_below_a_webdav_locked_null_resource() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_stor_rechecks_webdav_locks_acquired_during_upload() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.client();
+    let original = b"original unlocked version".to_vec();
+    let mut original_reader = std::io::Cursor::new(original.clone());
+    client
+        .put_file("lock-during-upload.bin", &mut original_reader)
+        .expect("original file should upload");
+
+    let (upload_started_tx, upload_started_rx) = tokio::sync::oneshot::channel();
+    let (resume_writing_tx, resume_writing_rx) = std::sync::mpsc::channel();
+    let transfer = tokio::task::spawn_blocking(move || {
+        let (_, mut data_stream) = client
+            .custom_data_command("STOR lock-during-upload.bin", &[Status::AboutToSend])
+            .expect("replacement STOR should start");
+        data_stream
+            .get_ref()
+            .set_write_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("data write timeout should be set");
+        client
+            .get_ref()
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("control read timeout should be set");
+
+        let first_chunk = vec![0x4c; 1_024];
+        std::io::Write::write_all(&mut data_stream, &first_chunk)
+            .expect("initial replacement bytes should reach the server");
+        upload_started_tx
+            .send(())
+            .expect("test should still be waiting for the upload");
+        resume_writing_rx
+            .recv()
+            .expect("test should resume the upload writer after locking");
+
+        let remainder = vec![0x4c; 256 * 1024];
+        let write_result = std::io::Write::write_all(&mut data_stream, &remainder);
+        let control_result = client.close_data_connection(data_stream);
+        (write_result, control_result)
+    });
+
+    upload_started_rx
+        .await
+        .expect("replacement should reach its data phase");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    lock_webdav_path(
+        &harness,
+        "lock-during-upload.bin",
+        "opaquelocktoken:ftp-stor-race",
+        false,
+    )
+    .await;
+    resume_writing_tx
+        .send(())
+        .expect("upload writer should still be alive");
+
+    let (_write_result, control_result) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), transfer)
+            .await
+            .expect("locked replacement should stop promptly")
+            .expect("FTP client task should finish");
+    assert!(
+        control_result.is_err(),
+        "SQLite should reject the upload when a WebDAV lock appears after STOR preflight"
+    );
+    assert_eq!(
+        harness
+            .read("lock-during-upload.bin")
+            .await
+            .expect("original version should remain readable")
+            .bytes,
+        original,
+        "an upload must not replace content protected by a newly acquired lock"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ftp_rmd_cannot_remove_a_webdav_locked_directory() {
     let harness = Harness::start(SnapshotMode::PerFile, 1).await;
     let mut client = harness.client();
