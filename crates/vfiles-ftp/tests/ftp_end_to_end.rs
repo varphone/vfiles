@@ -2235,6 +2235,42 @@ async fn disabled_user_cannot_keep_control_session_alive_with_noop() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn password_rotation_revokes_existing_ftp_session_and_old_credentials() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut established = harness.client();
+    let new_password = "ftp-password-rotated-987654";
+    let new_hash = AuthService::hash_password_for_storage(new_password)
+        .expect("new password hash should build");
+    harness
+        .user_repo
+        .update_password(&harness.user_id, &new_hash)
+        .await
+        .expect("password should rotate");
+
+    let operation = tokio::task::spawn_blocking(move || established.mkdir("must-not-be-created"))
+        .await
+        .expect("FTP client task should finish");
+    assert!(operation.is_err(), "password rotation must revoke the live session");
+    assert!(
+        harness.entry_paths().await.is_empty(),
+        "revoked session must not create entries"
+    );
+
+    let mut old_credentials = harness.secure_client();
+    assert!(
+        old_credentials.login(USERNAME, PASSWORD).is_err(),
+        "the previous password must no longer authenticate"
+    );
+
+    let mut replacement = harness.secure_client();
+    replacement
+        .login(USERNAME, new_password)
+        .expect("rotated password should authenticate");
+    replacement.noop().expect("replacement session should remain usable");
+    replacement.quit().expect("replacement session should close");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn disabled_user_cannot_bypass_revalidation_with_invalid_commands() {
     let harness = Harness::start(SnapshotMode::Off, 1).await;
     let mut client = harness.client();
