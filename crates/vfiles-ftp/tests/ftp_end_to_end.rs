@@ -648,6 +648,143 @@ async fn ftps_keeps_passive_listener_after_rejecting_another_sessions_tls() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftps_data_handshake_tickets_cannot_replace_control_session_resumption() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let certificate_path = harness._temp_dir.path().join("ftp-tls/ftp-cert.pem");
+    let certificate_pem = std::fs::read(certificate_path).expect("test certificate");
+    let certificate = CertificateDer::pem_slice_iter(&certificate_pem)
+        .next()
+        .expect("PEM certificate should be present")
+        .expect("PEM certificate should parse");
+    let mut victim_roots = RootCertStore::empty();
+    victim_roots
+        .add(certificate.clone())
+        .expect("test certificate should be trusted");
+    let victim_tls_config = Arc::new(
+        ClientConfig::builder()
+            .with_root_certificates(victim_roots)
+            .with_no_client_auth(),
+    );
+    let mut attacker_roots = RootCertStore::empty();
+    attacker_roots
+        .add(certificate)
+        .expect("test certificate should be trusted");
+    let attacker_tls_config = Arc::new(
+        ClientConfig::builder()
+            .with_root_certificates(attacker_roots)
+            .with_no_client_auth(),
+    );
+    let mut victim = RustlsFtpStream::connect(harness.handle.local_addr())
+        .expect("victim should connect")
+        .into_secure(
+            RustlsConnector::from(Arc::clone(&victim_tls_config)),
+            "localhost",
+        )
+        .expect("victim control channel should use FTPS");
+    victim
+        .login(USERNAME, PASSWORD)
+        .expect("victim should log in");
+    let secret = b"visible only to the owning FTPS session";
+    victim
+        .put_file("ftp050-proof.txt", &mut std::io::Cursor::new(secret))
+        .expect("victim should upload a proof file");
+
+    let passive_response = victim
+        .custom_command("EPSV", &[Status::ExtendedPassiveMode])
+        .expect("victim should allocate a passive data port");
+    let passive_text = String::from_utf8_lossy(&passive_response.body);
+    let passive_port = passive_text
+        .split('(')
+        .nth(1)
+        .and_then(|value| value.split(')').next())
+        .and_then(|value| value.split('|').find_map(|part| part.parse::<u16>().ok()))
+        .expect("EPSV response should contain a port");
+    let victim_data_addr = std::net::SocketAddr::new(
+        harness.handle.local_addr().ip(),
+        passive_port,
+    );
+
+    let server_name = || {
+        suppaftp::rustls::pki_types::ServerName::try_from("localhost")
+            .expect("server name should parse")
+    };
+    let mut first_candidate = suppaftp::rustls::StreamOwned::new(
+        suppaftp::rustls::ClientConnection::new(
+            Arc::clone(&attacker_tls_config),
+            server_name(),
+        )
+        .expect("first attacker TLS session should build"),
+        std::net::TcpStream::connect_timeout(&victim_data_addr, std::time::Duration::from_secs(2))
+            .expect("attacker should reach the passive port"),
+    );
+    first_candidate
+        .get_ref()
+        .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+        .expect("attacker data socket should accept a read timeout");
+    let mut probe = [0_u8; 1];
+    let _ = std::io::Read::read(&mut first_candidate, &mut probe);
+    assert_eq!(
+        first_candidate.conn.handshake_kind(),
+        Some(suppaftp::rustls::HandshakeKind::Full),
+        "the attacker starts without the victim's control-channel ticket"
+    );
+    drop(first_candidate);
+
+    let mut second_candidate = suppaftp::rustls::StreamOwned::new(
+        suppaftp::rustls::ClientConnection::new(
+            Arc::clone(&attacker_tls_config),
+            server_name(),
+        )
+        .expect("second attacker TLS session should build"),
+        std::net::TcpStream::connect_timeout(&victim_data_addr, std::time::Duration::from_secs(2))
+            .expect("the passive listener should continue accepting candidates"),
+    );
+    second_candidate
+        .get_ref()
+        .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+        .expect("attacker data socket should accept a read timeout");
+    let _ = std::io::Read::read(&mut second_candidate, &mut probe);
+    assert_eq!(
+        second_candidate.conn.handshake_kind(),
+        Some(suppaftp::rustls::HandshakeKind::Full),
+        "a data-channel handshake must not mint a ticket that authenticates another data channel"
+    );
+    drop(second_candidate);
+
+    victim
+        .custom_command("NLST", &[Status::AboutToSend])
+        .expect("victim should start the transfer on its existing passive listener");
+    let data_socket = std::net::TcpStream::connect_timeout(
+        &victim_data_addr,
+        std::time::Duration::from_secs(2),
+    )
+    .expect("invalid attacker tickets must not consume the victim's listener");
+    data_socket
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .expect("victim data socket should accept a read timeout");
+    let mut data_stream = suppaftp::rustls::StreamOwned::new(
+        suppaftp::rustls::ClientConnection::new(
+            Arc::clone(&victim_tls_config),
+            server_name(),
+        )
+        .expect("victim data TLS session should build"),
+        data_socket,
+    );
+    let mut listing = Vec::new();
+    std::io::Read::read_to_end(&mut data_stream, &mut listing)
+        .expect("the control-session ticket should authorize the victim's transfer");
+    assert_eq!(
+        data_stream.conn.handshake_kind(),
+        Some(suppaftp::rustls::HandshakeKind::Resumed),
+        "the victim's data channel must resume its control TLS session"
+    );
+    assert!(
+        String::from_utf8_lossy(&listing).contains("ftp050-proof.txt"),
+        "the victim should receive its listing after both attacker candidates are rejected"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn disabled_user_stops_receiving_a_directory_listing_in_progress() {
     const ENTRY_COUNT: usize = 3_500;
     const NAME_PADDING: usize = 850;
