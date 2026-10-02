@@ -137,6 +137,12 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unicode_line_separators_in_paths() {
+        assert!(normalize("line\u{2028}break").is_err());
+        assert!(normalize("paragraph\u{2029}break").is_err());
+    }
+
+    #[test]
     fn enforces_path_byte_and_segment_limits() {
         let at_byte_limit = "é".repeat(2_048);
         assert_eq!(at_byte_limit.len(), 4 * 1024);
