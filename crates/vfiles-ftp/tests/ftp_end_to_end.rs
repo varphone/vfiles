@@ -97,6 +97,7 @@ impl Harness {
             max_connections,
             idle_timeout_secs,
             Some(1024 * 1024),
+            5,
         )
         .await
     }
@@ -107,6 +108,7 @@ impl Harness {
         max_connections: u32,
         idle_timeout_secs: u64,
         max_file_size_bytes: Option<u64>,
+        max_login_attempts: u32,
     ) -> Self {
         let test_slot = TEST_HARNESS_SLOTS
             .acquire()
@@ -172,7 +174,7 @@ impl Harness {
         let policy = RateLimitPolicy {
             enabled: true,
             window_ms: 60_000,
-            max_attempts: 5,
+            max_attempts: max_login_attempts,
         };
 
         let authenticator = Arc::new(VfilesAuthenticator::new(
@@ -1019,7 +1021,8 @@ async fn disabled_user_stops_receiving_a_file_during_retr() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn disabled_user_cannot_finish_a_stor_started_before_revocation() {
     const FILE_BYTES: usize = 16 * 1024 * 1024;
-    let harness = Harness::start_with_limits_and_file_size(SnapshotMode::Off, 1, 8, 60, None).await;
+    let harness =
+        Harness::start_with_limits_and_file_size(SnapshotMode::Off, 1, 8, 60, None, 5).await;
     let mut client = harness.client();
     let (upload_started_tx, upload_started_rx) = tokio::sync::oneshot::channel();
     let (resume_writing_tx, resume_writing_rx) = std::sync::mpsc::channel();
@@ -1342,6 +1345,40 @@ async fn ftp_login_rate_limit_combines_email_case_variants() {
     assert!(
         client.login("ftp@example.com", PASSWORD).is_err(),
         "email casing must not create fresh FTP failure counters"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_login_rate_limit_aggregates_password_spraying_across_usernames() {
+    let harness = Harness::start_with_limits_and_file_size(
+        SnapshotMode::Off,
+        1,
+        8,
+        60,
+        Some(1024 * 1024),
+        1,
+    )
+    .await;
+    let mut client = harness.secure_client();
+
+    // The per-login limit is one attempt; the aggregate source limit is ten attempts.
+    for index in 0..10 {
+        client
+            .custom_command(format!("USER spray-{index}"), &[Status::NeedPassword])
+            .expect("each new username should receive one password attempt");
+        client
+            .custom_command("PASS wrong-password", &[Status::NotLoggedIn])
+            .expect("the individual bad-password attempt should be rejected");
+    }
+
+    client
+        .custom_command(format!("USER {USERNAME}"), &[Status::NeedPassword])
+        .expect("the valid username should reach the password step");
+    assert!(
+        client
+            .custom_command(format!("PASS {PASSWORD}"), &[Status::LoggedIn])
+            .is_err(),
+        "source-level throttling must stop correct credentials after username spraying"
     );
 }
 
