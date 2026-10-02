@@ -1,277 +1,64 @@
-# VFiles Performance Optimization Guide
+# HTTP 性能审核与优化记录
 
-This document outlines performance optimizations and best practices for the VFiles application.
+本文记录 HTTP 性能审核、已实施的改进和仍需结合部署负载判断的事项。审核基线来自 v2.6.11 代码；下方数字来自本地回环、合成数据或临时对照测试，不能作为生产环境 SLA。数据库设备、操作系统缓存、网络、请求分布和并发模型都会改变结果。
 
-## Current Performance Characteristics
+## 已实施的改进
 
-### Strengths
-- **SQLite WAL mode**: Provides good concurrent read performance
-- **Content-addressable storage**: Efficient for large files and deduplication
-- **Chunked uploads**: Allows resumable uploads and memory-efficient processing
-- **Async/Await**: Non-blocking I/O operations throughout
+| 问题 | 审核证据 | 改进 | 验证 |
+| --- | --- | --- | --- |
+| HTTP/2 小包发送延迟 | 本地复用连接请求 27.6 KB 目录 JSON 时，HTTP/2 总耗时 p50 为 45.42 ms、p95 为 46.89 ms；临时启用 `TCP_NODELAY` 后分别为 2.43 ms、3.65 ms。HTTP/1 对照 p50 为 2.35 ms 和 2.05 ms。 | 接受 TCP 连接后启用 `TCP_NODELAY`。设置失败时记录警告，不中断连接接入。 | `http_server::tests::accepted_streams_enable_tcp_nodelay` 检查 socket 选项；HTTP 服务端测试覆盖连接上限、超时和 HTTP/2 设置。 |
+| 目录选择器 COUNT 扫描 | 100,000 条目数据集上，查询计划此前按命名空间扫描非覆盖索引。临时复合索引对照测试的 40 次串行请求中，p50 从 28.74 ms 降至 2.27 ms，p95 从 32.16 ms 降至 3.70 ms。 | 添加只包含目录的部分索引，并为根目录目录计数添加更窄的部分索引。 | 查询计划测试要求目录计数使用覆盖索引；完整 SQLite 测试覆盖迁移。 |
+| 根目录总数扫描与深 `offset` 分页 | 100,000 条目数据集中，`offset=0` 的根列表 p50 为 8.63 ms、p95 为 10.87 ms；`offset=99900` 的 p50 为 21.39 ms、p95 为 25.39 ms。并发 32 时，浅页 p50 / p95 约为 102 / 168 ms，深页约为 186 / 247 ms。根总数查询此前扫描命名空间下所有路径。 | 根条目总数改用只含直接子项的覆盖部分索引。HTTP 实时目录列表增加游标分页；客户端「加载更多」在服务端提供游标时使用 `(kind, path)` 续读。`offset` 参数仍供兼容调用方使用。 | SQLite 查询计划测试验证根计数索引；HTTP API 测试覆盖目录优先顺序、跨目录到文件的游标切换、连续分页和非法游标。客户端 store 测试验证续页使用游标。 |
+| 已压缩文件重复压缩 | 70 MB 目录压缩包本地构建约需 1 秒；审核代码对所有归档文件使用 Deflate。 | JPEG、PNG、WebP、AVIF、常见音视频、字体和压缩包等已压缩格式写入 ZIP 时使用 `Stored`；文本等其他格式继续使用 `Deflated`。归档仍先生成到临时文件，再返回响应。 | 应用服务测试检查 JPEG 使用 `Stored`、文本使用 `Deflated`；现有归档测试验证内容可读。 |
+| 预压缩静态资源的冗余打开 | 文件系统静态资源命中 `.br` 或 `.gz` 时，旧流程会先打开未压缩文件，再打开编码变体。 | 先尝试客户端可接受的 `.br`、`.gz` 变体；变体未命中时再打开未压缩文件。仍对每个文件执行 canonical path 检查。 | 静态资源测试覆盖仅有压缩变体、编码协商、拒绝未压缩内容和越界符号链接。 |
+| 每个 HTTP 请求写两条访问日志 | 本地每秒 1,000 次健康检查的对照中，默认日志约 9,517 req/s，关闭 INFO 后约 9,585 req/s；p95 分别为 0.111 ms 和 0.086 ms。默认日志约为每 1,000 个请求 234 KB。 | 合并为一条结构化完成事件，记录请求 ID、方法、脱敏路径、状态码和 `response_ready_us`。该时长到 handler 返回响应为止，不代表响应体传输完成时间。 | 请求日志测试捕获 tracing event，要求每个请求只写一条事件并包含时长字段；原有凭据脱敏测试继续运行。 |
 
-### Areas for Optimization
+目录计数索引缩小了扫描范围，但会增加少量索引存储和条目写入成本。游标分页消除了分页查询对先前页行数的重复跳过；为保持现有「已加载数量 / 总数」界面，游标请求仍查询精确总数。根目录计数现在只扫描根条目索引，条目数很大的根目录仍会产生与根条目数相关的计数工作。
 
-## 1. Database Optimizations
+## 尚未实施的候选项
 
-### Connection Pool Tuning
-```rust
-// Current: Basic pool configuration
-let pool = SqlitePoolOptions::new()
-    .max_connections(10)
-    .connect(&database_url)
-    .await?;
+| 项目 | 当前证据 | 处理依据 |
+| --- | --- | --- |
+| 文件名子串搜索的 FTS trigram 索引 | 100,000 条目下，无匹配查询 p50 约 10.78 ms、p95 约 14.76 ms；约 100 个匹配时 p50 约 13.37 ms、p95 约 23.23 ms。 | 当前延迟尚不足以证明索引带来的收益能抵消数据库占用、条目写入成本和迁移回填成本。若生产搜索延迟成为主要问题，再用真实查询分布评估 FTS5 trigram，并验证标点、Unicode、短于 3 字符的查询和大小写语义。 |
+| 连接池和并发上限调优 | 当前 HTTP 活跃连接上限为 512、HTTP/2 单连接并发流上限为 32、API 处理许可为 128；SQLite 连接池使用 SQLx 默认连接上限。256 个并发 HTTP/1 大列表请求中，206 个返回 200、50 个快速返回 429，其余请求无其他状态码；突发后请求恢复为 200。 | 当前限制会在过载时拒绝部分请求，并保留服务恢复能力。没有部署级 CPU、磁盘、连接等待和并发分布数据，暂不全局提高限制或连接池大小。应先按部署资源复测队列等待、429 比例和恢复时间，再调整配置。 |
+| API 列表、搜索和历史响应缓存 | 用户相关 JSON 默认使用 `private, no-store`；文件和缩略图已有私有重新验证策略。审核未发现缓存带来的明确服务器 CPU 瓶颈。 | 列表、搜索和历史结果会随目录、权限和历史版本变化。启用缓存前需定义失效规则，并验证用户与命名空间隔离。当前保留禁止存储策略。 |
+| 归档响应流式生成 | 当前 ZIP 完整写入临时文件后才返回响应；70 MB 本地归档约需 1 秒。 | 这会延迟首字节，但能够在返回前确定归档大小。改为直接流式输出前，需要评估取消、临时资源清理、Content-Length 变化以及 Range、ETag 等响应语义。当前先减少已压缩文件的重复压缩。 |
+| 静态资源缓存与前端包体 | 带哈希的资源缓存一年并标记 immutable，`index.html` 使用 `no-cache`。当前构建检查通过；Brotli 为 804.4 / 833.8 KB、gzip 为 877.8 / 912.6 KB、未压缩为 1,926.8 / 2,026.1 KB，均已使用约 95% 至 97% 的现有预算。 | 保持当前缓存策略和体积检查。新增前端依赖或资源时关注预算余量；未发现需要降低缓存时长的证据。 |
 
-// Optimized: Production-ready configuration
-let pool = SqlitePoolOptions::new()
-    .max_connections(20)           // Increase for higher concurrency
-    .min_connections(5)            // Keep some connections warm
-    .max_lifetime(Duration::hours(1))  // Recycle connections
-    .idle_timeout(Duration::minutes(10)) // Close idle connections
-    .connect(&database_url)
-    .await?;
-```
+搜索索引、连接池、API 缓存和归档流式输出仍是候选优化，不代表已经确认存在性能缺陷。实施前需要采集相应的生产查询、资源和协议行为数据。根目录精确总数也可通过维护计数或允许未知总数减少每页聚合工作；这会增加目录变更时的原子更新和一致性要求，应先评估实际计数延迟。
 
-### Query Optimizations
+## 当前关键资源限制
 
-#### Add Database Indexes
-Current indexes are minimal. Consider adding:
-```sql
--- For file browsing performance
-CREATE INDEX idx_entries_namespace_path ON entries(namespace_id, path);
-CREATE INDEX idx_entries_parent ON entries(namespace_id, path) WHERE kind = 'directory';
+| 资源 | 当前限制或行为 |
+| --- | --- |
+| HTTP 连接 | 最多 512 个活跃连接；超限的新连接会关闭。 |
+| HTTP/2 | 每个连接最多 32 个并发 stream；接受的 TCP socket 启用 `TCP_NODELAY`。 |
+| API 处理 | 全局 API 处理许可为 128；饱和时快速返回过载响应。 |
+| SQLite | WAL、`synchronous=NORMAL`、5 秒 busy timeout；连接池未覆盖 SQLx 默认 max connections。 |
+| 前端静态文件 | 文件系统模式按请求 canonicalize 文件并检查其仍处于前端根目录下；优先读取预压缩文件。 |
+| ZIP 归档 | 使用容量为 2 的有界 channel 和 64 KiB 读取缓冲区；完整归档写入临时文件后响应。 |
 
--- For history queries
-CREATE INDEX idx_entry_versions_entry_id_version ON entry_versions(entry_id, version DESC);
+不要只根据并发请求数提高连接、stream 或 API 许可。SQLite 写入能力、文件系统吞吐、CPU 和内存都会限制实际容量。
 
--- For upload sessions
-CREATE INDEX idx_upload_sessions_created_at ON upload_sessions(created_at);
-CREATE INDEX idx_upload_parts_session_id ON upload_parts(upload_session_id, part_number);
-```
+## 回归验证
 
-#### Batch Operations
-```rust
-// Instead of individual inserts, use transactions
-let mut tx = pool.begin().await?;
-for item in batch {
-    sqlx::query("INSERT INTO ...").bind(...).execute(&mut tx).await?;
-}
-tx.commit().await?;
-```
+针对代码修改运行对应的定向测试：
 
-## 2. Memory Optimizations
-
-### Reduce Cloning
-Current code has some unnecessary clones. Optimize by:
-
-#### Use References Where Possible
-```rust
-// Current: Cloning strings
-let path = req.path.clone();
-let filename = req.filename.clone();
-
-// Optimized: Use references
-let path = &req.path;
-let filename = &req.filename;
-```
-
-#### Arc for Shared State
-Current code correctly uses `Arc` for shared repositories, which is good.
-
-### Streaming for Large Files
-Current upload implementation loads entire chunks into memory. For very large files:
-
-```rust
-// Current: Loads entire chunk into memory
-let buf = await slice.arrayBuffer();
-
-// Optimized: Stream processing
-let stream = slice.stream();
-let reader = stream.getReader();
-while (true) {
-    let { done, value } = await reader.read();
-    if (done) break;
-    // Process chunk incrementally
-    await processChunk(value);
-}
-```
-
-## 3. Caching Optimizations
-
-### Response Caching
-```rust
-// Add cache headers for static content
-(
-    StatusCode::OK,
-    [
-        (header::CACHE_CONTROL, "public, max-age=3600"),
-        (header::ETAG, etag_value),
-    ],
-    content
-)
-```
-
-### Database Query Caching
-For frequently accessed data like user permissions:
-```rust
-// Implement Redis or in-memory cache for session data
-// Cache namespace information
-// Cache file metadata
-```
-
-## 4. Network Optimizations
-
-### Compression
-Current nginx config includes gzip compression, which is good.
-
-### Connection Reuse
-Current HTTP client configuration should reuse connections.
-
-### Chunked Transfer Encoding
-Current implementation uses chunked uploads, which is optimal.
-
-## 5. Security Hardening
-
-### Input Validation
-Current validation is basic. Enhance with:
-
-#### File Type Validation
-```rust
-// More comprehensive MIME type checking
-let allowed_mimes = ["image/", "text/", "application/pdf"];
-if !allowed_mimes.iter().any(|prefix| mime.starts_with(prefix)) {
-    return Err(ValidationError::InvalidFileType);
-}
-```
-
-#### Path Traversal Protection
-Current implementation has basic protection. Enhance with:
-```rust
-// Additional checks
-if path.contains("..") || path.contains("//") || path.starts_with('/') {
-    return Err(ValidationError::InvalidPath);
-}
-// Canonicalize paths
-let canonical = std::fs::canonicalize(path)?;
-```
-
-### Rate Limiting
-Current implementation has basic rate limiting. Consider:
-- Per-user rate limits
-- Burst allowance
-- Progressive delays
-
-### Authentication Security
-- Implement proper session invalidation
-- Add CSRF protection
-- Use secure cookies (HttpOnly, Secure, SameSite)
-
-## 6. Monitoring and Observability
-
-### Metrics Collection
-```rust
-// Add metrics for:
-// - Request latency
-// - Database query performance
-// - File upload/download rates
-// - Error rates by endpoint
-// - Memory usage
-// - Disk I/O
-```
-
-### Structured Logging
-Current tracing implementation is good. Consider adding:
-- Request IDs for tracing
-- Performance timing
-- Business metrics
-
-## 7. Scalability Considerations
-
-### Horizontal Scaling
-For high-traffic deployments:
-- Move to PostgreSQL
-- Implement Redis for caching
-- Use load balancer
-- Consider CDN for static assets
-
-### Database Sharding
-For very large deployments:
-- Shard by namespace
-- Implement database federation
-- Use read replicas
-
-## 8. Resource Limits
-
-### File Size Limits
-Current: 50MB per file, 100MB total upload
-Consider: Configurable limits based on user tiers
-
-### Concurrent Connections
-Current: SQLite default limits
-Optimize: Connection pool tuning, query optimization
-
-### Memory Usage
-Monitor and limit:
-- Upload buffer sizes
-- Database connection pools
-- Cache sizes
-
-## Implementation Priority
-
-### High Priority (Immediate)
-1. Add database indexes for common queries
-2. Implement proper error handling (avoid unwrap())
-3. Add comprehensive input validation
-4. Tune database connection pool
-
-### Medium Priority (Next Sprint)
-1. Implement response caching
-2. Add performance metrics
-3. Optimize memory usage in upload handling
-4. Add rate limiting
-
-### Low Priority (Future)
-1. Implement Redis caching
-2. Add horizontal scaling support
-3. Implement advanced security features
-4. Add performance profiling tools
-
-## Performance Benchmarks
-
-### Target Performance
-- API response time: <100ms for simple requests
-- File upload: 10MB/s sustained throughput
-- Concurrent users: 1000+ simultaneous connections
-- Database queries: <10ms average response time
-
-### Monitoring Commands
 ```bash
-# Database performance
-sqlite3 data/vfiles.db ".timer on" "SELECT COUNT(*) FROM entries;"
-
-# Memory usage
-docker stats vfiles
-
-# Network performance
-curl -w "@curl-format.txt" -o /dev/null -s http://localhost:3000/api/health
+cargo test -p vfiles-bin --bin vfiles http_server::tests
+cargo test -p vfiles-infra-sqlite tree_page_query_plan_tests
+cargo test -p vfiles-app
+cargo test -p vfiles-http --test api_endpoints
+cd client && bun run check
 ```
 
-## Security Checklist
+发布前还需运行 workspace 回归、前端构建和包体预算检查：
 
-- [x] Input validation on all endpoints
-- [x] SQL injection prevention (parameterized queries)
-- [x] Path traversal protection
-- [x] XSS prevention (proper content escaping)
-- [x] CSRF protection
-- [ ] Rate limiting implementation
-- [ ] Secure headers (CSP, HSTS, etc.)
-- [ ] Dependency vulnerability scanning
-- [ ] Regular security audits
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cd client && bun run build && bun run size:check
+```
 
-## Next Steps
-
-1. Implement database indexes
-2. Add comprehensive error handling
-3. Set up performance monitoring
-4. Conduct security audit
-5. Load testing and optimization
+本地对照测试仅用于确认趋势。发布后应使用部署环境的真实目录规模、网络协议、文件类型和并发分布复测；记录 p50、p95、错误率、429 比例、SQLite 写延迟和归档首字节时间。
