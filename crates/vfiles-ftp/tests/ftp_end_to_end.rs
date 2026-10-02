@@ -1836,6 +1836,39 @@ async fn ftp_mkd_cannot_create_a_webdav_locked_null_resource() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_stor_cannot_create_below_a_webdav_locked_null_resource() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let mut client = harness.client();
+    lock_webdav_path(
+        &harness,
+        "locked-null-parent",
+        "opaquelocktoken:ftp-stor-null-parent",
+        false,
+    )
+    .await;
+
+    let blob_root = harness._temp_dir.path().join("blobs");
+    let blobs_before = blob_file_count(&blob_root);
+    let mut payload = std::io::Cursor::new(b"must not be ingested".to_vec());
+    assert!(
+        client
+            .put_file("locked-null-parent/file.bin", &mut payload)
+            .is_err(),
+        "STOR must reject a locked null resource in its parent path"
+    );
+    assert_eq!(
+        blob_file_count(&blob_root),
+        blobs_before,
+        "rejected STOR must not publish a blob"
+    );
+    assert!(
+        harness.entry_paths().await.is_empty(),
+        "rejected STOR must not create the locked parent or child"
+    );
+    client.quit().expect("control session should remain usable");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ftp_rmd_cannot_remove_a_webdav_locked_directory() {
     let harness = Harness::start(SnapshotMode::PerFile, 1).await;
     let mut client = harness.client();
