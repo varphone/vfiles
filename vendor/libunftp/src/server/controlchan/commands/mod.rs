@@ -107,3 +107,31 @@ where
         _ = tx.closed() => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::while_control_channel_open;
+    use std::future::pending;
+    use tokio::sync::{mpsc::channel, oneshot};
+
+    #[tokio::test]
+    async fn control_channel_close_cancels_detached_storage_work() {
+        let (control_tx, control_rx) = channel(1);
+        let (started_tx, started_rx) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            while_control_channel_open(&control_tx, async move {
+                let _ = started_tx.send(());
+                pending::<()>().await;
+            })
+            .await
+        });
+
+        started_rx.await.expect("storage future should start");
+        drop(control_rx);
+        let result = tokio::time::timeout(std::time::Duration::from_millis(100), task)
+            .await
+            .expect("closed control channel should cancel the pending future")
+            .expect("command task should finish cleanly");
+        assert!(result.is_none(), "cancelled storage work must not report a result");
+    }
+}
