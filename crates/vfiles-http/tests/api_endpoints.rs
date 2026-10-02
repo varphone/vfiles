@@ -7259,6 +7259,28 @@ async fn live_directory_listing_pages_accept_a_path_cursor() {
 }
 
 #[tokio::test]
+async fn live_directory_listing_rejects_malformed_or_ambiguous_cursors() {
+    let app = TestApp::new().await;
+    for uri in [
+        "/api/files/list?after_path=a.txt",
+        "/api/files/list?after_kind=other&after_path=a.txt",
+        "/api/files/list?after_kind=file&after_path=..%2Fsecret",
+        "/api/files/list?after_kind=file&after_path=a.txt&offset=0",
+        "/api/files/list?commit=bad&after_kind=file&after_path=a.txt",
+    ] {
+        let response = app
+            .request_as_admin(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("cursor request should build"),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
+    }
+}
+
+#[tokio::test]
 async fn legacy_directory_listing_rejects_directories_over_its_response_limit() {
     const ENTRY_COUNT: usize = 1001;
 
