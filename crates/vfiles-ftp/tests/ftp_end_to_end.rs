@@ -596,6 +596,17 @@ async fn ftps_keeps_passive_listener_after_rejecting_another_sessions_tls() {
         passive_port,
     );
 
+    // A foreign source IP must be dropped before TLS negotiation without consuming EPSV.
+    let foreign_socket = tokio::net::TcpSocket::new_v4().expect("foreign IPv4 socket");
+    foreign_socket
+        .bind("127.0.0.2:0".parse().expect("foreign source address"))
+        .expect("foreign source address should bind");
+    let foreign_candidate = foreign_socket
+        .connect(victim_data_addr)
+        .await
+        .expect("foreign peer should reach the passive port");
+    drop(foreign_candidate);
+
     let mut attacker = harness
         .secure_client()
         .passive_stream_builder(move |_| {
