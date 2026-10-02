@@ -6934,6 +6934,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_during_deduplicated_import_keeps_the_new_reference_readable() {
+        let context = TestContext::new().await;
+        let root = TestContext::path("");
+        let shared_content = b"deduplicated content survives delete race";
+        let (source_path, original_blob_id, _) = context
+            .seed_file_without_snapshot(&root, "source.txt", shared_content, "seed")
+            .await;
+
+        let mut batch = crate::import::ImportBatch::with_options(
+            Arc::new(context.entry_repo.clone()),
+            Arc::new(context.snapshot_repo.clone()),
+            Arc::new(context.blob_store.clone()),
+            context.namespace_id,
+            context.user_id,
+            "concurrent import",
+            crate::import::SnapshotMode::Off,
+            1,
+            false,
+        );
+        let entry_repo = context.entry_repo.clone();
+        let blob_store = context.blob_store.clone();
+        let namespace_id = context.namespace_id;
+        let user_id = context.user_id;
+        let delete_service = context.workspace_service;
+        let copy_path = TestContext::path("copy.txt");
+        let copy_condition = EntryWriteCondition {
+            namespace_id,
+            path: copy_path.clone(),
+            check_entry_state: true,
+            expected_entry_id: None,
+            expected_version_id: None,
+            expected_lock_tokens: Some(Vec::new()),
+            expected_additional_lock_states: None,
+        };
+        let imported = batch
+            .import_file_stream_with_conditions_and_precommit(
+                &copy_path,
+                Box::new(std::io::Cursor::new(shared_content.to_vec())),
+                None,
+                None,
+                std::slice::from_ref(&copy_condition),
+                move || {
+                    Box::pin(async move {
+                        delete_service
+                            .delete_entries(
+                                &namespace_id,
+                                &[source_path],
+                                Some("delete source during import"),
+                                &user_id,
+                            )
+                            .await?;
+                        Ok(())
+                    })
+                },
+            )
+            .await
+            .expect("the concurrent copy should commit after deleting its source");
+
+        let copied_entry = entry_repo
+            .find_by_path(&namespace_id, &TestContext::path("copy.txt"))
+            .await
+            .expect("copy lookup should work")
+            .expect("copy entry should exist");
+        let copied_version = entry_repo
+            .find_version(&copied_entry.current_version_id.expect("copy version"))
+            .await
+            .expect("copy version should be readable");
+        let copied_blob_id = copied_version.blob_id.expect("copy blob");
+        assert_eq!(copied_blob_id, original_blob_id);
+        assert_eq!(imported.content_hash, copied_version.content_hash.as_str());
+        assert_eq!(
+            blob_store
+                .get_blob(&copied_blob_id)
+                .await
+                .expect("copy blob lookup should work")
+                .expect("delete must not reclaim a blob referenced by the new copy"),
+            shared_content
+        );
+    }
+
+    #[tokio::test]
     async fn workspace_service_moves_and_deletes_entries() {
         let context = TestContext::new().await;
         let docs = TestContext::path("docs");
