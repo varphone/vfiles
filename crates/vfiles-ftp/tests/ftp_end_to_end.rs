@@ -443,7 +443,7 @@ async fn repeated_epsv_commands_do_not_exhaust_the_passive_port_range() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn ftps_refuses_new_passive_listeners_while_a_data_socket_waits_for_a_command() {
+async fn ftps_refuses_new_listeners_and_quit_cancels_idle_data_worker() {
     let harness = Harness::start(SnapshotMode::Off, 1).await;
     let victim_tls_config = harness.client_tls_config();
     let mut client = harness.secure_client_with_config(Arc::clone(&victim_tls_config));
@@ -495,8 +495,30 @@ async fn ftps_refuses_new_passive_listeners_while_a_data_socket_waits_for_a_comm
         }
     }
 
-    drop(data_stream);
-    client.quit().expect("QUIT should cancel the waiting data worker");
+    let cleanup = tokio::task::spawn_blocking(move || {
+        let quit_result = client.quit();
+        let data_result = std::io::Read::read(&mut data_stream, &mut probe);
+        (quit_result, data_result)
+    });
+    let (quit_result, data_result) = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        cleanup,
+    )
+    .await
+    .expect("QUIT should not wait for the idle data command timeout")
+    .expect("FTP client task should finish");
+    quit_result.expect("QUIT should cancel the waiting data worker");
+    match data_result {
+        Ok(0) => {}
+        Ok(bytes_read) => panic!("idle data channel unexpectedly sent {bytes_read} bytes"),
+        Err(error) => assert!(
+            !matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+            "session cleanup should close the idle data channel, not leave it open: {error}"
+        ),
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
