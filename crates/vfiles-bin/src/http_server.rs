@@ -65,6 +65,7 @@ async fn serve_with_limits(
                                 continue;
                             }
                         };
+                        configure_accepted_stream(&stream, remote_addr);
                         connections.spawn(serve_connection(
                             stream,
                             remote_addr,
@@ -90,6 +91,12 @@ async fn serve_with_limits(
     }
 
     Ok(())
+}
+
+fn configure_accepted_stream(stream: &TcpStream, remote_addr: SocketAddr) {
+    if let Err(error) = stream.set_nodelay(true) {
+        tracing::warn!(%remote_addr, %error, "failed to enable TCP_NODELAY for HTTP connection");
+    }
 }
 
 async fn serve_connection(
@@ -155,7 +162,27 @@ mod tests {
         sync::watch,
     };
 
-    use super::{HTTP2_MAX_CONCURRENT_STREAMS, serve_with_limits};
+    use super::{HTTP2_MAX_CONCURRENT_STREAMS, configure_accepted_stream, serve_with_limits};
+
+    #[tokio::test]
+    async fn accepted_streams_enable_tcp_nodelay() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let address = listener.local_addr().expect("test address should exist");
+        let client = TcpStream::connect(address)
+            .await
+            .expect("client should connect");
+        let (stream, _) = listener
+            .accept()
+            .await
+            .expect("connection should be accepted");
+
+        configure_accepted_stream(&stream, address);
+
+        assert!(stream.nodelay().expect("TCP_NODELAY should be readable"));
+        drop(client);
+    }
 
     async fn start_server(
         max_connections: usize,
