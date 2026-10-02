@@ -835,6 +835,57 @@ async fn non_empty_directory_cannot_be_removed() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rmd_flushes_pending_uploads_before_checking_directory_contents() {
+    let harness = Harness::start(SnapshotMode::Batch, 100).await;
+    let mut client = harness.client();
+
+    client
+        .mkdir("batch-dir")
+        .expect("directory should be created");
+    let snapshots_before_upload = harness.snapshot_count().await;
+    let data = payload(16, 0x5a);
+    let mut reader = std::io::Cursor::new(data.clone());
+    client
+        .put_file("batch-dir/pending.bin", &mut reader)
+        .expect("upload should remain pending below the batch threshold");
+
+    assert_eq!(
+        harness.snapshot_count().await,
+        snapshots_before_upload,
+        "the upload should remain in the batch until an operation flushes it"
+    );
+    assert_eq!(
+        harness.entry_paths().await,
+        vec!["batch-dir", "batch-dir/pending.bin"],
+        "the uploaded file should already exist in the live tree"
+    );
+    let snapshots_before_rmd = harness.snapshot_count().await;
+    assert!(
+        client.rmdir("batch-dir").is_err(),
+        "RMD must see the pending upload and reject a non-empty directory"
+    );
+    assert!(
+        harness.snapshot_count().await > snapshots_before_rmd,
+        "RMD should flush the pending snapshot batch before checking the directory"
+    );
+    assert_eq!(
+        harness.entry_paths().await,
+        vec!["batch-dir", "batch-dir/pending.bin"],
+        "flushing before RMD must preserve both the directory and pending file"
+    );
+    assert_eq!(
+        harness
+            .read("batch-dir/pending.bin")
+            .await
+            .expect("pending file should be committed")
+            .bytes,
+        data
+    );
+
+    client.quit().ok();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn disabled_user_cannot_keep_control_session_alive_with_noop() {
     let harness = Harness::start(SnapshotMode::Off, 1).await;
     let mut client = harness.client();
