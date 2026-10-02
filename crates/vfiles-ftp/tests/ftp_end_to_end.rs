@@ -349,6 +349,34 @@ async fn lock_webdav_path(harness: &Harness, path: &str, token: &str, depth_infi
     );
 }
 
+async fn corrupt_current_file_size(
+    harness: &Harness,
+    path: &str,
+) -> (vfiles_domain::VersionId, vfiles_domain::BlobId) {
+    let entry = harness
+        .entry_repo
+        .find_by_path(
+            &harness.namespace_id,
+            &NormalizedPath::new(path).expect("file path"),
+        )
+        .await
+        .expect("file lookup should work")
+        .expect("file should exist");
+    let version_id = entry.current_version_id.expect("file version");
+    let version = harness
+        .entry_repo
+        .find_version(&version_id)
+        .await
+        .expect("version should be readable before corruption");
+    let blob_id = version.blob_id.expect("file blob");
+    sqlx::query("UPDATE entry_versions SET size = 'invalid-size' WHERE id = ?")
+        .bind(version_id.to_string())
+        .execute(&harness.pool)
+        .await
+        .expect("version size should be corrupted for this error-path test");
+    (version_id, blob_id)
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rejects_new_control_connections_at_the_configured_limit() {
     let harness = Harness::start_with_max_connections(SnapshotMode::Off, 1, 1).await;
@@ -2614,6 +2642,53 @@ async fn control_disconnect_cancels_active_stor_and_releases_session_slot() {
         blob_file_count(&blob_root),
         blobs_before,
         "an interrupted partial STOR must not publish a blob"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_metadata_propagates_current_version_lookup_failure() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let path = "corrupt-metadata.bin";
+    let mut client = harness.client();
+    client
+        .put_file(path, &mut std::io::Cursor::new(b"preserve this version".to_vec()))
+        .expect("file should upload");
+    client.quit().expect("control session should close");
+    let (version_id, _) = corrupt_current_file_size(&harness, path).await;
+
+    let record = harness
+        .user_repo
+        .find_by_id(&harness.user_id)
+        .await
+        .expect("FTP user");
+    let user = VfilesFtpUser {
+        id: record.id,
+        username: record.username.to_string(),
+        role: record.role,
+        namespace_id: harness.namespace_id,
+        account_updated_at: record.updated_at,
+        password_changed_at: record.password_changed_at,
+        anonymous: false,
+    };
+    let backend = VfilesStorageBackend::new(harness.backend.clone());
+    let error = backend
+        .metadata(&user, path)
+        .await
+        .expect_err("corrupt current-version metadata must not become a zero-byte file");
+    assert_eq!(error.kind(), ErrorKind::LocalError);
+    assert_eq!(
+        harness
+            .entry_repo
+            .find_by_path(
+                &harness.namespace_id,
+                &NormalizedPath::new(path).expect("path"),
+            )
+            .await
+            .expect("file lookup should work")
+            .expect("file should remain")
+            .current_version_id,
+        Some(version_id),
+        "metadata failure must not change the file version"
     );
 }
 
