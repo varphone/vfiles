@@ -2047,6 +2047,49 @@ async fn ftp_rnto_respects_webdav_locks_on_sources_and_destinations() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_rmd_and_rnto_respect_locked_null_descendants() {
+    let harness = Harness::start(SnapshotMode::PerFile, 1).await;
+    let mut client = harness.client();
+    client
+        .mkdir("rmd-parent")
+        .expect("RMD fixture directory should be created");
+    client
+        .mkdir("rename-parent")
+        .expect("RNTO fixture directory should be created");
+    lock_webdav_path(
+        &harness,
+        "rmd-parent/locked-null",
+        "opaquelocktoken:ftp-rmd-descendant",
+        false,
+    )
+    .await;
+    lock_webdav_path(
+        &harness,
+        "rename-parent/locked-null",
+        "opaquelocktoken:ftp-rnto-descendant",
+        false,
+    )
+    .await;
+
+    assert!(
+        client.rmdir("rmd-parent").is_err(),
+        "RMD must reject a lock-null child below an otherwise empty directory"
+    );
+    assert!(
+        client
+            .rename("rename-parent", "moved-parent")
+            .is_err(),
+        "RNTO must reject a lock-null descendant inside the source subtree"
+    );
+    assert_eq!(
+        harness.entry_paths().await,
+        vec!["rename-parent", "rmd-parent"],
+        "rejected mutations must preserve both source directories"
+    );
+    client.quit().expect("control session should remain usable");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn non_empty_directory_cannot_be_removed() {
     let harness = Harness::start(SnapshotMode::PerFile, 1).await;
     let mut client = harness.client();
