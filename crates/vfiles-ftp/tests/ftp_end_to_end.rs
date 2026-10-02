@@ -2731,3 +2731,71 @@ async fn ftp_rename_rejects_subtrees_over_its_bounded_entry_limit() {
     assert_eq!(original_count, (DESCENDANT_COUNT + 1) as i64);
     assert_eq!(renamed_count, 0);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ftp_rename_rejects_generated_descendant_paths_over_the_path_limit() {
+    let harness = Harness::start(SnapshotMode::Off, 1).await;
+    let namespace_id = harness.namespace_id.to_string();
+    let mut rows = vec![(
+        vfiles_domain::EntryId::new().to_string(),
+        "source".to_string(),
+        "directory",
+    )];
+    let segment = "s".repeat(240);
+    let mut source_path = "source".to_string();
+    for index in 0..16 {
+        source_path.push('/');
+        source_path.push_str(&segment);
+        rows.push((
+            vfiles_domain::EntryId::new().to_string(),
+            source_path.clone(),
+            if index == 15 { "file" } else { "directory" },
+        ));
+    }
+
+    let target = format!("destination/{}/{}", "t".repeat(200), "u".repeat(100));
+    let moved_descendant_len = target.len() + 1 + source_path.len() - "source/".len();
+    assert!(source_path.len() < 4 * 1024);
+    assert!(target.len() < 4 * 1024);
+    assert!(moved_descendant_len > 4 * 1024);
+    rows.push((
+        vfiles_domain::EntryId::new().to_string(),
+        "destination".to_string(),
+        "directory",
+    ));
+    rows.push((
+        vfiles_domain::EntryId::new().to_string(),
+        format!("destination/{}", "t".repeat(200)),
+        "directory",
+    ));
+
+    let mut transaction = harness.pool.begin().await.expect("transaction");
+    let mut query =
+        QueryBuilder::<Sqlite>::new("INSERT INTO entries (id, namespace_id, path, kind) ");
+    query.push_values(&rows, |mut builder, (id, path, kind)| {
+        builder
+            .push_bind(id)
+            .push_bind(&namespace_id)
+            .push_bind(path)
+            .push_bind(kind);
+    });
+    query
+        .build()
+        .execute(&mut *transaction)
+        .await
+        .expect("long but valid source and target fixtures should be inserted");
+    transaction.commit().await.expect("fixture transaction");
+
+    let original_paths = harness.entry_paths().await;
+    let mut client = harness.client();
+    assert!(
+        client.rename("source", &target).is_err(),
+        "RNTO must reject a destination whose generated descendant exceeds the FTP path limit"
+    );
+    client.quit().ok();
+    assert_eq!(
+        harness.entry_paths().await,
+        original_paths,
+        "rejected RNTO must leave the original subtree and destination parents unchanged"
+    );
+}
