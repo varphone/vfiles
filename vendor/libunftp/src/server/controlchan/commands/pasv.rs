@@ -21,7 +21,7 @@ use crate::{
     storage::{Metadata, StorageBackend},
 };
 use async_trait::async_trait;
-use std::{net::Ipv4Addr, time::Duration};
+use std::{net::{Ipv4Addr, SocketAddr}, time::Duration};
 
 use super::passive_common::{self, LegacyReplyProducer};
 
@@ -43,14 +43,18 @@ where
     Storage: StorageBackend<User> + 'static,
 {
     async fn build_reply(&self, args: &CommandContext<Storage, User>, port: u16) -> Result<Reply, ControlChanError> {
-        let conn_addr = match args.local_addr {
-            std::net::SocketAddr::V4(addr) => *addr.ip(),
-            std::net::SocketAddr::V6(_) => {
-                slog::error!(args.logger, "local address is ipv6! we only listen on ipv4, so this shouldn't happen");
-                return Err(ControlChanErrorKind::InternalServerError.into());
-            }
+        let Some(conn_addr) = ipv4_connection_address(args.local_addr) else {
+            slog::error!(args.logger, "local address is ipv6! we only listen on ipv4, so this shouldn't happen");
+            return Err(ControlChanErrorKind::InternalServerError.into());
         };
         Ok(make_pasv_reply(&args.logger, args.passive_host.clone(), &conn_addr, port).await)
+    }
+}
+
+fn ipv4_connection_address(local_addr: SocketAddr) -> Option<Ipv4Addr> {
+    match local_addr {
+        SocketAddr::V4(addr) => Some(*addr.ip()),
+        SocketAddr::V6(_) => None,
     }
 }
 
@@ -106,4 +110,22 @@ pub async fn make_pasv_reply(logger: &slog::Logger, passive_host: PassiveHost, c
         ReplyCode::EnteringPassiveMode,
         format!("Entering Passive Mode ({},{},{},{},{},{})", octets[0], octets[1], octets[2], octets[3], p1, p2),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ipv4_connection_address;
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+
+    #[test]
+    fn pasv_rejects_ipv6_local_address_without_panicking() {
+        let local_addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 2121);
+        assert_eq!(ipv4_connection_address(local_addr), None);
+    }
+
+    #[test]
+    fn pasv_uses_ipv4_local_address() {
+        let address = SocketAddr::new(Ipv4Addr::new(192, 0, 2, 7).into(), 2121);
+        assert_eq!(ipv4_connection_address(address), Some(Ipv4Addr::new(192, 0, 2, 7)));
+    }
 }
