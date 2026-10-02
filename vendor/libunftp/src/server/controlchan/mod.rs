@@ -47,3 +47,14 @@ pub(crate) fn sanitize_control_text(text: &str) -> String {
 pub(crate) fn sanitize_control_path(path: &std::path::Path) -> String {
     sanitize_control_text(&path.to_string_lossy())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_control_text;
+
+    #[test]
+    fn log_text_replaces_control_and_bidirectional_formatting_characters() {
+        let text = "USER\r\nname\u{202e}hidden\u{2066}value\u{2069}\u{001b}";
+        assert_eq!(sanitize_control_text(text), "USER  name hidden value  ");
+    }
+}
