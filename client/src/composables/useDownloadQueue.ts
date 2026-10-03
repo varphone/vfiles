@@ -3,11 +3,7 @@ import { filesService } from "../services/files.service";
 import { formatDownloadProgress } from "../utils/filePresentation";
 
 export type DownloadQueueStatus =
-  | "queued"
-  | "downloading"
-  | "done"
-  | "error"
-  | "canceled";
+  "queued" | "downloading" | "done" | "delegated" | "error" | "canceled";
 
 export type DownloadQueueKind = "file" | "folder";
 
@@ -91,6 +87,7 @@ export function useDownloadQueue(browseCommit: Ref<string | undefined>) {
         : item,
     );
 
+    const commit = browseCommit.value;
     try {
       const onProgress = (progress: { loaded: number; total?: number }) => {
         downloadQueue.value = downloadQueue.value.map((item) =>
@@ -98,7 +95,6 @@ export function useDownloadQueue(browseCommit: Ref<string | undefined>) {
         );
       };
 
-      const commit = browseCommit.value;
       const result =
         next.kind === "folder"
           ? await filesService.fetchFolderDownload(next.path, commit, {
@@ -118,6 +114,30 @@ export function useDownloadQueue(browseCommit: Ref<string | undefined>) {
       );
     } catch (err) {
       const isAbort = (err as { name?: string } | null)?.name === "AbortError";
+      let failure: unknown = err;
+      if (!isAbort && isFetchNetworkError(err)) {
+        try {
+          if (next.kind === "folder") {
+            filesService.downloadFolder(next.path, commit);
+          } else {
+            filesService.downloadFile(next.path, commit);
+          }
+          downloadQueue.value = downloadQueue.value.map((item) =>
+            item.id === next.id
+              ? {
+                  ...item,
+                  status: "delegated",
+                  error: undefined,
+                  abort: undefined,
+                }
+              : item,
+          );
+          return;
+        } catch (fallbackError) {
+          failure = fallbackError;
+        }
+      }
+
       downloadQueue.value = downloadQueue.value.map((item) =>
         item.id === next.id
           ? {
@@ -125,8 +145,8 @@ export function useDownloadQueue(browseCommit: Ref<string | undefined>) {
               status: isAbort ? "canceled" : "error",
               error: isAbort
                 ? undefined
-                : err instanceof Error
-                  ? err.message
+                : failure instanceof Error
+                  ? failure.message
                   : "下载失败",
               abort: undefined,
             }
@@ -136,6 +156,13 @@ export function useDownloadQueue(browseCommit: Ref<string | undefined>) {
       // 继续下一个
       void processQueue();
     }
+  }
+
+  function isFetchNetworkError(error: unknown): boolean {
+    const name = (error as { name?: unknown } | null)?.name;
+    // Fetch rejects network and response-body transport failures with TypeError.
+    // NetworkError is used by some browser implementations for the same case.
+    return name === "TypeError" || name === "NetworkError";
   }
 
   function formatProgress(loaded: number, total: number): string {

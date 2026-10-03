@@ -5,10 +5,14 @@ import { useDownloadQueue } from "../src/composables/useDownloadQueue";
 const {
   fetchFileDownloadMock,
   fetchFolderDownloadMock,
+  downloadFileMock,
+  downloadFolderMock,
   saveDownloadedBlobMock,
 } = vi.hoisted(() => ({
   fetchFileDownloadMock: vi.fn(),
   fetchFolderDownloadMock: vi.fn(),
+  downloadFileMock: vi.fn(),
+  downloadFolderMock: vi.fn(),
   saveDownloadedBlobMock: vi.fn(),
 }));
 
@@ -16,6 +20,8 @@ vi.mock("../src/services/files.service", () => ({
   filesService: {
     fetchFileDownload: fetchFileDownloadMock,
     fetchFolderDownload: fetchFolderDownloadMock,
+    downloadFile: downloadFileMock,
+    downloadFolder: downloadFolderMock,
     saveDownloadedBlob: saveDownloadedBlobMock,
   },
 }));
@@ -34,6 +40,8 @@ describe("useDownloadQueue", () => {
   beforeEach(() => {
     fetchFileDownloadMock.mockReset();
     fetchFolderDownloadMock.mockReset();
+    downloadFileMock.mockReset();
+    downloadFolderMock.mockReset();
     saveDownloadedBlobMock.mockReset();
   });
 
@@ -138,6 +146,53 @@ describe("useDownloadQueue", () => {
     expect(queue.downloadQueue.value[0].status).toBe("done");
     expect(queue.downloadQueue.value[0].error).toBeUndefined();
     expect(fetchFileDownloadMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("hands a file to the browser when fetch fails at the network layer", async () => {
+    fetchFileDownloadMock.mockRejectedValueOnce(
+      new TypeError("Failed to fetch"),
+    );
+
+    const queue = useDownloadQueue(ref("commit-1"));
+    queue.enqueueDownload("file", "docs/readme.txt");
+    await flush();
+
+    expect(downloadFileMock).toHaveBeenCalledWith(
+      "docs/readme.txt",
+      "commit-1",
+    );
+    expect(saveDownloadedBlobMock).not.toHaveBeenCalled();
+    expect(queue.downloadQueue.value[0]).toMatchObject({
+      status: "delegated",
+      error: undefined,
+    });
+  });
+
+  it("keeps HTTP/API errors visible instead of handing them to the browser", async () => {
+    fetchFileDownloadMock.mockRejectedValueOnce(
+      new Error("没有权限执行该操作"),
+    );
+
+    const queue = useDownloadQueue(ref(undefined));
+    queue.enqueueDownload("file", "private.txt");
+    await flush();
+
+    expect(downloadFileMock).not.toHaveBeenCalled();
+    expect(queue.downloadQueue.value[0]).toMatchObject({
+      status: "error",
+      error: "没有权限执行该操作",
+    });
+  });
+
+  it("hands a failed folder fetch to the browser with the selected revision", async () => {
+    fetchFolderDownloadMock.mockRejectedValueOnce(new TypeError("Load failed"));
+
+    const queue = useDownloadQueue(ref("commit-2"));
+    queue.enqueueDownload("folder", "photos/2026");
+    await flush();
+
+    expect(downloadFolderMock).toHaveBeenCalledWith("photos/2026", "commit-2");
+    expect(queue.downloadQueue.value[0].status).toBe("delegated");
   });
 
   it("ignores retry for active items", async () => {

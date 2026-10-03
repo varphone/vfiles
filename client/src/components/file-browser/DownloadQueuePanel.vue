@@ -81,6 +81,11 @@
               >完成</span
             >
             <span
+              v-else-if="item.status === 'delegated'"
+              class="tag is-info is-light ml-2 is-size-7"
+              >已交由浏览器</span
+            >
+            <span
               v-else-if="item.status === 'canceled'"
               class="tag is-warning is-light ml-2 is-size-7"
               >已取消</span
@@ -128,6 +133,12 @@
 
         <p v-if="item.error" class="has-text-danger is-size-7 mt-1">
           {{ item.error }}
+        </p>
+        <p
+          v-if="item.status === 'delegated'"
+          class="has-text-grey is-size-7 mt-1"
+        >
+          下载已交由浏览器处理，请在浏览器下载列表查看进度。
         </p>
       </div>
     </div>
