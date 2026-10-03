@@ -36,8 +36,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import type { Component } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
+import type { Component, CSSProperties } from "vue";
 
 export interface ContextMenuItem {
   key: string;
@@ -63,11 +70,57 @@ const emit = defineEmits<{
 
 const menuRef = ref<HTMLElement | null>(null);
 const MENU_WIDTH = 184;
+const menuSize = ref<{ width: number; height: number } | null>(null);
+const positionReady = ref(false);
 
-const panelStyle = computed(() => ({
-  left: `${Math.max(8, Math.min(props.x, window.innerWidth - MENU_WIDTH - 8))}px`,
-  top: `${Math.max(8, Math.min(props.y, window.innerHeight - 8))}px`,
+const panelStyle = computed<CSSProperties>(() => ({
+  left: `${Math.max(
+    8,
+    Math.min(
+      props.x,
+      window.innerWidth - (menuSize.value?.width || MENU_WIDTH) - 8,
+    ),
+  )}px`,
+  top: `${getMenuTop()}px`,
+  maxHeight: "calc(100dvh - 16px)",
+  overflowY: "auto",
+  visibility: positionReady.value ? "visible" : "hidden",
 }));
+
+function getMenuTop(): number {
+  const viewportHeight = window.innerHeight;
+  const height = menuSize.value?.height ?? 0;
+  if (!height) return Math.max(8, Math.min(props.y, viewportHeight - 8));
+
+  if (props.y + height <= viewportHeight - 8) {
+    return Math.max(8, Math.min(props.y, viewportHeight - height - 8));
+  }
+
+  // 空间不足时把菜单放到触发位置上方；过高菜单由 max-height 和滚动承载。
+  return Math.max(8, props.y - height);
+}
+
+watch(
+  () => [props.show, props.x, props.y, props.items] as const,
+  async ([show]) => {
+    positionReady.value = false;
+    if (!show) {
+      menuSize.value = null;
+      return;
+    }
+
+    await nextTick();
+    const rect = menuRef.value?.getBoundingClientRect();
+    if (!rect) return;
+
+    menuSize.value = {
+      width: rect.width || MENU_WIDTH,
+      height: rect.height,
+    };
+    positionReady.value = true;
+  },
+  { flush: "post", immediate: true },
+);
 
 function choose(item: ContextMenuItem) {
   if (item.disabled) return;
@@ -113,6 +166,10 @@ onBeforeUnmount(closeListeners);
   position: fixed;
   z-index: 60;
   min-width: 184px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--vf-border);
   border-radius: var(--vf-radius-sm);
