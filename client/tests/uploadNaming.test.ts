@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { keepBothName, splitName } from "../src/utils/uploadNaming";
+import {
+  keepBothName,
+  splitName,
+  uploadRelativeDirectory,
+  uploadTargetKey,
+} from "../src/utils/uploadNaming";
 
 describe("splitName", () => {
   it("splits base and extension, dotfiles stay whole", () => {
@@ -24,5 +29,22 @@ describe("keepBothName", () => {
     const taken = new Set(["a.b.txt", "a.b (1).txt"]);
     expect(keepBothName("a.b.txt", taken)).toBe("a.b (2).txt");
     expect(keepBothName("c.log", taken)).toBe("c.log");
+  });
+});
+
+describe("upload target paths", () => {
+  it("keeps files with the same name in different directories distinct", () => {
+    expect(uploadTargetKey("foo/a/world.csv", "world.csv")).toBe(
+      "foo/a/world.csv",
+    );
+    expect(uploadTargetKey("foo/b/world.csv", "world.csv")).toBe(
+      "foo/b/world.csv",
+    );
+    expect(uploadTargetKey("world.csv", "world.csv")).toBe("world.csv");
+  });
+
+  it("extracts the directory from a browser relative path", () => {
+    expect(uploadRelativeDirectory("folder/a/world.csv")).toBe("folder/a");
+    expect(uploadRelativeDirectory("world.csv")).toBe("");
   });
 });

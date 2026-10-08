@@ -10,6 +10,27 @@ export function splitName(name: string): { base: string; ext: string } {
 }
 
 /**
+ * 从浏览器的 `webkitRelativePath` 提取上传目标的相对目录。
+ * 普通文件没有相对路径，返回空字符串。
+ */
+export function uploadRelativeDirectory(relativePath: string): string {
+  const normalized = relativePath.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const separator = normalized.lastIndexOf("/");
+  return separator < 0 ? "" : normalized.slice(0, separator);
+}
+
+/**
+ * 生成本次目录上传中的目标相对路径，用于按完整路径判断重名。
+ */
+export function uploadTargetKey(
+  relativePath: string,
+  filename: string,
+): string {
+  const directory = uploadRelativeDirectory(relativePath);
+  return directory ? `${directory}/${filename}` : filename;
+}
+
+/**
  * 「保留两个」改名：从 `名 (1).ext` 起找首个未占用名（含已 taken ∪ 目录既存 ✗）。
  */
 export function keepBothName(name: string, taken: ReadonlySet<string>): string {

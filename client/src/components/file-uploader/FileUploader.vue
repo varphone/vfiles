@@ -86,7 +86,11 @@ import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 import { filesService } from "../../services/files.service";
 import { choiceDialog } from "../../composables/dialog";
-import { keepBothName } from "../../utils/uploadNaming";
+import {
+  keepBothName,
+  uploadRelativeDirectory,
+  uploadTargetKey,
+} from "../../utils/uploadNaming";
 import {
   IconBan,
   IconChecklist,
@@ -119,12 +123,7 @@ const props = defineProps<{
 type UploadStatus = "queued" | "uploading" | "done" | "error" | "canceled";
 /** A 决策冲突选择（模块级命名类型 ✗ typeof 变量会被控制流窄化成初值 = 教训位）。 */
 type ConflictChoice =
-  | "ask"
-  | "replace"
-  | "keep"
-  | "replaceAll"
-  | "keepAll"
-  | "cancel";
+  "ask" | "replace" | "keep" | "replaceAll" | "keepAll" | "cancel";
 
 type UploadItem = {
   id: number;
@@ -285,19 +284,38 @@ async function startUpload() {
   if (!hasQueued.value) return;
   if (uploading.value) return;
 
-  // ── A 决策会话态：占名集 / 冲突决策记忆（聚合钮后不再弹 ✗ C = 自动消息无输入框）──
+  // ── A 决策会话态：占用路径集 / 冲突决策记忆（聚合钮后不再弹 ✗ C = 自动消息无输入框）──
   const sessionNames = new Set<string>();
   let bulkChoice: ConflictChoice = "ask";
   let replacedCount = 0;
 
+  function isTaken(item: UploadItem): boolean {
+    const key = uploadTargetKey(item.relativePath, item.file.name);
+    // existingNames 只包含当前目录的条目；目录上传的嵌套目录不在当前列表中。
+    return (
+      sessionNames.has(key) ||
+      (uploadRelativeDirectory(item.relativePath) === "" &&
+        (props.existingNames ?? new Set<string>()).has(item.file.name))
+    );
+  }
+
+  function namesTakenInDirectory(item: UploadItem): Set<string> {
+    const directory = uploadRelativeDirectory(item.relativePath);
+    const prefix = directory ? `${directory}/` : "";
+    const names = new Set<string>(
+      directory === "" ? (props.existingNames ?? []) : [],
+    );
+    for (const key of sessionNames) {
+      if (!key.startsWith(prefix)) continue;
+      const name = key.slice(prefix.length);
+      if (name && !name.includes("/")) names.add(name);
+    }
+    return names;
+  }
+
   function countRemainingConflicts(): number {
-    const pool = new Set<string>([
-      ...(props.existingNames ?? []),
-      ...sessionNames,
-    ]);
-    return queue.value.filter(
-      (x) => x.status === "queued" && pool.has(x.file.name),
-    ).length;
+    return queue.value.filter((x) => x.status === "queued" && isTaken(x))
+      .length;
   }
 
   async function askConflict(
@@ -317,7 +335,10 @@ async function startUpload() {
         { value: "keep", label: "保留两个" },
         ...(remaining > 0
           ? [
-              { value: "replaceAll", label: `全部替换（剩余 ${remaining} 项）` },
+              {
+                value: "replaceAll",
+                label: `全部替换（剩余 ${remaining} 项）`,
+              },
               { value: "keepAll", label: "全部保留两个" },
             ]
           : []),
@@ -335,11 +356,8 @@ async function startUpload() {
     if (!next) break;
 
     // ── A 决策：同名预判 → 冲突对话框（后端实测同名 = 直接生成新版本 ✗ 确认面全在前端）──
-    const taken = new Set<string>([
-      ...(props.existingNames ?? []),
-      ...sessionNames,
-    ]);
-    if (taken.has(next.file.name)) {
+    const taken = namesTakenInDirectory(next);
+    if (isTaken(next)) {
       let choice: ConflictChoice = bulkChoice; // 显式注解（字面窄化防护 ✗ TS let 推断）
       if (choice === "ask") {
         choice = await askConflict(next.file.name, taken);
@@ -353,7 +371,7 @@ async function startUpload() {
           type: next.file.type,
           lastModified: next.file.lastModified,
         });
-        sessionNames.add(newName);
+        sessionNames.add(uploadTargetKey(next.relativePath, newName));
       } else {
         next.status = "canceled"; // 取消 = 跳过（留队可重试 ✗ DownloadQueue 风格）
         next.abort = undefined;
@@ -383,7 +401,7 @@ async function startUpload() {
       next.status = "done";
       next.abort = undefined;
       next.percent = 100;
-      sessionNames.add(next.file.name); // 本次占名（队列内后续同名亦可预判 ✗）
+      sessionNames.add(uploadTargetKey(next.relativePath, next.file.name));
     } catch (err: any) {
       const isAbort = abort.signal.aborted || err?.name === "CanceledError";
       next.status = isAbort ? "canceled" : "error";
