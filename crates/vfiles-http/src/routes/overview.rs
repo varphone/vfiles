@@ -47,18 +47,12 @@ pub async fn overview(
 ) -> ApiResult<Json<OverviewDto>> {
     let ctx = protected_request_context(&state, &jar).await?;
 
-    // 统计走 SQL 聚合，避免把整棵目录树拉进内存
-    let stats = state.entry_repo.stats(&ctx.namespace_id).await?;
-    // 分类占比是辅助信息：失败不影响总量与最近文件
-    let categories = state
+    // 统计、分类与最近更新来自同一遍扫描，避免为每一项重新遍历命名空间。
+    let overview = state
         .entry_repo
-        .stats_by_category(&ctx.namespace_id)
-        .await
-        .unwrap_or_default();
-    let recent = state
-        .entry_repo
-        .recent_files(&ctx.namespace_id, RECENT_FILE_LIMIT)
+        .namespace_overview(&ctx.namespace_id, RECENT_FILE_LIMIT)
         .await?;
+    let (stats, categories, recent) = (overview.stats, overview.categories, overview.recent_files);
 
     // 最近文件需要展示大小与类型：按 entry 的当前版本补齐
     let version_ids: Vec<_> = recent

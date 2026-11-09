@@ -935,34 +935,38 @@ where
         });
         let mut report = SnapshotPruneReport::default();
         for snapshots in by_namespace.values_mut() {
-            // list_all_snapshots 已按创建时间倒序
+            // list_all_snapshots 已按创建时间倒序；先按数量与时间窗口选出本轮要删
+            // 的快照，再一次性统计 blob 引用并删除，避免每个快照各付一次提交。
+            let mut doomed = Vec::new();
+            let mut counts = std::collections::HashMap::<BlobId, u32>::new();
             for snapshot in snapshots.iter().skip(keep as usize) {
                 if let Some(cutoff) = cutoff
                     && snapshot.created_at >= cutoff
                 {
                     continue;
                 }
-                let entries = self
+                for (blob_id, count) in self
                     .snapshot_repo
-                    .get_snapshot_entries(&snapshot.id)
-                    .await?;
-
-                let mut counts = std::collections::HashMap::<BlobId, u32>::new();
-                for entry in entries {
-                    if let Some(blob_id) = entry.blob_id {
-                        *counts.entry(blob_id).or_insert(0) += 1;
-                    }
+                    .snapshot_blob_reference_counts(&snapshot.id)
+                    .await?
+                {
+                    *counts.entry(blob_id).or_insert(0) += count;
                 }
+                doomed.push(snapshot.id);
+            }
+            if doomed.is_empty() {
+                continue;
+            }
 
-                self.snapshot_repo.delete_snapshot(&snapshot.id).await?;
-                report.pruned_snapshots += 1;
+            report.pruned_snapshots += self.snapshot_repo.delete_snapshots(&doomed).await?;
 
-                let references = counts.into_iter().collect::<Vec<_>>();
-                let removable = self.entry_repo.release_blob_references(&references).await?;
-                for blob_id in removable {
-                    self.blob_store.defer_blob_deletion(&blob_id).await?;
-                    report.released_blobs += 1;
-                }
+            // 引用在删除前已统计完毕，删除后统一扣减；跨快照的同一 blob 合并计数，
+            // 一次事务内完成扣减与删除。
+            let references = counts.into_iter().collect::<Vec<_>>();
+            let removable = self.entry_repo.release_blob_references(&references).await?;
+            for blob_id in removable {
+                self.blob_store.defer_blob_deletion(&blob_id).await?;
+                report.released_blobs += 1;
             }
         }
 
@@ -4894,15 +4898,21 @@ where
         })
     }
 
+    /// Page one directory's snapshot history, newest first.
+    ///
+    /// `include_total` asks for the full match count as well; the newest page
+    /// alone is all the version-step controls need, and skipping the count
+    /// keeps that lookup proportional to the page instead of the history.
     pub async fn directory_history(
         &self,
         namespace_id: &NamespaceId,
         path: &NormalizedPath,
         limit: u32,
+        include_total: bool,
     ) -> DomainResult<DirectoryHistoryPage> {
         let (snapshots, total_items) = self
             .snapshot_repo
-            .list_snapshots_for_path(namespace_id, path, limit)
+            .list_snapshots_for_path(namespace_id, path, limit, include_total)
             .await?;
         let actor_ids = snapshots
             .iter()

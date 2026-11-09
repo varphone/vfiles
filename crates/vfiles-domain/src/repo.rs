@@ -97,7 +97,7 @@ pub struct UserStorageUsage {
 ///
 /// 分类依据是当前版本的 MIME 类型（缺失时归入 `Other`），与主流网盘的
 /// 「文档 / 图片 / 视频 / 音频 / 其它」分组保持一致。
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FileCategory {
     Document,
     Image,
@@ -136,6 +136,16 @@ pub struct CategoryUsage {
     pub category: FileCategory,
     pub bytes: u64,
     pub file_count: u64,
+}
+
+/// 侧栏概览所需的全部聚合结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamespaceOverview {
+    pub stats: NamespaceStats,
+    /// 按占用字节倒序；只含至少有一个文件的分类。
+    pub categories: Vec<CategoryUsage>,
+    /// 最近更新的文件，按更新时间倒序。
+    pub recent_files: Vec<Entry>,
 }
 
 #[async_trait::async_trait]
@@ -549,21 +559,15 @@ pub trait EntryRepo {
         Ok(entries)
     }
 
-    /// 命名空间内的条目统计（文件数、目录数、总字节数），用 SQL 聚合避免全量拉取。
-    async fn stats(&self, namespace_id: &NamespaceId) -> DomainResult<NamespaceStats>;
-
-    /// 按文件类型聚合的占用（只统计文件、只算当前版本）。
-    async fn stats_by_category(
+    /// 侧栏概览的一次性快照：条目统计、分类占用与最近更新。
+    ///
+    /// 三项数据来自同一遍扫描，避免每项各自遍历命名空间；存储实现应把它
+    /// 维持在与「条目数」而非「历史记录数」相关的成本上。
+    async fn namespace_overview(
         &self,
         namespace_id: &NamespaceId,
-    ) -> DomainResult<Vec<CategoryUsage>>;
-
-    /// 最近更新的文件（按版本创建时间倒序），用于侧栏「最近」。
-    async fn recent_files(
-        &self,
-        namespace_id: &NamespaceId,
-        limit: u32,
-    ) -> DomainResult<Vec<Entry>>;
+        recent_limit: u32,
+    ) -> DomainResult<NamespaceOverview>;
     /// 一次取回某目录及其所有后代（含 root 自身），按路径排序。
     /// 分页取直接子条目：按「目录优先 + 路径升序」排序（与应用层排序一致），
     /// 同时返回该目录下的条目总数，避免把整棵目录拉进内存后再切片。
@@ -1217,11 +1221,16 @@ pub trait SnapshotRepo {
         cursor: Option<&str>,
     ) -> DomainResult<Vec<Snapshot>>;
     /// List snapshots whose saved tree includes the requested path (or its descendants).
+    ///
+    /// The total is the full match count, which costs a second pass over the history;
+    /// callers that only page through the newest snapshots pass `include_total: false`
+    /// and read the returned total as zero.
     async fn list_snapshots_for_path(
         &self,
         namespace_id: &NamespaceId,
         path: &NormalizedPath,
         limit: u32,
+        include_total: bool,
     ) -> DomainResult<(Vec<Snapshot>, u64)> {
         let snapshots = self.list_snapshots(namespace_id, u32::MAX, None).await?;
         let mut relevant = Vec::new();
@@ -1242,7 +1251,11 @@ pub trait SnapshotRepo {
                 relevant.push(snapshot);
             }
         }
-        let total = relevant.len() as u64;
+        let total = if include_total {
+            relevant.len() as u64
+        } else {
+            0
+        };
         relevant.truncate(limit.max(1) as usize);
         Ok((relevant, total))
     }
@@ -1358,6 +1371,34 @@ pub trait SnapshotRepo {
     async fn list_all_snapshots(&self) -> DomainResult<Vec<Snapshot>>;
     /// 删除快照及其条目（条目通过外键级联删除）。
     async fn delete_snapshot(&self, snapshot_id: &SnapshotId) -> DomainResult<()>;
+    /// 一次事务内删除多个快照及其条目，返回实际删除的快照数。
+    ///
+    /// 默认实现逐条删除；存储实现应把它合并为一次提交，避免每个快照各付一次
+    /// 提交与检查点成本（裁剪历史时这一点决定了维护窗口的长短）。
+    async fn delete_snapshots(&self, snapshot_ids: &[SnapshotId]) -> DomainResult<u64> {
+        let mut deleted = 0;
+        for snapshot_id in snapshot_ids {
+            self.delete_snapshot(snapshot_id).await?;
+            deleted += 1;
+        }
+        Ok(deleted)
+    }
+    /// 统计一个快照持有的 blob 引用次数（裁剪前汇总，随后由条目仓储扣减）。
+    ///
+    /// 默认实现通过快照条目在内存中统计；存储实现应在 SQL 内聚合，避免把整份
+    /// 快照条目读进内存。
+    async fn snapshot_blob_reference_counts(
+        &self,
+        snapshot_id: &SnapshotId,
+    ) -> DomainResult<Vec<(BlobId, u32)>> {
+        let mut counts = std::collections::HashMap::<BlobId, u32>::new();
+        for entry in self.get_snapshot_entries(snapshot_id).await? {
+            if let Some(blob_id) = entry.blob_id {
+                *counts.entry(blob_id).or_insert(0) += 1;
+            }
+        }
+        Ok(counts.into_iter().collect())
+    }
 }
 
 /// Protocol-specific changes applied while creating a full namespace snapshot.

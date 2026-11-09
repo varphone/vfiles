@@ -421,8 +421,8 @@ async fn paginated_directory_listing(
     }))
 }
 
-/// 分页列目录：HEAD 走 SQL 分页（大目录不再全量拉取），
-/// 指定快照时仍按快照重建整棵子树后切片。
+/// 分页列目录：实时目录与快照目录都走 SQL 分页，不再全量重建子树。
+/// 快照目录按 `parent_path` 索引 seek 直接子项，代价与返回页大小相关。
 async fn paginated_listing(
     state: &AppState,
     namespace_id: &NamespaceId,

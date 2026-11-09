@@ -2655,49 +2655,6 @@ fn parse_snapshot_entry_row(row: SnapshotEntryRow) -> DomainResult<SnapshotEntry
     })
 }
 
-fn push_snapshot_children_cte(
-    query: &mut sqlx::QueryBuilder<sqlx::Sqlite>,
-    snapshot_id: String,
-    root: &str,
-    lower: &str,
-    upper: &str,
-) {
-    query.push("WITH visible AS (SELECT entry_path, entry_kind, ");
-    if root.is_empty() {
-        query.push("entry_path AS remainder");
-    } else {
-        query
-            .push("substr(entry_path, length(")
-            .push_bind(root)
-            .push(") + 2) AS remainder");
-    }
-    query
-        .push(" FROM snapshot_entries WHERE snapshot_id = ")
-        .push_bind(snapshot_id)
-        .push(" AND change_type != 'deleted'");
-    if !root.is_empty() {
-        query
-            .push(" AND entry_path >= ")
-            .push_bind(lower)
-            .push(" AND entry_path < ")
-            .push_bind(upper);
-    }
-    query.push(
-        r#"), children AS (
-                SELECT
-                    CASE WHEN instr(remainder, '/') = 0 THEN entry_path
-                         ELSE substr(entry_path, 1, length(entry_path) - length(remainder))
-                              || substr(remainder, 1, instr(remainder, '/') - 1)
-                    END AS child_path,
-                    MAX(CASE WHEN instr(remainder, '/') > 0 OR entry_kind = 'directory'
-                             THEN 1 ELSE 0 END) AS is_directory
-                FROM visible
-                WHERE remainder != ''
-                GROUP BY child_path
-            )"#,
-    );
-}
-
 type EntryChildMetaRow = (
     String,
     String,
@@ -2964,6 +2921,84 @@ fn parse_entry_version_row(
     })
 }
 
+/// Live directory listing: one page of direct children, ordered "directories
+/// first, then path". The order matches `idx_entries_namespace_parent_kind_path`.
+const LIVE_CHILDREN_PAGE_SQL: &str = r#"
+    SELECT
+        e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+        (
+            SELECT ev.id FROM entry_versions ev
+            WHERE ev.entry_id = e.id
+            ORDER BY ev.version DESC
+            LIMIT 1
+        ) AS current_version_id
+    FROM entries e
+    WHERE e.namespace_id = ? AND e.parent_path = ?
+    ORDER BY e.kind ASC, e.path ASC
+    LIMIT ? OFFSET ?
+"#;
+
+const LIVE_CHILDREN_COUNT_SQL: &str = r#"
+    SELECT COUNT(*) FROM entries e
+    WHERE e.namespace_id = ? AND e.parent_path = ?
+"#;
+
+const LIVE_CHILDREN_AFTER_SQL: &str = r#"
+    SELECT
+        e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+        (
+            SELECT ev.id FROM entry_versions ev
+            WHERE ev.entry_id = e.id
+            ORDER BY ev.version DESC
+            LIMIT 1
+        ) AS current_version_id
+    FROM entries e
+    WHERE e.namespace_id = ? AND e.parent_path = ?
+      AND (e.kind, e.path) > (?, ?)
+    ORDER BY e.kind ASC, e.path ASC
+    LIMIT ?
+"#;
+
+const LIVE_DIRECTORY_CHILDREN_PAGE_SQL: &str = r#"
+    SELECT
+        e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
+        (
+            SELECT ev.id FROM entry_versions ev
+            WHERE ev.entry_id = e.id
+            ORDER BY ev.version DESC
+            LIMIT 1
+        ) AS current_version_id
+    FROM entries e
+    WHERE e.namespace_id = ? AND e.parent_path = ? AND e.kind = 'directory'
+    ORDER BY e.path ASC
+    LIMIT ? OFFSET ?
+"#;
+
+const LIVE_DIRECTORY_CHILDREN_COUNT_SQL: &str = r#"
+    SELECT COUNT(*) FROM entries e
+    WHERE e.namespace_id = ? AND e.parent_path = ? AND e.kind = 'directory'
+"#;
+
+const LIVE_CHILDREN_ALL_SQL: &str = r#"
+    SELECT
+        e.id,
+        e.namespace_id,
+        e.path,
+        e.kind,
+        e.created_at,
+        e.updated_at,
+        (
+            SELECT ev.id
+            FROM entry_versions ev
+            WHERE ev.entry_id = e.id
+            ORDER BY ev.version DESC
+            LIMIT 1
+        ) AS current_version_id
+    FROM entries e
+    WHERE e.namespace_id = ? AND e.parent_path = ?
+    ORDER BY e.path
+"#;
+
 #[async_trait::async_trait]
 impl EntryRepo for SqliteEntryRepo {
     async fn find_by_id(&self, entry_id: &EntryId) -> DomainResult<Entry> {
@@ -3100,70 +3135,15 @@ impl EntryRepo for SqliteEntryRepo {
         namespace_id: &NamespaceId,
         parent_path: &NormalizedPath,
     ) -> DomainResult<Vec<Entry>> {
-        let rows: Vec<EntryRow> = if parent_path.as_str().is_empty() {
-            sqlx::query_as(
-                r#"
-                SELECT
-                    e.id,
-                    e.namespace_id,
-                    e.path,
-                    e.kind,
-                    e.created_at,
-                    e.updated_at,
-                    (
-                        SELECT ev.id
-                        FROM entry_versions ev
-                        WHERE ev.entry_id = e.id
-                        ORDER BY ev.version DESC
-                        LIMIT 1
-                    ) AS current_version_id
-                FROM entries e
-                WHERE e.namespace_id = ?
-                  AND instr(e.path, '/') = 0
-                ORDER BY e.path
-                "#,
-            )
+        let root = parent_path.as_str().trim_end_matches('/').to_string();
+        let rows: Vec<EntryRow> = sqlx::query_as(LIVE_CHILDREN_ALL_SQL)
             .bind(namespace_id.to_string())
+            .bind(&root)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| DomainError::Internal {
                 message: format!("Failed to find children: {}", e),
-            })?
-        } else {
-            let direct_prefix = format!("{}/", parent_path.as_str().trim_end_matches('/'));
-            sqlx::query_as(
-                r#"
-                SELECT
-                    e.id,
-                    e.namespace_id,
-                    e.path,
-                    e.kind,
-                    e.created_at,
-                    e.updated_at,
-                    (
-                        SELECT ev.id
-                        FROM entry_versions ev
-                        WHERE ev.entry_id = e.id
-                        ORDER BY ev.version DESC
-                        LIMIT 1
-                    ) AS current_version_id
-                FROM entries e
-                WHERE e.namespace_id = ?
-                  AND e.path LIKE ?
-                                    AND instr(substr(e.path, length(?) + 1), '/') = 0
-                ORDER BY e.path
-                "#,
-            )
-            .bind(namespace_id.to_string())
-            .bind(format!("{}%", direct_prefix))
-            .bind(direct_prefix)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| DomainError::Internal {
-                message: format!("Failed to find children: {}", e),
-            })?
-        };
-
+            })?;
         rows.into_iter().map(parse_entry_row).collect()
     }
 
@@ -3762,32 +3742,69 @@ impl EntryRepo for SqliteEntryRepo {
         rows.into_iter().map(parse_entry_row).collect()
     }
 
-    async fn stats(&self, namespace_id: &NamespaceId) -> DomainResult<NamespaceStats> {
+    async fn namespace_overview(
+        &self,
+        namespace_id: &NamespaceId,
+        recent_limit: u32,
+    ) -> DomainResult<NamespaceOverview> {
         #[derive(sqlx::FromRow)]
-        struct StatsRow {
-            file_count: i64,
+        struct OverviewRow {
             directory_count: i64,
+            file_count: i64,
             total_bytes: i64,
+            document_bytes: i64,
+            document_count: i64,
+            image_bytes: i64,
+            image_count: i64,
+            video_bytes: i64,
+            video_count: i64,
+            audio_bytes: i64,
+            audio_count: i64,
         }
 
-        // 只统计当前版本（version 最大的一条）的大小；目录没有版本，按 0 计。
-        // entries 表没有 current_version_id 列，这里用子查询取最新版本。
-        let row: StatsRow = sqlx::query_as(
+        // 一次遍历同时得到条目统计、总占用与分类占用。当前版本的 size/MIME
+        // 存在 entries 上并由触发器维护，因此这里不再为每个条目查一次版本。
+        // 分类规则与主流网盘一致，按当前版本的 MIME 归类；缺失类型归入 other。
+        let row: OverviewRow = sqlx::query_as(
             r#"
             SELECT
-                COUNT(CASE WHEN e.kind = 'file' THEN 1 END) as file_count,
-                COUNT(CASE WHEN e.kind = 'directory' THEN 1 END) as directory_count,
-                COALESCE(
-                    SUM(
-                        CASE WHEN e.kind = 'file' THEN (
-                            SELECT ev.size FROM entry_versions ev
-                            WHERE ev.entry_id = e.id
-                            ORDER BY ev.version DESC
-                            LIMIT 1
-                        ) ELSE 0 END
-                    ),
-                    0
-                ) as total_bytes
+                COALESCE(SUM(CASE WHEN e.kind = 'directory' THEN 1 ELSE 0 END), 0) AS directory_count,
+                COALESCE(SUM(CASE WHEN e.kind = 'file' THEN 1 ELSE 0 END), 0) AS file_count,
+                COALESCE(SUM(CASE WHEN e.kind = 'file' THEN e.current_size ELSE 0 END), 0) AS total_bytes,
+                COALESCE(SUM(CASE WHEN e.kind = 'file' AND (
+                        e.current_content_type LIKE 'text/%'
+                        OR e.current_content_type IN (
+                            'application/pdf',
+                            'application/json',
+                            'application/xml',
+                            'application/rtf',
+                            'application/msword',
+                            'application/vnd.ms-excel',
+                            'application/vnd.ms-powerpoint'
+                        )
+                        OR e.current_content_type LIKE 'application/vnd.openxmlformats%'
+                        OR e.current_content_type LIKE 'application/vnd.oasis%'
+                    ) THEN e.current_size ELSE 0 END), 0) AS document_bytes,
+                COALESCE(SUM(CASE WHEN e.kind = 'file' AND (
+                        e.current_content_type LIKE 'text/%'
+                        OR e.current_content_type IN (
+                            'application/pdf',
+                            'application/json',
+                            'application/xml',
+                            'application/rtf',
+                            'application/msword',
+                            'application/vnd.ms-excel',
+                            'application/vnd.ms-powerpoint'
+                        )
+                        OR e.current_content_type LIKE 'application/vnd.openxmlformats%'
+                        OR e.current_content_type LIKE 'application/vnd.oasis%'
+                    ) THEN 1 ELSE 0 END), 0) AS document_count,
+                COALESCE(SUM(CASE WHEN e.kind = 'file' AND e.current_content_type LIKE 'image/%' THEN e.current_size ELSE 0 END), 0) AS image_bytes,
+                COALESCE(SUM(CASE WHEN e.kind = 'file' AND e.current_content_type LIKE 'image/%' THEN 1 ELSE 0 END), 0) AS image_count,
+                COALESCE(SUM(CASE WHEN e.kind = 'file' AND e.current_content_type LIKE 'video/%' THEN e.current_size ELSE 0 END), 0) AS video_bytes,
+                COALESCE(SUM(CASE WHEN e.kind = 'file' AND e.current_content_type LIKE 'video/%' THEN 1 ELSE 0 END), 0) AS video_count,
+                COALESCE(SUM(CASE WHEN e.kind = 'file' AND e.current_content_type LIKE 'audio/%' THEN e.current_size ELSE 0 END), 0) AS audio_bytes,
+                COALESCE(SUM(CASE WHEN e.kind = 'file' AND e.current_content_type LIKE 'audio/%' THEN 1 ELSE 0 END), 0) AS audio_count
             FROM entries e
             WHERE e.namespace_id = ?
             "#,
@@ -3796,87 +3813,49 @@ impl EntryRepo for SqliteEntryRepo {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| DomainError::Internal {
-            message: format!("Failed to load namespace stats: {e}"),
+            message: format!("Failed to load namespace overview: {e}"),
         })?;
 
-        Ok(NamespaceStats {
-            file_count: row.file_count.max(0) as u64,
-            directory_count: row.directory_count.max(0) as u64,
-            total_bytes: row.total_bytes.max(0) as u64,
-        })
-    }
-
-    async fn stats_by_category(
-        &self,
-        namespace_id: &NamespaceId,
-    ) -> DomainResult<Vec<CategoryUsage>> {
-        #[derive(sqlx::FromRow)]
-        struct CategoryRow {
-            category: String,
-            bytes: i64,
-            file_count: i64,
-        }
-
-        // 分类规则与主流网盘一致：按当前版本的 MIME 前缀归类，
-        // 文档包含文本、PDF 与 Office 系列；缺失类型归入 other。
-        let rows: Vec<CategoryRow> = sqlx::query_as(
-            r#"
-            SELECT
-                CASE
-                    WHEN ev.content_type LIKE 'image/%' THEN 'image'
-                    WHEN ev.content_type LIKE 'video/%' THEN 'video'
-                    WHEN ev.content_type LIKE 'audio/%' THEN 'audio'
-                    WHEN ev.content_type LIKE 'text/%'
-                      OR ev.content_type IN (
-                            'application/pdf',
-                            'application/json',
-                            'application/xml',
-                            'application/rtf',
-                            'application/msword',
-                            'application/vnd.ms-excel',
-                            'application/vnd.ms-powerpoint'
-                      )
-                      OR ev.content_type LIKE 'application/vnd.openxmlformats%'
-                      OR ev.content_type LIKE 'application/vnd.oasis%'
-                      THEN 'document'
-                    ELSE 'other'
-                END AS category,
-                COALESCE(SUM(ev.size), 0) AS bytes,
-                COUNT(*) AS file_count
-            FROM entries e
-            JOIN entry_versions ev ON ev.entry_id = e.id
-            WHERE e.namespace_id = ?
-              AND e.kind = 'file'
-              AND ev.version = (
-                    SELECT MAX(version) FROM entry_versions WHERE entry_id = e.id
-              )
-            GROUP BY category
-            ORDER BY bytes DESC
-            "#,
-        )
-        .bind(namespace_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to load category stats: {e}"),
-        })?;
-
-        Ok(rows
+        let total_bytes = row.total_bytes.max(0) as u64;
+        let file_count = row.file_count.max(0) as u64;
+        let categories = [
+            (
+                FileCategory::Document,
+                row.document_bytes,
+                row.document_count,
+            ),
+            (FileCategory::Image, row.image_bytes, row.image_count),
+            (FileCategory::Video, row.video_bytes, row.video_count),
+            (FileCategory::Audio, row.audio_bytes, row.audio_count),
+        ];
+        let mut usages = categories
             .into_iter()
-            .map(|row| CategoryUsage {
-                category: FileCategory::from_sql(&row.category),
-                bytes: row.bytes.max(0) as u64,
-                file_count: row.file_count.max(0) as u64,
+            .filter(|(_, _, count)| *count > 0)
+            .map(|(category, bytes, count)| CategoryUsage {
+                category,
+                bytes: bytes.max(0) as u64,
+                file_count: count.max(0) as u64,
             })
-            .collect())
-    }
+            .collect::<Vec<_>>();
+        let categorized_bytes: u64 = usages.iter().map(|usage| usage.bytes).sum();
+        let categorized_count: u64 = usages.iter().map(|usage| usage.file_count).sum();
+        if file_count > categorized_count {
+            usages.push(CategoryUsage {
+                category: FileCategory::Other,
+                bytes: total_bytes.saturating_sub(categorized_bytes),
+                file_count: file_count - categorized_count,
+            });
+        }
+        usages.sort_by(|left, right| {
+            right
+                .bytes
+                .cmp(&left.bytes)
+                .then_with(|| left.category.as_str().cmp(right.category.as_str()))
+        });
 
-    async fn recent_files(
-        &self,
-        namespace_id: &NamespaceId,
-        limit: u32,
-    ) -> DomainResult<Vec<Entry>> {
-        let rows: Vec<EntryRow> = sqlx::query_as(
+        // 「最近更新」按条目的更新时间排序，直接走部分索引，不再对每个文件
+        // 计算一次版本时间戳再排序。
+        let recent_rows: Vec<EntryRow> = sqlx::query_as(
             r#"
             SELECT
                 e.id,
@@ -3893,24 +3872,31 @@ impl EntryRepo for SqliteEntryRepo {
                 ) AS current_version_id
             FROM entries e
             WHERE e.namespace_id = ? AND e.kind = 'file'
-            ORDER BY (
-                SELECT ev.created_at FROM entry_versions ev
-                WHERE ev.entry_id = e.id
-                ORDER BY ev.version DESC
-                LIMIT 1
-            ) DESC, e.path ASC
+            ORDER BY e.updated_at DESC, e.path ASC
             LIMIT ?
             "#,
         )
         .bind(namespace_id.to_string())
-        .bind(i64::from(limit))
+        .bind(i64::from(recent_limit.max(1)))
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DomainError::Internal {
-            message: format!("Failed to list recent files: {e}"),
+            message: format!("Failed to load recent files: {e}"),
         })?;
+        let recent_files = recent_rows
+            .into_iter()
+            .map(parse_entry_row)
+            .collect::<DomainResult<Vec<_>>>()?;
 
-        rows.into_iter().map(parse_entry_row).collect()
+        Ok(NamespaceOverview {
+            stats: NamespaceStats {
+                file_count,
+                directory_count: row.directory_count.max(0) as u64,
+                total_bytes,
+            },
+            categories: usages,
+            recent_files,
+        })
     }
 
     async fn find_children_page(
@@ -3920,85 +3906,29 @@ impl EntryRepo for SqliteEntryRepo {
         limit: u32,
         offset: u32,
     ) -> DomainResult<(Vec<Entry>, u64)> {
-        // sqlx 要求静态 SQL，因此根目录与子目录各写一份完整语句（均命中
-        // (namespace_id, path) 索引）；排序与 live tree 的「目录优先 + 名称升序」一致。
-        const TOTAL_ROOT: &str = "SELECT COUNT(*) FROM entries e INDEXED BY idx_entries_namespace_root_path WHERE e.namespace_id = ? AND instr(e.path, '/') = 0";
-        // 只统计**直接子条目**：用 LIKE 前缀 + 「前缀之后不再含 /」过滤，
-        // 否则会把整棵子树都算进来（`a/` 的范围匹配会命中 `a/docs/x`）。
-        const TOTAL_PREFIX: &str = r#"SELECT COUNT(*) FROM entries e WHERE e.namespace_id = ? AND e.path LIKE ? ESCAPE '\' AND instr(substr(e.path, length(?) + 1), '/') = 0"#;
-        const PAGE_ROOT: &str = r#"
-            SELECT
-                e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
-                (
-                    SELECT ev.id FROM entry_versions ev
-                    WHERE ev.entry_id = e.id
-                    ORDER BY ev.version DESC
-                    LIMIT 1
-                ) AS current_version_id
-            FROM entries e
-            WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
-            ORDER BY (e.kind = 'directory') DESC, e.path ASC
-            LIMIT ? OFFSET ?
-        "#;
-        const PAGE_PREFIX: &str = r#"
-            SELECT
-                e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
-                (
-                    SELECT ev.id FROM entry_versions ev
-                    WHERE ev.entry_id = e.id
-                    ORDER BY ev.version DESC
-                    LIMIT 1
-                ) AS current_version_id
-            FROM entries e
-            WHERE e.namespace_id = ? AND e.path LIKE ? ESCAPE '\'
-              AND instr(substr(e.path, length(?) + 1), '/') = 0
-            ORDER BY (e.kind = 'directory') DESC, e.path ASC
-            LIMIT ? OFFSET ?
-        "#;
-        let is_root = parent_path.as_str().is_empty();
-        let root = parent_path.as_str().trim_end_matches('/');
-        // LIKE 前缀与长度参数：`instr(substr(path, length(prefix)+1), '/') = 0`
-        // 保证只取直接子条目
-        let direct_prefix = format!("{root}/");
-        let like_pattern = format!("{}%", escape_like_literal(&direct_prefix));
+        // `parent_path` 由 entries.path 派生，直接子条目是一次索引 seek；
+        // 索引顺序 (kind, path) 与「目录优先 + 路径升序」一致，不需要临时排序。
+        let root = parent_path.as_str().trim_end_matches('/').to_string();
 
-        let total: i64 = if is_root {
-            sqlx::query_scalar::<_, i64>(TOTAL_ROOT)
-                .bind(namespace_id.to_string())
-                .fetch_one(&self.pool)
-                .await
-        } else {
-            sqlx::query_scalar::<_, i64>(TOTAL_PREFIX)
-                .bind(namespace_id.to_string())
-                .bind(&like_pattern)
-                .bind(&direct_prefix)
-                .fetch_one(&self.pool)
-                .await
-        }
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to count children: {e}"),
-        })?;
+        let total: i64 = sqlx::query_scalar::<_, i64>(LIVE_CHILDREN_COUNT_SQL)
+            .bind(namespace_id.to_string())
+            .bind(&root)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to count children: {e}"),
+            })?;
 
-        let rows: Vec<EntryRow> = if is_root {
-            sqlx::query_as::<_, EntryRow>(PAGE_ROOT)
-                .bind(namespace_id.to_string())
-                .bind(i64::from(limit))
-                .bind(i64::from(offset))
-                .fetch_all(&self.pool)
-                .await
-        } else {
-            sqlx::query_as::<_, EntryRow>(PAGE_PREFIX)
-                .bind(namespace_id.to_string())
-                .bind(&like_pattern)
-                .bind(&direct_prefix)
-                .bind(i64::from(limit))
-                .bind(i64::from(offset))
-                .fetch_all(&self.pool)
-                .await
-        }
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to list children page: {e}"),
-        })?;
+        let rows: Vec<EntryRow> = sqlx::query_as::<_, EntryRow>(LIVE_CHILDREN_PAGE_SQL)
+            .bind(namespace_id.to_string())
+            .bind(&root)
+            .bind(i64::from(limit))
+            .bind(i64::from(offset))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to list children page: {e}"),
+            })?;
 
         let entries = rows
             .into_iter()
@@ -4015,79 +3945,27 @@ impl EntryRepo for SqliteEntryRepo {
         limit: u32,
         offset: u32,
     ) -> DomainResult<(Vec<Entry>, u64)> {
-        const TOTAL_ROOT: &str = "SELECT COUNT(*) FROM entries e INDEXED BY idx_entries_namespace_root_directories_path WHERE e.namespace_id = ? AND e.kind = 'directory' AND instr(e.path, '/') = 0";
-        const TOTAL_PREFIX: &str = r#"SELECT COUNT(*) FROM entries e WHERE e.namespace_id = ? AND e.kind = 'directory' AND e.path LIKE ? ESCAPE '\' AND instr(substr(e.path, length(?) + 1), '/') = 0"#;
-        const PAGE_ROOT: &str = r#"
-            SELECT
-                e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
-                (
-                    SELECT ev.id FROM entry_versions ev
-                    WHERE ev.entry_id = e.id
-                    ORDER BY ev.version DESC
-                    LIMIT 1
-                ) AS current_version_id
-            FROM entries e
-            WHERE e.namespace_id = ? AND e.kind = 'directory' AND instr(e.path, '/') = 0
-            ORDER BY e.path ASC
-            LIMIT ? OFFSET ?
-        "#;
-        const PAGE_PREFIX: &str = r#"
-            SELECT
-                e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
-                (
-                    SELECT ev.id FROM entry_versions ev
-                    WHERE ev.entry_id = e.id
-                    ORDER BY ev.version DESC
-                    LIMIT 1
-                ) AS current_version_id
-            FROM entries e
-            WHERE e.namespace_id = ? AND e.kind = 'directory' AND e.path LIKE ? ESCAPE '\'
-              AND instr(substr(e.path, length(?) + 1), '/') = 0
-            ORDER BY e.path ASC
-            LIMIT ? OFFSET ?
-        "#;
-        let is_root = parent_path.as_str().is_empty();
-        let root = parent_path.as_str().trim_end_matches('/');
-        let direct_prefix = format!("{root}/");
-        let like_pattern = format!("{}%", escape_like_literal(&direct_prefix));
+        let root = parent_path.as_str().trim_end_matches('/').to_string();
 
-        let total: i64 = if is_root {
-            sqlx::query_scalar::<_, i64>(TOTAL_ROOT)
-                .bind(namespace_id.to_string())
-                .fetch_one(&self.pool)
-                .await
-        } else {
-            sqlx::query_scalar::<_, i64>(TOTAL_PREFIX)
-                .bind(namespace_id.to_string())
-                .bind(&like_pattern)
-                .bind(&direct_prefix)
-                .fetch_one(&self.pool)
-                .await
-        }
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to count child directories: {e}"),
-        })?;
+        let total: i64 = sqlx::query_scalar::<_, i64>(LIVE_DIRECTORY_CHILDREN_COUNT_SQL)
+            .bind(namespace_id.to_string())
+            .bind(&root)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to count child directories: {e}"),
+            })?;
 
-        let rows: Vec<EntryRow> = if is_root {
-            sqlx::query_as::<_, EntryRow>(PAGE_ROOT)
-                .bind(namespace_id.to_string())
-                .bind(i64::from(limit))
-                .bind(i64::from(offset))
-                .fetch_all(&self.pool)
-                .await
-        } else {
-            sqlx::query_as::<_, EntryRow>(PAGE_PREFIX)
-                .bind(namespace_id.to_string())
-                .bind(&like_pattern)
-                .bind(&direct_prefix)
-                .bind(i64::from(limit))
-                .bind(i64::from(offset))
-                .fetch_all(&self.pool)
-                .await
-        }
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to list child directories page: {e}"),
-        })?;
+        let rows: Vec<EntryRow> = sqlx::query_as::<_, EntryRow>(LIVE_DIRECTORY_CHILDREN_PAGE_SQL)
+            .bind(namespace_id.to_string())
+            .bind(&root)
+            .bind(i64::from(limit))
+            .bind(i64::from(offset))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to list child directories page: {e}"),
+            })?;
 
         let entries = rows
             .into_iter()
@@ -4104,70 +3982,12 @@ impl EntryRepo for SqliteEntryRepo {
         after: Option<(bool, String)>,
         limit: u32,
     ) -> DomainResult<Vec<Entry>> {
-        const ROOT_FIRST: &str = r#"
-            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
-                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
-            FROM entries e WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
-            ORDER BY (e.kind = 'directory') DESC, e.path ASC LIMIT ?
-        "#;
-        const ROOT_AFTER_DIRECTORY: &str = r#"
-            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
-                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
-            FROM entries e INDEXED BY idx_entries_namespace_root_directories_path
-            WHERE e.namespace_id = ? AND e.kind = 'directory' AND instr(e.path, '/') = 0
-              AND e.path > ?
-            ORDER BY e.path ASC LIMIT ?
-        "#;
-        const ROOT_FILES_FROM_START: &str = r#"
-            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
-                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
-            FROM entries e INDEXED BY idx_entries_namespace_root_path
-            WHERE e.namespace_id = ? AND instr(e.path, '/') = 0 AND e.kind = 'file'
-            ORDER BY e.path ASC LIMIT ?
-        "#;
-        const ROOT_AFTER_FILE: &str = r#"
-            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
-                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
-            FROM entries e INDEXED BY idx_entries_namespace_root_path
-            WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
-              AND e.kind = 'file' AND e.path > ?
-            ORDER BY e.path ASC LIMIT ?
-        "#;
-        const PREFIX_FIRST: &str = r#"
-            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
-                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
-            FROM entries e WHERE e.namespace_id = ? AND e.path >= ? AND e.path < ?
-              AND instr(substr(e.path, length(?) + 1), '/') = 0
-            ORDER BY (e.kind = 'directory') DESC, e.path ASC LIMIT ?
-        "#;
-        const PREFIX_AFTER_DIRECTORY: &str = r#"
-            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
-                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
-            FROM entries e INDEXED BY idx_entries_namespace_directories_path
-            WHERE e.namespace_id = ? AND e.path > ? AND e.path < ? AND e.kind = 'directory'
-              AND instr(substr(e.path, length(?) + 1), '/') = 0
-            ORDER BY e.path ASC LIMIT ?
-        "#;
-        const PREFIX_FILES_FROM_START: &str = r#"
-            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
-                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
-            FROM entries e WHERE e.namespace_id = ? AND e.path >= ? AND e.path < ?
-              AND instr(substr(e.path, length(?) + 1), '/') = 0 AND e.kind = 'file'
-            ORDER BY e.path ASC LIMIT ?
-        "#;
-        const PREFIX_AFTER_FILE: &str = r#"
-            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
-                (SELECT ev.id FROM entry_versions ev WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
-            FROM entries e WHERE e.namespace_id = ? AND e.path >= ? AND e.path < ?
-              AND instr(substr(e.path, length(?) + 1), '/') = 0
-              AND e.kind = 'file' AND e.path > ?
-            ORDER BY e.path ASC LIMIT ?
-        "#;
+        // 游标分页与首页共用 `(namespace_id, parent_path, kind, path)` 索引：
+        // 排序键就是索引键，行值比较直接落在索引范围上，无需按类型拆成多条语句。
 
         let limit = i64::from(limit);
         let is_root = parent_path.as_str().is_empty();
         let prefix = format!("{}/", parent_path.as_str().trim_end_matches('/'));
-        let upper = format!("{}0", parent_path.as_str().trim_end_matches('/'));
         if let Some((_, path)) = after.as_ref() {
             let is_direct_child = if is_root {
                 !path.is_empty() && !path.contains('/')
@@ -4182,89 +4002,29 @@ impl EntryRepo for SqliteEntryRepo {
                 });
             }
         }
+        let root = parent_path.as_str().trim_end_matches('/').to_string();
 
-        let rows: Vec<EntryRow> = async {
-            match (is_root, after) {
-                (true, None) => {
-                    sqlx::query_as(ROOT_FIRST)
-                        .bind(namespace_id.to_string())
-                        .bind(limit)
-                        .fetch_all(&self.pool)
-                        .await
-                }
-                (true, Some((true, path))) => {
-                    let mut rows = sqlx::query_as::<_, EntryRow>(ROOT_AFTER_DIRECTORY)
-                        .bind(namespace_id.to_string())
-                        .bind(path)
-                        .bind(limit)
-                        .fetch_all(&self.pool)
-                        .await?;
-                    if (rows.len() as i64) < limit {
-                        let remaining = limit - rows.len() as i64;
-                        let mut files = sqlx::query_as::<_, EntryRow>(ROOT_FILES_FROM_START)
-                            .bind(namespace_id.to_string())
-                            .bind(remaining)
-                            .fetch_all(&self.pool)
-                            .await?;
-                        rows.append(&mut files);
-                    }
-                    Ok(rows)
-                }
-                (true, Some((false, path))) => {
-                    sqlx::query_as(ROOT_AFTER_FILE)
-                        .bind(namespace_id.to_string())
-                        .bind(path)
-                        .bind(limit)
-                        .fetch_all(&self.pool)
-                        .await
-                }
-                (false, None) => {
-                    sqlx::query_as(PREFIX_FIRST)
-                        .bind(namespace_id.to_string())
-                        .bind(&prefix)
-                        .bind(&upper)
-                        .bind(&prefix)
-                        .bind(limit)
-                        .fetch_all(&self.pool)
-                        .await
-                }
-                (false, Some((true, path))) => {
-                    let mut rows = sqlx::query_as::<_, EntryRow>(PREFIX_AFTER_DIRECTORY)
-                        .bind(namespace_id.to_string())
-                        .bind(path)
-                        .bind(&upper)
-                        .bind(&prefix)
-                        .bind(limit)
-                        .fetch_all(&self.pool)
-                        .await?;
-                    if (rows.len() as i64) < limit {
-                        let remaining = limit - rows.len() as i64;
-                        let mut files = sqlx::query_as::<_, EntryRow>(PREFIX_FILES_FROM_START)
-                            .bind(namespace_id.to_string())
-                            .bind(&prefix)
-                            .bind(&upper)
-                            .bind(&prefix)
-                            .bind(remaining)
-                            .fetch_all(&self.pool)
-                            .await?;
-                        rows.append(&mut files);
-                    }
-                    Ok(rows)
-                }
-                (false, Some((false, path))) => {
-                    sqlx::query_as(PREFIX_AFTER_FILE)
-                        .bind(namespace_id.to_string())
-                        .bind(&prefix)
-                        .bind(&upper)
-                        .bind(&prefix)
-                        .bind(path)
-                        .bind(limit)
-                        .fetch_all(&self.pool)
-                        .await
-                }
+        let rows: Vec<EntryRow> = match after {
+            Some((is_directory, path)) => {
+                let kind = if is_directory { "directory" } else { "file" };
+                sqlx::query_as::<_, EntryRow>(LIVE_CHILDREN_AFTER_SQL)
+                    .bind(namespace_id.to_string())
+                    .bind(&root)
+                    .bind(kind)
+                    .bind(path)
+                    .bind(limit)
+                    .fetch_all(&self.pool)
+                    .await
+            }
+            None => {
+                sqlx::query_as::<_, EntryRow>(LIVE_CHILDREN_PAGE_SQL)
+                    .bind(namespace_id.to_string())
+                    .bind(&root)
+                    .bind(limit)
+                    .fetch_all(&self.pool)
+                    .await
             }
         }
-        .await
         .map_err(|error| DomainError::Internal {
             message: format!("Failed to list children cursor page: {error}"),
         })?;
@@ -6904,28 +6664,44 @@ impl AuditLogRepo for SqliteAuditLogRepo {
         let result = query.result.map(|value| value.as_str().to_string());
         let since = query.since;
         let until = query.until;
+        let unfiltered = keyword.is_none()
+            && action.is_none()
+            && result.is_none()
+            && since.is_none()
+            && until.is_none();
 
-        // sqlx 要求 SQL 为静态字符串（避免拼接注入），因此两处各写一遍完整语句
-        let total: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(*) FROM audit_logs
-            WHERE (?1 IS NULL OR username LIKE ?1 OR ip LIKE ?1)
-              AND (?2 IS NULL OR action = ?2)
-              AND (?3 IS NULL OR result = ?3)
-              AND (?4 IS NULL OR created_at >= ?4)
-              AND (?5 IS NULL OR created_at < ?5)
-            "#,
-        )
-        .bind(keyword.as_deref())
-        .bind(action.as_deref())
-        .bind(result.as_deref())
-        .bind(since)
-        .bind(until)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to count audit logs: {e}"),
-        })?;
+        // 无筛选条件时用最窄的计数：带 `? IS NULL` 分支的通用语句会让 SQLite
+        // 逐行扫描整张审计表，而默认页面每次都要这个总数。
+        let total: i64 = if unfiltered {
+            sqlx::query_scalar("SELECT COUNT(*) FROM audit_logs")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| DomainError::Internal {
+                    message: format!("Failed to count audit logs: {e}"),
+                })?
+        } else {
+            // sqlx 要求 SQL 为静态字符串（避免拼接注入），因此两处各写一遍完整语句
+            sqlx::query_scalar(
+                r#"
+                SELECT COUNT(*) FROM audit_logs
+                WHERE (?1 IS NULL OR username LIKE ?1 OR ip LIKE ?1)
+                  AND (?2 IS NULL OR action = ?2)
+                  AND (?3 IS NULL OR result = ?3)
+                  AND (?4 IS NULL OR created_at >= ?4)
+                  AND (?5 IS NULL OR created_at < ?5)
+                "#,
+            )
+            .bind(keyword.as_deref())
+            .bind(action.as_deref())
+            .bind(result.as_deref())
+            .bind(since)
+            .bind(until)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to count audit logs: {e}"),
+            })?
+        };
 
         let limit = query.limit.clamp(1, 500) as i64;
         let offset = query.offset as i64;
@@ -7097,171 +6873,190 @@ impl AuditLogRepo for SqliteAuditLogRepo {
 
 pub struct SqliteSnapshotRepo {
     pool: SqlitePool,
+    /// 启用后合并窗口内的自动快照；`None` 表示逐次生成。
+    coalescer: Option<std::sync::Arc<SnapshotCoalescer>>,
+}
+
+/// 单个命名空间当前的合并窗口。
+struct CoalesceWindow {
+    /// 窗口内最近一次创建的快照；合并中的变更返回该 id。
+    snapshot_id: SnapshotId,
+    /// 最近一次变更的操作者，补提交时作为快照作者。
+    user_id: UserId,
+    /// 尚未被快照覆盖的变更数。
+    pending: u64,
+    /// 是否已安排补提交定时器。
+    armed: bool,
+    /// 是否正在补提交。
+    flushing: bool,
+    generation: u64,
+}
+
+enum CoalesceDecision {
+    /// 立即创建快照（窗口起点，或没有进行中的窗口）。
+    Create,
+    /// 合并到当前窗口，返回该窗口的快照 id。
+    Reuse(SnapshotId),
+}
+
+/// 按命名空间合并自动快照。
+///
+/// 第一次变更立即生成快照并开启窗口；窗口内的后续变更只累加待提交计数，
+/// 由窗口结束时的后台任务补提交一次。补提交失败时保留计数，等下一次变更
+/// 重新开启窗口（不忙循环重试）。
+struct SnapshotCoalescer {
+    window: std::time::Duration,
+    pool: SqlitePool,
+    state: tokio::sync::Mutex<std::collections::HashMap<NamespaceId, CoalesceWindow>>,
+    generations: std::sync::atomic::AtomicU64,
+}
+
+impl SnapshotCoalescer {
+    fn next_generation(&self) -> u64 {
+        self.generations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1
+    }
+
+    async fn decide(self: &std::sync::Arc<Self>, namespace_id: &NamespaceId) -> CoalesceDecision {
+        let mut state = self.state.lock().await;
+        match state.get_mut(namespace_id) {
+            Some(window) => {
+                window.pending = window.pending.saturating_add(1);
+                if !window.armed && !window.flushing {
+                    window.armed = true;
+                    window.generation = self.next_generation();
+                    self.spawn_flush(*namespace_id, window.generation);
+                }
+                CoalesceDecision::Reuse(window.snapshot_id)
+            }
+            None => CoalesceDecision::Create,
+        }
+    }
+
+    async fn record_created(
+        self: &std::sync::Arc<Self>,
+        namespace_id: &NamespaceId,
+        snapshot_id: SnapshotId,
+        user_id: UserId,
+    ) {
+        let mut state = self.state.lock().await;
+        let generation = self.next_generation();
+        state.insert(
+            *namespace_id,
+            CoalesceWindow {
+                snapshot_id,
+                user_id,
+                pending: 0,
+                armed: true,
+                flushing: false,
+                generation,
+            },
+        );
+        self.spawn_flush(*namespace_id, generation);
+    }
+
+    fn spawn_flush(self: &std::sync::Arc<Self>, namespace_id: NamespaceId, generation: u64) {
+        let coalescer = std::sync::Arc::clone(self);
+        let window = self.window;
+        tokio::spawn(async move {
+            tokio::time::sleep(window).await;
+            coalescer.flush(namespace_id, generation).await;
+        });
+    }
+
+    async fn flush(self: &std::sync::Arc<Self>, namespace_id: NamespaceId, generation: u64) {
+        let repo = SqliteSnapshotRepo {
+            pool: self.pool.clone(),
+            coalescer: None,
+        };
+        let (pending, user_id) = {
+            let mut state = self.state.lock().await;
+            let Some(window) = state.get_mut(&namespace_id) else {
+                return;
+            };
+            if window.generation != generation || !window.armed {
+                return;
+            }
+            window.armed = false;
+            if window.pending == 0 {
+                // 窗口内没有需要补提交的变更，窗口结束。
+                state.remove(&namespace_id);
+                return;
+            }
+            window.flushing = true;
+            (window.pending, window.user_id)
+        };
+
+        let message = format!("自动快照（合并 {pending} 次变更）");
+        let result = repo
+            .create_snapshot_core(
+                &namespace_id,
+                Some(&message),
+                SnapshotKind::AutoCommit,
+                &user_id,
+                &SnapshotNamespaceChanges::default(),
+            )
+            .await;
+
+        let mut state = self.state.lock().await;
+        let Some(window) = state.get_mut(&namespace_id) else {
+            return;
+        };
+        window.flushing = false;
+        match result {
+            Ok(snapshot_id) => {
+                window.snapshot_id = snapshot_id;
+                window.pending = window.pending.saturating_sub(pending);
+                if window.pending > 0 {
+                    window.armed = true;
+                    window.generation = self.next_generation();
+                    self.spawn_flush(namespace_id, window.generation);
+                }
+            }
+            Err(error) => {
+                // 保留 pending：下一次变更会重新开启窗口并再次补提交。
+                tracing::warn!(
+                    namespace = %namespace_id,
+                    %error,
+                    "自动快照补提交失败，等待下一次变更重试"
+                );
+            }
+        }
+    }
 }
 
 impl SqliteSnapshotRepo {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
-    }
-
-    async fn next_snapshot_no(&self, namespace_id: &NamespaceId) -> DomainResult<u32> {
-        let snapshot_no: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COALESCE(
-                MAX(
-                    CASE
-                        WHEN instr(name, '-') > 0 THEN CAST(substr(name, instr(name, '-') + 1) AS INTEGER)
-                        ELSE 0
-                    END
-                ),
-                0
-            ) + 1
-            FROM snapshots
-            WHERE namespace_id = ?
-            "#,
-        )
-        .bind(namespace_id.to_string())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to calculate next snapshot number: {}", e),
-        })?;
-
-        u32::try_from(snapshot_no).map_err(|_| DomainError::Internal {
-            message: format!("Invalid snapshot number: {}", snapshot_no),
-        })
-    }
-}
-
-impl Clone for SqliteSnapshotRepo {
-    fn clone(&self) -> Self {
         Self {
-            pool: self.pool.clone(),
+            pool,
+            coalescer: None,
         }
     }
-}
 
-fn snapshot_name(kind: SnapshotKind, snapshot_no: u32) -> String {
-    match kind {
-        SnapshotKind::UserCreated => format!("snapshot-{:06}", snapshot_no),
-        SnapshotKind::AutoCommit => format!("auto-{:06}", snapshot_no),
-    }
-}
-
-const SNAPSHOT_NAME_RETRY_LIMIT: usize = 8;
-
-fn parse_snapshot_name(name: &str) -> (SnapshotKind, u32) {
-    if let Some(number) = name.strip_prefix("auto-") {
-        let snapshot_no = number.parse::<u32>().unwrap_or(1);
-        return (SnapshotKind::AutoCommit, snapshot_no);
-    }
-
-    if let Some(number) = name.strip_prefix("snapshot-") {
-        let snapshot_no = number.parse::<u32>().unwrap_or(1);
-        return (SnapshotKind::UserCreated, snapshot_no);
-    }
-
-    (SnapshotKind::UserCreated, 1)
-}
-
-#[cfg(test)]
-mod snapshot_helper_tests {
-    use super::{parse_snapshot_name, snapshot_name};
-    use vfiles_domain::SnapshotKind;
-
-    #[test]
-    fn snapshot_name_round_trip_preserves_kind_and_number() {
-        let name = snapshot_name(SnapshotKind::UserCreated, 42);
-        let (kind, snapshot_no) = parse_snapshot_name(&name);
-
-        assert_eq!(kind, SnapshotKind::UserCreated);
-        assert_eq!(snapshot_no, 42);
-    }
-
-    #[test]
-    fn auto_snapshot_name_round_trip_preserves_kind_and_number() {
-        let name = snapshot_name(SnapshotKind::AutoCommit, 7);
-        let (kind, snapshot_no) = parse_snapshot_name(&name);
-
-        assert_eq!(kind, SnapshotKind::AutoCommit);
-        assert_eq!(snapshot_no, 7);
-    }
-}
-
-#[async_trait::async_trait]
-impl SnapshotRepo for SqliteSnapshotRepo {
-    async fn create_snapshot(
-        &self,
-        namespace_id: &NamespaceId,
-        message: Option<&str>,
-        kind: SnapshotKind,
-        user_id: &UserId,
-    ) -> DomainResult<SnapshotId> {
-        let now = time::OffsetDateTime::now_utc();
-        let namespace_id_str = namespace_id.to_string();
-        let user_id_str = user_id.to_string();
-
-        for _ in 0..SNAPSHOT_NAME_RETRY_LIMIT {
-            let id = SnapshotId::new();
-            let snapshot_no = self.next_snapshot_no(namespace_id).await?;
-            let name = snapshot_name(kind, snapshot_no);
-
-            match sqlx::query(
-                "INSERT INTO snapshots (id, namespace_id, name, description, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)"
-            )
-            .bind(id.to_string())
-            .bind(&namespace_id_str)
-            .bind(name)
-            .bind(message)
-            .bind(now)
-            .bind(&user_id_str)
-            .execute(&self.pool)
-            .await
-            {
-                Ok(_) => return Ok(id),
-                Err(sqlx::Error::Database(ref db_err)) if db_err.is_unique_violation() => {
-                    continue;
-                }
-                Err(e) => {
-                    return Err(DomainError::Internal {
-                        message: format!("Failed to create snapshot: {}", e),
-                    });
-                }
-            }
+    /// 合并窗口内的自动快照；窗口为 0 时保持逐次写入。
+    ///
+    /// 合并期间返回的快照 id 是窗口内已创建的那一条，可能尚未包含刚提交的变更；
+    /// 窗口结束时由后台任务补提交一次快照。
+    pub fn with_coalescing(mut self, window: std::time::Duration) -> Self {
+        if !window.is_zero() {
+            self.coalescer = Some(std::sync::Arc::new(SnapshotCoalescer {
+                window,
+                pool: self.pool.clone(),
+                state: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+                generations: std::sync::atomic::AtomicU64::new(0),
+            }));
         }
-
-        Err(DomainError::Internal {
-            message: "Failed to allocate a unique snapshot name after multiple retries".to_string(),
-        })
+        self
     }
 
-    async fn create_snapshot_from_namespace(
+    /// 真正生成快照并复制整棵命名空间树（不含合并判定）。
+    async fn create_snapshot_core(
         &self,
         namespace_id: &NamespaceId,
         message: Option<&str>,
         kind: SnapshotKind,
         user_id: &UserId,
-        entry_repo: &(dyn EntryRepo + Send + Sync),
-    ) -> DomainResult<SnapshotId> {
-        let changes = SnapshotNamespaceChanges::default();
-        self.create_snapshot_from_namespace_with_changes(
-            namespace_id,
-            message,
-            kind,
-            user_id,
-            entry_repo,
-            &changes,
-        )
-        .await
-    }
-
-    async fn create_snapshot_from_namespace_with_changes(
-        &self,
-        namespace_id: &NamespaceId,
-        message: Option<&str>,
-        kind: SnapshotKind,
-        user_id: &UserId,
-        _entry_repo: &(dyn EntryRepo + Send + Sync),
         changes: &SnapshotNamespaceChanges,
     ) -> DomainResult<SnapshotId> {
         let mut tx = self
@@ -7446,6 +7241,192 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         Ok(snapshot_id)
     }
 
+    async fn next_snapshot_no(&self, namespace_id: &NamespaceId) -> DomainResult<u32> {
+        let snapshot_no: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COALESCE(
+                MAX(
+                    CASE
+                        WHEN instr(name, '-') > 0 THEN CAST(substr(name, instr(name, '-') + 1) AS INTEGER)
+                        ELSE 0
+                    END
+                ),
+                0
+            ) + 1
+            FROM snapshots
+            WHERE namespace_id = ?
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to calculate next snapshot number: {}", e),
+        })?;
+
+        u32::try_from(snapshot_no).map_err(|_| DomainError::Internal {
+            message: format!("Invalid snapshot number: {}", snapshot_no),
+        })
+    }
+}
+
+impl Clone for SqliteSnapshotRepo {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            coalescer: self.coalescer.clone(),
+        }
+    }
+}
+
+fn snapshot_name(kind: SnapshotKind, snapshot_no: u32) -> String {
+    match kind {
+        SnapshotKind::UserCreated => format!("snapshot-{:06}", snapshot_no),
+        SnapshotKind::AutoCommit => format!("auto-{:06}", snapshot_no),
+    }
+}
+
+const SNAPSHOT_NAME_RETRY_LIMIT: usize = 8;
+
+fn parse_snapshot_name(name: &str) -> (SnapshotKind, u32) {
+    if let Some(number) = name.strip_prefix("auto-") {
+        let snapshot_no = number.parse::<u32>().unwrap_or(1);
+        return (SnapshotKind::AutoCommit, snapshot_no);
+    }
+
+    if let Some(number) = name.strip_prefix("snapshot-") {
+        let snapshot_no = number.parse::<u32>().unwrap_or(1);
+        return (SnapshotKind::UserCreated, snapshot_no);
+    }
+
+    (SnapshotKind::UserCreated, 1)
+}
+
+#[cfg(test)]
+mod snapshot_helper_tests {
+    use super::{parse_snapshot_name, snapshot_name};
+    use vfiles_domain::SnapshotKind;
+
+    #[test]
+    fn snapshot_name_round_trip_preserves_kind_and_number() {
+        let name = snapshot_name(SnapshotKind::UserCreated, 42);
+        let (kind, snapshot_no) = parse_snapshot_name(&name);
+
+        assert_eq!(kind, SnapshotKind::UserCreated);
+        assert_eq!(snapshot_no, 42);
+    }
+
+    #[test]
+    fn auto_snapshot_name_round_trip_preserves_kind_and_number() {
+        let name = snapshot_name(SnapshotKind::AutoCommit, 7);
+        let (kind, snapshot_no) = parse_snapshot_name(&name);
+
+        assert_eq!(kind, SnapshotKind::AutoCommit);
+        assert_eq!(snapshot_no, 7);
+    }
+}
+
+#[async_trait::async_trait]
+impl SnapshotRepo for SqliteSnapshotRepo {
+    async fn create_snapshot(
+        &self,
+        namespace_id: &NamespaceId,
+        message: Option<&str>,
+        kind: SnapshotKind,
+        user_id: &UserId,
+    ) -> DomainResult<SnapshotId> {
+        let now = time::OffsetDateTime::now_utc();
+        let namespace_id_str = namespace_id.to_string();
+        let user_id_str = user_id.to_string();
+
+        for _ in 0..SNAPSHOT_NAME_RETRY_LIMIT {
+            let id = SnapshotId::new();
+            let snapshot_no = self.next_snapshot_no(namespace_id).await?;
+            let name = snapshot_name(kind, snapshot_no);
+
+            match sqlx::query(
+                "INSERT INTO snapshots (id, namespace_id, name, description, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)"
+            )
+            .bind(id.to_string())
+            .bind(&namespace_id_str)
+            .bind(name)
+            .bind(message)
+            .bind(now)
+            .bind(&user_id_str)
+            .execute(&self.pool)
+            .await
+            {
+                Ok(_) => return Ok(id),
+                Err(sqlx::Error::Database(ref db_err)) if db_err.is_unique_violation() => {
+                    continue;
+                }
+                Err(e) => {
+                    return Err(DomainError::Internal {
+                        message: format!("Failed to create snapshot: {}", e),
+                    });
+                }
+            }
+        }
+
+        Err(DomainError::Internal {
+            message: "Failed to allocate a unique snapshot name after multiple retries".to_string(),
+        })
+    }
+
+    async fn create_snapshot_from_namespace(
+        &self,
+        namespace_id: &NamespaceId,
+        message: Option<&str>,
+        kind: SnapshotKind,
+        user_id: &UserId,
+        entry_repo: &(dyn EntryRepo + Send + Sync),
+    ) -> DomainResult<SnapshotId> {
+        let changes = SnapshotNamespaceChanges::default();
+        self.create_snapshot_from_namespace_with_changes(
+            namespace_id,
+            message,
+            kind,
+            user_id,
+            entry_repo,
+            &changes,
+        )
+        .await
+    }
+
+    async fn create_snapshot_from_namespace_with_changes(
+        &self,
+        namespace_id: &NamespaceId,
+        message: Option<&str>,
+        kind: SnapshotKind,
+        user_id: &UserId,
+        _entry_repo: &(dyn EntryRepo + Send + Sync),
+        changes: &SnapshotNamespaceChanges,
+    ) -> DomainResult<SnapshotId> {
+        let Some(coalescer) = &self.coalescer else {
+            return self
+                .create_snapshot_core(namespace_id, message, kind, user_id, changes)
+                .await;
+        };
+        // 只合并自动提交：手动快照（用户显式创建）始终立即落盘。
+        if kind != SnapshotKind::AutoCommit {
+            return self
+                .create_snapshot_core(namespace_id, message, kind, user_id, changes)
+                .await;
+        }
+        match coalescer.decide(namespace_id).await {
+            CoalesceDecision::Create => {
+                let snapshot_id = self
+                    .create_snapshot_core(namespace_id, message, kind, user_id, changes)
+                    .await?;
+                coalescer
+                    .record_created(namespace_id, snapshot_id, *user_id)
+                    .await;
+                Ok(snapshot_id)
+            }
+            CoalesceDecision::Reuse(snapshot_id) => Ok(snapshot_id),
+        }
+    }
+
     async fn find_snapshot(&self, snapshot_id: &SnapshotId) -> DomainResult<Snapshot> {
         let row: (String, String, String, Option<String>, String, String) = sqlx::query_as(
             "SELECT id, namespace_id, name, description, created_at, created_by FROM snapshots WHERE id = ?"
@@ -7552,32 +7533,44 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         namespace_id: &NamespaceId,
         path: &NormalizedPath,
         limit: u32,
+        include_total: bool,
     ) -> DomainResult<(Vec<Snapshot>, u64)> {
         let path = path.as_str();
         let lower = format!("{path}/");
         let upper = format!("{path}0");
-        let total: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(*)
-            FROM snapshots s
-            WHERE s.namespace_id = ?
-              AND (? = '' OR EXISTS (
-                  SELECT 1 FROM snapshot_entries se
-                  WHERE se.snapshot_id = s.id
-                    AND (se.entry_path = ? OR (se.entry_path >= ? AND se.entry_path < ?))
-              ))
-            "#,
-        )
-        .bind(namespace_id.to_string())
-        .bind(path)
-        .bind(path)
-        .bind(&lower)
-        .bind(&upper)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|error| DomainError::Internal {
-            message: format!("Failed to count path snapshots: {error}"),
-        })?;
+        // The path match is two index seeks (exact path, then the descendant
+        // prefix) rather than an OR over both, so each snapshot check reads
+        // only the matching rows. The count walks the whole namespace and is
+        // skipped when the caller only needs the newest page.
+        let total = if include_total {
+            let total: i64 = sqlx::query_scalar(
+                r#"
+                SELECT COUNT(*)
+                FROM snapshots s
+                WHERE s.namespace_id = ?
+                  AND (? = '' OR EXISTS (
+                      SELECT 1 FROM snapshot_entries se
+                      WHERE se.snapshot_id = s.id AND se.entry_path = ?
+                  ) OR EXISTS (
+                      SELECT 1 FROM snapshot_entries se
+                      WHERE se.snapshot_id = s.id AND se.entry_path >= ? AND se.entry_path < ?
+                  ))
+                "#,
+            )
+            .bind(namespace_id.to_string())
+            .bind(path)
+            .bind(path)
+            .bind(&lower)
+            .bind(&upper)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to count path snapshots: {error}"),
+            })?;
+            total as u64
+        } else {
+            0
+        };
         let rows: Vec<SnapshotRow> = sqlx::query_as(
             r#"
             SELECT s.id, s.namespace_id, s.name, s.description, s.created_at, s.created_by
@@ -7585,8 +7578,10 @@ impl SnapshotRepo for SqliteSnapshotRepo {
             WHERE s.namespace_id = ?
               AND (? = '' OR EXISTS (
                   SELECT 1 FROM snapshot_entries se
-                  WHERE se.snapshot_id = s.id
-                    AND (se.entry_path = ? OR (se.entry_path >= ? AND se.entry_path < ?))
+                  WHERE se.snapshot_id = s.id AND se.entry_path = ?
+              ) OR EXISTS (
+                  SELECT 1 FROM snapshot_entries se
+                  WHERE se.snapshot_id = s.id AND se.entry_path >= ? AND se.entry_path < ?
               ))
             ORDER BY s.created_at DESC, s.id DESC
             LIMIT ?
@@ -7607,7 +7602,7 @@ impl SnapshotRepo for SqliteSnapshotRepo {
             rows.into_iter()
                 .map(parse_snapshot_row)
                 .collect::<DomainResult<_>>()?,
-            total as u64,
+            total,
         ))
     }
 
@@ -7717,11 +7712,15 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         offset: u32,
     ) -> DomainResult<(Vec<SnapshotTreeChild>, u64)> {
         let root = path.as_str();
+        let snapshot_id_str = snapshot_id.to_string();
+
+        // Validate the requested directory before paging. Both checks use the
+        // direct-children index, so this stays proportional to one directory.
         if !root.is_empty() {
             let exact_kind: Option<String> = sqlx::query_scalar(
                 "SELECT entry_kind FROM snapshot_entries WHERE snapshot_id = ? AND entry_path = ? AND change_type != 'deleted' LIMIT 1",
             )
-            .bind(snapshot_id.to_string())
+            .bind(&snapshot_id_str)
             .bind(root)
             .fetch_optional(&self.pool)
             .await
@@ -7734,20 +7733,17 @@ impl SnapshotRepo for SqliteSnapshotRepo {
                 });
             }
             if exact_kind.is_none() {
-                let lower = format!("{root}/");
-                let upper = format!("{root}0");
-                let has_descendants: bool = sqlx::query_scalar(
-                    "SELECT EXISTS(SELECT 1 FROM snapshot_entries WHERE snapshot_id = ? AND change_type != 'deleted' AND entry_path >= ? AND entry_path < ?)",
+                let has_children: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM snapshot_entries WHERE snapshot_id = ? AND parent_path = ? AND change_type != 'deleted')",
                 )
-                .bind(snapshot_id.to_string())
-                .bind(lower)
-                .bind(upper)
+                .bind(&snapshot_id_str)
+                .bind(root)
                 .fetch_one(&self.pool)
                 .await
                 .map_err(|error| DomainError::Internal {
                     message: format!("Failed to validate snapshot directory: {error}"),
                 })?;
-                if !has_descendants {
+                if !has_children {
                     return Err(DomainError::NotFound {
                         resource: "snapshot entry".to_string(),
                     });
@@ -7755,99 +7751,90 @@ impl SnapshotRepo for SqliteSnapshotRepo {
             }
         }
 
-        let lower = format!("{root}/");
-        let upper = format!("{root}0");
-        let mut count_query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("");
-        push_snapshot_children_cte(
-            &mut count_query,
-            snapshot_id.to_string(),
-            root,
-            &lower,
-            &upper,
+        // One index seek per directory plus the window count: the page and its
+        // total come from the same scan of the directory's children.
+        type ChildRow = (
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+            Option<i64>,
+            String,
+            Option<String>,
+            Option<String>,
+            i64,
         );
-        count_query.push(" SELECT COUNT(*) FROM children");
-        let total: i64 = count_query
-            .build_query_scalar()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|error| DomainError::Internal {
-                message: format!("Failed to count snapshot children: {error}"),
-            })?;
-        let total = total as u64;
-        if total == 0 || u64::from(offset) >= total || limit == 0 {
-            return Ok((Vec::new(), total));
-        }
+        let rows: Vec<ChildRow> = sqlx::query_as(
+            r#"
+            SELECT
+                snapshot_id,
+                entry_id,
+                entry_version_id,
+                entry_path,
+                entry_kind,
+                blob_id,
+                size,
+                content_type,
+                version_no,
+                change_type,
+                created_by,
+                created_at,
+                COUNT(*) OVER () AS total
+            FROM snapshot_entries
+            WHERE snapshot_id = ? AND parent_path = ? AND change_type != 'deleted'
+            ORDER BY (entry_kind = 'directory') DESC, entry_path ASC
+            LIMIT ? OFFSET ?
+            "#,
+        )
+        .bind(&snapshot_id_str)
+        .bind(root)
+        .bind(i64::from(limit.max(1)))
+        .bind(i64::from(offset))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to page snapshot children: {error}"),
+        })?;
 
-        let mut page_query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("");
-        push_snapshot_children_cte(
-            &mut page_query,
-            snapshot_id.to_string(),
-            root,
-            &lower,
-            &upper,
-        );
-        page_query
-            .push(" SELECT child_path, is_directory FROM children ORDER BY is_directory DESC, child_path ASC LIMIT ")
-            .push_bind(i64::from(limit))
-            .push(" OFFSET ")
-            .push_bind(i64::from(offset));
-        let page: Vec<(String, i64)> = page_query
-            .build_query_as()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| DomainError::Internal {
-                message: format!("Failed to page snapshot children: {error}"),
-            })?;
-
-        let mut entries_by_path = std::collections::HashMap::new();
-        if !page.is_empty() {
-            let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
-                r#"SELECT snapshot_id, entry_id, entry_version_id, entry_path, entry_kind,
-                          blob_id, size, content_type, version_no, change_type, created_by, created_at
-                   FROM snapshot_entries
-                   WHERE snapshot_id = "#,
-            );
-            query
-                .push_bind(snapshot_id.to_string())
-                .push(" AND change_type != 'deleted' AND entry_path IN (");
-            {
-                let mut paths = query.separated(", ");
-                for (child_path, _) in &page {
-                    paths.push_bind(child_path);
-                }
-                paths.push_unseparated(") ORDER BY entry_path");
-            }
-            let rows: Vec<SnapshotEntryRow> = query
-                .build_query_as()
-                .fetch_all(&self.pool)
+        // An offset past the last child returns no rows, so the window count is
+        // unavailable; ask for it directly.
+        let total = match rows.first() {
+            Some(row) => row.12,
+            None => {
+                let count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM snapshot_entries WHERE snapshot_id = ? AND parent_path = ? AND change_type != 'deleted'",
+                )
+                .bind(&snapshot_id_str)
+                .bind(root)
+                .fetch_one(&self.pool)
                 .await
                 .map_err(|error| DomainError::Internal {
-                    message: format!("Failed to load snapshot page metadata: {error}"),
+                    message: format!("Failed to count snapshot children: {error}"),
                 })?;
-            for entry in rows.into_iter().map(parse_snapshot_entry_row) {
-                let entry = entry?;
-                entries_by_path.insert(entry.entry_path.as_str().to_string(), entry);
+                count
             }
-        }
+        };
 
-        let children = page
+        let children = rows
             .into_iter()
-            .map(|(child_path, is_directory)| {
-                let path = NormalizedPath::new(&child_path).map_err(|_| DomainError::Internal {
-                    message: "Snapshot contains an invalid child path".to_string(),
-                })?;
+            .map(|row| {
+                let entry = parse_snapshot_entry_row((
+                    row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9, row.10,
+                    row.11,
+                ))?;
                 Ok(SnapshotTreeChild {
-                    path: path.clone(),
-                    kind: if is_directory != 0 {
-                        EntryKind::Directory
-                    } else {
-                        EntryKind::File
-                    },
-                    entry: entries_by_path.remove(&child_path),
+                    path: entry.entry_path.clone(),
+                    kind: entry.entry_kind,
+                    entry: Some(entry),
                 })
             })
             .collect::<DomainResult<Vec<_>>>()?;
-        Ok((children, total))
+
+        Ok((children, total as u64))
     }
 
     async fn list_all_snapshots(&self) -> DomainResult<Vec<Snapshot>> {
@@ -7903,6 +7890,78 @@ impl SnapshotRepo for SqliteSnapshotRepo {
                 message: format!("Failed to delete snapshot: {}", e),
             })?;
         Ok(())
+    }
+
+    async fn delete_snapshots(&self, snapshot_ids: &[SnapshotId]) -> DomainResult<u64> {
+        if snapshot_ids.is_empty() {
+            return Ok(0);
+        }
+        // 一次事务提交：级联删除的快照条目很多时，逐条提交会让每个快照各付一次
+        // 提交与 WAL 检查点成本。
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to begin snapshot deletion: {error}"),
+            })?;
+        let mut deleted = 0u64;
+        for chunk in snapshot_ids.chunks(400) {
+            let mut query =
+                sqlx::QueryBuilder::<sqlx::Sqlite>::new("DELETE FROM snapshots WHERE id IN (");
+            {
+                let mut separated = query.separated(", ");
+                for snapshot_id in chunk {
+                    separated.push_bind(snapshot_id.to_string());
+                }
+            }
+            query.push(")");
+            deleted += query
+                .build()
+                .execute(&mut *tx)
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to delete snapshots: {error}"),
+                })?
+                .rows_affected();
+        }
+        tx.commit().await.map_err(|error| DomainError::Internal {
+            message: format!("Failed to commit snapshot deletion: {error}"),
+        })?;
+        Ok(deleted)
+    }
+
+    async fn snapshot_blob_reference_counts(
+        &self,
+        snapshot_id: &SnapshotId,
+    ) -> DomainResult<Vec<(BlobId, u32)>> {
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            r#"
+            SELECT blob_id, COUNT(*) AS reference_count
+            FROM snapshot_entries
+            WHERE snapshot_id = ? AND blob_id IS NOT NULL
+            GROUP BY blob_id
+            "#,
+        )
+        .bind(snapshot_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to count snapshot blob references: {error}"),
+        })?;
+
+        rows.into_iter()
+            .map(|(blob_id, count)| {
+                Ok((
+                    BlobId::from_uuid(uuid::Uuid::parse_str(&blob_id).map_err(|_| {
+                        DomainError::Internal {
+                            message: "Invalid blob UUID in snapshot".to_string(),
+                        }
+                    })?),
+                    u32::try_from(count.max(0)).unwrap_or(u32::MAX),
+                ))
+            })
+            .collect()
     }
 }
 
@@ -11923,6 +11982,7 @@ mod snapshot_repo_tests {
                 &namespace_id,
                 &NormalizedPath::new("docs").expect("path should parse"),
                 1,
+                true,
             )
             .await
             .expect("path snapshot page should load");
@@ -11930,11 +11990,26 @@ mod snapshot_repo_tests {
         assert_eq!(docs_page.len(), 1);
         assert!(docs_page[0].id == snapshot_ids[0] || docs_page[0].id == snapshot_ids[2]);
 
+        // Without the total the page is unchanged and the count is not paid for.
+        let (docs_page_without_total, docs_total_without_total) = repo
+            .list_snapshots_for_path(
+                &namespace_id,
+                &NormalizedPath::new("docs").expect("path should parse"),
+                1,
+                false,
+            )
+            .await
+            .expect("path snapshot page should load without a total");
+        assert_eq!(docs_total_without_total, 0);
+        assert_eq!(docs_page_without_total.len(), 1);
+        assert_eq!(docs_page_without_total[0].id, docs_page[0].id);
+
         let (root_page, root_total) = repo
             .list_snapshots_for_path(
                 &namespace_id,
                 &NormalizedPath::new("").expect("root should parse"),
                 2,
+                true,
             )
             .await
             .expect("root snapshot page should load");
@@ -11959,6 +12034,7 @@ mod snapshot_repo_tests {
         let now = time::OffsetDateTime::now_utc();
         let entries = [
             ("z.txt", EntryKind::File, ChangeType::Added),
+            ("a", EntryKind::Directory, ChangeType::Added),
             ("a/child.txt", EntryKind::File, ChangeType::Added),
             ("b", EntryKind::Directory, ChangeType::Added),
             ("c.txt", EntryKind::File, ChangeType::Added),
@@ -12003,12 +12079,8 @@ mod snapshot_repo_tests {
         );
         assert!(first.iter().all(|child| child.kind == EntryKind::Directory));
         assert!(
-            first[0].entry.is_none(),
-            "implicit directory is synthesized"
-        );
-        assert!(
-            first[1].entry.is_some(),
-            "explicit directory keeps metadata"
+            first.iter().all(|child| child.entry.is_some()),
+            "directories recorded by the snapshot keep their metadata"
         );
 
         let (second, second_total) = repo
@@ -12029,6 +12101,19 @@ mod snapshot_repo_tests {
             vec!["c.txt", "z.txt"]
         );
 
+        // Paging past the last child still reports the directory's total.
+        let (beyond, beyond_total) = repo
+            .list_snapshot_children_page(
+                &snapshot_id,
+                &NormalizedPath::new("").expect("root path should parse"),
+                2,
+                50,
+            )
+            .await
+            .expect("offset past the end should still report the total");
+        assert!(beyond.is_empty());
+        assert_eq!(beyond_total, 4);
+
         let (nested, nested_total) = repo
             .list_snapshot_children_page(
                 &snapshot_id,
@@ -12037,22 +12122,29 @@ mod snapshot_repo_tests {
                 0,
             )
             .await
-            .expect("implicit directory should be traversable");
+            .expect("nested directory should be traversable");
         assert_eq!(nested_total, 1);
         assert_eq!(nested[0].path.as_str(), "a/child.txt");
 
-        let mut plan_query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("EXPLAIN QUERY PLAN ");
-        push_snapshot_children_cte(&mut plan_query, snapshot_id.to_string(), "a", "a/", "a0");
-        plan_query.push(" SELECT child_path, is_directory FROM children");
-        let plan: Vec<(i64, i64, i64, String)> = plan_query
-            .build_query_as()
-            .fetch_all(&pool)
-            .await
-            .expect("snapshot subtree query plan should be available");
+        // Children, their page total and the directory check all read the
+        // parent-path index instead of scanning the snapshot's tree.
+        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+            r#"EXPLAIN QUERY PLAN
+               SELECT entry_path, entry_kind, COUNT(*) OVER () AS total
+               FROM snapshot_entries
+               WHERE snapshot_id = ? AND parent_path = ? AND change_type != 'deleted'
+               ORDER BY (entry_kind = 'directory') DESC, entry_path ASC
+               LIMIT 10 OFFSET 0"#,
+        )
+        .bind(snapshot_id.to_string())
+        .bind("")
+        .fetch_all(&pool)
+        .await
+        .expect("snapshot children query plan should be available");
         assert!(
             plan.iter()
-                .any(|row| row.3.contains("idx_snapshot_entries_snapshot_path")),
-            "snapshot subtree query should use its snapshot/path index: {plan:?}"
+                .any(|row| row.3.contains("idx_snapshot_entries_snapshot_parent")),
+            "snapshot children query should use its parent-path index: {plan:?}"
         );
 
         let missing = repo
@@ -12073,6 +12165,166 @@ mod snapshot_repo_tests {
             )
             .await;
         assert!(matches!(file_path, Err(DomainError::Validation { .. })));
+
+        cleanup_db(pool, db_path).await;
+    }
+
+    #[tokio::test]
+    async fn coalesced_auto_snapshots_merge_into_one_per_window() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup_snapshot_repo().await;
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+        let repo = repo.with_coalescing(std::time::Duration::from_millis(40));
+        let changes = SnapshotNamespaceChanges::default();
+
+        let first = repo
+            .create_snapshot_from_namespace_with_changes(
+                &namespace_id,
+                Some("one"),
+                SnapshotKind::AutoCommit,
+                &user_id,
+                &entry_repo,
+                &changes,
+            )
+            .await
+            .expect("first auto snapshot should be created");
+        let second = repo
+            .create_snapshot_from_namespace_with_changes(
+                &namespace_id,
+                Some("two"),
+                SnapshotKind::AutoCommit,
+                &user_id,
+                &entry_repo,
+                &changes,
+            )
+            .await
+            .expect("second auto snapshot joins the window");
+        assert_eq!(
+            first, second,
+            "an auto snapshot inside the window returns the window's snapshot"
+        );
+        assert_eq!(
+            repo.list_all_snapshots().await.expect("list").len(),
+            1,
+            "only the window's opening snapshot exists yet"
+        );
+
+        // 手动快照不参与合并。
+        repo.create_snapshot_from_namespace_with_changes(
+            &namespace_id,
+            Some("manual"),
+            SnapshotKind::UserCreated,
+            &user_id,
+            &entry_repo,
+            &changes,
+        )
+        .await
+        .expect("manual snapshot should be created immediately");
+        assert_eq!(repo.list_all_snapshots().await.expect("list").len(), 2);
+
+        // 窗口结束后的补提交把合并的变更写入一条新快照。
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let snapshots = repo.list_all_snapshots().await.expect("list");
+        assert_eq!(
+            snapshots.len(),
+            3,
+            "the pending auto snapshot is flushed after the window"
+        );
+        assert!(
+            snapshots.iter().any(|snapshot| snapshot
+                .message
+                .as_ref()
+                .is_some_and(|message| { message.as_str().contains("合并") })),
+            "the coalesced snapshot explains the merge: {snapshots:?}"
+        );
+
+        cleanup_db(pool, db_path).await;
+    }
+
+    #[tokio::test]
+    async fn batched_snapshot_deletion_removes_entries_and_counts_blob_references() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup_snapshot_repo().await;
+
+        let mut snapshot_ids = Vec::new();
+        for index in 0..3 {
+            let snapshot_id = repo
+                .create_snapshot(
+                    &namespace_id,
+                    Some(&format!("batch-{index}")),
+                    SnapshotKind::UserCreated,
+                    &user_id,
+                )
+                .await
+                .expect("snapshot should be created");
+            let shared_blob = BlobId::new();
+            let other_blob = BlobId::new();
+            let entries = [
+                ("a.txt", shared_blob),
+                ("b.txt", shared_blob),
+                ("c.txt", other_blob),
+            ]
+            .into_iter()
+            .map(|(path, blob_id)| SnapshotEntry {
+                snapshot_id,
+                entry_id: EntryId::new(),
+                entry_path: NormalizedPath::new(path).expect("fixture path should parse"),
+                entry_kind: EntryKind::File,
+                entry_version_id: None,
+                blob_id: Some(blob_id),
+                size_bytes: None,
+                mime_type: None,
+                version_no: None,
+                change_type: ChangeType::Added,
+                created_by: Some(user_id),
+                created_at: None,
+            })
+            .collect::<Vec<_>>();
+            repo.add_snapshot_entries(&snapshot_id, &entries)
+                .await
+                .expect("snapshot entries should be saved");
+            snapshot_ids.push(snapshot_id);
+        }
+
+        let mut counts = repo
+            .snapshot_blob_reference_counts(&snapshot_ids[0])
+            .await
+            .expect("blob reference counts should load");
+        counts.sort_by_key(|(blob_id, _)| blob_id.to_string());
+        assert_eq!(counts.len(), 2, "the snapshot holds two distinct blobs");
+        assert_eq!(
+            counts.iter().map(|(_, count)| *count).sum::<u32>(),
+            3,
+            "every entry contributes one reference"
+        );
+
+        let deleted = repo
+            .delete_snapshots(&snapshot_ids[..2])
+            .await
+            .expect("both snapshots should be deleted");
+        assert_eq!(deleted, 2);
+
+        let remaining = repo
+            .list_all_snapshots()
+            .await
+            .expect("snapshots should be listable");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, snapshot_ids[2]);
+
+        let entries_left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM snapshot_entries")
+            .fetch_one(&pool)
+            .await
+            .expect("entry count should be readable");
+        assert_eq!(
+            entries_left, 3,
+            "cascade leaves only the remaining snapshot"
+        );
+
+        let orphans: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM snapshot_entries WHERE snapshot_id NOT IN (SELECT id FROM snapshots)",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("orphan count should be readable");
+        assert_eq!(orphans, 0);
 
         cleanup_db(pool, db_path).await;
     }
@@ -12532,6 +12784,81 @@ mod entry_version_batch_tests {
             .expect("default namespace should be created");
 
         (db_path, pool, entry_repo, namespace_id, user_id)
+    }
+
+    async fn current_payload(
+        pool: &SqlitePool,
+        entry_id: &EntryId,
+    ) -> (Option<i64>, Option<String>) {
+        sqlx::query_as("SELECT current_size, current_content_type FROM entries WHERE id = ?")
+            .bind(entry_id.to_string())
+            .fetch_one(pool)
+            .await
+            .expect("entry payload should be readable")
+    }
+
+    #[tokio::test]
+    async fn current_version_payload_follows_the_latest_version() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup().await;
+        let path = NormalizedPath::new("docs/report.txt").expect("path should parse");
+        let entry_id = repo
+            .create_entry(&namespace_id, &path, EntryKind::File, &user_id)
+            .await
+            .expect("entry should be created");
+        assert_eq!(
+            current_payload(&pool, &entry_id).await,
+            (None, None),
+            "an entry without versions has no current payload"
+        );
+
+        repo.create_version(
+            &entry_id,
+            None,
+            None,
+            10,
+            Some("text/plain"),
+            &user_id,
+            Some("one"),
+        )
+        .await
+        .expect("first version should be created");
+        assert_eq!(
+            current_payload(&pool, &entry_id).await,
+            (Some(10), Some("text/plain".to_string())),
+            "the first version becomes current"
+        );
+
+        let second = repo
+            .create_version(
+                &entry_id,
+                None,
+                None,
+                20,
+                Some("application/pdf"),
+                &user_id,
+                Some("two"),
+            )
+            .await
+            .expect("second version should be created");
+        assert_eq!(
+            current_payload(&pool, &entry_id).await,
+            (Some(20), Some("application/pdf".to_string())),
+            "a newer version replaces the current payload"
+        );
+
+        assert!(
+            repo.delete_version(&second.id)
+                .await
+                .expect("current version should be deletable")
+        );
+        assert_eq!(
+            current_payload(&pool, &entry_id).await,
+            (Some(10), Some("text/plain".to_string())),
+            "deleting the newest version falls back to the previous one"
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[tokio::test]
@@ -14751,12 +15078,15 @@ mod webdav_lock_repo_tests {
 
 #[cfg(test)]
 mod tree_page_query_plan_tests {
+    use super::{
+        LIVE_CHILDREN_AFTER_SQL, LIVE_CHILDREN_COUNT_SQL, LIVE_CHILDREN_PAGE_SQL,
+        LIVE_DIRECTORY_CHILDREN_COUNT_SQL, LIVE_DIRECTORY_CHILDREN_PAGE_SQL,
+    };
     use crate::{SqliteMigrations, SqlitePoolFactory};
     use camino::Utf8PathBuf;
     use sqlx::Row;
 
-    #[tokio::test]
-    async fn root_page_uses_ordered_index_without_temporary_sort() {
+    async fn plan_for(sql: &str, binds: &[&str]) -> Vec<String> {
         let db_path = Utf8PathBuf::from_path_buf(
             std::env::temp_dir().join(format!("vfiles-tree-page-plan-{}.db", uuid::Uuid::new_v4())),
         )
@@ -14768,261 +15098,96 @@ mod tree_page_query_plan_tests {
             .await
             .expect("migrations should run");
 
-        let plan = sqlx::query(
-            r#"EXPLAIN QUERY PLAN
-            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at,
-                (SELECT ev.id FROM entry_versions ev
-                 WHERE ev.entry_id = e.id ORDER BY ev.version DESC LIMIT 1)
-            FROM entries e
-            WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
-            ORDER BY (e.kind = 'directory') DESC, e.path ASC LIMIT ? OFFSET ?"#,
-        )
-        .bind("plan-test")
-        .bind(200_i64)
-        .bind(0_i64)
-        .fetch_all(&pool)
-        .await
-        .expect("query plan should be available");
-        let details = plan
+        let sql = sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {sql}"));
+        let mut query = sqlx::query::<sqlx::Sqlite>(sql);
+        for value in binds {
+            query = query.bind(*value);
+        }
+        let rows = query
+            .fetch_all(&pool)
+            .await
+            .expect("query plan should be available");
+        let details = rows
             .iter()
             .map(|row| row.get::<String, _>("detail"))
             .collect::<Vec<_>>();
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+        details
+    }
+
+    #[tokio::test]
+    async fn listing_page_seeks_parent_index_without_temporary_sort() {
+        let details = plan_for(LIVE_CHILDREN_PAGE_SQL, &["plan-test", "d0", "200", "0"]).await;
         assert!(
-            details
-                .iter()
-                .any(|detail| detail.contains("idx_entries_namespace_kind_path")),
-            "root page should use its order-compatible index: {details:?}"
+            details.iter().any(|detail| {
+                detail.contains("idx_entries_namespace_parent_kind_path")
+                    && detail.contains("parent_path=?")
+            }),
+            "listing page should seek the parent-path index: {details:?}"
         );
         assert!(
             details
                 .iter()
                 .all(|detail| !detail.contains("USE TEMP B-TREE FOR ORDER BY")),
-            "root page should not allocate a temporary sort: {details:?}"
+            "index order already matches the listing order: {details:?}"
         );
-
-        pool.close().await;
-        let _ = std::fs::remove_file(db_path);
     }
 
     #[tokio::test]
-    async fn directory_picker_count_uses_covering_partial_index() {
-        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
-            "vfiles-directory-count-plan-{}.db",
-            uuid::Uuid::new_v4()
-        )))
-        .expect("temp path should be valid utf-8");
-        let pool = SqlitePoolFactory::connect(&db_path)
-            .await
-            .expect("sqlite pool should connect");
-        SqliteMigrations::run(&pool)
-            .await
-            .expect("migrations should run");
-
-        let plan = sqlx::query(
-            r#"EXPLAIN QUERY PLAN
-            SELECT COUNT(*) FROM entries e INDEXED BY idx_entries_namespace_directories_path
-            WHERE e.namespace_id = ? AND e.kind = 'directory'
-              AND e.path LIKE ? ESCAPE '\\'
-              AND instr(substr(e.path, length(?) + 1), '/') = 0"#,
-        )
-        .bind("plan-test")
-        .bind("parent/%")
-        .bind("parent/")
-        .fetch_all(&pool)
-        .await
-        .expect("query plan should be available");
-        let details = plan
-            .iter()
-            .map(|row| row.get::<String, _>("detail"))
-            .collect::<Vec<_>>();
+    async fn listing_count_and_directory_pages_use_parent_index() {
+        let count = plan_for(LIVE_CHILDREN_COUNT_SQL, &["plan-test", "d0"]).await;
         assert!(
-            details.iter().any(|detail| {
-                detail.contains("idx_entries_namespace_directories_path")
-                    && detail.contains("COVERING INDEX")
-            }),
-            "directory count should use the covering namespace/kind/path index: {details:?}"
-        );
-
-        pool.close().await;
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn root_child_count_uses_covering_root_entries_index() {
-        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
-            "vfiles-root-count-plan-{}.db",
-            uuid::Uuid::new_v4()
-        )))
-        .expect("temp path should be valid utf-8");
-        let pool = SqlitePoolFactory::connect(&db_path)
-            .await
-            .expect("sqlite pool should connect");
-        SqliteMigrations::run(&pool)
-            .await
-            .expect("migrations should run");
-
-        let plan = sqlx::query(
-            r#"EXPLAIN QUERY PLAN
-            SELECT COUNT(*) FROM entries e INDEXED BY idx_entries_namespace_root_path
-            WHERE e.namespace_id = ? AND instr(e.path, '/') = 0"#,
-        )
-        .bind("plan-test")
-        .fetch_all(&pool)
-        .await
-        .expect("query plan should be available");
-        let details = plan
-            .iter()
-            .map(|row| row.get::<String, _>("detail"))
-            .collect::<Vec<_>>();
-        assert!(
-            details.iter().any(|detail| {
-                detail.contains("idx_entries_namespace_root_path")
-                    && detail.contains("COVERING INDEX")
-            }),
-            "root child count should use the covering root-path index: {details:?}"
-        );
-
-        pool.close().await;
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn root_directory_count_uses_covering_root_directory_index() {
-        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
-            "vfiles-root-directory-count-plan-{}.db",
-            uuid::Uuid::new_v4()
-        )))
-        .expect("temp path should be valid utf-8");
-        let pool = SqlitePoolFactory::connect(&db_path)
-            .await
-            .expect("sqlite pool should connect");
-        SqliteMigrations::run(&pool)
-            .await
-            .expect("migrations should run");
-
-        let plan = sqlx::query(
-            r#"EXPLAIN QUERY PLAN
-            SELECT COUNT(*) FROM entries e INDEXED BY idx_entries_namespace_root_directories_path
-            WHERE e.namespace_id = ? AND e.kind = 'directory' AND instr(e.path, '/') = 0"#,
-        )
-        .bind("plan-test")
-        .fetch_all(&pool)
-        .await
-        .expect("query plan should be available");
-        let details = plan
-            .iter()
-            .map(|row| row.get::<String, _>("detail"))
-            .collect::<Vec<_>>();
-        assert!(
-            details.iter().any(|detail| {
-                detail.contains("idx_entries_namespace_root_directories_path")
-                    && detail.contains("COVERING INDEX")
-            }),
-            "root directory count should use its covering partial index: {details:?}"
-        );
-
-        pool.close().await;
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn directory_cursor_seeks_root_directory_index() {
-        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
-            "vfiles-root-directory-cursor-plan-{}.db",
-            uuid::Uuid::new_v4()
-        )))
-        .expect("temp path should be valid utf-8");
-        let pool = SqlitePoolFactory::connect(&db_path)
-            .await
-            .expect("sqlite pool should connect");
-        SqliteMigrations::run(&pool)
-            .await
-            .expect("migrations should run");
-
-        let plan = sqlx::query(
-            r#"EXPLAIN QUERY PLAN
-            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at
-            FROM entries e INDEXED BY idx_entries_namespace_root_directories_path
-            WHERE e.namespace_id = ? AND e.kind = 'directory' AND instr(e.path, '/') = 0
-              AND e.path > ?
-            ORDER BY e.path ASC LIMIT ?"#,
-        )
-        .bind("plan-test")
-        .bind("entry-05000")
-        .bind(201_i64)
-        .fetch_all(&pool)
-        .await
-        .expect("query plan should be available");
-        let details = plan
-            .iter()
-            .map(|row| row.get::<String, _>("detail"))
-            .collect::<Vec<_>>();
-        assert!(
-            details.iter().any(|detail| {
-                detail.contains("idx_entries_namespace_root_directories_path")
-                    && detail.contains("path>?")
-            }),
-            "directory cursor must seek from its path in the root directory index: {details:?}"
-        );
-
-        let file_plan = sqlx::query(
-            r#"EXPLAIN QUERY PLAN
-            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at
-            FROM entries e INDEXED BY idx_entries_namespace_root_path
-            WHERE e.namespace_id = ? AND instr(e.path, '/') = 0
-              AND e.kind = 'file' AND e.path > ?
-            ORDER BY e.path ASC LIMIT ?"#,
-        )
-        .bind("plan-test")
-        .bind("entry-05000")
-        .bind(201_i64)
-        .fetch_all(&pool)
-        .await
-        .expect("root file query plan should be available");
-        let file_details = file_plan
-            .iter()
-            .map(|row| row.get::<String, _>("detail"))
-            .collect::<Vec<_>>();
-        assert!(
-            file_details
+            count
                 .iter()
-                .any(|detail| detail.contains("idx_entries_namespace_root_path")
-                    && detail.contains("path>?")),
-            "root file cursor must seek from its path: {file_details:?}"
+                .any(|detail| detail.contains("idx_entries_namespace_parent_kind_path")),
+            "listing count should seek the parent index: {count:?}"
         );
 
-        let nested_plan = sqlx::query(
-            r#"EXPLAIN QUERY PLAN
-            SELECT e.id, e.namespace_id, e.path, e.kind, e.created_at, e.updated_at
-            FROM entries e INDEXED BY idx_entries_namespace_directories_path
-            WHERE e.namespace_id = ? AND e.path > ? AND e.path < ?
-              AND e.kind = 'directory'
-              AND instr(substr(e.path, length(?) + 1), '/') = 0
-            ORDER BY e.path ASC LIMIT ?"#,
+        let directory_page = plan_for(
+            LIVE_DIRECTORY_CHILDREN_PAGE_SQL,
+            &["plan-test", "d0", "100", "0"],
         )
-        .bind("plan-test")
-        .bind("parent/entry-05000")
-        .bind("parent0")
-        .bind("parent/")
-        .bind(201_i64)
-        .fetch_all(&pool)
-        .await
-        .expect("nested directory query plan should be available");
-        let nested_details = nested_plan
-            .iter()
-            .map(|row| row.get::<String, _>("detail"))
-            .collect::<Vec<_>>();
+        .await;
         assert!(
-            nested_details.iter().any(|detail| {
-                detail.contains("idx_entries_namespace_directories_path")
-                    && detail.contains("path>?")
-                    && detail.contains("path<?")
+            directory_page.iter().any(|detail| {
+                detail.contains("idx_entries_namespace_parent_kind_path")
+                    && detail.contains("kind=?")
             }),
-            "nested directory cursor must seek within the parent path range: {nested_details:?}"
+            "directory picker page should seek the parent-path index by kind: {directory_page:?}"
         );
 
-        pool.close().await;
-        let _ = std::fs::remove_file(db_path);
+        let directory_count =
+            plan_for(LIVE_DIRECTORY_CHILDREN_COUNT_SQL, &["plan-test", "d0"]).await;
+        assert!(
+            directory_count
+                .iter()
+                .any(|detail| detail.contains("idx_entries_namespace_parent_kind_path")),
+            "directory picker count should seek the parent index: {directory_count:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn listing_cursor_seeks_parent_index_with_row_value() {
+        let details = plan_for(
+            LIVE_CHILDREN_AFTER_SQL,
+            &["plan-test", "d0", "file", "d0/f0100.txt", "200"],
+        )
+        .await;
+        assert!(
+            details.iter().any(|detail| {
+                detail.contains("idx_entries_namespace_parent_kind_path")
+                    && detail.contains("(kind,path)>(?,?)")
+            }),
+            "cursor page should seek from the row value in the parent index: {details:?}"
+        );
+        assert!(
+            details
+                .iter()
+                .all(|detail| !detail.contains("USE TEMP B-TREE FOR ORDER BY")),
+            "cursor page should not allocate a temporary sort: {details:?}"
+        );
     }
 }
 

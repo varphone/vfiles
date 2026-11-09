@@ -2911,7 +2911,34 @@ async fn directory_history_returns_snapshot_commits_for_tree_and_content_browsin
     assert_eq!(history.status(), StatusCode::OK);
     let history_payload = response_json(history).await;
     assert!(
+        history_payload["data"].get("totalCommits").is_none(),
+        "directory history skips the whole-history count unless asked"
+    );
+    assert!(
         history_payload["data"]["commits"]
+            .as_array()
+            .expect("commits should be an array")
+            .iter()
+            .any(|commit| commit["hash"] == Value::String(snapshot_id.clone()))
+    );
+
+    // 需要总数时（例如外部调用方）显式请求。
+    let history_with_total = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/history?path=docs&with_total=true")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(history_with_total.status(), StatusCode::OK);
+    let history_with_total = response_json(history_with_total).await;
+    assert!(
+        history_with_total["data"]["totalCommits"].is_number(),
+        "with_total=true counts matching snapshots"
+    );
+    assert!(
+        history_with_total["data"]["commits"]
             .as_array()
             .expect("commits should be an array")
             .iter()

@@ -23,6 +23,9 @@ struct HistoryQuery {
     path: Option<String>,
     limit: Option<u32>,
     cursor: Option<String>,
+    /// Directory history totals need a pass over the whole history; version-step
+    /// controls only need the newest page and pass `with_total=false`.
+    with_total: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,13 +107,13 @@ fn file_history_payload(page: EntryHistoryPage) -> serde_json::Value {
     })
 }
 
-fn directory_history_payload(page: DirectoryHistoryPage) -> serde_json::Value {
+fn directory_history_payload(page: DirectoryHistoryPage, include_total: bool) -> serde_json::Value {
     let current_version = page
         .current_snapshot_id
         .map(|value| value.to_string())
         .unwrap_or_default();
 
-    serde_json::json!({
+    let mut payload = serde_json::json!({
         "commits": page.items.iter().enumerate().map(|(index, item)| {
             serde_json::json!({
                 "hash": item.snapshot_id.to_string(),
@@ -127,8 +130,11 @@ fn directory_history_payload(page: DirectoryHistoryPage) -> serde_json::Value {
             })
         }).collect::<Vec<_>>(),
         "currentVersion": current_version,
-        "totalCommits": page.total_items,
-    })
+    });
+    if include_total {
+        payload["totalCommits"] = serde_json::json!(page.total_items);
+    }
+    payload
 }
 
 async fn get_entry_history(
@@ -152,6 +158,9 @@ async fn get_entry_history(
         })
     })?;
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    // 目录历史的总数需要对整段历史再统计一遍，而页面只需要最新一页；默认跳过，
+    // 只有显式请求时才计算。文件历史的总数由条目版本索引直接得出，始终返回。
+    let with_total = query.with_total.unwrap_or(false);
 
     let history = match state
         .history_service
@@ -167,9 +176,9 @@ async fn get_entry_history(
         Err(DomainError::Validation { .. }) | Err(DomainError::NotFound { .. }) => {
             let page = state
                 .history_service
-                .directory_history(&ctx.namespace_id, &normalized_path, limit)
+                .directory_history(&ctx.namespace_id, &normalized_path, limit, with_total)
                 .await?;
-            directory_history_payload(page)
+            directory_history_payload(page, with_total)
         }
         Err(err) => return Err(err.into()),
     };
