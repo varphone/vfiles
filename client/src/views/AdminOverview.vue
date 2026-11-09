@@ -20,25 +20,31 @@
     <section class="admin-stats" aria-label="关键指标">
       <StatCard
         label="用户"
-        :value="storage?.user_count ?? '—'"
-        hint="已创建的账号"
+        :value="overview?.userCount ?? storage?.user_count ?? '—'"
+        :hint="overview ? `${overview.activeUserCount} 个启用中` : '已创建的账号'"
         :icon="IconUsers"
       />
       <StatCard
         label="文件"
-        :value="storage?.file_count ?? '—'"
+        :value="overview?.fileCount ?? storage?.file_count ?? '—'"
         hint="全部工作区"
         :icon="IconFile"
       />
       <StatCard
         label="目录"
-        :value="storage?.directory_count ?? '—'"
+        :value="overview?.directoryCount ?? storage?.directory_count ?? '—'"
         hint="全部工作区"
         :icon="IconFolder"
       />
       <StatCard
         label="存储用量"
-        :value="storage ? formatSize(storage.total_bytes) : '—'"
+        :value="
+          overview
+            ? formatSize(overview.totalBytes)
+            : storage
+              ? formatSize(storage.total_bytes)
+              : '—'
+        "
         hint="逻辑大小"
         :icon="IconDatabase"
       />
@@ -150,6 +156,7 @@ const recent = ref<AuditLogEntry[]>([]);
 const loading = ref(false);
 const error = ref("");
 
+const overview = ref<import("../services/auth.service").AdminOverviewPayload | null>(null);
 const storage = computed(() => info.value?.storage ?? null);
 const protocols = computed(() => info.value?.protocols ?? []);
 
@@ -209,10 +216,12 @@ async function reload(): Promise<void> {
   loading.value = true;
   error.value = "";
   try {
-    const [system, page] = await Promise.all([
+    const [system, page, summary] = await Promise.all([
       authService.systemInfo(),
       filesService.listAuditLogs({ limit: 6 }),
+      authService.adminOverview().catch(() => null),
     ]);
+    overview.value = summary;
     if (!system.success) {
       error.value = system.error || "加载系统信息失败";
     } else {

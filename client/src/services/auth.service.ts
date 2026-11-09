@@ -141,6 +141,33 @@ export interface SystemUserStorageUsage {
   total_bytes: number;
 }
 
+/** 管理台概览聚合（GET /api/admin/overview）。 */
+export interface AdminOverviewPayload {
+  userCount: number;
+  activeUserCount: number;
+  fileCount: number;
+  directoryCount: number;
+  totalBytes: number;
+  activeSessions: number;
+  failedLogins24h: number;
+  version: string;
+  startedAt: string;
+  uptimeSecs: number;
+}
+
+type RustAdminOverview = {
+  user_count?: number;
+  active_user_count?: number;
+  file_count?: number;
+  directory_count?: number;
+  total_bytes?: number;
+  active_sessions?: number;
+  failed_logins_24h?: number;
+  version?: string;
+  started_at?: string;
+  uptime_secs?: number;
+};
+
 export interface SystemInfoPayload {
   version: string;
   os: string;
@@ -609,6 +636,25 @@ class AuthService {
         capabilities: LEGACY_ADMIN_CAPABILITIES,
       });
     }
+  }
+
+  /** 管理台概览：单次请求取回统计卡所需的聚合。 */
+  async adminOverview(): Promise<AdminOverviewPayload | null> {
+    const response = await apiService.get<unknown>("/admin/overview");
+    const payload = ((response as any)?.data ?? response) as RustAdminOverview;
+    if (!payload || typeof payload !== "object") return null;
+    return {
+      userCount: Number(payload.user_count ?? 0),
+      activeUserCount: Number(payload.active_user_count ?? 0),
+      fileCount: Number(payload.file_count ?? 0),
+      directoryCount: Number(payload.directory_count ?? 0),
+      totalBytes: Number(payload.total_bytes ?? 0),
+      activeSessions: Number(payload.active_sessions ?? 0),
+      failedLogins24h: Number(payload.failed_logins_24h ?? 0),
+      version: String(payload.version ?? ""),
+      startedAt: String(payload.started_at ?? ""),
+      uptimeSecs: Number(payload.uptime_secs ?? 0),
+    };
   }
 
   /** 管理台用户抽屉：该账号最近的会话。 */

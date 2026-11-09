@@ -10339,3 +10339,42 @@ async fn admin_user_sessions_list_sessions_for_one_account() {
         .await;
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
+
+/// 管理台概览聚合：一次请求返回统计卡所需数据。
+#[tokio::test]
+async fn admin_overview_aggregates_counts_in_one_request() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "note.txt", b"hello", "seed")
+        .await;
+
+    let response = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/admin/overview")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = response_json(response).await;
+
+    assert!(payload["user_count"].as_u64().unwrap_or(0) >= 1);
+    assert!(payload["file_count"].as_u64().unwrap_or(0) >= 1);
+    assert!(payload["total_bytes"].as_u64().unwrap_or(0) >= 5);
+    assert!(!payload["version"].as_str().unwrap_or("").is_empty());
+    assert!(payload["uptime_secs"].is_number());
+
+    // 普通用户不能访问
+    app.register_user_without_email("eve", "eve-password").await;
+    let cookie = app.login_cookie("eve", "eve-password").await;
+    let denied = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/admin/overview")
+                .body(Body::empty())
+                .expect("request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+}

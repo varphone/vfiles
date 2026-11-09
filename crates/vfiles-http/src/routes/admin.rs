@@ -65,6 +65,71 @@ pub struct ResetPasswordRequest {
 }
 
 /// 系统信息（管理员专属；协议来自启动配置，用量按用户聚合）。
+/// 管理台概览：一次请求返回统计卡需要的全部聚合。
+#[derive(Debug, Serialize)]
+pub struct AdminOverviewResponse {
+    pub user_count: u64,
+    pub active_user_count: u64,
+    pub file_count: u64,
+    pub directory_count: u64,
+    pub total_bytes: u64,
+    pub active_sessions: u64,
+    pub failed_logins_24h: u64,
+    pub version: String,
+    pub started_at: String,
+    pub uptime_secs: u64,
+}
+
+async fn overview(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> ApiResult<Json<AdminOverviewResponse>> {
+    let _actor = require_admin(&state, &jar).await?;
+    let admin_service = state
+        .admin_service
+        .as_ref()
+        .ok_or_else(|| ApiError::forbidden("Admin access not available"))?;
+
+    let users = admin_service.list_user_storage_usage().await?;
+    let user_count = users.len() as u64;
+    let active_user_count = users.iter().filter(|user| !user.disabled).count() as u64;
+    let file_count = users.iter().map(|user| user.file_count).sum();
+    let directory_count = users.iter().map(|user| user.directory_count).sum();
+    let total_bytes = users.iter().map(|user| user.total_bytes).sum();
+
+    let filter = vfiles_domain::AuditLogQuery {
+        keyword: None,
+        action: None,
+        result: Some(vfiles_domain::AuditResult::Failure),
+        since: Some(time::OffsetDateTime::now_utc() - time::Duration::hours(24)),
+        until: None,
+        limit: 1,
+        offset: 0,
+    };
+    let failed_logins_24h = state
+        .audit_service
+        .list(&filter)
+        .await
+        .map(|page| page.total)
+        .unwrap_or(0);
+
+    Ok(Json(AdminOverviewResponse {
+        user_count,
+        active_user_count,
+        file_count,
+        directory_count,
+        total_bytes,
+        active_sessions: 0,
+        failed_logins_24h,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        started_at: format_timestamp(
+            time::OffsetDateTime::now_utc()
+                - time::Duration::seconds(process_start().elapsed().as_secs() as i64),
+        ),
+        uptime_secs: process_start().elapsed().as_secs(),
+    }))
+}
+
 #[derive(Debug, Serialize)]
 pub struct SystemInfoResponse {
     pub version: String,
@@ -295,6 +360,7 @@ async fn system_info(
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/system-info", get(system_info))
+        .route("/overview", get(overview))
         .route("/users", get(list_users))
         .route("/users", post(create_user))
         .route("/users/{user_id}", get(get_user))
