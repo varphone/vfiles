@@ -147,3 +147,136 @@
 .settings-content > * > :first-child {
   margin-top: 0;
 }
+
+/* ============================================================
+ * Seafile 视觉校准（追加层）
+ *
+ * 与 Seafile 的差异主要集中在「形状」和「状态色」：
+ * 按钮是 3px 小圆角而不是胶囊；行悬停是中性灰而不是蓝色；表头更矮更小。
+ * 这里统一覆盖，页面无需逐处修改。
+ * ============================================================ */
+
+/* 按钮：小圆角、32px 高、13px 字 */
+.button,
+.vf-ghost-button {
+  border-radius: 3px;
+  min-height: 32px;
+  padding: 0 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.button.is-small,
+.vf-ghost-button.is-small {
+  min-height: 28px;
+  padding: 0 0.6rem;
+  font-size: 0.78rem;
+}
+
+/* 主操作用 Seafile 的纯色蓝，悬停加深而不是抬升 */
+.button.is-link,
+.button.is-primary,
+.vf-ghost-button.is-primary {
+  background: var(--vf-accent);
+  color: var(--vf-on-accent);
+  box-shadow: none;
+}
+
+.button.is-link:hover,
+.button.is-primary:hover,
+.vf-ghost-button.is-primary:hover:not(:disabled) {
+  background: var(--vf-accent-strong);
+  color: var(--vf-on-accent);
+}
+
+.vf-ghost-button:hover:not(:disabled),
+.vf-ghost-button:focus-visible {
+  background: rgba(0, 0, 0, 0.045);
+  color: var(--vf-text-strong);
+}
+
+[data-theme="dark"] .vf-ghost-button:hover:not(:disabled),
+[data-theme="dark"] .vf-ghost-button:focus-visible {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* 输入控件：3px 圆角、32px 高 */
+.input,
+.textarea,
+.select select {
+  min-height: 32px;
+  border-radius: 3px;
+  font-size: 0.8125rem;
+}
+
+/* 数据表：表头 40px、13px 灰字；行悬停中性灰；选中浅蓝 */
+.table thead th,
+.file-list-table thead th {
+  height: 40px;
+  padding: 0 0.75rem;
+  background: var(--vf-table-head);
+  color: var(--vf-text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.table td {
+  padding: 0.45rem 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.table.is-hoverable tbody tr:hover,
+.desktop-file-row:hover > td {
+  background: var(--vf-row-hover);
+}
+
+.table.is-hoverable tbody tr:hover {
+  background: var(--vf-row-hover);
+}
+
+.desktop-file-row.is-row-selected > td,
+.table tbody tr.is-selected td {
+  background: var(--vf-row-selected);
+}
+
+/* 侧栏与导航：Seafile 的浅灰底 + 3px 圆角选中块 */
+.browser-sidebar,
+.admin-sidebar {
+  background: var(--vf-surface-2);
+}
+
+.browser-nav-item,
+.admin-nav-item,
+.settings-nav-item {
+  border-radius: 3px;
+  font-size: 0.8125rem;
+  font-weight: 400;
+}
+
+.browser-nav-item.is-active,
+.admin-nav-item.is-active,
+.settings-nav-item.is-active {
+  background: var(--vf-row-selected);
+  color: var(--vf-accent-text);
+  font-weight: 500;
+}
+
+/* 卡片/面板：4px 圆角、几乎无阴影（Seafile 用边框区分层级） */
+.vf-card,
+.vf-stat,
+.admin-user-card,
+.library-card {
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+/* 顶栏与标签：13px、2px 下划线 */
+.sf-nav-tab {
+  font-size: 0.8125rem;
+  font-weight: 400;
+  padding: 0 0.65rem;
+}
+
+.sf-nav-tab.is-active {
+  font-weight: 500;
+}
