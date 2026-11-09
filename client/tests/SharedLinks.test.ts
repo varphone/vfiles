@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { createRouter, createMemoryHistory } from "vue-router";
 import SharedLinks from "../src/views/SharedLinks.vue";
@@ -52,6 +52,19 @@ function sharePage(
   return { items, total, limit: 100, offset, has_more };
 }
 
+function stubCompactViewport() {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("max-width: 768px"),
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
 function renderPage() {
   const pinia = createPinia();
   setActivePinia(pinia);
@@ -60,6 +73,8 @@ function renderPage() {
 }
 
 describe("SharedLinks.vue", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   beforeEach(() => {
     listSharesPageMock.mockReset();
     listSharesPageMock.mockResolvedValue(sharePage([share()]));
@@ -80,6 +95,19 @@ describe("SharedLinks.vue", () => {
       `${window.location.origin}/s/abc123`,
     );
     expect(container.querySelector(".shares-icon svg")).not.toBeNull();
+  });
+
+  it("renders stacked cards instead of a table on narrow screens", async () => {
+    stubCompactViewport();
+    const { container } = renderPage();
+
+    await screen.findByText("报告.txt");
+    expect(container.querySelector(".shares-cards")).not.toBeNull();
+    expect(container.querySelector(".shares-table")).toBeNull();
+    expect(container.querySelectorAll(".shares-card")).toHaveLength(1);
+    expect(container.querySelector(".shares-link-input")).toHaveValue(
+      `${window.location.origin}/s/abc123`,
+    );
   });
 
   it("loads later share pages only when requested", async () => {

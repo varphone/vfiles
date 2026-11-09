@@ -151,6 +151,24 @@ function setDetailsVisible(visible: boolean) {
       foldersFirst: true,
       thumbnailSize: 144,
       detailsVisible: visible,
+      // 根目录卡片首页会遮住文件表；既有用例统一显式关闭，保持列表断言语义。
+      libraryCards: false,
+    }),
+  );
+}
+
+/** 显式开启根目录「我的资料库」卡片首页（默认开启，其余用例统一关闭）。 */
+function enableLibraryCards() {
+  localStorage.setItem(
+    "vfiles:file-browser:view",
+    JSON.stringify({
+      mode: "list",
+      sortField: "name",
+      sortDirection: "asc",
+      foldersFirst: true,
+      thumbnailSize: 144,
+      detailsVisible: false,
+      libraryCards: true,
     }),
   );
 }
@@ -197,6 +215,61 @@ describe("FileBrowser.vue", () => {
   it("shows empty folder message when no files", async () => {
     const { findByText } = renderWithProviders(FileBrowser as any);
     await findByText("此文件夹为空");
+  });
+
+  it("shows library cards at the namespace root and opens a directory", async () => {
+    enableLibraryCards();
+    getFilesMock.mockImplementation(async (path: string) => {
+      if (path === "design") {
+        return [
+          {
+            id: "spec",
+            name: "spec.md",
+            path: "design/spec.md",
+            kind: "file",
+            size_bytes: 12,
+            created_at: "2026-05-29T00:00:00.000Z",
+            updated_at: "2026-05-29T00:00:00.000Z",
+          },
+        ];
+      }
+      return [
+        {
+          id: "docs",
+          name: "文档",
+          path: "docs",
+          kind: "directory",
+          created_at: "2026-05-29T00:00:00.000Z",
+          updated_at: "2026-05-29T00:00:00.000Z",
+        },
+        {
+          id: "design",
+          name: "设计稿",
+          path: "design",
+          kind: "directory",
+          created_at: "2026-05-29T00:00:00.000Z",
+          updated_at: "2026-05-29T00:00:00.000Z",
+        },
+      ];
+    });
+
+    const { container, findByText, queryByText } = renderWithProviders(
+      FileBrowser as any,
+    );
+
+    await findByText("我的资料库");
+    await waitFor(() => {
+      expect(container.querySelectorAll(".library-card")).toHaveLength(2);
+    });
+
+    const card = container.querySelector<HTMLElement>(
+      '[data-vfiles-path="design"]',
+    );
+    expect(card).not.toBeNull();
+    await fireEvent.click(card!);
+
+    await findByText("spec.md");
+    expect(queryByText("我的资料库")).not.toBeInTheDocument();
   });
 
   it("refreshes search results after deleting a searched file", async () => {

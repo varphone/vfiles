@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import AccessTokens from "../src/views/AccessTokens.vue";
 
@@ -46,6 +46,19 @@ const token = {
   active: true,
 };
 
+function stubCompactViewport() {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("max-width: 768px"),
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
 function renderPage() {
   const pinia = createPinia();
   setActivePinia(pinia);
@@ -53,6 +66,8 @@ function renderPage() {
 }
 
 describe("AccessTokens.vue", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   beforeEach(() => {
     listTokensMock.mockReset();
     listTokensMock.mockResolvedValue({
@@ -92,6 +107,18 @@ describe("AccessTokens.vue", () => {
     expect(
       container.querySelector(".tokens-usage-code")?.textContent,
     ).toContain("Authorization: Bearer");
+  });
+
+  it("renders stacked cards instead of a table on narrow screens", async () => {
+    stubCompactViewport();
+    const { container } = renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText("CI 构建")).toBeInTheDocument(),
+    );
+    expect(container.querySelector(".tokens-cards")).not.toBeNull();
+    expect(container.querySelector(".tokens-table")).toBeNull();
+    expect(container.querySelectorAll(".tokens-card-item")).toHaveLength(1);
   });
 
   it("shows the empty state with a create action", async () => {

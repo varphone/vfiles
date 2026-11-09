@@ -27,8 +27,7 @@
     </template>
 
     <div class="settings-content">
-      <div class="passwords-card vf-page-card">
-
+      <section class="settings-table-panel" aria-label="访问密码列表">
       <p class="passwords-note">
         <IconShieldLock :size="14" />
         <span>
@@ -53,6 +52,7 @@
 
       <SkeletonList
         v-else-if="loading && credentials.length === 0"
+        class="settings-table-state"
         :rows="3"
         label="加载访问密码"
       />
@@ -71,21 +71,99 @@
         </template>
       </EmptyState>
 
+      <div v-else-if="isCompact" class="passwords-cards">
+        <article
+          v-for="credential in credentials"
+          :key="credential.id"
+          class="passwords-card"
+        >
+          <header class="passwords-card-head">
+            <span class="passwords-name" :title="credential.label">
+              {{ credential.label }}
+            </span>
+            <Badge
+              class="password-mode"
+              :tone="credential.canWrite ? 'primary' : 'neutral'"
+              size="sm"
+            >
+              {{ credential.canWrite ? "可写" : "只读" }}
+            </Badge>
+          </header>
+
+          <dl class="passwords-card-meta">
+            <div class="passwords-card-roots">
+              <dt>允许目录</dt>
+              <dd>
+                <div class="passwords-roots">
+                  <span
+                    v-for="root in credential.roots"
+                    :key="root"
+                    class="password-root-chip"
+                    :title="`/${root}`"
+                  >
+                    {{ root }}
+                  </span>
+                </div>
+              </dd>
+            </div>
+            <div>
+              <dt>创建时间</dt>
+              <dd>{{ formatRelativeDate(credential.createdAt) }}</dd>
+            </div>
+            <div>
+              <dt>最近使用</dt>
+              <dd>
+                {{
+                  credential.lastUsedAt
+                    ? formatRelativeDate(credential.lastUsedAt)
+                    : "从未使用"
+                }}
+              </dd>
+            </div>
+          </dl>
+
+          <div class="passwords-card-actions">
+            <button
+              class="vf-ghost-button passwords-action"
+              type="button"
+              @click="openEdit(credential)"
+            >
+              <IconPencil :size="14" />
+              <span>编辑</span>
+            </button>
+            <button
+              class="vf-ghost-button passwords-action passwords-delete"
+              type="button"
+              @click="remove(credential)"
+            >
+              <IconTrash :size="14" />
+              <span>删除</span>
+            </button>
+          </div>
+        </article>
+      </div>
+
       <div v-else class="passwords-table-wrap">
         <table class="passwords-table">
           <thead>
             <tr>
-              <th scope="col">备注</th>
-              <th scope="col">允许目录</th>
-              <th scope="col">权限</th>
-              <th scope="col">创建时间</th>
-              <th scope="col">最近使用</th>
-              <th scope="col" class="passwords-actions-head">操作</th>
+              <th scope="col" class="passwords-col-name">备注</th>
+              <th scope="col" class="passwords-col-roots">允许目录</th>
+              <th scope="col" class="passwords-col-mode">权限</th>
+              <th scope="col" class="passwords-col-created">创建时间</th>
+              <th scope="col" class="passwords-col-used">最近使用</th>
+              <th scope="col" class="passwords-col-actions">操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="credential in credentials" :key="credential.id">
-              <td class="passwords-name">{{ credential.label }}</td>
+            <tr
+              v-for="credential in credentials"
+              :key="credential.id"
+              class="passwords-row"
+            >
+              <td class="passwords-name" :title="credential.label">
+                {{ credential.label }}
+              </td>
               <td>
                 <div class="passwords-roots">
                   <span
@@ -99,12 +177,13 @@
                 </div>
               </td>
               <td>
-                <span
-                  class="password-mode vf-status-pill"
-                  :class="credential.canWrite ? 'is-write' : 'is-read'"
+                <Badge
+                  class="password-mode"
+                  :tone="credential.canWrite ? 'primary' : 'neutral'"
+                  size="sm"
                 >
                   {{ credential.canWrite ? "可写" : "只读" }}
-                </span>
+                </Badge>
               </td>
               <td class="passwords-muted">
                 {{ formatRelativeDate(credential.createdAt) }}
@@ -117,27 +196,30 @@
                 }}
               </td>
               <td class="passwords-actions">
-                <button
-                  class="vf-ghost-button"
-                  type="button"
-                  @click="openEdit(credential)"
-                >
-                  <IconPencil :size="14" />
-                  <span>编辑</span>
-                </button>
-                <button
-                  class="vf-ghost-button passwords-delete"
-                  type="button"
-                  @click="remove(credential)"
-                >
-                  <IconTrash :size="14" />
-                  <span>删除</span>
-                </button>
+                <div class="passwords-actions-inner">
+                  <button
+                    class="vf-ghost-button passwords-action"
+                    type="button"
+                    @click="openEdit(credential)"
+                  >
+                    <IconPencil :size="14" />
+                    <span>编辑</span>
+                  </button>
+                  <button
+                    class="vf-ghost-button passwords-action passwords-delete"
+                    type="button"
+                    @click="remove(credential)"
+                  >
+                    <IconTrash :size="14" />
+                    <span>删除</span>
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
+      </section>
     </div>
 
     <!-- 新建 / 编辑 -->
@@ -315,7 +397,6 @@
         </div>
       </div>
     </Modal>
-    </div>
   </SettingsLayout>
 </template>
 
@@ -338,7 +419,9 @@ import EmptyState from "../components/common/EmptyState.vue";
 import SettingsLayout from "../layouts/SettingsLayout.vue";
 import Modal from "../components/common/Modal.vue";
 import SkeletonList from "../components/common/SkeletonList.vue";
+import Badge from "../ui/Badge.vue";
 import { confirmDialog } from "../composables/dialog";
+import { useMediaQuery } from "../composables/useMediaQuery";
 import { authService } from "../services/auth.service";
 import { filesService } from "../services/files.service";
 import { useAppStore } from "../stores/app.store";
@@ -354,6 +437,7 @@ const MAX_ROOTS = 8;
 const MIN_PASSWORD_LENGTH = 6;
 
 const app = useAppStore();
+const isCompact = useMediaQuery("(max-width: 768px)");
 
 const credentials = ref<LoginCredential[]>([]);
 const loading = ref(false);
@@ -583,7 +667,16 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.settings-content > .settings-table-panel {
+  padding: 0;
+  overflow: hidden;
+}
 
+.settings-table-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 
 .passwords-header-actions {
   display: flex;
@@ -596,51 +689,110 @@ onMounted(() => {
   display: flex;
   align-items: flex-start;
   gap: 0.35rem;
-  margin: 0.75rem 0 0.25rem;
+  margin: 0;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+  background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
   font-size: 0.8rem;
+  line-height: 1.5;
 }
 
 .passwords-note svg {
   flex: 0 0 auto;
-  margin-top: 0.1rem;
+  margin-top: 0.12rem;
+}
+
+.settings-table-panel > .settings-table-state {
+  padding: 0.9rem 1rem;
 }
 
 .passwords-table-wrap {
-  margin-top: 0.6rem;
+  width: 100%;
   overflow-x: auto;
 }
 
 .passwords-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
   font-size: 0.875rem;
 }
 
 .passwords-table th {
-  padding: 0.45rem 0.5rem;
+  height: 36px;
+  padding: 0 0.75rem;
   border-bottom: 1px solid var(--vf-border-weak);
+  background: var(--vf-table-head);
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: 12px;
   font-weight: 600;
   text-align: left;
   white-space: nowrap;
 }
 
 .passwords-table td {
-  padding: 0.5rem;
+  height: 44px;
+  padding: 0 0.75rem;
   border-bottom: 1px solid var(--vf-border-weak);
   vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.passwords-table th:first-child,
+.passwords-table td:first-child {
+  padding-left: 1rem;
+}
+
+.passwords-table th:last-child,
+.passwords-table td:last-child {
+  padding-right: 1rem;
+}
+
+.passwords-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.passwords-table tbody tr:hover {
+  background: var(--vf-row-hover);
+}
+
+.passwords-col-name {
+  width: 19%;
+}
+
+.passwords-col-roots {
+  width: 24%;
+}
+
+.passwords-col-mode {
+  width: 9%;
+}
+
+.passwords-col-created {
+  width: 15%;
+}
+
+.passwords-col-used {
+  width: 16%;
+}
+
+.passwords-col-actions {
+  width: 17%;
+  text-align: right;
 }
 
 .passwords-name {
-  min-width: 9rem;
   color: var(--vf-text-strong);
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .passwords-muted {
-  color: var(--vf-text-subtle);
+  color: var(--vf-text-muted);
   white-space: nowrap;
 }
 
@@ -648,6 +800,7 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem;
+  min-width: 0;
 }
 
 .password-root-chip {
@@ -690,24 +843,89 @@ onMounted(() => {
   color: var(--vf-danger-text);
 }
 
-.password-mode.is-write {
-  background: var(--vf-accent-soft);
-  color: var(--vf-accent-text);
+.password-mode {
+  flex: 0 0 auto;
 }
 
-.password-mode.is-read {
-  background: var(--vf-surface-sunken);
-  color: var(--vf-text-muted);
-}
-
-.passwords-actions-head,
 .passwords-actions {
   text-align: right;
   white-space: nowrap;
 }
 
+.passwords-actions-inner {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.15rem;
+}
+
+.passwords-action {
+  min-height: 1.9rem;
+  padding: 0 0.5rem;
+  font-size: 0.8rem;
+}
+
 .passwords-delete {
   color: var(--vf-danger-text);
+}
+
+/* 窄屏：每行一张卡，表格列不横向溢出 */
+.passwords-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.75rem;
+}
+
+.passwords-card {
+  padding: 0.75rem 0.8rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-surface);
+}
+
+.passwords-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.passwords-card-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.55rem 0.9rem;
+  margin: 0.6rem 0 0.7rem;
+}
+
+.passwords-card-meta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.passwords-card-meta dt {
+  color: var(--vf-text-subtle);
+  font-size: 0.7rem;
+}
+
+.passwords-card-meta dd {
+  margin: 0;
+  color: var(--vf-text-strong);
+  font-size: 0.8rem;
+  word-break: break-word;
+}
+
+.passwords-card-roots {
+  grid-column: 1 / -1;
+}
+
+.passwords-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
 }
 
 .passwords-form {

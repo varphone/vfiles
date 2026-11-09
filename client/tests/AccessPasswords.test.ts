@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import AccessPasswords from "../src/views/AccessPasswords.vue";
 
@@ -57,6 +57,19 @@ const writableCredential = {
   lastUsedAt: "2026-01-03T00:00:00Z",
 };
 
+function stubCompactViewport() {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("max-width: 768px"),
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
 function renderPage() {
   const pinia = createPinia();
   setActivePinia(pinia);
@@ -64,6 +77,8 @@ function renderPage() {
 }
 
 describe("AccessPasswords.vue", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   beforeEach(() => {
     listMock.mockReset();
     listMock.mockResolvedValue([credential]);
@@ -107,6 +122,18 @@ describe("AccessPasswords.vue", () => {
     expect(screen.getByText("只读")).toBeInTheDocument();
     expect(screen.getByText("可写")).toBeInTheDocument();
     expect(screen.getByText("从未使用")).toBeInTheDocument();
+  });
+
+  it("renders stacked cards instead of a table on narrow screens", async () => {
+    stubCompactViewport();
+    const { container } = renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText("read-docs")).toBeInTheDocument(),
+    );
+    expect(container.querySelector(".passwords-cards")).not.toBeNull();
+    expect(container.querySelector(".passwords-table")).toBeNull();
+    expect(container.querySelectorAll(".passwords-card")).toHaveLength(1);
   });
 
   it("shows a friendly empty state", async () => {

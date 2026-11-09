@@ -27,7 +27,7 @@
     </template>
 
     <div class="settings-content">
-      <div class="tokens-card vf-page-card">
+      <section class="settings-table-panel" aria-label="访问令牌列表">
 
       <p class="tokens-note">
         <IconShieldLock :size="14" />
@@ -53,6 +53,7 @@
 
       <SkeletonList
         v-else-if="loading && tokens.length === 0"
+        class="settings-table-state"
         :rows="3"
         label="加载访问令牌"
       />
@@ -71,22 +72,80 @@
         </template>
       </EmptyState>
 
+      <div v-else-if="isCompact" class="tokens-cards">
+        <article
+          v-for="token in tokens"
+          :key="token.id"
+          class="tokens-card-item"
+        >
+          <header class="tokens-card-head">
+            <span class="tokens-name" :title="token.name">{{ token.name }}</span>
+            <Badge
+              class="tokens-status"
+              :class="statusClass(token)"
+              :tone="statusTone(token)"
+              size="sm"
+            >
+              {{ statusLabel(token) }}
+            </Badge>
+          </header>
+
+          <p class="tokens-card-prefix">
+            <code class="tokens-prefix">{{ token.token_prefix }}…</code>
+          </p>
+
+          <dl class="tokens-card-meta">
+            <div>
+              <dt>创建时间</dt>
+              <dd>{{ formatRelativeDate(token.created_at) }}</dd>
+            </div>
+            <div>
+              <dt>最近使用</dt>
+              <dd>
+                {{
+                  token.last_used_at
+                    ? formatRelativeDate(token.last_used_at)
+                    : "从未使用"
+                }}
+              </dd>
+            </div>
+            <div>
+              <dt>有效期</dt>
+              <dd>{{ expiryLabel(token) }}</dd>
+            </div>
+          </dl>
+
+          <div class="tokens-card-actions">
+            <button
+              v-if="!token.revoked_at"
+              class="vf-ghost-button tokens-action tokens-revoke"
+              type="button"
+              @click="revoke(token)"
+            >
+              <IconTrash :size="14" />
+              <span>撤销</span>
+            </button>
+            <span v-else class="tokens-muted">已撤销</span>
+          </div>
+        </article>
+      </div>
+
       <div v-else class="tokens-table-wrap">
         <table class="tokens-table">
           <thead>
             <tr>
-              <th scope="col">名称</th>
-              <th scope="col">令牌</th>
-              <th scope="col">创建时间</th>
-              <th scope="col">最近使用</th>
-              <th scope="col">有效期</th>
-              <th scope="col">状态</th>
-              <th scope="col" class="tokens-actions-head">操作</th>
+              <th scope="col" class="tokens-col-name">名称</th>
+              <th scope="col" class="tokens-col-prefix">令牌前缀</th>
+              <th scope="col" class="tokens-col-created">创建时间</th>
+              <th scope="col" class="tokens-col-used">最近使用</th>
+              <th scope="col" class="tokens-col-expiry">有效期</th>
+              <th scope="col" class="tokens-col-status">状态</th>
+              <th scope="col" class="tokens-col-actions">操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="token in tokens" :key="token.id">
-              <td class="tokens-name">{{ token.name }}</td>
+            <tr v-for="token in tokens" :key="token.id" class="tokens-row">
+              <td class="tokens-name" :title="token.name">{{ token.name }}</td>
               <td>
                 <code class="tokens-prefix">{{ token.token_prefix }}…</code>
               </td>
@@ -102,17 +161,19 @@
               </td>
               <td class="tokens-muted">{{ expiryLabel(token) }}</td>
               <td>
-                <span
-                  class="tokens-status vf-status-pill"
+                <Badge
+                  class="tokens-status"
                   :class="statusClass(token)"
+                  :tone="statusTone(token)"
+                  size="sm"
                 >
                   {{ statusLabel(token) }}
-                </span>
+                </Badge>
               </td>
               <td class="tokens-actions">
                 <button
                   v-if="!token.revoked_at"
-                  class="vf-ghost-button tokens-revoke"
+                  class="vf-ghost-button tokens-action tokens-revoke"
                   type="button"
                   @click="revoke(token)"
                 >
@@ -160,6 +221,7 @@
           <IconCopy :size="14" />
           <span>复制示例</span>
         </button>
+      </section>
       </section>
     </div>
 
@@ -258,7 +320,6 @@
         </button>
       </template>
     </Modal>
-    </div>
   </SettingsLayout>
 </template>
 
@@ -278,7 +339,9 @@ import EmptyState from "../components/common/EmptyState.vue";
 import SettingsLayout from "../layouts/SettingsLayout.vue";
 import Modal from "../components/common/Modal.vue";
 import SkeletonList from "../components/common/SkeletonList.vue";
+import Badge from "../ui/Badge.vue";
 import { confirmDialog } from "../composables/dialog";
+import { useMediaQuery } from "../composables/useMediaQuery";
 import { useAppStore } from "../stores/app.store";
 import { filesService } from "../services/files.service";
 import { copyText } from "../utils/clipboard";
@@ -291,6 +354,7 @@ import type { AccessToken, TokenExpiryOption } from "../types";
  * 明文令牌只在创建响应里出现一次，这里用一个独立对话框展示并提供复制。
  */
 const app = useAppStore();
+const isCompact = useMediaQuery("(max-width: 768px)");
 const tokens = ref<AccessToken[]>([]);
 const currentPage = ref(0);
 const totalTokens = ref(0);
@@ -460,6 +524,11 @@ function statusClass(token: AccessToken): string {
   return token.active ? "is-active" : "is-expired";
 }
 
+function statusTone(token: AccessToken): "success" | "warning" | "muted" {
+  if (token.revoked_at) return "muted";
+  return token.active ? "success" : "warning";
+}
+
 onMounted(async () => {
   try {
     expiryOptions.value = await filesService.listTokenExpiryOptions();
@@ -471,8 +540,16 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.settings-content > .settings-table-panel {
+  padding: 0;
+  overflow: hidden;
+}
 
-
+.settings-table-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 
 .tokens-header-actions {
   display: flex;
@@ -484,14 +561,137 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  margin: 0.75rem 0 0.25rem;
+  margin: 0;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+  background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
   font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.settings-table-panel > .settings-table-state {
+  padding: 0.9rem 1rem;
 }
 
 .tokens-table-wrap {
-  margin-top: 0.6rem;
+  width: 100%;
   overflow-x: auto;
+}
+
+.tokens-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.875rem;
+}
+
+.tokens-table th {
+  height: 36px;
+  padding: 0 0.75rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+  background: var(--vf-table-head);
+  color: var(--vf-text-subtle);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.tokens-table td {
+  height: 44px;
+  padding: 0 0.75rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tokens-table th:first-child,
+.tokens-table td:first-child {
+  padding-left: 1rem;
+}
+
+.tokens-table th:last-child,
+.tokens-table td:last-child {
+  padding-right: 1rem;
+}
+
+.tokens-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.tokens-table tbody tr:hover {
+  background: var(--vf-row-hover);
+}
+
+.tokens-col-name {
+  width: 17%;
+}
+
+.tokens-col-prefix {
+  width: 13%;
+}
+
+.tokens-col-created {
+  width: 13%;
+}
+
+.tokens-col-used {
+  width: 12%;
+}
+
+.tokens-col-expiry {
+  width: 16%;
+}
+
+.tokens-col-status {
+  width: 10%;
+}
+
+.tokens-col-actions {
+  width: 19%;
+  text-align: right;
+}
+
+.tokens-name {
+  color: var(--vf-text-strong);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tokens-prefix {
+  padding: 0.05rem 0.3rem;
+  border-radius: var(--vf-radius-xs);
+  background: var(--vf-surface-sunken);
+  color: var(--vf-text);
+  font-size: 0.8rem;
+}
+
+.tokens-muted {
+  color: var(--vf-text-muted);
+  white-space: nowrap;
+}
+
+.tokens-status {
+  flex: 0 0 auto;
+}
+
+.tokens-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tokens-action {
+  min-height: 1.9rem;
+  padding: 0 0.55rem;
+  font-size: 0.8rem;
+}
+
+.tokens-revoke {
+  color: var(--vf-danger-text);
 }
 
 .tokens-pager {
@@ -499,7 +699,9 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  margin-top: 0.75rem;
+  padding: 0.7rem 1rem;
+  border-top: 1px solid var(--vf-border-weak);
+  background: var(--vf-surface-2);
 }
 
 .tokens-pager-info {
@@ -508,70 +710,9 @@ onMounted(async () => {
   text-align: center;
 }
 
-.tokens-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.875rem;
-}
-
-.tokens-table th {
-  padding: 0.45rem 0.5rem;
-  border-bottom: 1px solid var(--vf-border-weak);
-  color: var(--vf-text-subtle);
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.tokens-table td {
-  padding: 0.5rem;
-  border-bottom: 1px solid var(--vf-border-weak);
-  vertical-align: middle;
-}
-
-.tokens-name {
-  color: var(--vf-text-strong);
-  font-weight: 600;
-}
-
-.tokens-prefix {
-  padding: 0.05rem 0.3rem;
-  border-radius: var(--vf-radius-xs);
-  background: var(--vf-surface-sunken);
-  font-size: 0.8rem;
-}
-
-.tokens-muted {
-  color: var(--vf-text-subtle);
-}
-
-.tokens-status.is-active {
-  background: var(--vf-success-soft);
-  color: var(--vf-success-text);
-}
-
-.tokens-status.is-expired {
-  background: var(--vf-warning-soft);
-  color: var(--vf-warning-text);
-}
-
-.tokens-status.is-revoked {
-  background: var(--vf-surface-sunken);
-  color: var(--vf-text-subtle);
-}
-
-.tokens-actions-head,
-.tokens-actions {
-  text-align: right;
-}
-
-.tokens-revoke {
-  color: var(--vf-danger-text);
-}
-
 .tokens-usage {
-  margin-top: 1.1rem;
+  padding: 0.85rem 1rem 1rem;
+  border-top: 1px solid var(--vf-border-weak);
 }
 
 .tokens-usage-title {
@@ -592,6 +733,65 @@ onMounted(async () => {
   line-height: 1.5;
   overflow-x: auto;
   white-space: pre;
+}
+
+/* 窄屏：每行一张卡，隐藏宽表格 */
+.tokens-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.75rem;
+}
+
+.tokens-card-item {
+  padding: 0.75rem 0.8rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-surface);
+}
+
+.tokens-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.tokens-card-prefix {
+  margin: 0.45rem 0 0;
+}
+
+.tokens-card-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: 0.5rem 0.9rem;
+  margin: 0.6rem 0 0.65rem;
+}
+
+.tokens-card-meta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.tokens-card-meta dt {
+  color: var(--vf-text-subtle);
+  font-size: 0.7rem;
+}
+
+.tokens-card-meta dd {
+  margin: 0;
+  color: var(--vf-text-strong);
+  font-size: 0.8rem;
+  word-break: break-word;
+}
+
+.tokens-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
 }
 
 .tokens-form {

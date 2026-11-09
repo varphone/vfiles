@@ -22,6 +22,8 @@ interface PersistedViewPrefs {
   detailsVisible: boolean;
   /** 列表密度（r126 ✓ 主流（Notion/Linear）舒适/紧凑切换） */
   density: ListDensity;
+  /** 命名空间根目录是否显示 Seafile 式「我的资料库」卡片首页（默认开启） */
+  libraryCards: boolean;
 }
 
 const SORT_FIELDS: SortField[] = ["name", "size", "modified", "type"];
@@ -56,8 +58,9 @@ function readPersisted(): PersistedViewPrefs {
     foldersFirst: DEFAULT_SORT_STATE.foldersFirst,
     thumbnailSize: DEFAULT_THUMBNAIL_SIZE,
     detailsVisible: false,
-      density: "comfortable",
-};
+    density: "comfortable",
+    libraryCards: true,
+  };
 
   if (typeof localStorage === "undefined") return fallback;
 
@@ -83,8 +86,12 @@ function readPersisted(): PersistedViewPrefs {
         typeof parsed.detailsVisible === "boolean"
           ? parsed.detailsVisible
           : fallback.detailsVisible,
-          density: parsed.density === "compact" ? "compact" : "comfortable",
-};
+      density: parsed.density === "compact" ? "compact" : "comfortable",
+      libraryCards:
+        typeof parsed.libraryCards === "boolean"
+          ? parsed.libraryCards
+          : fallback.libraryCards,
+    };
   } catch {
     return fallback;
   }
@@ -100,6 +107,7 @@ export const useFileViewStore = defineStore("fileView", () => {
   const thumbnailSize = ref(initial.thumbnailSize);
   const detailsVisible = ref(initial.detailsVisible);
   const density = ref<ListDensity>(initial.density);
+  const libraryCards = ref(initial.libraryCards);
 
   function persist() {
     if (typeof localStorage === "undefined") return;
@@ -112,6 +120,7 @@ export const useFileViewStore = defineStore("fileView", () => {
         thumbnailSize: thumbnailSize.value,
         detailsVisible: detailsVisible.value,
         density: density.value,
+        libraryCards: libraryCards.value,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch {
@@ -128,6 +137,7 @@ export const useFileViewStore = defineStore("fileView", () => {
       thumbnailSize,
       detailsVisible,
       density,
+      libraryCards,
     ],
     persist,
     {
@@ -177,6 +187,11 @@ export const useFileViewStore = defineStore("fileView", () => {
     detailsVisible.value = !detailsVisible.value;
   }
 
+  /** 根目录卡片首页开关：关闭后回到原有文件列表（供测试/偏好覆盖）。 */
+  function setLibraryCards(next: boolean) {
+    libraryCards.value = Boolean(next);
+  }
+
   return {
     mode,
     sortField,
@@ -186,6 +201,8 @@ export const useFileViewStore = defineStore("fileView", () => {
     detailsVisible,
     setDetailsVisible,
     toggleDetails,
+    libraryCards,
+    setLibraryCards,
     density,
     setDensity,
     setMode,

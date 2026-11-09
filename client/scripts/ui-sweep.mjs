@@ -174,8 +174,23 @@ async function main() {
       await browser.newContext({ viewport: { width: 1440, height: 900 } })
     ).newPage();
     await page.addInitScript(
-      (t) => localStorage.setItem("vfiles:theme", t),
-      theme,
+      ({ t, cards }) => {
+        localStorage.setItem("vfiles:theme", t);
+        localStorage.setItem(
+          "vfiles:file-browser:view",
+          JSON.stringify({
+            mode: "list",
+            sortField: "name",
+            sortDirection: "asc",
+            foldersFirst: true,
+            thumbnailSize: 144,
+            detailsVisible: false,
+            density: "comfortable",
+            libraryCards: cards,
+          }),
+        );
+      },
+      { t: theme, cards: false },
     );
     await page.goto(`${base}/login`, { waitUntil: "networkidle" });
     await page.waitForTimeout(400);
@@ -186,6 +201,23 @@ async function main() {
     await page.waitForSelector(".file-browser-box", { timeout: 10000 });
     await page.waitForTimeout(900);
     await snap(page, `${theme}-2-list`);
+
+    // 资料库卡片首页（根目录）
+    const pc = await (
+      await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    ).newPage();
+    await pc.addInitScript(
+      ({ t }) => localStorage.setItem("vfiles:theme", t),
+      { t: theme },
+    );
+    await pc.goto(`${base}/login`, { waitUntil: "networkidle" });
+    await pc.fill("#auth-username", SEED_USER.name);
+    await pc.fill("#auth-password", SEED_USER.pass);
+    await pc.click(".auth-submit");
+    await pc.waitForSelector(".library-home", { timeout: 10000 });
+    await pc.waitForTimeout(600);
+    await snap(pc, `${theme}-19-libraries`);
+    await pc.close();
     await doubleClick(page.locator('tr[data-vfiles-path="项目库"]'));
     await page.waitForTimeout(700);
     await page.evaluate(() =>

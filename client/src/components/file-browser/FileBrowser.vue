@@ -253,6 +253,22 @@
                 </template>
               </EmptyState>
 
+              <LibraryGrid
+                v-else-if="showLibraryCards"
+                :directories="libraryDirectories"
+                :renaming-path="renamingPath"
+                :can-write="canWrite"
+                :can-share="canShare"
+                @open="handleOpenFolder"
+                @rename="handleRenameEntry"
+                @rename-commit="commitRenameEntry"
+                @rename-cancel="cancelRenameEntry"
+                @delete="handleDelete"
+                @share="handleShare"
+                @details="openDetailsDialog"
+                @context-menu="handleContextMenu"
+              />
+
               <EmptyState
                 v-else-if="!searchActive && files.length === 0"
                 :icon="IconFolderOpen"
@@ -448,15 +464,19 @@
           <span>{{
             searchActive
               ? `搜索结果 ${searchResults.length} 项`
-              : filesStore.hasMoreFiles
-                ? `当前目录 ${files.length} / ${filesStore.totalFiles} 项`
-                : `当前目录 ${files.length} 项`
+              : showLibraryCards
+                ? `我的资料库 ${libraryDirectories.length} 个目录`
+                : filesStore.hasMoreFiles
+                  ? `当前目录 ${files.length} / ${filesStore.totalFiles} 项`
+                  : `当前目录 ${files.length} 项`
           }}</span>
           <span>
             {{
               parentPath != null
                 ? "单击文件夹进入，点“返回上一级”回退"
-                : "单击文件夹进入子目录"
+                : showLibraryCards
+                  ? "单击资料库进入目录"
+                  : "单击文件夹进入子目录"
             }}
           </span>
           <span v-if="selectedCount > 0">已选 {{ selectedCount }} 项</span>
@@ -498,6 +518,22 @@
             </button>
           </div>
         </div>
+
+        <LibraryGrid
+          v-else-if="showLibraryCards"
+          :directories="libraryDirectories"
+          :renaming-path="renamingPath"
+          :can-write="canWrite"
+          :can-share="canShare"
+          @open="handleOpenFolder"
+          @rename="handleRenameEntry"
+          @rename-commit="commitRenameEntry"
+          @rename-cancel="cancelRenameEntry"
+          @delete="handleDelete"
+          @share="handleShare"
+          @details="openDetailsDialog"
+          @context-menu="handleContextMenu"
+        />
 
         <EmptyState
           v-else-if="!searchActive && files.length === 0"
@@ -995,6 +1031,7 @@ import DirectoryTree from "./DirectoryTree.vue";
 import SidebarOverview from "./SidebarOverview.vue";
 import EmptyState from "../common/EmptyState.vue";
 import FileGrid from "./FileGrid.vue";
+import LibraryGrid from "./LibraryGrid.vue";
 import MobileSearchBar from "./MobileSearchBar.vue";
 import DesktopCommandBar from "./DesktopCommandBar.vue";
 import type { SearchType } from "./BrowserSearchBox.vue";
@@ -1986,6 +2023,29 @@ let loadMoreObserver: IntersectionObserver | null = null;
 /** 目录列表（不含 `.`/`..` 之类的合成条目，导航交给面包屑/目录树/上一级按钮）。 */
 const navigationListItems = computed<FileInfo[]>(() =>
   sortBrowserItems(files.value, sortState.value),
+);
+
+/**
+ * 命名空间根目录的 Seafile 式「我的资料库」卡片首页。
+ *
+ * 仅在根路径、非历史快照浏览、未搜索、无加载/错误且偏好开启时启用；
+ * 受限会话被重定向到范围根（currentPath 非空）时自然回退到原有列表，
+ * 根路径若返回 403 则由 error 分支继续展示原有错误界面。
+ */
+const showLibraryCards = computed(
+  () =>
+    currentPath.value === "" &&
+    !browseCommit.value &&
+    fileView.libraryCards &&
+    !searchActive.value &&
+    !loading.value &&
+    !error.value &&
+    (!isRestricted.value || scopeRoots.value.length === 0),
+);
+
+/** 根目录卡片只取一级子目录，并跟随列表当前的排序偏好。 */
+const libraryDirectories = computed(() =>
+  navigationListItems.value.filter((file) => file.kind === "directory"),
 );
 
 /** 搜索结果按图标分类归入筛选桶（与搜索工具条的 chips 口径一致）。 */

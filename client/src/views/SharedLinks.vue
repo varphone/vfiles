@@ -35,7 +35,7 @@
     </template>
 
     <div class="settings-content">
-      <div class="shares-card vf-page-card">
+      <section class="settings-table-panel" aria-label="分享链接列表">
 
       <p v-if="featureDisabled" class="shares-note">
         <IconInfoCircle :size="14" />
@@ -59,6 +59,7 @@
 
       <SkeletonList
         v-else-if="loading && shares.length === 0"
+        class="settings-table-state"
         :rows="3"
         label="加载分享链接"
       />
@@ -77,72 +78,87 @@
         </template>
       </EmptyState>
 
-      <div v-if="shares.length > 0" class="shares-filters">
-        <button
-          v-for="chip in filterChips"
-          :key="chip.key"
-          class="vf-ghost-button shares-filter"
-          :class="{ 'is-active': statusFilter === chip.key }"
-          type="button"
-          :aria-pressed="statusFilter === chip.key ? 'true' : 'false'"
-          @click="statusFilter = chip.key"
-        >
-          <component :is="chip.icon" :size="14" />
-          <span>{{ chip.label }}</span>
-          <span class="shares-filter-count">{{ chip.count }}</span>
-        </button>
-      </div>
-
-      <p v-if="hasMore" class="shares-page-hint">
-        状态筛选和过期链接清理仅作用于已加载的分享链接。
-      </p>
-
-      <EmptyState
-        v-if="shares.length > 0 && visibleShares.length === 0"
-        :icon="IconFilter"
-        :title="emptyFilterTitle"
-        hint="换一个筛选条件即可看到其它链接"
-      >
-        <template #actions>
-          <button class="vf-ghost-button" @click="statusFilter = 'all'">
-            <span>查看全部</span>
+      <template v-if="shares.length > 0">
+        <div class="shares-filters">
+          <button
+            v-for="chip in filterChips"
+            :key="chip.key"
+            class="vf-ghost-button shares-filter"
+            :class="{ 'is-active': statusFilter === chip.key }"
+            type="button"
+            :aria-pressed="statusFilter === chip.key ? 'true' : 'false'"
+            @click="statusFilter = chip.key"
+          >
+            <component :is="chip.icon" :size="14" />
+            <span>{{ chip.label }}</span>
+            <span class="shares-filter-count">{{ chip.count }}</span>
           </button>
-        </template>
-      </EmptyState>
+        </div>
 
-      <ul v-else-if="shares.length > 0" class="shares-list">
-        <li
-          v-for="share in visibleShares"
-          :key="share.id"
-          class="shares-row"
-          :class="{ 'is-expired': isExpired(share) }"
+        <p v-if="hasMore" class="shares-page-hint">
+          状态筛选和过期链接清理仅作用于已加载的分享链接。
+        </p>
+
+        <EmptyState
+          v-if="visibleShares.length === 0"
+          :icon="IconFilter"
+          :title="emptyFilterTitle"
+          hint="换一个筛选条件即可看到其它链接"
         >
-          <span class="shares-icon" aria-hidden="true">
-            <FileTypeIcon :file="iconSource(share)" :size="20" />
-          </span>
+          <template #actions>
+            <button class="vf-ghost-button" @click="statusFilter = 'all'">
+              <span>查看全部</span>
+            </button>
+          </template>
+        </EmptyState>
 
-          <div class="shares-row-main">
-            <div class="shares-row-titles">
-              <span class="shares-name" :title="share.entry_name">
-                {{ share.entry_name }}
+        <div v-else-if="isCompact" class="shares-cards">
+          <article
+            v-for="share in visibleShares"
+            :key="share.id"
+            class="shares-card"
+            :class="{ 'is-expired': isExpired(share) }"
+          >
+            <header class="shares-card-head">
+              <span class="shares-icon" aria-hidden="true">
+                <FileTypeIcon :file="iconSource(share)" :size="20" />
               </span>
-              <span class="shares-path" :title="share.entry_path">
-                /{{ share.entry_path }}
-              </span>
-            </div>
-
-            <div class="shares-row-meta">
-              <span
-                class="shares-badge vf-status-pill"
+              <div class="shares-card-titles">
+                <span class="shares-name" :title="share.entry_name">
+                  {{ share.entry_name }}
+                </span>
+                <span class="shares-path" :title="share.entry_path">
+                  /{{ share.entry_path }}
+                </span>
+              </div>
+              <Badge
+                class="shares-badge"
                 :class="statusClass(share)"
+                :tone="isExpired(share) ? 'muted' : 'success'"
+                size="sm"
               >
                 {{ statusLabel(share) }}
-              </span>
-              <span>访问 {{ share.access_count }} 次</span>
-              <span v-if="share.last_accessed_at">
-                · 最近 {{ formatRelativeDate(share.last_accessed_at) }}
-              </span>
-            </div>
+              </Badge>
+            </header>
+
+            <dl class="shares-card-meta">
+              <div>
+                <dt>类型</dt>
+                <dd>{{ kindLabel(share) }}</dd>
+              </div>
+              <div>
+                <dt>访问次数</dt>
+                <dd>访问 {{ share.access_count }} 次</dd>
+              </div>
+              <div>
+                <dt>创建时间</dt>
+                <dd>{{ formatRelativeDate(share.created_at) }}</dd>
+              </div>
+              <div>
+                <dt>过期时间</dt>
+                <dd>{{ expiryLabel(share) }}</dd>
+              </div>
+            </dl>
 
             <div class="shares-link-row">
               <input
@@ -154,40 +170,142 @@
                 @focus="selectLink"
               />
             </div>
-          </div>
 
-          <div class="shares-row-actions">
-            <button
-              class="vf-ghost-button shares-action"
-              type="button"
-              @click="copyLink(share)"
-            >
-              <IconCheck v-if="copiedCode === share.code" :size="16" />
-              <IconCopy v-else :size="16" />
-              <span>{{ copiedCode === share.code ? "已复制" : "复制" }}</span>
-            </button>
-            <button
-              class="vf-ghost-button shares-action"
-              type="button"
-              @click="openLink(share)"
-            >
-              <IconExternalLink :size="16" />
-              <span>打开</span>
-            </button>
-            <button
-              class="vf-ghost-button is-danger shares-action"
-              type="button"
-              :disabled="disablingCode === share.code"
-              @click="stopSharing(share)"
-            >
-              <IconTrash :size="16" />
-              <span>{{
-                disablingCode === share.code ? "停止中…" : "停止"
-              }}</span>
-            </button>
-          </div>
-        </li>
-      </ul>
+            <div class="shares-card-actions">
+              <button
+                class="vf-ghost-button shares-action"
+                type="button"
+                @click="copyLink(share)"
+              >
+                <IconCheck v-if="copiedCode === share.code" :size="16" />
+                <IconCopy v-else :size="16" />
+                <span>{{ copiedCode === share.code ? "已复制" : "复制" }}</span>
+              </button>
+              <button
+                class="vf-ghost-button shares-action"
+                type="button"
+                @click="openLink(share)"
+              >
+                <IconExternalLink :size="16" />
+                <span>打开</span>
+              </button>
+              <button
+                class="vf-ghost-button is-danger shares-action"
+                type="button"
+                :disabled="disablingCode === share.code"
+                @click="stopSharing(share)"
+              >
+                <IconTrash :size="16" />
+                <span>{{ disablingCode === share.code ? "停止中…" : "停止" }}</span>
+              </button>
+            </div>
+          </article>
+        </div>
+
+        <div v-else class="shares-table-wrap">
+          <table class="shares-table">
+            <thead>
+              <tr>
+                <th scope="col" class="shares-col-file">文件</th>
+                <th scope="col" class="shares-col-kind">类型</th>
+                <th scope="col" class="shares-col-status">状态</th>
+                <th scope="col" class="shares-col-visits">访问次数</th>
+                <th scope="col" class="shares-col-created">创建时间</th>
+                <th scope="col" class="shares-col-expiry">过期时间</th>
+                <th scope="col" class="shares-col-actions">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="share in visibleShares"
+                :key="share.id"
+                class="shares-row"
+                :class="{ 'is-expired': isExpired(share) }"
+              >
+                <td class="shares-file-cell">
+                  <div class="shares-file">
+                    <span class="shares-icon" aria-hidden="true">
+                      <FileTypeIcon :file="iconSource(share)" :size="20" />
+                    </span>
+                    <div class="shares-file-text">
+                      <div class="shares-file-titles">
+                        <span class="shares-name" :title="share.entry_name">
+                          {{ share.entry_name }}
+                        </span>
+                        <span class="shares-path" :title="share.entry_path">
+                          /{{ share.entry_path }}
+                        </span>
+                      </div>
+                      <div class="shares-link-row">
+                        <input
+                          class="input is-small shares-link-input"
+                          type="text"
+                          :value="shareUrl(share)"
+                          readonly
+                          :aria-label="`${share.entry_name} 的分享链接`"
+                          @focus="selectLink"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </td>
+                <td class="shares-muted">{{ kindLabel(share) }}</td>
+                <td>
+                  <Badge
+                    class="shares-badge"
+                    :class="statusClass(share)"
+                    :tone="isExpired(share) ? 'muted' : 'success'"
+                    size="sm"
+                  >
+                    {{ statusLabel(share) }}
+                  </Badge>
+                </td>
+                <td class="shares-muted shares-count">
+                  访问 {{ share.access_count }} 次
+                </td>
+                <td class="shares-muted">
+                  {{ formatRelativeDate(share.created_at) }}
+                </td>
+                <td class="shares-muted">{{ expiryLabel(share) }}</td>
+                <td class="shares-actions">
+                  <div class="shares-actions-inner">
+                    <button
+                      class="vf-ghost-button shares-action"
+                      type="button"
+                      @click="copyLink(share)"
+                    >
+                      <IconCheck v-if="copiedCode === share.code" :size="16" />
+                      <IconCopy v-else :size="16" />
+                      <span>{{
+                        copiedCode === share.code ? "已复制" : "复制"
+                      }}</span>
+                    </button>
+                    <button
+                      class="vf-ghost-button shares-action"
+                      type="button"
+                      @click="openLink(share)"
+                    >
+                      <IconExternalLink :size="16" />
+                      <span>打开</span>
+                    </button>
+                    <button
+                      class="vf-ghost-button is-danger shares-action"
+                      type="button"
+                      :disabled="disablingCode === share.code"
+                      @click="stopSharing(share)"
+                    >
+                      <IconTrash :size="16" />
+                      <span>{{
+                        disablingCode === share.code ? "停止中…" : "停止"
+                      }}</span>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
 
       <div v-if="hasMore" class="shares-load-more">
         <button
@@ -204,7 +322,7 @@
           }}</span>
         </button>
       </div>
-    </div>
+      </section>
     </div>
   </SettingsLayout>
 </template>
@@ -231,6 +349,8 @@ import EmptyState from "../components/common/EmptyState.vue";
 import SettingsLayout from "../layouts/SettingsLayout.vue";
 import SkeletonList from "../components/common/SkeletonList.vue";
 import FileTypeIcon from "../components/file-browser/FileTypeIcon.vue";
+import Badge from "../ui/Badge.vue";
+import { useMediaQuery } from "../composables/useMediaQuery";
 import { filesService } from "../services/files.service";
 import { copyText } from "../utils/clipboard";
 import { formatRelativeDate } from "../utils/filePresentation";
@@ -249,6 +369,7 @@ import type { ShareLink } from "../types";
 const auth = useAuthStore();
 const app = useAppStore();
 const router = useRouter();
+const isCompact = useMediaQuery("(max-width: 768px)");
 
 const shares = ref<ShareLink[]>([]);
 const shareTotal = ref(0);
@@ -390,9 +511,16 @@ function shareUrl(share: ShareLink): string {
 }
 
 function statusLabel(share: ShareLink): string {
-  if (isExpired(share)) return "已过期";
+  return isExpired(share) ? "已过期" : "有效";
+}
+
+function expiryLabel(share: ShareLink): string {
   if (!share.expires_at) return "长期有效";
-  return `有效期至 ${formatRelativeDate(share.expires_at)}`;
+  return formatRelativeDate(share.expires_at);
+}
+
+function kindLabel(share: ShareLink): string {
+  return share.entry_kind === "directory" ? "文件夹" : "文件";
 }
 
 function statusClass(share: ShareLink): string {
@@ -498,7 +626,16 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.settings-content > .settings-table-panel {
+  padding: 0;
+  overflow: hidden;
+}
 
+.settings-table-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 
 .shares-header-actions {
   display: flex;
@@ -511,13 +648,16 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  margin: 0.75rem 0 0;
-  padding: 0.45rem 0.55rem;
-  border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-sm);
+  margin: 0;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
   font-size: 0.8rem;
+}
+
+.settings-table-panel > .settings-table-state {
+  padding: 0.9rem 1rem;
 }
 
 /* 状态筛选 chips：全部 / 有效 / 已过期 / 已被访问 */
@@ -526,11 +666,12 @@ onMounted(() => {
   align-items: center;
   gap: 0.3rem;
   flex-wrap: wrap;
-  padding: 0.65rem 0 0;
+  padding: 0.75rem 1rem 0.35rem;
 }
 
 .shares-page-hint {
-  margin: 0.45rem 0 0;
+  margin: 0;
+  padding: 0 1rem 0.5rem;
   color: var(--vf-text-subtle);
   font-size: 0.75rem;
 }
@@ -552,64 +693,128 @@ onMounted(() => {
   opacity: 0.75;
 }
 
-.shares-list {
-  display: flex;
-  flex-direction: column;
-  margin: 0.6rem 0 0;
-  padding: 0;
-  list-style: none;
+.shares-table-wrap {
+  width: 100%;
+  overflow-x: auto;
 }
 
-.shares-load-more {
-  display: flex;
-  justify-content: center;
-  padding: 0.75rem 0 0.25rem;
+.shares-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.875rem;
 }
 
-.shares-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.6rem;
-  padding: 0.65rem 0.5rem;
+.shares-table th {
+  height: 36px;
+  padding: 0 0.75rem;
   border-bottom: 1px solid var(--vf-border-weak);
+  background: var(--vf-table-head);
+  color: var(--vf-text-subtle);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
 }
 
-.shares-row:last-child {
+.shares-table td {
+  padding: 0.3rem 0.75rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shares-table th:first-child,
+.shares-table td:first-child {
+  padding-left: 1rem;
+}
+
+.shares-table th:last-child,
+.shares-table td:last-child {
+  padding-right: 1rem;
+}
+
+.shares-table tbody tr:last-child td {
   border-bottom: none;
 }
 
-.shares-row:hover {
-  background: var(--vf-surface-hover);
+.shares-table tbody tr:hover {
+  background: var(--vf-row-hover);
+}
+
+.shares-col-file {
+  width: 30%;
+}
+
+.shares-col-kind {
+  width: 7%;
+}
+
+.shares-col-status {
+  width: 8%;
+}
+
+.shares-col-visits {
+  width: 8%;
+}
+
+.shares-col-created {
+  width: 10%;
+}
+
+.shares-col-expiry {
+  width: 9%;
+}
+
+.shares-col-actions {
+  width: 28%;
+  text-align: right;
 }
 
 .shares-row.is-expired .shares-name {
   color: var(--vf-text-muted);
 }
 
-.shares-icon {
-  display: inline-flex;
-  flex: 0 0 auto;
-  margin-top: 0.1rem;
-  color: var(--vf-accent-text);
-}
-
 .shares-row.is-expired .shares-icon {
   color: var(--vf-text-subtle);
 }
 
-.shares-row-main {
+.shares-file {
   display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  flex: 1 1 auto;
+  align-items: center;
+  gap: 0.55rem;
   min-width: 0;
 }
 
-.shares-row-titles {
+.shares-file-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.shares-file-titles {
   display: flex;
   align-items: baseline;
   gap: 0.4rem;
   min-width: 0;
+}
+
+.shares-file-titles .shares-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.shares-file-titles .shares-path {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.shares-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--vf-accent-text);
 }
 
 .shares-name {
@@ -629,50 +834,126 @@ onMounted(() => {
   font-size: 0.75rem;
 }
 
-.shares-row-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex-wrap: wrap;
+.shares-badge {
+  flex: 0 0 auto;
+}
+
+.shares-muted {
   color: var(--vf-text-muted);
-  font-size: 0.75rem;
+  white-space: nowrap;
 }
 
-.shares-badge.is-active {
-  background: var(--vf-success-soft);
-  color: var(--vf-success-text);
-}
-
-.shares-badge.is-expired {
-  background: var(--vf-surface-sunken);
-  color: var(--vf-text-subtle);
+.shares-count {
+  font-variant-numeric: tabular-nums;
 }
 
 .shares-link-row {
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  max-width: 30rem;
+  min-width: 0;
+  margin-top: 0.2rem;
 }
 
 .shares-link-input {
-  font-size: 0.8rem;
+  width: 100%;
+  min-width: 0;
+  height: 1.55rem;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 0.72rem;
 }
 
-.shares-row-actions {
+.shares-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.shares-actions-inner {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 0.15rem;
+  flex-wrap: wrap;
 }
 
 .shares-action {
-  min-height: 1.8rem;
-  padding: 0 0.5rem;
-  font-size: 0.8rem;
+  min-height: 1.9rem;
+  padding: 0 0.45rem;
+  font-size: 0.78rem;
   white-space: nowrap;
+}
+
+.shares-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 0.7rem 1rem;
+  border-top: 1px solid var(--vf-border-weak);
+}
+
+/* 窄屏：每行一张卡，表格列不横向溢出 */
+.shares-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.75rem;
+}
+
+.shares-card {
+  padding: 0.75rem 0.8rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-surface);
+}
+
+.shares-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.shares-card-titles {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.shares-card-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: 0.5rem 0.9rem;
+  margin: 0.6rem 0 0.55rem;
+}
+
+.shares-card-meta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.shares-card-meta dt {
+  color: var(--vf-text-subtle);
+  font-size: 0.7rem;
+}
+
+.shares-card-meta dd {
+  margin: 0;
+  color: var(--vf-text-strong);
+  font-size: 0.8rem;
+  word-break: break-word;
+}
+
+.shares-card .shares-link-row {
+  margin: 0 0 0.55rem;
+}
+
+.shares-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
 }
 
 .is-spinning {
@@ -682,19 +963,6 @@ onMounted(() => {
 @keyframes shares-spin {
   to {
     transform: rotate(360deg);
-  }
-}
-
-@media screen and (max-width: 768px) {
-  
-
-  .shares-row {
-    flex-wrap: wrap;
-  }
-
-  .shares-row-actions {
-    width: 100%;
-    justify-content: flex-start;
   }
 }
 

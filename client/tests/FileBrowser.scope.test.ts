@@ -102,6 +102,8 @@ describe("FileBrowser.vue restricted scope", () => {
         foldersFirst: true,
         thumbnailSize: 144,
         detailsVisible: false,
+        // 受限范围根不是命名空间根，这里仍显式关闭卡片首页，保持列表断言语义。
+        libraryCards: false,
       }),
     );
     stubWideScreen();
