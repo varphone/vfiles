@@ -884,9 +884,9 @@ function share() {
   text-underline-offset: 0.15em;
 }
 
-/* 行高与 hover/选中态对齐主流云盘 */
+/* Seafile 行高：40px，比云盘的 48px 更紧凑 */
 .desktop-file-row {
-  height: 3rem;
+  height: 2.5rem;
 }
 
 .desktop-file-row > td {
@@ -906,7 +906,7 @@ function share() {
 .desktop-file-row > td.is-narrow,
 .desktop-file-date {
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
 }
 
 /* M3 状态层：悬停 8%（accent-soft）、选中 16%（accent-soft-strong），
