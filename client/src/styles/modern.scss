@@ -143,37 +143,42 @@
   margin-top: 0;
 }
 
+
 /* ============================================================
- * Seafile 视觉校准（追加层）
+ * Nextcloud 视觉层
  *
- * 与 Seafile 的差异主要集中在「形状」和「状态色」：
- * 按钮是 3px 小圆角而不是胶囊；行悬停是中性灰而不是蓝色；表头更矮更小。
- * 这里统一覆盖，页面无需逐处修改。
+ * 形状：元素 3px、卡片与弹窗 8px、徽标 pill；行高 50px；按钮 34px。
+ * 状态：行悬停中性灰、选中浅蓝；主按钮实心 #0082C9。
  * ============================================================ */
 
-/* 按钮：小圆角、32px 高、13px 字 */
+.button,
+.vf-ghost-button,
+.vf-icon-button {
+  border-radius: 3px;
+}
+
 .button,
 .vf-ghost-button {
-  border-radius: 3px;
-  min-height: 32px;
-  padding: 0 0.75rem;
-  font-size: 0.8125rem;
+  min-height: 34px;
+  padding: 0 0.8rem;
+  font-size: 0.875rem;
   font-weight: 500;
 }
 
 .button.is-small,
 .vf-ghost-button.is-small {
-  min-height: 28px;
-  padding: 0 0.6rem;
-  font-size: 0.78rem;
+  min-height: 30px;
+  padding: 0 0.65rem;
+  font-size: 0.8125rem;
 }
 
-/* 主操作用 Seafile 的纯色蓝，悬停加深而不是抬升 */
 .button.is-link,
 .button.is-primary,
-.vf-ghost-button.is-primary {
+.vf-ghost-button.is-primary,
+.vf-primary-button {
   background: var(--vf-accent);
   color: var(--vf-on-accent);
+  border-radius: 3px;
   box-shadow: none;
 }
 
@@ -186,46 +191,44 @@
 
 .vf-ghost-button:hover:not(:disabled),
 .vf-ghost-button:focus-visible {
-  background: rgba(0, 0, 0, 0.045);
+  background: var(--vf-row-hover);
   color: var(--vf-text-strong);
 }
 
-[data-theme="dark"] .vf-ghost-button:hover:not(:disabled),
-[data-theme="dark"] .vf-ghost-button:focus-visible {
+[data-theme="dark"] .vf-ghost-button:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.07);
 }
 
-/* 输入控件：3px 圆角、32px 高 */
 .input,
 .textarea,
 .select select {
-  min-height: 32px;
+  min-height: 34px;
   border-radius: 3px;
-  font-size: 0.8125rem;
+  border-color: var(--vf-border);
+  font-size: 0.875rem;
 }
 
-/* 数据表：表头 40px、13px 灰字；行悬停中性灰；选中浅蓝 */
+/* 数据表：表头 44px、13px；行 50px；悬停中性灰 */
 .table thead th,
-.file-list-table thead th {
-  height: 40px;
-  padding: 0 0.75rem;
+.file-list-table thead th,
+.admin-table thead th {
+  height: 44px;
+  padding: 0 0.9rem;
   background: var(--vf-table-head);
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8125rem;
   font-weight: 600;
+  border-bottom: 1px solid var(--vf-border-weak);
 }
 
-.table td {
-  padding: 0.45rem 0.75rem;
-  font-size: 0.8125rem;
+.table td,
+.admin-table tbody td {
+  padding: 0.5rem 0.9rem;
+  font-size: 0.875rem;
 }
 
 .table.is-hoverable tbody tr:hover,
 .desktop-file-row:hover > td {
-  background: var(--vf-row-hover);
-}
-
-.table.is-hoverable tbody tr:hover {
   background: var(--vf-row-hover);
 }
 
@@ -234,17 +237,18 @@
   background: var(--vf-row-selected);
 }
 
-/* 侧栏与导航：Seafile 的浅灰底 + 3px 圆角选中块 */
+/* 侧栏：白底、40px 行、选中浅蓝 + 左侧 3px 指示条 */
 .browser-sidebar,
 .admin-sidebar {
-  background: var(--vf-surface-2);
+  background: var(--vf-surface);
+  border-right: 1px solid var(--vf-border-weak);
 }
 
 .browser-nav-item,
 .admin-nav-item,
 .settings-nav-item {
   border-radius: 3px;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 400;
 }
 
@@ -256,110 +260,26 @@
   font-weight: 500;
 }
 
-/* 卡片/面板：4px 圆角、几乎无阴影（Seafile 用边框区分层级） */
+/* 卡片与弹窗：8px 圆角 */
 .vf-card,
 .vf-stat,
 .admin-user-card,
-.library-card {
-  border-radius: 4px;
+.library-card,
+.modal-card {
+  border-radius: 8px;
   box-shadow: none;
 }
 
-/* 顶栏与标签：13px、2px 下划线 */
+.modal-card {
+  border: 1px solid var(--vf-border);
+}
+
+/* 顶栏：50px、白色、细边框 */
+.app-top-bar {
+  height: var(--vf-topbar-height, 50px);
+  min-height: var(--vf-topbar-height, 50px);
+}
+
 .sf-nav-tab {
-  font-size: 0.8125rem;
-  font-weight: 400;
-  padding: 0 0.65rem;
-}
-
-.sf-nav-tab.is-active {
-  font-weight: 500;
-}
-
-/* 工具栏密度：Seafile 的一行工具栏更矮，图标按钮也更紧凑 */
-.file-browser-toolbar {
-  padding: 0.3rem 0.85rem;
-}
-
-.vf-icon-button {
-  border-radius: 3px;
-}
-
-.vf-primary-button {
-  border-radius: 3px;
-  font-size: 0.8125rem;
-  font-weight: 500;
-}
-
-/* 管理台与设置页密度：Seafile 的卡片内边距更小、区块间距更紧 */
-.admin-main-inner {
-  padding: 1.15rem 1.25rem 2.5rem;
-  gap: 0.9rem;
-}
-
-.vf-page-header {
-  padding-bottom: 0.7rem;
-}
-
-.vf-page-header-title {
-  font-size: 1.1rem;
-}
-
-.vf-page-header-desc {
-  font-size: 0.78rem;
-  margin-top: 0.2rem;
-}
-
-.vf-card-head {
-  padding: 0.7rem 0.9rem 0.55rem;
-}
-
-.vf-card-body {
-  padding: 0 0.9rem 0.85rem;
-}
-
-.admin-facts > div,
-.admin-protocol {
-  padding-bottom: 0.4rem;
-}
-
-.admin-activity-item {
-  padding: 0.5rem 0.9rem;
-}
-
-.settings-content > * {
-  padding: 0.75rem 0.85rem 0.85rem;
-}
-
-/* 侧栏分组标题与目录树缩进：Seafile 的分组标题更小更淡，条目与标题左对齐 */
-.browser-sidebar-label {
-  padding: 0.55rem 0.75rem 0.2rem;
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-}
-
-.directory-tree-row,
-.browser-nav-item {
-  margin: 0 0.4rem;
-  padding-left: 0.5rem;
-}
-
-.browser-nav {
-  padding: 0.5rem 0.25rem;
-}
-
-/* 管理台表头与文件列表表头统一高度/字号 */
-.admin-table thead th {
-  height: 40px;
-  padding: 0 0.75rem;
-  background: var(--vf-table-head);
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--vf-text-muted);
-}
-
-.admin-table tbody td {
-  padding: 0.4rem 0.75rem;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }

@@ -47,14 +47,14 @@
   /* 强调色（链接、选中、拖放高亮）。
      参考 Drive（#0B57D0）/ Dropbox（#0061FF）/ GitHub（#1F6FEB）的鲜明蓝，
      取 blue-600 家族：填充面白字对比度 5.2:1（AA ✓），链接用更深的 accent-text。 */
-  /* Seafile 的蓝更偏青（Material Blue 600 #1E88E5），比原来的 indigo 蓝更“网盘” */
-  --vf-accent: #1e88e5;
-  --vf-accent-strong: #1873c4;
-  --vf-accent-text: #1565c0;
-  --vf-accent-soft: rgba(30, 136, 229, 0.08);
-  --vf-accent-soft-strong: rgba(30, 136, 229, 0.16);
-  --vf-accent-tint: rgba(30, 136, 229, 0.1);
-  --vf-focus-ring: rgba(30, 136, 229, 0.3);
+  /* Nextcloud 主色 #0082C9（官网 --color-primary）；链接用更深的 #00679E 保证白底可读 */
+  --vf-accent: #0082c9;
+  --vf-accent-strong: #0070ad;
+  --vf-accent-text: #00679e;
+  --vf-accent-soft: rgba(0, 130, 201, 0.08);
+  --vf-accent-soft-strong: rgba(0, 130, 201, 0.16);
+  --vf-accent-tint: rgba(0, 130, 201, 0.1);
+  --vf-focus-ring: rgba(0, 130, 201, 0.35);
   /* 填充面上的文字（M3 的 on-container 配对） */
   --vf-on-accent: #ffffff;
   /* 按压状态层（M3 pressed 12%） */
@@ -85,21 +85,21 @@
   --vf-shell-panel: rgba(255, 255, 255, 0.82);
 
   /* 页面背景（Home 装饰性渐变） */
-  --vf-canvas: #f5f6f8;
+  --vf-canvas: #f7f7f7;
 
   /* 边框 */
-  --vf-border: #d6dfeb;
+  --vf-border: #dedede;
   --vf-border-soft: rgba(214, 223, 235, 0.92);
-  --vf-border-weak: #eef1f5;
+  --vf-border-weak: #ededed;
   --vf-border-strong: #b5b5b5;
 
   /* 文本 */
-  --vf-text: #363636;
-  --vf-text-strong: #223448;
+  --vf-text: #222222;
+  --vf-text-strong: #1b1b1b;
   /* 文本对比度（WCAG AA ≥4.5，两档同时加深以保持层次不倒挂）：
      strong 12.7 / text ~10 / muted 5.6 / subtle 5.0 */
-  --vf-text-muted: #566a7e;
-  --vf-text-subtle: #5f7186;
+  --vf-text-muted: #5b5b5b;
+  --vf-text-subtle: #8a8a8a;
 
   /* 圆角与间距（对齐 M3 形状刻度：small 8 / medium 12 / large 16；按钮用胶囊） */
   /* 内联标记档（词级强调/小 chip）：圆角语义四档 xs/sm/md/lg + pill */
@@ -150,25 +150,25 @@
   --vf-code-deletion-bg: rgba(130, 7, 30, 0.1);
 
   /* 布局与组件尺寸（全站 shell 共用） */
-  --vf-topbar-height: 60px;
-  --vf-sidebar-width: 264px;
+  --vf-topbar-height: 50px;
+  --vf-sidebar-width: 300px;
   --vf-settings-nav-width: 208px;
   --vf-admin-sidebar-width: 232px;
   --vf-details-width: 320px;
-  --vf-content-max: 1280px;
-  --vf-row-height: 44px;
-  --vf-row-height-compact: 38px;
+  --vf-content-max: 1600px;
+  --vf-row-height: 50px;
+  --vf-row-height-compact: 44px;
   --vf-control-height-sm: 30px;
   --vf-control-height: 34px;
   --vf-control-height-lg: 38px;
 
   /* 表面层级：二级面 / 侧栏 / 顶栏 / 表头 / 行状态 */
-  --vf-surface-2: #f7f8fa;
+  --vf-surface-2: #ffffff;
   --vf-sidebar: #ffffff;
-  --vf-topbar: rgba(255, 255, 255, 0.92);
-  --vf-table-head: #f8fafc;
-  --vf-row-hover: #f5f6f7;
-  --vf-row-selected: #e7f1fc;
+  --vf-topbar: #ffffff;
+  --vf-table-head: #ffffff;
+  --vf-row-hover: #f5f5f5;
+  --vf-row-selected: #e5f2f9;
   --vf-shadow-popover: 0 10px 30px rgba(16, 24, 40, 0.12);
   --vf-shadow-modal: 0 24px 64px rgba(16, 24, 40, 0.2);
 
@@ -207,11 +207,11 @@
 
   /* 填充面色取更深的蓝：白字对比度 5.8:1（旧值 2.83:1 未达 AA）；
      文本/链接仍用高明度保证深色背景上的可读性。 */
-  --vf-accent: hsl(222, 76%, 46%);
-  --vf-accent-strong: hsl(222, 78%, 40%);
-  --vf-accent-text: hsl(217, 84%, 74%);
-  --vf-accent-soft: hsla(222, 76%, 60%, 0.16);
-  --vf-accent-soft-strong: hsla(222, 76%, 60%, 0.3);
+  --vf-accent: #4aa9e0;
+  --vf-accent-strong: #6fbbe8;
+  --vf-accent-text: #8acbf0;
+  --vf-accent-soft: rgba(74, 169, 224, 0.16);
+  --vf-accent-soft-strong: rgba(74, 169, 224, 0.3);
 
   /* 存储占比条的分类配色（深色主题下提高明度保证对比度） */
   --vf-chart-document: #6aa9ee;
@@ -300,24 +300,24 @@
   --vf-scrollbar-thumb: hsl(221, 14%, 32%);
   --vf-scrollbar-thumb-hover: hsl(221, 14%, 42%);
   /* 布局与组件尺寸（与浅色一致） */
-  --vf-topbar-height: 60px;
-  --vf-sidebar-width: 264px;
+  --vf-topbar-height: 50px;
+  --vf-sidebar-width: 300px;
   --vf-settings-nav-width: 208px;
   --vf-admin-sidebar-width: 232px;
   --vf-details-width: 320px;
-  --vf-content-max: 1280px;
-  --vf-row-height: 44px;
-  --vf-row-height-compact: 38px;
+  --vf-content-max: 1600px;
+  --vf-row-height: 50px;
+  --vf-row-height-compact: 44px;
   --vf-control-height-sm: 30px;
   --vf-control-height: 34px;
   --vf-control-height-lg: 38px;
 
-  --vf-surface-2: #1a2028;
+  --vf-surface-2: #242424;
   --vf-sidebar: #121720;
   --vf-topbar: rgba(18, 23, 32, 0.92);
   --vf-table-head: #1a2028;
-  --vf-row-hover: hsla(222, 76%, 60%, 0.06);
-  --vf-row-selected: hsla(222, 76%, 60%, 0.14);
+  --vf-row-hover: rgba(255, 255, 255, 0.06);
+  --vf-row-selected: rgba(74, 169, 224, 0.18);
   --vf-shadow-popover: 0 10px 30px rgba(0, 0, 0, 0.5);
   --vf-shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.6);
 
