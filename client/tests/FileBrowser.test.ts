@@ -1097,10 +1097,10 @@ describe("FileBrowser.vue view and sort menus", () => {
     setDetailsVisible(false);
     getFilesMock.mockResolvedValue([]);
 
-    const { container, findAllByText } = renderWithProviders(
+    const { container, findByText } = renderWithProviders(
       FileBrowser as any,
     );
-    await findAllByText("全部文件").catch(() => []);
+    await findByText("此文件夹为空");
 
     // 视图菜单：只负责显示方式与缩略图大小
     await fireEvent.click(
@@ -1354,8 +1354,8 @@ describe("FileBrowser.vue keyboard navigation", () => {
   });
 });
 
-describe("FileBrowser.vue directory tree", () => {
-  it("shows the tree on wide screens and navigates from it", async () => {
+describe("FileBrowser.vue directory navigation", () => {
+  it("navigates by breadcrumb while the page view sidebar owns the tree", async () => {
     // 宽屏：仅 min-width 查询为真
     vi.stubGlobal("matchMedia", (q: string) => ({
       matches: q.includes("min-width"),
@@ -1379,18 +1379,14 @@ describe("FileBrowser.vue directory tree", () => {
       },
     ]);
 
-    const { container } = renderWithProviders(FileBrowser as any);
+    const { container, findByText } = renderWithProviders(FileBrowser as any);
 
-    // 目录树与文件列表里都会出现目录名，这里限定在树内查找
-    await waitFor(() => {
-      const tree = container.querySelector(".directory-tree");
-      expect(tree).not.toBeNull();
-      expect(within(tree as HTMLElement).queryByText("docs")).not.toBeNull();
-    });
+    // 目录树与旧侧栏已迁出文件列表；导航由页面级 ViewsSidebar/面包屑承担。
+    expect(container.querySelector(".directory-tree")).toBeNull();
+    expect(container.querySelector(".browser-sidebar")).toBeNull();
+    expect(container.querySelector(".browser-nav")).toBeNull();
 
-    const tree = container.querySelector(".directory-tree") as HTMLElement;
-    await fireEvent.click(within(tree).getByText("docs"));
-
+    await fireEvent.click(await findByText("docs"));
     await waitFor(() => {
       expect(getFilesPageMock).toHaveBeenCalledWith(
         "docs",
@@ -1399,6 +1395,17 @@ describe("FileBrowser.vue directory tree", () => {
           limit: 200,
           offset: 0,
         }),
+      );
+    });
+
+    // 面包屑仍是目录导航的主要方式：点根目录回到命名空间根。
+    await fireEvent.click(
+      container.querySelector('.path-bar-segment[title="根目录"]')!,
+    );
+    await waitFor(() => {
+      expect(getFilesPageMock).toHaveBeenCalledWith(
+        "",
+        expect.objectContaining({ commit: undefined }),
       );
     });
   });

@@ -1,67 +1,26 @@
 <template>
   <div class="home">
-    <AppHeader>
-      <template #center>
-        <div
-          class="app-bar-history is-hidden-touch"
-          :class="{ 'is-error': dirHistoryError }"
-          role="group"
-          aria-label="版本切换"
-        >
-          <button
-            class="vf-icon-button app-bar-history-button"
-            :disabled="dirHistoryLoading"
-            title="快退到最早快照"
-            aria-label="快退到最早快照"
-            @click="desktopHistoryFastBack"
-          >
-            <IconChevronsLeft :size="16" />
-          </button>
-          <button
-            class="vf-icon-button app-bar-history-button"
-            :disabled="dirHistoryLoading"
-            title="后退到更早快照"
-            aria-label="后退到更早快照"
-            @click="desktopHistoryStepBack"
-          >
-            <IconChevronLeft :size="16" />
-          </button>
-          <span class="app-bar-history-label" :title="desktopHistoryTitle">
-            {{ desktopHistoryStateLabel }}
-          </span>
-          <button
-            class="vf-icon-button app-bar-history-button"
-            :disabled="dirHistoryLoading || !browseCommit"
-            title="前进到较新快照"
-            aria-label="前进到较新快照"
-            @click="desktopHistoryStepForward"
-          >
-            <IconChevronRight :size="16" />
-          </button>
-          <button
-            class="vf-icon-button app-bar-history-button"
-            :disabled="dirHistoryLoading || !browseCommit"
-            title="回到当前版本"
-            aria-label="回到当前版本"
-            @click="desktopHistoryFastForward"
-          >
-            <IconChevronsRight :size="16" />
-          </button>
-        </div>
+    <FilesLayout title="全部文件">
+      <template #sidebar>
+        <ViewsSidebar />
       </template>
-    </AppHeader>
 
-    <section class="section home-content">
-      <div class="container is-fluid home-main-container">
-        <div class="home-browser-shell">
-          <FileBrowser
-            :key="auth.activeWorkspace || 'default-workspace'"
-            ref="browserRef"
-          />
-        </div>
-
+      <div class="home-browser-shell">
+        <FileBrowser
+          :key="auth.activeWorkspace || 'default-workspace'"
+          ref="browserRef"
+          :history-loading="dirHistoryLoading"
+          :history-error="Boolean(dirHistoryError)"
+          :history-state-label="desktopHistoryStateLabel"
+          :history-title="desktopHistoryTitle"
+          :history-has-commit="Boolean(browseCommit)"
+          @history-fast-back="desktopHistoryFastBack"
+          @history-step-back="desktopHistoryStepBack"
+          @history-step-forward="desktopHistoryStepForward"
+          @history-fast-forward="desktopHistoryFastForward"
+        />
       </div>
-    </section>
+    </FilesLayout>
 
     <div class="mobile-bottom-bar is-hidden-desktop">
       <div class="container is-fluid">
@@ -318,7 +277,6 @@ import {
   IconChecklist,
   IconDotsVertical,
   IconArrowLeft,
-  IconChevronsLeft,
   IconChevronLeft,
   IconChevronRight,
   IconChevronsRight,
@@ -328,7 +286,8 @@ import {
   IconFolderPlus,
 } from "@tabler/icons-vue";
 import FileBrowser from "../components/file-browser/FileBrowser.vue";
-import AppHeader from "../components/shell/AppHeader.vue";
+import FilesLayout from "../layouts/FilesLayout.vue";
+import ViewsSidebar from "../components/files/ViewsSidebar.vue";
 import { useFilesStore } from "../stores/files.store";
 import { useAuthStore } from "../stores/auth.store";
 import { useAppStore } from "../stores/app.store";
@@ -367,7 +326,7 @@ const batchMenuRef = ref<HTMLElement | null>(null);
 const filesStore = useFilesStore();
 const { currentPath, browseCommit } = storeToRefs(filesStore);
 
-// 顶栏「版本切换」：加载/步进/取消都在 composable 内，Home 只负责展示。
+// 版本切换：加载/步进/取消都在 composable 内，Home 负责状态，FileBrowser 工具栏负责展示。
 const {
   loading: dirHistoryLoading,
   error: dirHistoryError,
@@ -536,7 +495,7 @@ const desktopHistoryStateLabel = computed(() => {
   return "当前版本";
 });
 
-/** 桌面顶栏的操作区：失败时把具体原因和重试方式放进悬停提示。 */
+/** 桌面工具栏的操作区：失败时把具体原因和重试方式放进悬停提示。 */
 const desktopHistoryTitle = computed(() =>
   dirHistoryError.value
     ? `${dirHistoryError.value}（点击后退重试）`
@@ -608,7 +567,7 @@ async function renameSelected() {
 /* 主流云盘的中性底色：不再使用装饰性渐变，让内容面板成为唯一焦点 */
 .home {
   position: relative;
-  min-height: 100vh;
+  min-height: 100dvh;
   /* 兼容文件列表内部的高度计算（本阶段不改列表，下一阶段统一改用 --vf-topbar-height） */
   --sf-topbar-height: var(--vf-topbar-height);
   /* 用 clip 而不是 hidden：hidden 会让 .home 变成滚动容器，导致内部的
@@ -618,53 +577,24 @@ async function renameSelected() {
   background: var(--vf-canvas);
 }
 
-.home-content.section {
-  /* 只清掉 Bulma .section 的左右内边距；上下由 .home-content 统一控制 */
-  padding-left: 0;
-  padding-right: 0;
-}
-
-.home-main-container.container.is-fluid {
-  max-width: none;
+/* 文件列表自己铺满内容区：不再叠加 FilesLayout 的页面内边距。 */
+.home :deep(.files-content) {
   padding: 0;
 }
 
 .home-browser-shell {
-  min-height: calc(100dvh - var(--vf-topbar-height));
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 @supports not (overflow: clip) {
   .home {
     overflow-x: hidden;
   }
-}
-
-/* 版本切换：紧凑胶囊，左右各两个箭头，中间显示当前版本 */
-.app-bar-history {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.1rem;
-  padding: 0.1rem;
-  border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-pill);
-  background: var(--vf-surface-sunken);
-}
-
-.app-bar-history.is-error {
-  border-color: var(--vf-danger);
-}
-
-.app-bar-history-label {
-  min-width: 5.5rem;
-  max-width: 9rem;
-  padding: 0 0.5rem;
-  text-align: center;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--vf-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .mobile-bottom-bar {
@@ -820,67 +750,14 @@ async function renameSelected() {
   pointer-events: none;
 }
 
-.home-content {
-  position: relative;
-  z-index: 1;
-  padding-top: 1.25rem;
-  padding-bottom: 6.5rem;
-}
-
-.home-main-container {
-  min-height: 0;
-}
-
-.home-browser-shell {
-  position: relative;
-  min-width: 0;
-}
-
-
-
-
 @media screen and (min-width: 1024px) {
-  /* 桌面端固定整屏高度：页面本身不滚动，文件列表在自己的内容区内滚动。
-     这样工具栏、列头、状态栏与侧栏/详情面板始终可见（主流网盘的应用外壳）。 */
-  .home {
-    display: flex;
-    flex-direction: column;
-    height: 100dvh;
-    min-height: 100dvh;
+  /* 桌面端文件列表在自己的内容区内滚动：工具栏、列头、状态栏与详情面板始终可见。 */
+  .home :deep(.files-content) {
     overflow: hidden;
-  }
-
-  .home-content {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .home-main-container {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-  }
-
-  .home-browser-shell {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
   }
 
   .mobile-bottom-bar {
     display: none;
-  }
-
-  /* 全高布局：顶栏在文档流内，内容区直接占满剩余高度 */
-  .home-content {
-    box-sizing: border-box;
-    padding-top: 0;
-    padding-bottom: 0;
   }
 
   :deep(.file-browser-box) {
@@ -894,23 +771,13 @@ async function renameSelected() {
 }
 
 @media screen and (max-width: 1023px) {
-  .section {
-    padding: 0;
-  }
-
-  .home-content {
-    padding-left: 0;
-    padding-right: 0;
-  }
-
   .mobile-bottom-bar {
     bottom: calc(env(safe-area-inset-bottom) + var(--vv-bottom, 0px));
   }
 
-  /* 顶栏在文档流内（sticky），不再为固定顶栏预留高度 */
-  .home-content {
-    padding-top: 0.5rem;
-    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+  /* 为 fixed 底部操作栏留出空间，并在 iOS 浏览器工具栏遮挡时一起抬起。 */
+  .home-browser-shell {
+    min-height: calc(100dvh - var(--vf-topbar-height));
     padding-bottom: calc(
       6.5rem + env(safe-area-inset-bottom) + var(--vv-bottom, 0px)
     );

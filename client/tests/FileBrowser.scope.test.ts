@@ -162,9 +162,8 @@ describe("FileBrowser.vue restricted scope", () => {
     const breadcrumbBar = container.querySelector(".breadcrumb-bar");
     expect(breadcrumbBar?.textContent).not.toContain("根目录");
     expect(breadcrumbBar?.textContent).toContain("docs");
-    expect(container.querySelector(".directory-tree")?.textContent).not.toContain(
-      "全部文件",
-    );
+    // 目录树/概览已迁到页面级 ViewsSidebar，FileBrowser 不再自带侧栏。
+    expect(container.querySelector(".directory-tree")).toBeNull();
     expect(container.querySelector(".sidebar-overview")).toBeNull();
     expect(container.querySelector(".desktop-upload-split")).toBeNull();
     expect(container.querySelector(".desktop-create-folder")).toBeNull();
@@ -224,7 +223,7 @@ describe("FileBrowser.vue restricted scope", () => {
   });
 
   it("does not show the scope badge for a full-scope session", async () => {
-    renderWithScope({
+    const { container } = renderWithScope({
       restricted: false,
       label: null,
       roots: [],
@@ -233,6 +232,8 @@ describe("FileBrowser.vue restricted scope", () => {
 
     await waitFor(() => expect(getFilesPageMock).toHaveBeenCalled());
     expect(screen.queryByText(/受限访问/)).toBeNull();
-    expect(screen.getByText("全部文件")).toBeInTheDocument();
+    // 全量会话正常渲染文件区；旧的目录树入口不再出现在 FileBrowser 内。
+    expect(container.querySelector(".file-browser")).not.toBeNull();
+    expect(container.querySelector(".directory-tree")).toBeNull();
   });
 });

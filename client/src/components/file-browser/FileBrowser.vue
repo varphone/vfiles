@@ -57,6 +57,55 @@
           @navigate="handleBreadcrumbNavigate"
           @drop="handleDropOnFolder"
         />
+
+        <!-- 版本切换：与面包屑同一行靠右，移动端由页面底栏承担。 -->
+        <div
+          v-if="!isMobile && historyStateLabel"
+          class="file-history"
+          :class="{ 'is-error': historyError }"
+          role="group"
+          aria-label="版本切换"
+        >
+          <button
+            class="vf-icon-button file-history-button"
+            :disabled="historyLoading"
+            title="快退到最早快照"
+            aria-label="快退到最早快照"
+            @click="emit('history-fast-back')"
+          >
+            <IconChevronsLeft :size="16" />
+          </button>
+          <button
+            class="vf-icon-button file-history-button"
+            :disabled="historyLoading"
+            title="后退到更早快照"
+            aria-label="后退到更早快照"
+            @click="emit('history-step-back')"
+          >
+            <IconChevronLeft :size="16" />
+          </button>
+          <span class="file-history-label" :title="historyTitle">
+            {{ historyStateLabel }}
+          </span>
+          <button
+            class="vf-icon-button file-history-button"
+            :disabled="historyLoading || !historyHasCommit"
+            title="前进到较新快照"
+            aria-label="前进到较新快照"
+            @click="emit('history-step-forward')"
+          >
+            <IconChevronRight :size="16" />
+          </button>
+          <button
+            class="vf-icon-button file-history-button"
+            :disabled="historyLoading || !historyHasCommit"
+            title="回到当前版本"
+            aria-label="回到当前版本"
+            @click="emit('history-fast-forward')"
+          >
+            <IconChevronsRight :size="16" />
+          </button>
+        </div>
       </div>
 
       <div class="file-browser-toolbar">
@@ -161,59 +210,9 @@
         <div
           class="desktop-content-layout"
           :class="{
-            'has-tree': treeVisible,
             'has-details': detailsVisible,
           }"
         >
-          <aside v-if="treeVisible" class="browser-sidebar">
-            <nav class="browser-nav" aria-label="快捷导航">
-              <RouterLink class="browser-nav-item is-active" to="/">
-                <IconFolder :size="16" />
-                <span>文件</span>
-              </RouterLink>
-              <RouterLink class="browser-nav-item" to="/shares">
-                <IconShare :size="16" />
-                <span>我的分享</span>
-              </RouterLink>
-              <template v-if="!isRestricted">
-                <RouterLink class="browser-nav-item" to="/settings/passwords">
-                  <IconKey :size="16" />
-                  <span>访问密码</span>
-                </RouterLink>
-                <RouterLink class="browser-nav-item" to="/settings/tokens">
-                  <IconTicket :size="16" />
-                  <span>访问令牌</span>
-                </RouterLink>
-                <RouterLink
-                  v-if="['admin', 'manager'].includes(authStore.user?.role || '')"
-                  class="browser-nav-item"
-                  to="/admin"
-                >
-                  <IconShieldLock :size="16" />
-                  <span>管理控制台</span>
-                </RouterLink>
-              </template>
-            </nav>
-
-            <p class="browser-sidebar-label">我的文件</p>
-            <DirectoryTree
-              :current-path="currentPath"
-              :dragging="Boolean(draggingFile)"
-              :refresh-key="sidebarVersion"
-              :roots="isRestricted ? scopeRoots : []"
-              :can-write="canWrite"
-              @navigate="handleTreeNavigate"
-              @drop-on-folder="handleDropOnFolder"
-            />
-            <SidebarOverview
-              v-if="!isRestricted"
-              :refresh-key="sidebarVersion"
-              @open-file="handleOpenRecentFile"
-              @open-favorite="handleOpenFavorite"
-              @favorite-changed="handleFavoriteChanged"
-            />
-          </aside>
-
           <div class="desktop-list-primary-shell">
             <!--
               批量操作条属于列表列：宽度与列表一致（不会压到详情面板），
@@ -1015,10 +1014,10 @@ import {
   IconStar,
   IconStarFilled,
   IconLock,
-  IconFolder,
-  IconKey,
-  IconTicket,
-  IconShieldLock,
+  IconChevronsLeft,
+  IconChevronLeft,
+  IconChevronRight,
+  IconChevronsRight,
 } from "@tabler/icons-vue";
 import { filesService, MAX_TRANSFER_PATHS } from "../../services/files.service";
 import { useFilesStore } from "../../stores/files.store";
@@ -1036,8 +1035,6 @@ import NewMenuButton from "./NewMenuButton.vue";
 const FilePreviewModal = defineAsyncComponent(() => import("./FilePreviewModal.vue"));
 import UploadDropOverlay from "./UploadDropOverlay.vue";
 import FileDetailsContent from "./FileDetailsContent.vue";
-import DirectoryTree from "./DirectoryTree.vue";
-import SidebarOverview from "./SidebarOverview.vue";
 import EmptyState from "../common/EmptyState.vue";
 import FileGrid from "./FileGrid.vue";
 import LibraryGrid from "./LibraryGrid.vue";
@@ -1090,6 +1087,34 @@ const authStore = useAuthStore();
 const fileView = useFileViewStore();
 const { files, loading, error, currentPath, browseCommit } =
   storeToRefs(filesStore);
+
+/**
+ * 版本切换控件由页面（Home）持有目录历史状态，FileBrowser 只负责在
+ * 面包屑行右侧渲染按钮并上报动作；移动端仍由页面底栏承担。
+ */
+withDefaults(
+  defineProps<{
+    historyLoading?: boolean;
+    historyError?: boolean;
+    historyStateLabel?: string;
+    historyTitle?: string;
+    historyHasCommit?: boolean;
+  }>(),
+  {
+    historyLoading: false,
+    historyError: false,
+    historyStateLabel: "",
+    historyTitle: "",
+    historyHasCommit: false,
+  },
+);
+
+const emit = defineEmits<{
+  (e: "history-fast-back"): void;
+  (e: "history-step-back"): void;
+  (e: "history-step-forward"): void;
+  (e: "history-fast-forward"): void;
+}>();
 
 /** 受限会话的目录范围与写权限（主密码会话恒为全量）。 */
 const isRestricted = computed(() => authStore.isRestricted);
@@ -1227,18 +1252,11 @@ const searchContentEnabled = computed(
 );
 
 const isMobile = ref(false);
-/** 目录树需要额外一列宽度，仅在宽屏桌面显示。 */
-const isWideScreen = ref(false);
 
 const MOBILE_LAYOUT_MEDIA_QUERY = "(max-width: 1023px)";
-const WIDE_LAYOUT_MEDIA_QUERY = "(min-width: 1280px)";
 
 function updateIsMobile() {
   isMobile.value = window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches;
-}
-
-function updateIsWideScreen() {
-  isWideScreen.value = window.matchMedia(WIDE_LAYOUT_MEDIA_QUERY).matches;
 }
 
 const showUploader = ref(false);
@@ -1281,8 +1299,6 @@ const uploadIndicator = computed(() => {
   return { label, title };
 });
 
-/** 文件列表重新加载或收藏变化后递增，用于让侧栏概览刷新。 */
-const sidebarVersion = ref(0);
 /** 来自收藏侧栏的局部状态缓存；文件列表 DTO 会提供准确状态。 */
 const favoritePaths = ref<Set<string>>(new Set());
 const detailsDialogFile = ref<FileInfo | null>(null);
@@ -1372,9 +1388,6 @@ const {
   getPreviewableFiles: () => previewableFiles.value,
 });
 
-/** 左侧目录树：宽屏桌面显示。 */
-const treeVisible = computed(() => !isMobile.value && isWideScreen.value);
-
 function handleFavoriteChanged(path: string, isFavorite: boolean) {
   const next = new Set(favoritePaths.value);
   if (isFavorite) next.add(path);
@@ -1386,24 +1399,13 @@ function handleFavoriteChanged(path: string, isFavorite: boolean) {
   if (contextMenu.value.file?.path === path) {
     contextMenu.value.file.is_favorite = isFavorite;
   }
-  sidebarVersion.value += 1;
 }
 
 function isFavorite(file: FileInfo): boolean {
   return file.is_favorite ?? favoritePaths.value.has(file.path);
 }
 
-/** 点击侧栏「收藏」：跳到该条目所在目录（文件则同时设为活动行）。 */
-function handleOpenFavorite(entry: { path: string; kind: string }) {
-  if (searchActive.value) clearSearch();
-  if (entry.kind === "directory") {
-    navigateTo(entry.path);
-    return;
-  }
-  handleOpenRecentFile(entry);
-}
-
-/** 切换收藏状态（右键菜单与侧栏共用）。 */
+/** 切换收藏状态（右键菜单与活动详情共用）。 */
 async function toggleFavorite(file: FileInfo) {
   const wasFavorite = isFavorite(file);
   try {
@@ -1420,21 +1422,6 @@ async function toggleFavorite(file: FileInfo) {
   } catch (err) {
     appStore.error(err instanceof Error ? err.message : "收藏操作失败");
   }
-}
-
-/** 点击侧栏「最近更新」：跳到文件所在目录并把它设为活动行。 */
-function handleOpenRecentFile(file: { path: string }) {
-  if (searchActive.value) clearSearch();
-  const parent = file.path.includes("/")
-    ? file.path.slice(0, file.path.lastIndexOf("/"))
-    : "";
-  navigateTo(parent);
-  desktopActivePath.value = file.path;
-}
-
-function handleTreeNavigate(path: string) {
-  if (searchActive.value) clearSearch();
-  navigateTo(path);
 }
 
 /**
@@ -1939,7 +1926,6 @@ onMounted(() => {
   });
 
   updateIsMobile();
-  updateIsWideScreen();
   const watchMedia = (query: string, handler: () => void): void => {
     try {
       const mql = window.matchMedia(query);
@@ -1958,7 +1944,6 @@ onMounted(() => {
   };
 
   watchMedia(MOBILE_LAYOUT_MEDIA_QUERY, updateIsMobile);
-  watchMedia(WIDE_LAYOUT_MEDIA_QUERY, updateIsWideScreen);
 });
 
 onBeforeUnmount(() => {
@@ -2163,13 +2148,6 @@ watch(
   () => {
     if (!canWrite.value) return;
     void createDirectoryHere();
-  },
-);
-
-watch(
-  () => filesStore.files,
-  () => {
-    sidebarVersion.value += 1;
   },
 );
 
@@ -3020,6 +2998,12 @@ function handleSortChange(field: SortField) {
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
+/* 面包屑是可收缩的主导航，版本切换固定在行尾。 */
+.breadcrumb-bar :deep(.path-bar) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* 受限会话的轻量范围徽标：让用户始终知道当前会话能看/能写哪里 */
 .scope-badge {
   display: inline-flex;
@@ -3037,6 +3021,36 @@ function handleSortChange(field: SortField) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 版本切换：面包屑行右侧的紧凑胶囊（原先在顶栏 #center 插槽）。 */
+.file-history {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0.1rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-pill);
+  background: var(--vf-surface-sunken);
+}
+
+.file-history.is-error {
+  border-color: var(--vf-danger);
+}
+
+.file-history-label {
+  min-width: 5.5rem;
+  max-width: 9rem;
+  padding: 0 0.5rem;
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--vf-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .file-browser-toolbar {
@@ -3133,10 +3147,6 @@ function handleSortChange(field: SortField) {
   min-height: 0;
 }
 
-.desktop-content-layout.has-tree {
-  grid-template-columns: 232px minmax(0, 1fr);
-}
-
 /* 上传进度胶囊：与「上传」按钮并排，显示队列进度 */
 .upload-indicator {
   display: inline-flex;
@@ -3170,41 +3180,7 @@ function handleSortChange(field: SortField) {
   }
 }
 
-/* 侧栏 = 目录树（可滚动）+ 概览（固定高度） */
-.browser-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 0.5rem 0.55rem;
-  border-bottom: 1px solid var(--vf-border-weak);
-}
-
-.browser-nav-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  height: 32px;
-  padding: 0 0.5rem;
-  border-radius: var(--vf-radius-sm);
-  color: var(--vf-text-muted);
-  font-size: 0.81rem;
-  font-weight: 500;
-  text-decoration: none;
-  transition: background-color 0.12s var(--vf-motion-standard);
-}
-
-.browser-nav-item:hover {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
-}
-
-.browser-nav-item.is-active {
-  background: var(--vf-accent-soft);
-  color: var(--vf-accent-text);
-  font-weight: 600;
-}
-
-/* ---- Seafile 式外壳：左侧浅灰导航 + 右侧白色列表，全高、无浮动卡片 ---- */
+/* ---- Seafile 式外壳：视图侧栏在页面级，文件区为全高、无浮动卡片 ---- */
 .file-browser {
   height: 100%;
 }
@@ -3217,26 +3193,6 @@ function handleSortChange(field: SortField) {
   height: calc(100dvh - var(--sf-topbar-height, 56px));
 }
 
-.browser-nav {
-  padding: 0.6rem 0.5rem;
-  background: var(--vf-surface-2);
-  border-bottom: 1px solid var(--vf-border-weak);
-}
-
-.browser-nav-item {
-  height: 34px;
-  border-radius: 6px;
-}
-
-.browser-nav-item.is-active {
-  background: var(--vf-scope-active-bg, rgba(30, 136, 229, 0.12));
-}
-
-.browser-sidebar {
-  background: var(--vf-surface-2);
-  border-right: 1px solid var(--vf-border-weak);
-}
-
 .file-browser-toolbar {
   padding: 0.45rem 0.85rem;
   background: var(--vf-surface);
@@ -3247,19 +3203,6 @@ function handleSortChange(field: SortField) {
     height: auto;
     min-height: calc(100dvh - var(--sf-topbar-height, 56px));
   }
-}
-
-.browser-sidebar {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  /* 防御：任何意外内容都在侧栏内裁剪，不得盖到状态栏 */
-  overflow: hidden;
-}
-
-.desktop-content-layout.has-tree.has-details {
-  grid-template-columns: 232px minmax(0, 1fr) 280px;
 }
 
 .desktop-content-layout.has-details {
@@ -3378,16 +3321,5 @@ function handleSortChange(field: SortField) {
   .file-browser-box {
     height: calc(100dvh - var(--sf-topbar-height, 56px));
   }
-}
-
-/* 侧栏分区标题（Seafile 式：分组标签 + 列表） */
-.browser-sidebar-label {
-  margin: 0;
-  padding: 0.65rem 0.9rem 0.3rem;
-  font-size: 0.7rem;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--vf-text-subtle);
 }
 </style>
