@@ -1,7 +1,12 @@
-// UI 截图回归：14 个表面 × 双主题 → PNG 证据集（bun run ui:sweep）。
+// UI 截图回归：26 个表面 × 双主题 → PNG 证据集（bun run ui:sweep）。
 //
 // 自带完整夹具生命周期（round 23 事故的纪律内建）：
 //   mktemp 存储库 + 显式 VFILES_* 环境的 CLI/服务器 + 结束清理 —— 全程不触碰仓库 data/。
+//
+// 选择器对齐 Nextcloud 风格改版（实心蓝顶栏 + 视图侧栏 + 单行工具栏 + 详情四 Tab）：
+//   写入口 = 「+ 新建」(.nc-new-button) 下拉；视图切换 = .file-view-toggle 直切；
+//   排序 = IconArrowsSort 的 .sort-menu；详情 = .file-toolbar-details + .details-tabs。
+// 每个脆弱步骤各自 try/catch：单步失败只记一行 ✗，不中断整套（截图仍以当时页面为准）。
 //
 // 用法：
 //   bun run ui:sweep                 # 输出到 /tmp/vfiles-ui-sweep-<时间戳>/
@@ -202,10 +207,39 @@ async function main() {
     await page.waitForTimeout(900);
     await snap(page, `${theme}-2-list`);
 
-    // 对话框圆角/边框（桌面）：新建文件夹
+    // 「+ 新建」下拉：上传文件 / 上传文件夹 / 新建文件夹（Nextcloud 式写入口）
     try {
-      await page.locator('button:has-text("新建文件夹")').first().click();
-      await page.waitForSelector(".modal-card", { timeout: 5000 });
+      await page.click(".nc-new-button");
+      await page.waitForSelector(".nc-new-dropdown", { timeout: 5000 });
+      await page.waitForTimeout(350);
+      await snap(page, `${theme}-25-new-menu`);
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(250);
+    } catch (e) {
+      console.log(`[ui-sweep] ✗ 新建菜单（${theme}）: ${String(e).slice(0, 80)}`);
+    }
+
+    // 统一搜索：Ctrl+K → 输入关键词 → 分组结果
+    try {
+      await page.keyboard.press("Control+K");
+      await page.waitForSelector(".unified-search-input", { timeout: 5000 });
+      await page.fill(".unified-search-input", "代码");
+      await page.waitForTimeout(900);
+      await snap(page, `${theme}-26-unified-search`);
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(300);
+    } catch (e) {
+      console.log(`[ui-sweep] ✗ 统一搜索（${theme}）: ${String(e).slice(0, 80)}`);
+    }
+
+    // 对话框圆角/边框（桌面）：+ 新建 → 新建文件夹（旧的行内文字按钮已移除）
+    try {
+      await page.click(".nc-new-button");
+      await page.waitForSelector(".nc-new-dropdown", { timeout: 5000 });
+      await page.click('.nc-new-dropdown .nc-new-item:has-text("新建文件夹")');
+      await page.waitForSelector(".modal.is-active .modal-card", {
+        timeout: 5000,
+      });
       await page.waitForTimeout(400);
       await snap(page, `${theme}-20-dialog`);
       await page.keyboard.press("Escape");
@@ -232,6 +266,24 @@ async function main() {
     await pc.close();
     await doubleClick(page.locator('tr[data-vfiles-path="项目库"]'));
     await page.waitForTimeout(700);
+
+    // 详情面板四 Tab：选中文件 → 工具栏详情开关 → 分享 Tab（Nextcloud 信息侧栏）
+    try {
+      await page.click(
+        'tr[data-vfiles-path="项目库/代码.js"] .desktop-name-text',
+      );
+      await page.waitForTimeout(300);
+      await page.click(".file-toolbar-details");
+      await page.waitForSelector(".details-tabs", { timeout: 5000 });
+      await page.click("#details-tab-shares");
+      await page.waitForTimeout(900);
+      await snap(page, `${theme}-21-details-tabs`);
+      await page.click(".file-toolbar-details");
+      await page.waitForTimeout(350);
+    } catch (e) {
+      console.log(`[ui-sweep] ✗ 详情 Tab（${theme}）: ${String(e).slice(0, 80)}`);
+    }
+
     await page.evaluate(() =>
       document
         .querySelector("tr.desktop-file-row input[type=checkbox]")
@@ -254,12 +306,16 @@ async function main() {
     await snap(page, `${theme}-5-preview-code`);
     await page.keyboard.press("Escape");
     await page.waitForTimeout(400);
-    // 历史（唯一命名的两次改名，绝不撞名）
-    // 成对路径（from → to）：每次改名后路径即变，固定路径会在第二击落空；
+    // 历史（两次改名：改成主题专属临时名，再改回原名）
+    // - 成对路径（from → to）：每次改名后路径即变，固定路径会在第二击落空；
+    // - 两个主题共用同一份夹具（服务器只起一次），所以临时名带主题后缀，
+    //   第二次改名回到原名，下一个主题仍有 说明.md 可改（旧写死 唯一A.tmp /
+    //   文档-副本.txt 在 dark 轮必然撞名 → 两次 30s 超时）。
     // 脆弱步骤 try/catch 隔离：单步失败不再拖垮整个 sweep。
+    const renameTemp = theme === "light" ? "唯一A-浅色.tmp" : "唯一A-深色.tmp";
     for (const [from, to] of [
-      ["项目库/说明.md", "唯一A.tmp"],
-      ["项目库/唯一A.tmp", "文档-副本.txt"],
+      ["项目库/说明.md", renameTemp],
+      [`项目库/${renameTemp}`, "说明.md"],
     ]) {
       try {
         await page
@@ -277,20 +333,46 @@ async function main() {
         console.log(`[ui-sweep] ✗ 改名(${from}): ${String(e).slice(0, 80)}`);
       }
     }
-    const hb = await page.$('button:has-text("历史版本")');
-    if (hb) {
-      await hb.click();
-      await page.waitForTimeout(1500);
+    // 历史版本：走行内操作（旧的「历史版本」文字按钮已随工具栏重构移除）
+    try {
+      await page
+        .locator(
+          'tr[data-vfiles-path="项目库/说明.md"] button[aria-label="查看历史"]',
+        )
+        .click();
+      await page.waitForSelector(".modal.is-active .modal-card", {
+        timeout: 5000,
+      });
+      await page.waitForTimeout(1200);
+    } catch (e) {
+      console.log(`[ui-sweep] ✗ 历史版本（${theme}）: ${String(e).slice(0, 80)}`);
     }
     await snap(page, `${theme}-6-history`);
     await page.keyboard.press("Escape");
     await page.waitForTimeout(400);
-    await page.click(".desktop-command-bar .view-options button");
-    await page.waitForTimeout(450);
-    await snap(page, `${theme}-7-viewpanel`);
-    await page.click('.view-options-panel button:has-text("网格")');
-    await page.waitForTimeout(700);
-    await snap(page, `${theme}-8-grid`);
+
+    // 排序：工具栏的 IconArrowsSort 菜单（旧的「视图」下拉面板已移除）
+    try {
+      await page.click(".sort-menu .sort-menu-trigger button");
+      await page.waitForSelector(".sort-menu-panel", { timeout: 5000 });
+      await page.waitForTimeout(400);
+      await snap(page, `${theme}-7-sort-menu`);
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(300);
+    } catch (e) {
+      console.log(`[ui-sweep] ✗ 排序菜单（${theme}）: ${String(e).slice(0, 80)}`);
+    }
+
+    // 视图：列表/网格已在工具栏直接切换（.file-view-toggle）
+    try {
+      await page.click('.file-view-toggle button[aria-label="网格视图"]');
+      await page.waitForTimeout(700);
+      await snap(page, `${theme}-8-grid`);
+      await page.click('.file-view-toggle button[aria-label="列表视图"]');
+      await page.waitForTimeout(400);
+    } catch (e) {
+      console.log(`[ui-sweep] ✗ 网格视图（${theme}）: ${String(e).slice(0, 80)}`);
+    }
     await page.close();
 
     // 工具页（无铃铛）+ 通知（回主文件页）
@@ -319,6 +401,23 @@ async function main() {
     await p2.goto(`${base}/admin`, { waitUntil: "networkidle" });
     await p2.waitForTimeout(900);
     await snap(p2, `${theme}-16-admin-overview`);
+
+    // 新增视图页：活动 / 最近 / 收藏（收藏夹具为空 → 空态也留证据）
+    for (const [path, selector, name] of [
+      ["/activity", ".activity-view", `${theme}-22-activity`],
+      ["/recent", ".recent-view", `${theme}-23-recent`],
+      ["/favorites", ".favorites-view", `${theme}-24-favorites`],
+    ]) {
+      try {
+        await p2.goto(`${base}${path}`, { waitUntil: "networkidle" });
+        await p2.waitForSelector(selector, { timeout: 8000 });
+        await p2.waitForTimeout(700);
+        await snap(p2, name);
+      } catch (e) {
+        console.log(`[ui-sweep] ✗ ${path}（${theme}）: ${String(e).slice(0, 80)}`);
+      }
+    }
+
     await p2.goto(`${base}/`, { waitUntil: "networkidle" });
     await p2.waitForTimeout(700);
     await p2.click("button.app-bar-bell");
@@ -349,6 +448,27 @@ async function main() {
     await pm.waitForTimeout(500);
     await snap(pm, `${theme}-14-mobile-more`);
 
+    // dialog-over-bar 帧：底栏「新建文件夹」→ 建目录 prompt 盖在底栏之上。
+    // 旧写法第二击找的是对话框里不存在的按钮（30s 超时 → 该帧两主题全丢），
+    // 现改为单次 aria-label 点击 + 等当前激活的 .modal-card（prompt 类对话框）。
+    try {
+      await pm.keyboard.press("Escape");
+      await pm.waitForTimeout(250);
+      await pm
+        .locator('.mobile-action-buttons button[aria-label="新建文件夹"]')
+        .first()
+        .click();
+      await pm.waitForSelector(".modal.is-active .modal-card", {
+        timeout: 5000,
+      });
+      await pm.waitForTimeout(500);
+      await snap(pm, `${theme}-15-dialog-over-bar`);
+      await pm.keyboard.press("Escape");
+      await pm.waitForTimeout(300);
+    } catch (e) {
+      console.log(`[ui-sweep] ✗ dialog 帧（${theme}）: ${String(e).slice(0, 80)}`);
+    }
+
     // 管理台移动端：抽屉导航 + 用户表格
     try {
       await pm.goto(`${base}/admin/users`, { waitUntil: "networkidle" });
@@ -360,20 +480,6 @@ async function main() {
       await pm.keyboard.press("Escape");
     } catch (e) {
       console.log(`[ui-sweep] ✗ 管理台移动端（${theme}）: ${String(e).slice(0, 80)}`);
-    }
-
-    // dialog-over-bar 帧（r95/r100 排期债兑现 ✓ 底栏样张终捕）——
-    // 两击式（新建 →「新建文件夹」✓ 第二击 = **aria-label 稳式**（title/aria 非文本 ✗✗ hasText 永不中 = r101 崩因））
-    // try/catch 隔离（r35 式 ✓ 脆弱帧单败不拖垮全 sweep）
-    try {
-      // 第一击 = **aria 稳式**（hasText "新建" 坑二连 ✗✗ 底栏钮 aria-label 非文本）
-      await pm.locator('.mobile-action-buttons button[aria-label="新建文件夹"]').first().click();
-      await pm.waitForTimeout(450);
-      await pm.locator('button[aria-label="新建文件夹"]').first().click();
-      await pm.waitForTimeout(500);
-      await snap(pm, `${theme}-15-dialog-over-bar`);
-    } catch (e) {
-      console.log(`[ui-sweep] ✗ dialog 帧（${theme}）: ${String(e).slice(0, 80)}`);
     }
     await pm.close();
   }

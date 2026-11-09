@@ -176,7 +176,7 @@
 .button.is-primary,
 .vf-ghost-button.is-primary,
 .vf-primary-button {
-  background: var(--vf-accent);
+  background: var(--vf-accent-fill);
   color: var(--vf-on-accent);
   border-radius: 3px;
   box-shadow: none;
@@ -185,7 +185,7 @@
 .button.is-link:hover,
 .button.is-primary:hover,
 .vf-ghost-button.is-primary:hover:not(:disabled) {
-  background: var(--vf-accent-strong);
+  background: var(--vf-accent-fill-hover);
   color: var(--vf-on-accent);
 }
 

@@ -206,7 +206,7 @@ const versionLabel = computed(() => {
 }
 
 .history-row.is-current .history-version {
-  background: var(--vf-accent);
+  background: var(--vf-accent-fill);
   color: var(--vf-on-accent);
 }
 

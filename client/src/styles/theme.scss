@@ -55,6 +55,10 @@
   --vf-accent-soft-strong: rgba(0, 130, 201, 0.16);
   --vf-accent-tint: rgba(0, 130, 201, 0.1);
   --vf-focus-ring: rgba(0, 130, 201, 0.35);
+  /* 填充面（顶栏 / 实心主按钮 / 当前版本徽标）：与 --vf-accent 分开——
+     强调色在深色下要变浅才读得清，而填充面配白字必须保持足够深。 */
+  --vf-accent-fill: #0082c9;
+  --vf-accent-fill-hover: #0070ad;
   /* 填充面上的文字（M3 的 on-container 配对） */
   --vf-on-accent: #ffffff;
   /* 按压状态层（M3 pressed 12%） */
@@ -212,11 +216,13 @@
   --bulma-info-invert-l: 100%;
   color-scheme: dark;
 
-  /* 填充面色取更深的蓝：白字对比度 5.8:1（旧值 2.83:1 未达 AA）；
-     文本/链接仍用高明度保证深色背景上的可读性。 */
+  /* 强调色在深色下提亮（文本/描边/焦点环用），填充面单独取更深的蓝：
+     白字对 #0a6fa8 为 5.45:1（AA ✓），而浅蓝 #4aa9e0 只有 2.61:1（明显发灰）。 */
   --vf-accent: #4aa9e0;
   --vf-accent-strong: #6fbbe8;
   --vf-accent-text: #8acbf0;
+  --vf-accent-fill: #0a6fa8;
+  --vf-accent-fill-hover: #0b7ab3;
   --vf-accent-soft: rgba(74, 169, 224, 0.16);
   --vf-accent-soft-strong: rgba(74, 169, 224, 0.3);
 

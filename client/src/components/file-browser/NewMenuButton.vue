@@ -127,9 +127,9 @@ onBeforeUnmount(() => {
   gap: 0.35rem;
   min-height: 36px;
   padding: 0 0.8rem;
-  border: 1px solid var(--vf-accent);
+  border: 1px solid var(--vf-accent-fill);
   border-radius: var(--vf-radius-sm);
-  background: var(--vf-accent);
+  background: var(--vf-accent-fill);
   color: var(--vf-on-accent);
   font-size: 0.875rem;
   font-weight: 500;
@@ -141,8 +141,8 @@ onBeforeUnmount(() => {
 
 .nc-new-button:hover,
 .nc-new-button:focus-visible {
-  background: var(--vf-accent-strong);
-  border-color: var(--vf-accent-strong);
+  background: var(--vf-accent-fill-hover);
+  border-color: var(--vf-accent-fill-hover);
   color: var(--vf-on-accent);
 }
 

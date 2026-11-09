@@ -164,7 +164,7 @@ const navItems = computed(() =>
   width: 34px;
   height: 34px;
   border-radius: var(--vf-radius-sm);
-  background: var(--vf-accent);
+  background: var(--vf-accent-fill);
   color: var(--vf-on-accent);
 }
 

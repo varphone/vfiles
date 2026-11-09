@@ -319,7 +319,8 @@ onBeforeUnmount(() => {
   z-index: 50;
   flex: 0 0 auto;
   height: var(--vf-topbar-height);
-  background: var(--vf-accent);
+  /* 填充面令牌：深色主题下仍保持足够的蓝（白字/白图标 5.45:1）。 */
+  background: var(--vf-accent-fill);
 }
 
 /* 白色前景只作用于顶栏内的导航控件（右侧弹窗/下拉不继承，避免白底白字）。 */
@@ -603,6 +604,23 @@ onBeforeUnmount(() => {
   .app-header-account {
     width: 32px;
     height: 32px;
+  }
+}
+</style>
+
+<!--
+  深色主题：白底头像上的首字母改用填充深蓝。
+  `--vf-accent-text` 在深色下是给深色背景用的浅蓝，落在白色头像上仅 1.8:1；
+  scoped 样式命中不了 <html data-theme>，故单独一个全局块（与 ViewsSidebar 同法）。
+-->
+<style>
+html[data-theme="dark"] .app-header-avatar {
+  color: var(--vf-accent-fill);
+}
+
+@media screen and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app-header-avatar {
+    color: var(--vf-accent-fill);
   }
 }
 </style>

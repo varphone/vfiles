@@ -108,18 +108,18 @@
 
 /* 主操作：用于「预览 / 打开」等首选动作，视觉上强于普通 ghost 按钮 */
 .vf-ghost-button.is-primary {
-  background: var(--vf-accent);
+  background: var(--vf-accent-fill);
   color: var(--vf-on-accent);
 }
 
 .vf-ghost-button.is-primary:hover:not(:disabled),
 .vf-ghost-button.is-primary:focus-visible {
-  background: var(--vf-accent-strong);
+  background: var(--vf-accent-fill-hover);
   color: var(--vf-on-accent);
 }
 
 .vf-ghost-button.is-primary:active:not(:disabled) {
-  background: var(--vf-accent-strong);
+  background: var(--vf-accent-fill-hover);
 }
 
 .vf-ghost-button.is-danger {
@@ -230,7 +230,7 @@
   padding: 0 0.9rem;
   border: none;
   border-radius: 3px;
-  background: var(--vf-accent);
+  background: var(--vf-accent-fill);
   color: var(--vf-on-accent);
   font-size: 0.875rem;
   font-weight: 600;
@@ -240,11 +240,11 @@
 
 .vf-primary-button:hover:not(:disabled),
 .vf-primary-button:focus-visible {
-  background: var(--vf-accent-strong);
+  background: var(--vf-accent-fill-hover);
 }
 
 .vf-primary-button:active:not(:disabled) {
-  background: var(--vf-accent-strong);
+  background: var(--vf-accent-fill-hover);
 }
 
 /* 焦点可见环（M3：2px 指示环 + halo；这里用 accent-text 实线环 + 偏移），

@@ -726,12 +726,12 @@ async function renameSelected() {
 }
 
 .mobile-action-buttons .button.is-link {
-  background: var(--vf-accent);
+  background: var(--vf-accent-fill);
   color: var(--vf-on-accent);
 }
 
 .mobile-action-buttons .button.is-link:hover {
-  background: var(--vf-accent-strong);
+  background: var(--vf-accent-fill-hover);
   color: var(--vf-on-accent);
 }
 
