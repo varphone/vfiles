@@ -127,7 +127,11 @@
                     <hr class="dropdown-divider" />
 
                     <router-link
-                      v-if="auth.user && auth.features?.shareEnabled !== false"
+                      v-if="
+                        !auth.isRestricted &&
+                        auth.user &&
+                        auth.features?.shareEnabled !== false
+                      "
                       class="dropdown-item"
                       to="/shares"
                       @click="closeAccountMenus"
@@ -136,7 +140,7 @@
                     </router-link>
 
                     <router-link
-                      v-if="auth.enabled && auth.user"
+                      v-if="auth.enabled && auth.user && !auth.isRestricted"
                       class="dropdown-item"
                       to="/settings/tokens"
                       @click="closeAccountMenus"
@@ -145,7 +149,17 @@
                     </router-link>
 
                     <router-link
+                      v-if="auth.enabled && auth.user && !auth.isRestricted"
+                      class="dropdown-item"
+                      to="/settings/passwords"
+                      @click="closeAccountMenus"
+                    >
+                      访问密码
+                    </router-link>
+
+                    <router-link
                       v-if="
+                        !auth.isRestricted &&
                         auth.enabled &&
                         ['admin', 'manager'].includes(auth.user?.role || '')
                       "
@@ -157,7 +171,11 @@
                     </router-link>
 
                     <router-link
-                      v-if="auth.enabled && auth.user?.role === 'admin'"
+                      v-if="
+                        !auth.isRestricted &&
+                        auth.enabled &&
+                        auth.user?.role === 'admin'
+                      "
                       class="dropdown-item"
                       to="/admin/audit"
                       @click="closeAccountMenus"
@@ -167,7 +185,11 @@
 
                     <!-- 系统信息（admin-only ✓ r106' 用户报"没入口"修复 = 主入口 ✓） -->
                     <router-link
-                      v-if="auth.enabled && auth.user?.role === 'admin'"
+                      v-if="
+                        !auth.isRestricted &&
+                        auth.enabled &&
+                        auth.user?.role === 'admin'
+                      "
                       class="dropdown-item"
                       to="/system-info"
                       @click="closeAccountMenus"
@@ -265,6 +287,7 @@
                     >历史</a
                   >
                   <a
+                    v-if="auth.canWrite"
                     class="dropdown-item"
                     :class="{ 'is-current': actionMode === 'batch' }"
                     href="#"
@@ -300,6 +323,7 @@
                   <span class="mobile-bar-label">首页</span>
                 </button>
                 <button
+                  v-if="!auth.isRestricted || auth.canWrite"
                   class="button is-light mobile-bar-button"
                   @click="appStore.requestCreateDirectory()"
                   title="新建文件夹"
@@ -309,6 +333,7 @@
                   <span class="mobile-bar-label">新建</span>
                 </button>
                 <button
+                  v-if="!auth.isRestricted || auth.canWrite"
                   class="button is-link mobile-bar-button"
                   @click="openUploader"
                   title="上传"
@@ -431,6 +456,7 @@
                     <div class="dropdown-menu" role="menu">
                       <div class="dropdown-content">
                         <a
+                          v-if="auth.canWrite"
                           class="dropdown-item"
                           :class="{ 'is-disabled': selectedCount === 0 }"
                           href="#"
@@ -439,6 +465,7 @@
                           删除
                         </a>
                         <a
+                          v-if="auth.canWrite"
                           class="dropdown-item"
                           :class="{ 'is-disabled': selectedCount === 0 }"
                           href="#"
@@ -447,6 +474,7 @@
                           移动
                         </a>
                         <a
+                          v-if="auth.canWrite"
                           class="dropdown-item"
                           :class="{ 'is-disabled': selectedCount !== 1 }"
                           href="#"
@@ -687,6 +715,7 @@ const selectedCount = computed(
   () => browserRef.value?.selectedCount?.value ?? 0,
 );
 function setActionMode(mode: "nav" | "history" | "batch") {
+  if (mode === "batch" && !auth.canWrite) return;
   actionMode.value = mode;
   actionMenuOpen.value = false;
   batchMenuOpen.value = false;

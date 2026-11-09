@@ -11,7 +11,7 @@
     }"
     :style="{ '--file-card-thumb-size': `${thumbnailSize}px` }"
     :title="file.name"
-    draggable
+    :draggable="canWrite"
     @click="handleClick"
     @dblclick="handleActivate"
     @contextmenu.prevent="handleContextMenu"
@@ -72,7 +72,7 @@
 
       <div v-if="menuOpen" class="file-card-menu-panel" role="menu">
         <button
-          v-if="file.kind === 'directory'"
+          v-if="file.kind === 'directory' && canWrite"
           class="file-card-menu-item"
           role="menuitem"
           @click="runAndClose(emitCreateDirectory)"
@@ -108,6 +108,7 @@
           <span>历史版本</span>
         </button>
         <button
+          v-if="canWrite"
           class="file-card-menu-item"
           role="menuitem"
           @click="runAndClose(() => emit('rename', file))"
@@ -116,6 +117,7 @@
           <span>重命名</span>
         </button>
         <button
+          v-if="canWrite"
           class="file-card-menu-item"
           role="menuitem"
           @click="runAndClose(() => emit('move', file))"
@@ -132,6 +134,7 @@
           <span>下载</span>
         </button>
         <button
+          v-if="canShare"
           class="file-card-menu-item"
           role="menuitem"
           @click="runAndClose(() => emit('share', file))"
@@ -140,6 +143,7 @@
           <span>分享</span>
         </button>
         <button
+          v-if="canWrite"
           class="file-card-menu-item is-danger"
           role="menuitem"
           @click="runAndClose(confirmDelete)"
@@ -247,6 +251,10 @@ const props = withDefaults(
     thumbnailSize?: number;
     /** 搜索结果中显示所在目录 */
     showLocation?: boolean;
+    /** 只读会话隐藏重命名/移动/删除/新建子目录，并禁用拖拽。 */
+    canWrite?: boolean;
+    /** 受限会话隐藏分享。 */
+    canShare?: boolean;
   }>(),
   {
     commit: undefined,
@@ -255,6 +263,8 @@ const props = withDefaults(
     selected: false,
     active: false,
     thumbnailSize: 144,
+    canWrite: true,
+    canShare: true,
   },
 );
 
@@ -476,6 +486,10 @@ onBeforeUnmount(clearLongPress);
 
 /** 拖拽：条目可拖动，目录可作为放置目标。 */
 function handleDragStart(event: DragEvent) {
+  if (!props.canWrite) {
+    event.preventDefault();
+    return;
+  }
   event.dataTransfer?.setData("text/plain", props.file.path);
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
   dragging.value = true;
@@ -489,7 +503,7 @@ function handleDragEnd() {
 }
 
 function handleDragOver(event: DragEvent) {
-  if (props.file.kind !== "directory") return;
+  if (!props.canWrite || props.file.kind !== "directory") return;
   if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
   dragOver.value = true;
 }
@@ -500,7 +514,7 @@ function handleDragLeave() {
 
 function handleDrop() {
   dragOver.value = false;
-  if (props.file.kind !== "directory") return;
+  if (!props.canWrite || props.file.kind !== "directory") return;
   emit("drop-on-folder", props.file.path);
 }
 
@@ -534,6 +548,7 @@ function emitCreateDirectory() {
 }
 
 async function confirmDelete() {
+  if (!props.canWrite) return;
   const ok = await confirmDialog({
     title: "删除确认",
     message: `确定要删除 ${props.file.name} 吗？`,

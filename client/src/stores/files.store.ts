@@ -7,8 +7,12 @@ export const useFilesStore = defineStore("files", () => {
   // 状态
   const files = ref<FileInfo[]>([]);
   const currentPath = ref<string>("");
+  /** 最近一次发起加载的目录（请求失败时 currentPath 不会前移，用它判断 403 回退是否已在范围根）。 */
+  const requestedPath = ref<string>("");
   const loading = ref(false);
   const error = ref<string | null>(null);
+  /** 最近一次目录加载的 HTTP 状态码（403 时由界面回退到受限范围根）。 */
+  const errorStatus = ref<number | null>(null);
   // 浏览目录所基于的提交（用于“历史版本浏览”）。undefined 表示当前 HEAD/worktree。
   const browseCommit = ref<string | undefined>(undefined);
   // 服务端分页状态：total 为当前目录全量条目数，hasMoreFiles 表示还有未加载的页。
@@ -54,12 +58,14 @@ export const useFilesStore = defineStore("files", () => {
 
   async function loadFiles(path: string = "") {
     const requestId = ++loadSequence;
+    requestedPath.value = path;
     activePageController?.abort();
     const controller = new AbortController();
     activePageController = controller;
     const commit = browseCommit.value;
     loading.value = true;
     error.value = null;
+    errorStatus.value = null;
     loadingMoreFiles.value = false;
     loadMoreError.value = null;
 
@@ -78,7 +84,17 @@ export const useFilesStore = defineStore("files", () => {
       currentPath.value = path;
     } catch (err) {
       if (requestId !== loadSequence) return;
-      error.value = err instanceof Error ? err.message : "加载文件失败";
+      const status =
+        err && typeof err === "object" && "status" in err
+          ? Number((err as { status?: unknown }).status)
+          : NaN;
+      errorStatus.value = Number.isFinite(status) ? status : null;
+      error.value =
+        errorStatus.value === 403
+          ? "无权访问该目录"
+          : err instanceof Error
+            ? err.message
+            : "加载文件失败";
       files.value = [];
       totalFiles.value = 0;
       hasMoreFiles.value = false;
@@ -186,8 +202,10 @@ export const useFilesStore = defineStore("files", () => {
   return {
     files,
     currentPath,
+    requestedPath,
     loading,
     error,
+    errorStatus,
     browseCommit,
     totalFiles,
     hasMoreFiles,

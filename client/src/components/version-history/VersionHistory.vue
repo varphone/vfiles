@@ -70,6 +70,7 @@
             :restoring-hash="restoringHash"
             :format-date="formatDate"
             :selected-hash="selectedHash"
+            :can-write="canWrite"
             @view-version="viewVersion"
             @view-diff="viewDiff"
             @restore-version="restoreVersion"
@@ -142,6 +143,7 @@
                   并排
                 </button>
                 <button
+                  v-if="canWrite"
                   type="button"
                   class="vf-ghost-button"
                   title="恢复到此版本（生成新提交）"
@@ -395,9 +397,14 @@ import CommitList from "./CommitList.vue";
 let cachedMarked: any | null = null;
 let cachedHljs: any | null = null;
 
-const props = defineProps<{
-  filePath: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    filePath: string;
+    /** 只读会话隐藏「恢复此版本」。 */
+    canWrite?: boolean;
+  }>(),
+  { canWrite: true },
+);
 
 const appStore = useAppStore();
 

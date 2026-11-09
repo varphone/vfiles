@@ -60,7 +60,7 @@
           <span>下载</span>
         </button>
         <button
-          v-if="!isCurrent"
+          v-if="!isCurrent && canWrite !== false"
           class="vf-ghost-button history-action is-accent"
           type="button"
           :disabled="restoringHash === commit.hash"
@@ -94,6 +94,8 @@ const props = defineProps<{
   /** 该文件的总版本数，用于显示「第 N 版」。 */
   totalCommits: number;
   currentVersion: string;
+  /** 只读会话隐藏「恢复此版本」。 */
+  canWrite?: boolean;
   restoringHash: string | null;
   /** 绝对时间格式化（悬停提示用）。 */
   formatDate: (date: string) => string;

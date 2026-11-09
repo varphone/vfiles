@@ -77,6 +77,8 @@
           :renaming="renamingPath === file.path"
           :show-action-column="showActionColumn"
           :show-location="showLocation"
+          :can-write="canWrite"
+          :can-share="canShare"
           @rename-commit="(target, name) => emit('rename-commit', target, name)"
           @rename-cancel="(target) => emit('rename-cancel', target)"
           @move="emit('move', file)"
@@ -107,6 +109,8 @@
       :flash="flashPath === file.path"
       :selected="selectedPaths.has(file.path)"
       :expanded="expandedPath === file.path"
+      :can-write="canWrite"
+      :can-share="canShare"
       @click="emit('click', file)"
       @download="emit('download', file)"
       @rename="emit('rename', file)"
@@ -186,6 +190,10 @@ const props = withDefaults(
     desktop?: boolean;
     sortField?: SortField;
     sortDirection?: SortDirection;
+    /** 只读会话隐藏重命名/移动/删除/新建子目录。 */
+    canWrite?: boolean;
+    /** 受限会话隐藏分享。 */
+    canShare?: boolean;
   }>(),
   {
     showActionColumn: true,
@@ -198,6 +206,8 @@ const props = withDefaults(
     desktop: false,
     sortField: "name",
     sortDirection: "asc",
+    canWrite: true,
+    canShare: true,
   },
 );
 

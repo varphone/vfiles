@@ -45,6 +45,12 @@ const router = createRouter({
       component: () => import("../views/AccessTokens.vue"),
     },
     {
+      path: "/settings/passwords",
+      meta: { title: "访问密码" },
+      name: "access-passwords",
+      component: () => import("../views/AccessPasswords.vue"),
+    },
+    {
       path: "/system-info",
       meta: { title: "系统信息" },
       name: "system-info",

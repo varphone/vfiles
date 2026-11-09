@@ -11,7 +11,7 @@
       'is-dragging': dragging,
       'is-drop-confirmed': flash,
     }"
-    draggable
+    :draggable="canWrite"
     @click="handleClick"
     @dblclick="handleActivate"
     @contextmenu.prevent="handleContextMenu"
@@ -142,6 +142,7 @@
       >
         <template v-if="file.kind === 'directory'">
           <button
+            v-if="canWrite"
             class="button is-ghost"
             @click="createDirectory"
             title="在此目录下新建子目录"
@@ -150,6 +151,7 @@
             <span class="icon is-small"><IconFolderPlus :size="16" /></span>
           </button>
           <button
+            v-if="canWrite"
             class="button is-ghost"
             @click="renameEntry"
             title="重命名目录"
@@ -158,6 +160,7 @@
             <span class="icon is-small"><IconPencil :size="16" /></span>
           </button>
           <button
+            v-if="canWrite"
             class="button is-ghost"
             @click="moveEntry"
             title="移动目录"
@@ -174,6 +177,7 @@
             <span class="icon is-small"><IconDownload :size="16" /></span>
           </button>
           <button
+            v-if="canShare"
             class="button is-ghost"
             @click="share"
             title="分享目录"
@@ -182,6 +186,7 @@
             <span class="icon is-small"><IconShare :size="16" /></span>
           </button>
           <button
+            v-if="canWrite"
             class="button is-ghost is-danger"
             @click="confirmDelete"
             title="删除目录"
@@ -208,6 +213,7 @@
             <span class="icon is-small"><IconHistory :size="16" /></span>
           </button>
           <button
+            v-if="canWrite"
             class="button is-ghost"
             @click="renameEntry"
             title="重命名文件"
@@ -216,6 +222,7 @@
             <span class="icon is-small"><IconPencil :size="16" /></span>
           </button>
           <button
+            v-if="canWrite"
             class="button is-ghost"
             @click="moveEntry"
             title="移动文件"
@@ -232,6 +239,7 @@
             <span class="icon is-small"><IconDownload :size="16" /></span>
           </button>
           <button
+            v-if="canShare"
             class="button is-ghost"
             @click="share"
             title="分享文件"
@@ -240,6 +248,7 @@
             <span class="icon is-small"><IconShare :size="16" /></span>
           </button>
           <button
+            v-if="canWrite"
             class="button is-ghost is-danger"
             @click="confirmDelete"
             title="删除文件"
@@ -263,7 +272,7 @@
       'is-dragging': dragging,
       'is-drop-confirmed': flash,
     }"
-    draggable
+    :draggable="canWrite"
     @click="handleClick"
     @dblclick="handleActivate"
     @contextmenu.prevent="handleContextMenu"
@@ -393,7 +402,12 @@
             <IconHistory :size="20" />
             <span>历史</span>
           </button>
-          <button class="action-btn" @click="moveEntry" title="移动">
+          <button
+            v-if="canWrite"
+            class="action-btn"
+            @click="moveEntry"
+            title="移动"
+          >
             <IconArrowsDiff :size="20" />
             <span>移动</span>
           </button>
@@ -401,11 +415,17 @@
             <IconDownload :size="20" />
             <span>下载</span>
           </button>
-          <button class="action-btn" @click="share" title="分享">
+          <button
+            v-if="canShare"
+            class="action-btn"
+            @click="share"
+            title="分享"
+          >
             <IconShare :size="20" />
             <span>分享</span>
           </button>
           <button
+            v-if="canWrite"
             class="action-btn is-danger"
             @click="confirmDelete"
             title="删除"
@@ -444,22 +464,29 @@ import {
   formatSize,
 } from "../../utils/filePresentation";
 
-const props = defineProps<{
-  file: FileInfo;
-  highlight?: string;
-  selectMode?: boolean;
-  selected?: boolean;
-  /** 落子回执（父层持态）：drop 后 650ms 内为 true（跨 remount 存活 ✓） */
-  flash?: boolean;
-  expanded?: boolean;
-  desktop?: boolean;
-  /** 是否处于内联重命名状态 */
-  renaming?: boolean;
-  /** 是否显示「操作」列（详情面板可见时由父组件关闭） */
-  showActionColumn?: boolean;
-  /** 搜索结果中显示所在目录 */
-  showLocation?: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    file: FileInfo;
+    highlight?: string;
+    selectMode?: boolean;
+    selected?: boolean;
+    /** 落子回执（父层持态）：drop 后 650ms 内为 true（跨 remount 存活 ✓） */
+    flash?: boolean;
+    expanded?: boolean;
+    desktop?: boolean;
+    /** 是否处于内联重命名状态 */
+    renaming?: boolean;
+    /** 是否显示「操作」列（详情面板可见时由父组件关闭） */
+    showActionColumn?: boolean;
+    /** 搜索结果中显示所在目录 */
+    showLocation?: boolean;
+    /** 只读会话隐藏重命名/移动/删除/新建子目录，并禁用拖拽。 */
+    canWrite?: boolean;
+    /** 受限会话隐藏分享。 */
+    canShare?: boolean;
+  }>(),
+  { canWrite: true, canShare: true, highlight: "" },
+);
 
 /** 条目所在目录（搜索结果用）：`/` 表示根目录。 */
 const locationLabel = computed(() => {
@@ -692,8 +719,12 @@ function handleLongPressCancel() {
 
 onBeforeUnmount(clearLongPress);
 
-/** 拖拽：条目可拖动，目录可作为放置目标。 */
+/** 拖拽：条目可拖动，目录可作为放置目标；只读会话禁用。 */
 function handleDragStart(event: DragEvent) {
+  if (!props.canWrite) {
+    event.preventDefault();
+    return;
+  }
   event.dataTransfer?.setData("text/plain", props.file.path);
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
   dragging.value = true;
@@ -707,7 +738,7 @@ function handleDragEnd() {
 }
 
 function handleDragOver(event: DragEvent) {
-  if (props.file.kind !== "directory") return;
+  if (!props.canWrite || props.file.kind !== "directory") return;
   if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
   dragOver.value = true;
 }
@@ -718,7 +749,7 @@ function handleDragLeave() {
 
 function handleDrop() {
   dragOver.value = false;
-  if (props.file.kind !== "directory") return;
+  if (!props.canWrite || props.file.kind !== "directory") return;
   // 落子回执由父层持态（flash prop）：move 成功会重渲染本行（remount），
   // 组件本地状态会被清零 ✗（实测教训）——状态上移父层跨 remount 存活 ✓
   emit("dropOnFolder", props.file.path);

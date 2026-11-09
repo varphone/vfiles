@@ -18,6 +18,8 @@
       :active="activePath === file.path"
       :show-location="showLocation"
       :thumbnail-size="thumbnailSize"
+      :can-write="canWrite"
+      :can-share="canShare"
       @click="emit('click', file)"
       @download="emit('download', file)"
       @rename="emit('rename', file)"
@@ -83,6 +85,10 @@ const props = withDefaults(
     thumbnailSize?: number;
     /** 搜索结果中显示所在目录 */
     showLocation?: boolean;
+    /** 只读会话隐藏重命名/移动/删除/新建子目录。 */
+    canWrite?: boolean;
+    /** 受限会话隐藏分享。 */
+    canShare?: boolean;
   }>(),
   {
     renamingPath: "",
@@ -90,6 +96,8 @@ const props = withDefaults(
     commit: undefined,
     activePath: "",
     thumbnailSize: 144,
+    canWrite: true,
+    canShare: true,
   },
 );
 

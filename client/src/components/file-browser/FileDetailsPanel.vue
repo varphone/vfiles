@@ -48,6 +48,7 @@
           <span>下载全部</span>
         </button>
         <button
+          v-if="canWrite"
           class="vf-ghost-button"
           type="button"
           @click="emit('move-selection')"
@@ -65,6 +66,7 @@
           <span>全选</span>
         </button>
         <button
+          v-if="canTransfer"
           class="vf-ghost-button details-selection-wide"
           type="button"
           @click="emit('transfer-selection')"
@@ -80,6 +82,7 @@
           <span>清空选择</span>
         </button>
         <button
+          v-if="canWrite"
           class="vf-ghost-button is-danger details-danger"
           type="button"
           @click="emit('delete-selection')"
@@ -118,7 +121,11 @@
             <IconDownload :size="16" />
             <span>下载</span>
           </button>
-          <button class="vf-ghost-button" @click="emit('share', item)">
+          <button
+            v-if="canShare"
+            class="vf-ghost-button"
+            @click="emit('share', item)"
+          >
             <IconShare :size="16" />
             <span>分享</span>
           </button>
@@ -126,19 +133,32 @@
             <IconHistory :size="16" />
             <span>历史版本</span>
           </button>
-          <button class="vf-ghost-button" @click="emit('rename', item)">
+          <button
+            v-if="canWrite"
+            class="vf-ghost-button"
+            @click="emit('rename', item)"
+          >
             <IconPencil :size="16" />
             <span>重命名</span>
           </button>
-          <button class="vf-ghost-button" @click="emit('move', item)">
+          <button
+            v-if="canWrite"
+            class="vf-ghost-button"
+            @click="emit('move', item)"
+          >
             <IconArrowsDiff :size="16" />
             <span>移动</span>
           </button>
-          <button class="vf-ghost-button" @click="emit('transfer', item)">
+          <button
+            v-if="canTransfer"
+            class="vf-ghost-button"
+            @click="emit('transfer', item)"
+          >
             <IconUserShare :size="16" />
             <span>转移所有权</span>
           </button>
           <button
+            v-if="canWrite"
             class="vf-ghost-button is-danger details-danger"
             @click="emit('delete', item)"
           >
@@ -195,8 +215,21 @@ const props = withDefaults(
     commit?: string;
     /** 批量选择中的条目；多于 1 项时展示选择摘要而不是单条详情。 */
     selection?: FileInfo[];
+    /** 只读会话隐藏重命名/移动/删除。 */
+    canWrite?: boolean;
+    /** 受限会话隐藏分享。 */
+    canShare?: boolean;
+    /** 受限会话隐藏所有权转移。 */
+    canTransfer?: boolean;
   }>(),
-  { item: undefined, commit: undefined, selection: () => [] },
+  {
+    item: undefined,
+    commit: undefined,
+    selection: () => [],
+    canWrite: true,
+    canShare: true,
+    canTransfer: true,
+  },
 );
 
 const emit = defineEmits<{

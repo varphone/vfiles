@@ -10,6 +10,7 @@
       :restoring-hash="restoringHash"
       :format-date="formatDate"
       :selected="commit.hash === selectedHash"
+      :can-write="canWrite"
       @view-version="(hash) => emit('view-version', hash)"
       @view-diff="(hash, parent) => emit('view-diff', hash, parent)"
       @restore-version="(hash) => emit('restore-version', hash)"
@@ -32,8 +33,10 @@ withDefaults(
     formatDate: (date: string) => string;
     /** 详情面板当前展示的版本，用于高亮。 */
     selectedHash?: string;
+    /** 只读会话隐藏「恢复此版本」。 */
+    canWrite?: boolean;
   }>(),
-  { selectedHash: "" },
+  { selectedHash: "", canWrite: true },
 );
 
 const emit = defineEmits<{

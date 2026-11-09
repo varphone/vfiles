@@ -63,6 +63,20 @@ router.beforeEach(async (to) => {
     return { name: "home" };
   }
 
+  // 受限会话只允许浏览范围内的文件；凭据/令牌/分享/管理页面一律回首页，
+  // 避免直达 URL 后只看到 403。
+  const fullScopeOnlyRoutes = new Set([
+    "admin-users",
+    "audit-logs",
+    "system-info",
+    "access-tokens",
+    "access-passwords",
+    "shared-links",
+  ]);
+  if (authStore.isRestricted && fullScopeOnlyRoutes.has(String(to.name))) {
+    return { name: "home" };
+  }
+
   // 管理页可见性守卫（r185 ✓ 公开表×全路由交叉核抓获 ×2 缺口）：
   // 审计日志/系统信息 = admin-only（菜单 v-if 同语义 ✓ 直址访问亦须拦 ✗）
   if (

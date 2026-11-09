@@ -10,6 +10,43 @@ export interface AuthUser {
   role: UserRole;
 }
 
+/**
+ * 当前会话的权限范围。
+ *
+ * 主密码会话为全量权限（restricted=false）；受限密码会话只能访问 roots
+ * 及其子目录，canWrite=false 时只读。
+ */
+export interface SessionScope {
+  restricted: boolean;
+  label: string | null;
+  roots: string[];
+  canWrite: boolean;
+}
+
+/** 受限登录密码（`GET /api/auth/credentials`，不含密码哈希）。 */
+export interface LoginCredential {
+  id: string;
+  label: string;
+  roots: string[];
+  canWrite: boolean;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface CreateLoginCredentialInput {
+  label: string;
+  password: string;
+  roots: string[];
+  canWrite?: boolean;
+}
+
+export interface UpdateLoginCredentialInput {
+  label?: string;
+  password?: string;
+  roots?: string[];
+  canWrite?: boolean;
+}
+
 export interface AdminUser {
   id: string;
   username: string;
@@ -146,6 +183,19 @@ type RustSessionBootstrapResponse = {
   features?: RustSessionFeatures;
 };
 
+/** 后端凭据 DTO 使用 camelCase；这里保留 snake_case 兜底以便兼容旧版本。 */
+type RustLoginCredential = {
+  id?: string;
+  label?: string;
+  roots?: string[];
+  canWrite?: boolean;
+  can_write?: boolean;
+  createdAt?: string;
+  created_at?: string;
+  lastUsedAt?: string | null;
+  last_used_at?: string | null;
+};
+
 const LEGACY_ADMIN_CAPABILITIES: AdminUserCapabilities = {
   canUpdateEmail: true,
   canRevokeSessions: true,
@@ -266,17 +316,53 @@ function normalizeSessionBootstrap(
   };
 }
 
+function normalizeLoginCredential(
+  credential: RustLoginCredential,
+): LoginCredential {
+  return {
+    id: String(credential.id ?? ""),
+    label: String(credential.label ?? ""),
+    roots: Array.isArray(credential.roots)
+      ? credential.roots.filter(
+          (root): root is string => typeof root === "string",
+        )
+      : [],
+    canWrite: Boolean(credential.canWrite ?? credential.can_write),
+    createdAt: String(credential.createdAt ?? credential.created_at ?? ""),
+    lastUsedAt:
+      credential.lastUsedAt ?? credential.last_used_at ?? null,
+  };
+}
+
+/** 拆开 `{ success, data }` 信封；后端部分接口直接返回裸数据。 */
+function unwrapPayload<T>(response: unknown): T | undefined {
+  if (response && typeof response === "object" && "data" in response) {
+    const wrapped = response as { data?: T; success?: boolean };
+    if (wrapped.success !== false) return wrapped.data;
+  }
+  return response as T;
+}
+
 export interface AuthMeResponseEnabledFalse {
   enabled: false;
 }
 
 export interface AuthMeResponseEnabledTrue {
-  user: AuthUser;
+  enabled: true;
+  allowRegister: boolean;
+  user: AuthUser | null;
+  scope: SessionScope | null;
 }
 
 export type AuthMeResponse =
   | AuthMeResponseEnabledFalse
   | AuthMeResponseEnabledTrue;
+
+export interface LoginPayload {
+  user: AuthUser;
+  token?: string;
+  scope?: SessionScope | null;
+}
 
 class AuthService {
   async getSessionBootstrap(): Promise<SessionBootstrapPayload | null> {
@@ -287,19 +373,14 @@ class AuthService {
     return normalizeSessionBootstrap(response);
   }
 
-  me(): Promise<
-    ApiResponse<
-      | { enabled: false }
-      | { enabled: true; allowRegister: boolean; user: AuthUser | null }
-    >
-  > {
+  me(): Promise<ApiResponse<AuthMeResponse>> {
     return apiService.get("/auth/me");
   }
 
   login(input: {
     username: string;
     password: string;
-  }): Promise<ApiResponse<{ user: AuthUser }>> {
+  }): Promise<ApiResponse<LoginPayload>> {
     // Backend expects 'username_or_email' field
     const requestData = {
       username_or_email: input.username,
@@ -318,6 +399,59 @@ class AuthService {
 
   logout(): Promise<ApiResponse<void>> {
     return apiService.post("/auth/logout");
+  }
+
+  // 受限登录密码（仅主密码会话可管理）
+  /** 列出当前账号的受限登录密码（不含密码）。 */
+  async listLoginCredentials(): Promise<LoginCredential[]> {
+    const response = await apiService.get<unknown>("/auth/credentials");
+    const payload = unwrapPayload<unknown>(response);
+    if (!Array.isArray(payload)) return [];
+    return payload.map((item) =>
+      normalizeLoginCredential(item as RustLoginCredential),
+    );
+  }
+
+  /** 新建一条受限登录密码。 */
+  async createLoginCredential(
+    input: CreateLoginCredentialInput,
+  ): Promise<{ id: string }> {
+    const response = await apiService.post<unknown>("/auth/credentials", {
+      label: input.label,
+      password: input.password,
+      roots: input.roots,
+      canWrite: input.canWrite === true,
+    });
+    const payload = unwrapPayload<{ id?: string }>(response);
+    return { id: String(payload?.id ?? "") };
+  }
+
+  /**
+   * 更新受限登录密码。
+   *
+   * 只发送调用方明确提供的字段；`password` 留空表示不修改密码。
+   */
+  async updateLoginCredential(
+    id: string,
+    input: UpdateLoginCredentialInput,
+  ): Promise<{ updated: boolean }> {
+    const body: Record<string, unknown> = {};
+    if (input.label !== undefined) body.label = input.label;
+    if (input.password !== undefined) body.password = input.password;
+    if (input.roots !== undefined) body.roots = input.roots;
+    if (input.canWrite !== undefined) body.canWrite = input.canWrite;
+
+    const response = await apiService.post<unknown>(
+      `/auth/credentials/${encodeURIComponent(id)}`,
+      body,
+    );
+    const payload = unwrapPayload<{ updated?: boolean }>(response);
+    return { updated: Boolean(payload?.updated ?? true) };
+  }
+
+  /** 删除受限登录密码；使用它的已有会话会立即失效。 */
+  async deleteLoginCredential(id: string): Promise<void> {
+    await apiService.delete(`/auth/credentials/${encodeURIComponent(id)}`);
   }
 
   // Admin APIs

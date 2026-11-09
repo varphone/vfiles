@@ -31,6 +31,7 @@
         <IconLayoutSidebarRight :size="18" />
       </button>
       <button
+        v-if="canWrite"
         class="vf-icon-button"
         :class="{ 'is-active': batchMode }"
         :title="batchMode ? '退出批量选择' : '批量选择'"
@@ -63,6 +64,7 @@
       />
 
       <button
+        v-if="canWrite"
         class="vf-ghost-button desktop-create-folder"
         type="button"
         title="新建文件夹"
@@ -74,7 +76,7 @@
       </button>
 
       <button
-        v-if="uploadIndicator"
+        v-if="uploadIndicator && canWrite"
         class="vf-ghost-button upload-indicator"
         type="button"
         :title="uploadIndicator.title"
@@ -85,6 +87,7 @@
       </button>
 
       <div
+        v-if="canWrite"
         ref="uploadMenuRef"
         class="dropdown is-right desktop-upload-split"
         :class="{ 'is-active': uploadMenuOpen }"
@@ -195,6 +198,8 @@ withDefaults(
     searchError?: string | null;
     uploadIndicator?: { label: string; title: string } | null;
     registerInput?: (el: Element | { $el?: Element } | null) => void;
+    /** 只读会话隐藏新建/上传/批量等写操作入口。 */
+    canWrite?: boolean;
   }>(),
   {
     canGoUp: false,
@@ -208,6 +213,7 @@ withDefaults(
     searchError: null,
     uploadIndicator: null,
     registerInput: undefined,
+    canWrite: true,
   },
 );
 

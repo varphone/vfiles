@@ -16,6 +16,7 @@
         下载
       </button>
       <button
+        v-if="canWrite"
         class="vf-ghost-button"
         :disabled="selectedCount === 0"
         @click="emit('move')"
@@ -23,6 +24,7 @@
         移动
       </button>
       <button
+        v-if="canTransfer"
         class="vf-ghost-button"
         :disabled="selectedCount === 0"
         title="把所选条目（含版本历史）交给另一个用户"
@@ -31,6 +33,7 @@
         转移所有权
       </button>
       <button
+        v-if="canWrite"
         class="vf-ghost-button"
         :disabled="selectedCount !== 1"
         @click="emit('rename')"
@@ -38,6 +41,7 @@
         重命名
       </button>
       <button
+        v-if="canWrite"
         class="vf-ghost-button is-danger"
         :disabled="selectedCount === 0"
         @click="emit('delete')"
@@ -55,7 +59,16 @@
  * 只呈现操作入口，批量逻辑（选择集合、下载/删除/移动/重命名）仍在
  * `useFileSelection` 与父组件里，避免这里重复状态。
  */
-defineProps<{ selectedCount: number }>();
+withDefaults(
+  defineProps<{
+    selectedCount: number;
+    /** 只读会话隐藏移动/重命名/删除。 */
+    canWrite?: boolean;
+    /** 受限会话隐藏所有权转移。 */
+    canTransfer?: boolean;
+  }>(),
+  { canWrite: true, canTransfer: true },
+);
 
 const emit = defineEmits<{
   (e: "select-all"): void;

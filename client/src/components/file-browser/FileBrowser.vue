@@ -36,8 +36,16 @@
   >
     <div class="box file-browser-box">
       <div class="breadcrumb-bar">
+        <span
+          v-if="isRestricted"
+          class="scope-badge"
+          :title="scopeBadgeTitle"
+        >
+          <IconLock :size="13" />
+          <span>{{ scopeBadgeText }}</span>
+        </span>
         <Breadcrumb
-          :breadcrumbs="filesStore.breadcrumbs"
+          :breadcrumbs="visibleBreadcrumbs"
           :directories="filesStore.directories"
           @navigate="handleBreadcrumbNavigate"
           @drop="handleDropOnFolder"
@@ -92,6 +100,7 @@
             :search-error="searchError"
             :upload-indicator="uploadIndicator"
             :register-input="setDesktopSearchInput"
+            :can-write="canWrite"
             @go-up="goBack"
             @refresh="refresh"
             @toggle-details="fileView.toggleDetails()"
@@ -154,10 +163,13 @@
               :current-path="currentPath"
               :dragging="Boolean(draggingFile)"
               :refresh-key="sidebarVersion"
+              :roots="isRestricted ? scopeRoots : []"
+              :can-write="canWrite"
               @navigate="handleTreeNavigate"
               @drop-on-folder="handleDropOnFolder"
             />
             <SidebarOverview
+              v-if="!isRestricted"
               :refresh-key="sidebarVersion"
               @open-file="handleOpenRecentFile"
               @open-favorite="handleOpenFavorite"
@@ -172,8 +184,10 @@
               放在工具栏内会被工具栏高度限制住，放在 layout 外层则会横跨详情列。
             -->
             <BatchActionBar
-              v-if="batchMode || selectedCount > 0"
+              v-if="(batchMode || selectedCount > 0) && canWrite"
               :selected-count="selectedCount"
+              :can-write="canWrite"
+              :can-transfer="!isRestricted"
               @select-all="selectAllVisible"
               @clear-selection="clearSelection"
               @download="batchDownload"
@@ -213,9 +227,13 @@
                 v-else-if="!searchActive && files.length === 0"
                 :icon="IconFolderOpen"
                 title="此文件夹为空"
-                hint="拖拽文件到这里，或使用下面的按钮上传"
+                :hint="
+                  canWrite
+                    ? '拖拽文件到这里，或使用下面的按钮上传'
+                    : '只读访问：当前目录没有可浏览的条目'
+                "
               >
-                <template #actions>
+                <template v-if="canWrite" #actions>
                   <button
                     class="vf-ghost-button is-primary"
                     @click="openUploader('files')"
@@ -271,6 +289,8 @@
 
                 <FileGrid
                   v-if="viewMode === 'grid'"
+                  :can-write="canWrite"
+                  :can-share="canShare"
                   :files="desktopItems"
                   :highlight="searchActive ? searchQuery : ''"
                   :commit="browseCommit"
@@ -301,6 +321,8 @@
                 />
                 <FileList
                   v-else
+                  :can-write="canWrite"
+                  :can-share="canShare"
                   :files="desktopItems"
                   :highlight="searchActive ? searchQuery : ''"
                   :show-location="searchActive"
@@ -367,6 +389,9 @@
             :item="detailItem"
             :commit="browseCommit"
             :selection="selectedItems"
+            :can-write="canWrite"
+            :can-share="canShare"
+            :can-transfer="!isRestricted"
             @close="fileView.toggleDetails()"
             @preview="handlePreview"
             @open-folder="handleOpenFolder"
@@ -448,7 +473,9 @@
           v-else-if="!searchActive && files.length === 0"
           :icon="IconFolderOpen"
           title="此文件夹为空"
-          hint="点击右下角按钮上传文件"
+          :hint="
+            canWrite ? '点击右下角按钮上传文件' : '只读访问：当前目录没有可浏览的条目'
+          "
         />
 
         <div v-else-if="searchActive" class="file-list">
@@ -474,6 +501,8 @@
           </EmptyState>
           <FileGrid
             v-if="viewMode === 'grid' && visibleSearchResults.length"
+            :can-write="canWrite"
+            :can-share="canShare"
             :files="visibleSearchResults"
             :highlight="searchQuery"
             :commit="browseCommit"
@@ -502,6 +531,8 @@
           />
           <FileList
             v-else-if="visibleSearchResults.length"
+            :can-write="canWrite"
+            :can-share="canShare"
             :files="visibleSearchResults"
             :highlight="searchQuery"
             :select-mode="batchMode"
@@ -554,6 +585,8 @@
         <div v-else class="file-list">
           <FileGrid
             v-if="viewMode === 'grid'"
+            :can-write="canWrite"
+            :can-share="canShare"
             :files="visibleFiles"
             :commit="browseCommit"
             :select-mode="batchMode"
@@ -581,6 +614,8 @@
           />
           <FileList
             v-else
+            :can-write="canWrite"
+            :can-share="canShare"
             :files="visibleFiles"
             :select-mode="batchMode"
             :selected-paths="selectedPaths"
@@ -761,7 +796,11 @@
       wide
       @close="showHistory = false"
     >
-      <VersionHistory v-if="selectedFile" :file-path="selectedFile.path" />
+      <VersionHistory
+        v-if="selectedFile"
+        :file-path="selectedFile.path"
+        :can-write="canWrite"
+      />
     </Modal>
 
     <!-- 分享对话框 -->
@@ -777,6 +816,7 @@
       :items="moveDialogItems"
       :initial-path="moveDialogInitialPath"
       :confirm-loading="moveDialogSubmitting"
+      :roots="isRestricted ? scopeRoots : []"
       @close="closeMoveDialog"
       @confirm="submitMoveDialog"
     />
@@ -900,6 +940,7 @@ import {
   IconKeyboard,
   IconStar,
   IconStarFilled,
+  IconLock,
 } from "@tabler/icons-vue";
 import { filesService, MAX_TRANSFER_PATHS } from "../../services/files.service";
 import { useFilesStore } from "../../stores/files.store";
@@ -955,6 +996,13 @@ import {
   type SortState,
 } from "../../utils/fileSort";
 import { buildSiblingPath, isSafeDirName } from "../../utils/filePaths";
+import {
+  firstScopeRoot,
+  isPathWithinRoots,
+  normalizeScopePath,
+  scopedParentPath,
+  sliceBreadcrumbsFromScopeRoot,
+} from "../../utils/sessionScope";
 
 const filesStore = useFilesStore();
 const appStore = useAppStore();
@@ -962,6 +1010,35 @@ const authStore = useAuthStore();
 const fileView = useFileViewStore();
 const { files, loading, error, currentPath, browseCommit } =
   storeToRefs(filesStore);
+
+/** 受限会话的目录范围与写权限（主密码会话恒为全量）。 */
+const isRestricted = computed(() => authStore.isRestricted);
+const scopeRoots = computed(() => authStore.scopeRoots);
+const canWrite = computed(() => authStore.canWrite);
+const canShare = computed(
+  () =>
+    authStore.features?.shareEnabled !== false &&
+    (!isRestricted.value || canWrite.value),
+);
+
+/** 面包屑隐藏范围根之上的入口。 */
+const visibleBreadcrumbs = computed(() =>
+  isRestricted.value
+    ? sliceBreadcrumbsFromScopeRoot(filesStore.breadcrumbs, scopeRoots.value)
+    : filesStore.breadcrumbs,
+);
+
+const scopeBadgeText = computed(() => {
+  const roots = scopeRoots.value.length
+    ? scopeRoots.value.join(", ")
+    : "受限目录";
+  return `受限访问：${roots}（${canWrite.value ? "可写" : "只读"}）`;
+});
+
+const scopeBadgeTitle = computed(() => {
+  const label = authStore.scope?.label;
+  return label ? `受限密码：${label}` : scopeBadgeText.value;
+});
 
 // 滚动位置记忆（r129 ✓ r137 合一式修正：保存/恢复单 watch（双 watch 触发疑云 ✗）
 // + 渲染双帧恢复（过早 clamp 到 0 ✗）+ loading 兜底）
@@ -1065,6 +1142,7 @@ const showUploader = ref(false);
 const uploaderPick = ref<"files" | "directory" | null>(null);
 
 function openUploader(pick: "files" | "directory" | null = null) {
+  if (!canWrite.value) return;
   uploaderPick.value = pick;
   showUploader.value = true;
 }
@@ -1110,6 +1188,7 @@ const transferDialogRef = ref<{ finish: () => void } | null>(null);
 
 /** 打开所有权转移对话框（支持单条与批量）。 */
 function openTransferDialog(items: FileInfo[]) {
+  if (isRestricted.value) return;
   const targets = items.filter((item) => item.path !== "");
   if (targets.length === 0) return;
   if (targets.length > MAX_TRANSFER_PATHS) {
@@ -1279,6 +1358,7 @@ const dropTargetLabel = computed(() =>
 );
 
 function queueDroppedFiles(files: File[]) {
+  if (!canWrite.value) return;
   showUploader.value = true;
   void nextTick().then(() => {
     fileUploaderRef.value?.addFiles(files);
@@ -1288,7 +1368,7 @@ function queueDroppedFiles(files: File[]) {
 
 const { dragging: externalDropActive } = useWindowFileDrop({
   onFiles: queueDroppedFiles,
-  enabled: () => !anyDialogOpen.value,
+  enabled: () => !anyDialogOpen.value && canWrite.value,
 });
 
 /** 代码/文本预览支持一键复制原文，复制结果在按钮上就地反馈。 */
@@ -1499,40 +1579,67 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
   const items: ContextMenuItem[] = [];
   // F 决策：菜单首项「选择」= 移动侧唯一进批量态入口（长按=既有菜单手势零冲突 ✓
   // 与桌面 Ctrl+A 对偶 ✗ 与「勾选即出操作条」语义接通）
-  items.push({ key: "select", label: "选择", icon: IconCheck });
+  if (canWrite.value) {
+    items.push({ key: "select", label: "选择", icon: IconCheck });
+  }
   if (isDirectory) {
     items.push({ key: "open", label: "打开", icon: IconFolderOpen, shortcut: "Enter" });
-    items.push({
-      key: "create-directory",
-      label: "在此新建子目录",
-      icon: IconFolderPlus,
-    });
+    if (canWrite.value) {
+      items.push({
+        key: "create-directory",
+        label: "在此新建子目录",
+        icon: IconFolderPlus,
+      });
+    }
   } else {
     items.push({ key: "preview", label: "预览", icon: IconEye });
     items.push({ key: "history", label: "历史版本", icon: IconHistory });
   }
-  const favorite = isFavorite(file);
   items.push({ key: "details", label: "详细信息", icon: IconInfoCircle });
-  items.push({
-    key: "favorite",
-    label: favorite ? "取消收藏" : "加入收藏",
-    icon: favorite ? IconStarFilled : IconStar,
-  });
-  items.push({ key: "rename", label: "重命名", icon: IconPencil, shortcut: "F2" });
-  items.push({ key: "move", label: "移动", icon: IconArrowsDiff });
-  items.push({
-    key: "transfer",
-    label: "转移所有权",
-    icon: IconUserShare,
-  });
+  if (canWrite.value) {
+    const favorite = isFavorite(file);
+    items.push({
+      key: "favorite",
+      label: favorite ? "取消收藏" : "加入收藏",
+      icon: favorite ? IconStarFilled : IconStar,
+    });
+    items.push({ key: "rename", label: "重命名", icon: IconPencil, shortcut: "F2" });
+    items.push({ key: "move", label: "移动", icon: IconArrowsDiff });
+  }
+  if (!isRestricted.value) {
+    items.push({
+      key: "transfer",
+      label: "转移所有权",
+      icon: IconUserShare,
+    });
+  }
   items.push({ key: "download", label: "下载", icon: IconDownload });
-  items.push({ key: "share", label: "分享", icon: IconShare });
-  items.push({ key: "delete", label: "删除", icon: IconTrash, danger: true, shortcut: "Del" });
+  if (canShare.value) {
+    items.push({ key: "share", label: "分享", icon: IconShare });
+  }
+  if (canWrite.value) {
+    items.push({ key: "delete", label: "删除", icon: IconTrash, danger: true, shortcut: "Del" });
+  }
   return items;
 });
 
+/** 受限会话进入时，范围外的路径（或空路径）回退到第一个范围根。 */
+function resolvedEntryPath(): string {
+  const current = normalizeScopePath(filesStore.currentPath);
+  if (!isRestricted.value) return current;
+  const roots = scopeRoots.value;
+  if (roots.length === 0) return current;
+  return isPathWithinRoots(current, roots)
+    ? current
+    : firstScopeRoot(roots);
+}
+
+function isNavigationAllowed(path: string): boolean {
+  return !isRestricted.value || isPathWithinRoots(path, scopeRoots.value);
+}
+
 onMounted(() => {
-  filesStore.loadFiles();
+  filesStore.loadFiles(resolvedEntryPath());
 
   const onDocPointer = (e: MouseEvent | TouchEvent) => {
     const target = e.target as Node | null;
@@ -1605,12 +1712,14 @@ onMounted(() => {
     const modifier = e.ctrlKey || e.metaKey;
     if (modifier && (e.key === "a" || e.key === "A")) {
       e.preventDefault();
+      if (!canWrite.value) return;
       if (!batchMode.value) batchMode.value = true;
       selectAllVisible();
       return;
     }
 
     if (e.key === "Delete" || e.key === "Backspace") {
+      if (!canWrite.value) return;
       if (selectedPaths.value.size > 0) {
         e.preventDefault();
         void batchDelete();
@@ -1675,6 +1784,7 @@ onMounted(() => {
     }
 
     if (e.key === "F2") {
+      if (!canWrite.value) return;
       if (selectedPaths.value.size === 1) {
         e.preventDefault();
         void renameSelected();
@@ -1737,10 +1847,18 @@ onBeforeUnmount(() => {
 });
 
 function navigateTo(path: string) {
+  const normalized = normalizeScopePath(path);
+  if (!isNavigationAllowed(normalized)) {
+    const root = firstScopeRoot(scopeRoots.value);
+    appStore.error("无权访问该目录");
+    if (!root || normalizeScopePath(currentPath.value) === root) return;
+    navigateTo(root);
+    return;
+  }
   stashScroll(currentPath.value);
-  pendingScrollRestore = scrollMemory.get(path) ?? null;
+  pendingScrollRestore = scrollMemory.get(normalized) ?? null;
   expandedFilePath.value = "";
-  filesStore.navigateTo(path);
+  filesStore.navigateTo(normalized);
   void nextTick().then(flushScrollRestore);
 }
 
@@ -1756,21 +1874,61 @@ function refresh() {
 }
 
 function goBack() {
+  if (parentPath.value == null) return;
   expandedFilePath.value = "";
-  filesStore.goBack();
+  navigateTo(parentPath.value);
 }
 
 function goRoot() {
-  navigateTo("");
+  navigateTo(isRestricted.value ? firstScopeRoot(scopeRoots.value) : "");
 }
 
 const parentPath = computed<string | null>(() => {
-  const cur = currentPath.value || "";
+  const cur = normalizeScopePath(currentPath.value);
+  if (!cur) return null;
+  if (isRestricted.value) {
+    return scopedParentPath(cur, scopeRoots.value);
+  }
   const parts = cur.split("/").filter(Boolean);
-  if (parts.length === 0) return null;
   parts.pop();
   return parts.join("/");
 });
+
+/**
+ * 403 = 当前目录在会话范围之外：提示后回到第一个范围根。
+ *
+ * 回退本身也会走一次请求；若范围根同样被拒（权限刚被撤销等），保留错误态
+ * 并提示，不再循环跳转（参考 useDirectoryHistory 的「失败不卡 loading」处理）。
+ */
+let handlingForbidden = false;
+watch(
+  () => filesStore.errorStatus,
+  (status) => {
+    if (status !== 403) return;
+    appStore.error("无权访问该目录");
+    if (!isRestricted.value || handlingForbidden) return;
+    const root = firstScopeRoot(scopeRoots.value);
+    if (!root || normalizeScopePath(filesStore.requestedPath) === root) return;
+    handlingForbidden = true;
+    navigateTo(root);
+    void nextTick().then(() => {
+      handlingForbidden = false;
+    });
+  },
+);
+
+// 会话范围在挂载后变化时（例如重新登录为受限会话），把范围外路径拉回范围根。
+watch(
+  [isRestricted, scopeRoots],
+  () => {
+    if (!isRestricted.value) return;
+    const roots = scopeRoots.value;
+    if (roots.length === 0) return;
+    if (isPathWithinRoots(currentPath.value, roots)) return;
+    navigateTo(firstScopeRoot(roots));
+  },
+  { deep: true },
+);
 
 function normalizeEntryName(
   rawName: string,
@@ -1861,6 +2019,7 @@ const desktopActivePath = ref("");
 watch(
   () => appStore.createDirectoryRequests,
   () => {
+    if (!canWrite.value) return;
     void createDirectoryHere();
   },
 );
@@ -2052,6 +2211,7 @@ function handleDownload(file: FileInfo) {
 }
 
 async function handleDelete(file: FileInfo) {
+  if (!canWrite.value) return;
   // 删除不可恢复（版本历史随条目级联删除），必须二次确认
   const isDirectory = file.kind === "directory";
   const ok = await confirmDialog({
@@ -2082,12 +2242,13 @@ async function handleDelete(file: FileInfo) {
 }
 
 async function handleCreateDirectory(file: FileInfo) {
-  if (file.kind !== "directory") return;
+  if (!canWrite.value || file.kind !== "directory") return;
   await promptCreateDirectory(file.path);
 }
 
 /** 在当前目录下新建文件夹（工具栏按钮 / 移动端入口）。 */
 async function createDirectoryHere() {
+  if (!canWrite.value) return;
   await promptCreateDirectory(currentPath.value || "");
 }
 
@@ -2099,6 +2260,7 @@ function quickLook() {
 
 /** 打开内联重命名（F2 / 右键菜单 / 行内按钮）；同时把该行设为活动行。 */
 function handleRenameEntry(file: FileInfo) {
+  if (!canWrite.value) return;
   desktopActivePath.value = file.path;
   renamingPath.value = file.path;
 }
@@ -2139,6 +2301,7 @@ function cancelRenameEntry() {
 }
 
 function handleMoveEntry(file: FileInfo) {
+  if (!canWrite.value) return;
   openMoveForEntry(file);
 }
 
@@ -2244,6 +2407,7 @@ function enterSearchResults() {
 }
 
 async function handleDropOnFolder(targetDir: string) {
+  if (!canWrite.value) return;
   const file = draggingFile.value;
   draggingFile.value = null;
   if (!file) return;
@@ -2262,6 +2426,7 @@ function handleViewHistory(file: FileInfo) {
 }
 
 function handleShare(file: FileInfo) {
+  if (!canShare.value) return;
   selectedFile.value = file;
   showShareDialog.value = true;
 }
@@ -2322,6 +2487,7 @@ function anyOverlayOpen(): boolean {
  * （与主流网盘一致：勾选即进入选择态，不必先点工具栏按钮）。
  */
 function handleRowSelect(file: FileInfo) {
+  if (!canWrite.value) return;
   toggleSelect(file);
 }
 
@@ -2522,6 +2688,7 @@ function handleTypeAhead(character: string): boolean {
 
 /** Space：切换活动行的选中态（主流文件列表都支持）。 */
 function toggleActiveRowSelection() {
+  if (!canWrite.value) return;
   const active = findActiveItem();
   if (!active) return;
   if (!batchMode.value) batchMode.value = true;
@@ -2575,6 +2742,7 @@ function handleContextMenuSelect(key: string) {
 
   switch (key) {
     case "select":
+      if (!canWrite.value) return;
       // F：进入批量选择态 + 勾中触发项（批量条与勾选槽随之出现 ✗ 167 出条条件）
       batchMode.value = true;
       if (!selectedPaths.value.has(file.path)) toggleSelect(file);
@@ -2583,6 +2751,7 @@ function handleContextMenuSelect(key: string) {
       openDetailsDialog(file);
       break;
     case "favorite":
+      if (!canWrite.value) return;
       void toggleFavorite(file);
       break;
     case "open":
@@ -2598,21 +2767,26 @@ function handleContextMenuSelect(key: string) {
       handleViewHistory(file);
       break;
     case "rename":
+      if (!canWrite.value) return;
       void handleRenameEntry(file);
       break;
     case "move":
+      if (!canWrite.value) return;
       handleMoveEntry(file);
       break;
     case "transfer":
+      if (isRestricted.value) return;
       openTransferDialog([file]);
       break;
     case "download":
       handleDownload(file);
       break;
     case "share":
+      if (!canShare.value) return;
       handleShare(file);
       break;
     case "delete":
+      if (!canWrite.value) return;
       void handleDelete(file);
       break;
   }
@@ -2696,8 +2870,31 @@ function handleSortChange(field: SortField) {
 }
 
 .breadcrumb-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
   padding: 0.85rem 1.1rem;
   border-bottom: 1px solid var(--vf-border-weak);
+}
+
+/* 受限会话的轻量范围徽标：让用户始终知道当前会话能看/能写哪里 */
+.scope-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+  max-width: 100%;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--vf-border);
+  border-radius: var(--vf-radius-pill);
+  background: var(--vf-surface-sunken);
+  color: var(--vf-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-browser-toolbar {

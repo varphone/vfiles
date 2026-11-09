@@ -36,6 +36,7 @@
 
           <nav class="move-dialog-crumbs" aria-label="目标目录">
             <button
+              v-if="!hasScopeRoots"
               class="move-dialog-crumb"
               :class="{ 'is-current': !browserPath }"
               type="button"
@@ -44,7 +45,7 @@
               <IconHome :size="14" />
               <span>根目录</span>
             </button>
-            <template v-for="crumb in breadcrumbs" :key="crumb.path">
+            <template v-for="crumb in visibleBreadcrumbs" :key="crumb.path">
               <span class="move-dialog-crumb-sep" aria-hidden="true">/</span>
               <button
                 class="move-dialog-crumb"
@@ -209,6 +210,13 @@ import {
   MAX_MOVE_BATCH_ITEMS,
 } from "../../services/files.service";
 import type { FileInfo } from "../../types";
+import {
+  firstScopeRoot,
+  isPathWithinRoots,
+  normalizeScopeRoots,
+  scopedParentPath,
+  sliceBreadcrumbsFromScopeRoot,
+} from "../../utils/sessionScope";
 
 type MoveDialogItem = Pick<FileInfo, "name" | "path" | "kind">;
 const DIRECTORY_PAGE_SIZE = 100;
@@ -224,12 +232,18 @@ const props = withDefaults(
     items: MoveDialogItem[];
     initialPath?: string;
     confirmLoading?: boolean;
+    /** 受限会话允许访问的范围根；非空时目标目录不能跳到范围之外。 */
+    roots?: string[];
   }>(),
   {
     initialPath: "",
     confirmLoading: false,
+    roots: () => [],
   },
 );
+
+const scopedRoots = computed(() => normalizeScopeRoots(props.roots));
+const hasScopeRoots = computed(() => scopedRoots.value.length > 0);
 
 const emit = defineEmits<{
   close: [];
@@ -265,8 +279,8 @@ const itemsLabel = computed(() => {
 });
 
 const targetLabel = computed(() =>
-  breadcrumbs.value.length
-    ? `「${breadcrumbs.value[breadcrumbs.value.length - 1]?.name}」`
+  visibleBreadcrumbs.value.length
+    ? `「${visibleBreadcrumbs.value[visibleBreadcrumbs.value.length - 1]?.name}」`
     : "根目录",
 );
 const confirmLabel = computed(() =>
@@ -293,6 +307,12 @@ const breadcrumbs = computed<BreadcrumbItem[]>(() => {
 
   return items;
 });
+
+const visibleBreadcrumbs = computed(() =>
+  hasScopeRoots.value
+    ? sliceBreadcrumbsFromScopeRoot(breadcrumbs.value, scopedRoots.value)
+    : breadcrumbs.value,
+);
 
 const validationMessages = computed(() => {
   if (loading.value) return [] as string[];
@@ -343,8 +363,13 @@ watch(
   () => [props.isActive, props.initialPath] as const,
   async ([isActive, initialPath]) => {
     if (!isActive) return;
-    browserPath.value = normalizePath(initialPath ?? "");
-    await loadDirectories(browserPath.value);
+    const requested = normalizePath(initialPath ?? "");
+    const initial =
+      hasScopeRoots.value && !isPathWithinRoots(requested, scopedRoots.value)
+        ? firstScopeRoot(scopedRoots.value)
+        : requested;
+    browserPath.value = initial;
+    await loadDirectories(initial);
   },
   { immediate: true },
 );
@@ -360,6 +385,12 @@ function normalizePath(rawPath: string): string {
 async function loadDirectories(path: string, offset = 0) {
   const requestId = ++directoryRequestId;
   const normalizedPath = normalizePath(path);
+  if (
+    hasScopeRoots.value &&
+    !isPathWithinRoots(normalizedPath, scopedRoots.value)
+  ) {
+    return;
+  }
   loading.value = true;
   error.value = "";
 
@@ -406,16 +437,27 @@ function directoryDisabledReason(path: string): string {
 async function openDirectory(path: string) {
   if (isDirectoryDisabled(path)) return;
   const nextPath = normalizePath(path);
+  if (hasScopeRoots.value && !isPathWithinRoots(nextPath, scopedRoots.value)) {
+    return;
+  }
   browserPath.value = nextPath;
   await loadDirectories(nextPath);
 }
 
 async function goRoot() {
-  await openDirectory("");
+  await openDirectory(
+    hasScopeRoots.value ? firstScopeRoot(scopedRoots.value) : "",
+  );
 }
 
 async function goUp() {
   if (!browserPath.value) return;
+  if (hasScopeRoots.value) {
+    const parent = scopedParentPath(browserPath.value, scopedRoots.value);
+    if (parent == null) return;
+    await openDirectory(parent);
+    return;
+  }
   const parts = browserPath.value.split("/").filter(Boolean);
   parts.pop();
   await openDirectory(parts.join("/"));

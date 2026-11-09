@@ -1,10 +1,11 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import {
   authService,
   type AuthUser,
   type SessionBootstrapPayload,
   type SessionFeatures,
+  type SessionScope,
 } from "../services/auth.service";
 
 export const useAuthStore = defineStore("auth", () => {
@@ -12,11 +13,41 @@ export const useAuthStore = defineStore("auth", () => {
   const enabled = ref<boolean>(false);
   const allowRegister = ref<boolean>(true);
   const user = ref<AuthUser | null>(null);
+  const scope = ref<SessionScope | null>(null);
   const capabilities = ref<string[]>([]);
   const activeWorkspace = ref<string | null>(null);
   const features = ref<SessionFeatures | null>(null);
   const loading = ref(false);
   const error = ref<string | null>(null);
+
+  /** 受限会话：主密码会话（或旧版后端未返回 scope）视为全量权限。 */
+  const isRestricted = computed(() => scope.value?.restricted === true);
+  const scopeRoots = computed(() =>
+    isRestricted.value ? (scope.value?.roots ?? []) : [],
+  );
+  const canWrite = computed(
+    () => !isRestricted.value || scope.value?.canWrite === true,
+  );
+
+  function applyScope(next: SessionScope | null | undefined): void {
+    if (!next || next.restricted !== true) {
+      scope.value = next
+        ? {
+            restricted: false,
+            label: next.label ?? null,
+            roots: [],
+            canWrite: true,
+          }
+        : null;
+      return;
+    }
+    scope.value = {
+      restricted: true,
+      label: next.label ?? null,
+      roots: Array.isArray(next.roots) ? [...next.roots] : [],
+      canWrite: next.canWrite === true,
+    };
+  }
 
   function applySessionBootstrap(
     bootstrap: SessionBootstrapPayload | null,
@@ -28,6 +59,7 @@ export const useAuthStore = defineStore("auth", () => {
 
   function clearSessionContext(): void {
     applySessionBootstrap(null);
+    scope.value = null;
   }
 
   async function syncSessionContext(): Promise<void> {
@@ -58,6 +90,7 @@ export const useAuthStore = defineStore("auth", () => {
         enabled.value = false;
         allowRegister.value = true;
         user.value = null;
+        applyScope(null);
         await syncSessionContext();
         return;
       }
@@ -65,6 +98,7 @@ export const useAuthStore = defineStore("auth", () => {
       enabled.value = true;
       allowRegister.value = Boolean((res.data as any)?.allowRegister);
       user.value = ((res.data as any)?.user as AuthUser | null) ?? null;
+      applyScope((res.data as any)?.scope as SessionScope | null | undefined);
       await syncSessionContext();
     } catch (e) {
       enabled.value = true;
@@ -86,6 +120,7 @@ export const useAuthStore = defineStore("auth", () => {
       // New Rust API returns login data directly
       enabled.value = true;
       user.value = (loginData as any)?.user ?? null;
+      applyScope((loginData as any)?.scope as SessionScope | null | undefined);
       // 标记登录成功时间，用于免疫期
       if (
         typeof window !== "undefined" &&
@@ -117,6 +152,7 @@ export const useAuthStore = defineStore("auth", () => {
       const loginData = await authService.login({ username, password });
       enabled.value = true;
       user.value = (loginData as any)?.user ?? null;
+      applyScope((loginData as any)?.scope as SessionScope | null | undefined);
       // 标记登录成功时间，用于免疫期
       if (
         typeof window !== "undefined" &&
@@ -156,6 +192,10 @@ export const useAuthStore = defineStore("auth", () => {
     enabled,
     allowRegister,
     user,
+    scope,
+    isRestricted,
+    scopeRoots,
+    canWrite,
     capabilities,
     activeWorkspace,
     features,

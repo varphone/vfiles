@@ -2,6 +2,7 @@
   <nav class="directory-tree" aria-label="目录树">
     <div class="directory-tree-scroll">
       <button
+        v-if="!hasScopedRoots"
         class="directory-tree-row is-root"
         :class="{ 'is-active': !currentPath }"
         type="button"
@@ -12,7 +13,9 @@
         <span class="directory-tree-name">全部文件</span>
       </button>
 
-      <div v-if="loadingRoot" class="directory-tree-hint">加载中...</div>
+      <div v-if="loadingRoot && !hasScopedRoots" class="directory-tree-hint">
+        加载中...
+      </div>
 
       <template v-else>
         <div
@@ -78,6 +81,11 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { IconChevronRight, IconFolder } from "@tabler/icons-vue";
 import { filesService } from "../../services/files.service";
+import {
+  isPathWithinRoots,
+  normalizeScopeRoots,
+  scopeRootLabel,
+} from "../../utils/sessionScope";
 
 /** 目录树里只展示目录，一次最多取这么多同级条目。 */
 const TREE_PAGE_SIZE = 200;
@@ -101,14 +109,30 @@ const props = withDefaults(
     dragging?: boolean;
     /** 每次数据变更（新建/删除/重命名/移动）后递增，用于刷新已加载的层级。 */
     refreshKey?: number;
+    /** 受限会话允许访问的范围根；非空时树从这些目录开始，不显示命名空间根。 */
+    roots?: string[];
+    /** 只读会话不提供拖放移动。 */
+    canWrite?: boolean;
   }>(),
-  { currentPath: "", dragging: false, refreshKey: 0 },
+  {
+    currentPath: "",
+    dragging: false,
+    refreshKey: 0,
+    roots: () => [],
+    canWrite: true,
+  },
 );
 
 const emit = defineEmits<{
   (e: "navigate", path: string): void;
   (e: "drop-on-folder", path: string): void;
 }>();
+
+const scopedRoots = computed(() => normalizeScopeRoots(props.roots));
+const hasScopedRoots = computed(() => scopedRoots.value.length > 0);
+const scopedRootRows = computed<TreeChild[]>(() =>
+  scopedRoots.value.map((path) => ({ path, name: scopeRootLabel(path) })),
+);
 
 /** 已加载的子目录（undefined 表示还没取过）。 */
 const children = ref<Record<string, TreeChild[]>>({});
@@ -171,7 +195,21 @@ const rows = computed<TreeRow[]>(() => {
       if (isExpanded) walk(child.path, depth + 1);
     }
   };
-  walk("", 0);
+
+  if (hasScopedRoots.value) {
+    for (const root of scopedRootRows.value) {
+      const isExpanded = expanded.value.has(root.path);
+      result.push({
+        ...root,
+        depth: 0,
+        expanded: isExpanded,
+        loading: loading.value.has(root.path),
+      });
+      if (isExpanded) walk(root.path, 1);
+    }
+  } else {
+    walk("", 0);
+  }
   return result;
 });
 
@@ -179,16 +217,21 @@ const rows = computed<TreeRow[]>(() => {
 function ancestorPaths(path: string): string[] {
   if (!path) return [];
   const parts = path.split("/").filter(Boolean);
-  return parts
+  const ancestors = parts
     .map((_, index) => parts.slice(0, index + 1).join("/"))
     .slice(0, -1);
+  if (!hasScopedRoots.value) return ancestors;
+  return ancestors.filter((ancestor) =>
+    isPathWithinRoots(ancestor, scopedRoots.value),
+  );
 }
 
 /** 展开到当前目录：逐级加载祖先，保证深层目录在树里可见。 */
 async function revealCurrentPath(path: string) {
+  if (!isPathWithinRoots(path, hasScopedRoots.value ? scopedRoots.value : [])) {
+    return;
+  }
   const ancestors = ancestorPaths(path);
-  if (ancestors.length === 0) return;
-
   let changed = false;
   const next = new Set(expanded.value);
   for (const ancestor of ancestors) {
@@ -199,12 +242,20 @@ async function revealCurrentPath(path: string) {
   }
   if (changed) expanded.value = next;
 
-  for (const ancestor of ["", ...ancestors]) {
-    await loadChildren(ancestor);
+  const rootsToLoad = hasScopedRoots.value ? scopedRoots.value : [""];
+  for (const parent of [...rootsToLoad, ...ancestors]) {
+    await loadChildren(parent);
   }
 }
 
 onMounted(() => {
+  if (hasScopedRoots.value) {
+    loadingRoot.value = false;
+    void Promise.all(
+      scopedRoots.value.map((root) => loadChildren(root)),
+    ).then(() => revealCurrentPath(props.currentPath));
+    return;
+  }
   void loadChildren("").then(() => revealCurrentPath(props.currentPath));
 });
 
@@ -216,7 +267,13 @@ onMounted(() => {
  * 保留展开状态，不会把用户展开的树折叠回去。
  */
 async function refreshLoadedLevels() {
-  await loadChildren("", { force: true });
+  if (hasScopedRoots.value) {
+    await Promise.all(
+      scopedRoots.value.map((root) => loadChildren(root, { force: true })),
+    );
+  } else {
+    await loadChildren("", { force: true });
+  }
 
   // 已展开的层级（含当前目录的祖先）重新拉取
   const paths = new Set<string>([
@@ -244,8 +301,20 @@ watch(
   },
 );
 
+watch(
+  () => normalizeScopeRoots(props.roots),
+  (roots) => {
+    // 会话范围变化（例如重新登录为受限/全量会话）时重新加载根部目录。
+    const rootPaths = roots.length > 0 ? roots : [""];
+    void Promise.all(
+      rootPaths.map((root) => loadChildren(root, { force: true })),
+    ).then(() => revealCurrentPath(props.currentPath));
+  },
+  { deep: true },
+);
+
 function onDragOver(path: string) {
-  if (!props.dragging) return;
+  if (!props.dragging || !props.canWrite) return;
   dragOverPath.value = path;
 }
 
@@ -257,7 +326,7 @@ const dropFlashPath = ref("");
 
 function onDrop(path: string) {
   dragOverPath.value = "";
-  if (!props.dragging) return;
+  if (!props.dragging || !props.canWrite) return;
   emit("drop-on-folder", path);
   // 落子回执：目标节点短暂高亮
   dropFlashPath.value = path;
