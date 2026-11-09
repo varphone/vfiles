@@ -335,3 +335,36 @@
 .settings-content > * {
   padding: 0.75rem 0.85rem 0.85rem;
 }
+
+/* 侧栏分组标题与目录树缩进：Seafile 的分组标题更小更淡，条目与标题左对齐 */
+.browser-sidebar-label {
+  padding: 0.55rem 0.75rem 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.directory-tree-row,
+.browser-nav-item {
+  margin: 0 0.4rem;
+  padding-left: 0.5rem;
+}
+
+.browser-nav {
+  padding: 0.5rem 0.25rem;
+}
+
+/* 管理台表头与文件列表表头统一高度/字号 */
+.admin-table thead th {
+  height: 40px;
+  padding: 0 0.75rem;
+  background: var(--vf-table-head);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--vf-text-muted);
+}
+
+.admin-table tbody td {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8125rem;
+}
