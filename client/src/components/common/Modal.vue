@@ -148,6 +148,12 @@ function close() {
   max-height: 90vh;
   display: flex;
   flex-direction: column;
+  /* 圆角由卡片自身持有：头部/底栏不再各自画圆角，否则内层 14px 与外层 6px
+     不一致，四角会出现错位的弧线和双层边框。 */
+  border: 1px solid var(--vf-border-weak);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 8px 28px rgba(16, 24, 40, 0.16);
 }
 
 .modal-card-head {
@@ -156,8 +162,8 @@ function close() {
   align-items: center;
   gap: 0;
   /* 覆盖 Bulma 默认（32px 内边距 / 12px 圆角）：对齐对话框家族节奏 */
-  padding: 1.25rem 1.5rem;
-  border-radius: var(--vf-radius-lg) var(--vf-radius-lg) 0 0;
+  padding: 0.9rem 1.1rem;
+  border-radius: 0;
 }
 
 .modal-card-title {
@@ -182,6 +188,7 @@ function close() {
 
 .modal-card-foot {
   justify-content: flex-end;
+  border-radius: 0;
   /* Bulma 的 modal 组件只挑了布局部分，按钮间距规则没进来，默认两个按钮会贴在一起 */
   gap: 0.5rem;
   flex-wrap: wrap;

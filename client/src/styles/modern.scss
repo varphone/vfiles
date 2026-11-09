@@ -79,16 +79,9 @@
   border-bottom: 0;
 }
 
-/* 卡片与浮层：Seafile 式扁平处理（小圆角 + 细边框 + 极浅阴影）。 */
-.modal-card {
-  border: 1px solid var(--vf-border-weak);
-  border-radius: 6px;
-  box-shadow: 0 8px 28px rgba(16, 24, 40, 0.16);
-  overflow: hidden;
-}
-
+/* 卡片与浮层：Seafile 式扁平处理。圆角/边框/内边距由 Modal.vue 自己持有，
+   这里只补颜色，避免两处各写一套圆角导致内层弧线露出。 */
 .modal-card-head {
-  padding: 0.85rem 1.1rem;
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface);
 }
@@ -107,6 +100,8 @@
   padding: 0.75rem 1.1rem;
   border-top: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-2);
+  border-bottom-left-radius: inherit;
+  border-bottom-right-radius: inherit;
 }
 
 .dropdown-content {

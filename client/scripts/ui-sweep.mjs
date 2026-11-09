@@ -202,6 +202,18 @@ async function main() {
     await page.waitForTimeout(900);
     await snap(page, `${theme}-2-list`);
 
+    // 对话框圆角/边框（桌面）：新建文件夹
+    try {
+      await page.locator('button:has-text("新建文件夹")').first().click();
+      await page.waitForSelector(".modal-card", { timeout: 5000 });
+      await page.waitForTimeout(400);
+      await snap(page, `${theme}-20-dialog`);
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(300);
+    } catch (e) {
+      console.log(`[ui-sweep] ✗ 对话框（${theme}）: ${String(e).slice(0, 80)}`);
+    }
+
     // 资料库卡片首页（根目录）
     const pc = await (
       await browser.newContext({ viewport: { width: 1440, height: 900 } })
