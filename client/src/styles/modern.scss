@@ -295,3 +295,43 @@
   font-size: 0.8125rem;
   font-weight: 500;
 }
+
+/* 管理台与设置页密度：Seafile 的卡片内边距更小、区块间距更紧 */
+.admin-main-inner {
+  padding: 1.15rem 1.25rem 2.5rem;
+  gap: 0.9rem;
+}
+
+.vf-page-header {
+  padding-bottom: 0.7rem;
+}
+
+.vf-page-header-title {
+  font-size: 1.1rem;
+}
+
+.vf-page-header-desc {
+  font-size: 0.78rem;
+  margin-top: 0.2rem;
+}
+
+.vf-card-head {
+  padding: 0.7rem 0.9rem 0.55rem;
+}
+
+.vf-card-body {
+  padding: 0 0.9rem 0.85rem;
+}
+
+.admin-facts > div,
+.admin-protocol {
+  padding-bottom: 0.4rem;
+}
+
+.admin-activity-item {
+  padding: 0.5rem 0.9rem;
+}
+
+.settings-content > * {
+  padding: 0.75rem 0.85rem 0.85rem;
+}
