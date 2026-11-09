@@ -3,6 +3,7 @@ import { fetchWithRetry } from "./fetch-retry";
 import { extractErrorPayload, localizeApiError } from "../utils/apiErrors";
 import type {
   AccessTokenPage,
+  AuditLogEntry,
   AuditLogPage,
   AuditLogQueryParams,
   AuditLogSummary,
@@ -455,6 +456,50 @@ export const filesService = {
   },
 
   /** 侧栏聚合：条目统计 + 最近文件。 */
+  /** 最近修改的文件（Nextcloud「最近」视图，`GET /api/files/recent`）。 */
+  async getRecentFiles(limit = 50): Promise<FileInfo[]> {
+    const response = await apiService.get<unknown>("/files/recent", { limit });
+    const payload = (response as any)?.data ?? response;
+    if (!Array.isArray(payload)) return [];
+    return payload.map((row: any) => ({
+      id: String(row.path ?? row.name ?? ""),
+      name: String(row.name ?? ""),
+      path: String(row.path ?? ""),
+      kind: "file" as const,
+      size_bytes: Number(row.size_bytes ?? 0),
+      mime_type: row.mime_type ?? undefined,
+      created_at: String(row.updated_at ?? ""),
+      updated_at: String(row.updated_at ?? ""),
+    })) as FileInfo[];
+  },
+
+  /** 个人活动流（`GET /api/activity`）。 */
+  async getActivity(
+    params: {
+      filter?: "all" | "mine" | "files";
+      limit?: number;
+      offset?: number;
+      since?: string;
+    } = {},
+  ): Promise<{ items: AuditLogEntry[]; total: number }> {
+    const response = await apiService.get<unknown>("/activity", {
+      filter: params.filter,
+      limit: params.limit,
+      offset: params.offset,
+      since: params.since,
+    });
+    const payload = (response as any)?.data ?? response;
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    return { items, total: Number(payload?.total ?? items.length) };
+  },
+
+  /** 已分享条目的路径集合（列表「已共享」徽标，`GET /api/share/entries`）。 */
+  async getSharedPaths(): Promise<string[]> {
+    const response = await apiService.get<unknown>("/share/entries");
+    const payload = (response as any)?.data ?? response;
+    return Array.isArray(payload) ? payload.map((value) => String(value)) : [];
+  },
+
   async getOverview(): Promise<WorkspaceOverview> {
     const response = await apiService.get<WorkspaceOverview>("/files/overview");
     // 该接口直接返回 DTO（没有 { success, data } 包裹），两种形态都兼容
