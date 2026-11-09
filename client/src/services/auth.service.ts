@@ -65,6 +65,17 @@ export interface AdminUserCapabilities {
   canRevokeSessions: boolean;
 }
 
+/** 管理台用户列表查询参数（服务端过滤/排序/分页）。 */
+export interface AdminUsersQuery {
+  q?: string;
+  role?: UserRole | "";
+  status?: "active" | "disabled" | "";
+  page?: number;
+  pageSize?: number;
+  sort?: "created_at" | "username" | "role" | "last_login" | "status";
+  order?: "asc" | "desc";
+}
+
 export interface AdminUsersPayload {
   users: AdminUser[];
   capabilities: AdminUserCapabilities;
@@ -517,9 +528,22 @@ class AuthService {
     }
   }
 
-  async listUsers(): Promise<ApiResponse<AdminUsersPayload>> {
+  async listUsers(
+    query: AdminUsersQuery = {},
+  ): Promise<ApiResponse<AdminUsersPayload>> {
     try {
-      const response = await apiService.get<unknown>("/admin/users");
+      const params: Record<string, unknown> = {};
+      if (query.q) params.q = query.q;
+      if (query.role) params.role = query.role;
+      if (query.status) params.status = query.status;
+      if (query.page) params.page = query.page;
+      if (query.pageSize) params.page_size = query.pageSize;
+      if (query.sort) params.sort = query.sort;
+      if (query.order) params.order = query.order;
+      const response = await apiService.get<unknown>(
+        "/admin/users",
+        Object.keys(params).length > 0 ? params : undefined,
+      );
 
       if (isWrappedApiResponse<{ users: AdminUser[] }>(response)) {
         return normalizeWrappedAdminUsers(response);
@@ -529,6 +553,9 @@ class AuthService {
         return toSuccessResponse({
           users: response.users.map(normalizeAdminUser),
           capabilities: RUST_ADMIN_CAPABILITIES,
+          total_count: response.total_count,
+          page: response.page,
+          page_size: response.page_size,
         });
       }
 

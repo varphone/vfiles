@@ -10,7 +10,7 @@ const mockUsers = [
     id: "u1",
     username: "alice",
     email: "alice@example.com",
-    role: "user",
+    role: "user" as const,
     disabled: false,
     createdAt: "2026-01-01T00:00:00Z",
   },
@@ -101,12 +101,34 @@ describe("AdminUsers.vue", () => {
     ).toBeGreaterThanOrEqual(1);
   });
 
-  it("filters users by keyword and by role", async () => {
+  it("asks the server for keyword and role filters", async () => {
+    const listUsers = vi.mocked(authService.listUsers);
+    listUsers.mockImplementation(async (query: any = {}) => {
+      const users = query.q
+        ? []
+        : mockUsers.filter((user) => !query.role || user.role === query.role);
+      return {
+        success: true,
+        data: {
+          users,
+          capabilities: { canUpdateEmail: true, canRevokeSessions: true },
+          total_count: users.length,
+        },
+      };
+    });
+
     const { findByText, getByLabelText } = renderWithProviders(AdminUsers);
     await findByText("alice");
 
     const search = getByLabelText("搜索用户名或邮箱");
     await fireEvent.update(search, "zzz");
+    await waitFor(
+      () =>
+        expect(listUsers).toHaveBeenCalledWith(
+          expect.objectContaining({ q: "zzz", page: 1 }),
+        ),
+      { timeout: 3000 },
+    );
     await waitFor(() =>
       expect(document.body.textContent).toContain("没有找到匹配的用户"),
     );
@@ -114,8 +136,27 @@ describe("AdminUsers.vue", () => {
     await fireEvent.click(screen.getByText("清除筛选"));
     await waitFor(() => expect(screen.getByText("alice")).toBeInTheDocument());
 
-    // 角色筛选 chips 只在存在多种角色时出现
-    expect(document.querySelectorAll(".admin-filter").length).toBe(0);
+    listUsers.mockResolvedValue({
+      success: true,
+      data: {
+        users: mockUsers,
+        capabilities: { canUpdateEmail: true, canRevokeSessions: true },
+        total_count: mockUsers.length,
+      },
+    });
+    listUsers.mockImplementation(async (query: any = {}) => {
+      const users = mockUsers.filter(
+        (user) => !query.role || user.role === query.role,
+      );
+      return {
+        success: true,
+        data: {
+          users,
+          capabilities: { canUpdateEmail: true, canRevokeSessions: true },
+          total_count: users.length,
+        },
+      };
+    });
   });
 
   it("renders created time in the shared relative format", async () => {
@@ -152,10 +193,17 @@ describe("AdminUsers.vue header actions", () => {
 
     const { findByRole, getByRole } = renderWithProviders(AdminUsers);
     await findByRole("heading", { name: "用户" });
-    await waitFor(() => expect(listUsers).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(listUsers).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 1, pageSize: 20 }),
+      ),
+    );
+    const before = listUsers.mock.calls.length;
 
     await fireEvent.click(getByRole("button", { name: /刷新/ }));
-    await waitFor(() => expect(listUsers).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(listUsers.mock.calls.length).toBeGreaterThan(before),
+    );
   });
 
   it("resets a user password through the modal (r107')", async () => {

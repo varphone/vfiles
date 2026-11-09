@@ -13,6 +13,7 @@
               type="search"
               placeholder="搜索用户名或邮箱"
               aria-label="搜索用户名或邮箱"
+              @input="onSearchInput"
             />
             <button
               v-if="searchQuery"
@@ -20,7 +21,7 @@
               type="button"
               title="清空搜索"
               aria-label="清空搜索"
-              @click="searchQuery = ''"
+              @click="onClearSearch"
             >
               <IconX :size="14" />
             </button>
@@ -43,10 +44,10 @@
           :class="{ 'is-active': roleFilter === 'all' }"
           type="button"
           :aria-pressed="roleFilter === 'all' ? 'true' : 'false'"
-          @click="roleFilter = 'all'"
+          @click="setRoleFilter('all')"
         >
           <span>全部</span>
-          <span class="admin-filter-count">{{ users.length }}</span>
+          <span class="admin-filter-count">{{ allCount }}</span>
         </button>
         <button
           v-for="bucket in roleBuckets"
@@ -55,7 +56,7 @@
           :class="{ 'is-active': roleFilter === bucket.role }"
           type="button"
           :aria-pressed="roleFilter === bucket.role ? 'true' : 'false'"
-          @click="roleFilter = bucket.role"
+          @click="setRoleFilter(bucket.role)"
         >
           <span>{{ bucket.label }}</span>
           <span class="admin-filter-count">{{ bucket.count }}</span>
@@ -89,14 +90,7 @@
       />
 
       <EmptyState
-        v-else-if="users.length === 0"
-        :icon="IconUsers"
-        title="暂无用户"
-        hint="创建用户后会在这里显示"
-      />
-
-      <EmptyState
-        v-else-if="filteredUsers.length === 0"
+        v-else-if="users.length === 0 && activeFilterCount > 0"
         :icon="IconSearch"
         title="没有找到匹配的用户"
         hint="换个关键字，或清除角色筛选"
@@ -107,6 +101,13 @@
           </button>
         </template>
       </EmptyState>
+
+      <EmptyState
+        v-else-if="users.length === 0"
+        :icon="IconUsers"
+        title="暂无用户"
+        hint="创建用户后会在这里显示"
+      />
 
       <div v-else class="admin-table-wrap">
         <table class="table is-fullwidth is-hoverable admin-table">
@@ -140,7 +141,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="u in sortedUsers" :key="u.id">
+            <tr v-for="u in users" :key="u.id">
               <td>
                 <div class="admin-user">
                   <span class="admin-avatar" aria-hidden="true">
@@ -301,6 +302,30 @@
           </tbody>
         </table>
       </div>
+
+      <footer v-if="pageCount > 1" class="admin-pager">
+        <span class="admin-pager-info">
+          第 {{ page }} / {{ pageCount }} 页 · 共 {{ totalCount }} 位
+        </span>
+        <div class="admin-pager-actions">
+          <button
+            class="vf-ghost-button"
+            type="button"
+            :disabled="loading || page <= 1"
+            @click="goPage(page - 1)"
+          >
+            上一页
+          </button>
+          <button
+            class="vf-ghost-button"
+            type="button"
+            :disabled="loading || page >= pageCount"
+            @click="goPage(page + 1)"
+          >
+            下一页
+          </button>
+        </div>
+      </footer>
   </AdminLayout>
   <!-- r107'：重置密码 Modal（一次输入 ✓ 语义：新密码即时生效） -->
   <Modal :show="!!resetTarget" title="重置密码" @close="resetTarget = null">
@@ -358,8 +383,13 @@ import { formatRelativeDate } from "../utils/filePresentation";
 const app = useAppStore();
 const auth = useAuthStore();
 
-// 表头排序（r118 ✓ 主流管理表标配 ✓ FileList 同式）
+// 表头排序（r118 ✓ 主流管理表标配 ✓ 服务端白名单排序）
 type AdminSortField = "username" | "role" | "createdAt";
+const SORT_PARAM: Record<AdminSortField, "username" | "role" | "created_at"> = {
+  username: "username",
+  role: "role",
+  createdAt: "created_at",
+};
 const sortField = ref<AdminSortField>("createdAt");
 const sortDirection = ref<"asc" | "desc">("desc");
 
@@ -370,6 +400,8 @@ function toggleSort(field: AdminSortField) {
     sortField.value = field;
     sortDirection.value = "asc";
   }
+  page.value = 1;
+  void reload();
 }
 
 function ariaSortFor(field: AdminSortField) {
@@ -377,15 +409,14 @@ function ariaSortFor(field: AdminSortField) {
   return sortDirection.value === "asc" ? "ascending" : "descending";
 }
 
-const sortedUsers = computed(() => {
-  const list = [...filteredUsers.value];
-  const dir = sortDirection.value === "asc" ? 1 : -1;
-  return list.sort((a, b) => {
-    const va = String(a[sortField.value] ?? "");
-    const vb = String(b[sortField.value] ?? "");
-    return va.localeCompare(vb, "zh-Hans-CN") * dir;
-  });
-});
+const PAGE_SIZE = 20;
+const page = ref(1);
+const totalCount = ref(0);
+const roleCounts = ref<Record<string, number>>({});
+
+const pageCount = computed(() =>
+  Math.max(1, Math.ceil(totalCount.value / PAGE_SIZE)),
+);
 const users = ref<AdminUser[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -420,37 +451,50 @@ const unsupportedActionsMessage = computed(() => {
     : null;
 });
 
-/** 关键字匹配用户名/邮箱/角色中文名，便于快速定位。 */
-const filteredUsers = computed(() => {
-  const query = searchQuery.value.toLowerCase();
-  return users.value.filter((user) => {
-    if (roleFilter.value !== "all" && user.role !== roleFilter.value) {
-      return false;
-    }
-    if (!query) return true;
-    return (
-      user.username.toLowerCase().includes(query) ||
-      (user.email ?? "").toLowerCase().includes(query) ||
-      (ROLE_LABELS[user.role] ?? "").includes(searchQuery.value)
-    );
-  });
-});
-
-/** 角色筛选 chips：只显示实际存在的角色。 */
+/** 角色筛选 chips：计数来自服务端，随关键词变化。 */
 const roleBuckets = computed(() => {
   const order: AdminUser["role"][] = ["admin", "manager", "user"];
   return order
     .map((role) => ({
       role,
       label: ROLE_LABELS[role] ?? role,
-      count: users.value.filter((user) => user.role === role).length,
+      count: roleCounts.value[role] ?? 0,
     }))
     .filter((bucket) => bucket.count > 0);
 });
 
+const allCount = computed(() =>
+  Object.values(roleCounts.value).reduce((sum, value) => sum + value, 0),
+);
+
 function clearFilters() {
   searchQuery.value = "";
   roleFilter.value = "all";
+  page.value = 1;
+  void reload();
+}
+
+function setRoleFilter(role: "all" | AdminUser["role"]) {
+  roleFilter.value = role;
+  page.value = 1;
+  void reload();
+}
+
+function goPage(next: number) {
+  const target = Math.min(Math.max(next, 1), pageCount.value);
+  if (target === page.value) return;
+  page.value = target;
+  void reload();
+}
+
+/** 搜索防抖：输入停顿后再请求，避免逐字打满服务端。 */
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+function onSearchInput() {
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    page.value = 1;
+    void reload();
+  }, 300);
 }
 
 function canManageUser(user: AdminUser): boolean {
@@ -494,7 +538,14 @@ async function reload() {
   loading.value = true;
   error.value = null;
   try {
-    const res = await authService.listUsers();
+    const res = await authService.listUsers({
+      q: searchQuery.value.trim() || undefined,
+      role: roleFilter.value === "all" ? undefined : roleFilter.value,
+      page: page.value,
+      pageSize: PAGE_SIZE,
+      sort: SORT_PARAM[sortField.value],
+      order: sortDirection.value,
+    });
     if (!res.success) {
       error.value = res.error || "加载失败";
       users.value = [];
@@ -502,10 +553,12 @@ async function reload() {
       return;
     }
     users.value = res.data?.users ?? [];
+    totalCount.value = res.data?.total_count ?? users.value.length;
     capabilities.value = res.data?.capabilities ?? { ...defaultCapabilities };
     emailDraft.value = Object.fromEntries(
       users.value.map((u) => [u.id, u.email || ""]),
     );
+    void refreshRoleCounts();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "加载失败";
     users.value = [];
@@ -513,6 +566,40 @@ async function reload() {
     capabilities.value = { ...defaultCapabilities };
   } finally {
     loading.value = false;
+  }
+}
+
+const activeFilterCount = computed(
+  () =>
+    (searchQuery.value.trim() ? 1 : 0) + (roleFilter.value === "all" ? 0 : 1),
+);
+
+function onClearSearch() {
+  searchQuery.value = "";
+  page.value = 1;
+  void reload();
+}
+
+/** 角色 chip 计数：按当前关键词分别取每个角色的总数（每页 1 条即可）。 */
+async function refreshRoleCounts() {
+  const q = searchQuery.value.trim() || undefined;
+  const roles: AdminUser["role"][] = ["admin", "manager", "user"];
+  try {
+    const results = await Promise.all(
+      roles.map((role) =>
+        authService.listUsers({ q, role, page: 1, pageSize: 1 }),
+      ),
+    );
+    const counts: Record<string, number> = {};
+    roles.forEach((role, index) => {
+      const result = results[index];
+      counts[role] = result.success
+        ? (result.data?.total_count ?? result.data?.users.length ?? 0)
+        : 0;
+    });
+    roleCounts.value = counts;
+  } catch {
+    // 计数失败不影响列表本身
   }
 }
 
@@ -713,6 +800,28 @@ onMounted(() => {
   background: var(--vf-warning-soft);
   color: var(--vf-text);
   font-size: 0.8rem;
+}
+
+.admin-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--vf-border-weak);
+}
+
+.admin-pager-info {
+  font-size: 0.78rem;
+  color: var(--vf-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-pager-actions {
+  display: flex;
+  gap: 0.4rem;
 }
 
 .admin-table-wrap {
