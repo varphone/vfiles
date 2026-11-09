@@ -25,243 +25,257 @@
     @dragleave="handleDragLeave"
     @drop.prevent="handleDrop"
   >
-    <td class="is-narrow">
-      <div class="is-flex is-align-items-center">
-        <!-- 复选框槽位常驻（opacity 显隐）：显隐切换不得引起行内位移
-             （曾致物理双击第二击落空 = 双击打开目录失效） -->
-        <label
-          class="mr-2 desktop-row-check"
-          :class="{ 'is-visible': selectMode || selected }"
-          @click.stop
-          @dblclick.stop
-        >
-          <input
-            type="checkbox"
-            :checked="selected"
-            @change="toggleSelected"
-            :aria-label="`选择 ${file.name}`"
-            :tabindex="selectMode || selected ? 0 : -1"
-          />
-        </label>
+    <td class="is-narrow desktop-check-cell">
+      <!-- 复选框槽位常驻（opacity 显隐）：显隐切换不得引起行内位移
+           （曾致物理双击第二击落空 = 双击打开目录失效） -->
+      <label
+        class="desktop-row-check"
+        :class="{ 'is-visible': selectMode || selected }"
+        @click.stop
+        @dblclick.stop
+      >
+        <input
+          type="checkbox"
+          :checked="selected"
+          @change="toggleSelected"
+          :aria-label="`选择 ${file.name}`"
+          :tabindex="selectMode || selected ? 0 : -1"
+        />
+      </label>
+    </td>
 
-        <span class="icon mr-2">
-          <FileTypeIcon :file="file" :size="18" :stroke-width="1.7" />
+    <td class="desktop-name-cell">
+      <div class="desktop-name-wrap">
+        <div class="desktop-name-main">
+          <!-- 彩色类型图标属于名称列：复选框列只放选择控件 -->
+          <span class="desktop-name-icon" aria-hidden="true">
+            <FileTypeIcon :file="file" :size="18" :stroke-width="1.7" />
+          </span>
+
+          <input
+            v-if="renaming"
+            :ref="registerRenameInput"
+            v-model="renameDraft"
+            class="input is-small rename-input"
+            type="text"
+            :aria-label="`重命名 ${file.name}`"
+            @click.stop
+            @dblclick.stop
+            @keydown.enter.prevent.stop="commitRename"
+            @keydown.esc.prevent.stop="cancelRename"
+            @keydown.stop
+            @blur="onRenameBlur"
+          />
+          <a
+            v-else-if="isNameLink"
+            href="#"
+            class="desktop-name-text desktop-name-link"
+            :class="nameTextClass"
+            :title="file.name"
+            @click.stop.prevent="activateNameLink"
+          >
+            <template v-for="(seg, i) in nameSegments" :key="i">
+              <mark v-if="seg.match" class="has-background-warning-light">{{
+                seg.text
+              }}</mark>
+              <span v-else>{{ seg.text }}</span>
+            </template>
+          </a>
+          <span
+            v-else-if="!renaming"
+            class="desktop-name-text"
+            :class="nameTextClass"
+            :title="file.name"
+          >
+            <template v-for="(seg, i) in nameSegments" :key="i">
+              <mark v-if="seg.match" class="has-background-warning-light">{{
+                seg.text
+              }}</mark>
+              <span v-else>{{ seg.text }}</span>
+            </template>
+          </span>
+
+          <!-- 已共享标记内联在文件名右侧（Nextcloud 式：灰色小字 + 类型图标） -->
+          <span v-if="shared" class="desktop-shared-inline" title="已共享">
+            <span class="desktop-shared-label">Shared</span>
+            <IconLink
+              v-if="sharedPublic"
+              :size="15"
+              class="desktop-shared-icon"
+              aria-hidden="true"
+            />
+            <IconUsers
+              v-else
+              :size="15"
+              class="desktop-shared-icon"
+              aria-hidden="true"
+            />
+          </span>
+
+          <!-- 拖放目标提示：明确"移动到哪里"（文件名与该行相同，提示补充动作语义） -->
+          <span v-if="dragOver" class="desktop-drop-hint" aria-hidden="true">
+            移动到「{{ file.name }}」
+          </span>
+        </div>
+
+        <span
+          v-if="showLocation && locationLabel"
+          class="desktop-name-location"
+          :title="locationLabel"
+        >
+          <IconFolder :size="14" />
+          <span class="desktop-name-location-text">{{ locationLabel }}</span>
         </span>
       </div>
     </td>
 
-    <td class="desktop-name-cell">
-      <input
-        v-if="renaming"
-        :ref="registerRenameInput"
-        v-model="renameDraft"
-        class="input is-small rename-input"
-        type="text"
-        :aria-label="`重命名 ${file.name}`"
-        @click.stop
-        @dblclick.stop
-        @keydown.enter.prevent.stop="commitRename"
-        @keydown.esc.prevent.stop="cancelRename"
-        @keydown.stop
-        @blur="onRenameBlur"
-      />
-      <a
-        v-else-if="isNameLink"
-        href="#"
-        class="desktop-name-text desktop-name-link"
-        :class="nameTextClass"
-        :title="file.name"
-        @click.stop.prevent="activateNameLink"
-      >
-        <template v-for="(seg, i) in nameSegments" :key="i">
-          <mark v-if="seg.match" class="has-background-warning-light">{{
-            seg.text
-          }}</mark>
-          <span v-else>{{ seg.text }}</span>
-        </template>
-      </a>
-      <span
-        v-else-if="!renaming"
-        class="desktop-name-text"
-        :class="nameTextClass"
-        :title="file.name"
-      >
-        <template v-for="(seg, i) in nameSegments" :key="i">
-          <mark v-if="seg.match" class="has-background-warning-light">{{
-            seg.text
-          }}</mark>
-          <span v-else>{{ seg.text }}</span>
-        </template>
-      </span>
-
-      <!-- 拖放目标提示：明确"移动到哪里"（文件名与该行相同，提示补充动作语义） -->
-      <span v-if="dragOver" class="desktop-drop-hint" aria-hidden="true">
-        移动到「{{ file.name }}」
-      </span>
-
-      <span
-        v-if="showLocation && locationLabel"
-        class="desktop-name-location"
-        :title="locationLabel"
-      >
-        <IconFolder :size="14" />
-        <span class="desktop-name-location-text">{{ locationLabel }}</span>
-      </span>
-
-      <!-- 行内操作入口：hover / 选中 / 触屏常驻，菜单与右键菜单一致 -->
-      <button
-        ref="rowMenuButton"
-        class="vf-icon-button desktop-row-menu"
-        type="button"
-        :aria-label="`${file.name} 的操作`"
-        :aria-haspopup="true"
-        :aria-expanded="menuOpen ? 'true' : 'false'"
-        title="更多操作"
-        @click.stop.prevent="openRowMenu"
-        @dblclick.stop
-      >
-        <IconDots :size="16" />
-      </button>
+    <td class="is-narrow has-text-right desktop-file-size">
+      {{ desktopFileSizeLabel }}
     </td>
-
-    <td class="is-narrow desktop-file-shared">
-      <span v-if="shared" class="desktop-shared-badge" title="已共享">
-        <IconLink :size="13" aria-hidden="true" />
-        <span>已共享</span>
-      </span>
-    </td>
-
-    <td class="is-narrow has-text-right">{{ desktopFileSizeLabel }}</td>
 
     <td class="is-narrow desktop-file-date" :title="desktopFileDateTitle">
       {{ desktopFileDateLabel }}
     </td>
 
-    <td
-      v-if="showActionColumn !== false"
-      class="is-narrow has-text-right"
-      @click.stop
-    >
-      <div
-        class="buttons has-addons are-small is-right mb-0 desktop-action-buttons"
-      >
-        <template v-if="file.kind === 'directory'">
-          <button
-            v-if="canWrite"
-            class="button is-ghost"
-            @click="createDirectory"
-            title="在此目录下新建子目录"
-            aria-label="在此目录下新建子目录"
-          >
-            <span class="icon is-small"><IconFolderPlus :size="16" /></span>
-          </button>
-          <button
-            v-if="canWrite"
-            class="button is-ghost"
-            @click="renameEntry"
-            title="重命名目录"
-            aria-label="重命名目录"
-          >
-            <span class="icon is-small"><IconPencil :size="16" /></span>
-          </button>
-          <button
-            v-if="canWrite"
-            class="button is-ghost"
-            @click="moveEntry"
-            title="移动目录"
-            aria-label="移动目录"
-          >
-            <span class="icon is-small"><IconArrowsDiff :size="16" /></span>
-          </button>
-          <button
-            class="button is-ghost"
-            @click="download"
-            title="下载目录"
-            aria-label="下载目录"
-          >
-            <span class="icon is-small"><IconDownload :size="16" /></span>
-          </button>
-          <button
-            v-if="canShare"
-            class="button is-ghost"
-            @click="share"
-            title="分享目录"
-            aria-label="分享目录"
-          >
-            <span class="icon is-small"><IconShare :size="16" /></span>
-          </button>
-          <button
-            v-if="canWrite"
-            class="button is-ghost is-danger"
-            @click="confirmDelete"
-            title="删除目录"
-            aria-label="删除目录"
-          >
-            <span class="icon is-small"><IconTrash :size="16" /></span>
-          </button>
-        </template>
-        <template v-else>
-          <button
-            class="button is-ghost"
-            @click="preview"
-            title="预览文件"
-            aria-label="预览文件"
-          >
-            <span class="icon is-small"><IconEye :size="16" /></span>
-          </button>
-          <button
-            class="button is-ghost"
-            @click="viewHistory"
-            title="查看历史"
-            aria-label="查看历史"
-          >
-            <span class="icon is-small"><IconHistory :size="16" /></span>
-          </button>
-          <button
-            v-if="canWrite"
-            class="button is-ghost"
-            @click="renameEntry"
-            title="重命名文件"
-            aria-label="重命名文件"
-          >
-            <span class="icon is-small"><IconPencil :size="16" /></span>
-          </button>
-          <button
-            v-if="canWrite"
-            class="button is-ghost"
-            @click="moveEntry"
-            title="移动文件"
-            aria-label="移动文件"
-          >
-            <span class="icon is-small"><IconArrowsDiff :size="16" /></span>
-          </button>
-          <button
-            class="button is-ghost"
-            @click="download"
-            title="下载文件"
-            aria-label="下载文件"
-          >
-            <span class="icon is-small"><IconDownload :size="16" /></span>
-          </button>
-          <button
-            v-if="canShare"
-            class="button is-ghost"
-            @click="share"
-            title="分享文件"
-            aria-label="分享文件"
-          >
-            <span class="icon is-small"><IconShare :size="16" /></span>
-          </button>
-          <button
-            v-if="canWrite"
-            class="button is-ghost is-danger"
-            @click="confirmDelete"
-            title="删除文件"
-            aria-label="删除文件"
-          >
-            <span class="icon is-small"><IconTrash :size="16" /></span>
-          </button>
-        </template>
+    <!-- 行尾：⋯ 菜单在最左，其后是行内操作图标组（操作列关闭时只留 ⋯） -->
+    <td class="is-narrow has-text-right desktop-rowend" @click.stop>
+      <div class="desktop-rowend-inner">
+        <button
+          ref="rowMenuButton"
+          class="vf-icon-button desktop-row-menu"
+          type="button"
+          :aria-label="`${file.name} 的操作`"
+          :aria-haspopup="true"
+          :aria-expanded="menuOpen ? 'true' : 'false'"
+          title="更多操作"
+          @click.stop.prevent="openRowMenu"
+          @dblclick.stop
+        >
+          <IconDots :size="16" />
+        </button>
+
+        <div
+          v-if="showActionColumn !== false"
+          class="buttons has-addons are-small is-right mb-0 desktop-action-buttons"
+        >
+          <template v-if="file.kind === 'directory'">
+            <button
+              v-if="canWrite"
+              class="button is-ghost"
+              @click="createDirectory"
+              title="在此目录下新建子目录"
+              aria-label="在此目录下新建子目录"
+            >
+              <span class="icon is-small"><IconFolderPlus :size="16" /></span>
+            </button>
+            <button
+              v-if="canWrite"
+              class="button is-ghost"
+              @click="renameEntry"
+              title="重命名目录"
+              aria-label="重命名目录"
+            >
+              <span class="icon is-small"><IconPencil :size="16" /></span>
+            </button>
+            <button
+              v-if="canWrite"
+              class="button is-ghost"
+              @click="moveEntry"
+              title="移动目录"
+              aria-label="移动目录"
+            >
+              <span class="icon is-small"><IconArrowsDiff :size="16" /></span>
+            </button>
+            <button
+              class="button is-ghost"
+              @click="download"
+              title="下载目录"
+              aria-label="下载目录"
+            >
+              <span class="icon is-small"><IconDownload :size="16" /></span>
+            </button>
+            <button
+              v-if="canShare"
+              class="button is-ghost"
+              @click="share"
+              title="分享目录"
+              aria-label="分享目录"
+            >
+              <span class="icon is-small"><IconShare :size="16" /></span>
+            </button>
+            <button
+              v-if="canWrite"
+              class="button is-ghost is-danger"
+              @click="confirmDelete"
+              title="删除目录"
+              aria-label="删除目录"
+            >
+              <span class="icon is-small"><IconTrash :size="16" /></span>
+            </button>
+          </template>
+          <template v-else>
+            <button
+              class="button is-ghost"
+              @click="preview"
+              title="预览文件"
+              aria-label="预览文件"
+            >
+              <span class="icon is-small"><IconEye :size="16" /></span>
+            </button>
+            <button
+              class="button is-ghost"
+              @click="viewHistory"
+              title="查看历史"
+              aria-label="查看历史"
+            >
+              <span class="icon is-small"><IconHistory :size="16" /></span>
+            </button>
+            <button
+              v-if="canWrite"
+              class="button is-ghost"
+              @click="renameEntry"
+              title="重命名文件"
+              aria-label="重命名文件"
+            >
+              <span class="icon is-small"><IconPencil :size="16" /></span>
+            </button>
+            <button
+              v-if="canWrite"
+              class="button is-ghost"
+              @click="moveEntry"
+              title="移动文件"
+              aria-label="移动文件"
+            >
+              <span class="icon is-small"><IconArrowsDiff :size="16" /></span>
+            </button>
+            <button
+              class="button is-ghost"
+              @click="download"
+              title="下载文件"
+              aria-label="下载文件"
+            >
+              <span class="icon is-small"><IconDownload :size="16" /></span>
+            </button>
+            <button
+              v-if="canShare"
+              class="button is-ghost"
+              @click="share"
+              title="分享文件"
+              aria-label="分享文件"
+            >
+              <span class="icon is-small"><IconShare :size="16" /></span>
+            </button>
+            <button
+              v-if="canWrite"
+              class="button is-ghost is-danger"
+              @click="confirmDelete"
+              title="删除文件"
+              aria-label="删除文件"
+            >
+              <span class="icon is-small"><IconTrash :size="16" /></span>
+            </button>
+          </template>
+        </div>
       </div>
     </td>
   </tr>
@@ -460,6 +474,7 @@ import {
   IconShare,
   IconEye,
   IconDots,
+  IconUsers,
 } from "@tabler/icons-vue";
 import type { FileInfo } from "../../types";
 import FileTypeIcon from "./FileTypeIcon.vue";
@@ -481,7 +496,7 @@ const props = withDefaults(
     desktop?: boolean;
     /** 是否处于内联重命名状态 */
     renaming?: boolean;
-    /** 是否显示「操作」列（详情面板可见时由父组件关闭） */
+    /** 是否显示「操作」列（详情面板可见时由父组件关闭，只保留 ⋯ 菜单） */
     showActionColumn?: boolean;
     /** 搜索结果中显示所在目录 */
     showLocation?: boolean;
@@ -489,10 +504,18 @@ const props = withDefaults(
     canWrite?: boolean;
     /** 受限会话隐藏分享。 */
     canShare?: boolean;
-    /** 该条目是否已有公开分享链接（「共享」列徽标）。 */
+    /** 该条目是否已分享（名称列内联 Shared 标记）。 */
     shared?: boolean;
+    /** 公开链接分享：标记用链接图标，否则用人物图标。 */
+    sharedPublic?: boolean;
   }>(),
-  { canWrite: true, canShare: true, highlight: "", shared: false },
+  {
+    canWrite: true,
+    canShare: true,
+    highlight: "",
+    shared: false,
+    sharedPublic: false,
+  },
 );
 
 /** 条目所在目录（搜索结果用）：`/` 表示根目录。 */
@@ -859,14 +882,18 @@ function share() {
 
 /* 内联重命名输入框：占满名称列，字号与正文一致 */
 .rename-input {
+  flex: 1 1 auto;
   width: 100%;
   max-width: 22rem;
   height: 1.9rem;
   font-size: 0.875rem;
 }
 
+/* 文件名：在名称列的 flex 行内按可用宽度省略 */
 .desktop-name-text {
   display: block;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -886,9 +913,9 @@ function share() {
   text-underline-offset: 0.15em;
 }
 
-/* Nextcloud 列表行高：50px（--vf-row-height），与表头 44px 配套 */
+/* Nextcloud 列表行高：51px，与 44px 表头配套 */
 .desktop-file-row {
-  height: var(--vf-row-height);
+  height: 51px;
 }
 
 .desktop-file-row > td {
@@ -899,24 +926,47 @@ function share() {
     opacity 0.15s var(--vf-motion-standard);
 }
 
-/* 「共享」列：只有已分享条目才出现的小徽标（链接图标 + 文案） */
-.desktop-shared-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.08rem 0.4rem;
-  border: 1px solid var(--vf-accent-soft-strong);
-  border-radius: 3px;
-  background: var(--vf-accent-soft);
-  color: var(--vf-accent-text);
-  font-size: 0.72rem;
-  font-weight: 600;
-  line-height: 1.35;
+/* 复选框列只放选择控件：固定窄列，名称列吸收剩余宽度 */
+.desktop-check-cell {
+  width: 1%;
   white-space: nowrap;
 }
 
-.desktop-file-shared {
+/* 名称列：类型图标 + 文件名 + 已共享标记在同一行 */
+.desktop-name-wrap {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.desktop-name-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.desktop-name-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+/* 已共享：文件名右侧的灰色小字 + 图标（不再是独立列/徽标块） */
+.desktop-shared-inline {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: var(--vf-text-muted);
+  font-size: 13px;
+  line-height: 1.2;
   white-space: nowrap;
+}
+
+.desktop-shared-icon {
+  flex: 0 0 auto;
+  color: var(--vf-text-subtle);
 }
 
 /* 拖起态（drag lift）：源项半透明，与目标高亮共同表达"拖动中" */
@@ -931,19 +981,18 @@ function share() {
   font-size: 0.78rem;
 }
 
-/* M3 状态层：悬停 8%（accent-soft）、选中 16%（accent-soft-strong），
-   两态相差一倍，肉眼可分；行面**满铺无圆角**（用户反馈：圆角在单元格四角留白显零乱）。 */
+/* 行状态：悬停中性灰、选中浅蓝（Nextcloud 行状态令牌） */
 .desktop-file-row:hover > td {
-  background: var(--vf-accent-soft);
+  background: var(--vf-row-hover);
 }
 
 .desktop-file-row.is-row-selected > td {
-  background: var(--vf-accent-soft-strong);
+  background: var(--vf-row-selected);
 }
 
-/* 按压态（触屏无 hover）：比悬停高一档，与选中同级的即时反馈 */
+/* 按压态（触屏无 hover）：与选中同级的即时反馈 */
 .desktop-file-row:active > td {
-  background: var(--vf-accent-soft-strong);
+  background: var(--vf-row-selected);
 }
 
 /* 拖放落点高亮压过 hover/选中底色（同特异性 → 靠后胜出），并随过渡渐入 */
@@ -951,10 +1000,21 @@ function share() {
   background: var(--vf-accent-soft);
 }
 
-/* 名称单元格：为尾部「⋯」预留空间，并作为其定位参考 */
+/* 名称单元格：内容自动换行省略，不再为「⋯」预留定位空间 */
 .desktop-name-cell {
-  position: relative;
-  padding-right: 2.1rem !important;
+  min-width: 0;
+}
+
+/* 行尾：⋯ 在最左，其后是行内操作图标组 */
+.desktop-rowend {
+  white-space: nowrap;
+}
+
+.desktop-rowend-inner {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
 }
 
 /* 搜索结果：名称下方显示所在目录，帮助区分同名文件 */
@@ -977,12 +1037,9 @@ function share() {
 }
 
 /* 行内操作入口「⋯」：默认隐藏，hover / 聚焦 / 选中 / 触屏时出现。
-   即使隐藏了「操作」列，用户也能在行内直接打开下载/重命名/移动等菜单。 */
+   即使隐藏了行操作图标组，用户也能在行内直接打开下载/重命名/移动等菜单。 */
 .desktop-row-menu {
-  position: absolute;
-  top: 50%;
-  right: 0.35rem;
-  transform: translateY(-50%);
+  flex: 0 0 auto;
   width: 1.75rem;
   height: 1.75rem;
   opacity: 0;

@@ -7,7 +7,6 @@
       <div class="auth-field">
         <label class="auth-label" for="forgot-email">邮箱</label>
         <div class="auth-input-wrap">
-          <IconMail :size="16" class="auth-input-icon" />
           <input
             id="forgot-email"
             v-model.trim="email"
@@ -21,8 +20,7 @@
       </div>
 
       <button
-        class="vf-ghost-button is-primary auth-submit"
-        :class="{ 'is-loading': loading }"
+        class="auth-submit auth-primary"
         :disabled="loading"
         type="submit"
       >
@@ -41,7 +39,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRouter } from "vue-router";
-import { IconMail } from "@tabler/icons-vue";
 import AuthShell from "../components/auth/AuthShell.vue";
 import { authService } from "../services/auth.service";
 import { useAppStore } from "../stores/app.store";
@@ -75,71 +72,3 @@ async function submit() {
   }
 }
 </script>
-
-<style scoped>
-.auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-}
-
-.auth-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.auth-label {
-  color: var(--vf-text-muted);
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.auth-input-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.auth-input-icon {
-  position: absolute;
-  /* Bulma 的 .input 也是定位元素，不抬高层级时图标会被输入框底色盖住 */
-  z-index: 1;
-  left: 0.55rem;
-  color: var(--vf-text-subtle);
-  pointer-events: none;
-}
-
-.auth-input {
-  padding-left: 2rem;
-  font-size: 0.875rem;
-}
-
-.auth-submit {
-  justify-content: center;
-  width: 100%;
-  min-height: 2.35rem;
-  font-size: 0.875rem;
-}
-
-.auth-links {
-  display: flex;
-  justify-content: center;
-  padding-top: 0.9rem;
-  border-top: 1px solid var(--vf-border-weak);
-}
-
-.auth-link-button {
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--vf-accent);
-  font-size: 0.8rem;
-  cursor: pointer;
-}
-
-.auth-link-button:hover,
-.auth-link-button:focus-visible {
-  text-decoration: underline;
-}
-</style>

@@ -19,7 +19,7 @@
       <aside
         id="files-view-sidebar"
         class="files-sidebar"
-        :class="{ 'is-open': isOpen }"
+        :class="{ 'is-open': isOpen, 'is-collapsed': isCollapsed }"
         aria-label="文件视图"
       >
         <div class="files-sidebar-head">
@@ -53,17 +53,22 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { IconMenu2, IconX } from "@tabler/icons-vue";
 import AppLayout from "./AppLayout.vue";
+import { provideFilesSidebarControl } from "../composables/useFilesSidebar";
+import { useMediaQuery } from "../composables/useMediaQuery";
 
 /**
- * 文件页两栏骨架：左侧视图栏（`--vf-sidebar-width`）+ 内容区。
+ * 文件页两栏骨架：左侧视图栏（`--vf-sidebar-width` = 300px）+ 内容区。
  *
- * 移动端（≤768px）视图栏变成抽屉，由单一 `isOpen` 布尔控制：汉堡按钮打开，
- * 遮罩 / 关闭按钮 / Esc / 路由切换关闭。`isOpen` 通过 defineExpose 暴露，
- * 父级也能主动控制抽屉状态。
+ * 侧栏两套开合语义：
+ * - 桌面（> 768px）：常驻，可被文件工具栏的汉堡按钮收起/展开（`isCollapsed`）；
+ * - 移动端（≤ 768px）：变成抽屉（`isOpen`），由移动端工具条打开，
+ *   遮罩 / 关闭按钮 / Esc / 路由切换关闭。
+ * 两种状态都通过 provide 暴露给文件工具栏（见 `useFilesSidebar`），
+ * 这样 Home 不必把回调一路透传给 FileBrowser。
  */
 withDefaults(
   defineProps<{
@@ -74,30 +79,57 @@ withDefaults(
 );
 
 const route = useRoute();
+const isMobile = useMediaQuery("(max-width: 768px)");
 
+/** 移动端抽屉是否展开。 */
 const isOpen = ref(false);
+/** 桌面端侧栏是否被收起。 */
+const isCollapsed = ref(false);
+
+/** 侧栏当前是否可见：桌面看收起态，移动看抽屉。 */
+const isSidebarVisible = computed(() =>
+  isMobile.value ? isOpen.value : !isCollapsed.value,
+);
 
 function openSidebar() {
-  isOpen.value = true;
+  if (isMobile.value) {
+    isOpen.value = true;
+    return;
+  }
+  isCollapsed.value = false;
 }
 
 function closeSidebar() {
-  isOpen.value = false;
+  if (isMobile.value) {
+    isOpen.value = false;
+    return;
+  }
+  isCollapsed.value = true;
 }
 
+/** 文件工具栏汉堡按钮的统一入口：桌面收起/展开侧栏，移动打开/关闭抽屉。 */
 function toggleSidebar() {
-  isOpen.value = !isOpen.value;
+  if (isMobile.value) {
+    isOpen.value = !isOpen.value;
+    return;
+  }
+  isCollapsed.value = !isCollapsed.value;
 }
+
+provideFilesSidebarControl({ isVisible: isSidebarVisible, toggle: toggleSidebar });
 
 function onDocumentKeydown(event: KeyboardEvent) {
   if (event.key !== "Escape" || !isOpen.value) return;
-  closeSidebar();
+  isOpen.value = false;
 }
 
 // 切换到别的视图后收起抽屉，避免停留在上一页的遮罩上。
+// 桌面收起态属于用户偏好，路由切换不重置。
 watch(
   () => route.fullPath,
-  () => closeSidebar(),
+  () => {
+    isOpen.value = false;
+  },
 );
 
 onMounted(() => document.addEventListener("keydown", onDocumentKeydown));
@@ -105,7 +137,14 @@ onBeforeUnmount(() =>
   document.removeEventListener("keydown", onDocumentKeydown),
 );
 
-defineExpose({ isOpen, openSidebar, closeSidebar, toggleSidebar });
+defineExpose({
+  isOpen,
+  isCollapsed,
+  isSidebarVisible,
+  openSidebar,
+  closeSidebar,
+  toggleSidebar,
+});
 </script>
 
 <style scoped>
@@ -121,15 +160,27 @@ defineExpose({ isOpen, openSidebar, closeSidebar, toggleSidebar });
   display: none;
 }
 
+/*
+ * 视图侧栏：浅蓝渐变（Nextcloud 的文件视图栏），300px + 右侧 1px 分隔线。
+ * 渐变本身是主题令牌（theme.scss 的 --vf-sidebar-gradient，深浅各一套），
+ * 这里只负责列宽与内容排布。
+ */
 .files-sidebar {
   display: flex;
   flex-direction: column;
   flex: 0 0 var(--vf-sidebar-width);
   width: var(--vf-sidebar-width);
   min-height: 0;
-  background: var(--vf-sidebar);
+  background: var(--vf-sidebar-gradient);
   border-right: 1px solid var(--vf-border-weak);
   overflow-y: auto;
+}
+
+/* 桌面端收起：整列让出宽度（汉堡按钮再从工具栏展开）。 */
+@media screen and (min-width: 769px) {
+  .files-sidebar.is-collapsed {
+    display: none;
+  }
 }
 
 .files-sidebar-head {
@@ -193,6 +244,7 @@ defineExpose({ isOpen, openSidebar, closeSidebar, toggleSidebar });
     z-index: 61;
     width: min(var(--vf-sidebar-width), 84vw);
     flex: 0 0 auto;
+    border-right: 1px solid var(--vf-border-weak);
     transform: translateX(-100%);
     /* 收起时对辅助技术隐藏，避免 Tab 进入屏幕外的抽屉内容 */
     visibility: hidden;

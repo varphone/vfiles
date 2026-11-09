@@ -68,16 +68,19 @@ describe("FileDetailsPanel.vue", () => {
   });
 
   it("renders metadata for a file", () => {
-    render(FileDetailsPanel as any, {
+    const { container } = render(FileDetailsPanel as any, {
       props: {
         item: file({ name: "main.ts", path: "src/main.ts", size_bytes: 2048 }),
       },
     });
 
-    expect(screen.getByText("main.ts")).toBeInTheDocument();
+    // 头部固定展示文件名 + 大小/修改时间元信息（详细信息 Tab 内仍是完整字段）
+    expect(
+      container.querySelector(".details-head-title")?.textContent?.trim(),
+    ).toBe("main.ts");
     expect(screen.getByText("/src/main.ts")).toBeInTheDocument();
     expect(screen.getByText("代码文件")).toBeInTheDocument();
-    expect(screen.getByText("2 KB")).toBeInTheDocument();
+    expect(screen.getAllByText("2 KB").length).toBeGreaterThan(0);
     expect(screen.getByText("修改时间")).toBeInTheDocument();
     expect(screen.getByText("创建时间")).toBeInTheDocument();
   });

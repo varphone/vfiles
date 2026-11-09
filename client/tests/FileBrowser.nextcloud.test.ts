@@ -66,29 +66,45 @@ beforeEach(() => {
 });
 
 describe("FileList.vue Nextcloud columns", () => {
-  it("renders the shared badge only for paths in the shared set", () => {
+  it("renders the inline Shared marker in the name column", () => {
     const { container } = render(FileList as any, {
       props: {
         desktop: true,
         selectMode: false,
         selectedPaths: new Set<string>(),
-        sharedPaths: new Set<string>(["a.txt"]),
+        sharedPaths: new Set<string>(["a.txt", "b.txt"]),
+        publicSharedPaths: new Set<string>(["b.txt"]),
         files: [
           file({ id: "a", name: "a.txt", path: "a.txt" }),
           file({ id: "b", name: "b.txt", path: "b.txt" }),
+          file({ id: "c", name: "c.txt", path: "c.txt" }),
         ],
       },
     });
 
     const rows = container.querySelectorAll("tr.desktop-file-row");
-    expect(rows).toHaveLength(2);
-    const badgeA = rows[0].querySelector(".desktop-shared-badge");
-    expect(badgeA).not.toBeNull();
-    expect(badgeA!.textContent?.trim()).toBe("已共享");
-    expect(rows[1].querySelector(".desktop-shared-badge")).toBeNull();
+    expect(rows).toHaveLength(3);
+
+    // 已共享标记在名称列内、文件名右侧：灰色小字 + 人物/链接图标
+    const nameCell = rows[0].querySelector(".desktop-name-cell")!;
+    const marker = nameCell.querySelector(".desktop-shared-inline");
+    expect(marker).not.toBeNull();
+    expect(marker!.textContent?.trim()).toBe("Shared");
+    expect(marker!.querySelector("svg")).not.toBeNull();
+    // 内部分享用人物图标，公开链接分享用链接图标
+    expect(marker!.querySelector(".tabler-icon-users")).not.toBeNull();
+    const linkMarker = rows[1].querySelector(
+      ".desktop-name-cell .desktop-shared-inline",
+    )!;
+    expect(linkMarker.querySelector(".tabler-icon-link")).not.toBeNull();
+    expect(linkMarker.querySelector(".tabler-icon-users")).toBeNull();
+    // 未分享：名称列里没有标记；旧的独立「共享」列/徽标已删除
+    expect(rows[2].querySelector(".desktop-shared-inline")).toBeNull();
+    expect(container.querySelector(".desktop-shared-badge")).toBeNull();
+    expect(container.querySelector(".desktop-file-shared")).toBeNull();
   });
 
-  it("uses the Nextcloud column order with 共享 between 名称 and 大小", () => {
+  it("uses the Nextcloud column order without a separate 共享 column", () => {
     const { container } = render(FileList as any, {
       props: {
         desktop: true,
@@ -101,13 +117,12 @@ describe("FileList.vue Nextcloud columns", () => {
     const headers = Array.from(container.querySelectorAll("thead th")).map(
       (th) => th.textContent?.trim(),
     );
-    expect(headers).toEqual(["", "名称", "共享", "大小", "修改时间", "操作"]);
-    // 共享列不参与排序：没有排序按钮，aria-sort 为 none
-    const sharedHeader = Array.from(
-      container.querySelectorAll<HTMLElement>("thead th"),
-    ).find((th) => th.textContent?.trim() === "共享")!;
-    expect(within(sharedHeader).queryByRole("button")).toBeNull();
-    expect(sharedHeader).toHaveAttribute("aria-sort", "none");
+    expect(headers).toEqual(["", "名称", "大小", "修改时间", ""]);
+    expect(headers).not.toContain("共享");
+    // 行尾操作列：空表头、不参与排序（⋯ 与行操作图标在行内）
+    const rowEndHeader = container.querySelectorAll<HTMLElement>("thead th")
+      .item(4);
+    expect(within(rowEndHeader).queryByRole("button")).toBeNull();
   });
 });
 
@@ -138,7 +153,39 @@ describe("FileDetailsPanel.vue tabs", () => {
     await fireEvent.click(screen.getByRole("tab", { name: "详细信息" }));
     // 切回详情：仍是同一个条目，选中态没有被 Tab 切换清掉
     expect(screen.getByText("/docs/main.ts")).toBeInTheDocument();
-    expect(screen.getByText("main.ts")).toBeInTheDocument();
+    expect(screen.getAllByText("main.ts").length).toBeGreaterThan(0);
+  });
+
+  it("offers four icon tabs in the Nextcloud order and switches between them", async () => {
+    const { container } = render(FileDetailsPanel as any, {
+      props: { item: file({ name: "main.ts", path: "docs/main.ts" }) },
+    });
+
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent?.trim())).toEqual([
+      "详细信息",
+      "分享",
+      "活动",
+      "版本",
+    ]);
+    // 图标在上、文字在下：每个 Tab 都带图标
+    expect(container.querySelectorAll(".details-tab")).toHaveLength(4);
+    expect(
+      container.querySelectorAll(".details-tab .details-tab-icon"),
+    ).toHaveLength(4);
+    expect(tabs[0]).toHaveAttribute("aria-selected", "true");
+    expect(tabs[0]).toHaveClass("is-active");
+
+    await fireEvent.click(screen.getByRole("tab", { name: "分享" }));
+    expect(screen.getByRole("tab", { name: "分享" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: "分享" })).toHaveClass("is-active");
+    expect(tabs[0]).toHaveAttribute("aria-selected", "false");
+    // 分享 Tab：内部分享 / 外部分享两个区块
+    expect(screen.getByText("内部分享")).toBeInTheDocument();
+    expect(screen.getByText("外部分享")).toBeInTheDocument();
   });
 
   it("lists only this entry's share links and opens the share dialog", async () => {

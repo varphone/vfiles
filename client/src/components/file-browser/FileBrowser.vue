@@ -35,153 +35,261 @@
     @touchend="onTouchEnd"
   >
     <div class="box file-browser-box">
-      <div class="breadcrumb-bar">
-        <!-- Nextcloud 式「+ 新建」：面包屑左侧，上传/新建文件夹的统一入口 -->
-        <NewMenuButton
-          v-if="!isMobile && canWrite"
-          @upload-files="openUploader('files')"
-          @upload-folder="openUploader('directory')"
-          @create-folder="requestCreateDirectoryFromToolbar"
-        />
-        <span
-          v-if="isRestricted"
-          class="scope-badge"
-          :title="scopeBadgeTitle"
-        >
-          <IconLock :size="13" />
-          <span>{{ scopeBadgeText }}</span>
-        </span>
-        <Breadcrumb
-          :breadcrumbs="visibleBreadcrumbs"
-          :directories="filesStore.directories"
-          @navigate="handleBreadcrumbNavigate"
-          @drop="handleDropOnFolder"
-        />
+      <!--
+        Nextcloud 式单行文件工具栏（50px）：左侧＝汉堡 + 「+ 新建」+ 视图名/面包屑，
+        右侧＝搜索、列表/网格切换、排序与详细信息开关。
+        上传入口统一收进「+ 新建」菜单（移动端底栏的上传入口保留）。
+      -->
+      <div class="breadcrumb-bar file-toolbar">
+        <div class="file-toolbar-leading">
+          <button
+            v-if="sidebarControl && !isMobile"
+            class="vf-icon-button file-toolbar-sidebar-toggle"
+            type="button"
+            title="切换视图栏"
+            :aria-label="sidebarVisible ? '收起视图栏' : '展开视图栏'"
+            :aria-expanded="sidebarVisible ? 'true' : 'false'"
+            aria-controls="files-view-sidebar"
+            @click="toggleSidebar"
+          >
+            <IconMenu2 :size="18" />
+          </button>
 
-        <!-- 版本切换：与面包屑同一行靠右，移动端由页面底栏承担。 -->
-        <div
-          v-if="!isMobile && historyStateLabel"
-          class="file-history"
-          :class="{ 'is-error': historyError }"
-          role="group"
-          aria-label="版本切换"
-        >
-          <button
-            class="vf-icon-button file-history-button"
-            :disabled="historyLoading"
-            title="快退到最早快照"
-            aria-label="快退到最早快照"
-            @click="emit('history-fast-back')"
+          <!-- 写入口组：可写会话才渲染「+ 新建」（上传/新建文件夹的统一入口）。 -->
+          <div v-if="!isMobile && canWrite" class="file-toolbar-write">
+            <NewMenuButton
+              @upload-files="openUploader('files')"
+              @upload-folder="openUploader('directory')"
+              @create-folder="requestCreateDirectoryFromToolbar"
+            />
+
+            <!-- 上传进度胶囊：仅在上传队列存在时出现，点击回到上传对话框 -->
+            <button
+              v-if="uploadIndicator"
+              class="vf-ghost-button upload-indicator file-toolbar-upload"
+              type="button"
+              :title="uploadIndicator.title"
+              @click="openUploader('files')"
+            >
+              <span class="upload-indicator-dot" aria-hidden="true"></span>
+              <span>{{ uploadIndicator.label }}</span>
+            </button>
+          </div>
+
+          <span
+            v-if="isRestricted"
+            class="scope-badge"
+            :title="scopeBadgeTitle"
           >
-            <IconChevronsLeft :size="16" />
-          </button>
-          <button
-            class="vf-icon-button file-history-button"
-            :disabled="historyLoading"
-            title="后退到更早快照"
-            aria-label="后退到更早快照"
-            @click="emit('history-step-back')"
-          >
-            <IconChevronLeft :size="16" />
-          </button>
-          <span class="file-history-label" :title="historyTitle">
-            {{ historyStateLabel }}
+            <IconLock :size="13" />
+            <span>{{ scopeBadgeText }}</span>
           </span>
-          <button
-            class="vf-icon-button file-history-button"
-            :disabled="historyLoading || !historyHasCommit"
-            title="前进到较新快照"
-            aria-label="前进到较新快照"
-            @click="emit('history-step-forward')"
+
+          <div class="file-toolbar-heading">
+            <!-- 进入子目录后，视图名换成面包屑（灰色小字，当前层深色） -->
+            <Breadcrumb
+              v-if="currentPath || isMobile"
+              :breadcrumbs="visibleBreadcrumbs"
+              :directories="filesStore.directories"
+              @navigate="handleBreadcrumbNavigate"
+              @drop="handleDropOnFolder"
+            />
+
+            <div v-else ref="viewMenuRef" class="file-toolbar-view-menu">
+              <button
+                class="file-toolbar-view-name"
+                type="button"
+                aria-haspopup="menu"
+                :aria-expanded="viewMenuOpen ? 'true' : 'false'"
+                @click="viewMenuOpen = !viewMenuOpen"
+              >
+                <span>全部文件</span>
+                <IconChevronDown
+                  class="file-toolbar-view-caret"
+                  :size="14"
+                  aria-hidden="true"
+                />
+              </button>
+
+              <ul
+                v-if="viewMenuOpen"
+                class="file-toolbar-view-list"
+                role="menu"
+                aria-label="切换到其它视图"
+              >
+                <li v-for="view in viewMenuItems" :key="view.to">
+                  <RouterLink
+                    class="file-toolbar-view-item"
+                    :class="{ 'is-active': isActiveView(view.to) }"
+                    :to="view.to"
+                    role="menuitem"
+                    @click="viewMenuOpen = false"
+                  >
+                    <component :is="view.icon" :size="16" aria-hidden="true" />
+                    <span>{{ view.label }}</span>
+                  </RouterLink>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="file-toolbar-actions">
+          <!-- 版本切换：与工具栏同一行靠右，移动端由页面底栏承担。 -->
+          <div
+            v-if="!isMobile && historyStateLabel"
+            class="file-history"
+            :class="{ 'is-error': historyError }"
+            role="group"
+            aria-label="版本切换"
           >
-            <IconChevronRight :size="16" />
-          </button>
-          <button
-            class="vf-icon-button file-history-button"
-            :disabled="historyLoading || !historyHasCommit"
-            title="回到当前版本"
-            aria-label="回到当前版本"
-            @click="emit('history-fast-forward')"
+            <button
+              class="vf-icon-button file-history-button"
+              :disabled="historyLoading"
+              title="快退到最早快照"
+              aria-label="快退到最早快照"
+              @click="emit('history-fast-back')"
+            >
+              <IconChevronsLeft :size="16" />
+            </button>
+            <button
+              class="vf-icon-button file-history-button"
+              :disabled="historyLoading"
+              title="后退到更早快照"
+              aria-label="后退到更早快照"
+              @click="emit('history-step-back')"
+            >
+              <IconChevronLeft :size="16" />
+            </button>
+            <span class="file-history-label" :title="historyTitle">
+              {{ historyStateLabel }}
+            </span>
+            <button
+              class="vf-icon-button file-history-button"
+              :disabled="historyLoading || !historyHasCommit"
+              title="前进到较新快照"
+              aria-label="前进到较新快照"
+              @click="emit('history-step-forward')"
+            >
+              <IconChevronRight :size="16" />
+            </button>
+            <button
+              class="vf-icon-button file-history-button"
+              :disabled="historyLoading || !historyHasCommit"
+              title="回到当前版本"
+              aria-label="回到当前版本"
+              @click="emit('history-fast-forward')"
+            >
+              <IconChevronsRight :size="16" />
+            </button>
+          </div>
+
+          <BrowserSearchBox
+            v-if="!isMobile"
+            :model-value="searchQuery"
+            :open="desktopSearchOpen"
+            :content="searchContent"
+            :type="searchType"
+            :scope-current="searchScopeCurrent"
+            :loading="searchLoading"
+            :active="searchActive"
+            :content-enabled="searchContentEnabled"
+            :filters-active="desktopSearchFiltersActive"
+            :history="searchHistory"
+            :register-input="setDesktopSearchInput"
+            @update:model-value="searchQuery = $event"
+            @update:open="desktopSearchOpen = $event"
+            @update:content="searchContent = $event"
+            @update:type="searchType = $event as SearchType"
+            @update:scope-current="searchScopeCurrent = $event"
+            @search="runDesktopSearch"
+            @clear="clearDesktopSearch"
+          />
+
+          <!-- 列表/网格切换：直接切换显示方式，不再占用一行下拉菜单 -->
+          <div
+            v-if="!isMobile"
+            class="file-view-toggle"
+            role="group"
+            aria-label="显示方式"
           >
-            <IconChevronsRight :size="16" />
+            <button
+              class="vf-icon-button"
+              :class="{ 'is-active': viewMode === 'list' }"
+              type="button"
+              title="列表视图"
+              aria-label="列表视图"
+              :aria-pressed="viewMode === 'list' ? 'true' : 'false'"
+              @click="fileView.setMode('list')"
+            >
+              <IconList :size="18" />
+            </button>
+            <button
+              class="vf-icon-button"
+              :class="{ 'is-active': viewMode === 'grid' }"
+              type="button"
+              title="网格视图"
+              aria-label="网格视图"
+              :aria-pressed="viewMode === 'grid' ? 'true' : 'false'"
+              @click="fileView.setMode('grid')"
+            >
+              <IconLayoutGrid :size="18" />
+            </button>
+          </div>
+
+          <SortMenu v-if="!isMobile" />
+
+          <button
+            v-if="!isMobile"
+            class="vf-icon-button file-toolbar-details"
+            :class="{ 'is-active': detailsVisible }"
+            :title="detailsVisible ? '隐藏详细信息' : '显示详细信息'"
+            :aria-label="detailsVisible ? '隐藏详细信息' : '显示详细信息'"
+            :aria-pressed="detailsVisible ? 'true' : 'false'"
+            @click="fileView.toggleDetails()"
+          >
+            <IconLayoutSidebarRight :size="18" />
           </button>
         </div>
       </div>
 
-      <div class="file-browser-toolbar">
-        <template v-if="isMobile">
-          <MobileSearchBar
-            v-model:query="searchQuery"
-            v-model:content="searchContent"
-            v-model:type="searchType"
-            v-model:scope-current="searchScopeCurrent"
-            v-model:filters-open="mobileSearchFiltersOpen"
-            :loading="searchLoading"
-            :active="searchActive"
-            :content-enabled="searchContentEnabled"
-            :history="searchHistory"
-            :pull-indicator-visible="pullIndicatorVisible"
-            :pull-refreshing="pullRefreshing"
-            :pull-ready="pullReady"
-            @search="runSearch"
-            @clear="clearSearch"
-            @enter-results="enterSearchResults"
-          />
+      <!-- 移动端搜索行保持原样：底栏的上传/新建入口也随之不变。 -->
+      <div v-if="isMobile" class="file-browser-toolbar">
+        <MobileSearchBar
+          v-model:query="searchQuery"
+          v-model:content="searchContent"
+          v-model:type="searchType"
+          v-model:scope-current="searchScopeCurrent"
+          v-model:filters-open="mobileSearchFiltersOpen"
+          :loading="searchLoading"
+          :active="searchActive"
+          :content-enabled="searchContentEnabled"
+          :history="searchHistory"
+          :pull-indicator-visible="pullIndicatorVisible"
+          :pull-refreshing="pullRefreshing"
+          :pull-ready="pullReady"
+          @search="runSearch"
+          @clear="clearSearch"
+          @enter-results="enterSearchResults"
+        />
 
-          <div
-            v-if="searchError"
-            class="notification is-danger is-light"
-            role="alert"
-          >
-            <IconAlertCircle :size="20" class="mr-2" />
-            {{ searchError }}
-          </div>
-        </template>
+        <div
+          v-if="searchError"
+          class="notification is-danger is-light"
+          role="alert"
+        >
+          <IconAlertCircle :size="20" class="mr-2" />
+          {{ searchError }}
+        </div>
+      </div>
 
-        <template v-else>
-          <DesktopCommandBar
-            :can-go-up="Boolean(currentPath)"
-            :details-visible="fileView.detailsVisible"
-            :batch-mode="batchMode"
-            :search-query="searchQuery"
-            :search-open="desktopSearchOpen"
-            :search-content="searchContent"
-            :search-type="searchType"
-            :search-scope-current="searchScopeCurrent"
-            :search-loading="searchLoading"
-            :search-active="searchActive"
-            :search-content-enabled="searchContentEnabled"
-            :search-filters-active="desktopSearchFiltersActive"
-            :search-history="searchHistory"
-            :search-error="searchError"
-            :upload-indicator="uploadIndicator"
-            :register-input="setDesktopSearchInput"
-            :can-write="canWrite"
-            @go-up="goBack"
-            @refresh="refresh"
-            @toggle-details="fileView.toggleDetails()"
-            @toggle-batch="toggleBatchMode"
-            @upload-files="openUploader('files')"
-            @upload-folder="openUploader('directory')"
-            @create-folder="createDirectoryHere"
-            @search="runDesktopSearch"
-            @clear="clearDesktopSearch"
-            @update:search-query="searchQuery = $event"
-            @update:search-open="desktopSearchOpen = $event"
-            @update:search-content="searchContent = $event"
-            @update:search-type="searchType = $event as SearchType"
-            @update:search-scope-current="searchScopeCurrent = $event"
-          />
-
-          <div
-            v-if="searchError"
-            class="notification is-danger is-light mb-3"
-            role="alert"
-          >
-            <IconAlertCircle :size="20" class="mr-2" />
-            {{ searchError }}
-          </div>
-        </template>
+      <div
+        v-else-if="searchError"
+        class="file-toolbar-error notification is-danger is-light"
+        role="alert"
+      >
+        <IconAlertCircle :size="20" class="mr-2" />
+        {{ searchError }}
       </div>
 
       <div
@@ -990,11 +1098,15 @@ import {
   watch,
   nextTick,
   defineAsyncComponent,
+  type Component,
 } from "vue";
 import { storeToRefs } from "pinia";
 import {
+  IconFolder,
   IconFolderOpen,
   IconFolderPlus,
+  IconActivity,
+  IconClock,
   IconAlertCircle,
   IconSearch,
   IconFileSearch,
@@ -1018,6 +1130,11 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconChevronsRight,
+  IconChevronDown,
+  IconLayoutGrid,
+  IconLayoutSidebarRight,
+  IconList,
+  IconMenu2,
 } from "@tabler/icons-vue";
 import { filesService, MAX_TRANSFER_PATHS } from "../../services/files.service";
 import { useFilesStore } from "../../stores/files.store";
@@ -1039,8 +1156,8 @@ import EmptyState from "../common/EmptyState.vue";
 import FileGrid from "./FileGrid.vue";
 import LibraryGrid from "./LibraryGrid.vue";
 import MobileSearchBar from "./MobileSearchBar.vue";
-import DesktopCommandBar from "./DesktopCommandBar.vue";
-import type { SearchType } from "./BrowserSearchBox.vue";
+import BrowserSearchBox, { type SearchType } from "./BrowserSearchBox.vue";
+import SortMenu from "./SortMenu.vue";
 import Breadcrumb from "./Breadcrumb.vue";
 import FileSkeleton from "./FileSkeleton.vue";
 import DownloadQueuePanel from "./DownloadQueuePanel.vue";
@@ -1065,6 +1182,7 @@ import { columnsFromElements } from "../../utils/gridLayout";
 import { fileIconKind } from "../../utils/filePresentation";
 import { useMoveDialog } from "../../composables/useMoveDialog";
 import { useTouchGestures } from "../../composables/useTouchGestures";
+import { useFilesSidebarControl } from "../../composables/useFilesSidebar";
 import type { FileInfo } from "../../types";
 import {
   sortBrowserItems,
@@ -1257,6 +1375,61 @@ const MOBILE_LAYOUT_MEDIA_QUERY = "(max-width: 1023px)";
 
 function updateIsMobile() {
   isMobile.value = window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches;
+}
+
+/**
+ * 视图侧栏开关由 FilesLayout 通过 provide/inject 提供（桌面收起、移动抽屉）。
+ * 没有 FilesLayout 时（组件测试 / 独立嵌入）为 null，工具栏不渲染汉堡按钮。
+ */
+const sidebarControl = useFilesSidebarControl();
+const sidebarVisible = computed(() => sidebarControl?.isVisible.value ?? false);
+
+function toggleSidebar() {
+  sidebarControl?.toggle();
+}
+
+/**
+ * 根视图的「全部文件 ⌄」视图菜单：进入子目录后由面包屑接管，
+ * 因此这里只在 `currentPath` 为空时渲染。
+ */
+const viewMenuOpen = ref(false);
+const viewMenuRef = ref<HTMLElement | null>(null);
+
+const viewMenuItems = computed<
+  Array<{ key: string; to: string; label: string; icon: Component }>
+>(() => {
+  const entries: Array<{
+    key: string;
+    to: string;
+    label: string;
+    icon: Component;
+  }> = [
+    { key: "all", to: "/", label: "全部文件", icon: IconFolder },
+    { key: "recent", to: "/recent", label: "最近", icon: IconClock },
+    { key: "favorites", to: "/favorites", label: "收藏", icon: IconStar },
+  ];
+
+  if (!isRestricted.value && authStore.features?.shareEnabled !== false) {
+    entries.push({
+      key: "shares",
+      to: "/shares",
+      label: "分享",
+      icon: IconShare,
+    });
+  }
+
+  entries.push({
+    key: "activity",
+    to: "/activity",
+    label: "活动",
+    icon: IconActivity,
+  });
+  return entries;
+});
+
+/** 菜单只在根视图出现，因此只有「全部文件」是当前视图。 */
+function isActiveView(to: string): boolean {
+  return to === "/";
 }
 
 const showUploader = ref(false);
@@ -1755,13 +1928,23 @@ onMounted(() => {
       const searchBox = desktopSearchBoxRef.value;
       if (searchBox && !searchBox.contains(target)) closeDesktopSearch();
     }
+
+    if (viewMenuOpen.value) {
+      const viewMenu = viewMenuRef.value;
+      if (viewMenu && !viewMenu.contains(target)) viewMenuOpen.value = false;
+    }
   };
 
   const onDocKeydown = (e: KeyboardEvent) => {
     if (e.defaultPrevented) return;
 
-    // Escape 逐层退出：按键定位前缀 → 高级搜索 → 预览 → 批量模式 → 选择
+    // Escape 逐层退出：视图菜单 → 按键定位前缀 → 高级搜索 → 预览 → 批量模式 → 选择
     if (e.key === "Escape") {
+      if (viewMenuOpen.value) {
+        e.preventDefault();
+        viewMenuOpen.value = false;
+        return;
+      }
       if (typeAheadPrefix.value) {
         e.preventDefault();
         typeAheadPrefix.value = "";
@@ -2989,19 +3172,187 @@ function handleSortChange(field: SortField) {
   }
 }
 
-.breadcrumb-bar {
+/* ---- 合并后的单行文件工具栏（50px）：面包屑行 + 命令条合成一行 ---- */
+.breadcrumb-bar.file-toolbar {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  padding: 0.85rem 1.1rem;
+  gap: 0.55rem;
+  flex-wrap: nowrap;
+  height: 50px;
+  padding: 0 0.85rem;
   border-bottom: 1px solid var(--vf-border-weak);
+  background: var(--vf-surface);
 }
 
-/* 面包屑是可收缩的主导航，版本切换固定在行尾。 */
-.breadcrumb-bar :deep(.path-bar) {
+/* 左组：汉堡按钮 / 「+ 新建」/ 范围徽标 / 视图名或面包屑 */
+.file-toolbar-leading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.file-toolbar-heading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.file-toolbar-sidebar-toggle {
+  flex: 0 0 auto;
+}
+
+.file-toolbar-write {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+}
+
+.file-toolbar-upload {
+  flex: 0 0 auto;
+}
+
+/* 面包屑：灰色小字，当前层深色（覆盖 Breadcrumb 默认的强调色） */
+.breadcrumb-bar.file-toolbar :deep(.path-bar) {
+  min-height: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.file-toolbar :deep(.path-bar-segment) {
+  padding: 4px 6px;
+  color: var(--vf-text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.file-toolbar :deep(.path-bar-item.is-active .path-bar-segment) {
+  color: var(--vf-text-strong);
+  font-weight: 600;
+}
+
+.file-toolbar :deep(.path-bar-toggle) {
+  margin-left: 0;
+}
+
+/* 根视图的「全部文件 ⌄」视图名 + 视图切换菜单 */
+.file-toolbar-view-menu {
+  position: relative;
+}
+
+.file-toolbar-view-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  height: 32px;
+  padding: 0 0.45rem;
+  border: none;
+  border-radius: var(--vf-radius-sm);
+  background: transparent;
+  color: var(--vf-text-strong);
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.file-toolbar-view-name:hover,
+.file-toolbar-view-name:focus-visible {
+  background: var(--vf-surface-hover);
+}
+
+.file-toolbar-view-caret {
+  color: var(--vf-text-muted);
+}
+
+.file-toolbar-view-list {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  z-index: 30;
+  min-width: 11rem;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  border: 1px solid var(--vf-border);
+  border-radius: var(--vf-radius);
+  background: var(--vf-surface);
+  box-shadow: var(--vf-shadow-menu);
+}
+
+.file-toolbar-view-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  height: 34px;
+  padding: 0 0.55rem;
+  border-radius: var(--vf-radius-sm);
+  color: var(--vf-text);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.file-toolbar-view-item:hover,
+.file-toolbar-view-item:focus-visible {
+  background: var(--vf-row-hover);
+  color: var(--vf-text-strong);
+}
+
+.file-toolbar-view-item.is-active {
+  background: var(--vf-accent-soft);
+  color: var(--vf-accent-text);
+}
+
+/* 右组：版本胶囊 / 搜索 / 列表网格切换 / 排序 / 详细信息 */
+.file-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.file-toolbar-actions :deep(.desktop-search-box) {
+  margin-left: 0;
+}
+
+.file-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-surface-sunken);
+}
+
+.file-view-toggle .vf-icon-button {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+}
+
+.file-toolbar-details {
+  flex: 0 0 auto;
+}
+
+/* 窄桌面（≤1279px）：版本胶囊先让位，保证搜索/视图/排序单行不被挤断。
+   历史入口在移动端底栏仍然可用。 */
+@media screen and (max-width: 1279px) {
+  .file-toolbar .file-history {
+    display: none;
+  }
+}
+
+.file-toolbar-error {
+  margin: 0.6rem 0.85rem 0;
 }
 
 /* 受限会话的轻量范围徽标：让用户始终知道当前会话能看/能写哪里 */
@@ -3023,13 +3374,12 @@ function handleSortChange(field: SortField) {
   white-space: nowrap;
 }
 
-/* 版本切换：面包屑行右侧的紧凑胶囊（原先在顶栏 #center 插槽）。 */
+/* 版本切换：工具栏右组的紧凑胶囊（原先在顶栏 #center 插槽）。 */
 .file-history {
   display: inline-flex;
   align-items: center;
   gap: 0.1rem;
   flex: 0 0 auto;
-  margin-left: auto;
   padding: 0.1rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-pill);
@@ -3053,10 +3403,9 @@ function handleSortChange(field: SortField) {
   text-overflow: ellipsis;
 }
 
+/* 移动端搜索行（桌面已合并进单行工具栏） */
 .file-browser-toolbar {
-  position: relative;
-  z-index: 2;
-  padding: 0.6rem 1.1rem;
+  padding: 0.55rem 0.75rem 0.6rem;
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
@@ -3193,10 +3542,6 @@ function handleSortChange(field: SortField) {
   height: calc(100dvh - var(--sf-topbar-height, 56px));
 }
 
-.file-browser-toolbar {
-  padding: 0.45rem 0.85rem;
-  background: var(--vf-surface);
-}
 
 @media screen and (max-width: 1023px) {
   .file-browser-box {
@@ -3205,8 +3550,9 @@ function handleSortChange(field: SortField) {
   }
 }
 
+/* 详情列宽度由 --vf-details-width 统一（350px），与列表/详情栏保持同步 */
 .desktop-content-layout.has-details {
-  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-columns: minmax(0, 1fr) var(--vf-details-width);
 }
 
 @media screen and (max-width: 1023px) {
@@ -3220,10 +3566,6 @@ function handleSortChange(field: SortField) {
     box-shadow: none;
     border-left: none;
     border-right: none;
-  }
-
-  .file-browser-toolbar {
-    padding: 0.55rem 0.9rem;
   }
 
   .level {

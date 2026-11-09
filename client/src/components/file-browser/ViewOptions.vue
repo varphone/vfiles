@@ -99,6 +99,13 @@
 </template>
 
 <script setup lang="ts">
+/**
+ * 视图偏好下拉：显示方式 / 行密度 / 缩略图大小。
+ *
+ * 桌面单行工具栏已用「列表/网格」直接切换按钮取代这里的「视图」下拉，
+ * 桌面端不再渲染本组件；移动端搜索栏（MobileSearchBar）仍把它作为
+ * 视图偏好入口保留。
+ */
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import {
   IconAdjustmentsHorizontal,

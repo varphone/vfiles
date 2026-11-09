@@ -5,7 +5,7 @@
       <colgroup>
         <col class="file-list-col-check" />
         <col v-for="column in columns" :key="column.field" />
-        <col v-if="showActionColumn" class="file-list-col-actions" />
+        <col class="file-list-col-rowend" />
       </colgroup>
       <thead>
         <tr>
@@ -25,18 +25,9 @@
             v-for="column in columns"
             :key="column.field"
             :class="[column.narrow ? 'is-narrow' : '', column.align || '']"
-            :aria-sort="
-              column.sortable === false ? 'none' : ariaSortFor(column.field)
-            "
+            :aria-sort="ariaSortFor(column.field)"
           >
-            <!-- 「共享」列只展示徽标，不参与排序：静态列头 -->
-            <span
-              v-if="column.sortable === false"
-              class="file-list-static-label"
-              >{{ column.label }}</span
-            >
             <button
-              v-else
               class="file-list-sort"
               type="button"
               :title="`按${column.label}排序`"
@@ -57,13 +48,13 @@
               />
             </button>
           </th>
+          <!-- 行尾：⋯ 菜单 + 行操作图标（列头保持空白，与 Nextcloud 一致） -->
           <th
             scope="col"
-            v-if="showActionColumn"
-            class="is-narrow has-text-right file-list-actions-header"
-          >
-            操作
-          </th>
+            class="is-narrow has-text-right"
+            :class="{ 'file-list-actions-header': showActionColumn }"
+            aria-label="操作"
+          ></th>
         </tr>
       </thead>
       <tbody>
@@ -79,6 +70,7 @@
             (!selectMode && activePath === file.path)
           "
           :shared="sharedPaths.has(file.path)"
+          :shared-public="publicSharedPaths.has(file.path)"
           :expanded="expandedPath === file.path"
           :desktop="true"
           @click="emit('click', file)"
@@ -107,6 +99,14 @@
         />
       </tbody>
     </table>
+
+    <!-- 表尾汇总：与数据行同一列宽，不属于表格行（无悬停态） -->
+    <div v-if="files.length > 0" class="file-list-summary">
+      <span class="file-list-summary-counts">
+        {{ fileCount }} 个文件 · {{ directoryCount }} 个文件夹
+      </span>
+      <span class="file-list-summary-size">{{ totalSizeLabel }}</span>
+    </div>
   </div>
 
   <template v-else>
@@ -119,6 +119,7 @@
       :flash="flashPath === file.path"
       :selected="selectedPaths.has(file.path)"
       :shared="sharedPaths.has(file.path)"
+      :shared-public="publicSharedPaths.has(file.path)"
       :expanded="expandedPath === file.path"
       :can-write="canWrite"
       :can-share="canShare"
@@ -154,6 +155,7 @@ import {
   type SortDirection,
   type SortField,
 } from "../../utils/fileSort";
+import { formatSize } from "../../utils/filePresentation";
 import FileItem from "./FileItem.vue";
 
 const emit = defineEmits<{
@@ -186,7 +188,7 @@ const props = withDefaults(
   defineProps<{
     files: FileInfo[];
     renamingPath?: string;
-    /** 是否显示「操作」列；详情面板可见时可关掉，避免与面板里的操作重复。 */
+    /** 是否显示行尾操作图标组（详情面板可见时可关掉，只保留 ⋯ 菜单）。 */
     showActionColumn?: boolean;
     /** 落子回执路径（父层持态 ✓ 跨 remount） */
     flashPath?: string;
@@ -207,6 +209,13 @@ const props = withDefaults(
     canShare?: boolean;
     /** 已分享路径集合（由 FileBrowser 按目录加载一次后传入）。 */
     sharedPaths?: Set<string>;
+    /**
+     * 公开链接分享路径集合（可选）。
+     *
+     * `sharedPaths` 只说明「有分享」，命中这里时名称列改用链接图标；
+     * 未提供时按内部分享（人物图标）展示。
+     */
+    publicSharedPaths?: Set<string>;
   }>(),
   {
     showActionColumn: true,
@@ -222,11 +231,13 @@ const props = withDefaults(
     canWrite: true,
     canShare: true,
     sharedPaths: () => new Set<string>(),
+    publicSharedPaths: () => new Set<string>(),
   },
 );
 
 const {
   files,
+  showActionColumn,
   highlight,
   showLocation,
   selectMode,
@@ -238,24 +249,16 @@ const {
 } = toRefs(props);
 
 interface SortColumn {
-  field: SortField | "shared";
+  field: SortField;
   label: string;
   narrow?: boolean;
   align?: string;
-  /** 「共享」列是状态列，不参与排序。 */
-  sortable?: boolean;
 }
 
-// Nextcloud 列序：名称 / 共享 / 大小 / 修改时间（复选框与操作列在模板里）。
-// 类型不再单列（仍可通过排序菜单按类型排序），把宽度留给共享状态。
+// Nextcloud 列序：名称 / 大小 / 修改时间（复选框与行尾操作列在模板里）。
+// 「共享」不再单列：已共享标记内联在名称列里（图标 + Shared）。
 const columns: SortColumn[] = [
   { field: "name", label: SORT_FIELD_LABELS.name },
-  {
-    field: "shared",
-    label: "共享",
-    narrow: true,
-    sortable: false,
-  },
   {
     field: "size",
     label: SORT_FIELD_LABELS.size,
@@ -278,46 +281,94 @@ const someSelected = computed(() =>
   selectableFiles.value.some((file) => selectedPaths.value.has(file.path)),
 );
 
-function ariaSortFor(
-  field: SortField | "shared",
-): "ascending" | "descending" | "none" {
-  if (field === "shared") return "none";
+/** 导航快捷项（`.` / `..`）不是当前目录里的真实条目，不计入表尾汇总。 */
+function isShortcut(file: FileInfo): boolean {
+  return Boolean((file as FileInfo & { uiRole?: string }).uiRole);
+}
+
+const listedFiles = computed(() =>
+  files.value.filter((file) => file && !isShortcut(file)),
+);
+const fileCount = computed(
+  () => listedFiles.value.filter((file) => file.kind === "file").length,
+);
+
+const directoryCount = computed(
+  () => listedFiles.value.filter((file) => file.kind === "directory").length,
+);
+
+/** 当前目录所有已加载文件大小之和（目录本身不计入）。 */
+const totalBytes = computed(() =>
+  listedFiles.value.reduce(
+    (sum, file) => (file.kind === "file" ? sum + (file.size_bytes ?? 0) : sum),
+    0,
+  ),
+);
+
+const totalSizeLabel = computed(() => formatSize(totalBytes.value));
+
+function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
   if (sortField.value !== field) return "none";
   return sortDirection.value === "asc" ? "ascending" : "descending";
 }
 </script>
 
 <style scoped>
-/* 主流网盘风格：无斑马纹、细分隔线、粘性表头 */
+/* Nextcloud 列表：无斑马纹、细分隔线、粘性表头 */
 .file-list-table {
-  /* 内容自适应（用户反馈定稿）：数据列随内容定宽（操作列内容完整显示），
-     名称列由 auto 布局自动吸收剩余空间。 */
+  /* 内容自适应：数据列随内容定宽，名称列由 auto 布局自动吸收剩余空间。 */
   background: transparent;
   margin-bottom: 0;
 }
 
+/* 表头：44px 高、灰色 13px */
 .file-list-table thead th {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 0.6rem 0.75rem;
+  height: 44px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface);
   color: var(--vf-text-muted);
-  font-size: 0.75rem;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.02em;
   white-space: nowrap;
+  user-select: none;
 }
 
-.file-list-table tbody td {
-  padding: 0 0.75rem;
+/* 单元格由 FileItem 渲染：用 :deep 才能作用到子组件的 <td>
+   （与表尾汇总的 16px 内边距对齐） */
+.file-list-table :deep(tbody td) {
+  padding: 0 16px;
   border-bottom: 1px solid var(--vf-border-weak);
   vertical-align: middle;
 }
 
-.file-list-table tbody tr:last-child td {
+.file-list-table :deep(tbody tr:last-child td) {
   border-bottom: none;
+}
+
+/* 行尾列（⋯ + 行操作图标）贴右侧，不参与名称列宽度竞争 */
+.file-list-col-rowend {
+  width: 1%;
+}
+
+/* 表尾汇总：不属于数据行，无悬停态 */
+.file-list-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  color: var(--vf-text-muted);
+  font-size: 13px;
+}
+
+.file-list-summary-counts,
+.file-list-summary-size {
+  white-space: nowrap;
 }
 
 /* 桌面端由 .desktop-list-shell 统一滚动：Bulma 的 .table-container 默认
@@ -326,6 +377,17 @@ function ariaSortFor(
   .table-container {
     overflow: visible;
   }
+}
+
+/* 表头：悬停时给出可排序的反馈 */
+.file-list-table thead th:hover {
+  /* 必须用不透明底：surface-hover 是半透明 tint（行悬停叠色用），
+     换给 sticky 表头会让滚动内容透出（用户反馈的"表头悬停变透明"）。 */
+  background: var(--vf-surface-sunken);
+}
+
+.file-list-table thead th:hover .file-list-sort {
+  color: var(--vf-text-strong);
 }
 
 .file-list-sort {
@@ -348,29 +410,6 @@ function ariaSortFor(
 .file-list-sort-icon {
   flex: 0 0 auto;
   color: var(--vf-accent);
-}
-
-/* 非排序列头（共享）：与可排序列头同字号/字重，但不显示交互暗示 */
-.file-list-static-label {
-  display: inline-flex;
-  align-items: center;
-  white-space: nowrap;
-}
-
-/* 表头：悬停时给出可拖拽/可排序的反馈 */
-.file-list-table thead th {
-  position: relative;
-  user-select: none;
-}
-
-.file-list-table thead th:hover {
-  /* 必须用不透明底：surface-hover 是半透明 tint（行悬停叠色用），
-     换给 sticky 表头会让滚动内容透出（用户反馈的"表头悬停变透明"）。 */
-  background: var(--vf-surface-sunken);
-}
-
-.file-list-table thead th:hover .file-list-sort {
-  color: var(--vf-text-strong);
 }
 
 .file-list-select-all {

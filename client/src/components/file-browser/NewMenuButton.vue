@@ -120,15 +120,15 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
-/* 主按钮：Nextcloud 的实心主色 + 3px 圆角，与工具栏「上传」保持同一视觉层级 */
+/* 主按钮：Nextcloud 的「+ 新建」——实心主色、8px 圆角、36px 高（工具栏唯一主操作） */
 .nc-new-button {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  min-height: var(--vf-control-height);
-  padding: 0 0.7rem;
+  min-height: 36px;
+  padding: 0 0.8rem;
   border: 1px solid var(--vf-accent);
-  border-radius: 3px;
+  border-radius: var(--vf-radius-sm);
   background: var(--vf-accent);
   color: var(--vf-on-accent);
   font-size: 0.875rem;
@@ -155,7 +155,7 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
-/* 下拉：白底、3px 圆角、菜单阴影；绝对定位在按钮下方，不挤压面包屑 */
+/* 下拉：白底、8px 圆角、菜单阴影；绝对定位在按钮下方，不挤压面包屑 */
 .nc-new-dropdown {
   position: absolute;
   top: calc(100% + 0.3rem);
@@ -166,7 +166,7 @@ onBeforeUnmount(() => {
   min-width: 11rem;
   padding: 0.25rem;
   border: 1px solid var(--vf-border);
-  border-radius: 3px;
+  border-radius: var(--vf-radius-sm);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-menu);
 }

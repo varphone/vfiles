@@ -304,17 +304,25 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* 顶栏：50px、白底、1px 底边（Nextcloud 外壳），滚动时吸附在顶部。 */
+/*
+ * 顶栏：50px 实心主色蓝（Nextcloud 外壳），无下边框；
+ * 文字与图标一律白色（--vf-on-accent），悬停/选中用半透明白色状态层。
+ */
 .app-header {
+  /* 顶栏状态层：悬停 12% / 当前应用 18%（Nextcloud 应用图标的选中块）。 */
+  --vf-header-hover: rgba(255, 255, 255, 0.12);
+  --vf-header-active: rgba(255, 255, 255, 0.18);
+  --vf-header-radius: 8px;
+
   position: sticky;
   top: 0;
   z-index: 50;
   flex: 0 0 auto;
   height: var(--vf-topbar-height);
-  background: var(--vf-surface);
-  border-bottom: 1px solid var(--vf-border-weak);
+  background: var(--vf-accent);
 }
 
+/* 白色前景只作用于顶栏内的导航控件（右侧弹窗/下拉不继承，避免白底白字）。 */
 .app-header-inner {
   display: flex;
   align-items: center;
@@ -323,6 +331,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   padding: 0 0.85rem;
   flex-wrap: nowrap;
+  color: var(--vf-on-accent);
 }
 
 .app-header-left {
@@ -339,25 +348,30 @@ onBeforeUnmount(() => {
   gap: 0.5rem;
   height: 100%;
   padding: 0 0.35rem;
-  color: var(--vf-text-strong);
+  color: var(--vf-on-accent);
   text-decoration: none;
   white-space: nowrap;
 }
 
-.app-header-brand:hover {
-  color: var(--vf-accent-text);
+.app-header-brand:hover,
+.app-header-brand:focus-visible {
+  color: var(--vf-on-accent);
+  opacity: 0.92;
 }
 
+/* 品牌图标：把原始彩色 SVG 统一渲染成纯白，蓝底上更接近 Nextcloud 的白色 logo。 */
 .app-header-logo {
   width: 28px;
   height: 28px;
   flex: 0 0 auto;
+  filter: brightness(0) invert(1);
 }
 
 .app-header-brand-name {
   font-size: 0.95rem;
   font-weight: 650;
   letter-spacing: 0.01em;
+  color: var(--vf-on-accent);
 }
 
 .app-header-apps {
@@ -368,15 +382,15 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
-/* 应用图标：桌面 40px 命中区，当前应用浅蓝底 + 蓝字。 */
+/* 应用图标：40px 命中区，白色图标；当前应用用白色半透明圆角块表示选中。 */
 .app-header-app {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 40px;
   height: 40px;
-  border-radius: 3px;
-  color: var(--vf-text-muted);
+  border-radius: var(--vf-header-radius);
+  color: var(--vf-on-accent);
   text-decoration: none;
   transition:
     background-color 0.12s var(--vf-motion-standard),
@@ -385,13 +399,18 @@ onBeforeUnmount(() => {
 
 .app-header-app:hover,
 .app-header-app:focus-visible {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-header-hover);
+  color: var(--vf-on-accent);
+}
+
+.app-header-app:focus-visible {
+  outline: 2px solid var(--vf-on-accent);
+  outline-offset: -2px;
 }
 
 .app-header-app.is-active {
-  background: var(--vf-accent-soft);
-  color: var(--vf-accent-text);
+  background: var(--vf-header-active);
+  color: var(--vf-on-accent);
 }
 
 .app-header-center {
@@ -409,6 +428,37 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
+/* 右侧图标（搜索 / 通知 / 主题）在主色面上统一白色 + 半透明白 hover。 */
+.app-header-actions :deep(.vf-icon-button) {
+  color: var(--vf-on-accent);
+}
+
+.app-header-actions :deep(.vf-icon-button:hover:not(:disabled)),
+.app-header-actions :deep(.vf-icon-button:focus-visible) {
+  background: var(--vf-header-hover);
+  color: var(--vf-on-accent);
+}
+
+.app-header-actions :deep(.notification-center .app-bar-bell.is-active) {
+  background: var(--vf-header-active);
+  color: var(--vf-on-accent);
+}
+
+/* 主题切换是 Bulma 的浅灰胶囊按钮：顶栏里改成无底白字，避免在白顶上“消失”。 */
+.app-header-actions :deep(.button.is-light) {
+  min-height: 34px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--vf-on-accent);
+}
+
+.app-header-actions :deep(.button.is-light:hover),
+.app-header-actions :deep(.button.is-light:focus-visible) {
+  background: var(--vf-header-hover);
+  border-color: transparent;
+  color: var(--vf-on-accent);
+}
+
 /* ---- 账号菜单（原 Home 顶栏账号下拉，迁入顶栏组件） ---- */
 .app-header-account {
   display: inline-flex;
@@ -418,9 +468,9 @@ onBeforeUnmount(() => {
   max-width: 12rem;
   padding: 0 0.55rem 0 0.25rem;
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: var(--vf-header-radius);
   background: transparent;
-  color: var(--vf-text);
+  color: var(--vf-on-accent);
   font-size: 0.875rem;
   cursor: pointer;
   transition:
@@ -430,10 +480,17 @@ onBeforeUnmount(() => {
 
 .app-header-account:hover,
 .app-header-account:focus-visible {
-  background: var(--vf-surface-hover);
-  border-color: var(--vf-border-weak);
+  background: var(--vf-header-hover);
+  border-color: transparent;
+  color: var(--vf-on-accent);
 }
 
+.app-header-account:focus-visible {
+  outline: 2px solid var(--vf-on-accent);
+  outline-offset: -2px;
+}
+
+/* 头像：白色圆形底 + 深色首字母（蓝底上仍是清晰的账号标识）。 */
 .app-header-avatar {
   display: inline-flex;
   align-items: center;
@@ -442,8 +499,8 @@ onBeforeUnmount(() => {
   width: 1.5rem;
   height: 1.5rem;
   border-radius: 50%;
-  background: var(--vf-accent);
-  color: var(--vf-on-accent);
+  background: var(--vf-on-accent);
+  color: var(--vf-accent-text);
   font-size: 0.75rem;
   font-weight: 700;
 }
@@ -453,11 +510,13 @@ onBeforeUnmount(() => {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  color: var(--vf-on-accent);
 }
 
 .app-header-account-caret {
   flex: 0 0 auto;
-  color: var(--vf-text-muted);
+  color: var(--vf-on-accent);
+  opacity: 0.8;
 }
 
 .app-header-account-menu .dropdown-menu {
@@ -466,6 +525,8 @@ onBeforeUnmount(() => {
 
 .app-header-account-menu .dropdown-content {
   max-width: calc(100vw - 1rem);
+  /* 下拉内容回到常规面：白底 + 深色文字，不继承顶栏的白色。 */
+  color: var(--vf-text);
 }
 
 .app-header-account-summary {
@@ -531,7 +592,7 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 窄屏（如 320px）：进一步收小图标，保证四个应用图标 + 右侧操作不溢出。 */
+/* 窄屏（如 320px）：进一步收小图标，保证应用图标 + 右侧操作不溢出、不换行。 */
 @media screen and (max-width: 400px) {
   .app-header-app,
   .app-header :deep(.vf-icon-button) {

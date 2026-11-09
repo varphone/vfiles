@@ -1,5 +1,5 @@
 <template>
-  <AuthShell>
+  <AuthShell :title="cardTitle">
     <AuthNotice v-if="auth.initialized && auth.enabled === false" tone="info">
       当前服务未启用认证（ENABLE_AUTH=false）。
       <button class="auth-link-button" type="button" @click="goHome">
@@ -10,7 +10,9 @@
     <template v-else>
       <AuthNotice v-if="reasonText" tone="warning">{{ reasonText }}</AuthNotice>
 
-      <!-- 模式切换：登录 / 邮箱验证码 / 注册（分段控件，与主界面控件语言一致） -->
+      <!-- 模式切换：登录 / 邮箱验证码 / 注册。
+           按 Nextcloud 的「只有表单」观感做成低调的顶部小标签（无边框、选中项下划线），
+           功能与 role=tab 语义保持不变。 -->
       <div class="auth-modes" role="tablist" aria-label="登录方式">
         <button
           v-for="option in modeOptions"
@@ -35,9 +37,8 @@
 
       <form v-if="mode !== 'email'" class="auth-form" @submit.prevent="submit">
         <div class="auth-field">
-          <label class="auth-label" for="auth-username">用户名</label>
+          <label class="auth-label" for="auth-username">账号或邮箱</label>
           <div class="auth-input-wrap">
-            <IconUser :size="16" class="auth-input-icon" />
             <input
               id="auth-username"
               aria-required="true"
@@ -67,7 +68,6 @@
         <div v-if="mode === 'register'" class="auth-field">
           <label class="auth-label" for="auth-email">邮箱（可选）</label>
           <div class="auth-input-wrap">
-            <IconMail :size="16" class="auth-input-icon" />
             <input
               id="auth-email"
               v-model.trim="email"
@@ -83,7 +83,6 @@
         <div class="auth-field">
           <label class="auth-label" for="auth-password">密码</label>
           <div class="auth-input-wrap">
-            <IconLock :size="16" class="auth-input-icon" />
             <input
               id="auth-password"
               aria-required="true"
@@ -112,7 +111,7 @@
             >
               <component
                 :is="showPassword ? IconEyeOff : IconEye"
-                :size="16"
+                :size="18"
                 aria-hidden="true"
               />
             </button>
@@ -127,13 +126,29 @@
           </p>
         </div>
 
+        <!-- 记住我：只记住账号名（便于下次填充），会话时效仍由服务端 Cookie 决定。 -->
+        <label v-if="mode === 'login'" class="auth-remember">
+          <input
+            v-model="remember"
+            class="auth-checkbox"
+            type="checkbox"
+            :disabled="auth.loading"
+          />
+          <span>记住我</span>
+        </label>
+
         <button
-          class="vf-ghost-button is-primary auth-submit"
-          :class="{ 'is-loading': auth.loading }"
+          class="auth-submit auth-primary"
+          data-variant="primary"
           :disabled="auth.loading"
           type="submit"
         >
-          {{ mode === "login" ? "登录" : "注册" }}
+          <span>{{ mode === "login" ? "登录" : "注册" }}</span>
+          <IconArrowRight
+            :size="18"
+            aria-hidden="true"
+            class="auth-submit-icon"
+          />
         </button>
 
         <AuthNotice v-if="auth.error" tone="error">{{ auth.error }}</AuthNotice>
@@ -148,13 +163,6 @@
           登录后落到令牌页，不打断当前登录流程。
         -->
         <div v-if="mode === 'login'" class="auth-links">
-          <button
-            class="auth-link-button"
-            type="button"
-            @click="goForgotPassword"
-          >
-            忘记密码？
-          </button>
           <a
             class="auth-link-button"
             href="/settings/tokens"
@@ -163,6 +171,13 @@
           >
             使用设备登录
           </a>
+          <button
+            class="auth-link-button"
+            type="button"
+            @click="goForgotPassword"
+          >
+            忘记密码？
+          </button>
         </div>
       </form>
 
@@ -170,7 +185,6 @@
         <div class="auth-field">
           <label class="auth-label" for="auth-email-login">邮箱</label>
           <div class="auth-input-wrap">
-            <IconMail :size="16" class="auth-input-icon" />
             <input
               id="auth-email-login"
               aria-required="true"
@@ -188,7 +202,6 @@
           <label class="auth-label" for="auth-code">验证码</label>
           <div class="auth-code-row">
             <div class="auth-input-wrap">
-              <IconKey :size="16" class="auth-input-icon" />
               <input
                 id="auth-code"
                 v-model.trim="emailCode"
@@ -201,7 +214,7 @@
               />
             </div>
             <button
-              class="vf-ghost-button auth-code-send"
+              class="auth-code-send"
               type="button"
               :disabled="emailLoading"
               @click="sendEmailCode"
@@ -212,12 +225,17 @@
         </div>
 
         <button
-          class="vf-ghost-button is-primary auth-submit"
-          :class="{ 'is-loading': emailLoading }"
+          class="auth-submit auth-primary"
+          data-variant="primary"
           :disabled="emailLoading"
           type="submit"
         >
-          验证码登录
+          <span>验证码登录</span>
+          <IconArrowRight
+            :size="18"
+            aria-hidden="true"
+            class="auth-submit-icon"
+          />
         </button>
       </form>
     </template>
@@ -227,14 +245,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import {
-  IconEye,
-  IconEyeOff,
-  IconKey,
-  IconLock,
-  IconMail,
-  IconUser,
-} from "@tabler/icons-vue";
+import { IconArrowRight, IconEye, IconEyeOff } from "@tabler/icons-vue";
 import AuthShell from "../components/auth/AuthShell.vue";
 import AuthNotice from "../components/auth/AuthNotice.vue";
 import { useAuthStore } from "../stores/auth.store";
@@ -249,6 +260,13 @@ const route = useRoute();
 type AuthMode = "login" | "register" | "email";
 
 const mode = ref<AuthMode>("login");
+
+/** 卡片标题随模式变化：登录页固定为「登录 VFiles」。 */
+const cardTitle = computed(() => {
+  if (mode.value === "email") return "邮箱验证码登录";
+  if (mode.value === "register") return "注册 VFiles";
+  return "登录 VFiles";
+});
 
 /** 模式切换项：注册关闭时不显示注册。 */
 const modeOptions = computed(() => {
@@ -271,6 +289,33 @@ const showPassword = ref(false);
 const emailLogin = ref("");
 const emailCode = ref("");
 const emailLoading = ref(false);
+
+/**
+ * 记住我：仅将账号名写入 localStorage 以便下次打开时预填；
+ * 会话有效期依旧由服务端下发的 Cookie 决定（本页不改登录协议）。
+ */
+const REMEMBER_KEY = "vfiles.login.remember-username";
+const remember = ref(false);
+
+function readRememberedUsername(): string {
+  try {
+    return localStorage.getItem(REMEMBER_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberUsername(): void {
+  try {
+    if (remember.value) {
+      localStorage.setItem(REMEMBER_KEY, username.value);
+    } else {
+      localStorage.removeItem(REMEMBER_KEY);
+    }
+  } catch {
+    // 隐私模式禁用本地存储：忽略即可，不影响登录流程。
+  }
+}
 
 const reasonText = computed(() => {
   const reason =
@@ -310,6 +355,7 @@ async function submit() {
   try {
     if (mode.value === "login") {
       await auth.login(username.value, password.value);
+      rememberUsername();
       app.success("登录成功");
     } else {
       await auth.register(
@@ -388,6 +434,12 @@ async function submitEmailLogin() {
 }
 
 onMounted(async () => {
+  const remembered = readRememberedUsername();
+  if (remembered && !username.value) {
+    username.value = remembered;
+    remember.value = true;
+  }
+
   if (!auth.initialized) {
     await auth.fetchMe();
   }
@@ -399,173 +451,105 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 顶部模式标签：无边框、无底色，选中项只用 2px 下划线区分（保持表单观感）。 */
 .auth-modes {
   display: flex;
+  justify-content: center;
   gap: 0.25rem;
-  padding: 0.2rem;
-  margin-bottom: 1rem;
-  border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius);
-  background: var(--vf-surface-sunken);
+  margin: -0.25rem 0 1rem;
 }
 
 .auth-mode {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 0.35rem 0.4rem;
+  padding: 0.25rem 0.5rem 0.375rem;
   border: none;
-  border-radius: var(--vf-radius-sm);
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
-  color: var(--vf-text-muted);
-  font-size: 0.875rem;
+  color: var(--auth-card-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
   cursor: pointer;
 }
 
 .auth-mode:hover {
-  color: var(--vf-text-strong);
+  color: var(--auth-card-ink);
 }
 
 .auth-mode.is-active {
-  background: var(--vf-surface);
-  color: var(--vf-accent-text);
-  font-weight: 600;
-  box-shadow: var(--vf-shadow-card);
+  border-bottom-color: var(--auth-card-ink);
+  color: var(--auth-card-ink);
 }
 
-.auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-}
-
-.auth-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.auth-label {
-  color: var(--vf-text-muted);
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.auth-input-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.auth-input-icon {
-  position: absolute;
-  /* Bulma 的 .input 也是定位元素，不抬高层级时图标会被输入框底色盖住 */
-  z-index: 1;
-  left: 0.55rem;
-  color: var(--vf-text-subtle);
-  pointer-events: none;
-}
-
-.auth-input {
-  padding-left: 2rem;
-  font-size: 0.875rem;
-}
-
-/* 密码框右侧留出显隐按钮的位置。 */
-.auth-input-password {
-  padding-right: 2.35rem;
-}
-
-.auth-password-toggle {
-  position: absolute;
-  z-index: 1;
-  right: 0.25rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.85rem;
-  height: 1.85rem;
-  padding: 0;
-  border: none;
-  border-radius: var(--vf-radius-sm);
-  background: transparent;
-  color: var(--vf-text-subtle);
-  cursor: pointer;
-}
-
-.auth-password-toggle:hover:not(:disabled),
-.auth-password-toggle:focus-visible {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
-}
-
-.auth-password-toggle:focus-visible {
-  outline: 2px solid var(--vf-accent-text);
+.auth-mode:focus-visible {
+  outline: 2px solid var(--auth-primary-bg);
   outline-offset: 1px;
 }
 
-.auth-password-toggle:disabled {
-  opacity: 0.45;
+/* 记住我：13px、深海军蓝勾选框。 */
+.auth-remember {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 0.5rem;
+  color: var(--auth-card-ink);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+}
+
+.auth-checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  /* 原生复选框着色：选中即为深海军蓝（#003a5f）的勾，无额外 DOM。 */
+  accent-color: var(--auth-field-border);
+  cursor: pointer;
+}
+
+.auth-checkbox:focus-visible {
+  outline: 2px solid var(--auth-primary-bg);
+  outline-offset: 2px;
+}
+
+.auth-checkbox:disabled {
+  opacity: 0.5;
   cursor: default;
 }
 
+/* 邮箱验证码：输入框 + 发送按钮同一行。 */
 .auth-code-row {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.5rem;
 }
 
 .auth-code-send {
   flex: 0 0 auto;
-  min-height: 2.1rem;
-  font-size: 0.8rem;
-}
-
-.auth-submit {
-  justify-content: center;
-  width: 100%;
-  /* 与控件语言一致（ghost 36px / 0.82rem） */
-  min-height: 2.25rem;
-  font-size: 0.875rem;
-}
-
-.auth-links {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem 1rem;
-  padding-top: 0.9rem;
-  border-top: 1px solid var(--vf-border-weak);
-}
-
-.auth-link-button {
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--vf-accent);
-  font-size: 0.8rem;
-  text-decoration: none;
+  box-sizing: border-box;
+  height: 44px;
+  padding: 0 0.75rem;
+  border: 2px solid var(--auth-field-border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--auth-field-border);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-/* 非颜色区分（r152 ✓ WCAG 1.4.1）：hover/焦点带下划线（GitHub/Discord 式） */
-.auth-link-button:hover,
-.auth-link-button:focus-visible {
-  text-decoration: underline;
+.auth-code-send:hover:not(:disabled) {
+  background: var(--auth-field-hover);
 }
 
-.auth-hint {
-  margin: 0;
-  color: var(--vf-text-subtle);
-  font-size: 0.8rem;
-  line-height: 1.5;
+.auth-code-send:focus-visible {
+  outline: 2px solid var(--auth-primary-bg);
+  outline-offset: 1px;
 }
-.auth-field-error {
-  margin: 0.3rem 0 0;
-  color: var(--vf-danger-text);
-  font-size: 0.75rem;
-  line-height: 1.4;
+
+.auth-code-send:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 </style>

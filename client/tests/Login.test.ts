@@ -84,6 +84,33 @@ describe("Login.vue auth shell", () => {
     );
   });
 
+  it("renders floating labels bound to their inputs", () => {
+    const { container, getByLabelText } = renderWithProviders(Login);
+
+    // Material 外框风格：label 与 input 用 for/id 关联，并带浮动标签类名
+    const username = getByLabelText("账号或邮箱");
+    expect(username).toHaveAttribute("id", "auth-username");
+    expect(container.querySelector('label[for="auth-username"]')).toHaveClass(
+      "auth-label",
+    );
+
+    const password = getByLabelText("密码");
+    expect(password).toHaveAttribute("id", "auth-password");
+    expect(container.querySelector('label[for="auth-password"]')).toHaveClass(
+      "auth-label",
+    );
+  });
+
+  it("renders the deep-navy primary submit button", () => {
+    const { container } = renderWithProviders(Login);
+
+    // 主按钮：深蓝语义类 + data 属性 + 右侧箭头图标
+    const submit = container.querySelector(".auth-submit");
+    expect(submit).toHaveClass("auth-primary");
+    expect(submit).toHaveAttribute("data-variant", "primary");
+    expect(submit?.querySelector(".auth-submit-icon")).toBeTruthy();
+  });
+
   it("shows the version and ICP record in the footer", () => {
     const { getByRole, getByText } = renderWithProviders(Login);
 

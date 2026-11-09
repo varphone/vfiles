@@ -176,9 +176,11 @@ import SortMenu from "./SortMenu.vue";
 import ViewOptions from "./ViewOptions.vue";
 
 /**
- * 桌面工具栏动作组：导航、视图/排序、详情与批量开关、搜索框、上传入口。
+ * 旧桌面工具栏动作组：导航、视图/排序、详情与批量开关、搜索框、上传入口。
  *
- * 只做展示与上报，状态仍由 FileBrowser 持有（搜索分页、批量选择、上传队列都在那里）。
+ * 已由 FileBrowser 内合并的单行工具栏取代，**不再被渲染**：视图/排序/搜索
+ * 直接进入那一行，上传分裂按钮整体移除（上传收进「+ 新建」菜单）。
+ * 文件保留以便回溯旧布局与单元测试，新改动请直接改 FileBrowser 的 file-toolbar。
  */
 withDefaults(
   defineProps<{

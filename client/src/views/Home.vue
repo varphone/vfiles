@@ -765,9 +765,6 @@ async function renameSelected() {
     flex-direction: column;
   }
 
-  :deep(.desktop-command-bar) {
-    margin-bottom: 0;
-  }
 }
 
 @media screen and (max-width: 1023px) {

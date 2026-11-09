@@ -1,4 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
@@ -84,6 +86,37 @@ describe("ViewsSidebar.vue", () => {
     expect(screen.getByRole("link", { name: "收藏" })).toHaveClass("is-active");
     expect(screen.getByRole("link", { name: "全部文件" })).not.toHaveClass(
       "is-active",
+    );
+  });
+
+  it("paints the active view as a solid primary block with white text", async () => {
+    await renderSidebar({ path: "/favorites" });
+
+    const active = screen.getByRole("link", { name: "收藏" });
+    expect(active).toHaveClass("is-active");
+
+    // jsdom 不套用 SFC 样式：核对样式契约（主色实心 + 白字 + 8px 圆角）。
+    const source = readFileSync(
+      resolve(process.cwd(), "src/components/files/ViewsSidebar.vue"),
+      "utf8",
+    );
+    expect(source).toContain("--vf-sidebar-item-radius: 8px");
+    expect(source).toContain(
+      "--vf-sidebar-item-active-bg: var(--vf-accent)",
+    );
+    expect(source).toContain(
+      "--vf-sidebar-item-active-fg: var(--vf-on-accent)",
+    );
+    const activeRule = source.match(
+      /\.views-sidebar-item\.is-active\s*\{([\s\S]*?)\n\}/,
+    )![1];
+    expect(activeRule).toContain(
+      "background: var(--vf-sidebar-item-active-bg)",
+    );
+    expect(activeRule).toContain("color: var(--vf-sidebar-item-active-fg)");
+    // 8px 圆角来自条目基类（选中态不覆盖它）。
+    expect(source).toContain(
+      "border-radius: var(--vf-sidebar-item-radius)",
     );
   });
 

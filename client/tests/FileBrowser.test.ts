@@ -826,14 +826,18 @@ describe("FileBrowser.vue create folder entry", () => {
     );
   });
 
-  it("asks for a folder name from the toolbar button", async () => {
+  it("asks for a folder name from the + new menu in the merged toolbar", async () => {
     setDetailsVisible(false);
     getFilesMock.mockResolvedValue([]);
     const { promptDialog } = await import("../src/composables/dialog");
 
-    const { findByLabelText } = renderWithProviders(FileBrowser as any);
+    const { findByLabelText, findByRole } = renderWithProviders(
+      FileBrowser as any,
+    );
 
-    await fireEvent.click(await findByLabelText("新建文件夹"));
+    // 单行工具栏由「+ 新建」菜单承载新建文件夹，不再单独占一个按钮。
+    await fireEvent.click(await findByLabelText("新建"));
+    await fireEvent.click(await findByRole("menuitem", { name: "新建文件夹" }));
 
     // 复用既有的「新建目录」提示流程（对话框由 DialogHost 渲染）
     await waitFor(() =>
@@ -989,7 +993,8 @@ describe("FileBrowser.vue action column", () => {
 
     expect(container.querySelector(".file-list-actions-header")).not.toBeNull();
     const row = container.querySelector("tr.desktop-file-row")!;
-    expect(row.querySelectorAll("td").length).toBe(6);
+    // 行尾列常驻（⋯ + 操作图标）：详见/隐藏操作列时单元格数一致
+    expect(row.querySelectorAll("td").length).toBe(5);
   });
 });
 
@@ -1102,16 +1107,18 @@ describe("FileBrowser.vue view and sort menus", () => {
     );
     await findByText("此文件夹为空");
 
-    // 视图菜单：只负责显示方式与缩略图大小
-    await fireEvent.click(
-      container.querySelector(".view-options .vf-ghost-button")!,
-    );
-    await waitFor(() =>
-      expect(container.querySelector(".view-options-panel")).not.toBeNull(),
-    );
-    const viewPanel = container.querySelector(".view-options-panel")!;
-    expect(viewPanel.textContent).toContain("显示方式");
-    expect(viewPanel.textContent).not.toContain("文件夹置顶");
+    // 显示方式：工具栏右侧直接用列表/网格两个切换按钮（旧的「视图」下拉已移除）
+    expect(container.querySelector(".view-options")).toBeNull();
+    const viewToggle = container.querySelector(".file-view-toggle")!;
+    expect(viewToggle).not.toBeNull();
+    expect(viewToggle.getAttribute("aria-label")).toBe("显示方式");
+    expect(
+      within(viewToggle as HTMLElement).getByRole("button", { name: "列表视图" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    // 显示方式控件里只有列表/网格，没有排序项（文件夹置顶）。
+    expect(
+      within(viewToggle as HTMLElement).queryByText("文件夹置顶"),
+    ).toBeNull();
 
     // 排序菜单：文件夹置顶属于排序选项
     const sortTrigger = container.querySelector(".sort-menu button")!;
@@ -2365,13 +2372,13 @@ describe("FileBrowser.vue shared badges", () => {
     await waitFor(() => {
       expect(
         container.querySelector(
-          'tr[data-vfiles-path="a.txt"] .desktop-shared-badge',
+          'tr[data-vfiles-path="a.txt"] .desktop-shared-inline',
         ),
       ).not.toBeNull();
     });
     expect(
       container.querySelector(
-        'tr[data-vfiles-path="b.txt"] .desktop-shared-badge',
+        'tr[data-vfiles-path="b.txt"] .desktop-shared-inline',
       ),
     ).toBeNull();
     // 按目录加载一次：不随行渲染重复请求

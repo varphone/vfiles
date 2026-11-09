@@ -2,65 +2,93 @@
   <div class="desktop-batch-strip" role="region" aria-label="批量操作">
     <div class="desktop-batch-meta">已选择 {{ selectedCount }} 项</div>
     <div class="desktop-batch-actions">
-      <button class="vf-ghost-button" @click="emit('select-all')">
-        全选当前视图
+      <button
+        class="vf-ghost-button is-small"
+        type="button"
+        @click="emit('select-all')"
+      >
+        <IconChecklist :size="16" aria-hidden="true" />
+        <span>全选当前视图</span>
       </button>
       <button
-        class="vf-ghost-button"
+        class="vf-ghost-button is-small"
+        type="button"
         :disabled="selectedCount === 0"
         @click="emit('download')"
       >
-        下载
+        <IconDownload :size="16" aria-hidden="true" />
+        <span>下载</span>
       </button>
       <button
         v-if="canWrite"
-        class="vf-ghost-button"
+        class="vf-ghost-button is-small"
+        type="button"
         :disabled="selectedCount === 0"
         @click="emit('move')"
       >
-        移动
+        <IconArrowsDiff :size="16" aria-hidden="true" />
+        <span>移动</span>
       </button>
       <button
         v-if="canTransfer"
-        class="vf-ghost-button"
+        class="vf-ghost-button is-small"
+        type="button"
         :disabled="selectedCount === 0"
         title="把所选条目（含版本历史）交给另一个用户"
         @click="emit('transfer')"
       >
-        转移所有权
+        <IconUserShare :size="16" aria-hidden="true" />
+        <span>转移所有权</span>
       </button>
       <button
         v-if="canWrite"
-        class="vf-ghost-button"
+        class="vf-ghost-button is-small"
+        type="button"
         :disabled="selectedCount !== 1"
         @click="emit('rename')"
       >
-        重命名
+        <IconPencil :size="16" aria-hidden="true" />
+        <span>重命名</span>
       </button>
       <button
         v-if="canWrite"
-        class="vf-ghost-button is-danger"
+        class="vf-ghost-button is-small is-danger"
+        type="button"
         :disabled="selectedCount === 0"
         @click="emit('delete')"
       >
-        删除
+        <IconTrash :size="16" aria-hidden="true" />
+        <span>删除</span>
       </button>
       <button
-        class="vf-ghost-button desktop-batch-clear"
+        class="vf-ghost-button is-small desktop-batch-clear"
+        type="button"
         @click="emit('clear-selection')"
       >
-        清空
+        <IconX :size="16" aria-hidden="true" />
+        <span>清空</span>
       </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import {
+  IconArrowsDiff,
+  IconChecklist,
+  IconDownload,
+  IconPencil,
+  IconTrash,
+  IconUserShare,
+  IconX,
+} from "@tabler/icons-vue";
+
 /**
  * 批量选择操作条。
  *
  * 只呈现操作入口，批量逻辑（选择集合、下载/删除/移动/重命名）仍在
  * `useFileSelection` 与父组件里，避免这里重复状态。
+ * 样式对齐 Nextcloud：浅蓝底、44px 高、左侧选择计数 + 右侧小号文字图标按钮。
  */
 withDefaults(
   defineProps<{
@@ -85,48 +113,53 @@ const emit = defineEmits<{
 </script>
 
 <style scoped>
-/* 批量操作条：Nextcloud 式中性浮条——白底、细边框、3px 圆角。
-   与上方工具栏和下方列表留出间距，避免贴在一起像是工具栏没画完 */
+/* 批量操作条：Nextcloud 式浅蓝选择条（满宽、无圆角、底部一条分隔线） */
 .desktop-batch-strip {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  /* 位于列表列内部：与列表内容左右对齐，并在列表列内吸顶 */
-  margin: 0.4rem 0 0.6rem;
-  padding: 0.45rem 0.75rem;
-  /* 吸顶：长列表滚动时批量操作始终可达（对齐主流网盘的选择工具条）。
-     用实底而不是半透明色，避免滚动时透出下层文字。 */
+  gap: 12px;
+  height: 44px;
+  /* 位于列表列内部：与列表内容左右对齐，并在列表列内吸顶。
+     top 取 0：选择条本来就贴在列表列顶部；带上顶栏高度会把条向下推、
+     压住表头/首行（实测 sticky 约束按最近的滚动容器计算）。 */
+  margin: 0;
+  padding: 0 16px;
   position: sticky;
-  top: calc(
-    var(--bulma-navbar-height, 3.25rem) + env(safe-area-inset-top) + 0.4rem
-  );
+  top: 0;
   z-index: 6;
-  background: var(--vf-surface);
-  border: 1px solid var(--vf-border-weak);
-  border-radius: 3px;
-  box-shadow: var(--vf-shadow-popover);
+  background: var(--vf-row-selected);
+  border: none;
+  border-bottom: 1px solid var(--vf-border-weak);
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .desktop-batch-meta {
+  flex: 0 0 auto;
   color: var(--vf-text-strong);
   font-size: 0.875rem;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .desktop-batch-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex: 0 1 auto;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.25rem;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.desktop-batch-actions::-webkit-scrollbar {
+  display: none;
 }
 
 .desktop-batch-actions .vf-ghost-button {
-  min-height: var(--vf-control-height-sm);
-  padding: 0 0.6rem;
-  font-size: 0.8125rem;
+  flex: 0 0 auto;
 }
 
 .desktop-batch-clear {

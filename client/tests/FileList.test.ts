@@ -106,6 +106,69 @@ describe("FileList.vue", () => {
     expect(container.textContent).not.toContain("▲");
   });
 
+  it("places the Shared marker inline next to the file name", () => {
+    const files = [
+      buildFile({ id: "a", name: "a.txt", path: "a.txt" }),
+      buildFile({ id: "b", name: "b.txt", path: "b.txt" }),
+    ];
+
+    const { container } = render(FileList as any, {
+      props: {
+        desktop: true,
+        selectMode: false,
+        selectedPaths: new Set<string>(),
+        sharedPaths: new Set<string>(["a.txt"]),
+        files,
+      },
+    });
+
+    // 共享标记在名称列内、文件名右侧（不再是独立列/徽标块）
+    const rows = container.querySelectorAll("tr.desktop-file-row");
+    const nameCell = rows[0].querySelector(".desktop-name-cell")!;
+    const marker = nameCell.querySelector(".desktop-shared-inline")!;
+    expect(marker).not.toBeNull();
+    expect(marker.textContent?.trim()).toBe("Shared");
+    expect(marker.querySelector("svg.tabler-icon-users")).not.toBeNull();
+    const name = nameCell.querySelector(".desktop-name-text")!;
+    expect(
+      name.compareDocumentPosition(marker) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    expect(rows[1].querySelector(".desktop-shared-inline")).toBeNull();
+    expect(container.querySelector(".desktop-file-shared")).toBeNull();
+    // 列序：复选框 / 名称 / 大小 / 修改时间 / 行尾（无「共享」列）
+    expect(container.querySelectorAll("thead th")).toHaveLength(5);
+  });
+
+  it("summarises the current directory below the last row", () => {
+    const files = [
+      buildFile({ id: "a", name: "a.txt", path: "a.txt", size_bytes: 1024 }),
+      buildFile({ id: "b", name: "b.txt", path: "b.txt", size_bytes: 2048 }),
+      buildFile({ id: "docs", name: "docs", path: "docs", kind: "directory" }),
+    ];
+
+    const { container } = render(FileList as any, {
+      props: {
+        desktop: true,
+        selectMode: false,
+        selectedPaths: new Set<string>(),
+        files,
+      },
+    });
+
+    // 表尾不是数据行：行数仍等于条目数
+    expect(container.querySelectorAll("tr.desktop-file-row")).toHaveLength(3);
+    const summary = container.querySelector(".file-list-summary");
+    expect(summary).not.toBeNull();
+    expect(
+      summary!.querySelector(".file-list-summary-counts")?.textContent?.trim(),
+    ).toBe("2 个文件 · 1 个文件夹");
+    // 总大小 = 当前目录已加载文件大小之和（目录不计入）
+    expect(
+      summary!.querySelector(".file-list-summary-size")?.textContent?.trim(),
+    ).toBe("3 KB");
+  });
+
   it("shows an indeterminate select-all checkbox for a partial selection", async () => {
     const files: FileInfo[] = [
       buildFile({ id: "a", name: "a.txt", path: "a.txt" }) as FileInfo,

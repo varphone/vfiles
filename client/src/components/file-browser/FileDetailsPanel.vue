@@ -94,8 +94,53 @@
     </div>
 
     <template v-else-if="item">
-      <!-- 详情侧栏 Tab：详细信息 / 活动 / 分享 / 版本（Nextcloud 信息侧栏结构） -->
-      <header class="details-tabs-bar">
+      <!-- 侧栏头部 + Tab：整体吸顶，长内容滚动时仍可切换视图与关闭 -->
+      <div class="details-top">
+        <header class="details-head">
+          <div class="details-head-top">
+            <h2 class="details-head-title" :title="item.name">
+              {{ item.name }}
+            </h2>
+            <div class="details-head-actions">
+              <button
+                ref="menuButton"
+                class="vf-icon-button details-menu"
+                type="button"
+                :aria-label="`${item.name} 的操作`"
+                aria-haspopup="true"
+                title="更多操作"
+                @click="openRowMenu"
+              >
+                <IconDots :size="18" />
+              </button>
+              <button
+                class="vf-icon-button details-close"
+                type="button"
+                title="关闭详细信息"
+                aria-label="关闭详细信息"
+                @click="emit('close')"
+              >
+                <IconX :size="18" />
+              </button>
+            </div>
+          </div>
+          <p class="details-head-meta">
+            <span class="details-head-size">{{ metaSizeLabel }}</span>
+            <span class="details-head-sep" aria-hidden="true">•</span>
+            <span class="details-head-date" :title="metaDateTitle">
+              {{ metaDateLabel }}
+            </span>
+            <template v-if="ownerName">
+              <span class="details-head-sep" aria-hidden="true">•</span>
+              <span class="details-head-owner">
+                <IconUser :size="14" aria-hidden="true" />
+                <span class="details-head-owner-name">{{ ownerName }}</span>
+              </span>
+            </template>
+          </p>
+        </header>
+
+        <!-- Tab：图标在上、文字在下的四项等宽切换（Nextcloud 信息侧栏） -->
         <div class="details-tabs" role="tablist" aria-label="条目详情">
           <button
             v-for="tab in tabs"
@@ -109,19 +154,16 @@
             :aria-controls="`details-panel-${tab.key}`"
             @click="activeTab = tab.key"
           >
-            {{ tab.label }}
+            <component
+              :is="tab.icon"
+              :size="20"
+              class="details-tab-icon"
+              aria-hidden="true"
+            />
+            <span class="details-tab-label">{{ tab.label }}</span>
           </button>
         </div>
-        <button
-          class="vf-icon-button details-close"
-          type="button"
-          title="关闭详细信息"
-          aria-label="关闭详细信息"
-          @click="emit('close')"
-        >
-          <IconX :size="16" />
-        </button>
-      </header>
+      </div>
 
       <div
         v-if="activeTab === 'details'"
@@ -201,16 +243,6 @@
       </div>
 
       <div
-        v-else-if="activeTab === 'activity'"
-        id="details-panel-activity"
-        class="details-tab-content"
-        role="tabpanel"
-        aria-labelledby="details-tab-activity"
-      >
-        <FileActivityTab :file="item" />
-      </div>
-
-      <div
         v-else-if="activeTab === 'shares'"
         id="details-panel-shares"
         class="details-tab-content"
@@ -222,6 +254,16 @@
           :can-share="canShare"
           @create-share="emit('share', item)"
         />
+      </div>
+
+      <div
+        v-else-if="activeTab === 'activity'"
+        id="details-panel-activity"
+        class="details-tab-content"
+        role="tabpanel"
+        aria-labelledby="details-tab-activity"
+      >
+        <FileActivityTab :file="item" />
       </div>
 
       <div
@@ -246,10 +288,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, type Component } from "vue";
 import {
   IconArrowsDiff,
+  IconBolt,
   IconChecklist,
+  IconDots,
   IconDownload,
   IconEye,
   IconFolderOpen,
@@ -258,12 +302,20 @@ import {
   IconPencil,
   IconShare,
   IconTrash,
+  IconUser,
   IconUserShare,
   IconX,
 } from "@tabler/icons-vue";
+import { getActivePinia } from "pinia";
 import type { FileInfo } from "../../types";
 import { filesService } from "../../services/files.service";
-import { formatSize, isImageFile } from "../../utils/filePresentation";
+import { useAuthStore } from "../../stores/auth.store";
+import {
+  formatDate,
+  formatRelativeDate,
+  formatSize,
+  isImageFile,
+} from "../../utils/filePresentation";
 import EmptyState from "../common/EmptyState.vue";
 import VersionHistory from "../version-history/VersionHistory.vue";
 import FileActivityTab from "./FileActivityTab.vue";
@@ -272,11 +324,11 @@ import FileShareTab from "./FileShareTab.vue";
 import FileTypeIcon from "./FileTypeIcon.vue";
 
 /**
- * 桌面端右侧「详细信息」面板。
+ * 桌面端右侧「详细信息」面板（Nextcloud 信息侧栏结构）。
  *
  * 只负责展示与事件上抛：当前条目、是否显示由父组件决定，避免这里再持有
- * 列表/选择状态。单选时分为「详细信息 / 活动 / 分享 / 版本」四个 Tab，
- * Tab 切换只切视图，不改变父组件持有的选中条目。
+ * 列表/选择状态。单选时头部固定展示文件名与元信息，下面按
+ * 「详细信息 / 分享 / 活动 / 版本」四个 Tab 切换视图。
  */
 const props = withDefaults(
   defineProps<{
@@ -319,15 +371,17 @@ const emit = defineEmits<{
   (e: "delete-selection"): void;
   (e: "select-all"): void;
   (e: "clear-selection"): void;
+  /** 头部「⋯」：与列表行菜单同源的上下文菜单请求。 */
+  (e: "context-menu", payload: { file: FileInfo; x: number; y: number }): void;
 }>();
 
-type DetailsTabKey = "details" | "activity" | "shares" | "versions";
+type DetailsTabKey = "details" | "shares" | "activity" | "versions";
 
-const tabs: Array<{ key: DetailsTabKey; label: string }> = [
-  { key: "details", label: "详细信息" },
-  { key: "activity", label: "活动" },
-  { key: "shares", label: "分享" },
-  { key: "versions", label: "版本" },
+const tabs: Array<{ key: DetailsTabKey; label: string; icon: Component }> = [
+  { key: "details", label: "详细信息", icon: IconInfoCircle },
+  { key: "shares", label: "分享", icon: IconShare },
+  { key: "activity", label: "活动", icon: IconBolt },
+  { key: "versions", label: "版本", icon: IconHistory },
 ];
 
 /** 当前 Tab；切换条目时保留，避免每次选文件都跳回第一页。 */
@@ -362,64 +416,182 @@ const previewUrl = computed(() => {
     size: 320,
   });
 });
+
+/** 当前会话用户名（用于头部的所有者胶囊）；无 Pinia 的嵌入/测试场景下省略。 */
+const pinia = getActivePinia();
+const authStore = pinia ? useAuthStore(pinia) : null;
+const ownerName = computed(() => authStore?.user?.username ?? "");
+
+const metaSizeLabel = computed(() => {
+  const item = props.item;
+  if (!item) return "";
+  if (item.kind === "directory") return "—";
+  return formatSize(item.size_bytes || 0);
+});
+
+const metaDateLabel = computed(() => {
+  const item = props.item;
+  if (!item) return "";
+  return formatRelativeDate(item.updated_at || item.created_at);
+});
+
+const metaDateTitle = computed(() => {
+  const item = props.item;
+  if (!item) return "";
+  return formatDate(item.updated_at || item.created_at);
+});
+
+/** 头部「⋯」：在按钮下方打开与列表行一致的上下文菜单。 */
+const menuButton = ref<HTMLButtonElement | null>(null);
+
+function openRowMenu() {
+  const item = props.item;
+  if (!item) return;
+  const rect = menuButton.value?.getBoundingClientRect();
+  emit("context-menu", {
+    file: item,
+    x: rect ? rect.left : 0,
+    y: rect ? rect.bottom + 4 : 0,
+  });
+}
 </script>
 
 <style scoped>
 .desktop-details {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  padding: 1.1rem;
+  /* Nextcloud 详情侧栏宽度；与外壳栅格轨道共用同一 token */
+  width: var(--vf-details-width, 350px);
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
   border-left: 1px solid var(--vf-border-weak);
   background: var(--vf-surface);
-  min-width: 0;
-  /* 与列表一致：面板自身吸顶并内部滚动，长列表滚动时信息与操作始终可见 */
+  /* 与列表一致：面板自身吸顶并内部滚动，长列表滚动时信息与操作始终可见。
+     top 取 0：面板就在内容区顶部；带上顶栏高度会在面板上方留出空白
+     （sticky 约束按最近的滚动容器计算）。 */
   position: sticky;
-  top: calc(
-    var(--bulma-navbar-height, 3.25rem) + env(safe-area-inset-top) + 0.6rem
-  );
+  top: 0;
   align-self: start;
   /* 高度受内容区（grid 行）限制，而不是视口：
      用视口高度会让面板越过内容区压住底部状态栏，挡住状态栏右侧的操作 */
+  min-height: 100%;
   max-height: 100%;
   overflow-y: auto;
 }
 
-/* Tab 头：吸顶，长内容滚动时仍可切换视图 */
-.details-tabs-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
+/* 头部 + Tab：整体吸顶，随面板滚动时保持可见 */
+.details-top {
   position: sticky;
   top: 0;
   z-index: 2;
-  margin: -0.35rem -0.25rem 0;
-  padding: 0.35rem 0.25rem;
   background: var(--vf-surface);
-  border-bottom: 1px solid var(--vf-border-weak);
 }
 
-.details-tabs {
+/* 头部：文件名 + 行菜单/关闭 + 一行元信息 */
+.details-head {
   display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px 10px;
+  background: var(--vf-surface);
+}
+
+.details-head-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 标题：17px 加粗，最多两行后截断 */
+.details-head-title {
+  display: -webkit-box;
   flex: 1 1 auto;
   min-width: 0;
-  gap: 0.1rem;
-  overflow-x: auto;
-  scrollbar-width: none;
+  margin: 0;
+  overflow: hidden;
+  color: var(--vf-text-strong);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
-.details-tabs::-webkit-scrollbar {
-  display: none;
+.details-head-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.details-close,
+.details-menu {
+  flex: 0 0 auto;
+}
+
+/* 元信息：大小 • 相对修改时间 • 用户名胶囊 */
+.details-head-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--vf-text-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.details-head-sep {
+  color: var(--vf-text-subtle);
+}
+
+.details-head-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--vf-surface-muted);
+  color: var(--vf-text);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.details-head-owner-name {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tab：图标在上、文字在下，四项等宽 */
+.details-tabs {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--vf-border-weak);
+  background: var(--vf-surface);
 }
 
 .details-tab {
-  flex: 0 0 auto;
-  padding: 0.45rem 0.4rem;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 4px;
   border: none;
   border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
   background: transparent;
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.2;
   white-space: nowrap;
@@ -436,20 +608,26 @@ const previewUrl = computed(() => {
   font-weight: 600;
 }
 
+.details-tab.is-active .details-tab-icon {
+  color: var(--vf-accent);
+}
+
+.details-tab-icon {
+  flex: 0 0 auto;
+  color: inherit;
+}
+
 .details-tab:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--vf-focus-ring);
   border-radius: 3px;
 }
 
-.details-close {
-  flex: 0 0 auto;
-}
-
 .details-tab-content {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  padding: 14px 16px 16px;
 }
 
 /* 版本 Tab 复用版本历史组件：侧栏只有一列，覆盖其宽屏双列布局 */

@@ -154,7 +154,7 @@
   --vf-sidebar-width: 300px;
   --vf-settings-nav-width: 208px;
   --vf-admin-sidebar-width: 232px;
-  --vf-details-width: 320px;
+  --vf-details-width: 350px;
   --vf-content-max: 1600px;
   --vf-row-height: 50px;
   --vf-row-height-compact: 44px;
@@ -165,6 +165,13 @@
   /* 表面层级：二级面 / 侧栏 / 顶栏 / 表头 / 行状态 */
   --vf-surface-2: #ffffff;
   --vf-sidebar: #ffffff;
+  /* 文件视图侧栏：Nextcloud 式浅蓝渐变（300px 列，底部渐白） */
+  --vf-sidebar-gradient: linear-gradient(
+    180deg,
+    #dceefb 0%,
+    #eef7fd 45%,
+    #ffffff 100%
+  );
   --vf-topbar: #ffffff;
   --vf-table-head: #ffffff;
   --vf-row-hover: #f5f5f5;
@@ -304,7 +311,7 @@
   --vf-sidebar-width: 300px;
   --vf-settings-nav-width: 208px;
   --vf-admin-sidebar-width: 232px;
-  --vf-details-width: 320px;
+  --vf-details-width: 350px;
   --vf-content-max: 1600px;
   --vf-row-height: 50px;
   --vf-row-height-compact: 44px;
@@ -314,6 +321,8 @@
 
   --vf-surface-2: #242424;
   --vf-sidebar: #121720;
+  /* 深色主题的对应深蓝渐变 */
+  --vf-sidebar-gradient: linear-gradient(180deg, #12303f 0%, #171717 100%);
   --vf-topbar: rgba(18, 23, 32, 0.92);
   --vf-table-head: #1a2028;
   --vf-row-hover: rgba(255, 255, 255, 0.06);

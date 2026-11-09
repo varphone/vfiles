@@ -165,11 +165,10 @@ describe("FileBrowser.vue restricted scope", () => {
     // 目录树/概览已迁到页面级 ViewsSidebar，FileBrowser 不再自带侧栏。
     expect(container.querySelector(".directory-tree")).toBeNull();
     expect(container.querySelector(".sidebar-overview")).toBeNull();
-    expect(container.querySelector(".desktop-upload-split")).toBeNull();
-    expect(container.querySelector(".desktop-create-folder")).toBeNull();
-    expect(
-      container.querySelector('.desktop-command-group button[title="批量选择"]'),
-    ).toBeNull();
+    // 只读会话不渲染写入口：合并工具栏里的「+ 新建」（上传 / 新建文件夹）整组缺席。
+    expect(container.querySelector(".file-toolbar-write")).toBeNull();
+    expect(container.querySelector(".nc-new-menu")).toBeNull();
+    expect(container.querySelector(".nc-new-button")).toBeNull();
   });
 
   it("keeps write actions for a read-write scoped credential", async () => {
@@ -186,8 +185,8 @@ describe("FileBrowser.vue restricted scope", () => {
     await waitFor(() =>
       expect(screen.getByText(/受限访问：docs（可写）/)).toBeInTheDocument(),
     );
-    expect(container.querySelector(".desktop-upload-split")).not.toBeNull();
-    expect(container.querySelector(".desktop-create-folder")).not.toBeNull();
+    expect(container.querySelector(".file-toolbar-write")).not.toBeNull();
+    expect(container.querySelector(".nc-new-button")).not.toBeNull();
   });
 
   it("shows a 403 message and stops loading without retrying forever", async () => {
