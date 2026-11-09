@@ -280,3 +280,18 @@
 .sf-nav-tab.is-active {
   font-weight: 500;
 }
+
+/* 工具栏密度：Seafile 的一行工具栏更矮，图标按钮也更紧凑 */
+.file-browser-toolbar {
+  padding: 0.3rem 0.85rem;
+}
+
+.vf-icon-button {
+  border-radius: 3px;
+}
+
+.vf-primary-button {
+  border-radius: 3px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
