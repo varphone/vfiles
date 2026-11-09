@@ -159,6 +159,35 @@
           }"
         >
           <aside v-if="treeVisible" class="browser-sidebar">
+            <nav class="browser-nav" aria-label="快捷导航">
+              <RouterLink class="browser-nav-item is-active" to="/">
+                <IconFolder :size="16" />
+                <span>文件</span>
+              </RouterLink>
+              <RouterLink class="browser-nav-item" to="/shares">
+                <IconShare :size="16" />
+                <span>我的分享</span>
+              </RouterLink>
+              <template v-if="!isRestricted">
+                <RouterLink class="browser-nav-item" to="/settings/passwords">
+                  <IconKey :size="16" />
+                  <span>访问密码</span>
+                </RouterLink>
+                <RouterLink class="browser-nav-item" to="/settings/tokens">
+                  <IconTicket :size="16" />
+                  <span>访问令牌</span>
+                </RouterLink>
+                <RouterLink
+                  v-if="['admin', 'manager'].includes(authStore.user?.role || '')"
+                  class="browser-nav-item"
+                  to="/admin"
+                >
+                  <IconShieldLock :size="16" />
+                  <span>管理控制台</span>
+                </RouterLink>
+              </template>
+            </nav>
+
             <DirectoryTree
               :current-path="currentPath"
               :dragging="Boolean(draggingFile)"
@@ -941,6 +970,10 @@ import {
   IconStar,
   IconStarFilled,
   IconLock,
+  IconFolder,
+  IconKey,
+  IconTicket,
+  IconShieldLock,
 } from "@tabler/icons-vue";
 import { filesService, MAX_TRANSFER_PATHS } from "../../services/files.service";
 import { useFilesStore } from "../../stores/files.store";
@@ -3029,6 +3062,39 @@ function handleSortChange(field: SortField) {
 }
 
 /* 侧栏 = 目录树（可滚动）+ 概览（固定高度） */
+.browser-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0.5rem 0.55rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+}
+
+.browser-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 32px;
+  padding: 0 0.5rem;
+  border-radius: var(--vf-radius-sm);
+  color: var(--vf-text-muted);
+  font-size: 0.81rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 0.12s var(--vf-motion-standard);
+}
+
+.browser-nav-item:hover {
+  background: var(--vf-surface-hover);
+  color: var(--vf-text-strong);
+}
+
+.browser-nav-item.is-active {
+  background: var(--vf-accent-soft);
+  color: var(--vf-accent-text);
+  font-weight: 600;
+}
+
 .browser-sidebar {
   display: flex;
   flex-direction: column;

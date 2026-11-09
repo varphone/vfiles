@@ -19,6 +19,14 @@ use crate::{
 pub struct ListUsersQuery {
     pub page: Option<i64>,
     pub page_size: Option<i64>,
+    /// 用户名或邮箱关键词。
+    pub q: Option<String>,
+    /// `admin` / `manager` / `user`。
+    pub role: Option<String>,
+    /// `active` / `disabled`。
+    pub status: Option<String>,
+    pub sort: Option<String>,
+    pub order: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -397,7 +405,87 @@ async fn list_users(
         });
     }
 
-    let user_list = admin_service.list_users(page, page_size).await?;
+    let role = match query
+        .role
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        None => None,
+        Some("admin") => Some(vfiles_domain::Role::Admin),
+        Some("manager") => Some(vfiles_domain::Role::Manager),
+        Some("user") => Some(vfiles_domain::Role::User),
+        Some(_) => {
+            return Err(ApiError::Validation {
+                field: "role".to_string(),
+                message: "role must be admin, manager or user".to_string(),
+            });
+        }
+    };
+    let disabled = match query
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        None => None,
+        Some("active") => Some(false),
+        Some("disabled") => Some(true),
+        Some(_) => {
+            return Err(ApiError::Validation {
+                field: "status".to_string(),
+                message: "status must be active or disabled".to_string(),
+            });
+        }
+    };
+    let sort = match query
+        .sort
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        None => vfiles_domain::AdminUserSort::default(),
+        Some(value) => {
+            vfiles_domain::AdminUserSort::parse(value).ok_or_else(|| ApiError::Validation {
+                field: "sort".to_string(),
+                message: "unsupported sort field".to_string(),
+            })?
+        }
+    };
+    let direction = match query
+        .order
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        None => vfiles_domain::SortDirection::default(),
+        Some(value) => {
+            vfiles_domain::SortDirection::parse(value).ok_or_else(|| ApiError::Validation {
+                field: "order".to_string(),
+                message: "order must be asc or desc".to_string(),
+            })?
+        }
+    };
+    let offset = (page - 1)
+        .checked_mul(page_size)
+        .ok_or_else(|| ApiError::Validation {
+            field: "page/page_size".to_string(),
+            message: "User list page offset is out of range".to_string(),
+        })?;
+    let filter = vfiles_domain::AdminUserFilter {
+        q: query
+            .q
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        role,
+        disabled,
+        sort,
+        direction,
+        limit: page_size,
+        offset,
+    };
+
+    let user_list = admin_service.list_users_filtered(filter).await?;
     Ok(Json(AdminUserListResponse {
         users: user_list.users.into_iter().map(Into::into).collect(),
         total_count: user_list.total_count,

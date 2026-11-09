@@ -26,6 +26,8 @@ pub struct AdminUserSummaryDto {
     pub disabled: bool,
     pub created_at: String,
     pub last_login: Option<String>,
+    /// 未撤销且未过期的会话数。
+    pub active_sessions: i64,
 }
 
 impl From<AdminUserSummary> for AdminUserSummaryDto {
@@ -38,6 +40,7 @@ impl From<AdminUserSummary> for AdminUserSummaryDto {
             disabled: user.disabled,
             created_at: format_timestamp(user.created_at),
             last_login: format_timestamp_opt(user.last_login),
+            active_sessions: user.active_sessions,
         }
     }
 }

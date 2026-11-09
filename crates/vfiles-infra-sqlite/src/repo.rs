@@ -11454,6 +11454,134 @@ impl Clone for SqliteAdminRepo {
 
 #[async_trait::async_trait]
 impl AdminRepo for SqliteAdminRepo {
+    async fn list_users_filtered(
+        &self,
+        filter: &AdminUserFilter,
+    ) -> DomainResult<Vec<AdminUserRow>> {
+        let keyword = filter
+            .q
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("%{value}%"))
+            .unwrap_or_else(|| "%".to_string());
+        let role = filter.role.map(|role| role.to_string()).unwrap_or_default();
+        let disabled = match filter.disabled {
+            Some(true) => 1,
+            Some(false) => 0,
+            None => -1,
+        };
+        let order = match filter.sort {
+            AdminUserSort::CreatedAt => format!(
+                "u.created_at {} , u.id {}",
+                filter.direction.as_sql(),
+                filter.direction.as_sql()
+            ),
+            AdminUserSort::Username => {
+                format!("u.username COLLATE NOCASE {}", filter.direction.as_sql())
+            }
+            AdminUserSort::Role => format!("u.role {}", filter.direction.as_sql()),
+            AdminUserSort::LastLogin => format!(
+                "CASE WHEN last_login IS NULL THEN 1 ELSE 0 END, last_login {}",
+                filter.direction.as_sql()
+            ),
+            AdminUserSort::Status => format!("u.disabled {}", filter.direction.as_sql()),
+        };
+        let sql = format!(
+            r#"
+            SELECT
+                u.id, u.username, u.email, u.password_hash, u.role, u.disabled,
+                u.created_at, u.updated_at, u.password_changed_at,
+                (SELECT MAX(s.last_seen_at) FROM user_sessions s WHERE s.user_id = u.id) AS last_login,
+                (SELECT COUNT(*) FROM user_sessions s
+                 WHERE s.user_id = u.id AND s.revoked_at IS NULL AND s.expires_at > ?) AS active_sessions
+            FROM users u
+            WHERE (u.username LIKE ? OR COALESCE(u.email, '') LIKE ?)
+              AND (? = '' OR u.role = ?)
+              AND (? < 0 OR u.disabled = ?)
+            ORDER BY {order}
+            LIMIT ? OFFSET ?
+            "#
+        );
+        let now = time::OffsetDateTime::now_utc();
+        let rows: Vec<(
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            bool,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            i64,
+        )> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+            .bind(now)
+            .bind(&keyword)
+            .bind(&keyword)
+            .bind(&role)
+            .bind(&role)
+            .bind(disabled)
+            .bind(disabled)
+            .bind(filter.limit)
+            .bind(filter.offset)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to list filtered users: {e}"),
+            })?;
+
+        rows.into_iter()
+            .map(|row| {
+                let user = user_from_row((
+                    row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8,
+                ))?;
+                Ok(AdminUserRow {
+                    user,
+                    last_login: parse_timestamp_opt(row.9.as_deref())?,
+                    active_sessions: row.10,
+                })
+            })
+            .collect()
+    }
+
+    async fn count_users_filtered(&self, filter: &AdminUserFilter) -> DomainResult<i64> {
+        let keyword = filter
+            .q
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("%{value}%"))
+            .unwrap_or_else(|| "%".to_string());
+        let role = filter.role.map(|role| role.to_string()).unwrap_or_default();
+        let disabled = match filter.disabled {
+            Some(true) => 1,
+            Some(false) => 0,
+            None => -1,
+        };
+        let (count,): (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*) FROM users u
+            WHERE (u.username LIKE ? OR COALESCE(u.email, '') LIKE ?)
+              AND (? = '' OR u.role = ?)
+              AND (? < 0 OR u.disabled = ?)
+            "#,
+        )
+        .bind(&keyword)
+        .bind(&keyword)
+        .bind(&role)
+        .bind(&role)
+        .bind(disabled)
+        .bind(disabled)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to count filtered users: {e}"),
+        })?;
+        Ok(count)
+    }
+
     async fn list_users(&self, limit: i64, offset: i64) -> DomainResult<Vec<User>> {
         let rows: Vec<UserRow> = sqlx::query_as(
             "SELECT id, username, email, password_hash, role, disabled, created_at, updated_at, password_changed_at FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?"

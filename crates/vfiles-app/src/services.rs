@@ -5624,6 +5624,8 @@ pub struct AdminUserSummary {
     pub disabled: bool,
     pub created_at: time::OffsetDateTime,
     pub last_login: Option<time::OffsetDateTime>,
+    /// 未撤销且未过期的会话数。
+    pub active_sessions: i64,
 }
 
 /// 用户实体 → 管理员视角摘要（列表与单查共用，避免字段漂移）。
@@ -5635,7 +5637,8 @@ fn admin_user_summary(user: User) -> AdminUserSummary {
         role: user.role,
         disabled: user.disabled,
         created_at: user.created_at,
-        last_login: None, // TODO: implement last login tracking
+        last_login: None,
+        active_sessions: 0,
     }
 }
 
@@ -5703,6 +5706,44 @@ where
             total_count,
             page,
             page_size,
+        })
+    }
+
+    /// 管理台用户列表：服务端关键词/角色/状态过滤、排序与分页。
+    pub async fn list_users_filtered(
+        &self,
+        filter: AdminUserFilter,
+    ) -> DomainResult<AdminUserList> {
+        if filter.limit < 1 || filter.offset < 0 {
+            return Err(DomainError::Validation {
+                message: "Pagination parameters must be positive".to_string(),
+            });
+        }
+        let rows = self.admin_repo.list_users_filtered(&filter).await?;
+        let total_count = self.admin_repo.count_users_filtered(&filter).await?;
+        let page = filter.offset / filter.limit + 1;
+        let users = rows
+            .into_iter()
+            .map(|row| AdminUserSummary {
+                id: row.user.id,
+                username: row.user.username.as_str().to_string(),
+                email: row
+                    .user
+                    .email
+                    .as_ref()
+                    .map(|email| email.as_str().to_string()),
+                role: row.user.role,
+                disabled: row.user.disabled,
+                created_at: row.user.created_at,
+                last_login: row.last_login,
+                active_sessions: row.active_sessions,
+            })
+            .collect();
+        Ok(AdminUserList {
+            users,
+            total_count,
+            page,
+            page_size: filter.limit,
         })
     }
 
@@ -5947,7 +5988,8 @@ where
             role: user.role,
             disabled: user.disabled,
             created_at: user.created_at,
-            last_login: None, // TODO: implement last login tracking
+            last_login: None,
+            active_sessions: 0,
         })
     }
 }

@@ -54,6 +54,10 @@ export interface AdminUser {
   role: UserRole;
   disabled?: boolean;
   createdAt: string;
+  /** 最近一次会话活动时间；从未登录为 null。 */
+  lastLogin?: string | null;
+  /** 未撤销且未过期的会话数。 */
+  activeSessions?: number;
 }
 
 export interface AdminUserCapabilities {
@@ -143,6 +147,10 @@ type RustAdminUser = {
   disabled?: boolean;
   created_at?: string;
   createdAt?: string;
+  last_login?: string | null;
+  lastLogin?: string | null;
+  active_sessions?: number;
+  activeSessions?: number;
 };
 
 type RustAdminUsersResponse = {
@@ -264,6 +272,16 @@ function normalizeAdminUser(user: RustAdminUser | AdminUser): AdminUser {
     role: user.role,
     disabled: user.disabled,
     createdAt,
+    lastLogin:
+      user.lastLogin ??
+      ("last_login" in user && typeof user.last_login === "string"
+        ? user.last_login
+        : null),
+    activeSessions:
+      user.activeSessions ??
+      ("active_sessions" in user && typeof user.active_sessions === "number"
+        ? user.active_sessions
+        : 0),
   };
 }
 

@@ -10136,3 +10136,124 @@ async fn scoped_password_creation_is_validated_and_owner_scoped() {
         .await;
     assert_eq!(foreign_delete.status(), StatusCode::NOT_FOUND);
 }
+
+/// 管理台用户列表：服务端关键词/角色/状态过滤、排序与分页。
+#[tokio::test]
+async fn admin_users_support_server_side_filters_and_paging() {
+    let app = TestApp::new().await;
+    app.register_user_without_email("bob", "bob-password").await;
+    app.register_user_without_email("carol", "carol-password")
+        .await;
+
+    // 关键词
+    let filtered = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/admin/users?q=bob&page=1&page_size=10")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(filtered.status(), StatusCode::OK);
+    let filtered = response_json(filtered).await;
+    assert_eq!(filtered["total_count"], Value::from(1));
+    assert_eq!(filtered["users"][0]["username"], Value::from("bob"));
+
+    // 角色
+    let admins = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/admin/users?role=admin&page=1&page_size=10")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let admins = response_json(admins).await;
+    assert_eq!(admins["total_count"], Value::from(1));
+    assert_eq!(admins["users"][0]["role"], Value::from("admin"));
+
+    // 禁用筛选 + 排序 + 分页
+    let bob_id = filtered["users"][0]["id"].as_str().unwrap().to_string();
+    let disable = app
+        .json_request_as_admin(
+            Method::PUT,
+            &format!("/api/admin/users/{bob_id}"),
+            json!({ "disabled": true }),
+        )
+        .await;
+    assert_eq!(disable.status(), StatusCode::NO_CONTENT);
+
+    let disabled = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/admin/users?status=disabled&page=1&page_size=10")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let disabled = response_json(disabled).await;
+    assert_eq!(disabled["total_count"], Value::from(1));
+    assert_eq!(disabled["users"][0]["username"], Value::from("bob"));
+
+    let sorted = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/admin/users?sort=username&order=asc&page=1&page_size=2")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let sorted = response_json(sorted).await;
+    assert_eq!(sorted["users"].as_array().map(Vec::len), Some(2));
+    let names = sorted["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|user| user["username"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    let mut expected = names.clone();
+    expected.sort();
+    assert_eq!(names, expected, "username sort must be ascending");
+
+    // 最近登录与活跃会话：carol 登录后应有最近登录时间。
+    app.login_cookie("carol", "carol-password").await;
+    let recent = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/admin/users?q=carol&page=1&page_size=10")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let recent = response_json(recent).await;
+    assert!(
+        !recent["users"][0]["last_login"].is_null(),
+        "last_login should be populated after a session"
+    );
+    assert!(
+        recent["users"][0]["active_sessions"].as_i64().unwrap_or(0) >= 1,
+        "active_sessions should count the new session"
+    );
+
+    // 非法参数
+    for uri in [
+        "/api/admin/users?role=root",
+        "/api/admin/users?status=unknown",
+        "/api/admin/users?sort=password",
+        "/api/admin/users?order=sideways",
+    ] {
+        let response = app
+            .request_as_admin(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "expected 400 for {uri}"
+        );
+    }
+}

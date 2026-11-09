@@ -1702,10 +1702,84 @@ pub trait ShareRepo {
     async fn cleanup_expired_shares(&self) -> DomainResult<i64>;
 }
 
+/// 管理台用户列表的排序字段（服务端白名单）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AdminUserSort {
+    #[default]
+    CreatedAt,
+    Username,
+    Role,
+    LastLogin,
+    Status,
+}
+
+impl AdminUserSort {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "created_at" | "created" => Some(Self::CreatedAt),
+            "username" | "name" => Some(Self::Username),
+            "role" => Some(Self::Role),
+            "last_login" | "lastLogin" => Some(Self::LastLogin),
+            "status" | "disabled" => Some(Self::Status),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortDirection {
+    Asc,
+    #[default]
+    Desc,
+}
+
+impl SortDirection {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "asc" => Some(Self::Asc),
+            "desc" => Some(Self::Desc),
+            _ => None,
+        }
+    }
+
+    pub fn as_sql(self) -> &'static str {
+        match self {
+            Self::Asc => "ASC",
+            Self::Desc => "DESC",
+        }
+    }
+}
+
+/// 管理台用户列表的过滤条件。
+#[derive(Debug, Clone, Default)]
+pub struct AdminUserFilter {
+    /// 用户名或邮箱包含的关键词。
+    pub q: Option<String>,
+    pub role: Option<Role>,
+    pub disabled: Option<bool>,
+    pub sort: AdminUserSort,
+    pub direction: SortDirection,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+/// 管理台用户列表的一行：账号 + 最近登录 + 活跃会话数。
+#[derive(Debug, Clone)]
+pub struct AdminUserRow {
+    pub user: User,
+    pub last_login: Option<time::OffsetDateTime>,
+    pub active_sessions: i64,
+}
+
 #[async_trait::async_trait]
 pub trait AdminRepo {
     async fn list_users(&self, limit: i64, offset: i64) -> DomainResult<Vec<User>>;
     async fn count_users(&self) -> DomainResult<i64>;
+    async fn list_users_filtered(
+        &self,
+        filter: &AdminUserFilter,
+    ) -> DomainResult<Vec<AdminUserRow>>;
+    async fn count_users_filtered(&self, filter: &AdminUserFilter) -> DomainResult<i64>;
     async fn list_user_storage_usage(&self) -> DomainResult<Vec<UserStorageUsage>>;
     async fn create_user(
         &self,

@@ -135,6 +135,7 @@
                   <IconChevronDown v-else-if="sortField === 'createdAt'" :size="14" class="vf-th-sort-icon" aria-hidden="true" />
                 </button>
               </th>
+              <th scope="col" class="is-narrow">最近登录</th>
               <th scope="col" class="admin-actions-header">操作</th>
             </tr>
           </thead>
@@ -228,11 +229,27 @@
                   <span class="admin-status-dot" aria-hidden="true"></span>
                   <span>{{ u.disabled ? "已禁用" : "正常" }}</span>
                 </span>
+                <span
+                  v-if="!u.disabled && (u.activeSessions ?? 0) > 0"
+                  class="admin-session-count"
+                  :title="`${u.activeSessions} 个活跃会话`"
+                >
+                  {{ u.activeSessions }} 会话
+                </span>
               </td>
 
               <td class="is-narrow">
                 <span class="admin-date" :title="u.createdAt">
                   {{ formatRelativeDate(u.createdAt) }}
+                </span>
+              </td>
+
+              <td class="is-narrow">
+                <span
+                  class="admin-date"
+                  :title="u.lastLogin || '从未登录'"
+                >
+                  {{ u.lastLogin ? formatRelativeDate(u.lastLogin) : "—" }}
                 </span>
               </td>
 
@@ -791,6 +808,17 @@ onMounted(() => {
   align-items: center;
   gap: 0.3rem;
   font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.admin-session-count {
+  display: inline-block;
+  margin-left: 0.45rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: var(--vf-radius-pill);
+  background: var(--vf-surface-muted);
+  color: var(--vf-text-subtle);
+  font-size: 0.68rem;
   white-space: nowrap;
 }
 
