@@ -305,6 +305,19 @@ async function main() {
     await pm.waitForTimeout(500);
     await snap(pm, `${theme}-14-mobile-more`);
 
+    // 管理台移动端：抽屉导航 + 用户表格
+    try {
+      await pm.goto(`${base}/admin/users`, { waitUntil: "networkidle" });
+      await pm.waitForTimeout(800);
+      await snap(pm, `${theme}-17-mobile-admin`);
+      await pm.locator('.admin-drawer-toggle').click();
+      await pm.waitForTimeout(450);
+      await snap(pm, `${theme}-18-mobile-admin-nav`);
+      await pm.keyboard.press("Escape");
+    } catch (e) {
+      console.log(`[ui-sweep] ✗ 管理台移动端（${theme}）: ${String(e).slice(0, 80)}`);
+    }
+
     // dialog-over-bar 帧（r95/r100 排期债兑现 ✓ 底栏样张终捕）——
     // 两击式（新建 →「新建文件夹」✓ 第二击 = **aria-label 稳式**（title/aria 非文本 ✗✗ hasText 永不中 = r101 崩因））
     // try/catch 隔离（r35 式 ✓ 脆弱帧单败不拖垮全 sweep）

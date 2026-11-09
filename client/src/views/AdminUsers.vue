@@ -109,6 +109,83 @@
         hint="创建用户后会在这里显示"
       />
 
+      <div v-else-if="isCompact" class="admin-user-cards">
+        <article v-for="u in users" :key="u.id" class="admin-user-card">
+          <header class="admin-user-card-head" @click="openDrawer(u)">
+            <span class="admin-avatar" aria-hidden="true">
+              {{ (u.username || "?").slice(0, 1).toUpperCase() }}
+            </span>
+            <div class="admin-user-titles">
+              <span class="admin-user-name">{{ u.username }}</span>
+              <span class="admin-user-card-email">{{ u.email || "未设置" }}</span>
+            </div>
+            <span
+              class="admin-status"
+              :class="u.disabled ? 'is-disabled' : 'is-active'"
+            >
+              <span class="admin-status-dot" aria-hidden="true"></span>
+              <span>{{ u.disabled ? "已禁用" : "正常" }}</span>
+            </span>
+          </header>
+
+          <dl class="admin-user-card-meta">
+            <div>
+              <dt>角色</dt>
+              <dd>{{ ROLE_LABELS[u.role] ?? u.role }}</dd>
+            </div>
+            <div>
+              <dt>最近登录</dt>
+              <dd>
+                {{ u.lastLogin ? formatRelativeDate(u.lastLogin) : "从未登录" }}
+              </dd>
+            </div>
+            <div>
+              <dt>创建</dt>
+              <dd>{{ formatRelativeDate(u.createdAt) }}</dd>
+            </div>
+          </dl>
+
+          <div class="admin-user-card-actions">
+            <button
+              class="vf-ghost-button admin-action"
+              type="button"
+              :disabled="loading || !canManageUser(u)"
+              @click="toggleDisabled(u)"
+            >
+              {{ u.disabled ? "启用" : "禁用" }}
+            </button>
+            <button
+              class="vf-ghost-button is-danger admin-action"
+              type="button"
+              :disabled="
+                loading ||
+                auth.user?.id === u.id ||
+                !capabilities.canRevokeSessions ||
+                !canManageUser(u)
+              "
+              @click="revokeSessions(u)"
+            >
+              强制下线
+            </button>
+            <button
+              class="vf-ghost-button admin-action"
+              type="button"
+              :disabled="loading || !canManageUser(u)"
+              @click="openResetPassword(u)"
+            >
+              重置密码
+            </button>
+            <button
+              class="vf-ghost-button"
+              type="button"
+              @click="openDrawer(u)"
+            >
+              详情
+            </button>
+          </div>
+        </article>
+      </div>
+
       <div v-else class="admin-table-wrap">
         <table class="table is-fullwidth is-hoverable admin-table">
           <thead>
@@ -483,6 +560,7 @@ import SkeletonList from "../components/common/SkeletonList.vue";
 import Drawer from "../ui/Drawer.vue";
 import Badge from "../ui/Badge.vue";
 import { formatRelativeDate } from "../utils/filePresentation";
+import { useMediaQuery } from "../composables/useMediaQuery";
 
 const app = useAppStore();
 const auth = useAuthStore();
@@ -512,6 +590,9 @@ function ariaSortFor(field: AdminSortField) {
   if (sortField.value !== field) return "none";
   return sortDirection.value === "asc" ? "ascending" : "descending";
 }
+
+/** 窄屏用卡片列表代替宽表格（表格横向滚动在手机上不可用）。 */
+const isCompact = useMediaQuery("(max-width: 768px)");
 
 const PAGE_SIZE = 20;
 const page = ref(1);
@@ -1047,6 +1128,63 @@ onMounted(() => {
   margin: 0.15rem 0 0;
   font-size: 0.72rem;
   color: var(--vf-text-subtle);
+}
+
+.admin-user-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.admin-user-card {
+  padding: 0.75rem 0.8rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius);
+  background: var(--vf-surface);
+}
+
+.admin-user-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+}
+
+.admin-user-card-email {
+  font-size: 0.75rem;
+  color: var(--vf-text-muted);
+  word-break: break-all;
+}
+
+.admin-user-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.1rem;
+  margin: 0.6rem 0 0.7rem;
+}
+
+.admin-user-card-meta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.admin-user-card-meta dt {
+  font-size: 0.68rem;
+  color: var(--vf-text-subtle);
+}
+
+.admin-user-card-meta dd {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--vf-text-strong);
+}
+
+.admin-user-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
 }
 
 .admin-pager {

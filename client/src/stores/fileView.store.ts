@@ -55,7 +55,7 @@ function readPersisted(): PersistedViewPrefs {
     sortDirection: DEFAULT_SORT_STATE.direction,
     foldersFirst: DEFAULT_SORT_STATE.foldersFirst,
     thumbnailSize: DEFAULT_THUMBNAIL_SIZE,
-    detailsVisible: true,
+    detailsVisible: false,
       density: "comfortable",
 };
 

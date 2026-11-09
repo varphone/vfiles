@@ -63,20 +63,21 @@ describe("fileView store", () => {
     expect(store.sortField).toBe("name");
   });
 
-  it("defaults the details panel to visible and persists changes", async () => {
+  it("defaults the details panel to hidden and persists changes", async () => {
     const store = useFileViewStore();
-    expect(store.detailsVisible).toBe(true);
+    // Seafile 式布局：文件列表占满宽度，详情面板按需打开
+    expect(store.detailsVisible).toBe(false);
 
     store.toggleDetails();
-    expect(store.detailsVisible).toBe(false);
+    expect(store.detailsVisible).toBe(true);
 
     // persist() 走 post-flush watcher，等一个 tick 再断言落盘结果
     await nextTick();
     const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
-    expect(persisted.detailsVisible).toBe(false);
+    expect(persisted.detailsVisible).toBe(true);
 
-    store.setDetailsVisible(true);
-    expect(store.detailsVisible).toBe(true);
+    store.setDetailsVisible(false);
+    expect(store.detailsVisible).toBe(false);
   });
 
   it("clamps the thumbnail size to the supported range", () => {

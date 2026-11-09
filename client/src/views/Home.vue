@@ -30,6 +30,25 @@
 
         <div class="navbar-menu" :class="{ 'is-active': mobileMenuOpen }">
           <div class="navbar-start">
+            <div class="sf-nav-tabs is-hidden-touch">
+              <router-link class="sf-nav-tab is-active" to="/">文件</router-link>
+              <router-link
+                v-if="auth.features?.shareEnabled !== false && !auth.isRestricted"
+                class="sf-nav-tab"
+                to="/shares"
+                >分享</router-link
+              >
+              <router-link
+                v-if="
+                  !auth.isRestricted &&
+                  ['admin', 'manager'].includes(auth.user?.role || '')
+                "
+                class="sf-nav-tab"
+                to="/admin"
+                >管理</router-link
+              >
+            </div>
+
             <div class="navbar-item is-hidden-touch">
               <div
                 class="app-bar-history"
@@ -205,19 +224,6 @@
           />
         </div>
 
-        <footer
-          class="site-record-footer has-text-centered"
-          aria-label="备案信息"
-        >
-          <a
-            class="site-record-link"
-            href="https://beian.miit.gov.cn/"
-            target="_blank"
-            rel="noreferrer"
-          >
-            苏ICP备2026014694号-1
-          </a>
-        </footer>
       </div>
     </section>
 
@@ -826,6 +832,89 @@ async function renameSelected() {
   background: var(--vf-canvas);
 }
 
+/* ---- Seafile 式外壳：白色顶栏 + 全高内容区（不再居中浮动卡片） ---- */
+.app-top-bar {
+  height: var(--sf-topbar-height, 56px);
+  min-height: var(--sf-topbar-height, 56px);
+  padding-top: 0;
+  background: var(--vf-surface);
+  border-bottom: 1px solid var(--vf-border-weak);
+  box-shadow: none;
+}
+
+.app-top-bar .container.is-fluid {
+  height: 100%;
+  max-width: none;
+  padding: 0 0.85rem;
+}
+
+.app-top-bar .navbar-brand,
+.app-top-bar .navbar-start,
+.app-top-bar .navbar-end {
+  height: 100%;
+  align-items: center;
+}
+
+.app-top-bar .navbar-item {
+  padding: 0 0.5rem;
+}
+
+.app-top-bar .navbar-brand .navbar-item {
+  padding-left: 0;
+  gap: 0.45rem;
+}
+
+.app-top-bar .navbar-brand .image {
+  width: 28px;
+  height: 28px;
+}
+
+.sf-nav-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin-left: 0.85rem;
+  height: 100%;
+}
+
+.sf-nav-tab {
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 0.7rem;
+  font-size: 0.86rem;
+  font-weight: 500;
+  color: var(--vf-text-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  transition: color 0.12s var(--vf-motion-standard);
+}
+
+.sf-nav-tab:hover {
+  color: var(--vf-text-strong);
+}
+
+.sf-nav-tab.is-active {
+  color: var(--vf-accent-text);
+  border-bottom-color: var(--vf-accent);
+  font-weight: 600;
+}
+
+.home-content.section {
+  padding: 0;
+  padding-top: var(--sf-topbar-height, 56px);
+  padding-bottom: 0;
+}
+
+.home-main-container.container.is-fluid {
+  max-width: none;
+  padding: 0;
+}
+
+.home-browser-shell {
+  min-height: calc(100dvh - var(--sf-topbar-height, 56px));
+}
+
 @supports not (overflow: clip) {
   .home {
     overflow-x: hidden;
@@ -1077,20 +1166,8 @@ async function renameSelected() {
   min-width: 0;
 }
 
-.site-record-footer {
-  padding: 1rem 0 0;
-}
 
-.site-record-link {
-  font-size: 0.75rem;
-  color: var(--vf-text-muted);
-}
 
-.site-record-link:hover,
-.site-record-link:focus-visible {
-  color: var(--vf-accent);
-  text-decoration: underline;
-}
 
 @media screen and (min-width: 1024px) {
   /* 桌面端固定整屏高度：页面本身不滚动，文件列表在自己的内容区内滚动。
@@ -1122,30 +1199,17 @@ async function renameSelected() {
     min-height: 0;
   }
 
-  .site-record-footer {
-    flex: 0 0 auto;
-  }
+  
 
   .mobile-bottom-bar {
     display: none;
   }
 
+  /* Seafile 式全高布局：内容区从顶栏下沿开始，无卡片内边距 */
   .home-content {
     box-sizing: border-box;
-    padding-top: calc(var(--bulma-navbar-height, 3.25rem) + 1.25rem);
-    padding-bottom: 2rem;
-  }
-
-  .site-record-footer {
-    padding-top: 1.25rem;
-  }
-
-  :deep(.file-browser-box) {
-    border-radius: var(--vf-radius-lg);
-    border: 1px solid var(--vf-border-weak);
-    background: var(--vf-surface);
-    box-shadow: var(--vf-shadow-card);
-    padding: 0;
+    padding-top: var(--sf-topbar-height, 56px);
+    padding-bottom: 0;
   }
 
   :deep(.file-browser-box) {
@@ -1233,8 +1297,6 @@ async function renameSelected() {
     );
   }
 
-  .site-record-footer {
-    padding: 0.75rem 0 0.5rem;
-  }
+  
 }
 </style>

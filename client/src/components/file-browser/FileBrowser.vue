@@ -188,6 +188,7 @@
               </template>
             </nav>
 
+            <p class="browser-sidebar-label">我的文件</p>
             <DirectoryTree
               :current-path="currentPath"
               :dragging="Boolean(draggingFile)"
@@ -3095,6 +3096,51 @@ function handleSortChange(field: SortField) {
   font-weight: 600;
 }
 
+/* ---- Seafile 式外壳：左侧浅灰导航 + 右侧白色列表，全高、无浮动卡片 ---- */
+.file-browser {
+  height: 100%;
+}
+
+.file-browser-box {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--vf-surface);
+  height: calc(100dvh - var(--sf-topbar-height, 56px));
+}
+
+.browser-nav {
+  padding: 0.6rem 0.5rem;
+  background: var(--vf-surface-2);
+  border-bottom: 1px solid var(--vf-border-weak);
+}
+
+.browser-nav-item {
+  height: 34px;
+  border-radius: 6px;
+}
+
+.browser-nav-item.is-active {
+  background: var(--vf-scope-active-bg, rgba(30, 136, 229, 0.12));
+}
+
+.browser-sidebar {
+  background: var(--vf-surface-2);
+  border-right: 1px solid var(--vf-border-weak);
+}
+
+.file-browser-toolbar {
+  padding: 0.45rem 0.85rem;
+  background: var(--vf-surface);
+}
+
+@media screen and (max-width: 1023px) {
+  .file-browser-box {
+    height: auto;
+    min-height: calc(100dvh - var(--sf-topbar-height, 56px));
+  }
+}
+
 .browser-sidebar {
   display: flex;
   flex-direction: column;
@@ -3200,5 +3246,40 @@ function handleSortChange(field: SortField) {
   font-weight: 600;
   pointer-events: none;
   white-space: nowrap;
+}
+
+/* ---- Seafile 式外壳（最后一条规则，覆盖上面的桌面端卡片样式） ---- */
+.file-browser {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  height: 100%;
+}
+
+.file-browser-box {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--vf-surface);
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+@media screen and (min-width: 1024px) {
+  .file-browser-box {
+    height: calc(100dvh - var(--sf-topbar-height, 56px));
+  }
+}
+
+/* 侧栏分区标题（Seafile 式：分组标签 + 列表） */
+.browser-sidebar-label {
+  margin: 0;
+  padding: 0.65rem 0.9rem 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--vf-text-subtle);
 }
 </style>
