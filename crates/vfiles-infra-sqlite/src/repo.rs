@@ -1365,6 +1365,78 @@ impl SessionRepo for SqliteSessionRepo {
         Ok(())
     }
 
+    async fn list_user_sessions(
+        &self,
+        user_id: &UserId,
+        limit: u32,
+    ) -> DomainResult<Vec<UserSession>> {
+        let rows: Vec<(
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<String>,
+        )> = sqlx::query_as(
+            r#"
+            SELECT id, user_id, session_token_hash, issued_at, expires_at, revoked_at,
+                   user_agent, ip_addr, last_seen_at, credential_id
+            FROM user_sessions
+            WHERE user_id = ?
+            ORDER BY last_seen_at DESC, issued_at DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(user_id.to_string())
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to list user sessions: {e}"),
+        })?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(UserSession {
+                    id: SessionId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
+                        DomainError::Internal {
+                            message: "Invalid session UUID".to_string(),
+                        }
+                    })?),
+                    user_id: UserId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(|_| {
+                        DomainError::Internal {
+                            message: "Invalid session user UUID".to_string(),
+                        }
+                    })?),
+                    session_token_hash: row.2,
+                    issued_at: parse_timestamp(&row.3)?,
+                    expires_at: parse_timestamp(&row.4)?,
+                    revoked_at: parse_timestamp_opt(row.5.as_deref())?,
+                    user_agent: row.6,
+                    ip_addr: row.7,
+                    last_seen_at: parse_timestamp(&row.8)?,
+                    credential_id: row
+                        .9
+                        .as_deref()
+                        .map(|value| -> DomainResult<CredentialId> {
+                            Ok(CredentialId::from_uuid(
+                                uuid::Uuid::parse_str(value).map_err(|_| {
+                                    DomainError::Internal {
+                                        message: "Invalid credential id".to_string(),
+                                    }
+                                })?,
+                            ))
+                        })
+                        .transpose()?,
+                })
+            })
+            .collect()
+    }
+
     async fn revoke_credential_sessions(&self, credential_id: &CredentialId) -> DomainResult<()> {
         let now = time::OffsetDateTime::now_utc();
         sqlx::query(

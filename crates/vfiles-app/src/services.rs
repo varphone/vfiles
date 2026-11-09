@@ -5980,6 +5980,18 @@ where
 
     pub async fn get_user_details(&self, user_id: &UserId) -> DomainResult<AdminUserSummary> {
         let user = self.auth_service.user_repo().find_by_id(user_id).await?;
+        let sessions = self
+            .auth_service
+            .session_repo()
+            .list_user_sessions(user_id, 50)
+            .await
+            .unwrap_or_default();
+        let now = time::OffsetDateTime::now_utc();
+        let active_sessions = sessions
+            .iter()
+            .filter(|session| session.revoked_at.is_none() && session.expires_at > now)
+            .count() as i64;
+        let last_login = sessions.iter().map(|session| session.last_seen_at).max();
 
         Ok(AdminUserSummary {
             id: user.id,
@@ -5988,10 +6000,54 @@ where
             role: user.role,
             disabled: user.disabled,
             created_at: user.created_at,
-            last_login: None,
-            active_sessions: 0,
+            last_login,
+            active_sessions,
         })
     }
+
+    /// 用户抽屉：最近的会话（按最近活跃排序，含已撤销/已过期记录）。
+    pub async fn list_user_sessions(
+        &self,
+        user_id: &UserId,
+        limit: u32,
+    ) -> DomainResult<Vec<SessionOverview>> {
+        // 先确认账号存在，避免对任意 UUID 返回空列表。
+        self.auth_service.user_repo().find_by_id(user_id).await?;
+        let sessions = self
+            .auth_service
+            .session_repo()
+            .list_user_sessions(user_id, limit.clamp(1, 100))
+            .await?;
+        let now = time::OffsetDateTime::now_utc();
+        Ok(sessions
+            .into_iter()
+            .map(|session| SessionOverview {
+                id: session.id,
+                issued_at: session.issued_at,
+                last_seen_at: session.last_seen_at,
+                expires_at: session.expires_at,
+                revoked_at: session.revoked_at,
+                user_agent: session.user_agent,
+                ip_addr: session.ip_addr,
+                credential_id: session.credential_id,
+                active: session.revoked_at.is_none() && session.expires_at > now,
+            })
+            .collect())
+    }
+}
+
+/// 管理台会话摘要。
+#[derive(Debug, Clone)]
+pub struct SessionOverview {
+    pub id: SessionId,
+    pub issued_at: time::OffsetDateTime,
+    pub last_seen_at: time::OffsetDateTime,
+    pub expires_at: time::OffsetDateTime,
+    pub revoked_at: Option<time::OffsetDateTime>,
+    pub user_agent: Option<String>,
+    pub ip_addr: Option<String>,
+    pub credential_id: Option<CredentialId>,
+    pub active: bool,
 }
 
 #[cfg(test)]

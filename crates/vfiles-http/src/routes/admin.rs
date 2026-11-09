@@ -11,7 +11,7 @@ use vfiles_domain::*;
 
 use crate::{
     AppState,
-    dto::AdminUserSummaryDto,
+    dto::{AdminUserSummaryDto, format_timestamp},
     error::{ApiError, ApiJson, ApiPath, ApiQuery, ApiResult},
 };
 
@@ -305,6 +305,7 @@ pub fn router() -> Router<AppState> {
             post(revoke_user_sessions),
         )
         .route("/users/{user_id}/reset-password", post(reset_password))
+        .route("/users/{user_id}/sessions", get(list_user_sessions))
 }
 
 fn parse_role(value: &str) -> ApiResult<Role> {
@@ -556,6 +557,55 @@ async fn get_user(
 
     let user = admin_service.get_user_details(&user_id).await?;
     Ok(Json(user.into()))
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminSessionDto {
+    pub id: String,
+    pub issued_at: String,
+    pub last_seen_at: String,
+    pub expires_at: String,
+    pub revoked_at: Option<String>,
+    pub user_agent: Option<String>,
+    pub ip_addr: Option<String>,
+    /// 非空表示该会话由访问密码（受限登录凭据）签发。
+    pub credential_id: Option<String>,
+    pub active: bool,
+}
+
+async fn list_user_sessions(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    ApiPath(user_id): ApiPath<String>,
+) -> ApiResult<Json<Vec<AdminSessionDto>>> {
+    let _actor = require_admin(&state, &jar).await?;
+    let admin_service = state
+        .admin_service
+        .as_ref()
+        .ok_or_else(|| ApiError::forbidden("Admin access not available"))?;
+
+    let user_id = UserId::from_string(&user_id).map_err(|_| ApiError::Validation {
+        field: "user_id".to_string(),
+        message: "Invalid user ID".to_string(),
+    })?;
+
+    let sessions = admin_service.list_user_sessions(&user_id, 50).await?;
+    Ok(Json(
+        sessions
+            .into_iter()
+            .map(|session| AdminSessionDto {
+                id: session.id.to_string(),
+                issued_at: format_timestamp(session.issued_at),
+                last_seen_at: format_timestamp(session.last_seen_at),
+                expires_at: format_timestamp(session.expires_at),
+                revoked_at: session.revoked_at.map(format_timestamp),
+                user_agent: session.user_agent,
+                ip_addr: session.ip_addr,
+                credential_id: session.credential_id.map(|id| id.to_string()),
+                active: session.active,
+            })
+            .collect(),
+    ))
 }
 
 async fn update_user(

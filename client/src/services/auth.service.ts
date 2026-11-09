@@ -85,6 +85,38 @@ export interface AdminUsersPayload {
   page_size?: number;
 }
 
+/** 管理台用户抽屉里的会话记录。 */
+export interface AdminUserSession {
+  id: string;
+  issuedAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  userAgent: string | null;
+  ipAddr: string | null;
+  credentialId: string | null;
+  active: boolean;
+}
+
+type RustAdminUserSession = {
+  id: string;
+  issued_at?: string;
+  issuedAt?: string;
+  last_seen_at?: string;
+  lastSeenAt?: string;
+  expires_at?: string;
+  expiresAt?: string;
+  revoked_at?: string | null;
+  revokedAt?: string | null;
+  user_agent?: string | null;
+  userAgent?: string | null;
+  ip_addr?: string | null;
+  ipAddr?: string | null;
+  credential_id?: string | null;
+  credentialId?: string | null;
+  active?: boolean;
+};
+
 export interface SystemProtocolInfo {
   id: "http" | "webdav" | "ftps" | "s3" | "rsync";
   /** Configuration switch; runtime_status reports the observed startup result. */
@@ -577,6 +609,29 @@ class AuthService {
         capabilities: LEGACY_ADMIN_CAPABILITIES,
       });
     }
+  }
+
+  /** 管理台用户抽屉：该账号最近的会话。 */
+  async listUserSessions(userId: string): Promise<AdminUserSession[]> {
+    const encoded = encodeURIComponent(userId);
+    const response = await apiService.get<unknown>(
+      `/admin/users/${encoded}/sessions`,
+    );
+    const payload = Array.isArray(response)
+      ? response
+      : ((response as any)?.data ?? []);
+    if (!Array.isArray(payload)) return [];
+    return payload.map((raw: RustAdminUserSession) => ({
+      id: String(raw.id ?? ""),
+      issuedAt: raw.issuedAt ?? raw.issued_at ?? "",
+      lastSeenAt: raw.lastSeenAt ?? raw.last_seen_at ?? "",
+      expiresAt: raw.expiresAt ?? raw.expires_at ?? "",
+      revokedAt: raw.revokedAt ?? raw.revoked_at ?? null,
+      userAgent: raw.userAgent ?? raw.user_agent ?? null,
+      ipAddr: raw.ipAddr ?? raw.ip_addr ?? null,
+      credentialId: raw.credentialId ?? raw.credential_id ?? null,
+      active: raw.active === true,
+    }));
   }
 
   async setUserRole(

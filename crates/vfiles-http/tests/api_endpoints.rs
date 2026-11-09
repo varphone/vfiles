@@ -10257,3 +10257,85 @@ async fn admin_users_support_server_side_filters_and_paging() {
         );
     }
 }
+
+/// 管理台用户抽屉：会话列表按账号返回，受限密码会话带 credential_id。
+#[tokio::test]
+async fn admin_user_sessions_list_sessions_for_one_account() {
+    let app = TestApp::new().await;
+    app.register_user_without_email("dave", "dave-password")
+        .await;
+    let dave_cookie = app.login_cookie("dave", "dave-password").await;
+    assert!(!dave_cookie.is_empty());
+
+    let dave = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/admin/users?q=dave&page=1&page_size=10")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let dave = response_json(dave).await;
+    let dave_id = dave["users"][0]["id"].as_str().unwrap().to_string();
+
+    let sessions = app
+        .request_as_admin(
+            Request::builder()
+                .uri(format!("/api/admin/users/{dave_id}/sessions"))
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(sessions.status(), StatusCode::OK);
+    let sessions = response_json(sessions).await;
+    let list = sessions
+        .as_array()
+        .expect("session list should be an array");
+    assert!(!list.is_empty(), "dave should have one session");
+    assert_eq!(list[0]["active"], Value::Bool(true));
+    assert!(list[0]["credential_id"].is_null());
+
+    // 撤销后仍然列出，但标记为 inactive。
+    let revoke = app
+        .request_as_admin(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/admin/users/{dave_id}/revoke-sessions"))
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert!(
+        revoke.status() == StatusCode::OK || revoke.status() == StatusCode::NO_CONTENT,
+        "revoke returned {}",
+        revoke.status()
+    );
+
+    let after = app
+        .request_as_admin(
+            Request::builder()
+                .uri(format!("/api/admin/users/{dave_id}/sessions"))
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    let after = response_json(after).await;
+    let after = after.as_array().unwrap();
+    assert!(
+        after
+            .iter()
+            .all(|session| session["active"] == Value::Bool(false)),
+        "revoked sessions must be reported as inactive"
+    );
+
+    // 未知账号 → 404
+    let missing = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/admin/users/00000000-0000-0000-0000-000000000000/sessions")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}

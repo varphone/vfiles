@@ -73,6 +73,12 @@ pub trait SessionRepo {
     async fn revoke_user_sessions(&self, user_id: &UserId) -> DomainResult<()>;
     /// 撤销某条受限凭据签发的全部会话（凭据被修改或删除时使用）。
     async fn revoke_credential_sessions(&self, credential_id: &CredentialId) -> DomainResult<()>;
+    /// 管理台用户抽屉：按最近活跃时间列出该用户的会话。
+    async fn list_user_sessions(
+        &self,
+        user_id: &UserId,
+        limit: u32,
+    ) -> DomainResult<Vec<UserSession>>;
     async fn cleanup_expired_sessions(&self) -> DomainResult<i64>;
 }
 

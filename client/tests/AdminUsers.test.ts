@@ -248,3 +248,34 @@ describe("AdminUsers.vue header actions", () => {
     expect(header.closest("th")).toHaveAttribute("aria-sort", "descending");
   });
 });
+
+describe("AdminUsers.vue user drawer", () => {
+  it("opens a row and lists the account sessions", async () => {
+    const listUserSessions = vi.fn(async () => [
+      {
+        id: "s1",
+        issuedAt: "2026-01-01T00:00:00Z",
+        lastSeenAt: "2026-01-01T01:00:00Z",
+        expiresAt: "2026-02-01T00:00:00Z",
+        revokedAt: null,
+        userAgent: "Chrome",
+        ipAddr: "127.0.0.1",
+        credentialId: null,
+        active: true,
+      },
+    ]);
+    (authService as any).listUserSessions = listUserSessions;
+
+    const { findByText, findByRole } = renderWithProviders(AdminUsers);
+    await findByText("alice");
+    await fireEvent.click(screen.getByText("alice"));
+
+    await waitFor(() =>
+      expect(listUserSessions).toHaveBeenCalledWith("u1"),
+    );
+    const drawer = await findByRole("dialog");
+    expect(drawer.textContent).toContain("最近会话");
+    await waitFor(() => expect(drawer.textContent).toContain("Chrome"));
+    expect(drawer.textContent).toContain("127.0.0.1");
+  });
+});

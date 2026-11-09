@@ -141,7 +141,14 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="u in users" :key="u.id">
+            <tr
+              v-for="u in users"
+              :key="u.id"
+              class="admin-row"
+              tabindex="0"
+              @click="openDrawer(u)"
+              @keydown.enter.prevent="openDrawer(u)"
+            >
               <td>
                 <div class="admin-user">
                   <span class="admin-avatar" aria-hidden="true">
@@ -254,7 +261,7 @@
                 </span>
               </td>
 
-              <td class="admin-actions">
+              <td class="admin-actions" @click.stop @keydown.enter.stop>
                 <div class="admin-actions-group">
                   <button
                     class="vf-ghost-button admin-action"
@@ -327,6 +334,100 @@
         </div>
       </footer>
   </AdminLayout>
+
+  <Drawer
+    :show="drawerUser !== null"
+    :title="drawerUser?.username ?? ''"
+    description="账号资料与最近会话"
+    width="440px"
+    @close="closeDrawer"
+  >
+    <template v-if="drawerUser">
+      <dl class="admin-facts">
+        <div>
+          <dt>邮箱</dt>
+          <dd>{{ drawerUser.email || "—" }}</dd>
+        </div>
+        <div>
+          <dt>角色</dt>
+          <dd>{{ ROLE_LABELS[drawerUser.role] ?? drawerUser.role }}</dd>
+        </div>
+        <div>
+          <dt>状态</dt>
+          <dd>
+            <Badge :tone="drawerUser.disabled ? 'muted' : 'success'" dot>
+              {{ drawerUser.disabled ? "已禁用" : "正常" }}
+            </Badge>
+          </dd>
+        </div>
+        <div>
+          <dt>创建时间</dt>
+          <dd>{{ formatRelativeDate(drawerUser.createdAt) }}</dd>
+        </div>
+        <div>
+          <dt>最近登录</dt>
+          <dd>
+            {{
+              drawerUser.lastLogin
+                ? formatRelativeDate(drawerUser.lastLogin)
+                : "从未登录"
+            }}
+          </dd>
+        </div>
+        <div>
+          <dt>活跃会话</dt>
+          <dd>{{ drawerUser.activeSessions ?? 0 }}</dd>
+        </div>
+      </dl>
+
+      <h3 class="admin-drawer-section">最近会话</h3>
+      <p v-if="drawerLoading" class="admin-drawer-hint">加载会话…</p>
+      <p v-else-if="drawerSessions.length === 0" class="admin-drawer-hint">
+        该账号还没有登录记录
+      </p>
+      <ul v-else class="admin-session-list">
+        <li
+          v-for="session in drawerSessions"
+          :key="session.id"
+          class="admin-session-item"
+        >
+          <span
+            class="admin-session-dot"
+            :class="session.active ? 'is-active' : 'is-inactive'"
+            aria-hidden="true"
+          ></span>
+          <div class="admin-session-main">
+            <p class="admin-session-title">
+              {{ session.userAgent || "未知客户端" }}
+              <Badge v-if="session.credentialId" tone="primary" size="sm">
+                访问密码
+              </Badge>
+            </p>
+            <p class="admin-session-meta">
+              {{ session.ipAddr || "—" }} · 最近活跃
+              {{ formatRelativeDate(session.lastSeenAt) }}
+              <template v-if="session.active"> · 有效</template>
+              <template v-else> · 已结束</template>
+            </p>
+          </div>
+        </li>
+      </ul>
+    </template>
+
+    <template #footer>
+      <button
+        v-if="drawerUser && (drawerUser.activeSessions ?? 0) > 0"
+        class="vf-ghost-button is-danger"
+        type="button"
+        @click="revokeFromDrawer"
+      >
+        强制下线
+      </button>
+      <button class="vf-ghost-button" type="button" @click="closeDrawer">
+        关闭
+      </button>
+    </template>
+  </Drawer>
   <!-- r107'：重置密码 Modal（一次输入 ✓ 语义：新密码即时生效） -->
   <Modal :show="!!resetTarget" title="重置密码" @close="resetTarget = null">
     <p class="admin-reset-hint">
@@ -370,6 +471,7 @@ import {
   authService,
   type AdminUser,
   type AdminUserCapabilities,
+  type AdminUserSession,
 } from "../services/auth.service";
 import { useAppStore } from "../stores/app.store";
 import { confirmDialog } from "../composables/dialog";
@@ -378,6 +480,8 @@ import AdminLayout from "../layouts/AdminLayout.vue";
 import Modal from "../components/common/Modal.vue";
 import EmptyState from "../components/common/EmptyState.vue";
 import SkeletonList from "../components/common/SkeletonList.vue";
+import Drawer from "../ui/Drawer.vue";
+import Badge from "../ui/Badge.vue";
 import { formatRelativeDate } from "../utils/filePresentation";
 
 const app = useAppStore();
@@ -603,6 +707,41 @@ async function refreshRoleCounts() {
   }
 }
 
+const drawerUser = ref<AdminUser | null>(null);
+const drawerSessions = ref<AdminUserSession[]>([]);
+const drawerLoading = ref(false);
+
+async function openDrawer(user: AdminUser) {
+  drawerUser.value = user;
+  drawerSessions.value = [];
+  drawerLoading.value = true;
+  try {
+    drawerSessions.value = await authService.listUserSessions(user.id);
+  } catch {
+    drawerSessions.value = [];
+  } finally {
+    drawerLoading.value = false;
+  }
+}
+
+function closeDrawer() {
+  drawerUser.value = null;
+  drawerSessions.value = [];
+}
+
+async function revokeFromDrawer() {
+  const user = drawerUser.value;
+  if (!user) return;
+  const res = await authService.revokeUserSessions(user.id);
+  if (res.success) {
+    app.success(`已让「${user.username}」的所有会话下线`);
+    await openDrawer({ ...user, activeSessions: 0 });
+    await reload();
+  } else {
+    app.error(res.error || "强制下线失败");
+  }
+}
+
 async function saveEmail(u: AdminUser) {
   const nextEmail = (emailDraft.value[u.id] || "").trim();
   if (!nextEmail) {
@@ -800,6 +939,114 @@ onMounted(() => {
   background: var(--vf-warning-soft);
   color: var(--vf-text);
   font-size: 0.8rem;
+}
+
+.admin-row {
+  cursor: pointer;
+}
+
+.admin-row:focus-visible {
+  outline: 2px solid var(--vf-accent);
+  outline-offset: -2px;
+}
+
+.admin-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.admin-facts > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+}
+
+.admin-facts > div:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.admin-facts dt {
+  font-size: 0.77rem;
+  color: var(--vf-text-muted);
+}
+
+.admin-facts dd {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--vf-text-strong);
+  text-align: right;
+}
+
+.admin-drawer-section {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--vf-text-strong);
+}
+
+.admin-drawer-hint {
+  margin: 0;
+  padding: 0.6rem 0;
+  font-size: 0.78rem;
+  color: var(--vf-text-subtle);
+}
+
+.admin-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.admin-session-item {
+  display: flex;
+  gap: 0.55rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--vf-border-weak);
+}
+
+.admin-session-item:last-child {
+  border-bottom: 0;
+}
+
+.admin-session-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 0.35rem;
+  flex: none;
+  border-radius: 50%;
+}
+
+.admin-session-dot.is-active {
+  background: var(--vf-success-text);
+}
+
+.admin-session-dot.is-inactive {
+  background: var(--vf-border-strong);
+}
+
+.admin-session-main {
+  min-width: 0;
+}
+
+.admin-session-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.79rem;
+  color: var(--vf-text-strong);
+  word-break: break-word;
+}
+
+.admin-session-meta {
+  margin: 0.15rem 0 0;
+  font-size: 0.72rem;
+  color: var(--vf-text-subtle);
 }
 
 .admin-pager {
