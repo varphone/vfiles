@@ -29,7 +29,13 @@
       </button>
     </div>
 
-    <ul class="views-sidebar-list">
+    <!--
+      分组标题而不是可点击条目：Nextcloud 的「Personal files」只是视觉分组，
+      「全部文件」与它同路由；做成标题就不会出现两个条目同时 aria-current。
+    -->
+    <h2 id="views-sidebar-personal" class="views-sidebar-group">个人文件</h2>
+
+    <ul class="views-sidebar-list" aria-labelledby="views-sidebar-personal">
       <li v-for="item in items" :key="item.key">
         <RouterLink
           class="views-sidebar-item"
@@ -42,6 +48,48 @@
         </RouterLink>
       </li>
     </ul>
+
+    <!--
+      可折叠的目录树（Nextcloud 的 Folder tree）：默认折叠，展开后占满
+      侧栏剩余高度并内部滚动，底部存储/设置/已删除三项不被挤压。
+    -->
+    <div class="views-sidebar-tree" :class="{ 'is-expanded': folderTreeOpen }">
+      <button
+        id="views-sidebar-tree-toggle"
+        class="views-sidebar-tree-toggle"
+        type="button"
+        aria-controls="views-sidebar-tree-panel"
+        :aria-expanded="folderTreeOpen ? 'true' : 'false'"
+        @click="folderTreeOpen = !folderTreeOpen"
+      >
+        <span class="views-sidebar-tree-label">文件夹树</span>
+        <IconChevronDown
+          v-if="folderTreeOpen"
+          class="views-sidebar-tree-chevron"
+          :size="16"
+          aria-hidden="true"
+        />
+        <IconChevronRight
+          v-else
+          class="views-sidebar-tree-chevron"
+          :size="16"
+          aria-hidden="true"
+        />
+      </button>
+
+      <div
+        v-if="folderTreeOpen"
+        id="views-sidebar-tree-panel"
+        class="views-sidebar-tree-body"
+      >
+        <DirectoryTree
+          :current-path="currentPath"
+          :roots="auth.scopeRoots"
+          :can-write="auth.canWrite"
+          @navigate="navigateFromTree"
+        />
+      </div>
+    </div>
 
     <!-- 底部固定区：存储用量 / 文件设置 / 已删除（最后一项暂不支持）。 -->
     <ul class="views-sidebar-footer">
@@ -88,10 +136,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, type Component } from "vue";
-import { useRoute } from "vue-router";
+import { storeToRefs } from "pinia";
+import { useRoute, useRouter } from "vue-router";
 import {
   IconActivity,
   IconChartPie,
+  IconChevronDown,
+  IconChevronRight,
   IconClock,
   IconFolder,
   IconSearch,
@@ -101,14 +152,18 @@ import {
   IconTrash,
   IconX,
 } from "@tabler/icons-vue";
+import DirectoryTree from "../file-browser/DirectoryTree.vue";
 import { filesService } from "../../services/files.service";
 import { useAuthStore } from "../../stores/auth.store";
+import { useFilesStore } from "../../stores/files.store";
 import { formatSize } from "../../utils/filePresentation";
+import { normalizeScopePath } from "../../utils/sessionScope";
 import type { WorkspaceOverview } from "../../types";
 
 /**
- * Nextcloud 式视图侧栏：全部文件 / 最近 / 收藏 / 分享 / 活动，底部是
- * 存储用量、文件设置与（暂不支持的）已删除。
+ * Nextcloud 式视图侧栏：「个人文件」分组标题下是全部文件 / 最近 / 收藏 /
+ * 分享 / 活动，再往下是可折叠的文件夹树，底部是存储用量、文件设置与
+ * （暂不支持的）已删除。
  *
  * 每行 44px，选中项为主色实心蓝底 + 白字 + 8px 圆角；底部区域用
  * `margin-top: auto` 贴住侧栏底部。搜索框本阶段只做占位，回车只上报事件。
@@ -126,12 +181,17 @@ const emit = defineEmits<{
 }>();
 
 const auth = useAuthStore();
+const filesStore = useFilesStore();
+const { currentPath } = storeToRefs(filesStore);
 const route = useRoute();
+const router = useRouter();
 
 const storage = ref<WorkspaceOverview | null>(null);
 const storageError = ref(false);
 /** 侧栏搜索框的当前输入（本阶段不参与过滤）。 */
 const searchDraft = ref("");
+/** 文件夹树默认折叠：首次展开时才挂载 DirectoryTree（按需请求根目录）。 */
+const folderTreeOpen = ref(false);
 
 /** 受限会话不展示工作区统计（与账号级入口同策略）。 */
 const showStorage = computed(() => !auth.isRestricted);
@@ -166,6 +226,23 @@ const items = computed<ViewItem[]>(() => {
 function isActive(to: string): boolean {
   if (to === "/") return route.path === "/";
   return route.path === to || route.path.startsWith(`${to}/`);
+}
+
+/**
+ * 目录树点击：用 `/?path=目录` 表达目标，由 Home 消费并把文件区导航过去。
+ * 路由完全不变时（已在首页且 query 相同）router.push 不会触发 watch，
+ * 这里直接让文件区回到该目录，避免“点了没反应”。
+ */
+function navigateFromTree(path: string) {
+  const target = normalizeScopePath(path);
+  const currentQuery = normalizeScopePath(
+    typeof route.query.path === "string" ? route.query.path : "",
+  );
+  if (route.path === "/" && target === currentQuery) {
+    filesStore.navigateTo(target);
+    return;
+  }
+  void router.push({ path: "/", query: { path: target } });
 }
 
 /** 回车提交：先 emit，过滤逻辑留给后续的统一搜索接入。 */
@@ -281,6 +358,21 @@ onMounted(() => {
   color: var(--vf-text-strong);
 }
 
+/* ---- 分组标题 ---- */
+/*
+ * 「个人文件」只是视觉分组（与 Nextcloud 的 Personal files 一致）：
+ * 13px 灰色小标题，不是链接也不接收点击。上下 8px，落在间距基线上。
+ */
+.views-sidebar-group {
+  margin: var(--vf-space-2) 0;
+  padding: 0 var(--vf-space-3);
+  color: var(--vf-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.5;
+}
+
 /* ---- 视图条目 ---- */
 .views-sidebar-list,
 .views-sidebar-footer {
@@ -290,6 +382,10 @@ onMounted(() => {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.views-sidebar-list {
+  flex: 0 0 auto;
 }
 
 .views-sidebar-item {
@@ -340,6 +436,90 @@ onMounted(() => {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ---- 文件夹树（可折叠分组） ---- */
+.views-sidebar-tree {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 0;
+  margin-top: var(--vf-space-2);
+}
+
+/* 展开后吃掉视图列表与底部区之间的剩余高度（不改变底部三项的位置）。 */
+.views-sidebar-tree.is-expanded {
+  flex: 1 1 auto;
+}
+
+/*
+ * 分组标题行：与「个人文件」同字号/同灰度，高度仍取 44px 条目基线；
+ * 右侧箭头表明可展开/收起。折叠时整组只有这一行。
+ */
+.views-sidebar-tree-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--vf-space-2);
+  flex: 0 0 auto;
+  width: 100%;
+  height: var(--vf-sidebar-item-height);
+  padding: 0 var(--vf-space-3);
+  border: none;
+  border-radius: var(--vf-sidebar-item-radius);
+  background: transparent;
+  color: var(--vf-text-muted);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.views-sidebar-tree-toggle:hover,
+.views-sidebar-tree-toggle:focus-visible {
+  background: var(--vf-sidebar-item-hover);
+  color: var(--vf-text-strong);
+}
+
+.views-sidebar-tree-toggle:focus-visible {
+  outline: 2px solid var(--vf-accent);
+  outline-offset: -2px;
+}
+
+.views-sidebar-tree-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.views-sidebar-tree-chevron {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/*
+ * 展开区：占满分组剩余高度并裁剪，滚动交给 DirectoryTree 自己的
+ * `.directory-tree-scroll`（复用组件内部已有滚动容器）。
+ */
+.views-sidebar-tree-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: var(--vf-space-1);
+  overflow: hidden;
+}
+
+/* 组件原本用于 FileBrowser 侧栏：去掉右分隔线与白底，融进侧栏渐变。 */
+.views-sidebar-tree-body :deep(.directory-tree) {
+  flex: 1 1 auto;
+  min-height: 0;
+  border-right: none;
+  background: transparent;
+}
+
+.views-sidebar-tree-body :deep(.directory-tree-scroll) {
+  padding: 0;
 }
 
 /* ---- 底部固定区 ---- */

@@ -270,8 +270,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
+import { useRoute } from "vue-router";
 import {
   IconMenu2,
   IconChecklist,
@@ -292,6 +293,7 @@ import { useFilesStore } from "../stores/files.store";
 import { useAuthStore } from "../stores/auth.store";
 import { useAppStore } from "../stores/app.store";
 import { useDirectoryHistory } from "../composables/useDirectoryHistory";
+import { isPathWithinRoots, normalizeScopePath } from "../utils/sessionScope";
 
 type FileBrowserHandle = {
   openUploader: () => void;
@@ -325,6 +327,41 @@ const batchMenuOpen = ref(false);
 const batchMenuRef = ref<HTMLElement | null>(null);
 const filesStore = useFilesStore();
 const { currentPath, browseCommit } = storeToRefs(filesStore);
+const route = useRoute();
+
+/**
+ * 侧栏目录树用 `/?path=目录` 交付导航目标。Home 是唯一消费这个参数的页面：
+ * 其它视图（最近/收藏/活动）没有 Home，切过去不受影响。
+ */
+let treeQueryApplied: string | null = null;
+
+function applyTreeQueryPath(raw: unknown) {
+  if (typeof raw !== "string") return;
+  const target = normalizeScopePath(raw);
+  // 受限会话不接受范围外路径（侧栏树本身也只用 scopeRoots 渲染）。
+  if (!isPathWithinRoots(target, auth.scopeRoots)) return;
+  treeQueryApplied = target;
+  if (target === filesStore.requestedPath) return;
+  filesStore.navigateTo(target);
+}
+
+watch(
+  () => route.query.path,
+  (value) => {
+    // 路由切到别的视图时 Home 会卸载；这里再挡一层，避免离开首页的瞬间
+    // 改动文件区状态。
+    if (route.path !== "/") return;
+    if (typeof value === "string") {
+      applyTreeQueryPath(value);
+      return;
+    }
+    // 从目录树目标回到不带参数的 `/`（例如点「全部文件」）→ 回根目录。
+    if (treeQueryApplied !== null) {
+      treeQueryApplied = null;
+      if (filesStore.requestedPath !== "") filesStore.navigateTo("");
+    }
+  },
+);
 
 // 版本切换：加载/步进/取消都在 composable 内，Home 负责状态，FileBrowser 工具栏负责展示。
 const {
@@ -364,6 +401,9 @@ function updateVisualViewportBottomOffset() {
 }
 
 onMounted(() => {
+  // FileBrowser 先按 store 里上次的目录挂载；父组件的 mounted 晚于子组件，
+  // 这里再用 URL 里的目录树目标覆盖它（直接打开或从其它视图跳回）。
+  applyTreeQueryPath(route.query.path);
   updateVisualViewportBottomOffset();
   window.addEventListener("resize", updateVisualViewportBottomOffset);
   window.visualViewport?.addEventListener(

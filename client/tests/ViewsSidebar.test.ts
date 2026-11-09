@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/vue";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,13 +13,15 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import ViewsSidebar from "../src/components/files/ViewsSidebar.vue";
 import { useAuthStore } from "../src/stores/auth.store";
 
-const { getOverviewMock } = vi.hoisted(() => ({
+const { getOverviewMock, getFilesPageMock } = vi.hoisted(() => ({
   getOverviewMock: vi.fn(),
+  getFilesPageMock: vi.fn(),
 }));
 
 vi.mock("../src/services/files.service", () => ({
   filesService: {
     getOverview: getOverviewMock,
+    getFilesPage: getFilesPageMock,
   },
 }));
 
@@ -72,6 +80,14 @@ beforeEach(() => {
     total_bytes: 2048,
     categories: [],
     recent_files: [],
+  });
+  getFilesPageMock.mockReset();
+  getFilesPageMock.mockResolvedValue({
+    items: [],
+    total: 0,
+    limit: 200,
+    offset: 0,
+    has_more: false,
   });
 });
 
@@ -145,5 +161,41 @@ describe("ViewsSidebar.vue", () => {
 
     expect(screen.queryByText("存储用量")).toBeNull();
     expect(getOverviewMock).not.toHaveBeenCalled();
+  });
+
+  it("renders 个人文件 as a group heading instead of a clickable item", async () => {
+    await renderSidebar();
+
+    const heading = screen.getByRole("heading", { name: "个人文件" });
+    expect(heading.tagName).toBe("H2");
+    expect(heading.closest("a, button")).toBeNull();
+    expect(screen.queryByRole("link", { name: "个人文件" })).toBeNull();
+    // 标题紧挨在视图列表上方，五个可点击视图仍在它下面。
+    expect(heading.nextElementSibling?.tagName).toBe("UL");
+  });
+
+  it("keeps the folder tree collapsed by default and renders it after expanding", async () => {
+    const { container } = await renderSidebar();
+
+    const toggle = screen.getByRole("button", { name: "文件夹树" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".directory-tree")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "目录树" })).toBeNull();
+    expect(getFilesPageMock).not.toHaveBeenCalled();
+
+    await fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const tree = await screen.findByRole("navigation", { name: "目录树" });
+    expect(tree).toBeInTheDocument();
+    expect(
+      await within(tree).findByRole("button", { name: "全部文件" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(getFilesPageMock).toHaveBeenCalledWith("", {
+        limit: 200,
+        offset: 0,
+      }),
+    );
   });
 });
