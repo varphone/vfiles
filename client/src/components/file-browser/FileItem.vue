@@ -124,13 +124,18 @@
       </button>
     </td>
 
+    <td class="is-narrow desktop-file-shared">
+      <span v-if="shared" class="desktop-shared-badge" title="已共享">
+        <IconLink :size="13" aria-hidden="true" />
+        <span>已共享</span>
+      </span>
+    </td>
+
+    <td class="is-narrow has-text-right">{{ desktopFileSizeLabel }}</td>
+
     <td class="is-narrow desktop-file-date" :title="desktopFileDateTitle">
       {{ desktopFileDateLabel }}
     </td>
-
-    <td class="is-narrow">{{ desktopFileKindLabel }}</td>
-
-    <td class="is-narrow has-text-right">{{ desktopFileSizeLabel }}</td>
 
     <td
       v-if="showActionColumn !== false"
@@ -448,6 +453,7 @@ import {
   IconFolderPlus,
   IconFolderOpen,
   IconHistory,
+  IconLink,
   IconPencil,
   IconDownload,
   IconTrash,
@@ -458,7 +464,6 @@ import {
 import type { FileInfo } from "../../types";
 import FileTypeIcon from "./FileTypeIcon.vue";
 import {
-  fileKindLabel,
   formatDate,
   formatRelativeDate,
   formatSize,
@@ -484,8 +489,10 @@ const props = withDefaults(
     canWrite?: boolean;
     /** 受限会话隐藏分享。 */
     canShare?: boolean;
+    /** 该条目是否已有公开分享链接（「共享」列徽标）。 */
+    shared?: boolean;
   }>(),
-  { canWrite: true, canShare: true, highlight: "" },
+  { canWrite: true, canShare: true, highlight: "", shared: false },
 );
 
 /** 条目所在目录（搜索结果用）：`/` 表示根目录。 */
@@ -616,11 +623,6 @@ const desktopFileDateTitle = computed(() => {
 const desktopFileSizeLabel = computed(() => {
   if (props.file.kind === "directory") return "—";
   return formatSize(props.file.size_bytes || 0);
-});
-
-const desktopFileKindLabel = computed(() => {
-  // 统一走共享实现，避免各处对「代码 / 视频」的判定不一致
-  return fileKindLabel(props.file);
 });
 
 type NameSegment = { text: string; match: boolean };
@@ -884,9 +886,9 @@ function share() {
   text-underline-offset: 0.15em;
 }
 
-/* Seafile 行高：40px，比云盘的 48px 更紧凑 */
+/* Nextcloud 列表行高：50px（--vf-row-height），与表头 44px 配套 */
 .desktop-file-row {
-  height: 2.5rem;
+  height: var(--vf-row-height);
 }
 
 .desktop-file-row > td {
@@ -895,6 +897,26 @@ function share() {
   transition:
     background-color 0.15s var(--vf-motion-standard),
     opacity 0.15s var(--vf-motion-standard);
+}
+
+/* 「共享」列：只有已分享条目才出现的小徽标（链接图标 + 文案） */
+.desktop-shared-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.08rem 0.4rem;
+  border: 1px solid var(--vf-accent-soft-strong);
+  border-radius: 3px;
+  background: var(--vf-accent-soft);
+  color: var(--vf-accent-text);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.desktop-file-shared {
+  white-space: nowrap;
 }
 
 /* 拖起态（drag lift）：源项半透明，与目标高亮共同表达"拖动中" */

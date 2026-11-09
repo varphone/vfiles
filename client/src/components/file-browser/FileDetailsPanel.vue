@@ -94,79 +94,145 @@
     </div>
 
     <template v-else-if="item">
-      <FileDetailsContent
-        :file="item"
-        :preview-url="previewUrl"
-        show-close
-        @close="emit('close')"
+      <!-- 详情侧栏 Tab：详细信息 / 活动 / 分享 / 版本（Nextcloud 信息侧栏结构） -->
+      <header class="details-tabs-bar">
+        <div class="details-tabs" role="tablist" aria-label="条目详情">
+          <button
+            v-for="tab in tabs"
+            :id="`details-tab-${tab.key}`"
+            :key="tab.key"
+            class="details-tab"
+            :class="{ 'is-active': activeTab === tab.key }"
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === tab.key ? 'true' : 'false'"
+            :aria-controls="`details-panel-${tab.key}`"
+            @click="activeTab = tab.key"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
+        <button
+          class="vf-icon-button details-close"
+          type="button"
+          title="关闭详细信息"
+          aria-label="关闭详细信息"
+          @click="emit('close')"
+        >
+          <IconX :size="16" />
+        </button>
+      </header>
+
+      <div
+        v-if="activeTab === 'details'"
+        id="details-panel-details"
+        class="details-tab-content"
+        role="tabpanel"
+        aria-labelledby="details-tab-details"
       >
-        <template #actions>
-          <button
-            v-if="item.kind === 'file'"
-            class="vf-ghost-button is-primary details-primary"
-            @click="emit('preview', item)"
-          >
-            <IconEye :size="16" />
-            <span>预览</span>
-          </button>
-          <button
-            v-else
-            class="vf-ghost-button is-primary details-primary"
-            @click="emit('open-folder', item)"
-          >
-            <IconFolderOpen :size="16" />
-            <span>打开</span>
-          </button>
-          <button class="vf-ghost-button" @click="emit('download', item)">
-            <IconDownload :size="16" />
-            <span>下载</span>
-          </button>
-          <button
-            v-if="canShare"
-            class="vf-ghost-button"
-            @click="emit('share', item)"
-          >
-            <IconShare :size="16" />
-            <span>分享</span>
-          </button>
-          <button class="vf-ghost-button" @click="emit('view-history', item)">
-            <IconHistory :size="16" />
-            <span>历史版本</span>
-          </button>
-          <button
-            v-if="canWrite"
-            class="vf-ghost-button"
-            @click="emit('rename', item)"
-          >
-            <IconPencil :size="16" />
-            <span>重命名</span>
-          </button>
-          <button
-            v-if="canWrite"
-            class="vf-ghost-button"
-            @click="emit('move', item)"
-          >
-            <IconArrowsDiff :size="16" />
-            <span>移动</span>
-          </button>
-          <button
-            v-if="canTransfer"
-            class="vf-ghost-button"
-            @click="emit('transfer', item)"
-          >
-            <IconUserShare :size="16" />
-            <span>转移所有权</span>
-          </button>
-          <button
-            v-if="canWrite"
-            class="vf-ghost-button is-danger details-danger"
-            @click="emit('delete', item)"
-          >
-            <IconTrash :size="16" />
-            <span>删除</span>
-          </button>
-        </template>
-      </FileDetailsContent>
+        <FileDetailsContent :file="item" :preview-url="previewUrl">
+          <template #actions>
+            <button
+              v-if="item.kind === 'file'"
+              class="vf-ghost-button is-primary details-primary"
+              @click="emit('preview', item)"
+            >
+              <IconEye :size="16" />
+              <span>预览</span>
+            </button>
+            <button
+              v-else
+              class="vf-ghost-button is-primary details-primary"
+              @click="emit('open-folder', item)"
+            >
+              <IconFolderOpen :size="16" />
+              <span>打开</span>
+            </button>
+            <button class="vf-ghost-button" @click="emit('download', item)">
+              <IconDownload :size="16" />
+              <span>下载</span>
+            </button>
+            <button
+              v-if="canShare"
+              class="vf-ghost-button"
+              @click="emit('share', item)"
+            >
+              <IconShare :size="16" />
+              <span>分享</span>
+            </button>
+            <button class="vf-ghost-button" @click="emit('view-history', item)">
+              <IconHistory :size="16" />
+              <span>历史版本</span>
+            </button>
+            <button
+              v-if="canWrite"
+              class="vf-ghost-button"
+              @click="emit('rename', item)"
+            >
+              <IconPencil :size="16" />
+              <span>重命名</span>
+            </button>
+            <button
+              v-if="canWrite"
+              class="vf-ghost-button"
+              @click="emit('move', item)"
+            >
+              <IconArrowsDiff :size="16" />
+              <span>移动</span>
+            </button>
+            <button
+              v-if="canTransfer"
+              class="vf-ghost-button"
+              @click="emit('transfer', item)"
+            >
+              <IconUserShare :size="16" />
+              <span>转移所有权</span>
+            </button>
+            <button
+              v-if="canWrite"
+              class="vf-ghost-button is-danger details-danger"
+              @click="emit('delete', item)"
+            >
+              <IconTrash :size="16" />
+              <span>删除</span>
+            </button>
+          </template>
+        </FileDetailsContent>
+      </div>
+
+      <div
+        v-else-if="activeTab === 'activity'"
+        id="details-panel-activity"
+        class="details-tab-content"
+        role="tabpanel"
+        aria-labelledby="details-tab-activity"
+      >
+        <FileActivityTab :file="item" />
+      </div>
+
+      <div
+        v-else-if="activeTab === 'shares'"
+        id="details-panel-shares"
+        class="details-tab-content"
+        role="tabpanel"
+        aria-labelledby="details-tab-shares"
+      >
+        <FileShareTab
+          :file="item"
+          :can-share="canShare"
+          @create-share="emit('share', item)"
+        />
+      </div>
+
+      <div
+        v-else
+        id="details-panel-versions"
+        class="details-tab-content details-version-panel"
+        role="tabpanel"
+        aria-labelledby="details-tab-versions"
+      >
+        <VersionHistory :file-path="item.path" :can-write="canWrite" />
+      </div>
     </template>
 
     <EmptyState
@@ -180,7 +246,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import {
   IconArrowsDiff,
   IconChecklist,
@@ -199,14 +265,18 @@ import type { FileInfo } from "../../types";
 import { filesService } from "../../services/files.service";
 import { formatSize, isImageFile } from "../../utils/filePresentation";
 import EmptyState from "../common/EmptyState.vue";
+import VersionHistory from "../version-history/VersionHistory.vue";
+import FileActivityTab from "./FileActivityTab.vue";
 import FileDetailsContent from "./FileDetailsContent.vue";
+import FileShareTab from "./FileShareTab.vue";
 import FileTypeIcon from "./FileTypeIcon.vue";
 
 /**
  * 桌面端右侧「详细信息」面板。
  *
  * 只负责展示与事件上抛：当前条目、是否显示由父组件决定，避免这里再持有
- * 列表/选择状态。
+ * 列表/选择状态。单选时分为「详细信息 / 活动 / 分享 / 版本」四个 Tab，
+ * Tab 切换只切视图，不改变父组件持有的选中条目。
  */
 const props = withDefaults(
   defineProps<{
@@ -215,7 +285,7 @@ const props = withDefaults(
     commit?: string;
     /** 批量选择中的条目；多于 1 项时展示选择摘要而不是单条详情。 */
     selection?: FileInfo[];
-    /** 只读会话隐藏重命名/移动/删除。 */
+    /** 只读会话隐藏重命名/移动/删除与版本恢复。 */
     canWrite?: boolean;
     /** 受限会话隐藏分享。 */
     canShare?: boolean;
@@ -250,6 +320,18 @@ const emit = defineEmits<{
   (e: "select-all"): void;
   (e: "clear-selection"): void;
 }>();
+
+type DetailsTabKey = "details" | "activity" | "shares" | "versions";
+
+const tabs: Array<{ key: DetailsTabKey; label: string }> = [
+  { key: "details", label: "详细信息" },
+  { key: "activity", label: "活动" },
+  { key: "shares", label: "分享" },
+  { key: "versions", label: "版本" },
+];
+
+/** 当前 Tab；切换条目时保留，避免每次选文件都跳回第一页。 */
+const activeTab = ref<DetailsTabKey>("details");
 
 const isMultiSelection = computed(() => props.selection.length > 1);
 
@@ -301,6 +383,86 @@ const previewUrl = computed(() => {
      用视口高度会让面板越过内容区压住底部状态栏，挡住状态栏右侧的操作 */
   max-height: 100%;
   overflow-y: auto;
+}
+
+/* Tab 头：吸顶，长内容滚动时仍可切换视图 */
+.details-tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: -0.35rem -0.25rem 0;
+  padding: 0.35rem 0.25rem;
+  background: var(--vf-surface);
+  border-bottom: 1px solid var(--vf-border-weak);
+}
+
+.details-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 0.1rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.details-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.details-tab {
+  flex: 0 0 auto;
+  padding: 0.45rem 0.4rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--vf-text-muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.details-tab:hover {
+  color: var(--vf-text-strong);
+}
+
+.details-tab.is-active {
+  color: var(--vf-accent-text);
+  border-bottom-color: var(--vf-accent);
+  font-weight: 600;
+}
+
+.details-tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--vf-focus-ring);
+  border-radius: 3px;
+}
+
+.details-close {
+  flex: 0 0 auto;
+}
+
+.details-tab-content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* 版本 Tab 复用版本历史组件：侧栏只有一列，覆盖其宽屏双列布局 */
+.details-version-panel :deep(.history-layout) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.details-version-panel :deep(.history-list-pane) {
+  max-height: none;
+}
+
+.details-version-panel :deep(.history-detail-pane) {
+  max-height: none;
 }
 
 /* 多选摘要 */

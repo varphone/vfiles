@@ -31,6 +31,7 @@ const {
   movePathsMock,
   listTransferTargetsMock,
   transferOwnershipMock,
+  getSharedPathsMock,
 } = vi.hoisted(() => ({
   getFilesMock: vi.fn(
     async (_path: string, _commit?: string): Promise<unknown[]> => [],
@@ -61,6 +62,7 @@ const {
     transferred: 1,
     target_username: "alice",
   })),
+  getSharedPathsMock: vi.fn(async (): Promise<string[]> => []),
 }));
 
 vi.mock("../src/composables/dialog", () => ({
@@ -93,6 +95,7 @@ vi.mock("../src/services/files.service", () => ({
     getDirectoriesPage: getDirectoriesPageMock,
     listTransferTargets: listTransferTargetsMock,
     transferOwnership: transferOwnershipMock,
+    getSharedPaths: getSharedPathsMock,
     // 侧栏概览与收藏：不 stub 时会在挂载后产生未处理的 rejection
     getOverview: vi.fn(async () => ({
       file_count: 0,
@@ -204,6 +207,8 @@ beforeEach(() => {
   movePathsMock.mockReset();
   movePathMock.mockResolvedValue({ success: true });
   movePathsMock.mockResolvedValue(undefined);
+  getSharedPathsMock.mockReset();
+  getSharedPathsMock.mockResolvedValue([]);
   getFilesMock.mockResolvedValue([]);
   searchFilesMock.mockResolvedValue([]);
   deleteFileMock.mockResolvedValue({ success: true });
@@ -390,11 +395,11 @@ describe("FileBrowser.vue", () => {
     await findByText("a.txt");
 
     await fireEvent.keyDown(document, { key: "a", ctrlKey: true });
-    expect((await findAllByText("已选 2 项")).length).toBeGreaterThan(0);
+    expect((await findAllByText("已选择 2 项")).length).toBeGreaterThan(0);
 
     await fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => {
-      expect(queryByText("已选 2 项")).not.toBeInTheDocument();
+      expect(queryByText("已选择 2 项")).not.toBeInTheDocument();
     });
   });
 
@@ -418,7 +423,7 @@ describe("FileBrowser.vue", () => {
     const input = await findByPlaceholderText("搜索名称、扩展名或路径");
     await fireEvent.keyDown(input, { key: "a", ctrlKey: true });
 
-    expect(queryByText("已选 1 项")).not.toBeInTheDocument();
+    expect(queryByText("已选择 1 项")).not.toBeInTheDocument();
   });
 
   it("supports ctrl-click plus shift-click range selection", async () => {
@@ -463,7 +468,7 @@ describe("FileBrowser.vue", () => {
     await fireEvent.click(await rowOf("a.txt"), { ctrlKey: true });
     await fireEvent.click(await rowOf("c.txt"), { shiftKey: true });
 
-    expect((await findAllByText("已选 3 项")).length).toBeGreaterThan(0);
+    expect((await findAllByText("已选择 3 项")).length).toBeGreaterThan(0);
   });
 
   it("opens a context menu and runs the chosen action", async () => {
@@ -795,6 +800,30 @@ describe("FileBrowser.vue create folder entry", () => {
     expect(names).toEqual(["docs"]);
     expect(names).not.toContain(".");
     expect(names).not.toContain("..");
+  });
+
+  it("creates a folder from the + new menu", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([]);
+    const { promptDialog } = await import("../src/composables/dialog");
+    vi.mocked(promptDialog).mockClear();
+
+    const { container, findByLabelText } = renderWithProviders(
+      FileBrowser as any,
+    );
+
+    await fireEvent.click(await findByLabelText("新建"));
+    const menu = container.querySelector(".nc-new-dropdown") as HTMLElement;
+    expect(menu).not.toBeNull();
+    await fireEvent.click(
+      within(menu).getByRole("menuitem", { name: "新建文件夹" }),
+    );
+
+    await waitFor(() =>
+      expect(promptDialog).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "新建目录" }),
+      ),
+    );
   });
 
   it("asks for a folder name from the toolbar button", async () => {
@@ -2295,5 +2324,50 @@ describe("FileBrowser.vue drop hint", () => {
     await nextTick();
     // 根目录标题 = 产品默认（immediate watch ✓ 渲染即设、无需行渲染）
     expect(document.title).toContain("VFiles");
+  });
+});
+
+describe("FileBrowser.vue shared badges", () => {
+  it("loads the shared path set once and marks only matching rows", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue([
+      {
+        id: "a",
+        name: "a.txt",
+        path: "a.txt",
+        kind: "file",
+        size_bytes: 10,
+        created_at: "2026-04-10T00:00:00.000Z",
+        updated_at: "2026-04-10T00:00:00.000Z",
+      },
+      {
+        id: "b",
+        name: "b.txt",
+        path: "b.txt",
+        kind: "file",
+        size_bytes: 20,
+        created_at: "2026-04-11T00:00:00.000Z",
+        updated_at: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+    getSharedPathsMock.mockResolvedValue(["/a.txt"]);
+
+    const { container, findByText } = renderWithProviders(FileBrowser as any);
+    await findByText("a.txt");
+
+    await waitFor(() => {
+      expect(
+        container.querySelector(
+          'tr[data-vfiles-path="a.txt"] .desktop-shared-badge',
+        ),
+      ).not.toBeNull();
+    });
+    expect(
+      container.querySelector(
+        'tr[data-vfiles-path="b.txt"] .desktop-shared-badge',
+      ),
+    ).toBeNull();
+    // 按目录加载一次：不随行渲染重复请求
+    expect(getSharedPathsMock).toHaveBeenCalledTimes(1);
   });
 });

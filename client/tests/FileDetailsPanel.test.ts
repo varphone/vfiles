@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/vue";
+import { fireEvent, render, screen, within } from "@testing-library/vue";
 import { describe, expect, it, vi } from "vitest";
 import FileDetailsPanel from "../src/components/file-browser/FileDetailsPanel.vue";
 import type { FileInfo } from "../src/types";
@@ -104,6 +104,11 @@ describe("FileDetailsPanel.vue", () => {
       props: { item: file({ name: "main.ts" }) },
     });
 
+    // 「分享」现在也是 Tab 名称：把查询限定在操作区，避免与 Tab 混淆
+    const actionsSection = screen
+      .getByText("操作")
+      .closest(".details-section") as HTMLElement;
+
     const actions: [string, string][] = [
       ["预览", "preview"],
       ["下载", "download"],
@@ -115,7 +120,7 @@ describe("FileDetailsPanel.vue", () => {
     ];
 
     for (const [label, event] of actions) {
-      await fireEvent.click(screen.getByText(label));
+      await fireEvent.click(within(actionsSection).getByText(label));
       expect(emitted()[event]).toHaveLength(1);
     }
   });

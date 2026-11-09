@@ -25,13 +25,22 @@
             v-for="column in columns"
             :key="column.field"
             :class="[column.narrow ? 'is-narrow' : '', column.align || '']"
-            :aria-sort="ariaSortFor(column.field)"
+            :aria-sort="
+              column.sortable === false ? 'none' : ariaSortFor(column.field)
+            "
           >
+            <!-- 「共享」列只展示徽标，不参与排序：静态列头 -->
+            <span
+              v-if="column.sortable === false"
+              class="file-list-static-label"
+              >{{ column.label }}</span
+            >
             <button
+              v-else
               class="file-list-sort"
               type="button"
               :title="`按${column.label}排序`"
-              @click="emit('sort-change', column.field)"
+              @click="emit('sort-change', column.field as SortField)"
             >
               <span>{{ column.label }}</span>
               <IconChevronUp
@@ -69,6 +78,7 @@
             selectedPaths.has(file.path) ||
             (!selectMode && activePath === file.path)
           "
+          :shared="sharedPaths.has(file.path)"
           :expanded="expandedPath === file.path"
           :desktop="true"
           @click="emit('click', file)"
@@ -108,6 +118,7 @@
       :select-mode="selectMode"
       :flash="flashPath === file.path"
       :selected="selectedPaths.has(file.path)"
+      :shared="sharedPaths.has(file.path)"
       :expanded="expandedPath === file.path"
       :can-write="canWrite"
       :can-share="canShare"
@@ -194,6 +205,8 @@ const props = withDefaults(
     canWrite?: boolean;
     /** 受限会话隐藏分享。 */
     canShare?: boolean;
+    /** 已分享路径集合（由 FileBrowser 按目录加载一次后传入）。 */
+    sharedPaths?: Set<string>;
   }>(),
   {
     showActionColumn: true,
@@ -208,6 +221,7 @@ const props = withDefaults(
     sortDirection: "asc",
     canWrite: true,
     canShare: true,
+    sharedPaths: () => new Set<string>(),
   },
 );
 
@@ -224,23 +238,31 @@ const {
 } = toRefs(props);
 
 interface SortColumn {
-  field: SortField;
+  field: SortField | "shared";
   label: string;
   narrow?: boolean;
   align?: string;
+  /** 「共享」列是状态列，不参与排序。 */
+  sortable?: boolean;
 }
 
-// 列头文案复用共享的排序字段标签，避免同一字段在表头与排序菜单里叫法不同
+// Nextcloud 列序：名称 / 共享 / 大小 / 修改时间（复选框与操作列在模板里）。
+// 类型不再单列（仍可通过排序菜单按类型排序），把宽度留给共享状态。
 const columns: SortColumn[] = [
   { field: "name", label: SORT_FIELD_LABELS.name },
-  { field: "modified", label: SORT_FIELD_LABELS.modified, narrow: true },
-  { field: "type", label: SORT_FIELD_LABELS.type, narrow: true },
+  {
+    field: "shared",
+    label: "共享",
+    narrow: true,
+    sortable: false,
+  },
   {
     field: "size",
     label: SORT_FIELD_LABELS.size,
     narrow: true,
     align: "has-text-right",
   },
+  { field: "modified", label: SORT_FIELD_LABELS.modified, narrow: true },
 ];
 
 /** 快捷项（`.`/`..`）不参与“全选”，与批量操作的范围保持一致。 */
@@ -256,7 +278,10 @@ const someSelected = computed(() =>
   selectableFiles.value.some((file) => selectedPaths.value.has(file.path)),
 );
 
-function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
+function ariaSortFor(
+  field: SortField | "shared",
+): "ascending" | "descending" | "none" {
+  if (field === "shared") return "none";
   if (sortField.value !== field) return "none";
   return sortDirection.value === "asc" ? "ascending" : "descending";
 }
@@ -323,6 +348,13 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
 .file-list-sort-icon {
   flex: 0 0 auto;
   color: var(--vf-accent);
+}
+
+/* 非排序列头（共享）：与可排序列头同字号/字重，但不显示交互暗示 */
+.file-list-static-label {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
 }
 
 /* 表头：悬停时给出可拖拽/可排序的反馈 */

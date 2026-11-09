@@ -88,8 +88,8 @@
               id="auth-password"
               aria-required="true"
               v-model="password"
-              class="input auth-input"
-              type="password"
+              class="input auth-input auth-input-password"
+              :type="showPassword ? 'text' : 'password'"
               :autocomplete="
                 mode === 'login' ? 'current-password' : 'new-password'
               "
@@ -100,6 +100,22 @@
               "
               :disabled="auth.loading"
             />
+            <button
+              class="auth-password-toggle"
+              type="button"
+              aria-controls="auth-password"
+              :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+              :aria-pressed="showPassword ? 'true' : 'false'"
+              :title="showPassword ? '隐藏密码' : '显示密码'"
+              :disabled="auth.loading"
+              @click="showPassword = !showPassword"
+            >
+              <component
+                :is="showPassword ? IconEyeOff : IconEye"
+                :size="16"
+                aria-hidden="true"
+              />
+            </button>
           </div>
           <p
             v-if="fieldErrors.password"
@@ -120,6 +136,17 @@
           {{ mode === "login" ? "登录" : "注册" }}
         </button>
 
+        <AuthNotice v-if="auth.error" tone="error">{{ auth.error }}</AuthNotice>
+        <p v-if="mode === 'register'" class="auth-hint">
+          提示：注册成功后将自动登录；管理员权限需由现有管理员或命令行创建。
+        </p>
+
+        <!--
+          设备登录 = 访问令牌页（/settings/tokens）。未登录时全局守卫会把它重定向回
+          登录页，若在同一标签内 router-link 跳转，只会刷新登录地址并丢掉已填字段；
+          因此用 target="_blank" 打开：已有会话时直达令牌页，没有会话时在新标签完成
+          登录后落到令牌页，不打断当前登录流程。
+        -->
         <div v-if="mode === 'login'" class="auth-links">
           <button
             class="auth-link-button"
@@ -128,12 +155,15 @@
           >
             忘记密码？
           </button>
+          <a
+            class="auth-link-button"
+            href="/settings/tokens"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            使用设备登录
+          </a>
         </div>
-
-        <AuthNotice v-if="auth.error" tone="error">{{ auth.error }}</AuthNotice>
-        <p v-if="mode === 'register'" class="auth-hint">
-          提示：注册成功后将自动登录；管理员权限需由现有管理员或命令行创建。
-        </p>
       </form>
 
       <form v-else class="auth-form" @submit.prevent="submitEmailLogin">
@@ -197,7 +227,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import { IconKey, IconLock, IconMail, IconUser } from "@tabler/icons-vue";
+import {
+  IconEye,
+  IconEyeOff,
+  IconKey,
+  IconLock,
+  IconMail,
+  IconUser,
+} from "@tabler/icons-vue";
 import AuthShell from "../components/auth/AuthShell.vue";
 import AuthNotice from "../components/auth/AuthNotice.vue";
 import { useAuthStore } from "../stores/auth.store";
@@ -227,6 +264,9 @@ const modeOptions = computed(() => {
 const username = ref("");
 const password = ref("");
 const email = ref("");
+
+/** 密码显隐：只影响输入框 type，不参与提交值。 */
+const showPassword = ref(false);
 
 const emailLogin = ref("");
 const emailCode = ref("");
@@ -432,6 +472,44 @@ onMounted(async () => {
   font-size: 0.875rem;
 }
 
+/* 密码框右侧留出显隐按钮的位置。 */
+.auth-input-password {
+  padding-right: 2.35rem;
+}
+
+.auth-password-toggle {
+  position: absolute;
+  z-index: 1;
+  right: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--vf-radius-sm);
+  background: transparent;
+  color: var(--vf-text-subtle);
+  cursor: pointer;
+}
+
+.auth-password-toggle:hover:not(:disabled),
+.auth-password-toggle:focus-visible {
+  background: var(--vf-surface-hover);
+  color: var(--vf-text-strong);
+}
+
+.auth-password-toggle:focus-visible {
+  outline: 2px solid var(--vf-accent-text);
+  outline-offset: 1px;
+}
+
+.auth-password-toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .auth-code-row {
   display: flex;
   align-items: center;
@@ -454,7 +532,12 @@ onMounted(async () => {
 
 .auth-links {
   display: flex;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--vf-border-weak);
 }
 
 .auth-link-button {
@@ -463,15 +546,11 @@ onMounted(async () => {
   background: none;
   color: var(--vf-accent);
   font-size: 0.8rem;
+  text-decoration: none;
   cursor: pointer;
 }
 
 /* 非颜色区分（r152 ✓ WCAG 1.4.1）：hover/焦点带下划线（GitHub/Discord 式） */
-.auth-link-button:hover,
-.auth-link-button:focus-visible {
-  text-decoration: underline;
-}
-
 .auth-link-button:hover,
 .auth-link-button:focus-visible {
   text-decoration: underline;

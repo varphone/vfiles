@@ -174,7 +174,9 @@ onMounted(() => {
 
 .auth-links {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--vf-border-weak);
 }
 
 .auth-link-button {

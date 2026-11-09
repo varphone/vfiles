@@ -58,4 +58,39 @@ describe("Login.vue auth shell", () => {
       expect(queryByPlaceholderText("3-32 位，字母数字-_")).not.toBeNull(),
     );
   });
+
+  it("toggles the password visibility with the eye button", async () => {
+    const { container, getByRole } = renderWithProviders(Login);
+    const password = container.querySelector(
+      "#auth-password",
+    ) as HTMLInputElement;
+    expect(password.type).toBe("password");
+
+    const show = getByRole("button", { name: "显示密码" });
+    expect(show.getAttribute("aria-pressed")).toBe("false");
+    await fireEvent.click(show);
+
+    expect(password.type).toBe("text");
+    expect(getByRole("button", { name: "隐藏密码" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    await fireEvent.click(getByRole("button", { name: "隐藏密码" }));
+    expect(password.type).toBe("password");
+    expect(getByRole("button", { name: "显示密码" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("shows the version and ICP record in the footer", () => {
+    const { getByRole, getByText } = renderWithProviders(Login);
+
+    // 版本号：VITE_APP_VERSION 未注入时回退为「VFiles」，始终有可见文案
+    expect(getByText(/^版本 /)).toBeInTheDocument();
+    expect(
+      getByRole("link", { name: "苏ICP备2026014694号-1" }),
+    ).toHaveAttribute("href", "https://beian.miit.gov.cn/");
+  });
 });

@@ -36,6 +36,13 @@
   >
     <div class="box file-browser-box">
       <div class="breadcrumb-bar">
+        <!-- Nextcloud 式「+ 新建」：面包屑左侧，上传/新建文件夹的统一入口 -->
+        <NewMenuButton
+          v-if="!isMobile && canWrite"
+          @upload-files="openUploader('files')"
+          @upload-folder="openUploader('directory')"
+          @create-folder="requestCreateDirectoryFromToolbar"
+        />
         <span
           v-if="isRestricted"
           class="scope-badge"
@@ -370,6 +377,7 @@
                   :can-write="canWrite"
                   :can-share="canShare"
                   :files="desktopItems"
+                  :shared-paths="sharedPaths"
                   :highlight="searchActive ? searchQuery : ''"
                   :show-location="searchActive"
                   :select-mode="batchMode"
@@ -479,7 +487,7 @@
                   : "单击文件夹进入子目录"
             }}
           </span>
-          <span v-if="selectedCount > 0">已选 {{ selectedCount }} 项</span>
+          <span v-if="selectedCount > 0">已选择 {{ selectedCount }} 项</span>
           <span v-if="typeAheadPrefix" class="desktop-status-typeahead">
             定位：<strong>{{ typeAheadPrefix }}</strong>
           </span>
@@ -874,7 +882,7 @@
       :is-active="showShareDialog"
       :file-path="selectedFile?.path || ''"
       :file="selectedFile || undefined"
-      @close="showShareDialog = false"
+      @close="closeShareDialog"
     />
 
     <MoveDialog
@@ -1024,6 +1032,7 @@ import TransferOwnershipDialog from "./TransferOwnershipDialog.vue";
 import SearchResultToolbar from "./SearchResultToolbar.vue";
 import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
+import NewMenuButton from "./NewMenuButton.vue";
 const FilePreviewModal = defineAsyncComponent(() => import("./FilePreviewModal.vue"));
 import UploadDropOverlay from "./UploadDropOverlay.vue";
 import FileDetailsContent from "./FileDetailsContent.vue";
@@ -1166,12 +1175,39 @@ function flushScrollRestore() {
   });
 }
 
+/**
+ * 已分享路径集合（列表「共享」列徽标）。
+ *
+ * 分享接口返回整个可见范围的路径集合；只在挂载后和切换目录时各取一次，
+ * 不随列表渲染重复请求。请求失败按「没有分享」处理，不让徽标拖垮文件列表。
+ */
+const sharedPaths = ref<Set<string>>(new Set());
+let sharedPathsRequest = 0;
+
+async function loadSharedPaths() {
+  const id = ++sharedPathsRequest;
+  try {
+    const paths = await filesService.getSharedPaths();
+    if (id !== sharedPathsRequest) return;
+    sharedPaths.value = new Set(
+      (Array.isArray(paths) ? paths : []).map((path) =>
+        String(path).replace(/^\/+/, ""),
+      ),
+    );
+  } catch {
+    if (id !== sharedPathsRequest) return;
+    sharedPaths.value = new Set();
+  }
+}
+
 // 目录级动态标题（r147 ✓ W3C 标准：浏览位置进标题）
 watch(
   currentPath,
   (path) => {
     const dir = path.split("/").filter(Boolean).pop();
     document.title = dir ? `${dir} - VFiles` : "VFiles - 文件管理系统";
+    // 分享徽标按路径匹配，切换目录时重取一次（渲染期间不重复请求）
+    void loadSharedPaths();
   },
   { immediate: true },
 );
@@ -1256,6 +1292,18 @@ const showShortcuts = ref(false);
 const showTransferDialog = ref(false);
 const transferItems = ref<FileInfo[]>([]);
 const transferDialogRef = ref<{ finish: () => void } | null>(null);
+
+function closeShareDialog() {
+  showShareDialog.value = false;
+  // 分享可能刚创建/停止，收起对话框后刷新徽标集合
+  void loadSharedPaths();
+}
+
+/** 工具栏「+ 新建 → 新建文件夹」：复用移动端底栏的建目录请求流程。 */
+function requestCreateDirectoryFromToolbar() {
+  if (!canWrite.value) return;
+  appStore.requestCreateDirectory();
+}
 
 /** 打开所有权转移对话框（支持单条与批量）。 */
 function openTransferDialog(items: FileInfo[]) {

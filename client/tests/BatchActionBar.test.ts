@@ -13,7 +13,7 @@ function button(label: string) {
 describe("BatchActionBar.vue", () => {
   it("shows how many entries are selected", () => {
     renderBar(3);
-    expect(screen.getByText("已选 3 项")).toBeInTheDocument();
+    expect(screen.getByText("已选择 3 项")).toBeInTheDocument();
   });
 
   it("disables the mutating actions when nothing is selected", () => {
@@ -24,7 +24,7 @@ describe("BatchActionBar.vue", () => {
     }
     // 全选/清空始终可用
     expect(button("全选当前视图").disabled).toBe(false);
-    expect(button("清空选择").disabled).toBe(false);
+    expect(button("清空").disabled).toBe(false);
   });
 
   it("enables bulk actions for one or more entries", () => {
@@ -48,7 +48,7 @@ describe("BatchActionBar.vue", () => {
 
     const actions: [string, string][] = [
       ["全选当前视图", "select-all"],
-      ["清空选择", "clear-selection"],
+      ["清空", "clear-selection"],
       ["下载", "download"],
       ["移动", "move"],
       ["删除", "delete"],
