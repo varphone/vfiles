@@ -41,3 +41,44 @@ describe("filesService.getFileDiff", () => {
     expect(requestSignal?.aborted).toBe(true);
   });
 });
+
+describe("filesService.getFileHistory", () => {
+  it("asks for the newest page without the directory total when requested", async () => {
+    const { apiService } = await import("../src/services/api.service");
+    const controller = new AbortController();
+    const getMock = vi
+      .spyOn(apiService, "get")
+      .mockResolvedValue({ success: true, data: { commits: [], currentVersion: "" } });
+
+    const history = await filesService.getFileHistory("docs", 50, undefined, {
+      signal: controller.signal,
+      withTotal: false,
+      timeoutMs: 15_000,
+    });
+
+    expect(getMock).toHaveBeenCalledWith(
+      "/history",
+      { path: "docs", limit: 50, with_total: "false" },
+      { signal: controller.signal, timeoutMs: 15_000 },
+    );
+    expect(history.totalCommits).toBe(0);
+    getMock.mockRestore();
+  });
+
+  it("keeps the total request by default", async () => {
+    const { apiService } = await import("../src/services/api.service");
+    const getMock = vi.spyOn(apiService, "get").mockResolvedValue({
+      success: true,
+      data: { commits: [], currentVersion: "", totalCommits: 3 },
+    });
+
+    await filesService.getFileHistory("docs");
+
+    expect(getMock).toHaveBeenCalledWith(
+      "/history",
+      { path: "docs", limit: 50 },
+      { signal: undefined, timeoutMs: undefined },
+    );
+    getMock.mockRestore();
+  });
+});

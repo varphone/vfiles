@@ -187,6 +187,7 @@ export interface AuthorInfo {
 export interface FileHistory {
   commits: CommitInfo[];
   currentVersion: string;
+  /** 未请求总数时（`withTotal: false` 的目录历史）缺省为 0。 */
   totalCommits: number;
   nextCursor?: string | null;
 }

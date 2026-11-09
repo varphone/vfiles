@@ -57,7 +57,7 @@
                 </button>
                 <span
                   class="app-bar-history-label"
-                  :title="desktopHistoryStateLabel"
+                  :title="desktopHistoryTitle"
                 >
                   {{ desktopHistoryStateLabel }}
                 </span>
@@ -468,7 +468,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import {
@@ -492,8 +492,8 @@ import NotificationCenter from "../components/common/NotificationCenter.vue";
 import ThemeToggle from "../components/common/ThemeToggle.vue";
 import { useFilesStore } from "../stores/files.store";
 import { useAuthStore } from "../stores/auth.store";
-import { filesService } from "../services/files.service";
 import { useAppStore } from "../stores/app.store";
+import { useDirectoryHistory } from "../composables/useDirectoryHistory";
 
 type FileBrowserHandle = {
   openUploader: () => void;
@@ -547,15 +547,32 @@ const actionMenuRef = ref<HTMLElement | null>(null);
 const actionMode = ref<"nav" | "history" | "batch">("nav");
 const batchMenuOpen = ref(false);
 const batchMenuRef = ref<HTMLElement | null>(null);
-const dirHistoryLoading = ref(false);
-const dirHistoryError = ref<string | null>(null);
-const dirHistoryCommits = ref<Array<{ hash: string; date?: string }>>([]);
-const dirHistoryPath = ref("");
-const dirSelectedHash = ref("");
-let dirHistoryReqId = 0;
-
 const filesStore = useFilesStore();
 const { currentPath, browseCommit } = storeToRefs(filesStore);
+
+// 顶栏「版本切换」：加载/步进/取消都在 composable 内，Home 只负责展示。
+const {
+  loading: dirHistoryLoading,
+  error: dirHistoryError,
+  commits: dirHistoryCommits,
+  loaded: dirHistoryLoaded,
+  selectedHash: dirSelectedHash,
+  selectedIndex: dirSelectedIndex,
+  canPrev,
+  canNext,
+  canLast,
+  load: loadHistory,
+  ensureLoaded: ensureHistoryLoaded,
+  select: applyHistoryHash,
+  stepBack: desktopHistoryStepBack,
+  stepForward: desktopHistoryStepForward,
+  fastBack: desktopHistoryFastBack,
+  fastForward: desktopHistoryFastForward,
+} = useDirectoryHistory({
+  currentPath,
+  browseCommit,
+  setBrowseCommit: (commit) => filesStore.setBrowseCommit(commit),
+});
 
 const desktopProfileLabel = computed(() => {
   if (!auth.enabled) return "本地模式";
@@ -685,7 +702,7 @@ function setActionMode(mode: "nav" | "history" | "batch") {
   }
 
   if (mode === "history") {
-    void loadDirHistory();
+    void loadHistory();
   }
 }
 
@@ -709,27 +726,6 @@ const historyDateShort = computed(() => {
   return `${mm}-${dd} ${hh}:${mi}`;
 });
 
-const dirSelectedIndex = computed(() => {
-  const h = dirSelectedHash.value;
-  if (!h) return -1;
-  return dirHistoryCommits.value.findIndex((c) => c.hash === h);
-});
-
-const canPrev = computed(() => {
-  const idx = dirSelectedIndex.value;
-  return idx >= 0 && idx < dirHistoryCommits.value.length - 1;
-});
-
-const canNext = computed(() => {
-  const idx = dirSelectedIndex.value;
-  return idx > 0;
-});
-
-const canLast = computed(() => {
-  const idx = dirSelectedIndex.value;
-  return idx > 0;
-});
-
 /** 账号头像用用户名首字符，未登录时回退到用户图标。 */
 const accountInitial = computed(() => {
   const name = auth.user?.username || "";
@@ -738,161 +734,45 @@ const accountInitial = computed(() => {
 
 const desktopHistoryStateLabel = computed(() => {
   if (dirHistoryLoading.value) return "加载历史...";
+  // 失败后按钮恢复可用，标签直接说明这次没拿到历史。
+  if (dirHistoryError.value) return "加载失败";
+  // 目录确实没有可回退的快照时也要说清楚，否则按钮点了像是没反应。
+  if (dirHistoryLoaded.value && dirHistoryCommits.value.length === 0) {
+    return "无历史";
+  }
   if (browseCommit.value) return historyHashShort.value;
   return "当前版本";
 });
 
-watch(
-  () => currentPath.value,
-  () => {
-    dirHistoryReqId += 1;
-    dirHistoryPath.value = "";
-    dirHistoryError.value = null;
-    dirHistoryCommits.value = [];
-    dirSelectedHash.value = browseCommit.value || "";
-
-    if (browseCommit.value) {
-      void loadDirHistory();
-    }
-  },
+/** 桌面顶栏的操作区：失败时把具体原因和重试方式放进悬停提示。 */
+const desktopHistoryTitle = computed(() =>
+  dirHistoryError.value
+    ? `${dirHistoryError.value}（点击后退重试）`
+    : desktopHistoryStateLabel.value,
 );
 
-watch(
-  () => browseCommit.value,
-  (nextCommit) => {
-    dirSelectedHash.value = nextCommit || "";
-
-    if (nextCommit && dirHistoryPath.value !== (currentPath.value || "")) {
-      void loadDirHistory();
-    }
-  },
-);
-
-function applyHistoryHash(hash: string | undefined) {
-  if (!hash) return;
-  dirSelectedHash.value = hash;
-  filesStore.setBrowseCommit(hash);
-}
-
-function exitBrowseHistory() {
-  dirSelectedHash.value = "";
-  filesStore.setBrowseCommit(undefined);
-}
-
-async function ensureDirHistoryLoaded() {
-  if (dirHistoryLoading.value) return false;
-
-  if (
-    dirHistoryPath.value !== (currentPath.value || "") ||
-    dirHistoryCommits.value.length === 0
-  ) {
-    await loadDirHistory();
-  }
-
-  return dirHistoryCommits.value.length > 0;
-}
-
-async function desktopHistoryFastBack() {
-  if (!(await ensureDirHistoryLoaded())) return;
-  applyHistoryHash(
-    dirHistoryCommits.value[dirHistoryCommits.value.length - 1]?.hash,
-  );
-}
-
-async function desktopHistoryStepBack() {
-  if (!(await ensureDirHistoryLoaded())) return;
-
-  if (!browseCommit.value) {
-    applyHistoryHash(dirHistoryCommits.value[0]?.hash);
-    return;
-  }
-
-  const idx = dirSelectedIndex.value;
-  const nextHash =
-    idx >= 0 ? dirHistoryCommits.value[idx + 1]?.hash : undefined;
-  applyHistoryHash(nextHash);
-}
-
-function desktopHistoryStepForward() {
-  if (!browseCommit.value) return;
-
-  const idx = dirSelectedIndex.value;
-  if (idx > 0) {
-    applyHistoryHash(dirHistoryCommits.value[idx - 1]?.hash);
-    return;
-  }
-
-  exitBrowseHistory();
-}
-
-function desktopHistoryFastForward() {
-  if (!browseCommit.value) return;
-  exitBrowseHistory();
-}
-
-async function loadDirHistory() {
-  const requestPath = currentPath.value || "";
-  const reqId = ++dirHistoryReqId;
-  dirHistoryLoading.value = true;
-  dirHistoryError.value = null;
-  try {
-    const data = await filesService.getFileHistory(requestPath, 50);
-    if (reqId !== dirHistoryReqId) return;
-    dirHistoryPath.value = requestPath;
-    dirHistoryCommits.value = (data.commits || []).map((c) => ({
-      hash: c.hash,
-      date: c.date,
-    }));
-
-    const preferred =
-      browseCommit.value ||
-      dirSelectedHash.value ||
-      data.currentVersion ||
-      data.commits?.[0]?.hash ||
-      "";
-    const exists =
-      preferred && dirHistoryCommits.value.some((c) => c.hash === preferred);
-    dirSelectedHash.value = exists
-      ? preferred
-      : data.currentVersion || data.commits?.[0]?.hash || "";
-
-    if (dirSelectedHash.value) {
-      filesStore.setBrowseCommit(dirSelectedHash.value);
-    }
-  } catch (err) {
-    if (reqId !== dirHistoryReqId) return;
-    dirHistoryPath.value = requestPath;
-    dirHistoryError.value = err instanceof Error ? err.message : "加载历史失败";
-    dirHistoryCommits.value = [];
-    dirSelectedHash.value = "";
-  } finally {
-    if (reqId === dirHistoryReqId) dirHistoryLoading.value = false;
-  }
-}
-
-function historyPrev() {
+/**
+ * 手机端历史面板的按钮：在已加载的提交列表内移动；列表还没加载时先加载。
+ */
+async function historyPrev() {
+  if (!(await ensureHistoryLoaded())) return;
   const idx = dirSelectedIndex.value;
   if (idx < 0) return;
-  const nextHash = dirHistoryCommits.value[idx + 1]?.hash;
-  if (!nextHash) return;
-  dirSelectedHash.value = nextHash;
-  filesStore.setBrowseCommit(nextHash);
+  applyHistoryHash(dirHistoryCommits.value[idx + 1]?.hash);
 }
 
-function historyNext() {
+async function historyNext() {
+  if (!(await ensureHistoryLoaded())) return;
   const idx = dirSelectedIndex.value;
   if (idx <= 0) return;
-  const nextHash = dirHistoryCommits.value[idx - 1]?.hash;
-  if (!nextHash) return;
-  dirSelectedHash.value = nextHash;
-  filesStore.setBrowseCommit(nextHash);
+  applyHistoryHash(dirHistoryCommits.value[idx - 1]?.hash);
 }
 
-function historyLast() {
+async function historyLast() {
+  if (!(await ensureHistoryLoaded())) return;
   const lastHash = dirHistoryCommits.value[0]?.hash;
   if (!lastHash) return;
-  dirSelectedHash.value = lastHash;
-  filesStore.setBrowseCommit(lastHash);
+  applyHistoryHash(lastHash);
 }
 
 async function runBatchMenuAction(action: "delete" | "move" | "rename") {
@@ -974,6 +854,7 @@ async function renameSelected() {
 
 .app-bar-history-label {
   min-width: 5.5rem;
+  max-width: 9rem;
   padding: 0 0.5rem;
   text-align: center;
   font-size: 0.8rem;

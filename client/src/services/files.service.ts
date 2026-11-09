@@ -1033,26 +1033,35 @@ export const filesService = {
   },
 
   /**
-   * 获取文件历史
+   * 获取文件或目录历史。
+   *
+   * 目录历史的 `totalCommits` 需要对整段历史再统计一次；顶栏的版本步进只需要
+   * 最新一页，传 `withTotal: false` 可跳过这次统计。`signal` 用于目录切换或
+   * 重复点击时取消上一次请求。
    */
   async getFileHistory(
     path: string,
     limit: number = 50,
     cursor?: string,
+    opts?: { signal?: AbortSignal; withTotal?: boolean; timeoutMs?: number },
   ): Promise<FileHistory> {
-    const response = await apiService.get<FileHistory>("/history", {
-      path,
-      limit,
-      cursor,
+    const params: Record<string, string | number> = { path, limit };
+    if (cursor) params.cursor = cursor;
+    if (opts?.withTotal === false) params.with_total = "false";
+    const response = await apiService.get<FileHistory>("/history", params, {
+      signal: opts?.signal,
+      timeoutMs: opts?.timeoutMs,
     });
-    return (
-      response.data || {
-        commits: [],
-        currentVersion: "",
-        totalCommits: 0,
-        nextCursor: null,
-      }
-    );
+    const data = response.data;
+    if (!data) {
+      return { commits: [], currentVersion: "", totalCommits: 0, nextCursor: null };
+    }
+    return {
+      ...data,
+      commits: Array.isArray(data.commits) ? data.commits : [],
+      // 未请求总数时服务端省略该字段；调用方拿到 0 而不是 undefined。
+      totalCommits: data.totalCommits ?? 0,
+    };
   },
 
   /**
