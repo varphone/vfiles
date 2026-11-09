@@ -1,5 +1,11 @@
 <template>
-  <component :is="icon" :size="size" :stroke-width="strokeWidth" />
+  <component
+    :is="icon"
+    :size="size"
+    :stroke-width="strokeWidth"
+    class="file-type-icon"
+    :class="`is-${kind}`"
+  />
 </template>
 
 <script setup lang="ts">
@@ -50,8 +56,49 @@ const ICONS: Record<FileIconKind, unknown> = {
   file: IconFile,
 };
 
+const kind = computed(() => fileIconKind(props.file));
+
 const icon = computed(() => {
   void IconArrowLeft;
-  return ICONS[fileIconKind(props.file)];
+  return ICONS[kind.value];
 });
 </script>
+
+<style scoped>
+/* Seafile 式彩色类型图标：按类型着色，文件夹保持中性强调色。 */
+.file-type-icon.is-folder {
+  color: var(--vf-accent);
+}
+
+.file-type-icon.is-image {
+  color: #7c3aed;
+}
+
+.file-type-icon.is-video {
+  color: #dc2626;
+}
+
+.file-type-icon.is-audio {
+  color: #d97706;
+}
+
+.file-type-icon.is-archive {
+  color: #0891b2;
+}
+
+.file-type-icon.is-code {
+  color: #0f766e;
+}
+
+.file-type-icon.is-pdf {
+  color: #b91c1c;
+}
+
+.file-type-icon.is-text {
+  color: #475569;
+}
+
+.file-type-icon.is-file {
+  color: var(--vf-text-subtle);
+}
+</style>
