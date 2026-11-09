@@ -10045,6 +10045,31 @@ async fn scoped_password_creation_is_validated_and_owner_scoped() {
         );
     }
 
+    // 6 位是允许的下限（上面的 "short" 是 5 位，仍然拒绝）。
+    let boundary = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/auth/credentials",
+            json!({ "label": "six-chars", "password": "abc123", "roots": ["docs"] }),
+        )
+        .await;
+    assert_eq!(boundary.status(), StatusCode::OK);
+    let boundary_id = response_json(boundary).await["id"]
+        .as_str()
+        .expect("boundary credential id")
+        .to_string();
+    let delete_boundary = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/auth/credentials/{boundary_id}"))
+                .body(Body::empty())
+                .expect("request should build"),
+            &app.admin_cookie().await,
+        )
+        .await;
+    assert_eq!(delete_boundary.status(), StatusCode::NO_CONTENT);
+
     let create = app
         .json_request_as_admin(
             Method::POST,

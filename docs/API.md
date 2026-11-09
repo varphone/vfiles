@@ -69,7 +69,7 @@ curl -b cookies.txt -X DELETE "$VFILES/api/auth/credentials/<id>"
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/auth/credentials` | 列出自己的受限密码（不含哈希） |
-| POST | `/api/auth/credentials` | 新建：`label`、`password`（8–256 字符）、`roots`（1–8 个已存在目录）、`canWrite` |
+| POST | `/api/auth/credentials` | 新建：`label`、`password`（6–256 字符）、`roots`（1–8 个已存在目录）、`canWrite` |
 | POST | `/api/auth/credentials/{id}` | 更新任意子集：`label`、`password`、`roots`、`canWrite` |
 | DELETE | `/api/auth/credentials/{id}` | 删除并撤销其会话 |
 

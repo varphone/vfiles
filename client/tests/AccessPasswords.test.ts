@@ -179,7 +179,7 @@ describe("AccessPasswords.vue", () => {
   it("surfaces the backend validation message", async () => {
     listMock.mockResolvedValue([]);
     createMock.mockRejectedValue(
-      new Error("密码长度需在 8-256 个字符之间"),
+      new Error("密码长度需在 6-256 个字符之间"),
     );
     renderPage();
 
@@ -201,7 +201,7 @@ describe("AccessPasswords.vue", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("密码长度需在 8-256 个字符之间"),
+        screen.getByText("密码长度需在 6-256 个字符之间"),
       ).toBeInTheDocument(),
     );
   });

@@ -312,7 +312,7 @@ pub async fn me(
 // ---- 受限登录密码（同一账号的多条密码） ----
 
 const MAX_SCOPE_ROOTS: usize = 8;
-const MIN_CREDENTIAL_PASSWORD_CHARS: usize = 8;
+const MIN_CREDENTIAL_PASSWORD_CHARS: usize = 6;
 const MAX_CREDENTIAL_PASSWORD_CHARS: usize = 256;
 const MAX_CREDENTIAL_LABEL_CHARS: usize = 64;
 
@@ -362,7 +362,7 @@ fn normalize_label(label: &str) -> ApiResult<String> {
 fn validate_credential_password(password: &str) -> ApiResult<()> {
     let chars = password.chars().count();
     if chars < MIN_CREDENTIAL_PASSWORD_CHARS || chars > MAX_CREDENTIAL_PASSWORD_CHARS {
-        return Err(validation_error("受限密码长度需在 8-256 个字符之间"));
+        return Err(validation_error("受限密码长度需在 6-256 个字符之间"));
     }
     Ok(())
 }

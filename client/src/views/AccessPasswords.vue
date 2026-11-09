@@ -172,7 +172,7 @@
           class="input is-small"
           type="password"
           autocomplete="new-password"
-          :placeholder="editingId ? '留空表示不修改' : '至少 8 位'"
+          :placeholder="editingId ? '留空表示不修改' : '至少 6 位'"
           :aria-invalid="formError ? 'true' : undefined"
           :aria-describedby="formError ? 'password-form-error' : undefined"
         />
@@ -355,7 +355,7 @@ import type { FileInfo } from "../types";
 import type { LoginCredential } from "../services/auth.service";
 
 const MAX_ROOTS = 8;
-const MIN_PASSWORD_LENGTH = 8;
+const MIN_PASSWORD_LENGTH = 6;
 
 const app = useAppStore();
 const router = useRouter();
@@ -442,7 +442,7 @@ function validateForm(): string {
   if (password) {
     const length = Array.from(password).length;
     if (length < MIN_PASSWORD_LENGTH || length > 256) {
-      return "密码长度需在 8-256 个字符之间";
+      return "密码长度需在 6-256 个字符之间";
     }
   }
 
