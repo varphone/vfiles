@@ -36,6 +36,49 @@
   - Body: `username`, `email`, `password`
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
+  - `data.scope` 描述本次会话的权限范围：主密码会话为
+    `{"restricted": false, "label": null, "roots": [], "canWrite": true}`；
+    受限密码会话为 `{"restricted": true, "label": "read-docs", "roots": ["docs"], "canWrite": false}`。
+- `POST /api/auth/login` 的 `data.scope` 与 `GET /api/auth/me` 相同。
+
+### 受限登录密码（同账号多密码）
+
+同一个账号可以有多条登录密码：主密码（`users.password_hash`，全量权限）和若干受限密码。
+受限密码绑定 1–8 个允许访问的目录，默认只读；只读会话不能上传、建目录、删除、移动、重命名、
+创建分享，也不能执行账号级操作。
+
+```bash
+# 用主密码会话管理（受限会话调用返回 403）
+curl -b cookies.txt -X POST "$VFILES/api/auth/credentials" \
+  -H 'Content-Type: application/json' \
+  -d '{"label":"只读-照片","password":"secondary-password","roots":["photos"],"canWrite":false}'
+
+curl -b cookies.txt "$VFILES/api/auth/credentials"
+
+# 修改范围/密码（会撤销该密码已签发的会话）
+curl -b cookies.txt -X POST "$VFILES/api/auth/credentials/<id>" \
+  -H 'Content-Type: application/json' \
+  -d '{"canWrite":true}'
+
+curl -b cookies.txt -X DELETE "$VFILES/api/auth/credentials/<id>"
+```
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/auth/credentials` | 列出自己的受限密码（不含哈希） |
+| POST | `/api/auth/credentials` | 新建：`label`、`password`（8–256 字符）、`roots`（1–8 个已存在目录）、`canWrite` |
+| POST | `/api/auth/credentials/{id}` | 更新任意子集：`label`、`password`、`roots`、`canWrite` |
+| DELETE | `/api/auth/credentials/{id}` | 删除并撤销其会话 |
+
+范围规则：
+
+- 路径等于某个根或位于其下（`root/...`）才允许；列出根目录自身可以，列出根之上的父目录返回 403。
+- 上传、建目录、删除、移动、重命名要求 `canWrite`；移动的源和目标都必须落在范围内。
+- 搜索在未指定目录时逐根搜索、合并结果；指定目录时该目录必须在范围内。
+- 分享的创建要求可写；分享列表与停用按范围过滤。公共分享链接本身不鉴权（既有行为）。
+- 受限会话不能访问：`/api/auth/credentials`、`/api/tokens`、`/api/admin/*`、`/api/audit/*`、
+  `/api/files/overview`、`/api/files/snapshots`、`/api/files/transfer`。
+- FTP、WebDAV、rsync 只接受主密码；受限密码在这些协议上认证失败。
 
 ## 文件树与目录操作
 

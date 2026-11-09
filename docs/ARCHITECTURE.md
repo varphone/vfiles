@@ -83,6 +83,20 @@ SQLite + local filesystem
 - 当认证开启且启用多用户命名空间时，每个登录用户会路由到自己的默认 namespace
 - 管理员接口会校验角色；普通用户不能访问 `/api/admin`
 
+### 同账号多密码与目录范围
+
+- 主密码保存在 `users.password_hash`；受限密码在 `user_credentials`（标签、Argon2 哈希、
+  允许目录 JSON、只读/可写），每账号最多 8 条。
+- 登录先校验主密码，未命中再依次校验受限密码；会话在 `user_sessions.credential_id` 记录
+  命中的凭据，鉴权时重新读取凭据生成 `SessionScope`，已删除的凭据会让会话立即失效。
+- HTTP 的 `RequestContext` 携带 `SessionScope`；路径入口统一调用 `require_read` /
+  `require_write` / `require_full`，范围外的路径返回 403，列表与搜索结果按范围过滤。
+- 访问令牌与主密码会话是 `SessionScope::Full`；受限会话不能创建令牌，也不能进入管理员、
+  审计、所有权转移、概览、手动快照与凭据管理接口。
+- FTP/WebDAV/rsync 复用 `verify_credentials(..., allow_restricted=false)`：这些协议没有路径
+  范围执行层，只接受主密码，避免绕过范围检查。
+- 凭据被修改（标签/范围/密码）或删除时会撤销该凭据的会话并清空认证热缓存。
+
 ## 关键设计点
 
 ### 目录树与历史

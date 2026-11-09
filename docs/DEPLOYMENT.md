@@ -287,6 +287,9 @@ VFILES_FTP_TLS_KEY=/etc/vfiles/ftp-key.pem
 VFILES_FTP_TLS_REQUIRED=true
 ```
 
+「访问密码」（同账号多密码，见用户指南）只在 HTTP API 与会话中生效：FTP、WebDAV、rsync
+没有路径范围执行层，会拒绝受限密码，只接受账号主密码。
+
 不配置 `VFILES_FTP_TLS_CERT`/`VFILES_FTP_TLS_KEY` 时，服务会自动创建
 `${VFILES_STORAGE_ROOT:-data}/ftp-tls/ftp-cert.pem` 和 `ftp-key.pem`。私钥权限为 `0600`，
 目录权限为 `0700`；自签名证书只在首次启动时生成，后续启动沿用同一证书。启动日志和
