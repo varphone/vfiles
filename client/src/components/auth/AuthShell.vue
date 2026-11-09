@@ -1,46 +1,78 @@
 <template>
-  <div class="auth-shell">
-    <div class="auth-shell-theme">
-      <ThemeToggle />
-    </div>
+  <div class="auth-layout">
+    <aside class="auth-brand-panel">
+      <div class="auth-brand-top">
+        <img class="auth-brand-logo" src="/vfiles-icon.svg" alt="" />
+        <span class="auth-brand-name">VFiles</span>
+      </div>
 
-    <div class="auth-shell-inner">
-      <header class="auth-shell-brand">
-        <img class="auth-shell-logo" src="/vfiles-icon.svg" alt="VFiles" />
-        <h1 class="auth-shell-title">VFiles</h1>
-        <p class="auth-shell-subtitle">基于版本控制的文件管理系统</p>
-      </header>
+      <div class="auth-brand-copy">
+        <h1>安全、可追溯的文件协作</h1>
+        <p>
+          为团队提供版本历史、目录范围权限与多协议访问，
+          文件和每一次变更都留在自己的服务器上。
+        </p>
+        <ul class="auth-features">
+          <li>
+            <IconHistory :size="16" />
+            <span>每次变更都有版本，可随时回溯</span>
+          </li>
+          <li>
+            <IconShieldLock :size="16" />
+            <span>同一账号可用不同密码限定可见目录</span>
+          </li>
+          <li>
+            <IconCloudUpload :size="16" />
+            <span>Web、WebDAV、S3 与 FTP 互通</span>
+          </li>
+        </ul>
+      </div>
 
-      <section class="auth-shell-card" :aria-label="title">
-        <h2 v-if="title" class="auth-shell-card-title">{{ title }}</h2>
-        <p v-if="description" class="auth-shell-card-desc">{{ description }}</p>
-        <slot />
-      </section>
+      <a
+        class="auth-record"
+        href="https://beian.miit.gov.cn/"
+        target="_blank"
+        rel="noreferrer"
+      >
+        苏ICP备2026014694号-1
+      </a>
+    </aside>
 
-      <footer class="auth-shell-footer">
-        <slot name="footer">
-          <a
-            class="auth-shell-record"
-            href="https://beian.miit.gov.cn/"
-            target="_blank"
-            rel="noreferrer"
-          >
-            苏ICP备2026014694号-1
-          </a>
-        </slot>
-      </footer>
+    <div class="auth-form-panel">
+      <div class="auth-theme">
+        <ThemeToggle />
+      </div>
+
+      <div class="auth-form-inner">
+        <header class="auth-mobile-brand">
+          <img src="/vfiles-icon.svg" alt="" width="36" height="36" />
+          <span>VFiles 文件管理</span>
+        </header>
+
+        <section class="auth-card" :aria-label="title">
+          <h2 v-if="title" class="auth-card-title">{{ title }}</h2>
+          <p v-if="description" class="auth-card-desc">{{ description }}</p>
+          <slot />
+        </section>
+
+        <footer class="auth-form-footer">
+          <slot name="footer">
+            <span>基于版本控制的文件管理系统</span>
+          </slot>
+        </footer>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { IconCloudUpload, IconHistory, IconShieldLock } from "@tabler/icons-vue";
 import ThemeToggle from "../common/ThemeToggle.vue";
 
 /**
- * 认证页外壳：品牌 + 卡片 + 页脚，登录 / 注册 / 找回 / 重置共用。
+ * 认证页外壳：左侧品牌与产品要点，右侧表单卡片。
  *
- * 三种认证流程之前各写一套 Bulma 布局（有的有品牌、有的没有），
- * 抽成外壳后视觉与间距保持一致，主题切换也固定在右上角。
+ * 登录 / 注册 / 找回 / 重置共用；窄屏时隐藏品牌区，只保留表单。
  */
 withDefaults(
   defineProps<{
@@ -53,95 +85,195 @@ withDefaults(
 </script>
 
 <style scoped>
-.auth-shell {
+.auth-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  min-height: 100dvh;
+  background: var(--vf-canvas);
+}
+
+.auth-brand-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 2.5rem 3rem;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 0% 0%, rgba(59, 130, 246, 0.28), transparent 55%),
+    radial-gradient(100% 80% at 100% 100%, rgba(14, 165, 233, 0.2), transparent 60%),
+    linear-gradient(150deg, #0f172a 0%, #111c33 55%, #0b1220 100%);
+  color: #e6ecf7;
+}
+
+.auth-brand-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.5), transparent 75%);
+  pointer-events: none;
+}
+
+.auth-brand-top {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.auth-brand-logo {
+  width: 34px;
+  height: 34px;
+}
+
+.auth-brand-name {
+  font-size: 1.02rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.auth-brand-copy {
+  position: relative;
+  z-index: 1;
+  max-width: 30rem;
+}
+
+.auth-brand-copy h1 {
+  margin: 0 0 0.75rem;
+  font-size: clamp(1.6rem, 2.4vw, 2.15rem);
+  line-height: 1.22;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.auth-brand-copy > p {
+  margin: 0;
+  color: rgba(230, 236, 247, 0.72);
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+.auth-features {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.auth-features li {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.83rem;
+  color: rgba(230, 236, 247, 0.86);
+}
+
+.auth-features svg {
+  flex: none;
+  color: #7db4ff;
+}
+
+.auth-record {
+  position: relative;
+  z-index: 1;
+  font-size: 0.72rem;
+  color: rgba(230, 236, 247, 0.5);
+  text-decoration: none;
+}
+
+.auth-record:hover {
+  color: rgba(230, 236, 247, 0.8);
+}
+
+.auth-form-panel {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100dvh;
-  padding: 3.5rem 1rem 1.5rem;
-  background: var(--vf-shell-bg);
+  padding: 3rem 2rem;
+  background: var(--vf-surface);
 }
 
-.auth-shell-theme {
+.auth-theme {
   position: absolute;
-  top: 0.75rem;
-  right: 0.9rem;
+  top: 1rem;
+  right: 1.1rem;
 }
 
-.auth-shell-inner {
+.auth-form-inner {
   display: flex;
   flex-direction: column;
   gap: 1.1rem;
   width: 100%;
-  max-width: 26rem;
+  max-width: 24rem;
 }
 
-.auth-shell-brand {
-  text-align: center;
-}
-
-.auth-shell-logo {
-  width: 3rem;
-  height: 3rem;
-}
-
-.auth-shell-title {
-  margin: 0.5rem 0 0;
-  font-size: 1.6rem;
+.auth-mobile-brand {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
   font-weight: 700;
-  letter-spacing: 0.01em;
+  font-size: 1.1rem;
   color: var(--vf-text-strong);
 }
 
-.auth-shell-subtitle {
-  margin: 0.2rem 0 0;
-  color: var(--vf-text-muted);
-  font-size: 0.875rem;
-}
-
-.auth-shell-card {
-  /* 与卡片家族节奏一致（round 4） */
-  padding: 1.1rem 1.2rem 1.3rem;
+.auth-card {
+  padding: 1.35rem 1.4rem 1.5rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-lg);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-card);
 }
 
-.auth-shell-card-title {
+.auth-card-title {
   margin: 0 0 0.2rem;
-  font-size: 1.05rem;
+  font-size: 1.15rem;
   font-weight: 700;
   color: var(--vf-text-strong);
 }
 
-.auth-shell-card-desc {
+.auth-card-desc {
   margin: 0 0 1rem;
   color: var(--vf-text-muted);
-  font-size: 0.875rem;
-  line-height: 1.5;
+  font-size: 0.85rem;
+  line-height: 1.55;
 }
 
-.auth-shell-footer {
+.auth-form-footer {
   text-align: center;
   font-size: 0.75rem;
+  color: var(--vf-text-subtle);
 }
 
-.auth-shell-record {
-  color: var(--vf-text-muted);
-}
+@media screen and (max-width: 900px) {
+  .auth-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
 
-.auth-shell-record:hover,
-.auth-shell-record:focus-visible {
-  color: var(--vf-accent);
-  text-decoration: underline;
-}
+  .auth-brand-panel {
+    display: none;
+  }
 
-@media screen and (max-width: 480px) {
-  .auth-shell {
-    padding: 3rem 0.75rem 1rem;
-    align-items: flex-start;
+  .auth-form-panel {
+    padding: 4rem 1rem 2rem;
+    background: var(--vf-canvas);
+  }
+
+  .auth-mobile-brand {
+    display: flex;
+  }
+
+  .auth-card {
+    background: var(--vf-surface);
   }
 }
 </style>

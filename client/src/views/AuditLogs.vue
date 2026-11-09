@@ -1,19 +1,11 @@
 <template>
-  <div class="audit-page">
-    <div class="audit-card vf-page-card">
-      <header class="audit-header">
-        <div class="audit-header-titles">
-          <h1 class="audit-title vf-page-title">审计日志</h1>
-          <p class="audit-subtitle vf-page-subtitle">
-            共 {{ total }} 条记录
-            <template v-if="items.length < total">
-              · 当前显示 {{ items.length }} 条
-            </template>
-            <template v-if="rangeLabel"> · {{ rangeLabel }}</template>
-          </p>
-        </div>
-
-        <div class="audit-header-actions">
+  <AdminLayout
+    title="审计日志"
+    description="登录、文件与账号操作的事后追溯；记录只读，不可修改或删除。"
+    active="audit"
+  >
+    <template #actions>
+      <div class="audit-header-actions">
           <a
             class="vf-ghost-button"
             :href="exportHref"
@@ -34,12 +26,8 @@
             <IconRefresh :size="16" :class="{ 'is-spinning': loading }" />
             <span>刷新</span>
           </button>
-          <button class="vf-ghost-button" type="button" @click="goFiles">
-            <IconFolderOpen :size="16" />
-            <span>返回文件</span>
-          </button>
-        </div>
-      </header>
+      </div>
+    </template>
 
       <!-- 只读声明：审计日志不可修改、不可删除（数据库层亦强制） -->
       <p class="audit-readonly">
@@ -307,18 +295,15 @@
           下一页
         </button>
       </footer>
-    </div>
-  </div>
+  </AdminLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
 import {
   IconAlertCircle,
   IconDownload,
   IconFilter,
-  IconFolderOpen,
   IconHistory,
   IconLock,
   IconRefresh,
@@ -326,6 +311,7 @@ import {
 } from "@tabler/icons-vue";
 import EmptyState from "../components/common/EmptyState.vue";
 import SkeletonList from "../components/common/SkeletonList.vue";
+import AdminLayout from "../layouts/AdminLayout.vue";
 import { filesService } from "../services/files.service";
 import { formatRelativeDate } from "../utils/filePresentation";
 import type { AuditLogEntry, AuditLogSummary } from "../types";
@@ -335,8 +321,6 @@ import type { AuditLogEntry, AuditLogSummary } from "../types";
  *
  * 服务端只提供查询接口，表中的记录由触发器保护，无法修改或删除。
  */
-const router = useRouter();
-
 const pageSize = 50;
 
 const items = ref<AuditLogEntry[]>([]);
@@ -407,21 +391,6 @@ const hasFilters = computed(
     Boolean(keyword.value || action.value || result.value) ||
     range.value !== "all",
 );
-const rangeLabel = computed(() => {
-  switch (range.value) {
-    case "today":
-      return "今天";
-    case "7d":
-      return "近 7 天";
-    case "30d":
-      return "近 30 天";
-    case "custom":
-      return `${customSince.value || "最早"} ~ ${customUntil.value || "现在"}`;
-    default:
-      return "";
-  }
-});
-
 const pageNumber = computed(() => Math.floor(offset.value / pageSize) + 1);
 const pageCount = computed(() =>
   Math.max(1, Math.ceil(total.value / pageSize)),
@@ -468,10 +437,6 @@ const exportHref = computed(() => {
   const query = params.toString();
   return `/api/audit/logs.csv${query ? `?${query}` : ""}`;
 });
-
-function goFiles() {
-  router.push({ path: "/" });
-}
 
 function applyFilters() {
   offset.value = 0;
@@ -575,19 +540,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.audit-page {
-  padding: 1.25rem 1rem 3rem;
-}
 
-.audit-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.8rem;
-  flex-wrap: wrap;
-  padding-bottom: 0.8rem;
-  border-bottom: 1px solid var(--vf-border-weak);
-}
 
 .audit-header-actions {
   display: flex;
@@ -852,9 +805,7 @@ onMounted(() => {
 }
 
 @media screen and (max-width: 768px) {
-  .audit-page {
-    padding: 0.75rem 0.5rem 2rem;
-  }
+  
 
   .audit-search-input {
     width: 100%;

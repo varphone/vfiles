@@ -1,18 +1,11 @@
 <template>
-  <div class="shares-page">
-    <div class="shares-card vf-page-card">
-      <header class="shares-header">
-        <div class="shares-header-titles">
-          <h1 class="shares-title vf-page-title">我的分享</h1>
-          <p class="shares-subtitle vf-page-subtitle">
-            共 {{ shareTotal }} 个链接 · 已加载 {{ shares.length }} 个
-            <template v-if="activeShares.length !== shares.length">
-              · 已加载有效 {{ activeShares.length }} 个
-            </template>
-          </p>
-        </div>
-
-        <div class="shares-header-actions">
+  <SettingsLayout
+    title="我的分享"
+    description="管理公开分享链接，查看访问次数与过期时间。"
+    active="shares"
+  >
+    <template #actions>
+      <div class="shares-header-actions">
           <button
             v-if="expiredShares.length > 0"
             class="vf-ghost-button is-danger"
@@ -38,12 +31,11 @@
             <IconRefresh :size="16" :class="{ 'is-spinning': loading }" />
             <span>刷新</span>
           </button>
-          <button class="vf-ghost-button" type="button" @click="goFiles">
-            <IconFolderOpen :size="16" />
-            <span>返回文件</span>
-          </button>
         </div>
-      </header>
+    </template>
+
+    <div class="settings-content">
+      <div class="shares-card vf-page-card">
 
       <p v-if="featureDisabled" class="shares-note">
         <IconInfoCircle :size="14" />
@@ -213,7 +205,8 @@
         </button>
       </div>
     </div>
-  </div>
+    </div>
+  </SettingsLayout>
 </template>
 
 <script setup lang="ts">
@@ -235,6 +228,7 @@ import {
   IconTrash,
 } from "@tabler/icons-vue";
 import EmptyState from "../components/common/EmptyState.vue";
+import SettingsLayout from "../layouts/SettingsLayout.vue";
 import SkeletonList from "../components/common/SkeletonList.vue";
 import FileTypeIcon from "../components/file-browser/FileTypeIcon.vue";
 import { filesService } from "../services/files.service";
@@ -504,19 +498,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.shares-page {
-  padding: 1.25rem 1rem 3rem;
-}
 
-.shares-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.8rem;
-  flex-wrap: wrap;
-  padding-bottom: 0.8rem;
-  border-bottom: 1px solid var(--vf-border-weak);
-}
 
 .shares-header-actions {
   display: flex;
@@ -704,9 +686,7 @@ onMounted(() => {
 }
 
 @media screen and (max-width: 768px) {
-  .shares-page {
-    padding: 0.75rem 0.5rem 2rem;
-  }
+  
 
   .shares-row {
     flex-wrap: wrap;

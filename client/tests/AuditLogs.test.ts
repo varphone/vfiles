@@ -188,9 +188,11 @@ describe("AuditLogs.vue", () => {
     expected.setHours(0, 0, 0, 0);
     expected.setDate(expected.getDate() - 6);
     expect(new Date(since).getTime()).toBe(expected.getTime());
-    expect(container.querySelector(".audit-subtitle")?.textContent).toContain(
-      "近 7 天",
-    );
+    expect(
+      container.querySelector<HTMLSelectElement>(
+        'select[aria-label="按时间范围筛选"]',
+      )?.value,
+    ).toBe("7d");
 
     const href = container
       .querySelector<HTMLAnchorElement>('a[href^="/api/audit/logs.csv"]')!

@@ -122,7 +122,7 @@ describe("SystemInfo.vue", () => {
 
     expect(
       document.querySelector(
-        ".vf-page-shell > .vf-page-card > .vf-page-header",
+        ".admin-shell .admin-main-inner > .vf-page-header",
       ),
     ).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("2.2.0")).toBeInTheDocument());

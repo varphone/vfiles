@@ -148,6 +148,29 @@
   --vf-code-deletion: #82071e;
   --vf-code-deletion-bg: rgba(130, 7, 30, 0.1);
 
+  /* 布局与组件尺寸（全站 shell 共用） */
+  --vf-topbar-height: 60px;
+  --vf-sidebar-width: 264px;
+  --vf-settings-nav-width: 208px;
+  --vf-admin-sidebar-width: 232px;
+  --vf-details-width: 320px;
+  --vf-content-max: 1280px;
+  --vf-row-height: 44px;
+  --vf-row-height-compact: 38px;
+  --vf-control-height-sm: 30px;
+  --vf-control-height: 34px;
+  --vf-control-height-lg: 38px;
+
+  /* 表面层级：二级面 / 侧栏 / 顶栏 / 表头 / 行状态 */
+  --vf-surface-2: #fbfcfd;
+  --vf-sidebar: #ffffff;
+  --vf-topbar: rgba(255, 255, 255, 0.92);
+  --vf-table-head: #f8fafc;
+  --vf-row-hover: rgba(37, 99, 235, 0.04);
+  --vf-row-selected: rgba(37, 99, 235, 0.08);
+  --vf-shadow-popover: 0 10px 30px rgba(16, 24, 40, 0.12);
+  --vf-shadow-modal: 0 24px 64px rgba(16, 24, 40, 0.2);
+
   /* 骨架屏 */
   --vf-skeleton-base: #e5e7eb;
   --vf-skeleton-shine: rgba(255, 255, 255, 0.65);
@@ -275,6 +298,28 @@
   --vf-scrollbar-track: hsl(221, 14%, 14%);
   --vf-scrollbar-thumb: hsl(221, 14%, 32%);
   --vf-scrollbar-thumb-hover: hsl(221, 14%, 42%);
+  /* 布局与组件尺寸（与浅色一致） */
+  --vf-topbar-height: 60px;
+  --vf-sidebar-width: 264px;
+  --vf-settings-nav-width: 208px;
+  --vf-admin-sidebar-width: 232px;
+  --vf-details-width: 320px;
+  --vf-content-max: 1280px;
+  --vf-row-height: 44px;
+  --vf-row-height-compact: 38px;
+  --vf-control-height-sm: 30px;
+  --vf-control-height: 34px;
+  --vf-control-height-lg: 38px;
+
+  --vf-surface-2: #1a2028;
+  --vf-sidebar: #121720;
+  --vf-topbar: rgba(18, 23, 32, 0.92);
+  --vf-table-head: #1a2028;
+  --vf-row-hover: hsla(222, 76%, 60%, 0.06);
+  --vf-row-selected: hsla(222, 76%, 60%, 0.14);
+  --vf-shadow-popover: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --vf-shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.6);
+
 }
 
 // 默认（未显式指定）为浅色；显式 data-theme 与系统偏好见下方。

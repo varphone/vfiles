@@ -166,8 +166,11 @@ describe("SharedLinks.vue", () => {
         .querySelector(".shares-row.is-expired .shares-badge")
         ?.textContent?.trim(),
     ).toBe("已过期");
-    // 有效数量为 0 时副标题会说明
-    expect(screen.getByText(/已加载有效 0 个/)).toBeInTheDocument();
+    // 有效数量为 0 时筛选 chip 会显示 0
+    const validChip = screen
+      .getAllByRole("button")
+      .find((button) => button.textContent?.includes("有效"));
+    expect(validChip?.textContent).toContain("0");
   });
 
   it("filters by status with counted chips", async () => {

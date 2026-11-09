@@ -27,6 +27,12 @@ const router = createRouter({
       component: () => import("../views/ResetPassword.vue"),
     },
     {
+      path: "/admin",
+      meta: { title: "管理概览" },
+      name: "admin-overview",
+      component: () => import("../views/AdminOverview.vue"),
+    },
+    {
       path: "/admin/audit",
       meta: { title: "审计日志" },
       name: "audit-logs",
@@ -51,10 +57,14 @@ const router = createRouter({
       component: () => import("../views/AccessPasswords.vue"),
     },
     {
-      path: "/system-info",
-      meta: { title: "系统信息" },
-      name: "system-info",
+      path: "/admin/system",
+      meta: { title: "系统" },
+      name: "admin-system",
       component: () => import("../views/SystemInfo.vue"),
+    },
+    {
+      path: "/system-info",
+      redirect: "/admin/system",
     },
     {
       path: "/admin/users",

@@ -18,6 +18,7 @@ import DialogHost from "./components/common/DialogHost.vue";
 @use "./styles/code-theme";
 /* 通用控件（图标按钮 / 次要按钮 / 主操作按钮） */
 @use "./styles/controls";
+@use "./styles/modern";
 
 /* 自定义全局样式 */
 * {

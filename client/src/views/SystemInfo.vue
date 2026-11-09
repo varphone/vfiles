@@ -1,28 +1,22 @@
 <template>
-  <div class="system-info-page vf-page-shell">
-    <main class="vf-page-card system-info-card">
-      <header class="system-info-header vf-page-header">
-        <div>
-          <h1 class="vf-page-title">系统信息</h1>
-          <p class="vf-page-subtitle">
-            查看服务运行状态、协议配置和所有用户的存储用量
-          </p>
-        </div>
-        <div class="system-info-header-actions vf-page-header-actions">
-          <button
-            class="vf-ghost-button"
-            type="button"
-            :disabled="loading"
-            @click="load"
-          >
-            <span :class="{ 'is-spinning': loading }" aria-hidden="true"
-              >↻</span
-            >
-            <span>刷新</span>
-          </button>
-          <RouterLink class="vf-ghost-button" to="/">返回文件</RouterLink>
-        </div>
-      </header>
+  <AdminLayout
+    title="系统"
+    description="服务运行状态、协议监听与所有用户的存储用量。"
+    active="system"
+  >
+    <template #actions>
+      <button
+        class="vf-ghost-button"
+        type="button"
+        :disabled="loading"
+        @click="load"
+      >
+        <span :class="{ 'is-spinning': loading }" aria-hidden="true">↻</span>
+        <span>刷新</span>
+      </button>
+    </template>
+
+    <div class="system-info-body">
 
       <p v-if="error" class="system-info-error" role="alert">{{ error }}</p>
 
@@ -266,14 +260,14 @@
           </p>
         </section>
       </template>
-    </main>
-  </div>
+    </div>
+  </AdminLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { RouterLink } from "vue-router";
 import SkeletonList from "../components/common/SkeletonList.vue";
+import AdminLayout from "../layouts/AdminLayout.vue";
 import { authService } from "../services/auth.service";
 import type {
   SystemInfoPayload,
@@ -450,10 +444,13 @@ onMounted(load);
 </script>
 
 <style scoped>
-.system-info-page {
+.system-info-body {
   --system-info-accent: var(--vf-accent, #5267df);
   --system-info-good: var(--vf-success, #24875a);
   --system-info-muted: var(--vf-text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
 }
 
 .system-info-section-heading {
@@ -461,10 +458,6 @@ onMounted(load);
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-}
-
-.system-info-header .vf-page-subtitle {
-  margin-top: 0.35rem;
 }
 
 .is-spinning {
@@ -934,12 +927,6 @@ onMounted(load);
 
   .system-info-main-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@media screen and (max-width: 768px) {
-  .system-info-card {
-    padding: 0.9rem 0.85rem 1.1rem;
   }
 }
 

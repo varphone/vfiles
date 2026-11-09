@@ -46,15 +46,20 @@ import { authService } from "../src/services/auth.service";
 
 describe("AdminUsers.vue", () => {
   it("loads users, edits the email inline and revokes sessions", async () => {
-    const { findByText, findByPlaceholderText, getAllByText, getByLabelText } =
-      renderWithProviders(AdminUsers);
+    const {
+      findByRole,
+      findByText,
+      findByPlaceholderText,
+      getAllByText,
+      getByLabelText,
+    } = renderWithProviders(AdminUsers);
 
     expect(
       document.querySelector(
-        ".vf-page-shell > .vf-page-card > .vf-page-header",
+        ".admin-shell .admin-main-inner > .vf-page-header",
       ),
     ).toBeInTheDocument();
-    await findByText("用户管理");
+    await findByRole("heading", { name: "用户" });
     await findByText("alice");
 
     // 只有管理员（或被授权者）能看到编辑入口
@@ -133,29 +138,23 @@ describe("AdminUsers.vue", () => {
 });
 
 describe("AdminUsers.vue header actions", () => {
-  it("offers the same 刷新 / 返回文件 actions as 我的分享 and 审计日志", async () => {
-    const { findByText, container } = renderWithProviders(AdminUsers);
-    await findByText("用户管理");
+  it("keeps 刷新 in the page header and 返回文件 in the admin shell", async () => {
+    const { findByRole, getByRole } = renderWithProviders(AdminUsers);
+    await findByRole("heading", { name: "用户" });
 
-    const actions = Array.from(
-      container.querySelectorAll<HTMLButtonElement>(
-        ".admin-header-actions button",
-      ),
-    ).map((button) => button.textContent?.trim());
-
-    expect(actions).toContain("刷新");
-    expect(actions).toContain("返回文件");
+    expect(getByRole("button", { name: /刷新/ })).toBeInTheDocument();
+    expect(getByRole("link", { name: /返回文件/ })).toBeInTheDocument();
   });
 
   it("refreshes when 刷新 is clicked", async () => {
     const listUsers = vi.mocked(authService.listUsers);
     listUsers.mockClear();
 
-    const { findByText, getByText } = renderWithProviders(AdminUsers);
-    await findByText("用户管理");
+    const { findByRole, getByRole } = renderWithProviders(AdminUsers);
+    await findByRole("heading", { name: "用户" });
     await waitFor(() => expect(listUsers).toHaveBeenCalledTimes(1));
 
-    await fireEvent.click(getByText("刷新"));
+    await fireEvent.click(getByRole("button", { name: /刷新/ }));
     await waitFor(() => expect(listUsers).toHaveBeenCalledTimes(2));
   });
 

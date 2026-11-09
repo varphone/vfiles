@@ -1,20 +1,11 @@
 <template>
-  <div class="admin-page vf-page-shell">
-    <div class="admin-card vf-page-card">
-      <!-- 页头：标题 + 概览 + 搜索/刷新（与文件浏览器的卡片语言一致） -->
-      <header class="admin-header vf-page-header">
-        <div class="admin-header-titles">
-          <h1 class="admin-title vf-page-title">用户管理</h1>
-          <p class="admin-subtitle vf-page-subtitle">
-            共 {{ users.length }} 位用户
-            <template v-if="filteredUsers.length !== users.length">
-              · 当前显示 {{ filteredUsers.length }} 位
-            </template>
-          </p>
-        </div>
-
-        <div class="admin-header-actions vf-page-header-actions">
-          <div class="admin-search">
+  <AdminLayout
+    title="用户"
+    description="管理账号、角色、状态与会话。"
+    active="users"
+  >
+    <template #actions>
+      <div class="admin-search">
             <IconSearch :size="16" class="admin-search-icon" />
             <input
               v-model.trim="searchQuery"
@@ -44,12 +35,7 @@
             <IconRefresh :size="16" :class="{ 'is-spinning': loading }" />
             <span>刷新</span>
           </button>
-          <button class="vf-ghost-button" type="button" @click="goFiles">
-            <IconFolderOpen :size="16" />
-            <span>返回文件</span>
-          </button>
-        </div>
-      </header>
+    </template>
 
       <div v-if="roleBuckets.length > 1" class="admin-filters">
         <button
@@ -298,8 +284,7 @@
           </tbody>
         </table>
       </div>
-    </div>
-  </div>
+  </AdminLayout>
   <!-- r107'：重置密码 Modal（一次输入 ✓ 语义：新密码即时生效） -->
   <Modal :show="!!resetTarget" title="重置密码" @close="resetTarget = null">
     <p class="admin-reset-hint">
@@ -328,10 +313,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
 import {
   IconAlertCircle,
-  IconFolderOpen,
   IconInfoCircle,
   IconPencil,
   IconRefresh,
@@ -349,6 +332,7 @@ import {
 import { useAppStore } from "../stores/app.store";
 import { confirmDialog } from "../composables/dialog";
 import { useAuthStore } from "../stores/auth.store";
+import AdminLayout from "../layouts/AdminLayout.vue";
 import Modal from "../components/common/Modal.vue";
 import EmptyState from "../components/common/EmptyState.vue";
 import SkeletonList from "../components/common/SkeletonList.vue";
@@ -385,13 +369,6 @@ const sortedUsers = computed(() => {
     return va.localeCompare(vb, "zh-Hans-CN") * dir;
   });
 });
-const router = useRouter();
-
-/** 与「我的分享」「审计日志」一致：返回文件浏览器。 */
-function goFiles() {
-  router.push({ path: "/" });
-}
-
 const users = ref<AdminUser[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -877,9 +854,7 @@ onMounted(() => {
 }
 
 @media screen and (max-width: 768px) {
-  .admin-card {
-    padding: 0.9rem 0.85rem 1.1rem;
-  }
+  
 
   .admin-search-input {
     width: 100%;

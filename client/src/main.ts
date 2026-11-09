@@ -55,9 +55,16 @@ router.beforeEach(async (to) => {
     return { name: "login", query: { redirect: to.fullPath } };
   }
 
-  // 管理页：admin / manager
+  // 管理台：admin / manager
+  const adminRoutes = new Set([
+    "admin-overview",
+    "admin-users",
+    "audit-logs",
+    "admin-system",
+    "system-info",
+  ]);
   if (
-    to.name === "admin-users" &&
+    adminRoutes.has(String(to.name)) &&
     !["admin", "manager"].includes(authStore.user?.role || "")
   ) {
     return { name: "home" };
@@ -66,8 +73,10 @@ router.beforeEach(async (to) => {
   // 受限会话只允许浏览范围内的文件；凭据/令牌/分享/管理页面一律回首页，
   // 避免直达 URL 后只看到 403。
   const fullScopeOnlyRoutes = new Set([
+    "admin-overview",
     "admin-users",
     "audit-logs",
+    "admin-system",
     "system-info",
     "access-tokens",
     "access-passwords",
@@ -80,7 +89,7 @@ router.beforeEach(async (to) => {
   // 管理页可见性守卫（r185 ✓ 公开表×全路由交叉核抓获 ×2 缺口）：
   // 审计日志/系统信息 = admin-only（菜单 v-if 同语义 ✓ 直址访问亦须拦 ✗）
   if (
-    (to.name === "audit-logs" || to.name === "system-info") &&
+    (to.name === "audit-logs" || to.name === "admin-system") &&
     authStore.user?.role !== "admin"
   ) {
     return { name: "home" };

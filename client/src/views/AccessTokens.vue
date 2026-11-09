@@ -1,16 +1,11 @@
 <template>
-  <div class="tokens-page">
-    <div class="tokens-card vf-page-card">
-      <header class="tokens-header">
-        <div class="tokens-header-titles">
-          <h1 class="tokens-title vf-page-title">访问令牌</h1>
-          <p class="tokens-subtitle vf-page-subtitle">
-            给 CLI、构建系统等程序使用的 API 凭证，用
-            <code>Authorization: Bearer &lt;token&gt;</code> 调用接口
-          </p>
-        </div>
-
-        <div class="tokens-header-actions">
+  <SettingsLayout
+    title="访问令牌"
+    description="给 CLI、构建系统等程序使用的 API 凭证，用 Authorization: Bearer <token> 调用接口。"
+    active="tokens"
+  >
+    <template #actions>
+      <div class="tokens-header-actions">
           <button
             class="vf-ghost-button is-primary"
             type="button"
@@ -28,12 +23,11 @@
             <IconRefresh :size="16" />
             <span>刷新</span>
           </button>
-          <button class="vf-ghost-button" type="button" @click="goFiles">
-            <IconFolder :size="16" />
-            <span>返回文件</span>
-          </button>
         </div>
-      </header>
+    </template>
+
+    <div class="settings-content">
+      <div class="tokens-card vf-page-card">
 
       <p class="tokens-note">
         <IconShieldLock :size="14" />
@@ -264,17 +258,16 @@
         </button>
       </template>
     </Modal>
-  </div>
+    </div>
+  </SettingsLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
 import {
   IconAlertCircle,
   IconAlertTriangle,
   IconCopy,
-  IconFolder,
   IconKey,
   IconPlus,
   IconRefresh,
@@ -282,6 +275,7 @@ import {
   IconTrash,
 } from "@tabler/icons-vue";
 import EmptyState from "../components/common/EmptyState.vue";
+import SettingsLayout from "../layouts/SettingsLayout.vue";
 import Modal from "../components/common/Modal.vue";
 import SkeletonList from "../components/common/SkeletonList.vue";
 import { confirmDialog } from "../composables/dialog";
@@ -297,8 +291,6 @@ import type { AccessToken, TokenExpiryOption } from "../types";
  * 明文令牌只在创建响应里出现一次，这里用一个独立对话框展示并提供复制。
  */
 const app = useAppStore();
-const router = useRouter();
-
 const tokens = ref<AccessToken[]>([]);
 const currentPage = ref(0);
 const totalTokens = ref(0);
@@ -370,10 +362,6 @@ function reloadCurrentPage() {
 
 function goToPage(page: number) {
   void reload(page);
-}
-
-function goFiles() {
-  void router.push({ name: "home" });
 }
 
 function openCreate() {
@@ -483,28 +471,8 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.tokens-page {
-  display: flex;
-  justify-content: center;
-  padding: 1.25rem;
-}
 
-.tokens-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--vf-border-weak);
-}
 
-.tokens-subtitle code {
-  padding: 0 0.25rem;
-  border-radius: var(--vf-radius-xs);
-  background: var(--vf-surface-sunken);
-  font-size: 0.8rem;
-}
 
 .tokens-header-actions {
   display: flex;

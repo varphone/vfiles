@@ -272,6 +272,9 @@ async function main() {
     await p2.goto(`${base}/admin/users`, { waitUntil: "networkidle" });
     await p2.waitForTimeout(900);
     await snap(p2, `${theme}-11-users`);
+    await p2.goto(`${base}/admin`, { waitUntil: "networkidle" });
+    await p2.waitForTimeout(900);
+    await snap(p2, `${theme}-16-admin-overview`);
     await p2.goto(`${base}/`, { waitUntil: "networkidle" });
     await p2.waitForTimeout(700);
     await p2.click("button.app-bar-bell");

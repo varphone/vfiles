@@ -1,0 +1,371 @@
+<template>
+  <div class="admin-shell">
+    <aside class="admin-sidebar" :class="{ 'is-open': drawerOpen }">
+      <div class="admin-brand">
+        <span class="admin-brand-mark" aria-hidden="true">
+          <IconShieldLock :size="18" />
+        </span>
+        <div class="admin-brand-text">
+          <strong>管理控制台</strong>
+          <span>VFiles</span>
+        </div>
+        <button
+          class="admin-drawer-close vf-icon-button"
+          type="button"
+          aria-label="关闭导航"
+          @click="drawerOpen = false"
+        >
+          <IconX :size="16" />
+        </button>
+      </div>
+
+      <nav class="admin-nav" aria-label="管理导航">
+        <p class="admin-nav-label">系统管理</p>
+        <RouterLink
+          v-for="item in navItems"
+          :key="item.key"
+          :to="item.to"
+          class="admin-nav-item"
+          :class="{ 'is-active': active === item.key }"
+          @click="drawerOpen = false"
+        >
+          <component :is="item.icon" :size="17" />
+          <span>{{ item.label }}</span>
+          <span v-if="active === item.key" class="admin-nav-indicator" aria-hidden="true" />
+        </RouterLink>
+      </nav>
+
+      <div class="admin-sidebar-foot">
+        <RouterLink class="admin-back-link" to="/">
+          <IconArrowLeft :size="15" />
+          <span>返回文件</span>
+        </RouterLink>
+      </div>
+    </aside>
+
+    <div
+      v-if="drawerOpen"
+      class="admin-drawer-scrim"
+      aria-hidden="true"
+      @click="drawerOpen = false"
+    ></div>
+
+    <div class="admin-workspace">
+      <header class="admin-topbar">
+        <div class="admin-topbar-left">
+          <button
+            class="admin-drawer-toggle vf-icon-button"
+            type="button"
+            aria-label="打开导航"
+            @click="drawerOpen = true"
+          >
+            <IconMenu2 :size="18" />
+          </button>
+          <span class="admin-crumb">管理</span>
+          <span class="admin-crumb-sep" aria-hidden="true">/</span>
+          <span class="admin-crumb-current">{{ title }}</span>
+        </div>
+        <div class="admin-topbar-right">
+          <ThemeToggle />
+          <RouterLink class="vf-ghost-button admin-topbar-back" to="/">
+            <IconFolderOpen :size="15" />
+            <span>文件</span>
+          </RouterLink>
+        </div>
+      </header>
+
+      <main class="admin-main">
+        <div class="admin-main-inner">
+          <PageHeader :title="title" :description="description">
+            <template v-if="$slots.actions" #actions>
+              <slot name="actions" />
+            </template>
+          </PageHeader>
+          <slot />
+        </div>
+      </main>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref } from "vue";
+import {
+  IconArrowLeft,
+  IconFileText,
+  IconFolderOpen,
+  IconLayoutDashboard,
+  IconMenu2,
+  IconServer,
+  IconShieldLock,
+  IconUsers,
+  IconX,
+} from "@tabler/icons-vue";
+import ThemeToggle from "../components/common/ThemeToggle.vue";
+import { useAuthStore } from "../stores/auth.store";
+import PageHeader from "../ui/PageHeader.vue";
+
+defineProps<{
+  title: string;
+  description?: string;
+  active: "overview" | "users" | "audit" | "system";
+}>();
+
+const drawerOpen = ref(false);
+const authStore = useAuthStore();
+
+const isAdmin = computed(() => authStore.user?.role === "admin");
+
+const navItems = computed(() =>
+  [
+    { key: "overview", label: "概览", to: "/admin", icon: IconLayoutDashboard },
+    { key: "users", label: "用户", to: "/admin/users", icon: IconUsers },
+    ...(isAdmin.value
+      ? [
+          { key: "audit", label: "审计日志", to: "/admin/audit", icon: IconFileText },
+          { key: "system", label: "系统", to: "/admin/system", icon: IconServer },
+        ]
+      : []),
+  ] as const,
+);
+</script>
+
+<style scoped>
+.admin-shell {
+  display: flex;
+  min-height: 100dvh;
+  background: var(--vf-canvas);
+}
+
+.admin-sidebar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  width: var(--vf-admin-sidebar-width);
+  height: 100dvh;
+  flex: none;
+  padding: 1rem 0.7rem 0.8rem;
+  border-right: 1px solid var(--vf-border-weak);
+  background: var(--vf-sidebar);
+}
+
+.admin-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.15rem 0.35rem 1rem;
+}
+
+.admin-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-accent);
+  color: var(--vf-on-accent);
+}
+
+.admin-brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.admin-brand-text strong {
+  font-size: 0.86rem;
+  color: var(--vf-text-strong);
+}
+
+.admin-brand-text span {
+  font-size: 0.7rem;
+  color: var(--vf-text-subtle);
+}
+
+.admin-drawer-close {
+  display: none;
+  margin-left: auto;
+}
+
+.admin-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.admin-nav-label {
+  margin: 0.25rem 0.45rem 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--vf-text-subtle);
+}
+
+.admin-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 36px;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--vf-radius-sm);
+  color: var(--vf-text-muted);
+  font-size: 0.84rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 0.12s var(--vf-motion-standard),
+    color 0.12s var(--vf-motion-standard);
+}
+
+.admin-nav-item:hover {
+  background: var(--vf-surface-hover);
+  color: var(--vf-text-strong);
+}
+
+.admin-nav-item.is-active {
+  background: var(--vf-accent-soft);
+  color: var(--vf-accent-text);
+  font-weight: 600;
+}
+
+.admin-nav-indicator {
+  position: absolute;
+  left: -0.7rem;
+  top: 0.45rem;
+  bottom: 0.45rem;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--vf-accent);
+}
+
+.admin-sidebar-foot {
+  margin-top: auto;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--vf-border-weak);
+}
+
+.admin-back-link {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--vf-radius-sm);
+  color: var(--vf-text-muted);
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.admin-back-link:hover {
+  background: var(--vf-surface-hover);
+  color: var(--vf-text-strong);
+}
+
+.admin-workspace {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  height: var(--vf-topbar-height);
+  padding: 0 1.5rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+  background: var(--vf-topbar);
+  backdrop-filter: blur(10px);
+}
+
+.admin-topbar-left,
+.admin-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.admin-drawer-toggle {
+  display: none;
+}
+
+.admin-crumb {
+  font-size: 0.78rem;
+  color: var(--vf-text-subtle);
+}
+
+.admin-crumb-sep {
+  color: var(--vf-text-subtle);
+  font-size: 0.72rem;
+}
+
+.admin-crumb-current {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--vf-text-strong);
+}
+
+.admin-main {
+  flex: 1;
+  min-height: 0;
+}
+
+.admin-main-inner {
+  max-width: var(--vf-content-max);
+  margin: 0 auto;
+  padding: 1.5rem 1.5rem 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.admin-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--vf-overlay);
+}
+
+@media screen and (max-width: 1024px) {
+  .admin-sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform 0.18s var(--vf-motion-standard);
+    box-shadow: var(--vf-shadow-popover);
+  }
+
+  .admin-sidebar.is-open {
+    transform: translateX(0);
+  }
+
+  .admin-drawer-close,
+  .admin-drawer-toggle {
+    display: inline-flex;
+  }
+
+  .admin-main-inner {
+    padding: 1.1rem 1rem 2.5rem;
+  }
+
+  .admin-topbar {
+    padding: 0 1rem;
+  }
+}
+
+@media screen and (max-width: 600px) {
+  .admin-topbar-back span {
+    display: none;
+  }
+}
+</style>

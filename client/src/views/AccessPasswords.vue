@@ -1,15 +1,11 @@
 <template>
-  <div class="passwords-page">
-    <div class="passwords-card vf-page-card">
-      <header class="passwords-header">
-        <div class="passwords-header-titles">
-          <h1 class="passwords-title vf-page-title">访问密码</h1>
-          <p class="passwords-subtitle vf-page-subtitle">
-            为同一账号创建多条受限登录密码。用主密码登录拥有完整权限；用这里的密码登录后，只能访问指定的目录。
-          </p>
-        </div>
-
-        <div class="passwords-header-actions">
+  <SettingsLayout
+    title="访问密码"
+    description="为同一账号创建多条受限登录密码：主密码拥有完整权限，访问密码只能访问指定目录。"
+    active="passwords"
+  >
+    <template #actions>
+      <div class="passwords-header-actions">
           <button
             class="vf-ghost-button is-primary"
             type="button"
@@ -27,12 +23,11 @@
             <IconRefresh :size="16" />
             <span>刷新</span>
           </button>
-          <button class="vf-ghost-button" type="button" @click="goFiles">
-            <IconFolder :size="16" />
-            <span>返回文件</span>
-          </button>
         </div>
-      </header>
+    </template>
+
+    <div class="settings-content">
+      <div class="passwords-card vf-page-card">
 
       <p class="passwords-note">
         <IconShieldLock :size="14" />
@@ -320,12 +315,12 @@
         </div>
       </div>
     </Modal>
-  </div>
+    </div>
+  </SettingsLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
 import {
   IconAlertCircle,
   IconArrowLeft,
@@ -340,6 +335,7 @@ import {
   IconX,
 } from "@tabler/icons-vue";
 import EmptyState from "../components/common/EmptyState.vue";
+import SettingsLayout from "../layouts/SettingsLayout.vue";
 import Modal from "../components/common/Modal.vue";
 import SkeletonList from "../components/common/SkeletonList.vue";
 import { confirmDialog } from "../composables/dialog";
@@ -358,7 +354,6 @@ const MAX_ROOTS = 8;
 const MIN_PASSWORD_LENGTH = 6;
 
 const app = useAppStore();
-const router = useRouter();
 
 const credentials = ref<LoginCredential[]>([]);
 const loading = ref(false);
@@ -396,9 +391,6 @@ async function reload(): Promise<void> {
   }
 }
 
-function goFiles(): void {
-  void router.push({ name: "home" });
-}
 
 function resetForm(): void {
   form.value = { label: "", password: "", roots: [], canWrite: false };
@@ -591,21 +583,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.passwords-page {
-  display: flex;
-  justify-content: center;
-  padding: 1.25rem;
-}
 
-.passwords-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--vf-border-weak);
-}
 
 .passwords-header-actions {
   display: flex;

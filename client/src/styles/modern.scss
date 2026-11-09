@@ -1,0 +1,99 @@
+//! 全站视觉微调：在 Bulma 语义之上统一控件高度、圆角、焦点与数据表密度。
+//!
+//! 只调整外观，不覆盖行为；页面仍可使用 Bulma 类与 `vf-*` 令牌。
+
+/* 按钮：统一 34px 高度、8px 圆角与可见焦点。 */
+.button {
+  min-height: var(--vf-control-height);
+  height: auto;
+  padding: 0.35rem 0.85rem;
+  border-radius: var(--vf-radius-sm);
+  font-size: 0.82rem;
+  font-weight: 550;
+  line-height: 1.25;
+  transition:
+    background-color 0.12s var(--vf-motion-standard),
+    border-color 0.12s var(--vf-motion-standard),
+    box-shadow 0.12s var(--vf-motion-standard);
+}
+
+.button.is-small {
+  min-height: var(--vf-control-height-sm);
+  padding: 0.25rem 0.65rem;
+  font-size: 0.78rem;
+}
+
+.button:focus-visible,
+.input:focus-visible,
+.select select:focus-visible,
+.textarea:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--vf-focus-ring);
+  border-color: var(--vf-accent);
+}
+
+/* 输入控件：与按钮同高，圆角与边框统一。 */
+.input,
+.textarea,
+.select select {
+  min-height: var(--vf-control-height);
+  border-radius: var(--vf-radius-sm);
+  border-color: var(--vf-border);
+  font-size: 0.84rem;
+}
+
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--vf-text-subtle);
+}
+
+/* 数据表：轻表头、44px 行高、行悬停与选中态。 */
+.table {
+  background: transparent;
+  color: var(--vf-text);
+}
+
+.table thead th {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+  background: var(--vf-table-head);
+  color: var(--vf-text-muted);
+  font-size: 0.73rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+  font-size: 0.82rem;
+  vertical-align: middle;
+}
+
+.table.is-hoverable tbody tr:hover {
+  background: var(--vf-row-hover);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* 卡片与浮层的圆角/阴影收口。 */
+.modal-card {
+  border-radius: var(--vf-radius-lg);
+  box-shadow: var(--vf-shadow-modal);
+  overflow: hidden;
+}
+
+.dropdown-content {
+  border-radius: var(--vf-radius);
+  box-shadow: var(--vf-shadow-popover);
+}
+
+/* 设置页内容列：与页头保持固定节奏。 */
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}

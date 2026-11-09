@@ -164,37 +164,10 @@
                         ['admin', 'manager'].includes(auth.user?.role || '')
                       "
                       class="dropdown-item"
-                      to="/admin/users"
+                      to="/admin"
                       @click="closeAccountMenus"
                     >
-                      用户管理
-                    </router-link>
-
-                    <router-link
-                      v-if="
-                        !auth.isRestricted &&
-                        auth.enabled &&
-                        auth.user?.role === 'admin'
-                      "
-                      class="dropdown-item"
-                      to="/admin/audit"
-                      @click="closeAccountMenus"
-                    >
-                      审计日志
-                    </router-link>
-
-                    <!-- 系统信息（admin-only ✓ r106' 用户报"没入口"修复 = 主入口 ✓） -->
-                    <router-link
-                      v-if="
-                        !auth.isRestricted &&
-                        auth.enabled &&
-                        auth.user?.role === 'admin'
-                      "
-                      class="dropdown-item"
-                      to="/system-info"
-                      @click="closeAccountMenus"
-                    >
-                      系统信息
+                      管理控制台
                     </router-link>
 
                     <router-link
