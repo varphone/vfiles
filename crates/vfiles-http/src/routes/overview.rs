@@ -1,13 +1,21 @@
 //! 工作区聚合统计：侧栏「存储用量 / 最近文件」的数据来源。
 
-use axum::{extract::State, response::Json};
+use axum::{extract::State, response::Json, routing::get};
 use axum_extra::extract::cookie::CookieJar;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use vfiles_domain::Entry;
 
-use crate::{AppState, error::ApiResult, routes::protected_request_context};
+use crate::{
+    AppState,
+    error::{ApiQuery, ApiResult},
+    routes::protected_request_context,
+};
 
-/// 「最近」返回的文件数量。
+/// 概览接口附带的最新文件数量（侧栏只展示少量）。
 const RECENT_FILE_LIMIT: u32 = 8;
+/// `/api/files/recent` 的默认条数与上限。
+const DEFAULT_RECENT_LIMIT: u32 = 50;
+const MAX_RECENT_LIMIT: u32 = 200;
 
 #[derive(Debug, Serialize)]
 pub struct RecentFileDto {
@@ -16,6 +24,11 @@ pub struct RecentFileDto {
     pub size_bytes: u64,
     pub mime_type: Option<String>,
     pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RecentFilesQuery {
+    limit: Option<u32>,
 }
 
 /// 按类型聚合的占用（侧栏占比条使用）。
@@ -38,7 +51,7 @@ pub struct OverviewDto {
 }
 
 pub fn router() -> axum::Router<AppState> {
-    axum::Router::new().route("/overview", axum::routing::get(overview))
+    axum::Router::new().route("/overview", get(overview))
 }
 
 pub async fn overview(
@@ -54,9 +67,60 @@ pub async fn overview(
         .entry_repo
         .namespace_overview(&ctx.namespace_id, RECENT_FILE_LIMIT)
         .await?;
-    let (stats, categories, recent) = (overview.stats, overview.categories, overview.recent_files);
+    let (stats, categories) = (overview.stats, overview.categories);
+    let recent_files = recent_file_dtos(&state, overview.recent_files).await;
 
-    // 最近文件需要展示大小与类型：按 entry 的当前版本补齐
+    Ok(Json(OverviewDto {
+        file_count: stats.file_count,
+        directory_count: stats.directory_count,
+        total_bytes: stats.total_bytes,
+        categories: categories
+            .into_iter()
+            .map(|usage| CategoryUsageDto {
+                category: usage.category.as_str().to_string(),
+                bytes: usage.bytes,
+                file_count: usage.file_count,
+            })
+            .collect(),
+        recent_files,
+    }))
+}
+
+/// 按 `updated_at` 倒序返回当前命名空间最近修改的文件。
+///
+/// 受限会话只保留 `allows_path_read` 的路径：范围过滤在仓储返回之后进行，
+/// 所以先按上限多取一些，避免过滤后不足调用方请求的条数。
+pub async fn recent(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    ApiQuery(query): ApiQuery<RecentFilesQuery>,
+) -> ApiResult<Json<Vec<RecentFileDto>>> {
+    let ctx = protected_request_context(&state, &jar).await?;
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_RECENT_LIMIT)
+        .clamp(1, MAX_RECENT_LIMIT);
+    let fetch_limit = if ctx.scope.is_full() {
+        limit
+    } else {
+        MAX_RECENT_LIMIT
+    };
+
+    let overview = state
+        .entry_repo
+        .namespace_overview(&ctx.namespace_id, fetch_limit)
+        .await?;
+    let mut files = recent_file_dtos(&state, overview.recent_files).await;
+    if !ctx.scope.is_full() {
+        files.retain(|file| ctx.scope.allows_path_read(&file.path));
+    }
+    files.truncate(limit as usize);
+
+    Ok(Json(files))
+}
+
+/// 最近文件需要展示大小与类型：按 entry 的当前版本补齐。
+async fn recent_file_dtos(state: &AppState, recent: Vec<Entry>) -> Vec<RecentFileDto> {
     let version_ids: Vec<_> = recent
         .iter()
         .filter_map(|entry| entry.current_version_id)
@@ -71,7 +135,7 @@ pub async fn overview(
         .map(|version| (version.id, version))
         .collect();
 
-    let recent_files = recent
+    recent
         .into_iter()
         .map(|entry| {
             let version = entry.current_version_id.and_then(|id| by_id.get(&id));
@@ -98,20 +162,5 @@ pub async fn overview(
                     .unwrap_or_default(),
             }
         })
-        .collect();
-
-    Ok(Json(OverviewDto {
-        file_count: stats.file_count,
-        directory_count: stats.directory_count,
-        total_bytes: stats.total_bytes,
-        categories: categories
-            .into_iter()
-            .map(|usage| CategoryUsageDto {
-                category: usage.category.as_str().to_string(),
-                bytes: usage.bytes,
-                file_count: usage.file_count,
-            })
-            .collect(),
-        recent_files,
-    }))
+        .collect()
 }

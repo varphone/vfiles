@@ -10,6 +10,7 @@ use crate::{
 use vfiles_app::NamespaceService;
 use vfiles_domain::{AuthUser, DomainError, NamespaceId, UserId};
 
+pub mod activity;
 pub mod admin;
 pub mod audit;
 pub mod auth;
@@ -274,6 +275,8 @@ pub fn api_router() -> Router<AppState> {
         .nest("/share", share::router())
         .nest("/admin", admin::router())
         .nest("/audit", audit::router())
+        // 个人活动流：登录即可访问，不需要管理员权限
+        .merge(activity::router())
         // 访问令牌是用户级资源，放在 /api/tokens 而不是 /api/files 下
         .merge(tokens::router())
         .merge(crate::routes::client_error::router())
@@ -290,6 +293,8 @@ pub fn files_router() -> Router<AppState> {
         .merge(snapshot::router())
         .merge(search::router())
         .merge(overview::router())
+        // 最近修改的文件与概览同源，但条数与范围语义不同，单独注册
+        .route("/recent", get(overview::recent))
         .merge(favorites::router())
         .merge(ftp::router())
         .merge(transfer::router())

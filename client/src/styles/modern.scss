@@ -274,12 +274,5 @@
   border: 1px solid var(--vf-border);
 }
 
-/* 顶栏：50px、白色、细边框 */
-.app-top-bar {
-  height: var(--vf-topbar-height, 50px);
-  min-height: var(--vf-topbar-height, 50px);
-}
-
-.sf-nav-tab {
-  font-size: 0.875rem;
-}
+/* 顶栏尺寸由 shell/AppHeader.vue 自己持有（--vf-topbar-height），
+ * 旧的 Seafile 顶栏与标签样式已随顶栏迁移删除。 */

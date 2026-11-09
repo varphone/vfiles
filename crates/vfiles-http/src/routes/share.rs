@@ -27,6 +27,10 @@ use vfiles_domain::{DomainError, EntryKind, NewAuditLog};
 
 const DEFAULT_SHARE_PAGE_LIMIT: u32 = 100;
 const MAX_SHARE_PAGE_LIMIT: u32 = 200;
+/// `/api/share/entries` 返回的路径上限。
+const SHARE_ENTRY_LIMIT: usize = 500;
+/// 逐页收集分享时每页条数：同一路径可能有多条分享，需要翻页后才能去重。
+const SHARE_ENTRY_PAGE_SIZE: u32 = 200;
 
 #[derive(Debug, Default, Deserialize)]
 struct SharePageQuery {
@@ -48,6 +52,7 @@ pub fn router() -> Router<AppState> {
         .route("/shares", post(create_share))
         .route("/shares", get(list_shares))
         .route("/shares/page", get(list_shares_page))
+        .route("/entries", get(list_share_entries))
         .route("/shares/{code}/download", get(download_share))
         .route("/shares/{code}", get(access_share))
         .route("/shares/{code}", delete(disable_share))
@@ -250,6 +255,54 @@ async fn list_shares_page(
         offset,
         has_more,
     }))
+}
+
+/// 当前用户已创建、未过期分享所对应的路径集合（去重，最多 500 条）。
+async fn list_share_entries(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<Vec<String>>, ApiError> {
+    if !state.config.features.share_enabled {
+        return Err(ApiError::Domain(vfiles_domain::DomainError::Forbidden));
+    }
+
+    let ctx = authenticated_request_context(&state, &jar).await?;
+    let now = time::OffsetDateTime::now_utc();
+    let mut seen = std::collections::HashSet::new();
+    let mut paths = Vec::new();
+    let mut offset = 0u32;
+
+    // 仓储只排除已停用的分享（管理页需要展示已过期的），有效期在这里过滤。
+    // 同一路径可能有多条分享，按页收集后去重，直到凑满上限或没有更多。
+    loop {
+        let (items, total) = state
+            .share_service
+            .list_shares_with_entry_by_user_page(&ctx.actor_user_id, SHARE_ENTRY_PAGE_SIZE, offset)
+            .await?;
+        let fetched = u32::try_from(items.len()).unwrap_or(u32::MAX);
+        for item in items {
+            let expired = item
+                .share
+                .expires_at
+                .is_some_and(|expires_at| expires_at <= now);
+            if expired || !ctx.scope.allows_path_read(&item.entry_path) {
+                continue;
+            }
+            if seen.insert(item.entry_path.clone()) {
+                paths.push(item.entry_path);
+                if paths.len() >= SHARE_ENTRY_LIMIT {
+                    break;
+                }
+            }
+        }
+
+        offset = offset.saturating_add(fetched);
+        if paths.len() >= SHARE_ENTRY_LIMIT || fetched == 0 || u64::from(offset) >= total {
+            break;
+        }
+    }
+
+    Ok(Json(paths))
 }
 
 async fn access_share(

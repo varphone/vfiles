@@ -104,7 +104,10 @@ pub struct AuditLogListDto {
     pub offset: u32,
 }
 
-fn parse_time(value: Option<&str>, field: &str) -> Result<Option<OffsetDateTime>, ApiError> {
+pub(crate) fn parse_time(
+    value: Option<&str>,
+    field: &str,
+) -> Result<Option<OffsetDateTime>, ApiError> {
     match value.map(str::trim).filter(|value| !value.is_empty()) {
         Some(raw) => OffsetDateTime::parse(raw, &Rfc3339).map(Some).map_err(|_| {
             ApiError::Domain(DomainError::Validation {
@@ -135,9 +138,11 @@ fn build_filter(
     Ok(AuditLogQuery {
         keyword: query.keyword.clone(),
         action: query.action.clone(),
+        action_prefixes: Vec::new(),
         result,
         since: parse_time(query.since.as_deref(), "since")?,
         until: parse_time(query.until.as_deref(), "until")?,
+        user_id: None,
         limit,
         offset,
     })

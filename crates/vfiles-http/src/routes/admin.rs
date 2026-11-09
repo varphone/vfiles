@@ -100,9 +100,11 @@ async fn overview(
     let filter = vfiles_domain::AuditLogQuery {
         keyword: None,
         action: None,
+        action_prefixes: Vec::new(),
         result: Some(vfiles_domain::AuditResult::Failure),
         since: Some(time::OffsetDateTime::now_utc() - time::Duration::hours(24)),
         until: None,
+        user_id: None,
         limit: 1,
         offset: 0,
     };

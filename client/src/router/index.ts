@@ -9,6 +9,24 @@ const router = createRouter({
       component: () => import("../views/Home.vue"),
     },
     {
+      path: "/recent",
+      meta: { title: "最近" },
+      name: "recent",
+      component: () => import("../views/files/RecentView.vue"),
+    },
+    {
+      path: "/favorites",
+      meta: { title: "收藏" },
+      name: "favorites",
+      component: () => import("../views/files/FavoritesView.vue"),
+    },
+    {
+      path: "/activity",
+      meta: { title: "活动" },
+      name: "activity",
+      component: () => import("../views/ActivityView.vue"),
+    },
+    {
       path: "/login",
       meta: { title: "登录" },
       name: "login",

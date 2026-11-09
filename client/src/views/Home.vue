@@ -1,219 +1,55 @@
 <template>
   <div class="home">
-    <nav
-      class="navbar is-fixed-top app-top-bar"
-      role="navigation"
-      aria-label="主页导航"
-    >
-      <div class="container is-fluid">
-        <div class="navbar-brand">
-          <router-link class="navbar-item" to="/">
-            <figure class="image is-32x32 mr-2">
-              <img src="/vfiles-icon.svg" alt="VFiles" />
-            </figure>
-            <span class="has-text-weight-semibold">VFiles</span>
-          </router-link>
-
-          <a
-            role="button"
-            class="navbar-burger"
-            :class="{ 'is-active': mobileMenuOpen }"
-            aria-label="menu"
-            :aria-expanded="mobileMenuOpen ? 'true' : 'false'"
-            @click="mobileMenuOpen = !mobileMenuOpen"
+    <AppHeader>
+      <template #center>
+        <div
+          class="app-bar-history is-hidden-touch"
+          :class="{ 'is-error': dirHistoryError }"
+          role="group"
+          aria-label="版本切换"
+        >
+          <button
+            class="vf-icon-button app-bar-history-button"
+            :disabled="dirHistoryLoading"
+            title="快退到最早快照"
+            aria-label="快退到最早快照"
+            @click="desktopHistoryFastBack"
           >
-            <span aria-hidden="true"></span>
-            <span aria-hidden="true"></span>
-            <span aria-hidden="true"></span>
-          </a>
+            <IconChevronsLeft :size="16" />
+          </button>
+          <button
+            class="vf-icon-button app-bar-history-button"
+            :disabled="dirHistoryLoading"
+            title="后退到更早快照"
+            aria-label="后退到更早快照"
+            @click="desktopHistoryStepBack"
+          >
+            <IconChevronLeft :size="16" />
+          </button>
+          <span class="app-bar-history-label" :title="desktopHistoryTitle">
+            {{ desktopHistoryStateLabel }}
+          </span>
+          <button
+            class="vf-icon-button app-bar-history-button"
+            :disabled="dirHistoryLoading || !browseCommit"
+            title="前进到较新快照"
+            aria-label="前进到较新快照"
+            @click="desktopHistoryStepForward"
+          >
+            <IconChevronRight :size="16" />
+          </button>
+          <button
+            class="vf-icon-button app-bar-history-button"
+            :disabled="dirHistoryLoading || !browseCommit"
+            title="回到当前版本"
+            aria-label="回到当前版本"
+            @click="desktopHistoryFastForward"
+          >
+            <IconChevronsRight :size="16" />
+          </button>
         </div>
-
-        <div class="navbar-menu" :class="{ 'is-active': mobileMenuOpen }">
-          <div class="navbar-start">
-            <div class="sf-nav-tabs is-hidden-touch">
-              <router-link class="sf-nav-tab is-active" to="/">文件</router-link>
-              <router-link
-                v-if="auth.features?.shareEnabled !== false && !auth.isRestricted"
-                class="sf-nav-tab"
-                to="/shares"
-                >分享</router-link
-              >
-              <router-link
-                v-if="
-                  !auth.isRestricted &&
-                  ['admin', 'manager'].includes(auth.user?.role || '')
-                "
-                class="sf-nav-tab"
-                to="/admin"
-                >管理</router-link
-              >
-            </div>
-
-            <div class="navbar-item is-hidden-touch">
-              <div
-                class="app-bar-history"
-                :class="{ 'is-error': dirHistoryError }"
-                role="group"
-                aria-label="版本切换"
-              >
-                <button
-                  class="vf-icon-button app-bar-history-button"
-                  :disabled="dirHistoryLoading"
-                  title="快退到最早快照"
-                  aria-label="快退到最早快照"
-                  @click="desktopHistoryFastBack"
-                >
-                  <IconChevronsLeft :size="16" />
-                </button>
-                <button
-                  class="vf-icon-button app-bar-history-button"
-                  :disabled="dirHistoryLoading"
-                  title="后退到更早快照"
-                  aria-label="后退到更早快照"
-                  @click="desktopHistoryStepBack"
-                >
-                  <IconChevronLeft :size="16" />
-                </button>
-                <span
-                  class="app-bar-history-label"
-                  :title="desktopHistoryTitle"
-                >
-                  {{ desktopHistoryStateLabel }}
-                </span>
-                <button
-                  class="vf-icon-button app-bar-history-button"
-                  :disabled="dirHistoryLoading || !browseCommit"
-                  title="前进到较新快照"
-                  aria-label="前进到较新快照"
-                  @click="desktopHistoryStepForward"
-                >
-                  <IconChevronRight :size="16" />
-                </button>
-                <button
-                  class="vf-icon-button app-bar-history-button"
-                  :disabled="dirHistoryLoading || !browseCommit"
-                  title="回到当前版本"
-                  aria-label="回到当前版本"
-                  @click="desktopHistoryFastForward"
-                >
-                  <IconChevronsRight :size="16" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div class="navbar-end">
-            <div class="navbar-item">
-              <NotificationCenter />
-            </div>
-
-            <div class="navbar-item">
-              <ThemeToggle />
-            </div>
-
-            <div class="navbar-item">
-              <div
-                ref="accountMenuRef"
-                class="dropdown is-right"
-                :class="{ 'is-active': accountMenuOpen }"
-              >
-                <div class="dropdown-trigger">
-                  <button
-                    class="app-bar-account"
-                    aria-haspopup="true"
-                    :aria-expanded="accountMenuOpen ? 'true' : 'false'"
-                    :title="auth.user?.username || '账号'"
-                    @click="accountMenuOpen = !accountMenuOpen"
-                  >
-                    <span class="app-bar-avatar" aria-hidden="true">
-                      <IconUser v-if="!accountInitial" :size="14" />
-                      <template v-else>{{ accountInitial }}</template>
-                    </span>
-                    <span class="app-bar-account-name">
-                      {{ auth.user?.username || "账号" }}
-                    </span>
-                    <IconChevronDown :size="14" class="app-bar-account-caret" />
-                  </button>
-                </div>
-
-                <div class="dropdown-menu" role="menu">
-                  <div class="dropdown-content">
-                    <div class="dropdown-item">
-                      <p class="vf-text-muted is-size-7 mb-1">账号</p>
-                      <p class="is-size-7 mb-0">{{ desktopProfileLabel }}</p>
-                    </div>
-
-                    <hr class="dropdown-divider" />
-
-                    <router-link
-                      v-if="
-                        !auth.isRestricted &&
-                        auth.user &&
-                        auth.features?.shareEnabled !== false
-                      "
-                      class="dropdown-item"
-                      to="/shares"
-                      @click="closeAccountMenus"
-                    >
-                      我的分享
-                    </router-link>
-
-                    <router-link
-                      v-if="auth.enabled && auth.user && !auth.isRestricted"
-                      class="dropdown-item"
-                      to="/settings/tokens"
-                      @click="closeAccountMenus"
-                    >
-                      访问令牌
-                    </router-link>
-
-                    <router-link
-                      v-if="auth.enabled && auth.user && !auth.isRestricted"
-                      class="dropdown-item"
-                      to="/settings/passwords"
-                      @click="closeAccountMenus"
-                    >
-                      访问密码
-                    </router-link>
-
-                    <router-link
-                      v-if="
-                        !auth.isRestricted &&
-                        auth.enabled &&
-                        ['admin', 'manager'].includes(auth.user?.role || '')
-                      "
-                      class="dropdown-item"
-                      to="/admin"
-                      @click="closeAccountMenus"
-                    >
-                      管理控制台
-                    </router-link>
-
-                    <router-link
-                      v-if="auth.enabled && !auth.user"
-                      class="dropdown-item"
-                      to="/login"
-                      @click="closeAccountMenus"
-                    >
-                      去登录
-                    </router-link>
-
-                    <a
-                      v-else-if="auth.enabled && auth.user"
-                      class="dropdown-item"
-                      href="#"
-                      @click.prevent="logoutFromMenu"
-                    >
-                      退出登录
-                    </a>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </nav>
+      </template>
+    </AppHeader>
 
     <section class="section home-content">
       <div class="container is-fluid home-main-container">
@@ -477,7 +313,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
-import { useRouter } from "vue-router";
 import {
   IconMenu2,
   IconChecklist,
@@ -485,18 +320,15 @@ import {
   IconArrowLeft,
   IconChevronsLeft,
   IconChevronLeft,
-  IconChevronDown,
   IconChevronRight,
   IconChevronsRight,
-  IconUser,
   IconHome,
   IconUpload,
   IconRefresh,
   IconFolderPlus,
 } from "@tabler/icons-vue";
 import FileBrowser from "../components/file-browser/FileBrowser.vue";
-import NotificationCenter from "../components/common/NotificationCenter.vue";
-import ThemeToggle from "../components/common/ThemeToggle.vue";
+import AppHeader from "../components/shell/AppHeader.vue";
 import { useFilesStore } from "../stores/files.store";
 import { useAuthStore } from "../stores/auth.store";
 import { useAppStore } from "../stores/app.store";
@@ -523,31 +355,9 @@ type FileBrowserHandle = {
 };
 
 const browserRef = ref<FileBrowserHandle | null>(null);
-const mobileMenuOpen = ref(false);
-const accountMenuOpen = ref(false);
-const accountMenuRef = ref<HTMLElement | null>(null);
 
 const auth = useAuthStore();
 const appStore = useAppStore();
-const router = useRouter();
-async function doLogout() {
-  try {
-    await auth.logout();
-  } finally {
-    appStore.info("已退出登录");
-    router.push({ name: "login", query: { redirect: "/" } });
-  }
-}
-
-function closeAccountMenus() {
-  accountMenuOpen.value = false;
-  mobileMenuOpen.value = false;
-}
-
-async function logoutFromMenu() {
-  closeAccountMenus();
-  await doLogout();
-}
 
 const actionMenuOpen = ref(false);
 const actionMenuRef = ref<HTMLElement | null>(null);
@@ -579,12 +389,6 @@ const {
   currentPath,
   browseCommit,
   setBrowseCommit: (commit) => filesStore.setBrowseCommit(commit),
-});
-
-const desktopProfileLabel = computed(() => {
-  if (!auth.enabled) return "本地模式";
-  if (!auth.user) return "认证已启用";
-  return `${auth.user.username} · ${auth.user.role}`;
 });
 
 function updateVisualViewportBottomOffset() {
@@ -624,26 +428,12 @@ onMounted(() => {
       const el = batchMenuRef.value;
       if (el && !el.contains(target)) batchMenuOpen.value = false;
     }
-    if (accountMenuOpen.value) {
-      const el = accountMenuRef.value;
-      if (el && !el.contains(target)) accountMenuOpen.value = false;
-    }
-    // 移动端展开的顶栏菜单：点击菜单与汉堡按钮之外也收起
-    if (mobileMenuOpen.value) {
-      const insideMenu =
-        target instanceof Element &&
-        (target.closest(".navbar-menu") !== null ||
-          target.closest(".navbar-burger") !== null);
-      if (!insideMenu) mobileMenuOpen.value = false;
-    }
   };
 
   const onDocKeydown = (e: KeyboardEvent) => {
     if (e.key !== "Escape") return;
     actionMenuOpen.value = false;
     batchMenuOpen.value = false;
-    accountMenuOpen.value = false;
-    mobileMenuOpen.value = false;
   };
 
   document.addEventListener("click", onDocPointer, true);
@@ -734,12 +524,6 @@ const historyDateShort = computed(() => {
   return `${mm}-${dd} ${hh}:${mi}`;
 });
 
-/** 账号头像用用户名首字符，未登录时回退到用户图标。 */
-const accountInitial = computed(() => {
-  const name = auth.user?.username || "";
-  return name ? name.slice(0, 1).toUpperCase() : "";
-});
-
 const desktopHistoryStateLabel = computed(() => {
   if (dirHistoryLoading.value) return "加载历史...";
   // 失败后按钮恢复可用，标签直接说明这次没拿到历史。
@@ -825,6 +609,8 @@ async function renameSelected() {
 .home {
   position: relative;
   min-height: 100vh;
+  /* 兼容文件列表内部的高度计算（本阶段不改列表，下一阶段统一改用 --vf-topbar-height） */
+  --sf-topbar-height: var(--vf-topbar-height);
   /* 用 clip 而不是 hidden：hidden 会让 .home 变成滚动容器，导致内部的
      position: sticky（批量操作条）失效；clip 只裁剪不建立滚动容器。
      旧浏览器不支持 clip 时退回 hidden（仅失去吸顶效果）。 */
@@ -832,78 +618,10 @@ async function renameSelected() {
   background: var(--vf-canvas);
 }
 
-/* ---- Seafile 式外壳：白色顶栏 + 全高内容区（不再居中浮动卡片） ---- */
-.app-top-bar {
-  height: var(--sf-topbar-height, 56px);
-  min-height: var(--sf-topbar-height, 56px);
-  padding-top: 0;
-  background: var(--vf-surface);
-  border-bottom: 1px solid var(--vf-border-weak);
-  box-shadow: none;
-}
-
-.app-top-bar .container.is-fluid {
-  height: 100%;
-  max-width: none;
-  padding: 0 0.85rem;
-}
-
-.app-top-bar .navbar-brand,
-.app-top-bar .navbar-start,
-.app-top-bar .navbar-end {
-  height: 100%;
-  align-items: center;
-}
-
-.app-top-bar .navbar-item {
-  padding: 0 0.5rem;
-}
-
-.app-top-bar .navbar-brand .navbar-item {
-  padding-left: 0;
-  gap: 0.45rem;
-}
-
-.app-top-bar .navbar-brand .image {
-  width: 28px;
-  height: 28px;
-}
-
-.sf-nav-tabs {
-  display: flex;
-  align-items: center;
-  gap: 0.15rem;
-  margin-left: 0.85rem;
-  height: 100%;
-}
-
-.sf-nav-tab {
-  display: inline-flex;
-  align-items: center;
-  height: 100%;
-  padding: 0 0.7rem;
-  font-size: 0.86rem;
-  font-weight: 500;
-  color: var(--vf-text-muted);
-  text-decoration: none;
-  border-bottom: 2px solid transparent;
-  transition: color 0.12s var(--vf-motion-standard);
-}
-
-.sf-nav-tab:hover {
-  color: var(--vf-text-strong);
-}
-
-.sf-nav-tab.is-active {
-  color: var(--vf-accent-text);
-  border-bottom-color: var(--vf-accent);
-  font-weight: 600;
-}
-
 .home-content.section {
-  padding: 0;
-  padding-top: var(--sf-topbar-height, 56px);
-  padding-bottom: 0;
+  /* 只清掉 Bulma .section 的左右内边距；上下由 .home-content 统一控制 */
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .home-main-container.container.is-fluid {
@@ -912,20 +630,13 @@ async function renameSelected() {
 }
 
 .home-browser-shell {
-  min-height: calc(100dvh - var(--sf-topbar-height, 56px));
+  min-height: calc(100dvh - var(--vf-topbar-height));
 }
 
 @supports not (overflow: clip) {
   .home {
     overflow-x: hidden;
   }
-}
-
-.app-top-bar {
-  padding-top: env(safe-area-inset-top);
-  background: var(--vf-app-bar);
-  border-bottom: 1px solid var(--vf-border-weak);
-  box-shadow: none;
 }
 
 /* 版本切换：紧凑胶囊，左右各两个箭头，中间显示当前版本 */
@@ -954,47 +665,6 @@ async function renameSelected() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.app-bar-account {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  /* 与顶栏其它控件一致（36px）：此前 32px 是栏内最后一个高度异类 */
-  height: 2.25rem;
-  padding: 0 0.6rem 0 0.25rem;
-  border: 1px solid transparent;
-  border-radius: var(--vf-radius-pill);
-  background: transparent;
-  color: var(--vf-text);
-  font-size: 0.875rem;
-  cursor: pointer;
-  transition:
-    background-color 0.15s var(--vf-motion-standard),
-    border-color 0.15s var(--vf-motion-standard);
-}
-
-.app-bar-account:hover,
-.app-bar-account:focus-visible {
-  background: var(--vf-surface-hover);
-  border-color: var(--vf-border-weak);
-}
-
-.app-bar-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: 50%;
-  background: var(--vf-accent);
-  color: var(--vf-on-accent);
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-
-.app-bar-account-caret {
-  color: var(--vf-text-muted);
 }
 
 .mobile-bottom-bar {
@@ -1173,6 +843,8 @@ async function renameSelected() {
   /* 桌面端固定整屏高度：页面本身不滚动，文件列表在自己的内容区内滚动。
      这样工具栏、列头、状态栏与侧栏/详情面板始终可见（主流网盘的应用外壳）。 */
   .home {
+    display: flex;
+    flex-direction: column;
     height: 100dvh;
     min-height: 100dvh;
     overflow: hidden;
@@ -1181,7 +853,8 @@ async function renameSelected() {
   .home-content {
     display: flex;
     flex-direction: column;
-    height: 100dvh;
+    flex: 1 1 auto;
+    min-height: 0;
     overflow: hidden;
   }
 
@@ -1199,16 +872,14 @@ async function renameSelected() {
     min-height: 0;
   }
 
-  
-
   .mobile-bottom-bar {
     display: none;
   }
 
-  /* Seafile 式全高布局：内容区从顶栏下沿开始，无卡片内边距 */
+  /* 全高布局：顶栏在文档流内，内容区直接占满剩余高度 */
   .home-content {
     box-sizing: border-box;
-    padding-top: var(--sf-topbar-height, 56px);
+    padding-top: 0;
     padding-bottom: 0;
   }
 
@@ -1223,57 +894,6 @@ async function renameSelected() {
 }
 
 @media screen and (max-width: 1023px) {
-  /* 展开的顶栏菜单：整行可点、文字与图标左对齐，并显示被 is-hidden-touch
-     隐藏的标签（外观名称、账号名），否则菜单里只剩两个没有说明的图标。 */
-  .app-top-bar .navbar-menu.is-active {
-    /* Bulma 在移动端给 .navbar-menu 设了 overflow: auto，会裁掉展开的下拉；
-       这个菜单只有两行，不需要内部滚动。 */
-    overflow: visible;
-    border-bottom: 1px solid var(--vf-border-weak);
-    box-shadow: var(--vf-shadow-menu);
-  }
-
-  .app-top-bar .navbar-menu.is-active .navbar-item {
-    display: flex;
-    width: 100%;
-    padding: 0.35rem 1rem;
-  }
-
-  /* ThemeToggle 是子组件：内部元素需要 :deep 才能命中（scoped 属性作用于子组件根节点） */
-  .app-top-bar .navbar-menu.is-active .theme-toggle,
-  .app-top-bar .navbar-menu.is-active .navbar-item > .dropdown {
-    width: 100%;
-  }
-
-  .app-top-bar .navbar-menu.is-active :deep(.theme-toggle-button),
-  .app-top-bar .navbar-menu.is-active .app-bar-account {
-    width: 100%;
-    justify-content: flex-start;
-    gap: 0.5rem;
-    /* 触屏菜单行命中区 ≥40px（原 2.2rem = 35.2px） */
-    height: 2.5rem;
-    padding-left: 0.35rem;
-    font-size: 0.875rem;
-  }
-
-  .app-top-bar .navbar-menu.is-active :deep(.theme-toggle-label) {
-    display: inline !important;
-  }
-
-  .app-top-bar .navbar-menu.is-active .navbar-end .navbar-item + .navbar-item {
-    border-top: 1px solid var(--vf-border-weak);
-  }
-
-  /* 展开的下拉（外观/账号）要盖住下面的行，否则会被后续行遮住 */
-  .app-top-bar .navbar-menu.is-active .dropdown.is-active {
-    position: relative;
-    z-index: 60;
-  }
-
-  .app-top-bar .navbar-menu.is-active .dropdown.is-active .dropdown-menu {
-    z-index: 60;
-  }
-
   .section {
     padding: 0;
   }
@@ -1287,16 +907,13 @@ async function renameSelected() {
     bottom: calc(env(safe-area-inset-bottom) + var(--vv-bottom, 0px));
   }
 
+  /* 顶栏在文档流内（sticky），不再为固定顶栏预留高度 */
   .home-content {
-    padding-top: calc(
-      var(--bulma-navbar-height, 3.25rem) + env(safe-area-inset-top)
-    );
+    padding-top: 0.5rem;
     padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
     padding-bottom: calc(
       6.5rem + env(safe-area-inset-bottom) + var(--vv-bottom, 0px)
     );
   }
-
-  
 }
 </style>

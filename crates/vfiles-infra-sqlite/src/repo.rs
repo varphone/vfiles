@@ -6936,6 +6936,94 @@ fn parse_audit_row(row: AuditLogRow) -> DomainResult<AuditLog> {
     })
 }
 
+/// 审计日志查询的 SQL 绑定值：关键字已转成 LIKE 模式，动作前缀已展开。
+///
+/// 用 [`sqlx::QueryBuilder`] 只拼接实际存在的条件，而不是写
+/// `(?N IS NULL OR ...)` 分支：没有筛选条件时计数会退化成最窄的
+/// `SELECT COUNT(*)`，动作前缀的个数也不受占位符数量限制。
+struct AuditLogFilter {
+    keyword: Option<String>,
+    action: Option<String>,
+    action_patterns: Vec<String>,
+    result: Option<String>,
+    since: Option<time::OffsetDateTime>,
+    until: Option<time::OffsetDateTime>,
+    user_id: Option<String>,
+}
+
+impl AuditLogFilter {
+    fn from_query(query: &AuditLogQuery) -> Self {
+        Self {
+            keyword: query
+                .keyword
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("%{value}%")),
+            action: query
+                .action
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+            action_patterns: query
+                .action_prefixes
+                .iter()
+                .map(|prefix| prefix.trim())
+                .filter(|prefix| !prefix.is_empty())
+                .map(|prefix| format!("{prefix}%"))
+                .collect(),
+            result: query.result.map(|value| value.as_str().to_string()),
+            since: query.since,
+            until: query.until,
+            user_id: query.user_id.as_ref().map(ToString::to_string),
+        }
+    }
+
+    /// 追加全部过滤条件；没有条件时保留 `WHERE 1 = 1`，调用方可直接续接子句。
+    fn push_where(&self, builder: &mut sqlx::QueryBuilder<Sqlite>) {
+        builder.push(" WHERE 1 = 1");
+        if let Some(keyword) = &self.keyword {
+            builder.push(" AND (username LIKE ");
+            builder.push_bind(keyword.clone());
+            builder.push(" OR ip LIKE ");
+            builder.push_bind(keyword.clone());
+            builder.push(")");
+        }
+        if let Some(action) = &self.action {
+            builder.push(" AND action = ");
+            builder.push_bind(action.clone());
+        }
+        if !self.action_patterns.is_empty() {
+            builder.push(" AND (");
+            for (index, pattern) in self.action_patterns.iter().enumerate() {
+                if index > 0 {
+                    builder.push(" OR ");
+                }
+                builder.push("action LIKE ");
+                builder.push_bind(pattern.clone());
+            }
+            builder.push(")");
+        }
+        if let Some(result) = &self.result {
+            builder.push(" AND result = ");
+            builder.push_bind(result.clone());
+        }
+        if let Some(since) = self.since {
+            builder.push(" AND created_at >= ");
+            builder.push_bind(since);
+        }
+        if let Some(until) = self.until {
+            builder.push(" AND created_at < ");
+            builder.push_bind(until);
+        }
+        if let Some(user_id) = &self.user_id {
+            builder.push(" AND user_id = ");
+            builder.push_bind(user_id.clone());
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl AuditLogRepo for SqliteAuditLogRepo {
     async fn append(&self, entry: &NewAuditLog) -> DomainResult<()> {
@@ -6970,90 +7058,37 @@ impl AuditLogRepo for SqliteAuditLogRepo {
     }
 
     async fn list(&self, query: &AuditLogQuery) -> DomainResult<AuditLogPage> {
-        // 条件与绑定值保持一致顺序，供 count 与分页查询复用
-        let keyword = query
-            .keyword
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| format!("%{value}%"));
-        let action = query
-            .action
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let result = query.result.map(|value| value.as_str().to_string());
-        let since = query.since;
-        let until = query.until;
-        let unfiltered = keyword.is_none()
-            && action.is_none()
-            && result.is_none()
-            && since.is_none()
-            && until.is_none();
+        let filter = AuditLogFilter::from_query(query);
 
-        // 无筛选条件时用最窄的计数：带 `? IS NULL` 分支的通用语句会让 SQLite
-        // 逐行扫描整张审计表，而默认页面每次都要这个总数。
-        let total: i64 = if unfiltered {
-            sqlx::query_scalar("SELECT COUNT(*) FROM audit_logs")
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| DomainError::Internal {
-                    message: format!("Failed to count audit logs: {e}"),
-                })?
-        } else {
-            // sqlx 要求 SQL 为静态字符串（避免拼接注入），因此两处各写一遍完整语句
-            sqlx::query_scalar(
-                r#"
-                SELECT COUNT(*) FROM audit_logs
-                WHERE (?1 IS NULL OR username LIKE ?1 OR ip LIKE ?1)
-                  AND (?2 IS NULL OR action = ?2)
-                  AND (?3 IS NULL OR result = ?3)
-                  AND (?4 IS NULL OR created_at >= ?4)
-                  AND (?5 IS NULL OR created_at < ?5)
-                "#,
-            )
-            .bind(keyword.as_deref())
-            .bind(action.as_deref())
-            .bind(result.as_deref())
-            .bind(since)
-            .bind(until)
+        let mut count = sqlx::QueryBuilder::new("SELECT COUNT(*) FROM audit_logs");
+        filter.push_where(&mut count);
+        let total = count
+            .build_query_scalar::<i64>()
             .fetch_one(&self.pool)
             .await
             .map_err(|e| DomainError::Internal {
                 message: format!("Failed to count audit logs: {e}"),
-            })?
-        };
+            })?;
 
         let limit = query.limit.clamp(1, 500) as i64;
-        let offset = query.offset as i64;
+        let offset = i64::from(query.offset);
 
-        let rows: Vec<AuditLogRow> = sqlx::query_as(
-            r#"
-            SELECT id, created_at, user_id, username, action, result,
-                   target, ip, user_agent, device, detail
-            FROM audit_logs
-            WHERE (?1 IS NULL OR username LIKE ?1 OR ip LIKE ?1)
-              AND (?2 IS NULL OR action = ?2)
-              AND (?3 IS NULL OR result = ?3)
-              AND (?4 IS NULL OR created_at >= ?4)
-              AND (?5 IS NULL OR created_at < ?5)
-            ORDER BY created_at DESC, id DESC
-            LIMIT ?6 OFFSET ?7
-            "#,
-        )
-        .bind(keyword.as_deref())
-        .bind(action.as_deref())
-        .bind(result.as_deref())
-        .bind(since)
-        .bind(until)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to list audit logs: {e}"),
-        })?;
+        let mut list = sqlx::QueryBuilder::new(
+            "SELECT id, created_at, user_id, username, action, result, \
+             target, ip, user_agent, device, detail FROM audit_logs",
+        );
+        filter.push_where(&mut list);
+        list.push(" ORDER BY created_at DESC, id DESC LIMIT ");
+        list.push_bind(limit);
+        list.push(" OFFSET ");
+        list.push_bind(offset);
+        let rows: Vec<AuditLogRow> = list
+            .build_query_as::<AuditLogRow>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to list audit logs: {e}"),
+            })?;
 
         let items = rows
             .into_iter()
@@ -7067,101 +7102,50 @@ impl AuditLogRepo for SqliteAuditLogRepo {
     }
 
     async fn summarize(&self, query: &AuditLogQuery, top: u32) -> DomainResult<AuditLogSummary> {
-        // 与 list 相同的过滤条件（sqlx 要求静态 SQL，因此这里各写一遍）
-        let keyword = query
-            .keyword
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| format!("%{value}%"));
-        let action = query
-            .action
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let result = query.result.map(|value| value.as_str().to_string());
-        let since = query.since;
-        let until = query.until;
+        let filter = AuditLogFilter::from_query(query);
         let top = top.clamp(1, 50) as i64;
 
-        let (total, failures): (i64, i64) = sqlx::query_as(
-            r#"
-            SELECT
-                COUNT(*),
-                COALESCE(SUM(CASE WHEN result = 'failure' THEN 1 ELSE 0 END), 0)
-            FROM audit_logs
-            WHERE (?1 IS NULL OR username LIKE ?1 OR ip LIKE ?1)
-              AND (?2 IS NULL OR action = ?2)
-              AND (?3 IS NULL OR result = ?3)
-              AND (?4 IS NULL OR created_at >= ?4)
-              AND (?5 IS NULL OR created_at < ?5)
-            "#,
-        )
-        .bind(keyword.as_deref())
-        .bind(action.as_deref())
-        .bind(result.as_deref())
-        .bind(since)
-        .bind(until)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to summarize audit logs: {e}"),
-        })?;
+        let mut totals = sqlx::QueryBuilder::new(
+            "SELECT COUNT(*), \
+             COALESCE(SUM(CASE WHEN result = 'failure' THEN 1 ELSE 0 END), 0) \
+             FROM audit_logs",
+        );
+        filter.push_where(&mut totals);
+        let (total, failures): (i64, i64) = totals
+            .build_query_as::<(i64, i64)>()
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to summarize audit logs: {e}"),
+            })?;
 
-        let users: Vec<(String, i64)> = sqlx::query_as(
-            r#"
-            SELECT
-                CASE WHEN username = '' THEN '(匿名)' ELSE username END AS key,
-                COUNT(*) AS count
-            FROM audit_logs
-            WHERE (?1 IS NULL OR username LIKE ?1 OR ip LIKE ?1)
-              AND (?2 IS NULL OR action = ?2)
-              AND (?3 IS NULL OR result = ?3)
-              AND (?4 IS NULL OR created_at >= ?4)
-              AND (?5 IS NULL OR created_at < ?5)
-            GROUP BY key
-            ORDER BY count DESC, key ASC
-            LIMIT ?6
-            "#,
-        )
-        .bind(keyword.as_deref())
-        .bind(action.as_deref())
-        .bind(result.as_deref())
-        .bind(since)
-        .bind(until)
-        .bind(top)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to summarize audit users: {e}"),
-        })?;
+        let mut users = sqlx::QueryBuilder::new(
+            "SELECT CASE WHEN username = '' THEN '(匿名)' ELSE username END AS key, \
+             COUNT(*) AS count FROM audit_logs",
+        );
+        filter.push_where(&mut users);
+        users.push(" GROUP BY key ORDER BY count DESC, key ASC LIMIT ");
+        users.push_bind(top);
+        let users: Vec<(String, i64)> = users
+            .build_query_as::<(String, i64)>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to summarize audit users: {e}"),
+            })?;
 
-        let actions: Vec<(String, i64)> = sqlx::query_as(
-            r#"
-            SELECT action AS key, COUNT(*) AS count
-            FROM audit_logs
-            WHERE (?1 IS NULL OR username LIKE ?1 OR ip LIKE ?1)
-              AND (?2 IS NULL OR action = ?2)
-              AND (?3 IS NULL OR result = ?3)
-              AND (?4 IS NULL OR created_at >= ?4)
-              AND (?5 IS NULL OR created_at < ?5)
-            GROUP BY action
-            ORDER BY count DESC, key ASC
-            LIMIT ?6
-            "#,
-        )
-        .bind(keyword.as_deref())
-        .bind(action.as_deref())
-        .bind(result.as_deref())
-        .bind(since)
-        .bind(until)
-        .bind(top)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to summarize audit actions: {e}"),
-        })?;
+        let mut actions =
+            sqlx::QueryBuilder::new("SELECT action AS key, COUNT(*) AS count FROM audit_logs");
+        filter.push_where(&mut actions);
+        actions.push(" GROUP BY action ORDER BY count DESC, key ASC LIMIT ");
+        actions.push_bind(top);
+        let actions: Vec<(String, i64)> = actions
+            .build_query_as::<(String, i64)>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to summarize audit actions: {e}"),
+            })?;
 
         let to_counts = |rows: Vec<(String, i64)>| {
             rows.into_iter()
@@ -13049,6 +13033,113 @@ mod audit_log_tests {
                 "login.success".to_string()
             ]
         );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    /// 个人活动流：按用户过滤，并只保留指定前缀的动作（总数同步收窄）。
+    #[tokio::test]
+    async fn list_filters_by_user_and_action_prefixes() {
+        let (db_path, pool, repo) = setup().await;
+        let alice = UserId::new();
+        let bob = UserId::new();
+        repo.append(
+            &NewAuditLog::success("login.success")
+                .user(Some(alice), "alice")
+                .target(""),
+        )
+        .await
+        .unwrap();
+        repo.append(
+            &NewAuditLog::success("file.upload")
+                .user(Some(alice), "alice")
+                .target("docs/report.txt"),
+        )
+        .await
+        .unwrap();
+        repo.append(
+            &NewAuditLog::success("directory.create")
+                .user(Some(alice), "alice")
+                .target("docs/archive"),
+        )
+        .await
+        .unwrap();
+        repo.append(
+            &NewAuditLog::success("file.upload")
+                .user(Some(bob), "bob")
+                .target("bob/notes.txt"),
+        )
+        .await
+        .unwrap();
+
+        // 只取 alice 的记录
+        let mine = repo
+            .list(&AuditLogQuery {
+                user_id: Some(alice),
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(mine.total, 3);
+        assert!(mine.items.iter().all(|item| item.username == "alice"));
+
+        // 文件类动作 = file.* 或 directory.*；bob 的 file.upload 仍被用户条件排除
+        let files = repo
+            .list(&AuditLogQuery {
+                user_id: Some(alice),
+                action_prefixes: vec!["file.".to_string(), "directory.".to_string()],
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(files.total, 2);
+        assert_eq!(files.items.len(), 2);
+        assert!(
+            files
+                .items
+                .iter()
+                .all(|item| item.action.starts_with("file.")
+                    || item.action.starts_with("directory."))
+        );
+
+        // 单前缀、无匹配前缀
+        let uploads = repo
+            .list(&AuditLogQuery {
+                action_prefixes: vec!["file.".to_string()],
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(uploads.total, 2);
+        let none = repo
+            .list(&AuditLogQuery {
+                action_prefixes: vec!["share.".to_string()],
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(none.total, 0);
+
+        // 聚合查询同样尊重用户与动作过滤
+        let summary = repo
+            .summarize(
+                &AuditLogQuery {
+                    user_id: Some(alice),
+                    action_prefixes: vec!["file.".to_string(), "directory.".to_string()],
+                    ..Default::default()
+                },
+                5,
+            )
+            .await
+            .unwrap();
+        assert_eq!(summary.total, 2);
+        assert_eq!(summary.users.len(), 1);
+        assert_eq!(summary.users[0].key, "alice");
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);

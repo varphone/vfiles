@@ -10378,3 +10378,426 @@ async fn admin_overview_aggregates_counts_in_one_request() {
         .await;
     assert_eq!(denied.status(), StatusCode::FORBIDDEN);
 }
+
+/// 最近文件：按 updated_at 倒序、limit 夹取，受限会话只返回范围内的路径。
+#[tokio::test]
+async fn recent_files_returns_latest_and_filters_scoped_paths() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "older.txt", b"old", "seed older")
+        .await;
+    app.upload_version("docs", "newer.txt", b"newer", "seed newer")
+        .await;
+    app.upload_version("secret", "private.txt", b"secret", "seed secret")
+        .await;
+
+    // entries.updated_at 只到秒；显式写入时间戳才能稳定验证排序。
+    for (path, updated_at) in [
+        ("docs/older.txt", "2020-01-01 00:00:00"),
+        ("docs/newer.txt", "2030-01-01 00:00:00"),
+        ("secret/private.txt", "2021-01-01 00:00:00"),
+    ] {
+        sqlx::query("UPDATE entries SET updated_at = ? WHERE path = ?")
+            .bind(updated_at)
+            .bind(path)
+            .execute(&app.db_pool)
+            .await
+            .expect("updated_at should be updated");
+    }
+
+    let cookie = app.admin_cookie().await;
+    let response = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/files/recent?limit=1")
+                .body(Body::empty())
+                .expect("request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = response_json(response).await;
+    let items = payload.as_array().expect("recent files should be an array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["path"], Value::from("docs/newer.txt"));
+    assert_eq!(items[0]["name"], Value::from("newer.txt"));
+    assert_eq!(items[0]["size_bytes"], Value::from(5));
+    assert_eq!(items[0]["mime_type"], Value::from("text/plain"));
+    assert!(
+        items[0]["updated_at"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+
+    // limit 低于下限时夹取到 1
+    let clamped = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/files/recent?limit=0")
+                .body(Body::empty())
+                .expect("request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(clamped.status(), StatusCode::OK);
+    let clamped = response_json(clamped).await;
+    assert_eq!(clamped.as_array().map(Vec::len), Some(1));
+
+    // 上限 200 同样正常返回（当前只有 3 个文件）
+    let all = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/files/recent?limit=9999")
+                .body(Body::empty())
+                .expect("request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(all.status(), StatusCode::OK);
+    let all = response_json(all).await;
+    assert_eq!(all.as_array().map(Vec::len), Some(3));
+
+    // 受限会话只看得到 docs 范围内的文件
+    let create = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/auth/credentials",
+            json!({
+                "label": "read-docs",
+                "password": "secondary-password",
+                "roots": ["docs"],
+                "canWrite": false
+            }),
+            &cookie,
+        )
+        .await;
+    assert_eq!(create.status(), StatusCode::OK);
+    let scoped = app.login_cookie("admin", "secondary-password").await;
+    let scoped_recent = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/files/recent?limit=50")
+                .body(Body::empty())
+                .expect("request should build"),
+            &scoped,
+        )
+        .await;
+    assert_eq!(scoped_recent.status(), StatusCode::OK);
+    let scoped_recent = response_json(scoped_recent).await;
+    let scoped_items = scoped_recent.as_array().expect("array response");
+    assert_eq!(scoped_items.len(), 2);
+    assert!(scoped_items.iter().all(|item| {
+        item["path"]
+            .as_str()
+            .is_some_and(|path| path.starts_with("docs/"))
+    }));
+}
+
+/// 个人活动流：只出现本人记录，filter=files 只保留文件类动作，分页稳定，未登录 401。
+#[tokio::test]
+async fn activity_lists_only_current_user_records_and_paginates() {
+    let app = TestApp::new().await;
+    let admin_cookie = app.admin_cookie().await;
+    app.upload_version_with_cookie(&admin_cookie, "docs", "first.txt", b"one", "seed one")
+        .await;
+    app.upload_version_with_cookie(&admin_cookie, "docs", "second.txt", b"two", "seed two")
+        .await;
+    app.upload_version_with_cookie(&admin_cookie, "docs", "third.txt", b"three", "seed three")
+        .await;
+    app.upload_version_with_cookie(
+        &admin_cookie,
+        "secret",
+        "private.txt",
+        b"secret",
+        "seed secret",
+    )
+    .await;
+
+    // 另一个账号也有上传记录，但不应出现在 admin 的活动流里
+    app.register_user_without_email("bob", "bob-password").await;
+    let bob_cookie = app.login_cookie("bob", "bob-password").await;
+    app.upload_version_with_cookie(&bob_cookie, "bob", "private.txt", b"bob", "bob upload")
+        .await;
+
+    let all = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/activity?limit=100")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(all.status(), StatusCode::OK);
+    let all = response_json(all).await;
+    assert_eq!(all["limit"], Value::from(100));
+    assert_eq!(all["offset"], Value::from(0));
+    let items = all["items"].as_array().expect("items should be an array");
+    assert!(!items.is_empty());
+    assert!(all["total"].as_u64().unwrap_or(0) >= items.len() as u64);
+    assert!(items.iter().all(|item| item["username"] == "admin"));
+    assert!(items.iter().any(|item| item["action"] == "login.success"));
+    assert!(items.iter().any(|item| item["action"] == "file.upload"));
+    assert!(!items.iter().any(|item| item["target"] == "bob/private.txt"));
+    for field in [
+        "id",
+        "created_at",
+        "user_id",
+        "username",
+        "action",
+        "result",
+        "target",
+        "ip",
+        "device",
+        "detail",
+    ] {
+        assert!(
+            items[0].get(field).is_some(),
+            "activity item should expose {field}"
+        );
+    }
+
+    // filter=files 只保留 file.* / directory.*，total 同步收窄
+    let files = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/activity?filter=files&limit=100")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(files.status(), StatusCode::OK);
+    let files = response_json(files).await;
+    let file_items = files["items"].as_array().expect("items should be an array");
+    assert_eq!(file_items.len(), 4);
+    assert_eq!(files["total"], Value::from(4));
+    assert!(file_items.iter().all(|item| {
+        item["action"]
+            .as_str()
+            .is_some_and(|action| action.starts_with("file.") || action.starts_with("directory."))
+    }));
+    assert!(
+        !file_items
+            .iter()
+            .any(|item| item["action"] == "login.success")
+    );
+
+    // 分页：同一筛选下两页不重叠，total 保持一致
+    let first_page = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/activity?filter=files&limit=2&offset=0")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let second_page = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/activity?filter=files&limit=2&offset=2")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let first_page = response_json(first_page).await;
+    let second_page = response_json(second_page).await;
+    assert_eq!(first_page["total"], Value::from(4));
+    assert_eq!(second_page["total"], Value::from(4));
+    let first_items = first_page["items"].as_array().expect("items");
+    let second_items = second_page["items"].as_array().expect("items");
+    assert_eq!(first_items.len(), 2);
+    assert_eq!(second_items.len(), 2);
+    let first_ids: std::collections::HashSet<&str> = first_items
+        .iter()
+        .filter_map(|item| item["id"].as_str())
+        .collect();
+    let second_ids: std::collections::HashSet<&str> = second_items
+        .iter()
+        .filter_map(|item| item["id"].as_str())
+        .collect();
+    assert!(first_ids.is_disjoint(&second_ids));
+
+    // 受限会话只保留范围内路径的活动（secret/private.txt 被剔除）
+    let create = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/auth/credentials",
+            json!({
+                "label": "read-docs",
+                "password": "secondary-password",
+                "roots": ["docs"],
+                "canWrite": false
+            }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(create.status(), StatusCode::OK);
+    let scoped = app.login_cookie("admin", "secondary-password").await;
+    let scoped_files = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/activity?filter=files&limit=100")
+                .body(Body::empty())
+                .expect("request should build"),
+            &scoped,
+        )
+        .await;
+    assert_eq!(scoped_files.status(), StatusCode::OK);
+    let scoped_files = response_json(scoped_files).await;
+    let scoped_items = scoped_files["items"].as_array().expect("items");
+    assert!(!scoped_items.is_empty());
+    assert!(scoped_items.iter().all(|item| {
+        item["target"]
+            .as_str()
+            .is_some_and(|target| target.starts_with("docs/"))
+    }));
+
+    // 未登录：401
+    let unauthorized = app
+        .request(
+            Request::builder()
+                .uri("/api/activity")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// 分享路径列表：创建后出现、停用后消失。
+#[tokio::test]
+async fn share_entries_lists_created_share_and_drops_it_after_disable() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    app.upload_version_with_cookie(&cookie, "docs", "public.txt", b"public", "seed")
+        .await;
+
+    let create = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/share/shares",
+            json!({ "path": "docs/public.txt" }),
+            &cookie,
+        )
+        .await;
+    assert_eq!(create.status(), StatusCode::OK);
+    let code = response_json(create).await["code"]
+        .as_str()
+        .expect("share code")
+        .to_string();
+
+    let entries = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/share/entries")
+                .body(Body::empty())
+                .expect("request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(entries.status(), StatusCode::OK);
+    assert_eq!(response_json(entries).await, json!(["docs/public.txt"]));
+
+    let disable = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/share/shares/{code}"))
+                .body(Body::empty())
+                .expect("request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(disable.status(), StatusCode::NO_CONTENT);
+
+    let entries = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/share/entries")
+                .body(Body::empty())
+                .expect("request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(entries.status(), StatusCode::OK);
+    assert_eq!(response_json(entries).await, json!([]));
+}
+
+/// 分享路径列表：同路径去重、过期分享不出现、受限会话只返回范围内路径。
+#[tokio::test]
+async fn share_entries_deduplicate_paths_and_respect_scope() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    app.upload_version_with_cookie(&cookie, "docs", "shared.txt", b"shared", "seed docs")
+        .await;
+    app.upload_version_with_cookie(&cookie, "secret", "private.txt", b"private", "seed secret")
+        .await;
+
+    for body in [
+        json!({ "path": "docs/shared.txt" }),
+        json!({ "path": "docs/shared.txt" }),
+        json!({ "path": "secret/private.txt" }),
+        json!({ "path": "docs/shared.txt", "expires_at": "2000-01-01T00:00:00Z" }),
+    ] {
+        let response = app
+            .json_request_with_cookie(Method::POST, "/api/share/shares", body, &cookie)
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let entries = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/share/entries")
+                .body(Body::empty())
+                .expect("request should build"),
+            &cookie,
+        )
+        .await;
+    assert_eq!(entries.status(), StatusCode::OK);
+    let mut paths: Vec<String> = response_json(entries)
+        .await
+        .as_array()
+        .expect("paths should be an array")
+        .iter()
+        .filter_map(|path| path.as_str().map(str::to_string))
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![
+            "docs/shared.txt".to_string(),
+            "secret/private.txt".to_string()
+        ]
+    );
+
+    // 受限会话只看到 docs 下的分享路径
+    let create = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/auth/credentials",
+            json!({
+                "label": "read-docs",
+                "password": "secondary-password",
+                "roots": ["docs"],
+                "canWrite": false
+            }),
+            &cookie,
+        )
+        .await;
+    assert_eq!(create.status(), StatusCode::OK);
+    let scoped = app.login_cookie("admin", "secondary-password").await;
+    let entries = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/share/entries")
+                .body(Body::empty())
+                .expect("request should build"),
+            &scoped,
+        )
+        .await;
+    assert_eq!(entries.status(), StatusCode::OK);
+    assert_eq!(response_json(entries).await, json!(["docs/shared.txt"]));
+}

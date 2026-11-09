@@ -601,12 +601,19 @@ pub fn describe_device(user_agent: &str) -> String {
 pub struct AuditLogQuery {
     /// 用户名或 IP 的模糊匹配。
     pub keyword: Option<String>,
+    /// 动作精确匹配（管理台筛选用）。
     pub action: Option<String>,
+    /// 动作前缀集合：只保留以其中任一前缀开头的记录（OR 关系）。
+    ///
+    /// 个人活动流的「文件」页签传 `["file.", "directory."]`；空集合表示不过滤。
+    pub action_prefixes: Vec<String>,
     pub result: Option<AuditResult>,
     /// 起始时间（含）。
     pub since: Option<time::OffsetDateTime>,
     /// 结束时间（不含）。
     pub until: Option<time::OffsetDateTime>,
+    /// 只返回该用户的记录（个人活动流）；`None` 表示不限用户。
+    pub user_id: Option<UserId>,
     pub limit: u32,
     pub offset: u32,
 }
