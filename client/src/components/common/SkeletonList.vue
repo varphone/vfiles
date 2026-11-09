@@ -59,15 +59,15 @@ withDefaults(
 .skeleton-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.5rem 0;
+  gap: var(--vf-space-1);
+  padding: var(--vf-space-2) 0;
 }
 
 .skeleton-row {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  min-height: 1.9rem;
+  gap: var(--vf-space-2);
+  min-height: var(--vf-row-height);
 }
 
 .skeleton-block {

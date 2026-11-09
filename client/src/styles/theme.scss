@@ -18,6 +18,27 @@
 :root {
   --vf-motion-standard: cubic-bezier(0.2, 0, 0, 1);
   --vf-motion-exit: cubic-bezier(0.3, 0, 1, 1);
+
+  /* 间距刻度：4px 基准。页面内容 / 单元格 / 卡片内边距统一取 space-4（16px），
+     小间距取 space-2（8px）；组件不再写 0.55rem、13.6px 这类散值。 */
+  --vf-space-1: 4px;
+  --vf-space-2: 8px;
+  --vf-space-3: 12px;
+  --vf-space-4: 16px;
+  --vf-space-5: 24px;
+  --vf-space-6: 32px;
+
+  /* 页面骨架：所有页面内容的左右边缘都落在同一条 16px 基线上 */
+  --vf-page-padding: var(--vf-space-4);
+  --vf-cell-padding-x: var(--vf-space-4);
+  --vf-section-gap: var(--vf-space-4);
+  --vf-toolbar-height: 50px;
+  --vf-table-head-height: 44px;
+  --vf-sidebar-item-height: 44px;
+
+  /* 形状：元素（按钮/输入框/菜单项）3px，卡片与按钮组 8px（Nextcloud 刻度） */
+  --vf-radius-control: 3px;
+  --vf-radius-card: 8px;
 }
 
 // 浅色：即项目此前的配色，保持视觉不变。
@@ -160,7 +181,7 @@
   --vf-admin-sidebar-width: 232px;
   --vf-details-width: 350px;
   --vf-content-max: 1600px;
-  --vf-row-height: 50px;
+  --vf-row-height: 51px;
   --vf-row-height-compact: 44px;
   --vf-control-height-sm: 30px;
   --vf-control-height: 34px;
@@ -319,7 +340,7 @@
   --vf-admin-sidebar-width: 232px;
   --vf-details-width: 350px;
   --vf-content-max: 1600px;
-  --vf-row-height: 50px;
+  --vf-row-height: 51px;
   --vf-row-height-compact: 44px;
   --vf-control-height-sm: 30px;
   --vf-control-height: 34px;

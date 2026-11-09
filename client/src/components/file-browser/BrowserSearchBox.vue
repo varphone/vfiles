@@ -204,7 +204,7 @@ onBeforeUnmount(() => {
 .desktop-search-inline {
   display: flex;
   align-items: stretch;
-  gap: 0.45rem;
+  gap: var(--vf-space-2);
 }
 
 .desktop-search-field {
@@ -212,12 +212,12 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-/* 工具栏右侧的搜索框：白底 + 8px 圆角，36px 高与同行按钮对齐。 */
+/* 工具栏右侧的搜索框：白底 + 3px 圆角，34px 高与同行按钮对齐。 */
 .desktop-search-control {
-  min-height: 36px;
-  font-size: 0.85rem;
+  min-height: var(--vf-control-height);
+  font-size: 0.875rem;
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-control);
   background: var(--vf-surface);
   box-shadow: none;
 }
@@ -249,7 +249,7 @@ onBeforeUnmount(() => {
   /* 覆盖 .vf-icon-button 的固定高度：随行拉伸到 40px，与左侧「搜索」按钮对齐 */
   height: auto;
   align-self: stretch;
-  border-radius: 0 var(--vf-radius-sm) var(--vf-radius-sm) 0;
+  border-radius: 0 var(--vf-radius-control) var(--vf-radius-control) 0;
 }
 
 .desktop-search-toggle svg {
@@ -263,11 +263,11 @@ onBeforeUnmount(() => {
 .desktop-search-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.65rem;
+  gap: var(--vf-space-3);
   /* 与工具栏其它弹层（视图/排序/上传）同一框体语言：
-     border-weak、6px 圆角、12px 内边距、raised 背景、菜单阴影 */
-  padding: 0.75rem;
-  border-radius: var(--vf-radius-sm);
+     border-weak、8px 圆角、12px 内边距、raised 背景、菜单阴影 */
+  padding: var(--vf-space-3);
+  border-radius: var(--vf-radius-card);
   border: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-raised);
   box-shadow: var(--vf-shadow-menu);

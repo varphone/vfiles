@@ -39,7 +39,6 @@
           :checked="selected"
           @change="toggleSelected"
           :aria-label="`选择 ${file.name}`"
-          :tabindex="selectMode || selected ? 0 : -1"
         />
       </label>
     </td>
@@ -915,7 +914,7 @@ function share() {
 
 /* Nextcloud 列表行高：51px，与 44px 表头配套 */
 .desktop-file-row {
-  height: 51px;
+  height: var(--vf-row-height);
 }
 
 .desktop-file-row > td {
@@ -943,7 +942,7 @@ function share() {
 .desktop-name-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--vf-space-2);
   min-width: 0;
 }
 
@@ -957,7 +956,7 @@ function share() {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 4px;
+  gap: var(--vf-space-1);
   color: var(--vf-text-muted);
   font-size: 13px;
   line-height: 1.2;
@@ -1038,61 +1037,60 @@ function share() {
 
 /* 行内操作入口「⋯」：默认隐藏，hover / 聚焦 / 选中 / 触屏时出现。
    即使隐藏了行操作图标组，用户也能在行内直接打开下载/重命名/移动等菜单。 */
-.desktop-row-menu {
-  flex: 0 0 auto;
-  width: 1.75rem;
-  height: 1.75rem;
+/*
+ * 行首复选框 / ⋯ 菜单 / 行内操作图标组：默认隐藏（Nextcloud 行为），
+ * 悬停行、键盘聚焦（focus-within）、已有选中或批量模式时显示。
+ *
+ * 用 opacity + pointer-events 而不是 display/visibility：
+ * - 元素始终占位，悬停时行内不位移（物理双击第二击不会落空）；
+ * - 依然在无障碍树与 Tab 顺序里，键盘可达性不退化；
+ * - 隐藏时 pointer-events: none，避免点到看不见的按钮。
+ */
+.desktop-row-menu,
+.desktop-row-check,
+.desktop-action-buttons {
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.12s var(--vf-motion-standard);
 }
 
-.desktop-file-row:hover .desktop-row-menu,
-.desktop-file-row:focus-within .desktop-row-menu,
-.desktop-file-row.is-row-selected .desktop-row-menu {
-  opacity: 1;
-}
-
-/* hover 才出现的复选框：批量模式下由 FileItem 直接渲染常驻版本 */
-.desktop-row-check {
-  opacity: 0;
-  transition: opacity 0.12s var(--vf-motion-standard);
-}
-
-.desktop-file-row:hover .desktop-row-check,
-.desktop-row-check.is-visible {
-  opacity: 1;
-}
-
-.desktop-file-row:hover .desktop-row-check,
-.desktop-file-row:focus-within .desktop-row-check,
-.desktop-file-row.is-row-selected .desktop-row-check {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  .desktop-row-menu,
-  .desktop-row-check {
-    opacity: 1;
-  }
-}
-
-/* 行内操作默认隐藏，hover / 键盘聚焦时出现，减少视觉噪音 */
 .desktop-action-buttons {
   flex-wrap: nowrap;
   justify-content: flex-end;
-  opacity: 0;
-  transition: opacity 0.12s var(--vf-motion-standard);
 }
 
+.desktop-row-menu {
+  flex: 0 0 auto;
+  width: var(--vf-control-height-sm);
+  height: var(--vf-control-height-sm);
+}
+
+.desktop-row-check {
+  display: inline-flex;
+}
+
+/* 选中（含批量）与批量模式：复选框常驻 */
+.desktop-row-check.is-visible,
+.desktop-file-row:hover .desktop-row-check,
+.desktop-file-row:focus-within .desktop-row-check,
+.desktop-file-row.is-row-selected .desktop-row-check,
+.desktop-file-row:hover .desktop-row-menu,
+.desktop-file-row:focus-within .desktop-row-menu,
+.desktop-file-row.is-row-selected .desktop-row-menu,
 .desktop-file-row:hover .desktop-action-buttons,
 .desktop-file-row:focus-within .desktop-action-buttons,
 .desktop-file-row.is-row-selected .desktop-action-buttons {
   opacity: 1;
+  pointer-events: auto;
 }
 
-@media (hover: none) {
+/* 触屏（无 hover / 粗指针）：保持常驻，触屏没有“悬停” */
+@media (hover: none), (pointer: coarse) {
+  .desktop-row-menu,
+  .desktop-row-check,
   .desktop-action-buttons {
     opacity: 1;
+    pointer-events: auto;
   }
 }
 

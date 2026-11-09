@@ -474,10 +474,10 @@ onMounted(load);
 }
 
 .system-info-error {
-  margin-bottom: 1rem;
-  padding: 0.8rem 1rem;
+  margin-bottom: var(--vf-space-4);
+  padding: var(--vf-space-3) var(--vf-space-4);
   border: 1px solid var(--vf-danger-border, #e9b8b8);
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-danger-soft, #fff5f5);
   color: var(--vf-danger-text, #a83232);
 }
@@ -485,16 +485,16 @@ onMounted(load);
 .system-info-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.8rem;
-  margin-top: 0.6rem;
-  margin-bottom: 1rem;
+  gap: var(--vf-section-gap);
+  margin-top: var(--vf-space-2);
+  margin-bottom: var(--vf-space-4);
 }
 
 .system-info-stat,
 .system-info-panel {
   min-width: 0;
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface-raised);
   box-shadow: var(--vf-shadow-card);
 }
@@ -550,14 +550,15 @@ onMounted(load);
 .system-info-card-title {
   margin: 0;
   color: var(--vf-text-strong);
-  font-size: 0.98rem;
+  /* 与 SectionCard 的卡片标题同字级 */
+  font-size: 0.95rem;
   font-weight: 650;
 }
 
 .system-info-section-description {
   margin: 0.28rem 0 0;
   color: var(--system-info-muted);
-  font-size: 0.78rem;
+  font-size: 0.8125rem;
   line-height: 1.45;
 }
 
@@ -760,14 +761,14 @@ onMounted(load);
 
 .system-info-search input {
   width: min(220px, 42vw);
-  height: 2.25rem;
-  padding: 0 0.7rem;
+  height: var(--vf-control-height);
+  padding: 0 var(--vf-space-3);
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-sm, 6px);
+  border-radius: var(--vf-radius-control);
   background: var(--vf-surface);
   color: var(--vf-text);
   font: inherit;
-  font-size: 0.78rem;
+  font-size: 0.8125rem;
 }
 
 .system-info-search input:focus-visible {
@@ -784,20 +785,22 @@ onMounted(load);
   width: 100%;
   border-collapse: collapse;
   text-align: left;
-  font-size: 0.79rem;
+  font-size: 0.8125rem;
 }
 
 .system-info-table th {
-  padding: 0.62rem 0.7rem;
+  height: var(--vf-table-head-height);
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   color: var(--system-info-muted);
-  font-size: 0.68rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .system-info-table td {
-  padding: 0.72rem 0.7rem;
+  height: var(--vf-row-height);
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   color: var(--vf-text);
   vertical-align: middle;

@@ -220,7 +220,7 @@ onBeforeUnmount(() => {
 .sort-menu-item {
   display: flex;
   align-items: center;
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-control);
   color: var(--vf-text);
   background: transparent;
 }

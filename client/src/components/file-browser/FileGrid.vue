@@ -132,12 +132,12 @@ const view = useFileViewStore();
     auto-fill,
     minmax(var(--file-card-min, 190px), 1fr)
   );
-  gap: 14px;
-  padding: 4px 2px 12px;
+  gap: var(--vf-section-gap);
+  padding: var(--vf-page-padding);
 }
 
 .file-grid.is-density-compact {
-  gap: 8px;
-  padding: 2px 0 10px;
+  gap: var(--vf-space-2);
+  padding: var(--vf-space-2);
 }
 </style>

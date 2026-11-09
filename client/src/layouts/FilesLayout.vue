@@ -200,7 +200,8 @@ defineExpose({
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  padding: 1.25rem 1.5rem;
+  /* 全站内容左右基线 16px（文件页由列表自己铺满，见 Home.vue） */
+  padding: var(--vf-page-padding);
   overflow-y: auto;
 }
 
@@ -219,9 +220,9 @@ defineExpose({
   .files-mobile-bar {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    height: 48px;
-    padding: 0 0.5rem;
+    gap: var(--vf-space-1);
+    height: var(--vf-toolbar-height);
+    padding: 0 var(--vf-space-2);
     border-bottom: 1px solid var(--vf-border-weak);
     background: var(--vf-surface);
   }
@@ -284,7 +285,7 @@ defineExpose({
   }
 
   .files-content {
-    padding: 0.75rem;
+    padding: var(--vf-page-padding);
     overflow-y: visible;
   }
 }

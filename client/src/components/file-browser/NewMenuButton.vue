@@ -120,15 +120,15 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
-/* 主按钮：Nextcloud 的「+ 新建」——实心主色、8px 圆角、36px 高（工具栏唯一主操作） */
+/* 主按钮：Nextcloud 的「+ 新建」——实心主色、3px 圆角、34px 高（工具栏唯一主操作） */
 .nc-new-button {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  min-height: 36px;
-  padding: 0 0.8rem;
+  gap: var(--vf-space-2);
+  min-height: var(--vf-control-height);
+  padding: 0 var(--vf-space-3);
   border: 1px solid var(--vf-accent-fill);
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-control);
   background: var(--vf-accent-fill);
   color: var(--vf-on-accent);
   font-size: 0.875rem;
@@ -158,15 +158,15 @@ onBeforeUnmount(() => {
 /* 下拉：白底、8px 圆角、菜单阴影；绝对定位在按钮下方，不挤压面包屑 */
 .nc-new-dropdown {
   position: absolute;
-  top: calc(100% + 0.3rem);
+  top: calc(100% + var(--vf-space-1));
   left: 0;
   z-index: 30;
   display: flex;
   flex-direction: column;
   min-width: 11rem;
-  padding: 0.25rem;
+  padding: var(--vf-space-1);
   border: 1px solid var(--vf-border);
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-menu);
 }
@@ -174,11 +174,11 @@ onBeforeUnmount(() => {
 .nc-new-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   width: 100%;
-  padding: 0.45rem 0.6rem;
+  padding: var(--vf-space-2) var(--vf-space-3);
   border: none;
-  border-radius: 3px;
+  border-radius: var(--vf-radius-control);
   background: transparent;
   color: var(--vf-text);
   font-size: 0.875rem;

@@ -179,14 +179,14 @@ onMounted(() => {
 .recent-view {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--vf-section-gap);
   min-width: 0;
 }
 
 /* 列表面板：与 Nextcloud 文件区一致，卡片 8px 圆角、行高 50px。 */
 .recent-panel {
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-card);
   overflow: hidden;
@@ -203,12 +203,12 @@ onMounted(() => {
 }
 
 .recent-table th {
-  height: 38px;
-  padding: 0 1rem;
+  height: var(--vf-table-head-height);
+  padding: 0 var(--vf-cell-padding-x);
   background: var(--vf-table-head);
   border-bottom: 1px solid var(--vf-border-weak);
   color: var(--vf-text-muted);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   text-align: left;
   white-space: nowrap;
@@ -216,7 +216,7 @@ onMounted(() => {
 
 .recent-table td {
   height: var(--vf-row-height);
-  padding: 0 1rem;
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   color: var(--vf-text);
   font-size: 0.875rem;
@@ -241,7 +241,7 @@ onMounted(() => {
 .recent-name-cell {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--vf-space-2);
   min-width: 0;
 }
 
@@ -270,11 +270,11 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 26px;
-  height: 26px;
+  width: var(--vf-control-height-sm);
+  height: var(--vf-control-height-sm);
   margin-left: auto;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--vf-radius-control);
   background: transparent;
   color: var(--vf-text-subtle);
   cursor: pointer;
@@ -315,7 +315,7 @@ onMounted(() => {
 
   .recent-table th,
   .recent-table td {
-    padding: 0 0.75rem;
+    padding: 0 var(--vf-space-3);
   }
 }
 

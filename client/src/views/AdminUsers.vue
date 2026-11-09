@@ -992,11 +992,11 @@ onMounted(() => {
 }
 
 .admin-filter {
-  gap: 0.3rem;
-  /* M3 filter chip 高度 32px（原 28px） */
-  min-height: 2rem;
-  padding: 0 0.6rem;
-  font-size: 0.8rem;
+  gap: var(--vf-space-1);
+  /* 与活动页 chips 同高（34px），不再混用 28/32/36 */
+  min-height: var(--vf-control-height);
+  padding: 0 var(--vf-space-3);
+  font-size: 0.8125rem;
 }
 
 .admin-filter-count {
@@ -1138,9 +1138,9 @@ onMounted(() => {
 }
 
 .admin-user-card {
-  padding: 0.75rem 0.8rem;
+  padding: var(--vf-space-4);
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
 }
 
@@ -1210,7 +1210,7 @@ onMounted(() => {
 }
 
 .admin-table-wrap {
-  margin-top: 0.6rem;
+  margin-top: var(--vf-space-2);
   overflow-x: auto;
 }
 
@@ -1221,7 +1221,7 @@ onMounted(() => {
 .admin-table thead th {
   border-bottom: 1px solid var(--vf-border-weak);
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   white-space: nowrap;
 }

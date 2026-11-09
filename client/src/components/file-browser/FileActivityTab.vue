@@ -157,20 +157,20 @@ onBeforeUnmount(() => {
 .details-tab-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--vf-section-gap);
 }
 
 .details-tab-hint {
   margin: 0;
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: 0.8125rem;
   line-height: 1.5;
 }
 
 .details-activity-list {
   display: flex;
   flex-direction: column;
-  gap: 0.55rem;
+  gap: var(--vf-space-2);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -179,7 +179,7 @@ onBeforeUnmount(() => {
 .details-activity-item {
   display: flex;
   align-items: flex-start;
-  gap: 0.55rem;
+  gap: var(--vf-space-2);
   min-width: 0;
 }
 
@@ -187,7 +187,7 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   width: 7px;
   height: 7px;
-  margin-top: 0.4rem;
+  margin-top: var(--vf-space-1);
   border: 2px solid var(--vf-accent-soft-strong);
   border-radius: 50%;
   background: var(--vf-accent);

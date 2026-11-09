@@ -328,7 +328,15 @@ onMounted(() => {
 .activity-view {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--vf-section-gap);
+  min-width: 0;
+}
+
+/* 分组卡片之间同样是 16px 区块间距（原先靠 .activity-group + .activity-group 的 0.9rem 外边距） */
+.activity-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vf-section-gap);
   min-width: 0;
 }
 
@@ -336,23 +344,23 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--vf-space-4);
   flex-wrap: wrap;
 }
 
 .activity-filters {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--vf-space-2);
   flex-wrap: wrap;
 }
 
 /* 分段 chips：3px 圆角、选中浅蓝底，与视图侧栏的选中态一致。 */
 .activity-filter {
-  height: 30px;
-  padding: 0 0.8rem;
+  height: var(--vf-control-height);
+  padding: 0 var(--vf-space-3);
   border: 1px solid var(--vf-border-soft);
-  border-radius: 3px;
+  border-radius: var(--vf-radius-control);
   background: var(--vf-surface);
   color: var(--vf-text-muted);
   font-size: 0.8125rem;
@@ -385,22 +393,19 @@ onMounted(() => {
 /* 每天一张卡片：卡片 8px 圆角、行高 50px。 */
 .activity-group {
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-card);
   overflow: hidden;
-}
-
-.activity-group + .activity-group {
-  margin-top: 0.9rem;
 }
 
 .activity-group-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.55rem 0.95rem;
+  gap: var(--vf-space-2);
+  height: var(--vf-table-head-height);
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-sunken);
 }
@@ -426,9 +431,9 @@ onMounted(() => {
 .activity-item {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: var(--vf-space-2);
   min-height: var(--vf-row-height);
-  padding: 0.35rem 0.95rem;
+  padding: var(--vf-space-1) var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
@@ -447,7 +452,7 @@ onMounted(() => {
 .activity-text {
   display: flex;
   align-items: baseline;
-  gap: 0.35rem;
+  gap: var(--vf-space-1);
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
@@ -479,7 +484,7 @@ onMounted(() => {
 .activity-failure {
   display: inline-flex;
   align-items: center;
-  gap: 0.22rem;
+  gap: var(--vf-space-1);
   flex: none;
   color: var(--vf-danger-text);
   font-size: 0.72rem;
@@ -503,7 +508,7 @@ onMounted(() => {
 .activity-more {
   display: flex;
   justify-content: center;
-  padding: 0.75rem 0 0.25rem;
+  padding: var(--vf-space-2) 0;
 }
 
 .is-spinning {
@@ -519,18 +524,18 @@ onMounted(() => {
 @media screen and (max-width: 600px) {
   .activity-item {
     flex-wrap: wrap;
-    row-gap: 0.15rem;
-    padding: 0.5rem 0.75rem;
+    row-gap: var(--vf-space-1);
+    padding: var(--vf-space-2) var(--vf-space-3);
   }
 
   .activity-time {
     width: 100%;
-    margin-left: calc(28px + 0.65rem);
+    margin-left: calc(28px + var(--vf-space-2));
     text-align: left;
   }
 
   .activity-group-head {
-    padding: 0.5rem 0.75rem;
+    padding: 0 var(--vf-space-3);
   }
 }
 

@@ -207,8 +207,8 @@ const emit = defineEmits<{
   align-items: center;
   gap: 0.6rem;
   margin-top: 0.5rem;
-  padding: 0.6rem;
-  border-radius: var(--vf-radius);
+  padding: var(--vf-space-3);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface-sunken);
   font-size: 0.875rem;
 }

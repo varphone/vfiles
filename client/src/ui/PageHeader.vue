@@ -32,9 +32,9 @@ withDefaults(
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--vf-space-4);
   flex-wrap: wrap;
-  padding-bottom: 1rem;
+  padding-bottom: var(--vf-space-4);
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
@@ -56,9 +56,9 @@ withDefaults(
 }
 
 .vf-page-header-desc {
-  margin: 0.3rem 0 0;
+  margin: var(--vf-space-1) 0 0;
   max-width: 62ch;
-  font-size: 0.82rem;
+  font-size: 0.8125rem;
   line-height: 1.5;
   color: var(--vf-text-muted);
 }
@@ -66,7 +66,7 @@ withDefaults(
 .vf-page-header-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   flex-wrap: wrap;
 }
 

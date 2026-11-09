@@ -29,10 +29,10 @@ withDefaults(
 .vf-stat {
   display: flex;
   align-items: flex-start;
-  gap: 0.75rem;
-  padding: 0.95rem 1rem;
+  gap: var(--vf-space-3);
+  padding: var(--vf-space-4);
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-lg);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-card);
 }
@@ -41,10 +41,10 @@ withDefaults(
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: var(--vf-control-height);
+  height: var(--vf-control-height);
   flex: none;
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-accent-soft);
   color: var(--vf-accent-text);
 }
@@ -61,7 +61,7 @@ withDefaults(
 }
 
 .vf-stat-value {
-  margin: 0.15rem 0 0;
+  margin: var(--vf-space-1) 0 0;
   font-size: 1.35rem;
   line-height: 1.25;
   font-weight: 700;
@@ -70,8 +70,8 @@ withDefaults(
 }
 
 .vf-stat-hint {
-  margin: 0.2rem 0 0;
-  font-size: 0.74rem;
+  margin: var(--vf-space-1) 0 0;
+  font-size: 0.75rem;
   color: var(--vf-text-subtle);
 }
 </style>

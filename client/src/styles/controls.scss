@@ -7,13 +7,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.35rem;
-  /* 对齐 M3 / Drive 的控件尺寸：36px（触屏 40px 命中区） */
-  width: 2.25rem;
-  height: 2.25rem;
+  gap: var(--vf-space-2);
+  /* 与文字按钮同高：34px（触屏 44px 命中区） */
+  width: var(--vf-control-height);
+  height: var(--vf-control-height);
   padding: 0;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--vf-radius-control);
   background: transparent;
   color: var(--vf-text-muted);
   cursor: pointer;
@@ -70,12 +70,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.35rem;
-  min-height: 2rem;
-  padding: 0 0.75rem;
+  gap: var(--vf-space-2);
+  min-height: var(--vf-control-height);
+  padding: 0 var(--vf-space-3);
   border: none;
-  /* Seafile 的小圆角（原胶囊按钮已统一收敛） */
-  border-radius: 3px;
+  /* 元素圆角（与 Bulma 按钮、输入框同一刻度） */
+  border-radius: var(--vf-radius-control);
   background: transparent;
   color: var(--vf-text-muted);
   font-size: 0.875rem;
@@ -153,7 +153,7 @@
   border-radius: 3px;
   color: var(--vf-text);
   box-shadow: none;
-  min-height: 2rem;
+  min-height: var(--vf-control-height);
 }
 
 .button:not(
@@ -225,15 +225,15 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.35rem;
-  min-height: 2rem;
-  padding: 0 0.9rem;
+  gap: var(--vf-space-2);
+  min-height: var(--vf-control-height);
+  padding: 0 var(--vf-space-4);
   border: none;
-  border-radius: 3px;
+  border-radius: var(--vf-radius-control);
   background: var(--vf-accent-fill);
   color: var(--vf-on-accent);
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   transition: background-color 0.15s var(--vf-motion-standard);
 }
@@ -245,6 +245,13 @@
 
 .vf-primary-button:active:not(:disabled) {
   background: var(--vf-accent-fill-hover);
+}
+
+/* 复选框同样参与键盘焦点语言：隐藏的 hover 控件获得焦点时可见 */
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline: 2px solid var(--vf-accent-text);
+  outline-offset: 2px;
 }
 
 /* 焦点可见环（M3：2px 指示环 + halo；这里用 accent-text 实线环 + 偏移），
@@ -292,8 +299,8 @@ a.dropdown-item,
 button.dropdown-item,
 .dropdown-item {
   font-size: 0.875rem;
-  padding: 0.5rem 0.625rem;
-  border-radius: var(--vf-radius-sm);
+  padding: var(--vf-space-2) var(--vf-space-3);
+  border-radius: var(--vf-radius-control);
 }
 
 /* 菜单中的当前项（如移动「更多」菜单的 当前模式）：tint + 字重标识状态 */
@@ -371,9 +378,9 @@ mark.has-background-warning-light {
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
-  padding: 1.1rem 1.2rem 1.3rem;
+  padding: var(--vf-space-4);
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-lg);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-card);
 }
@@ -382,21 +389,17 @@ mark.has-background-warning-light {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.8rem;
+  gap: var(--vf-space-4);
   flex-wrap: wrap;
-  padding-bottom: 0.8rem;
+  padding-bottom: var(--vf-space-4);
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
 .vf-page-header-actions {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--vf-space-2);
   flex-wrap: wrap;
-}
-
-@media screen and (max-width: 768px) {
-  
 }
 
 
@@ -444,21 +447,20 @@ mark.has-background-warning-light {
   }
 }
 
-/* 对话框页脚里的 Bulma 按钮（确认框等）与 Seafile 一致：
-   32px 高、3px 圆角、13px/500 —— 与 move/share/transfer 对话框的 vf-ghost-button 一致。 */
+/* 对话框页脚按钮与 vf-ghost-button 同一尺寸：34px 高、3px 圆角、14px/500。 */
 .modal-card-foot .button:not(.is-static) {
-  min-height: 2rem;
-  padding: 0 0.75rem;
-  border-radius: 3px;
-  font-size: 0.8125rem;
+  min-height: var(--vf-control-height);
+  padding: 0 var(--vf-space-3);
+  border-radius: var(--vf-radius-control);
+  font-size: 0.875rem;
   font-weight: 500;
 }
 
 /* 触屏命中区不小于 40px（M3 / HIG） */
 @media (pointer: coarse) {
   .vf-icon-button {
-    width: 2.5rem;
-    height: 2.5rem;
+    width: 2.75rem;
+    height: 2.75rem;
   }
 
   .vf-ghost-button,
@@ -484,7 +486,7 @@ mark.has-background-warning-light {
 .vf-th-sort {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
   padding: 0;
   border: 0;
   background: transparent;

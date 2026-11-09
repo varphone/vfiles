@@ -10,7 +10,8 @@
       <thead>
         <tr>
           <th scope="col" class="is-narrow">
-            <label v-if="selectMode" class="file-list-select-all" @click.stop>
+            <!-- 表头全选常驻：行首复选框默认隐藏，全选入口必须始终可见/可达 -->
+            <label class="file-list-select-all" @click.stop>
               <input
                 type="checkbox"
                 :checked="allSelected"
@@ -326,8 +327,8 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
   position: sticky;
   top: 0;
   z-index: 1;
-  height: 44px;
-  padding: 0 16px;
+  height: var(--vf-table-head-height);
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface);
   color: var(--vf-text-muted);
@@ -341,7 +342,7 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
 /* 单元格由 FileItem 渲染：用 :deep 才能作用到子组件的 <td>
    （与表尾汇总的 16px 内边距对齐） */
 .file-list-table :deep(tbody td) {
-  padding: 0 16px;
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   vertical-align: middle;
 }
@@ -355,13 +356,14 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
   width: 1%;
 }
 
-/* 表尾汇总：不属于数据行，无悬停态 */
+/* 表尾汇总：不属于数据行，无悬停态；与表头同高、同 16px 基线 */
 .file-list-summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 16px;
+  gap: var(--vf-space-3);
+  min-height: var(--vf-table-head-height);
+  padding: 0 var(--vf-cell-padding-x);
   color: var(--vf-text-muted);
   font-size: 13px;
 }
@@ -393,7 +395,7 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
 .file-list-sort {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--vf-space-1);
   padding: 0;
   border: none;
   background: transparent;

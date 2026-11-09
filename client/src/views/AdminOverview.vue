@@ -260,8 +260,9 @@ onMounted(reload);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.6rem 0;
+  gap: var(--vf-space-3);
+  min-height: var(--vf-row-height);
+  padding: 0;
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
@@ -292,15 +293,15 @@ onMounted(reload);
 .admin-facts {
   display: flex;
   flex-direction: column;
-  gap: 0.55rem;
+  gap: var(--vf-space-2);
 }
 
 .admin-facts > div {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 1rem;
-  padding-bottom: 0.5rem;
+  gap: var(--vf-space-4);
+  padding-bottom: var(--vf-space-2);
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
@@ -332,8 +333,10 @@ onMounted(reload);
 
 .admin-activity-item {
   display: flex;
-  gap: 0.7rem;
-  padding: 0.65rem 1.1rem;
+  align-items: center;
+  gap: var(--vf-space-2);
+  min-height: var(--vf-row-height);
+  padding: var(--vf-space-1) 0;
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
@@ -392,7 +395,7 @@ onMounted(reload);
 
 .admin-empty {
   margin: 0;
-  padding: 1.4rem 1.1rem;
+  padding: var(--vf-space-5) 0;
   text-align: center;
   font-size: 0.8rem;
   color: var(--vf-text-subtle);
@@ -406,10 +409,10 @@ onMounted(reload);
 .admin-overview-error {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 0.8rem;
+  gap: var(--vf-space-2);
+  padding: var(--vf-space-2) var(--vf-space-3);
   border: 1px solid var(--vf-danger-soft);
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-control);
   background: var(--vf-danger-soft);
   color: var(--vf-danger-text);
   font-size: 0.8rem;

@@ -131,7 +131,10 @@ export function useFileSelection(deps: FileSelectionDeps) {
   }
 
   function toggleSelectAll() {
-    if (!batchMode.value) return;
+    // 表头全选常驻（行内复选框默认隐藏），未进入批量模式时先进入再全选。
+    if (!batchMode.value) {
+      batchMode.value = true;
+    }
     const selectable = selectableItems();
     const allSelected =
       selectable.length > 0 &&

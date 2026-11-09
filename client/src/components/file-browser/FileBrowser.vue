@@ -3119,7 +3119,7 @@ function handleSortChange(field: SortField) {
 .file-browser-box {
   display: flex;
   flex-direction: column;
-  border-radius: var(--vf-radius-lg);
+  border-radius: var(--vf-radius-card);
   border: 1px solid var(--vf-border-weak);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-card);
@@ -3157,10 +3157,12 @@ function handleSortChange(field: SortField) {
     /* 列表区域是唯一滚动容器：行、加载更多提示一起滚动，
        列头用 sticky 常驻，与主流网盘一致 */
     overflow: auto;
-    scrollbar-gutter: stable;
-    /* sticky 表头的滚动缓冲（38px 表头高）：scrollIntoView/键盘导航停在表头下方，
-       否则向上导航时活动行会被吸进表头（实测藏于表头下 38px）。 */
-    scroll-padding-top: 2.375rem;
+    /* 不再用 scrollbar-gutter: stable —— 它会在无滚动条时也永久占用右侧
+       滚动条宽度，使表头/行/表尾比工具栏窄一截（右边缘对不齐）。
+       滚动条出现时列表按浏览器行为收窄，是主流网盘的一致表现。 */
+    /* sticky 表头的滚动缓冲（44px 表头高）：scrollIntoView/键盘导航停在表头下方，
+       否则向上导航时活动行会被吸进表头。 */
+    scroll-padding-top: var(--vf-table-head-height);
   }
 
   /* thead 由子组件 FileList.vue 渲染，需 :deep() 才能匹配到 th（此前规则从未生效） */
@@ -3178,10 +3180,12 @@ function handleSortChange(field: SortField) {
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: var(--vf-space-2);
   flex-wrap: nowrap;
-  height: 50px;
-  padding: 0 0.85rem;
+  height: var(--vf-toolbar-height);
+  flex: 0 0 auto;
+  /* 与表格单元格、表尾同一 16px 基线 */
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface);
 }
@@ -3190,7 +3194,7 @@ function handleSortChange(field: SortField) {
 .file-toolbar-leading {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -3209,7 +3213,7 @@ function handleSortChange(field: SortField) {
 .file-toolbar-write {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--vf-space-2);
   flex: 0 0 auto;
 }
 
@@ -3248,11 +3252,11 @@ function handleSortChange(field: SortField) {
 .file-toolbar-view-name {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  height: 32px;
-  padding: 0 0.45rem;
+  gap: var(--vf-space-1);
+  height: var(--vf-control-height);
+  padding: 0 var(--vf-space-2);
   border: none;
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-control);
   background: transparent;
   color: var(--vf-text-strong);
   font-family: inherit;
@@ -3277,10 +3281,10 @@ function handleSortChange(field: SortField) {
   z-index: 30;
   min-width: 11rem;
   margin: 0;
-  padding: 0.25rem;
+  padding: var(--vf-space-1);
   list-style: none;
   border: 1px solid var(--vf-border);
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-menu);
 }
@@ -3288,12 +3292,12 @@ function handleSortChange(field: SortField) {
 .file-toolbar-view-item {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  height: 34px;
-  padding: 0 0.55rem;
-  border-radius: var(--vf-radius-sm);
+  gap: var(--vf-space-3);
+  height: var(--vf-control-height);
+  padding: 0 var(--vf-space-3);
+  border-radius: var(--vf-radius-control);
   color: var(--vf-text);
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   text-decoration: none;
 }
 
@@ -3312,7 +3316,7 @@ function handleSortChange(field: SortField) {
 .file-toolbar-actions {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--vf-space-2);
   margin-left: auto;
   flex: 0 1 auto;
   min-width: 0;
@@ -3329,14 +3333,14 @@ function handleSortChange(field: SortField) {
   flex: 0 0 auto;
   padding: 2px;
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface-sunken);
 }
 
 .file-view-toggle .vf-icon-button {
-  width: 30px;
-  height: 30px;
-  border-radius: 6px;
+  width: var(--vf-control-height-sm);
+  height: var(--vf-control-height-sm);
+  border-radius: var(--vf-radius-control);
 }
 
 .file-toolbar-details {
@@ -3352,7 +3356,7 @@ function handleSortChange(field: SortField) {
 }
 
 .file-toolbar-error {
-  margin: 0.6rem 0.85rem 0;
+  margin: var(--vf-space-2) var(--vf-cell-padding-x) 0;
 }
 
 /* 受限会话的轻量范围徽标：让用户始终知道当前会话能看/能写哪里 */
@@ -3362,7 +3366,7 @@ function handleSortChange(field: SortField) {
   gap: 0.3rem;
   flex: 0 0 auto;
   max-width: 100%;
-  padding: 0.2rem 0.55rem;
+  padding: var(--vf-space-1) var(--vf-space-3);
   border: 1px solid var(--vf-border);
   border-radius: var(--vf-radius-pill);
   background: var(--vf-surface-sunken);
@@ -3374,16 +3378,29 @@ function handleSortChange(field: SortField) {
   white-space: nowrap;
 }
 
-/* 版本切换：工具栏右组的紧凑胶囊（原先在顶栏 #center 插槽）。 */
+/* 版本切换：工具栏右组的紧凑按钮组（8px 外圆角，与视图切换组一致）。 */
 .file-history {
   display: inline-flex;
   align-items: center;
-  gap: 0.1rem;
+  gap: 0;
   flex: 0 0 auto;
-  padding: 0.1rem;
+  padding: 0;
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-pill);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface-sunken);
+  overflow: hidden;
+}
+
+.file-history .vf-icon-button {
+  width: 30px;
+  height: 34px;
+  border-radius: 0;
+}
+
+.file-history .file-history-label {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
 }
 
 .file-history.is-error {
@@ -3393,9 +3410,9 @@ function handleSortChange(field: SortField) {
 .file-history-label {
   min-width: 5.5rem;
   max-width: 9rem;
-  padding: 0 0.5rem;
+  padding: 0 var(--vf-space-2);
   text-align: center;
-  font-size: 0.8rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   color: var(--vf-text);
   white-space: nowrap;
@@ -3443,21 +3460,23 @@ function handleSortChange(field: SortField) {
 .desktop-status-bar {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: var(--vf-space-4);
   flex-wrap: wrap;
-  padding: 0.55rem 1.1rem;
+  min-height: var(--vf-table-head-height);
+  flex: 0 0 auto;
+  padding: 0 var(--vf-cell-padding-x);
   border-top: 1px solid var(--vf-border-weak);
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: 0.8125rem;
 }
 
 .desktop-status-shortcuts {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.1rem 0.35rem;
+  gap: var(--vf-space-1);
+  padding: var(--vf-space-1) var(--vf-space-2);
   border: none;
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-control);
   background: transparent;
   color: inherit;
   font-size: inherit;
@@ -3529,24 +3548,27 @@ function handleSortChange(field: SortField) {
   }
 }
 
-/* ---- Seafile 式外壳：视图侧栏在页面级，文件区为全高、无浮动卡片 ---- */
+/* ---- Seafile 式外壳：视图侧栏在页面级，文件区为全高、无浮动卡片 ----
+   padding: 0 覆盖 Bulma .box 的 1.25rem：工具栏/表格/表尾各自持有 16px，
+   这样内容左右边缘与其它页面落在同一条基线上。 */
 .file-browser {
   height: 100%;
 }
 
 .file-browser-box {
+  padding: 0;
   border: 0;
   border-radius: 0;
   box-shadow: none;
   background: var(--vf-surface);
-  height: calc(100dvh - var(--sf-topbar-height, 56px));
+  height: calc(100dvh - var(--vf-topbar-height));
 }
 
 
 @media screen and (max-width: 1023px) {
   .file-browser-box {
     height: auto;
-    min-height: calc(100dvh - var(--sf-topbar-height, 56px));
+    min-height: calc(100dvh - var(--vf-topbar-height));
   }
 }
 
@@ -3561,7 +3583,7 @@ function handleSortChange(field: SortField) {
   }
 
   .file-browser-box {
-    padding: 0.5rem;
+    padding: var(--vf-space-2);
     border-radius: 0;
     box-shadow: none;
     border-left: none;
@@ -3603,9 +3625,9 @@ function handleSortChange(field: SortField) {
   left: 50%;
   transform: translateX(-50%);
   z-index: 60;
-  padding: 0.55rem 1.1rem;
+  padding: var(--vf-space-2) var(--vf-space-4);
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface-raised);
   box-shadow: var(--vf-shadow-menu);
   color: var(--vf-text-strong);
@@ -3661,7 +3683,7 @@ function handleSortChange(field: SortField) {
 
 @media screen and (min-width: 1024px) {
   .file-browser-box {
-    height: calc(100dvh - var(--sf-topbar-height, 56px));
+    height: calc(100dvh - var(--vf-topbar-height));
   }
 }
 </style>

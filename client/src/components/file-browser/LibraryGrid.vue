@@ -340,8 +340,8 @@ useDocumentEventListener("keydown", (event) => {
 .library-home {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  padding: 1.35rem 1.1rem 2rem;
+  gap: var(--vf-section-gap);
+  padding: var(--vf-page-padding);
   min-height: 100%;
   box-sizing: border-box;
 }
@@ -350,27 +350,28 @@ useDocumentEventListener("keydown", (event) => {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--vf-space-4);
 }
 
 .library-home-title {
   margin: 0;
   color: var(--vf-text-strong);
-  font-size: 1.05rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  /* 与 PageHeader 的页标题同字级 */
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .library-home-subtitle {
-  margin: 0.2rem 0 0;
+  margin: var(--vf-space-1) 0 0;
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: 0.8125rem;
 }
 
 .library-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 1rem;
+  gap: var(--vf-section-gap);
   align-content: start;
 }
 
@@ -378,7 +379,7 @@ useDocumentEventListener("keydown", (event) => {
   position: relative;
   min-width: 0;
   border: 1px solid var(--vf-border-weak);
-  border-radius: 8px;
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   cursor: pointer;
   transition:
@@ -410,7 +411,8 @@ useDocumentEventListener("keydown", (event) => {
   align-items: center;
   justify-content: center;
   height: 92px;
-  border-radius: 7px 7px 0 0;
+  border-radius: calc(var(--vf-radius-card) - 1px)
+    calc(var(--vf-radius-card) - 1px) 0 0;
   background: var(--vf-accent-soft);
   color: var(--vf-accent);
 }
@@ -418,8 +420,8 @@ useDocumentEventListener("keydown", (event) => {
 .library-card-body {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
-  padding: 0.7rem 0.85rem 0.85rem;
+  gap: var(--vf-space-1);
+  padding: var(--vf-space-3) var(--vf-space-4) var(--vf-space-4);
   min-width: 0;
 }
 
@@ -443,10 +445,10 @@ useDocumentEventListener("keydown", (event) => {
 .library-card-updated {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  margin: 0.35rem 0 0;
+  gap: var(--vf-space-1);
+  margin: var(--vf-space-1) 0 0;
   color: var(--vf-text-subtle);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .library-card-rename {
@@ -466,10 +468,10 @@ useDocumentEventListener("keydown", (event) => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 27px;
-  height: 27px;
+  width: var(--vf-control-height-sm);
+  height: var(--vf-control-height-sm);
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--vf-radius-control);
   background: var(--vf-surface-translucent);
   backdrop-filter: blur(8px);
   color: var(--vf-text);
@@ -499,9 +501,9 @@ useDocumentEventListener("keydown", (event) => {
   right: 0;
   z-index: 30;
   min-width: 158px;
-  padding: 4px;
+  padding: var(--vf-space-1);
   border: 1px solid var(--vf-border);
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-menu);
 }
@@ -509,11 +511,11 @@ useDocumentEventListener("keydown", (event) => {
 .library-card-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--vf-space-2);
   width: 100%;
-  padding: 7px 10px;
+  padding: var(--vf-space-2) var(--vf-space-3);
   border: none;
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-control);
   background: transparent;
   color: var(--vf-text);
   font-size: 0.8rem;
@@ -535,11 +537,11 @@ useDocumentEventListener("keydown", (event) => {
 
 @media screen and (max-width: 1023px) {
   .library-home {
-    padding: 1rem 0.9rem 1.5rem;
+    padding: var(--vf-page-padding);
   }
 
   .library-grid {
-    gap: 0.75rem;
+    gap: var(--vf-space-3);
   }
 
   .library-card-cover {

@@ -67,13 +67,13 @@ import { cardMinWidth } from "../../stores/fileView.store";
 
 <style scoped>
 .file-skeleton {
-  padding: 0.25rem 0;
+  padding: 0;
 }
 
 .file-skeleton--list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0;
 }
 
 .file-skeleton--grid {
@@ -90,10 +90,10 @@ import { cardMinWidth } from "../../stores/fileView.store";
 .file-skeleton-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  /* 与真实桌面列表行同高（48px）：此前 42px → 加载完成瞬间 6px/行 的布局跳动 */
-  min-height: 3rem;
-  padding: 0.6rem 0.35rem;
+  gap: var(--vf-space-4);
+  /* 与真实桌面列表行同高（51px）、同 16px 单元格基线，加载完成不跳动 */
+  min-height: var(--vf-row-height);
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
@@ -113,9 +113,9 @@ import { cardMinWidth } from "../../stores/fileView.store";
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  padding: 0.6rem;
+  padding: var(--vf-space-3);
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-card);
   /* 与真实卡片同高（200px）：消除加载完成瞬间的布局跳动 */
   min-height: 12.5rem;
 }

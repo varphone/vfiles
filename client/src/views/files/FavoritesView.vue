@@ -250,7 +250,7 @@ onMounted(() => {
 .favorites-view {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--vf-section-gap);
   min-width: 0;
 }
 
@@ -263,7 +263,7 @@ onMounted(() => {
 /* 列表面板：卡片 8px 圆角、行高 50px，与文件列表的密度一致。 */
 .favorites-panel {
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-card);
   overflow: hidden;
@@ -280,12 +280,12 @@ onMounted(() => {
 }
 
 .favorites-table th {
-  height: 38px;
-  padding: 0 1rem;
+  height: var(--vf-table-head-height);
+  padding: 0 var(--vf-cell-padding-x);
   background: var(--vf-table-head);
   border-bottom: 1px solid var(--vf-border-weak);
   color: var(--vf-text-muted);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   text-align: left;
   white-space: nowrap;
@@ -293,7 +293,7 @@ onMounted(() => {
 
 .favorites-table td {
   height: var(--vf-row-height);
-  padding: 0 1rem;
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   color: var(--vf-text);
   font-size: 0.875rem;
@@ -323,7 +323,7 @@ onMounted(() => {
 .favorites-name-cell {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--vf-space-2);
   min-width: 0;
 }
 
@@ -356,15 +356,15 @@ onMounted(() => {
 }
 
 .favorites-remove {
-  gap: 0.3rem;
-  padding: 0 0.55rem;
+  gap: var(--vf-space-1);
+  padding: 0 var(--vf-space-2);
   font-size: 0.8125rem;
 }
 
 .favorites-more {
   display: flex;
   justify-content: center;
-  padding: 0.6rem;
+  padding: var(--vf-space-2);
   border-top: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-2);
 }
@@ -394,7 +394,7 @@ onMounted(() => {
 
   .favorites-table th,
   .favorites-table td {
-    padding: 0 0.75rem;
+    padding: 0 var(--vf-space-3);
   }
 }
 

@@ -110,9 +110,10 @@ describe("useFileSelection", () => {
 
   it("selects all visible entries then clears on a second call", () => {
     const { selection } = setup();
-    selection.batchMode.value = true;
 
+    // 表头全选常驻：首次点击自动进入批量模式
     selection.toggleSelectAll();
+    expect(selection.batchMode.value).toBe(true);
     expect(selection.selectedCount.value).toBe(3);
 
     selection.toggleSelectAll();

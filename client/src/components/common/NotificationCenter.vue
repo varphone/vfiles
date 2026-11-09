@@ -225,9 +225,9 @@ onBeforeUnmount(() => {
 
 .notification-center-menu {
   min-width: min(20rem, calc(100vw - 2rem));
-  padding: 0.25rem;
+  padding: var(--vf-space-1);
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-card);
   /* 浮层色调抬升（同 ContextMenu）：深色下高于基准面一档 */
   background: var(--vf-surface-raised);
   box-shadow: var(--vf-shadow-menu);

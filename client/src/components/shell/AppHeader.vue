@@ -327,10 +327,11 @@ onBeforeUnmount(() => {
 .app-header-inner {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   height: 100%;
   min-width: 0;
-  padding: 0 0.85rem;
+  /* 与页面内容同一条 16px 左右基线 */
+  padding: 0 var(--vf-page-padding);
   flex-wrap: nowrap;
   color: var(--vf-on-accent);
 }
@@ -346,9 +347,10 @@ onBeforeUnmount(() => {
 .app-header-brand {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   height: 100%;
-  padding: 0 0.35rem;
+  /* 16（容器）+ 4 = 20px，与侧栏首列图标对齐 */
+  padding: 0 var(--vf-space-1);
   color: var(--vf-on-accent);
   text-decoration: none;
   white-space: nowrap;
@@ -360,12 +362,13 @@ onBeforeUnmount(() => {
   opacity: 0.92;
 }
 
-/* 品牌图标：把原始彩色 SVG 统一渲染成纯白，蓝底上更接近 Nextcloud 的白色 logo。 */
+/* 品牌图标：保留原始彩虹渐变（白 V 自带对比度）。
+   此前用 brightness(0) invert(1) 想染白，结果把整块不透明底也刷成白色，
+   蓝底上只剩一个白色圆角方块（V 被吃掉）。 */
 .app-header-logo {
   width: 28px;
   height: 28px;
   flex: 0 0 auto;
-  filter: brightness(0) invert(1);
 }
 
 .app-header-brand-name {

@@ -690,7 +690,7 @@ onMounted(() => {
   align-items: flex-start;
   gap: 0.35rem;
   margin: 0;
-  padding: 0.7rem 1rem;
+  padding: var(--vf-space-3) var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
@@ -704,7 +704,7 @@ onMounted(() => {
 }
 
 .settings-table-panel > .settings-table-state {
-  padding: 0.9rem 1rem;
+  padding: var(--vf-space-4);
 }
 
 .passwords-table-wrap {
@@ -720,20 +720,20 @@ onMounted(() => {
 }
 
 .passwords-table th {
-  height: 36px;
-  padding: 0 0.75rem;
+  height: var(--vf-table-head-height);
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-table-head);
-  color: var(--vf-text-subtle);
-  font-size: 12px;
+  color: var(--vf-text-muted);
+  font-size: 0.8125rem;
   font-weight: 600;
   text-align: left;
   white-space: nowrap;
 }
 
 .passwords-table td {
-  height: 44px;
-  padding: 0 0.75rem;
+  height: var(--vf-row-height);
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   vertical-align: middle;
   overflow: hidden;
@@ -742,12 +742,12 @@ onMounted(() => {
 
 .passwords-table th:first-child,
 .passwords-table td:first-child {
-  padding-left: 1rem;
+  padding-left: var(--vf-cell-padding-x);
 }
 
 .passwords-table th:last-child,
 .passwords-table td:last-child {
-  padding-right: 1rem;
+  padding-right: var(--vf-cell-padding-x);
 }
 
 .passwords-table tbody tr:last-child td {

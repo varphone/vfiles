@@ -100,7 +100,9 @@ describe("ViewsSidebar.vue", () => {
       resolve(process.cwd(), "src/components/files/ViewsSidebar.vue"),
       "utf8",
     );
-    expect(source).toContain("--vf-sidebar-item-radius: 8px");
+    expect(source).toContain(
+      "--vf-sidebar-item-radius: var(--vf-radius-card)",
+    );
     expect(source).toContain(
       "--vf-sidebar-item-active-bg: var(--vf-accent)",
     );

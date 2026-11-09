@@ -238,19 +238,19 @@ onBeforeUnmount(() => {
 .details-tab-panel {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--vf-section-gap);
 }
 
 /* 区块：标题 + 右侧说明按钮，区块之间用细分隔线 */
 .details-share-block {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--vf-space-2);
   min-width: 0;
 }
 
 .details-share-block + .details-share-block {
-  padding-top: 16px;
+  padding-top: var(--vf-space-4);
   border-top: 1px solid var(--vf-border-weak);
 }
 
@@ -258,7 +258,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
 }
 
 .details-share-block-title {
@@ -288,7 +288,7 @@ onBeforeUnmount(() => {
 .details-tab-hint {
   margin: 0;
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: 0.8125rem;
   line-height: 1.5;
 }
 
@@ -299,14 +299,14 @@ onBeforeUnmount(() => {
 .details-share-note {
   margin: 0;
   color: var(--vf-text-subtle);
-  font-size: 0.78rem;
+  font-size: 0.8125rem;
   line-height: 1.5;
 }
 
 .details-share-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -315,10 +315,10 @@ onBeforeUnmount(() => {
 .details-share-item {
   display: flex;
   align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.5rem 0.55rem;
+  gap: var(--vf-space-2);
+  padding: var(--vf-space-2) var(--vf-space-3);
   border: 1px solid var(--vf-border-weak);
-  border-radius: 3px;
+  border-radius: var(--vf-radius-control);
   background: var(--vf-surface-sunken);
 }
 

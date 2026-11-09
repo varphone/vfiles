@@ -164,7 +164,7 @@ onBeforeUnmount(() => {
 .path-bar {
   display: flex;
   align-items: center;
-  min-height: 2.1rem;
+  min-height: var(--vf-control-height);
   margin: 0;
   padding: 0;
 }
@@ -191,10 +191,10 @@ onBeforeUnmount(() => {
 .path-bar-segment {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--vf-space-1);
   max-width: 16rem;
-  padding: 3px 8px;
-  border-radius: var(--vf-radius-sm);
+  padding: var(--vf-space-1) var(--vf-space-2);
+  border-radius: var(--vf-radius-control);
   color: var(--vf-text-strong);
   font-size: 0.875rem;
   font-weight: 600;
@@ -226,7 +226,7 @@ onBeforeUnmount(() => {
   height: 22px;
   margin-left: 1px;
   border: none;
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-control);
   background: transparent;
   color: var(--vf-text-muted);
   cursor: pointer;
@@ -240,9 +240,9 @@ onBeforeUnmount(() => {
 .path-bar-menu {
   z-index: 60;
   min-width: 190px;
-  padding: 4px;
+  padding: var(--vf-space-1);
   border: 1px solid var(--vf-border);
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-menu);
 }

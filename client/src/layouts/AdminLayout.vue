@@ -145,7 +145,7 @@ const navItems = computed(() =>
   width: var(--vf-admin-sidebar-width);
   height: 100dvh;
   flex: none;
-  padding: 1rem 0.7rem 0.8rem;
+  padding: var(--vf-space-2);
   border-right: 1px solid var(--vf-border-weak);
   background: var(--vf-sidebar);
 }
@@ -153,8 +153,8 @@ const navItems = computed(() =>
 .admin-brand {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  padding: 0.15rem 0.35rem 1rem;
+  gap: var(--vf-space-2);
+  padding: var(--vf-space-1) var(--vf-space-1) var(--vf-space-4);
 }
 
 .admin-brand-mark {
@@ -192,11 +192,11 @@ const navItems = computed(() =>
 .admin-nav {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: var(--vf-space-1);
 }
 
 .admin-nav-label {
-  margin: 0.25rem 0.45rem 0.35rem;
+  margin: var(--vf-space-2) var(--vf-space-3) var(--vf-space-1);
   font-size: 0.68rem;
   font-weight: 650;
   letter-spacing: 0.04em;
@@ -208,12 +208,12 @@ const navItems = computed(() =>
   position: relative;
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  min-height: 36px;
-  padding: 0.4rem 0.6rem;
-  border-radius: var(--vf-radius-sm);
+  gap: var(--vf-space-2);
+  min-height: var(--vf-sidebar-item-height);
+  padding: 0 var(--vf-space-3);
+  border-radius: var(--vf-radius-card);
   color: var(--vf-text-muted);
-  font-size: 0.84rem;
+  font-size: 0.875rem;
   font-weight: 500;
   text-decoration: none;
   transition: background-color 0.12s var(--vf-motion-standard),
@@ -233,9 +233,9 @@ const navItems = computed(() =>
 
 .admin-nav-indicator {
   position: absolute;
-  left: -0.7rem;
-  top: 0.45rem;
-  bottom: 0.45rem;
+  left: calc(var(--vf-space-2) * -1);
+  top: var(--vf-space-2);
+  bottom: var(--vf-space-2);
   width: 2px;
   border-radius: 2px;
   background: var(--vf-accent);
@@ -243,16 +243,17 @@ const navItems = computed(() =>
 
 .admin-sidebar-foot {
   margin-top: auto;
-  padding-top: 0.8rem;
+  padding-top: var(--vf-space-2);
   border-top: 1px solid var(--vf-border-weak);
 }
 
 .admin-back-link {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.45rem 0.6rem;
-  border-radius: var(--vf-radius-sm);
+  gap: var(--vf-space-2);
+  min-height: var(--vf-sidebar-item-height);
+  padding: 0 var(--vf-space-3);
+  border-radius: var(--vf-radius-card);
   color: var(--vf-text-muted);
   font-size: 0.8rem;
   text-decoration: none;
@@ -277,9 +278,9 @@ const navItems = computed(() =>
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--vf-space-2);
   height: var(--vf-topbar-height);
-  padding: 0 1.5rem;
+  padding: 0 var(--vf-page-padding);
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-topbar);
   backdrop-filter: blur(10px);
@@ -289,7 +290,7 @@ const navItems = computed(() =>
 .admin-topbar-right {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: var(--vf-space-2);
   min-width: 0;
 }
 
@@ -321,10 +322,10 @@ const navItems = computed(() =>
 .admin-main-inner {
   max-width: var(--vf-content-max);
   margin: 0 auto;
-  padding: 1.5rem 1.5rem 3rem;
+  padding: var(--vf-page-padding) var(--vf-page-padding) var(--vf-space-6);
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--vf-section-gap);
 }
 
 .admin-drawer-scrim {
@@ -355,11 +356,11 @@ const navItems = computed(() =>
   }
 
   .admin-main-inner {
-    padding: 1.1rem 1rem 2.5rem;
+    padding: var(--vf-page-padding) var(--vf-page-padding) var(--vf-space-6);
   }
 
   .admin-topbar {
-    padding: 0 1rem;
+    padding: 0 var(--vf-page-padding);
   }
 }
 

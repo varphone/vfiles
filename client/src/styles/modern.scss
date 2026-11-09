@@ -2,14 +2,14 @@
 //!
 //! 只调整外观，不覆盖行为；页面仍可使用 Bulma 类与 `vf-*` 令牌。
 
-/* 按钮：统一 34px 高度、8px 圆角与可见焦点。 */
+/* 按钮：统一 34px 高度（小号 30px）、3px 圆角与可见焦点。 */
 .button {
   min-height: var(--vf-control-height);
   height: auto;
-  padding: 0.35rem 0.85rem;
-  border-radius: var(--vf-radius-sm);
-  font-size: 0.82rem;
-  font-weight: 550;
+  padding: 0 var(--vf-space-3);
+  border-radius: var(--vf-radius-control);
+  font-size: 0.875rem;
+  font-weight: 500;
   line-height: 1.25;
   transition:
     background-color 0.12s var(--vf-motion-standard),
@@ -19,8 +19,8 @@
 
 .button.is-small {
   min-height: var(--vf-control-height-sm);
-  padding: 0.25rem 0.65rem;
-  font-size: 0.78rem;
+  padding: 0 var(--vf-space-2);
+  font-size: 0.8125rem;
 }
 
 .button:focus-visible,
@@ -37,9 +37,9 @@
 .textarea,
 .select select {
   min-height: var(--vf-control-height);
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-control);
   border-color: var(--vf-border);
-  font-size: 0.84rem;
+  font-size: 0.875rem;
 }
 
 .input::placeholder,
@@ -47,27 +47,29 @@
   color: var(--vf-text-subtle);
 }
 
-/* 数据表：轻表头、44px 行高、行悬停与选中态。 */
+/* 数据表：表头 44px、行 51px，单元格左右 16px（与工具栏/表尾同一基线）。 */
 .table {
   background: transparent;
   color: var(--vf-text);
 }
 
 .table thead th {
-  padding: 0.6rem 0.75rem;
+  height: var(--vf-table-head-height);
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-table-head);
   color: var(--vf-text-muted);
-  font-size: 0.73rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   white-space: nowrap;
 }
 
 .table td {
-  padding: 0.55rem 0.75rem;
+  height: var(--vf-row-height);
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   vertical-align: middle;
 }
 
@@ -93,11 +95,11 @@
 }
 
 .modal-card-body {
-  padding: 1rem 1.1rem;
+  padding: var(--vf-space-4);
 }
 
 .modal-card-foot {
-  padding: 0.75rem 1.1rem;
+  padding: var(--vf-space-3) var(--vf-space-4);
   border-top: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-2);
   border-bottom-left-radius: inherit;
@@ -105,16 +107,16 @@
 }
 
 .dropdown-content {
-  padding: 0.25rem;
+  padding: var(--vf-space-1);
   border: 1px solid var(--vf-border-weak);
-  border-radius: 6px;
+  border-radius: var(--vf-radius-card);
   box-shadow: 0 6px 20px rgba(16, 24, 40, 0.12);
 }
 
 .dropdown-item {
-  padding: 0.45rem 0.65rem;
-  border-radius: 4px;
-  font-size: 0.82rem;
+  padding: var(--vf-space-2) var(--vf-space-3);
+  border-radius: var(--vf-radius-control);
+  font-size: 0.875rem;
   color: var(--vf-text);
 }
 
@@ -128,15 +130,15 @@
 .settings-content {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--vf-section-gap);
 }
 
 .settings-content > * {
   border: 1px solid var(--vf-border-weak);
-  border-radius: 8px;
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: none;
-  padding: 0.9rem 1rem 1rem;
+  padding: var(--vf-space-4);
 }
 
 .settings-content > * > :first-child {
@@ -147,28 +149,28 @@
 /* ============================================================
  * Nextcloud 视觉层
  *
- * 形状：元素 3px、卡片与弹窗 8px、徽标 pill；行高 50px；按钮 34px。
+ * 形状：元素 3px、卡片与弹窗 8px、徽标 pill；行高 51px；按钮 34px。
  * 状态：行悬停中性灰、选中浅蓝；主按钮实心 #0082C9。
  * ============================================================ */
 
 .button,
 .vf-ghost-button,
 .vf-icon-button {
-  border-radius: 3px;
+  border-radius: var(--vf-radius-control);
 }
 
 .button,
 .vf-ghost-button {
-  min-height: 34px;
-  padding: 0 0.8rem;
+  min-height: var(--vf-control-height);
+  padding: 0 var(--vf-space-3);
   font-size: 0.875rem;
   font-weight: 500;
 }
 
 .button.is-small,
 .vf-ghost-button.is-small {
-  min-height: 30px;
-  padding: 0 0.65rem;
+  min-height: var(--vf-control-height-sm);
+  padding: 0 var(--vf-space-2);
   font-size: 0.8125rem;
 }
 
@@ -178,7 +180,7 @@
 .vf-primary-button {
   background: var(--vf-accent-fill);
   color: var(--vf-on-accent);
-  border-radius: 3px;
+  border-radius: var(--vf-radius-control);
   box-shadow: none;
 }
 
@@ -202,18 +204,18 @@
 .input,
 .textarea,
 .select select {
-  min-height: 34px;
-  border-radius: 3px;
+  min-height: var(--vf-control-height);
+  border-radius: var(--vf-radius-control);
   border-color: var(--vf-border);
   font-size: 0.875rem;
 }
 
-/* 数据表：表头 44px、13px；行 50px；悬停中性灰 */
+/* 数据表：表头 44px、行 51px、单元格左右 16px；悬停中性灰 */
 .table thead th,
 .file-list-table thead th,
 .admin-table thead th {
-  height: 44px;
-  padding: 0 0.9rem;
+  height: var(--vf-table-head-height);
+  padding: 0 var(--vf-cell-padding-x);
   background: var(--vf-table-head);
   color: var(--vf-text-muted);
   font-size: 0.8125rem;
@@ -223,7 +225,9 @@
 
 .table td,
 .admin-table tbody td {
-  padding: 0.5rem 0.9rem;
+  height: var(--vf-row-height);
+  padding: 0 var(--vf-cell-padding-x);
+  vertical-align: middle;
   font-size: 0.875rem;
 }
 
@@ -237,7 +241,7 @@
   background: var(--vf-row-selected);
 }
 
-/* 侧栏：白底、40px 行、选中浅蓝 + 左侧 3px 指示条 */
+/* 侧栏：白底、44px 行、选中浅蓝 + 左侧 3px 指示条 */
 .browser-sidebar,
 .admin-sidebar {
   background: var(--vf-surface);
@@ -247,7 +251,7 @@
 .browser-nav-item,
 .admin-nav-item,
 .settings-nav-item {
-  border-radius: 3px;
+  border-radius: var(--vf-radius-card);
   font-size: 0.875rem;
   font-weight: 400;
 }
@@ -265,8 +269,11 @@
 .vf-stat,
 .admin-user-card,
 .library-card,
-.modal-card {
-  border-radius: 8px;
+.modal-card,
+.recent-panel,
+.favorites-panel,
+.activity-group {
+  border-radius: var(--vf-radius-card);
   box-shadow: none;
 }
 

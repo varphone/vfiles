@@ -201,11 +201,12 @@ describe("FileList.vue", () => {
     expect(allChecked.checked).toBe(true);
   });
 
-  it("emits toggle-select-all from the header checkbox", async () => {
+  it("emits toggle-select-all from the always-visible header checkbox", async () => {
+    // 表头全选常驻：未进入批量模式（行内复选框默认隐藏）也要能直接全选
     const { emitted } = render(FileList as any, {
       props: {
         desktop: true,
-        selectMode: true,
+        selectMode: false,
         selectedPaths: new Set<string>(),
         files: [buildFile({ name: "a.txt", path: "a.txt" })],
       },

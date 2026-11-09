@@ -685,7 +685,7 @@ onMounted(() => {
 }
 
 .audit-table-wrap {
-  margin-top: 0.5rem;
+  margin-top: var(--vf-space-2);
   overflow-x: auto;
 }
 
@@ -696,7 +696,7 @@ onMounted(() => {
 .audit-table thead th {
   border-bottom: 1px solid var(--vf-border-weak);
   color: var(--vf-text-muted);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   white-space: nowrap;
 }

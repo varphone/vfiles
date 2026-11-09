@@ -200,8 +200,7 @@ onMounted(() => {
  * 这里只排内容。令牌全部用 --vf-*，深色主题各一套。
  */
 .views-sidebar {
-  --vf-sidebar-item-height: 44px;
-  --vf-sidebar-item-radius: 8px;
+  --vf-sidebar-item-radius: var(--vf-radius-card);
   --vf-sidebar-item-hover: rgba(0, 0, 0, 0.04);
   --vf-sidebar-item-active-bg: var(--vf-accent);
   --vf-sidebar-item-active-fg: var(--vf-on-accent);
@@ -211,7 +210,8 @@ onMounted(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 0.6rem 0.55rem 0.55rem;
+  /* 与条目同宽：搜索框、导航、底部区共用 8px 外边距 */
+  padding: var(--vf-space-2);
 }
 
 /* ---- 顶部搜索（占位） ---- */
@@ -219,23 +219,24 @@ onMounted(() => {
   position: relative;
   display: flex;
   align-items: center;
-  margin: 0 0.15rem 0.6rem;
+  margin: 0 0 var(--vf-space-2);
   flex: 0 0 auto;
 }
 
 .views-sidebar-search-icon {
   position: absolute;
-  left: 0.6rem;
+  left: var(--vf-space-3);
   color: var(--vf-text-muted);
   pointer-events: none;
 }
 
 .views-sidebar-search-input {
   width: 100%;
-  height: 36px;
-  padding: 0 2rem 0 2rem;
+  height: var(--vf-control-height);
+  /* 图标 12px 起、文字 36px 起；右侧给清空按钮 32px */
+  padding: 0 var(--vf-space-6) 0 36px;
   border: 1px solid var(--vf-border-weak);
-  border-radius: 8px;
+  border-radius: var(--vf-radius-control);
   background: var(--vf-sidebar-search-bg);
   color: var(--vf-text);
   font-size: 0.85rem;
@@ -260,7 +261,7 @@ onMounted(() => {
 /* 清空按钮：仅在输入后出现，不占位时也保持 24px 命中区。 */
 .views-sidebar-search-clear {
   position: absolute;
-  right: 0.35rem;
+  right: var(--vf-space-2);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -285,7 +286,7 @@ onMounted(() => {
 .views-sidebar-footer {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--vf-space-1);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -294,10 +295,10 @@ onMounted(() => {
 .views-sidebar-item {
   display: flex;
   align-items: center;
-  gap: 0.7rem;
+  gap: var(--vf-space-2);
   width: 100%;
   height: var(--vf-sidebar-item-height);
-  padding: 0 0.75rem;
+  padding: 0 var(--vf-space-3);
   border: none;
   border-radius: var(--vf-sidebar-item-radius);
   background: transparent;
@@ -344,7 +345,7 @@ onMounted(() => {
 /* ---- 底部固定区 ---- */
 .views-sidebar-footer {
   margin-top: auto;
-  padding-top: 0.55rem;
+  padding-top: var(--vf-space-2);
   border-top: 1px solid var(--vf-border-weak);
 }
 
@@ -365,7 +366,7 @@ onMounted(() => {
 .views-sidebar-usage-value {
   margin-left: auto;
   color: var(--vf-text-strong);
-  font-size: 0.8rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -376,10 +377,10 @@ onMounted(() => {
 }
 
 .views-sidebar-usage-meta {
-  margin: 0.1rem 0 0.35rem;
-  padding: 0 0.75rem;
+  margin: var(--vf-space-1) 0 0;
+  padding: 0 var(--vf-space-3);
   color: var(--vf-text-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 /* 已删除：禁用态（保留入口位置，不跳转）。 */

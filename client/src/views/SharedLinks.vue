@@ -649,7 +649,7 @@ onMounted(() => {
   align-items: center;
   gap: 0.35rem;
   margin: 0;
-  padding: 0.7rem 1rem;
+  padding: var(--vf-space-3) var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
@@ -657,7 +657,7 @@ onMounted(() => {
 }
 
 .settings-table-panel > .settings-table-state {
-  padding: 0.9rem 1rem;
+  padding: var(--vf-space-4);
 }
 
 /* 状态筛选 chips：全部 / 有效 / 已过期 / 已被访问 */
@@ -706,19 +706,20 @@ onMounted(() => {
 }
 
 .shares-table th {
-  height: 36px;
-  padding: 0 0.75rem;
+  height: var(--vf-table-head-height);
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-table-head);
-  color: var(--vf-text-subtle);
-  font-size: 12px;
+  color: var(--vf-text-muted);
+  font-size: 0.8125rem;
   font-weight: 600;
   text-align: left;
   white-space: nowrap;
 }
 
 .shares-table td {
-  padding: 0.3rem 0.75rem;
+  height: var(--vf-row-height);
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   vertical-align: middle;
   overflow: hidden;
@@ -727,12 +728,12 @@ onMounted(() => {
 
 .shares-table th:first-child,
 .shares-table td:first-child {
-  padding-left: 1rem;
+  padding-left: var(--vf-cell-padding-x);
 }
 
 .shares-table th:last-child,
 .shares-table td:last-child {
-  padding-right: 1rem;
+  padding-right: var(--vf-cell-padding-x);
 }
 
 .shares-table tbody tr:last-child td {

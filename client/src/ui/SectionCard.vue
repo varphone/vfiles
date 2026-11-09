@@ -33,7 +33,7 @@ withDefaults(
 <style scoped>
 .vf-card {
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-lg);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-card);
   overflow: hidden;
@@ -43,9 +43,9 @@ withDefaults(
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--vf-space-3);
   flex-wrap: wrap;
-  padding: 0.95rem 1.1rem 0.75rem;
+  padding: var(--vf-space-4) var(--vf-space-4) var(--vf-space-3);
 }
 
 .vf-card-title {
@@ -56,8 +56,8 @@ withDefaults(
 }
 
 .vf-card-desc {
-  margin: 0.2rem 0 0;
-  font-size: 0.78rem;
+  margin: var(--vf-space-1) 0 0;
+  font-size: 0.8125rem;
   line-height: 1.5;
   color: var(--vf-text-muted);
 }
@@ -65,12 +65,12 @@ withDefaults(
 .vf-card-actions {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--vf-space-2);
   flex-wrap: wrap;
 }
 
 .vf-card-body {
-  padding: 0 1.1rem 1.1rem;
+  padding: 0 var(--vf-space-4) var(--vf-space-4);
 }
 
 .vf-card-body.is-flush,
@@ -79,18 +79,18 @@ withDefaults(
 }
 
 .vf-card-foot {
-  padding: 0.7rem 1.1rem;
+  padding: var(--vf-space-3) var(--vf-space-4);
   border-top: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-2);
 }
 
 @media screen and (max-width: 768px) {
   .vf-card-head {
-    padding: 0.8rem 0.9rem 0.65rem;
+    padding: var(--vf-space-3);
   }
 
   .vf-card-body {
-    padding: 0 0.9rem 0.95rem;
+    padding: 0 var(--vf-space-3) var(--vf-space-3);
   }
 }
 </style>

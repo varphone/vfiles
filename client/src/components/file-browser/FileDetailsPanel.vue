@@ -492,8 +492,9 @@ function openRowMenu() {
 .details-head {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 14px 16px 10px;
+  gap: var(--vf-space-2);
+  /* 标题区与内容区共用 16px 左右基线；底部留 12px 接 Tab 行 */
+  padding: var(--vf-space-4) var(--vf-page-padding) var(--vf-space-3);
   background: var(--vf-surface);
 }
 
@@ -526,7 +527,7 @@ function openRowMenu() {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 2px;
+  gap: var(--vf-space-1);
 }
 
 .details-close,
@@ -539,7 +540,7 @@ function openRowMenu() {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--vf-space-2);
   margin: 0;
   color: var(--vf-text-muted);
   font-size: 13px;
@@ -553,8 +554,8 @@ function openRowMenu() {
 .details-head-owner {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
+  gap: var(--vf-space-1);
+  padding: var(--vf-space-1) var(--vf-space-2);
   border-radius: 999px;
   background: var(--vf-surface-muted);
   color: var(--vf-text);
@@ -569,10 +570,11 @@ function openRowMenu() {
   white-space: nowrap;
 }
 
-/* Tab：图标在上、文字在下，四项等宽 */
+/* Tab：图标在上、文字在下，四项等宽；行高与表头一致（44px） */
 .details-tabs {
   display: flex;
   align-items: stretch;
+  height: var(--vf-table-head-height);
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface);
 }
@@ -583,15 +585,15 @@ function openRowMenu() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
-  padding: 8px 4px;
+  padding: var(--vf-space-1);
   border: none;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   background: transparent;
   color: var(--vf-text-muted);
-  font-size: 13px;
+  font-size: 0.75rem;
   font-weight: 500;
   line-height: 1.2;
   white-space: nowrap;
@@ -627,7 +629,7 @@ function openRowMenu() {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: 14px 16px 16px;
+  padding: var(--vf-page-padding);
 }
 
 /* 版本 Tab 复用版本历史组件：侧栏只有一列，覆盖其宽屏双列布局 */
@@ -647,8 +649,8 @@ function openRowMenu() {
 .details-selection {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  padding: 1rem 1.1rem;
+  gap: var(--vf-space-3);
+  padding: var(--vf-space-4);
 }
 
 .details-selection-head {
@@ -678,11 +680,11 @@ function openRowMenu() {
 .details-selection-list {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: var(--vf-space-1);
   margin: 0;
-  padding: 0.4rem;
+  padding: var(--vf-space-2);
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-control);
   background: var(--vf-surface-sunken);
   list-style: none;
 }
@@ -690,7 +692,7 @@ function openRowMenu() {
 .details-selection-row {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--vf-space-2);
   min-width: 0;
   color: var(--vf-text);
   font-size: 0.875rem;
@@ -711,7 +713,7 @@ function openRowMenu() {
 .details-selection-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.4rem;
+  gap: var(--vf-space-2);
 }
 
 .details-selection-actions .details-primary,

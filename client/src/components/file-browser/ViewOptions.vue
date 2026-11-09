@@ -197,17 +197,17 @@ onBeforeUnmount(() => {
 /* 显示方式：分段控件，激活项用强调色浅底 */
 .view-options-segment {
   display: inline-flex;
-  gap: 0.15rem;
-  padding: 0.15rem;
-  border-radius: var(--vf-radius);
+  gap: var(--vf-space-1);
+  padding: 2px;
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface-sunken);
 }
 
 .view-options-segment-button {
-  /* 与控件语言一致（ghost 36px）：此前 28px 明显小于相邻按钮 */
-  min-height: 2.25rem;
-  padding: 0 0.85rem;
-  font-size: 0.8rem;
+  /* 与控件语言一致（34px）：此前 28px 明显小于相邻按钮 */
+  min-height: var(--vf-control-height);
+  padding: 0 var(--vf-space-3);
+  font-size: 0.8125rem;
 }
 
 .view-options-label {

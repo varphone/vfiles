@@ -72,9 +72,9 @@ const navItems = [
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   height: var(--vf-topbar-height);
-  padding: 0 1.5rem;
+  padding: 0 var(--vf-page-padding);
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-topbar);
   backdrop-filter: blur(10px);
@@ -110,18 +110,18 @@ const navItems = [
 
 .settings-body {
   display: flex;
-  gap: 1.75rem;
+  gap: var(--vf-space-5);
   max-width: var(--vf-content-max);
   margin: 0 auto;
-  padding: 1.5rem 1.5rem 3rem;
+  padding: var(--vf-page-padding) var(--vf-page-padding) var(--vf-space-6);
 }
 
 .settings-nav {
   position: sticky;
-  top: calc(var(--vf-topbar-height) + 1.5rem);
+  top: calc(var(--vf-topbar-height) + var(--vf-page-padding));
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: var(--vf-space-1);
   width: var(--vf-settings-nav-width);
   flex: none;
   align-self: flex-start;
@@ -130,12 +130,12 @@ const navItems = [
 .settings-nav-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  min-height: 36px;
-  padding: 0.4rem 0.65rem;
-  border-radius: var(--vf-radius-sm);
+  gap: var(--vf-space-2);
+  min-height: var(--vf-sidebar-item-height);
+  padding: 0 var(--vf-space-3);
+  border-radius: var(--vf-radius-card);
   color: var(--vf-text-muted);
-  font-size: 0.84rem;
+  font-size: 0.875rem;
   font-weight: 500;
   text-decoration: none;
   transition: background-color 0.12s var(--vf-motion-standard),
@@ -158,14 +158,14 @@ const navItems = [
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1.1rem;
+  gap: var(--vf-section-gap);
 }
 
 @media screen and (max-width: 1024px) {
   .settings-body {
     flex-direction: column;
-    gap: 1rem;
-    padding: 1.1rem 1rem 2.5rem;
+    gap: var(--vf-section-gap);
+    padding: var(--vf-page-padding) var(--vf-page-padding) var(--vf-space-6);
   }
 
   .settings-nav {
@@ -181,7 +181,7 @@ const navItems = [
   }
 
   .settings-bar {
-    padding: 0 1rem;
+    padding: 0 var(--vf-page-padding);
   }
 }
 </style>

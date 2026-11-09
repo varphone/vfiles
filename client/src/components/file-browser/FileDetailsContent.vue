@@ -137,7 +137,7 @@ watch(
 .file-details-content {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--vf-section-gap);
 }
 
 /* 预览区：方形浅底；图片按 contain 展示完整画面 */
@@ -148,7 +148,7 @@ watch(
   /* 没有缩略图时用较矮的图标块，避免大面积留白 */
   height: 5.5rem;
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
   overflow: hidden;
@@ -168,7 +168,7 @@ watch(
 .details-header {
   display: flex;
   align-items: flex-start;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   min-width: 0;
 }
 
@@ -202,8 +202,8 @@ watch(
 .details-section {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding-top: 0.85rem;
+  gap: var(--vf-space-2);
+  padding-top: var(--vf-space-4);
   border-top: 1px solid var(--vf-border-weak);
 }
 
@@ -219,7 +219,7 @@ watch(
 .details-rows {
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: var(--vf-space-2);
   margin: 0;
 }
 
@@ -227,7 +227,7 @@ watch(
 .details-row {
   display: grid;
   grid-template-columns: 4.5rem minmax(0, 1fr);
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   align-items: baseline;
 }
 
@@ -246,7 +246,7 @@ watch(
 .desktop-details-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.3rem;
+  gap: var(--vf-space-1);
 }
 
 .desktop-details-actions :deep(.vf-ghost-button) {

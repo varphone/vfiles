@@ -53,9 +53,9 @@ defineProps<{
   align-items: center;
   gap: 0.4rem;
   width: min(28rem, 100%);
-  padding: 2.5rem 1.5rem;
+  padding: 2.5rem var(--vf-space-5);
   border: 2px dashed var(--vf-accent);
-  border-radius: var(--vf-radius-lg);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-md);
   text-align: center;

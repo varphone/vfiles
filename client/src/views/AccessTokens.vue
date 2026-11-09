@@ -554,7 +554,7 @@ onMounted(async () => {
 .tokens-header-actions {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--vf-space-2);
 }
 
 .tokens-note {
@@ -562,7 +562,7 @@ onMounted(async () => {
   align-items: center;
   gap: 0.35rem;
   margin: 0;
-  padding: 0.7rem 1rem;
+  padding: var(--vf-space-3) var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-sunken);
   color: var(--vf-text-muted);
@@ -571,7 +571,7 @@ onMounted(async () => {
 }
 
 .settings-table-panel > .settings-table-state {
-  padding: 0.9rem 1rem;
+  padding: var(--vf-space-4);
 }
 
 .tokens-table-wrap {
@@ -587,20 +587,20 @@ onMounted(async () => {
 }
 
 .tokens-table th {
-  height: 36px;
-  padding: 0 0.75rem;
+  height: var(--vf-table-head-height);
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-table-head);
-  color: var(--vf-text-subtle);
-  font-size: 12px;
+  color: var(--vf-text-muted);
+  font-size: 0.8125rem;
   font-weight: 600;
   text-align: left;
   white-space: nowrap;
 }
 
 .tokens-table td {
-  height: 44px;
-  padding: 0 0.75rem;
+  height: var(--vf-row-height);
+  padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
   vertical-align: middle;
   overflow: hidden;
@@ -609,12 +609,12 @@ onMounted(async () => {
 
 .tokens-table th:first-child,
 .tokens-table td:first-child {
-  padding-left: 1rem;
+  padding-left: var(--vf-cell-padding-x);
 }
 
 .tokens-table th:last-child,
 .tokens-table td:last-child {
-  padding-right: 1rem;
+  padding-right: var(--vf-cell-padding-x);
 }
 
 .tokens-table tbody tr:last-child td {

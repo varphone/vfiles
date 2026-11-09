@@ -714,7 +714,7 @@ async function renameSelected() {
   height: 2.75rem;
   padding: 0 0.1rem;
   border: none;
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-control);
   background: transparent;
   color: var(--vf-text-muted);
 }

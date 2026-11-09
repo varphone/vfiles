@@ -569,7 +569,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   cursor: pointer;
   overflow: visible;
@@ -612,7 +612,8 @@ onBeforeUnmount(() => {
   justify-content: center;
   height: var(--file-card-thumb-size, 144px);
   border-bottom: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius) var(--vf-radius) 0 0;
+  border-radius: calc(var(--vf-radius-card) - 1px)
+    calc(var(--vf-radius-card) - 1px) 0 0;
   background: var(--vf-surface-sunken);
   overflow: hidden;
 }
@@ -653,12 +654,12 @@ onBeforeUnmount(() => {
 
 .file-card-check {
   position: absolute;
-  top: 6px;
-  left: 6px;
+  top: var(--vf-space-2);
+  left: var(--vf-space-2);
   z-index: 2;
   display: inline-flex;
-  padding: 4px;
-  border-radius: var(--vf-radius-sm);
+  padding: var(--vf-space-1);
+  border-radius: var(--vf-radius-control);
   /* 半透明令牌须配毛玻璃：勾选块浮在缩略图（含照片）上 */
   background: var(--vf-surface-translucent);
   backdrop-filter: blur(8px);
@@ -667,8 +668,8 @@ onBeforeUnmount(() => {
 
 .file-card-menu {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: var(--vf-space-2);
+  right: var(--vf-space-2);
   z-index: 2;
 }
 
@@ -676,10 +677,10 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: var(--vf-control-height-sm);
+  height: var(--vf-control-height-sm);
   border: none;
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-control);
   /* 悬浮于缩略图之上：半透明须配毛玻璃 */
   background: var(--vf-surface-translucent);
   backdrop-filter: blur(8px);
@@ -706,9 +707,9 @@ onBeforeUnmount(() => {
   top: 30px;
   right: 0;
   min-width: 160px;
-  padding: 4px;
+  padding: var(--vf-space-1);
   border: 1px solid var(--vf-border);
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-menu);
   z-index: 30;
@@ -717,14 +718,14 @@ onBeforeUnmount(() => {
 .file-card-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--vf-space-2);
   width: 100%;
-  padding: 7px 10px;
+  padding: var(--vf-space-2) var(--vf-space-3);
   border: none;
-  border-radius: var(--vf-radius-sm);
+  border-radius: var(--vf-radius-control);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.8rem;
+  font-size: 0.8125rem;
   text-align: left;
   cursor: pointer;
 }
@@ -744,8 +745,8 @@ onBeforeUnmount(() => {
 .file-card-body {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px 10px;
+  gap: var(--vf-space-1);
+  padding: var(--vf-space-4);
   min-width: 0;
 }
 
@@ -760,7 +761,7 @@ onBeforeUnmount(() => {
 .file-card-location {
   display: flex;
   align-items: center;
-  gap: 0.15rem;
+  gap: var(--vf-space-1);
   max-width: 100%;
   color: var(--vf-text-subtle);
   font-size: 0.75rem;
@@ -789,7 +790,7 @@ onBeforeUnmount(() => {
 .file-card-meta {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--vf-space-1);
   font-size: 0.75rem;
   color: var(--vf-text-subtle);
   overflow: hidden;

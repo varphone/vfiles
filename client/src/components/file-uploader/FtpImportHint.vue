@@ -253,9 +253,9 @@ watch(
 
 <style scoped>
 .ftp-import-hint {
-  margin-top: 0.75rem;
+  margin-top: var(--vf-space-3);
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface-sunken);
 }
 

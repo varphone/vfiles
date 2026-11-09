@@ -82,12 +82,12 @@ function remove(id: number) {
 .toast {
   display: flex;
   align-items: flex-start;
-  gap: 0.55rem;
+  gap: var(--vf-space-2);
   margin-bottom: 0;
-  padding: 0.65rem 0.8rem;
+  padding: var(--vf-space-3) var(--vf-space-4);
   border: 1px solid var(--vf-border-weak);
   border-left-width: 3px;
-  border-radius: 6px;
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface-raised);
   color: var(--vf-text);
   box-shadow: 0 6px 20px rgba(16, 24, 40, 0.12);

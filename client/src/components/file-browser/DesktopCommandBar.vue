@@ -328,8 +328,8 @@ const emit = defineEmits<{
 .desktop-upload-caret {
   /* Seafile：主按钮与下拉箭头共用一个圆角矩形，中间只用 1px 高光分隔 */
   margin-left: 1px;
-  padding: 0 0.45rem;
-  min-height: 2rem;
+  padding: 0 var(--vf-space-2);
+  min-height: var(--vf-control-height);
   border-left: 1px solid rgba(255, 255, 255, 0.25);
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;

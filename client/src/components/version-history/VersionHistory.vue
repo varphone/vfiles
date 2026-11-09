@@ -1080,7 +1080,7 @@ function loadMore() {
   min-width: 0;
   max-height: min(64vh, 560px);
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
 }
 

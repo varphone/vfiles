@@ -168,9 +168,9 @@ const versionLabel = computed(() => {
 .history-card {
   min-width: 0;
   margin-bottom: 0.5rem;
-  padding: 0.6rem 0.7rem;
+  padding: var(--vf-space-3);
   border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius);
+  border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   transition:
     border-color 0.15s var(--vf-motion-standard),
