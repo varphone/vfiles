@@ -91,9 +91,21 @@
   box-shadow: var(--vf-shadow-popover);
 }
 
-/* 设置页内容列：与页头保持固定节奏。 */
+/* 设置页内容列：与页头保持固定节奏；卡片收平（Seafile 式列表而非浮层）。 */
 .settings-content {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.settings-content > * {
+  border: 1px solid var(--vf-border-weak);
+  border-radius: 8px;
+  background: var(--vf-surface);
+  box-shadow: none;
+  padding: 0.9rem 1rem 1rem;
+}
+
+.settings-content > * > :first-child {
+  margin-top: 0;
 }
