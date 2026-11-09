@@ -79,16 +79,54 @@
   border-bottom: 0;
 }
 
-/* 卡片与浮层的圆角/阴影收口。 */
+/* 卡片与浮层：Seafile 式扁平处理（小圆角 + 细边框 + 极浅阴影）。 */
 .modal-card {
-  border-radius: var(--vf-radius-lg);
-  box-shadow: var(--vf-shadow-modal);
+  border: 1px solid var(--vf-border-weak);
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(16, 24, 40, 0.16);
   overflow: hidden;
 }
 
+.modal-card-head {
+  padding: 0.85rem 1.1rem;
+  border-bottom: 1px solid var(--vf-border-weak);
+  background: var(--vf-surface);
+}
+
+.modal-card-title {
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: var(--vf-text-strong);
+}
+
+.modal-card-body {
+  padding: 1rem 1.1rem;
+}
+
+.modal-card-foot {
+  padding: 0.75rem 1.1rem;
+  border-top: 1px solid var(--vf-border-weak);
+  background: var(--vf-surface-2);
+}
+
 .dropdown-content {
-  border-radius: var(--vf-radius);
-  box-shadow: var(--vf-shadow-popover);
+  padding: 0.25rem;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(16, 24, 40, 0.12);
+}
+
+.dropdown-item {
+  padding: 0.45rem 0.65rem;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  color: var(--vf-text);
+}
+
+.dropdown-item:hover,
+.dropdown-item:focus {
+  background: var(--vf-surface-hover);
+  color: var(--vf-text-strong);
 }
 
 /* 设置页内容列：与页头保持固定节奏；卡片收平（Seafile 式列表而非浮层）。 */

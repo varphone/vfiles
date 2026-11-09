@@ -84,13 +84,13 @@ function remove(id: number) {
   align-items: flex-start;
   gap: 0.55rem;
   margin-bottom: 0;
-  padding: 0.7rem 0.85rem;
+  padding: 0.65rem 0.8rem;
   border: 1px solid var(--vf-border-weak);
   border-left-width: 3px;
-  border-radius: var(--vf-radius);
+  border-radius: 6px;
   background: var(--vf-surface-raised);
   color: var(--vf-text);
-  box-shadow: var(--vf-shadow-menu);
+  box-shadow: 0 6px 20px rgba(16, 24, 40, 0.12);
   pointer-events: auto;
 }
 
