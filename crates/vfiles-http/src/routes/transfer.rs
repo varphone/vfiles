@@ -53,6 +53,8 @@ async fn transfer_ownership(
     ApiJson(req): ApiJson<TransferRequest>,
 ) -> ApiResult<Json<TransferResponse>> {
     let ctx = protected_request_context(&state, &jar).await?;
+    // 所有权转移属于账号级操作。
+    ctx.require_full()?;
 
     if req.paths.len() > MAX_TRANSFER_PATHS {
         return Err(ApiError::Domain(DomainError::Validation {
@@ -117,6 +119,8 @@ async fn list_transfer_targets(
     ApiQuery(_query): ApiQuery<serde_json::Value>,
 ) -> ApiResult<Json<Vec<TransferTargetDto>>> {
     let ctx = protected_request_context(&state, &jar).await?;
+    // 所有权转移属于账号级操作。
+    ctx.require_full()?;
     let targets = state
         .ownership_service
         .list_targets(&ctx.actor_user_id)

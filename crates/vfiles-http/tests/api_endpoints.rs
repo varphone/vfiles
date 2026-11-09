@@ -24,7 +24,7 @@ use vfiles_infra_fs::FsStorageBootstrap;
 use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteAdminRepo, SqliteEntryRepo, SqliteMigrations,
     SqliteNamespaceRepo, SqlitePool, SqlitePoolFactory, SqliteSearchRepo, SqliteSessionRepo,
-    SqliteShareRepo, SqliteSnapshotRepo, SqliteUserRepo,
+    SqliteShareRepo, SqliteSnapshotRepo, SqliteUserCredentialRepo, SqliteUserRepo,
 };
 
 struct TestApp {
@@ -244,6 +244,7 @@ impl TestApp {
         let auth_service = AuthService::new(
             user_repo.clone(),
             session_repo.clone(),
+            SqliteUserCredentialRepo::new(pool.clone()),
             config.auth.session_ttl_seconds,
         );
         let admin_service =
@@ -9732,4 +9733,381 @@ async fn paginated_directory_listing_reports_total_and_pages() {
     assert_eq!(nested.status(), StatusCode::OK);
     let payload = response_json(nested).await;
     assert_eq!(payload["total"], Value::from(0));
+}
+
+/// 同一账号的受限密码：只读指定目录，不能执行账号级操作。
+#[tokio::test]
+async fn scoped_password_restricts_http_paths_and_account_actions() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "public.txt", b"ok", "seed docs")
+        .await;
+    app.upload_version("secret", "private.txt", b"no", "seed secret")
+        .await;
+
+    let create = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/auth/credentials",
+            json!({
+                "label": "read-docs",
+                "password": "secondary-password",
+                "roots": ["docs"],
+                "canWrite": false
+            }),
+        )
+        .await;
+    assert_eq!(create.status(), StatusCode::OK);
+    let created = response_json(create).await;
+    let credential_id = created["id"]
+        .as_str()
+        .expect("credential id should be returned")
+        .to_string();
+
+    let scoped = app.login_cookie("admin", "secondary-password").await;
+
+    // 登录响应与会话信息都带上范围
+    let me = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/auth/me")
+                .body(Body::empty())
+                .expect("request should build"),
+            &scoped,
+        )
+        .await;
+    let me = response_json(me).await;
+    assert_eq!(me["data"]["scope"]["restricted"], Value::Bool(true));
+    assert_eq!(me["data"]["scope"]["label"], Value::from("read-docs"));
+    assert_eq!(me["data"]["scope"]["roots"], json!(["docs"]));
+    assert_eq!(me["data"]["scope"]["canWrite"], Value::Bool(false));
+
+    let allowed = [
+        "/api/files/list/docs?limit=50",
+        "/api/files/directories/docs?limit=50",
+        "/api/files/content?path=docs/public.txt",
+        "/api/download?path=docs/public.txt",
+        "/api/history?path=docs/public.txt",
+        "/api/files/search?q=public&search_files=true&path=docs&limit=50",
+    ];
+    for uri in allowed {
+        let response = app
+            .request_with_cookie(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request should build"),
+                &scoped,
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK, "expected 200 for {uri}");
+    }
+
+    let forbidden = [
+        "/api/files/list?limit=50",
+        "/api/files/list/secret?limit=50",
+        "/api/files/directories/secret?limit=50",
+        "/api/files/content?path=secret/private.txt",
+        "/api/download?path=secret/private.txt",
+        "/api/history?path=secret/private.txt",
+        "/api/files/overview",
+        "/api/auth/credentials",
+        "/api/tokens?limit=10",
+        "/api/admin/users?page=1&page_size=10",
+    ];
+    for uri in forbidden {
+        let response = app
+            .request_with_cookie(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request should build"),
+                &scoped,
+            )
+            .await;
+        assert!(
+            response.status() == StatusCode::FORBIDDEN
+                || response.status() == StatusCode::UNAUTHORIZED,
+            "expected a refusal for {uri}, got {}",
+            response.status()
+        );
+    }
+
+    // 只读凭据不能发起上传/建目录/删除/移动，也不能创建快照。
+    let upload = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/upload/init",
+            json!({ "path": "docs", "filename": "new.txt", "size": 5 }),
+            &scoped,
+        )
+        .await;
+    assert_eq!(upload.status(), StatusCode::FORBIDDEN);
+
+    let mkdir = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/directories",
+            json!({ "path": "docs/new-dir" }),
+            &scoped,
+        )
+        .await;
+    assert_eq!(mkdir.status(), StatusCode::FORBIDDEN);
+
+    let delete = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/files?path=docs/public.txt")
+                .body(Body::empty())
+                .expect("request should build"),
+            &scoped,
+        )
+        .await;
+    assert_eq!(delete.status(), StatusCode::FORBIDDEN);
+
+    let move_entry = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/move",
+            json!({ "from": "docs/public.txt", "to": "secret/moved.txt" }),
+            &scoped,
+        )
+        .await;
+    assert_eq!(move_entry.status(), StatusCode::FORBIDDEN);
+
+    let snapshot = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/snapshots",
+            json!({ "message": "scoped attempt" }),
+            &scoped,
+        )
+        .await;
+    assert_eq!(snapshot.status(), StatusCode::FORBIDDEN);
+
+    let share = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/share/shares",
+            json!({ "path": "docs/public.txt" }),
+            &scoped,
+        )
+        .await;
+    assert_eq!(share.status(), StatusCode::FORBIDDEN);
+
+    // 全局搜索只返回范围内的结果。
+    let search = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/files/search?q=private&search_files=true&limit=50")
+                .body(Body::empty())
+                .expect("request should build"),
+            &scoped,
+        )
+        .await;
+    assert_eq!(search.status(), StatusCode::OK);
+    let search = response_json(search).await;
+    assert_eq!(
+        search["items"].as_array().map(Vec::len),
+        Some(0),
+        "the out-of-scope file must not be searchable"
+    );
+
+    // 主密码仍然可见全部内容。
+    let root = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/list?limit=50")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(root.status(), StatusCode::OK);
+
+    // 提升为可写后旧会话失效；重新登录即可上传。
+    let update = app
+        .json_request_as_admin(
+            Method::POST,
+            &format!("/api/auth/credentials/{credential_id}"),
+            json!({ "canWrite": true }),
+        )
+        .await;
+    assert_eq!(update.status(), StatusCode::OK);
+
+    let stale = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/auth/me")
+                .body(Body::empty())
+                .expect("request should build"),
+            &scoped,
+        )
+        .await;
+    let stale = response_json(stale).await;
+    assert!(
+        stale["data"]["user"].is_null(),
+        "updating a credential must revoke its sessions"
+    );
+
+    let writable = app.login_cookie("admin", "secondary-password").await;
+    let upload = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/upload/init",
+            json!({ "path": "docs", "filename": "new.txt", "size": 5 }),
+            &writable,
+        )
+        .await;
+    assert_eq!(
+        upload.status(),
+        StatusCode::OK,
+        "write scope should allow upload"
+    );
+
+    // 轮换密码：旧密码失效，旧会话被撤销。
+    let rotate = app
+        .json_request_as_admin(
+            Method::POST,
+            &format!("/api/auth/credentials/{credential_id}"),
+            json!({ "password": "rotated-secondary-password" }),
+        )
+        .await;
+    assert_eq!(rotate.status(), StatusCode::OK);
+
+    let old_password = app
+        .json_request(
+            Method::POST,
+            "/api/auth/login",
+            json!({ "username_or_email": "admin", "password": "secondary-password" }),
+        )
+        .await;
+    assert_eq!(old_password.status(), StatusCode::UNAUTHORIZED);
+
+    let rotated_cookie = app
+        .login_cookie("admin", "rotated-secondary-password")
+        .await;
+    let rotated_upload = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/upload/init",
+            json!({ "path": "docs", "filename": "rotated.txt", "size": 5 }),
+            &rotated_cookie,
+        )
+        .await;
+    assert_eq!(rotated_upload.status(), StatusCode::OK);
+
+    // 删除凭据后该密码不能再登录。
+    let delete_credential = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/auth/credentials/{credential_id}"))
+                .body(Body::empty())
+                .expect("request should build"),
+            &app.admin_cookie().await,
+        )
+        .await;
+    assert_eq!(delete_credential.status(), StatusCode::NO_CONTENT);
+
+    let denied_login = app
+        .json_request(
+            Method::POST,
+            "/api/auth/login",
+            json!({ "username_or_email": "admin", "password": "rotated-secondary-password" }),
+        )
+        .await;
+    assert_eq!(denied_login.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// 受限密码的创建参数校验与跨账号隔离。
+#[tokio::test]
+async fn scoped_password_creation_is_validated_and_owner_scoped() {
+    let app = TestApp::new().await;
+    app.upload_version("docs", "public.txt", b"ok", "seed")
+        .await;
+
+    let invalid_bodies = [
+        json!({ "label": "x", "password": "long-enough", "roots": [] }),
+        json!({ "label": "x", "password": "long-enough", "roots": [""] }),
+        json!({ "label": "x", "password": "long-enough", "roots": ["missing-dir"] }),
+        json!({ "label": "x", "password": "long-enough", "roots": ["docs/public.txt"] }),
+        json!({ "label": "x", "password": "short", "roots": ["docs"] }),
+        json!({ "label": "   ", "password": "long-enough", "roots": ["docs"] }),
+    ];
+    for body in invalid_bodies {
+        let response = app
+            .json_request_as_admin(Method::POST, "/api/auth/credentials", body.clone())
+            .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "expected validation failure for {body}"
+        );
+    }
+
+    let create = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/auth/credentials",
+            json!({ "label": "docs-only", "password": "secondary-password", "roots": ["docs"] }),
+        )
+        .await;
+    assert_eq!(create.status(), StatusCode::OK);
+    let credential_id = response_json(create).await["id"]
+        .as_str()
+        .expect("credential id")
+        .to_string();
+
+    // 另一个账号不能读取或删除这条凭据。
+    let register = app
+        .json_request(
+            Method::POST,
+            "/api/auth/register",
+            json!({ "username": "otheruser", "email": "other@example.com", "password": "other-password" }),
+        )
+        .await;
+    assert!(
+        register.status() == StatusCode::OK || register.status() == StatusCode::CREATED,
+        "register failed with {}",
+        register.status()
+    );
+    let other_cookie = app.login_cookie("otheruser", "other-password").await;
+
+    let list = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/auth/credentials")
+                .body(Body::empty())
+                .expect("request should build"),
+            &other_cookie,
+        )
+        .await;
+    assert_eq!(list.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(list).await.as_array().map(Vec::len),
+        Some(0),
+        "another account must not see this credential"
+    );
+
+    let foreign_update = app
+        .json_request_with_cookie(
+            Method::POST,
+            &format!("/api/auth/credentials/{credential_id}"),
+            json!({ "canWrite": true }),
+            &other_cookie,
+        )
+        .await;
+    assert_eq!(foreign_update.status(), StatusCode::NOT_FOUND);
+
+    let foreign_delete = app
+        .request_with_cookie(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/auth/credentials/{credential_id}"))
+                .body(Body::empty())
+                .expect("request should build"),
+            &other_cookie,
+        )
+        .await;
+    assert_eq!(foreign_delete.status(), StatusCode::NOT_FOUND);
 }

@@ -173,6 +173,7 @@ impl Harness {
         let auth_service = Arc::new(AuthService::new(
             user_repo.clone(),
             SqliteSessionRepo::new(pool.clone()),
+            vfiles_infra_sqlite::SqliteUserCredentialRepo::new(pool.clone()),
             3600,
         ));
         let namespaces = NamespaceService::new(Arc::new(namespace_repo));

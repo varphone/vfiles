@@ -12,7 +12,7 @@ use tokio::sync::Semaphore;
 use vfiles_domain::*;
 use vfiles_infra_sqlite::{
     FsBlobStore, FsUploadStore, SqliteEntryRepo, SqliteSessionRepo, SqliteSnapshotRepo,
-    SqliteUserRepo,
+    SqliteUserCredentialRepo, SqliteUserRepo,
 };
 
 const MAX_DIFF_INPUT_BYTES: u64 = 8 * 1024 * 1024;
@@ -1055,33 +1055,52 @@ impl SessionService {
     }
 
     pub async fn bootstrap(&self, auth_token: Option<&str>) -> DomainResult<SessionBootstrap> {
-        let (auth_enabled, current_user, capabilities) =
-            if let Some(auth_service) = &self.auth_service {
-                if let Some(token) = auth_token {
-                    match auth_service.authenticate_session(token).await {
-                        Ok(auth_user) => {
-                            let capabilities = self
-                                .features
-                                .capabilities_for_role(auth_user.role.can_access_admin_panel());
-                            (true, Some(auth_user.id), capabilities)
+        let (auth_enabled, current_user, capabilities) = if let Some(auth_service) =
+            &self.auth_service
+        {
+            if let Some(token) = auth_token {
+                match auth_service.authenticate_session(token).await {
+                    Ok(auth_user) => {
+                        let mut capabilities = self
+                            .features
+                            .capabilities_for_role(auth_user.user.role.can_access_admin_panel());
+                        // 受限密码不能上传/分享/管理；只读凭据只保留浏览类能力。
+                        if let vfiles_domain::SessionScope::Restricted(scope) = &auth_user.scope {
+                            capabilities.retain(|capability| {
+                                !matches!(
+                                    capability,
+                                    Capability::Upload
+                                        | Capability::Share
+                                        | Capability::Delete
+                                        | Capability::AdminUsers
+                                )
+                            });
+                            if scope.can_write {
+                                capabilities.push(Capability::Upload);
+                                if self.features.share_enabled {
+                                    capabilities.push(Capability::Share);
+                                }
+                            }
                         }
-                        Err(_) => {
-                            // Invalid token, treat as unauthenticated
-                            (true, None, vec![])
-                        }
+                        (true, Some(auth_user.user.id), capabilities)
                     }
-                } else {
-                    // Auth enabled but no token provided
-                    (true, None, vec![])
+                    Err(_) => {
+                        // Invalid token, treat as unauthenticated
+                        (true, None, vec![])
+                    }
                 }
             } else {
-                // Auth disabled
-                (
-                    false,
-                    None,
-                    vec![Capability::Upload, Capability::ViewHistory],
-                )
-            };
+                // Auth enabled but no token provided
+                (true, None, vec![])
+            }
+        } else {
+            // Auth disabled
+            (
+                false,
+                None,
+                vec![Capability::Upload, Capability::ViewHistory],
+            )
+        };
 
         Ok(SessionBootstrap {
             auth_enabled,
@@ -1106,6 +1125,7 @@ impl Clone for SessionService {
 pub struct AuthService {
     user_repo: SqliteUserRepo,
     session_repo: SqliteSessionRepo,
+    credential_repo: SqliteUserCredentialRepo,
     session_ttl_seconds: u64,
     password_work_gate: PasswordWorkGate,
     /// 热验缓存以 SHA-256 凭据摘要为键，只缓存成功认证；每次命中仍从数据库
@@ -1115,9 +1135,21 @@ pub struct AuthService {
     session_last_seen_refreshes: Arc<SessionLastSeenRefreshCache>,
 }
 
+/// 一次成功凭据校验：账号、范围与命中的哈希（用于热缓存复核）。
+#[derive(Debug, Clone)]
+pub struct VerifiedLogin {
+    pub user: User,
+    pub scope: SessionScope,
+    pub credential_id: Option<CredentialId>,
+    matched_hash: String,
+}
+
 type VerifiedCredentialCache = std::sync::Arc<
-    std::sync::Mutex<std::collections::HashMap<[u8; 32], (User, std::time::Instant)>>,
+    std::sync::Mutex<std::collections::HashMap<[u8; 32], (VerifiedLogin, std::time::Instant)>>,
 >;
+
+/// 每个账号允许的受限密码上限：限制一次登录最多需要校验的 Argon2 次数。
+const MAX_LOGIN_CREDENTIALS_PER_USER: usize = 8;
 
 const MAX_CONCURRENT_PASSWORD_JOBS: usize = 4;
 const MAX_VERIFIED_CREDENTIAL_CACHE_ENTRIES: usize = 50_000;
@@ -1263,11 +1295,13 @@ impl AuthService {
     pub fn new(
         user_repo: SqliteUserRepo,
         session_repo: SqliteSessionRepo,
+        credential_repo: SqliteUserCredentialRepo,
         session_ttl_seconds: u64,
     ) -> Self {
         Self {
             user_repo,
             session_repo,
+            credential_repo,
             session_ttl_seconds,
             password_work_gate: PasswordWorkGate::new(MAX_CONCURRENT_PASSWORD_JOBS),
             verified_cache: std::sync::Arc::new(std::sync::Mutex::new(
@@ -1308,10 +1342,11 @@ impl AuthService {
     }
 
     pub async fn login(&self, req: LoginRequest) -> DomainResult<LoginResponse> {
-        // 标识/口令校验（含旧哈希透明升级）与 FTP 认证共用同一实现
-        let user = self
-            .verify_credentials(&req.username_or_email, &req.password)
+        // 标识/口令校验（主密码或受限密码，含旧哈希透明升级）
+        let verified = self
+            .verify_credentials(&req.username_or_email, &req.password, true)
             .await?;
+        let user = verified.user;
 
         // Create session
         let now = time::OffsetDateTime::now_utc();
@@ -1327,6 +1362,7 @@ impl AuthService {
                 expires_at,
                 None, // user_agent
                 None, // ip_addr
+                verified.credential_id.as_ref(),
             )
             .await?;
 
@@ -1340,12 +1376,14 @@ impl AuthService {
             user_agent: None,
             ip_addr: None,
             last_seen_at: now,
+            credential_id: verified.credential_id,
         };
 
         Ok(LoginResponse {
             user,
             session,
             token,
+            scope: verified.scope,
         })
     }
 
@@ -1383,16 +1421,21 @@ impl AuthService {
         }
     }
 
+    /// 校验用户名/口令并返回命中的范围，不创建会话。
+    ///
+    /// `allow_restricted` 为 true 时才继续比对受限密码；FTP/WebDAV/rsync 传 false，
+    /// 这些协议没有范围执行层，只接受主密码，避免受限密码获得全量权限。
     pub async fn verify_credentials(
         &self,
         username_or_email: &str,
         password: &str,
-    ) -> DomainResult<User> {
+        allow_restricted: bool,
+    ) -> DomainResult<VerifiedLogin> {
         let key = Self::cred_key(username_or_email, password);
-        let cached_user = {
+        let cached = {
             let mut cache = self.verified_cache.lock().expect("auth cache poisoned");
             match cache.get(&key) {
-                Some((user, at)) if at.elapsed().as_secs() < 30 => Some(user.clone()),
+                Some((verified, at)) if at.elapsed().as_secs() < 30 => Some(verified.clone()),
                 Some(_) => {
                     cache.remove(&key);
                     None
@@ -1402,16 +1445,13 @@ impl AuthService {
         };
 
         // 每次读取轻量账号记录，确保缓存不会延迟停用、改密、改名或删除生效。
-        // Argon2 只在首次成功验证、凭据变化或缓存过期时运行。
         let user = match self.find_user_for_credentials(username_or_email).await {
             Ok(user) => user,
             Err(error) => {
-                if cached_user.is_some() {
-                    self.verified_cache
-                        .lock()
-                        .expect("auth cache poisoned")
-                        .remove(&key);
-                }
+                self.verified_cache
+                    .lock()
+                    .expect("auth cache poisoned")
+                    .remove(&key);
                 return Err(error);
             }
         };
@@ -1424,9 +1464,26 @@ impl AuthService {
             return Err(DomainError::InvalidCredentials);
         }
 
-        if let Some(cached_user) = cached_user {
-            if cached_user.id == user.id && cached_user.password_hash == user.password_hash {
-                return Ok(user);
+        // 缓存命中仍需复核命中的哈希：主密码看账号记录，受限密码看凭据记录。
+        if let Some(verified) = cached {
+            if verified.user.id == user.id {
+                match verified.credential_id {
+                    None if verified.matched_hash == user.password_hash => {
+                        return Ok(verified);
+                    }
+                    // 受限凭据只在允许的协议面上复用缓存；FTP/WebDAV/rsync 不能借
+                    // 由 HTTP 登录留下的热缓存绕过范围检查。
+                    Some(credential_id) if allow_restricted => {
+                        if let Ok(credential) =
+                            self.credential_repo.find_credential(&credential_id).await
+                            && credential.user_id == user.id
+                            && credential.password_hash == verified.matched_hash
+                        {
+                            return Ok(verified);
+                        }
+                    }
+                    _ => {}
+                }
             }
             self.verified_cache
                 .lock()
@@ -1434,28 +1491,67 @@ impl AuthService {
                 .remove(&key);
         }
 
-        if !self.verify_password(password, &user.password_hash).await? {
-            return Err(DomainError::InvalidCredentials);
-        }
-        // 仅缓存成功验证结果；命中前仍核对当前账号记录，密码原文从不缓存。
-        {
-            let mut cache = self.verified_cache.lock().expect("auth cache poisoned");
-            cache.retain(|_, (_, at)| at.elapsed().as_secs() < 30);
-            evict_cache_entry_if_full(&mut cache, &key, MAX_VERIFIED_CREDENTIAL_CACHE_ENTRIES);
-            cache.insert(key, (user.clone(), std::time::Instant::now()));
+        // 主密码
+        if self.verify_password(password, &user.password_hash).await? {
+            // 旧 SHA-256 哈希在成功校验后透明升级；失败不得影响本次登录
+            if !user.password_hash.starts_with("$argon2")
+                && let Ok(new_hash) = self.hash_password(password).await
+            {
+                let _ = self.user_repo.update_password(&user.id, &new_hash).await;
+            }
+            let verified = VerifiedLogin {
+                user: user.clone(),
+                scope: SessionScope::Full,
+                credential_id: None,
+                matched_hash: user.password_hash.clone(),
+            };
+            self.cache_verified(&key, &verified);
+            return Ok(verified);
         }
 
-        // 旧 SHA-256 哈希在成功校验后透明升级；失败不得影响本次登录
-        if !user.password_hash.starts_with("$argon2")
-            && let Ok(new_hash) = self.hash_password(password).await
-        {
-            let _ = self.user_repo.update_password(&user.id, &new_hash).await;
+        // 受限密码：只有允许的协议面才会走到这里。
+        if allow_restricted {
+            let credentials = self.credential_repo.list_credentials(&user.id).await?;
+            for credential in credentials {
+                if !self
+                    .verify_password(password, &credential.password_hash)
+                    .await?
+                {
+                    continue;
+                }
+                // 展示用时间戳，失败不影响登录。
+                let _ = self
+                    .credential_repo
+                    .touch_credential_used(&credential.id)
+                    .await;
+                let scope = SessionScope::Restricted(ScopedScope {
+                    credential_id: credential.id,
+                    label: credential.label.clone(),
+                    roots: credential.scope_roots.clone(),
+                    can_write: credential.can_write,
+                });
+                let verified = VerifiedLogin {
+                    user: user.clone(),
+                    scope,
+                    credential_id: Some(credential.id),
+                    matched_hash: credential.password_hash.clone(),
+                };
+                self.cache_verified(&key, &verified);
+                return Ok(verified);
+            }
         }
 
-        Ok(user)
+        Err(DomainError::InvalidCredentials)
     }
 
-    pub async fn authenticate_session(&self, token: &str) -> DomainResult<AuthUser> {
+    fn cache_verified(&self, key: &[u8; 32], verified: &VerifiedLogin) {
+        let mut cache = self.verified_cache.lock().expect("auth cache poisoned");
+        cache.retain(|_, (_, at)| at.elapsed().as_secs() < 30);
+        evict_cache_entry_if_full(&mut cache, key, MAX_VERIFIED_CREDENTIAL_CACHE_ENTRIES);
+        cache.insert(*key, (verified.clone(), std::time::Instant::now()));
+    }
+
+    pub async fn authenticate_session(&self, token: &str) -> DomainResult<AuthenticatedSession> {
         let token_hash = self.hash_token(token)?;
         let session = self
             .session_repo
@@ -1477,6 +1573,25 @@ impl AuthService {
             return Err(DomainError::UserDisabled);
         }
 
+        // 受限会话的范围来自凭据记录；凭据已删除时该会话立即失效。
+        let scope = match session.credential_id {
+            None => SessionScope::Full,
+            Some(credential_id) => {
+                let credential = match self.credential_repo.find_credential(&credential_id).await {
+                    Ok(credential) if credential.user_id == user.id => credential,
+                    Ok(_) => return Err(DomainError::SessionRevoked),
+                    Err(DomainError::NotFound { .. }) => return Err(DomainError::SessionRevoked),
+                    Err(error) => return Err(error),
+                };
+                SessionScope::Restricted(ScopedScope {
+                    credential_id,
+                    label: credential.label,
+                    roots: credential.scope_roots,
+                    can_write: credential.can_write,
+                })
+            }
+        };
+
         // 活跃会话的鉴权仍读取最新撤销、过期和用户状态；仅把展示用活动时间写入
         // 限制为每会话每分钟一次。该辅助写入失败不影响请求，下次请求可立即重试。
         if let Some(attempted_at) = self.session_last_seen_refreshes.reserve(session.id)
@@ -1490,11 +1605,15 @@ impl AuthService {
                 .clear_failed(session.id, attempted_at);
         }
 
-        Ok(AuthUser {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            role: user.role,
+        Ok(AuthenticatedSession {
+            user: AuthUser {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                role: user.role,
+            },
+            scope,
+            credential_id: session.credential_id,
         })
     }
 
@@ -1505,6 +1624,121 @@ impl AuthService {
             .find_session_by_token_hash(&token_hash)
             .await?;
         self.session_repo.revoke_session(&session.id).await
+    }
+
+    /// 列出账号的受限登录凭据（返回的哈希由仓储层持有，接口层不输出）。
+    pub async fn list_login_credentials(
+        &self,
+        user_id: &UserId,
+    ) -> DomainResult<Vec<UserCredential>> {
+        self.credential_repo.list_credentials(user_id).await
+    }
+
+    /// 取一条受限凭据（含哈希，仅供服务内部使用）。
+    pub async fn find_login_credential(
+        &self,
+        user_id: &UserId,
+        credential_id: &CredentialId,
+    ) -> DomainResult<UserCredential> {
+        let credential = self.credential_repo.find_credential(credential_id).await?;
+        if credential.user_id != *user_id {
+            return Err(DomainError::NotFound {
+                resource: "credential".to_string(),
+            });
+        }
+        Ok(credential)
+    }
+
+    /// 创建一条受限凭据；范围根由调用方校验为命名空间内的目录。
+    pub async fn create_login_credential(
+        &self,
+        user_id: &UserId,
+        label: &str,
+        password: &str,
+        scope_roots: &[NormalizedPath],
+        can_write: bool,
+    ) -> DomainResult<CredentialId> {
+        let existing = self.credential_repo.list_credentials(user_id).await?;
+        if existing.len() >= MAX_LOGIN_CREDENTIALS_PER_USER {
+            return Err(DomainError::Conflict {
+                message: format!("每个账号最多 {MAX_LOGIN_CREDENTIALS_PER_USER} 条受限密码"),
+            });
+        }
+        let password_hash = self.hash_password(password).await?;
+        let id = self
+            .credential_repo
+            .create_credential(user_id, label, &password_hash, scope_roots, can_write)
+            .await?;
+        self.clear_verified_cache();
+        Ok(id)
+    }
+
+    /// 更新标签、范围或写权限；传 `password` 时同时轮换密码。
+    ///
+    /// 变更会撤销该凭据已经签发的会话，旧密码/旧范围立即失效。
+    pub async fn update_login_credential(
+        &self,
+        user_id: &UserId,
+        credential_id: &CredentialId,
+        label: &str,
+        password: Option<&str>,
+        scope_roots: &[NormalizedPath],
+        can_write: bool,
+    ) -> DomainResult<()> {
+        let credential = self.credential_repo.find_credential(credential_id).await?;
+        if credential.user_id != *user_id {
+            return Err(DomainError::NotFound {
+                resource: "credential".to_string(),
+            });
+        }
+        self.credential_repo
+            .update_credential(credential_id, label, scope_roots, can_write)
+            .await?;
+        if let Some(password) = password {
+            let password_hash = self.hash_password(password).await?;
+            self.credential_repo
+                .update_credential_password(credential_id, &password_hash)
+                .await?;
+        }
+        self.session_repo
+            .revoke_credential_sessions(credential_id)
+            .await?;
+        self.clear_verified_cache();
+        Ok(())
+    }
+
+    /// 删除一条受限凭据并撤销其会话。
+    pub async fn delete_login_credential(
+        &self,
+        user_id: &UserId,
+        credential_id: &CredentialId,
+    ) -> DomainResult<bool> {
+        let credential = match self.credential_repo.find_credential(credential_id).await {
+            Ok(credential) if credential.user_id == *user_id => credential,
+            Ok(_) => {
+                return Err(DomainError::NotFound {
+                    resource: "credential".to_string(),
+                });
+            }
+            Err(DomainError::NotFound { .. }) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        let deleted = self
+            .credential_repo
+            .delete_credential(&credential.id)
+            .await?;
+        self.session_repo
+            .revoke_credential_sessions(credential_id)
+            .await?;
+        self.clear_verified_cache();
+        Ok(deleted)
+    }
+
+    fn clear_verified_cache(&self) {
+        self.verified_cache
+            .lock()
+            .expect("auth cache poisoned")
+            .clear();
     }
 
     pub fn user_repo(&self) -> &SqliteUserRepo {
@@ -1581,6 +1815,7 @@ impl Clone for AuthService {
         Self {
             user_repo: self.user_repo.clone(),
             session_repo: self.session_repo.clone(),
+            credential_repo: self.credential_repo.clone(),
             session_ttl_seconds: self.session_ttl_seconds,
             password_work_gate: self.password_work_gate.clone(),
             // r9 Clone = Arc 共享缓存（新建空 = 分叉 ✗ 共享才免疫 clone 分叉 ✓）
@@ -5790,6 +6025,7 @@ mod tests {
             let auth_service = AuthService::new(
                 user_repo.clone(),
                 SqliteSessionRepo::new(pool.clone()),
+                SqliteUserCredentialRepo::new(pool.clone()),
                 3600,
             );
 
@@ -6093,6 +6329,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restricted_login_requires_the_surface_to_allow_it() {
+        let context = TestContext::new().await;
+        let primary_hash = AuthService::hash_password_for_storage("primary-password")
+            .expect("primary password should hash");
+        context
+            .user_repo
+            .update_password(&context.user_id, &primary_hash)
+            .await
+            .expect("primary password should be stored");
+        let docs = TestContext::path("docs");
+        let credential_id = context
+            .auth_service
+            .create_login_credential(
+                &context.user_id,
+                "read-docs",
+                "secondary-password",
+                std::slice::from_ref(&docs),
+                false,
+            )
+            .await
+            .expect("credential should be created");
+
+        // HTTP 登录面允许受限密码，并返回范围。
+        let verified = context
+            .auth_service
+            .verify_credentials("admin", "secondary-password", true)
+            .await
+            .expect("restricted password should verify");
+        assert_eq!(verified.credential_id, Some(credential_id));
+        assert!(!verified.scope.is_full());
+        assert!(verified.scope.allows_read(&docs));
+        assert!(!verified.scope.allows_write(&docs));
+        assert!(!verified.scope.allows_path_read("outside/file.txt"));
+
+        // FTP/WebDAV/rsync 没有范围执行层：拒绝受限密码。
+        assert!(matches!(
+            context
+                .auth_service
+                .verify_credentials("admin", "secondary-password", false)
+                .await,
+            Err(DomainError::InvalidCredentials)
+        ));
+
+        // 主密码仍是全量。
+        let primary = context
+            .auth_service
+            .verify_credentials("admin", "primary-password", false)
+            .await
+            .expect("primary password should verify");
+        assert!(primary.scope.is_full());
+        assert!(primary.credential_id.is_none());
+    }
+
+    #[tokio::test]
     async fn verified_credential_cache_rechecks_password_and_disabled_state() {
         let context = TestContext::new().await;
         let old_hash = AuthService::hash_password_for_storage("old-password")
@@ -6105,7 +6395,7 @@ mod tests {
 
         context
             .auth_service
-            .verify_credentials("admin", "old-password")
+            .verify_credentials("admin", "old-password", true)
             .await
             .expect("initial credentials should verify");
 
@@ -6119,13 +6409,13 @@ mod tests {
         assert!(matches!(
             context
                 .auth_service
-                .verify_credentials("admin", "old-password")
+                .verify_credentials("admin", "old-password", true)
                 .await,
             Err(DomainError::InvalidCredentials)
         ));
         context
             .auth_service
-            .verify_credentials("admin", "new-password")
+            .verify_credentials("admin", "new-password", true)
             .await
             .expect("new password should verify");
 
@@ -6137,7 +6427,7 @@ mod tests {
         assert!(matches!(
             context
                 .auth_service
-                .verify_credentials("admin", "new-password")
+                .verify_credentials("admin", "new-password", true)
                 .await,
             Err(DomainError::InvalidCredentials)
         ));

@@ -51,6 +51,7 @@ async fn download_file(
             message: "Invalid path format".to_string(),
         })
     })?;
+    ctx.require_read(path.as_str())?;
 
     let file = state
         .workspace_service
@@ -96,6 +97,7 @@ async fn download_folder(
             message: "Invalid path format".to_string(),
         })
     })?;
+    ctx.require_read(path.as_str())?;
 
     if if_none_match_is_wildcard(&headers)
         && !headers.contains_key(header::IF_MATCH)

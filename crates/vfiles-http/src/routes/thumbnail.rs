@@ -192,6 +192,7 @@ async fn get_file_thumbnail(
             message: "Invalid path format".to_string(),
         })
     })?;
+    ctx.require_read(path.as_str())?;
     let size = query.size.unwrap_or(DEFAULT_SIZE).clamp(MIN_SIZE, MAX_SIZE);
 
     // Negotiate before reading the source so rejected representations do no storage I/O.

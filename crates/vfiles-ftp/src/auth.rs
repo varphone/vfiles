@@ -159,12 +159,14 @@ impl Authenticator for VfilesAuthenticator {
             return Err(AuthenticationError::BadPassword);
         }
 
+        // FTP 没有路径范围执行层：只接受主密码，受限密码一律认证失败。
         match self
             .auth_service
-            .verify_credentials(username, password)
+            .verify_credentials(username, password, false)
             .await
         {
-            Ok(user) => {
+            Ok(verified) => {
+                let user = verified.user;
                 if user.disabled {
                     self.limiter
                         .record_login_failure(&self.policy, &source_ip, username);

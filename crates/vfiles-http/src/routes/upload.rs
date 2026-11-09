@@ -244,6 +244,7 @@ async fn create_upload(
             message: "Invalid path format".to_string(),
         })
     })?;
+    ctx.require_write(target_path.as_str())?;
 
     let max_chunk_size = state.config.limits.upload_chunk_size_bytes;
     let chunk_size = req.chunk_size.unwrap_or(max_chunk_size);
@@ -287,6 +288,12 @@ async fn ensure_upload_owner(
     if session.owner_user_id != ctx.actor_user_id {
         return Err(ApiError::Domain(DomainError::Forbidden));
     }
+    let target = if session.target_path_norm.as_str().is_empty() {
+        session.filename.clone()
+    } else {
+        format!("{}/{}", session.target_path_norm.as_str(), session.filename)
+    };
+    ctx.require_write(&target)?;
 
     Ok(session)
 }
@@ -535,6 +542,13 @@ async fn put_upload_inner(
                 .to_string(),
         }));
     }
+
+    let target = if path.trim_end_matches('/').is_empty() {
+        filename.clone()
+    } else {
+        format!("{}/{}", path.trim_end_matches('/'), filename)
+    };
+    ctx.require_write(&target)?;
 
     let max_upload_size = max_upload_size_bytes(&state);
     // Content-Length 已知时提前拒绝，避免白传一遍
@@ -844,6 +858,7 @@ async fn finish_single_upload(input: SingleUploadInput<'_>) -> ApiResult<Json<se
     } else {
         format!("{}/{filename}", target_path.as_str())
     };
+    ctx.require_write(&full_path)?;
     if let Ok(full) = NormalizedPath::new(&full_path)
         && let Ok(Some(existing)) = state
             .entry_repo

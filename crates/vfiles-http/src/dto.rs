@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use vfiles_app::{AdminUserList, AdminUserSummary, SessionBootstrap, TreeItem};
 use vfiles_domain::{
-    ChangeType, Entry, EntryKind, EntryVersion, FeatureMatrix, LoginResponse, Snapshot, User,
+    ChangeType, Entry, EntryKind, EntryVersion, FeatureMatrix, LoginResponse, SessionScope,
+    Snapshot, User, UserCredential,
 };
 
 pub(crate) fn format_timestamp(value: OffsetDateTime) -> String {
@@ -140,17 +141,82 @@ impl From<User> for UserDto {
     }
 }
 
+/// 登录会话的权限范围（前端据此裁剪界面）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopeDto {
+    pub restricted: bool,
+    pub label: Option<String>,
+    pub roots: Vec<String>,
+    pub can_write: bool,
+}
+
+impl From<&SessionScope> for ScopeDto {
+    fn from(scope: &SessionScope) -> Self {
+        match scope {
+            SessionScope::Full => Self {
+                restricted: false,
+                label: None,
+                roots: Vec::new(),
+                can_write: true,
+            },
+            SessionScope::Restricted(scoped) => Self {
+                restricted: true,
+                label: Some(scoped.label.clone()),
+                roots: scoped
+                    .roots
+                    .iter()
+                    .map(|root| root.as_str().to_string())
+                    .collect(),
+                can_write: scoped.can_write,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct LoginResponseDto {
     pub user: UserDto,
     pub token: String,
+    pub scope: ScopeDto,
 }
 
 impl From<LoginResponse> for LoginResponseDto {
     fn from(response: LoginResponse) -> Self {
+        let scope = ScopeDto::from(&response.scope);
         Self {
             user: response.user.into(),
             token: response.token,
+            scope,
+        }
+    }
+}
+
+/// 受限登录密码（不含哈希）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginCredentialDto {
+    pub id: String,
+    pub label: String,
+    pub roots: Vec<String>,
+    pub can_write: bool,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+}
+
+impl From<UserCredential> for LoginCredentialDto {
+    fn from(credential: UserCredential) -> Self {
+        Self {
+            id: credential.id.to_string(),
+            label: credential.label,
+            roots: credential
+                .scope_roots
+                .iter()
+                .map(|root| root.as_str().to_string())
+                .collect(),
+            can_write: credential.can_write,
+            created_at: format_timestamp(credential.created_at),
+            last_used_at: format_timestamp_opt(credential.last_used_at),
         }
     }
 }

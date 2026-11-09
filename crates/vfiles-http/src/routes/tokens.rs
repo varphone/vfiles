@@ -14,7 +14,7 @@ use vfiles_domain::{AccessToken, DomainError, NewAuditLog};
 
 use crate::AppState;
 use crate::error::{ApiError, ApiJson, ApiPath, ApiQuery, ApiResult};
-use crate::routes::require_session_auth_user;
+use crate::routes::require_primary_session;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -113,7 +113,7 @@ async fn list_tokens(
     jar: CookieJar,
     ApiQuery(query): ApiQuery<ListTokensQuery>,
 ) -> ApiResult<Json<AccessTokenListDto>> {
-    let auth_user = require_session_auth_user(&state, &jar).await?;
+    let auth_user = require_primary_session(&state, &jar).await?;
     let now = time::OffsetDateTime::now_utc();
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = query.offset.unwrap_or(0);
@@ -138,7 +138,7 @@ async fn create_token(
     ApiJson(req): ApiJson<CreateTokenRequest>,
 ) -> ApiResult<Json<CreateTokenResponse>> {
     // 令牌不能创建令牌
-    let auth_user = require_session_auth_user(&state, &jar).await?;
+    let auth_user = require_primary_session(&state, &jar).await?;
 
     let created = state
         .access_token_service
@@ -175,7 +175,7 @@ async fn revoke_token(
     jar: CookieJar,
     ApiPath(id): ApiPath<String>,
 ) -> ApiResult<axum::http::StatusCode> {
-    let auth_user = require_session_auth_user(&state, &jar).await?;
+    let auth_user = require_primary_session(&state, &jar).await?;
 
     let token_id = vfiles_domain::AccessTokenId::from_string(&id).map_err(|_| {
         ApiError::Domain(DomainError::Validation {

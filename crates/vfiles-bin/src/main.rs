@@ -574,10 +574,12 @@ async fn build_user_command_context() -> anyhow::Result<UserCommandContext> {
     let admin_repo = SqliteAdminRepo::new(pool.clone());
     let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
     let settings_repo = SqliteSystemSettingsRepo::new(pool.clone());
-    let session_repo = SqliteSessionRepo::new(pool);
+    let session_repo = SqliteSessionRepo::new(pool.clone());
+    let credential_repo = SqliteUserCredentialRepo::new(pool);
     let auth_service = AuthService::new(
         user_repo.clone(),
         session_repo,
+        credential_repo,
         config.auth.session_ttl_seconds,
     );
 
@@ -1241,9 +1243,11 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     // Create services
     tracing::debug!("Creating service instances...");
     let health_service = HealthService;
+    let credential_repo = SqliteUserCredentialRepo::new(pool.clone());
     let auth_service = AuthService::new(
         user_repo.clone(),
         session_repo.clone(),
+        credential_repo,
         config.auth.session_ttl_seconds,
     );
     let admin_service = AdminService::new(admin_repo, auth_service.clone());
@@ -2935,7 +2939,11 @@ fn build_webdav_runtime(
         let auth = std::sync::Arc::new(auth_service.clone());
         std::sync::Arc::new(move |u: String, pw: String| {
             let auth = std::sync::Arc::clone(&auth);
-            Box::pin(async move { auth.verify_credentials(&u, &pw).await })
+            Box::pin(async move {
+                auth.verify_credentials(&u, &pw, false)
+                    .await
+                    .map(|verified| verified.user)
+            })
         })
     };
     let app = vfiles_webdav::WebdavApplication {

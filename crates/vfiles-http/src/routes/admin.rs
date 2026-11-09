@@ -337,16 +337,23 @@ pub(crate) async fn require_admin(state: &AppState, jar: &CookieJar) -> ApiResul
         .get("auth_token")
         .ok_or(ApiError::Domain(DomainError::Unauthorized))?;
 
-    let auth_user = auth_service
+    let session = auth_service
         .authenticate_session(token.value())
         .await
         .map_err(|_| ApiError::Domain(DomainError::Unauthorized))?;
 
-    if !auth_user.role.can_access_admin_panel() {
+    // 受限密码只能浏览授权目录，管理面始终要求主密码会话。
+    if !session.scope.is_full() {
+        return Err(ApiError::forbidden(
+            "Admin access requires the primary account password",
+        ));
+    }
+
+    if !session.user.role.can_access_admin_panel() {
         return Err(ApiError::forbidden("Admin or manager role required"));
     }
 
-    Ok(auth_user)
+    Ok(session.user)
 }
 
 /// 管理动作的审计记录：actor 为执行操作的管理员。

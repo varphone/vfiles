@@ -37,6 +37,8 @@ pub(crate) struct RequestContext {
     pub actor_user_id: UserId,
     /// 已认证用户的用户名（用于审计日志快照）；未启用认证时为 `None`。
     pub username: Option<String>,
+    /// 本次会话的权限范围；访问令牌与主密码会话为全量。
+    pub scope: vfiles_domain::SessionScope,
 }
 
 pub(crate) async fn request_context(
@@ -66,12 +68,20 @@ pub(crate) async fn authenticated_request_context(
     request_context_from_auth_user(state, Some(auth_user)).await
 }
 
-async fn optional_auth_user(state: &AppState, jar: &CookieJar) -> ApiResult<Option<AuthUser>> {
+async fn optional_auth_user(
+    state: &AppState,
+    jar: &CookieJar,
+) -> ApiResult<Option<vfiles_domain::AuthenticatedSession>> {
     // 访问令牌优先：`Authorization: Bearer vfat_...` 由中间件复制成 vfiles_token cookie
     if let Some(token) = jar.get(crate::middleware::ACCESS_TOKEN_COOKIE)
         && let Some(auth_user) = authenticate_access_token(state, token.value()).await?
     {
-        return Ok(Some(auth_user));
+        // 访问令牌由主密码会话创建，代表账号本身：全量权限。
+        return Ok(Some(vfiles_domain::AuthenticatedSession {
+            user: auth_user,
+            scope: vfiles_domain::SessionScope::Full,
+            credential_id: None,
+        }));
     }
 
     let Some(auth_service) = &state.auth_service else {
@@ -133,17 +143,78 @@ async fn authenticate_access_token(
 pub(crate) async fn require_session_auth_user(
     state: &AppState,
     jar: &CookieJar,
-) -> ApiResult<AuthUser> {
+) -> ApiResult<vfiles_domain::AuthenticatedSession> {
     if jar.get(crate::middleware::ACCESS_TOKEN_COOKIE).is_some() {
         return Err(ApiError::Domain(DomainError::Forbidden));
     }
     require_auth_user(state, jar).await
 }
 
+/// 受限会话越权时的统一文案。
+pub(crate) const SCOPE_FORBIDDEN_MESSAGE: &str = "该路径不在当前密码的访问范围内";
+
+impl RequestContext {
+    /// 读取路径必须在会话范围内。
+    pub(crate) fn require_read(&self, path: &str) -> ApiResult<()> {
+        if self.scope.allows_path_read(path) {
+            Ok(())
+        } else {
+            Err(ApiError::forbidden(SCOPE_FORBIDDEN_MESSAGE))
+        }
+    }
+
+    /// 写入路径必须在会话范围内，且受限凭据需要 `can_write`。
+    pub(crate) fn require_write(&self, path: &str) -> ApiResult<()> {
+        if self.scope.allows_path_write(path) {
+            Ok(())
+        } else {
+            Err(ApiError::forbidden(SCOPE_FORBIDDEN_MESSAGE))
+        }
+    }
+
+    /// 账号级操作（令牌、管理、概览、转移、手动快照、凭据管理）只允许主密码会话。
+    pub(crate) fn require_full(&self) -> ApiResult<()> {
+        if self.scope.is_full() {
+            Ok(())
+        } else {
+            Err(ApiError::forbidden(
+                "此操作需要主密码会话；受限密码只能访问授权目录",
+            ))
+        }
+    }
+}
+
+/// 主密码会话的请求上下文：账号级操作使用。
+pub(crate) async fn primary_request_context(
+    state: &AppState,
+    jar: &CookieJar,
+) -> ApiResult<RequestContext> {
+    let ctx = protected_request_context(state, jar).await?;
+    ctx.require_full()?;
+    Ok(ctx)
+}
+
+/// 需要主密码会话：受限密码只能浏览/写入授权目录，不能执行账号级操作。
+pub(crate) async fn require_primary_session(
+    state: &AppState,
+    jar: &CookieJar,
+) -> ApiResult<AuthUser> {
+    let session = require_session_auth_user(state, jar).await?;
+    if !session.scope.is_full() {
+        return Err(ApiError::forbidden(
+            "This action requires the primary account password",
+        ));
+    }
+    Ok(session.user)
+}
+
 /// 需要登录：会话 Cookie 或访问令牌任一有效即可。
 ///
 /// 复用 [`optional_auth_user`]，保证两条鉴权路径（会话 / 令牌）行为一致。
-async fn require_auth_user(state: &AppState, jar: &CookieJar) -> ApiResult<AuthUser> {
+async fn require_auth_user(
+    state: &AppState,
+    jar: &CookieJar,
+) -> ApiResult<vfiles_domain::AuthenticatedSession> {
     optional_auth_user(state, jar)
         .await?
         .ok_or(ApiError::Domain(DomainError::Unauthorized))
@@ -151,29 +222,33 @@ async fn require_auth_user(state: &AppState, jar: &CookieJar) -> ApiResult<AuthU
 
 async fn request_context_from_auth_user(
     state: &AppState,
-    auth_user: Option<AuthUser>,
+    session: Option<vfiles_domain::AuthenticatedSession>,
 ) -> ApiResult<RequestContext> {
     let namespace_id = if state.config.auth.enabled && state.config.features.multi_user {
-        match auth_user.as_ref() {
-            Some(auth_user) => ensure_default_namespace(state, &auth_user.id).await?,
+        match session.as_ref() {
+            Some(session) => ensure_default_namespace(state, &session.user.id).await?,
             None => state.default_namespace_id,
         }
     } else {
         state.default_namespace_id
     };
 
-    let actor_user_id = auth_user
+    let actor_user_id = session
         .as_ref()
-        .map(|auth_user| auth_user.id)
+        .map(|session| session.user.id)
         .unwrap_or(state.default_actor_user_id);
-    let username = auth_user
+    let username = session
         .as_ref()
-        .map(|auth_user| auth_user.username.to_string());
+        .map(|session| session.user.username.to_string());
+    let scope = session
+        .map(|session| session.scope)
+        .unwrap_or(vfiles_domain::SessionScope::Full);
 
     Ok(RequestContext {
         namespace_id,
         actor_user_id,
         username,
+        scope,
     })
 }
 

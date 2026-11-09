@@ -46,6 +46,8 @@ pub async fn overview(
     jar: CookieJar,
 ) -> ApiResult<Json<OverviewDto>> {
     let ctx = protected_request_context(&state, &jar).await?;
+    // 整命名空间的存储统计属于账号级信息，受限密码不展示。
+    ctx.require_full()?;
 
     // 统计、分类与最近更新来自同一遍扫描，避免为每一项重新遍历命名空间。
     let overview = state

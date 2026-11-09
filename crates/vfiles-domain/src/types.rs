@@ -56,6 +56,7 @@ newtype_id!(UploadId);
 newtype_id!(ShareId);
 newtype_id!(BlobId);
 newtype_id!(AccessTokenId);
+newtype_id!(CredentialId);
 
 // Domain entities
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +83,82 @@ pub struct UserSession {
     pub user_agent: Option<String>,
     pub ip_addr: Option<String>,
     pub last_seen_at: time::OffsetDateTime,
+    /// 登录使用的受限凭据；`None` 表示主密码会话（全量权限）。
+    pub credential_id: Option<CredentialId>,
+}
+
+/// 登录凭据：同一账号下的一条密码。
+///
+/// 主密码保存在 `users.password_hash`，不在此表中；本表只保存受限凭据。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserCredential {
+    pub id: CredentialId,
+    pub user_id: UserId,
+    pub label: String,
+    pub password_hash: String,
+    /// 允许访问的目录根；至少一个，空数组不合法。
+    pub scope_roots: Vec<NormalizedPath>,
+    pub can_write: bool,
+    pub created_at: time::OffsetDateTime,
+    pub updated_at: time::OffsetDateTime,
+    pub last_used_at: Option<time::OffsetDateTime>,
+}
+
+/// 受限会话的可见范围。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopedScope {
+    pub credential_id: CredentialId,
+    pub label: String,
+    pub roots: Vec<NormalizedPath>,
+    pub can_write: bool,
+}
+
+impl ScopedScope {
+    fn contains(&self, path: &NormalizedPath) -> bool {
+        let value = path.as_str();
+        self.roots.iter().any(|root| {
+            let root = root.as_str();
+            value == root || value.starts_with(&format!("{root}/"))
+        })
+    }
+}
+
+/// 会话的权限范围：主密码会话为全量，受限凭据会话按目录根过滤。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SessionScope {
+    Full,
+    Restricted(ScopedScope),
+}
+
+impl SessionScope {
+    pub fn is_full(&self) -> bool {
+        matches!(self, SessionScope::Full)
+    }
+
+    /// 读取路径是否在范围内；全量会话恒为 true。
+    pub fn allows_read(&self, path: &NormalizedPath) -> bool {
+        match self {
+            SessionScope::Full => true,
+            SessionScope::Restricted(scope) => scope.contains(path),
+        }
+    }
+
+    /// 写入路径是否在范围内；受限凭据还需要 `can_write`。
+    pub fn allows_write(&self, path: &NormalizedPath) -> bool {
+        match self {
+            SessionScope::Full => true,
+            SessionScope::Restricted(scope) => scope.can_write && scope.contains(path),
+        }
+    }
+
+    /// 便捷版本：调用方只有字符串路径时先经 `NormalizedPath` 解析。
+    pub fn allows_path_read(&self, path: &str) -> bool {
+        NormalizedPath::new(path).is_ok_and(|path| self.allows_read(&path))
+    }
+
+    pub fn allows_path_write(&self, path: &str) -> bool {
+        NormalizedPath::new(path).is_ok_and(|path| self.allows_write(&path))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +173,8 @@ pub struct LoginResponse {
     pub user: User,
     pub session: UserSession,
     pub token: String,
+    /// 本次登录命中的权限范围（主密码为全量，副密码为受限范围）。
+    pub scope: SessionScope,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +190,14 @@ pub struct AuthUser {
     pub username: Username,
     pub email: Option<EmailAddress>,
     pub role: Role,
+}
+
+/// 已认证的会话：账号身份 + 该会话的权限范围。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedSession {
+    pub user: AuthUser,
+    pub scope: SessionScope,
+    pub credential_id: Option<CredentialId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

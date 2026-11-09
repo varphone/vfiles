@@ -116,19 +116,48 @@ pub async fn list(
         .unwrap_or(DEFAULT_PAGE_LIMIT)
         .clamp(1, MAX_PAGE_LIMIT);
     let offset = u32::try_from(query.offset.unwrap_or(0)).unwrap_or(u32::MAX);
-    let (entries, total) = state
+    if ctx.scope.is_full() {
+        let (entries, total) = state
+            .favorite_repo
+            .list_page(&ctx.namespace_id, limit as u32, offset)
+            .await?;
+        let item_count = entries.len() as u64;
+        let response_offset = u64::from(offset).min(total);
+
+        return Ok(Json(FavoriteListDto {
+            items: entries.into_iter().map(to_dto).collect(),
+            total,
+            limit,
+            offset: usize::try_from(response_offset).unwrap_or(usize::MAX),
+            has_more: response_offset.saturating_add(item_count) < total,
+        }));
+    }
+
+    // 受限会话只看到范围内的收藏；范围通常很小，直接取回后过滤再分页。
+    let (entries, _) = state
         .favorite_repo
-        .list_page(&ctx.namespace_id, limit as u32, offset)
+        .list_page(&ctx.namespace_id, 10_000, 0)
         .await?;
-    let item_count = entries.len() as u64;
-    let response_offset = u64::from(offset).min(total);
+    let visible: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| ctx.scope.allows_read(&entry.path_norm))
+        .collect();
+    let total = visible.len() as u64;
+    let response_offset = u64::from(offset).min(total) as usize;
+    let items = visible
+        .into_iter()
+        .skip(response_offset)
+        .take(limit)
+        .map(to_dto)
+        .collect::<Vec<_>>();
+    let item_count = items.len() as u64;
 
     Ok(Json(FavoriteListDto {
-        items: entries.into_iter().map(to_dto).collect(),
+        items,
         total,
         limit,
-        offset: usize::try_from(response_offset).unwrap_or(usize::MAX),
-        has_more: response_offset.saturating_add(item_count) < total,
+        offset: response_offset,
+        has_more: response_offset as u64 + item_count < total,
     }))
 }
 
@@ -139,6 +168,7 @@ pub async fn add(
     ApiJson(body): ApiJson<FavoriteBody>,
 ) -> ApiResult<(StatusCode, Json<FavoriteListDto>)> {
     let ctx = protected_request_context(&state, &jar).await?;
+    ctx.require_read(body.path.trim_matches('/'))?;
     let entry_id = resolve_entry(&state, &ctx.namespace_id, &body.path).await?;
 
     state
@@ -169,6 +199,7 @@ pub async fn remove(
     ApiQuery(query): ApiQuery<FavoriteQuery>,
 ) -> ApiResult<Json<FavoriteListDto>> {
     let ctx = protected_request_context(&state, &jar).await?;
+    ctx.require_read(query.path.trim_matches('/'))?;
     let entry_id = resolve_entry(&state, &ctx.namespace_id, &query.path).await?;
 
     state

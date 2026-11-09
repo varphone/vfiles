@@ -93,6 +93,8 @@ pub async fn move_entry(
             message: "Source and destination paths are required".to_string(),
         }));
     }
+    ctx.require_write(source_path.as_str())?;
+    ctx.require_write(destination_path.as_str())?;
 
     state
         .workspace_service
@@ -163,6 +165,10 @@ async fn move_entries(
             message: "Invalid destination path format".to_string(),
         })
     })?;
+    for source in &sources {
+        ctx.require_write(source.as_str())?;
+    }
+    ctx.require_write(destination.as_str())?;
 
     state
         .workspace_service
@@ -216,6 +222,7 @@ async fn delete_entry(
             message: "Cannot delete the root directory".to_string(),
         }));
     }
+    ctx.require_write(normalized_path.as_str())?;
 
     state
         .workspace_service
@@ -251,6 +258,7 @@ async fn list_root(
             message: "Invalid root path".to_string(),
         })
     })?;
+    ctx.require_read("")?;
 
     list_directory_impl(
         &state,
@@ -273,6 +281,7 @@ async fn list_directory(
             message: "Invalid path format".to_string(),
         })
     })?;
+    ctx.require_read(normalized_path.as_str())?;
 
     list_directory_impl(
         &state,
@@ -333,6 +342,7 @@ async fn list_root_page(
             message: "Invalid root path".to_string(),
         })
     })?;
+    ctx.require_read("")?;
 
     paginated_listing(&state, &ctx.namespace_id, &root_path, &query).await
 }
@@ -350,6 +360,7 @@ async fn list_directory_page(
             message: "Invalid path format".to_string(),
         })
     })?;
+    ctx.require_read(normalized_path.as_str())?;
 
     paginated_listing(&state, &ctx.namespace_id, &normalized_path, &query).await
 }
@@ -365,6 +376,7 @@ async fn list_root_directories_page(
             message: "Invalid root path".to_string(),
         })
     })?;
+    ctx.require_read("")?;
 
     paginated_directory_listing(&state, &ctx.namespace_id, &root_path, &query).await
 }
@@ -381,6 +393,7 @@ async fn list_directory_directories_page(
             message: "Invalid path format".to_string(),
         })
     })?;
+    ctx.require_read(normalized_path.as_str())?;
 
     paginated_directory_listing(&state, &ctx.namespace_id, &normalized_path, &query).await
 }
@@ -564,6 +577,7 @@ pub async fn create_directory(
             message: "Invalid path format".to_string(),
         })
     })?;
+    ctx.require_write(normalized_path.as_str())?;
 
     state
         .workspace_service

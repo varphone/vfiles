@@ -121,6 +121,8 @@ async fn create_share(
         })
     })?;
 
+    ctx.require_write(entry_path.as_str())?;
+
     // Create the share
     let code = state
         .share_service
@@ -179,7 +181,11 @@ async fn list_shares(
         }));
     }
 
-    let dtos = shares.into_iter().map(ShareDto::from).collect();
+    let dtos = shares
+        .into_iter()
+        .filter(|item| ctx.scope.allows_path_read(&item.entry_path))
+        .map(ShareDto::from)
+        .collect();
 
     Ok(Json(dtos))
 }
@@ -199,15 +205,46 @@ async fn list_shares_page(
         .unwrap_or(DEFAULT_SHARE_PAGE_LIMIT)
         .clamp(1, MAX_SHARE_PAGE_LIMIT);
     let offset = query.offset.unwrap_or(0);
-    let (items, total) = state
+    if ctx.scope.is_full() {
+        let (items, total) = state
+            .share_service
+            .list_shares_with_entry_by_user_page(&ctx.actor_user_id, limit, offset)
+            .await?;
+        let item_count = u64::try_from(items.len()).unwrap_or(u64::MAX);
+        let has_more = u64::from(offset).saturating_add(item_count) < total;
+
+        return Ok(Json(SharePageDto {
+            items: items.into_iter().map(ShareDto::from).collect(),
+            total,
+            limit,
+            offset,
+            has_more,
+        }));
+    }
+
+    // 受限会话只看到范围内的分享；分享数量有限，取回后过滤再分页。
+    let (items, _) = state
         .share_service
-        .list_shares_with_entry_by_user_page(&ctx.actor_user_id, limit, offset)
+        .list_shares_with_entry_by_user_page(&ctx.actor_user_id, 1_000, 0)
         .await?;
-    let item_count = u64::try_from(items.len()).unwrap_or(u64::MAX);
-    let has_more = u64::from(offset).saturating_add(item_count) < total;
+    let visible: Vec<_> = items
+        .into_iter()
+        .filter(|item| ctx.scope.allows_path_read(&item.entry_path))
+        .collect();
+    let total = u64::try_from(visible.len()).unwrap_or(u64::MAX);
+    let start = usize::try_from(offset)
+        .unwrap_or(usize::MAX)
+        .min(visible.len());
+    let page = visible
+        .into_iter()
+        .skip(start)
+        .take(limit as usize)
+        .map(ShareDto::from)
+        .collect::<Vec<_>>();
+    let has_more = (start as u64).saturating_add(page.len() as u64) < total;
 
     Ok(Json(SharePageDto {
-        items: items.into_iter().map(ShareDto::from).collect(),
+        items: page,
         total,
         limit,
         offset,
@@ -374,6 +411,12 @@ async fn disable_share(
 
     tracing::info!(user_id = %user_id, "Disabling share");
 
+    // 受限会话只能停用范围内的分享；主密码会话保持原有行为（含已过期分享）。
+    if !ctx.scope.is_full() {
+        let share = state.share_service.access_share(&code).await?;
+        let entry = state.entry_repo.find_by_id(&share.entry_id).await?;
+        ctx.require_write(entry.path_norm.as_str())?;
+    }
     let share_id = state.share_service.disable_share(&code, &user_id).await?;
     tracing::info!(share_id = %share_id, "Share disabled");
 

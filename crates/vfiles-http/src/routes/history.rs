@@ -157,6 +157,7 @@ async fn get_entry_history(
             message: "Invalid path format".to_string(),
         })
     })?;
+    ctx.require_read(normalized_path.as_str())?;
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
     // 目录历史的总数需要对整段历史再统计一遍，而页面只需要最新一页；默认跳过，
     // 只有显式请求时才计算。文件历史的总数由条目版本索引直接得出，始终返回。
@@ -209,6 +210,7 @@ async fn get_entry_diff(
             message: "Invalid path format".to_string(),
         })
     })?;
+    ctx.require_read(normalized_path.as_str())?;
     let commit = parse_version_id(query.commit.as_deref(), "commit")?.ok_or_else(|| {
         ApiError::Domain(DomainError::Validation {
             message: "Missing commit parameter".to_string(),
@@ -250,6 +252,7 @@ async fn restore_entry_version(
             message: "Invalid path format".to_string(),
         })
     })?;
+    ctx.require_write(normalized_path.as_str())?;
     let version_id = VersionId::from_string(&req.commit).map_err(|_| {
         ApiError::Domain(DomainError::Validation {
             message: "Invalid commit parameter".to_string(),

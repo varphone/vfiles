@@ -65,12 +65,45 @@ pub trait SessionRepo {
         expires_at: time::OffsetDateTime,
         user_agent: Option<&str>,
         ip_addr: Option<&str>,
+        credential_id: Option<&CredentialId>,
     ) -> DomainResult<SessionId>;
     async fn find_session_by_token_hash(&self, token_hash: &str) -> DomainResult<UserSession>;
     async fn update_last_seen(&self, id: &SessionId) -> DomainResult<()>;
     async fn revoke_session(&self, id: &SessionId) -> DomainResult<()>;
     async fn revoke_user_sessions(&self, user_id: &UserId) -> DomainResult<()>;
+    /// 撤销某条受限凭据签发的全部会话（凭据被修改或删除时使用）。
+    async fn revoke_credential_sessions(&self, credential_id: &CredentialId) -> DomainResult<()>;
     async fn cleanup_expired_sessions(&self) -> DomainResult<i64>;
+}
+
+/// 受限登录凭据的持久化入口。
+#[async_trait::async_trait]
+pub trait UserCredentialRepo {
+    async fn create_credential(
+        &self,
+        user_id: &UserId,
+        label: &str,
+        password_hash: &str,
+        scope_roots: &[NormalizedPath],
+        can_write: bool,
+    ) -> DomainResult<CredentialId>;
+    async fn list_credentials(&self, user_id: &UserId) -> DomainResult<Vec<UserCredential>>;
+    async fn find_credential(&self, id: &CredentialId) -> DomainResult<UserCredential>;
+    /// 更新标签、范围与写权限；密码另行更新。
+    async fn update_credential(
+        &self,
+        id: &CredentialId,
+        label: &str,
+        scope_roots: &[NormalizedPath],
+        can_write: bool,
+    ) -> DomainResult<()>;
+    async fn update_credential_password(
+        &self,
+        id: &CredentialId,
+        password_hash: &str,
+    ) -> DomainResult<()>;
+    async fn delete_credential(&self, id: &CredentialId) -> DomainResult<bool>;
+    async fn touch_credential_used(&self, id: &CredentialId) -> DomainResult<()>;
 }
 
 /// 命名空间统计（侧栏聚合入口使用）。

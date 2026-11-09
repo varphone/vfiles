@@ -166,6 +166,7 @@ async fn options_advertises_and_propfind_needs_auth() {
     let auth = Arc::new(AuthService::new(
         SqliteUserRepo::new(pool.clone()),
         session_repo,
+        vfiles_infra_sqlite::SqliteUserCredentialRepo::new(pool.clone()),
         86_400_u64,
     ));
     let user = auth

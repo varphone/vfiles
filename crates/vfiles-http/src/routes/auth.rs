@@ -14,11 +14,12 @@ use crate::middleware::login_rate_limit_policy;
 use crate::{
     AppState,
     audit::sanitize_log_field,
-    dto::{LoginResponseDto, UserDto},
-    error::{ApiError, ApiJson, ApiResult, ErrorResponse},
+    dto::{LoginCredentialDto, LoginResponseDto, ScopeDto, UserDto},
+    error::{ApiError, ApiJson, ApiPath, ApiResult, ErrorResponse},
     middleware::client_ip_from_headers,
+    routes::primary_request_context,
 };
-use vfiles_domain::{DomainError, NewAuditLog, UserRepo};
+use vfiles_domain::{CredentialId, DomainError, EntryKind, NewAuditLog, NormalizedPath, UserRepo};
 
 const MAX_LOGIN_BODY_BYTES: usize = 16 * 1024;
 const MAX_LOGIN_IDENTIFIER_LOG_CHARS: usize = 254;
@@ -32,12 +33,21 @@ pub fn router() -> Router<AppState> {
         .route("/register", post(register))
         .route("/logout", post(logout))
         .route("/me", get(me))
+        .route(
+            "/credentials",
+            get(list_login_credentials).post(create_login_credential),
+        )
+        .route(
+            "/credentials/{id}",
+            post(update_login_credential).delete(delete_login_credential),
+        )
 }
 
 fn auth_me_response(
     enabled: bool,
     allow_register: bool,
     user: Option<UserDto>,
+    scope: Option<ScopeDto>,
 ) -> Json<serde_json::Value> {
     Json(json!({
         "success": true,
@@ -45,6 +55,7 @@ fn auth_me_response(
             "enabled": enabled,
             "allowRegister": allow_register,
             "user": user,
+            "scope": scope,
         },
     }))
 }
@@ -124,12 +135,16 @@ pub async fn login(
 
     tracing::info!("Login successful for user: {}", response_dto.user.username);
 
+    let login_detail = match response_dto.scope.label.as_deref() {
+        Some(label) => format!("登录成功（受限密码：{label}）"),
+        None => "登录成功".to_string(),
+    };
     crate::audit::record(
         &state,
         &headers,
         NewAuditLog::success(crate::audit::action::LOGIN_SUCCESS)
             .user(Some(actor_user_id), response_dto.user.username.clone())
-            .detail("登录成功"),
+            .detail(login_detail),
     )
     .await;
 
@@ -238,6 +253,7 @@ pub async fn me(
             false,
             state.config.auth.allow_register,
             None,
+            None,
         ));
     };
 
@@ -247,11 +263,12 @@ pub async fn me(
             auth_enabled,
             state.config.auth.allow_register,
             None,
+            None,
         ));
     };
 
-    let auth_user = match auth_service.authenticate_session(token.value()).await {
-        Ok(user) => user,
+    let session = match auth_service.authenticate_session(token.value()).await {
+        Ok(session) => session,
         Err(
             DomainError::Unauthorized
             | DomainError::InvalidCredentials
@@ -264,26 +281,285 @@ pub async fn me(
                 auth_enabled,
                 state.config.auth.allow_register,
                 None,
-            ));
-        }
-        Err(err) => return Err(ApiError::Domain(err)),
-    };
-
-    let user: vfiles_domain::User = match auth_service.user_repo().find_by_id(&auth_user.id).await {
-        Ok(user) => user,
-        Err(DomainError::NotFound { .. }) => {
-            return Ok(auth_me_response(
-                auth_enabled,
-                state.config.auth.allow_register,
                 None,
             ));
         }
         Err(err) => return Err(ApiError::Domain(err)),
     };
 
+    let user: vfiles_domain::User =
+        match auth_service.user_repo().find_by_id(&session.user.id).await {
+            Ok(user) => user,
+            Err(DomainError::NotFound { .. }) => {
+                return Ok(auth_me_response(
+                    auth_enabled,
+                    state.config.auth.allow_register,
+                    None,
+                    None,
+                ));
+            }
+            Err(err) => return Err(ApiError::Domain(err)),
+        };
+
     Ok(auth_me_response(
         auth_enabled,
         state.config.auth.allow_register,
         Some(user.into()),
+        Some(ScopeDto::from(&session.scope)),
     ))
+}
+
+// ---- 受限登录密码（同一账号的多条密码） ----
+
+const MAX_SCOPE_ROOTS: usize = 8;
+const MIN_CREDENTIAL_PASSWORD_CHARS: usize = 8;
+const MAX_CREDENTIAL_PASSWORD_CHARS: usize = 256;
+const MAX_CREDENTIAL_LABEL_CHARS: usize = 64;
+
+#[derive(Debug, serde::Deserialize)]
+struct CreateLoginCredentialRequest {
+    label: String,
+    password: String,
+    #[serde(default)]
+    roots: Vec<String>,
+    #[serde(default, alias = "canWrite")]
+    can_write: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct UpdateLoginCredentialRequest {
+    label: Option<String>,
+    password: Option<String>,
+    roots: Option<Vec<String>>,
+    #[serde(alias = "canWrite")]
+    can_write: Option<bool>,
+}
+
+fn validation_error(message: &str) -> ApiError {
+    ApiError::Domain(DomainError::Validation {
+        message: message.to_string(),
+    })
+}
+
+fn auth_service(state: &AppState) -> ApiResult<&vfiles_app::AuthService> {
+    state
+        .auth_service
+        .as_ref()
+        .ok_or(ApiError::Domain(DomainError::Authentication {
+            message: "Authentication not enabled".to_string(),
+        }))
+}
+
+fn normalize_label(label: &str) -> ApiResult<String> {
+    let trimmed = label.trim();
+    let chars = trimmed.chars().count();
+    if chars == 0 || chars > MAX_CREDENTIAL_LABEL_CHARS {
+        return Err(validation_error("备注长度需在 1-64 个字符之间"));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn validate_credential_password(password: &str) -> ApiResult<()> {
+    let chars = password.chars().count();
+    if chars < MIN_CREDENTIAL_PASSWORD_CHARS || chars > MAX_CREDENTIAL_PASSWORD_CHARS {
+        return Err(validation_error("受限密码长度需在 8-256 个字符之间"));
+    }
+    Ok(())
+}
+
+/// 校验并规范化范围根：必须是当前命名空间内已存在的目录，不能是命名空间根。
+async fn normalize_scope_roots(
+    state: &AppState,
+    namespace_id: &vfiles_domain::NamespaceId,
+    raw: &[String],
+) -> ApiResult<Vec<NormalizedPath>> {
+    if raw.is_empty() {
+        return Err(validation_error("至少选择一个允许访问的目录"));
+    }
+    if raw.len() > MAX_SCOPE_ROOTS {
+        return Err(validation_error("最多选择 8 个允许访问的目录"));
+    }
+    let mut roots: Vec<NormalizedPath> = Vec::new();
+    for value in raw {
+        let trimmed = value.trim().trim_matches('/');
+        if trimmed.is_empty() {
+            return Err(validation_error("不能把命名空间根目录作为受限范围"));
+        }
+        let path =
+            NormalizedPath::new(trimmed).map_err(|_| validation_error("目录路径格式不正确"))?;
+        let entry = state
+            .entry_repo
+            .find_by_path(namespace_id, &path)
+            .await
+            .map_err(ApiError::Domain)?
+            .ok_or_else(|| validation_error("目录不存在"))?;
+        if entry.entry_type != EntryKind::Directory {
+            return Err(validation_error("受限范围必须是目录"));
+        }
+        if !roots.iter().any(|existing| existing == &path) {
+            roots.push(path);
+        }
+    }
+    Ok(roots)
+}
+
+async fn list_login_credentials(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    jar: CookieJar,
+) -> ApiResult<Json<Vec<LoginCredentialDto>>> {
+    let ctx = primary_request_context(&state, &jar).await?;
+    let credentials = auth_service(&state)?
+        .list_login_credentials(&ctx.actor_user_id)
+        .await
+        .map_err(ApiError::Domain)?;
+    Ok(Json(credentials.into_iter().map(Into::into).collect()))
+}
+
+async fn create_login_credential(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ApiJson(req): ApiJson<CreateLoginCredentialRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let ctx = primary_request_context(&state, &jar).await?;
+    let label = normalize_label(&req.label)?;
+    validate_credential_password(&req.password)?;
+    let roots = normalize_scope_roots(&state, &ctx.namespace_id, &req.roots).await?;
+    let credential_id = auth_service(&state)?
+        .create_login_credential(
+            &ctx.actor_user_id,
+            &label,
+            &req.password,
+            &roots,
+            req.can_write,
+        )
+        .await
+        .map_err(ApiError::Domain)?;
+
+    crate::audit::record(
+        &state,
+        &headers,
+        NewAuditLog::success(crate::audit::action::CREDENTIAL_CREATE)
+            .user(
+                Some(ctx.actor_user_id),
+                ctx.username.clone().unwrap_or_default(),
+            )
+            .target(label.clone())
+            .detail(format!(
+                "创建受限登录密码「{label}」（{}，{}）",
+                roots
+                    .iter()
+                    .map(|root| root.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                if req.can_write { "可写" } else { "只读" }
+            )),
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({ "id": credential_id.to_string() })))
+}
+
+async fn update_login_credential(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ApiPath(id): ApiPath<String>,
+    ApiJson(req): ApiJson<UpdateLoginCredentialRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let ctx = primary_request_context(&state, &jar).await?;
+    let credential_id =
+        CredentialId::from_string(&id).map_err(|_| validation_error("凭据 ID 格式不正确"))?;
+    let auth = auth_service(&state)?;
+    let existing = auth
+        .find_login_credential(&ctx.actor_user_id, &credential_id)
+        .await
+        .map_err(ApiError::Domain)?;
+
+    let label = match req.label.as_deref() {
+        Some(label) => normalize_label(label)?,
+        None => existing.label.clone(),
+    };
+    if let Some(password) = req.password.as_deref() {
+        validate_credential_password(password)?;
+    }
+    let roots = match req.roots.as_deref() {
+        Some(raw) => normalize_scope_roots(&state, &ctx.namespace_id, raw).await?,
+        None => existing.scope_roots.clone(),
+    };
+    let can_write = req.can_write.unwrap_or(existing.can_write);
+
+    auth.update_login_credential(
+        &ctx.actor_user_id,
+        &credential_id,
+        &label,
+        req.password.as_deref(),
+        &roots,
+        can_write,
+    )
+    .await
+    .map_err(ApiError::Domain)?;
+
+    crate::audit::record(
+        &state,
+        &headers,
+        NewAuditLog::success(crate::audit::action::CREDENTIAL_UPDATE)
+            .user(
+                Some(ctx.actor_user_id),
+                ctx.username.clone().unwrap_or_default(),
+            )
+            .target(label.clone())
+            .detail(format!(
+                "更新受限登录密码「{label}」（{}，{}）{}",
+                roots
+                    .iter()
+                    .map(|root| root.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                if can_write { "可写" } else { "只读" },
+                if req.password.is_some() {
+                    "；密码已轮换，旧会话已失效"
+                } else {
+                    "；旧会话已失效"
+                }
+            )),
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({ "updated": true })))
+}
+
+async fn delete_login_credential(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ApiPath(id): ApiPath<String>,
+) -> ApiResult<axum::http::StatusCode> {
+    let ctx = primary_request_context(&state, &jar).await?;
+    let credential_id =
+        CredentialId::from_string(&id).map_err(|_| validation_error("凭据 ID 格式不正确"))?;
+    let deleted = auth_service(&state)?
+        .delete_login_credential(&ctx.actor_user_id, &credential_id)
+        .await
+        .map_err(ApiError::Domain)?;
+    if !deleted {
+        return Err(ApiError::Domain(DomainError::NotFound {
+            resource: "credential".to_string(),
+        }));
+    }
+
+    crate::audit::record(
+        &state,
+        &headers,
+        NewAuditLog::success(crate::audit::action::CREDENTIAL_DELETE)
+            .user(
+                Some(ctx.actor_user_id),
+                ctx.username.clone().unwrap_or_default(),
+            )
+            .target(id)
+            .detail("删除受限登录密码；其会话已失效"),
+    )
+    .await;
+
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }

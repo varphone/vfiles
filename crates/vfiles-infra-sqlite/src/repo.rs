@@ -1229,11 +1229,12 @@ impl SessionRepo for SqliteSessionRepo {
         expires_at: time::OffsetDateTime,
         user_agent: Option<&str>,
         ip_addr: Option<&str>,
+        credential_id: Option<&CredentialId>,
     ) -> DomainResult<SessionId> {
         let id = SessionId::new();
         let now = time::OffsetDateTime::now_utc();
         sqlx::query(
-            "INSERT INTO user_sessions (id, user_id, session_token_hash, issued_at, expires_at, user_agent, ip_addr, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO user_sessions (id, user_id, session_token_hash, issued_at, expires_at, user_agent, ip_addr, last_seen_at, credential_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(id.to_string())
         .bind(user_id.to_string())
@@ -1243,6 +1244,7 @@ impl SessionRepo for SqliteSessionRepo {
         .bind(user_agent)
         .bind(ip_addr)
         .bind(now)
+        .bind(credential_id.map(|id| id.to_string()))
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::Internal {
@@ -1252,8 +1254,8 @@ impl SessionRepo for SqliteSessionRepo {
     }
 
     async fn find_session_by_token_hash(&self, token_hash: &str) -> DomainResult<UserSession> {
-        let row: (String, String, String, String, String, Option<String>, Option<String>, String, Option<String>) = sqlx::query_as(
-            "SELECT id, user_id, session_token_hash, issued_at, expires_at, revoked_at, user_agent, ip_addr, last_seen_at FROM user_sessions WHERE session_token_hash = ?"
+        let row: (String, String, String, String, String, Option<String>, Option<String>, String, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT id, user_id, session_token_hash, issued_at, expires_at, revoked_at, user_agent, ip_addr, last_seen_at, credential_id FROM user_sessions WHERE session_token_hash = ?"
         )
         .bind(token_hash)
         .fetch_one(&self.pool)
@@ -1308,6 +1310,17 @@ impl SessionRepo for SqliteSessionRepo {
             .map_err(|_| DomainError::Internal {
                 message: "Invalid timestamp".to_string(),
             })?,
+            credential_id: row
+                .9
+                .as_deref()
+                .map(|value| -> DomainResult<CredentialId> {
+                    Ok(CredentialId::from_uuid(
+                        uuid::Uuid::parse_str(value).map_err(|_| DomainError::Internal {
+                            message: "Invalid credential id".to_string(),
+                        })?,
+                    ))
+                })
+                .transpose()?,
         })
     }
 
@@ -1352,6 +1365,21 @@ impl SessionRepo for SqliteSessionRepo {
         Ok(())
     }
 
+    async fn revoke_credential_sessions(&self, credential_id: &CredentialId) -> DomainResult<()> {
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query(
+            "UPDATE user_sessions SET revoked_at = ? WHERE credential_id = ? AND revoked_at IS NULL",
+        )
+        .bind(now)
+        .bind(credential_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to revoke credential sessions: {}", e),
+        })?;
+        Ok(())
+    }
+
     async fn cleanup_expired_sessions(&self) -> DomainResult<i64> {
         let now = time::OffsetDateTime::now_utc();
         let result = sqlx::query(
@@ -1365,6 +1393,228 @@ impl SessionRepo for SqliteSessionRepo {
             message: format!("Failed to cleanup sessions: {}", e),
         })?;
         Ok(result.rows_affected() as i64)
+    }
+}
+
+// Login credentials (same account, several passwords)
+
+/// 受限登录凭据仓储。主密码仍保存在 `users.password_hash`。
+#[derive(Debug, Clone)]
+pub struct SqliteUserCredentialRepo {
+    pool: SqlitePool,
+}
+
+impl SqliteUserCredentialRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+type UserCredentialRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    Option<String>,
+);
+
+fn parse_user_credential_row(row: UserCredentialRow) -> DomainResult<UserCredential> {
+    let roots: Vec<String> =
+        serde_json::from_str(&row.4).map_err(|error| DomainError::Internal {
+            message: format!("Invalid credential scope: {error}"),
+        })?;
+    let scope_roots = roots
+        .iter()
+        .map(|root| {
+            NormalizedPath::new(root).map_err(|_| DomainError::Internal {
+                message: "Invalid credential scope root".to_string(),
+            })
+        })
+        .collect::<DomainResult<Vec<_>>>()?;
+    Ok(UserCredential {
+        id: CredentialId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
+            DomainError::Internal {
+                message: "Invalid credential UUID".to_string(),
+            }
+        })?),
+        user_id: UserId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(|_| {
+            DomainError::Internal {
+                message: "Invalid credential user UUID".to_string(),
+            }
+        })?),
+        label: row.2,
+        password_hash: row.3,
+        scope_roots,
+        can_write: row.5 != 0,
+        created_at: parse_timestamp(&row.6)?,
+        updated_at: parse_timestamp(&row.7)?,
+        last_used_at: row.8.as_deref().map(parse_timestamp).transpose()?,
+    })
+}
+
+fn encode_scope_roots(scope_roots: &[NormalizedPath]) -> DomainResult<String> {
+    serde_json::to_string(
+        &scope_roots
+            .iter()
+            .map(|root| root.as_str().to_string())
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|error| DomainError::Internal {
+        message: format!("Failed to encode credential scope: {error}"),
+    })
+}
+
+#[async_trait::async_trait]
+impl UserCredentialRepo for SqliteUserCredentialRepo {
+    async fn create_credential(
+        &self,
+        user_id: &UserId,
+        label: &str,
+        password_hash: &str,
+        scope_roots: &[NormalizedPath],
+        can_write: bool,
+    ) -> DomainResult<CredentialId> {
+        let id = CredentialId::new();
+        let now = time::OffsetDateTime::now_utc();
+        sqlx::query(
+            r#"
+            INSERT INTO user_credentials (id, user_id, label, password_hash, scope_roots, can_write, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(id.to_string())
+        .bind(user_id.to_string())
+        .bind(label)
+        .bind(password_hash)
+        .bind(encode_scope_roots(scope_roots)?)
+        .bind(i64::from(can_write))
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to create login credential: {error}"),
+        })?;
+        Ok(id)
+    }
+
+    async fn list_credentials(&self, user_id: &UserId) -> DomainResult<Vec<UserCredential>> {
+        let rows: Vec<UserCredentialRow> = sqlx::query_as(
+            r#"
+            SELECT id, user_id, label, password_hash, scope_roots, can_write, created_at, updated_at, last_used_at
+            FROM user_credentials WHERE user_id = ? ORDER BY created_at ASC, id ASC
+            "#,
+        )
+        .bind(user_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to list login credentials: {error}"),
+        })?;
+        rows.into_iter().map(parse_user_credential_row).collect()
+    }
+
+    async fn find_credential(&self, id: &CredentialId) -> DomainResult<UserCredential> {
+        let row: UserCredentialRow = sqlx::query_as(
+            r#"
+            SELECT id, user_id, label, password_hash, scope_roots, can_write, created_at, updated_at, last_used_at
+            FROM user_credentials WHERE id = ?
+            "#,
+        )
+        .bind(id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| match error {
+            sqlx::Error::RowNotFound => DomainError::NotFound {
+                resource: "credential".to_string(),
+            },
+            other => DomainError::Internal {
+                message: format!("Failed to find login credential: {other}"),
+            },
+        })?;
+        parse_user_credential_row(row)
+    }
+
+    async fn update_credential(
+        &self,
+        id: &CredentialId,
+        label: &str,
+        scope_roots: &[NormalizedPath],
+        can_write: bool,
+    ) -> DomainResult<()> {
+        let updated = sqlx::query(
+            "UPDATE user_credentials SET label = ?, scope_roots = ?, can_write = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(label)
+        .bind(encode_scope_roots(scope_roots)?)
+        .bind(i64::from(can_write))
+        .bind(time::OffsetDateTime::now_utc())
+        .bind(id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to update login credential: {error}"),
+        })?
+        .rows_affected();
+        if updated == 0 {
+            return Err(DomainError::NotFound {
+                resource: "credential".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn update_credential_password(
+        &self,
+        id: &CredentialId,
+        password_hash: &str,
+    ) -> DomainResult<()> {
+        let updated = sqlx::query(
+            "UPDATE user_credentials SET password_hash = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(password_hash)
+        .bind(time::OffsetDateTime::now_utc())
+        .bind(id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to update login credential password: {error}"),
+        })?
+        .rows_affected();
+        if updated == 0 {
+            return Err(DomainError::NotFound {
+                resource: "credential".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn delete_credential(&self, id: &CredentialId) -> DomainResult<bool> {
+        let deleted = sqlx::query("DELETE FROM user_credentials WHERE id = ?")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to delete login credential: {error}"),
+            })?
+            .rows_affected();
+        Ok(deleted > 0)
+    }
+
+    async fn touch_credential_used(&self, id: &CredentialId) -> DomainResult<()> {
+        sqlx::query("UPDATE user_credentials SET last_used_at = ? WHERE id = ?")
+            .bind(time::OffsetDateTime::now_utc())
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to record credential use: {error}"),
+            })?;
+        Ok(())
     }
 }
 
@@ -15415,5 +15665,153 @@ mod filename_trigram_search_tests {
 
         pool.close().await;
         let _ = std::fs::remove_file(&root);
+    }
+}
+
+#[cfg(test)]
+mod credential_repo_tests {
+    use super::*;
+    use crate::{SqliteMigrations, SqlitePoolFactory};
+    use camino::Utf8PathBuf;
+
+    async fn setup() -> (SqlitePool, Utf8PathBuf) {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-credential-repo-test-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("sqlite pool should connect");
+        SqliteMigrations::run(&pool)
+            .await
+            .expect("migrations should succeed");
+        (pool, db_path)
+    }
+
+    #[tokio::test]
+    async fn credentials_roundtrip_and_revoke_their_sessions() {
+        let (pool, db_path) = setup().await;
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let user_id = user_repo
+            .create_admin("credential-owner", "owner@example.com", "hash")
+            .await
+            .expect("user should be created");
+
+        let repo = SqliteUserCredentialRepo::new(pool.clone());
+        let docs = NormalizedPath::new("docs").expect("valid path");
+        let photos = NormalizedPath::new("photos/2024").expect("valid path");
+
+        let first = repo
+            .create_credential(&user_id, "docs-reader", "hash-a", &[docs.clone()], false)
+            .await
+            .expect("first credential");
+        let second = repo
+            .create_credential(
+                &user_id,
+                "photos-writer",
+                "hash-b",
+                &[photos.clone(), docs.clone()],
+                true,
+            )
+            .await
+            .expect("second credential");
+
+        let listed = repo
+            .list_credentials(&user_id)
+            .await
+            .expect("credentials should list");
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].id, first);
+        assert_eq!(listed[0].scope_roots, vec![docs.clone()]);
+        assert!(!listed[0].can_write);
+        assert_eq!(listed[1].id, second);
+        assert_eq!(
+            listed[1].scope_roots,
+            vec![photos.clone(), docs.clone()],
+            "scope roots must round-trip through JSON"
+        );
+        assert!(listed[1].can_write);
+        assert!(listed[0].last_used_at.is_none());
+
+        // 更新标签与范围，并记录使用时间。
+        repo.update_credential(&first, "docs-writer", &[docs.clone()], true)
+            .await
+            .expect("credential should update");
+        repo.touch_credential_used(&first)
+            .await
+            .expect("last used should record");
+        let updated = repo
+            .find_credential(&first)
+            .await
+            .expect("credential should be readable");
+        assert_eq!(updated.label, "docs-writer");
+        assert!(updated.can_write);
+        assert!(updated.last_used_at.is_some());
+
+        // 会话记录凭据；撤销该凭据时只影响它的会话。
+        let session_repo = SqliteSessionRepo::new(pool.clone());
+        let expires_at = time::OffsetDateTime::now_utc() + time::Duration::hours(1);
+        let primary_session = session_repo
+            .create_session(&user_id, "hash-primary", expires_at, None, None, None)
+            .await
+            .expect("primary session");
+        let _scoped_session = session_repo
+            .create_session(
+                &user_id,
+                "hash-scoped",
+                expires_at,
+                None,
+                None,
+                Some(&first),
+            )
+            .await
+            .expect("scoped session");
+
+        let loaded = session_repo
+            .find_session_by_token_hash("hash-scoped")
+            .await
+            .expect("scoped session should load");
+        assert_eq!(loaded.credential_id, Some(first));
+
+        session_repo
+            .revoke_credential_sessions(&first)
+            .await
+            .expect("credential sessions should revoke");
+        let scoped_after = session_repo
+            .find_session_by_token_hash("hash-scoped")
+            .await
+            .expect("session should still exist");
+        assert!(scoped_after.revoked_at.is_some());
+        let primary_after = session_repo
+            .find_session_by_token_hash("hash-primary")
+            .await
+            .expect("primary session should still exist");
+        assert!(
+            primary_after.revoked_at.is_none(),
+            "the primary session must not be revoked with a credential"
+        );
+        let _ = primary_session;
+
+        // 删除凭据后不可再读取。
+        assert!(
+            repo.delete_credential(&first)
+                .await
+                .expect("delete should succeed")
+        );
+        assert!(matches!(
+            repo.find_credential(&first).await,
+            Err(DomainError::NotFound { .. })
+        ));
+        assert_eq!(
+            repo.list_credentials(&user_id)
+                .await
+                .expect("remaining credentials")
+                .len(),
+            1
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
     }
 }

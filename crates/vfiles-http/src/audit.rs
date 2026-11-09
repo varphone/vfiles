@@ -55,6 +55,9 @@ pub mod action {
     pub const AUDIT_EXPORT: &str = "audit.export";
     pub const TOKEN_CREATE: &str = "token.create";
     pub const TOKEN_REVOKE: &str = "token.revoke";
+    pub const CREDENTIAL_CREATE: &str = "credential.create";
+    pub const CREDENTIAL_UPDATE: &str = "credential.update";
+    pub const CREDENTIAL_DELETE: &str = "credential.delete";
 }
 
 /// 从请求头取出 (IP, User-Agent)。

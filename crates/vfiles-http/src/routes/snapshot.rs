@@ -20,6 +20,8 @@ pub async fn create_snapshot(
     ApiJson(req): ApiJson<CreateSnapshotRequest>,
 ) -> ApiResult<Json<SnapshotDto>> {
     let ctx = protected_request_context(&state, &jar).await?;
+    // 手动快照是整命名空间操作，只允许主密码会话。
+    ctx.require_full()?;
     let snapshot = state
         .workspace_service
         .create_snapshot(

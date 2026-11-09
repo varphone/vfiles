@@ -1,7 +1,7 @@
 use axum::{extract::State, response::Json};
 use axum_extra::extract::cookie::CookieJar;
 use serde::Deserialize;
-use vfiles_domain::{EntryKind, NormalizedPath, SearchQuery};
+use vfiles_domain::{EntryKind, NormalizedPath, SearchQuery, SearchResult, SessionScope};
 
 use crate::{
     AppState,
@@ -86,29 +86,84 @@ async fn search(
     };
 
     let limit = params.limit.clamp(1, MAX_SEARCH_LIMIT);
+    let search_files = params.search_files || (!params.search_files && !params.search_content);
+    let search_content = params.search_content;
+    let entry_kind = entry_kind;
+    let query_for =
+        |path_prefix: Option<NormalizedPath>, offset: u32, page_limit: u32| SearchQuery {
+            query: params.q.clone(),
+            namespace_id: ctx.namespace_id,
+            search_files,
+            search_content,
+            path_prefix,
+            entry_kind,
+            limit: page_limit,
+            offset,
+        };
 
-    // Build search query
-    let query = SearchQuery {
-        query: params.q,
-        namespace_id: ctx.namespace_id,
-        search_files: params.search_files || (!params.search_files && !params.search_content), // Default to files if neither specified
-        search_content: params.search_content,
-        path_prefix,
-        entry_kind,
-        // 多取一条用于判断是否还有下一页
-        limit: limit + 1,
-        offset: params.offset,
+    // 受限会话：显式目录必须在范围内；未指定目录时逐根搜索后合并，结果不会越界。
+    let (results, has_more, results_may_be_incomplete) = match &ctx.scope {
+        SessionScope::Full => {
+            let mut page = state
+                .search_service
+                .search_page(query_for(path_prefix, params.offset, limit + 1))
+                .await?;
+            let has_more = page.items.len() > limit as usize;
+            page.items.truncate(limit as usize);
+            (page.items, has_more, page.results_may_be_incomplete)
+        }
+        SessionScope::Restricted(scope) => {
+            if let Some(prefix) = path_prefix.as_ref() {
+                ctx.require_read(prefix.as_str())?;
+                let mut page = state
+                    .search_service
+                    .search_page(query_for(Some(prefix.clone()), params.offset, limit + 1))
+                    .await?;
+                let has_more = page.items.len() > limit as usize;
+                page.items.truncate(limit as usize);
+                (page.items, has_more, page.results_may_be_incomplete)
+            } else {
+                let per_root_limit =
+                    (params.offset.saturating_add(limit).saturating_add(1)).min(MAX_SEARCH_LIMIT);
+                let mut merged: Vec<SearchResult> = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                let mut incomplete = false;
+                for root in &scope.roots {
+                    let page = state
+                        .search_service
+                        .search_page(query_for(Some(root.clone()), 0, per_root_limit))
+                        .await?;
+                    incomplete |= page.results_may_be_incomplete;
+                    for item in page.items {
+                        if seen.insert(item.entry.id) {
+                            merged.push(item);
+                        }
+                    }
+                }
+                merged.sort_by(|left, right| {
+                    right
+                        .score
+                        .partial_cmp(&left.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| {
+                            left.entry
+                                .path_norm
+                                .as_str()
+                                .cmp(right.entry.path_norm.as_str())
+                        })
+                });
+                let start = (params.offset as usize).min(merged.len());
+                let end = start.saturating_add(limit as usize).min(merged.len());
+                let has_more = merged.len() > end;
+                (merged[start..end].to_vec(), has_more, incomplete)
+            }
+        }
     };
 
-    // Perform search
-    let mut page = state.search_service.search_page(query).await?;
-    let has_more = page.items.len() > limit as usize;
-    page.items.truncate(limit as usize);
-    let entry_ids: Vec<_> = page.items.iter().map(|result| result.entry.id).collect();
+    let entry_ids: Vec<_> = results.iter().map(|result| result.entry.id).collect();
     let favorite_ids =
         super::favorites::favorite_ids(&state, &ctx.namespace_id, &entry_ids).await?;
-    let items = page
-        .items
+    let items = results
         .into_iter()
         .map(|result| {
             let entry_id = result.entry.id;
@@ -123,6 +178,6 @@ async fn search(
         limit,
         offset: params.offset,
         has_more,
-        results_may_be_incomplete: page.results_may_be_incomplete,
+        results_may_be_incomplete,
     }))
 }

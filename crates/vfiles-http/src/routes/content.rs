@@ -43,6 +43,7 @@ async fn get_file_content(
             message: "Invalid path format".to_string(),
         })
     })?;
+    ctx.require_read(path.as_str())?;
 
     let file = state
         .workspace_service
