@@ -520,6 +520,16 @@ IPv6 字面量在 `example_command` 中带方括号。
 - `GET /s/{code}`
   - 对外公开下载入口
 
+## 管理台接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/admin/overview` | 概览聚合：`user_count`、`active_user_count`、`file_count`、`directory_count`、`total_bytes`、`failed_logins_24h`、`version`、`started_at`、`uptime_secs` |
+| GET | `/api/admin/users` | 用户列表，支持 `q`、`role`（admin/manager/user）、`status`（active/disabled）、`sort`（created_at/username/role/last_login/status）、`order`、`page`、`page_size`；返回 `last_login` 与 `active_sessions` |
+| GET | `/api/admin/users/{id}/sessions` | 该账号最近的会话（客户端、IP、最近活跃、是否有效、是否由访问密码签发） |
+
+参数非法时返回 400（`VALIDATION_FAILED`）；普通用户返回 403。
+
 ## 管理员接口
 
 这些接口要求管理员或具备管理能力的账号：
