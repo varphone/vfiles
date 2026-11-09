@@ -252,8 +252,24 @@ async function main() {
     const pc = await (
       await browser.newContext({ viewport: { width: 1440, height: 900 } })
     ).newPage();
+    // 资料库卡片首页不是默认视图：这一帧显式打开偏好再截图
     await pc.addInitScript(
-      ({ t }) => localStorage.setItem("vfiles:theme", t),
+      ({ t }) => {
+        localStorage.setItem("vfiles:theme", t);
+        localStorage.setItem(
+          "vfiles:file-browser:view",
+          JSON.stringify({
+            mode: "list",
+            sortField: "name",
+            sortDirection: "asc",
+            foldersFirst: true,
+            thumbnailSize: 144,
+            detailsVisible: false,
+            density: "comfortable",
+            libraryCards: true,
+          }),
+        );
+      },
       { t: theme },
     );
     await pc.goto(`${base}/login`, { waitUntil: "networkidle" });
