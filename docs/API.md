@@ -40,6 +40,9 @@
     `{"restricted": false, "label": null, "roots": [], "canWrite": true}`；
     受限密码会话为 `{"restricted": true, "label": "read-docs", "roots": ["docs"], "canWrite": false}`。
 - `POST /api/auth/login` 的 `data.scope` 与 `GET /api/auth/me` 相同。
+- 写请求需要浏览器来源可信：`Origin` 与请求的 `Host` 同源，或命中
+  `VFILES_HTTP_CORS_ALLOWED_ORIGINS` / `VFILES_HTTP_PUBLIC_BASE_URL`；否则返回
+  `403 Cross-origin write requests are not allowed`。
 
 ### 受限登录密码（同账号多密码）
 

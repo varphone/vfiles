@@ -209,6 +209,24 @@ pub async fn write_origin_guard_middleware(
     next: Next,
 ) -> Response {
     if !is_write_origin_allowed(req.method(), req.headers(), &allowed_origins) {
+        let origin = req
+            .headers()
+            .get(axum::http::header::ORIGIN)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("<none>");
+        let host = req
+            .headers()
+            .get(axum::http::header::HOST)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("<none>");
+        tracing::warn!(
+            origin,
+            host,
+            allowed = ?allowed_origins,
+            method = %req.method(),
+            path = %req.uri().path(),
+            "rejected a write request from an untrusted origin"
+        );
         return crate::error::ApiError::forbidden("Cross-origin write requests are not allowed")
             .into_response();
     }
@@ -229,9 +247,13 @@ fn is_write_origin_allowed(
     if let Some(origin) = origins.next() {
         return origins.next().is_none()
             && origin.to_str().is_ok_and(|origin| {
-                allowed_origins
-                    .iter()
-                    .any(|allowed| origin.eq_ignore_ascii_case(allowed))
+                // 同源请求：浏览器把 Origin 设成它正在访问的地址，Host 也是同一个
+                // 地址。这样用 127.0.0.1、局域网 IP 或反代域名访问时，登录等写请求
+                // 不会被误判成跨站；跨站页面的 Origin 与我们的 Host 不同，仍然拒绝。
+                origin_matches_request_host(origin, headers)
+                    || allowed_origins
+                        .iter()
+                        .any(|allowed| origin.eq_ignore_ascii_case(allowed))
             });
     }
 
@@ -246,6 +268,31 @@ fn is_write_origin_allowed(
     }
 
     has_bearer_access_token(headers)
+}
+
+/// `Origin` 的主机（含端口）是否就是本次请求的 `Host`。
+///
+/// 默认端口按 scheme 归一化：`https://example.test` 与 `Host: example.test:443`
+/// 视为同源。IPv6 的 `Host: [::1]:3000` 由 `Url` 解析后同样能匹配。
+fn origin_matches_request_host(origin: &str, headers: &axum::http::HeaderMap) -> bool {
+    let Ok(origin_url) = url::Url::parse(origin) else {
+        return false;
+    };
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    let Ok(host_url) = url::Url::parse(&format!("{}://{host}", origin_url.scheme())) else {
+        return false;
+    };
+    origin_url
+        .origin()
+        .ascii_serialization()
+        .eq_ignore_ascii_case(&host_url.origin().ascii_serialization())
 }
 
 fn has_bearer_access_token(headers: &axum::http::HeaderMap) -> bool {
@@ -602,6 +649,58 @@ mod tests {
 
         headers.remove(header::ORIGIN);
         headers.insert("sec-fetch-site", HeaderValue::from_static("same-site"));
+        assert!(!is_write_origin_allowed(
+            &Method::POST,
+            &headers,
+            &allowed_origins
+        ));
+    }
+
+    #[test]
+    fn write_origin_guard_accepts_same_origin_by_request_host() {
+        let allowed_origins = vec!["https://files.example.test".to_string()];
+
+        // 用 127.0.0.1 / 局域网 IP 访问时，浏览器发的 Origin 就是当前 Host：
+        // 登录等写请求不能被误判成跨站。
+        for (origin, host) in [
+            ("http://127.0.0.1:3000", "127.0.0.1:3000"),
+            ("http://192.168.1.5:3000", "192.168.1.5:3000"),
+            ("https://files.example.test", "files.example.test:443"),
+            ("http://[::1]:3000", "[::1]:3000"),
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::ORIGIN, HeaderValue::from_str(origin).unwrap());
+            headers.insert(header::HOST, HeaderValue::from_str(host).unwrap());
+            assert!(
+                is_write_origin_allowed(&Method::POST, &headers, &allowed_origins),
+                "same-origin write should be allowed for {origin} with Host {host}"
+            );
+        }
+
+        // localhost 与 127.0.0.1 是不同源，不能因为都在本机就放行。
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://localhost:3000"),
+        );
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:3000"));
+        assert!(!is_write_origin_allowed(
+            &Method::POST,
+            &headers,
+            &allowed_origins
+        ));
+
+        // 重复的 Origin 头仍然是不可信输入。
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:3000"));
+        headers.append(
+            header::ORIGIN,
+            HeaderValue::from_static("http://127.0.0.1:3000"),
+        );
+        headers.append(
+            header::ORIGIN,
+            HeaderValue::from_static("http://127.0.0.1:3000"),
+        );
         assert!(!is_write_origin_allowed(
             &Method::POST,
             &headers,

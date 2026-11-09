@@ -233,6 +233,18 @@ VFILES_SNAPSHOT_COALESCE_SECONDS=1
 粒度变粗：窗口内的多次写入只对应一条自动快照。补提交失败时保留待提交计数，等下一次变更
 重新开启窗口再试。
 
+### 写入请求的来源校验
+
+所有写请求（登录、上传、移动、删除等）都会校验浏览器发来的 `Origin`：
+与本次请求的 `Host` 同源时直接放行，因此用 `127.0.0.1`、局域网 IP 或域名访问都能正常登录；
+跨站来源只有在 `VFILES_HTTP_CORS_ALLOWED_ORIGINS` 中显式列出时才放行。被拒绝时返回
+`403 Cross-origin write requests are not allowed`，服务端日志会记录来源与 Host。
+
+反向代理改写了 `Host`（例如代理转发到 `127.0.0.1:3000`，而浏览器访问的是
+`https://files.example.com`）时，需要设置 `VFILES_HTTP_PUBLIC_BASE_URL=https://files.example.com`，
+或把该来源加入 `VFILES_HTTP_CORS_ALLOWED_ORIGINS`。使用 `bun run dev`（Vite 在 5173）时，
+把 `http://localhost:5173` 加入允许列表。
+
 ### 缩略图格式（AVIF 默认关闭）
 
 缩略图会按请求的 `Accept` 协商输出格式，并声明 `Vary: accept`：
