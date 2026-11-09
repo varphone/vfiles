@@ -1219,6 +1219,17 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
     // Create repositories
     let entry_repo = SqliteEntryRepo::new(pool.clone());
     let snapshot_repo = SqliteSnapshotRepo::new(pool.clone());
+    // 可选：把窗口内的自动快照合并为一次，降低大目录树上批量写入的成本。
+    let snapshot_repo = match config.snapshot_coalesce_seconds {
+        0 => snapshot_repo,
+        seconds => {
+            tracing::info!(
+                seconds,
+                "自动快照合并已启用：同一命名空间在窗口内的变更只保留一次自动快照"
+            );
+            snapshot_repo.with_coalescing(std::time::Duration::from_secs(seconds))
+        }
+    };
     let share_repo = SqliteShareRepo::new(pool.clone());
     let admin_repo = SqliteAdminRepo::new(pool.clone());
     let blob_store = FsBlobStore::new(pool.clone(), paths.blobs.clone());

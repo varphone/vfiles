@@ -25,6 +25,11 @@ pub struct AppConfig {
     pub search: SearchConfig,
     pub limits: LimitsConfig,
     pub maintenance: MaintenanceConfig,
+    /// 自动快照合并窗口（秒）。0 表示每次变更都立即生成快照（默认）。
+    ///
+    /// 大于 0 时，同一命名空间在窗口内的多次自动提交合并为一次快照，窗口结束时
+    /// 由后台任务补提交；历史粒度随之变粗，手动快照不受影响。
+    pub snapshot_coalesce_seconds: u64,
     pub ftp: FtpConfig,
     pub webdav: WebdavConfig,
     /// S3 兼容 API（默认启用；空凭证时运行期生成随机凭证）。
@@ -595,6 +600,14 @@ impl ConfigLoader {
             "MAINTENANCE_SNAPSHOT_KEEP",
         ])?
         .unwrap_or(0);
+        // 自动快照合并窗口：0 表示每次变更都立即生成快照；上限 1 小时，避免配置失误
+        // 让历史长时间不落盘。
+        let snapshot_coalesce_seconds = Self::env_parse::<u64>(&[
+            "VFILES_SNAPSHOT_COALESCE_SECONDS",
+            "SNAPSHOT_COALESCE_SECONDS",
+        ])?
+        .unwrap_or(0)
+        .min(3600);
 
         let thumbnail_cache_max_entries = Self::env_parse::<usize>(&[
             "VFILES_THUMBNAIL_CACHE_MAX_ENTRIES",
@@ -724,6 +737,7 @@ impl ConfigLoader {
                 snapshot_keep: maintenance_snapshot_keep,
                 snapshot_max_age_days: maintenance_snapshot_max_age_days,
             },
+            snapshot_coalesce_seconds,
             ftp,
             webdav: webdav_from_env(webdav_enabled_raw, auth_enabled)?,
             s3: s3_from_env()?,
