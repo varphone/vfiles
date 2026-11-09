@@ -59,7 +59,7 @@ function readPersisted(): PersistedViewPrefs {
     thumbnailSize: DEFAULT_THUMBNAIL_SIZE,
     detailsVisible: false,
     density: "comfortable",
-    libraryCards: true,
+    libraryCards: false,
   };
 
   if (typeof localStorage === "undefined") return fallback;
