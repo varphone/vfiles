@@ -9,7 +9,10 @@ export const useFilesStore = defineStore("files", () => {
   const currentPath = ref<string>("");
   /** 最近一次发起加载的目录（请求失败时 currentPath 不会前移，用它判断 403 回退是否已在范围根）。 */
   const requestedPath = ref<string>("");
+  /** 首次加载/切目录：只有它驱动列表骨架（避免删一个文件就整屏替换成骨架）。 */
   const loading = ref(false);
+  /** 写操作进行中：按钮 spinner 用，不动列表。 */
+  const mutationPending = ref(false);
   const error = ref<string | null>(null);
   /** 最近一次目录加载的 HTTP 状态码（403 时由界面回退到受限范围根）。 */
   const errorStatus = ref<number | null>(null);
@@ -156,7 +159,7 @@ export const useFilesStore = defineStore("files", () => {
   }
 
   async function uploadFile(file: File, message?: string) {
-    loading.value = true;
+    mutationPending.value = true;
     error.value = null;
 
     try {
@@ -167,12 +170,12 @@ export const useFilesStore = defineStore("files", () => {
       error.value = err instanceof Error ? err.message : "上传失败";
       throw err;
     } finally {
-      loading.value = false;
+      mutationPending.value = false;
     }
   }
 
   async function deleteFile(path: string, message?: string) {
-    loading.value = true;
+    mutationPending.value = true;
     error.value = null;
 
     try {
@@ -183,7 +186,7 @@ export const useFilesStore = defineStore("files", () => {
       error.value = err instanceof Error ? err.message : "删除失败";
       throw err;
     } finally {
-      loading.value = false;
+      mutationPending.value = false;
     }
   }
 
@@ -204,6 +207,7 @@ export const useFilesStore = defineStore("files", () => {
     currentPath,
     requestedPath,
     loading,
+    mutationPending,
     error,
     errorStatus,
     browseCommit,
