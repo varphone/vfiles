@@ -280,7 +280,7 @@ onMounted(reload);
 .admin-protocol-name {
   font-size: 0.83rem;
   font-weight: 600;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .admin-protocol-bind {
@@ -318,7 +318,7 @@ onMounted(reload);
 .admin-facts dd {
   margin: 0;
   font-size: 0.8rem;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   text-align: right;
 }
 

@@ -193,7 +193,7 @@ const emit = defineEmits<{
 .mobile-search-input {
   border-radius: var(--vf-radius-pill);
   border-color: transparent;
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
 }
 
 .mobile-search-input:focus {
@@ -209,7 +209,7 @@ const emit = defineEmits<{
   margin-top: 0.5rem;
   padding: var(--vf-space-3);
   border-radius: var(--vf-radius-card);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   font-size: 0.875rem;
 }
 

@@ -195,7 +195,7 @@ onBeforeUnmount(() => {
   max-width: 16rem;
   padding: var(--vf-space-1) var(--vf-space-2);
   border-radius: var(--vf-radius-control);
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 0.875rem;
   font-weight: 600;
   text-decoration: none;
@@ -205,12 +205,12 @@ onBeforeUnmount(() => {
 }
 
 .path-bar-segment:hover {
-  background: var(--vf-accent-tint);
+  background: var(--vf-row-hover);
   color: var(--vf-accent);
 }
 
 .path-bar-item.is-active .path-bar-segment {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   cursor: default;
 }
 
@@ -233,7 +233,7 @@ onBeforeUnmount(() => {
 }
 
 .path-bar-toggle:hover {
-  background: var(--vf-accent-tint);
+  background: var(--vf-row-hover);
   color: var(--vf-accent);
 }
 

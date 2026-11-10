@@ -278,9 +278,9 @@ onMounted(() => {
  */
 .views-sidebar {
   --vf-sidebar-item-radius: var(--vf-radius-card);
-  --vf-sidebar-item-bg: var(--vf-content-bg);
-  --vf-sidebar-item-hover: rgba(0, 0, 0, 0.05);
-  --vf-sidebar-item-active-bg: var(--vf-accent);
+  --vf-sidebar-item-bg: var(--vf-surface);
+  --vf-sidebar-item-hover: var(--vf-row-hover);
+  --vf-sidebar-item-active-bg: var(--vf-accent-fill);
   --vf-sidebar-item-active-fg: var(--vf-on-accent);
   --vf-sidebar-search-bg: var(--vf-content-bg);
 
@@ -356,7 +356,7 @@ onMounted(() => {
 .views-sidebar-search-clear:hover,
 .views-sidebar-search-clear:focus-visible {
   background: var(--vf-sidebar-item-hover);
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 /* ---- 分组标题 ---- */
@@ -412,7 +412,7 @@ onMounted(() => {
 .views-sidebar-item:hover,
 .views-sidebar-item:focus-visible {
   background: var(--vf-sidebar-item-hover);
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .views-sidebar-item:focus-visible {
@@ -480,7 +480,7 @@ onMounted(() => {
 .views-sidebar-tree-toggle:hover,
 .views-sidebar-tree-toggle:focus-visible {
   background: var(--vf-sidebar-item-hover);
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .views-sidebar-tree-toggle:focus-visible {
@@ -545,7 +545,7 @@ onMounted(() => {
 
 .views-sidebar-usage-value {
   margin-left: auto;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 0.8125rem;
   font-weight: 600;
   white-space: nowrap;
@@ -573,24 +573,5 @@ onMounted(() => {
 .views-sidebar-item--disabled:hover {
   background: var(--vf-sidebar-item-bg);
   color: var(--vf-text-subtle);
-}
-</style>
-
-<!--
-  深色主题的侧栏状态色：需要命中组件之外的祖先（<html data-theme> / 系统偏好），
-  scoped 样式做不到，因此单独一个全局样式块；选择器带 html/:root 提升特异性，
-  覆盖上面 scoped 块里的浅色取值。
--->
-<style>
-html[data-theme="dark"] .views-sidebar {
-  --vf-sidebar-item-hover: rgba(255, 255, 255, 0.06);
-  --vf-sidebar-item-active-bg: #0a6fa8;
-}
-
-@media screen and (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .views-sidebar {
-    --vf-sidebar-item-hover: rgba(255, 255, 255, 0.06);
-    --vf-sidebar-item-active-bg: #0a6fa8;
-  }
 }
 </style>

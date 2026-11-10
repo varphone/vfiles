@@ -71,7 +71,7 @@ const icon = computed(() => {
 
 .auth-notice.is-info {
   border-color: var(--vf-border-weak);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
 }
 

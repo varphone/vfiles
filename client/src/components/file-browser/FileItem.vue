@@ -848,9 +848,9 @@ function share() {
   opacity: 0.55;
 }
 
-/* 移动行选中态与桌面行/网格卡片一致（round 2 语言：16% 强调底色） */
+/* 移动行选中态与桌面行/网格卡片共用同一个低饱和选中令牌 */
 .file-item.is-row-selected {
-  background: var(--vf-accent-soft-strong);
+  background: var(--vf-row-selected);
 }
 
 .file-item {
@@ -871,7 +871,7 @@ function share() {
 
 .file-item:hover,
 .file-item:active {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
 }
 
 /* 文件名用正文色（不再整列蓝色链接），hover 时才提示可点击 */
@@ -1216,7 +1216,7 @@ function share() {
 }
 
 .action-btn:hover {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
   color: var(--vf-accent);
 }
 

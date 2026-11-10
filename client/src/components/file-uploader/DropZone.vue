@@ -130,7 +130,7 @@ function onDirectorySelect(event: Event) {
   border-radius: var(--vf-radius-sm);
   padding: 0.75rem 1rem;
   transition: all 0.3s;
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
 }
 
 .drop-zone.is-active {

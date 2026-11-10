@@ -231,14 +231,14 @@ defineExpose({
   padding: 0.45rem 0.55rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.8rem;
   line-height: 1.5;
 }
 
 .transfer-note strong {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .transfer-items {
@@ -259,7 +259,7 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 0.875rem;
   font-weight: 600;
 }
@@ -323,7 +323,7 @@ defineExpose({
 }
 
 .transfer-target:hover {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
 }
 
 .transfer-target.is-selected {

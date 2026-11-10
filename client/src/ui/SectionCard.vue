@@ -52,7 +52,7 @@ withDefaults(
   margin: 0;
   font-size: 0.95rem;
   font-weight: 650;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .vf-card-desc {

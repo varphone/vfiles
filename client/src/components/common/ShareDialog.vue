@@ -287,7 +287,7 @@ async function stopSharing() {
   padding: 0.55rem 0.65rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
 }
 
 .share-item-icon {
@@ -307,7 +307,7 @@ async function stopSharing() {
   white-space: nowrap;
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .share-item-path {
@@ -377,7 +377,7 @@ async function stopSharing() {
   gap: 0.3rem;
   padding: 0.2rem 0.5rem;
   border-radius: var(--vf-radius-pill);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.8rem;
 }

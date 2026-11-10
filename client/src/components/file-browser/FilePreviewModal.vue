@@ -542,7 +542,7 @@ watch(
   white-space: nowrap;
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .preview-toolbar-meta {
@@ -666,8 +666,8 @@ watch(
 }
 
 .preview-arrow:hover:not(:disabled) {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .preview-arrow:disabled {
@@ -698,7 +698,7 @@ watch(
 
 .preview-position {
   min-width: 3rem;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-weight: 600;
 }
 
@@ -714,7 +714,7 @@ watch(
   padding: 0 0.25rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-xs);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   font-family: inherit;
   font-size: 0.75rem;
 }

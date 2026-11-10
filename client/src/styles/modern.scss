@@ -57,7 +57,7 @@
   height: var(--vf-table-head-height);
   padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-table-head);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.8125rem;
   font-weight: 600;
@@ -69,6 +69,9 @@
   height: var(--vf-row-height);
   padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
+  /* Bulma 的 td 自带 --bulma-table-color（text-strong），会盖过 .table 的
+     正文色；这里显式回到三档文本令牌，避免出现第四种正文灰。 */
+  color: var(--vf-text);
   font-size: 0.875rem;
   vertical-align: middle;
 }
@@ -91,7 +94,7 @@
 .modal-card-title {
   font-size: 0.95rem;
   font-weight: 650;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .modal-card-body {
@@ -110,7 +113,7 @@
   padding: var(--vf-space-1);
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-card);
-  box-shadow: 0 6px 20px rgba(16, 24, 40, 0.12);
+  box-shadow: var(--vf-shadow-menu);
 }
 
 .dropdown-item {
@@ -122,8 +125,8 @@
 
 .dropdown-item:hover,
 .dropdown-item:focus {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 /* 设置页内容列：与页头保持固定节奏；卡片收平（Seafile 式列表而非浮层）。 */
@@ -150,7 +153,7 @@
  * Nextcloud 视觉层
  *
  * 形状：元素 3px、卡片与弹窗 8px、徽标 pill；行高 51px；按钮 34px。
- * 状态：行悬停中性灰、选中浅蓝；主按钮实心 #0082C9。
+ * 状态：行悬停中性灰、选中浅蓝；主按钮实心主色 --vf-accent-fill。
  * ============================================================ */
 
 .button,
@@ -194,11 +197,7 @@
 .vf-ghost-button:hover:not(:disabled),
 .vf-ghost-button:focus-visible {
   background: var(--vf-row-hover);
-  color: var(--vf-text-strong);
-}
-
-[data-theme="dark"] .vf-ghost-button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
+  color: var(--vf-text);
 }
 
 .input,
@@ -216,7 +215,7 @@
 .admin-table thead th {
   height: var(--vf-table-head-height);
   padding: 0 var(--vf-cell-padding-x);
-  background: var(--vf-table-head);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.8125rem;
   font-weight: 600;
@@ -282,3 +281,12 @@
 
 /* 顶栏尺寸由 shell/AppHeader.vue 自己持有（--vf-topbar-height），
  * 旧的 Seafile 顶栏与标签样式已随顶栏迁移删除。 */
+
+/* 搜索命中：Bulma 的固定浅黄在深色下过亮，改用语义警告软底 + 正文色；
+   命中只是强调，不改变文字层级。 */
+.has-background-warning-light {
+  background-color: var(--vf-warning-soft) !important;
+  color: var(--vf-text);
+  border-radius: var(--vf-radius-xs);
+  padding: 0 2px;
+}

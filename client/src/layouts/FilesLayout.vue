@@ -237,7 +237,7 @@ defineExpose({
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    color: var(--vf-text-strong);
+    color: var(--vf-text);
     font-size: 0.95rem;
     font-weight: 600;
   }

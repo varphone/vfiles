@@ -651,7 +651,7 @@ onMounted(() => {
   margin: 0;
   padding: var(--vf-space-3) var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.8rem;
 }
@@ -709,7 +709,7 @@ onMounted(() => {
   height: var(--vf-table-head-height);
   padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-table-head);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.8125rem;
   font-weight: 600;
@@ -824,7 +824,7 @@ onMounted(() => {
   white-space: nowrap;
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .shares-path {
@@ -942,7 +942,7 @@ onMounted(() => {
 
 .shares-card-meta dd {
   margin: 0;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 0.8rem;
   word-break: break-word;
 }

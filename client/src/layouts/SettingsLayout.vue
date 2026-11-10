@@ -174,8 +174,8 @@ onBeforeUnmount(() =>
  */
 .settings-sidebar {
   --vf-settings-item-radius: var(--vf-radius-card);
-  --vf-settings-item-bg: var(--vf-content-bg);
-  --vf-settings-item-hover: rgba(0, 0, 0, 0.05);
+  --vf-settings-item-bg: var(--vf-surface);
+  --vf-settings-item-hover: var(--vf-row-hover);
 
   display: flex;
   flex-direction: column;
@@ -242,7 +242,7 @@ onBeforeUnmount(() =>
 .settings-nav-item:hover,
 .settings-nav-item:focus-visible {
   background: var(--vf-settings-item-hover);
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .settings-nav-item:focus-visible {
@@ -332,7 +332,7 @@ onBeforeUnmount(() =>
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    color: var(--vf-text-strong);
+    color: var(--vf-text);
     font-size: 0.95rem;
     font-weight: 600;
   }
@@ -403,22 +403,6 @@ onBeforeUnmount(() =>
 @media screen and (prefers-reduced-motion: reduce) {
   .settings-sidebar {
     transition: none;
-  }
-}
-</style>
-
-<!--
-  深色主题的侧栏状态色：需要命中组件之外的祖先（<html data-theme> / 系统偏好），
-  scoped 样式做不到，因此单独一个全局样式块（与 ViewsSidebar 同法）。
--->
-<style>
-html[data-theme="dark"] .settings-sidebar {
-  --vf-settings-item-hover: rgba(255, 255, 255, 0.06);
-}
-
-@media screen and (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .settings-sidebar {
-    --vf-settings-item-hover: rgba(255, 255, 255, 0.06);
   }
 }
 </style>

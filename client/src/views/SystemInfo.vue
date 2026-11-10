@@ -445,8 +445,8 @@ onMounted(load);
 
 <style scoped>
 .system-info-body {
-  --system-info-accent: var(--vf-accent, #5267df);
-  --system-info-good: var(--vf-success, #24875a);
+  --system-info-accent: var(--vf-accent);
+  --system-info-good: var(--vf-success);
   --system-info-muted: var(--vf-text-muted);
   display: flex;
   flex-direction: column;
@@ -476,10 +476,10 @@ onMounted(load);
 .system-info-error {
   margin-bottom: var(--vf-space-4);
   padding: var(--vf-space-3) var(--vf-space-4);
-  border: 1px solid var(--vf-danger-border, #e9b8b8);
+  border: 1px solid var(--vf-danger-line);
   border-radius: var(--vf-radius-card);
-  background: var(--vf-danger-soft, #fff5f5);
-  color: var(--vf-danger-text, #a83232);
+  background: var(--vf-danger-soft);
+  color: var(--vf-danger-text);
 }
 
 .system-info-stats {
@@ -529,7 +529,7 @@ onMounted(load);
 }
 
 .system-info-stat strong {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: clamp(1.15rem, 2vw, 1.55rem);
   font-variant-numeric: tabular-nums;
   line-height: 1.25;
@@ -549,7 +549,7 @@ onMounted(load);
 
 .system-info-card-title {
   margin: 0;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   /* 与 SectionCard 的卡片标题同字级 */
   font-size: 0.95rem;
   font-weight: 650;
@@ -567,7 +567,7 @@ onMounted(load);
   flex-shrink: 0;
   padding: 0.32rem 0.58rem;
   border-radius: 999px;
-  background: var(--vf-surface-sunken, var(--vf-surface));
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
@@ -594,14 +594,14 @@ onMounted(load);
   padding: 0.8rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: calc(var(--vf-radius) - 3px);
-  background: var(--vf-surface, #fff);
+  background: var(--vf-surface);
 }
 
 .system-info-protocol.is-disabled {
   background: color-mix(
     in srgb,
     var(--vf-surface) 75%,
-    var(--vf-surface-sunken, #f3f4f6)
+    var(--vf-surface-2)
   );
 }
 
@@ -620,7 +620,7 @@ onMounted(load);
 
 .system-info-protocol-name-wrap h3 {
   margin: 0;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 0.84rem;
   font-weight: 650;
 }
@@ -648,8 +648,8 @@ onMounted(load);
 }
 
 .system-info-protocol-indicator.is-failed {
-  background: var(--vf-danger-text, #b42318);
-  box-shadow: 0 0 0 3px color-mix(in srgb, #b42318 13%, transparent);
+  background: var(--vf-danger-text);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vf-danger) 13%, transparent);
 }
 
 .system-info-status,
@@ -669,26 +669,26 @@ onMounted(load);
 
 .system-info-status.is-disabled,
 .system-info-account-state.is-disabled {
-  background: var(--vf-surface-sunken, #f1f2f4);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
 }
 
 .system-info-status.is-unknown {
-  background: var(--vf-surface-sunken, #f1f2f4);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
 }
 
 .system-info-status.is-failed {
-  background: var(--vf-danger-soft, #fff1f0);
-  color: var(--vf-danger-text, #b42318);
+  background: var(--vf-danger-soft);
+  color: var(--vf-danger-text);
 }
 
 .system-info-protocol-error {
   margin: 0.65rem 0 0;
   padding: 0.55rem 0.65rem;
   border-radius: calc(var(--vf-radius) - 3px);
-  background: var(--vf-danger-soft, #fff1f0);
-  color: var(--vf-danger-text, #b42318);
+  background: var(--vf-danger-soft);
+  color: var(--vf-danger-text);
   font-size: 0.71rem;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -792,6 +792,7 @@ onMounted(load);
   height: var(--vf-table-head-height);
   padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
+  background: var(--vf-surface-2);
   color: var(--system-info-muted);
   font-size: 0.8125rem;
   font-weight: 600;
@@ -818,7 +819,7 @@ onMounted(load);
 }
 
 .system-info-user {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-weight: 580;
 }
 
@@ -877,7 +878,7 @@ onMounted(load);
 }
 
 .system-info-usage-value strong {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 0.8rem;
   font-weight: 620;
 }
@@ -892,7 +893,7 @@ onMounted(load);
   margin-top: 0.43rem;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--vf-surface-sunken, #eff0f3);
+  background: var(--vf-surface-2);
 }
 
 .system-info-usage-track span {

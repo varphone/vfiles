@@ -24,12 +24,12 @@
 
 .vf-icon-button:hover:not(:disabled),
 .vf-icon-button:focus-visible {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .vf-icon-button:active:not(:disabled) {
-  background: var(--vf-surface-pressed);
+  background: var(--vf-row-pressed);
 }
 
 .vf-icon-button:disabled {
@@ -50,7 +50,7 @@
 
 .button.is-ghost:hover:not([disabled]),
 .button.is-ghost:focus-visible {
-  background-color: var(--vf-surface-hover);
+  background-color: var(--vf-row-hover);
   color: var(--vf-accent-text);
   text-decoration: none;
 }
@@ -88,12 +88,12 @@
 
 .vf-ghost-button:hover:not(:disabled),
 .vf-ghost-button:focus-visible {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .vf-ghost-button:active:not(:disabled) {
-  background: var(--vf-surface-pressed);
+  background: var(--vf-row-pressed);
 }
 
 .vf-ghost-button:disabled {
@@ -182,9 +182,9 @@
     .is-ghost,
     .is-static
   ):focus-visible {
-  background-color: var(--vf-surface-hover);
+  background-color: var(--vf-row-hover);
   border-color: var(--vf-border);
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .button:not(
@@ -200,8 +200,8 @@
     .is-ghost,
     .is-static
   ):active {
-  background-color: var(--vf-surface-sunken);
-  color: var(--vf-text-strong);
+  background-color: var(--vf-surface-2);
+  color: var(--vf-text);
 }
 
 .button:not(
@@ -496,7 +496,7 @@ mark.has-background-warning-light {
 }
 
 .vf-th-sort:hover {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .vf-th-sort-icon {

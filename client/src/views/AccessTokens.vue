@@ -564,7 +564,7 @@ onMounted(async () => {
   margin: 0;
   padding: var(--vf-space-3) var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.8rem;
   line-height: 1.5;
@@ -590,7 +590,7 @@ onMounted(async () => {
   height: var(--vf-table-head-height);
   padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-table-head);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.8125rem;
   font-weight: 600;
@@ -655,7 +655,7 @@ onMounted(async () => {
 }
 
 .tokens-name {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -665,7 +665,7 @@ onMounted(async () => {
 .tokens-prefix {
   padding: 0.05rem 0.3rem;
   border-radius: var(--vf-radius-xs);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text);
   font-size: 0.8rem;
 }
@@ -719,7 +719,7 @@ onMounted(async () => {
   margin: 0 0 0.35rem;
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .tokens-usage-code {
@@ -727,7 +727,7 @@ onMounted(async () => {
   padding: 0.6rem 0.7rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text);
   font-size: 0.8rem;
   line-height: 1.5;
@@ -783,7 +783,7 @@ onMounted(async () => {
 
 .tokens-card-meta dd {
   margin: 0;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 0.8rem;
   word-break: break-word;
 }

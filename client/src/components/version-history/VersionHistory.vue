@@ -1035,7 +1035,7 @@ function loadMore() {
 }
 
 .history-summary-strong {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-weight: 600;
 }
 
@@ -1123,7 +1123,7 @@ function loadMore() {
   align-items: center;
   gap: 0.4rem;
   margin: 0.15rem 0 0;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 0.875rem;
   font-weight: 600;
 }
@@ -1166,7 +1166,7 @@ function loadMore() {
   padding: 0.45rem 0.55rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.8rem;
   line-height: 1.5;
@@ -1236,7 +1236,7 @@ function loadMore() {
 }
 
 .diff-cell.is-empty {
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
 }
 
 .diff-cell.is-add {
@@ -1305,10 +1305,13 @@ function loadMore() {
      彩底×彩字会双双掉档（实测浅 4.38 / 深 3.18 ✗），换深字后 ≥4.5 ✓。 */
   font-weight: 600;
   border-radius: var(--vf-radius-xs);
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   /* 叠 12% 黑膜：深色主题词底偏亮（白字 4.41 差一线），压暗后达标；
      浅色主题 7.8 → ~6.5 仍在 AA 上 ✓ 双向安全。 */
-  background-image: linear-gradient(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.12));
+  background-image: linear-gradient(
+    var(--vf-diff-word-overlay),
+    var(--vf-diff-word-overlay)
+  );
 }
 
 .is-add .diff-word {
@@ -1320,7 +1323,7 @@ function loadMore() {
 }
 
 .diff-line.is-hunk {
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.75rem;
 }

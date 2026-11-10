@@ -44,13 +44,13 @@ withDefaults(
 
 .vf-badge.is-neutral {
   color: var(--vf-text-muted);
-  background: var(--vf-surface-muted);
-  border-color: var(--vf-border-soft);
+  background: var(--vf-surface-2);
+  border-color: var(--vf-border-weak);
 }
 
 .vf-badge.is-muted {
   color: var(--vf-text-subtle);
-  background: var(--vf-surface-soft);
+  background: var(--vf-surface-2);
 }
 
 .vf-badge.is-primary {

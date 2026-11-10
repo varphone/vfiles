@@ -256,7 +256,7 @@ watch(
   margin-top: var(--vf-space-3);
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-card);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
 }
 
 .ftp-import-toggle {

@@ -149,7 +149,7 @@ watch(
   height: 5.5rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-card);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   overflow: hidden;
 }
@@ -181,7 +181,7 @@ watch(
   font-size: 0.875rem;
   font-weight: 600;
   line-height: 1.4;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   word-break: break-word;
 }
 

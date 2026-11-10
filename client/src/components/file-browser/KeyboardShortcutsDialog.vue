@@ -162,8 +162,8 @@ const groups = [
   padding: 0.1rem 0.35rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-xs);
-  background: var(--vf-surface-sunken);
-  color: var(--vf-text-strong);
+  background: var(--vf-surface-2);
+  color: var(--vf-text);
   font-family: inherit;
   font-size: 0.75rem;
   white-space: nowrap;

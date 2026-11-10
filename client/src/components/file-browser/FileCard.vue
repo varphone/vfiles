@@ -592,7 +592,7 @@ onBeforeUnmount(() => {
 }
 
 .file-card:active {
-  background: var(--vf-accent-soft-strong);
+  background: var(--vf-row-pressed);
 }
 
 /* 拖起态：源卡片半透明（同列表行） */
@@ -601,8 +601,8 @@ onBeforeUnmount(() => {
 }
 
 .file-card--selected {
-  border-color: var(--vf-accent);
-  background: var(--vf-accent-soft-strong);
+  border-color: var(--vf-accent-line);
+  background: var(--vf-row-selected);
 }
 
 .file-card-thumb {
@@ -614,7 +614,7 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--vf-border-weak);
   border-radius: calc(var(--vf-radius-card) - 1px)
     calc(var(--vf-radius-card) - 1px) 0 0;
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   overflow: hidden;
 }
 
@@ -731,7 +731,7 @@ onBeforeUnmount(() => {
 }
 
 .file-card-menu-item:hover {
-  background: var(--vf-surface-sunken);
+  background: var(--vf-row-hover);
 }
 
 .file-card-menu-item.is-danger {

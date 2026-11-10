@@ -330,7 +330,7 @@ const emit = defineEmits<{
   margin-left: 1px;
   padding: 0 var(--vf-space-2);
   min-height: var(--vf-control-height);
-  border-left: 1px solid rgba(255, 255, 255, 0.25);
+  border-left: 1px solid var(--vf-on-accent-line);
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
@@ -358,8 +358,8 @@ const emit = defineEmits<{
 }
 
 .desktop-upload-item:hover {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 /* 新建文件夹：文字按钮，放在上传左侧（搜索框自适应收缩，工具栏保持单行） */

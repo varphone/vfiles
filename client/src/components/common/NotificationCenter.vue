@@ -200,7 +200,7 @@ onBeforeUnmount(() => {
 }
 
 .app-bar-bell.is-active {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
 }
 
 /* 未读角标：与主流应用一致 */
@@ -250,7 +250,7 @@ onBeforeUnmount(() => {
 .notification-center-title {
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .notification-center-clear {
@@ -286,7 +286,7 @@ onBeforeUnmount(() => {
 }
 
 .notification-center-filter:hover {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
 }
 
 .notification-center-filter.is-active {
@@ -319,7 +319,7 @@ onBeforeUnmount(() => {
 }
 
 .notification-center-remove:hover {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
   color: var(--vf-danger-text);
 }
 
@@ -349,7 +349,7 @@ onBeforeUnmount(() => {
 }
 
 .notification-center-item:hover {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
 }
 
 .notification-center-icon {

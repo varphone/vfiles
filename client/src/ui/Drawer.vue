@@ -131,7 +131,7 @@ watch(
   margin: 0;
   font-size: 1rem;
   font-weight: 650;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .vf-drawer-desc {

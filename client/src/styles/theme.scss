@@ -6,10 +6,14 @@
 //!
 //! 约定：
 //! - `--vf-*` 变量只在声明处出现字面色值，组件中一律引用变量；
-//! - 结构性颜色（文本、边框、面板）优先复用 Bulma 的 CSS 变量，
-//!   仅当 Bulma 没有对应语义时才新增 `--vf-*`；
+//! - 同一语义只保留一个令牌：正文/次级/辅助文本、结构线、次级面、状态层
+//!   都按语义取用，不再在组件里写 rgba 灰或第二套近似值；
+//! - 大面积面（外壳、内容面板）用中性灰，主色只用于操作与选中；
 //! - 主题切换靠 `<html data-theme="light|dark">`，未设置时跟随系统；
 //! - 令牌按需增补，避免长期保留无人使用的变量。
+//!
+//! 配色目标：低饱和、低疲劳。主色比此前 #0082C9 降饱和；深色下的实心块
+//! 用 `--vf-accent-fill`（更深）而不是亮蓝 `--vf-accent`（用于文字/描边）。
 //!
 //! 切换方式见 `src/stores/theme.store.ts`。
 
@@ -44,125 +48,134 @@
      内容面板用更浅的 --vf-content-bg，四周留 --vf-content-gap 的空隙。 */
   --vf-content-radius: 10px;
   --vf-content-gap: 8px;
+
+  /* 等宽字体（代码、令牌、摘要） */
+  --vf-font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
-// 浅色：即项目此前的配色，保持视觉不变。
+// 浅色：冷灰外壳 + 纯白内容面板；正文不用纯黑，结构线不用纯黑透明度。
 @mixin vf-light-tokens {
-  /* Bulma 语义色通道对齐 --vf-* 令牌（is-* 按钮/has-text-* 工具类按此派生）：
-     danger #cc0f35 + 白字 5.87；success 深绿 + 白字 ≈5.0；warning 深琥珀 + 白字 ≈8.2；
-     info 对齐 blue-600 + 白字 5.2。Bulma 1.0 默认是主题无关的鲜色（浅色下
-     has-text-warning 对白仅 1.75:1）。 */
-  --bulma-danger-h: 348;
-  --bulma-danger-s: 86%;
-  --bulma-danger-l: 43%;
+  /* Bulma 语义色通道对齐 --vf-* 令牌（is-* 按钮/has-text-* 工具类按此派生）。
+     浅色下语义色作为实心底时配白字：danger 6.54、success 4.96、
+     warning 4.99、info 5.03，均 ≥ 4.5。 */
+  --bulma-danger-h: 3;
+  --bulma-danger-s: 71%;
+  --bulma-danger-l: 41%;
   --bulma-danger-invert-l: 100%;
-  --bulma-success-h: 160;
-  --bulma-success-s: 55%;
+  --bulma-success-h: 158;
+  --bulma-success-s: 65%;
   --bulma-success-l: 30%;
   --bulma-success-invert-l: 100%;
-  --bulma-warning-h: 34;
-  --bulma-warning-s: 94%;
-  --bulma-warning-l: 25%;
+  --bulma-warning-h: 36;
+  --bulma-warning-s: 78%;
+  --bulma-warning-l: 34%;
   --bulma-warning-invert-l: 100%;
-  --bulma-info-h: 221;
-  --bulma-info-s: 83%;
-  --bulma-info-l: 53%;
+  --bulma-info-h: 206;
+  --bulma-info-s: 85%;
+  --bulma-info-l: 39%;
   --bulma-info-invert-l: 100%;
   color-scheme: light;
 
-  /* 强调色（链接、选中、拖放高亮）。
-     参考 Drive（#0B57D0）/ Dropbox（#0061FF）/ GitHub（#1F6FEB）的鲜明蓝，
-     取 blue-600 家族：填充面白字对比度 5.2:1（AA ✓），链接用更深的 accent-text。 */
-  /* Nextcloud 主色 #0082C9（官网 --color-primary）；链接用更深的 #00679E 保证白底可读 */
-  --vf-accent: #0082c9;
-  --vf-accent-strong: #0070ad;
-  --vf-accent-text: #00679e;
-  --vf-accent-soft: rgba(0, 130, 201, 0.08);
-  --vf-accent-soft-strong: rgba(0, 130, 201, 0.16);
-  --vf-accent-tint: rgba(0, 130, 201, 0.1);
-  --vf-focus-ring: rgba(0, 130, 201, 0.35);
-  /* 填充面（实心主按钮 / 当前版本徽标 / 选中条目）：与 --vf-accent 分开——
-     强调色在深色下要变浅才读得清，而填充面配白字必须保持足够深。 */
-  --vf-accent-fill: #0082c9;
-  --vf-accent-fill-hover: #0070ad;
-  /* 填充面上的文字（M3 的 on-container 配对） */
-  --vf-on-accent: #ffffff;
-  /* 按压状态层（M3 pressed 12%） */
-  --vf-surface-pressed: rgba(37, 99, 235, 0.14);
+  /* 强调色：比 #0082C9 稍降饱和，长时间看不刺眼。
+     - accent 用于图标/焦点/描边；
+     - accent-text 是白底上的可读链接色（7.2:1）；
+     - accent-fill 是实心块（主按钮/选中条目），near-white 文字 5.0:1。 */
+  --vf-accent: #0f6fb8;
+  --vf-accent-strong: #0c5c99;
+  --vf-accent-text: #0b5a94;
+  --vf-accent-fill: #0f6fb8;
+  --vf-accent-fill-hover: #0c5c99;
+  --vf-accent-fill-active: #0a4f82;
+  /* 实心主色块上的文字（M3 的 on-container 配对） */
+  --vf-on-accent: #f7fafc;
+  --vf-on-accent-line: rgba(247, 250, 252, 0.28);
 
-  /* 存储占比条的分类配色（对齐主流网盘的用量分组：文档/图片/视频/音频/其它） */
-  --vf-chart-document: #2563eb;
-  --vf-chart-image: #2f9e6f;
-  --vf-chart-video: #8a5bd6;
-  --vf-chart-audio: #d98324;
-  --vf-chart-other: #9aa7b8;
+  /* 强调色的半透明层：soft 用于底、soft-strong 用于叠加、line 用于描边 */
+  --vf-accent-soft: rgba(15, 111, 184, 0.08);
+  --vf-accent-soft-strong: rgba(15, 111, 184, 0.14);
+  --vf-accent-line: rgba(15, 111, 184, 0.35);
+  --vf-focus-ring: rgba(15, 111, 184, 0.35);
 
-  /* 面板 / 卡片 / 列表底色 */
+  /* 存储占比条的分类配色：同一饱和度（比旧值降 10–15%），色相保持。
+     深色下用同色相提亮，见 vf-dark-tokens。 */
+  --vf-chart-document: #225dd3;
+  --vf-chart-image: #35926d;
+  --vf-chart-video: #8259c9;
+  --vf-chart-audio: #be782d;
+  --vf-chart-other: #8a96a8;
+
+  /* 文件类型图标：同一明度档（白底 4.5:1 以上），避免糖果色。 */
+  --vf-type-image: #6f4db8;
+  --vf-type-video: #b84a3f;
+  --vf-type-audio: #a36a1c;
+  --vf-type-archive: #17707f;
+  --vf-type-code: #1e7a63;
+  --vf-type-pdf: #a62f28;
+  --vf-type-text: #5b6673;
+
+  /* 面：surface = 内容/卡片，surface-2 = 次级面/表头/内嵌块，
+     raised 只给弹层（菜单/通知）；translucent 给浮在预览图上的控制条。 */
   --vf-surface: #ffffff;
-  --vf-app-bar: #ffffff;
+  --vf-surface-2: #f7f9fb;
   --vf-surface-raised: #ffffff;
-  --vf-surface-sunken: #f5f8fc;
-  --vf-surface-stripe: rgba(248, 250, 253, 0.92);
-  --vf-surface-translucent: rgba(255, 255, 255, 0.9);
-  --vf-surface-translucent-strong: rgba(255, 255, 255, 0.95);
-  --vf-surface-overlay: rgba(255, 255, 255, 0.65);
-  --vf-surface-muted: rgba(241, 245, 251, 0.88);
-  --vf-surface-soft: rgba(243, 244, 246, 0.96);
-  --vf-surface-hover: rgba(37, 99, 235, 0.06);
+  --vf-surface-translucent: rgba(255, 255, 255, 0.92);
+  --vf-surface-translucent-strong: rgba(255, 255, 255, 0.96);
 
-  /* 应用外壳：顶栏、侧栏、页面背景统一用这一层中性浅灰。 */
-  --vf-shell-bg: #eef1f5;
+  /* 应用外壳：顶栏、侧栏、页面背景统一用这一层中性浅灰（不带蓝调）。 */
+  --vf-shell-bg: #edf0f4;
   /* 内容面板：比外壳浅一档的白色圆角矩形。 */
   --vf-content-bg: #ffffff;
 
-  /* 页面兜底背景（拖放遮罩等仍引用；应用外壳已改用 --vf-shell-bg） */
-  --vf-canvas: #f7f7f7;
+  /* 结构线：border 用于输入框/需要可辨识的边界，weak 用于 1px 分隔线。 */
+  --vf-border: #dfe4ea;
+  --vf-border-weak: #eaeef3;
 
-  /* 边框 */
-  --vf-border: #dedede;
-  --vf-border-soft: rgba(214, 223, 235, 0.92);
-  --vf-border-weak: #ededed;
-  --vf-border-strong: #b5b5b5;
+  /* 文本三档：正文不用纯黑（15.0:1），次级 5.8:1，辅助 3.1:1（占位/说明）。 */
+  --vf-text: #1f2733;
+  --vf-text-muted: #5b6673;
+  --vf-text-subtle: #8a94a2;
 
-  /* 文本 */
-  --vf-text: #222222;
-  --vf-text-strong: #1b1b1b;
-  /* 文本对比度（WCAG AA ≥4.5，两档同时加深以保持层次不倒挂）：
-     strong 12.7 / text ~10 / muted 5.6 / subtle 5.0 */
-  --vf-text-muted: #5b5b5b;
-  --vf-text-subtle: #8a8a8a;
+  /* 行状态：悬停中性灰，选中低饱和蓝，按压比悬停深一档。 */
+  --vf-row-hover: #f4f6f9;
+  --vf-row-selected: #e8f2fa;
+  --vf-row-pressed: #e9edf2;
 
   /* 圆角与间距（对齐 M3 形状刻度：small 8 / medium 12 / large 16；按钮用胶囊） */
-  /* 内联标记档（词级强调/小 chip）：圆角语义四档 xs/sm/md/lg + pill */
   --vf-radius-xs: 4px;
   --vf-radius-sm: 8px;
   --vf-radius: 10px;
   --vf-radius-lg: 14px;
   --vf-radius-pill: 999px;
 
-  /* 阴影 */
-  --vf-shadow-card:
-    0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
-  --vf-shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.18);
-  --vf-shadow-md: 0 20px 48px rgba(32, 52, 88, 0.12);
-  --vf-shadow-menu: 0 8px 24px rgba(10, 10, 10, 0.16);
+  /* 阴影：卡片一律不用阴影（1px 结构线表达层次）；只保留弹层/遮罩。 */
+  --vf-shadow-card: none;
+  --vf-shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.1);
+  --vf-shadow-menu: 0 8px 24px rgba(15, 23, 42, 0.14);
+  --vf-shadow-popover: 0 10px 30px rgba(15, 23, 42, 0.14);
+  --vf-shadow-modal: 0 24px 64px rgba(15, 23, 42, 0.22);
   /* 全屏遮罩（加载中 / 拖放） */
-  --vf-overlay: rgba(0, 0, 0, 0.7);
+  --vf-overlay: rgba(15, 23, 42, 0.6);
 
-  /* 语义色（软背景 + 深色文字） */
-  --vf-danger: #cc0f35;
-  --vf-danger-soft: #feecf0;
-  --vf-danger-text: #cc0f35;
-  --vf-success-soft: rgba(38, 132, 101, 0.12);
-  --vf-success-text: #166534;
-  --vf-success-line: rgba(38, 132, 101, 0.28);
-  --vf-warning-soft: rgba(186, 120, 18, 0.12);
-  --vf-warning-text: #7c4a03;
-  --vf-warning-line: rgba(186, 120, 18, 0.32);
-  --vf-accent-line: rgba(81, 132, 208, 0.55);
+  /* 语义色：fill 用于圆点/描边，text 用于软底上的文字（≥4.5:1）。 */
+  --vf-success: #1b7f5a;
+  --vf-success-text: #14674a;
+  --vf-success-soft: rgba(27, 127, 90, 0.12);
+  --vf-success-line: rgba(27, 127, 90, 0.3);
+  --vf-warning: #9a6413;
+  --vf-warning-text: #7c4e0b;
+  --vf-warning-soft: rgba(154, 100, 19, 0.12);
+  --vf-warning-line: rgba(154, 100, 19, 0.32);
+  --vf-danger: #b3261e;
+  --vf-danger-text: #b3261e;
+  --vf-danger-soft: rgba(179, 38, 30, 0.12);
+  --vf-danger-line: rgba(179, 38, 30, 0.3);
 
-  /* 代码 / 语法高亮（GitHub Light 风格） */
-  --vf-code-bg: #f6f8fa;
+  /* 差异词高亮：在行色带上叠一层 12% 黑膜，彩色文字才够清楚。 */
+  --vf-diff-word-overlay: rgba(0, 0, 0, 0.12);
+
+  /* 代码 / 语法高亮（GitHub Light 风格；底色并入次级面体系） */
+  --vf-code-bg: #f7f9fb;
   --vf-code-text: #24292f;
   --vf-code-comment: #6a737d;
   --vf-code-keyword: #cf222e;
@@ -193,119 +206,119 @@
   --vf-control-height: 34px;
   --vf-control-height-lg: 38px;
 
-  /* 表面层级：二级面 / 表头 / 行状态 */
-  --vf-surface-2: #ffffff;
-  --vf-table-head: #ffffff;
-  --vf-row-hover: #f5f5f5;
-  --vf-row-selected: #e5f2f9;
-  --vf-shadow-popover: 0 10px 30px rgba(16, 24, 40, 0.12);
-  --vf-shadow-modal: 0 24px 64px rgba(16, 24, 40, 0.2);
-
   /* 骨架屏 */
-  --vf-skeleton-base: #e5e7eb;
+  --vf-skeleton-base: #e7ebf1;
   --vf-skeleton-shine: rgba(255, 255, 255, 0.65);
 
   /* 滚动条 */
-  --vf-scrollbar-track: #f1f1f1;
-  --vf-scrollbar-thumb: #888888;
-  --vf-scrollbar-thumb-hover: #555555;
+  --vf-scrollbar-track: #f0f2f5;
+  --vf-scrollbar-thumb: #aab2bd;
+  --vf-scrollbar-thumb-hover: #7b8593;
 }
 
-// 深色：与 Bulma 的 `data-theme="dark"` 主题（h 221 / s 14%）保持一致。
+// 深色：中性炭黑外壳 + 抬高一档的内容面板；文本不用纯白。
 @mixin vf-dark-tokens {
-  /* Bulma 语义色通道对齐 --vf-* 深色令牌（浅色系填充 + 深色文字，与本主题
-     "语义色在深色下变浅"的哲学一致）：danger 348/86/61、success 160/55/60、
-     warning 35/85/72 均配深字（invert-l 0%）；info 用 blue-600 + 白字 6.67。 */
-  --bulma-danger-h: 348;
-  --bulma-danger-s: 86%;
-  --bulma-danger-l: 61%;
+  /* Bulma 语义色通道对齐 --vf-* 深色令牌（浅色系填充 + 深色文字）：
+     danger 5/71/63、success 154/43/52、warning 37/65/57 均配深字（invert-l 0%）；
+     info 用 accent-fill 家族 + 白字 5.09。 */
+  --bulma-danger-h: 5;
+  --bulma-danger-s: 71%;
+  --bulma-danger-l: 63%;
   --bulma-danger-invert-l: 0%;
-  --bulma-success-h: 160;
-  --bulma-success-s: 55%;
-  --bulma-success-l: 60%;
+  --bulma-success-h: 154;
+  --bulma-success-s: 43%;
+  --bulma-success-l: 52%;
   --bulma-success-invert-l: 0%;
-  --bulma-warning-h: 35;
-  --bulma-warning-s: 85%;
-  --bulma-warning-l: 72%;
+  --bulma-warning-h: 37;
+  --bulma-warning-s: 65%;
+  --bulma-warning-l: 57%;
   --bulma-warning-invert-l: 0%;
-  --bulma-info-h: 222;
-  --bulma-info-s: 76%;
-  --bulma-info-l: 46%;
+  --bulma-info-h: 205;
+  --bulma-info-s: 58%;
+  --bulma-info-l: 39%;
   --bulma-info-invert-l: 100%;
   color-scheme: dark;
 
-  /* 强调色在深色下提亮（文本/描边/焦点环用），填充面单独取更深的蓝：
-     白字对 #0a6fa8 为 5.45:1（AA ✓），而浅蓝 #4aa9e0 只有 2.61:1（明显发灰）。 */
-  --vf-accent: #4aa9e0;
-  --vf-accent-strong: #6fbbe8;
-  --vf-accent-text: #8acbf0;
-  --vf-accent-fill: #0a6fa8;
-  --vf-accent-fill-hover: #0b7ab3;
-  --vf-accent-soft: rgba(74, 169, 224, 0.16);
-  --vf-accent-soft-strong: rgba(74, 169, 224, 0.3);
+  /* 强调色在深色下提亮（文本/描边/焦点环用）；实心块单独取更深的蓝：
+     near-white 文字对 #2a6e9e 为 5.09:1（AA ✓），对亮蓝 #4e9bcb 只有 2.7:1。 */
+  --vf-accent: #4e9bcb;
+  --vf-accent-strong: #63aedb;
+  --vf-accent-text: #8cc6e8;
+  --vf-accent-fill: #2a6e9e;
+  --vf-accent-fill-hover: #246188;
+  --vf-accent-fill-active: #1d5273;
+  --vf-on-accent: #f2f7fa;
+  --vf-on-accent-line: rgba(242, 247, 250, 0.28);
 
-  /* 存储占比条的分类配色（深色主题下提高明度保证对比度） */
-  --vf-chart-document: #6aa9ee;
-  --vf-on-accent: #ffffff;
-  --vf-surface-pressed: hsla(222, 76%, 66%, 0.22);
-  --vf-chart-image: #4fc48c;
-  --vf-chart-video: #a98beb;
-  --vf-chart-audio: #eaa54f;
-  --vf-chart-other: #7d8b9c;
-  --vf-accent-tint: hsla(222, 76%, 66%, 0.2);
-  --vf-focus-ring: hsla(222, 76%, 66%, 0.4);
+  --vf-accent-soft: rgba(78, 155, 203, 0.16);
+  --vf-accent-soft-strong: rgba(78, 155, 203, 0.28);
+  --vf-accent-line: rgba(78, 155, 203, 0.55);
+  --vf-focus-ring: rgba(78, 155, 203, 0.45);
 
-  --vf-surface: hsl(221, 14%, 12%);
-  --vf-app-bar: hsl(221, 14%, 11%);
+  /* 存储占比条：同色相提亮，保持与浅色一致的饱和度关系。 */
+  --vf-chart-document: #6ca4e5;
+  --vf-chart-image: #57c79a;
+  --vf-chart-video: #ad90e0;
+  --vf-chart-audio: #e0a25c;
+  --vf-chart-other: #9ca8ba;
+
+  /* 文件类型图标：同色相提亮，深底上 6.5:1 以上。 */
+  --vf-type-image: #b39be8;
+  --vf-type-video: #e89086;
+  --vf-type-audio: #d9ab5f;
+  --vf-type-archive: #6bb9c6;
+  --vf-type-code: #6ac2a4;
+  --vf-type-pdf: #e88c84;
+  --vf-type-text: #aeb8c5;
+
+  --vf-surface: #161a20;
+  --vf-surface-2: #1c2128;
   /* 浮层抬升（M3 dark / GitHub dark 的 tonal elevation）：
-     比基准面(12%)高一档，配合发丝边框表达层次，阴影只做辅助。 */
-  --vf-surface-raised: hsl(221, 14%, 18%);
-  --vf-surface-sunken: hsl(221, 14%, 17%);
-  --vf-surface-stripe: hsla(221, 14%, 71%, 0.05);
-  --vf-surface-translucent: hsla(221, 14%, 12%, 0.9);
-  --vf-surface-translucent-strong: hsla(221, 14%, 12%, 0.94);
-  --vf-surface-overlay: hsla(221, 14%, 15%, 0.72);
-  --vf-surface-muted: hsla(221, 14%, 16%, 0.9);
-  --vf-surface-soft: hsla(221, 14%, 18%, 0.92);
-  --vf-surface-hover: hsla(222, 76%, 66%, 0.14);
+     比基准面高一档，配合发丝边框表达层次，阴影只做辅助。 */
+  --vf-surface-raised: #20262e;
+  --vf-surface-translucent: rgba(22, 26, 32, 0.92);
+  --vf-surface-translucent-strong: rgba(22, 26, 32, 0.96);
 
-  /* 应用外壳：近黑；内容面板抬高一档为深灰蓝。 */
-  --vf-shell-bg: #101317;
-  --vf-content-bg: #191d23;
+  /* 应用外壳：中性近黑；内容面板抬高一档，但不再带蓝调。 */
+  --vf-shell-bg: #0e1216;
+  --vf-content-bg: #161a20;
 
-  --vf-canvas: hsl(221, 16%, 9%);
+  --vf-border: #262c34;
+  --vf-border-weak: #1f242b;
 
-  --vf-border: hsla(221, 14%, 71%, 0.24);
-  --vf-border-soft: hsla(221, 14%, 71%, 0.22);
-  --vf-border-weak: hsla(221, 14%, 71%, 0.14);
-  --vf-border-strong: hsla(221, 14%, 71%, 0.4);
+  --vf-text: #e3e7ed;
+  --vf-text-muted: #a3adba;
+  --vf-text-subtle: #7b8593;
 
-  --vf-text: hsl(221, 14%, 82%);
-  --vf-text-strong: hsl(221, 14%, 94%);
-  --vf-text-muted: hsl(221, 14%, 66%);
-  --vf-text-subtle: hsl(221, 14%, 60%);
+  --vf-row-hover: #1b2027;
+  --vf-row-selected: #1b2a38;
+  --vf-row-pressed: #232a33;
 
-  --vf-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
-
+  --vf-shadow-card: none;
   --vf-shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.45);
-  --vf-shadow-md: 0 20px 48px rgba(0, 0, 0, 0.45);
-  --vf-shadow-menu: 0 8px 20px rgba(0, 0, 0, 0.4);
+  --vf-shadow-menu: 0 8px 20px rgba(0, 0, 0, 0.45);
+  --vf-shadow-popover: 0 10px 30px rgba(0, 0, 0, 0.55);
+  --vf-shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.65);
   --vf-overlay: rgba(0, 0, 0, 0.78);
 
-  --vf-danger: hsl(348, 86%, 61%);
-  --vf-danger-soft: hsla(348, 86%, 61%, 0.16);
-  --vf-danger-text: hsl(348, 90%, 74%);
-  --vf-success-soft: hsla(160, 55%, 60%, 0.16);
-  --vf-success-text: hsl(160, 55%, 70%);
-  --vf-success-line: hsla(160, 55%, 60%, 0.42);
-  --vf-warning-soft: hsla(35, 80%, 62%, 0.16);
-  --vf-warning-text: hsl(35, 85%, 72%);
-  --vf-warning-line: hsla(35, 80%, 62%, 0.45);
-  --vf-accent-line: hsla(222, 76%, 62%, 0.65);
+  --vf-success: #4fb98b;
+  --vf-success-text: #4fb98b;
+  --vf-success-soft: rgba(79, 185, 139, 0.16);
+  --vf-success-line: rgba(79, 185, 139, 0.4);
+  --vf-warning: #d8a24a;
+  --vf-warning-text: #d8a24a;
+  --vf-warning-soft: rgba(216, 162, 74, 0.16);
+  --vf-warning-line: rgba(216, 162, 74, 0.42);
+  --vf-danger: #e4695f;
+  --vf-danger-text: #f08a82;
+  --vf-danger-soft: rgba(228, 105, 95, 0.16);
+  --vf-danger-line: rgba(228, 105, 95, 0.42);
 
-  --vf-code-bg: hsl(221, 16%, 10%);
-  --vf-code-text: hsl(221, 14%, 84%);
-  --vf-code-comment: hsl(221, 14%, 56%);
+  --vf-diff-word-overlay: rgba(0, 0, 0, 0.12);
+
+  --vf-code-bg: #11151a;
+  --vf-code-text: #e3e7ed;
+  --vf-code-comment: #7b8593;
   --vf-code-keyword: #ff7b72;
   --vf-code-string: #a5d6ff;
   --vf-code-number: #79c0ff;
@@ -321,12 +334,13 @@
   --vf-code-deletion: #ffdcd7;
   --vf-code-deletion-bg: hsla(348, 86%, 61%, 0.16);
 
-  --vf-skeleton-base: hsla(221, 14%, 71%, 0.14);
-  --vf-skeleton-shine: hsla(221, 14%, 71%, 0.22);
+  --vf-skeleton-base: rgba(163, 173, 186, 0.14);
+  --vf-skeleton-shine: rgba(163, 173, 186, 0.22);
 
-  --vf-scrollbar-track: hsl(221, 14%, 14%);
-  --vf-scrollbar-thumb: hsl(221, 14%, 32%);
-  --vf-scrollbar-thumb-hover: hsl(221, 14%, 42%);
+  --vf-scrollbar-track: #12171c;
+  --vf-scrollbar-thumb: #3a424c;
+  --vf-scrollbar-thumb-hover: #505a66;
+
   /* 布局与组件尺寸（与浅色一致） */
   --vf-topbar-height: 50px;
   --vf-sidebar-width: 300px;
@@ -339,14 +353,6 @@
   --vf-control-height-sm: 30px;
   --vf-control-height: 34px;
   --vf-control-height-lg: 38px;
-
-  --vf-surface-2: #242424;
-  --vf-table-head: #1a2028;
-  --vf-row-hover: rgba(255, 255, 255, 0.06);
-  --vf-row-selected: rgba(74, 169, 224, 0.18);
-  --vf-shadow-popover: 0 10px 30px rgba(0, 0, 0, 0.5);
-  --vf-shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.6);
-
 }
 
 // 默认（未显式指定）为浅色；显式 data-theme 与系统偏好见下方。

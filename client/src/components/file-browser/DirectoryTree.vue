@@ -375,7 +375,7 @@ function onDrop(path: string) {
 }
 
 .directory-tree-item:active {
-  background: var(--vf-accent-soft-strong);
+  background: var(--vf-row-pressed);
 }
 
 /* 树条目没有行尾「⋯」按钮，chip 收紧右距 */
@@ -428,12 +428,12 @@ function onDrop(path: string) {
 }
 
 .directory-tree-row:hover {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .directory-tree-row.is-active {
-  background: var(--vf-accent-soft);
+  background: var(--vf-row-selected);
   color: var(--vf-accent-text);
   font-weight: 600;
 }

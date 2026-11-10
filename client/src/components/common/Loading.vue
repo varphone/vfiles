@@ -35,9 +35,9 @@ defineProps<{
 .spinner {
   width: 50px;
   height: 50px;
-  /* 位于深色遮罩之上，两种主题下都保持白色 */
-  border: 4px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #ffffff;
+  /* 位于深色遮罩之上，两种主题下都用 near-white */
+  border: 4px solid var(--vf-on-accent-line);
+  border-top-color: var(--vf-on-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   margin: 0 auto;

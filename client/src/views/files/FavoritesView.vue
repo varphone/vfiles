@@ -286,7 +286,7 @@ onMounted(() => {
 .favorites-table th {
   height: var(--vf-table-head-height);
   padding: 0 var(--vf-cell-padding-x);
-  background: var(--vf-table-head);
+  background: var(--vf-surface-2);
   border-bottom: 1px solid var(--vf-border-weak);
   color: var(--vf-text-muted);
   font-size: 0.8125rem;

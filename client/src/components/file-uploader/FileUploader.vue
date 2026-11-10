@@ -476,7 +476,7 @@ defineExpose({
   margin: 0;
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .upload-queue-subtitle {

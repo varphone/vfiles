@@ -395,7 +395,7 @@ onBeforeUnmount(() => {
 .desktop-history-item:hover,
 .desktop-history-item.is-highlighted {
   background: var(--vf-row-hover);
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .desktop-search-panel {
@@ -451,7 +451,7 @@ onBeforeUnmount(() => {
   padding: 0.4rem 0.72rem;
   border-radius: var(--vf-radius-pill);
   border: 1px solid var(--vf-border);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   line-height: 1;
 }
 

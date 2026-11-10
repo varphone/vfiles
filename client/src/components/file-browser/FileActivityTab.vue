@@ -218,7 +218,7 @@ onBeforeUnmount(() => {
 .details-activity-hash {
   padding: 0 0.25rem;
   border-radius: 3px;
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.72rem;
 }

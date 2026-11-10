@@ -14,7 +14,7 @@
     </div>
 
     <main class="auth-inner">
-      <!-- Nextcloud 形态：卡片正上方是白色 Logo（图标 + 产品名），不再放副标题。 -->
+      <!-- 卡片正上方是产品图标 + 名称，不再放副标题。 -->
       <header class="auth-brand">
         <img
           class="auth-brand-logo"
@@ -60,7 +60,7 @@
 import ThemeToggle from "../common/ThemeToggle.vue";
 
 /**
- * 认证页外壳：Nextcloud 式亮蓝渐变 + 半透明气泡，白色 Logo 位于浅蓝白卡片上方。
+ * 认证页外壳：中性外壳 + 低饱和气泡 + 内容面板式登录卡片，与站内保持同一套配色。
  *
  * 登录 / 找回 / 重置共用；移动端卡片满宽（保留 16px 页边距）。
  * 卡片内的表单控件（浮动标签、外框输入框、深蓝主按钮、次要链接）也在这里用
@@ -85,32 +85,29 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
 
 <style scoped>
 /* 主题参数：卡片、输入框、按钮、页脚都从这里取值；
-   深色主题只改这些变量，结构样式无需重复。 */
+   全部指向全局 --vf-* 令牌，深浅主题由令牌自动切换。 */
 .auth-shell {
-  --auth-page-bg: linear-gradient(
-    150deg,
-    #1a8fd4 0%,
-    #2aa3e0 48%,
-    #4db8ea 100%
-  );
-  --auth-bubble-fill: rgba(255, 255, 255, 0.18);
-  --auth-card-bg: #eaf3fa;
-  --auth-card-border: transparent;
-  --auth-card-ink: #003a5f;
-  --auth-card-muted: #4a6b80;
-  --auth-field-bg: #ffffff;
-  --auth-field-border: #003a5f;
-  --auth-field-ink: #003a5f;
-  --auth-field-placeholder: #6b8ba0;
-  --auth-field-hover: rgba(0, 58, 95, 0.08);
-  --auth-field-ring: rgba(0, 75, 115, 0.2);
-  --auth-primary-bg: #004b73;
-  --auth-primary-bg-hover: #003a5f;
-  --auth-primary-bg-active: #002f4d;
-  --auth-link-ink: #003a5f;
-  --auth-footer-pill-bg: #ffffff;
-  --auth-footer-pill-ink: #003a5f;
-  --auth-meta-ink: rgba(255, 255, 255, 0.78);
+  /* 认证页与站内外壳同一套面：中性外壳 + 内容面板卡片，
+     主色只落在主按钮/链接/焦点上，不再用大面积高饱和蓝渐变。 */
+  --auth-page-bg: var(--vf-shell-bg);
+  --auth-bubble-fill: var(--vf-accent-soft);
+  --auth-card-bg: var(--vf-surface);
+  --auth-card-border: var(--vf-border-weak);
+  --auth-card-ink: var(--vf-text);
+  --auth-card-muted: var(--vf-text-muted);
+  --auth-field-bg: var(--vf-surface);
+  --auth-field-border: var(--vf-border);
+  --auth-field-ink: var(--vf-text);
+  --auth-field-placeholder: var(--vf-text-subtle);
+  --auth-field-hover: var(--vf-row-hover);
+  --auth-field-ring: var(--vf-focus-ring);
+  --auth-primary-bg: var(--vf-accent-fill);
+  --auth-primary-bg-hover: var(--vf-accent-fill-hover);
+  --auth-primary-bg-active: var(--vf-accent-fill-active);
+  --auth-link-ink: var(--vf-accent-text);
+  --auth-footer-pill-bg: var(--vf-surface);
+  --auth-footer-pill-ink: var(--vf-text-muted);
+  --auth-meta-ink: var(--vf-text-muted);
 
   position: relative;
   display: flex;
@@ -121,7 +118,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   padding: 2rem 1rem 1.25rem;
   overflow: hidden;
   background: var(--auth-page-bg);
-  color: #ffffff;
+  color: var(--vf-text);
 }
 
 /* 半透明气泡层：裁掉超出视口的部分，避免出现横向滚动条。 */
@@ -179,55 +176,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   opacity: 0.4;
 }
 
-/* 深色主题：深蓝底 + 深色卡片，边框与文字换成浅色（保持可读）。 */
-[data-theme="dark"] .auth-shell {
-  --auth-page-bg: linear-gradient(150deg, #0b2233 0%, #123a52 100%);
-  --auth-bubble-fill: rgba(125, 195, 240, 0.16);
-  --auth-card-bg: #16242e;
-  --auth-card-border: rgba(255, 255, 255, 0.12);
-  --auth-card-ink: #eaf3fa;
-  --auth-card-muted: #a9c2d3;
-  --auth-field-bg: #0f1d26;
-  --auth-field-border: #8fc4e4;
-  --auth-field-ink: #eaf3fa;
-  --auth-field-placeholder: #8aa6b8;
-  --auth-field-hover: rgba(255, 255, 255, 0.08);
-  --auth-field-ring: rgba(143, 196, 228, 0.24);
-  --auth-primary-bg: #176d9e;
-  --auth-primary-bg-hover: #1d7fb5;
-  --auth-primary-bg-active: #135a83;
-  --auth-link-ink: #d6ecfa;
-  --auth-footer-pill-bg: rgba(255, 255, 255, 0.94);
-  --auth-footer-pill-ink: #003a5f;
-  --auth-meta-ink: rgba(255, 255, 255, 0.7);
-}
-
-/* 跟随系统深色（未显式选择浅色时）走同一套深色参数。 */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .auth-shell {
-    --auth-page-bg: linear-gradient(150deg, #0b2233 0%, #123a52 100%);
-    --auth-bubble-fill: rgba(125, 195, 240, 0.16);
-    --auth-card-bg: #16242e;
-    --auth-card-border: rgba(255, 255, 255, 0.12);
-    --auth-card-ink: #eaf3fa;
-    --auth-card-muted: #a9c2d3;
-    --auth-field-bg: #0f1d26;
-    --auth-field-border: #8fc4e4;
-    --auth-field-ink: #eaf3fa;
-    --auth-field-placeholder: #8aa6b8;
-    --auth-field-hover: rgba(255, 255, 255, 0.08);
-    --auth-field-ring: rgba(143, 196, 228, 0.24);
-    --auth-primary-bg: #176d9e;
-    --auth-primary-bg-hover: #1d7fb5;
-    --auth-primary-bg-active: #135a83;
-    --auth-link-ink: #d6ecfa;
-    --auth-footer-pill-bg: rgba(255, 255, 255, 0.94);
-    --auth-footer-pill-ink: #003a5f;
-    --auth-meta-ink: rgba(255, 255, 255, 0.7);
-  }
-}
-
-/* 主题切换钮：蓝底上改成半透明白，避免默认的浅色胶囊抢视线。 */
+/* 主题切换钮：外壳上保持内容面 + 结构线，不抢登录卡片的焦点。 */
 .auth-theme {
   position: absolute;
   top: 0.9rem;
@@ -236,18 +185,17 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
 }
 
 .auth-theme :deep(.theme-toggle-button) {
-  border-color: rgba(255, 255, 255, 0.34);
-  background: rgba(255, 255, 255, 0.16);
-  color: #ffffff;
+  border-color: var(--vf-border-weak);
+  background: var(--vf-surface);
+  color: var(--vf-text-muted);
   box-shadow: none;
-  backdrop-filter: blur(6px);
 }
 
 .auth-theme :deep(.theme-toggle-button:hover),
 .auth-theme :deep(.theme-toggle-button:focus-visible) {
-  border-color: rgba(255, 255, 255, 0.5);
-  background: rgba(255, 255, 255, 0.26);
-  color: #ffffff;
+  border-color: var(--vf-border);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 /* 中间内容占满剩余高度：Logo + 卡片垂直居中，页脚贴页面底部。 */
@@ -276,20 +224,18 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   display: block;
   width: 56px;
   height: 56px;
-  filter: drop-shadow(0 6px 16px rgba(8, 47, 73, 0.22));
 }
 
 .auth-brand-name {
   margin: 0;
-  color: #ffffff;
+  color: var(--vf-text);
   font-size: 1.75rem;
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.01em;
-  text-shadow: 0 1px 2px rgba(8, 47, 73, 0.18);
 }
 
-/* 卡片：316px、浅蓝白、3px 圆角、轻阴影、24px 内边距（对齐 Nextcloud 登录卡片）。 */
+/* 卡片：316px、内容面、细结构线、24px 内边距（与站内内容面板同语言）。 */
 .auth-card {
   box-sizing: border-box;
   width: 316px;
@@ -298,7 +244,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   border: 1px solid var(--auth-card-border);
   border-radius: 3px;
   background: var(--auth-card-bg);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--vf-shadow-card);
   color: var(--auth-card-ink);
 }
 
@@ -367,7 +313,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   height: 44px;
   min-height: 44px;
   padding: 10px 12px;
-  border: 2px solid var(--auth-field-border);
+  border: 1px solid var(--auth-field-border);
   border-radius: 3px;
   background: var(--auth-field-bg);
   color: var(--auth-field-ink);
@@ -415,7 +361,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   border: none;
   border-radius: 2px;
   background: transparent;
-  color: var(--auth-field-border);
+  color: var(--vf-text-muted);
   cursor: pointer;
 }
 
@@ -433,7 +379,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   cursor: default;
 }
 
-/* 主按钮：整宽 44px、深海军蓝、右侧箭头；hover/active 逐级加深。
+/* 主按钮：整宽 44px、实心主色、右侧箭头；hover/active 逐级加深。
    .auth-primary 是主按钮的语义标记（测试/主题钩子），外观统一由 .auth-submit 提供。 */
 .auth-card :deep(.auth-submit) {
   display: flex;
@@ -448,7 +394,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   border: none;
   border-radius: 3px;
   background: var(--auth-primary-bg);
-  color: #ffffff;
+  color: var(--vf-on-accent);
   font-size: 0.9375rem;
   font-weight: 600;
   line-height: 1;
@@ -474,7 +420,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   outline-offset: 2px;
 }
 
-/* 次要链接：按钮下方两行居中、13px 加粗深海军蓝。 */
+/* 次要链接：按钮下方两行居中、13px 加粗强调色文字。 */
 .auth-card :deep(.auth-links) {
   display: flex;
   flex-direction: column;
@@ -514,7 +460,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   line-height: 1.5;
 }
 
-/* 页脚：白色胶囊 + 右侧低调备案号；版本号与标语放在胶囊下方一行。 */
+/* 页脚：内容面胶囊 + 右侧低调备案号；版本号与标语放在胶囊下方一行。 */
 .auth-footer {
   position: relative;
   z-index: 1;
@@ -539,7 +485,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   padding: 4px 14px;
   border-radius: 999px;
   background: var(--auth-footer-pill-bg);
-  box-shadow: 0 1px 3px rgba(8, 47, 73, 0.12);
+  box-shadow: none;
   color: var(--auth-footer-pill-ink);
   font-size: 13px;
   font-weight: 500;
@@ -570,7 +516,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
 
 .auth-record:hover,
 .auth-record:focus-visible {
-  color: #ffffff;
+  color: var(--vf-text);
   text-decoration: underline;
 }
 

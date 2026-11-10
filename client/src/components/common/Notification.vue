@@ -90,7 +90,7 @@ function remove(id: number) {
   border-radius: var(--vf-radius-card);
   background: var(--vf-surface-raised);
   color: var(--vf-text);
-  box-shadow: 0 6px 20px rgba(16, 24, 40, 0.12);
+  box-shadow: var(--vf-shadow-popover);
   pointer-events: auto;
 }
 

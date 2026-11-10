@@ -225,8 +225,8 @@ onMounted(() => {
 }
 
 .breadcrumb-tree-item:hover {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .breadcrumb-tree-icon {

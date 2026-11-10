@@ -306,14 +306,13 @@ onBeforeUnmount(() => {
 <style scoped>
 /*
  * 顶栏：与应用侧栏、页面背景共用 --vf-shell-bg，无下边框；
- * 前景随主题（浅色用强文本色、深色用常规文本色），
- * 应用图标用中性灰，选中态只保留品牌蓝作为唯一强调色。
+ * 前景统一用正文色，应用图标用中性灰，选中态只保留主色作为唯一强调色。
  */
 .app-header {
-  /* 顶栏状态层：浅色用低透明度黑，深色用低透明度白（全局块按主题覆盖）。 */
-  --vf-header-fg: var(--vf-text-strong);
-  --vf-header-hover: rgba(0, 0, 0, 0.05);
-  --vf-header-active: rgba(0, 0, 0, 0.06);
+  /* 顶栏状态层：悬停/选中复用全局行状态令牌，深浅主题自动切换。 */
+  --vf-header-fg: var(--vf-text);
+  --vf-header-hover: var(--vf-row-hover);
+  --vf-header-active: var(--vf-row-selected);
   --vf-header-active-fg: var(--vf-accent-text);
   --vf-header-radius: 8px;
 
@@ -630,20 +629,5 @@ html[data-theme="dark"] .app-header-avatar {
   }
 }
 
-/* 深色主题：顶栏前景改用常规文本色，状态层换成低透明度白。 */
-html[data-theme="dark"] .app-header {
-  --vf-header-fg: var(--vf-text);
-  --vf-header-hover: rgba(255, 255, 255, 0.06);
-  --vf-header-active: rgba(255, 255, 255, 0.1);
-  --vf-header-active-fg: var(--vf-accent);
-}
 
-@media screen and (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .app-header {
-    --vf-header-fg: var(--vf-text);
-    --vf-header-hover: rgba(255, 255, 255, 0.06);
-    --vf-header-active: rgba(255, 255, 255, 0.1);
-    --vf-header-active-fg: var(--vf-accent);
-  }
-}
 </style>

@@ -189,7 +189,7 @@ onBeforeUnmount(() => {
 .nc-new-item:hover,
 .nc-new-item:focus-visible {
   background: var(--vf-row-hover);
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .nc-new-item:focus-visible {

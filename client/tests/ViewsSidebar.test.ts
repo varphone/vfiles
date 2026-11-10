@@ -120,7 +120,7 @@ describe("ViewsSidebar.vue", () => {
       "--vf-sidebar-item-radius: var(--vf-radius-card)",
     );
     expect(source).toContain(
-      "--vf-sidebar-item-active-bg: var(--vf-accent)",
+      "--vf-sidebar-item-active-bg: var(--vf-accent-fill)",
     );
     expect(source).toContain(
       "--vf-sidebar-item-active-fg: var(--vf-on-accent)",

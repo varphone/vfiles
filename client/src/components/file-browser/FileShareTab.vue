@@ -282,7 +282,7 @@ onBeforeUnmount(() => {
 
 .details-share-info:hover,
 .details-share-info:focus-visible {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .details-tab-hint {
@@ -319,7 +319,7 @@ onBeforeUnmount(() => {
   padding: var(--vf-space-2) var(--vf-space-3);
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-control);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
 }
 
 .details-share-icon {

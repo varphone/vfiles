@@ -692,7 +692,7 @@ onMounted(() => {
   margin: 0;
   padding: var(--vf-space-3) var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.8rem;
   line-height: 1.5;
@@ -723,7 +723,7 @@ onMounted(() => {
   height: var(--vf-table-head-height);
   padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-table-head);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.8125rem;
   font-weight: 600;
@@ -784,7 +784,7 @@ onMounted(() => {
 }
 
 .passwords-name {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -811,7 +811,7 @@ onMounted(() => {
   padding: 0.08rem 0.4rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-pill);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text);
   font-size: 0.75rem;
   overflow: hidden;
@@ -913,7 +913,7 @@ onMounted(() => {
 
 .passwords-card-meta dd {
   margin: 0;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 0.8rem;
   word-break: break-word;
 }
@@ -950,7 +950,7 @@ onMounted(() => {
   padding: 0.3rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
 }
 
 .passwords-add-root {
@@ -995,7 +995,7 @@ onMounted(() => {
 .directory-picker-current {
   padding: 0.15rem 0.4rem;
   border-radius: var(--vf-radius-xs);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text);
   font-size: 0.8rem;
   word-break: break-all;
@@ -1042,8 +1042,8 @@ onMounted(() => {
 
 .directory-picker-enter:hover,
 .directory-picker-enter:focus-visible {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .directory-picker-enter span {

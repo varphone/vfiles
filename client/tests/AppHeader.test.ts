@@ -116,18 +116,18 @@ describe("AppHeader.vue", () => {
     expect(headerRule).toContain("color: var(--vf-header-fg)");
     expect(headerRule).not.toContain("border-bottom");
 
-    // 前景随主题：浅色用强文本色，深色用常规文本色（不再固定白字）。
+    // 前景随主题：正文色不再分第四档，深色由令牌自动切换。
     const innerRule = source.match(/\.app-header-inner\s*\{([\s\S]*?)\n\}/)![1];
     expect(innerRule).toContain("color: var(--vf-header-fg)");
-    expect(source).toContain("--vf-header-fg: var(--vf-text-strong)");
     expect(source).toContain("--vf-header-fg: var(--vf-text)");
+    expect(source).not.toContain("--vf-text-strong");
 
-    // 当前应用图标：浅色 6% 黑块 / 深色 10% 白块，图标取主题强调色。
+    // 当前应用图标：悬停中性灰 / 选中低饱和蓝，均复用全局行状态令牌。
     expect(container.querySelector(".app-header-app.is-active")).not.toBeNull();
-    expect(source).toContain("--vf-header-active: rgba(0, 0, 0, 0.06)");
-    expect(source).toContain("--vf-header-active: rgba(255, 255, 255, 0.1)");
+    expect(source).toContain("--vf-header-active: var(--vf-row-selected)");
+    expect(source).not.toContain("--vf-header-active: rgba(");
     expect(source).toContain("--vf-header-active-fg: var(--vf-accent-text)");
-    expect(source).toContain("--vf-header-active-fg: var(--vf-accent)");
+    expect(source).not.toContain("--vf-header-active-fg: var(--vf-accent)");
     const appRule = source.match(/\.app-header-app\s*\{([\s\S]*?)\n\}/)![1];
     expect(appRule).toContain("color: var(--vf-text-muted)");
     const activeAppRule = source.match(

@@ -65,7 +65,7 @@ withDefaults(
   font-size: 1.35rem;
   line-height: 1.25;
   font-weight: 700;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-variant-numeric: tabular-nums;
 }
 

@@ -65,37 +65,37 @@ const icon = computed(() => {
 </script>
 
 <style scoped>
-/* Seafile 式彩色类型图标：按类型着色，文件夹保持中性强调色。 */
+/* 文件类型图标：同一明度档的类型色（token 随深浅主题切换），文件夹用强调色。 */
 .file-type-icon.is-folder {
   color: var(--vf-accent);
 }
 
 .file-type-icon.is-image {
-  color: #7c3aed;
+  color: var(--vf-type-image);
 }
 
 .file-type-icon.is-video {
-  color: #dc2626;
+  color: var(--vf-type-video);
 }
 
 .file-type-icon.is-audio {
-  color: #d97706;
+  color: var(--vf-type-audio);
 }
 
 .file-type-icon.is-archive {
-  color: #0891b2;
+  color: var(--vf-type-archive);
 }
 
 .file-type-icon.is-code {
-  color: #0f766e;
+  color: var(--vf-type-code);
 }
 
 .file-type-icon.is-pdf {
-  color: #b91c1c;
+  color: var(--vf-type-pdf);
 }
 
 .file-type-icon.is-text {
-  color: #475569;
+  color: var(--vf-type-text);
 }
 
 .file-type-icon.is-file {

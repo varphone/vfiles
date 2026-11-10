@@ -557,7 +557,7 @@ onMounted(() => {
   padding: 0.45rem 0.55rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.8rem;
 }
@@ -572,7 +572,7 @@ onMounted(() => {
   margin-top: 0.7rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   font-size: 0.8rem;
 }
 
@@ -584,7 +584,7 @@ onMounted(() => {
 }
 
 .audit-summary-total strong {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .audit-summary-failures {
@@ -702,7 +702,7 @@ onMounted(() => {
 }
 
 .audit-table tbody tr:hover {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
 }
 
 .audit-time {
@@ -711,12 +711,12 @@ onMounted(() => {
 }
 
 .audit-user {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-weight: 600;
 }
 
 .audit-action {
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text);
 }
 

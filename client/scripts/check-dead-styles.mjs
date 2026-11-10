@@ -1,5 +1,5 @@
 // 死样式扫描（防回归）：类选择器定义了但全仓库零引用、无动画引用的 keyframes、
-// 或样式块花括号不配平 → 报错退出 1。
+// 样式块花括号不配平、或组件样式里出现硬编码 #rrggbb → 报错退出 1。
 //
 // 方法论与误报豁免沿用 docs/OPTIMIZATION_ROADMAP.md §4.16（三批人工清理的经验）：
 //   1. Vue <transition name="X"> 的运行时类（X-enter-*/leave-*/appear-*）由框架生成；
@@ -113,7 +113,23 @@ const defined = new Map(); // cls -> file
 const keyframes = new Map(); // name -> file
 const problems = [];
 
+// 只有令牌文件可以出现字面色值；组件/样式模块一律走 var(--vf-*)。
+const COLOR_TOKEN_FILES = new Set([
+  "src/styles/theme.scss",
+  "src/styles/code-theme.scss",
+]);
+let hardcodedColors = 0;
+
 for (const { file, style } of styleParts) {
+  if (!COLOR_TOKEN_FILES.has(file)) {
+    for (const m of style.matchAll(/#[0-9a-fA-F]{3,8}\b/g)) {
+      problems.push(
+        `[hardcoded-color] ${file}: ${m[0]}（请改用 --vf-* 令牌）`,
+      );
+      hardcodedColors++;
+    }
+  }
+
   // 花括号配平（排掉字符串/注释里的简单干扰：先去注释）
   const noComments = style
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -157,5 +173,5 @@ if (problems.length) {
   process.exit(1);
 }
 console.log(
-  `死样式检查通过：${defined.size} 个类、${keyframes.size} 组 keyframes、transition 豁免 ${transitionNames.size} 组、动态前缀豁免 ${dynPrefixes.size} 个`,
+  `死样式检查通过：${defined.size} 个类、${keyframes.size} 组 keyframes、transition 豁免 ${transitionNames.size} 组、动态前缀豁免 ${dynPrefixes.size} 个、硬编码色 ${hardcodedColors} 处`,
 );

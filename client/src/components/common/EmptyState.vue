@@ -70,7 +70,7 @@ const illustrationSize = computed(() => (props.compact ? 28 : 34));
   height: 4rem;
   margin-bottom: 0.5rem;
   border-radius: 50%;
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-subtle);
 }
 
@@ -89,7 +89,7 @@ const illustrationSize = computed(() => (props.compact ? 28 : 34));
   margin: 0;
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .empty-state.is-compact .empty-state-title {

@@ -649,7 +649,7 @@ async function renameSelected() {
   right: 0;
   bottom: 0;
   z-index: 900;
-  background: var(--vf-app-bar);
+  background: var(--vf-surface);
   border-top: 1px solid var(--vf-border-weak);
   box-shadow: none;
 }
@@ -767,8 +767,8 @@ async function renameSelected() {
 
 .mobile-action-buttons .button:hover,
 .mobile-action-buttons .button:active {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .mobile-action-buttons .button.is-link {

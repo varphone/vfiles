@@ -153,7 +153,7 @@ function close() {
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-card);
   overflow: hidden;
-  box-shadow: 0 8px 28px rgba(16, 24, 40, 0.16);
+  box-shadow: var(--vf-shadow-modal);
 }
 
 .modal-card-head {

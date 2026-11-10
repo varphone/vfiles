@@ -355,7 +355,7 @@ useDocumentEventListener("keydown", (event) => {
 
 .library-home-title {
   margin: 0;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   /* 与 PageHeader 的页标题同字级 */
   font-size: 1.25rem;
   font-weight: 700;
@@ -391,7 +391,6 @@ useDocumentEventListener("keydown", (event) => {
 .library-card:hover {
   transform: translateY(-2px);
   border-color: var(--vf-accent-line);
-  box-shadow: var(--vf-shadow-md);
 }
 
 .library-card:focus-visible {
@@ -403,7 +402,6 @@ useDocumentEventListener("keydown", (event) => {
 .library-card.is-menu-open {
   z-index: 5;
   border-color: var(--vf-accent-line);
-  box-shadow: var(--vf-shadow-md);
 }
 
 .library-card-cover {
@@ -428,7 +426,7 @@ useDocumentEventListener("keydown", (event) => {
 .library-card-name {
   margin: 0;
   overflow: hidden;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 0.9rem;
   font-weight: 600;
   line-height: 1.35;
@@ -524,7 +522,7 @@ useDocumentEventListener("keydown", (event) => {
 }
 
 .library-card-menu-item:hover {
-  background: var(--vf-surface-sunken);
+  background: var(--vf-row-hover);
 }
 
 .library-card-menu-item.is-danger {

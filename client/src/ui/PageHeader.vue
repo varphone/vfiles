@@ -51,7 +51,7 @@ withDefaults(
   font-size: 1.25rem;
   font-weight: 700;
   line-height: 1.3;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   letter-spacing: -0.01em;
 }
 

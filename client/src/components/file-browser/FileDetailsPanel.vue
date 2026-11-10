@@ -513,7 +513,7 @@ function openRowMenu() {
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 17px;
   font-weight: 700;
   line-height: 1.3;
@@ -557,7 +557,7 @@ function openRowMenu() {
   gap: var(--vf-space-1);
   padding: var(--vf-space-1) var(--vf-space-2);
   border-radius: 999px;
-  background: var(--vf-surface-muted);
+  background: var(--vf-surface-2);
   color: var(--vf-text);
   font-size: 13px;
   line-height: 1.3;
@@ -576,7 +576,7 @@ function openRowMenu() {
   align-items: stretch;
   height: var(--vf-table-head-height);
   border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-surface);
+  background: var(--vf-surface-2);
 }
 
 .details-tab {
@@ -601,7 +601,7 @@ function openRowMenu() {
 }
 
 .details-tab:hover {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .details-tab.is-active {
@@ -668,7 +668,7 @@ function openRowMenu() {
   margin: 0;
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .details-selection-meta {
@@ -685,7 +685,7 @@ function openRowMenu() {
   padding: var(--vf-space-2);
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-control);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   list-style: none;
 }
 

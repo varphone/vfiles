@@ -481,7 +481,7 @@ async function goUp() {
   padding: 0.5rem 0.65rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
 }
 
 .move-dialog-items-icon {
@@ -497,7 +497,7 @@ async function goUp() {
   white-space: nowrap;
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .move-dialog-items-more {
@@ -553,12 +553,12 @@ async function goUp() {
 }
 
 .move-dialog-crumb:hover {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .move-dialog-crumb.is-current {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-weight: 600;
 }
 
@@ -614,7 +614,7 @@ async function goUp() {
 }
 
 .move-dialog-row:hover:not(:disabled) {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
 }
 
 .move-dialog-row.is-disabled,

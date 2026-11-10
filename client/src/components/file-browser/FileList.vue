@@ -330,7 +330,7 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
   height: var(--vf-table-head-height);
   padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-surface);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 13px;
   font-weight: 600;
@@ -383,13 +383,12 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
 
 /* 表头：悬停时给出可排序的反馈 */
 .file-list-table thead th:hover {
-  /* 必须用不透明底：surface-hover 是半透明 tint（行悬停叠色用），
-     换给 sticky 表头会让滚动内容透出（用户反馈的"表头悬停变透明"）。 */
-  background: var(--vf-surface-sunken);
+  /* 必须用不透明底：行悬停令牌是不透明中性灰，sticky 表头不会透出滚动内容。 */
+  background: var(--vf-row-hover);
 }
 
 .file-list-table thead th:hover .file-list-sort {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .file-list-sort {

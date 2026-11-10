@@ -42,7 +42,7 @@ defineProps<{
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
-  background: color-mix(in srgb, var(--vf-canvas) 72%, transparent);
+  background: color-mix(in srgb, var(--vf-shell-bg) 72%, transparent);
   backdrop-filter: blur(2px);
   pointer-events: none;
 }
@@ -57,7 +57,6 @@ defineProps<{
   border: 2px dashed var(--vf-accent);
   border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
-  box-shadow: var(--vf-shadow-md);
   text-align: center;
 }
 
@@ -68,7 +67,7 @@ defineProps<{
 .upload-drop-title {
   font-size: 1.05rem;
   font-weight: 600;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .upload-drop-hint {

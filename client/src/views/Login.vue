@@ -502,7 +502,7 @@ onMounted(async () => {
   width: 16px;
   height: 16px;
   margin: 0;
-  /* 原生复选框着色：选中即为深海军蓝（#003a5f）的勾，无额外 DOM。 */
+  /* 原生复选框着色：选中即为主色强调色的勾，无额外 DOM。 */
   accent-color: var(--auth-field-border);
   cursor: pointer;
 }

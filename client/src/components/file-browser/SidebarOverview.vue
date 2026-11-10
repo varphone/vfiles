@@ -386,7 +386,7 @@ watch(
 .sidebar-overview-size {
   font-size: 1rem;
   font-weight: 600;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .sidebar-overview-counts {
@@ -402,7 +402,7 @@ watch(
   margin-top: 0.55rem;
   border-radius: var(--vf-radius-pill);
   overflow: hidden;
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
 }
 
 .storage-bar-segment {
@@ -514,8 +514,8 @@ watch(
 }
 
 .sidebar-recent-item:hover {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .sidebar-recent-name {
@@ -586,7 +586,7 @@ watch(
 }
 
 .sidebar-favorite-remove:hover {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
 }
 
 /* reduced-motion：transform/width/all 过渡含位移或布局动画，降级为瞬时

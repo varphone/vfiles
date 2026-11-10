@@ -177,10 +177,14 @@ const versionLabel = computed(() => {
     background 0.15s var(--vf-motion-standard);
 }
 
-.history-row:hover .history-card,
-.history-row.is-selected .history-card {
+.history-row:hover .history-card {
   border-color: var(--vf-border);
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
+}
+
+.history-row.is-selected .history-card {
+  border-color: var(--vf-accent-line);
+  background: var(--vf-row-selected);
 }
 
 .history-row.is-current .history-card {
@@ -199,7 +203,7 @@ const versionLabel = computed(() => {
   flex: 0 0 auto;
   padding: 0.05rem 0.4rem;
   border-radius: var(--vf-radius-pill);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.75rem;
   font-weight: 600;
@@ -214,7 +218,7 @@ const versionLabel = computed(() => {
   flex: 0 0 auto;
   padding: 0.05rem 0.35rem;
   border-radius: var(--vf-radius-xs);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.75rem;
 }
@@ -223,7 +227,7 @@ const versionLabel = computed(() => {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 0.875rem;
   font-weight: 600;
   line-height: 1.3;

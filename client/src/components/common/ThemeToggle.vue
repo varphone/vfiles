@@ -126,12 +126,12 @@ onBeforeUnmount(() => {
 
 .theme-toggle-item:hover,
 .theme-toggle-item:focus-visible {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .theme-toggle-item.is-active {
-  background: var(--vf-accent-soft);
+  background: var(--vf-row-selected);
   color: var(--vf-accent-text);
 }
 </style>

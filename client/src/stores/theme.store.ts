@@ -6,12 +6,6 @@ export type ResolvedTheme = "light" | "dark";
 
 const STORAGE_KEY = "vfiles:theme";
 const DARK_MEDIA_QUERY = "(prefers-color-scheme: dark)";
-// 与 index.html 中首屏脚本、以及浅/深色页面底色保持一致。
-const THEME_COLORS: Record<ResolvedTheme, string> = {
-  light: "#f6f8fb",
-  dark: "#16191f",
-};
-
 const MODES: ThemeMode[] = ["system", "light", "dark"];
 
 function readPersistedMode(): ThemeMode {
@@ -58,8 +52,12 @@ export const useThemeStore = defineStore("theme", () => {
       root.dataset.theme = mode.value;
     }
 
+    // 地址栏颜色从令牌读取，避免在 JS 里维护第二份色值。
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", THEME_COLORS[resolved.value]);
+    const shell = getComputedStyle(root)
+      .getPropertyValue("--vf-shell-bg")
+      .trim();
+    if (meta && shell) meta.setAttribute("content", shell);
   }
 
   function setMode(next: ThemeMode) {

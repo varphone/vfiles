@@ -187,7 +187,7 @@ function onMessageInput(id: number, event: Event) {
 }
 
 .upload-queue-row:hover {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
 }
 
 .upload-queue-main {
@@ -220,7 +220,7 @@ function onMessageInput(id: number, event: Event) {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.875rem;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .upload-queue-row.is-done .upload-queue-name {

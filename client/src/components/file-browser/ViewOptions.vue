@@ -200,7 +200,7 @@ onBeforeUnmount(() => {
   gap: var(--vf-space-1);
   padding: 2px;
   border-radius: var(--vf-radius-card);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
 }
 
 .view-options-segment-button {

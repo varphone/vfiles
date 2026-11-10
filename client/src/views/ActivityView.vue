@@ -363,7 +363,7 @@ onMounted(() => {
 .activity-filter {
   height: var(--vf-control-height);
   padding: 0 var(--vf-space-3);
-  border: 1px solid var(--vf-border-soft);
+  border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-control);
   background: var(--vf-surface);
   color: var(--vf-text-muted);
@@ -378,8 +378,8 @@ onMounted(() => {
 
 .activity-filter:hover,
 .activity-filter:focus-visible {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .activity-filter.is-active {
@@ -411,12 +411,12 @@ onMounted(() => {
   height: var(--vf-table-head-height);
   padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
 }
 
 .activity-day {
   margin: 0;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 0.8125rem;
   font-weight: 650;
 }
@@ -467,7 +467,7 @@ onMounted(() => {
 
 .activity-user {
   flex: none;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-weight: 600;
 }
 

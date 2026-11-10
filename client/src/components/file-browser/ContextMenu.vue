@@ -194,7 +194,7 @@ onBeforeUnmount(closeListeners);
 }
 
 .vfiles-context-menu__item:hover:not(:disabled) {
-  background: var(--vf-surface-sunken);
+  background: var(--vf-row-hover);
 }
 
 .vfiles-context-menu__item:disabled {

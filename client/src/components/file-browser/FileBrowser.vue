@@ -3167,7 +3167,7 @@ function handleSortChange(field: SortField) {
     position: sticky;
     top: 0;
     z-index: 1;
-    background: var(--vf-surface);
+    background: var(--vf-surface-2);
   }
 }
 
@@ -3233,7 +3233,7 @@ function handleSortChange(field: SortField) {
 }
 
 .file-toolbar :deep(.path-bar-item.is-active .path-bar-segment) {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-weight: 600;
 }
 
@@ -3255,7 +3255,7 @@ function handleSortChange(field: SortField) {
   border: none;
   border-radius: var(--vf-radius-control);
   background: transparent;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-family: inherit;
   font-size: 0.9rem;
   font-weight: 600;
@@ -3264,7 +3264,7 @@ function handleSortChange(field: SortField) {
 
 .file-toolbar-view-name:hover,
 .file-toolbar-view-name:focus-visible {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
 }
 
 .file-toolbar-view-caret {
@@ -3301,11 +3301,11 @@ function handleSortChange(field: SortField) {
 .file-toolbar-view-item:hover,
 .file-toolbar-view-item:focus-visible {
   background: var(--vf-row-hover);
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .file-toolbar-view-item.is-active {
-  background: var(--vf-accent-soft);
+  background: var(--vf-row-selected);
   color: var(--vf-accent-text);
 }
 
@@ -3331,7 +3331,7 @@ function handleSortChange(field: SortField) {
   padding: 2px;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-card);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
 }
 
 .file-view-toggle .vf-icon-button {
@@ -3366,7 +3366,7 @@ function handleSortChange(field: SortField) {
   padding: var(--vf-space-1) var(--vf-space-3);
   border: 1px solid var(--vf-border);
   border-radius: var(--vf-radius-pill);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   color: var(--vf-text-muted);
   font-size: 0.75rem;
   font-weight: 600;
@@ -3384,7 +3384,7 @@ function handleSortChange(field: SortField) {
   padding: 0;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-card);
-  background: var(--vf-surface-sunken);
+  background: var(--vf-surface-2);
   overflow: hidden;
 }
 
@@ -3482,7 +3482,7 @@ function handleSortChange(field: SortField) {
 
 .desktop-status-shortcuts:hover,
 .desktop-status-shortcuts:focus-visible {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
   color: var(--vf-text);
 }
 
@@ -3627,7 +3627,7 @@ function handleSortChange(field: SortField) {
   border-radius: var(--vf-radius-card);
   background: var(--vf-surface-raised);
   box-shadow: var(--vf-shadow-menu);
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 1.5rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -3636,7 +3636,7 @@ function handleSortChange(field: SortField) {
 }
 
 .desktop-drag-chip.is-invalid {
-  background: var(--vf-danger-soft-strong);
+  background: var(--vf-danger-soft);
   border-color: var(--vf-danger-line);
 }
 
@@ -3653,7 +3653,7 @@ function handleSortChange(field: SortField) {
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface-raised);
   box-shadow: var(--vf-shadow-menu);
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-size: 0.8rem;
   font-weight: 600;
   pointer-events: none;

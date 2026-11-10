@@ -175,7 +175,7 @@ const navItems = computed(() =>
 
 .admin-brand-text strong {
   font-size: 0.86rem;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .admin-brand-text span {
@@ -200,7 +200,7 @@ const navItems = computed(() =>
   font-weight: 650;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--vf-text-subtle);
+  color: var(--vf-text-muted);
 }
 
 .admin-nav-item {
@@ -220,13 +220,13 @@ const navItems = computed(() =>
 }
 
 .admin-nav-item:hover {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .admin-nav-item.is-active {
-  background: var(--vf-accent-soft);
-  color: var(--vf-accent-text);
+  background: var(--vf-accent-fill);
+  color: var(--vf-on-accent);
   font-weight: 600;
 }
 
@@ -259,8 +259,8 @@ const navItems = computed(() =>
 }
 
 .admin-back-link:hover {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .admin-workspace {
@@ -308,7 +308,7 @@ const navItems = computed(() =>
 .admin-crumb-current {
   font-size: 0.8rem;
   font-weight: 600;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 /* 内容面板：与工作区四周留 8px 外壳间隙，内部页面直接落在面板上。 */

@@ -227,8 +227,8 @@ onBeforeUnmount(() => {
 
 .sort-menu-item:hover,
 .sort-menu-item:focus-visible {
-  background: var(--vf-surface-hover);
-  color: var(--vf-text-strong);
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 .sort-menu-item.is-active {

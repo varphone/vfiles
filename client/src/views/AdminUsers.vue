@@ -1059,7 +1059,7 @@ onMounted(() => {
 .admin-facts dd {
   margin: 0;
   font-size: 0.8rem;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   text-align: right;
 }
 
@@ -1067,7 +1067,7 @@ onMounted(() => {
   margin: 1.25rem 0 0.5rem;
   font-size: 0.82rem;
   font-weight: 650;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .admin-drawer-hint {
@@ -1107,7 +1107,7 @@ onMounted(() => {
 }
 
 .admin-session-dot.is-inactive {
-  background: var(--vf-border-strong);
+  background: var(--vf-text-subtle);
 }
 
 .admin-session-main {
@@ -1120,7 +1120,7 @@ onMounted(() => {
   gap: 0.4rem;
   margin: 0;
   font-size: 0.79rem;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   word-break: break-word;
 }
 
@@ -1178,7 +1178,7 @@ onMounted(() => {
 .admin-user-card-meta dd {
   margin: 0;
   font-size: 0.78rem;
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
 }
 
 .admin-user-card-actions {
@@ -1227,7 +1227,7 @@ onMounted(() => {
 }
 
 .admin-table tbody tr:hover {
-  background: var(--vf-surface-hover);
+  background: var(--vf-row-hover);
 }
 
 .admin-user {
@@ -1257,7 +1257,7 @@ onMounted(() => {
 }
 
 .admin-user-name {
-  color: var(--vf-text-strong);
+  color: var(--vf-text);
   font-weight: 600;
 }
 
@@ -1310,7 +1310,7 @@ onMounted(() => {
   margin-left: 0.45rem;
   padding: 0.05rem 0.35rem;
   border-radius: var(--vf-radius-pill);
-  background: var(--vf-surface-muted);
+  background: var(--vf-surface-2);
   color: var(--vf-text-subtle);
   font-size: 0.68rem;
   white-space: nowrap;
