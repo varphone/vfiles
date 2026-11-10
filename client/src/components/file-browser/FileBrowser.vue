@@ -628,7 +628,6 @@ import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 import { useFileViewStore } from "../../stores/fileView.store";
-import { confirmDialog } from "../../composables/dialog";
 import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
 import FileBrowserDialogs from "./FileBrowserDialogs.vue";
@@ -657,6 +656,7 @@ import {
 import { createFileBrowserKeyboard } from "../../composables/useFileBrowserKeyboard";
 import { useDirectoryNavigation } from "../../composables/useDirectoryNavigation";
 import { useFileRename } from "../../composables/useFileRename";
+import { useFileActions } from "../../composables/useFileActions";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
@@ -836,7 +836,6 @@ function closeUploader() {
   showUploader.value = false;
   uploaderPick.value = null;
 }
-const showDetailsDialog = ref(false);
 /** 正在内联重命名的条目路径（空字符串表示没有）。 */
 /** 工具栏上的上传进度：有队列时显示「上传中 x/y」，点击打开上传对话框。 */
 const uploadIndicator = computed(() => {
@@ -860,19 +859,11 @@ const uploadIndicator = computed(() => {
 
 /** 来自收藏侧栏的局部状态缓存；文件列表 DTO 会提供准确状态。 */
 const favoritePaths = ref<Set<string>>(new Set());
-const detailsDialogFile = ref<FileInfo | null>(null);
-const showHistory = ref(false);
-const showShareDialog = ref(false);
 const showShortcuts = ref(false);
 const showTransferDialog = ref(false);
 const transferItems = ref<FileInfo[]>([]);
 const dialogsRef = ref<{ finishTransfer: () => void } | null>(null);
 
-function closeShareDialog() {
-  showShareDialog.value = false;
-  // 分享可能刚创建/停止，收起对话框后刷新徽标集合
-  void loadSharedPaths();
-}
 
 /** 工具栏「+ 新建 → 新建文件夹」：复用移动端底栏的建目录请求流程。 */
 function requestCreateDirectoryFromToolbar() {
@@ -923,7 +914,6 @@ async function submitTransfer(
     dialogsRef.value?.finishTransfer();
   }
 }
-const selectedFile = ref<FileInfo | null>(null);
 const fileUploaderRef = ref<InstanceType<typeof FileUploader> | null>(null);
 /** A 决策：同名预判集合（目录既存名 ✗ 上传前冲突检测数据源）。 */
 const uploadExistingNames = computed(
@@ -1251,6 +1241,34 @@ const {
   replaceSelectedPath,
   renameEntryPath,
   refreshAfterMutation,
+  notifySuccess: (message) => appStore.success(message),
+  notifyError: (message) => appStore.error(message),
+});
+
+const {
+  selectedFile,
+  detailsDialogFile,
+  showHistory,
+  showShareDialog,
+  showDetailsDialog,
+  handleDelete,
+  handleCreateDirectory,
+  createDirectoryHere,
+  handleMoveEntry,
+  handleViewHistory,
+  handleShare,
+  closeShareDialog,
+  openDetailsDialog,
+} = useFileActions({
+  canWrite,
+  canShare,
+  currentPath,
+  searchActive,
+  desktopActivePath,
+  deletePath: (path, detail) => filesStore.deleteFile(path, detail),
+  promptCreateDirectory,
+  openMoveForEntry,
+  doSearch,
   notifySuccess: (message) => appStore.success(message),
   notifyError: (message) => appStore.error(message),
 });
@@ -1716,57 +1734,10 @@ function handleDownload(file: FileInfo) {
   enqueueDownload(file.kind === "directory" ? "folder" : "file", file.path);
 }
 
-async function handleDelete(file: FileInfo) {
-  if (!canWrite.value) return;
-  // 删除不可恢复（版本历史随条目级联删除），必须二次确认
-  const isDirectory = file.kind === "directory";
-  const ok = await confirmDialog({
-    title: isDirectory ? "删除目录" : "删除文件",
-    message: isDirectory
-      ? `确定要删除“${file.name}”吗？目录及其全部内容将被删除，且不可撤销。`
-      : `确定要删除“${file.name}”吗？删除后不可撤销。`,
-    confirmText: "删除",
-    danger: true,
-  });
-  if (!ok) return;
-
-  try {
-    await filesStore.deleteFile(
-      file.path,
-      `${file.kind === "directory" ? "删除目录" : "删除文件"}: ${file.path}`,
-    );
-    if (desktopActivePath.value === file.path) {
-      desktopActivePath.value = "";
-    }
-    if (searchActive.value) {
-      await doSearch(false);
-    }
-    appStore.success(`已删除「${file.name}」`);
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : "删除失败");
-  }
-}
-
-async function handleCreateDirectory(file: FileInfo) {
-  if (!canWrite.value || file.kind !== "directory") return;
-  await promptCreateDirectory(file.path);
-}
-
-/** 在当前目录下新建文件夹（工具栏按钮 / 移动端入口）。 */
-async function createDirectoryHere() {
-  if (!canWrite.value) return;
-  await promptCreateDirectory(currentPath.value || "");
-}
-
 /** 快速预览（空格 ✓ 云盘 web 惯例 = Finder Quick Look 同款）：预览活动行。 */
 function quickLook() {
   const active = findActiveItem();
   if (active) openPreview(active.path);
-}
-
-function handleMoveEntry(file: FileInfo) {
-  if (!canWrite.value) return;
-  openMoveForEntry(file);
 }
 
 /** 当前正在拖动的条目（用于拖放移动）。 */
@@ -1882,17 +1853,6 @@ async function handleDropOnFolder(targetDir: string) {
   }, 650);
   // 校验（自身/子目录、未变化、重名）由 useMoveDialog 内的 planMoveOperations 统一处理
   await moveEntryToDirectory(file, targetDir);
-}
-
-function handleViewHistory(file: FileInfo) {
-  selectedFile.value = file;
-  showHistory.value = true;
-}
-
-function handleShare(file: FileInfo) {
-  if (!canShare.value) return;
-  selectedFile.value = file;
-  showShareDialog.value = true;
 }
 
 async function handleUpload() {
@@ -2217,11 +2177,6 @@ function closeContextMenu() {
   contextMenu.value.show = false;
   contextMenu.value.returnFocus = null;
   if (target?.isConnected) target.focus();
-}
-
-function openDetailsDialog(file: FileInfo) {
-  detailsDialogFile.value = file;
-  showDetailsDialog.value = true;
 }
 
 function handleContextMenuSelect(key: string) {
