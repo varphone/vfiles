@@ -1,15 +1,24 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from "vue";
 import type { FileInfo } from "../types";
 
+interface DragChipDeps {
+  canWrite: Ref<boolean>;
+  moveEntryToDirectory: (file: FileInfo, targetDir: string) => Promise<boolean>;
+}
+
 /**
  * 光标跟随的拖拽 chip（VS Code/macOS 风格）：显示条目名/多选数、目标目录，
  * 以及非法落点的禁止态。位置由捕获阶段的 dragover 实时更新。
  */
-export function useDragChip(selectedPaths: Ref<Set<string>>) {
+export function useDragChip(
+  selectedPaths: Ref<Set<string>>,
+  deps: DragChipDeps,
+) {
   const draggingFile = ref<FileInfo | null>(null);
   const dragChipPos = ref({ x: -999, y: -999 });
   const dragChipTarget = ref<string | null>(null);
   const dragChipInvalid = ref(false);
+  const dropFlashPath = ref("");
 
   const dragChipLabel = computed(() => {
     const file = draggingFile.value;
@@ -81,6 +90,20 @@ export function useDragChip(selectedPaths: Ref<Set<string>>) {
         .slice(0, 24) || null;
   }
 
+  async function handleDropOnFolder(targetDir: string) {
+    if (!deps.canWrite.value) return;
+    const file = draggingFile.value;
+    draggingFile.value = null;
+    if (!file) return;
+    // 落子回执：目标行 650ms 高亮消退
+    dropFlashPath.value = targetDir;
+    window.setTimeout(() => {
+      if (dropFlashPath.value === targetDir) dropFlashPath.value = "";
+    }, 650);
+    // 自身/子目录/未变化/重名由 useMoveDialog 的 planMoveOperations 统一校验
+    await deps.moveEntryToDirectory(file, targetDir);
+  }
+
   watch(draggingFile, (current) => {
     if (current) {
       document.addEventListener("dragover", moveDragChip, {
@@ -107,6 +130,8 @@ export function useDragChip(selectedPaths: Ref<Set<string>>) {
     dragChipTarget,
     dragChipInvalid,
     dragChipLabel,
+    dropFlashPath,
+    handleDropOnFolder,
     handleDragStart: (file: FileInfo) => {
       draggingFile.value = file;
     },

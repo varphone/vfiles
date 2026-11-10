@@ -1222,9 +1222,14 @@ const {
   dragChipTarget,
   dragChipInvalid,
   dragChipLabel,
+  dropFlashPath,
+  handleDropOnFolder,
   handleDragStart,
   handleDragEnd,
-} = useDragChip(selectedPaths);
+} = useDragChip(selectedPaths, {
+  canWrite,
+  moveEntryToDirectory,
+});
 
 const {
   queueCollapsed,
@@ -1693,27 +1698,12 @@ function quickLook() {
   if (active) openPreview(active.path);
 }
 
-const dropFlashPath = ref("");
 
 /** 搜索框 ↓ 键：进入结果列表首项（活动项模型，容器级 ↑↓ 随后自然接管 ✓） */
 function enterSearchResults() {
   const first = searchResults.value[0];
   if (!first) return;
   desktopActivePath.value = first.path;
-}
-
-async function handleDropOnFolder(targetDir: string) {
-  if (!canWrite.value) return;
-  const file = draggingFile.value;
-  draggingFile.value = null;
-  if (!file) return;
-  // 落子回执（Finder/Explorer 式）：目标行 650ms 高亮消退（父层持态 ✓ 跨 remount）
-  dropFlashPath.value = targetDir;
-  window.setTimeout(() => {
-    if (dropFlashPath.value === targetDir) dropFlashPath.value = "";
-  }, 650);
-  // 校验（自身/子目录、未变化、重名）由 useMoveDialog 内的 planMoveOperations 统一处理
-  await moveEntryToDirectory(file, targetDir);
 }
 
 defineExpose({
