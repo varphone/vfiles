@@ -329,6 +329,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useListResource } from "../composables/useListResource";
 import { useRouter } from "vue-router";
 import {
   IconAlertCircle,
@@ -371,16 +372,22 @@ const app = useAppStore();
 const router = useRouter();
 const isCompact = useMediaQuery("(max-width: 768px)");
 
-const shares = ref<ShareLink[]>([]);
-const shareTotal = ref(0);
-const hasMore = ref(false);
-const loading = ref(false);
-const loadingMore = ref(false);
-const error = ref<string | null>(null);
+const SHARE_PAGE_SIZE = 100;
+// 追加式列表交给 useListResource：序号防护 + 按 id 去重 + 首次/追加分离。
+const resource = useListResource<ShareLink>({
+  pageSize: SHARE_PAGE_SIZE,
+  key: (share) => share.id,
+  fetchPage: ({ limit, offset }) =>
+    filesService.listSharesPage({ limit, offset }),
+});
+const shares = resource.items;
+const shareTotal = resource.total;
+const loading = resource.loading;
+const loadingMore = resource.loadingMore;
+const error = resource.error;
+const hasMore = computed(() => resource.hasMore());
 const copiedCode = ref("");
 const disablingCode = ref("");
-const SHARE_PAGE_SIZE = 100;
-let nextShareOffset = 0;
 
 const featureDisabled = computed(
   () => auth.initialized && auth.features?.shareEnabled === false,
@@ -394,15 +401,15 @@ function isExpired(share: ShareLink): boolean {
 }
 
 const activeShares = computed(() =>
-  shares.value.filter((share) => !isExpired(share)),
+  shares.value.filter((share: ShareLink) => !isExpired(share)),
 );
 
 const expiredShares = computed(() =>
-  shares.value.filter((share) => isExpired(share)),
+  shares.value.filter((share: ShareLink) => isExpired(share)),
 );
 
 const visitedShares = computed(() =>
-  shares.value.filter((share) => share.access_count > 0),
+  shares.value.filter((share: ShareLink) => share.access_count > 0),
 );
 
 /** 列表筛选：全部 / 有效 / 已过期 / 已被访问。 */
@@ -573,51 +580,11 @@ function goFiles() {
 }
 
 async function reload() {
-  loading.value = true;
-  error.value = null;
-  shares.value = [];
-  shareTotal.value = 0;
-  hasMore.value = false;
-  nextShareOffset = 0;
-  try {
-    const page = await filesService.listSharesPage({
-      limit: SHARE_PAGE_SIZE,
-      offset: 0,
-    });
-    shares.value = page.items;
-    shareTotal.value = page.total;
-    nextShareOffset = page.offset + page.items.length;
-    hasMore.value = page.has_more;
-  } catch (e) {
-    shares.value = [];
-    error.value = e instanceof Error ? e.message : "加载失败";
-  } finally {
-    loading.value = false;
-  }
+  await resource.reload();
 }
 
 async function loadMore() {
-  if (!hasMore.value || loadingMore.value || loading.value) return;
-
-  loadingMore.value = true;
-  try {
-    const page = await filesService.listSharesPage({
-      limit: SHARE_PAGE_SIZE,
-      offset: nextShareOffset,
-    });
-    const knownIds = new Set(shares.value.map((share) => share.id));
-    shares.value = [
-      ...shares.value,
-      ...page.items.filter((share) => !knownIds.has(share.id)),
-    ];
-    shareTotal.value = page.total;
-    nextShareOffset = page.offset + page.items.length;
-    hasMore.value = page.has_more;
-  } catch (e) {
-    app.error(e instanceof Error ? e.message : "加载更多分享链接失败");
-  } finally {
-    loadingMore.value = false;
-  }
+  await resource.loadMore();
 }
 
 onMounted(() => {
