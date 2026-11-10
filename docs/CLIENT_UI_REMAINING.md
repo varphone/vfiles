@@ -4,7 +4,7 @@
 
 **验证基线**：601 个客户端用例、24 项浏览器回归（含深色/移动 axe）、10 张像素 golden、52 张 `ui:sweep` 截图、布局尺寸基线 0 漂移、`strictTemplates` 全绿、Rust fmt/clippy/测试通过。
 
-## 已完成（截至 601a849）
+## 已完成（截至 215d272）
 
 - **功能**：移动端批量条（ref 解包）、缩略图 watcher 泄漏、选择态跨目录泄漏、确认框 Promise 悬挂、批量删除部分失败汇总、批量下载走队列。
 - **可访问性**：页面缩放、对话框 `role/aria-modal/aria-labelledby`、Esc 只关最上层、Tab 焦点回收、4 个输入框标签、辅助文本对比度达 AA（浅 4.99:1 / 深 5.76:1）。
@@ -29,6 +29,7 @@
 - **布局基线**：`ui:regression` 在 1440×900 与 390×844 采集顶栏/侧栏/内容区/工具栏/列表/状态栏/首行等盒子，与 `tests/fixtures/ui-layout.json` 以 3px 容差比较；`UPDATE_LAYOUT=1` 重新生成（95fbfa2）。
 - **菜单语义**：移动端批量菜单的三项补 `role="menuitem"`/`aria-disabled`，触发器 `aria-haspopup="menu"`（本轮）。
 - **管理台可访问性**：用户卡片头改为真正的 button 语义（role/tabindex/Enter/Space/aria-haspopup、视觉隐藏「查看详情」），头像改为装饰性生成内容；桌面行补 aria-label 与 Space；面包屑当前段加 `aria-current="page"`（3f50042）。
+- **结构（进行中）**：右键/行菜单与收藏状态抽为 `useFileContextMenu`（215d272）；`FileBrowser` 降至约 2240 行。
 - **像素基线**：`ui:visual` 使用固定夹具/固定 DB 时间戳/冻结时钟/固定主题与视口，对登录、文件列表（明暗）、网格、移动端（明暗）、管理台用户、空令牌页、统一搜索、右键菜单共 10 张截图做 pixelmatch 比对；CI 安装 Noto CJK 后执行，goldens 已提交（601a849）。
 - **类型与契约**：开启 `strictTemplates`，修复 73 个模板类型错误；顺带补 `AdminOverview` 的 `SkeletonList` 导入、`MobileSearchBar` 的 `enter-results`/ArrowDown、桌面内容区的重命名绑定，并让 `FileBrowserCollection` 声明/转发完整事件契约（6485dc6）。
 - **首屏占位**：`index.html` 增加主题化启动骨架（含 reduced-motion 回退），Vue 挂载后替换，覆盖 Home chunk 加载前的空白窗口（5e71ddd）。
@@ -39,7 +40,7 @@
 ## 后续（非本次缺陷）
 
 ### A. `FileBrowser` 剩余编排（可选）
-[FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 约 2420 行；模板已拆成工具栏、内容、状态栏、详情与弹窗组件，脚本侧也抽出了键盘、导航、选择、上传、转移、拖放、重命名、条目动作等 composable。剩余是核心状态与跨模块编排，进一步拆分收益低于风险。
+[FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 约 2240 行；模板已拆成工具栏、内容、状态栏、详情与弹窗组件，脚本侧也抽出了键盘、导航、选择、上传、转移、拖放、重命名、条目动作等 composable。剩余是核心状态与跨模块编排，进一步拆分收益低于风险。
 
 **做法**：只有在新增功能触及时再拆；保持 `FileList`/`FileGrid`/`useVirtualWindow` 的滚动契约与 `useDirectoryNavigation` 的导航单点。
 
