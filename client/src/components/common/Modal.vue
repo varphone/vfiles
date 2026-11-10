@@ -66,10 +66,18 @@ function trapTab(event: KeyboardEvent) {
   if (items.length === 0) return;
   const first = items[0];
   const last = items[items.length - 1];
-  if (event.shiftKey && document.activeElement === first) {
+  const active = document.activeElement as HTMLElement | null;
+  // 焦点已在卡片外（点了标题/背景）：无论方向，先拉回卡片边缘，避免 Tab
+  // 继续在页面其余控件里游走。
+  if (!active || !card.contains(active)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+    return;
+  }
+  if (event.shiftKey && active === first) {
     event.preventDefault();
     last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
+  } else if (!event.shiftKey && active === last) {
     event.preventDefault();
     first.focus();
   }
@@ -102,14 +110,23 @@ const emit = defineEmits<{
  * Esc 关闭：多个对话框叠加时只有 DOM 中最后一个（视觉最上层）响应，
  * 避免一次 Esc 把所有层一起关掉。
  */
-function onKeydown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return;
+function isTopmost(): boolean {
   const mine = cardRef.value?.closest(".modal");
   const open = document.querySelectorAll(".modal.is-active");
   const topmost = open.length > 0 ? open[open.length - 1] : null;
-  if (mine && topmost && mine !== topmost) return;
-  event.preventDefault();
-  emit("close");
+  return !mine || !topmost || mine === topmost;
+}
+
+function onKeydown(event: KeyboardEvent) {
+  if (!isTopmost()) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    emit("close");
+    return;
+  }
+  // 焦点回收：绑在卡片上的 keydown 只在焦点仍在卡片内时触发，
+  // 用户点一下标题后焦点落到 body，Tab 就会从页面顶部重新走一遍。
+  if (event.key === "Tab") trapTab(event as KeyboardEvent);
 }
 
 function bindKeydown(show: boolean) {
