@@ -2,7 +2,7 @@
 
 承接 [CLIENT_UI_AUDIT.md](CLIENT_UI_AUDIT.md)。本文件只记录**尚未完成**的项，以及动手前必须知道的坑。
 
-## 已完成（截至 6485dc6）
+## 已完成（截至 3f50042）
 
 - **功能**：移动端批量条（ref 解包）、缩略图 watcher 泄漏、选择态跨目录泄漏、确认框 Promise 悬挂、批量删除部分失败汇总、批量下载走队列。
 - **可访问性**：页面缩放、对话框 `role/aria-modal/aria-labelledby`、Esc 只关最上层、Tab 焦点回收、4 个输入框标签、辅助文本对比度达 AA（浅 4.99:1 / 深 5.76:1）。
@@ -25,6 +25,7 @@
 - **个人资料**：`POST /auth/profile` 更新邮箱（主密码会话、格式/唯一性校验、审计）；账号菜单新增「个人资料」对话框，保存后同步本地会话（509bac7）。
 - **自助改密**：`POST /auth/password` 校验当前密码、写入新哈希、撤销该账号全部会话并写审计；账号菜单新增「修改密码」对话框（当前/新/确认，≥8 位且不得相同），成功后清本地状态回登录页（d7bc09f）。
 - **布局基线**：`ui:regression` 在 1440×900 与 390×844 采集顶栏/侧栏/内容区/工具栏/列表/状态栏/首行等盒子，与 `tests/fixtures/ui-layout.json` 以 3px 容差比较；`UPDATE_LAYOUT=1` 重新生成（95fbfa2）。
+- **管理台可访问性**：用户卡片头改为真正的 button 语义（role/tabindex/Enter/Space/aria-haspopup、视觉隐藏「查看详情」），头像改为装饰性生成内容；桌面行补 aria-label 与 Space；面包屑当前段加 `aria-current="page"`（3f50042）。
 - **类型与契约**：开启 `strictTemplates`，修复 73 个模板类型错误；顺带补 `AdminOverview` 的 `SkeletonList` 导入、`MobileSearchBar` 的 `enter-results`/ArrowDown、桌面内容区的重命名绑定，并让 `FileBrowserCollection` 声明/转发完整事件契约（6485dc6）。
 - **首屏占位**：`index.html` 增加主题化启动骨架（含 reduced-motion 回退），Vue 挂载后替换，覆盖 Home chunk 加载前的空白窗口（5e71ddd）。
 - **构建体积**：删除 `prefers-color-scheme` 的那份深色变量（theme-init 已保证显式 `data-theme`，并补隐私模式回退）；Tabler 图标从 19 个小 chunk 合并为 1 个（47bf5ba）。
