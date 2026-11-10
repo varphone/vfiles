@@ -645,6 +645,7 @@ import { useFileBrowserHotkeys } from "../../composables/useFileBrowserHotkeys";
 import { useSharedPaths } from "../../composables/useSharedPaths";
 import { useWindowDropTarget } from "../../composables/useWindowDropTarget";
 import { useFileBrowserScope } from "../../composables/useFileBrowserScope";
+import { useFileBrowserItemActions } from "../../composables/useFileBrowserItemActions";
 import { useFileBrowserRowNavigation } from "../../composables/useFileBrowserRowNavigation";
 import { useFileBrowserList } from "../../composables/useFileBrowserList";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
@@ -838,7 +839,7 @@ const {
   setActivePath: (path) => {
     desktopActivePath.value = path;
   },
-  handleDownload,
+  handleDownload: (file) => handleDownload(file),
 });
 
 const {
@@ -1036,37 +1037,7 @@ const {
   notifyError: (message) => appStore.error(message),
 });
 
-const {
-  contextMenu,
-  contextMenuItems,
-  openRowContextMenu,
-  handleContextMenu,
-  closeContextMenu,
-  handleContextMenuSelect,
-} = useFileContextMenu({
-  files,
-  canWrite,
-  canShare,
-  isRestricted,
-  batchMode,
-  selectedPaths,
-  desktopActivePath,
-  narrowSelectionTo,
-  toggleSelect,
-  openDetailsDialog,
-  handleOpenFolder,
-  handleCreateDirectory,
-  handlePreview,
-  handleViewHistory,
-  handleRenameEntry,
-  handleMoveEntry,
-  openTransferDialog,
-  handleDownload,
-  handleShare,
-  handleDelete,
-  notifySuccess: (message) => appStore.success(message),
-  notifyError: (message) => appStore.error(message),
-});
+
 
 const {
   draggingFile,
@@ -1251,70 +1222,61 @@ const {
   goBack,
 });
 
-function handleItemClick(file: FileInfo) {
-  if (file.kind === "directory") {
-    handleOpenFolder(file);
-    return;
-  }
+const {
+  handleItemClick,
+  handlePreview,
+  onDetailsPreview,
+  handleOpenFolder,
+  handleDownload,
+  quickLook,
+  enterSearchResults,
+} = useFileBrowserItemActions({
+  isMobile,
+  batchMode,
+  desktopActivePath,
+  lastSelectedPath,
+  expandedFilePath,
+  searchActive,
+  searchResults,
+  showDetailsDialog,
+  navigateTo,
+  clearSearch,
+  openPreview,
+  enqueueDownload,
+  findActiveItem,
+});
 
-  if (!isMobile.value && !batchMode.value) {
-    desktopActivePath.value = file.path;
-    // 记录锚点，便于随后 Shift 点击做范围选择
-    lastSelectedPath.value = file.path;
-    // 点击行后把焦点交给列表容器：行本身不可聚焦，若焦点仍停在工具栏按钮上，
-    // Shift+F10 / 方向键等列表快捷键会被「交互控件」守卫挡掉。
-    document
-      .querySelector<HTMLElement>(".desktop-list-shell")
-      ?.focus({ preventScroll: true });
-    return;
-  }
-
-  if (expandedFilePath.value === file.path) {
-    expandedFilePath.value = "";
-  } else {
-    expandedFilePath.value = file.path;
-  }
-}
-
-function handlePreview(file: FileInfo) {
-  openPreview(file.path);
-}
-
-/** 详细信息弹窗里的「预览」：关掉详情再打开预览。 */
-function onDetailsPreview(file: FileInfo) {
-  showDetailsDialog.value = false;
-  handlePreview(file);
-}
-
-function handleOpenFolder(file: FileInfo) {
-  if (file.kind === "directory") {
-    if (searchActive.value) {
-      clearSearch();
-    }
-    navigateTo(file.path);
-  }
-}
-
-function handleDownload(file: FileInfo) {
-  // Route downloads through the queue so users get progress, error feedback,
-  // and cancellation support instead of a silent browser download.
-  enqueueDownload(file.kind === "directory" ? "folder" : "file", file.path);
-}
-
-/** 快速预览（空格 ✓ 云盘 web 惯例 = Finder Quick Look 同款）：预览活动行。 */
-function quickLook() {
-  const active = findActiveItem();
-  if (active) openPreview(active.path);
-}
-
-
-/** 搜索框 ↓ 键：进入结果列表首项（活动项模型，容器级 ↑↓ 随后自然接管 ✓） */
-function enterSearchResults() {
-  const first = searchResults.value[0];
-  if (!first) return;
-  desktopActivePath.value = first.path;
-}
-
+const {
+  contextMenu,
+  contextMenuItems,
+  openRowContextMenu,
+  handleContextMenu,
+  closeContextMenu,
+  handleContextMenuSelect,
+} = useFileContextMenu({
+  files,
+  canWrite,
+  canShare,
+  isRestricted,
+  batchMode,
+  selectedPaths,
+  desktopActivePath,
+  narrowSelectionTo,
+  toggleSelect,
+  openDetailsDialog,
+  handleOpenFolder,
+  handleCreateDirectory,
+  handlePreview,
+  handleViewHistory,
+  handleRenameEntry,
+  handleMoveEntry,
+  openTransferDialog,
+  handleDownload,
+  handleShare,
+  handleDelete,
+  notifySuccess: (message) => appStore.success(message),
+  notifyError: (message) => appStore.error(message),
+});
 defineExpose({
   // 移动端底栏的「上传」：直接弹出文件选择器（与工具栏主按钮一致）
   openUploader: () => openUploader("files"),
