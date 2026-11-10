@@ -918,7 +918,7 @@ onMounted(load);
   border: 0;
 }
 
-@media (max-width: 800px) {
+@media (max-width: 768px) {
   .system-info-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -928,7 +928,7 @@ onMounted(load);
   }
 }
 
-@media (max-width: 560px) {
+@media (max-width: 600px) {
   .system-info-protocols {
     grid-template-columns: minmax(0, 1fr);
   }

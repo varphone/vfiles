@@ -424,7 +424,7 @@ onMounted(reload);
   font-size: var(--vf-text-sm);
 }
 
-@media screen and (max-width: 1100px) {
+@media screen and (max-width: 1024px) {
   .admin-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

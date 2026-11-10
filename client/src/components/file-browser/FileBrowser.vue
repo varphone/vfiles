@@ -3392,7 +3392,7 @@ function handleSortChange(field: SortField) {
 
 /* 窄桌面（≤1279px）：版本胶囊先让位，保证搜索/视图/排序单行不被挤断。
    历史入口在移动端底栏仍然可用。 */
-@media screen and (max-width: 1279px) {
+@media screen and (max-width: 1280px) {
   .file-toolbar .file-history {
     display: none;
   }

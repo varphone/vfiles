@@ -625,7 +625,7 @@ onBeforeUnmount(() => {
   }
 }
 
-@media screen and (max-width: 400px) {
+@media screen and (max-width: 480px) {
   .app-header-app,
   .app-header :deep(.vf-icon-button) {
     width: 32px;
