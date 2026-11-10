@@ -574,7 +574,7 @@
       :copy-state="previewCopyState"
       :preview-file="previewFile"
       @close-history="showHistory = false"
-      @close-share="closeShareDialog"
+      @close-share="closeShareAndRefresh"
       @close-details="showDetailsDialog = false"
       @details-preview="onDetailsPreview"
       @details-download="handleDownload"
@@ -754,8 +754,18 @@ const scopeBadgeTitle = computed(() => {
  */
 const sharedPaths = ref<Set<string>>(new Set());
 let sharedPathsRequest = 0;
+let sharedPathsLoadedAt = 0;
+/** 分享集合是账号级数据：目录切换不必每次都重取，30s 内复用缓存。 */
+const SHARED_PATHS_TTL_MS = 30_000;
 
-async function loadSharedPaths() {
+async function loadSharedPaths(force = false) {
+  if (
+    !force &&
+    sharedPathsLoadedAt > 0 &&
+    Date.now() - sharedPathsLoadedAt < SHARED_PATHS_TTL_MS
+  ) {
+    return;
+  }
   const id = ++sharedPathsRequest;
   try {
     const paths = await filesService.getSharedPaths();
@@ -765,6 +775,7 @@ async function loadSharedPaths() {
         String(path).replace(/^\/+/, ""),
       ),
     );
+    sharedPathsLoadedAt = Date.now();
   } catch {
     if (id !== sharedPathsRequest) return;
     sharedPaths.value = new Set();
@@ -1754,6 +1765,12 @@ function anyOverlayOpen(): boolean {
  * 行内复选框：即使不在「批量选择」模式，勾选一项也应立刻出现操作条
  * （与主流网盘一致：勾选即进入选择态，不必先点工具栏按钮）。
  */
+/** 分享对话框关闭后强制刷新徽标集合（期间可能新建或停止分享）。 */
+function closeShareAndRefresh() {
+  closeShareDialog();
+  void loadSharedPaths(true);
+}
+
 function handleRowSelect(file: FileInfo) {
   if (!canWrite.value) return;
   toggleSelect(file);
