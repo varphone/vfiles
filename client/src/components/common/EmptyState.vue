@@ -53,13 +53,13 @@ const illustrationSize = computed(() => (props.compact ? 28 : 34));
   flex-direction: column;
   align-items: center;
   gap: 0.3rem;
-  padding: 3.25rem 1rem;
+  padding: 3.25rem var(--vf-space-4);
   text-align: center;
 }
 
 .empty-state.is-compact {
   gap: 0.2rem;
-  padding: 1.25rem 0.75rem;
+  padding: 1.25rem var(--vf-space-3);
 }
 
 .empty-state-illustration {
@@ -68,7 +68,7 @@ const illustrationSize = computed(() => (props.compact ? 28 : 34));
   justify-content: center;
   width: 4rem;
   height: 4rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--vf-space-2);
   border-radius: 50%;
   background: var(--vf-surface-2);
   color: var(--vf-text-subtle);
@@ -108,11 +108,11 @@ const illustrationSize = computed(() => (props.compact ? 28 : 34));
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   margin-top: 0.9rem;
 }
 
 .empty-state.is-compact .empty-state-actions {
-  margin-top: 0.5rem;
+  margin-top: var(--vf-space-2);
 }
 </style>

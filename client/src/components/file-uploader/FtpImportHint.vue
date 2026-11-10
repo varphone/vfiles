@@ -262,9 +262,9 @@ watch(
 .ftp-import-toggle {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   width: 100%;
-  padding: 0.6rem 0.75rem;
+  padding: 0.6rem var(--vf-space-3);
   border: none;
   background: transparent;
   color: var(--vf-text);
@@ -300,14 +300,14 @@ watch(
 }
 
 .ftp-import-body {
-  padding: 0 0.75rem 0.75rem;
+  padding: 0 var(--vf-space-3) var(--vf-space-3);
 }
 
 .ftp-import-state {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0.75rem;
+  padding: var(--vf-space-3);
   color: var(--vf-text-muted);
   font-size: var(--vf-text-base);
 }
@@ -315,7 +315,7 @@ watch(
 .ftp-import-facts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-  gap: 0.4rem 0.75rem;
+  gap: 0.4rem var(--vf-space-3);
   margin: 0 0 0.6rem;
 }
 
@@ -357,7 +357,7 @@ watch(
 
 .ftp-import-source {
   margin-left: 0.3rem;
-  padding: 0 0.25rem;
+  padding: 0 var(--vf-space-1);
   border-radius: var(--vf-radius-xs);
   background: var(--vf-surface);
   color: var(--vf-text-subtle);
@@ -369,7 +369,7 @@ watch(
   display: flex;
   align-items: flex-start;
   gap: 0.35rem;
-  margin: 0 0 0.5rem;
+  margin: 0 0 var(--vf-space-2);
   padding: 0.45rem 0.55rem;
   border: 1px solid var(--vf-warning-line);
   border-radius: var(--vf-radius-sm);
@@ -401,8 +401,8 @@ watch(
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  margin-bottom: 0.5rem;
-  padding: 0.4rem 0.5rem;
+  margin-bottom: var(--vf-space-2);
+  padding: 0.4rem var(--vf-space-2);
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface);

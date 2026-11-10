@@ -771,7 +771,7 @@ onMounted(() => {
 .passwords-roots {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
   min-width: 0;
 }
 
@@ -833,7 +833,7 @@ onMounted(() => {
 
 .passwords-action {
   min-height: 1.9rem;
-  padding: 0 0.5rem;
+  padding: 0 var(--vf-space-2);
   font-size: var(--vf-text-sm);
 }
 
@@ -846,7 +846,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
-  padding: 0.75rem;
+  padding: var(--vf-space-3);
 }
 
 .passwords-card {
@@ -945,7 +945,7 @@ onMounted(() => {
 }
 
 .passwords-error {
-  margin: 0.25rem 0 0;
+  margin: var(--vf-space-1) 0 0;
   color: var(--vf-danger-text);
   font-size: var(--vf-text-sm);
 }
@@ -960,7 +960,7 @@ onMounted(() => {
 .directory-picker-path {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   flex-wrap: wrap;
 }
 
@@ -987,8 +987,8 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.25rem 0.5rem;
+  gap: var(--vf-space-2);
+  padding: var(--vf-space-1) var(--vf-space-2);
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
@@ -1029,7 +1029,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--vf-space-3);
   flex-wrap: wrap;
 }
 </style>

@@ -657,7 +657,7 @@ function openRowMenu() {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
 }
 
 .details-selection-titles {

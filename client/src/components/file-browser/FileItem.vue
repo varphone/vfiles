@@ -869,7 +869,7 @@ function share() {
   border-bottom: 1px solid var(--vf-border-weak);
   content-visibility: auto;
   contain-intrinsic-size: 96px;
-  padding: 0.75rem 0.9rem;
+  padding: var(--vf-space-3) 0.9rem;
   position: relative;
   overflow: hidden;
 }
@@ -1119,11 +1119,11 @@ function share() {
 }
 
 .file-item :deep(.media-left) {
-  margin-right: 0.5rem;
+  margin-right: var(--vf-space-2);
 }
 
 .file-item :deep(.media-right) {
-  margin-left: 0.5rem;
+  margin-left: var(--vf-space-2);
 }
 
 .file-icon {
@@ -1155,7 +1155,7 @@ function share() {
 }
 
 .file-info-sep {
-  margin: 0 0.25rem;
+  margin: 0 var(--vf-space-1);
 }
 
 .file-commit-message {
@@ -1173,7 +1173,7 @@ function share() {
   padding-right: 0 !important;
   margin-left: 0 !important;
   margin-right: 0 !important;
-  margin-bottom: 0.25rem !important;
+  margin-bottom: var(--vf-space-1) !important;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -1184,7 +1184,7 @@ function share() {
   padding-right: 0 !important;
   margin-left: 0 !important;
   margin-right: 0 !important;
-  margin-top: 0.25rem;
+  margin-top: var(--vf-space-1);
 }
 
 .file-commit .tag {
@@ -1196,7 +1196,7 @@ function share() {
 }
 
 .search-matches {
-  margin-top: 0.5rem;
+  margin-top: var(--vf-space-2);
 }
 
 /* 浮动操作栏 */
@@ -1208,14 +1208,14 @@ function share() {
   background: var(--vf-surface-translucent-strong);
   backdrop-filter: blur(8px);
   border-top: 1px solid var(--vf-border-weak);
-  padding: 0.5rem 0.75rem;
+  padding: var(--vf-space-2) var(--vf-space-3);
 }
 
 .actions-bar {
   display: flex;
   justify-content: space-around;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
 }
 
 .action-btn {
@@ -1224,7 +1224,7 @@ function share() {
   align-items: center;
   justify-content: center;
   gap: 0.125rem;
-  padding: 0.25rem 0.5rem;
+  padding: var(--vf-space-1) var(--vf-space-2);
   border: none;
   background: transparent;
   color: var(--vf-text);
@@ -1267,8 +1267,8 @@ function share() {
 
 @media screen and (max-width: 1023px) {
   .file-item {
-    padding-left: 0.5rem;
-    padding-right: 0.5rem;
+    padding-left: var(--vf-space-2);
+    padding-right: var(--vf-space-2);
   }
 
   .file-item :deep(.media-left) {
@@ -1291,7 +1291,7 @@ function share() {
 
   .action-btn {
     min-width: 2.5rem;
-    padding: 0.25rem 0.25rem;
+    padding: var(--vf-space-1) var(--vf-space-1);
   }
 }
 

@@ -244,7 +244,7 @@ function close() {
 .modal-card-foot {
   justify-content: flex-end;
   /* iOS 手势区：底部按钮不能压在 home indicator 上 */
-  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+  padding-bottom: calc(var(--vf-space-3) + env(safe-area-inset-bottom));
   border-radius: 0;
   /* Bulma 的 modal 组件只挑了布局部分，按钮间距规则没进来，默认两个按钮会贴在一起 */
   gap: var(--vf-space-2);
@@ -263,19 +263,19 @@ function close() {
   .modal-card.is-mobile-compact .modal-card-head,
   .modal-card.is-mobile-compact .modal-card-body,
   .modal-card.is-mobile-compact .modal-card-foot {
-    padding-left: 0.75rem;
-    padding-right: 0.75rem;
+    padding-left: var(--vf-space-3);
+    padding-right: var(--vf-space-3);
   }
 
   .modal-card.is-mobile-compact .modal-card-head,
   .modal-card.is-mobile-compact .modal-card-foot {
-    padding-top: 0.75rem;
-    padding-bottom: 0.75rem;
+    padding-top: var(--vf-space-3);
+    padding-bottom: var(--vf-space-3);
   }
 
   .modal-card.is-mobile-compact .modal-card-body {
-    padding-top: 0.75rem;
-    padding-bottom: 0.75rem;
+    padding-top: var(--vf-space-3);
+    padding-bottom: var(--vf-space-3);
   }
 }
 </style>

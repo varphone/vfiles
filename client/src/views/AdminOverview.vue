@@ -256,13 +256,13 @@ onMounted(reload);
 .admin-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1rem;
+  gap: var(--vf-space-4);
 }
 
 .admin-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
-  gap: 1rem;
+  gap: var(--vf-space-4);
 }
 
 .admin-protocols {

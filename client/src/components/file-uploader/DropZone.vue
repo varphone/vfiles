@@ -128,7 +128,7 @@ function onDirectorySelect(event: Event) {
 .drop-zone {
   border: 2px dashed var(--vf-border);
   border-radius: var(--vf-radius-sm);
-  padding: 0.75rem 1rem;
+  padding: var(--vf-space-3) var(--vf-space-4);
   transition: all 0.3s;
   background: var(--vf-surface-2);
 }
@@ -148,13 +148,13 @@ function onDirectorySelect(event: Event) {
 .drop-zone-left {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   color: var(--vf-text-muted);
 }
 
 .drop-zone-buttons {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
 }
 
 .icon-upload {
@@ -167,12 +167,12 @@ function onDirectorySelect(event: Event) {
 
 @media screen and (max-width: 768px) {
   .drop-zone {
-    padding: 0.75rem;
+    padding: var(--vf-space-3);
   }
 
   .drop-zone-content {
     flex-direction: column;
-    gap: 0.75rem;
+    gap: var(--vf-space-3);
   }
 }
 

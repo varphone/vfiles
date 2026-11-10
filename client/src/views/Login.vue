@@ -455,12 +455,12 @@ onMounted(async () => {
 .auth-modes {
   display: flex;
   justify-content: center;
-  gap: 0.25rem;
-  margin: -0.25rem 0 1rem;
+  gap: var(--vf-space-1);
+  margin: calc(var(--vf-space-1) * -1) 0 var(--vf-space-4);
 }
 
 .auth-mode {
-  padding: 0.25rem 0.5rem 0.375rem;
+  padding: var(--vf-space-1) var(--vf-space-2) 0.375rem;
   border: none;
   border-bottom: 2px solid transparent;
   border-radius: 0;
@@ -490,7 +490,7 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   align-self: flex-start;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   color: var(--auth-card-ink);
   font-size: var(--vf-text-sm);
   line-height: 1.4;
@@ -521,14 +521,14 @@ onMounted(async () => {
 .auth-code-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
 }
 
 .auth-code-send {
   flex: 0 0 auto;
   box-sizing: border-box;
   height: 44px;
-  padding: 0 0.75rem;
+  padding: 0 var(--vf-space-3);
   border: 2px solid var(--auth-field-border);
   border-radius: 3px;
   background: transparent;

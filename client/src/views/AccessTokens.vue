@@ -652,8 +652,8 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.7rem 1rem;
+  gap: var(--vf-space-3);
+  padding: 0.7rem var(--vf-space-4);
   border-top: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-2);
 }
@@ -665,7 +665,7 @@ onMounted(async () => {
 }
 
 .tokens-usage {
-  padding: 0.85rem 1rem 1rem;
+  padding: 0.85rem var(--vf-space-4) var(--vf-space-4);
   border-top: 1px solid var(--vf-border-weak);
 }
 
@@ -677,7 +677,7 @@ onMounted(async () => {
 }
 
 .tokens-usage-code {
-  margin: 0 0 0.5rem;
+  margin: 0 0 var(--vf-space-2);
   padding: 0.6rem 0.7rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
@@ -694,7 +694,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
-  padding: 0.75rem;
+  padding: var(--vf-space-3);
 }
 
 .tokens-card-item {
@@ -719,7 +719,7 @@ onMounted(async () => {
 .tokens-card-meta {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
-  gap: 0.5rem 0.9rem;
+  gap: var(--vf-space-2) 0.9rem;
   margin: 0.6rem 0 0.65rem;
 }
 

@@ -3465,7 +3465,7 @@ function handleSortChange(field: SortField) {
 
 /* 移动端搜索行（桌面已合并进单行工具栏） */
 .file-browser-toolbar {
-  padding: 0.55rem 0.75rem 0.6rem;
+  padding: 0.55rem var(--vf-space-3) 0.6rem;
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
@@ -3646,7 +3646,7 @@ function handleSortChange(field: SortField) {
   }
 
   .level-item {
-    margin-bottom: 0.5rem;
+    margin-bottom: var(--vf-space-2);
   }
 
   .level .button {
@@ -3696,7 +3696,7 @@ function handleSortChange(field: SortField) {
 .desktop-drag-chip {
   position: fixed;
   z-index: 60;
-  padding: 0.35rem 0.75rem;
+  padding: 0.35rem var(--vf-space-3);
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface-raised);

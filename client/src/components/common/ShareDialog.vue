@@ -361,7 +361,7 @@ async function stopSharing() {
 .share-result {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
 }
 
 .share-result-meta {
@@ -375,7 +375,7 @@ async function stopSharing() {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  padding: 0.2rem 0.5rem;
+  padding: 0.2rem var(--vf-space-2);
   border-radius: var(--vf-radius-pill);
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);

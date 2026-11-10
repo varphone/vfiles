@@ -115,7 +115,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   align-items: center;
   min-height: 100vh;
   min-height: 100dvh;
-  padding: 2rem 1rem 1.25rem;
+  padding: var(--vf-space-6) var(--vf-space-4) 1.25rem;
   overflow: hidden;
   background: var(--auth-page-bg);
   color: var(--vf-text);
@@ -209,7 +209,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   justify-content: center;
   width: 100%;
   max-width: 26rem;
-  padding: 1rem 0;
+  padding: var(--vf-space-4) 0;
 }
 
 .auth-brand {
@@ -217,7 +217,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   align-items: center;
   justify-content: center;
   gap: 0.625rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--vf-space-5);
 }
 
 .auth-brand-logo {
@@ -240,7 +240,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   box-sizing: border-box;
   width: 316px;
   max-width: 100%;
-  padding: 1.5rem;
+  padding: var(--vf-space-5);
   border: 1px solid var(--auth-card-border);
   border-radius: 3px;
   background: var(--auth-card-bg);
@@ -258,7 +258,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
 }
 
 .auth-card-desc {
-  margin: -0.5rem 0 1.125rem;
+  margin: calc(var(--vf-space-2) * -1) 0 1.125rem;
   color: var(--auth-card-muted);
   font-size: var(--vf-text-sm);
   line-height: 1.55;
@@ -267,7 +267,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
 
 /* 卡片直挂的提示条单独留出间距；表单内的提示条交给 .auth-form 的 gap。 */
 .auth-card > :deep(.auth-notice) {
-  margin: 0 0 1rem;
+  margin: 0 0 var(--vf-space-4);
 }
 
 /* ---- 卡片内共用的表单外观（浮动标签 + 外框输入框 + 深蓝主按钮） ---- */
@@ -385,7 +385,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   box-sizing: border-box;
   width: 100%;
   height: 44px;
@@ -467,7 +467,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   padding-top: 1.25rem;
   text-align: center;
 }
@@ -477,7 +477,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 0.375rem 0.75rem;
+  gap: 0.375rem var(--vf-space-3);
 }
 
 .auth-footer-pill {
@@ -522,12 +522,12 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
 
 @media screen and (max-width: 600px) {
   .auth-shell {
-    padding: 3rem 1rem 1.25rem;
+    padding: 3rem var(--vf-space-4) 1.25rem;
   }
 
   .auth-inner {
     max-width: none;
-    padding: 0.5rem 0;
+    padding: var(--vf-space-2) 0;
   }
 
   .auth-brand {

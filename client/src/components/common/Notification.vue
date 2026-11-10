@@ -63,7 +63,7 @@ function remove(id: number) {
   z-index: 10000;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   width: min(24rem, calc(100vw - 2rem));
   pointer-events: none;
 }

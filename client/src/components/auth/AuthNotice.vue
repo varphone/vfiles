@@ -53,7 +53,7 @@ const icon = computed(() => {
   align-items: flex-start;
   gap: 0.4rem;
   margin: 0 0 0.9rem;
-  padding: 0.5rem 0.6rem;
+  padding: var(--vf-space-2) 0.6rem;
   border: 1px solid transparent;
   border-radius: var(--vf-radius-sm);
   font-size: var(--vf-text-sm);

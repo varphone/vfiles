@@ -461,7 +461,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
-  margin-top: 1rem;
+  margin-top: var(--vf-space-4);
 }
 
 .upload-queue-header {
@@ -482,7 +482,7 @@ defineExpose({
 .upload-queue-subtitle {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   margin: 0.1rem 0 0;
   color: var(--vf-text-muted);
   font-size: var(--vf-text-sm);

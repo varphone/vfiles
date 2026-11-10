@@ -8,7 +8,7 @@
 
 .hljs {
   display: block;
-  padding: 0.85rem 1rem;
+  padding: 0.85rem var(--vf-space-4);
   overflow: auto;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-card);
@@ -112,7 +112,7 @@
 
 .markdown-body pre code {
   display: block;
-  padding: 0.85rem 1rem;
+  padding: 0.85rem var(--vf-space-4);
   overflow: auto;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-card);

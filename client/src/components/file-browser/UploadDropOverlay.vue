@@ -41,7 +41,7 @@ defineProps<{
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 1.5rem;
+  padding: var(--vf-space-5);
   background: color-mix(in srgb, var(--vf-shell-bg) 72%, transparent);
   backdrop-filter: blur(2px);
   pointer-events: none;

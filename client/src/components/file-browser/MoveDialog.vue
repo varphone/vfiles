@@ -478,7 +478,7 @@ async function goUp() {
   align-items: center;
   gap: 0.45rem;
   min-width: 0;
-  padding: 0.5rem 0.65rem;
+  padding: var(--vf-space-2) 0.65rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface-2);
@@ -510,7 +510,7 @@ async function goUp() {
 .move-dialog-picker {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   min-height: 0;
 }
 
@@ -541,7 +541,7 @@ async function goUp() {
 .move-dialog-crumb {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
   flex: 0 0 auto;
   padding: 0.15rem 0.35rem;
   border: none;
@@ -580,7 +580,7 @@ async function goUp() {
   display: flex;
   flex-direction: column;
   margin: 0;
-  padding: 0.25rem;
+  padding: var(--vf-space-1);
   list-style: none;
 }
 
@@ -588,8 +588,8 @@ async function goUp() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  padding-top: 0.25rem;
+  gap: var(--vf-space-2);
+  padding-top: var(--vf-space-1);
   color: var(--vf-text-subtle);
   font-size: var(--vf-text-sm);
 }
@@ -601,9 +601,9 @@ async function goUp() {
 .move-dialog-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   width: 100%;
-  padding: 0.5rem 0.55rem;
+  padding: var(--vf-space-2) 0.55rem;
   border: none;
   border-radius: var(--vf-radius-sm);
   background: transparent;

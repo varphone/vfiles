@@ -216,7 +216,7 @@ onBeforeUnmount(() => {
 .unified-search-input {
   width: 100%;
   padding-left: 2.1rem;
-  padding-right: 2rem;
+  padding-right: var(--vf-space-6);
 }
 
 .unified-search-loading {
@@ -244,7 +244,7 @@ onBeforeUnmount(() => {
 
 .unified-search-hint {
   margin: 0;
-  padding: 1.1rem 0.25rem;
+  padding: 1.1rem var(--vf-space-1);
   color: var(--vf-text-muted);
   font-size: var(--vf-text-sm);
   text-align: center;
@@ -261,7 +261,7 @@ onBeforeUnmount(() => {
 }
 
 .unified-search-group + .unified-search-group {
-  margin-top: 0.5rem;
+  margin-top: var(--vf-space-2);
 }
 
 .unified-search-group-title {

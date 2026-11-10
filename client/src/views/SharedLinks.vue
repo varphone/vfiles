@@ -633,12 +633,12 @@ onMounted(() => {
   align-items: center;
   gap: 0.3rem;
   flex-wrap: wrap;
-  padding: 0.75rem 1rem 0.35rem;
+  padding: var(--vf-space-3) var(--vf-space-4) 0.35rem;
 }
 
 .shares-page-hint {
   margin: 0;
-  padding: 0 1rem 0.5rem;
+  padding: 0 var(--vf-space-4) var(--vf-space-2);
   color: var(--vf-text-subtle);
   font-size: var(--vf-text-xs);
 }
@@ -827,7 +827,7 @@ onMounted(() => {
 .shares-load-more {
   display: flex;
   justify-content: center;
-  padding: 0.7rem 1rem;
+  padding: 0.7rem var(--vf-space-4);
   border-top: 1px solid var(--vf-border-weak);
 }
 
@@ -836,7 +836,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
-  padding: 0.75rem;
+  padding: var(--vf-space-3);
 }
 
 .shares-card {
@@ -863,7 +863,7 @@ onMounted(() => {
 .shares-card-meta {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
-  gap: 0.5rem 0.9rem;
+  gap: var(--vf-space-2) 0.9rem;
   margin: 0.6rem 0 0.55rem;
 }
 

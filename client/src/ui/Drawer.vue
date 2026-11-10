@@ -144,14 +144,14 @@ watch(
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 1rem 1.1rem 1.4rem;
+  padding: var(--vf-space-4) 1.1rem 1.4rem;
 }
 
 .vf-drawer-foot {
   display: flex;
   justify-content: flex-end;
-  gap: 0.5rem;
-  padding: 0.75rem 1.1rem;
+  gap: var(--vf-space-2);
+  padding: var(--vf-space-3) 1.1rem;
   border-top: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-2);
 }

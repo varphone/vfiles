@@ -117,7 +117,7 @@ const groups = [
 .shortcuts {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--vf-space-4);
   min-width: min(480px, 100%);
 }
 
@@ -147,13 +147,13 @@ const groups = [
 .shortcuts-row {
   display: flex;
   align-items: baseline;
-  gap: 0.75rem;
+  gap: var(--vf-space-3);
 }
 
 .shortcuts-keys {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
   flex: 0 0 auto;
   width: 8.5rem;
 }

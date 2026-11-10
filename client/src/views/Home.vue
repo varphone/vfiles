@@ -711,7 +711,7 @@ async function renameSelected() {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom));
+  padding: 0.35rem var(--vf-space-2) calc(0.35rem + env(safe-area-inset-bottom));
 }
 
 /* 图标 + 文字：触屏没有 hover，底部操作必须自解释 */
@@ -723,7 +723,7 @@ async function renameSelected() {
   gap: 0.1rem;
   min-width: 2.75rem;
   min-height: 2.75rem;
-  padding: 0.25rem 0.35rem;
+  padding: var(--vf-space-1) 0.35rem;
   line-height: 1.1;
 }
 
@@ -761,7 +761,7 @@ async function renameSelected() {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
 }
 
 .mobile-history-hash {
@@ -775,7 +775,7 @@ async function renameSelected() {
   align-items: center;
   justify-content: flex-end;
   margin-left: auto;
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
   overflow: visible;
 }
 
@@ -800,7 +800,7 @@ async function renameSelected() {
   flex-wrap: nowrap;
   width: 100%;
   /* M3/HIG：相邻触控目标间距 ≥8px（原 2.4px 过紧，几乎相贴） */
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
 }
 
 .mobile-action-buttons .button {

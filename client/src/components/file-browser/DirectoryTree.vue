@@ -357,7 +357,7 @@ function onDrop(path: string) {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 0.5rem 0.35rem;
+  padding: var(--vf-space-2) 0.35rem;
 }
 
 .directory-tree-item {
@@ -412,7 +412,7 @@ function onDrop(path: string) {
   flex: 1 1 auto;
   min-width: 0;
   height: 1.9rem;
-  padding: 0 0.5rem;
+  padding: 0 var(--vf-space-2);
   border: none;
   border-radius: var(--vf-radius-sm);
   background: transparent;
@@ -455,7 +455,7 @@ function onDrop(path: string) {
 }
 
 .directory-tree-hint {
-  padding: 0.5rem 0.6rem;
+  padding: var(--vf-space-2) 0.6rem;
   font-size: var(--vf-text-sm);
   color: var(--vf-text-subtle);
 }

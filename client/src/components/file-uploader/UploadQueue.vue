@@ -178,7 +178,7 @@ function onMessageInput(id: number, event: Event) {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  padding: 0.5rem 0.6rem;
+  padding: var(--vf-space-2) 0.6rem;
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
@@ -193,7 +193,7 @@ function onMessageInput(id: number, event: Event) {
 .upload-queue-main {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   min-width: 0;
 }
 
@@ -263,13 +263,13 @@ function onMessageInput(id: number, event: Event) {
 .upload-queue-actions {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
   flex: 0 0 auto;
 }
 
 .upload-queue-button {
   min-height: 1.75rem;
-  padding: 0 0.5rem;
+  padding: 0 var(--vf-space-2);
   font-size: var(--vf-text-sm);
 }
 

@@ -559,7 +559,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  margin: 0.75rem 0 0;
+  margin: var(--vf-space-3) 0 0;
   padding: 0.45rem 0.55rem;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
@@ -572,7 +572,7 @@ onMounted(() => {
 .audit-summary {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--vf-space-3);
   flex-wrap: wrap;
   padding: 0.6rem 0.65rem;
   margin-top: 0.7rem;
@@ -609,7 +609,7 @@ onMounted(() => {
 .audit-summary-group {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -674,7 +674,7 @@ onMounted(() => {
 .audit-date {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
   color: var(--vf-text-muted);
   font-size: var(--vf-text-sm);
 }

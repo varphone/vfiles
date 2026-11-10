@@ -243,7 +243,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.35rem 0.5rem;
+  padding: 0.35rem var(--vf-space-2);
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
@@ -269,7 +269,7 @@ onBeforeUnmount(() => {
 .notification-center-filters {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
   flex-wrap: wrap;
   padding: 0.3rem 0.45rem;
   border-bottom: 1px solid var(--vf-border-weak);
@@ -325,7 +325,7 @@ onBeforeUnmount(() => {
 
 .notification-center-empty {
   margin: 0;
-  padding: 1.25rem 0.5rem;
+  padding: 1.25rem var(--vf-space-2);
   color: var(--vf-text-subtle);
   font-size: var(--vf-text-sm);
   text-align: center;
@@ -335,7 +335,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   margin: 0;
-  padding: 0.25rem;
+  padding: var(--vf-space-1);
   overflow-y: auto;
   list-style: none;
 }

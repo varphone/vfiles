@@ -168,7 +168,7 @@ const emit = defineEmits<{
   position: sticky;
   top: calc(var(--bulma-navbar-height, 3.25rem) + env(safe-area-inset-top));
   z-index: 30;
-  padding: 0.5rem 0.4rem;
+  padding: var(--vf-space-2) 0.4rem;
   margin: 0 -0.4rem;
   background: var(--vf-surface);
   border-bottom: 1px solid var(--vf-border-weak);
@@ -207,7 +207,7 @@ const emit = defineEmits<{
   flex-wrap: wrap;
   align-items: center;
   gap: 0.6rem;
-  margin-top: 0.5rem;
+  margin-top: var(--vf-space-2);
   padding: var(--vf-space-3);
   border-radius: var(--vf-radius-card);
   background: var(--vf-surface-2);

@@ -429,7 +429,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   min-width: 0;
-  margin-left: 0.5rem;
+  margin-left: var(--vf-space-2);
 }
 
 .app-header-actions {
@@ -478,7 +478,7 @@ onBeforeUnmount(() => {
   gap: 0.45rem;
   height: 2.125rem;
   max-width: 12rem;
-  padding: 0 0.55rem 0 0.25rem;
+  padding: 0 0.55rem 0 var(--vf-space-1);
   border: 1px solid transparent;
   border-radius: var(--vf-header-radius);
   background: transparent;

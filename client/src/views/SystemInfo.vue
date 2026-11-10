@@ -477,7 +477,7 @@ onMounted(load);
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--vf-space-4);
 }
 
 .is-spinning {
@@ -530,7 +530,7 @@ onMounted(load);
   align-items: flex-start;
   justify-content: center;
   gap: 0.22rem;
-  padding: 1rem 1.1rem;
+  padding: var(--vf-space-4) 1.1rem;
 }
 
 .system-info-stat.is-accent {
@@ -563,8 +563,8 @@ onMounted(load);
   display: grid;
   grid-template-columns: minmax(0, 1.65fr) minmax(250px, 0.85fr);
   align-items: start;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: var(--vf-space-4);
+  margin-bottom: var(--vf-space-4);
 }
 
 .system-info-panel {
@@ -608,7 +608,7 @@ onMounted(load);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.65rem;
-  margin: 0.75rem 0 0;
+  margin: var(--vf-space-3) 0 0;
   padding: 0;
   list-style: none;
 }
@@ -721,8 +721,8 @@ onMounted(load);
 .system-info-protocol-details {
   display: grid;
   grid-template-columns: 4.5rem minmax(0, 1fr);
-  gap: 0.27rem 0.5rem;
-  margin: 0.75rem 0 0;
+  gap: 0.27rem var(--vf-space-2);
+  margin: var(--vf-space-3) 0 0;
   font-size: var(--vf-text-2xs);
   line-height: 1.45;
 }
@@ -746,7 +746,7 @@ onMounted(load);
 .system-info-runtime-list {
   display: grid;
   gap: 0;
-  margin: 1rem 0 0;
+  margin: var(--vf-space-4) 0 0;
 }
 
 .system-info-runtime-list div {
@@ -953,8 +953,8 @@ onMounted(load);
 
   .system-info-table th,
   .system-info-table td {
-    padding-right: 0.5rem;
-    padding-left: 0.5rem;
+    padding-right: var(--vf-space-2);
+    padding-left: var(--vf-space-2);
   }
 }
 

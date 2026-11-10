@@ -57,7 +57,7 @@ main[tabindex="-1"]:focus {
 /* 移动端优化 */
 @media screen and (max-width: 768px) {
   .section {
-    padding: 1.5rem 0.75rem;
+    padding: var(--vf-space-5) var(--vf-space-3);
   }
 
   .container {

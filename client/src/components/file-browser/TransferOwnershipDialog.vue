@@ -310,9 +310,9 @@ defineExpose({
 .transfer-target {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   width: 100%;
-  padding: 0.4rem 0.5rem;
+  padding: 0.4rem var(--vf-space-2);
   border: none;
   border-radius: var(--vf-radius-sm);
   background: transparent;

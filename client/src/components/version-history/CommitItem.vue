@@ -167,7 +167,7 @@ const versionLabel = computed(() => {
 
 .history-card {
   min-width: 0;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--vf-space-2);
   padding: var(--vf-space-3);
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-card);
@@ -237,7 +237,7 @@ const versionLabel = computed(() => {
 }
 
 .history-detail {
-  margin: 0.25rem 0 0;
+  margin: var(--vf-space-1) 0 0;
   color: var(--vf-text-muted);
   font-size: var(--vf-text-sm);
   line-height: 1.4;
@@ -265,13 +265,13 @@ const versionLabel = computed(() => {
 .history-actions {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
   flex-wrap: wrap;
   margin-top: 0.45rem;
 }
 
 .history-action {
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
   min-height: 1.75rem;
   padding: 0 0.45rem;
   font-size: var(--vf-text-sm);

@@ -1025,7 +1025,7 @@ function loadMore() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
 }
 
 .history-summary {
@@ -1153,7 +1153,7 @@ function loadMore() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 2rem 1rem;
+  padding: var(--vf-space-6) var(--vf-space-4);
   text-align: center;
 }
 
@@ -1200,7 +1200,7 @@ function loadMore() {
 .history-more {
   display: flex;
   justify-content: center;
-  padding: 0.5rem 0 0.2rem;
+  padding: var(--vf-space-2) 0 0.2rem;
 }
 
 .diff-toolbar {
@@ -1229,7 +1229,7 @@ function loadMore() {
 .diff-cell {
   flex: 1 1 50%;
   min-width: 0;
-  padding: 0.1rem 0.5rem;
+  padding: 0.1rem var(--vf-space-2);
   white-space: pre-wrap;
   word-break: break-word;
   border-left: 1px solid var(--vf-border-weak);
@@ -1268,8 +1268,8 @@ function loadMore() {
 
 .diff-line {
   display: flex;
-  gap: 0.5rem;
-  padding: 0.1rem 0.5rem;
+  gap: var(--vf-space-2);
+  padding: 0.1rem var(--vf-space-2);
   white-space: pre-wrap;
   word-break: break-word;
 }

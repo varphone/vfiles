@@ -511,7 +511,7 @@ watch(
 }
 
 .preview-shell.is-fullscreen {
-  padding: 0.75rem;
+  padding: var(--vf-space-3);
   background: var(--vf-surface);
 }
 
@@ -520,7 +520,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--vf-space-3);
   flex-wrap: wrap;
   padding-bottom: 0.55rem;
   border-bottom: 1px solid var(--vf-border-weak);
@@ -691,7 +691,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--vf-space-3);
   flex-wrap: wrap;
   padding-top: 0.55rem;
   border-top: 1px solid var(--vf-border-weak);
@@ -714,7 +714,7 @@ watch(
 }
 
 .preview-hint kbd {
-  padding: 0 0.25rem;
+  padding: 0 var(--vf-space-1);
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-xs);
   background: var(--vf-surface-2);

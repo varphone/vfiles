@@ -111,7 +111,7 @@ const summary = computed(() => {
   justify-content: space-between;
   gap: 0.6rem;
   flex-wrap: wrap;
-  padding: 0 0 0.5rem;
+  padding: 0 0 var(--vf-space-2);
 }
 
 .search-toolbar-summary {
@@ -123,7 +123,7 @@ const summary = computed(() => {
 .search-toolbar-chips {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
   flex-wrap: wrap;
 }
 
@@ -155,7 +155,7 @@ const summary = computed(() => {
 .search-chip {
   gap: 0.3rem;
   min-height: 1.75rem;
-  padding: 0 0.5rem;
+  padding: 0 var(--vf-space-2);
   font-size: var(--vf-text-sm);
 }
 

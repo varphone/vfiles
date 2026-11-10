@@ -344,7 +344,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--vf-space-1);
   margin: 0.15rem 0 0;
   color: var(--vf-text-subtle);
   font-size: var(--vf-text-xs);

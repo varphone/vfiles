@@ -1019,7 +1019,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  margin: 0.75rem 0 0;
+  margin: var(--vf-space-3) 0 0;
   padding: 0.45rem 0.55rem;
   border: 1px solid var(--vf-warning-line);
   border-radius: var(--vf-radius-sm);
@@ -1047,8 +1047,8 @@ onMounted(() => {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 1rem;
-  padding-bottom: 0.5rem;
+  gap: var(--vf-space-4);
+  padding-bottom: var(--vf-space-2);
   border-bottom: 1px solid var(--vf-border-weak);
 }
 
@@ -1070,7 +1070,7 @@ onMounted(() => {
 }
 
 .admin-drawer-section {
-  margin: 1.25rem 0 0.5rem;
+  margin: 1.25rem 0 var(--vf-space-2);
   font-size: var(--vf-text-sm);
   font-weight: 650;
   color: var(--vf-text);
@@ -1166,7 +1166,7 @@ onMounted(() => {
 .admin-user-card-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem 1.1rem;
+  gap: var(--vf-space-2) 1.1rem;
   margin: 0.6rem 0 0.7rem;
 }
 
@@ -1197,9 +1197,9 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--vf-space-3);
   flex-wrap: wrap;
-  margin-top: 0.75rem;
+  margin-top: var(--vf-space-3);
   padding-top: 0.65rem;
   border-top: 1px solid var(--vf-border-weak);
 }
@@ -1241,7 +1241,7 @@ onMounted(() => {
 .admin-user {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
 }
 
 .admin-avatar {
@@ -1301,7 +1301,7 @@ onMounted(() => {
 
 .admin-edit-button {
   min-height: 1.75rem;
-  padding: 0 0.5rem;
+  padding: 0 var(--vf-space-2);
   font-size: var(--vf-text-sm);
 }
 
