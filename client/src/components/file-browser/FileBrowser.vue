@@ -42,67 +42,32 @@
       -->
       <div class="breadcrumb-bar file-toolbar">
         <div class="file-toolbar-leading">
-          <button
-            v-if="sidebarControl && !isMobile"
-            class="vf-icon-button file-toolbar-sidebar-toggle"
-            type="button"
-            title="切换视图栏"
-            :aria-label="sidebarVisible ? '收起视图栏' : '展开视图栏'"
-            :aria-expanded="sidebarVisible ? 'true' : 'false'"
-            aria-controls="files-view-sidebar"
-            @click="toggleSidebar"
-          >
-            <IconMenu2 :size="18" />
-          </button>
-
-          <!-- 写入口组：可写会话才渲染「+ 新建」（上传/新建文件夹的统一入口）。 -->
-          <div v-if="!isMobile && canWrite" class="file-toolbar-write">
-            <NewMenuButton
-              @upload-files="openUploader('files')"
-              @upload-folder="openUploader('directory')"
-              @create-folder="requestCreateDirectoryFromToolbar"
-            />
-
-            <!-- 上传进度胶囊：仅在上传队列存在时出现，点击回到上传对话框 -->
-            <button
-              v-if="uploadIndicator"
-              class="vf-ghost-button upload-indicator file-toolbar-upload"
-              type="button"
-              :title="uploadIndicator.title"
-              @click="openUploader('files')"
-            >
-              <span class="upload-indicator-dot" aria-hidden="true"></span>
-              <span>{{ uploadIndicator.label }}</span>
-            </button>
-          </div>
-
-          <span
-            v-if="isRestricted"
-            class="scope-badge"
-            :title="scopeBadgeTitle"
-          >
-            <IconLock :size="13" />
-            <span>{{ scopeBadgeText }}</span>
-          </span>
-
-          <div class="file-toolbar-heading">
-            <!-- 进入子目录后，视图名换成面包屑（灰色小字，当前层深色） -->
-            <Breadcrumb
-              v-if="currentPath || isMobile"
-              :breadcrumbs="visibleBreadcrumbs"
-              :directories="filesStore.directories"
-              @navigate="handleBreadcrumbNavigate"
-              @drop="handleDropOnFolder"
-            />
-
-            <FileBrowserViewMenu
-              v-else
-              v-model:open="viewMenuOpen"
-              :show-shares="
-                !isRestricted && authStore.features?.shareEnabled !== false
-              "
-            />
-          </div>
+          <FileBrowserToolbarLeading
+            :show-sidebar-toggle="Boolean(sidebarControl) && !isMobile"
+            :sidebar-visible="sidebarVisible"
+            :show-write="!isMobile && canWrite"
+            :upload="uploadIndicator"
+            :is-restricted="isRestricted"
+            :scope-text="scopeBadgeText"
+            :scope-title="scopeBadgeTitle"
+            @toggle-sidebar="toggleSidebar"
+            @upload-files="openUploader('files')"
+            @upload-folder="openUploader('directory')"
+            @create-folder="requestCreateDirectoryFromToolbar"
+            @open-uploader="openUploader('files')"
+          />
+          <FileBrowserToolbarHeading
+            v-model:open="viewMenuOpen"
+            :is-mobile="isMobile"
+            :current-path="currentPath"
+            :breadcrumbs="visibleBreadcrumbs"
+            :directories="filesStore.directories"
+            :show-shares="
+              !isRestricted && authStore.features?.shareEnabled !== false
+            "
+            @navigate="handleBreadcrumbNavigate"
+            @drop="handleDropOnFolder"
+          />
         </div>
 
         <div class="file-toolbar-actions">
@@ -882,8 +847,6 @@ import {
   IconKeyboard,
   IconStar,
   IconStarFilled,
-  IconLock,
-  IconMenu2,
 } from "@tabler/icons-vue";
 import { filesService, MAX_TRANSFER_PATHS } from "../../services/files.service";
 import { useFilesStore } from "../../stores/files.store";
@@ -898,14 +861,13 @@ import FileBrowserDialogs from "./FileBrowserDialogs.vue";
 import FileBrowserCollection from "./FileBrowserCollection.vue";
 import FileBrowserHistoryControls from "./FileBrowserHistoryControls.vue";
 import FileBrowserViewControls from "./FileBrowserViewControls.vue";
-import FileBrowserViewMenu from "./FileBrowserViewMenu.vue";
-import NewMenuButton from "./NewMenuButton.vue";
+import FileBrowserToolbarLeading from "./FileBrowserToolbarLeading.vue";
+import FileBrowserToolbarHeading from "./FileBrowserToolbarHeading.vue";
 import UploadDropOverlay from "./UploadDropOverlay.vue";
 import EmptyState from "../common/EmptyState.vue";
 import LibraryGrid from "./LibraryGrid.vue";
 import MobileSearchBar from "./MobileSearchBar.vue";
 import BrowserSearchBox, { type SearchType } from "./BrowserSearchBox.vue";
-import Breadcrumb from "./Breadcrumb.vue";
 import FileSkeleton from "./FileSkeleton.vue";
 import DownloadQueuePanel from "./DownloadQueuePanel.vue";
 import ContextMenu, { type ContextMenuItem } from "./ContextMenu.vue";
@@ -2689,28 +2651,6 @@ function handleSortChange(field: SortField) {
   min-width: 0;
 }
 
-.file-toolbar-heading {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  flex: 0 1 auto;
-}
-
-.file-toolbar-sidebar-toggle {
-  flex: 0 0 auto;
-}
-
-.file-toolbar-write {
-  display: flex;
-  align-items: center;
-  gap: var(--vf-space-2);
-  flex: 0 0 auto;
-}
-
-.file-toolbar-upload {
-  flex: 0 0 auto;
-}
-
 /* 面包屑：灰色小字，当前层深色（覆盖 Breadcrumb 默认的强调色） */
 .breadcrumb-bar.file-toolbar :deep(.path-bar) {
   min-height: 0;
@@ -2750,25 +2690,6 @@ function handleSortChange(field: SortField) {
 
 .file-toolbar-error {
   margin: var(--vf-space-2) var(--vf-cell-padding-x) 0;
-}
-
-/* 受限会话的轻量范围徽标：让用户始终知道当前会话能看/能写哪里 */
-.scope-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--vf-badge-gap);
-  flex: 0 0 auto;
-  max-width: 100%;
-  padding: var(--vf-badge-padding-y) var(--vf-badge-padding-x);
-  border: 1px solid var(--vf-border);
-  border-radius: var(--vf-radius-pill);
-  background: var(--vf-surface-2);
-  color: var(--vf-text-muted);
-  font-size: var(--vf-badge-font-size);
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* 移动端搜索行（桌面已合并进单行工具栏） */
@@ -2864,39 +2785,6 @@ function handleSortChange(field: SortField) {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-height: 0;
-}
-
-/* 上传进度胶囊：与「上传」按钮并排，显示队列进度 */
-.upload-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: var(--vf-text-sm);
-  color: var(--vf-text-muted);
-}
-
-.upload-indicator-dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-  background: var(--vf-accent);
-  animation: upload-indicator-pulse 1.2s var(--vf-motion-standard) infinite;
-}
-
-@keyframes upload-indicator-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .upload-indicator-dot {
-    animation: none;
-  }
 }
 
 /* ---- Seafile 式外壳：视图侧栏在页面级，文件区为全高、无浮动卡片 ----
