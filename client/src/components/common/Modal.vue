@@ -31,12 +31,22 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
+import { popModalLayer, pushModalLayer } from "../../composables/useModalLayer";
 
 // 焦点管理（r131 ✓ W3C 对话框模式：移入/Tab 循环/归还）
 const cardRef = ref<HTMLElement | null>(null);
 // 每个对话框一个稳定 id：标题用 aria-labelledby 关联，读屏能念出对话框名称。
 const titleId = `modal-title-${useId()}`;
 let previousActive: HTMLElement | null = null;
+let modalRoot: HTMLElement | null = null;
+
+/** 卸载或关闭时撤掉背景 inert 与滚动锁。 */
+function releaseLayer() {
+  if (modalRoot) {
+    popModalLayer(modalRoot);
+    modalRoot = null;
+  }
+}
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -143,9 +153,18 @@ watch(
   (visible) => {
     if (visible) {
       previousActive = document.activeElement as HTMLElement | null;
-      void nextTick().then(focusFirst);
-    } else if (previousActive) {
-      previousActive.focus();
+      void nextTick().then(() => {
+        const root = cardRef.value?.closest<HTMLElement>(".modal") ?? null;
+        if (root) {
+          modalRoot = root;
+          pushModalLayer(root);
+        }
+        focusFirst();
+      });
+    } else {
+      // 先解除 inert 再归还焦点：不能把焦点送回仍然 inert 的容器。
+      releaseLayer();
+      if (previousActive?.isConnected) previousActive.focus();
       previousActive = null;
     }
   },
@@ -153,7 +172,10 @@ watch(
 );
 
 onMounted(() => bindKeydown(props.show));
-onBeforeUnmount(() => bindKeydown(false));
+onBeforeUnmount(() => {
+  bindKeydown(false);
+  releaseLayer();
+});
 watch(() => props.show, bindKeydown);
 
 function close() {

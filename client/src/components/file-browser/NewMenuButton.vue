@@ -1,6 +1,7 @@
 <template>
   <div ref="rootRef" class="nc-new-menu" :class="{ 'is-open': open }">
     <button
+      ref="triggerRef"
       class="nc-new-button"
       type="button"
       aria-haspopup="menu"
@@ -71,6 +72,7 @@ const emit = defineEmits<{
 
 const open = ref(false);
 const rootRef = ref<HTMLElement | null>(null);
+const triggerRef = ref<HTMLButtonElement | null>(null);
 
 function toggle() {
   open.value = !open.value;
@@ -78,6 +80,9 @@ function toggle() {
 
 function choose(kind: "files" | "directory" | "folder") {
   open.value = false;
+  // 菜单项随关闭被移除：先把焦点还给触发按钮，Modal 才能把这里记为
+  // 「关闭后归还焦点」的目标（否则键盘用户会落到 body）。
+  triggerRef.value?.focus();
   if (kind === "folder") {
     emit("create-folder");
     return;

@@ -5,6 +5,8 @@
         <ViewsSidebar @search="handleSidebarSearch" />
       </template>
 
+      <h1 class="is-sr-only">全部文件</h1>
+
       <div class="home-browser-shell">
         <FileBrowser
           :key="auth.activeWorkspace || 'default-workspace'"
@@ -48,6 +50,7 @@
                 <div class="dropdown-content">
                   <a
                     class="dropdown-item"
+                    role="menuitem"
                     :class="{ 'is-current': actionMode === 'nav' }"
                     href="#"
                     @click.prevent="setActionMode('nav')"
@@ -55,6 +58,7 @@
                   >
                   <a
                     class="dropdown-item"
+                    role="menuitem"
                     :class="{ 'is-current': actionMode === 'history' }"
                     href="#"
                     @click.prevent="setActionMode('history')"
@@ -63,6 +67,7 @@
                   <a
                     v-if="auth.canWrite"
                     class="dropdown-item"
+                    role="menuitem"
                     :class="{ 'is-current': actionMode === 'batch' }"
                     href="#"
                     @click.prevent="setActionMode('batch')"
@@ -692,6 +697,7 @@ async function renameSelected() {
   align-items: center;
   justify-content: center;
   gap: 0.1rem;
+  min-width: 2.75rem;
   min-height: 2.75rem;
   padding: 0.25rem 0.35rem;
   line-height: 1.1;

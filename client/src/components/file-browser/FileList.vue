@@ -66,10 +66,8 @@
           :highlight="highlight"
           :select-mode="selectMode"
           :flash="flashPath === file.path"
-          :selected="
-            selectedPaths.has(file.path) ||
-            (!selectMode && activePath === file.path)
-          "
+          :selected="selectedPaths.has(file.path)"
+          :active="!selectMode && activePath === file.path"
           :shared="sharedPaths.has(file.path)"
           :shared-public="publicSharedPaths.has(file.path)"
           :expanded="expandedPath === file.path"
@@ -417,5 +415,10 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
 
 .file-list-select-all {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 与行内复选框同一命中区口径（25px）。 */
+  padding: 6px;
+  margin: -6px;
 }
 </style>

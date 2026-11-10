@@ -423,6 +423,8 @@ function onFullscreenChange() {
 
 /** 图片类快捷键：+/- 缩放、0 适应、R 旋转；其余交给父级/Modal 处理。 */
 function onKeydown(event: KeyboardEvent) {
+  // 只在预览打开时接管按键：关闭状态仍挂捕获监听会把全站 Space 吞掉。
+  if (!props.show) return;
   const t = event.target as HTMLElement | null;
   if (
     t &&
@@ -488,9 +490,10 @@ onBeforeUnmount(() => {
 // 键盘接线（r71 收口）：Modal 自带初始聚焦会夺回焦点 ✗ shell 级 @keydown 常够不着
 // ——改**窗口级监听**（r62/65 同款范式）随 shell 挂卸；元素级保留双保险 ✓
 watch(
-  shellRef,
-  (el, _prev, onCleanup) => {
-    if (!el) return;
+  [() => props.show, shellRef],
+  ([show, el], _prev, onCleanup) => {
+    // 预览关闭时卸载监听（此前 shell 常驻 → 全站 Space 被 capture 层 preventDefault）。
+    if (!show || !el) return;
     window.addEventListener("keydown", onKeydown, true);
     onCleanup(() => window.removeEventListener("keydown", onKeydown, true));
   },

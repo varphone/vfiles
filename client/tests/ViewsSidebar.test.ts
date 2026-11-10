@@ -163,15 +163,17 @@ describe("ViewsSidebar.vue", () => {
     expect(getOverviewMock).not.toHaveBeenCalled();
   });
 
-  it("renders 个人文件 as a group heading instead of a clickable item", async () => {
+  it("renders 个人文件 as a group label instead of a heading or link", async () => {
     await renderSidebar();
 
-    const heading = screen.getByRole("heading", { name: "个人文件" });
-    expect(heading.tagName).toBe("H2");
-    expect(heading.closest("a, button")).toBeNull();
+    // 分组标签不是标题：页面 h1 必须排在它前面（标题层级不倒置）。
+    const label = screen.getByText("个人文件");
+    expect(label.tagName).toBe("P");
+    expect(screen.queryByRole("heading", { name: "个人文件" })).toBeNull();
+    expect(label.closest("a, button")).toBeNull();
     expect(screen.queryByRole("link", { name: "个人文件" })).toBeNull();
-    // 标题紧挨在视图列表上方，五个可点击视图仍在它下面。
-    expect(heading.nextElementSibling?.tagName).toBe("UL");
+    // 标签紧挨在视图列表上方，五个可点击视图仍在它下面。
+    expect(label.nextElementSibling?.tagName).toBe("UL");
   });
 
   it("keeps the folder tree collapsed by default and renders it after expanding", async () => {

@@ -1212,7 +1212,7 @@ describe("FileBrowser.vue keyboard navigation", () => {
   /** 单选场景下高亮行（或网格里的活动卡片）即活动项。 */
   function activeName(container: Element) {
     const row = container.querySelector(
-      ".desktop-file-row.is-row-selected .desktop-name-text",
+      ".desktop-file-row.is-row-active .desktop-name-text",
     );
     if (row) return row.textContent?.trim();
     return container
@@ -1358,6 +1358,129 @@ describe("FileBrowser.vue keyboard navigation", () => {
     await fireEvent.keyDown(input, { key: "ArrowDown" });
 
     expect(activeName(container)).toBe("a.txt");
+  });
+
+  it("leaves Enter and Space to focused buttons and links", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(files());
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("a.txt");
+    await waitFor(() => expect(activeName(container)).toBe("a.txt"));
+
+    const newButton = container.querySelector<HTMLElement>(".nc-new-button")!;
+    newButton.focus();
+    for (const key of ["Enter", " "]) {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+      });
+      newButton.dispatchEvent(event);
+      // 控件自己处理按键：全局文件快捷键必须放行（WCAG 2.1.1）。
+      expect(event.defaultPrevented).toBe(false);
+    }
+
+    // 普通链接同理：Enter 不能被解释成「打开活动行」。
+    const link = document.createElement("a");
+    link.href = "#";
+    link.textContent = "链接";
+    container.appendChild(link);
+    link.focus();
+    const linkEvent = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    link.dispatchEvent(linkEvent);
+    expect(linkEvent.defaultPrevented).toBe(false);
+    link.remove();
+
+    // 焦点不在控件上时，快捷键仍然生效（活动行文件 → 预览）。
+    const bodyEvent = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(bodyEvent);
+    expect(bodyEvent.defaultPrevented).toBe(true);
+    await waitFor(() =>
+      expect(document.querySelector(".modal.is-active .modal-card-title")).not.toBeNull(),
+    );
+    await fireEvent.keyDown(document, { key: "Escape" });
+  });
+
+  it("keeps the cursor row active without marking it selected", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(files());
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("a.txt");
+    await waitFor(() => expect(activeName(container)).toBe("a.txt"));
+
+    const active = container.querySelector<HTMLElement>(
+      "tr.desktop-file-row.is-row-active",
+    )!;
+    expect(active).not.toBeNull();
+    expect(active.getAttribute("aria-selected")).toBeNull();
+    expect(
+      active.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked,
+    ).toBe(false);
+    expect(
+      container.querySelector("tr.desktop-file-row.is-row-selected"),
+    ).toBeNull();
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: " ", ctrlKey: true, bubbles: true }),
+    );
+    await waitFor(() => {
+      expect(active.getAttribute("aria-selected")).toBe("true");
+      expect(
+        active.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+          .checked,
+      ).toBe(true);
+    });
+  });
+
+  it("focuses the row menu with Shift+F10 and returns focus on Escape", async () => {
+    setDetailsVisible(false);
+    getFilesMock.mockResolvedValue(files());
+
+    const { findByText, container } = renderWithProviders(FileBrowser as any);
+    await findByText("a.txt");
+    await waitFor(() => expect(activeName(container)).toBe("a.txt"));
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "F10",
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    await waitFor(() =>
+      expect(document.querySelector(".vfiles-context-menu")).not.toBeNull(),
+    );
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute("role")).toBe("menuitem"),
+    );
+    const first = document.activeElement as HTMLElement;
+
+    first.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+    );
+    await waitFor(() => expect(document.activeElement).not.toBe(first));
+
+    (document.activeElement as HTMLElement).dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    await waitFor(() =>
+      expect(document.querySelector(".vfiles-context-menu")).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(
+        document.activeElement?.classList.contains("desktop-row-menu"),
+      ).toBe(true),
+    );
   });
 });
 
@@ -1670,6 +1793,7 @@ describe("FileBrowser.vue preview retry", () => {
       expect(getFileContentMock).toHaveBeenCalledTimes(2);
     });
   });
+
 });
 
 describe("FileBrowser.vue keyboard shortcuts help", () => {
@@ -1740,6 +1864,7 @@ describe("FileBrowser.vue keyboard shortcuts help", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container.querySelector(".shortcuts")).toBeNull();
   });
+
 });
 
 describe("FileBrowser.vue keyboard navigation extras", () => {
@@ -1759,7 +1884,7 @@ describe("FileBrowser.vue keyboard navigation extras", () => {
     return (
       container
         .querySelector<HTMLElement>(
-          "tr.desktop-file-row.is-row-selected, tr.desktop-file-row.is-active",
+          "tr.desktop-file-row.is-row-active, tr.desktop-file-row.is-active",
         )
         ?.getAttribute("data-vfiles-path") ?? null
     );
@@ -1840,6 +1965,8 @@ describe("FileBrowser.vue keyboard navigation extras", () => {
       ).toBeNull(),
     );
   });
+
+
 });
 
 describe("FileBrowser.vue grid paging", () => {

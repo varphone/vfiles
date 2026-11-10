@@ -6,16 +6,20 @@
       class="vfiles-context-menu"
       :style="panelStyle"
       role="menu"
+      tabindex="-1"
       @contextmenu.prevent
+      @keydown="onMenuKeydown"
     >
       <button
-        v-for="item in items"
+        v-for="(item, index) in items"
         :key="item.key"
         class="vfiles-context-menu__item"
         :class="{ 'is-danger': item.danger }"
         type="button"
         role="menuitem"
         :disabled="item.disabled"
+        :tabindex="item.disabled ? -1 : index === focusIndex ? 0 : -1"
+        @focus="focusIndex = index"
         @click="choose(item)"
       >
         <span
@@ -69,6 +73,7 @@ const emit = defineEmits<{
 }>();
 
 const menuRef = ref<HTMLElement | null>(null);
+const focusIndex = ref(0);
 const MENU_WIDTH = 184;
 const menuSize = ref<{ width: number; height: number } | null>(null);
 const positionReady = ref(false);
@@ -118,14 +123,66 @@ watch(
       height: rect.height,
     };
     positionReady.value = true;
+    // 先等 visibility: visible 落到 DOM，再聚焦：隐藏元素无法接收焦点。
+    await nextTick();
+
+    // 右键与 Shift+F10 都把焦点交给菜单，后续方向键/Enter 才有落点。
+    const first = enabledItems()[0];
+    if (first) {
+      focusIndex.value = 0;
+      first.focus();
+    }
   },
   { flush: "post", immediate: true },
 );
 
 function choose(item: ContextMenuItem) {
   if (item.disabled) return;
-  emit("select", item.key);
+  // 先关闭再执行：父层在 close 里归还焦点，随后打开对话框时
+  // Modal 才能把「行尾菜单钮」记为归还目标（否则焦点落到 body）。
   emit("close");
+  emit("select", item.key);
+}
+
+function enabledItems(): HTMLButtonElement[] {
+  return Array.from(
+    menuRef.value?.querySelectorAll<HTMLButtonElement>(
+      ".vfiles-context-menu__item:not(:disabled)",
+    ) ?? [],
+  );
+}
+
+/** 菜单键盘语义：↑↓/Home/End 移动，Enter/Space 由按钮原生激活，Esc/Tab 关闭。 */
+function onMenuKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" || event.key === "Tab") {
+    event.preventDefault();
+    event.stopPropagation();
+    emit("close");
+    return;
+  }
+  const items = enabledItems();
+  if (items.length === 0) return;
+  const current = items.indexOf(document.activeElement as HTMLButtonElement);
+  let next: number;
+  switch (event.key) {
+    case "ArrowDown":
+      next = current < 0 ? 0 : (current + 1) % items.length;
+      break;
+    case "ArrowUp":
+      next = current <= 0 ? items.length - 1 : current - 1;
+      break;
+    case "Home":
+      next = 0;
+      break;
+    case "End":
+      next = items.length - 1;
+      break;
+    default:
+      return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  items[next].focus();
 }
 
 function onDocumentPointer(event: MouseEvent) {

@@ -1010,7 +1010,7 @@
       :y="contextMenu.y"
       :items="contextMenuItems"
       @select="handleContextMenuSelect"
-      @close="contextMenu.show = false"
+      @close="closeContextMenu"
     />
 
     <!-- 预览对话框（当前版本） -->
@@ -1851,7 +1851,9 @@ const contextMenu = ref<{
   x: number;
   y: number;
   file: FileInfo | null;
-}>({ show: false, x: 0, y: 0, file: null });
+  /** 键盘打开时归还焦点的元素（鼠标右键不抢焦点）。 */
+  returnFocus: HTMLElement | null;
+}>({ show: false, x: 0, y: 0, file: null, returnFocus: null });
 
 const contextMenuItems = computed<ContextMenuItem[]>(() => {
   const file = contextMenu.value.file;
@@ -1997,6 +1999,11 @@ onMounted(() => {
         return;
       }
     }
+
+    // 焦点在按钮、链接、菜单项等交互控件上时，Enter/Space/方向键属于控件本身：
+    // 全局快捷键若继续 preventDefault，键盘用户就无法激活工具栏/侧栏/菜单
+    //（WCAG 2.1.1）。文件列表快捷键只在焦点不在控件上时生效。
+    if (isInteractiveTarget(e.target)) return;
 
     // 输入控件或弹窗内不触发文件操作快捷键
     if (anyOverlayOpen() || isTypingTarget(e.target)) return;
@@ -2778,8 +2785,18 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return element.isContentEditable === true;
 }
 
+/** 可点击/可激活的控件：这些元素上的按键必须交还浏览器。 */
+const INTERACTIVE_SELECTOR =
+  'a[href], button, input, select, textarea, summary, [role="button"], [role="menuitem"], [role="menuitemradio"], [role="tab"], [contenteditable="true"]';
+
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  const element = target instanceof Element ? target : null;
+  return element !== null && element.closest(INTERACTIVE_SELECTOR) !== null;
+}
+
 function anyOverlayOpen(): boolean {
   return (
+    contextMenu.value.show ||
     preview.value.open ||
     showShortcuts.value ||
     showUploader.value ||
@@ -3024,7 +3041,11 @@ function openRowContextMenu(file: FileInfo) {
   const rect = element?.getBoundingClientRect();
   const x = rect ? rect.right - 8 : 0;
   const y = rect ? rect.bottom : 0;
-  handleContextMenu({ file, x, y });
+  // Shift+F10 打开时焦点停在 body：菜单关闭后应回到该行的「⋯」按钮，
+  // 否则键盘用户会丢失当前位置。
+  const returnFocus =
+    element?.querySelector<HTMLElement>(".desktop-row-menu") ?? null;
+  handleContextMenu({ file, x, y, returnFocus });
 }
 
 /** 内容搜索无结果时，一键改用文件名搜索（保留关键字与范围）。 */
@@ -3033,7 +3054,12 @@ function switchToNameSearch() {
   void runDesktopSearch();
 }
 
-function handleContextMenu(payload: { file: FileInfo; x: number; y: number }) {
+function handleContextMenu(payload: {
+  file: FileInfo;
+  x: number;
+  y: number;
+  returnFocus?: HTMLElement | null;
+}) {
   const file = payload.file;
   narrowSelectionTo(file.path);
   desktopActivePath.value = file.path;
@@ -3042,7 +3068,16 @@ function handleContextMenu(payload: { file: FileInfo; x: number; y: number }) {
     x: payload.x,
     y: payload.y,
     file: payload.file,
+    returnFocus: payload.returnFocus ?? null,
   };
+}
+
+/** 关闭右键菜单：键盘打开时把焦点还给触发行，鼠标操作保持原焦点。 */
+function closeContextMenu() {
+  const target = contextMenu.value.returnFocus;
+  contextMenu.value.show = false;
+  contextMenu.value.returnFocus = null;
+  if (target?.isConnected) target.focus();
 }
 
 function openDetailsDialog(file: FileInfo) {

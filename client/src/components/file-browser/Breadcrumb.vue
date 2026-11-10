@@ -222,8 +222,9 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  /* WCAG 2.2 2.5.8：命中区至少 24×24；32 与 34px 工具条同高。 */
+  width: 32px;
+  height: 32px;
   margin-left: 1px;
   border: none;
   border-radius: var(--vf-radius-control);
@@ -245,6 +246,17 @@ onBeforeUnmount(() => {
   border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
   box-shadow: var(--vf-shadow-menu);
+}
+
+@media (pointer: coarse) {
+  .path-bar {
+    min-height: 44px;
+  }
+
+  .path-bar-toggle {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 @media screen and (max-width: 1023px) {

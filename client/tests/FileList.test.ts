@@ -127,7 +127,7 @@ describe("FileList.vue", () => {
     const nameCell = rows[0].querySelector(".desktop-name-cell")!;
     const marker = nameCell.querySelector(".desktop-shared-inline")!;
     expect(marker).not.toBeNull();
-    expect(marker.textContent?.trim()).toBe("Shared");
+    expect(marker.textContent?.trim()).toBe("已共享");
     expect(marker.querySelector("svg.tabler-icon-users")).not.toBeNull();
     const name = nameCell.querySelector(".desktop-name-text")!;
     expect(

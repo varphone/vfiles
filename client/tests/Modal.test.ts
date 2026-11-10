@@ -1,7 +1,11 @@
-import { render, fireEvent, waitFor } from "@testing-library/vue";
+import { cleanup, render, fireEvent, waitFor } from "@testing-library/vue";
 import { h, nextTick } from "vue";
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import Modal from "../src/components/common/Modal.vue";
+
+// 每个用例后卸载：Modal 的滚动锁/inert 栈按实例卸载清理，
+// 否则后面的用例会继承上一轮的层状态。
+afterEach(() => cleanup());
 
 describe("Modal.vue focus trap (r131)", () => {
   function renderModal() {
@@ -73,5 +77,33 @@ describe("Modal.vue 层叠与语义", () => {
     const labelledBy = dialog.getAttribute("aria-labelledby");
     expect(labelledBy).toBeTruthy();
     expect(container.querySelector(`#${labelledBy}`)?.textContent).toBe("删除确认");
+  });
+});
+
+describe("Modal.vue 背景隔离", () => {
+  it("锁住页面滚动、惰化背景，并在关闭后归还焦点", async () => {
+    const opener = document.createElement("button");
+    opener.textContent = "打开对话框";
+    document.body.appendChild(opener);
+    const background = document.createElement("div");
+    background.id = "modal-background-probe";
+    document.body.appendChild(background);
+    opener.focus();
+
+    const { rerender } = render(Modal, {
+      props: { show: true, title: "背景测试" },
+      slots: { default: "内容" },
+    });
+
+    await waitFor(() => expect(document.body.style.overflow).toBe("hidden"));
+    expect(background.hasAttribute("inert")).toBe(true);
+
+    await rerender({ show: false, title: "背景测试" });
+    await waitFor(() => expect(document.body.style.overflow).not.toBe("hidden"));
+    expect(background.hasAttribute("inert")).toBe(false);
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+
+    opener.remove();
+    background.remove();
   });
 });

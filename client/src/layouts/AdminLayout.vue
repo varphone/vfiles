@@ -182,7 +182,8 @@ const navItems = computed(() =>
 
 .admin-brand-text span {
   font-size: 0.7rem;
-  color: var(--vf-text-subtle);
+  /* 小字在 shell 底上必须 ≥4.5:1：subtle 仅在白底达标（4.37 → 5.4）。 */
+  color: var(--vf-text-muted);
 }
 
 .admin-drawer-close {
@@ -299,11 +300,11 @@ const navItems = computed(() =>
 
 .admin-crumb {
   font-size: 0.78rem;
-  color: var(--vf-text-subtle);
+  color: var(--vf-text-muted);
 }
 
 .admin-crumb-sep {
-  color: var(--vf-text-subtle);
+  color: var(--vf-text-muted);
   font-size: 0.72rem;
 }
 

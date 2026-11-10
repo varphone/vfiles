@@ -11,10 +11,7 @@
       :commit="commit"
       :highlight="highlight"
       :select-mode="selectMode"
-      :selected="
-        selectedPaths.has(file.path) ||
-        (!selectMode && activePath === file.path)
-      "
+      :selected="selectedPaths.has(file.path)"
       :active="activePath === file.path"
       :show-location="showLocation"
       :thumbnail-size="thumbnailSize"

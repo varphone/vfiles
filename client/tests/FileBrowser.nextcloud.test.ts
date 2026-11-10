@@ -89,7 +89,7 @@ describe("FileList.vue Nextcloud columns", () => {
     const nameCell = rows[0].querySelector(".desktop-name-cell")!;
     const marker = nameCell.querySelector(".desktop-shared-inline");
     expect(marker).not.toBeNull();
-    expect(marker!.textContent?.trim()).toBe("Shared");
+    expect(marker!.textContent?.trim()).toBe("已共享");
     expect(marker!.querySelector("svg")).not.toBeNull();
     // 内部分享用人物图标，公开链接分享用链接图标
     expect(marker!.querySelector(".tabler-icon-users")).not.toBeNull();

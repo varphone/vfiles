@@ -78,6 +78,7 @@
               <RouterLink
                 v-if="showAccountEntries && auth.user && shareEnabled"
                 class="dropdown-item"
+                role="menuitem"
                 to="/shares"
                 @click="closeAccountMenu"
               >
@@ -87,6 +88,7 @@
               <RouterLink
                 v-if="showAccountEntries && auth.enabled && auth.user"
                 class="dropdown-item"
+                role="menuitem"
                 to="/settings/passwords"
                 @click="closeAccountMenu"
               >
@@ -96,6 +98,7 @@
               <RouterLink
                 v-if="showAccountEntries && auth.enabled && auth.user"
                 class="dropdown-item"
+                role="menuitem"
                 to="/settings/tokens"
                 @click="closeAccountMenu"
               >
@@ -109,6 +112,7 @@
                   ['admin', 'manager'].includes(auth.user?.role || '')
                 "
                 class="dropdown-item"
+                role="menuitem"
                 to="/admin"
                 @click="closeAccountMenu"
               >
@@ -118,6 +122,7 @@
               <RouterLink
                 v-if="auth.enabled && !auth.user"
                 class="dropdown-item"
+                role="menuitem"
                 to="/login"
                 @click="closeAccountMenu"
               >
@@ -127,6 +132,7 @@
               <a
                 v-else-if="auth.enabled && auth.user"
                 class="dropdown-item"
+                role="menuitem"
                 href="#"
                 @click.prevent="logoutFromMenu"
               >
@@ -150,7 +156,7 @@ import {
   IconChevronDown,
   IconFolder,
   IconSearch,
-  IconSettings,
+  IconShieldLock,
   IconShare,
   IconUser,
 } from "@tabler/icons-vue";
@@ -213,7 +219,7 @@ const apps = computed<AppEntry[]>(() => {
       key: "admin",
       to: "/admin",
       label: "管理",
-      icon: IconSettings,
+      icon: IconShieldLock,
     });
   }
 
@@ -599,6 +605,26 @@ onBeforeUnmount(() => {
 }
 
 /* 窄屏（如 320px）：进一步收小图标，保证应用图标 + 右侧操作不溢出、不换行。 */
+/* 触屏：图标视觉尺寸不变，用伪元素把命中区扩大到 44px 左右 */
+@media (pointer: coarse) {
+  .app-header-app,
+  .app-header-search,
+  .app-header-account,
+  .app-header :deep(.app-bar-bell) {
+    position: relative;
+  }
+
+  .app-header-app::after,
+  .app-header-search::after,
+  .app-header-account::after,
+  .app-header :deep(.app-bar-bell)::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: inherit;
+  }
+}
+
 @media screen and (max-width: 400px) {
   .app-header-app,
   .app-header :deep(.vf-icon-button) {

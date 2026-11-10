@@ -1,7 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
-import { describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/vue";
+import { afterEach, describe, expect, it } from "vitest";
+import { nextTick } from "vue";
 import FilePreviewModal from "../src/components/file-browser/FilePreviewModal.vue";
 import type { PreviewState } from "../src/composables/useFilePreview";
+
+// 预览的 capture 级 window 监听随 show 挂卸，用例间必须卸载干净。
+afterEach(() => cleanup());
 
 function state(overrides: Partial<PreviewState> = {}): PreviewState {
   return {
@@ -210,5 +214,36 @@ describe("FilePreviewModal.vue", () => {
     await fireEvent.click(screen.getByLabelText("上一张"));
     expect(multi.emitted()["prev"]).toHaveLength(1);
     expect(screen.getByLabelText("下一张")).toBeDisabled();
+  });
+});
+
+describe("FilePreviewModal.vue 按键作用域", () => {
+  it("只在预览打开时接管 Space", async () => {
+    const closed = renderModal({ show: false });
+    await nextTick();
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.focus();
+    const closedEvent = new KeyboardEvent("keydown", {
+      key: " ",
+      bubbles: true,
+      cancelable: true,
+    });
+    outside.dispatchEvent(closedEvent);
+    expect(closedEvent.defaultPrevented).toBe(false);
+    closed.unmount();
+    outside.remove();
+
+    const open = renderModal({ show: true });
+    await nextTick();
+    await nextTick();
+    const openEvent = new KeyboardEvent("keydown", {
+      key: " ",
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(openEvent);
+    expect(openEvent.defaultPrevented).toBe(true);
+    expect(open.emitted().close).toBeTruthy();
   });
 });

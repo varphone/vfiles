@@ -3,10 +3,12 @@
   <tr
     v-if="desktop"
     :aria-selected="selected ? 'true' : undefined"
+    :aria-current="active ? 'true' : undefined"
     class="desktop-file-row"
     :data-vfiles-path="file.path"
     :class="{
       'drop-target': dragOver,
+      'is-row-active': active,
       'is-row-selected': selected,
       'is-dragging': dragging,
       'is-drop-confirmed': flash,
@@ -96,7 +98,7 @@
 
           <!-- 已共享标记内联在文件名右侧（Nextcloud 式：灰色小字 + 类型图标） -->
           <span v-if="shared" class="desktop-shared-inline" title="已共享">
-            <span class="desktop-shared-label">Shared</span>
+            <span class="desktop-shared-label">已共享</span>
             <IconLink
               v-if="sharedPublic"
               :size="15"
@@ -284,6 +286,7 @@
     v-else
     class="file-item box"
     :class="{
+      'is-row-active': active,
       'is-row-selected': selected,
       'is-expanded': showActions,
       'drop-target': dragOver,
@@ -489,6 +492,8 @@ const props = withDefaults(
     highlight?: string;
     selectMode?: boolean;
     selected?: boolean;
+    /** 键盘/鼠标光标所在行（不等于选中：不勾复选框、不参与批量操作）。 */
+    active?: boolean;
     /** 落子回执（父层持态）：drop 后 650ms 内为 true（跨 remount 存活 ✓） */
     flash?: boolean;
     expanded?: boolean;
@@ -985,6 +990,15 @@ function share() {
   background: var(--vf-row-hover);
 }
 
+/* 活动行（键盘光标）：浅灰底 + 左侧强调条，区别于「已勾选」的浅蓝底 */
+.desktop-file-row.is-row-active > td {
+  background: var(--vf-row-hover);
+}
+
+.desktop-file-row.is-row-active > td:first-child {
+  box-shadow: inset 2px 0 0 var(--vf-accent);
+}
+
 .desktop-file-row.is-row-selected > td {
   background: var(--vf-row-selected);
 }
@@ -1067,6 +1081,11 @@ function share() {
 
 .desktop-row-check {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 13px 复选框 + 6px 内边距 = 25px 命中区；负外边距保持单元格布局不变。 */
+  padding: 6px;
+  margin: -6px;
 }
 
 /* 选中（含批量）与批量模式：复选框常驻 */
@@ -1076,6 +1095,7 @@ function share() {
 .desktop-file-row.is-row-selected .desktop-row-check,
 .desktop-file-row:hover .desktop-row-menu,
 .desktop-file-row:focus-within .desktop-row-menu,
+.desktop-file-row.is-row-active .desktop-row-menu,
 .desktop-file-row.is-row-selected .desktop-row-menu,
 .desktop-file-row:hover .desktop-action-buttons,
 .desktop-file-row:focus-within .desktop-action-buttons,

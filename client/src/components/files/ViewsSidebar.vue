@@ -14,7 +14,7 @@
         v-model="searchDraft"
         class="views-sidebar-search-input"
         type="search"
-        placeholder="Search here …"
+        placeholder="搜索文件…"
         aria-label="搜索文件"
         @keydown.enter.prevent="submitSearch"
       />
@@ -33,7 +33,7 @@
       分组标题而不是可点击条目：Nextcloud 的「Personal files」只是视觉分组，
       「全部文件」与它同路由；做成标题就不会出现两个条目同时 aria-current。
     -->
-    <h2 id="views-sidebar-personal" class="views-sidebar-group">个人文件</h2>
+    <p id="views-sidebar-personal" class="views-sidebar-group">个人文件</p>
 
     <ul class="views-sidebar-list" aria-labelledby="views-sidebar-personal">
       <li v-for="item in items" :key="item.key">
@@ -112,8 +112,8 @@
 
       <li class="views-sidebar-footer-item">
         <RouterLink class="views-sidebar-item" to="/settings/tokens">
-          <IconSettings :size="18" :stroke-width="1.7" aria-hidden="true" />
-          <span class="views-sidebar-label">文件设置</span>
+          <IconKey :size="18" :stroke-width="1.7" aria-hidden="true" />
+          <span class="views-sidebar-label">访问令牌</span>
         </RouterLink>
       </li>
 
@@ -145,8 +145,8 @@ import {
   IconChevronRight,
   IconClock,
   IconFolder,
+  IconKey,
   IconSearch,
-  IconSettings,
   IconShare,
   IconStar,
   IconTrash,

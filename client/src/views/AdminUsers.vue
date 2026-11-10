@@ -1011,8 +1011,8 @@ onMounted(() => {
 }
 
 .admin-filter.is-active .admin-filter-count {
+  /* 不再叠 opacity：0.75 会把 12px 计数压到 3.8:1（低于 AA）。 */
   color: currentColor;
-  opacity: 0.75;
 }
 
 .admin-note {
