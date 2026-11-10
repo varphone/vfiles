@@ -156,6 +156,7 @@ import {
   IconUsers,
 } from "@tabler/icons-vue";
 import EmptyState from "../components/common/EmptyState.vue";
+import SkeletonList from "../components/common/SkeletonList.vue";
 import AdminLayout from "../layouts/AdminLayout.vue";
 import SectionCard from "../ui/SectionCard.vue";
 import StatCard from "../ui/StatCard.vue";

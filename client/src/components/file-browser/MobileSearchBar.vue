@@ -21,6 +21,7 @@
           @input="
             emit('update:query', ($event.target as HTMLInputElement).value)
           "
+          @keydown.down.prevent="emit('enter-results')"
           @keyup.enter="emit('search')"
         />
         <datalist id="vfiles-search-history">
@@ -82,9 +83,7 @@
           :value="type"
           :disabled="loading"
           aria-label="搜索类型"
-          @change="
-            emit('update:type', ($event.target as HTMLSelectElement).value)
-          "
+          @change="onTypeChange"
         >
           <option value="all">全部</option>
           <option value="file">仅文件</option>
@@ -132,7 +131,7 @@ withDefaults(
     active?: boolean;
     content: boolean;
     contentEnabled?: boolean;
-    type: string;
+    type: "all" | "file" | "directory";
     scopeCurrent: boolean;
     filtersOpen: boolean;
     history?: string[];
@@ -151,14 +150,22 @@ withDefaults(
   },
 );
 
+function onTypeChange(event: Event) {
+  const value = (event.target as HTMLSelectElement).value;
+  if (value === "all" || value === "file" || value === "directory") {
+    emit("update:type", value);
+  }
+}
+
 const emit = defineEmits<{
   (e: "update:query", value: string): void;
   (e: "update:content", value: boolean): void;
-  (e: "update:type", value: string): void;
+  (e: "update:type", value: "all" | "file" | "directory"): void;
   (e: "update:scopeCurrent", value: boolean): void;
   (e: "update:filtersOpen", value: boolean): void;
   (e: "search"): void;
   (e: "clear"): void;
+  (e: "enter-results"): void;
 }>();
 </script>
 

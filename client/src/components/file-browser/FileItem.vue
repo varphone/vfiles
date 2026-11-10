@@ -5,7 +5,7 @@
     :aria-selected="selected ? 'true' : undefined"
     :aria-current="active ? 'true' : undefined"
     class="desktop-file-row"
-    :data-vfiles-path="file.path"
+    v-bind="{ 'data-vfiles-path': file.path }"
     :class="{
       'drop-target': dragOver,
       'is-row-active': active,

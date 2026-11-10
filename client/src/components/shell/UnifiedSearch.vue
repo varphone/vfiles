@@ -11,7 +11,7 @@
           placeholder="搜索文件与文件夹…"
           aria-label="搜索文件"
           autocomplete="off"
-          data-autofocus
+          v-bind="{ 'data-autofocus': '' }"
         />
         <span v-if="loading" class="unified-search-loading" aria-hidden="true">
           <span class="unified-search-spinner"></span>

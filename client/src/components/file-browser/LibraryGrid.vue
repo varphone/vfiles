@@ -24,7 +24,7 @@
         :key="directory.path"
         class="library-card"
         :class="{ 'is-menu-open': openMenuPath === directory.path }"
-        :data-vfiles-path="directory.path"
+        v-bind="{ 'data-vfiles-path': directory.path }"
         tabindex="0"
         :aria-label="`打开资料库 ${directory.name}`"
         @click="handleCardClick(directory)"

@@ -21,7 +21,7 @@
         <div
           v-for="row in rows"
           :key="row.path"
-          :data-vfiles-path="row.path"
+          v-bind="{ 'data-vfiles-path': row.path }"
           class="directory-tree-item"
           :class="{
             'is-drop-confirmed': dropFlashPath === row.path,

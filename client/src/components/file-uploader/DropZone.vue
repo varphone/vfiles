@@ -16,7 +16,7 @@
     <input
       type="file"
       ref="directoryInput"
-      webkitdirectory
+      v-bind="{ webkitdirectory: '' }"
       multiple
       style="display: none"
       @change="onDirectorySelect"

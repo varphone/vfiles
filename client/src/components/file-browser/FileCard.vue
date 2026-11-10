@@ -1,7 +1,7 @@
 <template>
   <div
     class="file-card"
-    :data-vfiles-path="file.path"
+    v-bind="{ 'data-vfiles-path': file.path }"
     :class="{
       'file-card--selected': selected,
       'file-card--active': active,

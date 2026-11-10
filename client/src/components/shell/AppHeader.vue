@@ -62,7 +62,7 @@
               <span
                 class="app-header-avatar"
                 aria-hidden="true"
-                :data-initial="accountInitial || undefined"
+                v-bind="{ 'data-initial': accountInitial || undefined }"
               >
                 <IconUser v-if="!accountInitial" :size="14" />
               </span>

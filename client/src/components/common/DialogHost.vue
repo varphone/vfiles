@@ -15,7 +15,7 @@
           type="button"
           class="button"
           :class="{ 'is-primary': action.primary }"
-          :data-autofocus="index === 0 ? '' : undefined"
+          v-bind="{ 'data-autofocus': index === 0 ? '' : undefined }"
           @click="choose(action.value)"
         >
           {{ action.label }}
@@ -42,7 +42,7 @@
       <button
         class="button"
         type="button"
-        :data-autofocus="dialog?.kind === 'confirm' ? '' : undefined"
+        v-bind="{ 'data-autofocus': dialog?.kind === 'confirm' ? '' : undefined }"
         @click="cancel"
       >
         {{ dialog?.cancelText ?? "取消" }}

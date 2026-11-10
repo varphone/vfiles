@@ -12,6 +12,7 @@
     :can-write="canWrite"
     :can-share="canShare"
     :renaming-path="renamingPath"
+    v-on="listeners"
   />
   <FileList
     v-else
@@ -31,6 +32,7 @@
     :shared-paths="sharedPaths"
     :sort-field="sortField"
     :sort-direction="sortDirection"
+    v-on="listeners"
   />
 </template>
 
@@ -86,4 +88,59 @@ withDefaults(
     sortDirection: "asc",
   },
 );
+
+const emit = defineEmits<{
+  (e: "click", file: FileInfo): void;
+  (e: "download", file: FileInfo): void;
+  (e: "rename", file: FileInfo): void;
+  (e: "rename-commit", file: FileInfo, name: string): void;
+  (e: "rename-cancel", file: FileInfo): void;
+  (e: "move", file: FileInfo): void;
+  (e: "delete", file: FileInfo): void;
+  (e: "view-history", file: FileInfo): void;
+  (e: "toggle-select", file: FileInfo): void;
+  (
+    e: "modifier-select",
+    payload: { file: FileInfo; shift: boolean; meta: boolean },
+  ): void;
+  (e: "context-menu", payload: { file: FileInfo; x: number; y: number }): void;
+  (e: "drag-start", file: FileInfo): void;
+  (e: "drag-end"): void;
+  (e: "drop-on-folder", targetDir: string): void;
+  (e: "toggle-select-all"): void;
+  (e: "sort-change", field: SortField): void;
+  (e: "share", file: FileInfo): void;
+  (e: "preview", file: FileInfo): void;
+  (e: "open-folder", file: FileInfo): void;
+  (e: "create-directory", file: FileInfo): void;
+}>();
+
+const listeners = {
+  click: (file: FileInfo) => emit("click", file),
+  download: (file: FileInfo) => emit("download", file),
+  rename: (file: FileInfo) => emit("rename", file),
+  "rename-commit": (file: FileInfo, name: string) =>
+    emit("rename-commit", file, name),
+  "rename-cancel": (file: FileInfo) => emit("rename-cancel", file),
+  move: (file: FileInfo) => emit("move", file),
+  delete: (file: FileInfo) => emit("delete", file),
+  "view-history": (file: FileInfo) => emit("view-history", file),
+  "toggle-select": (file: FileInfo) => emit("toggle-select", file),
+  "modifier-select": (payload: {
+    file: FileInfo;
+    shift: boolean;
+    meta: boolean;
+  }) => emit("modifier-select", payload),
+  "context-menu": (payload: { file: FileInfo; x: number; y: number }) =>
+    emit("context-menu", payload),
+  "drag-start": (file: FileInfo) => emit("drag-start", file),
+  "drag-end": () => emit("drag-end"),
+  "drop-on-folder": (targetDir: string) => emit("drop-on-folder", targetDir),
+  "toggle-select-all": () => emit("toggle-select-all"),
+  "sort-change": (field: SortField) => emit("sort-change", field),
+  share: (file: FileInfo) => emit("share", file),
+  preview: (file: FileInfo) => emit("preview", file),
+  "open-folder": (file: FileInfo) => emit("open-folder", file),
+  "create-directory": (file: FileInfo) => emit("create-directory", file),
+};
 </script>

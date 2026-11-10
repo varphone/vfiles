@@ -139,7 +139,7 @@
 
         <button
           class="auth-submit auth-primary"
-          data-variant="primary"
+          v-bind="{ 'data-variant': 'primary' }"
           :disabled="auth.loading"
           type="submit"
         >
@@ -226,7 +226,7 @@
 
         <button
           class="auth-submit auth-primary"
-          data-variant="primary"
+          v-bind="{ 'data-variant': 'primary' }"
           :disabled="emailLoading"
           type="submit"
         >
