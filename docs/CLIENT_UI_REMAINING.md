@@ -2,7 +2,7 @@
 
 承接 [CLIENT_UI_AUDIT.md](CLIENT_UI_AUDIT.md)。本文件只记录**尚未完成**的项，以及动手前必须知道的坑。
 
-## 已完成（截至 6bbe05e）
+## 已完成（截至 47bf5ba）
 
 - **功能**：移动端批量条（ref 解包）、缩略图 watcher 泄漏、选择态跨目录泄漏、确认框 Promise 悬挂、批量删除部分失败汇总、批量下载走队列。
 - **可访问性**：页面缩放、对话框 `role/aria-modal/aria-labelledby`、Esc 只关最上层、Tab 焦点回收、4 个输入框标签、辅助文本对比度达 AA（浅 4.99:1 / 深 5.76:1）。
@@ -25,6 +25,7 @@
 - **个人资料**：`POST /auth/profile` 更新邮箱（主密码会话、格式/唯一性校验、审计）；账号菜单新增「个人资料」对话框，保存后同步本地会话（509bac7）。
 - **自助改密**：`POST /auth/password` 校验当前密码、写入新哈希、撤销该账号全部会话并写审计；账号菜单新增「修改密码」对话框（当前/新/确认，≥8 位且不得相同），成功后清本地状态回登录页（d7bc09f）。
 - **布局基线**：`ui:regression` 在 1440×900 与 390×844 采集顶栏/侧栏/内容区/工具栏/列表/状态栏/首行等盒子，与 `tests/fixtures/ui-layout.json` 以 3px 容差比较；`UPDATE_LAYOUT=1` 重新生成（95fbfa2）。
+- **构建体积**：删除 `prefers-color-scheme` 的那份深色变量（theme-init 已保证显式 `data-theme`，并补隐私模式回退）；Tabler 图标从 19 个小 chunk 合并为 1 个（47bf5ba）。
 - **结构（进行中）**：拖拽光标 chip（状态/目标判定/坐标/监听生命周期）抽为 `useDragChip`（6bbe05e）。所有权转移（状态/上限/提交/失败恢复）抽为 `useFileTransfer`（d155fa5）。上传队列 UI 状态（对话框/选择器/进度胶囊/拖放入队）抽为 `useFileUpload`（1e5cc0b）。条目动作与弹窗状态（删除/新建/移动/分享/历史/详情）抽为 `useFileActions`（ede96c6）。行内重命名（状态/校验/请求/刷新）抽为 `useFileRename`（ccac3e7）。桌面内容区（加载/错误/资料库/空态/搜索/列表与加载更多 slot）抽为 `FileBrowserDesktopContent`（ac32317）。桌面状态栏抽为 `FileBrowserStatusBar`（摘要/提示/选择/定位/快捷键入口，8bf5724）；移动端内容区（加载/错误/资料库/空态/搜索/列表与加载更多 slot）抽为 `FileBrowserMobileContent`（633eb48）。工具栏右侧的版本切换抽为 `FileBrowserHistoryControls`，列表/网格/排序/详情控制抽为 `FileBrowserViewControls`（8fdff03）；根视图「全部文件」菜单抽为 `FileBrowserViewMenu`，父层保留 `viewMenuOpen` 供 Escape 关闭（41d250b）；工具栏左侧的侧栏开关/写入口/范围徽标与面包屑/菜单切换抽为 `FileBrowserToolbarLeading`、`FileBrowserToolbarHeading`（b189c26）。文件浏览器的历史/分享/详情/转移/快捷键/预览覆盖层抽离为 `FileBrowserDialogs`，用显式 props/emits 连接，转移失败路径通过 `finishTransfer` 暴露；新增组件契约测试（1530b9e）。键盘处理与输入/控件判定抽离为 `useFileBrowserKeyboard`，主组件通过依赖注入连接（fc773b7）。目录导航、范围守卫、403/范围回退与滚动记忆抽离为 `useDirectoryNavigation`（88429df）。列表/网格的三处重复接线收敛为 `FileBrowserCollection`（4acd50c）。
 
 ## 待办
@@ -43,6 +44,14 @@
 关键容器的布局尺寸基线已进 CI（21 项、3px 容差）；像素级 diff 仍依赖手动 `ui:sweep`。跨平台字体渲染会让像素 goldens 不稳定，暂不提交基线图。
 
 **做法**：若确需像素级，用固定 Playwright 容器生成 goldens；否则保留「布局基线 + 手动截图」策略。
+
+### 4. 剩余性能细节
+- `sortBrowserItems` 在多个 computed 中重复排序/复制；
+- 每次切目录都重取全量 `getSharedPaths`；
+- `index.html` 没有 Home chunk 的 `modulepreload`，首屏仍有空白窗口；
+- 尚未开启 `vue-tsc` 的 `strictTemplates`。
+
+**做法**：按测量结果排：先把分享集合改为缓存/增量，再合并排序 computed，最后评估 Home 预加载与 strictTemplates。
 
 ## 提交前的固定检查
 
