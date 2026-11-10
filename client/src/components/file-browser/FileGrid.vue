@@ -1,11 +1,15 @@
 <template>
   <div
+    ref="gridRef"
     class="file-grid"
     :class="{ 'is-density-compact': view.density === 'compact' }"
-    :style="{ '--file-card-min': `${cardMinWidth(thumbnailSize)}px` }"
+    :style="[
+      { '--file-card-min': `${cardMinWidth(thumbnailSize)}px` },
+      virtualGridStyle,
+    ]"
   >
     <FileCard
-      v-for="file in cards"
+      v-for="file in windowCards"
       :key="file.path"
       v-memo="[
         file,
@@ -55,9 +59,10 @@
 
 <script setup lang="ts">
 import { useFileViewStore } from "../../stores/fileView.store";
-import { computed, toRefs } from "vue";
+import { computed, ref, toRefs, watch } from "vue";
 import type { FileInfo } from "../../types";
 import FileCard from "./FileCard.vue";
+import { useVirtualWindow } from "../../composables/useVirtualWindow";
 
 const emit = defineEmits<{
   (e: "click", file: FileInfo): void;
@@ -129,6 +134,68 @@ const cards = computed(() =>
   files.value.filter(
     (file) => !(file as FileInfo & { uiRole?: string }).uiRole,
   ),
+);
+
+/* ------------------------------------------------------------------
+ * 网格窗口化：按「行」保留视口附近的卡片，用上下 padding 撑出完整高度。
+ * 列数随容器宽度变化，因此每次测量都重新读取 grid-template-columns。
+ * jsdom 没有布局，enabled 为 false，测试仍渲染全部卡片。
+ * ------------------------------------------------------------------ */
+const gridRef = ref<HTMLDivElement | null>(null);
+const itemsPerRow = ref(1);
+
+function measureColumns(): number {
+  const el = gridRef.value;
+  if (!el) return itemsPerRow.value;
+  const columns = getComputedStyle(el)
+    .gridTemplateColumns.split(" ")
+    .filter(Boolean).length;
+  itemsPerRow.value = Math.max(1, columns);
+  return itemsPerRow.value;
+}
+
+function measureRowHeight(): number {
+  const el = gridRef.value;
+  if (!el) return 0;
+  const columns = measureColumns();
+  const cards = el.querySelectorAll<HTMLElement>(".file-card");
+  if (cards.length === 0) return 0;
+  const first = cards[0].getBoundingClientRect();
+  const nextRow = cards[columns]?.getBoundingClientRect();
+  if (nextRow && nextRow.top > first.top) {
+    return nextRow.top - first.top;
+  }
+  const gap = Number.parseFloat(getComputedStyle(el).rowGap) || 0;
+  return first.height + gap;
+}
+
+const {
+  start,
+  end,
+  padTop,
+  padBottom,
+  pin,
+} = useVirtualWindow({
+  anchor: gridRef,
+  itemCount: computed(() => cards.value.length),
+  itemsPerRow,
+  measureRowHeight,
+  threshold: 60,
+  overscan: 2,
+});
+
+const windowCards = computed(() => cards.value.slice(start.value, end.value));
+const virtualGridStyle = computed(() => ({
+  paddingTop: `${padTop.value}px`,
+  paddingBottom: `${padBottom.value}px`,
+}));
+
+watch(
+  () => props.activePath,
+  (path) => {
+    const index = cards.value.findIndex((file) => file.path === path);
+    if (index >= 0) pin(index);
+  },
 );
 import { cardMinWidth } from "../../stores/fileView.store";
 

@@ -401,6 +401,44 @@ async function main() {
   });
   check("End key reaches the last virtual row", endState);
 
+  // 网格视图同样只保留视口附近的卡片，上下 padding 撑高滚动区。
+  await page.locator('button[aria-label="网格视图"]').click();
+  await page.waitForTimeout(600);
+  await scrollListTo(page, "top");
+  await page.waitForTimeout(450);
+  const gridTop = await page.evaluate(() => {
+    const grid = document.querySelector(".file-grid");
+    return {
+      cards: document.querySelectorAll(".file-card").length,
+      first: document.querySelector(".file-card")?.getAttribute("data-vfiles-path"),
+      padBottom: grid ? getComputedStyle(grid).paddingBottom : "0px",
+    };
+  });
+  await scrollListTo(page, "bottom");
+  await page.waitForTimeout(450);
+  const gridBottom = await page.evaluate(() => {
+    const grid = document.querySelector(".file-grid");
+    return {
+      cards: document.querySelectorAll(".file-card").length,
+      last: [...document.querySelectorAll(".file-card")]
+        .at(-1)
+        ?.getAttribute("data-vfiles-path"),
+      padTop: grid ? getComputedStyle(grid).paddingTop : "0px",
+    };
+  });
+  check(
+    "grid renders a window and both ends",
+    gridTop.cards > 0 &&
+      gridTop.cards < 100 &&
+      gridBottom.cards > 0 &&
+      gridBottom.cards < 100 &&
+      gridTop.first?.includes("项目库") &&
+      gridBottom.last?.includes("报告-150") &&
+      Number.parseFloat(gridTop.padBottom) > 0 &&
+      Number.parseFloat(gridBottom.padTop) > 0,
+    JSON.stringify({ gridTop, gridBottom }),
+  );
+
   // 7) axe：主要页面 serious/critical 违规为 0。
   const pages = [
     ["/", ".file-browser-box"],
@@ -470,6 +508,50 @@ async function main() {
     ["/", ".file-browser-box"],
     ["/admin/users", "table"],
   ]);
+
+  // 移动端网格：切换为网格后滚动加载全部 150 条，仍只渲染窗口卡片。
+  await mobilePage.evaluate(() => {
+    localStorage.setItem(
+      "vfiles:file-browser:view",
+      JSON.stringify({
+        mode: "grid",
+        sortField: "name",
+        sortDirection: "asc",
+        foldersFirst: true,
+        thumbnailSize: 144,
+        detailsVisible: false,
+        density: "comfortable",
+        libraryCards: false,
+      }),
+    );
+  });
+  await mobilePage.goto(`${base}/`, { waitUntil: "networkidle" });
+  await mobilePage.reload({ waitUntil: "networkidle" });
+  await mobilePage.waitForSelector(".file-grid", { timeout: 10000 });
+  for (let i = 0; i < 10; i += 1) {
+    await mobilePage.evaluate(() =>
+      window.scrollTo(0, document.body.scrollHeight),
+    );
+    await mobilePage.waitForTimeout(550);
+  }
+  const mobileGrid = await mobilePage.evaluate(() => {
+    const grid = document.querySelector(".file-grid");
+    return {
+      cards: document.querySelectorAll(".file-card").length,
+      last: [...document.querySelectorAll(".file-card")]
+        .at(-1)
+        ?.getAttribute("data-vfiles-path"),
+      padTop: grid ? getComputedStyle(grid).paddingTop : "0px",
+    };
+  });
+  check(
+    "mobile grid windows cards too",
+    mobileGrid.cards > 0 &&
+      mobileGrid.cards < 100 &&
+      mobileGrid.last?.includes("报告-150") &&
+      Number.parseFloat(mobileGrid.padTop) > 0,
+    JSON.stringify(mobileGrid),
+  );
   await mobileContext.close();
 
   check(
