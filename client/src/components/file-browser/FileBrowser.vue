@@ -656,6 +656,7 @@ import {
 } from "../../composables/useFileSearch";
 import { createFileBrowserKeyboard } from "../../composables/useFileBrowserKeyboard";
 import { useDirectoryNavigation } from "../../composables/useDirectoryNavigation";
+import { useFileRename } from "../../composables/useFileRename";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
@@ -671,7 +672,6 @@ import {
   type SortField,
   type SortState,
 } from "../../utils/fileSort";
-import { buildSiblingPath, isSafeDirName } from "../../utils/filePaths";
 import {
   firstScopeRoot,
   isPathWithinRoots,
@@ -838,7 +838,6 @@ function closeUploader() {
 }
 const showDetailsDialog = ref(false);
 /** 正在内联重命名的条目路径（空字符串表示没有）。 */
-const renamingPath = ref("");
 /** 工具栏上的上传进度：有队列时显示「上传中 x/y」，点击打开上传对话框。 */
 const uploadIndicator = computed(() => {
   const summary = fileUploaderRef.value?.summary;
@@ -1181,6 +1180,8 @@ const {
   },
 });
 
+const desktopActivePath = ref("");
+
 const {
   showMoveDialog,
   moveDialogItems,
@@ -1235,8 +1236,23 @@ const {
   refresh,
   doSearch,
   openMoveDialog,
-  renameEntry: handleRenameEntry,
+  renameEntry: (file) => handleRenameEntry(file),
   enqueueDownload: (kind, path) => enqueueDownload(kind, path),
+});
+
+const {
+  renamingPath,
+  handleRenameEntry,
+  commitRenameEntry,
+  cancelRenameEntry,
+} = useFileRename({
+  canWrite,
+  desktopActivePath,
+  replaceSelectedPath,
+  renameEntryPath,
+  refreshAfterMutation,
+  notifySuccess: (message) => appStore.success(message),
+  notifyError: (message) => appStore.error(message),
 });
 
 const {
@@ -1406,18 +1422,6 @@ onBeforeUnmount(() => {
   closePreview();
 });
 
-function normalizeEntryName(
-  rawName: string,
-  invalidMessage: string,
-): string | null {
-  const name = rawName.trim();
-  if (!isSafeDirName(name)) {
-    appStore.error(invalidMessage);
-    return null;
-  }
-  return name;
-}
-
 // 4.2: 大数据目录的分批渲染（桌面与移动端通用）
 const INITIAL_VISIBLE_COUNT = 40;
 const VISIBLE_CHUNK_COUNT = 30;
@@ -1511,7 +1515,6 @@ const desktopItems = computed(() =>
     : navigationListItems.value
   ).slice(0, visibleCount.value),
 );
-const desktopActivePath = ref("");
 
 // 文件列表重新加载（上传/删除/重命名/移动/切换目录）后刷新侧栏概览
 // 移动端底栏的「新建文件夹」：在当前位置打开创建对话框
@@ -1759,48 +1762,6 @@ async function createDirectoryHere() {
 function quickLook() {
   const active = findActiveItem();
   if (active) openPreview(active.path);
-}
-
-/** 打开内联重命名（F2 / 右键菜单 / 行内按钮）；同时把该行设为活动行。 */
-function handleRenameEntry(file: FileInfo) {
-  if (!canWrite.value) return;
-  desktopActivePath.value = file.path;
-  renamingPath.value = file.path;
-}
-
-/** 提交内联重命名：校验名称后调用重命名接口。 */
-async function commitRenameEntry(file: FileInfo, rawName: string) {
-  renamingPath.value = "";
-  if (!rawName) return;
-
-  const name = normalizeEntryName(rawName, "非法名称");
-  if (!name) return;
-  if (name === file.name) {
-    appStore.error("名称未变化");
-    return;
-  }
-
-  try {
-    const to = await renameEntryPath(
-      file.path,
-      name,
-      `重命名${file.kind === "directory" ? "目录" : "项目"}: ${file.path} -> ${buildSiblingPath(file.path, name)}`,
-    );
-    replaceSelectedPath(file.path, to);
-    if (desktopActivePath.value === file.path) {
-      desktopActivePath.value = to;
-    }
-    appStore.success(
-      `已重命名为「${to.split("/").filter(Boolean).pop() ?? to}」`,
-    );
-    await refreshAfterMutation();
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : "重命名失败");
-  }
-}
-
-function cancelRenameEntry() {
-  renamingPath.value = "";
 }
 
 function handleMoveEntry(file: FileInfo) {
