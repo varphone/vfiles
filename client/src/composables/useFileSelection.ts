@@ -211,18 +211,31 @@ export function useFileSelection(deps: FileSelectionDeps) {
     });
     if (!ok) return;
 
-    try {
-      for (const file of items) {
+    // 逐项删除：单项失败不再中断整批，结束后汇总「成功 N / 失败 M」，
+    // 否则第 37 项失败会让后 160 项静默跳过，用户不知道删了哪些。
+    const failed: string[] = [];
+    for (const file of items) {
+      try {
         await filesService.deleteFile(file.path, "批量删除");
+      } catch (err) {
+        failed.push(err instanceof Error ? err.message : file.path);
       }
-      appStore.success("批量删除完成");
-      clearSelection();
-      await deps.refresh();
-      if (deps.searchActive.value) {
-        await deps.doSearch(false);
-      }
-    } catch (err) {
-      appStore.error(err instanceof Error ? err.message : "批量删除失败");
+    }
+
+    if (failed.length === 0) {
+      appStore.success(`已删除 ${items.length} 项`);
+    } else if (failed.length === items.length) {
+      appStore.error(`批量删除失败：${failed[0]}`);
+    } else {
+      appStore.warning(
+        `已删除 ${items.length - failed.length} 项，${failed.length} 项失败（${failed[0]}）`,
+      );
+    }
+
+    clearSelection();
+    await deps.refresh();
+    if (deps.searchActive.value) {
+      await deps.doSearch(false);
     }
   }
 
