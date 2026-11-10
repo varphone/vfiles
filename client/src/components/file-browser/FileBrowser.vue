@@ -646,6 +646,7 @@ import { useSharedPaths } from "../../composables/useSharedPaths";
 import { useWindowDropTarget } from "../../composables/useWindowDropTarget";
 import { useFileBrowserScope } from "../../composables/useFileBrowserScope";
 import { useFileBrowserItemActions } from "../../composables/useFileBrowserItemActions";
+import { useFileBrowserOverlays } from "../../composables/useFileBrowserOverlays";
 import { useFileBrowserRowNavigation } from "../../composables/useFileBrowserRowNavigation";
 import { useFileBrowserList } from "../../composables/useFileBrowserList";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
@@ -1217,7 +1218,7 @@ const {
   onTouchEnd,
 } = useTouchGestures({
   enabled: isMobile,
-  isBlocked: anyOverlayOpen,
+  isBlocked: () => anyOverlayOpen(),
   refresh,
   goBack,
 });
@@ -1300,40 +1301,25 @@ defineExpose({
   searchLoading,
 });
 
-function anyOverlayOpen(): boolean {
-  return (
-    contextMenu.value.show ||
-    preview.value.open ||
-    showShortcuts.value ||
-    showUploader.value ||
-    showHistory.value ||
-    showShareDialog.value ||
-    showMoveDialog.value ||
-    showDetailsDialog.value ||
-    showTransferDialog.value ||
-    dirManagerOpen.value ||
-    // 全局确认框也盖住列表：弹着时 Delete/F2 不能穿透到后台行。
-    // 用 DOM 判定而不是 dialogState，避免上一个对话框未结算时的模块级残留。
-    document.querySelector(".modal.is-active") !== null
-  );
-}
-
-/** 当前键盘操作的目标：优先高亮行，其次唯一的已选条目。 */
-/**
- * 行内复选框：即使不在「批量选择」模式，勾选一项也应立刻出现操作条
- * （与主流网盘一致：勾选即进入选择态，不必先点工具栏按钮）。
- */
-/** 分享对话框关闭后强制刷新徽标集合（期间可能新建或停止分享）。 */
-function closeShareAndRefresh() {
-  closeShareDialog();
-  void loadSharedPaths(true);
-}
-
-/** 内容搜索无结果时，一键改用文件名搜索（保留关键字与范围）。 */
 function switchToNameSearch() {
   searchContent.value = false;
   void runDesktopSearch();
 }
+
+const { anyOverlayOpen, closeShareAndRefresh } = useFileBrowserOverlays({
+  contextMenu,
+  previewOpen: computed(() => preview.value.open),
+  showShortcuts,
+  showUploader,
+  showHistory,
+  showShareDialog,
+  showMoveDialog,
+  showDetailsDialog,
+  showTransferDialog,
+  dirManagerOpen,
+  closeShareDialog,
+  loadSharedPaths,
+});
 
 useFileBrowserHotkeys({
   viewMenuOpen,
