@@ -489,6 +489,11 @@ class AuthService {
     return apiService.post("/auth/logout");
   }
 
+  /** 更新个人邮箱（仅主密码会话）。 */
+  updateProfile(email: string): Promise<ApiResponse<{ email: string }>> {
+    return apiService.post("/auth/profile", { email });
+  }
+
   /** 修改主密码；成功后服务端会撤销该账号的全部会话。 */
   changePassword(
     currentPassword: string,

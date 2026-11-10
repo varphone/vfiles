@@ -26,6 +26,12 @@ const MAX_LOGIN_IDENTIFIER_LOG_CHARS: usize = 254;
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpdateProfileRequest {
+    pub email: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChangePasswordRequest {
     pub current_password: String,
     pub new_password: String,
@@ -43,6 +49,7 @@ pub fn router() -> Router<AppState> {
             "/password",
             post(change_password).layer(DefaultBodyLimit::max(MAX_LOGIN_BODY_BYTES)),
         )
+        .route("/profile", post(update_profile))
         .route("/me", get(me))
         .route(
             "/credentials",
@@ -250,6 +257,35 @@ pub async fn logout(
         jar,
         Json(serde_json::json!({ "message": "Logged out successfully" })),
     ))
+}
+
+/// 自助更新邮箱：仅全量会话可用。
+pub async fn update_profile(
+    jar: CookieJar,
+    axum::extract::State(state): axum::extract::State<AppState>,
+    headers: HeaderMap,
+    ApiJson(req): ApiJson<UpdateProfileRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let auth_service =
+        state
+            .auth_service
+            .as_ref()
+            .ok_or(ApiError::Domain(DomainError::Authentication {
+                message: "Authentication not enabled".to_string(),
+            }))?;
+    let ctx = crate::routes::primary_request_context(&state, &jar).await?;
+    let email = req.email.trim().to_string();
+    auth_service
+        .update_own_email(&ctx.actor_user_id, &email)
+        .await?;
+    crate::audit::record_for(
+        &state,
+        &headers,
+        &ctx,
+        NewAuditLog::success(crate::audit::action::PROFILE_UPDATE).detail("更新个人邮箱"),
+    )
+    .await;
+    Ok(Json(json!({ "success": true, "data": { "email": email } })))
 }
 
 /// 自助修改主密码：仅全量会话可用；成功后该账号的所有会话失效。

@@ -129,6 +129,14 @@
                   class="dropdown-item"
                   role="menuitem"
                   href="#"
+                  @click.prevent="openProfile"
+                >
+                  个人资料
+                </a>
+                <a
+                  class="dropdown-item"
+                  role="menuitem"
+                  href="#"
                   @click.prevent="openChangePassword"
                 >
                   修改密码
@@ -163,6 +171,7 @@
       :show="showChangePassword"
       @close="showChangePassword = false"
     />
+    <ProfileDialog :show="showProfile" @close="showProfile = false" />
   </header>
 </template>
 
@@ -182,6 +191,7 @@ import NotificationCenter from "../common/NotificationCenter.vue";
 import ThemeToggle from "../common/ThemeToggle.vue";
 import UnifiedSearch from "./UnifiedSearch.vue";
 import ChangePasswordDialog from "../auth/ChangePasswordDialog.vue";
+import ProfileDialog from "../auth/ProfileDialog.vue";
 import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 
@@ -211,6 +221,7 @@ const accountMenuOpen = ref(false);
 const accountMenuRef = ref<HTMLElement | null>(null);
 const searchOpen = ref(false);
 const showChangePassword = ref(false);
+const showProfile = ref(false);
 
 const shareEnabled = computed(() => auth.features?.shareEnabled !== false);
 
@@ -281,6 +292,11 @@ function openSearch() {
 
 function closeSearch() {
   searchOpen.value = false;
+}
+
+function openProfile() {
+  closeAccountMenu();
+  showProfile.value = true;
 }
 
 function openChangePassword() {

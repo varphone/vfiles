@@ -1626,6 +1626,19 @@ impl AuthService {
         self.session_repo.revoke_session(&session.id).await
     }
 
+    /// 自助更新邮箱：校验格式与唯一性后写入。
+    pub async fn update_own_email(&self, user_id: &UserId, email: &str) -> DomainResult<()> {
+        let email = vfiles_domain::EmailAddress::new(email)?;
+        if let Ok(existing) = self.user_repo.find_by_email(&email).await
+            && existing.id != *user_id
+        {
+            return Err(DomainError::Conflict {
+                message: "Email already exists".to_string(),
+            });
+        }
+        self.user_repo.update_email(user_id, &email).await
+    }
+
     /// 自助修改主密码：校验当前密码、写入新哈希并撤销该用户的全部会话。
     ///
     /// 撤销会话是安全默认：旧密码泄露时，已签发的 cookie/凭据不能继续使用；
@@ -6462,6 +6475,33 @@ mod tests {
         assert!(outcomes.1);
         assert_eq!(outcomes.2, Ok(9));
         assert_eq!(outcomes.3, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn update_own_email_validates_and_persists() {
+        let context = TestContext::new().await;
+        assert!(matches!(
+            context
+                .auth_service
+                .update_own_email(&context.user_id, "not-an-email")
+                .await,
+            Err(DomainError::Validation { .. })
+        ));
+
+        context
+            .auth_service
+            .update_own_email(&context.user_id, "new@example.com")
+            .await
+            .expect("email should update");
+        let user = context
+            .user_repo
+            .find_by_id(&context.user_id)
+            .await
+            .expect("user should load");
+        assert_eq!(
+            user.email.as_ref().map(|email| email.as_str()),
+            Some("new@example.com")
+        );
     }
 
     #[tokio::test]

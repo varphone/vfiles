@@ -401,6 +401,7 @@ const ACTION_LABELS: Record<string, string> = {
   "login.failure": "登录失败",
   "auth.logout": "退出登录",
   "auth.password_change": "修改密码",
+  "auth.profile_update": "更新资料",
   "credential.create": "创建访问密码",
   "credential.update": "更新访问密码",
   "credential.delete": "删除访问密码",

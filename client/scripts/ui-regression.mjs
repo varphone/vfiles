@@ -232,6 +232,23 @@ async function main() {
     viewMenuOpened && viewMenuClosed,
   );
 
+  // 账号菜单 → 个人资料：确认独立对话框的入口与 Escape 关闭。
+  await page.locator(".app-header-account").click();
+  await page.locator('.dropdown-item:has-text("个人资料")').click();
+  const profileOpened = await waitFor(
+    async () =>
+      (await page.locator(".modal.is-active .modal-card").count()) === 1 &&
+      (await page.locator(".modal.is-active").innerText()).includes("个人资料"),
+  );
+  await page.keyboard.press("Escape");
+  const profileClosed = await waitFor(
+    async () => (await page.locator(".modal.is-active").count()) === 0,
+  );
+  check(
+    "profile dialog opens from the account menu",
+    profileOpened && profileClosed,
+  );
+
   // 账号菜单 → 修改密码：确认独立对话框的入口与 Escape 关闭。
   await page.locator(".app-header-account").click();
   await page.locator('.dropdown-item:has-text("修改密码")').click();
