@@ -183,7 +183,11 @@
 
 .button.is-link,
 .button.is-primary,
-.vf-ghost-button.is-primary,
+.vf-ghost-button.is-primary {
+  background: var(--vf-accent-fill);
+  color: var(--vf-on-accent);
+  box-shadow: none;
+}
 
 .button.is-link:hover,
 .button.is-primary:hover,
