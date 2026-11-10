@@ -2,6 +2,10 @@
   <div
     class="modal"
     :class="{ 'is-active': show, 'is-overlay-layer': layer === 'overlay' }"
+    :role="show ? 'dialog' : undefined"
+    :aria-modal="show ? 'true' : undefined"
+    :aria-labelledby="show ? titleId : undefined"
+    :aria-hidden="show ? undefined : 'true'"
   >
     <div class="modal-background" @click="close"></div>
     <div
@@ -12,8 +16,8 @@
       @keydown.tab="trapTab"
     >
       <header class="modal-card-head">
-        <p class="modal-card-title">{{ title }}</p>
-        <button class="delete" aria-label="close" @click="close"></button>
+        <p :id="titleId" class="modal-card-title">{{ title }}</p>
+        <button class="delete" aria-label="关闭" @click="close"></button>
       </header>
       <section class="modal-card-body">
         <slot></slot>
@@ -26,10 +30,12 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
 
 // 焦点管理（r131 ✓ W3C 对话框模式：移入/Tab 循环/归还）
 const cardRef = ref<HTMLElement | null>(null);
+// 每个对话框一个稳定 id：标题用 aria-labelledby 关联，读屏能念出对话框名称。
+const titleId = `modal-title-${useId()}`;
 let previousActive: HTMLElement | null = null;
 
 const FOCUSABLE =
