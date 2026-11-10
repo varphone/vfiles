@@ -643,16 +643,15 @@ import { useDragChip } from "../../composables/useDragChip";
 import { useFileContextMenu } from "../../composables/useFileContextMenu";
 import { useFileBrowserView } from "../../composables/useFileBrowserView";
 import { useProgressiveList } from "../../composables/useProgressiveList";
+import { useFileBrowserList } from "../../composables/useFileBrowserList";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
 import { columnsFromElements } from "../../utils/gridLayout";
-import { fileIconKind } from "../../utils/filePresentation";
 import { useMoveDialog } from "../../composables/useMoveDialog";
 import { useTouchGestures } from "../../composables/useTouchGestures";
 import { useFilesSidebarControl } from "../../composables/useFilesSidebar";
 import type { FileInfo } from "../../types";
-import { sortBrowserItems, sortFiles } from "../../utils/fileSort";
 import {
   firstScopeRoot,
   isPathWithinRoots,
@@ -1279,68 +1278,29 @@ onBeforeUnmount(() => {
   closePreview();
 });
 
-/** 目录列表（不含 `.`/`..` 之类的合成条目，导航交给面包屑/目录树/上一级按钮）。 */
-const navigationListItems = computed<FileInfo[]>(() =>
-  sortBrowserItems(files.value, sortState.value),
-);
-
-/**
- * 命名空间根目录的 Seafile 式「我的资料库」卡片首页。
- *
- * 仅在根路径、非历史快照浏览、未搜索、无加载/错误且偏好开启时启用；
- * 受限会话被重定向到范围根（currentPath 非空）时自然回退到原有列表，
- * 根路径若返回 403 则由 error 分支继续展示原有错误界面。
- */
-const showLibraryCards = computed(
-  () =>
-    currentPath.value === "" &&
-    !browseCommit.value &&
-    fileView.libraryCards &&
-    !searchActive.value &&
-    !loading.value &&
-    !error.value &&
-    (!isRestricted.value || scopeRoots.value.length === 0),
-);
-
-/** 根目录卡片只取一级子目录，并跟随列表当前的排序偏好。 */
-const libraryDirectories = computed(() =>
-  navigationListItems.value.filter((file) => file.kind === "directory"),
-);
-
-/** 搜索结果按图标分类归入筛选桶（与搜索工具条的 chips 口径一致）。 */
-function searchResultBucket(file: FileInfo): SearchResultFilter {
-  switch (fileIconKind(file)) {
-    case "folder":
-      return "folder";
-    case "image":
-      return "image";
-    case "video":
-      return "video";
-    case "audio":
-      return "audio";
-    case "text":
-    case "code":
-    case "pdf":
-      return "document";
-    default:
-      return "other";
-  }
-}
-
-const filteredSearchResults = computed<FileInfo[]>(() => {
-  if (resultFilter.value === "all") return searchResults.value;
-  return searchResults.value.filter(
-    (file) => searchResultBucket(file) === resultFilter.value,
-  );
+const {
+  navigationListItems,
+  showLibraryCards,
+  libraryDirectories,
+  sortedSearchResults,
+  activeList,
+  knownTotal,
+} = useFileBrowserList({
+  files,
+  sortState,
+  searchActive,
+  searchResults,
+  resultFilter,
+  currentPath,
+  browseCommit,
+  libraryCards: computed(() => fileView.libraryCards),
+  loading,
+  error,
+  isRestricted,
+  scopeRoots,
+  totalFiles: computed(() => filesStore.totalFiles),
 });
 
-const sortedSearchResults = computed<FileInfo[]>(() => {
-  return sortFiles(filteredSearchResults.value, sortState.value);
-});
-
-const activeList = computed(() =>
-  searchActive.value ? sortedSearchResults.value : navigationListItems.value,
-);
 const {
   visibleCount,
   hasMore,
@@ -1358,10 +1318,7 @@ const {
       `${filesStore.currentPath}|${searchActive.value}|${searchQuery.value}|${searchResults.value.length}`,
   ),
 });
-// 当前目录的已知条目总数（含 "." 与 ".." 两个虚拟条目），用于进度提示。
-const knownTotal = computed(() =>
-  searchActive.value ? activeList.value.length : filesStore.totalFiles + 2,
-);
+
 const visibleFiles = computed(() =>
   navigationListItems.value.slice(0, visibleCount.value),
 );
@@ -1369,10 +1326,7 @@ const visibleSearchResults = computed(() =>
   sortedSearchResults.value.slice(0, visibleCount.value),
 );
 const desktopItems = computed(() =>
-  (searchActive.value
-    ? sortedSearchResults.value
-    : navigationListItems.value
-  ).slice(0, visibleCount.value),
+  activeList.value.slice(0, visibleCount.value),
 );
 
 // 文件列表重新加载（上传/删除/重命名/移动/切换目录）后刷新侧栏概览
