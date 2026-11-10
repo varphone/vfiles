@@ -4,7 +4,7 @@
 
 **验证基线**：601 个客户端用例、24 项浏览器回归（含深色/移动 axe）、10 张像素 golden、52 张 `ui:sweep` 截图、布局尺寸基线 0 漂移、`strictTemplates` 全绿、Rust fmt/clippy/测试通过。
 
-## 已完成（截至 c6f2ee5）
+## 已完成（截至 3a1f0c9）
 
 - **功能**：移动端批量条（ref 解包）、缩略图 watcher 泄漏、选择态跨目录泄漏、确认框 Promise 悬挂、批量删除部分失败汇总、批量下载走队列。
 - **可访问性**：页面缩放、对话框 `role/aria-modal/aria-labelledby`、Esc 只关最上层、Tab 焦点回收、4 个输入框标签、辅助文本对比度达 AA（浅 4.99:1 / 深 5.76:1）。
@@ -29,48 +29,80 @@
 - **布局基线**：`ui:regression` 在 1440×900 与 390×844 采集顶栏/侧栏/内容区/工具栏/列表/状态栏/首行等盒子，与 `tests/fixtures/ui-layout.json` 以 3px 容差比较；`UPDATE_LAYOUT=1` 重新生成（95fbfa2）。
 - **菜单语义**：移动端批量菜单的三项补 `role="menuitem"`/`aria-disabled`，触发器 `aria-haspopup="menu"`（本轮）。
 - **管理台可访问性**：用户卡片头改为真正的 button 语义（role/tabindex/Enter/Space/aria-haspopup、视觉隐藏「查看详情」），头像改为装饰性生成内容；桌面行补 aria-label 与 Space；面包屑当前段加 `aria-current="page"`（3f50042）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：目录排序、资料库卡片、搜索筛选与合并列表抽为 `useFileBrowserList`；`FileBrowser` 降至约 2054 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：本地分批/服务端分页的可见窗口与哨兵加载抽为 `useProgressiveList`；`FileBrowser` 降至约 2100 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：目录排序、资料库卡片、搜索筛选与合并列表抽为 `useFileBrowserList`；`FileBrowser` 降至约 2054 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：视图层状态（移动断点/排序/列表网格/根视图菜单）抽为 `useFileBrowserView`，并用 `useMediaQuery` 替代手写监听（73aac11）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：目录排序、资料库卡片、搜索筛选与合并列表抽为 `useFileBrowserList`；`FileBrowser` 降至约 2054 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：本地分批/服务端分页的可见窗口与哨兵加载抽为 `useProgressiveList`；`FileBrowser` 降至约 2100 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：目录排序、资料库卡片、搜索筛选与合并列表抽为 `useFileBrowserList`；`FileBrowser` 降至约 2054 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：右键/行菜单与收藏状态抽为 `useFileContextMenu`（215d272）；`FileBrowser` 降至约 2240 行。
 - **像素基线**：`ui:visual` 使用固定夹具/固定 DB 时间戳/冻结时钟/固定主题与视口，对登录、文件列表（明暗）、网格、移动端（明暗）、管理台用户、空令牌页、统一搜索、右键菜单共 10 张截图做 pixelmatch 比对；CI 安装 Noto CJK 后执行，goldens 已提交（601a849）。
 - **类型与契约**：开启 `strictTemplates`，修复 73 个模板类型错误；顺带补 `AdminOverview` 的 `SkeletonList` 导入、`MobileSearchBar` 的 `enter-results`/ArrowDown、桌面内容区的重命名绑定，并让 `FileBrowserCollection` 声明/转发完整事件契约（6485dc6）。
 - **首屏占位**：`index.html` 增加主题化启动骨架（含 reduced-motion 回退），Vue 挂载后替换，覆盖 Home chunk 加载前的空白窗口（5e71ddd）。
 - **构建体积**：删除 `prefers-color-scheme` 的那份深色变量（theme-init 已保证显式 `data-theme`，并补隐私模式回退）；Tabler 图标从 19 个小 chunk 合并为 1 个（47bf5ba）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：目录排序、资料库卡片、搜索筛选与合并列表抽为 `useFileBrowserList`；`FileBrowser` 降至约 2054 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：本地分批/服务端分页的可见窗口与哨兵加载抽为 `useProgressiveList`；`FileBrowser` 降至约 2100 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：目录排序、资料库卡片、搜索筛选与合并列表抽为 `useFileBrowserList`；`FileBrowser` 降至约 2054 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：视图层状态（移动断点/排序/列表网格/根视图菜单）抽为 `useFileBrowserView`，并用 `useMediaQuery` 替代手写监听（73aac11）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：目录排序、资料库卡片、搜索筛选与合并列表抽为 `useFileBrowserList`；`FileBrowser` 降至约 2054 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：本地分批/服务端分页的可见窗口与哨兵加载抽为 `useProgressiveList`；`FileBrowser` 降至约 2100 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：目录排序、资料库卡片、搜索筛选与合并列表抽为 `useFileBrowserList`；`FileBrowser` 降至约 2054 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：预览动作（复制/下载/在文件夹显示/当前预览条目）抽为 `usePreviewActions`；`FileBrowser` 降至约 2019 行（本轮）。
+- **结构（进行中）**：文档级键盘/外部点击编排抽为 `useFileBrowserHotkeys`；`FileBrowser` 降至约 2002 行（本轮）。
 - **结构（进行中）**：详情面板容器与事件桥抽为 `FileBrowserDetailsPanel`；主组件模板已由工具栏/内容/状态栏/详情/弹窗组件组成，剩余主要是状态与编排脚本（本轮）。
 拖放落子与 650ms 回执也并入 `useDragChip`（本轮）。拖拽光标 chip（状态/目标判定/坐标/监听生命周期）抽为 `useDragChip`（6bbe05e）。所有权转移（状态/上限/提交/失败恢复）抽为 `useFileTransfer`（d155fa5）。上传队列 UI 状态（对话框/选择器/进度胶囊/拖放入队）抽为 `useFileUpload`（1e5cc0b）。条目动作与弹窗状态（删除/新建/移动/分享/历史/详情）抽为 `useFileActions`（ede96c6）。行内重命名（状态/校验/请求/刷新）抽为 `useFileRename`（ccac3e7）。桌面内容区（加载/错误/资料库/空态/搜索/列表与加载更多 slot）抽为 `FileBrowserDesktopContent`（ac32317）。桌面状态栏抽为 `FileBrowserStatusBar`（摘要/提示/选择/定位/快捷键入口，8bf5724）；移动端内容区（加载/错误/资料库/空态/搜索/列表与加载更多 slot）抽为 `FileBrowserMobileContent`（633eb48）。工具栏右侧的版本切换抽为 `FileBrowserHistoryControls`，列表/网格/排序/详情控制抽为 `FileBrowserViewControls`（8fdff03）；根视图「全部文件」菜单抽为 `FileBrowserViewMenu`，父层保留 `viewMenuOpen` 供 Escape 关闭（41d250b）；工具栏左侧的侧栏开关/写入口/范围徽标与面包屑/菜单切换抽为 `FileBrowserToolbarLeading`、`FileBrowserToolbarHeading`（b189c26）。文件浏览器的历史/分享/详情/转移/快捷键/预览覆盖层抽离为 `FileBrowserDialogs`，用显式 props/emits 连接，转移失败路径通过 `finishTransfer` 暴露；新增组件契约测试（1530b9e）。键盘处理与输入/控件判定抽离为 `useFileBrowserKeyboard`，主组件通过依赖注入连接（fc773b7）。目录导航、范围守卫、403/范围回退与滚动记忆抽离为 `useDirectoryNavigation`（88429df）。列表/网格的三处重复接线收敛为 `FileBrowserCollection`（4acd50c）。
 
 ## 后续（非本次缺陷）
 
 ### A. `FileBrowser` 剩余编排（可选）
-[FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 约 2019 行；模板已拆成工具栏、内容、状态栏、详情与弹窗组件，脚本侧也抽出了键盘、导航、选择、上传、转移、拖放、重命名、条目动作等 composable。剩余是核心状态与跨模块编排，进一步拆分收益低于风险。
+[FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 约 2002 行；模板已拆成工具栏、内容、状态栏、详情与弹窗组件，脚本侧也抽出了键盘、导航、选择、上传、转移、拖放、重命名、条目动作等 composable。剩余是核心状态与跨模块编排，进一步拆分收益低于风险。
 
 **做法**：只有在新增功能触及时再拆；保持 `FileList`/`FileGrid`/`useVirtualWindow` 的滚动契约与 `useDirectoryNavigation` 的导航单点。
 
