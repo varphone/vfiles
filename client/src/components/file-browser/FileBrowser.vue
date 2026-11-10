@@ -626,7 +626,6 @@ import ContextMenu from "./ContextMenu.vue";
 import MoveDialog from "./MoveDialog.vue";
 import FileUploader from "../file-uploader/FileUploader.vue";
 import Modal from "../common/Modal.vue";
-import { copyText } from "../../utils/clipboard";
 import { useDownloadQueue } from "../../composables/useDownloadQueue";
 import { useFilePreview } from "../../composables/useFilePreview";
 import {
@@ -643,6 +642,7 @@ import { useDragChip } from "../../composables/useDragChip";
 import { useFileContextMenu } from "../../composables/useFileContextMenu";
 import { useFileBrowserView } from "../../composables/useFileBrowserView";
 import { useProgressiveList } from "../../composables/useProgressiveList";
+import { usePreviewActions } from "../../composables/usePreviewActions";
 import { useFileBrowserList } from "../../composables/useFileBrowserList";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
@@ -866,60 +866,6 @@ const { dragging: externalDropActive } = useWindowFileDrop({
   enabled: () => !anyDialogOpen.value && canWrite.value,
 });
 
-/** 代码/文本预览支持一键复制原文，复制结果在按钮上就地反馈。 */
-const previewCopyState = ref<"idle" | "done" | "failed">("idle");
-const canCopyPreview = computed(
-  () =>
-    (preview.value.kind === "code" || preview.value.kind === "text") &&
-    !preview.value.loading &&
-    !preview.value.error &&
-    preview.value.text.length > 0,
-);
-
-/** 当前预览的条目：用于顶栏图标、大小与「下载 / 所在文件夹」入口。 */
-const previewFile = computed<FileInfo | null>(() => {
-  const path = preview.value.path;
-  if (!path) return null;
-  return (
-    [...files.value, ...searchResults.value].find(
-      (item) => item.path === path,
-    ) ?? null
-  );
-});
-
-function downloadPreviewedFile() {
-  const file = previewFile.value;
-  if (file) handleDownload(file);
-}
-
-/** 打开所在文件夹并高亮该文件（主流预览器的「在文件夹中显示」）。 */
-async function revealPreviewedFile() {
-  const file = previewFile.value;
-  if (!file) return;
-  const slash = file.path.lastIndexOf("/");
-  const parent = slash > 0 ? file.path.slice(0, slash) : "";
-
-  closePreview();
-  if (searchActive.value) clearSearch();
-  await filesStore.loadFiles(parent);
-  desktopActivePath.value = file.path;
-}
-
-async function copyPreviewContent() {
-  const ok = await copyText(preview.value.text);
-  previewCopyState.value = ok ? "done" : "failed";
-  window.setTimeout(() => {
-    previewCopyState.value = "idle";
-  }, 2000);
-}
-
-watch(
-  () => preview.value.path,
-  () => {
-    previewCopyState.value = "idle";
-  },
-);
-
 /** 预览导航使用的文件列表，跟随当前视图（目录或搜索结果）。 */
 const previewableFiles = computed<FileInfo[]>(() =>
   (searchActive.value
@@ -962,6 +908,27 @@ function setDesktopSearchInput(el: Element | { $el?: Element } | null) {
   const element = el instanceof HTMLInputElement ? el : null;
   desktopSearchInputRef.value = element;
 }
+
+const {
+  previewCopyState,
+  canCopyPreview,
+  previewFile,
+  downloadPreviewedFile,
+  revealPreviewedFile,
+  copyPreviewContent,
+} = usePreviewActions({
+  preview,
+  files,
+  searchResults,
+  closePreview,
+  searchActive,
+  clearSearch,
+  loadFiles: (path) => filesStore.loadFiles(path),
+  setActivePath: (path) => {
+    desktopActivePath.value = path;
+  },
+  handleDownload,
+});
 
 const {
   navigateTo,
