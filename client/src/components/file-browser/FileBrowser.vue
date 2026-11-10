@@ -632,7 +632,6 @@ import {
   useFileSearch,
   type SearchResultFilter,
 } from "../../composables/useFileSearch";
-import { createFileBrowserKeyboard } from "../../composables/useFileBrowserKeyboard";
 import { useDirectoryNavigation } from "../../composables/useDirectoryNavigation";
 import { useFileRename } from "../../composables/useFileRename";
 import { useFileActions } from "../../composables/useFileActions";
@@ -643,6 +642,7 @@ import { useFileContextMenu } from "../../composables/useFileContextMenu";
 import { useFileBrowserView } from "../../composables/useFileBrowserView";
 import { useProgressiveList } from "../../composables/useProgressiveList";
 import { usePreviewActions } from "../../composables/usePreviewActions";
+import { useFileBrowserHotkeys } from "../../composables/useFileBrowserHotkeys";
 import { useFileBrowserList } from "../../composables/useFileBrowserList";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
@@ -1187,58 +1187,6 @@ function resolvedEntryPath(): string {
 
 onMounted(() => {
   filesStore.loadFiles(resolvedEntryPath());
-
-  const onDocPointer = (e: MouseEvent | TouchEvent) => {
-    const target = e.target as Node | null;
-    if (!target) return;
-
-    if (desktopSearchOpen.value) {
-      const searchBox = desktopSearchBoxRef.value;
-      if (searchBox && !searchBox.contains(target)) closeDesktopSearch();
-    }
-
-  };
-
-  const onDocKeydown = createFileBrowserKeyboard({
-    viewMenuOpen,
-    typeAheadPrefix,
-    clearTypeAhead,
-    desktopSearchOpen,
-    closeDesktopSearch,
-    previewOpen: computed(() => preview.value.open),
-    closePreview,
-    prevPreview,
-    nextPreview,
-    showShortcuts,
-    batchMode,
-    toggleBatchMode,
-    selectedPaths,
-    clearSelection,
-    canWrite,
-    selectAllVisible,
-    batchDelete,
-    findActiveItem,
-    handleDelete,
-    moveActiveRow,
-    toggleActiveRowSelection,
-    quickLook,
-    handleTypeAhead,
-    openRowContextMenu,
-    renameSelected,
-    handleRenameEntry,
-    handleOpenFolder,
-    handlePreview,
-    anyOverlayOpen,
-  });
-
-  document.addEventListener("click", onDocPointer, true);
-  document.addEventListener("touchstart", onDocPointer, true);
-  document.addEventListener("keydown", onDocKeydown);
-  onBeforeUnmount(() => {
-    document.removeEventListener("click", onDocPointer, true);
-    document.removeEventListener("touchstart", onDocPointer, true);
-    document.removeEventListener("keydown", onDocKeydown);
-  });
 });
 
 onBeforeUnmount(() => {
@@ -1694,6 +1642,39 @@ function switchToNameSearch() {
   searchContent.value = false;
   void runDesktopSearch();
 }
+
+useFileBrowserHotkeys({
+  viewMenuOpen,
+  typeAheadPrefix,
+  clearTypeAhead,
+  desktopSearchOpen,
+  closeDesktopSearch,
+  previewOpen: computed(() => preview.value.open),
+  closePreview,
+  prevPreview,
+  nextPreview,
+  showShortcuts,
+  batchMode,
+  toggleBatchMode,
+  selectedPaths,
+  clearSelection,
+  canWrite,
+  selectAllVisible,
+  batchDelete,
+  findActiveItem,
+  handleDelete,
+  moveActiveRow,
+  toggleActiveRowSelection,
+  quickLook,
+  handleTypeAhead,
+  openRowContextMenu,
+  renameSelected,
+  handleRenameEntry,
+  handleOpenFolder,
+  handlePreview,
+  anyOverlayOpen,
+  desktopSearchBoxRef,
+});
 
 </script>
 
