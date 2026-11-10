@@ -659,6 +659,7 @@ import { useFileRename } from "../../composables/useFileRename";
 import { useFileActions } from "../../composables/useFileActions";
 import { useFileUpload } from "../../composables/useFileUpload";
 import { useFileTransfer } from "../../composables/useFileTransfer";
+import { useDragChip } from "../../composables/useDragChip";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
@@ -1208,6 +1209,16 @@ const {
 });
 
 const {
+  draggingFile,
+  dragChipPos,
+  dragChipTarget,
+  dragChipInvalid,
+  dragChipLabel,
+  handleDragStart,
+  handleDragEnd,
+} = useDragChip(selectedPaths);
+
+const {
   queueCollapsed,
   downloadQueue,
   downloading,
@@ -1673,98 +1684,6 @@ function quickLook() {
   const active = findActiveItem();
   if (active) openPreview(active.path);
 }
-
-/** 当前正在拖动的条目（用于拖放移动）。 */
-const draggingFile = ref<FileInfo | null>(null);
-
-function handleDragStart(file: FileInfo) {
-  draggingFile.value = file;
-}
-
-function handleDragEnd() {
-  draggingFile.value = null;
-}
-
-/** 光标跟随拖拽 chip：位置由捕获阶段 dragover 实时驱动（定位更新非动画 ✓ 无需降级）。 */
-const dragChipPos = ref({ x: -999, y: -999 });
-const dragChipTarget = ref<string | null>(null);
-const dragChipInvalid = ref(false);
-const dragChipLabel = computed(() => {
-  const file = draggingFile.value;
-  if (!file) return "";
-  if (dragChipInvalid.value) return "不能放到这里";
-  if (dragChipTarget.value) return `放入 ${dragChipTarget.value}`;
-  const sel = selectedPaths.value;
-  if (sel instanceof Set && sel.size > 1 && sel.has(file.path)) {
-    return `移动 ${sel.size} 项`;
-  }
-  return `移动 ${file.name}`;
-});
-function moveDragChip(e: DragEvent) {
-  dragChipPos.value = { x: e.clientX + 14, y: e.clientY + 14 };
-  // 两段式：命中有效落点（树条目 / 目录行——目录行带名称链接 ✓）→「放入 目标名」
-  const el = document.elementFromPoint(e.clientX, e.clientY);
-  const tree = el?.closest(".directory-tree-item") as HTMLElement | null;
-  const row = el?.closest("tr[data-vfiles-path]") as HTMLElement | null;
-  const rowIsDir = row?.querySelector("a.desktop-name-link") != null;
-  const target = tree ?? (rowIsDir ? row : null);
-  const targetPath =
-    target?.getAttribute("data-vfiles-path") ??
-    row?.getAttribute("data-vfiles-path") ??
-    "";
-  const draggedPath = draggingFile.value?.path ?? "";
-  // 拖自身任何行 = 禁止（先于目录目标判定）
-  if (
-    row &&
-    draggedPath &&
-    row.getAttribute("data-vfiles-path") === draggedPath
-  ) {
-    dragChipTarget.value = null;
-    dragChipInvalid.value = true;
-    return;
-  }
-  // 非法目标（拖自身 / 自身子目录）→ 禁止态（useMoveDialog 落子校验的前置预示）
-  if (
-    target &&
-    draggedPath &&
-    (targetPath === draggedPath || targetPath.startsWith(`${draggedPath}/`))
-  ) {
-    dragChipTarget.value = null;
-    dragChipInvalid.value = true;
-    return;
-  }
-  dragChipInvalid.value = false;
-  if (!target) {
-    dragChipTarget.value = null;
-    return;
-  }
-  dragChipTarget.value =
-    (
-      target.querySelector(".desktop-name-text, [class*=tree-name]")
-        ?.textContent ??
-      target.textContent ??
-      ""
-    )
-      .trim()
-      .split("\n")[0]
-      .slice(0, 24) || null;
-}
-watch(draggingFile, (cur) => {
-  if (cur) {
-    document.addEventListener("dragover", moveDragChip, {
-      passive: true,
-      capture: true,
-    });
-  } else {
-    document.removeEventListener("dragover", moveDragChip, { capture: true });
-    dragChipPos.value = { x: -999, y: -999 };
-    dragChipTarget.value = null;
-    dragChipInvalid.value = false;
-  }
-});
-onBeforeUnmount(() => {
-  document.removeEventListener("dragover", moveDragChip, { capture: true });
-});
 
 const dropFlashPath = ref("");
 
