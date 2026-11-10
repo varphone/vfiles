@@ -205,177 +205,86 @@
               aria-label="文件列表"
               tabindex="-1"
             >
-              <FileSkeleton
-                v-if="loading"
-                :variant="viewMode === 'grid' ? 'grid' : 'list'"
-                :thumbnail-size="fileView.thumbnailSize"
-              />
-
-              <EmptyState
-                v-else-if="error"
-                :icon="IconAlertCircle"
-                tone="error"
-                title="加载失败"
-                :hint="error"
-              >
-                <template #actions>
-                  <button
-                    class="vf-ghost-button"
-                    :class="{ 'is-loading': loading }"
-                    :disabled="loading"
-                    @click="refresh"
-                  >
-                    <IconRefresh :size="16" />
-                    <span>重试</span>
-                  </button>
-                </template>
-              </EmptyState>
-
-              <LibraryGrid
-                v-else-if="showLibraryCards"
-                :directories="libraryDirectories"
-                :renaming-path="renamingPath"
+              <FileBrowserDesktopContent
+                :loading="loading"
+                :error="error"
+                :search-active="searchActive"
+                :search-mode="searchMode"
+                :search-results="searchResults"
+                :desktop-items="desktopItems"
+                :files="files"
+                :show-library-cards="showLibraryCards"
+                :library-directories="libraryDirectories"
                 :can-write="canWrite"
                 :can-share="canShare"
-                @open="handleOpenFolder"
+                :view-mode="viewMode"
+                :batch-mode="batchMode"
+                :selected-paths="selectedPaths"
+                :flash-path="dropFlashPath"
+                :expanded-path="expandedFilePath"
+                :active-path="desktopActivePath"
+                :details-visible="detailsVisible"
+                :shared-paths="sharedPaths"
+                :sort-field="fileView.sortField"
+                :sort-direction="fileView.sortDirection"
+                :thumbnail-size="fileView.thumbnailSize"
+                :renaming-path="renamingPath"
+                :commit="browseCommit"
+                :result-filter="resultFilter"
+                :search-query="searchQuery"
+                @retry="refresh"
+                @upload-files="openUploader('files')"
+                @create-folder="promptCreateDirectory(currentPath || '')"
+                @switch-to-name-search="switchToNameSearch"
+                @clear-search="clearSearch"
+                @click="handleItemClick"
+                @download="handleDownload"
                 @rename="handleRenameEntry"
                 @rename-commit="commitRenameEntry"
                 @rename-cancel="cancelRenameEntry"
+                @move="handleMoveEntry"
                 @delete="handleDelete"
-                @share="handleShare"
-                @details="openDetailsDialog"
+                @view-history="handleViewHistory"
+                @toggle-select="handleRowSelect"
+                @modifier-select="handleModifierSelect"
                 @context-menu="handleContextMenu"
-              />
-
-              <EmptyState
-                v-else-if="!searchActive && files.length === 0"
-                :icon="IconFolderOpen"
-                title="此文件夹为空"
-                :hint="
-                  canWrite
-                    ? '拖拽文件到这里，或使用下面的按钮上传'
-                    : '只读访问：当前目录没有可浏览的条目'
-                "
+                @drag-start="handleDragStart"
+                @drag-end="handleDragEnd"
+                @drop-on-folder="handleDropOnFolder"
+                @toggle-select-all="toggleSelectAll"
+                @sort-change="handleSortChange"
+                @share="handleShare"
+                @preview="handlePreview"
+                @open-folder="handleOpenFolder"
+                @create-directory="handleCreateDirectory"
+                @open-details="openDetailsDialog"
+                @update:filter="setResultFilter"
               >
-                <template v-if="canWrite" #actions>
-                  <button
-                    class="vf-ghost-button is-primary"
-                    @click="openUploader('files')"
+                <template #load-more>
+                  <div
+                    v-if="hasMore"
+                    ref="loadMoreSentinel"
+                    class="desktop-load-more has-text-centered vf-text-muted is-size-7 py-3"
                   >
-                    <IconUpload :size="16" />
-                    <span>上传文件</span>
-                  </button>
-                  <button
-                    class="vf-ghost-button"
-                    @click="promptCreateDirectory(currentPath || '')"
-                  >
-                    <IconFolderPlus :size="16" />
-                    <span>新建文件夹</span>
-                  </button>
-                </template>
-              </EmptyState>
-
-              <EmptyState
-                v-else-if="searchActive && searchResults.length === 0"
-                :icon="IconSearch"
-                title="没有找到匹配的文件"
-                :hint="
-                  searchMode === 'content'
-                    ? '换个关键字，或改用文件名搜索（内容搜索只匹配文件内容）'
-                    : '换个关键字，或检查是否限制了搜索范围'
-                "
-              >
-                <template #actions>
-                  <button
-                    v-if="searchMode === 'content'"
-                    class="vf-ghost-button is-primary"
-                    @click="switchToNameSearch"
-                  >
-                    <IconFileSearch :size="16" />
-                    <span>改为文件名搜索</span>
-                  </button>
-                  <button class="vf-ghost-button" @click="clearSearch">
-                    <span>清空搜索</span>
-                  </button>
-                </template>
-              </EmptyState>
-
-              <template v-else>
-                <SearchResultToolbar
-                  v-if="searchActive"
-                  class="desktop-list-meta"
-                  :results="searchResults"
-                  :active="resultFilter"
-                  :query="searchQuery"
-                  :visible-count="desktopItems.length"
-                  @update:active="setResultFilter"
-                />
-
-                <FileBrowserCollection
-                  :files="desktopItems"
-                  :view-mode="viewMode"
-                  :can-write="canWrite"
-                  :can-share="canShare"
-                  :shared-paths="sharedPaths"
-                  :highlight="searchActive ? searchQuery : ''"
-                  :commit="browseCommit"
-                  :select-mode="batchMode"
-                  :selected-paths="selectedPaths"
-                  :flash-path="dropFlashPath"
-                  :expanded-path="expandedFilePath"
-                  :active-path="desktopActivePath"
-                  :desktop="true"
-                  :show-action-column="!detailsVisible"
-                  :show-location="searchActive"
-                  :sort-field="fileView.sortField"
-                  :sort-direction="fileView.sortDirection"
-                  :thumbnail-size="fileView.thumbnailSize"
-                  :renaming-path="renamingPath"
-                  @click="handleItemClick"
-                  @download="handleDownload"
-                  @rename="handleRenameEntry"
-                  @rename-commit="commitRenameEntry"
-                  @rename-cancel="cancelRenameEntry"
-                  @move="handleMoveEntry"
-                  @delete="handleDelete"
-                  @view-history="handleViewHistory"
-                  @toggle-select="handleRowSelect"
-                  @modifier-select="handleModifierSelect"
-                  @context-menu="handleContextMenu"
-                  @drag-start="handleDragStart"
-                  @drag-end="handleDragEnd"
-                  @drop-on-folder="handleDropOnFolder"
-                  @toggle-select-all="toggleSelectAll"
-                  @sort-change="handleSortChange"
-                  @share="handleShare"
-                  @preview="handlePreview"
-                  @open-folder="handleOpenFolder"
-                  @create-directory="handleCreateDirectory"
-                />
-
-                <div
-                  v-if="hasMore"
-                  ref="loadMoreSentinel"
-                  class="desktop-load-more has-text-centered vf-text-muted is-size-7 py-3"
-                >
-                  <span v-if="searchLoadingMore || filesStore.loadingMoreFiles"
-                    >正在加载更多...</span
-                  >
-                  <span v-else-if="filesStore.loadMoreError">
-                    {{ filesStore.loadMoreError }}
-                    <button
-                      class="button is-small is-light ml-2"
-                      @click="filesStore.loadMoreFiles()"
+                    <span v-if="searchLoadingMore || filesStore.loadingMoreFiles"
+                      >正在加载更多...</span
                     >
-                      重试
-                    </button>
-                  </span>
-                  <span v-else
-                    >继续下滑加载更多（已显示 {{ desktopItems.length }} /
-                    {{ knownTotal }}）...</span
-                  >
-                </div>
-              </template>
+                    <span v-else-if="filesStore.loadMoreError">
+                      {{ filesStore.loadMoreError }}
+                      <button
+                        class="button is-small is-light ml-2"
+                        @click="filesStore.loadMoreFiles()"
+                      >
+                        重试
+                      </button>
+                    </span>
+                    <span v-else
+                      >继续下滑加载更多（已显示 {{ desktopItems.length }} /
+                      {{ knownTotal }}）...</span
+                    >
+                  </div>
+                </template>
+              </FileBrowserDesktopContent>
             </div>
           </div>
 
@@ -703,9 +612,6 @@ import {
   IconFolderOpen,
   IconFolderPlus,
   IconAlertCircle,
-  IconSearch,
-  IconFileSearch,
-  IconRefresh,
   IconUpload,
   IconHistory,
   IconPencil,
@@ -723,23 +629,19 @@ import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 import { useFileViewStore } from "../../stores/fileView.store";
 import { confirmDialog } from "../../composables/dialog";
-import SearchResultToolbar from "./SearchResultToolbar.vue";
 import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
 import FileBrowserDialogs from "./FileBrowserDialogs.vue";
-import FileBrowserCollection from "./FileBrowserCollection.vue";
 import FileBrowserHistoryControls from "./FileBrowserHistoryControls.vue";
 import FileBrowserViewControls from "./FileBrowserViewControls.vue";
 import FileBrowserToolbarLeading from "./FileBrowserToolbarLeading.vue";
 import FileBrowserToolbarHeading from "./FileBrowserToolbarHeading.vue";
 import FileBrowserStatusBar from "./FileBrowserStatusBar.vue";
 import FileBrowserMobileContent from "./FileBrowserMobileContent.vue";
+import FileBrowserDesktopContent from "./FileBrowserDesktopContent.vue";
 import UploadDropOverlay from "./UploadDropOverlay.vue";
-import EmptyState from "../common/EmptyState.vue";
-import LibraryGrid from "./LibraryGrid.vue";
 import MobileSearchBar from "./MobileSearchBar.vue";
 import BrowserSearchBox, { type SearchType } from "./BrowserSearchBox.vue";
-import FileSkeleton from "./FileSkeleton.vue";
 import DownloadQueuePanel from "./DownloadQueuePanel.vue";
 import ContextMenu, { type ContextMenuItem } from "./ContextMenu.vue";
 import MoveDialog from "./MoveDialog.vue";
