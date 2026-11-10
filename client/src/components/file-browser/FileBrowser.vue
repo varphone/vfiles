@@ -602,24 +602,7 @@ import {
   nextTick,
 } from "vue";
 import { storeToRefs } from "pinia";
-import {
-  IconDownload,
-  IconEye,
-  IconShare,
-  IconFolderOpen,
-  IconFolderPlus,
-  IconAlertCircle,
-  IconUpload,
-  IconHistory,
-  IconPencil,
-  IconArrowsDiff,
-  IconUserShare,
-  IconTrash,
-  IconCheck,
-  IconInfoCircle,
-  IconStar,
-  IconStarFilled,
-} from "@tabler/icons-vue";
+import { IconAlertCircle, IconUpload } from "@tabler/icons-vue";
 import { filesService } from "../../services/files.service";
 import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
@@ -639,7 +622,7 @@ import UploadDropOverlay from "./UploadDropOverlay.vue";
 import MobileSearchBar from "./MobileSearchBar.vue";
 import BrowserSearchBox, { type SearchType } from "./BrowserSearchBox.vue";
 import DownloadQueuePanel from "./DownloadQueuePanel.vue";
-import ContextMenu, { type ContextMenuItem } from "./ContextMenu.vue";
+import ContextMenu from "./ContextMenu.vue";
 import MoveDialog from "./MoveDialog.vue";
 import FileUploader from "../file-uploader/FileUploader.vue";
 import Modal from "../common/Modal.vue";
@@ -657,6 +640,7 @@ import { useFileActions } from "../../composables/useFileActions";
 import { useFileUpload } from "../../composables/useFileUpload";
 import { useFileTransfer } from "../../composables/useFileTransfer";
 import { useDragChip } from "../../composables/useDragChip";
+import { useFileContextMenu } from "../../composables/useFileContextMenu";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
@@ -830,8 +814,6 @@ function toggleSidebar() {
  */
 const viewMenuOpen = ref(false);
 
-/** 来自收藏侧栏的局部状态缓存；文件列表 DTO 会提供准确状态。 */
-const favoritePaths = ref<Set<string>>(new Set());
 const showShortcuts = ref(false);
 /** 工具栏「+ 新建 → 新建文件夹」：复用移动端底栏的建目录请求流程。 */
 function requestCreateDirectoryFromToolbar() {
@@ -856,42 +838,6 @@ const {
   // 当前视图中的文件（不含目录与 `.`/`..`），用于预览的上一张/下一张
   getPreviewableFiles: () => previewableFiles.value,
 });
-
-function handleFavoriteChanged(path: string, isFavorite: boolean) {
-  const next = new Set(favoritePaths.value);
-  if (isFavorite) next.add(path);
-  else next.delete(path);
-  favoritePaths.value = next;
-  for (const file of files.value) {
-    if (file.path === path) file.is_favorite = isFavorite;
-  }
-  if (contextMenu.value.file?.path === path) {
-    contextMenu.value.file.is_favorite = isFavorite;
-  }
-}
-
-function isFavorite(file: FileInfo): boolean {
-  return file.is_favorite ?? favoritePaths.value.has(file.path);
-}
-
-/** 切换收藏状态（右键菜单与活动详情共用）。 */
-async function toggleFavorite(file: FileInfo) {
-  const wasFavorite = isFavorite(file);
-  try {
-    if (wasFavorite) {
-      await filesService.removeFavorite(file.path);
-    } else {
-      await filesService.addFavorite(file.path);
-    }
-    file.is_favorite = !wasFavorite;
-    handleFavoriteChanged(file.path, !wasFavorite);
-    appStore.success(
-      wasFavorite ? `已取消收藏「${file.name}」` : `已收藏「${file.name}」`,
-    );
-  } catch (err) {
-    appStore.error(err instanceof Error ? err.message : "收藏操作失败");
-  }
-}
 
 /**
  * 右侧「详细信息」面板：桌面端显示，移动端隐藏。
@@ -1217,6 +1163,38 @@ const {
 });
 
 const {
+  contextMenu,
+  contextMenuItems,
+  openRowContextMenu,
+  handleContextMenu,
+  closeContextMenu,
+  handleContextMenuSelect,
+} = useFileContextMenu({
+  files,
+  canWrite,
+  canShare,
+  isRestricted,
+  batchMode,
+  selectedPaths,
+  desktopActivePath,
+  narrowSelectionTo,
+  toggleSelect,
+  openDetailsDialog,
+  handleOpenFolder,
+  handleCreateDirectory,
+  handlePreview,
+  handleViewHistory,
+  handleRenameEntry,
+  handleMoveEntry,
+  openTransferDialog,
+  handleDownload,
+  handleShare,
+  handleDelete,
+  notifySuccess: (message) => appStore.success(message),
+  notifyError: (message) => appStore.error(message),
+});
+
+const {
   draggingFile,
   dragChipPos,
   dragChipTarget,
@@ -1245,67 +1223,6 @@ const {
   removeItem,
   retryItem,
 } = useDownloadQueue(browseCommit);
-
-const contextMenu = ref<{
-  show: boolean;
-  x: number;
-  y: number;
-  file: FileInfo | null;
-  /** 键盘打开时归还焦点的元素（鼠标右键不抢焦点）。 */
-  returnFocus: HTMLElement | null;
-}>({ show: false, x: 0, y: 0, file: null, returnFocus: null });
-
-const contextMenuItems = computed<ContextMenuItem[]>(() => {
-  const file = contextMenu.value.file;
-  if (!file) return [];
-  const isDirectory = file.kind === "directory";
-
-  const items: ContextMenuItem[] = [];
-  // F 决策：菜单首项「选择」= 移动侧唯一进批量态入口（长按=既有菜单手势零冲突 ✓
-  // 与桌面 Ctrl+A 对偶 ✗ 与「勾选即出操作条」语义接通）
-  if (canWrite.value) {
-    items.push({ key: "select", label: "选择", icon: IconCheck });
-  }
-  if (isDirectory) {
-    items.push({ key: "open", label: "打开", icon: IconFolderOpen, shortcut: "Enter" });
-    if (canWrite.value) {
-      items.push({
-        key: "create-directory",
-        label: "在此新建子目录",
-        icon: IconFolderPlus,
-      });
-    }
-  } else {
-    items.push({ key: "preview", label: "预览", icon: IconEye });
-    items.push({ key: "history", label: "历史版本", icon: IconHistory });
-  }
-  items.push({ key: "details", label: "详细信息", icon: IconInfoCircle });
-  if (canWrite.value) {
-    const favorite = isFavorite(file);
-    items.push({
-      key: "favorite",
-      label: favorite ? "取消收藏" : "加入收藏",
-      icon: favorite ? IconStarFilled : IconStar,
-    });
-    items.push({ key: "rename", label: "重命名", icon: IconPencil, shortcut: "F2" });
-    items.push({ key: "move", label: "移动", icon: IconArrowsDiff });
-  }
-  if (!isRestricted.value) {
-    items.push({
-      key: "transfer",
-      label: "转移所有权",
-      icon: IconUserShare,
-    });
-  }
-  items.push({ key: "download", label: "下载", icon: IconDownload });
-  if (canShare.value) {
-    items.push({ key: "share", label: "分享", icon: IconShare });
-  }
-  if (canWrite.value) {
-    items.push({ key: "delete", label: "删除", icon: IconTrash, danger: true, shortcut: "Del" });
-  }
-  return items;
-});
 
 /** 受限会话进入时，范围外的路径（或空路径）回退到第一个范围根。 */
 function resolvedEntryPath(): string {
@@ -1983,107 +1900,10 @@ function scrollActiveIntoView(path: string) {
   element?.scrollIntoView?.({ block: "nearest" });
 }
 
-/** 在指定行的右侧打开操作菜单（键盘触发时按行位置定位）。 */
-function openRowContextMenu(file: FileInfo) {
-  if (typeof document === "undefined") return;
-  const selector = `[data-vfiles-path="${CSS.escape(file.path)}"]`;
-  const element = document.querySelector<HTMLElement>(selector);
-  const rect = element?.getBoundingClientRect();
-  const x = rect ? rect.right - 8 : 0;
-  const y = rect ? rect.bottom : 0;
-  // Shift+F10 打开时焦点停在 body：菜单关闭后应回到该行的「⋯」按钮，
-  // 否则键盘用户会丢失当前位置。
-  const returnFocus =
-    element?.querySelector<HTMLElement>(".desktop-row-menu") ?? null;
-  handleContextMenu({ file, x, y, returnFocus });
-}
-
 /** 内容搜索无结果时，一键改用文件名搜索（保留关键字与范围）。 */
 function switchToNameSearch() {
   searchContent.value = false;
   void runDesktopSearch();
-}
-
-function handleContextMenu(payload: {
-  file: FileInfo;
-  x: number;
-  y: number;
-  returnFocus?: HTMLElement | null;
-}) {
-  const file = payload.file;
-  narrowSelectionTo(file.path);
-  desktopActivePath.value = file.path;
-  contextMenu.value = {
-    show: true,
-    x: payload.x,
-    y: payload.y,
-    file: payload.file,
-    returnFocus: payload.returnFocus ?? null,
-  };
-}
-
-/** 关闭右键菜单：键盘打开时把焦点还给触发行，鼠标操作保持原焦点。 */
-function closeContextMenu() {
-  const target = contextMenu.value.returnFocus;
-  contextMenu.value.show = false;
-  contextMenu.value.returnFocus = null;
-  if (target?.isConnected) target.focus();
-}
-
-function handleContextMenuSelect(key: string) {
-  const file = contextMenu.value.file;
-  if (!file) return;
-
-  switch (key) {
-    case "select":
-      if (!canWrite.value) return;
-      // F：进入批量选择态 + 勾中触发项（批量条与勾选槽随之出现 ✗ 167 出条条件）
-      batchMode.value = true;
-      if (!selectedPaths.value.has(file.path)) toggleSelect(file);
-      break;
-    case "details":
-      openDetailsDialog(file);
-      break;
-    case "favorite":
-      if (!canWrite.value) return;
-      void toggleFavorite(file);
-      break;
-    case "open":
-      handleOpenFolder(file);
-      break;
-    case "create-directory":
-      void handleCreateDirectory(file);
-      break;
-    case "preview":
-      handlePreview(file);
-      break;
-    case "history":
-      handleViewHistory(file);
-      break;
-    case "rename":
-      if (!canWrite.value) return;
-      void handleRenameEntry(file);
-      break;
-    case "move":
-      if (!canWrite.value) return;
-      handleMoveEntry(file);
-      break;
-    case "transfer":
-      if (isRestricted.value) return;
-      openTransferDialog([file]);
-      break;
-    case "download":
-      handleDownload(file);
-      break;
-    case "share":
-      if (!canShare.value) return;
-      handleShare(file);
-      break;
-    case "delete":
-      if (!canWrite.value) return;
-      void handleDelete(file);
-      break;
-  }
 }
 
 /** 点击表头：切换字段时改字段，重复点击同一字段时切换升降序。 */
