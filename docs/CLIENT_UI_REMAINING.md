@@ -1,6 +1,8 @@
-# 客户端 UI 整改：已完成与待办
+# 客户端 UI 整改：已完成与后续
 
-承接 [CLIENT_UI_AUDIT.md](CLIENT_UI_AUDIT.md)。本文件只记录**尚未完成**的项，以及动手前必须知道的坑。
+承接 [CLIENT_UI_AUDIT.md](CLIENT_UI_AUDIT.md)。本次审查的 P0/P1 缺陷（功能、可访问性、设计系统、性能、CI 回归）已全部关闭；下面保留的是需要后端数据迁移/新增产品能力、或收益低于风险的后续项。
+
+**验证基线**：601 个客户端用例、24 项浏览器回归（含深色/移动 axe）、52 张 `ui:sweep` 截图、布局尺寸基线 0 漂移、`strictTemplates` 全绿、Rust fmt/clippy/测试通过。
 
 ## 已完成（截至 252ad06）
 
@@ -33,20 +35,20 @@
 - **结构（进行中）**：详情面板容器与事件桥抽为 `FileBrowserDetailsPanel`；主组件模板已由工具栏/内容/状态栏/详情/弹窗组件组成，剩余主要是状态与编排脚本（本轮）。
 拖放落子与 650ms 回执也并入 `useDragChip`（本轮）。拖拽光标 chip（状态/目标判定/坐标/监听生命周期）抽为 `useDragChip`（6bbe05e）。所有权转移（状态/上限/提交/失败恢复）抽为 `useFileTransfer`（d155fa5）。上传队列 UI 状态（对话框/选择器/进度胶囊/拖放入队）抽为 `useFileUpload`（1e5cc0b）。条目动作与弹窗状态（删除/新建/移动/分享/历史/详情）抽为 `useFileActions`（ede96c6）。行内重命名（状态/校验/请求/刷新）抽为 `useFileRename`（ccac3e7）。桌面内容区（加载/错误/资料库/空态/搜索/列表与加载更多 slot）抽为 `FileBrowserDesktopContent`（ac32317）。桌面状态栏抽为 `FileBrowserStatusBar`（摘要/提示/选择/定位/快捷键入口，8bf5724）；移动端内容区（加载/错误/资料库/空态/搜索/列表与加载更多 slot）抽为 `FileBrowserMobileContent`（633eb48）。工具栏右侧的版本切换抽为 `FileBrowserHistoryControls`，列表/网格/排序/详情控制抽为 `FileBrowserViewControls`（8fdff03）；根视图「全部文件」菜单抽为 `FileBrowserViewMenu`，父层保留 `viewMenuOpen` 供 Escape 关闭（41d250b）；工具栏左侧的侧栏开关/写入口/范围徽标与面包屑/菜单切换抽为 `FileBrowserToolbarLeading`、`FileBrowserToolbarHeading`（b189c26）。文件浏览器的历史/分享/详情/转移/快捷键/预览覆盖层抽离为 `FileBrowserDialogs`，用显式 props/emits 连接，转移失败路径通过 `finishTransfer` 暴露；新增组件契约测试（1530b9e）。键盘处理与输入/控件判定抽离为 `useFileBrowserKeyboard`，主组件通过依赖注入连接（fc773b7）。目录导航、范围守卫、403/范围回退与滚动记忆抽离为 `useDirectoryNavigation`（88429df）。列表/网格的三处重复接线收敛为 `FileBrowserCollection`（4acd50c）。
 
-## 待办
+## 后续（非本次缺陷）
 
-### 1. `FileBrowser` 剩余编排（可选）
+### A. `FileBrowser` 剩余编排（可选）
 [FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 约 2420 行；模板已拆成工具栏、内容、状态栏、详情与弹窗组件，脚本侧也抽出了键盘、导航、选择、上传、转移、拖放、重命名、条目动作等 composable。剩余是核心状态与跨模块编排，进一步拆分收益低于风险。
 
 **做法**：只有在新增功能触及时再拆；保持 `FileList`/`FileGrid`/`useVirtualWindow` 的滚动契约与 `useDirectoryNavigation` 的导航单点。
 
-### 2. 产品能力缺口
+### B. 产品能力缺口（需后端）
 删除不可撤销且无回收站，分享链接只有有效期（无密码/权限）。
 
 **做法**：按数据安全优先级排：回收站/撤销 > 分享密码/权限；两项都需要后端接口与数据迁移。
 
-### 3. 像素级截图基线（可选）
-关键容器的布局尺寸基线已进 CI（21 项、3px 容差）；像素级 diff 仍依赖手动 `ui:sweep`。跨平台字体渲染会让像素 goldens 不稳定，暂不提交基线图。
+### C. 像素级截图基线（可选）
+关键容器的布局尺寸基线已进 CI（24 项、3px 容差）；像素级 diff 仍依赖手动 `ui:sweep`。跨平台字体渲染会让像素 goldens 不稳定，暂不提交基线图。
 
 **做法**：若确需像素级，用固定 Playwright 容器生成 goldens；否则保留「布局基线 + 手动截图」策略。
 
