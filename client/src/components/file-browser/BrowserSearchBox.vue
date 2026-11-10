@@ -264,39 +264,29 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: var(--vf-space-3);
-  /* 与工具栏其它弹层（视图/排序/上传）同一框体语言：
-     border-weak、8px 圆角、12px 内边距、raised 背景、菜单阴影 */
+  /* 与 .dropdown-content / 排序菜单同一套框体：白底、1px 细边、8px 圆角、
+     12px 内边距、popover 阴影。此前用 raised + menu 阴影并额外画了三角箭头，
+     是页面上唯一带箭头的浮层，和其余弹层对不上。 */
   padding: var(--vf-space-3);
-  border-radius: var(--vf-radius-card);
+  border-radius: var(--vf-radius-sm);
   border: 1px solid var(--vf-border-weak);
-  background: var(--vf-surface-raised);
-  box-shadow: var(--vf-shadow-menu);
+  background: var(--vf-surface);
+  box-shadow: var(--vf-shadow-popover);
 }
 
 .desktop-search-panel--dropdown {
   position: absolute;
-  top: calc(100% + 0.45rem);
-  left: auto;
-  right: 0;
+  /* 与输入框左缘对齐并向下 6px：right:0 会把面板推到右侧按钮组下方，
+     看起来像「脱离了搜索框」 */
+  top: calc(100% + 6px);
+  left: 0;
+  right: auto;
   width: max-content;
+  min-width: 100%;
   max-width: min(calc(100vw - 2rem), 28rem);
   z-index: 30;
   opacity: 1;
   isolation: isolate;
-  /* 背景/阴影继承 .desktop-search-panel（raised + 菜单阴影，与其它弹层一致） */
-}
-
-.desktop-search-panel--dropdown::after {
-  content: "";
-  position: absolute;
-  right: 1.25rem;
-  top: -0.42rem;
-  width: 0.82rem;
-  height: 0.82rem;
-  background: var(--vf-surface);
-  border-left: 1px solid var(--explorer-panel-border, var(--vf-border));
-  border-top: 1px solid var(--explorer-panel-border, var(--vf-border));
-  transform: rotate(45deg);
 }
 
 .desktop-search-panel-heading {

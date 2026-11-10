@@ -3108,9 +3108,6 @@ function handleSortChange(field: SortField) {
 <style scoped>
 .file-browser {
   /* 指向全局设计令牌，随明暗主题切换 */
-  /* 唯一仍被引用的 explorer 令牌（搜索面板 ::after 分隔线）；
-     其余 accent/panel-bg/shell-bg/list-bg 消费者已在历轮重构中移除，令牌随之清理。 */
-  --explorer-panel-border: var(--vf-border);
   margin: 0 auto;
   padding: 0;
 }
