@@ -74,6 +74,8 @@ export const useAuthStore = defineStore("auth", () => {
   async function fetchMe(): Promise<void> {
     loading.value = true;
     error.value = null;
+    // 会话能力（bootstrap）与身份（me）互不依赖：并行发出，首屏少一个串行 RTT。
+    const bootstrapPromise = syncSessionContext();
     try {
       const res = await authService.me();
       if (!res.success) {
@@ -91,7 +93,7 @@ export const useAuthStore = defineStore("auth", () => {
         allowRegister.value = true;
         user.value = null;
         applyScope(null);
-        await syncSessionContext();
+        await bootstrapPromise;
         return;
       }
 
@@ -99,7 +101,7 @@ export const useAuthStore = defineStore("auth", () => {
       allowRegister.value = Boolean((res.data as any)?.allowRegister);
       user.value = ((res.data as any)?.user as AuthUser | null) ?? null;
       applyScope((res.data as any)?.scope as SessionScope | null | undefined);
-      await syncSessionContext();
+      await bootstrapPromise;
     } catch (e) {
       enabled.value = true;
       allowRegister.value = true;

@@ -25,6 +25,10 @@ const LOGIN_IMMUNITY_MS = 3000;
   loginSuccessAt = Date.now();
 };
 
+// 首屏关键路径：路由守卫要等 /auth/me，之后才 import 首页 chunk（两百多 KB）。
+// 这里与鉴权并行预取首页 chunk，省掉一次串行 RTT 的等待；失败不阻断启动。
+void import("./views/Home.vue").catch(() => {});
+
 router.beforeEach(async (to) => {
   if (!authStore.initialized) {
     await authStore.fetchMe();
