@@ -129,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import {
   IconAlertCircle,
@@ -144,6 +144,7 @@ import SkeletonList from "../../components/common/SkeletonList.vue";
 import FileTypeIcon from "../../components/file-browser/FileTypeIcon.vue";
 import PageHeader from "../../ui/PageHeader.vue";
 import { filesService } from "../../services/files.service";
+import { useListResource } from "../../composables/useListResource";
 import { useAppStore } from "../../stores/app.store";
 import { parentDirectoryPath } from "../../utils/filePaths";
 import type { FavoriteEntry } from "../../types";
@@ -166,52 +167,27 @@ const PAGE_SIZE = 50;
 const router = useRouter();
 const appStore = useAppStore();
 
-const items = ref<FavoriteEntry[]>([]);
-const total = ref(0);
-const hasMore = ref(false);
-const loading = ref(false);
-const loadingMore = ref(false);
 const removingPath = ref("");
-const error = ref<string | null>(null);
+
+// 列表状态统一由 useListResource 管理（竞态防护 + 按路径去重）。
+const resource = useListResource<FavoriteEntry>({
+  pageSize: PAGE_SIZE,
+  key: (item) => item.path,
+  fetchPage: ({ limit, offset }) => filesService.getFavorites(limit, offset),
+});
+const items = resource.items;
+const loading = resource.loading;
+const loadingMore = resource.loadingMore;
+const error = resource.error;
+const hasMore = computed(() => resource.hasMore());
+const total = resource.total;
 
 async function reload() {
-  loading.value = true;
-  loadingMore.value = false;
-  error.value = null;
-  try {
-    const page = await filesService.getFavorites(PAGE_SIZE, 0);
-    items.value = page.items;
-    total.value = page.total;
-    hasMore.value = page.has_more;
-  } catch (e) {
-    items.value = [];
-    total.value = 0;
-    hasMore.value = false;
-    error.value = e instanceof Error ? e.message : "加载收藏失败";
-  } finally {
-    loading.value = false;
-  }
+  await resource.reload();
 }
 
 async function loadMore() {
-  if (!hasMore.value || loading.value || loadingMore.value) return;
-
-  loadingMore.value = true;
-  try {
-    const page = await filesService.getFavorites(PAGE_SIZE, items.value.length);
-    // 取消收藏后偏移量会前移，服务端可能返回已加载条目，按路径去重。
-    const known = new Set(items.value.map((item) => item.path));
-    items.value = [
-      ...items.value,
-      ...page.items.filter((item) => !known.has(item.path)),
-    ];
-    total.value = page.total;
-    hasMore.value = page.has_more;
-  } catch (e) {
-    appStore.error(e instanceof Error ? e.message : "加载更多收藏失败");
-  } finally {
-    loadingMore.value = false;
-  }
+  await resource.loadMore();
 }
 
 /** 取消收藏成功后立即从列表移除，并同步总数与「加载更多」状态。 */
@@ -221,11 +197,10 @@ async function remove(item: FavoriteEntry) {
   removingPath.value = item.path;
   try {
     await filesService.removeFavorite(item.path);
-    items.value = items.value.filter((entry) => entry.path !== item.path);
+    items.value = items.value.filter((entry: FavoriteEntry) => entry.path !== item.path);
     total.value = Math.max(0, total.value - 1);
-    hasMore.value = items.value.length < total.value;
     // 当前页被清空但服务端还有数据时，补一页避免停留在空列表上。
-    if (items.value.length === 0 && hasMore.value) {
+    if (items.value.length === 0 && resource.hasMore()) {
       await loadMore();
     }
   } catch (e) {
