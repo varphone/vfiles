@@ -643,12 +643,12 @@ import { useProgressiveList } from "../../composables/useProgressiveList";
 import { usePreviewActions } from "../../composables/usePreviewActions";
 import { useFileBrowserHotkeys } from "../../composables/useFileBrowserHotkeys";
 import { useSharedPaths } from "../../composables/useSharedPaths";
+import { useWindowDropTarget } from "../../composables/useWindowDropTarget";
 import { useFileBrowserScope } from "../../composables/useFileBrowserScope";
 import { useFileBrowserRowNavigation } from "../../composables/useFileBrowserRowNavigation";
 import { useFileBrowserList } from "../../composables/useFileBrowserList";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
-import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
 import { useMoveDialog } from "../../composables/useMoveDialog";
 import { useTouchGestures } from "../../composables/useTouchGestures";
 import { useFilesSidebarControl } from "../../composables/useFilesSidebar";
@@ -776,33 +776,6 @@ const detailsVisible = computed(
 
 /** 移动端搜索筛选面板（默认收起，保持顶部只有一行搜索框）。 */
 const mobileSearchFiltersOpen = ref(false);
-
-/**
- * 整窗拖放上传：把桌面文件直接拖进浏览器。
- *
- * 已有弹窗（预览/上传/移动/历史/分享）时交给弹窗自己处理，不弹整窗提示。
- */
-const anyDialogOpen = computed(
-  () =>
-    preview.value.open ||
-    showUploader.value ||
-    showHistory.value ||
-    showShareDialog.value ||
-    showMoveDialog.value ||
-    dirManagerOpen.value ||
-    showDetailsDialog.value,
-);
-const dropTargetLabel = computed(() =>
-  filesStore.currentPath
-    ? filesStore.currentPath.split("/").filter(Boolean).pop() ||
-      filesStore.currentPath
-    : "根目录",
-);
-
-const { dragging: externalDropActive } = useWindowFileDrop({
-  onFiles: (dropped) => queueDroppedFiles(dropped),
-  enabled: () => !anyDialogOpen.value && canWrite.value,
-});
 
 /** 预览导航使用的文件列表，跟随当前视图（目录或搜索结果）。 */
 const previewableFiles = computed<FileInfo[]>(() =>
@@ -1033,6 +1006,19 @@ const {
   files,
   refresh,
   notifySuccess: (message) => appStore.success(message),
+});
+
+const { dropTargetLabel, externalDropActive } = useWindowDropTarget({
+  previewOpen: computed(() => preview.value.open),
+  showUploader,
+  showHistory,
+  showShareDialog,
+  showMoveDialog,
+  dirManagerOpen,
+  showDetailsDialog,
+  canWrite,
+  currentPath,
+  queueDroppedFiles,
 });
 
 const {
