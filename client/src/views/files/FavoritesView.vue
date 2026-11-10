@@ -1,7 +1,7 @@
 <template>
   <FilesLayout title="收藏">
     <template #sidebar>
-      <ViewsSidebar />
+      <ViewsSidebar @search="goToSearch" />
     </template>
 
     <div class="favorites-view">
@@ -147,6 +147,13 @@ import { filesService } from "../../services/files.service";
 import { useAppStore } from "../../stores/app.store";
 import { parentDirectoryPath } from "../../utils/filePaths";
 import type { FavoriteEntry } from "../../types";
+
+/** 侧栏搜索：其它视图没有列表内搜索，统一跳到文件页并带上关键字。 */
+function goToSearch(query: string) {
+  const value = query.trim();
+  if (!value) return;
+  void router.push({ path: "/", query: { q: value } });
+}
 
 /**
  * 「收藏」视图：分页读取收藏条目，支持就地取消收藏。

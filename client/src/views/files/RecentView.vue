@@ -1,7 +1,7 @@
 <template>
   <FilesLayout title="最近">
     <template #sidebar>
-      <ViewsSidebar />
+      <ViewsSidebar @search="goToSearch" />
     </template>
 
     <div class="recent-view">
@@ -130,6 +130,13 @@ import {
 } from "../../utils/filePresentation";
 import { parentDirectoryPath } from "../../utils/filePaths";
 import type { FileInfo } from "../../types";
+
+/** 侧栏搜索：其它视图没有列表内搜索，统一跳到文件页并带上关键字。 */
+function goToSearch(query: string) {
+  const value = query.trim();
+  if (!value) return;
+  void router.push({ path: "/", query: { q: value } });
+}
 
 /**
  * 「最近」视图：按修改时间倒序列出最近变更的文件。

@@ -1,7 +1,7 @@
 <template>
   <FilesLayout title="活动">
     <template #sidebar>
-      <ViewsSidebar />
+      <ViewsSidebar @search="goToSearch" />
     </template>
 
     <div class="activity-view">
@@ -150,6 +150,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { IconActivity, IconAlertCircle, IconRefresh } from "@tabler/icons-vue";
 import FilesLayout from "../layouts/FilesLayout.vue";
 import ViewsSidebar from "../components/files/ViewsSidebar.vue";
@@ -161,6 +162,15 @@ import { filesService } from "../services/files.service";
 import { useAppStore } from "../stores/app.store";
 import { formatDate, formatRelativeDate } from "../utils/filePresentation";
 import type { AuditLogEntry } from "../types";
+
+const router = useRouter();
+
+/** 侧栏搜索：其它视图没有列表内搜索，统一跳到文件页并带上关键字。 */
+function goToSearch(query: string) {
+  const value = query.trim();
+  if (!value) return;
+  void router.push({ path: "/", query: { q: value } });
+}
 
 /**
  * 「活动」视图：按天分组展示当前用户的操作记录。

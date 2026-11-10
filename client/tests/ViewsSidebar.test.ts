@@ -199,3 +199,26 @@ describe("ViewsSidebar.vue", () => {
     );
   });
 });
+
+describe("ViewsSidebar.vue 搜索接线", () => {
+  it("回车提交关键字并清空输入", async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/", component: { template: "<div />" } }],
+    });
+    await router.push("/");
+    await router.isReady();
+
+    const { container, emitted } = render(ViewsSidebar, {
+      props: { roots: [] },
+      global: { plugins: [router] },
+    });
+    const input = container.querySelector<HTMLInputElement>(
+      ".views-sidebar-search input",
+    )!;
+    await fireEvent.update(input, "报告");
+    await fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(emitted().search?.[0]).toEqual(["报告"]);
+  });
+});

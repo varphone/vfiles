@@ -2,7 +2,7 @@
   <div class="home">
     <FilesLayout title="全部文件">
       <template #sidebar>
-        <ViewsSidebar />
+        <ViewsSidebar @search="handleSidebarSearch" />
       </template>
 
       <div class="home-browser-shell">
@@ -272,7 +272,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import {
   IconMenu2,
   IconChecklist,
@@ -329,6 +329,7 @@ const batchMenuRef = ref<HTMLElement | null>(null);
 const filesStore = useFilesStore();
 const { currentPath, browseCommit } = storeToRefs(filesStore);
 const route = useRoute();
+const router = useRouter();
 
 /**
  * 侧栏目录树用 `/?path=目录` 交付导航目标。Home 是唯一消费这个参数的页面：
@@ -400,6 +401,29 @@ function updateVisualViewportBottomOffset() {
   const bottom = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
   document.documentElement.style.setProperty("--vv-bottom", `${bottom}px`);
 }
+
+/** 侧栏搜索框：交给文件区执行，同时把关键字写进 URL（可刷新/回链）。 */
+function handleSidebarSearch(query: string) {
+  const value = query.trim();
+  if (!value) return;
+  if (route.query.q !== value) {
+    void router.push({ path: "/", query: { ...route.query, q: value } });
+  }
+  browserRef.value?.setSearchQuery(value);
+  void browserRef.value?.runSearch();
+}
+
+watch(
+  () => route.query.q,
+  (value) => {
+    if (route.path !== "/") return;
+    const query = typeof value === "string" ? value.trim() : "";
+    if (!query) return;
+    browserRef.value?.setSearchQuery(query);
+    void browserRef.value?.runSearch();
+  },
+  { immediate: true },
+);
 
 onMounted(() => {
   // FileBrowser 先按 store 里上次的目录挂载；父组件的 mounted 晚于子组件，
