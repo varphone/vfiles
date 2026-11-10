@@ -657,6 +657,7 @@ import { createFileBrowserKeyboard } from "../../composables/useFileBrowserKeybo
 import { useDirectoryNavigation } from "../../composables/useDirectoryNavigation";
 import { useFileRename } from "../../composables/useFileRename";
 import { useFileActions } from "../../composables/useFileActions";
+import { useFileUpload } from "../../composables/useFileUpload";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
@@ -819,44 +820,6 @@ function toggleSidebar() {
  */
 const viewMenuOpen = ref(false);
 
-const showUploader = ref(false);
-/**
- * 打开上传对话框时直接弹出的选择器：
- * 工具栏「上传」主按钮 → 文件；「上传文件夹」菜单项 → 目录；其它入口不自动弹出。
- */
-const uploaderPick = ref<"files" | "directory" | null>(null);
-
-function openUploader(pick: "files" | "directory" | null = null) {
-  if (!canWrite.value) return;
-  uploaderPick.value = pick;
-  showUploader.value = true;
-}
-
-function closeUploader() {
-  showUploader.value = false;
-  uploaderPick.value = null;
-}
-/** 正在内联重命名的条目路径（空字符串表示没有）。 */
-/** 工具栏上的上传进度：有队列时显示「上传中 x/y」，点击打开上传对话框。 */
-const uploadIndicator = computed(() => {
-  const summary = fileUploaderRef.value?.summary;
-  if (!summary || summary.total === 0) return null;
-
-  const finished = summary.done + summary.failed;
-  const label =
-    summary.active > 0
-      ? `上传中 ${finished}/${summary.total}`
-      : summary.queued > 0
-        ? `待上传 ${summary.total}`
-        : `上传完成 ${summary.done}/${summary.total}`;
-  const title =
-    summary.failed > 0
-      ? `上传队列：${summary.done} 成功，${summary.failed} 失败`
-      : "查看上传队列";
-
-  return { label, title };
-});
-
 /** 来自收藏侧栏的局部状态缓存；文件列表 DTO 会提供准确状态。 */
 const favoritePaths = ref<Set<string>>(new Set());
 const showShortcuts = ref(false);
@@ -914,11 +877,6 @@ async function submitTransfer(
     dialogsRef.value?.finishTransfer();
   }
 }
-const fileUploaderRef = ref<InstanceType<typeof FileUploader> | null>(null);
-/** A 决策：同名预判集合（目录既存名 ✗ 上传前冲突检测数据源）。 */
-const uploadExistingNames = computed(
-  () => new Set(files.value.map((f) => f.name)),
-);
 const expandedFilePath = ref<string>("");
 
 const {
@@ -1012,17 +970,8 @@ const dropTargetLabel = computed(() =>
     : "根目录",
 );
 
-function queueDroppedFiles(files: File[]) {
-  if (!canWrite.value) return;
-  showUploader.value = true;
-  void nextTick().then(() => {
-    fileUploaderRef.value?.addFiles(files);
-    appStore.success(`已添加 ${files.length} 个文件到上传队列`);
-  });
-}
-
 const { dragging: externalDropActive } = useWindowFileDrop({
-  onFiles: queueDroppedFiles,
+  onFiles: (dropped) => queueDroppedFiles(dropped),
   enabled: () => !anyDialogOpen.value && canWrite.value,
 });
 
@@ -1271,6 +1220,23 @@ const {
   doSearch,
   notifySuccess: (message) => appStore.success(message),
   notifyError: (message) => appStore.error(message),
+});
+
+const {
+  showUploader,
+  uploaderPick,
+  fileUploaderRef,
+  uploadExistingNames,
+  uploadIndicator,
+  openUploader,
+  closeUploader,
+  queueDroppedFiles,
+  handleUpload,
+} = useFileUpload({
+  canWrite,
+  files,
+  refresh,
+  notifySuccess: (message) => appStore.success(message),
 });
 
 const {
@@ -1853,12 +1819,6 @@ async function handleDropOnFolder(targetDir: string) {
   }, 650);
   // 校验（自身/子目录、未变化、重名）由 useMoveDialog 内的 planMoveOperations 统一处理
   await moveEntryToDirectory(file, targetDir);
-}
-
-async function handleUpload() {
-  showUploader.value = false;
-  appStore.success("文件上传成功");
-  await refresh();
 }
 
 defineExpose({
