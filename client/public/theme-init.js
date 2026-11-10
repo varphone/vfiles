@@ -1,10 +1,15 @@
-// Apply the saved theme before first paint; otherwise CSS uses prefers-color-scheme.
+// Apply the theme before first paint. Always resolve to an explicit data-theme
+// (saved preference, else the system scheme) so the CSS only needs one copy of
+// each theme's variables instead of also shipping a prefers-color-scheme block.
 (function () {
   try {
     var mode = localStorage.getItem("vfiles:theme");
-    if (mode === "light" || mode === "dark") {
-      document.documentElement.dataset.theme = mode;
+    if (mode !== "light" && mode !== "dark") {
+      mode = window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
     }
+    document.documentElement.dataset.theme = mode;
   } catch {
     // localStorage may be unavailable in private browsing contexts.
   }

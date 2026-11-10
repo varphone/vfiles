@@ -2783,7 +2783,12 @@ function anyOverlayOpen(): boolean {
     showHistory.value ||
     showShareDialog.value ||
     showMoveDialog.value ||
-    dirManagerOpen.value
+    showDetailsDialog.value ||
+    showTransferDialog.value ||
+    dirManagerOpen.value ||
+    // 全局确认框也盖住列表：弹着时 Delete/F2 不能穿透到后台行。
+    // 用 DOM 判定而不是 dialogState，避免上一个对话框未结算时的模块级残留。
+    document.querySelector(".modal.is-active") !== null
   );
 }
 
