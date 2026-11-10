@@ -2,7 +2,7 @@
 
 承接 [CLIENT_UI_AUDIT.md](CLIENT_UI_AUDIT.md)。本文件只记录**尚未完成**的项，以及动手前必须知道的坑。
 
-## 已完成（截至 5f82b7d）
+## 已完成（截至 1530b9e）
 
 - **功能**：移动端批量条（ref 解包）、缩略图 watcher 泄漏、选择态跨目录泄漏、确认框 Promise 悬挂、批量删除部分失败汇总、批量下载走队列。
 - **可访问性**：页面缩放、对话框 `role/aria-modal/aria-labelledby`、Esc 只关最上层、Tab 焦点回收、4 个输入框标签、辅助文本对比度达 AA（浅 4.99:1 / 深 5.76:1）。
@@ -22,13 +22,14 @@
 - **长列表与桌面布局**：桌面外壳锁 `100dvh`，列表/设置/活动改为面板内滚动，列表表头真正 sticky；`FileList` 超过 60 行后只渲染视口窗口 + 上下占位行，150 文件实测 DOM 31 行，End 键可达末行，删除后窗口自动收敛；`ui:regression` 扩到 18 项并覆盖两侧端点与勾选状态（bb04fd0）。
 - **选择重渲染**：`selectedPaths` 改为 `shallowRef`（整体替换），`FileList` 行与 `FileGrid` 卡片按全部渲染相关 props 加 `v-memo`；回归增加勾选状态断言（18 项，701b74d）。
 - **网格窗口化**：新增通用 `useVirtualWindow`（测量列数/行高、兼容容器与页面滚动、键盘活动项钉住），`FileGrid` 只渲染视口附近的卡片并用上下 padding 撑高；150 文件桌面网格 26–40 张、移动端 6 张，两端可达，回归 20 项（5f82b7d）。
+- **结构（进行中）**：文件浏览器的历史/分享/详情/转移/快捷键/预览覆盖层抽离为 `FileBrowserDialogs`，用显式 props/emits 连接，转移失败路径通过 `finishTransfer` 暴露；新增组件契约测试（1530b9e）。
 
 ## 待办
 
-### 1. 拆分 `FileBrowser`
-[FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 3700 行，桌面/移动两套模板；`FileItem` 单行 63 个 DOM 节点。选择一项会牵动整块重渲染。
+### 1. 继续拆分 `FileBrowser`
+[FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 仍约 3695 行；覆盖层已抽离为 [FileBrowserDialogs.vue](../client/src/components/file-browser/FileBrowserDialogs.vue)，桌面/移动两套模板与工具栏仍在主组件中。
 
-**做法**：按工具栏 / 列表 / 移动布局 / 覆盖层拆组件与 composable；桌面列表/网格窗口化已验证，拆分时保持 `FileList`/`FileGrid` 的滚动契约与 `useVirtualWindow` 边界。
+**做法**：下一刀优先工具栏与键盘处理（`useFileBrowserKeyboard` 或 `FileBrowserToolbar`），再拆桌面列表区/移动布局；保持 `FileList`/`FileGrid`/`useVirtualWindow` 的滚动契约。
 
 ### 2. 产品能力缺口
 删除不可撤销且无回收站、无自助改密与个人资料、分享链接只有有效期（无密码/权限）。
