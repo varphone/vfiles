@@ -370,6 +370,30 @@ watch(
   },
 );
 
+/**
+ * 目录同步到 URL：刷新、分享链接与浏览器前进/后退都停在同一个目录。
+ *
+ * 由路由驱动的导航会在上面的 watcher 里先写进 store，这里比较两者，
+ * 相等即不 push（否则前进/后退会互相回环）。用户浏览产生的新目录用
+ * push，Back 才能逐级返回。
+ */
+watch(
+  () => currentPath.value,
+  (path) => {
+    if (route.path !== "/") return;
+    const value = path || undefined;
+    const current =
+      typeof route.query.path === "string" && route.query.path
+        ? route.query.path
+        : undefined;
+    if (current === value) return;
+    void router.push({
+      path: "/",
+      query: { ...route.query, path: value },
+    });
+  },
+);
+
 // 版本切换：加载/步进/取消都在 composable 内，Home 负责状态，FileBrowser 工具栏负责展示。
 const {
   loading: dirHistoryLoading,

@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
 import Home from "../src/views/Home.vue";
 import { useAuthStore } from "../src/stores/auth.store";
+import { useFilesStore } from "../src/stores/files.store";
 
 const {
   getFilesPageMock,
@@ -201,3 +202,18 @@ describe("Home.vue", () => {
     ).toBeInTheDocument();
   });
 });
+
+  it("mirrors the browsed directory in the URL and follows Back", async () => {
+    const { router } = await renderHome();
+    const files = useFilesStore();
+    await waitFor(() => expect(getFilesPageMock).toHaveBeenCalled());
+
+    files.navigateTo("docs");
+    await waitFor(() =>
+      expect(router.currentRoute.value.query.path).toBe("docs"),
+    );
+
+    router.back();
+    await waitFor(() => expect(router.currentRoute.value.path).toBe("/"));
+    await waitFor(() => expect(files.currentPath).toBe(""));
+  });
