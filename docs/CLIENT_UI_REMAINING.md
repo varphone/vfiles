@@ -2,7 +2,7 @@
 
 承接 [CLIENT_UI_AUDIT.md](CLIENT_UI_AUDIT.md)。本文件只记录**尚未完成**的项，以及动手前必须知道的坑。
 
-## 已完成（截至 905f3be）
+## 已完成（截至 edf310b）
 
 - **功能**：移动端批量条（ref 解包）、缩略图 watcher 泄漏、选择态跨目录泄漏、确认框 Promise 悬挂、批量删除部分失败汇总、批量下载走队列。
 - **可访问性**：页面缩放、对话框 `role/aria-modal/aria-labelledby`、Esc 只关最上层、Tab 焦点回收、4 个输入框标签、辅助文本对比度达 AA（浅 4.99:1 / 深 5.76:1）。
@@ -18,6 +18,7 @@
 - **断点**：400/560/800/1100/1279 五个一次性宽度并入 480/600/768/1024/1280，保留 769/899/1023 配对值；新边界逐档实测，无页面级横向溢出（12083b0）。
 - **间距**：190 处精确落在 4px 网格上的 padding/margin/gap 换成 `--vf-space-*`（41 文件），计算样式零差异；0.3–0.6rem 光学校准带按设计令牌决策保留（b963d72）。
 - **通知与搜索**：通知历史/未读写入 sessionStorage，刷新保留、退出登录或会话失效即清；统一搜索满 20 条时提供「查看全部结果」，结果数用 aria-live 播报；快捷键面板补 Ctrl+K（905f3be）。
+- **浏览器回归**：新增 `ui:regression`（Playwright + axe），覆盖键盘激活、右键菜单、对话框滚动锁/inert/焦点、目录 URL 前进后退与 10 个页面的 WCAG A/AA 扫描；CI 构建客户端/服务端、安装 Chromium 后执行。首次运行修复列表点击后的焦点上下文、通知/账号可访问名称、系统状态胶囊对比度（edf310b）。
 
 ## 待办
 
@@ -36,10 +37,10 @@
 
 **做法**：按数据安全优先级排：回收站/撤销 > 自助改密 > 分享密码/权限。三项都需要后端接口，先在服务端补能力再接入 UI。
 
-### 4. 无障碍与视觉回归进 CI
-本次键盘问题说明点击测试抓不到：594 个用例全绿，但聚焦按钮按 Enter/Space 仍被全局快捷键吞掉。
+### 4. CI 视觉截图基线
+键盘冒烟与 axe 扫描已进 CI；像素级截图基线仍依赖手动 `ui:sweep`。跨平台字体渲染会让 goldens 不稳定，需先决定基线策略（容器内生成 / 只比对结构尺寸 / 容忍阈值）。
 
-**做法**：加三类别回归——Playwright 键盘冒烟（按钮 Enter/Space、对话框焦点归还、菜单方向键）、`@axe-core/playwright` 扫描主要页面、`ui:sweep` 截图基线自动比对。
+**做法**：优先在固定容器里生成基线；若成本过高，保留手动 sweep，并把关键表面的截图附在发布检查单中。
 
 ## 提交前的固定检查
 
@@ -47,6 +48,7 @@
 cd client
 bun run check          # eslint + 死样式 + vue-tsc + vitest
 bun run build && bun run size:check
+bun run ui:regression  # 需要 target/debug/vfiles + client/dist
 bun run ui:sweep -- --out /tmp/vfiles-sweep
 ```
 
