@@ -80,6 +80,11 @@
      强调色在深色下要变浅才读得清，而填充面配白字必须保持足够深。 */
   --vf-accent-fill: #0082c9;
   --vf-accent-fill-hover: #0070ad;
+  /* 顶栏底色：浅色为品牌蓝，深色收敛为与内容区同族的深灰，避免一整条高饱和蓝
+     与近黑内容脱节（Nextcloud 深色主题同样把顶栏压到深面）。 */
+  --vf-topbar-bg: #0082c9;
+  --vf-topbar-fg: #ffffff;
+  --vf-topbar-hover: rgba(255, 255, 255, 0.14);
   /* 填充面上的文字（M3 的 on-container 配对） */
   --vf-on-accent: #ffffff;
   /* 按压状态层（M3 pressed 12%） */
@@ -244,6 +249,9 @@
   --vf-accent-text: #8acbf0;
   --vf-accent-fill: #0a6fa8;
   --vf-accent-fill-hover: #0b7ab3;
+  --vf-topbar-bg: #1e1e1e;
+  --vf-topbar-fg: #ededed;
+  --vf-topbar-hover: rgba(255, 255, 255, 0.08);
   --vf-accent-soft: rgba(74, 169, 224, 0.16);
   --vf-accent-soft-strong: rgba(74, 169, 224, 0.3);
 
@@ -349,7 +357,7 @@
   --vf-surface-2: #242424;
   --vf-sidebar: #121720;
   /* 深色主题的对应深蓝渐变 */
-  --vf-sidebar-gradient: linear-gradient(180deg, #12303f 0%, #171717 100%);
+  --vf-sidebar-gradient: linear-gradient(180deg, #1c2530 0%, #171717 100%);
   --vf-topbar: rgba(18, 23, 32, 0.92);
   --vf-table-head: #1a2028;
   --vf-row-hover: rgba(255, 255, 255, 0.06);

@@ -320,7 +320,8 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   height: var(--vf-topbar-height);
   /* 填充面令牌：深色主题下仍保持足够的蓝（白字/白图标 5.45:1）。 */
-  background: var(--vf-accent-fill);
+  background: var(--vf-topbar-bg);
+  color: var(--vf-topbar-fg);
 }
 
 /* 白色前景只作用于顶栏内的导航控件（右侧弹窗/下拉不继承，避免白底白字）。 */
@@ -624,6 +625,17 @@ html[data-theme="dark"] .app-header-avatar {
 @media screen and (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .app-header-avatar {
     color: var(--vf-accent-fill);
+  }
+}
+
+/* 深色下顶栏与内容同为深面：用一条极细的分隔线界定层级，避免整块“消失” */
+html[data-theme="dark"] .app-header {
+  border-bottom: 1px solid var(--vf-border-weak);
+}
+
+@media screen and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app-header {
+    border-bottom: 1px solid var(--vf-border-weak);
   }
 }
 </style>

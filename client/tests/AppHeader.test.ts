@@ -111,7 +111,7 @@ describe("AppHeader.vue", () => {
     );
     const headerRule = source.match(/\.app-header\s*\{([\s\S]*?)\n\}/)![1];
     // 实心蓝用填充面令牌：深色主题下它保持深蓝，白字/白图标才够对比。
-    expect(headerRule).toContain("background: var(--vf-accent-fill)");
+    expect(headerRule).toContain("background: var(--vf-topbar-bg)");
     expect(headerRule).toContain("height: var(--vf-topbar-height)");
     expect(headerRule).not.toContain("border-bottom");
 
