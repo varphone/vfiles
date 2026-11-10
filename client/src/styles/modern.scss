@@ -1,15 +1,26 @@
 //! 全站视觉微调：在 Bulma 语义之上统一控件高度、圆角、焦点与数据表密度。
 //!
 //! 只调整外观，不覆盖行为；页面仍可使用 Bulma 类与 `vf-*` 令牌。
+//!
+//! 形状：元素 3px、卡片与弹窗 8px、徽标 pill；行高 51px；按钮 34px。
+//! 状态：行悬停中性灰、选中浅蓝；主按钮实心主色 --vf-accent-fill。
 
-/* 按钮：统一 34px 高度（小号 30px）、3px 圆角与可见焦点。 */
-.button {
-  min-height: var(--vf-control-height);
-  height: auto;
-  padding: 0 var(--vf-space-3);
+/* ============================================================
+ * 控件：按钮 / 输入框
+ *
+ * 形状：元素 3px 圆角；按钮 34px（小号 30px），输入框与按钮同高。
+ * 焦点：键盘焦点统一 3px halo。
+ * ============================================================ */
+
+.button,
+.vf-ghost-button,
+.vf-icon-button {
   border-radius: var(--vf-radius-control);
-  font-size: 0.875rem;
-  font-weight: 500;
+}
+
+/* 只在 .button 上生效：ghost 按钮有自己的行高与过渡，不能并进下一条规则。 */
+.button {
+  height: auto;
   line-height: 1.25;
   transition:
     background-color 0.12s var(--vf-motion-standard),
@@ -17,12 +28,22 @@
     box-shadow 0.12s var(--vf-motion-standard);
 }
 
-.button.is-small {
+.button,
+.vf-ghost-button {
+  min-height: var(--vf-control-height);
+  padding: 0 var(--vf-space-3);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.button.is-small,
+.vf-ghost-button.is-small {
   min-height: var(--vf-control-height-sm);
   padding: 0 var(--vf-space-2);
   font-size: 0.8125rem;
 }
 
+/* 焦点环放在变体之前：实心按钮自带 box-shadow: none，聚焦时不叠第二层阴影。 */
 .button:focus-visible,
 .input:focus-visible,
 .select select:focus-visible,
@@ -30,6 +51,28 @@
   outline: none;
   box-shadow: 0 0 0 3px var(--vf-focus-ring);
   border-color: var(--vf-accent);
+}
+
+/* 主操作：实心主色 + 白字，hover 加深。 */
+.button.is-link,
+.button.is-primary,
+.vf-ghost-button.is-primary {
+  background: var(--vf-accent-fill);
+  color: var(--vf-on-accent);
+  box-shadow: none;
+}
+
+.button.is-link:hover,
+.button.is-primary:hover,
+.vf-ghost-button.is-primary:hover:not(:disabled) {
+  background: var(--vf-accent-fill-hover);
+  color: var(--vf-on-accent);
+}
+
+.vf-ghost-button:hover:not(:disabled),
+.vf-ghost-button:focus-visible {
+  background: var(--vf-row-hover);
+  color: var(--vf-text);
 }
 
 /* 输入控件：与按钮同高，圆角与边框统一。 */
@@ -47,13 +90,18 @@
   color: var(--vf-text-subtle);
 }
 
-/* 数据表：表头 44px、行 51px，单元格左右 16px（与工具栏/表尾同一基线）。 */
+/* ============================================================
+ * 数据表：表头 44px、行 51px，单元格左右 16px（与工具栏/表尾同一基线）。
+ * ============================================================ */
+
 .table {
   background: transparent;
   color: var(--vf-text);
 }
 
-.table thead th {
+.table thead th,
+.file-list-table thead th,
+.admin-table thead th {
   height: var(--vf-table-head-height);
   padding: 0 var(--vf-cell-padding-x);
   /* th 默认按 baseline 对齐：同行有图标或不同字号时文字会被推到底部，
@@ -69,7 +117,8 @@
   white-space: nowrap;
 }
 
-.table td {
+.table td,
+.admin-table tbody td {
   height: var(--vf-row-height);
   padding: 0 var(--vf-cell-padding-x);
   border-bottom: 1px solid var(--vf-border-weak);
@@ -80,8 +129,14 @@
   vertical-align: middle;
 }
 
-.table.is-hoverable tbody tr:hover {
+.table.is-hoverable tbody tr:hover,
+.desktop-file-row:hover > td {
   background: var(--vf-row-hover);
+}
+
+.desktop-file-row.is-row-selected > td,
+.table tbody tr.is-selected td {
+  background: var(--vf-row-selected);
 }
 
 .table tbody tr:last-child td {
@@ -150,96 +205,6 @@
 
 .settings-content > * > :first-child {
   margin-top: 0;
-}
-
-
-/* ============================================================
- * Nextcloud 视觉层
- *
- * 形状：元素 3px、卡片与弹窗 8px、徽标 pill；行高 51px；按钮 34px。
- * 状态：行悬停中性灰、选中浅蓝；主按钮实心主色 --vf-accent-fill。
- * ============================================================ */
-
-.button,
-.vf-ghost-button,
-.vf-icon-button {
-  border-radius: var(--vf-radius-control);
-}
-
-.button,
-.vf-ghost-button {
-  min-height: var(--vf-control-height);
-  padding: 0 var(--vf-space-3);
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-
-.button.is-small,
-.vf-ghost-button.is-small {
-  min-height: var(--vf-control-height-sm);
-  padding: 0 var(--vf-space-2);
-  font-size: 0.8125rem;
-}
-
-.button.is-link,
-.button.is-primary,
-.vf-ghost-button.is-primary {
-  background: var(--vf-accent-fill);
-  color: var(--vf-on-accent);
-  box-shadow: none;
-}
-
-.button.is-link:hover,
-.button.is-primary:hover,
-.vf-ghost-button.is-primary:hover:not(:disabled) {
-  background: var(--vf-accent-fill-hover);
-  color: var(--vf-on-accent);
-}
-
-.vf-ghost-button:hover:not(:disabled),
-.vf-ghost-button:focus-visible {
-  background: var(--vf-row-hover);
-  color: var(--vf-text);
-}
-
-.input,
-.textarea,
-.select select {
-  min-height: var(--vf-control-height);
-  border-radius: var(--vf-radius-control);
-  border-color: var(--vf-border);
-  font-size: 0.875rem;
-}
-
-/* 数据表：表头 44px、行 51px、单元格左右 16px；悬停中性灰 */
-.table thead th,
-.file-list-table thead th,
-.admin-table thead th {
-  height: var(--vf-table-head-height);
-  padding: 0 var(--vf-cell-padding-x);
-  background: var(--vf-surface-2);
-  color: var(--vf-text-muted);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  border-bottom: 1px solid var(--vf-border-weak);
-}
-
-.table td,
-.admin-table tbody td {
-  height: var(--vf-row-height);
-  padding: 0 var(--vf-cell-padding-x);
-  vertical-align: middle;
-  font-size: 0.875rem;
-}
-
-.table.is-hoverable tbody tr:hover,
-.desktop-file-row:hover > td {
-  background: var(--vf-row-hover);
-}
-
-.desktop-file-row.is-row-selected > td,
-.table tbody tr.is-selected td {
-  background: var(--vf-row-selected);
 }
 
 /* 侧栏：与顶栏/页面背景同用外壳色（--vf-shell-bg），无右侧分隔线 */
