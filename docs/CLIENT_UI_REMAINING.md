@@ -2,7 +2,7 @@
 
 承接 [CLIENT_UI_AUDIT.md](CLIENT_UI_AUDIT.md)。本文件只记录**尚未完成**的项，以及动手前必须知道的坑。
 
-## 已完成（截至 5661f6d）
+## 已完成（截至 e5b0c3f）
 
 - **功能**：移动端批量条（ref 解包）、缩略图 watcher 泄漏、选择态跨目录泄漏、确认框 Promise 悬挂、批量删除部分失败汇总、批量下载走队列。
 - **可访问性**：页面缩放、对话框 `role/aria-modal/aria-labelledby`、Esc 只关最上层、Tab 焦点回收、4 个输入框标签、辅助文本对比度达 AA（浅 4.99:1 / 深 5.76:1）。
@@ -30,14 +30,14 @@
 - **类型与契约**：开启 `strictTemplates`，修复 73 个模板类型错误；顺带补 `AdminOverview` 的 `SkeletonList` 导入、`MobileSearchBar` 的 `enter-results`/ArrowDown、桌面内容区的重命名绑定，并让 `FileBrowserCollection` 声明/转发完整事件契约（6485dc6）。
 - **首屏占位**：`index.html` 增加主题化启动骨架（含 reduced-motion 回退），Vue 挂载后替换，覆盖 Home chunk 加载前的空白窗口（5e71ddd）。
 - **构建体积**：删除 `prefers-color-scheme` 的那份深色变量（theme-init 已保证显式 `data-theme`，并补隐私模式回退）；Tabler 图标从 19 个小 chunk 合并为 1 个（47bf5ba）。
-- **结构（进行中）**：拖拽光标 chip（状态/目标判定/坐标/监听生命周期）抽为 `useDragChip`（6bbe05e）。所有权转移（状态/上限/提交/失败恢复）抽为 `useFileTransfer`（d155fa5）。上传队列 UI 状态（对话框/选择器/进度胶囊/拖放入队）抽为 `useFileUpload`（1e5cc0b）。条目动作与弹窗状态（删除/新建/移动/分享/历史/详情）抽为 `useFileActions`（ede96c6）。行内重命名（状态/校验/请求/刷新）抽为 `useFileRename`（ccac3e7）。桌面内容区（加载/错误/资料库/空态/搜索/列表与加载更多 slot）抽为 `FileBrowserDesktopContent`（ac32317）。桌面状态栏抽为 `FileBrowserStatusBar`（摘要/提示/选择/定位/快捷键入口，8bf5724）；移动端内容区（加载/错误/资料库/空态/搜索/列表与加载更多 slot）抽为 `FileBrowserMobileContent`（633eb48）。工具栏右侧的版本切换抽为 `FileBrowserHistoryControls`，列表/网格/排序/详情控制抽为 `FileBrowserViewControls`（8fdff03）；根视图「全部文件」菜单抽为 `FileBrowserViewMenu`，父层保留 `viewMenuOpen` 供 Escape 关闭（41d250b）；工具栏左侧的侧栏开关/写入口/范围徽标与面包屑/菜单切换抽为 `FileBrowserToolbarLeading`、`FileBrowserToolbarHeading`（b189c26）。文件浏览器的历史/分享/详情/转移/快捷键/预览覆盖层抽离为 `FileBrowserDialogs`，用显式 props/emits 连接，转移失败路径通过 `finishTransfer` 暴露；新增组件契约测试（1530b9e）。键盘处理与输入/控件判定抽离为 `useFileBrowserKeyboard`，主组件通过依赖注入连接（fc773b7）。目录导航、范围守卫、403/范围回退与滚动记忆抽离为 `useDirectoryNavigation`（88429df）。列表/网格的三处重复接线收敛为 `FileBrowserCollection`（4acd50c）。
+- **结构（进行中）**：拖放落子与 650ms 回执也并入 `useDragChip`（本轮）。拖拽光标 chip（状态/目标判定/坐标/监听生命周期）抽为 `useDragChip`（6bbe05e）。所有权转移（状态/上限/提交/失败恢复）抽为 `useFileTransfer`（d155fa5）。上传队列 UI 状态（对话框/选择器/进度胶囊/拖放入队）抽为 `useFileUpload`（1e5cc0b）。条目动作与弹窗状态（删除/新建/移动/分享/历史/详情）抽为 `useFileActions`（ede96c6）。行内重命名（状态/校验/请求/刷新）抽为 `useFileRename`（ccac3e7）。桌面内容区（加载/错误/资料库/空态/搜索/列表与加载更多 slot）抽为 `FileBrowserDesktopContent`（ac32317）。桌面状态栏抽为 `FileBrowserStatusBar`（摘要/提示/选择/定位/快捷键入口，8bf5724）；移动端内容区（加载/错误/资料库/空态/搜索/列表与加载更多 slot）抽为 `FileBrowserMobileContent`（633eb48）。工具栏右侧的版本切换抽为 `FileBrowserHistoryControls`，列表/网格/排序/详情控制抽为 `FileBrowserViewControls`（8fdff03）；根视图「全部文件」菜单抽为 `FileBrowserViewMenu`，父层保留 `viewMenuOpen` 供 Escape 关闭（41d250b）；工具栏左侧的侧栏开关/写入口/范围徽标与面包屑/菜单切换抽为 `FileBrowserToolbarLeading`、`FileBrowserToolbarHeading`（b189c26）。文件浏览器的历史/分享/详情/转移/快捷键/预览覆盖层抽离为 `FileBrowserDialogs`，用显式 props/emits 连接，转移失败路径通过 `finishTransfer` 暴露；新增组件契约测试（1530b9e）。键盘处理与输入/控件判定抽离为 `useFileBrowserKeyboard`，主组件通过依赖注入连接（fc773b7）。目录导航、范围守卫、403/范围回退与滚动记忆抽离为 `useDirectoryNavigation`（88429df）。列表/网格的三处重复接线收敛为 `FileBrowserCollection`（4acd50c）。
 
 ## 待办
 
 ### 1. 继续拆分 `FileBrowser`
-[FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 约 2416 行；覆盖层、键盘、目录导航、列表/网格接线、工具栏、状态栏、移动/桌面内容区、重命名、条目动作、上传、转移、拖拽 chip 均已抽离。剩余主要是拖放落子编排与详情面板接线。
+[FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 约 2420 行；覆盖层、键盘、目录导航、列表/网格接线、工具栏、状态栏、移动/桌面内容区、重命名、条目动作、上传、转移、拖拽/落子均已抽离。剩余主要是详情面板接线与少量编排。
 
-**做法**：下一刀评估拖放落子 composable 或详情面板容器；保持 `FileList`/`FileGrid`/`useVirtualWindow` 的滚动契约与 `useDirectoryNavigation` 的导航单点。
+**做法**：下一刀评估详情面板容器；保持 `FileList`/`FileGrid`/`useVirtualWindow` 的滚动契约与 `useDirectoryNavigation` 的导航单点。
 
 ### 2. 产品能力缺口
 删除不可撤销且无回收站，分享链接只有有效期（无密码/权限）。
