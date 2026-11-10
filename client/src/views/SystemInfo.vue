@@ -203,7 +203,7 @@
           </div>
 
           <div v-if="filteredUsers.length" class="system-info-table-wrap">
-            <table class="system-info-table">
+            <table class="table is-fullwidth is-hoverable system-info-table">
               <thead>
                 <tr>
                   <th scope="col">用户</th>
@@ -798,34 +798,10 @@ onMounted(load);
 .system-info-table {
   width: 100%;
   border-collapse: collapse;
-  text-align: left;
-  font-size: 0.8125rem;
 }
 
-.system-info-table th {
-  height: var(--vf-table-head-height);
-  padding: 0 var(--vf-cell-padding-x);
-  border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-surface-2);
-  color: var(--system-info-muted);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  white-space: nowrap;
-  vertical-align: middle;
-  line-height: 1.35;
-}
 
-.system-info-table td {
-  height: var(--vf-row-height);
-  padding: 0 var(--vf-cell-padding-x);
-  border-bottom: 1px solid var(--vf-border-weak);
-  color: var(--vf-text);
-  vertical-align: middle;
-}
 
-.system-info-table tbody tr:last-child td {
-  border-bottom: 0;
-}
 
 .system-info-user,
 .system-info-user-status {

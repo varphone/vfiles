@@ -71,25 +71,14 @@
   align-items: center;
   justify-content: center;
   gap: var(--vf-space-2);
-  min-height: var(--vf-control-height);
-  padding: 0 var(--vf-space-3);
   border: none;
-  /* 元素圆角（与 Bulma 按钮、输入框同一刻度） */
-  border-radius: var(--vf-radius-control);
+  /* 尺寸/圆角/字号由 modern.scss 的控件块统一持有 */
   background: transparent;
   color: var(--vf-text-muted);
-  font-size: 0.875rem;
-  font-weight: 500;
   cursor: pointer;
   transition:
     background-color 0.15s var(--vf-motion-standard),
     color 0.15s var(--vf-motion-standard);
-}
-
-.vf-ghost-button:hover:not(:disabled),
-.vf-ghost-button:focus-visible {
-  background: var(--vf-row-hover);
-  color: var(--vf-text);
 }
 
 .vf-ghost-button:active:not(:disabled) {
@@ -106,18 +95,7 @@
   color: var(--vf-accent-text);
 }
 
-/* 主操作：用于「预览 / 打开」等首选动作，视觉上强于普通 ghost 按钮 */
-.vf-ghost-button.is-primary {
-  background: var(--vf-accent-fill);
-  color: var(--vf-on-accent);
-}
-
-.vf-ghost-button.is-primary:hover:not(:disabled),
-.vf-ghost-button.is-primary:focus-visible {
-  background: var(--vf-accent-fill-hover);
-  color: var(--vf-on-accent);
-}
-
+/* 主操作：用于「预览 / 打开」等首选动作（底色/悬停由 modern.scss 持有） */
 .vf-ghost-button.is-primary:active:not(:disabled) {
   background: var(--vf-accent-fill-hover);
 }
@@ -150,7 +128,6 @@
 ) {
   background-color: transparent;
   border-color: var(--vf-border);
-  border-radius: 3px;
   color: var(--vf-text);
   box-shadow: none;
   min-height: var(--vf-control-height);
@@ -229,25 +206,6 @@ input[type="checkbox"]:focus-visible,
 input[type="radio"]:focus-visible {
   outline: 2px solid var(--vf-accent-text);
   outline-offset: 2px;
-}
-
-/* 焦点可见环（M3：2px 指示环 + halo；这里用 accent-text 实线环 + 偏移），
-   所有可交互控件共用一套键盘焦点语言。 */
-.vf-icon-button:focus-visible,
-.vf-ghost-button:focus-visible,
-
-/* 表单控件：8px 圆角（M3 small）+ M3 式焦点 halo */
-.input,
-.select select,
-.textarea {
-  border-radius: var(--vf-radius-sm);
-}
-
-.input:focus,
-.select select:focus,
-.textarea:focus {
-  border-color: var(--vf-accent);
-  box-shadow: 0 0 0 3px var(--vf-focus-ring);
 }
 
 /* 触屏命中区（iOS HIG 44pt / M3 48dp）：视觉尺寸不变、命中区最小 44px。

@@ -203,7 +203,7 @@
         </div>
 
         <div v-else class="shares-table-wrap">
-          <table class="shares-table">
+          <table class="table is-fullwidth is-hoverable shares-table">
             <thead>
               <tr>
                 <th scope="col" class="shares-col-file">文件</th>
@@ -672,45 +672,15 @@ onMounted(() => {
   font-size: 0.875rem;
 }
 
-.shares-table th {
-  height: var(--vf-table-head-height);
-  padding: 0 var(--vf-cell-padding-x);
-  border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-surface-2);
-  color: var(--vf-text-muted);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  text-align: left;
-  white-space: nowrap;
-  vertical-align: middle;
-  line-height: 1.35;
-}
+
+
+
+
+
 
 .shares-table td {
-  height: var(--vf-row-height);
-  padding: 0 var(--vf-cell-padding-x);
-  border-bottom: 1px solid var(--vf-border-weak);
-  vertical-align: middle;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.shares-table th:first-child,
-.shares-table td:first-child {
-  padding-left: var(--vf-cell-padding-x);
-}
-
-.shares-table th:last-child,
-.shares-table td:last-child {
-  padding-right: var(--vf-cell-padding-x);
-}
-
-.shares-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.shares-table tbody tr:hover {
-  background: var(--vf-row-hover);
 }
 
 .shares-col-file {

@@ -60,7 +60,7 @@
 
       <section v-else class="favorites-panel" aria-label="收藏列表">
         <div class="favorites-table-wrap">
-          <table class="favorites-table">
+          <table class="table is-fullwidth is-hoverable favorites-table">
             <thead>
               <tr>
                 <th scope="col">名称</th>
@@ -265,36 +265,9 @@ onMounted(() => {
   table-layout: fixed;
 }
 
-.favorites-table th {
-  height: var(--vf-table-head-height);
-  padding: 0 var(--vf-cell-padding-x);
-  background: var(--vf-surface-2);
-  border-bottom: 1px solid var(--vf-border-weak);
-  color: var(--vf-text-muted);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  text-align: left;
-  white-space: nowrap;
-  /* 与其它表格一致：垂直居中 + 固定行高（见 d0dc882） */
-  vertical-align: middle;
-  line-height: 1.35;
-}
 
-.favorites-table td {
-  height: var(--vf-row-height);
-  padding: 0 var(--vf-cell-padding-x);
-  border-bottom: 1px solid var(--vf-border-weak);
-  color: var(--vf-text);
-  font-size: 0.875rem;
-}
 
-.favorites-table tbody tr:last-child td {
-  border-bottom: 0;
-}
 
-.favorites-table tbody tr:hover {
-  background: var(--vf-row-hover);
-}
 
 .favorites-col-location {
   width: 30%;

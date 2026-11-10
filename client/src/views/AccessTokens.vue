@@ -131,7 +131,7 @@
       </div>
 
       <div v-else class="tokens-table-wrap">
-        <table class="tokens-table">
+        <table class="table is-fullwidth is-hoverable tokens-table">
           <thead>
             <tr>
               <th scope="col" class="tokens-col-name">名称</th>
@@ -568,45 +568,15 @@ onMounted(async () => {
   font-size: 0.875rem;
 }
 
-.tokens-table th {
-  height: var(--vf-table-head-height);
-  padding: 0 var(--vf-cell-padding-x);
-  border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-surface-2);
-  color: var(--vf-text-muted);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  text-align: left;
-  white-space: nowrap;
-  vertical-align: middle;
-  line-height: 1.35;
-}
+
+
+
+
+
 
 .tokens-table td {
-  height: var(--vf-row-height);
-  padding: 0 var(--vf-cell-padding-x);
-  border-bottom: 1px solid var(--vf-border-weak);
-  vertical-align: middle;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.tokens-table th:first-child,
-.tokens-table td:first-child {
-  padding-left: var(--vf-cell-padding-x);
-}
-
-.tokens-table th:last-child,
-.tokens-table td:last-child {
-  padding-right: var(--vf-cell-padding-x);
-}
-
-.tokens-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.tokens-table tbody tr:hover {
-  background: var(--vf-row-hover);
 }
 
 .tokens-col-name {

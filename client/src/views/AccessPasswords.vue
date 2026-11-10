@@ -144,7 +144,7 @@
       </div>
 
       <div v-else class="passwords-table-wrap">
-        <table class="passwords-table">
+        <table class="table is-fullwidth is-hoverable passwords-table">
           <thead>
             <tr>
               <th scope="col" class="passwords-col-name">备注</th>
@@ -719,46 +719,15 @@ onMounted(() => {
   font-size: 0.875rem;
 }
 
-.passwords-table th {
-  height: var(--vf-table-head-height);
-  padding: 0 var(--vf-cell-padding-x);
-  border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-surface-2);
-  color: var(--vf-text-muted);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  text-align: left;
-  white-space: nowrap;
-  /* 与其它表格一致：垂直居中 + 固定行高，否则 baseline 对齐会让文字贴近下边 */
-  vertical-align: middle;
-  line-height: 1.35;
-}
+
+
+
+
+
 
 .passwords-table td {
-  height: var(--vf-row-height);
-  padding: 0 var(--vf-cell-padding-x);
-  border-bottom: 1px solid var(--vf-border-weak);
-  vertical-align: middle;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.passwords-table th:first-child,
-.passwords-table td:first-child {
-  padding-left: var(--vf-cell-padding-x);
-}
-
-.passwords-table th:last-child,
-.passwords-table td:last-child {
-  padding-right: var(--vf-cell-padding-x);
-}
-
-.passwords-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.passwords-table tbody tr:hover {
-  background: var(--vf-row-hover);
 }
 
 .passwords-col-name {
