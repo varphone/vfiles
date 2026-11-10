@@ -7,6 +7,19 @@
     <FileCard
       v-for="file in cards"
       :key="file.path"
+      v-memo="[
+        file,
+        commit,
+        highlight,
+        selectMode,
+        selectedPaths.has(file.path),
+        activePath === file.path,
+        showLocation,
+        thumbnailSize,
+        canWrite,
+        canShare,
+        renamingPath === file.path,
+      ]"
       :file="file"
       :commit="commit"
       :highlight="highlight"

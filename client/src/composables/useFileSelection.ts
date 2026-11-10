@@ -1,4 +1,4 @@
-import { computed, ref, type Ref } from "vue";
+import { computed, ref, shallowRef, type Ref } from "vue";
 import { useAppStore } from "../stores/app.store";
 import { filesService } from "../services/files.service";
 import { confirmDialog } from "./dialog";
@@ -37,7 +37,8 @@ export function useFileSelection(deps: FileSelectionDeps) {
   const appStore = useAppStore();
 
   const batchMode = ref(false);
-  const selectedPaths = ref<Set<string>>(new Set());
+  // 选择集只整体替换、不原地增删：shallowRef 避免把 Set 变成深层响应式代理。
+  const selectedPaths = shallowRef<Set<string>>(new Set());
   /** 最近一次点击的条目路径，用于 Shift 范围选择。 */
   const lastSelectedPath = ref<string>("");
 

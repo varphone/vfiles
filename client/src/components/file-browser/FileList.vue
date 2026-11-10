@@ -69,6 +69,22 @@
         <FileItem
           v-for="file in windowFiles"
           :key="file.path"
+          v-memo="[
+            file,
+            highlight,
+            selectMode,
+            flashPath === file.path,
+            selectedPaths.has(file.path),
+            !selectMode && activePath === file.path,
+            sharedPaths.has(file.path),
+            publicSharedPaths.has(file.path),
+            expandedPath === file.path,
+            renamingPath === file.path,
+            showActionColumn,
+            showLocation,
+            canWrite,
+            canShare,
+          ]"
           :file="file"
           :highlight="highlight"
           :select-mode="selectMode"

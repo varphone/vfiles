@@ -210,6 +210,30 @@ async function main() {
   );
   check("no row is selected on load", rowState.selectedRows === 0);
 
+  // 行经过 v-memo 后，勾选状态仍必须跟随 selectedPaths 变化。
+  const selectableRow = page
+    .locator('tr.desktop-file-row[data-vfiles-path$=".md"]')
+    .first();
+  const selectBox = selectableRow.locator('input[type="checkbox"]').first();
+  await selectBox.check({ force: true });
+  const selectedOne = await waitFor(async () => {
+    const state = await page.evaluate(() => ({
+      rows: document.querySelectorAll("tr.is-row-selected").length,
+      checked: document.querySelectorAll(
+        'tr.desktop-file-row input[type="checkbox"]:checked',
+      ).length,
+    }));
+    return state.rows === 1 && state.checked === 1;
+  });
+  await selectBox.uncheck({ force: true });
+  const cleared = await waitFor(
+    async () =>
+      (await page.evaluate(
+        () => document.querySelectorAll("tr.is-row-selected").length,
+      )) === 0,
+  );
+  check("row selection updates despite memoization", selectedOne && cleared);
+
   // 3) 右键菜单键盘操作与焦点归还。
   await page
     .locator('tr.desktop-file-row[data-vfiles-path$=".md"]')
