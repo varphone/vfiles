@@ -578,6 +578,8 @@ onMounted(async () => {
   font-weight: 600;
   text-align: left;
   white-space: nowrap;
+  vertical-align: middle;
+  line-height: 1.35;
 }
 
 .tokens-table td {
