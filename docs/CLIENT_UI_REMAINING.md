@@ -2,7 +2,7 @@
 
 承接 [CLIENT_UI_AUDIT.md](CLIENT_UI_AUDIT.md)。本文件只记录**尚未完成**的项，以及动手前必须知道的坑。
 
-## 已完成（截至 8fdff03）
+## 已完成（截至 41d250b）
 
 - **功能**：移动端批量条（ref 解包）、缩略图 watcher 泄漏、选择态跨目录泄漏、确认框 Promise 悬挂、批量删除部分失败汇总、批量下载走队列。
 - **可访问性**：页面缩放、对话框 `role/aria-modal/aria-labelledby`、Esc 只关最上层、Tab 焦点回收、4 个输入框标签、辅助文本对比度达 AA（浅 4.99:1 / 深 5.76:1）。
@@ -18,17 +18,17 @@
 - **断点**：400/560/800/1100/1279 五个一次性宽度并入 480/600/768/1024/1280，保留 769/899/1023 配对值；新边界逐档实测，无页面级横向溢出（12083b0）。
 - **间距**：190 处精确落在 4px 网格上的 padding/margin/gap 换成 `--vf-space-*`（41 文件），计算样式零差异；0.3–0.6rem 光学校准带按设计令牌决策保留（b963d72）。
 - **通知与搜索**：通知历史/未读写入 sessionStorage，刷新保留、退出登录或会话失效即清；统一搜索满 20 条时提供「查看全部结果」，结果数用 aria-live 播报；快捷键面板补 Ctrl+K（905f3be）。
-- **浏览器回归**：新增 `ui:regression`（Playwright + axe），覆盖键盘激活、右键菜单、对话框滚动锁/inert/焦点、目录 URL 前进后退与 10 个页面的 WCAG A/AA 扫描；CI 构建客户端/服务端、安装 Chromium 后执行。首次运行修复列表点击后的焦点上下文、通知/账号可访问名称、系统状态胶囊对比度（edf310b）。随后把深色 + 390px 移动端纳入 axe 扫描，修复移动底栏「更多/首页」与图标返回链接的名称问题（0d8f49f）。回归已扩到 21 项（窗口化列表/网格、勾选、布局基线）。
+- **浏览器回归**：新增 `ui:regression`（Playwright + axe），覆盖键盘激活、右键菜单、对话框滚动锁/inert/焦点、目录 URL 前进后退与 10 个页面的 WCAG A/AA 扫描；CI 构建客户端/服务端、安装 Chromium 后执行。首次运行修复列表点击后的焦点上下文、通知/账号可访问名称、系统状态胶囊对比度（edf310b）。随后把深色 + 390px 移动端纳入 axe 扫描，修复移动底栏「更多/首页」与图标返回链接的名称问题（0d8f49f）。回归已扩到 22 项（窗口化列表/网格、勾选、布局基线）。
 - **长列表与桌面布局**：桌面外壳锁 `100dvh`，列表/设置/活动改为面板内滚动，列表表头真正 sticky；`FileList` 超过 60 行后只渲染视口窗口 + 上下占位行，150 文件实测 DOM 31 行，End 键可达末行，删除后窗口自动收敛；`ui:regression` 扩到 18 项并覆盖两侧端点与勾选状态（bb04fd0）。
 - **选择重渲染**：`selectedPaths` 改为 `shallowRef`（整体替换），`FileList` 行与 `FileGrid` 卡片按全部渲染相关 props 加 `v-memo`；回归增加勾选状态断言（18 项，701b74d）。
 - **网格窗口化**：新增通用 `useVirtualWindow`（测量列数/行高、兼容容器与页面滚动、键盘活动项钉住），`FileGrid` 只渲染视口附近的卡片并用上下 padding 撑高；150 文件桌面网格 26–40 张、移动端 6 张，两端可达，回归 20 项（5f82b7d）。
 - **布局基线**：`ui:regression` 在 1440×900 与 390×844 采集顶栏/侧栏/内容区/工具栏/列表/状态栏/首行等盒子，与 `tests/fixtures/ui-layout.json` 以 3px 容差比较；`UPDATE_LAYOUT=1` 重新生成（95fbfa2）。
-- **结构（进行中）**：工具栏右侧的版本切换抽为 `FileBrowserHistoryControls`，列表/网格/排序/详情控制抽为 `FileBrowserViewControls`（8fdff03）。文件浏览器的历史/分享/详情/转移/快捷键/预览覆盖层抽离为 `FileBrowserDialogs`，用显式 props/emits 连接，转移失败路径通过 `finishTransfer` 暴露；新增组件契约测试（1530b9e）。键盘处理与输入/控件判定抽离为 `useFileBrowserKeyboard`，主组件通过依赖注入连接（fc773b7）。目录导航、范围守卫、403/范围回退与滚动记忆抽离为 `useDirectoryNavigation`（88429df）。列表/网格的三处重复接线收敛为 `FileBrowserCollection`（4acd50c）。
+- **结构（进行中）**：工具栏右侧的版本切换抽为 `FileBrowserHistoryControls`，列表/网格/排序/详情控制抽为 `FileBrowserViewControls`（8fdff03）；根视图「全部文件」菜单抽为 `FileBrowserViewMenu`，父层保留 `viewMenuOpen` 供 Escape 关闭（41d250b）。文件浏览器的历史/分享/详情/转移/快捷键/预览覆盖层抽离为 `FileBrowserDialogs`，用显式 props/emits 连接，转移失败路径通过 `finishTransfer` 暴露；新增组件契约测试（1530b9e）。键盘处理与输入/控件判定抽离为 `useFileBrowserKeyboard`，主组件通过依赖注入连接（fc773b7）。目录导航、范围守卫、403/范围回退与滚动记忆抽离为 `useDirectoryNavigation`（88429df）。列表/网格的三处重复接线收敛为 `FileBrowserCollection`（4acd50c）。
 
 ## 待办
 
 ### 1. 继续拆分 `FileBrowser`
-[FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 约 3186 行；覆盖层、键盘、目录导航、列表/网格接线、工具栏右侧控制已分别抽离。工具栏左侧（面包屑/新建/上传/搜索）、移动布局、桌面列表容器与文件操作脚本仍在主组件。
+[FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 约 3043 行；覆盖层、键盘、目录导航、列表/网格接线、工具栏右侧控制、根视图菜单已分别抽离。工具栏左侧（面包屑/新建/上传/搜索）、移动布局、桌面列表容器与文件操作脚本仍在主组件。
 
 **做法**：下一刀优先工具栏左侧（面包屑/新建/上传）或移动布局；再评估文件操作 composable。保持 `FileList`/`FileGrid`/`useVirtualWindow` 的滚动契约与 `useDirectoryNavigation` 的导航单点。
 
