@@ -313,33 +313,63 @@ async function main() {
     ["/admin/system", "section"],
   ];
   const axeFailures = [];
-  for (const [path, selector] of pages) {
-    await page.goto(`${base}${path}`, { waitUntil: "networkidle" });
-    try {
-      await page.waitForSelector(selector, { timeout: 8000 });
-    } catch {
-      /* 页面可能用空态渲染 */
-    }
-    await page.waitForTimeout(350);
-    const report = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
-      .analyze();
-    const blocked = report.violations.filter(
-      (violation) =>
-        violation.impact === "critical" || violation.impact === "serious",
-    );
-    for (const violation of blocked) {
-      axeFailures.push({
-        path,
-        id: violation.id,
-        impact: violation.impact,
-        nodes: violation.nodes.length,
-        targets: violation.nodes.map((node) => node.target),
-        html: violation.nodes.map((node) => node.html),
-        summary: violation.nodes.map((node) => node.failureSummary),
-      });
+  async function scanAxe(target, label, entries) {
+    for (const [path, selector] of entries) {
+      await target.goto(`${base}${path}`, { waitUntil: "networkidle" });
+      try {
+        await target.waitForSelector(selector, { timeout: 8000 });
+      } catch {
+        /* 页面可能用空态渲染 */
+      }
+      await target.waitForTimeout(350);
+      const report = await new AxeBuilder({ page: target })
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+        .analyze();
+      const blocked = report.violations.filter(
+        (violation) =>
+          violation.impact === "critical" || violation.impact === "serious",
+      );
+      for (const violation of blocked) {
+        axeFailures.push({
+          theme: label,
+          path,
+          id: violation.id,
+          impact: violation.impact,
+          nodes: violation.nodes.length,
+          targets: violation.nodes.map((node) => node.target),
+          html: violation.nodes.map((node) => node.html),
+          summary: violation.nodes.map((node) => node.failureSummary),
+        });
+      }
     }
   }
+
+  await scanAxe(page, "light-desktop", pages);
+
+  // 深色 + 移动端：同一批规则再扫两个代表页。
+  const mobileContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const mobilePage = await mobileContext.newPage();
+  mobilePage.on("pageerror", (error) => pageErrors.push(String(error)));
+  await mobilePage.addInitScript(
+    (theme) => localStorage.setItem("vfiles:theme", theme),
+    "dark",
+  );
+  await mobilePage.goto(`${base}/login`, { waitUntil: "networkidle" });
+  await mobilePage.fill("#auth-username", USER.name);
+  await mobilePage.fill("#auth-password", USER.pass);
+  await mobilePage.click(".auth-submit");
+  await mobilePage.waitForSelector(".file-browser-box", { timeout: 15000 });
+  await mobilePage.waitForTimeout(600);
+  await scanAxe(mobilePage, "dark-mobile", [
+    ["/", ".file-browser-box"],
+    ["/admin/users", "table"],
+  ]);
+  await mobileContext.close();
+
   check(
     "axe serious/critical violations",
     axeFailures.length === 0,

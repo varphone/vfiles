@@ -67,7 +67,11 @@
         </div>
         <div class="admin-topbar-right">
           <ThemeToggle />
-          <RouterLink class="vf-ghost-button admin-topbar-back" to="/">
+          <RouterLink
+            class="vf-ghost-button admin-topbar-back"
+            to="/"
+            aria-label="文件"
+          >
             <IconFolderOpen :size="15" />
             <span>文件</span>
           </RouterLink>

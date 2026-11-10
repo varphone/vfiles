@@ -38,8 +38,8 @@
                   class="button is-light is-small mobile-bar-button"
                   aria-haspopup="true"
                   :aria-expanded="actionMenuOpen ? 'true' : 'false'"
-                  title="操作菜单"
-                  aria-label="操作菜单"
+                  title="更多操作"
+                  aria-label="更多操作"
                   @click="actionMenuOpen = !actionMenuOpen"
                 >
                   <IconMenu2 :size="18" />
@@ -94,8 +94,8 @@
                 </button>
                 <button
                   class="button is-light mobile-bar-button"
-                  title="根目录"
-                  aria-label="根目录"
+                  title="首页（根目录）"
+                  aria-label="首页（根目录）"
                   @click="goRoot"
                 >
                   <IconHome :size="18" />
