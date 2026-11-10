@@ -263,7 +263,7 @@
                 <template #load-more>
                   <div
                     v-if="hasMore"
-                    ref="loadMoreSentinel"
+                    :ref="setLoadMoreSentinel"
                     class="desktop-load-more has-text-centered vf-text-muted is-size-7 py-3"
                   >
                     <span v-if="searchLoadingMore || filesStore.loadingMoreFiles"
@@ -379,7 +379,7 @@
           <template #load-more>
             <div
               v-if="isMobile && hasMore"
-              ref="loadMoreSentinel"
+              :ref="setLoadMoreSentinel"
               class="has-text-centered vf-text-muted is-size-7 py-2"
             >
               <template v-if="searchLoadingMore || filesStore.loadingMoreFiles"
@@ -642,6 +642,7 @@ import { useFileTransfer } from "../../composables/useFileTransfer";
 import { useDragChip } from "../../composables/useDragChip";
 import { useFileContextMenu } from "../../composables/useFileContextMenu";
 import { useFileBrowserView } from "../../composables/useFileBrowserView";
+import { useProgressiveList } from "../../composables/useProgressiveList";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
@@ -1278,13 +1279,6 @@ onBeforeUnmount(() => {
   closePreview();
 });
 
-// 4.2: 大数据目录的分批渲染（桌面与移动端通用）
-const INITIAL_VISIBLE_COUNT = 40;
-const VISIBLE_CHUNK_COUNT = 30;
-const visibleCount = ref(INITIAL_VISIBLE_COUNT);
-const loadMoreSentinel = ref<HTMLElement | null>(null);
-let loadMoreObserver: IntersectionObserver | null = null;
-
 /** 目录列表（不含 `.`/`..` 之类的合成条目，导航交给面包屑/目录树/上一级按钮）。 */
 const navigationListItems = computed<FileInfo[]>(() =>
   sortBrowserItems(files.value, sortState.value),
@@ -1347,13 +1341,22 @@ const sortedSearchResults = computed<FileInfo[]>(() => {
 const activeList = computed(() =>
   searchActive.value ? sortedSearchResults.value : navigationListItems.value,
 );
-// 本地分批渲染之外，目录可能还有服务端未加载的页（服务端分页，默认每页 200 条）。
-const hasMoreLocal = computed(
-  () => visibleCount.value < activeList.value.length,
-);
-const hasMore = computed(() => {
-  if (searchActive.value) return hasMoreLocal.value || searchHasMore.value;
-  return hasMoreLocal.value || filesStore.hasMoreFiles;
+const {
+  visibleCount,
+  hasMore,
+  setLoadMoreSentinel,
+} = useProgressiveList({
+  activeList,
+  isMobile,
+  searchActive,
+  searchHasMore,
+  loadMoreSearchResults,
+  serverHasMore: computed(() => filesStore.hasMoreFiles),
+  loadMoreServer: () => filesStore.loadMoreFiles(),
+  resetKey: computed(
+    () =>
+      `${filesStore.currentPath}|${searchActive.value}|${searchQuery.value}|${searchResults.value.length}`,
+  ),
 });
 // 当前目录的已知条目总数（含 "." 与 ".." 两个虚拟条目），用于进度提示。
 const knownTotal = computed(() =>
@@ -1409,104 +1412,6 @@ watch(
   },
   { immediate: true },
 );
-
-function bumpVisibleCount() {
-  const total = activeList.value.length;
-  visibleCount.value = Math.min(
-    total,
-    visibleCount.value + VISIBLE_CHUNK_COUNT,
-  );
-}
-
-function resetVisibleCount() {
-  visibleCount.value = INITIAL_VISIBLE_COUNT;
-}
-
-/**
- * 分批渲染：只要哨兵还在视口附近就继续补齐，避免 IntersectionObserver
- * 在同一交叉状态下不再回调导致列表停在首批。
- */
-function maybeLoadMore() {
-  if (!hasMore.value) return;
-  const sentinel = loadMoreSentinel.value;
-  if (!sentinel) return;
-
-  const rect = sentinel.getBoundingClientRect();
-  const viewportHeight =
-    window.innerHeight || document.documentElement.clientHeight || 0;
-  if (rect.top > viewportHeight + 160) return;
-
-  // 先补齐本地已加载条目的渲染分片。
-  if (hasMoreLocal.value) {
-    const before = visibleCount.value;
-    bumpVisibleCount();
-    if (visibleCount.value === before) return;
-    void nextTick().then(() => maybeLoadMore());
-    return;
-  }
-
-  // 本地已全部渲染但服务端还有下一页：按需拉取，成功后由 length 监听继续补齐。
-  if (searchActive.value) {
-    if (searchHasMore.value) void loadMoreSearchResults();
-    return;
-  }
-
-  if (filesStore.hasMoreFiles) {
-    void filesStore.loadMoreFiles();
-  }
-}
-
-function setupLoadMoreObserver() {
-  if (loadMoreObserver) {
-    loadMoreObserver.disconnect();
-    loadMoreObserver = null;
-  }
-
-  if (!("IntersectionObserver" in window)) return;
-  if (!loadMoreSentinel.value) return;
-
-  loadMoreObserver = new IntersectionObserver(
-    (entries) => {
-      if (!entries.some((e) => e.isIntersecting)) return;
-      maybeLoadMore();
-    },
-    { root: null, threshold: 0.1, rootMargin: "120px" },
-  );
-
-  loadMoreObserver.observe(loadMoreSentinel.value);
-}
-
-watch(
-  [
-    () => filesStore.currentPath,
-    searchActive,
-    searchQuery,
-    () => searchResults.value.length,
-  ],
-  () => {
-    resetVisibleCount();
-    void nextTick().then(() => setupLoadMoreObserver());
-  },
-);
-
-watch([isMobile, loadMoreSentinel], () => {
-  void nextTick().then(() => setupLoadMoreObserver());
-});
-
-// 服务端分页追加数据后，若哨兵仍在视口内则继续拉取下一页。
-watch(
-  () => files.value.length,
-  () => {
-    void nextTick().then(() => maybeLoadMore());
-  },
-);
-
-onBeforeUnmount(() => {
-  if (loadMoreObserver) {
-    loadMoreObserver.disconnect();
-    loadMoreObserver = null;
-  }
-});
 
 const {
   pullReady,
