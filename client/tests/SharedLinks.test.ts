@@ -68,7 +68,10 @@ function stubCompactViewport() {
 function renderPage() {
   const pinia = createPinia();
   setActivePinia(pinia);
-  const router = createRouter({ history: createMemoryHistory(), routes: [] });
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: "/:pathMatch(.*)*", component: { render: () => null } }],
+  });
   return render(SharedLinks, { global: { plugins: [pinia, router] } });
 }
 

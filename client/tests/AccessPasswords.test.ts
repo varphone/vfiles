@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { createMemoryHistory, createRouter } from "vue-router";
 import AccessPasswords from "../src/views/AccessPasswords.vue";
 
 const {
@@ -10,7 +11,6 @@ const {
   deleteMock,
   directoriesMock,
   confirmMock,
-  pushMock,
 } = vi.hoisted(() => ({
   listMock: vi.fn(),
   createMock: vi.fn(),
@@ -18,7 +18,6 @@ const {
   deleteMock: vi.fn(),
   directoriesMock: vi.fn(),
   confirmMock: vi.fn(),
-  pushMock: vi.fn(),
 }));
 
 vi.mock("../src/services/auth.service", () => ({
@@ -37,7 +36,6 @@ vi.mock("../src/services/files.service", () => ({
 }));
 
 vi.mock("../src/composables/dialog", () => ({ confirmDialog: confirmMock }));
-vi.mock("vue-router", () => ({ useRouter: () => ({ push: pushMock }) }));
 
 const credential = {
   id: "c-1",
@@ -73,7 +71,13 @@ function stubCompactViewport() {
 function renderPage() {
   const pinia = createPinia();
   setActivePinia(pinia);
-  return render(AccessPasswords as any, { global: { plugins: [pinia] } });
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: "/:pathMatch(.*)*", component: { render: () => null } }],
+  });
+  return render(AccessPasswords as any, {
+    global: { plugins: [pinia, router] },
+  });
 }
 
 describe("AccessPasswords.vue", () => {
@@ -106,7 +110,6 @@ describe("AccessPasswords.vue", () => {
     });
     confirmMock.mockReset();
     confirmMock.mockResolvedValue(true);
-    pushMock.mockReset();
   });
 
   it("lists label, allowed directories, permission and last use", async () => {

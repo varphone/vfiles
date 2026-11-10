@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { createMemoryHistory, createRouter } from "vue-router";
 import AccessTokens from "../src/views/AccessTokens.vue";
 
 const {
@@ -10,7 +11,6 @@ const {
   revokeTokenMock,
   confirmMock,
   copyMock,
-  pushMock,
 } = vi.hoisted(() => ({
   listTokensMock: vi.fn(),
   expiryOptionsMock: vi.fn(),
@@ -18,7 +18,6 @@ const {
   revokeTokenMock: vi.fn(),
   confirmMock: vi.fn(),
   copyMock: vi.fn(),
-  pushMock: vi.fn(),
 }));
 
 vi.mock("../src/services/files.service", () => ({
@@ -32,7 +31,6 @@ vi.mock("../src/services/files.service", () => ({
 
 vi.mock("../src/composables/dialog", () => ({ confirmDialog: confirmMock }));
 vi.mock("../src/utils/clipboard", () => ({ copyText: copyMock }));
-vi.mock("vue-router", () => ({ useRouter: () => ({ push: pushMock }) }));
 
 const token = {
   id: "t-1",
@@ -62,7 +60,13 @@ function stubCompactViewport() {
 function renderPage() {
   const pinia = createPinia();
   setActivePinia(pinia);
-  return render(AccessTokens as any, { global: { plugins: [pinia] } });
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: "/:pathMatch(.*)*", component: { render: () => null } }],
+  });
+  return render(AccessTokens as any, {
+    global: { plugins: [pinia, router] },
+  });
 }
 
 describe("AccessTokens.vue", () => {
@@ -87,7 +91,6 @@ describe("AccessTokens.vue", () => {
     confirmMock.mockResolvedValue(true);
     copyMock.mockReset();
     copyMock.mockResolvedValue(true);
-    pushMock.mockReset();
   });
 
   it("lists tokens with prefix, status and usage hint", async () => {
