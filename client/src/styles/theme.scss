@@ -144,7 +144,9 @@
   /* 文本三档：正文不用纯黑（15.0:1），次级 5.8:1，辅助 3.1:1（占位/说明）。 */
   --vf-text: #1f2733;
   --vf-text-muted: #5b6673;
-  --vf-text-subtle: #8a94a2;
+  /* 辅助文本：文件大小/时间等实义元数据要用它，因此必须达 AA（≥4.5:1）。
+     纯占位符/禁用态另用 opacity 降低，不要靠这一档承担。 */
+  --vf-text-subtle: #677080;
 
   /* 行状态：悬停中性灰，选中低饱和蓝，按压比悬停深一档。 */
   --vf-row-hover: #f4f6f9;
@@ -298,7 +300,7 @@
 
   --vf-text: #e3e7ed;
   --vf-text-muted: #a3adba;
-  --vf-text-subtle: #7b8593;
+  --vf-text-subtle: #8b95a3;
 
   --vf-row-hover: #1b2027;
   --vf-row-selected: #1b2a38;
