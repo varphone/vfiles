@@ -13,6 +13,7 @@ function renderToasts() {
 
 describe("Notification.vue", () => {
   beforeEach(() => {
+    sessionStorage.clear();
     setActivePinia(createPinia());
   });
 

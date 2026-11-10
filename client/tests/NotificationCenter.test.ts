@@ -15,6 +15,7 @@ function renderCenter() {
 
 describe("NotificationCenter.vue", () => {
   beforeEach(() => {
+    sessionStorage.clear();
     setActivePinia(createPinia());
   });
 
@@ -69,6 +70,28 @@ describe("NotificationCenter.vue", () => {
     expect(store.notifications).toHaveLength(0);
     expect(store.notificationHistory).toHaveLength(1);
     expect(store.notificationHistory[0].message).toBe("失败了");
+  });
+
+  it("restores history and unread from the session after a reload", () => {
+    const firstPinia = createPinia();
+    setActivePinia(firstPinia);
+    const first = useAppStore();
+    first.success("保留我");
+    first.warning("也保留");
+
+    // 新的 Pinia 实例模拟刷新：同一 sessionStorage 重新水合。
+    setActivePinia(createPinia());
+    const second = useAppStore();
+    expect(second.notificationHistory.map((item) => item.message)).toEqual([
+      "也保留",
+      "保留我",
+    ]);
+    expect(second.unreadNotifications).toBe(2);
+
+    // 新通知的 id 不能与历史冲突。
+    second.info("新的");
+    const ids = second.notificationHistory.map((item) => item.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("clears the history and shows the empty state", async () => {

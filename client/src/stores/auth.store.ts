@@ -7,6 +7,7 @@ import {
   type SessionFeatures,
   type SessionScope,
 } from "../services/auth.service";
+import { useAppStore } from "./app.store";
 
 export const useAuthStore = defineStore("auth", () => {
   const initialized = ref(false);
@@ -171,6 +172,15 @@ export const useAuthStore = defineStore("auth", () => {
     }
   }
 
+  /** 会话结束时清掉通知缓存，避免同一标签页换账号后看到上一位用户的通知。 */
+  function clearNotificationCache(): void {
+    try {
+      useAppStore().clearNotificationHistory();
+    } catch {
+      // Pinia 尚未激活（如极早期卸载）：没有缓存可清。
+    }
+  }
+
   async function logout(): Promise<void> {
     loading.value = true;
     error.value = null;
@@ -179,6 +189,7 @@ export const useAuthStore = defineStore("auth", () => {
     } finally {
       user.value = null;
       clearSessionContext();
+      clearNotificationCache();
       loading.value = false;
       initialized.value = true;
     }
@@ -187,6 +198,7 @@ export const useAuthStore = defineStore("auth", () => {
   function clearUser(): void {
     user.value = null;
     clearSessionContext();
+    clearNotificationCache();
   }
 
   return {

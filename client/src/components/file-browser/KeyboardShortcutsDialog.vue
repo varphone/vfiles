@@ -94,6 +94,10 @@ const groups = [
   {
     title: "预览与搜索",
     items: [
+      {
+        keys: "Ctrl K",
+        description: "打开统一搜索（⌘+K 同效）",
+      },
       { keys: "← →", description: "预览中切换上一个 / 下一个文件" },
       {
         keys: "+ - 0 R",

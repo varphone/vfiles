@@ -15,13 +15,70 @@ export const MAX_NOTIFICATIONS = 4;
 /** 通知中心保留的历史条数（已消失的提示也能回看）。 */
 export const MAX_NOTIFICATION_HISTORY = 50;
 
+/** 会话级持久化键：刷新后通知中心仍能看到本标签页发生过的提示。 */
+const NOTIFICATION_STORAGE_KEY = "vfiles:notification-history";
+
+type PersistedNotifications = {
+  history: Notification[];
+  unread: number;
+};
+
+function readPersistedNotifications(): PersistedNotifications {
+  if (typeof sessionStorage === "undefined") return { history: [], unread: 0 };
+  try {
+    const raw = sessionStorage.getItem(NOTIFICATION_STORAGE_KEY);
+    if (!raw) return { history: [], unread: 0 };
+    const parsed = JSON.parse(raw) as Partial<PersistedNotifications>;
+    const types = new Set(["success", "error", "warning", "info"]);
+    const history = Array.isArray(parsed.history)
+      ? parsed.history
+          .filter(
+            (item) =>
+              item &&
+              typeof item.id === "number" &&
+              typeof item.message === "string" &&
+              typeof item.createdAt === "number" &&
+              types.has(item.type),
+          )
+          .slice(0, MAX_NOTIFICATION_HISTORY)
+      : [];
+    const unread =
+      typeof parsed.unread === "number" &&
+      Number.isFinite(parsed.unread) &&
+      parsed.unread > 0
+        ? Math.min(parsed.unread, history.length)
+        : 0;
+    return { history, unread };
+  } catch {
+    return { history: [], unread: 0 };
+  }
+}
+
+function writePersistedNotifications(state: PersistedNotifications): void {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // 隐私模式/配额不足：通知中心降级为内存态，不影响主流程。
+  }
+}
+
 export const useAppStore = defineStore("app", () => {
+  const persisted = readPersistedNotifications();
   const notifications = ref<Notification[]>([]);
   /** 通知历史：即使 toast 已自动消失也保留，供「通知中心」回看。 */
-  const notificationHistory = ref<Notification[]>([]);
+  const notificationHistory = ref<Notification[]>(persisted.history);
   /** 通知中心里未读的条数（打开面板后清零）。 */
-  const unreadNotifications = ref(0);
-  let notificationId = 0;
+  const unreadNotifications = ref(persisted.unread);
+  let notificationId =
+    persisted.history.reduce((max, item) => Math.max(max, item.id + 1), 0);
+
+  function persistNotifications() {
+    writePersistedNotifications({
+      history: notificationHistory.value,
+      unread: unreadNotifications.value,
+    });
+  }
 
   function showNotification(
     type: Notification["type"],
@@ -38,6 +95,7 @@ export const useAppStore = defineStore("app", () => {
       MAX_NOTIFICATION_HISTORY,
     );
     unreadNotifications.value += 1;
+    persistNotifications();
 
     // 批量操作可能一次产生多条通知，这里只保留最近的几条
     if (notifications.value.length > MAX_NOTIFICATIONS) {
@@ -54,6 +112,7 @@ export const useAppStore = defineStore("app", () => {
   /** 打开通知中心：清空未读计数。 */
   function markNotificationsRead() {
     unreadNotifications.value = 0;
+    persistNotifications();
   }
 
   /** 从历史里移除单条（toast 若还在也一并移除）。 */
@@ -62,12 +121,14 @@ export const useAppStore = defineStore("app", () => {
       (item) => item.id !== id,
     );
     removeNotification(id);
+    persistNotifications();
   }
 
   /** 清空通知历史。 */
   function clearNotificationHistory() {
     notificationHistory.value = [];
     unreadNotifications.value = 0;
+    persistNotifications();
   }
 
   function removeNotification(id: number) {

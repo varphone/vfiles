@@ -100,6 +100,37 @@ describe("UnifiedSearch.vue", () => {
     expect(router.currentRoute.value.path).toBe("/");
   });
 
+  it("offers the full result list when the preview hits the cap", async () => {
+    searchFilesMock.mockResolvedValue({
+      items: Array.from({ length: 20 }, (_, index) => ({
+        id: `file-${index}`,
+        name: `report-${index}.pdf`,
+        path: `docs/report-${index}.pdf`,
+        kind: "file",
+        size_bytes: 1024,
+        created_at: "2026-05-29T00:00:00.000Z",
+      })),
+      hasMore: true,
+      resultsMayBeIncomplete: false,
+      limit: 20,
+      offset: 0,
+    });
+    const { router, onClose } = renderSearch();
+
+    await fireEvent.update(
+      screen.getByPlaceholderText("搜索文件与文件夹…"),
+      "report",
+    );
+    const all = await screen.findByRole("button", { name: "查看全部结果" });
+    await fireEvent.click(all);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(router.currentRoute.value.query.q).toBe("report"),
+    );
+    expect(router.currentRoute.value.path).toBe("/");
+  });
+
   it("closes on Escape and clears its results", async () => {
     const { onClose } = renderSearch();
 

@@ -61,6 +61,18 @@
           </ul>
         </section>
       </div>
+
+      <button
+        v-if="fullSearchAvailable"
+        class="vf-ghost-button unified-search-all"
+        type="button"
+        @click="openFullSearch"
+      >
+        查看全部结果
+      </button>
+      <p class="is-sr-only" role="status" aria-live="polite">
+        {{ statusText }}
+      </p>
     </div>
   </Modal>
 </template>
@@ -111,6 +123,20 @@ const trimmedQuery = computed(() => query.value.trim());
 const resultGroups = computed(() => {
   if (results.value.length === 0) return [];
   return [{ key: "files", label: "文件", items: results.value }];
+});
+
+/** 结果达到上限时提示去文件页看完整列表（模态只展示首屏）。 */
+const fullSearchAvailable = computed(
+  () =>
+    !loading.value &&
+    trimmedQuery.value !== "" &&
+    results.value.length >= SEARCH_RESULT_LIMIT,
+);
+
+const statusText = computed(() => {
+  if (loading.value) return "正在搜索";
+  if (trimmedQuery.value === "") return "";
+  return `${results.value.length} 个结果`;
 });
 
 function clearDebounce() {
@@ -177,6 +203,14 @@ watch(
     void nextTick().then(() => inputRef.value?.focus());
   },
 );
+
+/** 查看全部：把关键字交给文件页的完整搜索。 */
+function openFullSearch() {
+  const term = trimmedQuery.value;
+  if (!term) return;
+  emit("close");
+  void router.push({ path: "/", query: { q: term } });
+}
 
 /** 点击结果：关闭模态并跳到文件根目录，目录参数由结果路径推导。 */
 function openResult(item: FileInfo) {
@@ -252,6 +286,12 @@ onBeforeUnmount(() => {
 
 .unified-search-hint.is-error {
   color: var(--vf-danger-text);
+}
+
+.unified-search-all {
+  width: 100%;
+  margin-top: var(--vf-space-2);
+  justify-content: center;
 }
 
 .unified-search-results {
