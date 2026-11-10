@@ -209,8 +209,7 @@ describe("ViewsSidebar.vue 搜索接线", () => {
     await router.push("/");
     await router.isReady();
 
-    const { container, emitted } = render(ViewsSidebar, {
-      props: { roots: [] },
+    const { container, emitted } = render(ViewsSidebar as any, {
       global: { plugins: [router] },
     });
     const input = container.querySelector<HTMLInputElement>(

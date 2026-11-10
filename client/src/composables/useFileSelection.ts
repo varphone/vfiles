@@ -17,6 +17,8 @@ export interface FileSelectionDeps {
   refresh: () => void | Promise<void>;
   doSearch: (pushHistoryEnabled: boolean) => Promise<void> | void;
   openMoveDialog: (items: FileInfo[], initialPath: string) => void;
+  /** 入队下载（与单文件下载同一条队列：有进度、可取消、可重试）。 */
+  enqueueDownload?: (kind: "file" | "folder", path: string) => void;
   renameEntry: (file: FileInfo) => Promise<void> | void;
 }
 
@@ -178,11 +180,17 @@ export function useFileSelection(deps: FileSelectionDeps) {
       if (!ok) return;
     }
 
-    for (const file of files) {
-      filesService.downloadFile(file.path, deps.browseCommit.value);
-    }
-    for (const folder of folders) {
-      filesService.downloadFolder(folder.path, deps.browseCommit.value);
+    if (deps.enqueueDownload) {
+      // 走下载队列：串行、有进度、可取消；批量点 50 个不再并发 50 个请求
+      for (const file of files) deps.enqueueDownload("file", file.path);
+      for (const folder of folders) deps.enqueueDownload("folder", folder.path);
+    } else {
+      for (const file of files) {
+        filesService.downloadFile(file.path, deps.browseCommit.value);
+      }
+      for (const folder of folders) {
+        filesService.downloadFolder(folder.path, deps.browseCommit.value);
+      }
     }
 
     appStore.success(`已开始下载 ${totalCount} 个项目`);

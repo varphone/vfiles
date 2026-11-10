@@ -1826,6 +1826,7 @@ const {
   doSearch,
   openMoveDialog,
   renameEntry: handleRenameEntry,
+  enqueueDownload: (kind, path) => enqueueDownload(kind, path),
 });
 
 const {
