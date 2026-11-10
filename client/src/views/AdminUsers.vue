@@ -111,14 +111,25 @@
 
       <div v-else-if="isCompact" class="admin-user-cards">
         <article v-for="u in users" :key="u.id" class="admin-user-card">
-          <header class="admin-user-card-head" @click="openDrawer(u)">
-            <span class="admin-avatar" aria-hidden="true">
-              {{ (u.username || "?").slice(0, 1).toUpperCase() }}
-            </span>
+          <header
+            class="admin-user-card-head"
+            role="button"
+            tabindex="0"
+            aria-haspopup="dialog"
+            @click="openDrawer(u)"
+            @keydown.enter.prevent="openDrawer(u)"
+            @keydown.space.prevent="openDrawer(u)"
+          >
+            <span
+              class="admin-avatar"
+              aria-hidden="true"
+              v-bind="{ 'data-initial': (u.username || '?').slice(0, 1).toUpperCase() }"
+            ></span>
             <div class="admin-user-titles">
               <span class="admin-user-name">{{ u.username }}</span>
               <span class="admin-user-card-email">{{ u.email || "未设置" }}</span>
             </div>
+            <span class="is-sr-only">查看详情</span>
             <span
               class="admin-status"
               :class="u.disabled ? 'is-disabled' : 'is-active'"
@@ -223,14 +234,19 @@
               :key="u.id"
               class="admin-row"
               tabindex="0"
+              :aria-label="`查看用户 ${u.username} 的详情`"
+              aria-haspopup="dialog"
               @click="openDrawer(u)"
               @keydown.enter.prevent="openDrawer(u)"
+              @keydown.space.prevent="openDrawer(u)"
             >
               <td>
                 <div class="admin-user">
-                  <span class="admin-avatar" aria-hidden="true">
-                    {{ (u.username || "?").slice(0, 1).toUpperCase() }}
-                  </span>
+                  <span
+                    class="admin-avatar"
+                    aria-hidden="true"
+                    v-bind="{ 'data-initial': (u.username || '?').slice(0, 1).toUpperCase() }"
+                  ></span>
                   <div class="admin-user-titles">
                     <span class="admin-user-name">{{ u.username }}</span>
                     <span v-if="u.id === auth.user?.id" class="admin-user-self">
@@ -1155,6 +1171,16 @@ onMounted(() => {
   align-items: center;
   gap: var(--vf-space-2);
   cursor: pointer;
+}
+
+.admin-avatar::before {
+  content: attr(data-initial);
+}
+
+.admin-user-card-head:focus-visible {
+  outline: 2px solid var(--vf-accent);
+  outline-offset: 2px;
+  border-radius: var(--vf-radius-control);
 }
 
 .admin-user-card-email {

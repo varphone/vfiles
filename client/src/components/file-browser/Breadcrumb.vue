@@ -14,6 +14,9 @@
           class="path-bar-segment"
           href="#"
           :title="crumb.path ? `/${crumb.path}` : '根目录'"
+          :aria-current="
+            index === breadcrumbs.length - 1 ? 'page' : undefined
+          "
           @click.prevent="go(crumb.path)"
           @dragover.prevent="onDragOver(crumb.path)"
           @dragleave="onDragLeave(crumb.path)"
