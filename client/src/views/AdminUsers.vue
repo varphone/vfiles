@@ -974,7 +974,7 @@ onMounted(() => {
   width: min(16rem, 60vw);
   padding-left: 1.75rem;
   padding-right: 1.6rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .admin-search-clear {
@@ -985,7 +985,7 @@ onMounted(() => {
 .admin-refresh {
   min-height: 1.9rem;
   padding: 0 0.6rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 /* 角色筛选 chips */
@@ -1002,12 +1002,12 @@ onMounted(() => {
   /* 与活动页 chips 同高（34px），不再混用 28/32/36 */
   min-height: var(--vf-control-height);
   padding: 0 var(--vf-space-3);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
 }
 
 .admin-filter-count {
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .admin-filter.is-active .admin-filter-count {
@@ -1025,7 +1025,7 @@ onMounted(() => {
   border-radius: var(--vf-radius-sm);
   background: var(--vf-warning-soft);
   color: var(--vf-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .admin-row {
@@ -1058,20 +1058,20 @@ onMounted(() => {
 }
 
 .admin-facts dt {
-  font-size: 0.77rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-muted);
 }
 
 .admin-facts dd {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   color: var(--vf-text);
   text-align: right;
 }
 
 .admin-drawer-section {
   margin: 1.25rem 0 0.5rem;
-  font-size: 0.82rem;
+  font-size: var(--vf-text-sm);
   font-weight: 650;
   color: var(--vf-text);
 }
@@ -1079,7 +1079,7 @@ onMounted(() => {
 .admin-drawer-hint {
   margin: 0;
   padding: 0.6rem 0;
-  font-size: 0.78rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-subtle);
 }
 
@@ -1125,14 +1125,14 @@ onMounted(() => {
   align-items: center;
   gap: 0.4rem;
   margin: 0;
-  font-size: 0.79rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text);
   word-break: break-word;
 }
 
 .admin-session-meta {
   margin: 0.15rem 0 0;
-  font-size: 0.72rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-subtle);
 }
 
@@ -1158,7 +1158,7 @@ onMounted(() => {
 }
 
 .admin-user-card-email {
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-muted);
   word-break: break-all;
 }
@@ -1177,13 +1177,13 @@ onMounted(() => {
 }
 
 .admin-user-card-meta dt {
-  font-size: 0.68rem;
+  font-size: var(--vf-text-2xs);
   color: var(--vf-text-subtle);
 }
 
 .admin-user-card-meta dd {
   margin: 0;
-  font-size: 0.78rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text);
 }
 
@@ -1205,7 +1205,7 @@ onMounted(() => {
 }
 
 .admin-pager-info {
-  font-size: 0.78rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -1221,13 +1221,13 @@ onMounted(() => {
 }
 
 .admin-table {
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
 }
 
 .admin-table thead th {
   border-bottom: 1px solid var(--vf-border-weak);
   color: var(--vf-text-muted);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   white-space: nowrap;
   vertical-align: middle;
@@ -1254,7 +1254,7 @@ onMounted(() => {
   border-radius: 50%;
   background: var(--vf-accent-soft);
   color: var(--vf-accent-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
 }
 
@@ -1271,7 +1271,7 @@ onMounted(() => {
 
 .admin-user-self {
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .admin-email {
@@ -1302,14 +1302,14 @@ onMounted(() => {
 .admin-edit-button {
   min-height: 1.75rem;
   padding: 0 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .admin-status {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   white-space: nowrap;
 }
 
@@ -1320,7 +1320,7 @@ onMounted(() => {
   border-radius: var(--vf-radius-pill);
   background: var(--vf-surface-2);
   color: var(--vf-text-subtle);
-  font-size: 0.68rem;
+  font-size: var(--vf-text-2xs);
   white-space: nowrap;
 }
 
@@ -1348,7 +1348,7 @@ onMounted(() => {
 
 .admin-date {
   color: var(--vf-text-subtle);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   white-space: nowrap;
 }
 
@@ -1369,7 +1369,7 @@ onMounted(() => {
 .admin-action {
   min-height: 1.8rem;
   padding: 0 0.55rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   white-space: nowrap;
 }
 

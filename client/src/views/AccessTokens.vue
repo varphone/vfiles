@@ -548,7 +548,7 @@ onMounted(async () => {
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.5;
 }
 
@@ -565,7 +565,7 @@ onMounted(async () => {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
 }
 
 
@@ -621,7 +621,7 @@ onMounted(async () => {
   border-radius: var(--vf-radius-xs);
   background: var(--vf-surface-2);
   color: var(--vf-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .tokens-muted {
@@ -641,7 +641,7 @@ onMounted(async () => {
 .tokens-action {
   min-height: 1.9rem;
   padding: 0 0.55rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .tokens-revoke {
@@ -660,7 +660,7 @@ onMounted(async () => {
 
 .tokens-pager-info {
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   text-align: center;
 }
 
@@ -671,7 +671,7 @@ onMounted(async () => {
 
 .tokens-usage-title {
   margin: 0 0 0.35rem;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 600;
   color: var(--vf-text);
 }
@@ -683,7 +683,7 @@ onMounted(async () => {
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface-2);
   color: var(--vf-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.5;
   overflow-x: auto;
   white-space: pre;
@@ -732,13 +732,13 @@ onMounted(async () => {
 
 .tokens-card-meta dt {
   color: var(--vf-text-subtle);
-  font-size: 0.7rem;
+  font-size: var(--vf-text-2xs);
 }
 
 .tokens-card-meta dd {
   margin: 0;
   color: var(--vf-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   word-break: break-word;
 }
 
@@ -757,14 +757,14 @@ onMounted(async () => {
 
 .tokens-label {
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
 }
 
 .tokens-error {
   margin: 0.2rem 0 0;
   color: var(--vf-danger-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .tokens-created {
@@ -780,7 +780,7 @@ onMounted(async () => {
   gap: 0.35rem;
   margin: 0;
   color: var(--vf-warning-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .tokens-created-row {
@@ -791,6 +791,6 @@ onMounted(async () => {
 
 .tokens-created-input {
   font-family: var(--vf-font-mono, monospace);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 </style>

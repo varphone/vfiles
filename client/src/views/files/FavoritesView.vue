@@ -242,7 +242,7 @@ onMounted(() => {
 
 .favorites-total {
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   white-space: nowrap;
 }
 
@@ -296,7 +296,7 @@ onMounted(() => {
   border: none;
   background: none;
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   text-align: left;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -312,7 +312,7 @@ onMounted(() => {
 .favorites-location {
   overflow: hidden;
   color: var(--vf-text-muted);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -320,7 +320,7 @@ onMounted(() => {
 .favorites-remove {
   gap: var(--vf-space-1);
   padding: 0 var(--vf-space-2);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
 }
 
 .favorites-more {

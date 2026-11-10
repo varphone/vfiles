@@ -70,24 +70,24 @@ const foreground = computed(() => palette.value.foreground);
 .vf-avatar.is-xs {
   width: 22px;
   height: 22px;
-  font-size: 0.62rem;
+  font-size: var(--vf-text-2xs);
 }
 
 .vf-avatar.is-sm {
   width: 28px;
   height: 28px;
-  font-size: 0.7rem;
+  font-size: var(--vf-text-2xs);
 }
 
 .vf-avatar.is-md {
   width: 34px;
   height: 34px;
-  font-size: 0.78rem;
+  font-size: var(--vf-text-xs);
 }
 
 .vf-avatar.is-lg {
   width: 44px;
   height: 44px;
-  font-size: 0.95rem;
+  font-size: var(--vf-text-lg);
 }
 </style>

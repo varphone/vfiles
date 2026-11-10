@@ -56,7 +56,7 @@ const icon = computed(() => {
   padding: 0.5rem 0.6rem;
   border: 1px solid transparent;
   border-radius: var(--vf-radius-sm);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.5;
 }
 

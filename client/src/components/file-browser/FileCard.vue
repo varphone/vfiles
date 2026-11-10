@@ -728,7 +728,7 @@ onBeforeUnmount(() => {
   border-radius: var(--vf-radius-control);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -757,7 +757,7 @@ onBeforeUnmount(() => {
 .rename-input {
   width: 100%;
   height: 1.9rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 /* 搜索结果：卡片上标出所在目录 */
@@ -767,7 +767,7 @@ onBeforeUnmount(() => {
   gap: var(--vf-space-1);
   max-width: 100%;
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .file-card-location-text {
@@ -778,7 +778,7 @@ onBeforeUnmount(() => {
 }
 
 .file-card-name {
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   line-height: 1.3;
   color: var(--vf-text);
   overflow: hidden;
@@ -794,7 +794,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: var(--vf-space-1);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-subtle);
   overflow: hidden;
   text-overflow: ellipsis;

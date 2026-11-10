@@ -728,7 +728,7 @@ async function renameSelected() {
 }
 
 .mobile-bar-label {
-  font-size: 0.66rem;
+  font-size: var(--vf-text-2xs);
   font-weight: 500;
   letter-spacing: 0.01em;
 }

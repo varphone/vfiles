@@ -565,7 +565,7 @@ onMounted(() => {
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 /* 概览条：总量/失败 + Top 用户/动作，点击即筛选 */
@@ -579,7 +579,7 @@ onMounted(() => {
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface-2);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .audit-summary-totals {
@@ -598,7 +598,7 @@ onMounted(() => {
   border: none;
   background: none;
   color: var(--vf-danger-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   cursor: pointer;
 }
 
@@ -616,19 +616,19 @@ onMounted(() => {
 
 .audit-summary-label {
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .audit-summary-chip {
   gap: 0.3rem;
   min-height: 1.6rem;
   padding: 0 0.45rem;
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .audit-summary-count {
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .audit-filters {
@@ -655,14 +655,14 @@ onMounted(() => {
 .audit-search-input {
   width: min(16rem, 60vw);
   padding-left: 1.75rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 /* 导出按钮与其它按钮一致，禁用时降低不透明度 */
 .audit-header-actions .vf-ghost-button {
   min-height: 1.9rem;
   padding: 0 0.55rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   text-decoration: none;
 }
 
@@ -676,18 +676,18 @@ onMounted(() => {
   align-items: center;
   gap: 0.25rem;
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .audit-date-input {
   width: 8.5rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .audit-apply {
   min-height: 1.9rem;
   padding: 0 0.55rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .audit-table-wrap {
@@ -696,13 +696,13 @@ onMounted(() => {
 }
 
 .audit-table {
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
 }
 
 .audit-table thead th {
   border-bottom: 1px solid var(--vf-border-weak);
   color: var(--vf-text-muted);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   white-space: nowrap;
   vertical-align: middle;
@@ -746,7 +746,7 @@ onMounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .audit-result {
@@ -799,7 +799,7 @@ onMounted(() => {
 
 .audit-pager-info {
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .is-spinning {

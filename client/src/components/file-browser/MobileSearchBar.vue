@@ -211,7 +211,7 @@ const emit = defineEmits<{
   padding: var(--vf-space-3);
   border-radius: var(--vf-radius-card);
   background: var(--vf-surface-2);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
 }
 
 .mobile-filter-item {

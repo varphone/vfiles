@@ -176,12 +176,12 @@ const navItems = computed(() =>
 }
 
 .admin-brand-text strong {
-  font-size: 0.86rem;
+  font-size: var(--vf-text-sm);
   color: var(--vf-text);
 }
 
 .admin-brand-text span {
-  font-size: 0.7rem;
+  font-size: var(--vf-text-2xs);
   /* 小字在 shell 底上必须 ≥4.5:1：subtle 仅在白底达标（4.37 → 5.4）。 */
   color: var(--vf-text-muted);
 }
@@ -199,7 +199,7 @@ const navItems = computed(() =>
 
 .admin-nav-label {
   margin: var(--vf-space-2) var(--vf-space-3) var(--vf-space-1);
-  font-size: 0.68rem;
+  font-size: var(--vf-text-2xs);
   font-weight: 650;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -215,7 +215,7 @@ const navItems = computed(() =>
   padding: 0 var(--vf-space-3);
   border-radius: var(--vf-radius-card);
   color: var(--vf-text-muted);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 500;
   text-decoration: none;
   transition: background-color 0.12s var(--vf-motion-standard),
@@ -257,7 +257,7 @@ const navItems = computed(() =>
   padding: 0 var(--vf-space-3);
   border-radius: var(--vf-radius-card);
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   text-decoration: none;
 }
 
@@ -299,17 +299,17 @@ const navItems = computed(() =>
 }
 
 .admin-crumb {
-  font-size: 0.78rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-muted);
 }
 
 .admin-crumb-sep {
   color: var(--vf-text-muted);
-  font-size: 0.72rem;
+  font-size: var(--vf-text-xs);
 }
 
 .admin-crumb-current {
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   color: var(--vf-text);
 }

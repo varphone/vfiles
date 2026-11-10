@@ -454,7 +454,7 @@ defineExpose({
   gap: 0.35rem;
   margin: 0.6rem 0 0;
   color: var(--vf-text-subtle);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .upload-queue-section {
@@ -474,7 +474,7 @@ defineExpose({
 
 .upload-queue-title {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 600;
   color: var(--vf-text);
 }
@@ -485,7 +485,7 @@ defineExpose({
   gap: 0.5rem;
   margin: 0.1rem 0 0;
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .upload-queue-subtitle .is-danger-text {
@@ -502,7 +502,7 @@ defineExpose({
 .upload-queue-header-button {
   min-height: 1.85rem;
   padding: 0 0.55rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .upload-queue-overall {
@@ -512,6 +512,6 @@ defineExpose({
 .upload-queue-hint {
   margin: 0;
   color: var(--vf-text-subtle);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 </style>

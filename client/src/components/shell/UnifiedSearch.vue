@@ -246,7 +246,7 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 1.1rem 0.25rem;
   color: var(--vf-text-muted);
-  font-size: 0.82rem;
+  font-size: var(--vf-text-sm);
   text-align: center;
 }
 
@@ -268,7 +268,7 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 0.3rem 0.4rem;
   color: var(--vf-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -318,12 +318,12 @@ onBeforeUnmount(() => {
 }
 
 .unified-search-name {
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
 }
 
 .unified-search-path {
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 @media (prefers-reduced-motion: reduce) {

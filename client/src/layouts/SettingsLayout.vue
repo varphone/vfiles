@@ -204,7 +204,7 @@ onBeforeUnmount(() =>
   margin: var(--vf-space-2) 0;
   padding: 0 var(--vf-space-3);
   color: var(--vf-text-muted);
-  font-size: 13px;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1.5;
@@ -232,7 +232,7 @@ onBeforeUnmount(() =>
   background: var(--vf-settings-item-bg);
   color: var(--vf-text);
   font-family: inherit;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 500;
   text-align: left;
   text-decoration: none;
@@ -333,7 +333,7 @@ onBeforeUnmount(() =>
     white-space: nowrap;
     text-overflow: ellipsis;
     color: var(--vf-text);
-    font-size: 0.95rem;
+    font-size: var(--vf-text-lg);
     font-weight: 600;
   }
 
@@ -372,7 +372,7 @@ onBeforeUnmount(() =>
 
   .settings-sidebar-head-title {
     color: var(--vf-text-muted);
-    font-size: 0.8rem;
+    font-size: var(--vf-text-sm);
     font-weight: 600;
   }
 

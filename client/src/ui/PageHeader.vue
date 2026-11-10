@@ -48,7 +48,7 @@ withDefaults(
 
 .vf-page-header-title {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: var(--vf-text-2xl);
   font-weight: 700;
   line-height: 1.3;
   color: var(--vf-text);
@@ -58,7 +58,7 @@ withDefaults(
 .vf-page-header-desc {
   margin: var(--vf-space-1) 0 0;
   max-width: 62ch;
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.5;
   color: var(--vf-text-muted);
 }
@@ -72,7 +72,7 @@ withDefaults(
 
 @media screen and (max-width: 768px) {
   .vf-page-header-title {
-    font-size: 1.1rem;
+    font-size: var(--vf-text-xl);
   }
 }
 </style>

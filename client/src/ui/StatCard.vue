@@ -55,14 +55,14 @@ withDefaults(
 
 .vf-stat-label {
   margin: 0;
-  font-size: 0.76rem;
+  font-size: var(--vf-text-xs);
   font-weight: 550;
   color: var(--vf-text-muted);
 }
 
 .vf-stat-value {
   margin: var(--vf-space-1) 0 0;
-  font-size: 1.35rem;
+  font-size: var(--vf-text-3xl);
   line-height: 1.25;
   font-weight: 700;
   color: var(--vf-text);
@@ -71,7 +71,7 @@ withDefaults(
 
 .vf-stat-hint {
   margin: var(--vf-space-1) 0 0;
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-subtle);
 }
 </style>

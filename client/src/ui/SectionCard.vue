@@ -50,14 +50,14 @@ withDefaults(
 
 .vf-card-title {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: var(--vf-text-lg);
   font-weight: 650;
   color: var(--vf-text);
 }
 
 .vf-card-desc {
   margin: var(--vf-space-1) 0 0;
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.5;
   color: var(--vf-text-muted);
 }

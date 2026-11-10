@@ -292,13 +292,13 @@ onMounted(reload);
 }
 
 .admin-protocol-name {
-  font-size: 0.83rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   color: var(--vf-text);
 }
 
 .admin-protocol-bind {
-  font-size: 0.74rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-subtle);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   word-break: break-all;
@@ -325,13 +325,13 @@ onMounted(reload);
 }
 
 .admin-facts dt {
-  font-size: 0.77rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-muted);
 }
 
 .admin-facts dd {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   color: var(--vf-text);
   text-align: right;
 }
@@ -384,7 +384,7 @@ onMounted(reload);
 
 .admin-activity-title {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   color: var(--vf-text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -403,12 +403,12 @@ onMounted(reload);
 
 .admin-activity-meta {
   margin: 0.15rem 0 0;
-  font-size: 0.72rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-subtle);
 }
 
 .admin-muted {
-  font-size: 0.78rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-subtle);
 }
 
@@ -421,7 +421,7 @@ onMounted(reload);
   border-radius: var(--vf-radius-control);
   background: var(--vf-danger-soft);
   color: var(--vf-danger-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 @media screen and (max-width: 1100px) {

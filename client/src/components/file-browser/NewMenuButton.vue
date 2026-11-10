@@ -136,7 +136,7 @@ onBeforeUnmount(() => {
   border-radius: var(--vf-radius-control);
   background: var(--vf-accent-fill);
   color: var(--vf-on-accent);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 500;
   line-height: 1.25;
   white-space: nowrap;
@@ -186,7 +186,7 @@ onBeforeUnmount(() => {
   border-radius: var(--vf-radius-control);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   text-align: left;
   cursor: pointer;
 }

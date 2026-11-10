@@ -65,13 +65,13 @@ defineProps<{
 }
 
 .upload-drop-title {
-  font-size: 1.05rem;
+  font-size: var(--vf-text-xl);
   font-weight: 600;
   color: var(--vf-text);
 }
 
 .upload-drop-hint {
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   color: var(--vf-text-muted);
 }
 

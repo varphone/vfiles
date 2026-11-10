@@ -219,7 +219,7 @@ function onMessageInput(id: number, event: Event) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   color: var(--vf-text);
 }
 
@@ -234,7 +234,7 @@ function onMessageInput(id: number, event: Event) {
   min-width: 0;
   overflow: hidden;
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   white-space: nowrap;
 }
 
@@ -270,11 +270,11 @@ function onMessageInput(id: number, event: Event) {
 .upload-queue-button {
   min-height: 1.75rem;
   padding: 0 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .upload-queue-message {
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .upload-queue-error {
@@ -283,7 +283,7 @@ function onMessageInput(id: number, event: Event) {
   gap: 0.3rem;
   margin: 0;
   color: var(--vf-danger-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.4;
 }
 </style>

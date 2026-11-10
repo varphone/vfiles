@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
 .details-tab-hint {
   margin: 0;
   color: var(--vf-text-muted);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.5;
 }
 
@@ -200,7 +200,7 @@ onBeforeUnmount(() => {
 .details-activity-message {
   margin: 0;
   color: var(--vf-text);
-  font-size: 0.84rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.45;
   word-break: break-word;
 }
@@ -212,7 +212,7 @@ onBeforeUnmount(() => {
   gap: 0.25rem;
   margin: 0.15rem 0 0;
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .details-activity-hash {
@@ -220,7 +220,7 @@ onBeforeUnmount(() => {
   border-radius: 3px;
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);
-  font-size: 0.72rem;
+  font-size: var(--vf-text-xs);
 }
 
 .details-activity-more {

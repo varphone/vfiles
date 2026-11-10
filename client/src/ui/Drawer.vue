@@ -129,14 +129,14 @@ watch(
 
 .vf-drawer-title {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--vf-text-lg);
   font-weight: 650;
   color: var(--vf-text);
 }
 
 .vf-drawer-desc {
   margin: 0.2rem 0 0;
-  font-size: 0.78rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-muted);
 }
 

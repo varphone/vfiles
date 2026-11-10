@@ -543,7 +543,7 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 600;
   color: var(--vf-text);
 }
@@ -551,7 +551,7 @@ watch(
 .preview-toolbar-meta {
   flex: 0 0 auto;
   color: var(--vf-text-subtle);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .preview-toolbar-actions {
@@ -564,7 +564,7 @@ watch(
 .preview-action {
   min-height: 1.9rem;
   padding: 0 0.55rem;
-  font-size: 0.79rem;
+  font-size: var(--vf-text-xs);
 }
 
 .preview-action-icon {
@@ -696,7 +696,7 @@ watch(
   padding-top: 0.55rem;
   border-top: 1px solid var(--vf-border-weak);
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .preview-position {
@@ -719,7 +719,7 @@ watch(
   border-radius: var(--vf-radius-xs);
   background: var(--vf-surface-2);
   font-family: inherit;
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .preview-zoom {

@@ -32,7 +32,7 @@
 .vf-ghost-button {
   min-height: var(--vf-control-height);
   padding: 0 var(--vf-space-3);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 500;
 }
 
@@ -40,7 +40,7 @@
 .vf-ghost-button.is-small {
   min-height: var(--vf-control-height-sm);
   padding: 0 var(--vf-space-2);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
 }
 
 /* 焦点环放在变体之前：实心按钮自带 box-shadow: none，聚焦时不叠第二层阴影。 */
@@ -83,7 +83,7 @@
   min-height: var(--vf-control-height);
   border-radius: var(--vf-radius-control);
   border-color: var(--vf-border);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
 }
 
 .input::placeholder,
@@ -113,7 +113,7 @@
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   letter-spacing: 0.01em;
   white-space: nowrap;
@@ -127,7 +127,7 @@
   /* Bulma 的 td 自带 --bulma-table-color（text-strong），会盖过 .table 的
      正文色；这里显式回到三档文本令牌，避免出现第四种正文灰。 */
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   vertical-align: middle;
 }
 
@@ -153,7 +153,7 @@
 }
 
 .modal-card-title {
-  font-size: 0.95rem;
+  font-size: var(--vf-text-lg);
   font-weight: 650;
   color: var(--vf-text);
 }
@@ -180,7 +180,7 @@
 .dropdown-item {
   padding: var(--vf-space-2) var(--vf-space-3);
   border-radius: var(--vf-radius-control);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   color: var(--vf-text);
 }
 
@@ -219,7 +219,7 @@
 .admin-nav-item,
 .settings-nav-item {
   border-radius: var(--vf-radius-card);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 400;
 }
 

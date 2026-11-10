@@ -138,7 +138,7 @@ const emit = defineEmits<{
 .desktop-batch-meta {
   flex: 0 0 auto;
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 600;
   white-space: nowrap;
 }

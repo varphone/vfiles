@@ -87,19 +87,19 @@ const illustrationSize = computed(() => (props.compact ? 28 : 34));
 
 .empty-state-title {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 600;
   color: var(--vf-text);
 }
 
 .empty-state.is-compact .empty-state-title {
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
 }
 
 .empty-state-hint {
   margin: 0;
   max-width: 26rem;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   line-height: 1.5;
   color: var(--vf-text-muted);
 }

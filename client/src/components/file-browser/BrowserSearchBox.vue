@@ -300,7 +300,7 @@ onBeforeUnmount(() => {
 /* 工具栏右侧的搜索框：白底 + 3px 圆角，34px 高与同行按钮对齐。 */
 .desktop-search-control {
   min-height: var(--vf-control-height);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-control);
   background: var(--vf-surface);
@@ -366,7 +366,7 @@ onBeforeUnmount(() => {
 .desktop-history-heading {
   margin: 0;
   padding: 4px 8px 6px;
-  font-size: 0.72rem;
+  font-size: var(--vf-text-xs);
   font-weight: 600;
   color: var(--vf-text-subtle);
 }
@@ -382,7 +382,7 @@ onBeforeUnmount(() => {
   border-radius: var(--vf-radius-xs);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.82rem;
+  font-size: var(--vf-text-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -428,7 +428,7 @@ onBeforeUnmount(() => {
 }
 
 .desktop-search-panel-heading {
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -441,7 +441,7 @@ onBeforeUnmount(() => {
   gap: 0.55rem;
   flex-wrap: wrap;
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .desktop-filter-pill {

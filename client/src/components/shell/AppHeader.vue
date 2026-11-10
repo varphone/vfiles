@@ -380,7 +380,7 @@ onBeforeUnmount(() => {
 }
 
 .app-header-brand-name {
-  font-size: 0.95rem;
+  font-size: var(--vf-text-lg);
   font-weight: 650;
   letter-spacing: 0.01em;
   color: var(--vf-header-fg);
@@ -483,7 +483,7 @@ onBeforeUnmount(() => {
   border-radius: var(--vf-header-radius);
   background: transparent;
   color: var(--vf-header-fg);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   cursor: pointer;
   transition:
     background-color 0.15s var(--vf-motion-standard),
@@ -513,7 +513,7 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   background: var(--vf-on-accent);
   color: var(--vf-accent-text);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   font-weight: 700;
 }
 
@@ -548,13 +548,13 @@ onBeforeUnmount(() => {
 .app-header-account-caption {
   margin: 0 0 0.2rem;
   color: var(--vf-text-muted);
-  font-size: 0.72rem;
+  font-size: var(--vf-text-xs);
 }
 
 .app-header-account-profile {
   margin: 0;
   color: var(--vf-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   word-break: break-all;
 }
 

@@ -357,7 +357,7 @@ useDocumentEventListener("keydown", (event) => {
   margin: 0;
   color: var(--vf-text);
   /* 与 PageHeader 的页标题同字级 */
-  font-size: 1.25rem;
+  font-size: var(--vf-text-2xl);
   font-weight: 700;
   letter-spacing: -0.01em;
 }
@@ -365,7 +365,7 @@ useDocumentEventListener("keydown", (event) => {
 .library-home-subtitle {
   margin: var(--vf-space-1) 0 0;
   color: var(--vf-text-muted);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
 }
 
 .library-grid {
@@ -427,7 +427,7 @@ useDocumentEventListener("keydown", (event) => {
   margin: 0;
   overflow: hidden;
   color: var(--vf-text);
-  font-size: 0.9rem;
+  font-size: var(--vf-text-lg);
   font-weight: 600;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -437,7 +437,7 @@ useDocumentEventListener("keydown", (event) => {
 .library-card-description {
   margin: 0;
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: var(--vf-text-xs);
 }
 
 .library-card-updated {
@@ -446,13 +446,13 @@ useDocumentEventListener("keydown", (event) => {
   gap: var(--vf-space-1);
   margin: var(--vf-space-1) 0 0;
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .library-card-rename {
   width: 100%;
   height: 1.9rem;
-  font-size: 0.82rem;
+  font-size: var(--vf-text-sm);
 }
 
 .library-card-menu {
@@ -516,7 +516,7 @@ useDocumentEventListener("keydown", (event) => {
   border-radius: var(--vf-radius-control);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   text-align: left;
   cursor: pointer;
 }

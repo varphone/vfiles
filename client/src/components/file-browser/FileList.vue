@@ -330,7 +330,7 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);
-  font-size: 13px;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -365,7 +365,7 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
   min-height: var(--vf-table-head-height);
   padding: 0 var(--vf-cell-padding-x);
   color: var(--vf-text-muted);
-  font-size: 13px;
+  font-size: var(--vf-text-sm);
 }
 
 .file-list-summary-counts,

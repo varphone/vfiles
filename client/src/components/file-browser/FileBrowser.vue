@@ -3274,7 +3274,7 @@ function handleSortChange(field: SortField) {
 .file-toolbar :deep(.path-bar-segment) {
   padding: 4px 6px;
   color: var(--vf-text-muted);
-  font-size: 0.82rem;
+  font-size: var(--vf-text-sm);
   font-weight: 500;
 }
 
@@ -3303,7 +3303,7 @@ function handleSortChange(field: SortField) {
   background: transparent;
   color: var(--vf-text);
   font-family: inherit;
-  font-size: 0.9rem;
+  font-size: var(--vf-text-lg);
   font-weight: 600;
   cursor: pointer;
 }
@@ -3340,7 +3340,7 @@ function handleSortChange(field: SortField) {
   padding: 0 var(--vf-space-3);
   border-radius: var(--vf-radius-control);
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   text-decoration: none;
 }
 
@@ -3455,7 +3455,7 @@ function handleSortChange(field: SortField) {
   max-width: 9rem;
   padding: 0 var(--vf-space-2);
   text-align: center;
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   color: var(--vf-text);
   white-space: nowrap;
@@ -3496,7 +3496,7 @@ function handleSortChange(field: SortField) {
 .desktop-list-meta {
   margin-bottom: 0.7rem;
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 /* 状态栏退化为一行低调的说明文字 */
@@ -3510,7 +3510,7 @@ function handleSortChange(field: SortField) {
   padding: 0 var(--vf-cell-padding-x);
   border-top: 1px solid var(--vf-border-weak);
   color: var(--vf-text-muted);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
 }
 
 .desktop-status-shortcuts {
@@ -3563,7 +3563,7 @@ function handleSortChange(field: SortField) {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   color: var(--vf-text-muted);
 }
 
@@ -3676,7 +3676,7 @@ function handleSortChange(field: SortField) {
   background: var(--vf-surface-raised);
   box-shadow: var(--vf-shadow-menu);
   color: var(--vf-text);
-  font-size: 1.5rem;
+  font-size: var(--vf-text-4xl);
   font-weight: 600;
   letter-spacing: 0.04em;
   pointer-events: none;
@@ -3702,7 +3702,7 @@ function handleSortChange(field: SortField) {
   background: var(--vf-surface-raised);
   box-shadow: var(--vf-shadow-menu);
   color: var(--vf-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   pointer-events: none;
   white-space: nowrap;

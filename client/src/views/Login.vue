@@ -466,7 +466,7 @@ onMounted(async () => {
   border-radius: 0;
   background: transparent;
   color: var(--auth-card-muted);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   font-weight: 600;
   cursor: pointer;
 }
@@ -492,7 +492,7 @@ onMounted(async () => {
   align-self: flex-start;
   gap: 0.5rem;
   color: var(--auth-card-ink);
-  font-size: 13px;
+  font-size: var(--vf-text-sm);
   line-height: 1.4;
   cursor: pointer;
   user-select: none;
@@ -533,7 +533,7 @@ onMounted(async () => {
   border-radius: 3px;
   background: transparent;
   color: var(--auth-field-border);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;

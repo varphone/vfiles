@@ -238,7 +238,7 @@ defineExpose({
     white-space: nowrap;
     text-overflow: ellipsis;
     color: var(--vf-text);
-    font-size: 0.95rem;
+    font-size: var(--vf-text-lg);
     font-weight: 600;
   }
 
@@ -278,7 +278,7 @@ defineExpose({
 
   .files-sidebar-head-title {
     color: var(--vf-text-muted);
-    font-size: 0.8rem;
+    font-size: var(--vf-text-sm);
     font-weight: 600;
   }
 

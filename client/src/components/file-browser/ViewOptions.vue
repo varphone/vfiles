@@ -207,12 +207,12 @@ onBeforeUnmount(() => {
   /* 与控件语言一致（34px）：此前 28px 明显小于相邻按钮 */
   min-height: var(--vf-control-height);
   padding: 0 var(--vf-space-3);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
 }
 
 .view-options-label {
   margin-bottom: 6px;
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;

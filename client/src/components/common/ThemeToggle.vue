@@ -110,7 +110,7 @@ onBeforeUnmount(() => {
 
 .theme-toggle-title {
   padding: 4px 8px;
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;

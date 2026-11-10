@@ -218,7 +218,7 @@ onBeforeUnmount(() => {
   color: var(--vf-danger-text);
   border: 1px solid var(--vf-danger);
   font-weight: 700;
-  font-size: 0.62rem;
+  font-size: var(--vf-text-2xs);
   line-height: 1rem;
   text-align: center;
 }
@@ -248,7 +248,7 @@ onBeforeUnmount(() => {
 }
 
 .notification-center-title {
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 600;
   color: var(--vf-text);
 }
@@ -258,7 +258,7 @@ onBeforeUnmount(() => {
   border: none;
   background: none;
   color: var(--vf-accent);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   cursor: pointer;
 }
 
@@ -281,7 +281,7 @@ onBeforeUnmount(() => {
   border-radius: var(--vf-radius-pill);
   background: var(--vf-surface);
   color: var(--vf-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   cursor: pointer;
 }
 
@@ -327,7 +327,7 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 1.25rem 0.5rem;
   color: var(--vf-text-subtle);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   text-align: center;
 }
 
@@ -381,7 +381,7 @@ onBeforeUnmount(() => {
 .notification-center-message {
   margin: 0;
   color: var(--vf-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.5;
   word-break: break-word;
 }
@@ -389,6 +389,6 @@ onBeforeUnmount(() => {
 .notification-center-time {
   margin: 0.1rem 0 0;
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 </style>

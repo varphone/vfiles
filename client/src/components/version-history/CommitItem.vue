@@ -228,7 +228,7 @@ const versionLabel = computed(() => {
   min-width: 0;
   margin: 0;
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 600;
   line-height: 1.3;
   overflow: hidden;
@@ -239,7 +239,7 @@ const versionLabel = computed(() => {
 .history-detail {
   margin: 0.25rem 0 0;
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.4;
 }
 
@@ -250,7 +250,7 @@ const versionLabel = computed(() => {
   flex-wrap: wrap;
   margin: 0.3rem 0 0;
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .history-meta-sep {
@@ -258,7 +258,7 @@ const versionLabel = computed(() => {
 }
 
 .history-hash {
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   color: var(--vf-text-subtle);
 }
 
@@ -274,7 +274,7 @@ const versionLabel = computed(() => {
   gap: 0.25rem;
   min-height: 1.75rem;
   padding: 0 0.45rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .history-action.is-accent {
@@ -289,6 +289,6 @@ const versionLabel = computed(() => {
 
 .history-current-hint {
   color: var(--vf-success-text);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 </style>

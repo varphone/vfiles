@@ -233,7 +233,7 @@ defineExpose({
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.5;
 }
 
@@ -251,7 +251,7 @@ defineExpose({
 .transfer-items-label {
   flex: 0 0 auto;
   color: var(--vf-text-subtle);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .transfer-items-names {
@@ -260,7 +260,7 @@ defineExpose({
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 600;
 }
 
@@ -272,7 +272,7 @@ defineExpose({
 
 .transfer-label {
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
 }
 
@@ -292,7 +292,7 @@ defineExpose({
 
 .transfer-search-input {
   padding-left: 1.75rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .transfer-list {
@@ -317,7 +317,7 @@ defineExpose({
   border-radius: var(--vf-radius-sm);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   text-align: left;
   cursor: pointer;
 }
@@ -342,7 +342,7 @@ defineExpose({
   border-radius: 50%;
   background: var(--vf-accent-soft);
   color: var(--vf-accent-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
 }
 
@@ -357,6 +357,6 @@ defineExpose({
 .transfer-error {
   margin: 0;
   color: var(--vf-danger-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 </style>

@@ -264,7 +264,7 @@ onBeforeUnmount(() => {
 .details-share-block-title {
   margin: 0;
   color: var(--vf-text-muted);
-  font-size: 13px;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
 }
 
@@ -288,7 +288,7 @@ onBeforeUnmount(() => {
 .details-tab-hint {
   margin: 0;
   color: var(--vf-text-muted);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.5;
 }
 
@@ -299,7 +299,7 @@ onBeforeUnmount(() => {
 .details-share-note {
   margin: 0;
   color: var(--vf-text-subtle);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.5;
 }
 
@@ -335,7 +335,7 @@ onBeforeUnmount(() => {
 .details-share-url {
   margin: 0;
   color: var(--vf-text);
-  font-size: 0.78rem;
+  font-size: var(--vf-text-xs);
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -347,6 +347,6 @@ onBeforeUnmount(() => {
   gap: 0.25rem;
   margin: 0.15rem 0 0;
   color: var(--vf-text-subtle);
-  font-size: 0.72rem;
+  font-size: var(--vf-text-xs);
 }
 </style>

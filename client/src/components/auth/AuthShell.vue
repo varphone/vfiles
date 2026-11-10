@@ -229,7 +229,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
 .auth-brand-name {
   margin: 0;
   color: var(--vf-text);
-  font-size: 1.75rem;
+  font-size: var(--vf-text-5xl);
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.01em;
@@ -251,7 +251,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
 .auth-card-title {
   margin: 0 0 1.25rem;
   color: var(--auth-card-ink);
-  font-size: 1.25rem;
+  font-size: var(--vf-text-2xl);
   font-weight: 700;
   line-height: 1.3;
   text-align: center;
@@ -260,7 +260,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
 .auth-card-desc {
   margin: -0.5rem 0 1.125rem;
   color: var(--auth-card-muted);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.55;
   text-align: center;
 }
@@ -294,7 +294,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   border-radius: 2px;
   background: var(--auth-card-bg);
   color: var(--auth-card-ink);
-  font-size: 12px;
+  font-size: var(--vf-text-xs);
   font-weight: 600;
   line-height: 16px;
 }
@@ -317,7 +317,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   border-radius: 3px;
   background: var(--auth-field-bg);
   color: var(--auth-field-ink);
-  font-size: 0.9375rem;
+  font-size: var(--vf-text-lg);
   line-height: 1.2;
   box-shadow: none;
   transition:
@@ -395,7 +395,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   border-radius: 3px;
   background: var(--auth-primary-bg);
   color: var(--vf-on-accent);
-  font-size: 0.9375rem;
+  font-size: var(--vf-text-lg);
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
@@ -433,7 +433,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   border: none;
   background: none;
   color: var(--auth-link-ink);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   font-weight: 700;
   line-height: 1.8;
   text-decoration: none;
@@ -449,14 +449,14 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
 .auth-card :deep(.auth-field-error) {
   margin: 6px 0 0;
   color: var(--vf-danger-text);
-  font-size: 12px;
+  font-size: var(--vf-text-xs);
   line-height: 1.4;
 }
 
 .auth-card :deep(.auth-hint) {
   margin: 0;
   color: var(--auth-card-muted);
-  font-size: 12px;
+  font-size: var(--vf-text-xs);
   line-height: 1.5;
 }
 
@@ -487,7 +487,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   background: var(--auth-footer-pill-bg);
   box-shadow: none;
   color: var(--auth-footer-pill-ink);
-  font-size: 13px;
+  font-size: var(--vf-text-sm);
   font-weight: 500;
   line-height: 1.6;
 }
@@ -500,7 +500,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   gap: 0.375rem;
   margin: 0;
   color: var(--auth-meta-ink);
-  font-size: 11px;
+  font-size: var(--vf-text-2xs);
   line-height: 1.5;
 }
 
@@ -510,7 +510,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
 
 .auth-record {
   color: var(--auth-meta-ink);
-  font-size: 11px;
+  font-size: var(--vf-text-2xs);
   text-decoration: none;
 }
 

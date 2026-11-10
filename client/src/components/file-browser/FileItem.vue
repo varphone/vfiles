@@ -890,7 +890,7 @@ function share() {
   width: 100%;
   max-width: 22rem;
   height: 1.9rem;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
 }
 
 /* 文件名：在名称列的 flex 行内按可用宽度省略 */
@@ -901,7 +901,7 @@ function share() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   color: var(--vf-text);
 }
 
@@ -963,7 +963,7 @@ function share() {
   align-items: center;
   gap: var(--vf-space-1);
   color: var(--vf-text-muted);
-  font-size: 13px;
+  font-size: var(--vf-text-sm);
   line-height: 1.2;
   white-space: nowrap;
 }
@@ -982,7 +982,7 @@ function share() {
 .desktop-file-row > td.is-narrow,
 .desktop-file-date {
   color: var(--vf-text-muted);
-  font-size: 0.78rem;
+  font-size: var(--vf-text-xs);
 }
 
 /* 行状态：悬停中性灰、选中浅蓝（Nextcloud 行状态令牌） */
@@ -1038,7 +1038,7 @@ function share() {
   max-width: 100%;
   margin-top: 0.1rem;
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   line-height: 1.3;
 }
 
@@ -1151,7 +1151,7 @@ function share() {
 .file-info-date,
 .file-info-sep {
   color: var(--vf-text-subtle);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .file-info-sep {
@@ -1165,7 +1165,7 @@ function share() {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--vf-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .file-info {
@@ -1188,7 +1188,7 @@ function share() {
 }
 
 .file-commit .tag {
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1231,7 +1231,7 @@ function share() {
   cursor: pointer;
   border-radius: var(--vf-radius-sm);
   transition: all 0.15s;
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   min-width: 3rem;
 }
 

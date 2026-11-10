@@ -317,7 +317,7 @@ onMounted(() => {
   border-radius: var(--vf-radius-control);
   background: var(--vf-sidebar-search-bg);
   color: var(--vf-text);
-  font-size: 0.85rem;
+  font-size: var(--vf-text-sm);
   appearance: none;
 }
 
@@ -368,7 +368,7 @@ onMounted(() => {
   margin: var(--vf-space-2) 0;
   padding: 0 var(--vf-space-3);
   color: var(--vf-text-muted);
-  font-size: 13px;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1.5;
@@ -401,7 +401,7 @@ onMounted(() => {
   background: var(--vf-sidebar-item-bg);
   color: var(--vf-text);
   font-family: inherit;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 500;
   text-align: left;
   text-decoration: none;
@@ -470,7 +470,7 @@ onMounted(() => {
   background: var(--vf-sidebar-item-bg);
   color: var(--vf-text-muted);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   letter-spacing: 0.01em;
   text-align: left;
@@ -546,7 +546,7 @@ onMounted(() => {
 .views-sidebar-usage-value {
   margin-left: auto;
   color: var(--vf-text);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -560,7 +560,7 @@ onMounted(() => {
   margin: var(--vf-space-1) 0 0;
   padding: 0 var(--vf-space-3);
   color: var(--vf-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 /* 已删除：禁用态（保留入口位置，不跳转）。 */

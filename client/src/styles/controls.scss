@@ -227,7 +227,7 @@ input[type="radio"]:focus-visible {
 a.dropdown-item,
 button.dropdown-item,
 .dropdown-item {
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   padding: var(--vf-space-2) var(--vf-space-3);
   border-radius: var(--vf-radius-control);
 }
@@ -252,7 +252,7 @@ button.dropdown-item,
   border-radius: var(--vf-radius-pill);
   background: var(--vf-surface);
   color: var(--vf-accent-text);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -381,7 +381,7 @@ mark.has-background-warning-light {
   min-height: var(--vf-control-height);
   padding: 0 var(--vf-space-3);
   border-radius: var(--vf-radius-control);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 500;
 }
 

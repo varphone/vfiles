@@ -620,7 +620,7 @@ onMounted(() => {
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .settings-table-panel > .settings-table-state {
@@ -640,19 +640,19 @@ onMounted(() => {
   margin: 0;
   padding: 0 1rem 0.5rem;
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .shares-filter {
   gap: 0.3rem;
   min-height: 1.75rem;
   padding: 0 0.55rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .shares-filter-count {
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .shares-filter.is-active .shares-filter-count {
@@ -669,7 +669,7 @@ onMounted(() => {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
 }
 
 
@@ -761,7 +761,7 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 600;
   color: var(--vf-text);
 }
@@ -771,7 +771,7 @@ onMounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .shares-badge {
@@ -801,7 +801,7 @@ onMounted(() => {
   height: 1.55rem;
   padding-top: 0;
   padding-bottom: 0;
-  font-size: 0.72rem;
+  font-size: var(--vf-text-xs);
 }
 
 .shares-actions {
@@ -820,7 +820,7 @@ onMounted(() => {
 .shares-action {
   min-height: 1.9rem;
   padding: 0 0.45rem;
-  font-size: 0.78rem;
+  font-size: var(--vf-text-xs);
   white-space: nowrap;
 }
 
@@ -876,13 +876,13 @@ onMounted(() => {
 
 .shares-card-meta dt {
   color: var(--vf-text-subtle);
-  font-size: 0.7rem;
+  font-size: var(--vf-text-2xs);
 }
 
 .shares-card-meta dd {
   margin: 0;
   color: var(--vf-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   word-break: break-word;
 }
 

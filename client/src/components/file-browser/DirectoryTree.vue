@@ -417,7 +417,7 @@ function onDrop(path: string) {
   border-radius: var(--vf-radius-sm);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   text-align: left;
   cursor: pointer;
 }
@@ -456,7 +456,7 @@ function onDrop(path: string) {
 
 .directory-tree-hint {
   padding: 0.5rem 0.6rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   color: var(--vf-text-subtle);
 }
 

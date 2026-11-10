@@ -124,13 +124,13 @@ const groups = [
 .shortcuts-hint {
   margin: 0;
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.6;
 }
 
 .shortcuts-group-title {
   margin: 0 0 0.4rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--vf-text-subtle);
@@ -165,14 +165,14 @@ const groups = [
   background: var(--vf-surface-2);
   color: var(--vf-text);
   font-family: inherit;
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   white-space: nowrap;
 }
 
 .shortcuts-desc {
   margin: 0;
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   line-height: 1.5;
 }
 

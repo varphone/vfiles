@@ -514,7 +514,7 @@ function openRowMenu() {
   margin: 0;
   overflow: hidden;
   color: var(--vf-text);
-  font-size: 17px;
+  font-size: var(--vf-text-lg);
   font-weight: 700;
   line-height: 1.3;
   overflow-wrap: anywhere;
@@ -543,7 +543,7 @@ function openRowMenu() {
   gap: var(--vf-space-2);
   margin: 0;
   color: var(--vf-text-muted);
-  font-size: 13px;
+  font-size: var(--vf-text-sm);
   line-height: 1.4;
 }
 
@@ -559,7 +559,7 @@ function openRowMenu() {
   border-radius: 999px;
   background: var(--vf-surface-2);
   color: var(--vf-text);
-  font-size: 13px;
+  font-size: var(--vf-text-sm);
   line-height: 1.3;
 }
 
@@ -593,7 +593,7 @@ function openRowMenu() {
   margin-bottom: -1px;
   background: transparent;
   color: var(--vf-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   font-weight: 500;
   line-height: 1.2;
   white-space: nowrap;
@@ -666,7 +666,7 @@ function openRowMenu() {
 
 .details-selection-title {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   font-weight: 600;
   color: var(--vf-text);
 }
@@ -674,7 +674,7 @@ function openRowMenu() {
 .details-selection-meta {
   margin: 0.15rem 0 0;
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .details-selection-list {
@@ -695,7 +695,7 @@ function openRowMenu() {
   gap: var(--vf-space-2);
   min-width: 0;
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
 }
 
 .details-selection-name {
@@ -707,7 +707,7 @@ function openRowMenu() {
 
 .details-selection-more {
   color: var(--vf-text-subtle);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .details-selection-actions {

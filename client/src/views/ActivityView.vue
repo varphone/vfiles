@@ -351,7 +351,7 @@ onMounted(() => {
   border-radius: var(--vf-radius-control);
   background: var(--vf-surface);
   color: var(--vf-text-muted);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   font-weight: 500;
   cursor: pointer;
   transition:
@@ -375,7 +375,7 @@ onMounted(() => {
 
 .activity-total {
   color: var(--vf-text-subtle);
-  font-size: 0.78rem;
+  font-size: var(--vf-text-xs);
 }
 
 /* 每天一张卡片：卡片 8px 圆角、行高 50px。 */
@@ -401,13 +401,13 @@ onMounted(() => {
 .activity-day {
   margin: 0;
   color: var(--vf-text);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   font-weight: 650;
 }
 
 .activity-day-count {
   color: var(--vf-text-subtle);
-  font-size: 0.72rem;
+  font-size: var(--vf-text-xs);
 }
 
 .activity-list {
@@ -445,7 +445,7 @@ onMounted(() => {
   min-width: 0;
   margin: 0;
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   line-height: 1.45;
 }
 
@@ -475,7 +475,7 @@ onMounted(() => {
   gap: var(--vf-space-1);
   flex: none;
   color: var(--vf-danger-text);
-  font-size: 0.72rem;
+  font-size: var(--vf-text-xs);
   font-weight: 600;
 }
 
@@ -489,7 +489,7 @@ onMounted(() => {
 .activity-time {
   flex: none;
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   white-space: nowrap;
 }
 

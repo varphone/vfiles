@@ -483,7 +483,7 @@ onMounted(load);
 .is-spinning {
   display: inline-block;
   animation: system-info-spin 1s linear infinite;
-  font-size: 1.15rem;
+  font-size: var(--vf-text-xl);
   line-height: 1;
 }
 
@@ -549,7 +549,7 @@ onMounted(load);
 .system-info-stat-label,
 .system-info-stat-detail {
   color: var(--system-info-muted);
-  font-size: 0.77rem;
+  font-size: var(--vf-text-xs);
 }
 
 .system-info-stat strong {
@@ -575,14 +575,14 @@ onMounted(load);
   margin: 0;
   color: var(--vf-text);
   /* 与 SectionCard 的卡片标题同字级 */
-  font-size: 0.95rem;
+  font-size: var(--vf-text-lg);
   font-weight: 650;
 }
 
 .system-info-section-description {
   margin: 0.28rem 0 0;
   color: var(--system-info-muted);
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.45;
 }
 
@@ -593,14 +593,14 @@ onMounted(load);
   border-radius: 999px;
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);
-  font-size: 0.72rem;
+  font-size: var(--vf-text-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .system-info-note {
   margin: 0.85rem 0 0;
   color: var(--system-info-muted);
-  font-size: 0.73rem;
+  font-size: var(--vf-text-xs);
   line-height: 1.5;
 }
 
@@ -645,14 +645,14 @@ onMounted(load);
 .system-info-protocol-name-wrap h3 {
   margin: 0;
   color: var(--vf-text);
-  font-size: 0.84rem;
+  font-size: var(--vf-text-sm);
   font-weight: 650;
 }
 
 .system-info-protocol-name-wrap p {
   margin: 0.14rem 0 0;
   color: var(--system-info-muted);
-  font-size: 0.69rem;
+  font-size: var(--vf-text-2xs);
   line-height: 1.4;
 }
 
@@ -681,7 +681,7 @@ onMounted(load);
   flex-shrink: 0;
   padding: 0.19rem 0.42rem;
   border-radius: 999px;
-  font-size: 0.65rem;
+  font-size: var(--vf-text-2xs);
   line-height: 1.4;
 }
 
@@ -713,7 +713,7 @@ onMounted(load);
   border-radius: calc(var(--vf-radius) - 3px);
   background: var(--vf-danger-soft);
   color: var(--vf-danger-text);
-  font-size: 0.71rem;
+  font-size: var(--vf-text-2xs);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -723,7 +723,7 @@ onMounted(load);
   grid-template-columns: 4.5rem minmax(0, 1fr);
   gap: 0.27rem 0.5rem;
   margin: 0.75rem 0 0;
-  font-size: 0.71rem;
+  font-size: var(--vf-text-2xs);
   line-height: 1.45;
 }
 
@@ -755,7 +755,7 @@ onMounted(load);
   gap: 0.7rem;
   padding: 0.76rem 0;
   border-bottom: 1px solid var(--vf-border-weak);
-  font-size: 0.78rem;
+  font-size: var(--vf-text-xs);
 }
 
 .system-info-runtime-list div:last-child {
@@ -792,7 +792,7 @@ onMounted(load);
   background: var(--vf-surface);
   color: var(--vf-text);
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: var(--vf-text-sm);
 }
 
 .system-info-search input:focus-visible {
@@ -838,7 +838,7 @@ onMounted(load);
     var(--vf-surface)
   );
   color: var(--system-info-accent);
-  font-size: 0.72rem;
+  font-size: var(--vf-text-xs);
   font-weight: 700;
 }
 
@@ -864,7 +864,7 @@ onMounted(load);
 .system-info-muted-line {
   margin-top: 0.16rem;
   color: var(--system-info-muted);
-  font-size: 0.7rem;
+  font-size: var(--vf-text-2xs);
 }
 
 .system-info-usage-column {
@@ -881,13 +881,13 @@ onMounted(load);
 
 .system-info-usage-value strong {
   color: var(--vf-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   font-weight: 620;
 }
 
 .system-info-usage-value span {
   color: var(--system-info-muted);
-  font-size: 0.68rem;
+  font-size: var(--vf-text-2xs);
 }
 
 .system-info-usage-track {

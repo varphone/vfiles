@@ -694,7 +694,7 @@ onMounted(() => {
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   line-height: 1.5;
 }
 
@@ -716,7 +716,7 @@ onMounted(() => {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
 }
 
 
@@ -785,7 +785,7 @@ onMounted(() => {
   border-radius: var(--vf-radius-pill);
   background: var(--vf-surface-2);
   color: var(--vf-text);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -834,7 +834,7 @@ onMounted(() => {
 .passwords-action {
   min-height: 1.9rem;
   padding: 0 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .passwords-delete {
@@ -880,13 +880,13 @@ onMounted(() => {
 
 .passwords-card-meta dt {
   color: var(--vf-text-subtle);
-  font-size: 0.7rem;
+  font-size: var(--vf-text-2xs);
 }
 
 .passwords-card-meta dd {
   margin: 0;
   color: var(--vf-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   word-break: break-word;
 }
 
@@ -909,7 +909,7 @@ onMounted(() => {
 
 .passwords-label {
   color: var(--vf-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   font-weight: 600;
 }
 
@@ -926,13 +926,13 @@ onMounted(() => {
 }
 
 .passwords-add-root {
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .passwords-hint {
   margin: 0;
   color: var(--vf-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--vf-text-xs);
 }
 
 .passwords-write-toggle {
@@ -941,13 +941,13 @@ onMounted(() => {
   gap: 0.4rem;
   margin-top: 0.35rem;
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
 }
 
 .passwords-error {
   margin: 0.25rem 0 0;
   color: var(--vf-danger-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
 }
 
 .directory-picker {
@@ -969,7 +969,7 @@ onMounted(() => {
   border-radius: var(--vf-radius-xs);
   background: var(--vf-surface-2);
   color: var(--vf-text);
-  font-size: 0.8rem;
+  font-size: var(--vf-text-sm);
   word-break: break-all;
 }
 
@@ -1007,7 +1007,7 @@ onMounted(() => {
   border-radius: var(--vf-radius-sm);
   background: transparent;
   color: var(--vf-text);
-  font-size: 0.875rem;
+  font-size: var(--vf-text-base);
   text-align: left;
   cursor: pointer;
 }
