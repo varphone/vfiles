@@ -275,6 +275,9 @@ onMounted(() => {
   font-weight: 600;
   text-align: left;
   white-space: nowrap;
+  /* 与其它表格一致：垂直居中 + 固定行高（见 d0dc882） */
+  vertical-align: middle;
+  line-height: 1.35;
 }
 
 .favorites-table td {
