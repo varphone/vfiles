@@ -95,42 +95,13 @@
               @drop="handleDropOnFolder"
             />
 
-            <div v-else ref="viewMenuRef" class="file-toolbar-view-menu">
-              <button
-                class="file-toolbar-view-name"
-                type="button"
-                aria-haspopup="menu"
-                :aria-expanded="viewMenuOpen ? 'true' : 'false'"
-                @click="viewMenuOpen = !viewMenuOpen"
-              >
-                <span>全部文件</span>
-                <IconChevronDown
-                  class="file-toolbar-view-caret"
-                  :size="14"
-                  aria-hidden="true"
-                />
-              </button>
-
-              <ul
-                v-if="viewMenuOpen"
-                class="file-toolbar-view-list"
-                role="menu"
-                aria-label="切换到其它视图"
-              >
-                <li v-for="view in viewMenuItems" :key="view.to">
-                  <RouterLink
-                    class="file-toolbar-view-item"
-                    :class="{ 'is-active': isActiveView(view.to) }"
-                    :to="view.to"
-                    role="menuitem"
-                    @click="viewMenuOpen = false"
-                  >
-                    <component :is="view.icon" :size="16" aria-hidden="true" />
-                    <span>{{ view.label }}</span>
-                  </RouterLink>
-                </li>
-              </ul>
-            </div>
+            <FileBrowserViewMenu
+              v-else
+              v-model:open="viewMenuOpen"
+              :show-shares="
+                !isRestricted && authStore.features?.shareEnabled !== false
+              "
+            />
           </div>
         </div>
 
@@ -888,18 +859,14 @@ import {
   computed,
   watch,
   nextTick,
-  type Component,
 } from "vue";
 import { storeToRefs } from "pinia";
 import {
-  IconFolder,
   IconDownload,
   IconEye,
   IconShare,
   IconFolderOpen,
   IconFolderPlus,
-  IconActivity,
-  IconClock,
   IconAlertCircle,
   IconSearch,
   IconFileSearch,
@@ -916,7 +883,6 @@ import {
   IconStar,
   IconStarFilled,
   IconLock,
-  IconChevronDown,
   IconMenu2,
 } from "@tabler/icons-vue";
 import { filesService, MAX_TRANSFER_PATHS } from "../../services/files.service";
@@ -932,6 +898,7 @@ import FileBrowserDialogs from "./FileBrowserDialogs.vue";
 import FileBrowserCollection from "./FileBrowserCollection.vue";
 import FileBrowserHistoryControls from "./FileBrowserHistoryControls.vue";
 import FileBrowserViewControls from "./FileBrowserViewControls.vue";
+import FileBrowserViewMenu from "./FileBrowserViewMenu.vue";
 import NewMenuButton from "./NewMenuButton.vue";
 import UploadDropOverlay from "./UploadDropOverlay.vue";
 import EmptyState from "../common/EmptyState.vue";
@@ -1116,44 +1083,6 @@ function toggleSidebar() {
  * 因此这里只在 `currentPath` 为空时渲染。
  */
 const viewMenuOpen = ref(false);
-const viewMenuRef = ref<HTMLElement | null>(null);
-
-const viewMenuItems = computed<
-  Array<{ key: string; to: string; label: string; icon: Component }>
->(() => {
-  const entries: Array<{
-    key: string;
-    to: string;
-    label: string;
-    icon: Component;
-  }> = [
-    { key: "all", to: "/", label: "全部文件", icon: IconFolder },
-    { key: "recent", to: "/recent", label: "最近", icon: IconClock },
-    { key: "favorites", to: "/favorites", label: "收藏", icon: IconStar },
-  ];
-
-  if (!isRestricted.value && authStore.features?.shareEnabled !== false) {
-    entries.push({
-      key: "shares",
-      to: "/shares",
-      label: "分享",
-      icon: IconShare,
-    });
-  }
-
-  entries.push({
-    key: "activity",
-    to: "/activity",
-    label: "活动",
-    icon: IconActivity,
-  });
-  return entries;
-});
-
-/** 菜单只在根视图出现，因此只有「全部文件」是当前视图。 */
-function isActiveView(to: string): boolean {
-  return to === "/";
-}
 
 const showUploader = ref(false);
 /**
@@ -1674,10 +1603,6 @@ onMounted(() => {
       if (searchBox && !searchBox.contains(target)) closeDesktopSearch();
     }
 
-    if (viewMenuOpen.value) {
-      const viewMenu = viewMenuRef.value;
-      if (viewMenu && !viewMenu.contains(target)) viewMenuOpen.value = false;
-    }
   };
 
   const onDocKeydown = createFileBrowserKeyboard({
@@ -2807,74 +2732,6 @@ function handleSortChange(field: SortField) {
 
 .file-toolbar :deep(.path-bar-toggle) {
   margin-left: 0;
-}
-
-/* 根视图的「全部文件 ⌄」视图名 + 视图切换菜单 */
-.file-toolbar-view-menu {
-  position: relative;
-}
-
-.file-toolbar-view-name {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--vf-space-1);
-  height: var(--vf-control-height);
-  padding: 0 var(--vf-space-2);
-  border: none;
-  border-radius: var(--vf-radius-control);
-  background: transparent;
-  color: var(--vf-text);
-  font-family: inherit;
-  font-size: var(--vf-text-lg);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.file-toolbar-view-name:hover,
-.file-toolbar-view-name:focus-visible {
-  background: var(--vf-row-hover);
-}
-
-.file-toolbar-view-caret {
-  color: var(--vf-text-muted);
-}
-
-.file-toolbar-view-list {
-  position: absolute;
-  top: calc(100% + 0.3rem);
-  left: 0;
-  z-index: 30;
-  min-width: 11rem;
-  margin: 0;
-  padding: var(--vf-space-1);
-  list-style: none;
-  border: 1px solid var(--vf-border);
-  border-radius: var(--vf-radius-card);
-  background: var(--vf-surface);
-  box-shadow: var(--vf-shadow-menu);
-}
-
-.file-toolbar-view-item {
-  display: flex;
-  align-items: center;
-  gap: var(--vf-space-3);
-  height: var(--vf-control-height);
-  padding: 0 var(--vf-space-3);
-  border-radius: var(--vf-radius-control);
-  color: var(--vf-text);
-  font-size: var(--vf-text-base);
-  text-decoration: none;
-}
-
-.file-toolbar-view-item:hover,
-.file-toolbar-view-item:focus-visible {
-  background: var(--vf-row-hover);
-  color: var(--vf-text);
-}
-
-.file-toolbar-view-item.is-active {
-  background: var(--vf-row-selected);
-  color: var(--vf-accent-text);
 }
 
 /* 右组：版本胶囊 / 搜索 / 列表网格切换 / 排序 / 详细信息 */

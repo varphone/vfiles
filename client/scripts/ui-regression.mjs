@@ -218,6 +218,20 @@ async function main() {
   await page.waitForTimeout(700);
   const desktopLayout = await captureLayout(page);
 
+  // 根视图的「全部文件 ⌄」菜单由独立组件承载，确认打开/Escape 仍正常。
+  await page.locator(".file-toolbar-view-name").click();
+  const viewMenuOpened = await waitFor(
+    async () => (await page.locator(".file-toolbar-view-list").count()) === 1,
+  );
+  await page.keyboard.press("Escape");
+  const viewMenuClosed = await waitFor(
+    async () => (await page.locator(".file-toolbar-view-list").count()) === 0,
+  );
+  check(
+    "root view menu opens and Escape closes it",
+    viewMenuOpened && viewMenuClosed,
+  );
+
   // 1) 控件上的 Enter/Space 不被全局文件快捷键吞掉。
   await page.locator(".nc-new-button").focus();
   await page.keyboard.press("Enter");
