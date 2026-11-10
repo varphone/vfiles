@@ -136,53 +136,18 @@
 
         <div class="file-toolbar-actions">
           <!-- 版本切换：与工具栏同一行靠右，移动端由页面底栏承担。 -->
-          <div
+          <FileBrowserHistoryControls
             v-if="!isMobile && historyStateLabel"
-            class="file-history"
-            :class="{ 'is-error': historyError }"
-            role="group"
-            aria-label="版本切换"
-          >
-            <button
-              class="vf-icon-button file-history-button"
-              :disabled="historyLoading"
-              title="快退到最早快照"
-              aria-label="快退到最早快照"
-              @click="emit('history-fast-back')"
-            >
-              <IconChevronsLeft :size="16" />
-            </button>
-            <button
-              class="vf-icon-button file-history-button"
-              :disabled="historyLoading"
-              title="后退到更早快照"
-              aria-label="后退到更早快照"
-              @click="emit('history-step-back')"
-            >
-              <IconChevronLeft :size="16" />
-            </button>
-            <span class="file-history-label" :title="historyTitle">
-              {{ historyStateLabel }}
-            </span>
-            <button
-              class="vf-icon-button file-history-button"
-              :disabled="historyLoading || !historyHasCommit"
-              title="前进到较新快照"
-              aria-label="前进到较新快照"
-              @click="emit('history-step-forward')"
-            >
-              <IconChevronRight :size="16" />
-            </button>
-            <button
-              class="vf-icon-button file-history-button"
-              :disabled="historyLoading || !historyHasCommit"
-              title="回到当前版本"
-              aria-label="回到当前版本"
-              @click="emit('history-fast-forward')"
-            >
-              <IconChevronsRight :size="16" />
-            </button>
-          </div>
+            :state-label="historyStateLabel"
+            :loading="historyLoading"
+            :error="historyError"
+            :title="historyTitle"
+            :has-commit="historyHasCommit"
+            @fast-back="emit('history-fast-back')"
+            @step-back="emit('history-step-back')"
+            @step-forward="emit('history-step-forward')"
+            @fast-forward="emit('history-fast-forward')"
+          />
 
           <BrowserSearchBox
             v-if="!isMobile"
@@ -206,50 +171,7 @@
             @clear="clearDesktopSearch"
           />
 
-          <!-- 列表/网格切换：直接切换显示方式，不再占用一行下拉菜单 -->
-          <div
-            v-if="!isMobile"
-            class="file-view-toggle"
-            role="group"
-            aria-label="显示方式"
-          >
-            <button
-              class="vf-icon-button"
-              :class="{ 'is-active': viewMode === 'list' }"
-              type="button"
-              title="列表视图"
-              aria-label="列表视图"
-              :aria-pressed="viewMode === 'list' ? 'true' : 'false'"
-              @click="fileView.setMode('list')"
-            >
-              <IconList :size="18" />
-            </button>
-            <button
-              class="vf-icon-button"
-              :class="{ 'is-active': viewMode === 'grid' }"
-              type="button"
-              title="网格视图"
-              aria-label="网格视图"
-              :aria-pressed="viewMode === 'grid' ? 'true' : 'false'"
-              @click="fileView.setMode('grid')"
-            >
-              <IconLayoutGrid :size="18" />
-            </button>
-          </div>
-
-          <SortMenu v-if="!isMobile" />
-
-          <button
-            v-if="!isMobile"
-            class="vf-icon-button file-toolbar-details"
-            :class="{ 'is-active': detailsVisible }"
-            :title="detailsVisible ? '隐藏详细信息' : '显示详细信息'"
-            :aria-label="detailsVisible ? '隐藏详细信息' : '显示详细信息'"
-            :aria-pressed="detailsVisible ? 'true' : 'false'"
-            @click="fileView.toggleDetails()"
-          >
-            <IconLayoutSidebarRight :size="18" />
-          </button>
+          <FileBrowserViewControls v-if="!isMobile" />
         </div>
       </div>
 
@@ -994,14 +916,7 @@ import {
   IconStar,
   IconStarFilled,
   IconLock,
-  IconChevronsLeft,
-  IconChevronLeft,
-  IconChevronRight,
-  IconChevronsRight,
   IconChevronDown,
-  IconLayoutGrid,
-  IconLayoutSidebarRight,
-  IconList,
   IconMenu2,
 } from "@tabler/icons-vue";
 import { filesService, MAX_TRANSFER_PATHS } from "../../services/files.service";
@@ -1015,13 +930,14 @@ import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
 import FileBrowserDialogs from "./FileBrowserDialogs.vue";
 import FileBrowserCollection from "./FileBrowserCollection.vue";
+import FileBrowserHistoryControls from "./FileBrowserHistoryControls.vue";
+import FileBrowserViewControls from "./FileBrowserViewControls.vue";
 import NewMenuButton from "./NewMenuButton.vue";
 import UploadDropOverlay from "./UploadDropOverlay.vue";
 import EmptyState from "../common/EmptyState.vue";
 import LibraryGrid from "./LibraryGrid.vue";
 import MobileSearchBar from "./MobileSearchBar.vue";
 import BrowserSearchBox, { type SearchType } from "./BrowserSearchBox.vue";
-import SortMenu from "./SortMenu.vue";
 import Breadcrumb from "./Breadcrumb.vue";
 import FileSkeleton from "./FileSkeleton.vue";
 import DownloadQueuePanel from "./DownloadQueuePanel.vue";
@@ -2975,35 +2891,6 @@ function handleSortChange(field: SortField) {
   margin-left: 0;
 }
 
-.file-view-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 1px;
-  flex: 0 0 auto;
-  padding: 2px;
-  border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-card);
-  background: var(--vf-surface-2);
-}
-
-.file-view-toggle .vf-icon-button {
-  width: var(--vf-control-height-sm);
-  height: var(--vf-control-height-sm);
-  border-radius: var(--vf-radius-control);
-}
-
-.file-toolbar-details {
-  flex: 0 0 auto;
-}
-
-/* 窄桌面（≤1279px）：版本胶囊先让位，保证搜索/视图/排序单行不被挤断。
-   历史入口在移动端底栏仍然可用。 */
-@media screen and (max-width: 1280px) {
-  .file-toolbar .file-history {
-    display: none;
-  }
-}
-
 .file-toolbar-error {
   margin: var(--vf-space-2) var(--vf-cell-padding-x) 0;
 }
@@ -3025,48 +2912,6 @@ function handleSortChange(field: SortField) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* 版本切换：工具栏右组的紧凑按钮组（8px 外圆角，与视图切换组一致）。 */
-.file-history {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  flex: 0 0 auto;
-  padding: 0;
-  border: 1px solid var(--vf-border-weak);
-  border-radius: var(--vf-radius-card);
-  background: var(--vf-surface-2);
-  overflow: hidden;
-}
-
-.file-history .vf-icon-button {
-  width: 30px;
-  height: 34px;
-  border-radius: 0;
-}
-
-.file-history .file-history-label {
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-}
-
-.file-history.is-error {
-  border-color: var(--vf-danger);
-}
-
-.file-history-label {
-  min-width: 5.5rem;
-  max-width: 9rem;
-  padding: 0 var(--vf-space-2);
-  text-align: center;
-  font-size: var(--vf-text-sm);
-  font-weight: 600;
-  color: var(--vf-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* 移动端搜索行（桌面已合并进单行工具栏） */
