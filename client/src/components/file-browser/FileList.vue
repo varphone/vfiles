@@ -337,6 +337,8 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
   letter-spacing: 0.02em;
   white-space: nowrap;
   user-select: none;
+  vertical-align: middle;
+  line-height: 1.35;
 }
 
 /* 单元格由 FileItem 渲染：用 :deep 才能作用到子组件的 <td>

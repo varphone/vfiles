@@ -56,6 +56,10 @@
 .table thead th {
   height: var(--vf-table-head-height);
   padding: 0 var(--vf-cell-padding-x);
+  /* th 默认按 baseline 对齐：同行有图标或不同字号时文字会被推到底部，
+     上下留白看起来不等。统一垂直居中并锁定行高。 */
+  vertical-align: middle;
+  line-height: 1.35;
   border-bottom: 1px solid var(--vf-border-weak);
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);

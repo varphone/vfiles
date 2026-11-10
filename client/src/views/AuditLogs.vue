@@ -699,6 +699,8 @@ onMounted(() => {
   font-size: 0.8125rem;
   font-weight: 600;
   white-space: nowrap;
+  vertical-align: middle;
+  line-height: 1.35;
 }
 
 .audit-table tbody tr:hover {

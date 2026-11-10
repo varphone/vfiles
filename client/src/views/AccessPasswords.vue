@@ -729,6 +729,9 @@ onMounted(() => {
   font-weight: 600;
   text-align: left;
   white-space: nowrap;
+  /* 与其它表格一致：垂直居中 + 固定行高，否则 baseline 对齐会让文字贴近下边 */
+  vertical-align: middle;
+  line-height: 1.35;
 }
 
 .passwords-table td {
