@@ -3561,6 +3561,7 @@ function handleSortChange(field: SortField) {
   border-radius: 0;
   box-shadow: none;
   background: var(--vf-surface);
+  height: calc(100vh - var(--vf-topbar-height));
   height: calc(100dvh - var(--vf-topbar-height));
 }
 
@@ -3568,7 +3569,8 @@ function handleSortChange(field: SortField) {
 @media screen and (max-width: 1023px) {
   .file-browser-box {
     height: auto;
-    min-height: calc(100dvh - var(--vf-topbar-height));
+    min-height: calc(100vh - var(--vf-topbar-height));
+  min-height: calc(100dvh - var(--vf-topbar-height));
   }
 }
 
@@ -3683,7 +3685,8 @@ function handleSortChange(field: SortField) {
 
 @media screen and (min-width: 1024px) {
   .file-browser-box {
-    height: calc(100dvh - var(--vf-topbar-height));
+    height: calc(100vh - var(--vf-topbar-height));
+  height: calc(100dvh - var(--vf-topbar-height));
   }
 }
 </style>

@@ -23,6 +23,7 @@ import AppHeader from "../components/shell/AppHeader.vue";
 .app-layout {
   display: flex;
   flex-direction: column;
+  min-height: 100vh;
   min-height: 100dvh;
   background: var(--vf-shell-bg);
   /* 兼容文件列表内部的高度计算（下一阶段统一改用 --vf-topbar-height）。 */

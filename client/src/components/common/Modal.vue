@@ -131,12 +131,12 @@ function close() {
 
 <style scoped>
 .modal {
-  z-index: 100;
+  z-index: var(--vf-z-modal);
 }
 
 /* 全局确认框要盖住任何业务对话框 */
 .modal.is-overlay-layer {
-  z-index: 1000;
+  z-index: var(--vf-z-fullscreen);
 }
 
 .modal-card.is-wide {
@@ -146,6 +146,7 @@ function close() {
 .modal-card {
   max-width: 90vw;
   max-height: 90vh;
+  max-height: 90dvh;
   display: flex;
   flex-direction: column;
   /* 圆角由卡片自身持有：头部/底栏不再各自画圆角，否则内层 14px 与外层 6px
@@ -188,6 +189,8 @@ function close() {
 
 .modal-card-foot {
   justify-content: flex-end;
+  /* iOS 手势区：底部按钮不能压在 home indicator 上 */
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
   border-radius: 0;
   /* Bulma 的 modal 组件只挑了布局部分，按钮间距规则没进来，默认两个按钮会贴在一起 */
   gap: var(--vf-space-2);
@@ -199,6 +202,7 @@ function close() {
     width: 100%;
     margin: 0;
     max-height: 90vh;
+  max-height: 90dvh;
   }
 
   /* 仅在需要时收紧移动端边距/内边距（例如“文件历史”） */

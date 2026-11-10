@@ -46,6 +46,16 @@
 
   /* 应用外壳 + 内容面板：顶栏、侧栏与页面背景共用 --vf-shell-bg，
      内容面板用更浅的 --vf-content-bg，四周留 --vf-content-gap 的空隙。 */
+  /* 层叠阶梯：全站只允许用这七级，避免 18 个散落值互相压盖 */
+  --vf-z-sticky: 10;
+  --vf-z-dropdown: 30;
+  --vf-z-scrim: 40;
+  --vf-z-drawer: 50;
+  --vf-z-modal: 60;
+  --vf-z-bottombar: 70;
+  --vf-z-toast: 80;
+  --vf-z-fullscreen: 90;
+
   --vf-content-radius: 10px;
   --vf-content-gap: 8px;
 

@@ -133,6 +133,7 @@ const navItems = computed(() =>
 <style scoped>
 .admin-shell {
   display: flex;
+  min-height: 100vh;
   min-height: 100dvh;
   background: var(--vf-shell-bg);
 }
@@ -143,6 +144,7 @@ const navItems = computed(() =>
   display: flex;
   flex-direction: column;
   width: var(--vf-admin-sidebar-width);
+  height: 100vh;
   height: 100dvh;
   flex: none;
   padding: var(--vf-space-2);

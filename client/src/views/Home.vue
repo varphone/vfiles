@@ -647,7 +647,7 @@ async function renameSelected() {
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 900;
+  z-index: var(--vf-z-bottombar);
   background: var(--vf-surface);
   border-top: 1px solid var(--vf-border-weak);
   box-shadow: none;
@@ -814,15 +814,16 @@ async function renameSelected() {
 
 @media screen and (max-width: 1023px) {
   .mobile-bottom-bar {
-    bottom: calc(env(safe-area-inset-bottom) + var(--vv-bottom, 0px));
+    /* 安全区只由 .mobile-bottom-bar-inner 的 padding 承担一次；
+       这里再抬 env() 会让底栏悬浮、下方露出页面底色 */
+    bottom: var(--vv-bottom, 0px);
   }
 
   /* 为 fixed 底部操作栏留出空间，并在 iOS 浏览器工具栏遮挡时一起抬起。 */
   .home-browser-shell {
+    min-height: calc(100vh - var(--vf-topbar-height));
     min-height: calc(100dvh - var(--vf-topbar-height));
-    padding-bottom: calc(
-      6.5rem + env(safe-area-inset-bottom) + var(--vv-bottom, 0px)
-    );
+    padding-bottom: calc(6rem + var(--vv-bottom, 0px));
   }
 }
 </style>

@@ -246,8 +246,10 @@ defineExpose({
     position: fixed;
     top: var(--vf-topbar-height);
     bottom: 0;
+    padding-bottom: calc(var(--vf-space-2) + env(safe-area-inset-bottom));
+    overscroll-behavior: contain;
     left: 0;
-    z-index: 61;
+    z-index: var(--vf-z-drawer);
     width: min(var(--vf-sidebar-width), 84vw);
     flex: 0 0 auto;
     transform: translateX(-100%);
@@ -283,7 +285,7 @@ defineExpose({
   .files-sidebar-scrim {
     position: fixed;
     inset: var(--vf-topbar-height) 0 0;
-    z-index: 60;
+    z-index: var(--vf-z-scrim);
     display: block;
     background: var(--vf-overlay);
   }
