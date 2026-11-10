@@ -2,9 +2,9 @@
 
 承接 [CLIENT_UI_AUDIT.md](CLIENT_UI_AUDIT.md)。本次审查的 P0/P1 缺陷（功能、可访问性、设计系统、性能、CI 回归）已全部关闭；下面保留的是需要后端数据迁移/新增产品能力、或收益低于风险的后续项。
 
-**验证基线**：601 个客户端用例、24 项浏览器回归（含深色/移动 axe）、52 张 `ui:sweep` 截图、布局尺寸基线 0 漂移、`strictTemplates` 全绿、Rust fmt/clippy/测试通过。
+**验证基线**：601 个客户端用例、24 项浏览器回归（含深色/移动 axe）、10 张像素 golden、52 张 `ui:sweep` 截图、布局尺寸基线 0 漂移、`strictTemplates` 全绿、Rust fmt/clippy/测试通过。
 
-## 已完成（截至 252ad06）
+## 已完成（截至 601a849）
 
 - **功能**：移动端批量条（ref 解包）、缩略图 watcher 泄漏、选择态跨目录泄漏、确认框 Promise 悬挂、批量删除部分失败汇总、批量下载走队列。
 - **可访问性**：页面缩放、对话框 `role/aria-modal/aria-labelledby`、Esc 只关最上层、Tab 焦点回收、4 个输入框标签、辅助文本对比度达 AA（浅 4.99:1 / 深 5.76:1）。
@@ -29,6 +29,7 @@
 - **布局基线**：`ui:regression` 在 1440×900 与 390×844 采集顶栏/侧栏/内容区/工具栏/列表/状态栏/首行等盒子，与 `tests/fixtures/ui-layout.json` 以 3px 容差比较；`UPDATE_LAYOUT=1` 重新生成（95fbfa2）。
 - **菜单语义**：移动端批量菜单的三项补 `role="menuitem"`/`aria-disabled`，触发器 `aria-haspopup="menu"`（本轮）。
 - **管理台可访问性**：用户卡片头改为真正的 button 语义（role/tabindex/Enter/Space/aria-haspopup、视觉隐藏「查看详情」），头像改为装饰性生成内容；桌面行补 aria-label 与 Space；面包屑当前段加 `aria-current="page"`（3f50042）。
+- **像素基线**：`ui:visual` 使用固定夹具/固定 DB 时间戳/冻结时钟/固定主题与视口，对登录、文件列表（明暗）、网格、移动端（明暗）、管理台用户、空令牌页、统一搜索、右键菜单共 10 张截图做 pixelmatch 比对；CI 安装 Noto CJK 后执行，goldens 已提交（601a849）。
 - **类型与契约**：开启 `strictTemplates`，修复 73 个模板类型错误；顺带补 `AdminOverview` 的 `SkeletonList` 导入、`MobileSearchBar` 的 `enter-results`/ArrowDown、桌面内容区的重命名绑定，并让 `FileBrowserCollection` 声明/转发完整事件契约（6485dc6）。
 - **首屏占位**：`index.html` 增加主题化启动骨架（含 reduced-motion 回退），Vue 挂载后替换，覆盖 Home chunk 加载前的空白窗口（5e71ddd）。
 - **构建体积**：删除 `prefers-color-scheme` 的那份深色变量（theme-init 已保证显式 `data-theme`，并补隐私模式回退）；Tabler 图标从 19 个小 chunk 合并为 1 个（47bf5ba）。
@@ -47,11 +48,6 @@
 
 **做法**：按数据安全优先级排：回收站/撤销 > 分享密码/权限；两项都需要后端接口与数据迁移。
 
-### C. 像素级截图基线（可选）
-关键容器的布局尺寸基线已进 CI（24 项、3px 容差）；像素级 diff 仍依赖手动 `ui:sweep`。跨平台字体渲染会让像素 goldens 不稳定，暂不提交基线图。
-
-**做法**：若确需像素级，用固定 Playwright 容器生成 goldens；否则保留「布局基线 + 手动截图」策略。
-
 ## 提交前的固定检查
 
 ```bash
@@ -59,6 +55,7 @@ cd client
 bun run check          # eslint + 死样式 + vue-tsc + vitest
 bun run build && bun run size:check
 bun run ui:regression  # 需要 target/debug/vfiles + client/dist
+bun run ui:visual      # 像素基线；UPDATE_VISUAL=1 重新生成 goldens
 bun run ui:sweep -- --out /tmp/vfiles-sweep
 ```
 
