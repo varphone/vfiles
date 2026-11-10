@@ -2,7 +2,7 @@
 
 承接 [CLIENT_UI_AUDIT.md](CLIENT_UI_AUDIT.md)。本文件只记录**尚未完成**的项，以及动手前必须知道的坑。
 
-## 已完成（截至 0d8f49f）
+## 已完成（截至 bb04fd0）
 
 - **功能**：移动端批量条（ref 解包）、缩略图 watcher 泄漏、选择态跨目录泄漏、确认框 Promise 悬挂、批量删除部分失败汇总、批量下载走队列。
 - **可访问性**：页面缩放、对话框 `role/aria-modal/aria-labelledby`、Esc 只关最上层、Tab 焦点回收、4 个输入框标签、辅助文本对比度达 AA（浅 4.99:1 / 深 5.76:1）。
@@ -19,18 +19,19 @@
 - **间距**：190 处精确落在 4px 网格上的 padding/margin/gap 换成 `--vf-space-*`（41 文件），计算样式零差异；0.3–0.6rem 光学校准带按设计令牌决策保留（b963d72）。
 - **通知与搜索**：通知历史/未读写入 sessionStorage，刷新保留、退出登录或会话失效即清；统一搜索满 20 条时提供「查看全部结果」，结果数用 aria-live 播报；快捷键面板补 Ctrl+K（905f3be）。
 - **浏览器回归**：新增 `ui:regression`（Playwright + axe），覆盖键盘激活、右键菜单、对话框滚动锁/inert/焦点、目录 URL 前进后退与 10 个页面的 WCAG A/AA 扫描；CI 构建客户端/服务端、安装 Chromium 后执行。首次运行修复列表点击后的焦点上下文、通知/账号可访问名称、系统状态胶囊对比度（edf310b）。随后把深色 + 390px 移动端纳入 axe 扫描，修复移动底栏「更多/首页」与图标返回链接的名称问题（0d8f49f）。
+- **长列表与桌面布局**：桌面外壳锁 `100dvh`，列表/设置/活动改为面板内滚动，列表表头真正 sticky；`FileList` 超过 60 行后只渲染视口窗口 + 上下占位行，150 文件实测 DOM 31 行，End 键可达末行，删除后窗口自动收敛；`ui:regression` 扩到 17 项并覆盖两侧端点（bb04fd0）。
 
 ## 待办
 
-### 1. 大列表虚拟滚动
-`FileList` 全量渲染，首屏 40 条、每次 +30；`FileItem` 收 20+ props / 18 事件，选中一项会整列表重渲染。
+### 1. 网格 / 移动端长列表与选择重渲染
+桌面列表已窗口化；网格视图和移动端仍按 40+30 分批渲染（移动端行已有 `content-visibility`）。`FileItem` 收 20+ props / 18 事件，选中一项仍会驱动整块列表重渲染，`v-memo`/`shallowRef` 尚未落地。
 
-**做法**：独立主题。先做 `shallowRef` + `v-memo`（按 `path + selected + renaming`），再评估 `useVirtualList`；`selectedPaths` 改为父层算好布尔值传入。
+**做法**：父层算好每行 `selected` 布尔值，行加 `v-memo`（含 path/selected/renaming/active）；网格按行高窗口化；移动端保留 `content-visibility`，不强行上虚拟列表。
 
 ### 2. 拆分 `FileBrowser`
 [FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 3700 行，桌面/移动两套模板；`FileItem` 单行 63 个 DOM 节点。选择一项会牵动整块重渲染。
 
-**做法**：按工具栏 / 列表 / 移动布局 / 覆盖层拆组件与 composable；先做选择状态 `shallowRef` + 行 `v-memo`，再和虚拟滚动合并验证。
+**做法**：按工具栏 / 列表 / 移动布局 / 覆盖层拆组件与 composable；桌面窗口化已验证，拆分时保持 `FileList` 的滚动/占位行契约。
 
 ### 3. 产品能力缺口
 删除不可撤销且无回收站、无自助改密与个人资料、分享链接只有有效期（无密码/权限）。
