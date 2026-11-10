@@ -641,6 +641,7 @@ import { useFileUpload } from "../../composables/useFileUpload";
 import { useFileTransfer } from "../../composables/useFileTransfer";
 import { useDragChip } from "../../composables/useDragChip";
 import { useFileContextMenu } from "../../composables/useFileContextMenu";
+import { useFileBrowserView } from "../../composables/useFileBrowserView";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
@@ -650,12 +651,7 @@ import { useMoveDialog } from "../../composables/useMoveDialog";
 import { useTouchGestures } from "../../composables/useTouchGestures";
 import { useFilesSidebarControl } from "../../composables/useFilesSidebar";
 import type { FileInfo } from "../../types";
-import {
-  sortBrowserItems,
-  sortFiles,
-  type SortField,
-  type SortState,
-} from "../../utils/fileSort";
+import { sortBrowserItems, sortFiles } from "../../utils/fileSort";
 import {
   firstScopeRoot,
   isPathWithinRoots,
@@ -778,24 +774,17 @@ watch(
 // 事件驱动式（r138 ✓ 上轮计划兑现）：挂钩 navigateTo 单点（不依赖 watch 触发时序）
 // + 重试式恢复（渲染竞态防 ✗ 双 rAF 后校验补设）。
 
-const sortState = computed<SortState>(() => ({
-  field: fileView.sortField,
-  direction: fileView.sortDirection,
-  foldersFirst: fileView.foldersFirst,
-}));
-const viewMode = computed(() => fileView.mode);
+const {
+  isMobile,
+  viewMenuOpen,
+  sortState,
+  viewMode,
+  handleSortChange,
+} = useFileBrowserView();
 
 const searchContentEnabled = computed(
   () => authStore.features?.searchContent ?? false,
 );
-
-const isMobile = ref(false);
-
-const MOBILE_LAYOUT_MEDIA_QUERY = "(max-width: 1023px)";
-
-function updateIsMobile() {
-  isMobile.value = window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches;
-}
 
 /**
  * 视图侧栏开关由 FilesLayout 通过 provide/inject 提供（桌面收起、移动抽屉）。
@@ -807,12 +796,6 @@ const sidebarVisible = computed(() => sidebarControl?.isVisible.value ?? false);
 function toggleSidebar() {
   sidebarControl?.toggle();
 }
-
-/**
- * 根视图的「全部文件 ⌄」视图菜单：进入子目录后由面包屑接管，
- * 因此这里只在 `currentPath` 为空时渲染。
- */
-const viewMenuOpen = ref(false);
 
 const showShortcuts = ref(false);
 /** 工具栏「+ 新建 → 新建文件夹」：复用移动端底栏的建目录请求流程。 */
@@ -1289,26 +1272,6 @@ onMounted(() => {
     document.removeEventListener("touchstart", onDocPointer, true);
     document.removeEventListener("keydown", onDocKeydown);
   });
-
-  updateIsMobile();
-  const watchMedia = (query: string, handler: () => void): void => {
-    try {
-      const mql = window.matchMedia(query);
-      if ("addEventListener" in mql) {
-        mql.addEventListener("change", handler);
-        onBeforeUnmount(() => mql.removeEventListener("change", handler));
-      } else {
-        // @ts-expect-error older Safari
-        mql.addListener(handler);
-        // @ts-expect-error older Safari
-        onBeforeUnmount(() => mql.removeListener(handler));
-      }
-    } catch {
-      // matchMedia 不可用时按默认值处理
-    }
-  };
-
-  watchMedia(MOBILE_LAYOUT_MEDIA_QUERY, updateIsMobile);
 });
 
 onBeforeUnmount(() => {
@@ -1906,14 +1869,6 @@ function switchToNameSearch() {
   void runDesktopSearch();
 }
 
-/** 点击表头：切换字段时改字段，重复点击同一字段时切换升降序。 */
-function handleSortChange(field: SortField) {
-  if (fileView.sortField === field) {
-    fileView.toggleSortDirection();
-    return;
-  }
-  fileView.setSortField(field);
-}
 </script>
 
 <style scoped>
