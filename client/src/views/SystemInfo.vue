@@ -18,7 +18,17 @@
 
     <div class="system-info-body">
 
-      <p v-if="error" class="system-info-error" role="alert">{{ error }}</p>
+      <div v-if="error" class="system-info-error" role="alert">
+        <span>{{ error }}</span>
+        <button
+          class="vf-ghost-button is-small"
+          type="button"
+          :disabled="loading"
+          @click="load"
+        >
+          重试
+        </button>
+      </div>
 
       <SkeletonList v-if="loading && !info" :rows="4" label="加载系统信息" />
 
@@ -474,6 +484,10 @@ onMounted(load);
 }
 
 .system-info-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--vf-space-3);
   margin-bottom: var(--vf-space-4);
   padding: var(--vf-space-3) var(--vf-space-4);
   border: 1px solid var(--vf-danger-line);

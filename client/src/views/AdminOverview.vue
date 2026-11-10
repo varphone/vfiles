@@ -17,7 +17,14 @@
       <button class="vf-ghost-button" type="button" @click="reload">重试</button>
     </div>
 
-    <section class="admin-stats" aria-label="关键指标">
+    <SkeletonList
+      v-if="loading && !overview && !storage"
+      :rows="4"
+      label="加载概览"
+      class="admin-overview-skeleton"
+    />
+
+    <section v-else class="admin-stats" aria-label="关键指标">
       <StatCard
         label="用户"
         :value="overview?.userCount ?? storage?.user_count ?? '—'"
