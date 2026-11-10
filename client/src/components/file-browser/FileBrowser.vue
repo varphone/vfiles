@@ -453,46 +453,14 @@
                   @update:active="setResultFilter"
                 />
 
-                <FileGrid
-                  v-if="viewMode === 'grid'"
+                <FileBrowserCollection
+                  :files="desktopItems"
+                  :view-mode="viewMode"
                   :can-write="canWrite"
                   :can-share="canShare"
-                  :files="desktopItems"
-                  :highlight="searchActive ? searchQuery : ''"
-                  :commit="browseCommit"
-                  :select-mode="batchMode"
-                  :selected-paths="selectedPaths"
-                  :active-path="desktopActivePath"
-                  :thumbnail-size="fileView.thumbnailSize"
-                  :show-location="searchActive"
-                  @click="handleItemClick"
-                  @download="handleDownload"
-                  @rename="handleRenameEntry"
-                  :renaming-path="renamingPath"
-                  @rename-commit="commitRenameEntry"
-                  @rename-cancel="cancelRenameEntry"
-                  @move="handleMoveEntry"
-                  @delete="handleDelete"
-                  @view-history="handleViewHistory"
-                  @toggle-select="handleRowSelect"
-                  @modifier-select="handleModifierSelect"
-                  @context-menu="handleContextMenu"
-                  @drag-start="handleDragStart"
-                  @drag-end="handleDragEnd"
-                  @drop-on-folder="handleDropOnFolder"
-                  @share="handleShare"
-                  @preview="handlePreview"
-                  @open-folder="handleOpenFolder"
-                  @create-directory="handleCreateDirectory"
-                />
-                <FileList
-                  v-else
-                  :can-write="canWrite"
-                  :can-share="canShare"
-                  :files="desktopItems"
                   :shared-paths="sharedPaths"
                   :highlight="searchActive ? searchQuery : ''"
-                  :show-location="searchActive"
+                  :commit="browseCommit"
                   :select-mode="batchMode"
                   :selected-paths="selectedPaths"
                   :flash-path="dropFlashPath"
@@ -500,12 +468,14 @@
                   :active-path="desktopActivePath"
                   :desktop="true"
                   :show-action-column="!detailsVisible"
+                  :show-location="searchActive"
                   :sort-field="fileView.sortField"
                   :sort-direction="fileView.sortDirection"
+                  :thumbnail-size="fileView.thumbnailSize"
+                  :renaming-path="renamingPath"
                   @click="handleItemClick"
                   @download="handleDownload"
                   @rename="handleRenameEntry"
-                  :renaming-path="renamingPath"
                   @rename-commit="commitRenameEntry"
                   @rename-cancel="cancelRenameEntry"
                   @move="handleMoveEntry"
@@ -686,51 +656,23 @@
               </button>
             </template>
           </EmptyState>
-          <FileGrid
-            v-if="viewMode === 'grid' && visibleSearchResults.length"
+          <FileBrowserCollection
+            v-if="visibleSearchResults.length"
+            :files="visibleSearchResults"
+            :view-mode="viewMode"
             :can-write="canWrite"
             :can-share="canShare"
-            :files="visibleSearchResults"
             :highlight="searchQuery"
             :commit="browseCommit"
             :select-mode="batchMode"
             :selected-paths="selectedPaths"
-            :thumbnail-size="fileView.thumbnailSize"
-            @click="handleItemClick"
-            @download="handleDownload"
-            @rename="handleRenameEntry"
-            :renaming-path="renamingPath"
-            @rename-commit="commitRenameEntry"
-            @rename-cancel="cancelRenameEntry"
-            @move="handleMoveEntry"
-            @delete="handleDelete"
-            @view-history="handleViewHistory"
-            @toggle-select="toggleSelect"
-            @modifier-select="handleModifierSelect"
-            @context-menu="handleContextMenu"
-            @drag-start="handleDragStart"
-            @drag-end="handleDragEnd"
-            @drop-on-folder="handleDropOnFolder"
-            @share="handleShare"
-            @preview="handlePreview"
-            @open-folder="handleOpenFolder"
-            @create-directory="handleCreateDirectory"
-          />
-          <FileList
-            v-else-if="visibleSearchResults.length"
-            :can-write="canWrite"
-            :can-share="canShare"
-            :files="visibleSearchResults"
-            :highlight="searchQuery"
-            :select-mode="batchMode"
-            :selected-paths="selectedPaths"
             :flash-path="dropFlashPath"
             :expanded-path="expandedFilePath"
-            :show-action-column="!detailsVisible"
+            :thumbnail-size="fileView.thumbnailSize"
+            :renaming-path="renamingPath"
             @click="handleItemClick"
             @download="handleDownload"
             @rename="handleRenameEntry"
-            :renaming-path="renamingPath"
             @rename-commit="commitRenameEntry"
             @rename-cancel="cancelRenameEntry"
             @move="handleMoveEntry"
@@ -770,48 +712,21 @@
         </div>
 
         <div v-else class="file-list">
-          <FileGrid
-            v-if="viewMode === 'grid'"
+          <FileBrowserCollection
+            :files="visibleFiles"
+            :view-mode="viewMode"
             :can-write="canWrite"
             :can-share="canShare"
-            :files="visibleFiles"
             :commit="browseCommit"
-            :select-mode="batchMode"
-            :selected-paths="selectedPaths"
-            :thumbnail-size="fileView.thumbnailSize"
-            @click="handleItemClick"
-            @download="handleDownload"
-            @rename="handleRenameEntry"
-            :renaming-path="renamingPath"
-            @rename-commit="commitRenameEntry"
-            @rename-cancel="cancelRenameEntry"
-            @move="handleMoveEntry"
-            @delete="handleDelete"
-            @view-history="handleViewHistory"
-            @toggle-select="toggleSelect"
-            @modifier-select="handleModifierSelect"
-            @context-menu="handleContextMenu"
-            @drag-start="handleDragStart"
-            @drag-end="handleDragEnd"
-            @drop-on-folder="handleDropOnFolder"
-            @share="handleShare"
-            @preview="handlePreview"
-            @open-folder="handleOpenFolder"
-            @create-directory="handleCreateDirectory"
-          />
-          <FileList
-            v-else
-            :can-write="canWrite"
-            :can-share="canShare"
-            :files="visibleFiles"
             :select-mode="batchMode"
             :selected-paths="selectedPaths"
             :flash-path="dropFlashPath"
             :expanded-path="expandedFilePath"
+            :thumbnail-size="fileView.thumbnailSize"
+            :renaming-path="renamingPath"
             @click="handleItemClick"
             @download="handleDownload"
             @rename="handleRenameEntry"
-            :renaming-path="renamingPath"
             @rename-commit="commitRenameEntry"
             @rename-cancel="cancelRenameEntry"
             @move="handleMoveEntry"
@@ -1094,16 +1009,15 @@ import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 import { useFileViewStore } from "../../stores/fileView.store";
-import FileList from "./FileList.vue";
 import { confirmDialog } from "../../composables/dialog";
 import SearchResultToolbar from "./SearchResultToolbar.vue";
 import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
 import FileBrowserDialogs from "./FileBrowserDialogs.vue";
+import FileBrowserCollection from "./FileBrowserCollection.vue";
 import NewMenuButton from "./NewMenuButton.vue";
 import UploadDropOverlay from "./UploadDropOverlay.vue";
 import EmptyState from "../common/EmptyState.vue";
-import FileGrid from "./FileGrid.vue";
 import LibraryGrid from "./LibraryGrid.vue";
 import MobileSearchBar from "./MobileSearchBar.vue";
 import BrowserSearchBox, { type SearchType } from "./BrowserSearchBox.vue";
