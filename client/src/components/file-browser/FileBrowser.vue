@@ -554,7 +554,7 @@
     />
 
     <FileBrowserDialogs
-      ref="dialogsRef"
+      :ref="setDialogsRef"
       :show-history="showHistory"
       :show-share="showShareDialog"
       :show-details="showDetailsDialog"
@@ -623,7 +623,7 @@ import {
   IconStar,
   IconStarFilled,
 } from "@tabler/icons-vue";
-import { filesService, MAX_TRANSFER_PATHS } from "../../services/files.service";
+import { filesService } from "../../services/files.service";
 import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
@@ -658,6 +658,7 @@ import { useDirectoryNavigation } from "../../composables/useDirectoryNavigation
 import { useFileRename } from "../../composables/useFileRename";
 import { useFileActions } from "../../composables/useFileActions";
 import { useFileUpload } from "../../composables/useFileUpload";
+import { useFileTransfer } from "../../composables/useFileTransfer";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
@@ -823,60 +824,12 @@ const viewMenuOpen = ref(false);
 /** 来自收藏侧栏的局部状态缓存；文件列表 DTO 会提供准确状态。 */
 const favoritePaths = ref<Set<string>>(new Set());
 const showShortcuts = ref(false);
-const showTransferDialog = ref(false);
-const transferItems = ref<FileInfo[]>([]);
-const dialogsRef = ref<{ finishTransfer: () => void } | null>(null);
-
-
 /** 工具栏「+ 新建 → 新建文件夹」：复用移动端底栏的建目录请求流程。 */
 function requestCreateDirectoryFromToolbar() {
   if (!canWrite.value) return;
   appStore.requestCreateDirectory();
 }
 
-/** 打开所有权转移对话框（支持单条与批量）。 */
-function openTransferDialog(items: FileInfo[]) {
-  if (isRestricted.value) return;
-  const targets = items.filter((item) => item.path !== "");
-  if (targets.length === 0) return;
-  if (targets.length > MAX_TRANSFER_PATHS) {
-    appStore.error(
-      `一次最多转移 ${MAX_TRANSFER_PATHS} 个项目，请减少所选项目后重试`,
-    );
-    return;
-  }
-  transferItems.value = targets;
-  showTransferDialog.value = true;
-}
-
-function closeTransferDialog() {
-  showTransferDialog.value = false;
-  transferItems.value = [];
-}
-
-/** 提交转移：成功则刷新列表并清空选择。 */
-async function submitTransfer(
-  target: { id: string; username: string },
-  message: string,
-) {
-  const paths = transferItems.value.map((item) => item.path);
-  try {
-    const result = await filesService.transferOwnership(
-      paths,
-      target.id,
-      message || undefined,
-    );
-    appStore.success(
-      `已把 ${result.transferred} 个条目转移给 ${result.target_username}`,
-    );
-    closeTransferDialog();
-    clearSelection();
-    await refresh();
-  } catch (e) {
-    appStore.error(e instanceof Error ? e.message : "转移失败");
-    dialogsRef.value?.finishTransfer();
-  }
-}
 const expandedFilePath = ref<string>("");
 
 const {
@@ -1237,6 +1190,21 @@ const {
   files,
   refresh,
   notifySuccess: (message) => appStore.success(message),
+});
+
+const {
+  showTransferDialog,
+  transferItems,
+  setDialogsRef,
+  openTransferDialog,
+  closeTransferDialog,
+  submitTransfer,
+} = useFileTransfer({
+  isRestricted,
+  clearSelection,
+  refresh,
+  notifySuccess: (message) => appStore.success(message),
+  notifyError: (message) => appStore.error(message),
 });
 
 const {
