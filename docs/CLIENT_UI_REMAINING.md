@@ -2,7 +2,7 @@
 
 承接 [CLIENT_UI_AUDIT.md](CLIENT_UI_AUDIT.md)。本文件只记录**尚未完成**的项，以及动手前必须知道的坑。
 
-## 已完成（截至 509bac7）
+## 已完成（截至 8bf5724）
 
 - **功能**：移动端批量条（ref 解包）、缩略图 watcher 泄漏、选择态跨目录泄漏、确认框 Promise 悬挂、批量删除部分失败汇总、批量下载走队列。
 - **可访问性**：页面缩放、对话框 `role/aria-modal/aria-labelledby`、Esc 只关最上层、Tab 焦点回收、4 个输入框标签、辅助文本对比度达 AA（浅 4.99:1 / 深 5.76:1）。
@@ -25,12 +25,12 @@
 - **个人资料**：`POST /auth/profile` 更新邮箱（主密码会话、格式/唯一性校验、审计）；账号菜单新增「个人资料」对话框，保存后同步本地会话（509bac7）。
 - **自助改密**：`POST /auth/password` 校验当前密码、写入新哈希、撤销该账号全部会话并写审计；账号菜单新增「修改密码」对话框（当前/新/确认，≥8 位且不得相同），成功后清本地状态回登录页（d7bc09f）。
 - **布局基线**：`ui:regression` 在 1440×900 与 390×844 采集顶栏/侧栏/内容区/工具栏/列表/状态栏/首行等盒子，与 `tests/fixtures/ui-layout.json` 以 3px 容差比较；`UPDATE_LAYOUT=1` 重新生成（95fbfa2）。
-- **结构（进行中）**：工具栏右侧的版本切换抽为 `FileBrowserHistoryControls`，列表/网格/排序/详情控制抽为 `FileBrowserViewControls`（8fdff03）；根视图「全部文件」菜单抽为 `FileBrowserViewMenu`，父层保留 `viewMenuOpen` 供 Escape 关闭（41d250b）；工具栏左侧的侧栏开关/写入口/范围徽标与面包屑/菜单切换抽为 `FileBrowserToolbarLeading`、`FileBrowserToolbarHeading`（b189c26）。文件浏览器的历史/分享/详情/转移/快捷键/预览覆盖层抽离为 `FileBrowserDialogs`，用显式 props/emits 连接，转移失败路径通过 `finishTransfer` 暴露；新增组件契约测试（1530b9e）。键盘处理与输入/控件判定抽离为 `useFileBrowserKeyboard`，主组件通过依赖注入连接（fc773b7）。目录导航、范围守卫、403/范围回退与滚动记忆抽离为 `useDirectoryNavigation`（88429df）。列表/网格的三处重复接线收敛为 `FileBrowserCollection`（4acd50c）。
+- **结构（进行中）**：桌面状态栏抽为 `FileBrowserStatusBar`（摘要/提示/选择/定位/快捷键入口，8bf5724）。工具栏右侧的版本切换抽为 `FileBrowserHistoryControls`，列表/网格/排序/详情控制抽为 `FileBrowserViewControls`（8fdff03）；根视图「全部文件」菜单抽为 `FileBrowserViewMenu`，父层保留 `viewMenuOpen` 供 Escape 关闭（41d250b）；工具栏左侧的侧栏开关/写入口/范围徽标与面包屑/菜单切换抽为 `FileBrowserToolbarLeading`、`FileBrowserToolbarHeading`（b189c26）。文件浏览器的历史/分享/详情/转移/快捷键/预览覆盖层抽离为 `FileBrowserDialogs`，用显式 props/emits 连接，转移失败路径通过 `finishTransfer` 暴露；新增组件契约测试（1530b9e）。键盘处理与输入/控件判定抽离为 `useFileBrowserKeyboard`，主组件通过依赖注入连接（fc773b7）。目录导航、范围守卫、403/范围回退与滚动记忆抽离为 `useDirectoryNavigation`（88429df）。列表/网格的三处重复接线收敛为 `FileBrowserCollection`（4acd50c）。
 
 ## 待办
 
 ### 1. 继续拆分 `FileBrowser`
-[FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 约 2931 行；覆盖层、键盘、目录导航、列表/网格接线、工具栏（leading/heading/history/view controls）均已抽离。剩余主要是桌面列表容器、移动布局与文件操作脚本。
+[FileBrowser.vue](../client/src/components/file-browser/FileBrowser.vue) 约 2859 行；覆盖层、键盘、目录导航、列表/网格接线、工具栏、状态栏均已抽离。剩余主要是桌面列表容器、移动布局与文件操作脚本。
 
 **做法**：下一刀优先桌面列表容器或移动布局；再评估文件操作 composable。保持 `FileList`/`FileGrid`/`useVirtualWindow` 的滚动契约与 `useDirectoryNavigation` 的导航单点。
 
