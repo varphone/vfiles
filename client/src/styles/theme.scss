@@ -9,7 +9,7 @@
 //! - 同一语义只保留一个令牌：正文/次级/辅助文本、结构线、次级面、状态层
 //!   都按语义取用，不再在组件里写 rgba 灰或第二套近似值；
 //! - 大面积面（外壳、内容面板）用中性灰，主色只用于操作与选中；
-//! - 主题切换靠 `<html data-theme="light|dark">`，未设置时跟随系统；
+//! - theme-init.js 总是写入 `<html data-theme="light|dark">`，CSS 只保留一份主题变量；
 //! - 令牌按需增补，避免长期保留无人使用的变量。
 //!
 //! 配色目标：低饱和、低疲劳。主色比此前 #0082C9 降饱和；深色下的实心块
@@ -395,11 +395,4 @@
 
 [data-theme="dark"] {
   @include vf-dark-tokens;
-}
-
-// 跟随系统：仅在用户未显式选择浅色时生效。
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    @include vf-dark-tokens;
-  }
 }

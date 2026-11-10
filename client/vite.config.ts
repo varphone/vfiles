@@ -24,6 +24,15 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Tabler 图标按组件拆成几十个 0.5 KB 的小 chunk，HTTP/2 下仍是几十次
+        // 请求；合并成一个按需加载的图标 chunk。
+        manualChunks(id) {
+          if (id.includes("@tabler/icons-vue")) return "icons";
+        },
+      },
+    },
   },
   test: {
     environment: "jsdom",

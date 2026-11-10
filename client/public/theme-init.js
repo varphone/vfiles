@@ -11,6 +11,16 @@
     }
     document.documentElement.dataset.theme = mode;
   } catch {
-    // localStorage may be unavailable in private browsing contexts.
+    // localStorage may be unavailable in private browsing contexts; still honor
+    // the system scheme so the single-copy CSS has an explicit theme.
+    try {
+      document.documentElement.dataset.theme = window.matchMedia(
+        "(prefers-color-scheme: dark)",
+      ).matches
+        ? "dark"
+        : "light";
+    } catch {
+      /* matchMedia unavailable: CSS defaults to light */
+    }
   }
 })();
