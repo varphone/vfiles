@@ -698,7 +698,7 @@ onMounted(async () => {
 }
 
 .tokens-card-item {
-  padding: 0.75rem 0.8rem;
+  padding: var(--vf-space-3);
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface);
@@ -708,7 +708,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--vf-space-2);
   min-width: 0;
 }
 

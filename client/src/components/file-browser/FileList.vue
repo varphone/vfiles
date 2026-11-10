@@ -395,7 +395,9 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
   display: inline-flex;
   align-items: center;
   gap: var(--vf-space-1);
-  padding: 0;
+  /* 44px 表头全高可点（13+18+13），负外边距保持行高 */
+  padding: 13px 0;
+  margin: -13px 0;
   border: none;
   background: transparent;
   color: inherit;

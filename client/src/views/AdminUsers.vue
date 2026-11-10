@@ -1153,7 +1153,7 @@ onMounted(() => {
 .admin-user-card-head {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--vf-space-2);
   cursor: pointer;
 }
 

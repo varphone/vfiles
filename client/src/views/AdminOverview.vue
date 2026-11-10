@@ -131,7 +131,13 @@
           </div>
         </li>
       </ul>
-      <p v-else class="admin-empty">暂无活动记录</p>
+      <EmptyState
+        v-else
+        compact
+        :icon="IconUsers"
+        title="暂无活动记录"
+        hint="登录与文件操作会显示在这里"
+      />
     </SectionCard>
   </AdminLayout>
 </template>
@@ -149,6 +155,7 @@ import {
   IconRefresh,
   IconUsers,
 } from "@tabler/icons-vue";
+import EmptyState from "../components/common/EmptyState.vue";
 import AdminLayout from "../layouts/AdminLayout.vue";
 import SectionCard from "../ui/SectionCard.vue";
 import StatCard from "../ui/StatCard.vue";
@@ -397,14 +404,6 @@ onMounted(reload);
 .admin-activity-meta {
   margin: 0.15rem 0 0;
   font-size: 0.72rem;
-  color: var(--vf-text-subtle);
-}
-
-.admin-empty {
-  margin: 0;
-  padding: var(--vf-space-5) 0;
-  text-align: center;
-  font-size: 0.8rem;
   color: var(--vf-text-subtle);
 }
 

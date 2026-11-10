@@ -723,7 +723,7 @@ onMounted(() => {
 .shares-file {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: var(--vf-space-2);
   min-width: 0;
 }
 
@@ -840,7 +840,7 @@ onMounted(() => {
 }
 
 .shares-card {
-  padding: 0.75rem 0.8rem;
+  padding: var(--vf-space-3);
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-sm);
   background: var(--vf-surface);
@@ -849,7 +849,7 @@ onMounted(() => {
 .shares-card-head {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: var(--vf-space-2);
   min-width: 0;
 }
 

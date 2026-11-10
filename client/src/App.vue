@@ -49,6 +49,11 @@ body,
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* 路由切换时主内容接收程序化焦点，不显示交互控件式的焦点环 */
+main[tabindex="-1"]:focus {
+  outline: none;
+}
+
 /* 移动端优化 */
 @media screen and (max-width: 768px) {
   .section {

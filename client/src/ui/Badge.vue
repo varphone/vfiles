@@ -20,19 +20,19 @@ withDefaults(
 .vf-badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.32rem;
-  padding: 0.14rem 0.5rem;
+  gap: var(--vf-badge-gap);
+  padding: var(--vf-badge-padding-y) var(--vf-badge-padding-x);
   border: 1px solid transparent;
   border-radius: var(--vf-radius-pill);
-  font-size: 0.72rem;
+  font-size: var(--vf-badge-font-size);
   font-weight: 600;
   line-height: 1.35;
   white-space: nowrap;
 }
 
 .vf-badge.is-sm {
-  padding: 0.05rem 0.4rem;
-  font-size: 0.68rem;
+  padding: var(--vf-badge-sm-padding-y) var(--vf-badge-sm-padding-x);
+  font-size: var(--vf-badge-sm-font-size);
 }
 
 .vf-badge-dot {

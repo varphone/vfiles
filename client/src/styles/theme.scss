@@ -44,6 +44,15 @@
   --vf-radius-control: 3px;
   --vf-radius-card: 8px;
 
+  /* 徽标/胶囊：字号与内边距一处定义，语义底色仍由各组件持有 */
+  --vf-badge-gap: 0.3rem;
+  --vf-badge-padding-y: 0.1rem;
+  --vf-badge-padding-x: 0.4rem;
+  --vf-badge-font-size: 0.75rem;
+  --vf-badge-sm-padding-y: 0.05rem;
+  --vf-badge-sm-padding-x: 0.4rem;
+  --vf-badge-sm-font-size: 0.68rem;
+
   /* 应用外壳 + 内容面板：顶栏、侧栏与页面背景共用 --vf-shell-bg，
      内容面板用更浅的 --vf-content-bg，四周留 --vf-content-gap 的空隙。 */
   /* 层叠阶梯：全站只允许用这七级，避免 18 个散落值互相压盖 */

@@ -1,3 +1,4 @@
+import { nextTick } from "vue";
 import { createRouter, createWebHistory } from "vue-router";
 
 const router = createRouter({
@@ -94,9 +95,27 @@ const router = createRouter({
 });
 
 // 动态页面标题（r147 ✓ W3C 页面标题标准：页面唯一可辨标题）
-router.afterEach((to) => {
+// 路由切换后把焦点交给主内容：SPA 不会像整页导航那样自动重定位焦点，
+// 读屏用户否则仍停在已卸载的链接上（activeElement 回落为 body）。
+router.afterEach(async (to, from) => {
   const base = "VFiles";
-  document.title = to.meta?.title ? `${to.meta.title} - ${base}` : `${base} - 文件管理系统`;
+  document.title = to.meta?.title
+    ? `${to.meta.title} - ${base}`
+    : `${base} - 文件管理系统`;
+
+  if (!from.name || from.name === to.name) return;
+  await nextTick();
+  const active = document.activeElement;
+  if (active && active !== document.body) return;
+  const main = document.querySelector<HTMLElement>("main");
+  if (!main) return;
+  main.setAttribute("tabindex", "-1");
+  main.focus({ preventScroll: true });
+  main.addEventListener(
+    "blur",
+    () => main.removeAttribute("tabindex"),
+    { once: true },
+  );
 });
 
 router.addRoute({

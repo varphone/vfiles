@@ -293,10 +293,10 @@ mark.has-background-warning-light {
 .vf-status-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.1rem 0.4rem;
+  gap: var(--vf-badge-gap);
+  padding: var(--vf-badge-padding-y) var(--vf-badge-padding-x);
   border-radius: var(--vf-radius-pill);
-  font-size: 0.75rem;
+  font-size: var(--vf-badge-font-size);
   white-space: nowrap;
 }
 
@@ -408,7 +408,9 @@ mark.has-background-warning-light {
   display: inline-flex;
   align-items: center;
   gap: var(--vf-space-1);
-  padding: 0;
+  /* 44px 表头全高都可点（13+18+13），负外边距不撑高行 */
+  padding: 13px 0;
+  margin: -13px 0;
   border: 0;
   background: transparent;
   color: inherit;

@@ -265,9 +265,17 @@
               </tbody>
             </table>
           </div>
-          <p v-else class="system-info-empty">
-            {{ searchQuery ? "没有匹配的用户" : "暂无用户用量" }}
-          </p>
+          <EmptyState
+            v-else
+            compact
+            :icon="IconUsers"
+            :title="searchQuery ? '没有匹配的用户' : '暂无用户用量'"
+            :hint="
+              searchQuery
+                ? '换个用户名试试'
+                : '有用户存储数据后会显示在这里'
+            "
+          />
         </section>
       </template>
     </div>
@@ -276,6 +284,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { IconUsers } from "@tabler/icons-vue";
+import EmptyState from "../components/common/EmptyState.vue";
 import SkeletonList from "../components/common/SkeletonList.vue";
 import AdminLayout from "../layouts/AdminLayout.vue";
 import { authService } from "../services/auth.service";
@@ -894,14 +904,6 @@ onMounted(load);
   border-radius: inherit;
   background: var(--system-info-accent);
   transition: width 180ms ease;
-}
-
-.system-info-empty {
-  margin: 0;
-  padding: 1.6rem 1rem;
-  color: var(--system-info-muted);
-  text-align: center;
-  font-size: 0.82rem;
 }
 
 .sr-only {

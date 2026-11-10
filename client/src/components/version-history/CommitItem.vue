@@ -201,11 +201,11 @@ const versionLabel = computed(() => {
 
 .history-version {
   flex: 0 0 auto;
-  padding: 0.05rem 0.4rem;
+  padding: var(--vf-badge-sm-padding-y) var(--vf-badge-sm-padding-x);
   border-radius: var(--vf-radius-pill);
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--vf-badge-sm-font-size);
   font-weight: 600;
 }
 
@@ -216,11 +216,11 @@ const versionLabel = computed(() => {
 
 .history-tag {
   flex: 0 0 auto;
-  padding: 0.05rem 0.35rem;
+  padding: var(--vf-badge-sm-padding-y) 0.35rem;
   border-radius: var(--vf-radius-xs);
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--vf-badge-sm-font-size);
 }
 
 .history-title {

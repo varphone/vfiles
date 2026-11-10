@@ -122,8 +122,8 @@ watch(
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 1rem 1.1rem 0.85rem;
+  gap: var(--vf-space-3);
+  padding: var(--vf-space-4) var(--vf-space-4) var(--vf-space-3);
   border-bottom: 1px solid var(--vf-border-weak);
 }
 

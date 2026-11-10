@@ -3406,15 +3406,15 @@ function handleSortChange(field: SortField) {
 .scope-badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--vf-badge-gap);
   flex: 0 0 auto;
   max-width: 100%;
-  padding: var(--vf-space-1) var(--vf-space-3);
+  padding: var(--vf-badge-padding-y) var(--vf-badge-padding-x);
   border: 1px solid var(--vf-border);
   border-radius: var(--vf-radius-pill);
   background: var(--vf-surface-2);
   color: var(--vf-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--vf-badge-font-size);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
