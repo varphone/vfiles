@@ -151,6 +151,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import { useListResource } from "../composables/useListResource";
 import { IconActivity, IconAlertCircle, IconRefresh } from "@tabler/icons-vue";
 import FilesLayout from "../layouts/FilesLayout.vue";
 import ViewsSidebar from "../components/files/ViewsSidebar.vue";
@@ -159,7 +160,6 @@ import SkeletonList from "../components/common/SkeletonList.vue";
 import Avatar from "../ui/Avatar.vue";
 import PageHeader from "../ui/PageHeader.vue";
 import { filesService } from "../services/files.service";
-import { useAppStore } from "../stores/app.store";
 import { formatDate, formatRelativeDate } from "../utils/filePresentation";
 import type { AuditLogEntry } from "../types";
 
@@ -205,16 +205,20 @@ const filterChips: Array<{ value: ActivityFilter; label: string }> = [
   { value: "files", label: "文件变更" },
 ];
 
-const appStore = useAppStore();
-
 const filter = ref<ActivityFilter>("all");
-const items = ref<AuditLogEntry[]>([]);
-const total = ref(0);
-const loading = ref(false);
-const loadingMore = ref(false);
-const error = ref<string | null>(null);
-
-const hasMore = computed(() => items.value.length < total.value);
+// 列表状态由 useListResource 统一管理：序号防护 + 去重 + 首次/追加加载分离。
+const resource = useListResource<AuditLogEntry>({
+  pageSize: PAGE_SIZE,
+  key: (entry) => entry.id,
+  fetchPage: ({ limit, offset }) =>
+    filesService.getActivity({ filter: filter.value, limit, offset }),
+});
+const items = resource.items;
+const total = resource.total;
+const loading = resource.loading;
+const loadingMore = resource.loadingMore;
+const error = resource.error;
+const hasMore = computed(() => resource.hasMore());
 
 function actionLabel(action: string): string {
   return ACTION_LABELS[action] ?? action;
@@ -276,51 +280,21 @@ const groups = computed<ActivityGroup[]>(() => {
   return [...grouped.values()];
 });
 
-/** 重新拉取第一页；切换筛选和刷新都走这里。 */
+/** 重新拉取第一页；切换筛选和刷新都走这里（竞态由 useListResource 收敛）。 */
 async function reload() {
-  loading.value = true;
-  loadingMore.value = false;
-  error.value = null;
+  resetActivity();
+  await resource.reload();
+}
+
+/** 切换筛选：先清空再拉，避免旧筛选的数据闪一下。 */
+function resetActivity() {
   items.value = [];
   total.value = 0;
-
-  try {
-    const page = await filesService.getActivity({
-      filter: filter.value,
-      limit: PAGE_SIZE,
-      offset: 0,
-    });
-    items.value = page.items;
-    total.value = page.total;
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : "加载活动记录失败";
-  } finally {
-    loading.value = false;
-  }
+  error.value = null;
 }
 
 async function loadMore() {
-  if (!hasMore.value || loading.value || loadingMore.value) return;
-
-  loadingMore.value = true;
-  try {
-    const page = await filesService.getActivity({
-      filter: filter.value,
-      limit: PAGE_SIZE,
-      offset: items.value.length,
-    });
-    // 分页边界可能重复返回同一条记录，按 id 去重。
-    const known = new Set(items.value.map((entry) => entry.id));
-    items.value = [
-      ...items.value,
-      ...page.items.filter((entry) => !known.has(entry.id)),
-    ];
-    total.value = page.total;
-  } catch (e) {
-    appStore.error(e instanceof Error ? e.message : "加载更多活动失败");
-  } finally {
-    loadingMore.value = false;
-  }
+  await resource.loadMore();
 }
 
 function setFilter(next: ActivityFilter) {
