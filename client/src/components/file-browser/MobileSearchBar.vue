@@ -15,6 +15,7 @@
           :value="query"
           class="input is-small mobile-search-input"
           type="search"
+          :aria-label="content ? '搜索文件内容' : '搜索文件名'"
           :placeholder="content ? '搜索文件内容...' : '搜索文件名...'"
           list="vfiles-search-history"
           @input="

@@ -909,6 +909,7 @@
               v-model="newDirName"
               class="input"
               type="text"
+              aria-label="目录名"
               placeholder="目录名"
             />
           </div>
@@ -936,6 +937,7 @@
               v-model="renameDirName"
               class="input"
               type="text"
+              aria-label="新目录名"
               placeholder="新目录名"
               :disabled="!currentPath"
             />

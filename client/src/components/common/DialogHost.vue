@@ -28,6 +28,7 @@
             v-model="inputValue"
             class="input"
             type="text"
+            :aria-label="dialog.title"
             :placeholder="dialog.placeholder"
             @keyup.enter="accept"
           />
