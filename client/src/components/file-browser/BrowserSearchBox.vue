@@ -9,19 +9,39 @@
           type="text"
           :placeholder="placeholder"
           :aria-label="placeholder"
-          list="vfiles-search-history-desktop"
-          @input="
-            emit('update:modelValue', ($event.target as HTMLInputElement).value)
-          "
-          @keyup.enter="emit('search')"
-          @keydown.esc.prevent="
-            open ? emit('update:open', false) : emit('clear')
-          "
-          @keydown.down.prevent="emit('enter-results')"
+          autocomplete="off"
+          @focus="historyOpen = historyItems.length > 0"
+          @input="onInput"
+          @keyup.enter="onEnter"
+          @keydown.esc.prevent="onEscape"
+          @keydown.down.prevent="onArrow(1)"
+          @keydown.up.prevent="onArrow(-1)"
         />
-        <datalist id="vfiles-search-history-desktop">
-          <option v-for="item in history" :key="item" :value="item" />
-        </datalist>
+      </div>
+
+      <!-- 历史条目：原生 datalist 无法与站内浮层统一样式与定位，改用自绘面板 -->
+      <div
+        v-if="historyOpen && historyItems.length > 0"
+        class="desktop-history-panel"
+        role="listbox"
+        aria-label="搜索历史"
+      >
+        <p class="desktop-history-heading">最近搜索</p>
+        <button
+          v-for="(item, index) in historyItems"
+          :key="item"
+          class="desktop-history-item"
+          :class="{ 'is-highlighted': index === historyIndex }"
+          type="button"
+          role="option"
+          :aria-selected="index === historyIndex ? 'true' : 'false'"
+          @mousedown.prevent
+          @click="pickHistory(item)"
+          @mouseenter="historyIndex = index"
+        >
+          <IconHistory :size="14" />
+          <span>{{ item }}</span>
+        </button>
       </div>
 
       <div class="desktop-search-action-group">
@@ -124,7 +144,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { IconChevronDown, IconSearch } from "@tabler/icons-vue";
+import { IconChevronDown, IconHistory, IconSearch } from "@tabler/icons-vue";
 
 export type SearchType = "all" | "file" | "directory";
 
@@ -163,6 +183,70 @@ const emit = defineEmits<{
 
 const rootRef = ref<HTMLElement | null>(null);
 
+/** 搜索历史浮层：聚焦时展开，匹配当前输入；键盘上下选择、回车填入并搜索。 */
+const historyOpen = ref(false);
+const historyIndex = ref(-1);
+
+const historyItems = computed(() => {
+  const keyword = props.modelValue.trim().toLowerCase();
+  const items = keyword
+    ? props.history.filter((item) => item.toLowerCase().includes(keyword))
+    : props.history;
+  return items.slice(0, 8);
+});
+
+function onInput(event: Event) {
+  const value = (event.target as HTMLInputElement).value;
+  emit("update:modelValue", value);
+  historyOpen.value = true;
+  historyIndex.value = -1;
+}
+
+function onEnter() {
+  if (historyOpen.value && historyIndex.value >= 0) {
+    const item = historyItems.value[historyIndex.value];
+    if (item) {
+      pickHistory(item);
+      return;
+    }
+  }
+  historyOpen.value = false;
+  emit("search");
+}
+
+function onEscape() {
+  if (historyOpen.value) {
+    historyOpen.value = false;
+    return;
+  }
+  if (props.open) {
+    emit("update:open", false);
+    return;
+  }
+  emit("clear");
+}
+
+function onArrow(step: number) {
+  if (!historyOpen.value && historyItems.value.length > 0) {
+    historyOpen.value = true;
+    historyIndex.value = -1;
+  }
+  if (!historyOpen.value || historyItems.value.length === 0) {
+    // 没有历史条目时保持原有行为：↓ 直接进入结果首项
+    if (step > 0) emit("enter-results");
+    return;
+  }
+  const total = historyItems.value.length;
+  historyIndex.value = (historyIndex.value + step + total) % total;
+}
+
+function pickHistory(item: string) {
+  emit("update:modelValue", item);
+  historyOpen.value = false;
+  historyIndex.value = -1;
+  emit("search");
+}
+
 const placeholder = computed(() =>
   props.content ? "搜索当前工作区中的文本内容" : "搜索名称、扩展名或路径",
 );
@@ -172,11 +256,12 @@ function registerInputElement(element: unknown) {
 }
 
 function onDocumentClick(event: MouseEvent) {
-  if (!props.open) return;
   const root = rootRef.value;
-  if (root && event.target instanceof Node && !root.contains(event.target)) {
-    emit("update:open", false);
+  if (!root || !(event.target instanceof Node) || root.contains(event.target)) {
+    return;
   }
+  historyOpen.value = false;
+  if (props.open) emit("update:open", false);
 }
 
 onMounted(() => {
@@ -258,6 +343,59 @@ onBeforeUnmount(() => {
 
 .desktop-search-toggle.is-open svg {
   transform: rotate(180deg);
+}
+
+/* 搜索历史浮层：与排序/视图/高级搜索同一套框体与定位（输入框左缘、下 6px） */
+.desktop-history-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  max-width: 26rem;
+  padding: 6px;
+  border: 1px solid var(--vf-border-weak);
+  border-radius: var(--vf-radius-sm);
+  background: var(--vf-surface);
+  box-shadow: var(--vf-shadow-popover);
+}
+
+.desktop-history-heading {
+  margin: 0;
+  padding: 4px 8px 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--vf-text-subtle);
+}
+
+.desktop-history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--vf-radius-xs);
+  background: transparent;
+  color: var(--vf-text);
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.desktop-history-item svg {
+  flex: none;
+  color: var(--vf-text-subtle);
+}
+
+.desktop-history-item:hover,
+.desktop-history-item.is-highlighted {
+  background: var(--vf-row-hover);
+  color: var(--vf-text-strong);
 }
 
 .desktop-search-panel {

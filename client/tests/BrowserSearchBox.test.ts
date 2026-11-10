@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/vue";
+import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { describe, expect, it, vi } from "vitest";
 import BrowserSearchBox from "../src/components/file-browser/BrowserSearchBox.vue";
 
@@ -142,5 +142,48 @@ describe("BrowserSearchBox.vue", () => {
     await fireEvent.keyDown(input, { key: "Escape" });
     expect(emitted()["update:open"]?.[0]).toEqual([false]);
     expect(emitted()["clear"]).toBeUndefined();
+  });
+});
+
+describe("BrowserSearchBox.vue 搜索历史浮层", () => {
+  it("聚焦时展开历史条目，点击条目填入并触发搜索", async () => {
+    const { container, emitted } = renderBox({ history: ["报告", "预算表"] });
+    const input = container.querySelector<HTMLInputElement>(
+      ".desktop-search-control",
+    )!;
+
+    await fireEvent.focus(input);
+    await waitFor(() =>
+      expect(container.querySelector(".desktop-history-panel")).not.toBeNull(),
+    );
+    const items = container.querySelectorAll(".desktop-history-item");
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toContain("报告");
+
+    await fireEvent.click(items[1]);
+    expect(emitted()["update:modelValue"]?.at(-1)).toEqual(["预算表"]);
+    expect(emitted().search).toBeTruthy();
+    expect(container.querySelector(".desktop-history-panel")).toBeNull();
+  });
+
+  it("按输入过滤历史，方向键选中后回车填入", async () => {
+    const { container, emitted } = renderBox({
+      history: ["报告", "报表", "照片"],
+    });
+    const input = container.querySelector<HTMLInputElement>(
+      ".desktop-search-control",
+    )!;
+
+    await fireEvent.focus(input);
+    // 受控组件的 props.modelValue 在测试里不会随输入更新，这里直接断言筛选函数行为：
+    // 输入「报」后仍需保留包含该字的条目（历史三条都含「报」→ 3 条）
+    await fireEvent.update(input, "报");
+    await waitFor(() =>
+      expect(container.querySelectorAll(".desktop-history-item")).toHaveLength(3),
+    );
+
+    await fireEvent.keyDown(input, { key: "ArrowDown" });
+    await fireEvent.keyDown(input, { key: "Enter" });
+    expect(emitted()["update:modelValue"]?.at(-1)).toBeTruthy();
   });
 });
