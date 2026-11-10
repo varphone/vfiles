@@ -88,7 +88,6 @@ async fn search(
     let limit = params.limit.clamp(1, MAX_SEARCH_LIMIT);
     let search_files = params.search_files || (!params.search_files && !params.search_content);
     let search_content = params.search_content;
-    let entry_kind = entry_kind;
     let query_for =
         |path_prefix: Option<NormalizedPath>, offset: u32, page_limit: u32| SearchQuery {
             query: params.q.clone(),

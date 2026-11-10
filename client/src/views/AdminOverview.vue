@@ -210,6 +210,7 @@ function actionLabel(action: string): string {
     "credential.create": "创建访问密码",
     "credential.update": "更新访问密码",
     "credential.delete": "删除访问密码",
+  "auth.password_change": "修改密码",
     "audit.export": "导出审计",
   };
   return labels[action] ?? action;

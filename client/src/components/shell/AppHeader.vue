@@ -124,8 +124,27 @@
                 管理控制台
               </RouterLink>
 
+              <template v-if="auth.enabled && auth.user">
+                <a
+                  class="dropdown-item"
+                  role="menuitem"
+                  href="#"
+                  @click.prevent="openChangePassword"
+                >
+                  修改密码
+                </a>
+                <a
+                  class="dropdown-item"
+                  role="menuitem"
+                  href="#"
+                  @click.prevent="logoutFromMenu"
+                >
+                  退出登录
+                </a>
+              </template>
+
               <RouterLink
-                v-if="auth.enabled && !auth.user"
+                v-else-if="auth.enabled && !auth.user"
                 class="dropdown-item"
                 role="menuitem"
                 to="/login"
@@ -133,16 +152,6 @@
               >
                 去登录
               </RouterLink>
-
-              <a
-                v-else-if="auth.enabled && auth.user"
-                class="dropdown-item"
-                role="menuitem"
-                href="#"
-                @click.prevent="logoutFromMenu"
-              >
-                退出登录
-              </a>
             </div>
           </div>
         </div>
@@ -150,6 +159,10 @@
     </div>
 
     <UnifiedSearch :show="searchOpen" @close="closeSearch" />
+    <ChangePasswordDialog
+      :show="showChangePassword"
+      @close="showChangePassword = false"
+    />
   </header>
 </template>
 
@@ -168,6 +181,7 @@ import {
 import NotificationCenter from "../common/NotificationCenter.vue";
 import ThemeToggle from "../common/ThemeToggle.vue";
 import UnifiedSearch from "./UnifiedSearch.vue";
+import ChangePasswordDialog from "../auth/ChangePasswordDialog.vue";
 import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 
@@ -196,6 +210,7 @@ const router = useRouter();
 const accountMenuOpen = ref(false);
 const accountMenuRef = ref<HTMLElement | null>(null);
 const searchOpen = ref(false);
+const showChangePassword = ref(false);
 
 const shareEnabled = computed(() => auth.features?.shareEnabled !== false);
 
@@ -266,6 +281,11 @@ function openSearch() {
 
 function closeSearch() {
   searchOpen.value = false;
+}
+
+function openChangePassword() {
+  closeAccountMenu();
+  showChangePassword.value = true;
 }
 
 async function logoutFromMenu() {

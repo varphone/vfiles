@@ -24,6 +24,13 @@ use vfiles_domain::{CredentialId, DomainError, EntryKind, NewAuditLog, Normalize
 const MAX_LOGIN_BODY_BYTES: usize = 16 * 1024;
 const MAX_LOGIN_IDENTIFIER_LOG_CHARS: usize = 254;
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route(
@@ -32,6 +39,10 @@ pub fn router() -> Router<AppState> {
         )
         .route("/register", post(register))
         .route("/logout", post(logout))
+        .route(
+            "/password",
+            post(change_password).layer(DefaultBodyLimit::max(MAX_LOGIN_BODY_BYTES)),
+        )
         .route("/me", get(me))
         .route(
             "/credentials",
@@ -241,6 +252,35 @@ pub async fn logout(
     ))
 }
 
+/// 自助修改主密码：仅全量会话可用；成功后该账号的所有会话失效。
+pub async fn change_password(
+    jar: CookieJar,
+    axum::extract::State(state): axum::extract::State<AppState>,
+    headers: HeaderMap,
+    ApiJson(req): ApiJson<ChangePasswordRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let auth_service =
+        state
+            .auth_service
+            .as_ref()
+            .ok_or(ApiError::Domain(DomainError::Authentication {
+                message: "Authentication not enabled".to_string(),
+            }))?;
+    let ctx = crate::routes::primary_request_context(&state, &jar).await?;
+    auth_service
+        .change_password(&ctx.actor_user_id, &req.current_password, &req.new_password)
+        .await?;
+    crate::audit::record_for(
+        &state,
+        &headers,
+        &ctx,
+        NewAuditLog::success(crate::audit::action::PASSWORD_CHANGE)
+            .detail("修改主密码并撤销该账号的全部会话"),
+    )
+    .await;
+    Ok(Json(json!({ "success": true })))
+}
+
 pub async fn me(
     jar: CookieJar,
     axum::extract::State(state): axum::extract::State<AppState>,
@@ -361,7 +401,7 @@ fn normalize_label(label: &str) -> ApiResult<String> {
 
 fn validate_credential_password(password: &str) -> ApiResult<()> {
     let chars = password.chars().count();
-    if chars < MIN_CREDENTIAL_PASSWORD_CHARS || chars > MAX_CREDENTIAL_PASSWORD_CHARS {
+    if !(MIN_CREDENTIAL_PASSWORD_CHARS..=MAX_CREDENTIAL_PASSWORD_CHARS).contains(&chars) {
         return Err(validation_error("受限密码长度需在 6-256 个字符之间"));
     }
     Ok(())

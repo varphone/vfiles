@@ -232,6 +232,23 @@ async function main() {
     viewMenuOpened && viewMenuClosed,
   );
 
+  // 账号菜单 → 修改密码：确认独立对话框的入口与 Escape 关闭。
+  await page.locator(".app-header-account").click();
+  await page.locator('.dropdown-item:has-text("修改密码")').click();
+  const passwordOpened = await waitFor(
+    async () =>
+      (await page.locator(".modal.is-active .modal-card").count()) === 1 &&
+      (await page.locator(".modal.is-active").innerText()).includes("修改密码"),
+  );
+  await page.keyboard.press("Escape");
+  const passwordClosed = await waitFor(
+    async () => (await page.locator(".modal.is-active").count()) === 0,
+  );
+  check(
+    "change-password dialog opens from the account menu",
+    passwordOpened && passwordClosed,
+  );
+
   // 1) 控件上的 Enter/Space 不被全局文件快捷键吞掉。
   await page.locator(".nc-new-button").focus();
   await page.keyboard.press("Enter");

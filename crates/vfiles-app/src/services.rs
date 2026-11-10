@@ -1626,6 +1626,44 @@ impl AuthService {
         self.session_repo.revoke_session(&session.id).await
     }
 
+    /// 自助修改主密码：校验当前密码、写入新哈希并撤销该用户的全部会话。
+    ///
+    /// 撤销会话是安全默认：旧密码泄露时，已签发的 cookie/凭据不能继续使用；
+    /// 当前页面拿到成功响应后应引导用户重新登录。
+    pub async fn change_password(
+        &self,
+        user_id: &UserId,
+        current_password: &str,
+        new_password: &str,
+    ) -> DomainResult<()> {
+        if new_password.chars().count() < 8 {
+            return Err(DomainError::Validation {
+                message: "Password must be at least 8 characters".to_string(),
+            });
+        }
+        if current_password == new_password {
+            return Err(DomainError::Validation {
+                message: "New password must differ from the current password".to_string(),
+            });
+        }
+
+        let user = self.user_repo.find_by_id(user_id).await?;
+        if !self
+            .verify_password(current_password, &user.password_hash)
+            .await?
+        {
+            return Err(DomainError::InvalidCredentials);
+        }
+
+        let password_hash = self.hash_password(new_password).await?;
+        self.user_repo
+            .update_password(user_id, &password_hash)
+            .await?;
+        self.session_repo.revoke_user_sessions(user_id).await?;
+        self.clear_verified_cache();
+        Ok(())
+    }
+
     /// 列出账号的受限登录凭据（返回的哈希由仓储层持有，接口层不输出）。
     pub async fn list_login_credentials(
         &self,
@@ -6424,6 +6462,56 @@ mod tests {
         assert!(outcomes.1);
         assert_eq!(outcomes.2, Ok(9));
         assert_eq!(outcomes.3, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn change_own_password_requires_current_and_updates_credentials() {
+        let context = TestContext::new().await;
+        let old_hash = AuthService::hash_password_for_storage("old-password").expect("old hash");
+        context
+            .user_repo
+            .update_password(&context.user_id, &old_hash)
+            .await
+            .expect("old password stored");
+
+        let wrong = context
+            .auth_service
+            .change_password(&context.user_id, "wrong-password", "new-password")
+            .await;
+        assert!(matches!(wrong, Err(DomainError::InvalidCredentials)));
+
+        let short = context
+            .auth_service
+            .change_password(&context.user_id, "old-password", "short")
+            .await;
+        assert!(matches!(short, Err(DomainError::Validation { .. })));
+
+        let same = context
+            .auth_service
+            .change_password(&context.user_id, "old-password", "old-password")
+            .await;
+        assert!(matches!(same, Err(DomainError::Validation { .. })));
+
+        context
+            .auth_service
+            .change_password(&context.user_id, "old-password", "new-password")
+            .await
+            .expect("password should change");
+
+        assert!(matches!(
+            context
+                .auth_service
+                .verify_credentials("admin", "old-password", true)
+                .await,
+            Err(DomainError::InvalidCredentials)
+        ));
+        assert!(
+            context
+                .auth_service
+                .verify_credentials("admin", "new-password", true)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]

@@ -489,6 +489,17 @@ class AuthService {
     return apiService.post("/auth/logout");
   }
 
+  /** 修改主密码；成功后服务端会撤销该账号的全部会话。 */
+  changePassword(
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<ApiResponse<void>> {
+    return apiService.post("/auth/password", {
+      currentPassword,
+      newPassword,
+    });
+  }
+
   // 受限登录密码（仅主密码会话可管理）
   /** 列出当前账号的受限登录密码（不含密码）。 */
   async listLoginCredentials(): Promise<LoginCredential[]> {

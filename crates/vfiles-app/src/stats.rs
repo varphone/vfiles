@@ -46,6 +46,7 @@ impl IngestStats {
         self.total_sessions.fetch_add(1, Ordering::Relaxed);
     }
 
+    #[allow(deprecated)] // fetch_update 在更新的稳定版被重命名，保留 MSRV 1.92 兼容
     pub fn session_finished(&self) {
         // 异常路径可能重复调用，这里做饱和处理避免下溢
         let _ = self

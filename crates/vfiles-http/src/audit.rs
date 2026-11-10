@@ -58,6 +58,7 @@ pub mod action {
     pub const CREDENTIAL_CREATE: &str = "credential.create";
     pub const CREDENTIAL_UPDATE: &str = "credential.update";
     pub const CREDENTIAL_DELETE: &str = "credential.delete";
+    pub const PASSWORD_CHANGE: &str = "auth.password_change";
 }
 
 /// 从请求头取出 (IP, User-Agent)。
