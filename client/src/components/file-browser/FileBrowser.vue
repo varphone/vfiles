@@ -599,7 +599,6 @@ import {
   onBeforeUnmount,
   computed,
   watch,
-  nextTick,
 } from "vue";
 import { storeToRefs } from "pinia";
 import { IconAlertCircle, IconUpload } from "@tabler/icons-vue";
@@ -643,11 +642,11 @@ import { useFileBrowserView } from "../../composables/useFileBrowserView";
 import { useProgressiveList } from "../../composables/useProgressiveList";
 import { usePreviewActions } from "../../composables/usePreviewActions";
 import { useFileBrowserHotkeys } from "../../composables/useFileBrowserHotkeys";
+import { useFileBrowserRowNavigation } from "../../composables/useFileBrowserRowNavigation";
 import { useFileBrowserList } from "../../composables/useFileBrowserList";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
-import { columnsFromElements } from "../../utils/gridLayout";
 import { useMoveDialog } from "../../composables/useMoveDialog";
 import { useTouchGestures } from "../../composables/useTouchGestures";
 import { useFilesSidebarControl } from "../../composables/useFilesSidebar";
@@ -832,12 +831,6 @@ const detailsVisible = computed(
 
 /** 移动端搜索筛选面板（默认收起，保持顶部只有一行搜索框）。 */
 const mobileSearchFiltersOpen = ref(false);
-const detailItem = computed<FileInfo | undefined>(() => findActiveItem());
-
-/** 当前批量选中的条目（保持列表顺序），用于详情面板的多选摘要。 */
-const selectedItems = computed<FileInfo[]>(() =>
-  activeList.value.filter((file) => selectedPaths.value.has(file.path)),
-);
 
 /**
  * 整窗拖放上传：把桌面文件直接拖进浏览器。
@@ -1244,6 +1237,37 @@ const desktopItems = computed(() =>
   activeList.value.slice(0, visibleCount.value),
 );
 
+const {
+  findActiveItem,
+  moveActiveRow,
+  typeAheadPrefix,
+  clearTypeAhead,
+  handleTypeAhead,
+  toggleActiveRowSelection,
+  handleRowSelect,
+} = useFileBrowserRowNavigation({
+  searchActive,
+  sortedSearchResults,
+  navigationListItems,
+  activeList,
+  visibleCount,
+  viewMode,
+  desktopActivePath,
+  lastSelectedPath,
+  selectedPaths,
+  batchMode,
+  canWrite,
+  toggleSelect,
+  handleModifierSelect,
+});
+
+const detailItem = computed<FileInfo | undefined>(() => findActiveItem());
+
+/** 当前批量选中的条目（保持列表顺序），用于详情面板的多选摘要。 */
+const selectedItems = computed<FileInfo[]>(() =>
+  activeList.value.filter((file) => selectedPaths.value.has(file.path)),
+);
+
 // 文件列表重新加载（上传/删除/重命名/移动/切换目录）后刷新侧栏概览
 // 移动端底栏的「新建文件夹」：在当前位置打开创建对话框
 watch(
@@ -1410,231 +1434,6 @@ function anyOverlayOpen(): boolean {
 function closeShareAndRefresh() {
   closeShareDialog();
   void loadSharedPaths(true);
-}
-
-function handleRowSelect(file: FileInfo) {
-  if (!canWrite.value) return;
-  toggleSelect(file);
-}
-
-
-function findActiveItem(): FileInfo | undefined {
-  const list = searchActive.value
-    ? sortedSearchResults.value
-    : navigationListItems.value;
-
-  if (desktopActivePath.value) {
-    const active = list.find((file) => file.path === desktopActivePath.value);
-    if (active) return active;
-  }
-
-  if (selectedPaths.value.size === 1) {
-    const [only] = selectedPaths.value;
-    const selected = list.find((file) => file.path === only);
-    if (selected) return selected;
-  }
-
-  return undefined;
-}
-
-/**
- * 网格视图下「上下键移动一行」的步长：按实际渲染的卡片推断列数。
- *
- * jsdom 等无布局环境下 offsetTop 全为 0，会退化成「一行一张卡」，
- * 因此这里只做兜底，真正的行为由 `columnsFromElements` 决定。
- */
-function gridColumnStep(): number {
-  if (typeof document === "undefined") return 1;
-  const cards = Array.from(document.querySelectorAll(".file-grid .file-card"));
-  return cards.length > 0 ? columnsFromElements(cards) : 1;
-}
-
-/**
- * 方向键 / Home / End 移动活动行（主流文件管理器的基本键盘操作）。
- *
- * - 列表视图：上下左右都按一项移动；网格视图：左右按一项、上下按**一行**（列数由布局推断）；
- * - 普通方向键：移动高亮行，批量模式下选择也跟随移动；
- * - Shift + 方向键：从上次选中项扩展到当前行（复用 useFileSelection 的区间选择）；
- * - `.`/`..` 快捷项不参与移动与选择（与鼠标点击一致）。
- */
-function moveActiveRow(key: string, shift: boolean) {
-  const list = searchActive.value
-    ? sortedSearchResults.value
-    : navigationListItems.value;
-  if (list.length === 0) return;
-
-  const currentIndex = list.findIndex(
-    (item) => item.path === desktopActivePath.value,
-  );
-  const rowStep = viewMode.value === "grid" ? gridColumnStep() : 1;
-  let nextIndex: number;
-  switch (key) {
-    case "ArrowUp":
-      nextIndex = currentIndex <= 0 ? 0 : Math.max(0, currentIndex - rowStep);
-      break;
-    case "ArrowDown":
-      nextIndex =
-        currentIndex === -1
-          ? 0
-          : Math.min(list.length - 1, currentIndex + rowStep);
-      break;
-    case "ArrowLeft":
-      nextIndex = currentIndex <= 0 ? 0 : currentIndex - 1;
-      break;
-    case "ArrowRight":
-      nextIndex =
-        currentIndex === -1 ? 0 : Math.min(list.length - 1, currentIndex + 1);
-      break;
-    case "Home":
-      nextIndex = 0;
-      break;
-    case "End":
-      nextIndex = list.length - 1;
-      break;
-    case "PageUp":
-      nextIndex = Math.max(
-        0,
-        (currentIndex === -1 ? 0 : currentIndex) - pageStep(),
-      );
-      break;
-    case "PageDown":
-      nextIndex =
-        currentIndex === -1
-          ? 0
-          : Math.min(list.length - 1, currentIndex + pageStep());
-      break;
-    default:
-      return;
-  }
-
-  const next = list[nextIndex];
-  if (!next) return;
-
-  const previousPath = desktopActivePath.value;
-  const previousIsReal = list.some((item) => item.path === previousPath);
-
-  desktopActivePath.value = next.path;
-  if (shift) {
-    // 还没有锚点时，把移动前的活动行作为区间起点，保证第一次 Shift+方向键
-    // 就能选中「原位置 → 新位置」的区间
-    if (!lastSelectedPath.value && previousIsReal) {
-      lastSelectedPath.value = previousPath;
-    }
-    handleModifierSelect({ file: next, shift: true, meta: false });
-  } else if (batchMode.value) {
-    selectedPaths.value = new Set([next.path]);
-  }
-
-  // 目标行可能还没渲染（分批渲染），先补齐渲染范围再滚动到可见区域
-  if (nextIndex >= visibleCount.value) {
-    visibleCount.value = Math.min(activeList.value.length, nextIndex + 1);
-  }
-  void nextTick().then(() => scrollActiveIntoView(next.path));
-}
-
-/**
- * 一屏能移动多少个条目：列表按「可视行数」，网格按「可视行数 × 列数」。
- *
- * 依赖真实布局（行/卡片高度与容器高度），无布局环境（如 jsdom）兜底 10。
- */
-function pageStep(): number {
-  if (typeof document === "undefined") return 10;
-  const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
-  if (!shell) return 10;
-
-  if (viewMode.value === "grid") {
-    const cards = Array.from(
-      document.querySelectorAll<HTMLElement>(".file-grid .file-card"),
-    );
-    if (cards.length === 0) return 10;
-    const columns = columnsFromElements(cards);
-    // 行高优先取同列相邻两行的间距；只有一行时退回卡片高度 + 间距
-    const cardTop = cards[0].getBoundingClientRect().top;
-    const nextRow = cards[columns];
-    const rowHeight = nextRow
-      ? nextRow.getBoundingClientRect().top - cardTop
-      : cards[0].getBoundingClientRect().height + 12;
-    if (rowHeight <= 0) return 10;
-    const visibleRows = Math.max(1, Math.floor(shell.clientHeight / rowHeight));
-    return Math.max(1, visibleRows * columns);
-  }
-
-  const rows = Array.from(
-    document.querySelectorAll<HTMLElement>("tr.desktop-file-row, .file-item"),
-  );
-  if (rows.length < 2) return 10;
-  const rowHeight =
-    rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top;
-  if (rowHeight <= 0) return 10;
-  return Math.max(1, Math.floor(shell.clientHeight / rowHeight));
-}
-
-/** 按键定位（type-ahead）：连续输入会在 800ms 后重置，主流文件管理器都有此行为。 */
-const typeAheadPrefix = ref("");
-let typeAheadTimer: number | undefined;
-
-/** Escape 清空按键定位前缀（并取消自动过期计时器）。 */
-function clearTypeAhead() {
-  typeAheadPrefix.value = "";
-  if (typeAheadTimer) {
-    window.clearTimeout(typeAheadTimer);
-    typeAheadTimer = undefined;
-  }
-}
-
-function handleTypeAhead(character: string): boolean {
-  const list = searchActive.value
-    ? sortedSearchResults.value
-    : navigationListItems.value;
-  if (list.length === 0) return false;
-
-  typeAheadPrefix.value += character;
-  if (typeAheadTimer) window.clearTimeout(typeAheadTimer);
-  typeAheadTimer = window.setTimeout(() => {
-    typeAheadPrefix.value = "";
-  }, 800);
-
-  const prefix = typeAheadPrefix.value.toLowerCase();
-  const startIndex = Math.max(
-    0,
-    list.findIndex((item) => item.path === desktopActivePath.value),
-  );
-  // 先找当前位置之后的匹配项，绕回开头再找一次（与主流行为一致）
-  const ordered = [...list.slice(startIndex), ...list.slice(0, startIndex)];
-  const match = ordered.find((item) =>
-    item.name.toLowerCase().startsWith(prefix),
-  );
-  if (!match) {
-    // 无匹配：清空前缀，不显示提示，也不拦截按键
-    typeAheadPrefix.value = "";
-    if (typeAheadTimer) window.clearTimeout(typeAheadTimer);
-    return false;
-  }
-
-  const index = list.findIndex((item) => item.path === match.path);
-  desktopActivePath.value = match.path;
-  if (batchMode.value) selectedPaths.value = new Set([match.path]);
-  if (index >= visibleCount.value) {
-    visibleCount.value = Math.min(activeList.value.length, index + 1);
-  }
-  void nextTick().then(() => scrollActiveIntoView(match.path));
-  return true;
-}
-
-/** Space：切换活动行的选中态（主流文件列表都支持）。 */
-function toggleActiveRowSelection() {
-  if (!canWrite.value) return;
-  const active = findActiveItem();
-  if (!active) return;
-  if (!batchMode.value) batchMode.value = true;
-  toggleSelect(active);
-}
-
-function scrollActiveIntoView(path: string) {
-  if (typeof document === "undefined") return;
-  const selector = `[data-vfiles-path="${CSS.escape(path)}"]`;
-  const element = document.querySelector<HTMLElement>(selector);
-  element?.scrollIntoView?.({ block: "nearest" });
 }
 
 /** 内容搜索无结果时，一键改用文件名搜索（保留关键字与范围）。 */
