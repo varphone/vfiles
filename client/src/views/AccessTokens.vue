@@ -344,6 +344,7 @@ import { confirmDialog } from "../composables/dialog";
 import { useMediaQuery } from "../composables/useMediaQuery";
 import { useAppStore } from "../stores/app.store";
 import { filesService } from "../services/files.service";
+import { usePagedResource } from "../composables/usePagedResource";
 import { copyText } from "../utils/clipboard";
 import { formatRelativeDate } from "../utils/filePresentation";
 import type { AccessToken, TokenExpiryOption } from "../types";
@@ -355,13 +356,18 @@ import type { AccessToken, TokenExpiryOption } from "../types";
  */
 const app = useAppStore();
 const isCompact = useMediaQuery("(max-width: 768px)");
-const tokens = ref<AccessToken[]>([]);
-const currentPage = ref(0);
-const totalTokens = ref(0);
 const pageSize = 50;
+// 页码式分页交给 usePagedResource：序号防护 + 越界回退都在里面。
+const resource = usePagedResource<AccessToken>({
+  pageSize,
+  fetchPage: ({ limit, offset }) => filesService.listAccessTokens(limit, offset),
+});
+const tokens = resource.items;
+const currentPage = resource.page;
+const totalTokens = resource.total;
 const expiryOptions = ref<TokenExpiryOption[]>([{ days: 0, label: "永久" }]);
-const loading = ref(false);
-const error = ref("");
+const loading = resource.loading;
+const error = resource.error;
 
 const createOpen = ref(false);
 const creating = ref(false);
@@ -371,9 +377,7 @@ const form = ref({ name: "", expiresInDays: 0 });
 const plaintext = ref("");
 const copied = ref(false);
 const plaintextInput = ref<HTMLInputElement | null>(null);
-const pageCount = computed(() =>
-  Math.max(1, Math.ceil(totalTokens.value / pageSize)),
-);
+const pageCount = resource.pageCount;
 
 const usageSnippet = computed(
   () => `# 上传（单请求，最简单）
@@ -395,37 +399,15 @@ curl -sS -H "Authorization: Bearer $VFILES_TOKEN" "$VFILES/api/files/tree?path=c
 );
 
 async function reload(requestedPage = currentPage.value) {
-  loading.value = true;
-  error.value = "";
-  try {
-    let page = await filesService.listAccessTokens(
-      pageSize,
-      requestedPage * pageSize,
-    );
-    const lastPage = Math.max(0, Math.ceil(page.total / pageSize) - 1);
-    if (requestedPage > lastPage) {
-      requestedPage = lastPage;
-      page = await filesService.listAccessTokens(
-        pageSize,
-        requestedPage * pageSize,
-      );
-    }
-    currentPage.value = requestedPage;
-    totalTokens.value = page.total;
-    tokens.value = page.items;
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : "加载访问令牌失败";
-  } finally {
-    loading.value = false;
-  }
+  await resource.load(requestedPage);
 }
 
 function reloadCurrentPage() {
-  void reload();
+  void resource.reload();
 }
 
 function goToPage(page: number) {
-  void reload(page);
+  resource.goToPage(page);
 }
 
 function openCreate() {
