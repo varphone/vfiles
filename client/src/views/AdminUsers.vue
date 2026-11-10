@@ -719,7 +719,11 @@ function cancelEdit() {
   editingId.value = null;
 }
 
+/** 搜索防抖 + 翻页 + 排序都会并发触发；只认最后一次请求，避免旧结果覆盖新页。 */
+let reloadSequence = 0;
+
 async function reload() {
+  const sequence = ++reloadSequence;
   loading.value = true;
   error.value = null;
   try {
@@ -731,6 +735,7 @@ async function reload() {
       sort: SORT_PARAM[sortField.value],
       order: sortDirection.value,
     });
+    if (sequence !== reloadSequence) return;
     if (!res.success) {
       error.value = res.error || "加载失败";
       users.value = [];
@@ -745,12 +750,13 @@ async function reload() {
     );
     void refreshRoleCounts();
   } catch (e) {
+    if (sequence !== reloadSequence) return;
     error.value = e instanceof Error ? e.message : "加载失败";
     users.value = [];
     emailDraft.value = {};
     capabilities.value = { ...defaultCapabilities };
   } finally {
-    loading.value = false;
+    if (sequence === reloadSequence) loading.value = false;
   }
 }
 
