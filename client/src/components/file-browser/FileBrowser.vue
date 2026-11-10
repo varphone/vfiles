@@ -1118,12 +1118,12 @@ import Modal from "../common/Modal.vue";
 import { copyText } from "../../utils/clipboard";
 import { useDownloadQueue } from "../../composables/useDownloadQueue";
 import { useFilePreview } from "../../composables/useFilePreview";
-import { useDocumentEventListener } from "../../composables/useDocumentEventListener";
 import {
   useFileSearch,
   type SearchResultFilter,
 } from "../../composables/useFileSearch";
 import { createFileBrowserKeyboard } from "../../composables/useFileBrowserKeyboard";
+import { useDirectoryNavigation } from "../../composables/useDirectoryNavigation";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
 import { useFileSelection } from "../../composables/useFileSelection";
 import { useWindowFileDrop } from "../../composables/useWindowFileDrop";
@@ -1144,7 +1144,6 @@ import {
   firstScopeRoot,
   isPathWithinRoots,
   normalizeScopePath,
-  scopedParentPath,
   sliceBreadcrumbsFromScopeRoot,
 } from "../../utils/sessionScope";
 
@@ -1211,61 +1210,6 @@ const scopeBadgeTitle = computed(() => {
   const label = authStore.scope?.label;
   return label ? `受限密码：${label}` : scopeBadgeText.value;
 });
-
-// 滚动位置记忆（r129 ✓ r137 合一式修正：保存/恢复单 watch（双 watch 触发疑云 ✗）
-// + 渲染双帧恢复（过早 clamp 到 0 ✗）+ loading 兜底）
-const scrollMemory = new Map<string, number>();
-const MAX_SCROLL_MEMORY = 50;
-let pendingScrollRestore: number | null = null;
-
-// 滚动快照（r139 终修 ✓ 瞬时读 scrollTop 输给点击竞态 ✗ → scroll 事件持续追踪式）
-let lastScrollTop = 0;
-useDocumentEventListener(
-  "scroll",
-  (event) => {
-    const target = event.target as HTMLElement | null;
-    if (target?.classList?.contains("desktop-list-shell")) {
-      lastScrollTop = target.scrollTop;
-    }
-  },
-  true,
-);
-
-function stashScroll(path: string) {
-  scrollMemory.set(path, lastScrollTop);
-  if (scrollMemory.size > MAX_SCROLL_MEMORY) {
-    const oldest = scrollMemory.keys().next().value;
-    if (oldest !== undefined) scrollMemory.delete(oldest);
-  }
-}
-
-function flushScrollRestore() {
-  if (pendingScrollRestore == null) return;
-  const restore = pendingScrollRestore;
-  pendingScrollRestore = null;
-  const apply = () => {
-    const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
-    if (shell) {
-      shell.scrollTop = restore;
-      lastScrollTop = restore;
-    }
-  };
-  // 渲染竞态防（r138 二修）：固定时点补设输给渲染竞态 ✗ → **重试校验循环**
-  // （每 100ms 校验补设 × 6 次（600ms 窗）✓ 列表渲染完成后即稳定）
-  let attempts = 0;
-  const timer = setInterval(() => {
-    attempts += 1;
-    if (attempts > 6) {
-      clearInterval(timer);
-      return;
-    }
-    const shell = document.querySelector<HTMLElement>(".desktop-list-shell");
-    if (shell && Math.abs(shell.scrollTop - restore) > 5) shell.scrollTop = restore;
-  }, 100);
-  requestAnimationFrame(() => {
-    requestAnimationFrame(apply);
-  });
-}
 
 /**
  * 已分享路径集合（列表「共享」列徽标）。
@@ -1697,6 +1641,29 @@ function setDesktopSearchInput(el: Element | { $el?: Element } | null) {
 }
 
 const {
+  navigateTo,
+  handleBreadcrumbNavigate,
+  refresh,
+  goBack,
+  goRoot,
+  parentPath,
+} = useDirectoryNavigation({
+  currentPath,
+  isRestricted,
+  scopeRoots,
+  searchActive,
+  clearSearch,
+  expandedFilePath,
+  getSelectedCount: () => selectedCount.value,
+  clearSelection: () => clearSelection(),
+  navigateStore: (path) => filesStore.navigateTo(path),
+  reload: (path) => filesStore.loadFiles(path),
+  errorStatus: computed(() => filesStore.errorStatus),
+  requestedPath: computed(() => filesStore.requestedPath),
+  notifyError: (message) => appStore.error(message),
+});
+
+const {
   dirManagerOpen,
   dirOpLoading,
   dirOpBusy,
@@ -1865,10 +1832,6 @@ function resolvedEntryPath(): string {
     : firstScopeRoot(roots);
 }
 
-function isNavigationAllowed(path: string): boolean {
-  return !isRestricted.value || isPathWithinRoots(path, scopeRoots.value);
-}
-
 onMounted(() => {
   filesStore.loadFiles(resolvedEntryPath());
 
@@ -1952,93 +1915,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   closePreview();
 });
-
-function navigateTo(path: string) {
-  const normalized = normalizeScopePath(path);
-  if (!isNavigationAllowed(normalized)) {
-    const root = firstScopeRoot(scopeRoots.value);
-    appStore.error("无权访问该目录");
-    if (!root || normalizeScopePath(currentPath.value) === root) return;
-    navigateTo(root);
-    return;
-  }
-  stashScroll(currentPath.value);
-  pendingScrollRestore = scrollMemory.get(normalized) ?? null;
-  expandedFilePath.value = "";
-  // 选择属于当前目录：切目录后旧选择既不可见也不可操作，
-  // 若不清理会出现「已选 N 项」但删除/移动在新目录里找不到条目的静默失败。
-  if (selectedCount.value > 0) clearSelection();
-  filesStore.navigateTo(normalized);
-  void nextTick().then(flushScrollRestore);
-}
-
-/** 面包屑跳转：处于搜索结果时先退出搜索，再进入目标目录。 */
-function handleBreadcrumbNavigate(path: string) {
-  if (searchActive.value) clearSearch();
-  navigateTo(path);
-}
-
-function refresh() {
-  expandedFilePath.value = "";
-  return filesStore.loadFiles(filesStore.currentPath);
-}
-
-function goBack() {
-  if (parentPath.value == null) return;
-  expandedFilePath.value = "";
-  navigateTo(parentPath.value);
-}
-
-function goRoot() {
-  navigateTo(isRestricted.value ? firstScopeRoot(scopeRoots.value) : "");
-}
-
-const parentPath = computed<string | null>(() => {
-  const cur = normalizeScopePath(currentPath.value);
-  if (!cur) return null;
-  if (isRestricted.value) {
-    return scopedParentPath(cur, scopeRoots.value);
-  }
-  const parts = cur.split("/").filter(Boolean);
-  parts.pop();
-  return parts.join("/");
-});
-
-/**
- * 403 = 当前目录在会话范围之外：提示后回到第一个范围根。
- *
- * 回退本身也会走一次请求；若范围根同样被拒（权限刚被撤销等），保留错误态
- * 并提示，不再循环跳转（参考 useDirectoryHistory 的「失败不卡 loading」处理）。
- */
-let handlingForbidden = false;
-watch(
-  () => filesStore.errorStatus,
-  (status) => {
-    if (status !== 403) return;
-    appStore.error("无权访问该目录");
-    if (!isRestricted.value || handlingForbidden) return;
-    const root = firstScopeRoot(scopeRoots.value);
-    if (!root || normalizeScopePath(filesStore.requestedPath) === root) return;
-    handlingForbidden = true;
-    navigateTo(root);
-    void nextTick().then(() => {
-      handlingForbidden = false;
-    });
-  },
-);
-
-// 会话范围在挂载后变化时（例如重新登录为受限会话），把范围外路径拉回范围根。
-watch(
-  [isRestricted, scopeRoots],
-  () => {
-    if (!isRestricted.value) return;
-    const roots = scopeRoots.value;
-    if (roots.length === 0) return;
-    if (isPathWithinRoots(currentPath.value, roots)) return;
-    navigateTo(firstScopeRoot(roots));
-  },
-  { deep: true },
-);
 
 function normalizeEntryName(
   rawName: string,
