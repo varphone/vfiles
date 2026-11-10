@@ -37,6 +37,12 @@ jobs:
       - name: Run UI regression
         run: cd client && bun run ui:regression
 
+      - name: Install CJK fonts for visual baselines
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+
+      - name: Run pixel visual regression
+        run: cd client && bun run ui:visual
+
       - name: Rust fmt check
         run: cargo fmt --check
 
