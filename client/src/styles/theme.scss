@@ -39,6 +39,11 @@
   /* 形状：元素（按钮/输入框/菜单项）3px，卡片与按钮组 8px（Nextcloud 刻度） */
   --vf-radius-control: 3px;
   --vf-radius-card: 8px;
+
+  /* 应用外壳 + 内容面板：顶栏、侧栏与页面背景共用 --vf-shell-bg，
+     内容面板用更浅的 --vf-content-bg，四周留 --vf-content-gap 的空隙。 */
+  --vf-content-radius: 10px;
+  --vf-content-gap: 8px;
 }
 
 // 浅色：即项目此前的配色，保持视觉不变。
@@ -76,15 +81,10 @@
   --vf-accent-soft-strong: rgba(0, 130, 201, 0.16);
   --vf-accent-tint: rgba(0, 130, 201, 0.1);
   --vf-focus-ring: rgba(0, 130, 201, 0.35);
-  /* 填充面（顶栏 / 实心主按钮 / 当前版本徽标）：与 --vf-accent 分开——
+  /* 填充面（实心主按钮 / 当前版本徽标 / 选中条目）：与 --vf-accent 分开——
      强调色在深色下要变浅才读得清，而填充面配白字必须保持足够深。 */
   --vf-accent-fill: #0082c9;
   --vf-accent-fill-hover: #0070ad;
-  /* 顶栏底色：浅色为品牌蓝，深色收敛为与内容区同族的深灰，避免一整条高饱和蓝
-     与近黑内容脱节（Nextcloud 深色主题同样把顶栏压到深面）。 */
-  --vf-topbar-bg: #0082c9;
-  --vf-topbar-fg: #ffffff;
-  --vf-topbar-hover: rgba(255, 255, 255, 0.14);
   /* 填充面上的文字（M3 的 on-container 配对） */
   --vf-on-accent: #ffffff;
   /* 按压状态层（M3 pressed 12%） */
@@ -110,11 +110,12 @@
   --vf-surface-soft: rgba(243, 244, 246, 0.96);
   --vf-surface-hover: rgba(37, 99, 235, 0.06);
 
-  /* 外壳渐变（文件浏览器外壳） */
-  --vf-shell-bg: linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
-  --vf-shell-panel: rgba(255, 255, 255, 0.82);
+  /* 应用外壳：顶栏、侧栏、页面背景统一用这一层中性浅灰。 */
+  --vf-shell-bg: #eef1f5;
+  /* 内容面板：比外壳浅一档的白色圆角矩形。 */
+  --vf-content-bg: #ffffff;
 
-  /* 页面背景（Home 装饰性渐变） */
+  /* 页面兜底背景（拖放遮罩等仍引用；应用外壳已改用 --vf-shell-bg） */
   --vf-canvas: #f7f7f7;
 
   /* 边框 */
@@ -192,17 +193,8 @@
   --vf-control-height: 34px;
   --vf-control-height-lg: 38px;
 
-  /* 表面层级：二级面 / 侧栏 / 顶栏 / 表头 / 行状态 */
+  /* 表面层级：二级面 / 表头 / 行状态 */
   --vf-surface-2: #ffffff;
-  --vf-sidebar: #ffffff;
-  /* 文件视图侧栏：Nextcloud 式浅蓝渐变（300px 列，底部渐白） */
-  --vf-sidebar-gradient: linear-gradient(
-    180deg,
-    #dceefb 0%,
-    #eef7fd 45%,
-    #ffffff 100%
-  );
-  --vf-topbar: #ffffff;
   --vf-table-head: #ffffff;
   --vf-row-hover: #f5f5f5;
   --vf-row-selected: #e5f2f9;
@@ -249,9 +241,6 @@
   --vf-accent-text: #8acbf0;
   --vf-accent-fill: #0a6fa8;
   --vf-accent-fill-hover: #0b7ab3;
-  --vf-topbar-bg: #1e1e1e;
-  --vf-topbar-fg: #ededed;
-  --vf-topbar-hover: rgba(255, 255, 255, 0.08);
   --vf-accent-soft: rgba(74, 169, 224, 0.16);
   --vf-accent-soft-strong: rgba(74, 169, 224, 0.3);
 
@@ -280,12 +269,9 @@
   --vf-surface-soft: hsla(221, 14%, 18%, 0.92);
   --vf-surface-hover: hsla(222, 76%, 66%, 0.14);
 
-  --vf-shell-bg: linear-gradient(
-    180deg,
-    hsl(221, 14%, 13%) 0%,
-    hsl(221, 14%, 10%) 100%
-  );
-  --vf-shell-panel: hsla(221, 14%, 15%, 0.86);
+  /* 应用外壳：近黑；内容面板抬高一档为深灰蓝。 */
+  --vf-shell-bg: #101317;
+  --vf-content-bg: #191d23;
 
   --vf-canvas: hsl(221, 16%, 9%);
 
@@ -355,10 +341,6 @@
   --vf-control-height-lg: 38px;
 
   --vf-surface-2: #242424;
-  --vf-sidebar: #121720;
-  /* 深色主题的对应深蓝渐变 */
-  --vf-sidebar-gradient: linear-gradient(180deg, #1c2530 0%, #171717 100%);
-  --vf-topbar: rgba(18, 23, 32, 0.92);
   --vf-table-head: #1a2028;
   --vf-row-hover: rgba(255, 255, 255, 0.06);
   --vf-row-selected: rgba(74, 169, 224, 0.18);

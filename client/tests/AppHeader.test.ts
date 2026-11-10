@@ -99,35 +99,42 @@ describe("AppHeader.vue", () => {
     );
   });
 
-  it("renders the header as a solid primary surface with white controls", () => {
+  it("renders the header on the shared shell surface with theme-aware text", () => {
     const { container } = renderHeader();
 
     expect(container.querySelector(".app-header")).not.toBeNull();
 
-    // jsdom 不套用 SFC 样式：直接核对样式契约（50px 实心主色、无下边框、白字）。
+    // jsdom 不套用 SFC 样式：直接核对样式契约（50px、外壳色、无下边框）。
     const source = readFileSync(
       resolve(process.cwd(), "src/components/shell/AppHeader.vue"),
       "utf8",
     );
     const headerRule = source.match(/\.app-header\s*\{([\s\S]*?)\n\}/)![1];
-    // 实心蓝用填充面令牌：深色主题下它保持深蓝，白字/白图标才够对比。
-    expect(headerRule).toContain("background: var(--vf-topbar-bg)");
+    // 顶栏与侧栏/页面背景共用外壳色，深色下不再画分隔线。
+    expect(headerRule).toContain("background: var(--vf-shell-bg)");
     expect(headerRule).toContain("height: var(--vf-topbar-height)");
+    expect(headerRule).toContain("color: var(--vf-header-fg)");
     expect(headerRule).not.toContain("border-bottom");
 
-    // 文字/图标白色：前景令牌挂在顶栏内层，右侧弹窗不继承。
+    // 前景随主题：浅色用强文本色，深色用常规文本色（不再固定白字）。
     const innerRule = source.match(/\.app-header-inner\s*\{([\s\S]*?)\n\}/)![1];
-    expect(innerRule).toContain("color: var(--vf-on-accent)");
+    expect(innerRule).toContain("color: var(--vf-header-fg)");
+    expect(source).toContain("--vf-header-fg: var(--vf-text-strong)");
+    expect(source).toContain("--vf-header-fg: var(--vf-text)");
 
-    // 当前应用图标：白色半透明圆角块；悬停用更浅的白色状态层。
+    // 当前应用图标：浅色 6% 黑块 / 深色 10% 白块，图标取主题强调色。
     expect(container.querySelector(".app-header-app.is-active")).not.toBeNull();
-    expect(source).toContain("--vf-header-active: rgba(255, 255, 255, 0.18)");
-    expect(source).toContain("--vf-header-hover: rgba(255, 255, 255, 0.12)");
+    expect(source).toContain("--vf-header-active: rgba(0, 0, 0, 0.06)");
+    expect(source).toContain("--vf-header-active: rgba(255, 255, 255, 0.1)");
+    expect(source).toContain("--vf-header-active-fg: var(--vf-accent-text)");
+    expect(source).toContain("--vf-header-active-fg: var(--vf-accent)");
+    const appRule = source.match(/\.app-header-app\s*\{([\s\S]*?)\n\}/)![1];
+    expect(appRule).toContain("color: var(--vf-text-muted)");
     const activeAppRule = source.match(
       /\.app-header-app\.is-active\s*\{([\s\S]*?)\n\}/,
     )![1];
     expect(activeAppRule).toContain("background: var(--vf-header-active)");
-    expect(activeAppRule).toContain("color: var(--vf-on-accent)");
+    expect(activeAppRule).toContain("color: var(--vf-header-active-fg)");
 
     // 账号头像：白色圆形底 + 深色首字母。
     const avatarRule = source.match(

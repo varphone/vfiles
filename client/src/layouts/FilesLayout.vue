@@ -161,9 +161,8 @@ defineExpose({
 }
 
 /*
- * 视图侧栏：浅蓝渐变（Nextcloud 的文件视图栏），300px + 右侧 1px 分隔线。
- * 渐变本身是主题令牌（theme.scss 的 --vf-sidebar-gradient，深浅各一套），
- * 这里只负责列宽与内容排布。
+ * 视图侧栏：与顶栏、页面背景共用外壳色（--vf-shell-bg），
+ * 不再画渐变或右侧分隔线，由内容面板的 8px 间隙界定两栏。
  */
 .files-sidebar {
   display: flex;
@@ -171,8 +170,7 @@ defineExpose({
   flex: 0 0 var(--vf-sidebar-width);
   width: var(--vf-sidebar-width);
   min-height: 0;
-  background: var(--vf-sidebar-gradient);
-  border-right: 1px solid var(--vf-border-weak);
+  background: var(--vf-shell-bg);
   overflow-y: auto;
 }
 
@@ -194,6 +192,11 @@ defineExpose({
   min-height: 0;
 }
 
+/*
+ * 内容面板：比外壳浅一档的圆角矩形，四周留 8px 外壳间隙。
+ * 滚动交给面板内部（文件列表 / 视图页各自滚动），
+ * 面板本身 overflow: hidden，圆角不会被内部内容顶破。
+ */
 .files-content {
   display: flex;
   flex-direction: column;
@@ -202,7 +205,10 @@ defineExpose({
   min-height: 0;
   /* 全站内容左右基线 16px（文件页由列表自己铺满，见 Home.vue） */
   padding: var(--vf-page-padding);
-  overflow-y: auto;
+  margin: var(--vf-content-gap);
+  border-radius: var(--vf-content-radius);
+  background: var(--vf-content-bg);
+  overflow: hidden;
 }
 
 .files-sidebar-scrim {
@@ -223,8 +229,7 @@ defineExpose({
     gap: var(--vf-space-1);
     height: var(--vf-toolbar-height);
     padding: 0 var(--vf-space-2);
-    border-bottom: 1px solid var(--vf-border-weak);
-    background: var(--vf-surface);
+    background: var(--vf-shell-bg);
   }
 
   .files-mobile-title {
@@ -245,7 +250,6 @@ defineExpose({
     z-index: 61;
     width: min(var(--vf-sidebar-width), 84vw);
     flex: 0 0 auto;
-    border-right: 1px solid var(--vf-border-weak);
     transform: translateX(-100%);
     /* 收起时对辅助技术隐藏，避免 Tab 进入屏幕外的抽屉内容 */
     visibility: hidden;
@@ -285,8 +289,9 @@ defineExpose({
   }
 
   .files-content {
+    margin: var(--vf-content-gap);
     padding: var(--vf-page-padding);
-    overflow-y: visible;
+    overflow: visible;
   }
 }
 

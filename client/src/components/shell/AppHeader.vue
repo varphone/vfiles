@@ -305,13 +305,16 @@ onBeforeUnmount(() => {
 
 <style scoped>
 /*
- * 顶栏：50px 实心主色蓝（Nextcloud 外壳），无下边框；
- * 文字与图标一律白色（--vf-on-accent），悬停/选中用半透明白色状态层。
+ * 顶栏：与应用侧栏、页面背景共用 --vf-shell-bg，无下边框；
+ * 前景随主题（浅色用强文本色、深色用常规文本色），
+ * 应用图标用中性灰，选中态只保留品牌蓝作为唯一强调色。
  */
 .app-header {
-  /* 顶栏状态层：悬停 12% / 当前应用 18%（Nextcloud 应用图标的选中块）。 */
-  --vf-header-hover: rgba(255, 255, 255, 0.12);
-  --vf-header-active: rgba(255, 255, 255, 0.18);
+  /* 顶栏状态层：浅色用低透明度黑，深色用低透明度白（全局块按主题覆盖）。 */
+  --vf-header-fg: var(--vf-text-strong);
+  --vf-header-hover: rgba(0, 0, 0, 0.05);
+  --vf-header-active: rgba(0, 0, 0, 0.06);
+  --vf-header-active-fg: var(--vf-accent-text);
   --vf-header-radius: 8px;
 
   position: sticky;
@@ -319,12 +322,11 @@ onBeforeUnmount(() => {
   z-index: 50;
   flex: 0 0 auto;
   height: var(--vf-topbar-height);
-  /* 填充面令牌：深色主题下仍保持足够的蓝（白字/白图标 5.45:1）。 */
-  background: var(--vf-topbar-bg);
-  color: var(--vf-topbar-fg);
+  background: var(--vf-shell-bg);
+  color: var(--vf-header-fg);
 }
 
-/* 白色前景只作用于顶栏内的导航控件（右侧弹窗/下拉不继承，避免白底白字）。 */
+/* 顶栏前景只作用于导航控件（右侧弹窗/下拉不继承）。 */
 .app-header-inner {
   display: flex;
   align-items: center;
@@ -334,7 +336,7 @@ onBeforeUnmount(() => {
   /* 与页面内容同一条 16px 左右基线 */
   padding: 0 var(--vf-page-padding);
   flex-wrap: nowrap;
-  color: var(--vf-on-accent);
+  color: var(--vf-header-fg);
 }
 
 .app-header-left {
@@ -352,20 +354,20 @@ onBeforeUnmount(() => {
   height: 100%;
   /* 16（容器）+ 4 = 20px，与侧栏首列图标对齐 */
   padding: 0 var(--vf-space-1);
-  color: var(--vf-on-accent);
+  color: var(--vf-header-fg);
   text-decoration: none;
   white-space: nowrap;
 }
 
 .app-header-brand:hover,
 .app-header-brand:focus-visible {
-  color: var(--vf-on-accent);
+  color: var(--vf-header-fg);
   opacity: 0.92;
 }
 
-/* 品牌图标：保留原始彩虹渐变（白 V 自带对比度）。
-   此前用 brightness(0) invert(1) 想染白，结果把整块不透明底也刷成白色，
-   蓝底上只剩一个白色圆角方块（V 被吃掉）。 */
+/* 品牌图标：保留原始彩色 V（自带对比度）。
+   此前用 brightness(0) invert(1) 想染白，结果把整块不透明底也刷成白色；
+   现在顶栏是浅色外壳，直接使用原始彩色图标。 */
 .app-header-logo {
   width: 28px;
   height: 28px;
@@ -376,7 +378,7 @@ onBeforeUnmount(() => {
   font-size: 0.95rem;
   font-weight: 650;
   letter-spacing: 0.01em;
-  color: var(--vf-on-accent);
+  color: var(--vf-header-fg);
 }
 
 .app-header-apps {
@@ -387,7 +389,7 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
-/* 应用图标：40px 命中区，白色图标；当前应用用白色半透明圆角块表示选中。 */
+/* 应用图标：40px 命中区；未选中为中性灰，选中为浅色块 + 品牌蓝图标。 */
 .app-header-app {
   display: inline-flex;
   align-items: center;
@@ -395,7 +397,7 @@ onBeforeUnmount(() => {
   width: 40px;
   height: 40px;
   border-radius: var(--vf-header-radius);
-  color: var(--vf-on-accent);
+  color: var(--vf-text-muted);
   text-decoration: none;
   transition:
     background-color 0.12s var(--vf-motion-standard),
@@ -405,17 +407,17 @@ onBeforeUnmount(() => {
 .app-header-app:hover,
 .app-header-app:focus-visible {
   background: var(--vf-header-hover);
-  color: var(--vf-on-accent);
+  color: var(--vf-header-fg);
 }
 
 .app-header-app:focus-visible {
-  outline: 2px solid var(--vf-on-accent);
+  outline: 2px solid var(--vf-accent);
   outline-offset: -2px;
 }
 
 .app-header-app.is-active {
   background: var(--vf-header-active);
-  color: var(--vf-on-accent);
+  color: var(--vf-header-active-fg);
 }
 
 .app-header-center {
@@ -433,35 +435,35 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
-/* 右侧图标（搜索 / 通知 / 主题）在主色面上统一白色 + 半透明白 hover。 */
+/* 右侧图标（搜索 / 通知 / 主题）用中性灰；悬停回到顶栏前景色。 */
 .app-header-actions :deep(.vf-icon-button) {
-  color: var(--vf-on-accent);
+  color: var(--vf-text-muted);
 }
 
 .app-header-actions :deep(.vf-icon-button:hover:not(:disabled)),
 .app-header-actions :deep(.vf-icon-button:focus-visible) {
   background: var(--vf-header-hover);
-  color: var(--vf-on-accent);
+  color: var(--vf-header-fg);
 }
 
 .app-header-actions :deep(.notification-center .app-bar-bell.is-active) {
   background: var(--vf-header-active);
-  color: var(--vf-on-accent);
+  color: var(--vf-header-active-fg);
 }
 
-/* 主题切换是 Bulma 的浅灰胶囊按钮：顶栏里改成无底白字，避免在白顶上“消失”。 */
+/* 主题切换是 Bulma 的浅灰胶囊按钮：顶栏里改成无底中性色。 */
 .app-header-actions :deep(.button.is-light) {
   min-height: 34px;
   border-color: transparent;
   background: transparent;
-  color: var(--vf-on-accent);
+  color: var(--vf-text-muted);
 }
 
 .app-header-actions :deep(.button.is-light:hover),
 .app-header-actions :deep(.button.is-light:focus-visible) {
   background: var(--vf-header-hover);
   border-color: transparent;
-  color: var(--vf-on-accent);
+  color: var(--vf-header-fg);
 }
 
 /* ---- 账号菜单（原 Home 顶栏账号下拉，迁入顶栏组件） ---- */
@@ -475,7 +477,7 @@ onBeforeUnmount(() => {
   border: 1px solid transparent;
   border-radius: var(--vf-header-radius);
   background: transparent;
-  color: var(--vf-on-accent);
+  color: var(--vf-header-fg);
   font-size: 0.875rem;
   cursor: pointer;
   transition:
@@ -487,15 +489,15 @@ onBeforeUnmount(() => {
 .app-header-account:focus-visible {
   background: var(--vf-header-hover);
   border-color: transparent;
-  color: var(--vf-on-accent);
+  color: var(--vf-header-fg);
 }
 
 .app-header-account:focus-visible {
-  outline: 2px solid var(--vf-on-accent);
+  outline: 2px solid var(--vf-accent);
   outline-offset: -2px;
 }
 
-/* 头像：白色圆形底 + 深色首字母（蓝底上仍是清晰的账号标识）。 */
+/* 头像：白色圆形底 + 深色首字母（浅色外壳上仍是清晰的账号标识）。 */
 .app-header-avatar {
   display: inline-flex;
   align-items: center;
@@ -515,12 +517,12 @@ onBeforeUnmount(() => {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--vf-on-accent);
+  color: var(--vf-header-fg);
 }
 
 .app-header-account-caret {
   flex: 0 0 auto;
-  color: var(--vf-on-accent);
+  color: var(--vf-header-fg);
   opacity: 0.8;
 }
 
@@ -628,14 +630,20 @@ html[data-theme="dark"] .app-header-avatar {
   }
 }
 
-/* 深色下顶栏与内容同为深面：用一条极细的分隔线界定层级，避免整块“消失” */
+/* 深色主题：顶栏前景改用常规文本色，状态层换成低透明度白。 */
 html[data-theme="dark"] .app-header {
-  border-bottom: 1px solid var(--vf-border-weak);
+  --vf-header-fg: var(--vf-text);
+  --vf-header-hover: rgba(255, 255, 255, 0.06);
+  --vf-header-active: rgba(255, 255, 255, 0.1);
+  --vf-header-active-fg: var(--vf-accent);
 }
 
 @media screen and (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .app-header {
-    border-bottom: 1px solid var(--vf-border-weak);
+    --vf-header-fg: var(--vf-text);
+    --vf-header-hover: rgba(255, 255, 255, 0.06);
+    --vf-header-active: rgba(255, 255, 255, 0.1);
+    --vf-header-active-fg: var(--vf-accent);
   }
 }
 </style>

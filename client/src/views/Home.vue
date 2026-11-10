@@ -604,7 +604,7 @@ async function renameSelected() {
 </script>
 
 <style scoped>
-/* 主流云盘的中性底色：不再使用装饰性渐变，让内容面板成为唯一焦点 */
+/* 页面背景与外壳同色：内容面板（FilesLayout 的 .files-content）是唯一焦点。 */
 .home {
   position: relative;
   min-height: 100dvh;
@@ -614,12 +614,18 @@ async function renameSelected() {
      position: sticky（批量操作条）失效；clip 只裁剪不建立滚动容器。
      旧浏览器不支持 clip 时退回 hidden（仅失去吸顶效果）。 */
   overflow-x: clip;
-  background: var(--vf-canvas);
+  background: var(--vf-shell-bg);
 }
 
-/* 文件列表自己铺满内容区：不再叠加 FilesLayout 的页面内边距。 */
+/* 文件列表自己铺满内容面板：内部 16px 单元格基线已由表格/工具栏持有。 */
 .home :deep(.files-content) {
   padding: 0;
+}
+
+/* 文件区直接落在圆角面板上：去掉 FileBrowser 自己的卡片高度与底色差。 */
+.home :deep(.file-browser-box) {
+  height: 100%;
+  background: var(--vf-content-bg);
 }
 
 .home-browser-shell {

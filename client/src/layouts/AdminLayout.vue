@@ -134,7 +134,7 @@ const navItems = computed(() =>
 .admin-shell {
   display: flex;
   min-height: 100dvh;
-  background: var(--vf-canvas);
+  background: var(--vf-shell-bg);
 }
 
 .admin-sidebar {
@@ -146,8 +146,7 @@ const navItems = computed(() =>
   height: 100dvh;
   flex: none;
   padding: var(--vf-space-2);
-  border-right: 1px solid var(--vf-border-weak);
-  background: var(--vf-sidebar);
+  background: var(--vf-shell-bg);
 }
 
 .admin-brand {
@@ -281,9 +280,7 @@ const navItems = computed(() =>
   gap: var(--vf-space-2);
   height: var(--vf-topbar-height);
   padding: 0 var(--vf-page-padding);
-  border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-topbar);
-  backdrop-filter: blur(10px);
+  background: var(--vf-shell-bg);
 }
 
 .admin-topbar-left,
@@ -314,9 +311,13 @@ const navItems = computed(() =>
   color: var(--vf-text-strong);
 }
 
+/* 内容面板：与工作区四周留 8px 外壳间隙，内部页面直接落在面板上。 */
 .admin-main {
-  flex: 1;
-  min-height: 0;
+  flex: 1 0 auto;
+  margin: var(--vf-content-gap);
+  border-radius: var(--vf-content-radius);
+  background: var(--vf-content-bg);
+  overflow: hidden;
 }
 
 .admin-main-inner {

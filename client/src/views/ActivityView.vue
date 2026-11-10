@@ -325,11 +325,15 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* 页面在圆角内容面板内部滚动：面板本身 overflow: hidden。 */
 .activity-view {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   gap: var(--vf-section-gap);
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* 分组卡片之间同样是 16px 区块间距（原先靠 .activity-group + .activity-group 的 0.9rem 外边距） */

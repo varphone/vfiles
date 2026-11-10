@@ -273,15 +273,16 @@ onMounted(() => {
 
 <style scoped>
 /*
- * 侧栏本体：背景渐变由 FilesLayout 的 .files-sidebar 承担（同 300px 列），
- * 这里只排内容。令牌全部用 --vf-*，深色主题各一套。
+ * 侧栏内容：背景外壳色由 FilesLayout 的 .files-sidebar 承担（同 300px 列），
+ * 搜索框、条目与底部三项用内容面板色浮在外壳上。令牌全部用 --vf-*。
  */
 .views-sidebar {
   --vf-sidebar-item-radius: var(--vf-radius-card);
-  --vf-sidebar-item-hover: rgba(0, 0, 0, 0.04);
+  --vf-sidebar-item-bg: var(--vf-content-bg);
+  --vf-sidebar-item-hover: rgba(0, 0, 0, 0.05);
   --vf-sidebar-item-active-bg: var(--vf-accent);
   --vf-sidebar-item-active-fg: var(--vf-on-accent);
-  --vf-sidebar-search-bg: #ffffff;
+  --vf-sidebar-search-bg: var(--vf-content-bg);
 
   display: flex;
   flex-direction: column;
@@ -397,7 +398,7 @@ onMounted(() => {
   padding: 0 var(--vf-space-3);
   border: none;
   border-radius: var(--vf-sidebar-item-radius);
-  background: transparent;
+  background: var(--vf-sidebar-item-bg);
   color: var(--vf-text);
   font-family: inherit;
   font-size: 0.875rem;
@@ -466,7 +467,7 @@ onMounted(() => {
   padding: 0 var(--vf-space-3);
   border: none;
   border-radius: var(--vf-sidebar-item-radius);
-  background: transparent;
+  background: var(--vf-sidebar-item-bg);
   color: var(--vf-text-muted);
   font-family: inherit;
   font-size: 13px;
@@ -510,7 +511,7 @@ onMounted(() => {
   overflow: hidden;
 }
 
-/* 组件原本用于 FileBrowser 侧栏：去掉右分隔线与白底，融进侧栏渐变。 */
+/* 组件原本用于 FileBrowser 侧栏：去掉右分隔线与白底，融进侧栏外壳。 */
 .views-sidebar-tree-body :deep(.directory-tree) {
   flex: 1 1 auto;
   min-height: 0;
@@ -526,7 +527,6 @@ onMounted(() => {
 .views-sidebar-footer {
   margin-top: auto;
   padding-top: var(--vf-space-2);
-  border-top: 1px solid var(--vf-border-weak);
 }
 
 .views-sidebar-footer-item {
@@ -539,7 +539,7 @@ onMounted(() => {
 }
 
 .views-sidebar-usage:hover {
-  background: transparent;
+  background: var(--vf-sidebar-item-bg);
   color: var(--vf-text);
 }
 
@@ -571,7 +571,7 @@ onMounted(() => {
 }
 
 .views-sidebar-item--disabled:hover {
-  background: transparent;
+  background: var(--vf-sidebar-item-bg);
   color: var(--vf-text-subtle);
 }
 </style>
@@ -585,14 +585,12 @@ onMounted(() => {
 html[data-theme="dark"] .views-sidebar {
   --vf-sidebar-item-hover: rgba(255, 255, 255, 0.06);
   --vf-sidebar-item-active-bg: #0a6fa8;
-  --vf-sidebar-search-bg: var(--vf-surface-sunken);
 }
 
 @media screen and (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .views-sidebar {
     --vf-sidebar-item-hover: rgba(255, 255, 255, 0.06);
     --vf-sidebar-item-active-bg: #0a6fa8;
-    --vf-sidebar-search-bg: var(--vf-surface-sunken);
   }
 }
 </style>

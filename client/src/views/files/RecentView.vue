@@ -176,11 +176,15 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* 页面在圆角内容面板内部滚动：面板本身 overflow: hidden。 */
 .recent-view {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   gap: var(--vf-section-gap);
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* 列表面板：与 Nextcloud 文件区一致，卡片 8px 圆角、行高 50px。 */

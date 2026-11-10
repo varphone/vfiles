@@ -241,11 +241,10 @@
   background: var(--vf-row-selected);
 }
 
-/* 侧栏：白底、44px 行、选中浅蓝 + 左侧 3px 指示条 */
+/* 侧栏：与顶栏/页面背景同用外壳色（--vf-shell-bg），无右侧分隔线 */
 .browser-sidebar,
 .admin-sidebar {
-  background: var(--vf-surface);
-  border-right: 1px solid var(--vf-border-weak);
+  background: var(--vf-shell-bg);
 }
 
 .browser-nav-item,

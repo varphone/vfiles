@@ -247,11 +247,15 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* 页面在圆角内容面板内部滚动：面板本身 overflow: hidden。 */
 .favorites-view {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   gap: var(--vf-section-gap);
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .favorites-total {

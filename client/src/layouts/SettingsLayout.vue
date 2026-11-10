@@ -62,8 +62,10 @@ const navItems = [
 
 <style scoped>
 .settings-shell {
+  display: flex;
+  flex-direction: column;
   min-height: 100dvh;
-  background: var(--vf-canvas);
+  background: var(--vf-shell-bg);
 }
 
 .settings-bar {
@@ -75,9 +77,7 @@ const navItems = [
   gap: var(--vf-space-2);
   height: var(--vf-topbar-height);
   padding: 0 var(--vf-page-padding);
-  border-bottom: 1px solid var(--vf-border-weak);
-  background: var(--vf-topbar);
-  backdrop-filter: blur(10px);
+  background: var(--vf-shell-bg);
 }
 
 .settings-back {
@@ -110,21 +110,23 @@ const navItems = [
 
 .settings-body {
   display: flex;
-  gap: var(--vf-space-5);
+  flex: 1 1 auto;
+  gap: 0;
+  width: 100%;
   max-width: var(--vf-content-max);
   margin: 0 auto;
-  padding: var(--vf-page-padding) var(--vf-page-padding) var(--vf-space-6);
 }
 
 .settings-nav {
   position: sticky;
-  top: calc(var(--vf-topbar-height) + var(--vf-page-padding));
+  top: calc(var(--vf-topbar-height) + var(--vf-content-gap));
   display: flex;
   flex-direction: column;
   gap: var(--vf-space-1);
   width: var(--vf-settings-nav-width);
   flex: none;
   align-self: flex-start;
+  margin: var(--vf-content-gap) 0 var(--vf-content-gap) var(--vf-content-gap);
 }
 
 .settings-nav-item {
@@ -153,26 +155,33 @@ const navItems = [
   font-weight: 600;
 }
 
+/* 内容面板：与导航、设置栏之间留 8px 外壳间隙，内部用统一的 16px 内边距。 */
 .settings-main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--vf-section-gap);
+  margin: var(--vf-content-gap);
+  padding: var(--vf-page-padding);
+  border-radius: var(--vf-content-radius);
+  background: var(--vf-content-bg);
+  overflow: hidden;
 }
 
 @media screen and (max-width: 1024px) {
   .settings-body {
     flex-direction: column;
-    gap: var(--vf-section-gap);
-    padding: var(--vf-page-padding) var(--vf-page-padding) var(--vf-space-6);
+    gap: 0;
   }
 
   .settings-nav {
     position: static;
-    width: 100%;
+    align-self: stretch;
+    width: auto;
     flex-direction: row;
     overflow-x: auto;
+    margin: var(--vf-content-gap) var(--vf-content-gap) 0;
     padding-bottom: 0.25rem;
   }
 

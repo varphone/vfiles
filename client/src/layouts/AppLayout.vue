@@ -11,11 +11,11 @@
 import AppHeader from "../components/shell/AppHeader.vue";
 
 /**
- * 应用外壳：Nextcloud 式顶栏 + 内容区。
+ * 应用外壳：顶栏 + 内容区。
  *
- * 供文件类页面（/、/recent、/favorites、/activity 等）复用；首页在下一阶段
- * 整体迁移到这里，本阶段仍保留自身结构。内容区用 flex 撑满剩余高度，
- * 让内部的文件列表 / 视图侧栏各自滚动。
+ * 供文件类页面（/、/recent、/favorites、/activity 等）复用。外壳（顶栏、
+ * 视图侧栏、页面背景）共用 --vf-shell-bg；内容区里的页面面板由
+ * FilesLayout 等布局自己绘制成更浅的圆角矩形。
  */
 </script>
 
@@ -24,7 +24,7 @@ import AppHeader from "../components/shell/AppHeader.vue";
   display: flex;
   flex-direction: column;
   min-height: 100dvh;
-  background: var(--vf-canvas);
+  background: var(--vf-shell-bg);
   /* 兼容文件列表内部的高度计算（下一阶段统一改用 --vf-topbar-height）。 */
   --sf-topbar-height: var(--vf-topbar-height);
 }
