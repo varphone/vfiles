@@ -98,8 +98,17 @@ const emit = defineEmits<{
  * 注意只在 show 时监听，且输入框内的 Esc 由各输入自己处理（冒泡到这里时会一起关闭弹窗，
  * 与浏览器/系统对话框行为一致）。
  */
+/**
+ * Esc 关闭：多个对话框叠加时只有 DOM 中最后一个（视觉最上层）响应，
+ * 避免一次 Esc 把所有层一起关掉。
+ */
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== "Escape") return;
+  const mine = cardRef.value?.closest(".modal");
+  const open = document.querySelectorAll(".modal.is-active");
+  const topmost = open.length > 0 ? open[open.length - 1] : null;
+  if (mine && topmost && mine !== topmost) return;
+  event.preventDefault();
   emit("close");
 }
 

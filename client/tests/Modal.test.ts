@@ -41,3 +41,37 @@ describe("Modal.vue focus trap (r131)", () => {
     expect(active?.className).toContain("footer-btn");
   });
 });
+
+describe("Modal.vue 层叠与语义", () => {
+  it("叠加时只有最上层响应 Esc", async () => {
+    const bottom = render(Modal, {
+      props: { show: true, title: "底层" },
+      slots: { default: "底层内容" },
+    });
+    const top = render(Modal, {
+      props: { show: true, title: "上层" },
+      slots: { default: "上层内容" },
+    });
+
+    await fireEvent.keyDown(document, { key: "Escape" });
+    expect(top.emitted().close).toBeTruthy();
+    expect(bottom.emitted().close).toBeUndefined();
+
+    top.unmount();
+    await fireEvent.keyDown(document, { key: "Escape" });
+    expect(bottom.emitted().close).toBeTruthy();
+  });
+
+  it("暴露 dialog 语义与标题关联", () => {
+    const { container } = render(Modal, {
+      props: { show: true, title: "删除确认" },
+      slots: { default: "内容" },
+    });
+    const dialog = container.querySelector(".modal")!;
+    expect(dialog.getAttribute("role")).toBe("dialog");
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+    const labelledBy = dialog.getAttribute("aria-labelledby");
+    expect(labelledBy).toBeTruthy();
+    expect(container.querySelector(`#${labelledBy}`)?.textContent).toBe("删除确认");
+  });
+});
