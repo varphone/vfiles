@@ -425,182 +425,73 @@
       </template>
 
       <template v-else>
-        <FileSkeleton
-          v-if="loading"
-          :variant="viewMode === 'grid' ? 'grid' : 'list'"
-          :thumbnail-size="fileView.thumbnailSize"
-        />
-
-        <div v-else-if="error" class="notification is-danger is-light">
-          <IconAlertCircle :size="20" class="mr-2" />
-          {{ error }}
-          <div class="mt-2">
-            <button
-              class="button is-small is-danger is-light"
-              :class="{ 'is-loading': loading }"
-              :disabled="loading"
-              @click="refresh"
-            >
-              <IconRefresh :size="16" class="mr-1" />
-              重试
-            </button>
-          </div>
-        </div>
-
-        <LibraryGrid
-          v-else-if="showLibraryCards"
-          :directories="libraryDirectories"
-          :renaming-path="renamingPath"
+        <FileBrowserMobileContent
+          :loading="loading"
+          :error="error"
+          :search-active="searchActive"
+          :show-library-cards="showLibraryCards"
+          :library-directories="libraryDirectories"
+          :files="files"
+          :visible-files="visibleFiles"
+          :search-results="searchResults"
+          :visible-search-results="visibleSearchResults"
+          :search-query="searchQuery"
+          :result-filter="resultFilter"
           :can-write="canWrite"
           :can-share="canShare"
-          @open="handleOpenFolder"
+          :view-mode="viewMode"
+          :batch-mode="batchMode"
+          :selected-paths="selectedPaths"
+          :flash-path="dropFlashPath"
+          :expanded-path="expandedFilePath"
+          :thumbnail-size="fileView.thumbnailSize"
+          :renaming-path="renamingPath"
+          :commit="browseCommit"
+          @retry="refresh"
+          @click="handleItemClick"
+          @download="handleDownload"
           @rename="handleRenameEntry"
           @rename-commit="commitRenameEntry"
           @rename-cancel="cancelRenameEntry"
+          @move="handleMoveEntry"
           @delete="handleDelete"
-          @share="handleShare"
-          @details="openDetailsDialog"
+          @view-history="handleViewHistory"
+          @toggle-select="toggleSelect"
+          @modifier-select="handleModifierSelect"
           @context-menu="handleContextMenu"
-        />
-
-        <EmptyState
-          v-else-if="!searchActive && files.length === 0"
-          :icon="IconFolderOpen"
-          title="此文件夹为空"
-          :hint="
-            canWrite ? '点击右下角按钮上传文件' : '只读访问：当前目录没有可浏览的条目'
-          "
-        />
-
-        <div v-else-if="searchActive" class="file-list">
-          <SearchResultToolbar
-            :results="searchResults"
-            :active="resultFilter"
-            :query="searchQuery"
-            :visible-count="visibleSearchResults.length"
-            @update:active="setResultFilter"
-          />
-          <EmptyState
-            v-if="searchResults.length === 0"
-            :icon="IconSearch"
-            compact
-            title="没有找到匹配的文件"
-            hint="换个关键字，或清空搜索条件"
-          >
-            <template #actions>
-              <button class="vf-ghost-button" @click="clearSearch">
-                <span>清空搜索</span>
-              </button>
-            </template>
-          </EmptyState>
-          <FileBrowserCollection
-            v-if="visibleSearchResults.length"
-            :files="visibleSearchResults"
-            :view-mode="viewMode"
-            :can-write="canWrite"
-            :can-share="canShare"
-            :highlight="searchQuery"
-            :commit="browseCommit"
-            :select-mode="batchMode"
-            :selected-paths="selectedPaths"
-            :flash-path="dropFlashPath"
-            :expanded-path="expandedFilePath"
-            :thumbnail-size="fileView.thumbnailSize"
-            :renaming-path="renamingPath"
-            @click="handleItemClick"
-            @download="handleDownload"
-            @rename="handleRenameEntry"
-            @rename-commit="commitRenameEntry"
-            @rename-cancel="cancelRenameEntry"
-            @move="handleMoveEntry"
-            @delete="handleDelete"
-            @view-history="handleViewHistory"
-            @toggle-select="toggleSelect"
-            @modifier-select="handleModifierSelect"
-            @context-menu="handleContextMenu"
-            @drag-start="handleDragStart"
-            @drag-end="handleDragEnd"
-            @drop-on-folder="handleDropOnFolder"
-            @share="handleShare"
-            @preview="handlePreview"
-            @open-folder="handleOpenFolder"
-            @create-directory="handleCreateDirectory"
-          />
-
-          <div
-            v-if="isMobile && hasMore"
-            ref="loadMoreSentinel"
-            class="has-text-centered vf-text-muted is-size-7 py-2"
-          >
-            <template v-if="searchLoadingMore || filesStore.loadingMoreFiles"
-              >正在加载更多...</template
+          @drag-start="handleDragStart"
+          @drag-end="handleDragEnd"
+          @drop-on-folder="handleDropOnFolder"
+          @share="handleShare"
+          @preview="handlePreview"
+          @open-folder="handleOpenFolder"
+          @create-directory="handleCreateDirectory"
+          @open-details="openDetailsDialog"
+          @update:filter="setResultFilter"
+          @clear-search="clearSearch"
+        >
+          <template #load-more>
+            <div
+              v-if="isMobile && hasMore"
+              ref="loadMoreSentinel"
+              class="has-text-centered vf-text-muted is-size-7 py-2"
             >
-            <template v-else-if="filesStore.loadMoreError">
-              {{ filesStore.loadMoreError }}
-              <button
-                class="button is-small is-light ml-2"
-                @click="filesStore.loadMoreFiles()"
+              <template v-if="searchLoadingMore || filesStore.loadingMoreFiles"
+                >正在加载更多...</template
               >
-                重试
-              </button>
-            </template>
-            <template v-else>继续下滑加载更多...</template>
-          </div>
-        </div>
-
-        <div v-else class="file-list">
-          <FileBrowserCollection
-            :files="visibleFiles"
-            :view-mode="viewMode"
-            :can-write="canWrite"
-            :can-share="canShare"
-            :commit="browseCommit"
-            :select-mode="batchMode"
-            :selected-paths="selectedPaths"
-            :flash-path="dropFlashPath"
-            :expanded-path="expandedFilePath"
-            :thumbnail-size="fileView.thumbnailSize"
-            :renaming-path="renamingPath"
-            @click="handleItemClick"
-            @download="handleDownload"
-            @rename="handleRenameEntry"
-            @rename-commit="commitRenameEntry"
-            @rename-cancel="cancelRenameEntry"
-            @move="handleMoveEntry"
-            @delete="handleDelete"
-            @view-history="handleViewHistory"
-            @toggle-select="toggleSelect"
-            @modifier-select="handleModifierSelect"
-            @context-menu="handleContextMenu"
-            @drag-start="handleDragStart"
-            @drag-end="handleDragEnd"
-            @drop-on-folder="handleDropOnFolder"
-            @share="handleShare"
-            @preview="handlePreview"
-            @open-folder="handleOpenFolder"
-            @create-directory="handleCreateDirectory"
-          />
-
-          <div
-            v-if="isMobile && hasMore"
-            ref="loadMoreSentinel"
-            class="has-text-centered vf-text-muted is-size-7 py-2"
-          >
-            <template v-if="searchLoadingMore || filesStore.loadingMoreFiles"
-              >正在加载更多...</template
-            >
-            <template v-else-if="filesStore.loadMoreError">
-              {{ filesStore.loadMoreError }}
-              <button
-                class="button is-small is-light ml-2"
-                @click="filesStore.loadMoreFiles()"
-              >
-                重试
-              </button>
-            </template>
-            <template v-else>继续下滑加载更多...</template>
-          </div>
-        </div>
+              <template v-else-if="filesStore.loadMoreError">
+                {{ filesStore.loadMoreError }}
+                <button
+                  class="button is-small is-light ml-2"
+                  @click="filesStore.loadMoreFiles()"
+                >
+                  重试
+                </button>
+              </template>
+              <template v-else>继续下滑加载更多...</template>
+            </div>
+          </template>
+        </FileBrowserMobileContent>
       </template>
     </div>
 
@@ -842,6 +733,7 @@ import FileBrowserViewControls from "./FileBrowserViewControls.vue";
 import FileBrowserToolbarLeading from "./FileBrowserToolbarLeading.vue";
 import FileBrowserToolbarHeading from "./FileBrowserToolbarHeading.vue";
 import FileBrowserStatusBar from "./FileBrowserStatusBar.vue";
+import FileBrowserMobileContent from "./FileBrowserMobileContent.vue";
 import UploadDropOverlay from "./UploadDropOverlay.vue";
 import EmptyState from "../common/EmptyState.vue";
 import LibraryGrid from "./LibraryGrid.vue";
