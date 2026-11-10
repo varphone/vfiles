@@ -642,6 +642,7 @@ import { useFileBrowserView } from "../../composables/useFileBrowserView";
 import { useProgressiveList } from "../../composables/useProgressiveList";
 import { usePreviewActions } from "../../composables/usePreviewActions";
 import { useFileBrowserHotkeys } from "../../composables/useFileBrowserHotkeys";
+import { useSharedPaths } from "../../composables/useSharedPaths";
 import { useFileBrowserRowNavigation } from "../../composables/useFileBrowserRowNavigation";
 import { useFileBrowserList } from "../../composables/useFileBrowserList";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
@@ -722,53 +723,16 @@ const scopeBadgeTitle = computed(() => {
   return label ? `受限密码：${label}` : scopeBadgeText.value;
 });
 
-/**
- * 已分享路径集合（列表「共享」列徽标）。
- *
- * 分享接口返回整个可见范围的路径集合；只在挂载后和切换目录时各取一次，
- * 不随列表渲染重复请求。请求失败按「没有分享」处理，不让徽标拖垮文件列表。
- */
-const sharedPaths = ref<Set<string>>(new Set());
-let sharedPathsRequest = 0;
-let sharedPathsLoadedAt = 0;
-/** 分享集合是账号级数据：目录切换不必每次都重取，30s 内复用缓存。 */
-const SHARED_PATHS_TTL_MS = 30_000;
-
-async function loadSharedPaths(force = false) {
-  if (
-    !force &&
-    sharedPathsLoadedAt > 0 &&
-    Date.now() - sharedPathsLoadedAt < SHARED_PATHS_TTL_MS
-  ) {
-    return;
-  }
-  const id = ++sharedPathsRequest;
-  try {
-    const paths = await filesService.getSharedPaths();
-    if (id !== sharedPathsRequest) return;
-    sharedPaths.value = new Set(
-      (Array.isArray(paths) ? paths : []).map((path) =>
-        String(path).replace(/^\/+/, ""),
-      ),
-    );
-    sharedPathsLoadedAt = Date.now();
-  } catch {
-    if (id !== sharedPathsRequest) return;
-    sharedPaths.value = new Set();
-  }
-}
-
-// 目录级动态标题（r147 ✓ W3C 标准：浏览位置进标题）
-watch(
+const { sharedPaths, loadSharedPaths } = useSharedPaths(
   currentPath,
-  (path) => {
-    const dir = path.split("/").filter(Boolean).pop();
-    document.title = dir ? `${dir} - VFiles` : "VFiles - 文件管理系统";
-    // 分享徽标按路径匹配，切换目录时重取一次（渲染期间不重复请求）
-    void loadSharedPaths();
-  },
-  { immediate: true },
+  () => filesService.getSharedPaths(),
 );
+
+// 目录级动态标题（W3C 标准：浏览位置进标题）
+watch(currentPath, (path) => {
+  const dir = path.split("/").filter(Boolean).pop();
+  document.title = dir ? `${dir} - VFiles` : "VFiles - 文件管理系统";
+});
 
 // 事件驱动式（r138 ✓ 上轮计划兑现）：挂钩 navigateTo 单点（不依赖 watch 触发时序）
 // + 重试式恢复（渲染竞态防 ✗ 双 rAF 后校验补设）。
