@@ -688,7 +688,8 @@ onMounted(load);
 .system-info-status.is-enabled,
 .system-info-account-state.is-enabled {
   background: color-mix(in srgb, var(--system-info-good) 10%, transparent);
-  color: var(--system-info-good);
+  /* 浅色下 --vf-success 对 10% 底只有 4.34:1；文字改用专用 AA 文本令牌。 */
+  color: var(--vf-success-text);
 }
 
 .system-info-status.is-disabled,

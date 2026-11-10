@@ -340,7 +340,13 @@
               @delete="batchDelete"
             />
 
-            <div class="desktop-list-shell" :class="{ 'is-density-compact': fileView.density === 'compact' }">
+            <div
+              class="desktop-list-shell"
+              :class="{ 'is-density-compact': fileView.density === 'compact' }"
+              role="region"
+              aria-label="文件列表"
+              tabindex="-1"
+            >
               <FileSkeleton
                 v-if="loading"
                 :variant="viewMode === 'grid' ? 'grid' : 'list'"
@@ -2497,6 +2503,11 @@ function handleItemClick(file: FileInfo) {
     desktopActivePath.value = file.path;
     // 记录锚点，便于随后 Shift 点击做范围选择
     lastSelectedPath.value = file.path;
+    // 点击行后把焦点交给列表容器：行本身不可聚焦，若焦点仍停在工具栏按钮上，
+    // Shift+F10 / 方向键等列表快捷键会被「交互控件」守卫挡掉。
+    document
+      .querySelector<HTMLElement>(".desktop-list-shell")
+      ?.focus({ preventScroll: true });
     return;
   }
 
@@ -3194,7 +3205,11 @@ function handleSortChange(field: SortField) {
     min-height: 0;
   }
 
-  .desktop-list-shell {
+  .desktop-list-shell:focus {
+  outline: none;
+}
+
+.desktop-list-shell {
     flex: 1 1 auto;
     min-height: 0;
     /* 列表区域是唯一滚动容器：行、加载更多提示一起滚动，

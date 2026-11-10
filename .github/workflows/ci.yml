@@ -25,6 +25,18 @@ jobs:
       - name: Run unit tests
         run: cd client && bun run test:coverage
 
+      - name: Build client
+        run: cd client && bun run build
+
+      - name: Build server binary for UI regression
+        run: cargo build -p vfiles-bin
+
+      - name: Install Playwright Chromium
+        run: cd client && bunx playwright install --with-deps chromium
+
+      - name: Run UI regression
+        run: cd client && bun run ui:regression
+
       - name: Rust fmt check
         run: cargo fmt --check
 

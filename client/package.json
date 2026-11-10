@@ -15,7 +15,8 @@
     "lint:styles": "node scripts/check-dead-styles.mjs",
     "ui:sweep": "node scripts/ui-sweep.mjs",
     "check": "bun run lint && bun run lint:styles && bun run typecheck && bun run test",
-    "size:check": "node scripts/check-size.mjs"
+    "size:check": "node scripts/check-size.mjs",
+    "ui:regression": "node scripts/ui-regression.mjs"
   },
   "overrides": {
     "brace-expansion@<1.1.17": "^1.1.17",
@@ -37,6 +38,7 @@
     "vue-router": "^5.3.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@eslint/js": "^9.39.5",
     "@testing-library/jest-dom": "~6.9.1",
     "@testing-library/vue": "^8.1.0",
@@ -51,6 +53,7 @@
     "eslint-plugin-vue": "^10.11.1",
     "globals": "^17.12.0",
     "jsdom": "^29.1.1",
+    "playwright": "1.57.0",
     "prettier": "^3.9.9",
     "sass": "^1.105.1",
     "typescript": "^6.0.3",

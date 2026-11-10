@@ -54,12 +54,17 @@
               aria-haspopup="true"
               :aria-expanded="accountMenuOpen ? 'true' : 'false'"
               :title="accountName"
-              aria-label="账号菜单"
+              :aria-label="accountMenuLabel"
               @click="accountMenuOpen = !accountMenuOpen"
             >
-              <span class="app-header-avatar" aria-hidden="true">
+              <!-- 首字母用生成内容渲染：视觉可见，但不进入可见文本，
+                   避免与账号名的可访问名称产生 mismatch。 -->
+              <span
+                class="app-header-avatar"
+                aria-hidden="true"
+                :data-initial="accountInitial || undefined"
+              >
                 <IconUser v-if="!accountInitial" :size="14" />
-                <template v-else>{{ accountInitial }}</template>
               </span>
               <span class="app-header-account-name">{{ accountName }}</span>
               <IconChevronDown :size="14" class="app-header-account-caret" />
@@ -235,6 +240,9 @@ const accountInitial = computed(() => {
   const name = auth.user?.username || "";
   return name ? name.slice(0, 1).toUpperCase() : "";
 });
+
+/** 可见文字只有用户名（首字母是装饰性生成内容）。 */
+const accountMenuLabel = computed(() => `账号菜单：${accountName.value}`);
 
 const profileLabel = computed(() => {
   if (!auth.enabled) return "本地模式";
@@ -503,6 +511,11 @@ onBeforeUnmount(() => {
 }
 
 /* 头像：白色圆形底 + 深色首字母（浅色外壳上仍是清晰的账号标识）。 */
+.app-header-avatar::before {
+  content: attr(data-initial);
+  font-weight: 600;
+}
+
 .app-header-avatar {
   display: inline-flex;
   align-items: center;

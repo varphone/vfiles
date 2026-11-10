@@ -157,7 +157,7 @@ describe("AppHeader.vue", () => {
     expect(screen.queryByRole("link", { name: "分享" })).toBeNull();
     expect(screen.queryByRole("link", { name: "管理" })).toBeNull();
 
-    await fireEvent.click(screen.getByRole("button", { name: "账号菜单" }));
+    await fireEvent.click(screen.getByRole("button", { name: /^账号菜单/ }));
     expect(screen.queryByRole("link", { name: "我的分享" })).toBeNull();
     expect(screen.queryByRole("link", { name: "访问密码" })).toBeNull();
     expect(screen.queryByRole("link", { name: "访问令牌" })).toBeNull();

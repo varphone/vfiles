@@ -19,7 +19,6 @@
         <span
           v-if="app.unreadNotifications > 0"
           class="app-bar-bell-badge"
-          aria-hidden="true"
         >
           {{ app.unreadNotifications > 9 ? "9+" : app.unreadNotifications }}
         </span>
@@ -161,7 +160,7 @@ const activeFilterLabel = computed(
 
 const bellTitle = computed(() =>
   app.unreadNotifications > 0
-    ? `通知（${app.unreadNotifications} 条未读）`
+    ? `通知，${app.unreadNotifications} 条未读`
     : "通知",
 );
 
