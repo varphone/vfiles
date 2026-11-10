@@ -409,40 +409,19 @@
           />
         </div>
 
-        <div class="desktop-status-bar">
-          <span>{{
-            searchActive
-              ? `搜索结果 ${searchResults.length} 项`
-              : showLibraryCards
-                ? `我的资料库 ${libraryDirectories.length} 个目录`
-                : filesStore.hasMoreFiles
-                  ? `当前目录 ${files.length} / ${filesStore.totalFiles} 项`
-                  : `当前目录 ${files.length} 项`
-          }}</span>
-          <span>
-            {{
-              parentPath != null
-                ? "单击文件夹进入，点“返回上一级”回退"
-                : showLibraryCards
-                  ? "单击资料库进入目录"
-                  : "单击文件夹进入子目录"
-            }}
-          </span>
-          <span v-if="selectedCount > 0">已选择 {{ selectedCount }} 项</span>
-          <span v-if="typeAheadPrefix" class="desktop-status-typeahead">
-            定位：<strong>{{ typeAheadPrefix }}</strong>
-          </span>
-          <button
-            class="desktop-status-shortcuts is-hidden-touch"
-            type="button"
-            title="查看全部键盘快捷键"
-            @click="showShortcuts = true"
-          >
-            <IconKeyboard :size="14" />
-            <span>Ctrl/⌘+A 全选 · ↑↓ 移动 · 空格 预览 · Delete 删除 · F2 重命名</span>
-            <span class="desktop-status-shortcuts-more">全部快捷键（?）</span>
-          </button>
-        </div>
+        <FileBrowserStatusBar
+          :search-active="searchActive"
+          :search-result-count="searchResults.length"
+          :show-library-cards="showLibraryCards"
+          :library-directory-count="libraryDirectories.length"
+          :has-more-files="filesStore.hasMoreFiles"
+          :files-count="files.length"
+          :total-files="filesStore.totalFiles"
+          :parent-path="parentPath"
+          :selected-count="selectedCount"
+          :type-ahead-prefix="typeAheadPrefix"
+          @open-shortcuts="showShortcuts = true"
+        />
       </template>
 
       <template v-else>
@@ -844,7 +823,6 @@ import {
   IconTrash,
   IconCheck,
   IconInfoCircle,
-  IconKeyboard,
   IconStar,
   IconStarFilled,
 } from "@tabler/icons-vue";
@@ -863,6 +841,7 @@ import FileBrowserHistoryControls from "./FileBrowserHistoryControls.vue";
 import FileBrowserViewControls from "./FileBrowserViewControls.vue";
 import FileBrowserToolbarLeading from "./FileBrowserToolbarLeading.vue";
 import FileBrowserToolbarHeading from "./FileBrowserToolbarHeading.vue";
+import FileBrowserStatusBar from "./FileBrowserStatusBar.vue";
 import UploadDropOverlay from "./UploadDropOverlay.vue";
 import EmptyState from "../common/EmptyState.vue";
 import LibraryGrid from "./LibraryGrid.vue";
@@ -2729,57 +2708,6 @@ function handleSortChange(field: SortField) {
 }
 
 /* 状态栏退化为一行低调的说明文字 */
-.desktop-status-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--vf-space-4);
-  flex-wrap: wrap;
-  min-height: var(--vf-table-head-height);
-  flex: 0 0 auto;
-  padding: 0 var(--vf-cell-padding-x);
-  border-top: 1px solid var(--vf-border-weak);
-  color: var(--vf-text-muted);
-  font-size: var(--vf-text-sm);
-}
-
-.desktop-status-shortcuts {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--vf-space-1);
-  padding: var(--vf-space-1) var(--vf-space-2);
-  border: none;
-  border-radius: var(--vf-radius-control);
-  background: transparent;
-  color: inherit;
-  font-size: inherit;
-  cursor: pointer;
-}
-
-.desktop-status-shortcuts:hover,
-.desktop-status-shortcuts:focus-visible {
-  background: var(--vf-row-hover);
-  color: var(--vf-text);
-}
-
-.desktop-status-typeahead {
-  color: var(--vf-accent);
-}
-
-.desktop-status-typeahead strong {
-  font-weight: 600;
-}
-
-.desktop-status-shortcuts-more {
-  color: var(--vf-accent);
-}
-
-/* 提示靠右显示，保持状态栏左侧信息优先 */
-.desktop-status-shortcuts {
-  margin-left: auto;
-  color: var(--vf-text-subtle);
-  white-space: nowrap;
-}
-
 /* 桌面内容区：列表 + 右侧详细信息面板 */
 .desktop-content-layout {
   display: grid;
