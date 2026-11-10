@@ -2145,6 +2145,9 @@ function navigateTo(path: string) {
   stashScroll(currentPath.value);
   pendingScrollRestore = scrollMemory.get(normalized) ?? null;
   expandedFilePath.value = "";
+  // 选择属于当前目录：切目录后旧选择既不可见也不可操作，
+  // 若不清理会出现「已选 N 项」但删除/移动在新目录里找不到条目的静默失败。
+  if (selectedCount.value > 0) clearSelection();
   filesStore.navigateTo(normalized);
   void nextTick().then(flushScrollRestore);
 }

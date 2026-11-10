@@ -16,6 +16,9 @@ const scale = Number(process.env.SIZE_BUDGET_SCALE || "1");
 function walk(dir) {
   const out = [];
   for (const name of readdirSync(dir)) {
+    // 预压缩副本（precompress 生成的 .gz/.br）不是用户下载的字节：
+    // 把它们计入并再压缩一次会让实测值是真实传输量的 3 倍左右，预算形同虚设。
+    if (name.endsWith(".gz") || name.endsWith(".br")) continue;
     const p = join(dir, name);
     const st = statSync(p);
     if (st.isDirectory()) out.push(...walk(p));

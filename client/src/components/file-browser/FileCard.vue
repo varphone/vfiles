@@ -386,18 +386,9 @@ const icon = computed(() => {
   }
 });
 
-const thumbnailUrl = computed(() => {
-  const thumbImageRef = ref<HTMLImageElement | null>(null);
+const thumbImageRef = ref<HTMLImageElement | null>(null);
 
-  // 命中缓存时 load 事件可能在挂载前就结束，这里补一次检查，避免缩略图一直透明
-  watch(
-    [thumbImageRef, thumbnailUrl],
-    () => {
-      const image = thumbImageRef.value;
-      if (image?.complete && image.naturalWidth > 0) thumbLoaded.value = true;
-    },
-    { immediate: true, flush: "post" },
-  );
+const thumbnailUrl = computed(() => {
   if (thumbFailed.value) return "";
   if (!isImageFile(props.file)) return "";
   return filesService.thumbnailUrl(props.file.path, {
@@ -406,6 +397,18 @@ const thumbnailUrl = computed(() => {
     size: Math.min(512, Math.round(props.thumbnailSize * 2)),
   });
 });
+
+// 命中浏览器缓存时 load 可能在挂载前就结束：URL 变化后补一次检查，
+// 避免骨架永久盖在图片上。watch 必须在 setup 顶层，放进 computed 会每次
+// 重算都新建一个永不 stop 的 watcher。
+watch(
+  [thumbImageRef, thumbnailUrl],
+  () => {
+    const image = thumbImageRef.value;
+    if (image?.complete && image.naturalWidth > 0) thumbLoaded.value = true;
+  },
+  { immediate: true, flush: "post" },
+);
 
 const sizeLabel = computed(() => formatSize(props.file.size_bytes));
 const dateLabel = computed(() =>

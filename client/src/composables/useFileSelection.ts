@@ -160,7 +160,10 @@ export function useFileSelection(deps: FileSelectionDeps) {
 
   async function batchDownload() {
     const items = getSelectedItems();
-    if (items.length === 0) return;
+    if (items.length === 0) {
+      appStore.warning("所选条目已不在当前目录");
+      return;
+    }
 
     const files = items.filter((file) => file.kind !== "directory");
     const folders = items.filter((file) => file.kind === "directory");
@@ -187,7 +190,10 @@ export function useFileSelection(deps: FileSelectionDeps) {
 
   async function batchDelete() {
     const items = getSelectedItems();
-    if (items.length === 0) return;
+    if (items.length === 0) {
+      appStore.warning("所选条目已不在当前目录");
+      return;
+    }
 
     const ok = await confirmDialog({
       title: "批量删除",
@@ -214,7 +220,10 @@ export function useFileSelection(deps: FileSelectionDeps) {
 
   function batchMove() {
     const items = getSelectedItems();
-    if (items.length === 0) return;
+    if (items.length === 0) {
+      appStore.warning("所选条目已不在当前目录");
+      return;
+    }
 
     deps.openMoveDialog(
       items,

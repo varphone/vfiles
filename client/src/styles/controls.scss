@@ -221,31 +221,8 @@
 }
 
 /* 主操作按钮：填充强调色胶囊 */
-.vf-primary-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--vf-space-2);
-  min-height: var(--vf-control-height);
-  padding: 0 var(--vf-space-4);
-  border: none;
-  border-radius: var(--vf-radius-control);
-  background: var(--vf-accent-fill);
-  color: var(--vf-on-accent);
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 0.15s var(--vf-motion-standard);
-}
 
-.vf-primary-button:hover:not(:disabled),
-.vf-primary-button:focus-visible {
-  background: var(--vf-accent-fill-hover);
-}
 
-.vf-primary-button:active:not(:disabled) {
-  background: var(--vf-accent-fill-hover);
-}
 
 /* 复选框同样参与键盘焦点语言：隐藏的 hover 控件获得焦点时可见 */
 input[type="checkbox"]:focus-visible,
@@ -258,12 +235,6 @@ input[type="radio"]:focus-visible {
    所有可交互控件共用一套键盘焦点语言。 */
 .vf-icon-button:focus-visible,
 .vf-ghost-button:focus-visible,
-.vf-primary-button:focus-visible,
-.button:focus-visible,
-.button.is-ghost:focus-visible {
-  outline: 2px solid var(--vf-accent-text);
-  outline-offset: 2px;
-}
 
 /* 表单控件：8px 圆角（M3 small）+ M3 式焦点 halo */
 .input,
@@ -464,11 +435,7 @@ mark.has-background-warning-light {
   }
 
   .vf-ghost-button,
-  .vf-primary-button,
-  .button:not(.is-static),
-  .modal-card-foot .button:not(.is-static) {
-    min-height: 2.5rem;
-  }
+  
 
   .input,
   .select select,
@@ -477,10 +444,6 @@ mark.has-background-warning-light {
   }
 }
 
-.vf-primary-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
 
 /* 表头排序族（r118 ✓ 主流管理表标配（列头点击排序）✓ FileList 同式抽公共） */
 .vf-th-sort {

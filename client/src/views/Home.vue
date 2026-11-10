@@ -304,15 +304,16 @@ type FileBrowserHandle = {
   setSearchQuery: (q: string) => void;
   runSearch: () => Promise<void>;
   clearSearch: () => void;
-  batchMode: { value: boolean };
-  selectedCount: { value: number };
+  /** defineExpose 暴露的 ref 经 proxyRefs 解包后即为值本身（不是 Ref）。 */
+  batchMode: boolean;
+  selectedCount: number;
   selectAllVisible: () => void;
   clearSelection: () => void;
   batchDownload: () => Promise<void>;
   batchDelete: () => Promise<void>;
   batchMove: () => Promise<void>;
   renameSelected: () => Promise<void>;
-  searchLoading: { value: boolean };
+  searchLoading: boolean;
 };
 
 const browserRef = ref<FileBrowserHandle | null>(null);
@@ -478,10 +479,8 @@ function toggleBatch() {
   browserRef.value?.toggleBatchMode();
 }
 
-const isBatchMode = computed(() => browserRef.value?.batchMode?.value ?? false);
-const selectedCount = computed(
-  () => browserRef.value?.selectedCount?.value ?? 0,
-);
+const isBatchMode = computed(() => browserRef.value?.batchMode ?? false);
+const selectedCount = computed(() => browserRef.value?.selectedCount ?? 0);
 function setActionMode(mode: "nav" | "history" | "batch") {
   if (mode === "batch" && !auth.canWrite) return;
   actionMode.value = mode;
