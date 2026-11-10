@@ -643,6 +643,7 @@ import { useProgressiveList } from "../../composables/useProgressiveList";
 import { usePreviewActions } from "../../composables/usePreviewActions";
 import { useFileBrowserHotkeys } from "../../composables/useFileBrowserHotkeys";
 import { useSharedPaths } from "../../composables/useSharedPaths";
+import { useFileBrowserScope } from "../../composables/useFileBrowserScope";
 import { useFileBrowserRowNavigation } from "../../composables/useFileBrowserRowNavigation";
 import { useFileBrowserList } from "../../composables/useFileBrowserList";
 import { useDirectoryManager } from "../../composables/useDirectoryManager";
@@ -656,7 +657,6 @@ import {
   firstScopeRoot,
   isPathWithinRoots,
   normalizeScopePath,
-  sliceBreadcrumbsFromScopeRoot,
 } from "../../utils/sessionScope";
 
 const filesStore = useFilesStore();
@@ -694,34 +694,15 @@ const emit = defineEmits<{
   (e: "history-fast-forward"): void;
 }>();
 
-/** 受限会话的目录范围与写权限（主密码会话恒为全量）。 */
-const isRestricted = computed(() => authStore.isRestricted);
-const scopeRoots = computed(() => authStore.scopeRoots);
-const canWrite = computed(() => authStore.canWrite);
-const canShare = computed(
-  () =>
-    authStore.features?.shareEnabled !== false &&
-    (!isRestricted.value || canWrite.value),
-);
-
-/** 面包屑隐藏范围根之上的入口。 */
-const visibleBreadcrumbs = computed(() =>
-  isRestricted.value
-    ? sliceBreadcrumbsFromScopeRoot(filesStore.breadcrumbs, scopeRoots.value)
-    : filesStore.breadcrumbs,
-);
-
-const scopeBadgeText = computed(() => {
-  const roots = scopeRoots.value.length
-    ? scopeRoots.value.join(", ")
-    : "受限目录";
-  return `受限访问：${roots}（${canWrite.value ? "可写" : "只读"}）`;
-});
-
-const scopeBadgeTitle = computed(() => {
-  const label = authStore.scope?.label;
-  return label ? `受限密码：${label}` : scopeBadgeText.value;
-});
+const {
+  isRestricted,
+  scopeRoots,
+  canWrite,
+  canShare,
+  visibleBreadcrumbs,
+  scopeBadgeText,
+  scopeBadgeTitle,
+} = useFileBrowserScope();
 
 const { sharedPaths, loadSharedPaths } = useSharedPaths(
   currentPath,
