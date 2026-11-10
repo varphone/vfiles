@@ -224,7 +224,7 @@
                     <div class="dropdown-trigger">
                       <button
                         class="button is-light is-small"
-                        aria-haspopup="true"
+                        aria-haspopup="menu"
                         :aria-expanded="batchMenuOpen ? 'true' : 'false'"
                         title="更多批量操作"
                         @click="batchMenuOpen = !batchMenuOpen"
@@ -237,6 +237,8 @@
                         <a
                           v-if="auth.canWrite"
                           class="dropdown-item"
+                          role="menuitem"
+                          :aria-disabled="selectedCount === 0 ? 'true' : 'false'"
                           :class="{ 'is-disabled': selectedCount === 0 }"
                           href="#"
                           @click.prevent="runBatchMenuAction('delete')"
@@ -246,6 +248,8 @@
                         <a
                           v-if="auth.canWrite"
                           class="dropdown-item"
+                          role="menuitem"
+                          :aria-disabled="selectedCount === 0 ? 'true' : 'false'"
                           :class="{ 'is-disabled': selectedCount === 0 }"
                           href="#"
                           @click.prevent="runBatchMenuAction('move')"
@@ -255,6 +259,8 @@
                         <a
                           v-if="auth.canWrite"
                           class="dropdown-item"
+                          role="menuitem"
+                          :aria-disabled="selectedCount !== 1 ? 'true' : 'false'"
                           :class="{ 'is-disabled': selectedCount !== 1 }"
                           href="#"
                           @click.prevent="runBatchMenuAction('rename')"
