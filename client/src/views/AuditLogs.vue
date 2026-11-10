@@ -464,7 +464,11 @@ function goNextPage() {
   void reload();
 }
 
+/** 连点翻页/改筛选时，先发出的请求后返回会覆盖新结果：用序号只认最后一次。 */
+let reloadSequence = 0;
+
 async function reload() {
+  const sequence = ++reloadSequence;
   loading.value = true;
   error.value = null;
   try {
@@ -478,15 +482,17 @@ async function reload() {
       limit: pageSize,
       offset: offset.value,
     });
+    if (sequence !== reloadSequence) return;
     items.value = page.items;
     total.value = page.total;
     void loadSummary();
   } catch (e) {
+    if (sequence !== reloadSequence) return;
     items.value = [];
     total.value = 0;
     error.value = e instanceof Error ? e.message : "加载失败";
   } finally {
-    loading.value = false;
+    if (sequence === reloadSequence) loading.value = false;
   }
 }
 
