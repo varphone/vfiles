@@ -35,6 +35,17 @@ async function waitFor(predicate, timeout = 5000) {
   return false;
 }
 
+async function scrollListTo(target, position) {
+  await target.evaluate((where) => {
+    const host = document.querySelector(".desktop-list-shell");
+    if (host && host.scrollHeight > host.clientHeight + 1) {
+      host.scrollTop = where === "bottom" ? host.scrollHeight : 0;
+    } else {
+      window.scrollTo(0, where === "bottom" ? document.body.scrollHeight : 0);
+    }
+  }, position);
+}
+
 function check(name, ok, detail = "") {
   results.push({ name, ok: Boolean(ok), detail });
   const mark = ok ? "✓" : "✗";
@@ -43,6 +54,7 @@ function check(name, ok, detail = "") {
 
 let TMP = null;
 let server = null;
+let browser = null;
 
 function env(extra = {}) {
   return {
@@ -61,7 +73,12 @@ function cli(args) {
   return execFileSync(BIN, args, { env: env(), encoding: "utf8" });
 }
 
-function teardown() {
+async function teardown() {
+  try {
+    await browser?.close();
+  } catch {
+    /* 浏览器可能已关闭 */
+  }
   try {
     server?.kill("SIGTERM");
   } catch {
@@ -98,14 +115,13 @@ async function main() {
   const seed = join(TMP, "seed");
   mkdirSync(join(seed, "项目库", "子目录"), { recursive: true });
   writeFileSync(join(seed, "项目库", "说明.md"), "# 说明\n");
-  writeFileSync(join(seed, "说明.md"), "# 说明\n");
-  for (let i = 1; i <= 24; i += 1) {
+  for (let i = 1; i <= 150; i += 1) {
     writeFileSync(
       join(seed, `报告-${String(i).padStart(2, "0")}.md`),
       `# ${i}\n`,
     );
   }
-  cli(["import", seed, "--flush-files", "30"]);
+  cli(["import", seed, "--flush-files", "50"]);
 
   server = spawn(BIN, ["serve"], { env: env(), stdio: "ignore", cwd: ROOT });
   const base = `http://127.0.0.1:${PORT}`;
@@ -120,7 +136,7 @@ async function main() {
     if (i === 99) throw new Error("服务器未就绪");
   }
 
-  const browser = await chromium.launch();
+  browser = await chromium.launch();
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
   });
@@ -195,7 +211,10 @@ async function main() {
   check("no row is selected on load", rowState.selectedRows === 0);
 
   // 3) 右键菜单键盘操作与焦点归还。
-  await page.click('tr[data-vfiles-path="说明.md"]');
+  await page
+    .locator('tr.desktop-file-row[data-vfiles-path$=".md"]')
+    .first()
+    .click();
   await page.keyboard.press("Shift+F10");
   const menuFocused = await waitFor(async () => {
     const state = await page.evaluate(() => ({
@@ -299,7 +318,66 @@ async function main() {
     page.url(),
   );
 
-  // 6) axe：主要页面 serious/critical 违规为 0。
+  // 6) 长列表窗口化：滚到加载完全部 150 条后，DOM 只保留视口附近的行。
+  await page.goto(`${base}/`, { waitUntil: "networkidle" });
+  await page.waitForSelector(".file-browser-box");
+  await page.waitForTimeout(500);
+  for (let i = 0; i < 10; i += 1) {
+    await scrollListTo(page, "bottom");
+    await page.waitForTimeout(550);
+    if ((await page.locator(".desktop-load-more").count()) === 0) break;
+  }
+  const virtualState = await page.evaluate(() => ({
+    rows: document.querySelectorAll("tr.desktop-file-row").length,
+    spacers: document.querySelectorAll("tr.file-list-spacer").length,
+    total: document.querySelector(".file-list-summary-counts")?.innerText.trim(),
+    last: [...document.querySelectorAll("tr.desktop-file-row")]
+      .at(-1)
+      ?.getAttribute("data-vfiles-path"),
+  }));
+  check(
+    "large list renders a window instead of every row",
+    virtualState.rows > 0 &&
+      virtualState.rows < 100 &&
+      virtualState.spacers > 0 &&
+      virtualState.total?.startsWith("150 个文件"),
+    JSON.stringify(virtualState),
+  );
+
+  await scrollListTo(page, "top");
+  await page.waitForTimeout(450);
+  const atTop = await page.evaluate(() =>
+    document
+      .querySelector("tr.desktop-file-row")
+      ?.getAttribute("data-vfiles-path"),
+  );
+  await scrollListTo(page, "bottom");
+  await page.waitForTimeout(450);
+  const atBottom = await page.evaluate(() =>
+    [...document.querySelectorAll("tr.desktop-file-row")]
+      .at(-1)
+      ?.getAttribute("data-vfiles-path"),
+  );
+  check(
+    "virtual list reaches both ends",
+    atTop?.includes("项目库") && atBottom?.includes("报告-150"),
+    JSON.stringify({ atTop, atBottom }),
+  );
+
+  await page.locator("tr.desktop-file-row").first().click();
+  await page.waitForTimeout(150);
+  await page.keyboard.press("End");
+  const endState = await waitFor(async () => {
+    const active = await page.evaluate(
+      () =>
+        document.querySelector("tr.is-row-active")?.getAttribute("data-vfiles-path") ??
+        "",
+    );
+    return active.includes("报告-150");
+  });
+  check("End key reaches the last virtual row", endState);
+
+  // 7) axe：主要页面 serious/critical 违规为 0。
   const pages = [
     ["/", ".file-browser-box"],
     ["/recent", ".recent-view"],

@@ -30,6 +30,17 @@ import AppHeader from "../components/shell/AppHeader.vue";
   --sf-topbar-height: var(--vf-topbar-height);
 }
 
+/* 桌面端把外壳锁到视口高度：文件列表/设置页各自内部滚动，
+   表头因此能相对列表容器 sticky，页面本身不再整页滚动。 */
+@media screen and (min-width: 1024px) {
+  .app-layout {
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+
 .app-layout-content {
   display: flex;
   flex-direction: column;

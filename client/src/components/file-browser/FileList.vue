@@ -1,6 +1,6 @@
 <template>
   <div v-if="desktop" class="table-container">
-    <table class="table is-fullwidth is-hoverable is-narrow file-list-table">
+    <table ref="tableRef" class="table is-fullwidth is-hoverable is-narrow file-list-table">
       <!-- 内容自适应（table-layout: auto）：数据列随内容定宽，名称列吸收剩余空间 -->
       <colgroup>
         <col class="file-list-col-check" />
@@ -59,8 +59,15 @@
         </tr>
       </thead>
       <tbody>
+        <tr
+          v-if="padTop > 0"
+          class="file-list-spacer"
+          aria-hidden="true"
+        >
+          <td :colspan="columnSpan" :style="{ height: `${padTop}px` }"></td>
+        </tr>
         <FileItem
-          v-for="file in files"
+          v-for="file in windowFiles"
           :key="file.path"
           :file="file"
           :highlight="highlight"
@@ -96,6 +103,13 @@
           @open-folder="emit('open-folder', file)"
           @create-directory="emit('create-directory', file)"
         />
+        <tr
+          v-if="padBottom > 0"
+          class="file-list-spacer"
+          aria-hidden="true"
+        >
+          <td :colspan="columnSpan" :style="{ height: `${padBottom}px` }"></td>
+        </tr>
       </tbody>
     </table>
 
@@ -146,7 +160,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, toRefs } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRefs, watch } from "vue";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-vue";
 import type { FileInfo } from "../../types";
 import {
@@ -310,6 +324,162 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
   if (sortField.value !== field) return "none";
   return sortDirection.value === "asc" ? "ascending" : "descending";
 }
+
+/* ------------------------------------------------------------------
+ * 桌面长列表窗口化
+ *
+ * 40 条以内全部渲染（首屏/普通目录）；超过阈值且容器有真实布局时，
+ * 只渲染视口附近的窗口，用上下两个占位行撑出完整滚动高度。
+ * jsdom 的 clientHeight 为 0，自动退化为全量渲染，组件测试不受影响。
+ * ------------------------------------------------------------------ */
+const VIRTUAL_MIN_ROWS = 60;
+const OVERSCAN = 8;
+const HEADER_HEIGHT = 44;
+
+const tableRef = ref<HTMLTableElement | null>(null);
+const scrollHost = ref<HTMLElement | null>(null);
+const scrollTop = ref(0);
+const viewportHeight = ref(0);
+const rowHeight = ref(51);
+const virtualEnabled = ref(false);
+const pinnedIndex = ref<number | null>(null);
+/** 桌面列表在部分布局下由页面滚动（此时容器高度等于内容高度）。 */
+const scrollMode = ref<"host" | "window">("host");
+
+const columnSpan = computed(() => columns.length + 2);
+const rowCount = computed(() => files.value.length);
+const viewportRows = computed(() =>
+  Math.max(1, Math.ceil(viewportHeight.value / rowHeight.value)),
+);
+
+function updateScrollPosition() {
+  const host = scrollHost.value;
+  const table = tableRef.value;
+  if (!host || !table) return;
+  if (scrollMode.value === "host") {
+    scrollTop.value = host.scrollTop;
+  } else {
+    // 页面滚动：表格顶部越过视口顶部的距离就是“已滚过”的内容高度。
+    scrollTop.value = Math.max(0, -table.getBoundingClientRect().top);
+  }
+}
+
+function measure() {
+  const host = scrollHost.value;
+  const table = tableRef.value;
+  if (!host || !table) return;
+  const internallyScrollable =
+    host.clientHeight > 0 && host.scrollHeight > host.clientHeight + 1;
+  scrollMode.value = internallyScrollable ? "host" : "window";
+  viewportHeight.value = internallyScrollable
+    ? host.clientHeight
+    : window.innerHeight;
+  const row = host.querySelector<HTMLElement>("tr.desktop-file-row");
+  const measured = row?.getBoundingClientRect().height ?? 0;
+  if (measured > 0) rowHeight.value = measured;
+  // clientHeight 为 0（jsdom）时保持全量渲染。
+  virtualEnabled.value =
+    host.clientHeight > 0 && rowCount.value > VIRTUAL_MIN_ROWS;
+  updateScrollPosition();
+}
+
+const windowStart = computed(() => {
+  if (!virtualEnabled.value) return 0;
+  const base = Math.min(
+    Math.max(
+      0,
+      Math.floor(Math.max(0, scrollTop.value - HEADER_HEIGHT) / rowHeight.value) -
+        OVERSCAN,
+    ),
+    Math.max(0, rowCount.value - 1),
+  );
+  const pinned = pinnedIndex.value;
+  if (pinned !== null && (pinned < base || pinned >= base + viewportRows.value)) {
+    return Math.max(0, Math.min(pinned - OVERSCAN, rowCount.value - 1));
+  }
+  return base;
+});
+
+const windowEnd = computed(() => {
+  if (!virtualEnabled.value) return rowCount.value;
+  return Math.min(
+    rowCount.value,
+    windowStart.value + viewportRows.value + OVERSCAN * 2,
+  );
+});
+
+const windowFiles = computed(() =>
+  files.value.slice(windowStart.value, windowEnd.value),
+);
+const padTop = computed(() =>
+  virtualEnabled.value ? windowStart.value * rowHeight.value : 0,
+);
+const padBottom = computed(() =>
+  virtualEnabled.value
+    ? (rowCount.value - windowEnd.value) * rowHeight.value
+    : 0,
+);
+
+let scrollFrame = 0;
+let resizeObserver: ResizeObserver | null = null;
+let classObserver: MutationObserver | null = null;
+
+function onScroll() {
+  if (scrollFrame) return;
+  scrollFrame = requestAnimationFrame(() => {
+    scrollFrame = 0;
+    const host = scrollHost.value;
+    if (!host) return;
+    updateScrollPosition();
+    pinnedIndex.value = null;
+  });
+}
+
+onMounted(() => {
+  const host = tableRef.value?.closest<HTMLElement>(".desktop-list-shell");
+  if (!host) return;
+  scrollHost.value = host;
+  measure();
+  host.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", measure);
+  if (typeof ResizeObserver !== "undefined") {
+    resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(host);
+  }
+  classObserver = new MutationObserver(measure);
+  classObserver.observe(host, { attributes: true, attributeFilter: ["class"] });
+});
+
+onBeforeUnmount(() => {
+  scrollHost.value?.removeEventListener("scroll", onScroll);
+  window.removeEventListener("scroll", onScroll);
+  window.removeEventListener("resize", measure);
+  resizeObserver?.disconnect();
+  classObserver?.disconnect();
+  if (scrollFrame) cancelAnimationFrame(scrollFrame);
+});
+
+watch(
+  () => files.value.length,
+  () => {
+    pinnedIndex.value = null;
+    void nextTick(measure);
+  },
+);
+
+// 键盘把活动行移出窗口时，先把它拉回渲染范围，再由父组件 scrollIntoView 定位。
+watch(
+  () => activePath.value,
+  (path) => {
+    if (!virtualEnabled.value) return;
+    const index = files.value.findIndex((file) => file.path === path);
+    if (index < 0) return;
+    if (index < windowStart.value || index >= windowEnd.value) {
+      pinnedIndex.value = index;
+    }
+  },
+);
 </script>
 
 <style scoped>
@@ -354,6 +524,13 @@ function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
 /* 行尾列（⋯ + 行操作图标）贴右侧，不参与名称列宽度竞争 */
 .file-list-col-rowend {
   width: 1%;
+}
+
+/* 窗口化占位行：撑高滚动区，不参与悬停/分隔线 */
+.file-list-spacer td {
+  padding: 0;
+  border: 0;
+  line-height: 0;
 }
 
 /* 表尾汇总：不属于数据行，无悬停态；与表头同高、同 16px 基线 */
