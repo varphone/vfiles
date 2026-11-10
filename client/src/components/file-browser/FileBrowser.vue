@@ -977,29 +977,6 @@
       </div>
     </Modal>
 
-    <!-- 历史记录对话框 -->
-    <Modal
-      :show="showHistory"
-      :title="`文件历史: ${selectedFile?.name}`"
-      :mobile-compact="true"
-      wide
-      @close="showHistory = false"
-    >
-      <VersionHistory
-        v-if="selectedFile"
-        :file-path="selectedFile.path"
-        :can-write="canWrite"
-      />
-    </Modal>
-
-    <!-- 分享对话框 -->
-    <ShareDialog
-      :is-active="showShareDialog"
-      :file-path="selectedFile?.path || ''"
-      :file="selectedFile || undefined"
-      @close="closeShareDialog"
-    />
-
     <MoveDialog
       :is-active="showMoveDialog"
       :items="moveDialogItems"
@@ -1019,81 +996,50 @@
       @close="closeContextMenu"
     />
 
-    <!-- 预览对话框（当前版本） -->
-    <Modal
-      :show="showDetailsDialog"
-      :title="`详细信息: ${detailsDialogFile?.name || ''}`"
-      :mobile-compact="true"
-      @close="showDetailsDialog = false"
-    >
-      <FileDetailsContent v-if="detailsDialogFile" :file="detailsDialogFile">
-        <template #actions>
-          <button
-            v-if="detailsDialogFile.kind === 'file'"
-            class="vf-ghost-button"
-            @click="
-              handlePreview(detailsDialogFile);
-              showDetailsDialog = false;
-            "
-          >
-            <IconEye :size="16" />
-            <span>预览</span>
-          </button>
-          <button
-            class="vf-ghost-button"
-            @click="handleDownload(detailsDialogFile)"
-          >
-            <IconDownload :size="16" />
-            <span>下载</span>
-          </button>
-          <button
-            class="vf-ghost-button"
-            @click="handleShare(detailsDialogFile)"
-          >
-            <IconShare :size="16" />
-            <span>分享</span>
-          </button>
-        </template>
-      </FileDetailsContent>
-    </Modal>
-
     <UploadDropOverlay
       :visible="externalDropActive"
       :target-label="dropTargetLabel"
     />
 
-    <TransferOwnershipDialog
-      ref="transferDialogRef"
-      :show="showTransferDialog"
-      :items="transferItems"
-      @close="closeTransferDialog"
-      @transfer="submitTransfer"
-    />
-
-    <KeyboardShortcutsDialog
-      :show="showShortcuts"
-      @close="showShortcuts = false"
-    />
-
-    <FilePreviewModal
-      :show="preview.open"
-      :filename="previewFilename"
+    <FileBrowserDialogs
+      ref="dialogsRef"
+      :show-history="showHistory"
+      :show-share="showShareDialog"
+      :show-details="showDetailsDialog"
+      :show-transfer="showTransferDialog"
+      :show-shortcuts="showShortcuts"
+      :selected-file="selectedFile"
+      :details-file="detailsDialogFile"
+      :transfer-items="transferItems"
+      :can-write="canWrite"
       :preview="preview"
+      :preview-filename="previewFilename"
       :can-go-prev="canGoPrev"
       :can-go-next="canGoNext"
-      :position="previewIndex + 1"
-      :total="previewTotal"
-      :can-copy="canCopyPreview"
+      :preview-position="previewIndex + 1"
+      :preview-total="previewTotal"
+      :can-copy-preview="canCopyPreview"
       :copy-state="previewCopyState"
-      :file="previewFile"
-      @close="closePreview"
-      @retry="openPreview"
-      @prev="prevPreview"
-      @next="nextPreview"
-      @copy="copyPreviewContent"
-      @download="downloadPreviewedFile"
-      @reveal="revealPreviewedFile"
+      :preview-file="previewFile"
+      @close-history="showHistory = false"
+      @close-share="closeShareDialog"
+      @close-details="showDetailsDialog = false"
+      @details-preview="onDetailsPreview"
+      @details-download="handleDownload"
+      @details-share="handleShare"
+      @close-transfer="closeTransferDialog"
+      @transfer="submitTransfer"
+      @close-shortcuts="showShortcuts = false"
+      @close-preview="closePreview"
+      @retry-preview="openPreview"
+      @prev-preview="prevPreview"
+      @next-preview="nextPreview"
+      @copy-preview="copyPreviewContent"
+      @download-preview="downloadPreviewedFile"
+      @reveal-preview="revealPreviewedFile"
     />
+
+
   </div>
 </template>
 
@@ -1105,12 +1051,14 @@ import {
   computed,
   watch,
   nextTick,
-  defineAsyncComponent,
   type Component,
 } from "vue";
 import { storeToRefs } from "pinia";
 import {
   IconFolder,
+  IconDownload,
+  IconEye,
+  IconShare,
   IconFolderOpen,
   IconFolderPlus,
   IconActivity,
@@ -1120,12 +1068,9 @@ import {
   IconFileSearch,
   IconRefresh,
   IconUpload,
-  IconEye,
   IconHistory,
   IconPencil,
   IconArrowsDiff,
-  IconDownload,
-  IconShare,
   IconUserShare,
   IconTrash,
   IconCheck,
@@ -1150,16 +1095,13 @@ import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 import { useFileViewStore } from "../../stores/fileView.store";
 import FileList from "./FileList.vue";
-import KeyboardShortcutsDialog from "./KeyboardShortcutsDialog.vue";
 import { confirmDialog } from "../../composables/dialog";
-import TransferOwnershipDialog from "./TransferOwnershipDialog.vue";
 import SearchResultToolbar from "./SearchResultToolbar.vue";
 import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
+import FileBrowserDialogs from "./FileBrowserDialogs.vue";
 import NewMenuButton from "./NewMenuButton.vue";
-const FilePreviewModal = defineAsyncComponent(() => import("./FilePreviewModal.vue"));
 import UploadDropOverlay from "./UploadDropOverlay.vue";
-import FileDetailsContent from "./FileDetailsContent.vue";
 import EmptyState from "../common/EmptyState.vue";
 import FileGrid from "./FileGrid.vue";
 import LibraryGrid from "./LibraryGrid.vue";
@@ -1172,9 +1114,7 @@ import DownloadQueuePanel from "./DownloadQueuePanel.vue";
 import ContextMenu, { type ContextMenuItem } from "./ContextMenu.vue";
 import MoveDialog from "./MoveDialog.vue";
 import FileUploader from "../file-uploader/FileUploader.vue";
-import VersionHistory from "../version-history/VersionHistory.vue";
 import Modal from "../common/Modal.vue";
-import ShareDialog from "../common/ShareDialog.vue";
 import { copyText } from "../../utils/clipboard";
 import { useDownloadQueue } from "../../composables/useDownloadQueue";
 import { useFilePreview } from "../../composables/useFilePreview";
@@ -1488,7 +1428,7 @@ const showShareDialog = ref(false);
 const showShortcuts = ref(false);
 const showTransferDialog = ref(false);
 const transferItems = ref<FileInfo[]>([]);
-const transferDialogRef = ref<{ finish: () => void } | null>(null);
+const dialogsRef = ref<{ finishTransfer: () => void } | null>(null);
 
 function closeShareDialog() {
   showShareDialog.value = false;
@@ -1542,7 +1482,7 @@ async function submitTransfer(
     await refresh();
   } catch (e) {
     appStore.error(e instanceof Error ? e.message : "转移失败");
-    transferDialogRef.value?.finish();
+    dialogsRef.value?.finishTransfer();
   }
 }
 const selectedFile = ref<FileInfo | null>(null);
@@ -2520,6 +2460,12 @@ function handleItemClick(file: FileInfo) {
 
 function handlePreview(file: FileInfo) {
   openPreview(file.path);
+}
+
+/** 详细信息弹窗里的「预览」：关掉详情再打开预览。 */
+function onDetailsPreview(file: FileInfo) {
+  showDetailsDialog.value = false;
+  handlePreview(file);
 }
 
 function handleOpenFolder(file: FileInfo) {
