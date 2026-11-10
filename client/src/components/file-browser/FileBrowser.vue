@@ -288,8 +288,8 @@
             </div>
           </div>
 
-          <FileDetailsPanel
-            v-if="detailsVisible"
+          <FileBrowserDetailsPanel
+            :visible="detailsVisible"
             :item="detailItem"
             :commit="browseCommit"
             :selection="selectedItems"
@@ -625,7 +625,6 @@ import { useFilesStore } from "../../stores/files.store";
 import { useAppStore } from "../../stores/app.store";
 import { useAuthStore } from "../../stores/auth.store";
 import { useFileViewStore } from "../../stores/fileView.store";
-import FileDetailsPanel from "./FileDetailsPanel.vue";
 import BatchActionBar from "./BatchActionBar.vue";
 import FileBrowserDialogs from "./FileBrowserDialogs.vue";
 import FileBrowserHistoryControls from "./FileBrowserHistoryControls.vue";
@@ -633,6 +632,7 @@ import FileBrowserViewControls from "./FileBrowserViewControls.vue";
 import FileBrowserToolbarLeading from "./FileBrowserToolbarLeading.vue";
 import FileBrowserToolbarHeading from "./FileBrowserToolbarHeading.vue";
 import FileBrowserStatusBar from "./FileBrowserStatusBar.vue";
+import FileBrowserDetailsPanel from "./FileBrowserDetailsPanel.vue";
 import FileBrowserMobileContent from "./FileBrowserMobileContent.vue";
 import FileBrowserDesktopContent from "./FileBrowserDesktopContent.vue";
 import UploadDropOverlay from "./UploadDropOverlay.vue";
