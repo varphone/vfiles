@@ -1,4 +1,4 @@
-import { ref } from "vue";
+import { computed, ref } from "vue";
 
 export interface ConfirmDialogOptions {
   title?: string;
@@ -42,19 +42,34 @@ export interface DialogRequest {
   resolve: (value: boolean | string | null) => void;
 }
 
-const currentDialog = ref<DialogRequest | null>(null);
+/**
+ * 对话框队列：一次只渲染队首。
+ *
+ * 早先是单槽位，第二次调用会直接覆盖第一个请求，前一个 Promise 的 resolve
+ * 永远不执行——调用方 `await confirmDialog(...)` 之后的代码（含 finally 里的
+ * loading 复位）就此悬挂，连续按两次 Delete 即可触发。
+ */
+const dialogQueue = ref<DialogRequest[]>([]);
+const currentDialog = computed<DialogRequest | null>(
+  () => dialogQueue.value[0] ?? null,
+);
 let nextDialogId = 1;
 
 function openDialog(
   request: Omit<DialogRequest, "id" | "resolve">,
 ): Promise<boolean | string | null> {
   return new Promise((resolve) => {
-    currentDialog.value = {
+    dialogQueue.value.push({
       ...request,
       id: nextDialogId++,
       resolve,
-    };
+    });
   });
+}
+
+/** 队首结算后出队（DialogHost 关闭时调用）。 */
+export function settleDialog(): void {
+  dialogQueue.value.shift();
 }
 
 export const dialogState = currentDialog;
@@ -103,6 +118,6 @@ export function choiceDialog(options: ChoiceDialogOptions): Promise<string | nul
 export function resolveDialog(value: boolean | string | null): void {
   const dialog = currentDialog.value;
   if (!dialog) return;
-  currentDialog.value = null;
+  settleDialog();
   dialog.resolve(value);
 }
