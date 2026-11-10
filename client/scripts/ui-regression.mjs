@@ -6,9 +6,18 @@
 //
 // 用法：bun run ui:regression
 //       失败时打印逐项结果并非零退出；成功时打印摘要。
+//       布局基线变更时用 UPDATE_LAYOUT=1 bun run ui:regression 重新生成
+//       tests/fixtures/ui-layout.json（3px 容差）。
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +29,9 @@ const BIN = process.env.VFILES_BIN || resolve(ROOT, "target/debug/vfiles");
 const PORT = 19400 + Math.floor(Math.random() * 200);
 const THEME = "light";
 const USER = { name: "admin", pass: "admin-password-123" };
+const LAYOUT_PATH = join(ROOT, "client", "tests", "fixtures", "ui-layout.json");
+const UPDATE_LAYOUT = process.env.UPDATE_LAYOUT === "1";
+const LAYOUT_TOLERANCE = 3;
 
 const results = [];
 async function waitFor(predicate, timeout = 5000) {
@@ -44,6 +56,53 @@ async function scrollListTo(target, position) {
       window.scrollTo(0, where === "bottom" ? document.body.scrollHeight : 0);
     }
   }, position);
+}
+
+async function captureLayout(target) {
+  return target.evaluate(() => {
+    const box = (selector) => {
+      const element = document.querySelector(selector);
+      if (!element) return null;
+      const rect = element.getBoundingClientRect();
+      return [
+        Math.round(rect.x),
+        Math.round(rect.y),
+        Math.round(rect.width),
+        Math.round(rect.height),
+      ];
+    };
+    return {
+      header: box(".app-header"),
+      sidebar: box(".files-sidebar"),
+      content: box(".files-content"),
+      toolbar: box(".file-toolbar"),
+      list: box(".desktop-list-shell"),
+      status: box(".desktop-status-bar"),
+      firstRow: box("tr.desktop-file-row"),
+      tableHead: box("thead tr"),
+      mobileBar: box(".files-mobile-bar"),
+      fileBox: box(".file-browser-box"),
+      bottomBar: box(".mobile-bottom-bar"),
+      firstItem: box(".file-list .file-item"),
+    };
+  });
+}
+
+function layoutDiffs(actual, expected) {
+  const diffs = [];
+  for (const [key, box] of Object.entries(actual)) {
+    const want = expected?.[key];
+    if (!box && !want) continue;
+    if (!box || !want) {
+      diffs.push({ key, actual: box, expected: want });
+      continue;
+    }
+    const deltas = box.map((value, index) => value - want[index]);
+    if (deltas.some((delta) => Math.abs(delta) > LAYOUT_TOLERANCE)) {
+      diffs.push({ key, actual: box, expected: want, deltas });
+    }
+  }
+  return diffs;
 }
 
 function check(name, ok, detail = "") {
@@ -157,6 +216,7 @@ async function main() {
   await page.click(".auth-submit");
   await page.waitForSelector(".file-browser-box", { timeout: 15000 });
   await page.waitForTimeout(700);
+  const desktopLayout = await captureLayout(page);
 
   // 1) 控件上的 Enter/Space 不被全局文件快捷键吞掉。
   await page.locator(".nc-new-button").focus();
@@ -504,6 +564,7 @@ async function main() {
   await mobilePage.click(".auth-submit");
   await mobilePage.waitForSelector(".file-browser-box", { timeout: 15000 });
   await mobilePage.waitForTimeout(600);
+  const mobileLayout = await captureLayout(mobilePage);
   await scanAxe(mobilePage, "dark-mobile", [
     ["/", ".file-browser-box"],
     ["/admin/users", "table"],
@@ -553,6 +614,34 @@ async function main() {
     JSON.stringify(mobileGrid),
   );
   await mobileContext.close();
+
+  const actualLayout = { desktop: desktopLayout, mobile: mobileLayout };
+  const baseline = existsSync(LAYOUT_PATH)
+    ? JSON.parse(readFileSync(LAYOUT_PATH, "utf8"))
+    : {};
+  const layoutProblems = [
+    ...layoutDiffs(actualLayout.desktop, baseline.desktop).map((diff) => ({
+      viewport: "desktop",
+      ...diff,
+    })),
+    ...layoutDiffs(actualLayout.mobile, baseline.mobile).map((diff) => ({
+      viewport: "mobile",
+      ...diff,
+    })),
+  ];
+  if (UPDATE_LAYOUT || !existsSync(LAYOUT_PATH)) {
+    mkdirSync(join(ROOT, "client", "tests", "fixtures"), {
+      recursive: true,
+    });
+    writeFileSync(LAYOUT_PATH, `${JSON.stringify(actualLayout, null, 2)}\n`);
+    check("layout baseline written", true, LAYOUT_PATH);
+  } else {
+    check(
+      "layout signature matches baseline",
+      layoutProblems.length === 0,
+      layoutProblems.length ? JSON.stringify(layoutProblems) : "0 diffs",
+    );
+  }
 
   check(
     "axe serious/critical violations",
