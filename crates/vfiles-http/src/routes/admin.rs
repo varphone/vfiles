@@ -205,7 +205,7 @@ async fn system_info(
     State(state): State<AppState>,
     jar: CookieJar,
 ) -> ApiResult<Json<SystemInfoResponse>> {
-    let _actor = require_admin(&state, &jar).await?;
+    let _actor = require_admin_only(&state, &jar).await?;
     let uptime = process_start().elapsed().as_secs();
     let config = &state.config;
     let http_bind = listener_address(&config.http.host, config.http.port);
@@ -433,6 +433,18 @@ pub(crate) async fn require_admin(state: &AppState, jar: &CookieJar) -> ApiResul
     Ok(session.user)
 }
 
+/// 仅 admin 可用的系统/审计接口。
+///
+/// 管理台用户管理允许 manager（受 `can_manage_user` 约束），但系统信息与全量
+/// 审计日志属于更高敏感面；前端路由也把这两页限制为 admin，后端必须一致。
+pub(crate) async fn require_admin_only(state: &AppState, jar: &CookieJar) -> ApiResult<AuthUser> {
+    let user = require_admin(state, jar).await?;
+    if !user.role.is_admin() {
+        return Err(ApiError::forbidden("Admin role required"));
+    }
+    Ok(user)
+}
+
 /// 管理动作的审计记录：actor 为执行操作的管理员。
 async fn record_admin_action(
     state: &AppState,
@@ -612,7 +624,7 @@ async fn get_user(
     jar: CookieJar,
     ApiPath(user_id): ApiPath<String>,
 ) -> ApiResult<Json<AdminUserSummaryDto>> {
-    let _actor = require_admin(&state, &jar).await?;
+    let actor = require_admin(&state, &jar).await?;
     let admin_service = state
         .admin_service
         .as_ref()
@@ -624,6 +636,11 @@ async fn get_user(
     })?;
 
     let user = admin_service.get_user_details(&user_id).await?;
+    if !can_manage_user(actor.role, user.role, None) {
+        return Err(ApiError::forbidden(
+            "Only admin can inspect admin or manager accounts",
+        ));
+    }
     Ok(Json(user.into()))
 }
 
@@ -646,7 +663,7 @@ async fn list_user_sessions(
     jar: CookieJar,
     ApiPath(user_id): ApiPath<String>,
 ) -> ApiResult<Json<Vec<AdminSessionDto>>> {
-    let _actor = require_admin(&state, &jar).await?;
+    let actor = require_admin(&state, &jar).await?;
     let admin_service = state
         .admin_service
         .as_ref()
@@ -656,6 +673,13 @@ async fn list_user_sessions(
         field: "user_id".to_string(),
         message: "Invalid user ID".to_string(),
     })?;
+
+    let target = admin_service.get_user_details(&user_id).await?;
+    if !can_manage_user(actor.role, target.role, None) {
+        return Err(ApiError::forbidden(
+            "Only admin can inspect admin or manager sessions",
+        ));
+    }
 
     let sessions = admin_service.list_user_sessions(&user_id, 50).await?;
     Ok(Json(
@@ -762,6 +786,10 @@ async fn revoke_user_sessions(
 
     let target_username = current_user.username.to_string();
     admin_service.revoke_user_sessions(&user_id).await?;
+    let revoked_tokens = state
+        .access_token_service
+        .revoke_all_for_user(&user_id)
+        .await?;
 
     record_admin_action(
         &state,
@@ -769,7 +797,7 @@ async fn revoke_user_sessions(
         &actor,
         crate::audit::action::USER_SESSIONS_REVOKE,
         target_username.clone(),
-        format!("强制下线用户 {target_username}"),
+        format!("强制下线用户 {target_username}（会话与 {revoked_tokens} 个访问令牌）"),
     )
     .await;
 
@@ -777,6 +805,7 @@ async fn revoke_user_sessions(
 }
 
 async fn delete_user(
+    headers: axum::http::HeaderMap,
     State(state): State<AppState>,
     jar: CookieJar,
     ApiPath(user_id): ApiPath<String>,
@@ -800,11 +829,22 @@ async fn delete_user(
         ));
     }
 
+    let target_username = current_user.username.to_string();
     admin_service.delete_user(&user_id).await?;
+    record_admin_action(
+        &state,
+        &headers,
+        &actor,
+        crate::audit::action::USER_DELETE,
+        target_username.clone(),
+        format!("删除用户 {target_username}"),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn reset_password(
+    headers: axum::http::HeaderMap,
     State(state): State<AppState>,
     jar: CookieJar,
     ApiPath(user_id): ApiPath<String>,
@@ -829,8 +869,25 @@ async fn reset_password(
         ));
     }
 
+    let target_username = current_user.username.to_string();
     admin_service
         .reset_user_password(&user_id, &req.new_password)
         .await?;
+    // 重置密码通常发生在账号泄露后：必须同时撤销旧会话和长期令牌，否则
+    // 攻击者仍可用旧凭据继续访问。
+    admin_service.revoke_user_sessions(&user_id).await?;
+    let revoked_tokens = state
+        .access_token_service
+        .revoke_all_for_user(&user_id)
+        .await?;
+    record_admin_action(
+        &state,
+        &headers,
+        &actor,
+        crate::audit::action::USER_PASSWORD_RESET,
+        target_username.clone(),
+        format!("重置用户 {target_username} 的密码，并撤销全部会话与 {revoked_tokens} 个访问令牌"),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }

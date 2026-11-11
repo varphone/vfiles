@@ -20,7 +20,7 @@ use crate::{
     AppState,
     dto::format_timestamp,
     error::{ApiError, ApiQuery, ApiResult},
-    routes::admin::require_admin,
+    routes::admin::require_admin_only,
 };
 
 const DEFAULT_LIMIT: u32 = 50;
@@ -204,7 +204,7 @@ async fn list_logs(
     jar: CookieJar,
     ApiQuery(query): ApiQuery<ListAuditQuery>,
 ) -> ApiResult<Json<AuditLogListDto>> {
-    require_admin(&state, &jar).await?;
+    require_admin_only(&state, &jar).await?;
 
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let filter = build_filter(&query, limit, query.offset.unwrap_or(0))?;
@@ -279,7 +279,7 @@ async fn export_logs_csv(
     headers: axum::http::HeaderMap,
     ApiQuery(query): ApiQuery<ListAuditQuery>,
 ) -> ApiResult<Response> {
-    let actor = require_admin(&state, &jar).await?;
+    let actor = require_admin_only(&state, &jar).await?;
 
     // 先确认筛选合法（把参数错误返回给调用方）
     build_filter(&query, 1, 0)?;
@@ -402,7 +402,7 @@ async fn summarize_logs(
     jar: CookieJar,
     ApiQuery(query): ApiQuery<ListAuditQuery>,
 ) -> ApiResult<Json<AuditLogSummaryDto>> {
-    require_admin(&state, &jar).await?;
+    require_admin_only(&state, &jar).await?;
 
     let filter = build_filter(&query, 1, 0)?;
     let summary = state
@@ -437,7 +437,7 @@ async fn list_actions(
     State(state): State<AppState>,
     jar: CookieJar,
 ) -> ApiResult<Json<Vec<String>>> {
-    require_admin(&state, &jar).await?;
+    require_admin_only(&state, &jar).await?;
     let actions = state
         .audit_service
         .actions()
