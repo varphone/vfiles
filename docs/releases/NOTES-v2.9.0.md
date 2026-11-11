@@ -12,6 +12,8 @@
 - 新增 `snapshot_path_ranges` 路径存在区间，目录历史仍返回“路径存在的所有快照”，
   不需要每个快照保存一份完整路径。
 - 裁剪按完整 checkpoint epoch 删除，避免留下依赖已删除 checkpoint 的 delta。
+- 裁剪按批（每批最多 64 个快照）聚合 blob 引用并提交删除，降低长事务和 WAL 峰值；
+  孤儿 blob 清理改用 `blobs.ref_count`，不再扫描整张历史快照表。
 - 废弃 `VFILES_SNAPSHOT_COALESCE_SECONDS`：增量快照已替代旧合并窗口；设置后启动仅告警。
 
 ### 升级说明

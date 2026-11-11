@@ -4721,18 +4721,15 @@ impl EntryRepo for SqliteEntryRepo {
     }
 
     async fn referenced_blob_ids(&self) -> DomainResult<Vec<BlobId>> {
-        let rows: Vec<String> = sqlx::query_scalar(
-            r#"
-            SELECT blob_id FROM entry_versions WHERE blob_id IS NOT NULL
-            UNION
-            SELECT blob_id FROM snapshot_entries WHERE blob_id IS NOT NULL
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DomainError::Internal {
-            message: format!("Failed to list referenced blobs: {}", e),
-        })?;
+        // `blobs.ref_count` is maintained by every write path (entry versions,
+        // full snapshots and deltas). Reading it is O(blobs) and avoids scanning
+        // the 85M-row snapshot_entries table during every orphan-blob purge.
+        let rows: Vec<String> = sqlx::query_scalar("SELECT id FROM blobs WHERE ref_count > 0")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to list referenced blobs: {e}"),
+            })?;
 
         rows.iter()
             .map(|id| {
@@ -8924,6 +8921,51 @@ impl SnapshotRepo for SqliteSnapshotRepo {
             message: format!("Failed to prune snapshot path ranges: {error}"),
         })?;
         Ok(result.rows_affected())
+    }
+
+    async fn snapshot_blob_reference_counts_many(
+        &self,
+        snapshot_ids: &[SnapshotId],
+    ) -> DomainResult<Vec<(BlobId, u32)>> {
+        if snapshot_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut builder = sqlx::QueryBuilder::<Sqlite>::new(
+            "SELECT blob_id, SUM(reference_count) AS reference_count FROM (",
+        );
+        for (table, offset) in [("snapshot_entries", 0), ("snapshot_entry_changes", 1)] {
+            if offset == 1 {
+                builder.push(" UNION ALL ");
+            }
+            builder.push("SELECT blob_id, COUNT(*) AS reference_count FROM ");
+            builder.push(table);
+            builder.push(" WHERE snapshot_id IN (");
+            let mut separated = builder.separated(", ");
+            for snapshot_id in snapshot_ids {
+                separated.push_bind(snapshot_id.to_string());
+            }
+            separated.push_unseparated(") AND blob_id IS NOT NULL GROUP BY blob_id");
+        }
+        builder.push(") GROUP BY blob_id");
+        let rows = builder
+            .build_query_as::<(String, i64)>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to count snapshot blob references: {error}"),
+            })?;
+        rows.into_iter()
+            .map(|(blob_id, count)| {
+                Ok((
+                    BlobId::from_uuid(uuid::Uuid::parse_str(&blob_id).map_err(|_| {
+                        DomainError::Internal {
+                            message: "Invalid blob UUID in snapshot".to_string(),
+                        }
+                    })?),
+                    u32::try_from(count.max(0)).unwrap_or(u32::MAX),
+                ))
+            })
+            .collect()
     }
 
     async fn snapshot_blob_reference_counts(
@@ -13872,6 +13914,8 @@ mod snapshot_repo_tests {
     async fn batched_snapshot_deletion_removes_entries_and_counts_blob_references() {
         let (db_path, pool, repo, namespace_id, user_id) = setup_snapshot_repo().await;
 
+        let shared_blob = BlobId::new();
+        let other_blob = BlobId::new();
         let mut snapshot_ids = Vec::new();
         for index in 0..3 {
             let snapshot_id = repo
@@ -13883,8 +13927,6 @@ mod snapshot_repo_tests {
                 )
                 .await
                 .expect("snapshot should be created");
-            let shared_blob = BlobId::new();
-            let other_blob = BlobId::new();
             let entries = [
                 ("a.txt", shared_blob),
                 ("b.txt", shared_blob),
@@ -13922,6 +13964,17 @@ mod snapshot_repo_tests {
             counts.iter().map(|(_, count)| *count).sum::<u32>(),
             3,
             "every entry contributes one reference"
+        );
+
+        let many = repo
+            .snapshot_blob_reference_counts_many(&snapshot_ids)
+            .await
+            .expect("batched blob counts should load");
+        assert_eq!(many.iter().map(|(_, count)| *count).sum::<u32>(), 9);
+        assert_eq!(
+            many.len(),
+            2,
+            "shared blobs are aggregated across snapshots"
         );
 
         let deleted = repo

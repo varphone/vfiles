@@ -1000,8 +1000,10 @@ where
                 groups.entry(group_id).or_default().push(snapshot);
             }
 
-            let mut doomed = Vec::new();
-            let mut counts = std::collections::HashMap::<BlobId, u32>::new();
+            // Keep checkpoint+delta epochs together. A checkpoint deleted in an
+            // earlier batch than its deltas would make those snapshots unreadable
+            // while the command is still running.
+            let mut doomed_groups = Vec::<Vec<SnapshotId>>::new();
             for group in groups.values() {
                 // Keep the whole epoch if any member is in the newest `keep`, or
                 // if any member is newer than the age cutoff.
@@ -1016,24 +1018,57 @@ where
                 {
                     continue;
                 }
-                for snapshot in group {
-                    for (blob_id, count) in self
-                        .snapshot_repo
-                        .snapshot_blob_reference_counts(&snapshot.id)
-                        .await?
-                    {
-                        *counts.entry(blob_id).or_insert(0) += count;
-                    }
-                    doomed.push(snapshot.id);
-                }
+                doomed_groups.push(group.iter().map(|snapshot| snapshot.id).collect());
             }
-            if doomed.is_empty() {
+            if doomed_groups.is_empty() {
                 continue;
             }
 
-            report.pruned_snapshots += self.snapshot_repo.delete_snapshots(&doomed).await?;
-            let doomed_ids = doomed
+            let namespace_id = snapshots
+                .first()
+                .map(|snapshot| snapshot.namespace_id)
+                .expect("namespace snapshot group");
+            // Deleting tens of millions of legacy rows in one transaction keeps a
+            // long write lock and a huge WAL. Count and delete in bounded batches;
+            // a killed command leaves a consistent, resumable partial prune.
+            const SNAPSHOT_PRUNE_BATCH: usize = 64;
+            let mut batches = Vec::<Vec<SnapshotId>>::new();
+            let mut current = Vec::new();
+            for group in doomed_groups {
+                if !current.is_empty() && current.len() + group.len() > SNAPSHOT_PRUNE_BATCH {
+                    batches.push(std::mem::take(&mut current));
+                }
+                current.extend(group);
+            }
+            if !current.is_empty() {
+                batches.push(current);
+            }
+
+            for (batch_index, chunk) in batches.iter().enumerate() {
+                let counts = self
+                    .snapshot_repo
+                    .snapshot_blob_reference_counts_many(chunk)
+                    .await?;
+                let deleted = self.snapshot_repo.delete_snapshots(chunk).await?;
+                report.pruned_snapshots += deleted;
+                let references = counts.into_iter().collect::<Vec<_>>();
+                let removable = self.entry_repo.release_blob_references(&references).await?;
+                for blob_id in removable {
+                    self.blob_store.defer_blob_deletion(&blob_id).await?;
+                    report.released_blobs += 1;
+                }
+                tracing::info!(
+                    namespace = %namespace_id,
+                    batch = batch_index + 1,
+                    snapshots = chunk.len(),
+                    pruned_snapshots = deleted,
+                    "pruned snapshot batch"
+                );
+            }
+
+            let doomed_ids = batches
                 .iter()
+                .flatten()
                 .copied()
                 .collect::<std::collections::HashSet<_>>();
             if let Some(oldest_retained) = snapshots
@@ -1041,18 +1076,10 @@ where
                 .filter(|snapshot| !doomed_ids.contains(&snapshot.id))
                 .map(|snapshot| snapshot.sequence)
                 .min()
-                && let Some(namespace_id) = snapshots.first().map(|snapshot| snapshot.namespace_id)
             {
                 self.snapshot_repo
                     .prune_path_ranges_before(&namespace_id, oldest_retained)
                     .await?;
-            }
-
-            let references = counts.into_iter().collect::<Vec<_>>();
-            let removable = self.entry_repo.release_blob_references(&references).await?;
-            for blob_id in removable {
-                self.blob_store.defer_blob_deletion(&blob_id).await?;
-                report.released_blobs += 1;
             }
         }
 

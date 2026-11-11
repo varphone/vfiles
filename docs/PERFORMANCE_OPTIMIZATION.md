@@ -51,6 +51,17 @@
 每次变更的 delta。基准测试位于 `vfiles-infra-sqlite` 的
 `benchmark_50k_entries_10k_snapshots_stays_incremental`，默认 `#[ignore]`。
 
+### 裁剪旧快照
+
+旧实现逐快照统计 blob 引用，再把所有待删快照放进一个事务；在 85M 行 legacy 数据上会形成
+N 次全量聚合和一个超大 WAL。现在改为：
+
+- 每批最多 64 个快照，按批聚合 `snapshot_entries` 与 `snapshot_entry_changes` 的 blob 引用；
+- 每批一个删除事务并释放引用，进程中断可重跑；
+- 孤儿 blob 清理使用 `blobs.ref_count > 0`，不再对 85M 行快照表做 `UNION` 去重。
+
+注意：删除 85M 行本身仍是主要成本，批量只避免长事务和重复扫描；不会把删除变成瞬间完成。
+
 ## 第四轮：自动快照合并（可选，已被 2.9 增量快照取代）
 
 > **2.9 起**：快照改为 checkpoint + delta，普通写入不再复制整棵树；

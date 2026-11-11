@@ -270,6 +270,10 @@ VFILES_SNAPSHOT_CHECKPOINT_INTERVAL=1024
 裁剪会按 checkpoint + delta 的完整 epoch 删除；如果 `--keep` 落在 epoch 中间，会保留整个
 epoch，因此实际保留数可能略大于 `--keep`。旧 `legacy` 快照可单独裁剪。
 
+删除按最多 64 个快照一批提交，每批输出一条 `pruned snapshot batch` 日志；进程中断只会留下
+已提交的批次，重跑即可继续。即使如此，删除数千万行 `legacy` 快照仍需时间，建议分批降低
+`--keep` 并在低峰期运行，完成后停机 `VACUUM`。
+
 ### 写入请求的来源校验
 
 所有写请求（登录、上传、移动、删除等）都会校验浏览器发来的 `Origin`：

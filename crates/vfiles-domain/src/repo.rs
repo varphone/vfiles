@@ -1444,6 +1444,22 @@ pub trait SnapshotRepo {
         }
         Ok(deleted)
     }
+    /// 统计一批快照持有的 blob 引用次数；裁剪时按批调用，避免每个快照
+    /// 各做一次全量聚合。
+    async fn snapshot_blob_reference_counts_many(
+        &self,
+        snapshot_ids: &[SnapshotId],
+    ) -> DomainResult<Vec<(BlobId, u32)>> {
+        let mut counts = std::collections::HashMap::<BlobId, u32>::new();
+        for snapshot_id in snapshot_ids {
+            for (blob_id, count) in self.snapshot_blob_reference_counts(snapshot_id).await? {
+                let entry = counts.entry(blob_id).or_insert(0);
+                *entry = entry.saturating_add(count);
+            }
+        }
+        Ok(counts.into_iter().collect())
+    }
+
     /// 统计一个快照持有的 blob 引用次数（裁剪前汇总，随后由条目仓储扣减）。
     ///
     /// 默认实现通过快照条目在内存中统计；存储实现应在 SQL 内聚合，避免把整份
