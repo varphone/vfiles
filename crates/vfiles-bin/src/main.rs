@@ -1514,10 +1514,22 @@ async fn run_serve(args: ServeArgs) -> anyhow::Result<()> {
             mount = %mount,
             "WebDAV 已挂载（共端口模式 ✓ 主端口同时提供 HTTP API + WebDAV + 前端）"
         );
+        // WebDAV 在主 Router 的 layer 之后才挂入，必须自己补安全头；否则
+        // /dav 的 HTML/SVG 响应既没有 CSP 也没有 nosniff，会绕过主应用的防护。
+        let webdav_hsts = config
+            .http
+            .public_base_url
+            .scheme()
+            .eq_ignore_ascii_case("https");
         app = app.nest_service(
             &mount,
             vfiles_webdav::apply_options_capabilities(
-                vfiles_webdav::router_for_e2e(webdav_app).layer(vfiles_http::cors_layer(&config)),
+                vfiles_webdav::router_for_e2e(webdav_app)
+                    .layer(vfiles_http::cors_layer(&config))
+                    .layer(axum::middleware::from_fn_with_state(
+                        webdav_hsts,
+                        vfiles_http::middleware::security_headers_middleware,
+                    )),
             )
             .into_service(),
         );
@@ -2827,16 +2839,39 @@ async fn build_s3_service(
 }
 
 fn s3_http_router(service: s3s::service::S3Service) -> axum::Router {
-    axum::Router::new().fallback_service(axum::error_handling::HandleError::new(
-        service,
-        |err: s3s::HttpError| async move {
-            tracing::error!(?err, "S3 服务错误");
-            axum::response::Response::builder()
-                .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
-                .body(axum::body::Body::from("Internal Server Error"))
-                .unwrap()
-        },
-    ))
+    axum::Router::new()
+        .fallback_service(axum::error_handling::HandleError::new(
+            service,
+            |err: s3s::HttpError| async move {
+                tracing::error!(?err, "S3 服务错误");
+                axum::response::Response::builder()
+                    .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(axum::body::Body::from("Internal Server Error"))
+                    .unwrap()
+            },
+        ))
+        .layer(axum::middleware::from_fn(s3_browser_safety_headers))
+}
+
+/// 专用端口 S3 也必须防浏览器把用户上传的 HTML/SVG 当文档执行；SDK 忽略这些头。
+async fn s3_browser_safety_headers(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_DISPOSITION,
+        axum::http::HeaderValue::from_static("attachment"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        axum::http::HeaderValue::from_static("sandbox"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        axum::http::HeaderValue::from_static("nosniff"),
+    );
+    response
 }
 
 fn spawn_s3_server(
@@ -2919,7 +2954,22 @@ async fn dispatch_s3_request(
 
     match service.oneshot(request).await {
         Ok(response) => {
-            let (parts, body) = response.into_parts();
+            let (mut parts, body) = response.into_parts();
+            // S3 与主应用共端口；预签名 URL 可被浏览器直接打开，用户上传的
+            // HTML/SVG 不能以可执行文档形式返回。所有 S3 响应强制下载并加
+            // sandbox CSP，SDK 会忽略这些浏览器专用头。
+            parts.headers.insert(
+                axum::http::header::CONTENT_DISPOSITION,
+                axum::http::HeaderValue::from_static("attachment"),
+            );
+            parts.headers.insert(
+                axum::http::header::CONTENT_SECURITY_POLICY,
+                axum::http::HeaderValue::from_static("sandbox"),
+            );
+            parts.headers.insert(
+                axum::http::header::X_CONTENT_TYPE_OPTIONS,
+                axum::http::HeaderValue::from_static("nosniff"),
+            );
             axum::http::Response::from_parts(parts, axum::body::Body::new(body))
         }
         Err(err) => {

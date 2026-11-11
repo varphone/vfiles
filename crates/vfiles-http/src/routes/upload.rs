@@ -213,23 +213,29 @@ async fn create_upload(
     ApiJson(req): ApiJson<UploadRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let ctx = protected_request_context(&state, &jar).await?;
-    tracing::info!(
-        "Creating upload session for file: {} (size: {} bytes)",
-        req.filename,
-        req.size_bytes
-    );
 
-    // Validate filename
+    // Validate filename before logging it: a newline/control character in the
+    // name could forge log lines.
     if req.filename.is_empty()
         || req.filename.contains('/')
         || req.filename.contains('\\')
         || req.filename == "."
         || req.filename == ".."
+        || req
+            .filename
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'))
     {
         return Err(ApiError::Domain(DomainError::Validation {
             message: "Invalid filename".to_string(),
         }));
     }
+
+    tracing::info!(
+        "Creating upload session for file: {} (size: {} bytes)",
+        req.filename,
+        req.size_bytes
+    );
 
     // Validate file size
     let max_upload_size = max_upload_size_bytes(&state);

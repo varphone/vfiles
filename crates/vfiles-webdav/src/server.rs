@@ -1069,6 +1069,11 @@ async fn get_op(
             // 此前忽略 Range = 播放器要 206 给全量 200 = mp4 循环重试真因）
             let mut base = Response::builder()
                 .header(header::CONTENT_TYPE, mime)
+                // WebDAV 与主应用同源。用户可上传 HTML/SVG/JS，浏览器直接打开
+                // /dav/... 会在应用源里执行脚本并携带会话 Cookie；一律强制下载，
+                // 防止把 WebDAV 变成一个存储型 XSS 入口。
+                .header(header::CONTENT_DISPOSITION, "attachment")
+                .header("content-security-policy", "sandbox")
                 .header("accept-ranges", "bytes");
             if let Some(et) = cur_etag.as_deref() {
                 base = base.header(header::ETAG, et); // r14 GET/206 响应暴露 ETag
@@ -2807,7 +2812,12 @@ static AUTH_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 async fn dav(req: axum::extract::Request) -> Response {
     // 访问日志（r208 ✓ 主流服务器标配 ✗ 此前成功连接在 info 级全隐身 = 用户"看不到日志"）
     let method = req.method().to_string();
-    let path = percent_decode(req.uri().path());
+    let path = percent_decode(req.uri().path())
+        .chars()
+        .filter(|character| {
+            !character.is_control() && !matches!(character, '\u{2028}' | '\u{2029}')
+        })
+        .collect::<String>();
     let resp = dav_inner(req).await;
     let status = resp.status().as_u16();
     if status == 404 && method == "PROPFIND" {

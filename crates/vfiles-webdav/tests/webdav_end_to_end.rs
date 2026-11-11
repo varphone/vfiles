@@ -352,7 +352,11 @@ async fn options_advertises_and_propfind_needs_auth() {
         let auth = Arc::clone(&auth);
         Arc::new(move |u: String, pw: String| {
             let auth = Arc::clone(&auth);
-            Box::pin(async move { auth.verify_credentials(&u, &pw).await.ok() })
+            Box::pin(async move {
+                auth.verify_credentials(&u, &pw, false)
+                    .await
+                    .map(|login| login.user)
+            })
         })
     };
     let login_attempt_limiter = Arc::new(vfiles_app::LoginAttemptLimiter::new());
@@ -1458,6 +1462,21 @@ async fn options_advertises_and_propfind_needs_auth() {
         .await
         .unwrap();
     assert_eq!(full_get.status(), 200);
+    assert_eq!(
+        full_get
+            .headers()
+            .get("content-disposition")
+            .and_then(|value| value.to_str().ok()),
+        Some("attachment"),
+        "WebDAV GET must force a download instead of executing user HTML"
+    );
+    assert_eq!(
+        full_get
+            .headers()
+            .get("content-security-policy")
+            .and_then(|value| value.to_str().ok()),
+        Some("sandbox")
+    );
     let etag = full_get
         .headers()
         .get("etag")

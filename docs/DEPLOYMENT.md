@@ -71,6 +71,7 @@ RUST_LOG=info
 - `VFILES_HTTP_CORS_ALLOWED_ORIGINS` 留空时，会默认回落到 `VFILES_HTTP_PUBLIC_BASE_URL` 的 origin；如果前端和 API 不同源，请显式写成逗号分隔列表。
 - `VFILES_HTTP_TRUSTED_PROXIES` 是逗号分隔的反向代理 IP 白名单，默认留空。只有连接来源命中白名单时，服务才会采用代理提供的客户端 IP 头；X-Forwarded-For 会从右向左跳过受信代理，使用最近的非受信地址。代理应追加真实连接地址，让客户端传入的更左侧值不会参与限流或审计。
 - 登录失败限流由 `VFILES_AUTH_LOGIN_RATE_LIMIT_ENABLED`、`VFILES_AUTH_LOGIN_RATE_LIMIT_WINDOW_MS` 和 `VFILES_AUTH_LOGIN_RATE_LIMIT_MAX` 控制；启用时窗口必须不超过 365 天。失败次数同时按规范化账号和来源 IP 计数，来源 IP 汇总上限为单账号上限的 10 倍，且 FTP、HTTP、WebDAV 共用计数。
+- 开放注册时（`VFILES_AUTH_ALLOW_REGISTER=true`）注册请求复用同一来源 IP 限流：同一窗口内超过阈值返回 `429`。公网仍建议保持注册关闭，或在反向代理再加一层注册限流。
 - `VFILES_STORAGE_ROOT` 下会自动创建 `blobs`、`uploads`、`tmp`、`export`、`logs`、`backups` 等目录。
 - `VFILES_FRONTEND_DIST` 在运行时用于外部静态资源托管；启用 `embed` feature 时，也可在编译期指定待嵌入目录。
 - 仍兼容读取旧别名 `PUBLIC_BASE_URL`、`CORS_ORIGIN`、`HTTP_COOKIE_SECURE`、`AUTH_SECRET`、`ENABLE_AUTH`、`AUTH_ALLOW_REGISTER`，但新部署不建议继续使用旧名字。
@@ -207,6 +208,12 @@ sudo ./vfiles register -t systemd \
 - 如果浏览器端与 API 不同源，显式设置 `VFILES_HTTP_CORS_ALLOWED_ORIGINS`
 - 下载接口转发时保留 Range 相关头
 - 上传场景适当提高反向代理的请求体限制
+- **WebDAV 使用 HTTP Basic，凭据会在每个请求中发送**：公网必须只经 HTTPS 暴露
+  `/dav`；不要把 WebDAV 单独开到明文端口。FTP 已默认强制 FTPS，WebDAV 没有同等的
+  应用层加密，需由反向代理或 TLS 终结层保证。
+- `/dav` 与 `/s3` 默认和应用共用主端口、同源。它们的 GET 响应会强制
+  `Content-Disposition: attachment` 并加 sandbox CSP，避免用户上传的 HTML/SVG 在
+  应用源里执行；反向代理不要剥离这两个响应头。
 
 ## 运行验收
 

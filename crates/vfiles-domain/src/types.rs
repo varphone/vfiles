@@ -699,6 +699,14 @@ impl NormalizedPath {
         if path.contains("..") || path.contains("//") || path.starts_with('/') {
             return Err("Invalid path format".to_string());
         }
+        // 控制字符会进入日志、审计详情和 HTTP 头；NUL 还会在部分文件系统上
+        // 截断路径。文件名同样经过这里，因此统一拒绝，而不是依赖各调用点。
+        if path
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'))
+        {
+            return Err("Path must not contain control characters".to_string());
+        }
         Ok(Self(path.to_string()))
     }
 
@@ -953,6 +961,10 @@ mod tests {
         assert!(NormalizedPath::new("").is_ok()); // Empty string is allowed for root path
         assert!(NormalizedPath::new("../test").is_err());
         assert!(NormalizedPath::new("valid/path").is_ok());
+        assert!(NormalizedPath::new("line\nbreak").is_err());
+        assert!(NormalizedPath::new("nul\0byte").is_err());
+        assert!(NormalizedPath::new("separator\u{2028}line").is_err());
+        assert!(NormalizedPath::new("separator\u{2029}line").is_err());
     }
 
     #[test]
