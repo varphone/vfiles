@@ -297,7 +297,7 @@ curl -T app.tar.gz -H "Authorization: Bearer $TOKEN" \
 给脚本、CI 等程序使用的 API 凭证：创建后把明文当 `Bearer` 令牌使用，**无需登录会话**。
 
 ```bash
-# 所有需要登录的接口都接受 Bearer 令牌
+# 文件/分享/历史等数据接口接受 Bearer 令牌
 curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci"
 ```
 
@@ -358,7 +358,9 @@ curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci
 
 - 明文形如 `vfat_<64 位十六进制>`，**只在创建响应里出现一次**；服务端只保存 SHA-256 摘要与展示前缀；
 - 令牌不能读取令牌管理列表、创建令牌或撤销令牌；这些接口只接受会话 Cookie 鉴权，使用 Bearer 令牌时返回 `403`，避免泄露后自我扩权；
+- 账号资料、改密和登录凭据（`/api/auth/profile`、`/api/auth/password`、`/api/auth/credentials*`）同样只接受会话 Cookie：令牌泄露后若能改邮箱或新增登录密码，就会升级为持久账号接管；
 - 撤销、过期或用户被禁用后，令牌立即失效（`401`）；
+- 修改主密码、管理员重置密码或强制下线会撤销该账号的全部访问令牌；改密后旧令牌不能继续访问；
 - 鉴权成功后会记录 `last_used_at`：首次使用时立即写入，同一服务进程内之后最多每分钟刷新一次；
 - 创建与撤销都会写入审计日志（动作 `token.create` / `token.revoke`）。
 
@@ -405,7 +407,7 @@ curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci
     "entry_name": "季报.txt",
     "entry_path": "文档/季报.txt",
     "entry_kind": "file",
-    "code": "c2a413be",
+    "code": "c2a413be7d9f4a1c",
     "expires_at": "2026-09-28T16:29:51Z",
     "created_by": "…",
     "created_at": "2026-09-21T16:29:51Z",
@@ -429,6 +431,7 @@ curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci
 ```
 
 - `entry_kind` 为 `file` 或 `directory`；`entry_name` 由条目路径末段推导（数据库中条目只有路径）；
+- 新建分享的 `code` 为 16 位 base32；历史 8 位链接仍可查询和停止，不需要迁移；
 - 单条分享接口（创建 / 按 code 查询）的 `entry_*` 字段为空或默认值，因为不需要回查条目；
 - 停止分享仍使用 `DELETE /api/share/shares/{code}`。
 
@@ -532,7 +535,7 @@ IPv6 字面量在 `example_command` 中带方括号。
 
 ## 管理员接口
 
-这些接口要求管理员或具备管理能力的账号：
+这些接口要求管理员或具备管理能力的账号（manager）：
 
 - `GET /api/admin/users?page=1&page_size=20`
 - `POST /api/admin/users`
@@ -541,6 +544,10 @@ IPv6 字面量在 `example_command` 中带方括号。
 - `DELETE /api/admin/users/{user_id}`
 - `POST /api/admin/users/{user_id}/revoke-sessions`
 - `POST /api/admin/users/{user_id}/reset-password`
+
+系统信息（`/api/admin/system-info`）和全量审计日志（`/api/audit/*`）只允许 `admin`：
+manager 直接访问会得到 `403`，与前端路由守卫一致。manager 也不能查看/管理
+admin 或另一个 manager 的详情与会话。
 
 ## 说明
 
