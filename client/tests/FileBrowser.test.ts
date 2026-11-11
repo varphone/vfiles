@@ -1731,7 +1731,13 @@ describe("FileBrowser.vue preview copy", () => {
     const name = await findByText("main.ts");
     await fireEvent.dblClick(name.closest("tr")!);
 
-    const copyButton = await findByRole("button", { name: /复制/ });
+    // Preview content is fetched asynchronously; coverage instrumentation in CI
+    // can push this past Testing Library's 1s default.
+    const copyButton = await findByRole(
+      "button",
+      { name: /复制/ },
+      { timeout: 5000 },
+    );
     await fireEvent.click(copyButton);
 
     await waitFor(() => {
