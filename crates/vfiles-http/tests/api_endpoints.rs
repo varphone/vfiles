@@ -16,7 +16,7 @@ use vfiles_app::{
     SessionService, ShareService, UploadService, WorkspaceService,
 };
 use vfiles_config::ConfigLoader;
-use vfiles_domain::{FeatureMatrix, NamespaceRepo, UserRepo};
+use vfiles_domain::{FeatureMatrix, NamespaceRepo, UserRepo, share_code::SHARE_CODE_LENGTH};
 use vfiles_http::{
     AppState, FrontendAssets, FtpsStartupStatus, build_router, middleware::LoginAttemptLimiter,
 };
@@ -4285,7 +4285,7 @@ async fn share_creation_uses_configured_public_base_url() {
     let code = share_payload["code"]
         .as_str()
         .expect("share code should be present");
-    assert_eq!(code.len(), 8, "share codes should remain short for users");
+    assert_eq!(code.len(), SHARE_CODE_LENGTH);
     assert!(
         code.bytes()
             .all(|byte| b"0123456789abcdefghjkmnpqrstvwxyz".contains(&byte))
@@ -4327,13 +4327,11 @@ async fn share_management_page_bounds_sql_results_and_reports_continuation() {
     assert_eq!(legacy.status(), StatusCode::OK);
     let legacy_shares = response_json(legacy).await;
     assert_eq!(legacy_shares.as_array().map(Vec::len), Some(3));
-    assert!(
-        legacy_shares
-            .as_array()
-            .into_iter()
-            .flatten()
-            .all(|share| share["code"].as_str().is_some_and(|code| code.len() == 8))
-    );
+    assert!(legacy_shares.as_array().into_iter().flatten().all(|share| {
+        share["code"]
+            .as_str()
+            .is_some_and(|code| code.len() == SHARE_CODE_LENGTH)
+    }));
 
     let first = app
         .request_with_cookie(
@@ -4376,7 +4374,7 @@ async fn share_management_page_bounds_sql_results_and_reports_continuation() {
         .filter_map(|item| item["code"].as_str())
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(codes.len(), 3);
-    assert!(codes.iter().all(|code| code.len() == 8));
+    assert!(codes.iter().all(|code| code.len() == SHARE_CODE_LENGTH));
 
     let oversized_page = app
         .request_with_cookie(
@@ -4477,7 +4475,9 @@ async fn legacy_share_listing_rejects_results_over_its_response_limit() {
             .as_array()
             .into_iter()
             .flatten()
-            .all(|share| share["code"].as_str().is_some_and(|code| code.len() == 8))
+            .all(|share| share["code"]
+                .as_str()
+                .is_some_and(|code| { code.len() == 8 || code.len() == SHARE_CODE_LENGTH }))
     );
 }
 
@@ -4539,7 +4539,7 @@ async fn migrated_long_share_keys_keep_short_public_codes_and_old_links_work() {
         .as_str()
         .expect("management API should expose a public code")
         .to_string();
-    assert_eq!(listed_code.len(), 8);
+    assert_eq!(listed_code.len(), SHARE_CODE_LENGTH);
     assert!(
         listed_code
             .bytes()
@@ -5354,6 +5354,44 @@ async fn access_token_authenticates_api_requests() {
         "access tokens must not read token-management metadata"
     );
 
+    // 账号资料、密码和登录凭据属于“账号接管面”，访问令牌同样不能操作。
+    for (path, body) in [
+        ("/api/auth/profile", json!({ "email": "token@example.com" })),
+        (
+            "/api/auth/credentials",
+            json!({
+                "label": "token-credential",
+                "password": "token-password",
+                "roots": [],
+                "canWrite": false
+            }),
+        ),
+        (
+            "/api/auth/password",
+            json!({
+                "currentPassword": "admin-password",
+                "newPassword": "another-password"
+            }),
+        ),
+    ] {
+        let denied = app
+            .request(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(path)
+                    .header(header::AUTHORIZATION, &bearer)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).expect("json body")))
+                    .expect("request should build"),
+            )
+            .await;
+        assert_eq!(
+            denied.status(),
+            StatusCode::FORBIDDEN,
+            "access tokens must not operate account credentials at {path}"
+        );
+    }
+
     // 7) 撤销后令牌立即失效
     let token_id = items[0]["id"].as_str().expect("token id").to_string();
     let revoked = app
@@ -5398,6 +5436,75 @@ async fn access_token_authenticates_api_requests() {
         .json_request(Method::POST, "/api/tokens", json!({ "name": "anon" }))
         .await;
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// 改密必须让旧的长期令牌一起失效；只撤销会话会留下可继续访问的凭据。
+#[tokio::test]
+async fn password_change_revokes_access_tokens() {
+    use axum::http::header;
+
+    let app = TestApp::new().await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+    let created = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/tokens",
+            json!({ "name": "rotation-check" }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(created.status(), StatusCode::OK);
+    let plaintext = response_json(created).await["plaintext"]
+        .as_str()
+        .expect("plaintext token")
+        .to_string();
+    let bearer = format!("Bearer {plaintext}");
+
+    let changed = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/auth/password",
+            json!({
+                "currentPassword": "admin-password",
+                "newPassword": "rotated-admin-password"
+            }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(changed.status(), StatusCode::OK);
+
+    let after_change = app
+        .request(
+            Request::builder()
+                .uri("/api/files/tree")
+                .header(header::AUTHORIZATION, &bearer)
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(
+        after_change.status(),
+        StatusCode::UNAUTHORIZED,
+        "password change must revoke access tokens"
+    );
+
+    let old_cookie = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/auth/me")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let old_cookie = response_json(old_cookie).await;
+    assert!(
+        old_cookie["data"]["user"].is_null(),
+        "password change must revoke sessions"
+    );
+
+    // 新密码仍可登录。
+    let _new_cookie = app.login_cookie("admin", "rotated-admin-password").await;
 }
 
 #[tokio::test]
@@ -8968,6 +9075,52 @@ async fn manager_can_access_admin_routes_but_cannot_promote_users_to_manager() {
         .await;
     assert_eq!(manager_list.status(), StatusCode::OK);
 
+    let admin_id = users_payload["users"]
+        .as_array()
+        .expect("users should be an array")
+        .iter()
+        .find(|user| user["username"] == Value::String("admin".to_string()))
+        .and_then(|user| user["id"].as_str())
+        .expect("admin id should be present")
+        .to_string();
+
+    // 系统信息与全量审计日志属于 admin-only：前端路由也这样限制，manager
+    // 不能靠直接调用 API 绕过。
+    for path in [
+        "/api/admin/system-info".to_string(),
+        "/api/audit/logs".to_string(),
+        "/api/audit/logs.csv".to_string(),
+        format!("/api/admin/users/{admin_id}"),
+        format!("/api/admin/users/{admin_id}/sessions"),
+    ] {
+        let denied = app
+            .request_with_cookie(
+                Request::builder()
+                    .uri(&path)
+                    .body(Body::empty())
+                    .expect("request should build"),
+                &manager_cookie,
+            )
+            .await;
+        assert_eq!(
+            denied.status(),
+            StatusCode::FORBIDDEN,
+            "manager must not access {path}"
+        );
+    }
+
+    // 普通用户仍在 manager 的可管理范围内。
+    let member_detail = app
+        .request_with_cookie(
+            Request::builder()
+                .uri(format!("/api/admin/users/{member_id}"))
+                .body(Body::empty())
+                .expect("request should build"),
+            &manager_cookie,
+        )
+        .await;
+    assert_eq!(member_detail.status(), StatusCode::OK);
+
     let forbidden = app
         .json_request_with_cookie(
             Method::PUT,
@@ -8977,6 +9130,93 @@ async fn manager_can_access_admin_routes_but_cannot_promote_users_to_manager() {
         )
         .await;
     assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn admin_password_reset_revokes_sessions_and_access_tokens() {
+    use axum::http::header;
+
+    let app = TestApp::new().await;
+    app.register_user("member", "member@example.com", "member-password")
+        .await;
+    let admin_cookie = app.login_cookie("admin", "admin-password").await;
+    let member_cookie = app.login_cookie("member", "member-password").await;
+
+    let users = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/admin/users")
+                .body(Body::empty())
+                .expect("request should build"),
+            &admin_cookie,
+        )
+        .await;
+    let users = response_json(users).await;
+    let member_id = users["users"]
+        .as_array()
+        .expect("users should be an array")
+        .iter()
+        .find(|user| user["username"] == Value::String("member".to_string()))
+        .and_then(|user| user["id"].as_str())
+        .expect("member id should be present")
+        .to_string();
+
+    let created = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/tokens",
+            json!({ "name": "reset-check" }),
+            &member_cookie,
+        )
+        .await;
+    assert_eq!(created.status(), StatusCode::OK);
+    let plaintext = response_json(created).await["plaintext"]
+        .as_str()
+        .expect("plaintext token")
+        .to_string();
+    let bearer = format!("Bearer {plaintext}");
+
+    let reset = app
+        .json_request_with_cookie(
+            Method::POST,
+            &format!("/api/admin/users/{member_id}/reset-password"),
+            json!({ "new_password": "member-password-2" }),
+            &admin_cookie,
+        )
+        .await;
+    assert_eq!(reset.status(), StatusCode::NO_CONTENT);
+
+    let stale_session = app
+        .request_with_cookie(
+            Request::builder()
+                .uri("/api/auth/me")
+                .body(Body::empty())
+                .expect("request should build"),
+            &member_cookie,
+        )
+        .await;
+    let stale_session = response_json(stale_session).await;
+    assert!(
+        stale_session["data"]["user"].is_null(),
+        "admin password reset must revoke existing sessions"
+    );
+
+    let stale_token = app
+        .request(
+            Request::builder()
+                .uri("/api/files/tree")
+                .header(header::AUTHORIZATION, &bearer)
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(
+        stale_token.status(),
+        StatusCode::UNAUTHORIZED,
+        "admin password reset must revoke access tokens"
+    );
+
+    let _new_cookie = app.login_cookie("member", "member-password-2").await;
 }
 
 #[tokio::test]
@@ -9780,6 +10020,34 @@ async fn scoped_password_restricts_http_paths_and_account_actions() {
     assert_eq!(me["data"]["scope"]["label"], Value::from("read-docs"));
     assert_eq!(me["data"]["scope"]["roots"], json!(["docs"]));
     assert_eq!(me["data"]["scope"]["canWrite"], Value::Bool(false));
+
+    // 收藏的写入响应也必须应用范围：管理员收藏了范围外的 secret，受限密码
+    // 添加 docs 收藏时不能把 secret 随响应带出来。
+    let seed_secret_favorite = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/favorites",
+            json!({ "path": "secret/private.txt" }),
+        )
+        .await;
+    assert_eq!(seed_secret_favorite.status(), StatusCode::CREATED);
+    let add_scoped_favorite = app
+        .json_request_with_cookie(
+            Method::POST,
+            "/api/files/favorites",
+            json!({ "path": "docs/public.txt" }),
+            &scoped,
+        )
+        .await;
+    assert_eq!(add_scoped_favorite.status(), StatusCode::CREATED);
+    let scoped_favorites = response_json(add_scoped_favorite).await;
+    let favorite_paths = scoped_favorites["items"]
+        .as_array()
+        .expect("favorites should be an array")
+        .iter()
+        .filter_map(|item| item["path"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(favorite_paths, vec!["docs/public.txt"]);
 
     let allowed = [
         "/api/files/list/docs?limit=50",
