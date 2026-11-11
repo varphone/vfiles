@@ -4343,6 +4343,8 @@ impl EntryRepo for SqliteEntryRepo {
                     .bind(namespace_id.to_string())
                     .bind(&root)
                     .bind(limit)
+                    // 首页没有游标：SQL 仍带 OFFSET 占位符，必须显式绑定 0。
+                    .bind(0_i64)
                     .fetch_all(&self.pool)
                     .await
             }
@@ -15994,7 +15996,13 @@ mod credential_repo_tests {
         let photos = NormalizedPath::new("photos/2024").expect("valid path");
 
         let first = repo
-            .create_credential(&user_id, "docs-reader", "hash-a", &[docs.clone()], false)
+            .create_credential(
+                &user_id,
+                "docs-reader",
+                "hash-a",
+                std::slice::from_ref(&docs),
+                false,
+            )
             .await
             .expect("first credential");
         let second = repo
@@ -16026,7 +16034,7 @@ mod credential_repo_tests {
         assert!(listed[0].last_used_at.is_none());
 
         // 更新标签与范围，并记录使用时间。
-        repo.update_credential(&first, "docs-writer", &[docs.clone()], true)
+        repo.update_credential(&first, "docs-writer", std::slice::from_ref(&docs), true)
             .await
             .expect("credential should update");
         repo.touch_credential_used(&first)

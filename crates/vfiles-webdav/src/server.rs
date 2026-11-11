@@ -2457,7 +2457,10 @@ async fn propfind_owned(
                     .entry_repo
                     .find_children_after(&ns, &path, direct_child_cursor.clone(), PAGE_SIZE)
                     .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                    .map_err(|error| {
+                        tracing::error!(%error, path = %rel, "WebDAV PROPFIND 子项分页读取失败");
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?;
                 let has_more = entries.len() == PAGE_SIZE as usize;
                 direct_child_cursor = entries.last().map(|entry| {
                     (
