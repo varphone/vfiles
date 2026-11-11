@@ -8,7 +8,7 @@ describe("Login.vue", () => {
     const { getByPlaceholderText, getByText } = renderWithProviders(Login);
 
     expect(getByText("VFiles")).toBeTruthy();
-    expect(getByText("基于版本控制的文件管理系统")).toBeTruthy();
+    expect(getByText("VFiles — 你自己的文件与版本历史")).toBeTruthy();
     // username input exists
     expect(getByPlaceholderText("3-32 位，字母数字-_")).toBeTruthy();
     // password input exists
@@ -114,8 +114,8 @@ describe("Login.vue auth shell", () => {
   it("shows the version and ICP record in the footer", () => {
     const { getByRole, getByText } = renderWithProviders(Login);
 
-    // 版本号：VITE_APP_VERSION 未注入时回退为「VFiles」，始终有可见文案
-    expect(getByText(/^版本 /)).toBeInTheDocument();
+    // 版本号：VITE_APP_VERSION 未注入时回退到 package.json 的版本，始终是语义化版本
+    expect(getByText(/^版本 \d+\.\d+\.\d+/)).toBeInTheDocument();
     expect(
       getByRole("link", { name: "苏ICP备2026014694号-1" }),
     ).toHaveAttribute("href", "https://beian.miit.gov.cn/");

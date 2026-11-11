@@ -35,8 +35,10 @@
 
     <footer class="auth-footer">
       <slot name="footer">
-        <div class="auth-footer-row">
-          <p class="auth-footer-pill">VFiles — 你自己的文件与版本历史</p>
+        <p class="auth-footer-tagline">VFiles — 你自己的文件与版本历史</p>
+        <p class="auth-footer-meta">
+          <span class="auth-version">版本 {{ appVersion }}</span>
+          <span aria-hidden="true">·</span>
           <a
             class="auth-record"
             href="https://beian.miit.gov.cn/"
@@ -45,11 +47,6 @@
           >
             苏ICP备2026014694号-1
           </a>
-        </div>
-        <p class="auth-footer-meta">
-          <span class="auth-version">版本 {{ appVersion }}</span>
-          <span aria-hidden="true">·</span>
-          <span>基于版本控制的文件管理系统</span>
         </p>
       </slot>
     </footer>
@@ -79,8 +76,10 @@ withDefaults(
  * 页脚版本号：构建时由 Vite 从 VITE_APP_VERSION 注入；
  * 未配置时回退为产品名「VFiles」，避免页脚出现空版本号。
  */
+import { version as packageVersion } from "../../../package.json";
+
 // @ts-expect-error Vite 构建期注入的环境变量（tsconfig 未引入 vite/client 类型）
-const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
+const appVersion: string = import.meta.env.VITE_APP_VERSION || packageVersion;
 </script>
 
 <style scoped>
@@ -105,8 +104,6 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   --auth-primary-bg-hover: var(--vf-accent-fill-hover);
   --auth-primary-bg-active: var(--vf-accent-fill-active);
   --auth-link-ink: var(--vf-accent-text);
-  --auth-footer-pill-bg: var(--vf-surface);
-  --auth-footer-pill-ink: var(--vf-text-muted);
   --auth-meta-ink: var(--vf-text-muted);
 
   position: relative;
@@ -423,9 +420,10 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
 /* 次要链接：按钮下方两行居中、13px 加粗强调色文字。 */
 .auth-card :deep(.auth-links) {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.125rem;
+  justify-content: center;
+  gap: 0.5rem;
 }
 
 .auth-card :deep(.auth-link-button) {
@@ -433,11 +431,17 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   border: none;
   background: none;
   color: var(--auth-link-ink);
-  font-size: var(--vf-text-sm);
-  font-weight: 700;
-  line-height: 1.8;
+  font-size: var(--vf-text-xs);
+  font-weight: 600;
+  line-height: 1.6;
   text-decoration: none;
   cursor: pointer;
+}
+
+.auth-card :deep(.auth-link-sep) {
+  color: var(--auth-card-muted);
+  font-size: var(--vf-text-xs);
+  line-height: 1;
 }
 
 /* 非颜色区分（WCAG 1.4.1）：hover/焦点带下划线。 */
@@ -460,35 +464,22 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   line-height: 1.5;
 }
 
-/* 页脚：内容面胶囊 + 右侧低调备案号；版本号与标语放在胶囊下方一行。 */
+/* 页脚：两行低调文字，第一行品牌标语，第二行版本与备案。 */
 .auth-footer {
   position: relative;
   z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--vf-space-2);
+  gap: 0.375rem;
   padding-top: 1.25rem;
   text-align: center;
 }
 
-.auth-footer-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 0.375rem var(--vf-space-3);
-}
-
-.auth-footer-pill {
+.auth-footer-tagline {
   margin: 0;
-  padding: 4px 14px;
-  border-radius: 999px;
-  background: var(--auth-footer-pill-bg);
-  box-shadow: none;
-  color: var(--auth-footer-pill-ink);
-  font-size: var(--vf-text-sm);
-  font-weight: 500;
+  color: var(--vf-text-muted);
+  font-size: var(--vf-text-xs);
   line-height: 1.6;
 }
 
@@ -501,7 +492,7 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
   margin: 0;
   color: var(--auth-meta-ink);
   font-size: var(--vf-text-2xs);
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .auth-version {
@@ -509,9 +500,9 @@ const appVersion: string = import.meta.env.VITE_APP_VERSION || "VFiles";
 }
 
 .auth-record {
-  color: var(--auth-meta-ink);
-  font-size: var(--vf-text-2xs);
+  color: inherit;
   text-decoration: none;
+  text-underline-offset: 2px;
 }
 
 .auth-record:hover,

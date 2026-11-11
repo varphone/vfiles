@@ -171,6 +171,7 @@
           >
             使用设备登录
           </a>
+          <span class="auth-link-sep" aria-hidden="true">·</span>
           <button
             class="auth-link-button"
             type="button"

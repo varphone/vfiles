@@ -151,9 +151,14 @@ function visualStyle() {
   `;
 }
 
-async function prepare(page) {
+async function prepare(page, config) {
   await page.evaluate(() => document.fonts.ready);
   await page.addStyleTag({ content: visualStyle() });
+  if (config.hide?.length) {
+    await page.addStyleTag({
+      content: `${config.hide.join(",")} { visibility: hidden !important; }`,
+    });
+  }
   await page.evaluate(() => document.activeElement?.blur());
   await page.waitForTimeout(250);
 }
@@ -209,7 +214,7 @@ async function shot(browser, base, config) {
     await login(page, base);
   }
   if (config.setup) await config.setup(page);
-  await prepare(page);
+  await prepare(page, config);
   const buffer = await page.screenshot({
     animations: "disabled",
     caret: "hide",
@@ -239,6 +244,15 @@ async function main() {
     {
       name: "login-light",
       loginPage: true,
+      setup: async (page) => {
+        await page.waitForSelector(".auth-submit");
+      },
+    },
+    {
+      name: "login-mobile-light",
+      loginPage: true,
+      viewport: { width: 390, height: 844 },
+      mobile: true,
       setup: async (page) => {
         await page.waitForSelector(".auth-submit");
       },
@@ -282,6 +296,11 @@ async function main() {
     },
     {
       name: "admin-users-light",
+      // 最近登录会随每次会话请求更新，隐藏两列时间，避免基线跨天漂移。
+      hide: [
+        ".admin-table tbody td:nth-child(5)",
+        ".admin-table tbody td:nth-child(6)",
+      ],
       setup: async (page) => {
         await page.goto(`${base}/admin/users`, { waitUntil: "networkidle" });
         await page.waitForSelector("table tbody tr");
