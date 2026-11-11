@@ -100,6 +100,8 @@ enum MaintenanceCommands {
     GcBlobs(GcBlobsArgs),
     /// Keep only the newest N snapshots per namespace, then reclaim their blobs
     PruneSnapshots(PruneSnapshotsArgs),
+    /// Offline rebuild of the snapshot table: copy retained rows instead of deleting old ones
+    RebuildSnapshots(RebuildSnapshotsArgs),
 }
 
 #[derive(Debug, Args, Clone)]
@@ -120,6 +122,19 @@ struct PruneSnapshotsArgs {
     /// Only purge blobs created more than this many seconds ago
     #[arg(long, default_value_t = 3600)]
     grace_seconds: u64,
+}
+
+#[derive(Debug, Args, Clone)]
+struct RebuildSnapshotsArgs {
+    /// Number of newest snapshots to keep per namespace
+    #[arg(long, default_value_t = 50)]
+    keep: u32,
+    /// Only prune snapshots older than this many days (0 disables the age window)
+    #[arg(long, default_value_t = 0)]
+    older_than_days: u32,
+    /// Run VACUUM after the rebuild to return free pages to the filesystem
+    #[arg(long)]
+    vacuum: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -1038,6 +1053,7 @@ async fn run_maintenance_command(command: MaintenanceCommands) -> anyhow::Result
     match command {
         MaintenanceCommands::GcBlobs(args) => run_gc_blobs(args).await,
         MaintenanceCommands::PruneSnapshots(args) => run_prune_snapshots(args).await,
+        MaintenanceCommands::RebuildSnapshots(args) => run_rebuild_snapshots(args).await,
     }
 }
 
@@ -1091,6 +1107,7 @@ async fn run_prune_snapshots(args: PruneSnapshotsArgs) -> anyhow::Result<()> {
     let config = ConfigLoader::load()?;
     let paths = vfiles_config::AppPaths::from_config(&config.storage);
     let pool = SqlitePoolFactory::connect(&paths.database).await?;
+    SqliteMigrations::run(&pool).await?;
 
     let blob_store = FsBlobStore::new(pool.clone(), paths.blobs.clone());
     let entry_repo = SqliteEntryRepo::new(pool.clone());
@@ -1127,6 +1144,62 @@ async fn run_prune_snapshots(args: PruneSnapshotsArgs) -> anyhow::Result<()> {
         freed_upload_temp_bytes = purge.freed_upload_temp_bytes,
         expired_upload_sessions,
         "Snapshot pruning finished"
+    );
+
+    pool.close().await;
+    Ok(())
+}
+
+/// 离线重建快照表：只复制保留的快照条目，不再逐行删除旧的 legacy 数据。
+///
+/// 运行前必须停止服务；建议先备份数据库。重建后可按需 VACUUM。
+async fn run_rebuild_snapshots(args: RebuildSnapshotsArgs) -> anyhow::Result<()> {
+    tracing::warn!(
+        "Offline snapshot rebuild requires the service to be stopped; keep={}, older_than_days={}",
+        args.keep,
+        args.older_than_days
+    );
+    let config = ConfigLoader::load()?;
+    let paths = vfiles_config::AppPaths::from_config(&config.storage);
+    let pool = SqlitePoolFactory::connect(&paths.database).await?;
+    SqliteMigrations::run(&pool).await?;
+
+    let blob_store = FsBlobStore::new(pool.clone(), paths.blobs.clone());
+    let entry_repo = SqliteEntryRepo::new(pool.clone());
+    let snapshot_repo = SqliteSnapshotRepo::new(pool.clone());
+    let service = MaintenanceService::new(blob_store, entry_repo, snapshot_repo);
+
+    let older_than = (args.older_than_days > 0)
+        .then(|| std::time::Duration::from_secs(u64::from(args.older_than_days) * 86_400));
+    let report = service
+        .rebuild_snapshot_storage(args.keep, older_than)
+        .await?;
+
+    if args.vacuum {
+        tracing::info!("Reclaiming unused database pages with VACUUM...");
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .fetch_all(&pool)
+            .await?;
+        sqlx::query("VACUUM").execute(&pool).await?;
+    }
+
+    println!(
+        "Rebuilt snapshot storage: kept {} snapshot(s) with {} entry row(s), removed {} snapshot(s){}",
+        report.retained_snapshots,
+        report.retained_entries,
+        report.removed_snapshots,
+        if args.vacuum {
+            "; database vacuumed"
+        } else {
+            "; run VACUUM to reclaim disk space"
+        }
+    );
+    tracing::info!(
+        retained_snapshots = report.retained_snapshots,
+        retained_entries = report.retained_entries,
+        removed_snapshots = report.removed_snapshots,
+        vacuum = args.vacuum,
+        "Snapshot storage rebuild finished"
     );
 
     pool.close().await;

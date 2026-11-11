@@ -14,6 +14,8 @@
 - 裁剪按完整 checkpoint epoch 删除，避免留下依赖已删除 checkpoint 的 delta。
 - 裁剪按批（每批最多 64 个快照）聚合 blob 引用并提交删除，降低长事务和 WAL 峰值；
   孤儿 blob 清理改用 `blobs.ref_count`，不再扫描整张历史快照表。
+- 新增离线 `rebuild-snapshots`：只复制保留快照的条目到新表，替代对数千万条 legacy
+  数据的逐行删除；需要停机、备份和额外磁盘空间，可选重建后 `VACUUM`。
 - 废弃 `VFILES_SNAPSHOT_COALESCE_SECONDS`：增量快照已替代旧合并窗口；设置后启动仅告警。
 
 ### 升级说明

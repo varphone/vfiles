@@ -274,6 +274,26 @@ epoch，因此实际保留数可能略大于 `--keep`。旧 `legacy` 快照可�
 已提交的批次，重跑即可继续。即使如此，删除数千万行 `legacy` 快照仍需时间，建议分批降低
 `--keep` 并在低峰期运行，完成后停机 `VACUUM`。
 
+### 离线重建快照表（大库推荐）
+
+如果 `snapshot_entries` 已经有数千万行，逐行 `DELETE` 仍然很慢。`rebuild-snapshots` 改为
+只把保留的快照条目复制到新表，再替换旧表，避免删除旧行：
+
+```bash
+# 必须先停止服务并备份数据库（含 -wal 文件）
+./vfiles maintenance rebuild-snapshots --keep 1000 --vacuum
+```
+
+- `--keep` 与裁剪使用同一套保留策略：checkpoint + delta epoch 不会被拆开；
+- 旧 legacy 快照按各自快照判断；命令只复制保留的 `snapshot_entries`；
+- 重建后自动重算 `blobs.ref_count`，并清理被删除快照的元数据和 delta；
+- `--vacuum` 会回收空闲页；VACUUM 需要额外磁盘空间，空间不足时先不带该参数运行，
+  之后在停机状态下单独执行 `sqlite3 ... "VACUUM;"`；
+- 重建过程和最终 VACUUM 都需要独占写入，不能在服务运行或另一次 prune 同时执行。
+
+重建不会修改当前 `entries`、`entry_versions` 或 `blobs` 文件；只重建快照相关表。完成后
+建议执行一次 `maintenance gc-blobs` 清理失去快照引用的 blob。
+
 ### 写入请求的来源校验
 
 所有写请求（登录、上传、移动、删除等）都会校验浏览器发来的 `Origin`：

@@ -334,6 +334,13 @@ pub struct Snapshot {
     pub checkpoint_id: Option<SnapshotId>,
 }
 
+/// 离线重建快照表的统计结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SnapshotRebuildStats {
+    /// 复制到新 `snapshot_entries` 表的条目数。
+    pub retained_entries: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SnapshotStorageKind {
     /// Full tree written before incremental snapshots were introduced.

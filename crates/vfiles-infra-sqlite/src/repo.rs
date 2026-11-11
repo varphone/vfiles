@@ -8820,6 +8820,231 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         rows.into_iter().map(parse_snapshot_row).collect()
     }
 
+    async fn rebuild_snapshot_storage(
+        &self,
+        retained_snapshot_ids: &[SnapshotId],
+    ) -> DomainResult<SnapshotRebuildStats> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to begin snapshot rebuild: {error}"),
+            })?;
+
+        sqlx::query("DROP TABLE IF EXISTS temp.retained_snapshot_ids")
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to reset retained snapshot set: {error}"),
+            })?;
+        sqlx::query("CREATE TEMP TABLE retained_snapshot_ids (id TEXT PRIMARY KEY NOT NULL)")
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to create retained snapshot set: {error}"),
+            })?;
+        for chunk in retained_snapshot_ids.chunks(400) {
+            let mut builder = sqlx::QueryBuilder::<Sqlite>::new(
+                "INSERT OR IGNORE INTO retained_snapshot_ids (id) ",
+            );
+            builder.push_values(chunk.iter(), |mut values, snapshot_id| {
+                values.push_bind(snapshot_id.to_string());
+            });
+            builder
+                .build()
+                .execute(&mut *tx)
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to record retained snapshots: {error}"),
+                })?;
+        }
+
+        sqlx::query("DROP TABLE IF EXISTS snapshot_entries_rebuild")
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to reset snapshot rebuild table: {error}"),
+            })?;
+        // Keep this DDL in sync with 0001/0030/0033: the generated parent_path
+        // column and its index are part of the snapshot browsing contract.
+        sqlx::query(
+            r#"
+            CREATE TABLE snapshot_entries_rebuild (
+                snapshot_id TEXT NOT NULL,
+                entry_id TEXT NOT NULL,
+                entry_version_id TEXT,
+                entry_path TEXT NOT NULL,
+                entry_kind TEXT NOT NULL CHECK (entry_kind IN ('file', 'directory')),
+                blob_id TEXT,
+                size INTEGER,
+                content_type TEXT,
+                version_no INTEGER,
+                change_type TEXT NOT NULL CHECK (change_type IN ('added', 'modified', 'deleted', 'renamed')),
+                created_by TEXT,
+                created_at TEXT,
+                parent_path TEXT GENERATED ALWAYS AS (
+                    rtrim(rtrim(entry_path, replace(entry_path, '/', '')), '/')
+                ) VIRTUAL,
+                PRIMARY KEY (snapshot_id, entry_id),
+                FOREIGN KEY (snapshot_id) REFERENCES snapshots(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to create snapshot rebuild table: {error}"),
+        })?;
+
+        let copied = sqlx::query(
+            r#"
+            INSERT INTO snapshot_entries_rebuild (
+                snapshot_id, entry_id, entry_version_id, entry_path, entry_kind,
+                blob_id, size, content_type, version_no, change_type, created_by, created_at
+            )
+            SELECT
+                snapshot_id, entry_id, entry_version_id, entry_path, entry_kind,
+                blob_id, size, content_type, version_no, change_type, created_by, created_at
+            FROM snapshot_entries
+            WHERE snapshot_id IN (SELECT id FROM retained_snapshot_ids)
+            "#,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to copy retained snapshot entries: {error}"),
+        })?;
+
+        // Drop the old table before deleting snapshot rows: with foreign keys on,
+        // deleting snapshots would otherwise cascade row-by-row through the old
+        // table and reintroduce the slow delete path we are replacing.
+        sqlx::query("DROP TABLE snapshot_entries")
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to drop old snapshot entries: {error}"),
+            })?;
+        sqlx::query("ALTER TABLE snapshot_entries_rebuild RENAME TO snapshot_entries")
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to install rebuilt snapshot entries: {error}"),
+            })?;
+        for statement in [
+            "CREATE INDEX idx_snapshot_entries_snapshot_path ON snapshot_entries(snapshot_id, entry_path)",
+            "CREATE INDEX idx_snapshot_entries_entry_id ON snapshot_entries(entry_id)",
+            "CREATE INDEX idx_snapshot_entries_path_snapshot ON snapshot_entries(entry_path, snapshot_id)",
+            "CREATE INDEX idx_snapshot_entries_snapshot_parent ON snapshot_entries(snapshot_id, parent_path, entry_path, change_type)",
+        ] {
+            sqlx::query(statement)
+                .execute(&mut *tx)
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to recreate snapshot index: {error}"),
+                })?;
+        }
+
+        sqlx::query(
+            "DELETE FROM snapshot_entry_changes \
+             WHERE snapshot_id NOT IN (SELECT id FROM retained_snapshot_ids)",
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to prune snapshot deltas: {error}"),
+        })?;
+        sqlx::query("DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM retained_snapshot_ids)")
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to prune snapshot metadata: {error}"),
+            })?;
+
+        // Recompute ref_count from the retained tables instead of trying to
+        // release tens of millions of individual references.
+        sqlx::query("DROP TABLE IF EXISTS temp.blob_ref_counts")
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to reset blob reference counts: {error}"),
+            })?;
+        sqlx::query(
+            r#"
+            CREATE TEMP TABLE blob_ref_counts AS
+            SELECT blob_id, COUNT(*) AS reference_count
+            FROM (
+                SELECT blob_id FROM entry_versions WHERE blob_id IS NOT NULL
+                UNION ALL
+                SELECT blob_id FROM snapshot_entries WHERE blob_id IS NOT NULL
+                UNION ALL
+                SELECT blob_id FROM snapshot_entry_changes WHERE blob_id IS NOT NULL
+            )
+            GROUP BY blob_id
+            "#,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to recompute blob references: {error}"),
+        })?;
+        sqlx::query("CREATE INDEX idx_blob_ref_counts ON blob_ref_counts(blob_id)")
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to index recomputed blob references: {error}"),
+            })?;
+        sqlx::query(
+            r#"
+            UPDATE blobs
+            SET ref_count = COALESCE(
+                (SELECT reference_count FROM blob_ref_counts WHERE blob_id = blobs.id),
+                0
+            )
+            "#,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to update blob reference counts: {error}"),
+        })?;
+        sqlx::query("DROP TABLE blob_ref_counts")
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to clean up blob reference counts: {error}"),
+            })?;
+
+        let violations: Vec<(String, i64, String, i64)> =
+            sqlx::query_as("PRAGMA foreign_key_check")
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to check snapshot rebuild foreign keys: {error}"),
+                })?;
+        if !violations.is_empty() {
+            return Err(DomainError::Internal {
+                message: format!(
+                    "Snapshot rebuild would leave {} foreign-key violation(s)",
+                    violations.len()
+                ),
+            });
+        }
+        sqlx::query("DROP TABLE temp.retained_snapshot_ids")
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to clean up retained snapshot set: {error}"),
+            })?;
+
+        tx.commit().await.map_err(|error| DomainError::Internal {
+            message: format!("Failed to commit snapshot rebuild: {error}"),
+        })?;
+        Ok(SnapshotRebuildStats {
+            retained_entries: copied.rows_affected(),
+        })
+    }
+
     async fn delete_snapshot(&self, snapshot_id: &SnapshotId) -> DomainResult<()> {
         // Delete both tree tables explicitly; this also works if a deployment
         // ever connects without SQLite foreign-key enforcement.
@@ -13541,6 +13766,30 @@ mod snapshot_repo_tests {
                 .expect("third rows");
         assert_eq!(third_rows, 3);
 
+        let rebuild = repo
+            .rebuild_snapshot_storage(&[first, second])
+            .await
+            .expect("rebuild checkpoint and delta");
+        assert_eq!(rebuild.retained_entries, 1);
+        let changes_left: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM snapshot_entry_changes WHERE snapshot_id = ?")
+                .bind(second.to_string())
+                .fetch_one(&pool)
+                .await
+                .expect("delta rows after rebuild");
+        assert_eq!(changes_left, 1);
+        let rebuilt_entries = repo
+            .get_snapshot_entries(&second)
+            .await
+            .expect("delta should remain readable");
+        assert_eq!(
+            rebuilt_entries
+                .iter()
+                .map(|entry| entry.entry_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first.txt", "second.txt"]
+        );
+
         cleanup_db(pool, db_path).await;
     }
 
@@ -13908,6 +14157,116 @@ mod snapshot_repo_tests {
 
         pool.close().await;
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn rebuild_copies_retained_entries_and_recomputes_blob_refs() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup_snapshot_repo().await;
+        let blob_id = BlobId::new();
+        sqlx::query(
+            "INSERT INTO blobs (id, content_hash, storage_key, size, ref_count, uploaded_by) VALUES (?, ?, ?, ?, 0, ?)",
+        )
+        .bind(blob_id.to_string())
+        .bind("rebuild-hash")
+        .bind("rebuild-key")
+        .bind(42_i64)
+        .bind(user_id.to_string())
+        .execute(&pool)
+        .await
+        .expect("blob");
+
+        let mut snapshot_ids = Vec::new();
+        for index in 0..3 {
+            let snapshot_id = repo
+                .create_snapshot(
+                    &namespace_id,
+                    Some(&format!("rebuild-{index}")),
+                    SnapshotKind::UserCreated,
+                    &user_id,
+                )
+                .await
+                .expect("snapshot");
+            repo.add_snapshot_entries(
+                &snapshot_id,
+                &[SnapshotEntry {
+                    snapshot_id,
+                    entry_id: EntryId::new(),
+                    entry_path: NormalizedPath::new(&format!("file-{index}.txt")).expect("path"),
+                    entry_kind: EntryKind::File,
+                    entry_version_id: None,
+                    blob_id: Some(blob_id),
+                    size_bytes: None,
+                    mime_type: None,
+                    version_no: None,
+                    change_type: ChangeType::Added,
+                    created_by: Some(user_id),
+                    created_at: None,
+                }],
+            )
+            .await
+            .expect("entry");
+            snapshot_ids.push(snapshot_id);
+        }
+        let before: i64 = sqlx::query_scalar("SELECT ref_count FROM blobs WHERE id = ?")
+            .bind(blob_id.to_string())
+            .fetch_one(&pool)
+            .await
+            .expect("ref count");
+        assert_eq!(before, 3);
+
+        let stats = repo
+            .rebuild_snapshot_storage(&snapshot_ids[2..])
+            .await
+            .expect("rebuild");
+        assert_eq!(stats.retained_entries, 1);
+        let snapshots_left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM snapshots")
+            .fetch_one(&pool)
+            .await
+            .expect("snapshot count");
+        assert_eq!(snapshots_left, 1);
+        let entries_left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM snapshot_entries")
+            .fetch_one(&pool)
+            .await
+            .expect("entry count");
+        assert_eq!(entries_left, 1);
+        let parent: String =
+            sqlx::query_scalar("SELECT parent_path FROM snapshot_entries WHERE snapshot_id = ?")
+                .bind(snapshot_ids[2].to_string())
+                .fetch_one(&pool)
+                .await
+                .expect("generated parent path");
+        assert_eq!(parent, "");
+        let ref_count: i64 = sqlx::query_scalar("SELECT ref_count FROM blobs WHERE id = ?")
+            .bind(blob_id.to_string())
+            .fetch_one(&pool)
+            .await
+            .expect("ref count after rebuild");
+        assert_eq!(ref_count, 1);
+        let violations: Vec<(String, i64, String, i64)> =
+            sqlx::query_as("PRAGMA foreign_key_check")
+                .fetch_all(&pool)
+                .await
+                .expect("foreign key check");
+        assert!(violations.is_empty());
+        let indexes: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'snapshot_entries'",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("snapshot indexes");
+        for expected in [
+            "idx_snapshot_entries_snapshot_path",
+            "idx_snapshot_entries_entry_id",
+            "idx_snapshot_entries_path_snapshot",
+            "idx_snapshot_entries_snapshot_parent",
+        ] {
+            assert!(
+                indexes.iter().any(|name| name == expected),
+                "missing {expected}"
+            );
+        }
+
+        cleanup_db(pool, db_path).await;
     }
 
     #[tokio::test]

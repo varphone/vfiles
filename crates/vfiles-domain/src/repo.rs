@@ -1432,6 +1432,19 @@ pub trait SnapshotRepo {
     ) -> DomainResult<u64> {
         Ok(0)
     }
+
+    /// 离线重建快照表：只保留 `retained_snapshot_ids` 对应的条目，删除其余
+    /// 快照元数据和 delta，并重算 blob 引用计数。
+    ///
+    /// 调用方必须保证服务已停止；默认实现拒绝调用。
+    async fn rebuild_snapshot_storage(
+        &self,
+        _retained_snapshot_ids: &[SnapshotId],
+    ) -> DomainResult<SnapshotRebuildStats> {
+        Err(DomainError::Internal {
+            message: "snapshot storage rebuild is not supported by this repository".to_string(),
+        })
+    }
     /// 一次事务内删除多个快照及其条目，返回实际删除的快照数。
     ///
     /// 默认实现逐条删除；存储实现应把它合并为一次提交，避免每个快照各付一次

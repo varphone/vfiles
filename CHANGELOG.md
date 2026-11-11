@@ -18,6 +18,8 @@
 - 快照裁剪按完整 checkpoint epoch 删除；`VFILES_SNAPSHOT_COALESCE_SECONDS` 废弃。
 - 快照裁剪改为按批聚合 blob 引用与删除（每批最多 64 个快照），避免巨量 legacy 行时
   每个快照一次全量聚合和单一超大事务；孤儿 blob 清理改用 `blobs.ref_count`。
+- 新增 `maintenance rebuild-snapshots`：停机时只复制保留快照的条目到新表，避免逐行
+  删除数千万条 legacy 数据；重建后重算 blob 引用并可按需 `VACUUM`。
 - 新格式快照写入后不支持直接降级到 2.8.x；需要恢复升级前备份。
 
 ## v2.8.1（2026-11-11）

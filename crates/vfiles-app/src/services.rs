@@ -888,6 +888,59 @@ pub struct SnapshotPruneReport {
     pub released_blobs: u64,
 }
 
+/// 一次快照保留策略的计算结果；裁剪和离线重建共用。
+#[derive(Debug, Clone, Default)]
+pub struct SnapshotRetentionPlan {
+    pub retained: Vec<Snapshot>,
+    /// 每个元素是一个不可拆分的 checkpoint epoch（旧 legacy 快照各自成组）。
+    pub doomed_groups: Vec<Vec<Snapshot>>,
+}
+
+/// 离线重建快照表的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SnapshotRebuildReport {
+    pub retained_snapshots: u64,
+    pub removed_snapshots: u64,
+    pub retained_entries: u64,
+}
+
+fn plan_namespace_snapshots(
+    snapshots: &[Snapshot],
+    keep: u32,
+    cutoff: Option<time::OffsetDateTime>,
+) -> (Vec<Snapshot>, Vec<Vec<Snapshot>>) {
+    let retained_ids = snapshots
+        .iter()
+        .take(keep as usize)
+        .map(|snapshot| snapshot.id)
+        .collect::<std::collections::HashSet<_>>();
+    let mut groups = std::collections::HashMap::<SnapshotId, Vec<&Snapshot>>::new();
+    for snapshot in snapshots {
+        let group_id = if snapshot.storage_kind == SnapshotStorageKind::Legacy {
+            snapshot.id
+        } else {
+            snapshot.checkpoint_id.unwrap_or(snapshot.id)
+        };
+        groups.entry(group_id).or_default().push(snapshot);
+    }
+
+    let mut retained = Vec::new();
+    let mut doomed_groups = Vec::new();
+    for group in groups.values() {
+        let keep_group = group
+            .iter()
+            .any(|snapshot| retained_ids.contains(&snapshot.id))
+            || cutoff
+                .is_some_and(|cutoff| group.iter().any(|snapshot| snapshot.created_at >= cutoff));
+        if keep_group {
+            retained.extend(group.iter().map(|snapshot| (*snapshot).clone()));
+        } else {
+            doomed_groups.push(group.iter().map(|snapshot| (*snapshot).clone()).collect());
+        }
+    }
+    (retained, doomed_groups)
+}
+
 /// 一次完整维护的结果：先按需裁剪快照，再回收孤儿 blob。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MaintenanceRunReport {
@@ -964,11 +1017,11 @@ where
     ///
     /// `older_than = None` 时退化为纯数量策略；两个条件是「与」的关系，
     /// 因此开启时间窗口不会比只按数量裁剪删得更多。
-    pub async fn prune_snapshots_with_age(
+    pub async fn snapshot_retention_plan(
         &self,
         keep: u32,
         older_than: Option<std::time::Duration>,
-    ) -> DomainResult<SnapshotPruneReport> {
+    ) -> DomainResult<SnapshotRetentionPlan> {
         let mut by_namespace: std::collections::HashMap<NamespaceId, Vec<Snapshot>> =
             std::collections::HashMap::new();
         for snapshot in self.snapshot_repo.list_all_snapshots().await? {
@@ -977,113 +1030,119 @@ where
                 .or_default()
                 .push(snapshot);
         }
-
         let cutoff = older_than.map(|age| {
             time::OffsetDateTime::now_utc() - time::Duration::seconds(age.as_secs() as i64)
         });
-        let mut report = SnapshotPruneReport::default();
-        for snapshots in by_namespace.values_mut() {
-            // list_all_snapshots is newest first. A checkpoint and its deltas are
-            // one indivisible epoch: never delete a checkpoint whose deltas remain.
-            let retained_ids = snapshots
-                .iter()
-                .take(keep as usize)
-                .map(|snapshot| snapshot.id)
-                .collect::<std::collections::HashSet<_>>();
-            let mut groups = std::collections::HashMap::<SnapshotId, Vec<&Snapshot>>::new();
-            for snapshot in snapshots.iter() {
-                let group_id = if snapshot.storage_kind == SnapshotStorageKind::Legacy {
-                    snapshot.id
-                } else {
-                    snapshot.checkpoint_id.unwrap_or(snapshot.id)
-                };
-                groups.entry(group_id).or_default().push(snapshot);
-            }
+        let mut plan = SnapshotRetentionPlan::default();
+        for snapshots in by_namespace.values() {
+            let (retained, doomed_groups) = plan_namespace_snapshots(snapshots, keep, cutoff);
+            plan.retained.extend(retained);
+            plan.doomed_groups.extend(doomed_groups);
+        }
+        Ok(plan)
+    }
 
-            // Keep checkpoint+delta epochs together. A checkpoint deleted in an
-            // earlier batch than its deltas would make those snapshots unreadable
-            // while the command is still running.
-            let mut doomed_groups = Vec::<Vec<SnapshotId>>::new();
-            for group in groups.values() {
-                // Keep the whole epoch if any member is in the newest `keep`, or
-                // if any member is newer than the age cutoff.
-                if group
-                    .iter()
-                    .any(|snapshot| retained_ids.contains(&snapshot.id))
-                {
-                    continue;
-                }
-                if let Some(cutoff) = cutoff
-                    && group.iter().any(|snapshot| snapshot.created_at >= cutoff)
-                {
-                    continue;
-                }
-                doomed_groups.push(group.iter().map(|snapshot| snapshot.id).collect());
-            }
-            if doomed_groups.is_empty() {
-                continue;
-            }
+    async fn prune_retained_path_ranges(&self, retained: &[Snapshot]) -> DomainResult<()> {
+        let mut oldest_by_namespace = std::collections::HashMap::<NamespaceId, u64>::new();
+        for snapshot in retained {
+            oldest_by_namespace
+                .entry(snapshot.namespace_id)
+                .and_modify(|sequence| *sequence = (*sequence).min(snapshot.sequence))
+                .or_insert(snapshot.sequence);
+        }
+        for (namespace_id, sequence) in oldest_by_namespace {
+            self.snapshot_repo
+                .prune_path_ranges_before(&namespace_id, sequence)
+                .await?;
+        }
+        Ok(())
+    }
 
-            let namespace_id = snapshots
-                .first()
-                .map(|snapshot| snapshot.namespace_id)
-                .expect("namespace snapshot group");
-            // Deleting tens of millions of legacy rows in one transaction keeps a
-            // long write lock and a huge WAL. Count and delete in bounded batches;
-            // a killed command leaves a consistent, resumable partial prune.
-            const SNAPSHOT_PRUNE_BATCH: usize = 64;
-            let mut batches = Vec::<Vec<SnapshotId>>::new();
-            let mut current = Vec::new();
-            for group in doomed_groups {
-                if !current.is_empty() && current.len() + group.len() > SNAPSHOT_PRUNE_BATCH {
-                    batches.push(std::mem::take(&mut current));
-                }
-                current.extend(group);
-            }
-            if !current.is_empty() {
-                batches.push(current);
-            }
-
-            for (batch_index, chunk) in batches.iter().enumerate() {
-                let counts = self
-                    .snapshot_repo
-                    .snapshot_blob_reference_counts_many(chunk)
-                    .await?;
-                let deleted = self.snapshot_repo.delete_snapshots(chunk).await?;
-                report.pruned_snapshots += deleted;
-                let references = counts.into_iter().collect::<Vec<_>>();
-                let removable = self.entry_repo.release_blob_references(&references).await?;
-                for blob_id in removable {
-                    self.blob_store.defer_blob_deletion(&blob_id).await?;
-                    report.released_blobs += 1;
-                }
-                tracing::info!(
-                    namespace = %namespace_id,
-                    batch = batch_index + 1,
-                    snapshots = chunk.len(),
-                    pruned_snapshots = deleted,
-                    "pruned snapshot batch"
-                );
-            }
-
-            let doomed_ids = batches
-                .iter()
-                .flatten()
-                .copied()
-                .collect::<std::collections::HashSet<_>>();
-            if let Some(oldest_retained) = snapshots
-                .iter()
-                .filter(|snapshot| !doomed_ids.contains(&snapshot.id))
-                .map(|snapshot| snapshot.sequence)
-                .min()
-            {
-                self.snapshot_repo
-                    .prune_path_ranges_before(&namespace_id, oldest_retained)
-                    .await?;
-            }
+    /// 在数量上限之外，再按**时间窗口**裁剪：只删除「既不在最新 `keep` 个之内、
+    /// 又早于 `older_than`（相对当前时间）的快照」。
+    ///
+    /// `older_than = None` 时退化为纯数量策略；两个条件是「与」的关系，
+    /// 因此开启时间窗口不会比只按数量裁剪删得更多。
+    pub async fn prune_snapshots_with_age(
+        &self,
+        keep: u32,
+        older_than: Option<std::time::Duration>,
+    ) -> DomainResult<SnapshotPruneReport> {
+        let plan = self.snapshot_retention_plan(keep, older_than).await?;
+        if plan.doomed_groups.is_empty() {
+            return Ok(SnapshotPruneReport::default());
         }
 
+        // Deleting tens of millions of legacy rows in one transaction keeps a
+        // long write lock and a huge WAL. Count and delete in bounded batches;
+        // a killed command leaves a consistent, resumable partial prune.
+        const SNAPSHOT_PRUNE_BATCH: usize = 64;
+        let mut batches = Vec::<Vec<SnapshotId>>::new();
+        let mut current = Vec::new();
+        for group in &plan.doomed_groups {
+            if !current.is_empty() && current.len() + group.len() > SNAPSHOT_PRUNE_BATCH {
+                batches.push(std::mem::take(&mut current));
+            }
+            current.extend(group.iter().map(|snapshot| snapshot.id));
+        }
+        if !current.is_empty() {
+            batches.push(current);
+        }
+
+        let mut report = SnapshotPruneReport::default();
+        for (batch_index, chunk) in batches.iter().enumerate() {
+            let counts = self
+                .snapshot_repo
+                .snapshot_blob_reference_counts_many(chunk)
+                .await?;
+            let deleted = self.snapshot_repo.delete_snapshots(chunk).await?;
+            report.pruned_snapshots += deleted;
+            let references = counts.into_iter().collect::<Vec<_>>();
+            let removable = self.entry_repo.release_blob_references(&references).await?;
+            for blob_id in removable {
+                self.blob_store.defer_blob_deletion(&blob_id).await?;
+                report.released_blobs += 1;
+            }
+            tracing::info!(
+                batch = batch_index + 1,
+                snapshots = chunk.len(),
+                pruned_snapshots = deleted,
+                "pruned snapshot batch"
+            );
+        }
+        self.prune_retained_path_ranges(&plan.retained).await?;
         Ok(report)
+    }
+
+    /// 离线重建快照表：只复制保留的快照条目，避免逐行删除数千万条 legacy 数据。
+    ///
+    /// 必须在服务停止时运行；命令本身负责重算 blob 引用计数，但不会自动
+    /// `VACUUM`，由 CLI 在重建成功后按需执行。
+    pub async fn rebuild_snapshot_storage(
+        &self,
+        keep: u32,
+        older_than: Option<std::time::Duration>,
+    ) -> DomainResult<SnapshotRebuildReport> {
+        let plan = self.snapshot_retention_plan(keep, older_than).await?;
+        let retained_ids = plan
+            .retained
+            .iter()
+            .map(|snapshot| snapshot.id)
+            .collect::<Vec<_>>();
+        let stats = self
+            .snapshot_repo
+            .rebuild_snapshot_storage(&retained_ids)
+            .await?;
+        self.prune_retained_path_ranges(&plan.retained).await?;
+        Ok(SnapshotRebuildReport {
+            retained_snapshots: retained_ids.len() as u64,
+            removed_snapshots: plan
+                .doomed_groups
+                .iter()
+                .map(|group| group.len() as u64)
+                .sum(),
+            retained_entries: stats.retained_entries,
+        })
     }
 
     /// 删除无引用且创建时间早于 `grace_seconds` 之前的 blob，返回清理统计。
