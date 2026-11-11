@@ -168,6 +168,14 @@ impl AccessTokenService {
         }
     }
 
+    /// 撤销某用户的全部令牌，返回撤销数量。
+    ///
+    /// 密码轮换、管理员重置密码和强制下线必须调用它：只撤销会话而留下长期
+    /// 令牌，会让已泄露的凭据在“改密”后继续有效。
+    pub async fn revoke_all_for_user(&self, user_id: &UserId) -> DomainResult<u64> {
+        self.repo.revoke_all_for_user(user_id).await
+    }
+
     /// 用明文令牌换出所属用户；无效/过期/已撤销返回 `None`。
     pub async fn authenticate(&self, plaintext: &str) -> DomainResult<Option<AccessToken>> {
         let plaintext = plaintext.trim();

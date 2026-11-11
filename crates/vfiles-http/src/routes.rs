@@ -186,13 +186,21 @@ impl RequestContext {
 }
 
 /// 主密码会话的请求上下文：账号级操作使用。
+///
+/// 这里刻意不接受访问令牌：令牌泄露后若能修改邮箱、密码或创建新的登录密码，
+/// 就会从“一次 API 访问”升级为持久账号接管。账号资料、密码和登录凭据只允许
+/// 浏览器会话（Cookie）操作；令牌在 [`require_session_auth_user`] 中被拒绝。
 pub(crate) async fn primary_request_context(
     state: &AppState,
     jar: &CookieJar,
 ) -> ApiResult<RequestContext> {
-    let ctx = protected_request_context(state, jar).await?;
-    ctx.require_full()?;
-    Ok(ctx)
+    let session = require_session_auth_user(state, jar).await?;
+    if !session.scope.is_full() {
+        return Err(ApiError::forbidden(
+            "此操作需要主密码会话；受限密码只能访问授权目录",
+        ));
+    }
+    request_context_from_auth_user(state, Some(session)).await
 }
 
 /// 需要主密码会话：受限密码只能浏览/写入授权目录，不能执行账号级操作。

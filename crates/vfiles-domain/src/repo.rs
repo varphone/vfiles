@@ -54,6 +54,8 @@ pub trait AccessTokenRepo {
     ) -> DomainResult<()>;
     /// 撤销：仅允许撤销自己的令牌，返回是否真的撤销了。
     async fn revoke(&self, user_id: &UserId, id: &AccessTokenId) -> DomainResult<bool>;
+    /// 撤销某用户的全部令牌（密码轮换/管理员重置/强制下线时使用），返回撤销数量。
+    async fn revoke_all_for_user(&self, user_id: &UserId) -> DomainResult<u64>;
 }
 
 #[async_trait::async_trait]

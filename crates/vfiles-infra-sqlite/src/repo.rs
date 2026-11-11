@@ -14935,6 +14935,21 @@ impl AccessTokenRepo for SqliteAccessTokenRepo {
 
         Ok(result.rows_affected() > 0)
     }
+
+    async fn revoke_all_for_user(&self, user_id: &UserId) -> DomainResult<u64> {
+        let result = sqlx::query(
+            "UPDATE access_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+        )
+        .bind(time::OffsetDateTime::now_utc())
+        .bind(user_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::Internal {
+            message: format!("Failed to revoke access tokens: {e}"),
+        })?;
+
+        Ok(result.rows_affected())
+    }
 }
 
 #[cfg(test)]

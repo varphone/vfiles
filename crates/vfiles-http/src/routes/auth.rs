@@ -128,7 +128,8 @@ pub async fn login(
                 .clear_login_success(&login_source_ip, &login_identifier);
             response
         }
-        Err(DomainError::InvalidCredentials) => {
+        // 禁用账号与密码错误返回同一响应：否则攻击者可枚举出哪些账号存在。
+        Err(DomainError::InvalidCredentials | DomainError::UserDisabled) => {
             state.login_attempt_limiter.record_login_failure(
                 &login_rate_limit,
                 &login_source_ip,
@@ -201,14 +202,28 @@ fn login_rate_limited_response(retry_after_secs: u64) -> Response {
 }
 
 pub async fn register(
+    headers: HeaderMap,
     axum::extract::State(state): axum::extract::State<AppState>,
     ApiJson(req): ApiJson<vfiles_domain::RegisterRequest>,
 ) -> ApiResult<Json<UserDto>> {
-    tracing::info!("Registration attempt for user: {}", req.username);
-
     if !state.config.auth.allow_register {
         return Err(ApiError::Domain(DomainError::Forbidden));
     }
+
+    // 开放注册时同样按来源 IP 限流；登录限流器使用哈希键，复用不会让日志
+    // 或内存随伪造用户名增长。注册成功也计入，避免批量注册绕过空闲窗口。
+    let source_ip = client_ip_from_headers(&headers);
+    let rate_limit = login_rate_limit_policy(&state.config.auth.login_rate_limit);
+    if let Some(block) =
+        state
+            .login_attempt_limiter
+            .check_login(&rate_limit, &source_ip, "__register__")
+    {
+        return Err(ApiError::rate_limited(block.retry_after_secs));
+    }
+    state
+        .login_attempt_limiter
+        .record_login_failure(&rate_limit, &source_ip, "__register__");
 
     let auth_service =
         state
@@ -306,12 +321,16 @@ pub async fn change_password(
     auth_service
         .change_password(&ctx.actor_user_id, &req.current_password, &req.new_password)
         .await?;
+    state
+        .access_token_service
+        .revoke_all_for_user(&ctx.actor_user_id)
+        .await?;
     crate::audit::record_for(
         &state,
         &headers,
         &ctx,
         NewAuditLog::success(crate::audit::action::PASSWORD_CHANGE)
-            .detail("修改主密码并撤销该账号的全部会话"),
+            .detail("修改主密码并撤销该账号的全部会话与访问令牌"),
     )
     .await;
     Ok(Json(json!({ "success": true })))
