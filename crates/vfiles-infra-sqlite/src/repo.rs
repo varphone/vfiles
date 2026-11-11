@@ -13672,6 +13672,113 @@ mod snapshot_repo_tests {
     }
 
     #[tokio::test]
+    #[ignore = "scale benchmark; run explicitly with --ignored --nocapture"]
+    async fn benchmark_50k_entries_10k_snapshots_stays_incremental() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup_snapshot_repo().await;
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+        let repo = repo.with_checkpoint_interval(1024);
+        sqlx::query(
+            r#"
+            WITH RECURSIVE seq(n) AS (
+                VALUES(1)
+                UNION ALL
+                SELECT n + 1 FROM seq WHERE n < 49999
+            )
+            INSERT INTO entries (id, namespace_id, path, kind)
+            SELECT 'raw-' || n, ?, 'f/' || n, 'file' FROM seq
+            "#,
+        )
+        .bind(namespace_id.to_string())
+        .execute(&pool)
+        .await
+        .expect("large entry fixture");
+        let changed_id = entry_repo
+            .create_entry(
+                &namespace_id,
+                &NormalizedPath::new("hot.txt").expect("path"),
+                EntryKind::File,
+                &user_id,
+            )
+            .await
+            .expect("hot entry");
+        let changed = SnapshotEntryDraft {
+            entry_id: changed_id,
+            entry_path: NormalizedPath::new("hot.txt").expect("path"),
+            previous_path: None,
+            entry_kind: EntryKind::File,
+            entry_version_id: None,
+            blob_id: None,
+            size_bytes: None,
+            mime_type: None,
+            version_no: None,
+            change_type: ChangeType::Added,
+            created_by: Some(user_id),
+            created_at: None,
+        };
+        let started = std::time::Instant::now();
+        for index in 0..10_000 {
+            let draft = SnapshotEntryDraft {
+                change_type: if index == 0 {
+                    ChangeType::Added
+                } else {
+                    ChangeType::Modified
+                },
+                ..changed.clone()
+            };
+            repo.create_snapshot_from_namespace_with_changes(
+                &namespace_id,
+                Some("bench"),
+                SnapshotKind::AutoCommit,
+                &user_id,
+                &entry_repo,
+                &SnapshotNamespaceChanges {
+                    changed_entries: vec![draft],
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("benchmark snapshot");
+        }
+        let elapsed = started.elapsed();
+        let snapshots: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM snapshots WHERE namespace_id = ?")
+                .bind(namespace_id.to_string())
+                .fetch_one(&pool)
+                .await
+                .expect("snapshot count");
+        let checkpoint_rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM snapshot_entries se JOIN snapshots s ON s.id = se.snapshot_id WHERE s.namespace_id = ?",
+        )
+        .bind(namespace_id.to_string())
+        .fetch_one(&pool)
+        .await
+        .expect("checkpoint rows");
+        let delta_rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM snapshot_entry_changes c JOIN snapshots s ON s.id = c.snapshot_id WHERE s.namespace_id = ?",
+        )
+        .bind(namespace_id.to_string())
+        .fetch_one(&pool)
+        .await
+        .expect("delta rows");
+        let db_bytes = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+        eprintln!(
+            "snapshots={snapshots} checkpoint_rows={checkpoint_rows} delta_rows={delta_rows} db_bytes={db_bytes} elapsed={elapsed:?}"
+        );
+        assert_eq!(snapshots, 10_000);
+        assert_eq!(delta_rows, 9_990);
+        assert!(
+            checkpoint_rows <= 510_000,
+            "checkpoint rows grew unexpectedly: {checkpoint_rows}"
+        );
+        assert!(
+            db_bytes < 600 * 1024 * 1024,
+            "database unexpectedly large: {db_bytes}"
+        );
+
+        cleanup_db(pool, db_path).await;
+    }
+
+    #[tokio::test]
     async fn migration_0035_backfills_sequences_and_path_ranges() {
         let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
             "vfiles-snapshot-migration-{}.db",
