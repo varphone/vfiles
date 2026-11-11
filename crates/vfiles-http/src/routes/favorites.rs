@@ -116,6 +116,19 @@ pub async fn list(
         .unwrap_or(DEFAULT_PAGE_LIMIT)
         .clamp(1, MAX_PAGE_LIMIT);
     let offset = u32::try_from(query.offset.unwrap_or(0)).unwrap_or(u32::MAX);
+    Ok(Json(favorite_page(&state, &ctx, limit, offset).await?))
+}
+
+/// 读取收藏并应用当前会话范围。
+///
+/// add/remove 也会返回最新收藏列表；如果这里只做分页不做范围过滤，受限密码
+/// 就能通过一次写入拿到授权目录之外的收藏路径。
+async fn favorite_page(
+    state: &AppState,
+    ctx: &crate::routes::RequestContext,
+    limit: usize,
+    offset: u32,
+) -> ApiResult<FavoriteListDto> {
     if ctx.scope.is_full() {
         let (entries, total) = state
             .favorite_repo
@@ -124,13 +137,13 @@ pub async fn list(
         let item_count = entries.len() as u64;
         let response_offset = u64::from(offset).min(total);
 
-        return Ok(Json(FavoriteListDto {
+        return Ok(FavoriteListDto {
             items: entries.into_iter().map(to_dto).collect(),
             total,
             limit,
             offset: usize::try_from(response_offset).unwrap_or(usize::MAX),
             has_more: response_offset.saturating_add(item_count) < total,
-        }));
+        });
     }
 
     // 受限会话只看到范围内的收藏；范围通常很小，直接取回后过滤再分页。
@@ -152,13 +165,13 @@ pub async fn list(
         .collect::<Vec<_>>();
     let item_count = items.len() as u64;
 
-    Ok(Json(FavoriteListDto {
+    Ok(FavoriteListDto {
         items,
         total,
         limit,
         offset: response_offset,
         has_more: response_offset as u64 + item_count < total,
-    }))
+    })
 }
 
 /// 添加收藏（幂等）。
@@ -176,19 +189,9 @@ pub async fn add(
         .add(&ctx.namespace_id, &entry_id)
         .await?;
 
-    let (entries, total) = state
-        .favorite_repo
-        .list_page(&ctx.namespace_id, DEFAULT_PAGE_LIMIT as u32, 0)
-        .await?;
     Ok((
         StatusCode::CREATED,
-        Json(FavoriteListDto {
-            items: entries.into_iter().map(to_dto).collect(),
-            total,
-            limit: DEFAULT_PAGE_LIMIT,
-            offset: 0,
-            has_more: total > DEFAULT_PAGE_LIMIT as u64,
-        }),
+        Json(favorite_page(&state, &ctx, DEFAULT_PAGE_LIMIT, 0).await?),
     ))
 }
 
@@ -207,17 +210,9 @@ pub async fn remove(
         .remove(&ctx.namespace_id, &entry_id)
         .await?;
 
-    let (entries, total) = state
-        .favorite_repo
-        .list_page(&ctx.namespace_id, DEFAULT_PAGE_LIMIT as u32, 0)
-        .await?;
-    Ok(Json(FavoriteListDto {
-        items: entries.into_iter().map(to_dto).collect(),
-        total,
-        limit: DEFAULT_PAGE_LIMIT,
-        offset: 0,
-        has_more: total > DEFAULT_PAGE_LIMIT as u64,
-    }))
+    Ok(Json(
+        favorite_page(&state, &ctx, DEFAULT_PAGE_LIMIT, 0).await?,
+    ))
 }
 
 /// 把请求里的路径解析为条目 ID；路径不存在时报 404 而不是静默忽略。
