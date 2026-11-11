@@ -2914,10 +2914,23 @@ type SnapshotEntryRow = (
     Option<String>,
 );
 
-type SnapshotRow = (String, String, String, Option<String>, String, String);
+type SnapshotRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    Option<i64>,
+    String,
+    Option<String>,
+);
 
 fn parse_snapshot_row(row: SnapshotRow) -> DomainResult<Snapshot> {
     let (kind, snapshot_no) = parse_snapshot_name(&row.2);
+    let storage_kind = SnapshotStorageKind::parse(&row.7).ok_or_else(|| DomainError::Internal {
+        message: format!("Invalid snapshot storage kind: {}", row.7),
+    })?;
     Ok(Snapshot {
         id: SnapshotId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
             DomainError::Internal {
@@ -2947,6 +2960,16 @@ fn parse_snapshot_row(row: SnapshotRow) -> DomainResult<Snapshot> {
             .as_deref()
             .and_then(|value| NonEmptyMessage::new(value).ok()),
         kind,
+        sequence: row.6.unwrap_or_default().max(0) as u64,
+        storage_kind,
+        checkpoint_id: row
+            .8
+            .as_deref()
+            .map(SnapshotId::from_string)
+            .transpose()
+            .map_err(|_| DomainError::Internal {
+                message: "Invalid snapshot checkpoint UUID".to_string(),
+            })?,
     })
 }
 
@@ -7181,181 +7204,320 @@ impl AuditLogRepo for SqliteAuditLogRepo {
 
 pub struct SqliteSnapshotRepo {
     pool: SqlitePool,
-    /// 启用后合并窗口内的自动快照；`None` 表示逐次生成。
-    coalescer: Option<std::sync::Arc<SnapshotCoalescer>>,
-}
-
-/// 单个命名空间当前的合并窗口。
-struct CoalesceWindow {
-    /// 窗口内最近一次创建的快照；合并中的变更返回该 id。
-    snapshot_id: SnapshotId,
-    /// 最近一次变更的操作者，补提交时作为快照作者。
-    user_id: UserId,
-    /// 尚未被快照覆盖的变更数。
-    pending: u64,
-    /// 是否已安排补提交定时器。
-    armed: bool,
-    /// 是否正在补提交。
-    flushing: bool,
-    generation: u64,
-}
-
-enum CoalesceDecision {
-    /// 立即创建快照（窗口起点，或没有进行中的窗口）。
-    Create,
-    /// 合并到当前窗口，返回该窗口的快照 id。
-    Reuse(SnapshotId),
-}
-
-/// 按命名空间合并自动快照。
-///
-/// 第一次变更立即生成快照并开启窗口；窗口内的后续变更只累加待提交计数，
-/// 由窗口结束时的后台任务补提交一次。补提交失败时保留计数，等下一次变更
-/// 重新开启窗口（不忙循环重试）。
-struct SnapshotCoalescer {
-    window: std::time::Duration,
-    pool: SqlitePool,
-    state: tokio::sync::Mutex<std::collections::HashMap<NamespaceId, CoalesceWindow>>,
-    generations: std::sync::atomic::AtomicU64,
-}
-
-impl SnapshotCoalescer {
-    fn next_generation(&self) -> u64 {
-        self.generations
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            + 1
-    }
-
-    async fn decide(self: &std::sync::Arc<Self>, namespace_id: &NamespaceId) -> CoalesceDecision {
-        let mut state = self.state.lock().await;
-        match state.get_mut(namespace_id) {
-            Some(window) => {
-                window.pending = window.pending.saturating_add(1);
-                if !window.armed && !window.flushing {
-                    window.armed = true;
-                    window.generation = self.next_generation();
-                    self.spawn_flush(*namespace_id, window.generation);
-                }
-                CoalesceDecision::Reuse(window.snapshot_id)
-            }
-            None => CoalesceDecision::Create,
-        }
-    }
-
-    async fn record_created(
-        self: &std::sync::Arc<Self>,
-        namespace_id: &NamespaceId,
-        snapshot_id: SnapshotId,
-        user_id: UserId,
-    ) {
-        let mut state = self.state.lock().await;
-        let generation = self.next_generation();
-        state.insert(
-            *namespace_id,
-            CoalesceWindow {
-                snapshot_id,
-                user_id,
-                pending: 0,
-                armed: true,
-                flushing: false,
-                generation,
-            },
-        );
-        self.spawn_flush(*namespace_id, generation);
-    }
-
-    fn spawn_flush(self: &std::sync::Arc<Self>, namespace_id: NamespaceId, generation: u64) {
-        let coalescer = std::sync::Arc::clone(self);
-        let window = self.window;
-        tokio::spawn(async move {
-            tokio::time::sleep(window).await;
-            coalescer.flush(namespace_id, generation).await;
-        });
-    }
-
-    async fn flush(self: &std::sync::Arc<Self>, namespace_id: NamespaceId, generation: u64) {
-        let repo = SqliteSnapshotRepo {
-            pool: self.pool.clone(),
-            coalescer: None,
-        };
-        let (pending, user_id) = {
-            let mut state = self.state.lock().await;
-            let Some(window) = state.get_mut(&namespace_id) else {
-                return;
-            };
-            if window.generation != generation || !window.armed {
-                return;
-            }
-            window.armed = false;
-            if window.pending == 0 {
-                // 窗口内没有需要补提交的变更，窗口结束。
-                state.remove(&namespace_id);
-                return;
-            }
-            window.flushing = true;
-            (window.pending, window.user_id)
-        };
-
-        let message = format!("自动快照（合并 {pending} 次变更）");
-        let result = repo
-            .create_snapshot_core(
-                &namespace_id,
-                Some(&message),
-                SnapshotKind::AutoCommit,
-                &user_id,
-                &SnapshotNamespaceChanges::default(),
-            )
-            .await;
-
-        let mut state = self.state.lock().await;
-        let Some(window) = state.get_mut(&namespace_id) else {
-            return;
-        };
-        window.flushing = false;
-        match result {
-            Ok(snapshot_id) => {
-                window.snapshot_id = snapshot_id;
-                window.pending = window.pending.saturating_sub(pending);
-                if window.pending > 0 {
-                    window.armed = true;
-                    window.generation = self.next_generation();
-                    self.spawn_flush(namespace_id, window.generation);
-                }
-            }
-            Err(error) => {
-                // 保留 pending：下一次变更会重新开启窗口并再次补提交。
-                tracing::warn!(
-                    namespace = %namespace_id,
-                    %error,
-                    "自动快照补提交失败，等待下一次变更重试"
-                );
-            }
-        }
-    }
+    /// Number of snapshots between full checkpoints; deltas live between them.
+    checkpoint_interval: u32,
 }
 
 impl SqliteSnapshotRepo {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool,
-            coalescer: None,
+            checkpoint_interval: 1024,
         }
     }
 
-    /// 合并窗口内的自动快照；窗口为 0 时保持逐次写入。
-    ///
-    /// 合并期间返回的快照 id 是窗口内已创建的那一条，可能尚未包含刚提交的变更；
-    /// 窗口结束时由后台任务补提交一次快照。
-    pub fn with_coalescing(mut self, window: std::time::Duration) -> Self {
-        if !window.is_zero() {
-            self.coalescer = Some(std::sync::Arc::new(SnapshotCoalescer {
-                window,
-                pool: self.pool.clone(),
-                state: tokio::sync::Mutex::new(std::collections::HashMap::new()),
-                generations: std::sync::atomic::AtomicU64::new(0),
-            }));
-        }
+    /// Set the number of snapshots between full checkpoints.
+    pub fn with_checkpoint_interval(mut self, interval: u32) -> Self {
+        self.checkpoint_interval = interval.clamp(1, 10_000);
         self
+    }
+
+    async fn snapshot_meta(
+        &self,
+        snapshot_id: &SnapshotId,
+    ) -> DomainResult<(SnapshotStorageKind, Option<SnapshotId>, i64)> {
+        let row: Option<(String, Option<String>, Option<i64>)> = sqlx::query_as(
+            "SELECT storage_kind, checkpoint_id, sequence FROM snapshots WHERE id = ?",
+        )
+        .bind(snapshot_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to inspect snapshot storage: {error}"),
+        })?;
+        let Some((storage_kind, checkpoint_id, sequence)) = row else {
+            return Err(DomainError::SnapshotNotFound);
+        };
+        let storage_kind =
+            SnapshotStorageKind::parse(&storage_kind).ok_or_else(|| DomainError::Internal {
+                message: format!("Invalid snapshot storage kind: {storage_kind}"),
+            })?;
+        let checkpoint_id = checkpoint_id
+            .as_deref()
+            .map(SnapshotId::from_string)
+            .transpose()
+            .map_err(|_| DomainError::Internal {
+                message: "Invalid snapshot checkpoint UUID".to_string(),
+            })?;
+        Ok((storage_kind, checkpoint_id, sequence.unwrap_or_default()))
+    }
+
+    async fn get_snapshot_entries_delta(
+        &self,
+        snapshot_id: &SnapshotId,
+        checkpoint_id: &SnapshotId,
+        checkpoint_sequence: i64,
+        target_sequence: i64,
+    ) -> DomainResult<Vec<SnapshotEntry>> {
+        type ChangeRow = (
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+            Option<i64>,
+            String,
+            Option<String>,
+            Option<String>,
+            i64,
+        );
+        let checkpoint_rows: Vec<SnapshotEntryRow> = sqlx::query_as(
+            r#"
+            SELECT snapshot_id, entry_id, entry_version_id, entry_path, entry_kind,
+                   blob_id, size, content_type, version_no, change_type, created_by, created_at
+            FROM snapshot_entries
+            WHERE snapshot_id = ?
+            "#,
+        )
+        .bind(checkpoint_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to load checkpoint entries: {error}"),
+        })?;
+        let mut entries = std::collections::HashMap::<String, SnapshotEntry>::new();
+        for row in checkpoint_rows {
+            let entry = parse_snapshot_entry_row(row)?;
+            entries.insert(entry.entry_id.to_string(), entry);
+        }
+
+        let changes: Vec<ChangeRow> = sqlx::query_as(
+            r#"
+            SELECT
+                c.entry_id, c.entry_version_id, c.entry_path, c.entry_kind,
+                c.blob_id, c.size, c.content_type, c.version_no, c.change_type,
+                c.created_by, c.created_at, s.sequence
+            FROM snapshot_entry_changes c
+            JOIN snapshots s ON s.id = c.snapshot_id
+            WHERE s.namespace_id = (SELECT namespace_id FROM snapshots WHERE id = ?)
+              AND s.sequence BETWEEN ? AND ?
+            ORDER BY s.sequence ASC, CASE WHEN c.change_type = 'deleted' THEN 0 ELSE 1 END ASC
+            "#,
+        )
+        .bind(snapshot_id.to_string())
+        .bind(checkpoint_sequence.saturating_add(1))
+        .bind(target_sequence)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to load delta snapshot entries: {error}"),
+        })?;
+        for row in changes {
+            let entry = SnapshotEntry {
+                snapshot_id: *snapshot_id,
+                entry_id: EntryId::from_string(&row.0).map_err(|_| DomainError::Internal {
+                    message: "Invalid delta entry UUID".to_string(),
+                })?,
+                entry_path: NormalizedPath::new(&row.2).map_err(|_| DomainError::Internal {
+                    message: "Invalid delta entry path".to_string(),
+                })?,
+                entry_kind: parse_entry_kind(&row.3)?,
+                entry_version_id: parse_version_id_opt(row.1.as_deref())?,
+                blob_id: parse_blob_id_opt(row.4.as_deref())?,
+                size_bytes: row.5.map(|value| ByteSize::new(value as u64)),
+                mime_type: row.6,
+                version_no: row.7.map(|value| value as u32),
+                change_type: parse_change_type(&row.8)?,
+                created_by: parse_user_id_opt(row.9.as_deref())?,
+                created_at: parse_timestamp_opt(row.10.as_deref())?,
+            };
+            // Keep tombstones in the materialized list, matching legacy full
+            // snapshots; tree/page readers filter Deleted explicitly.
+            entries.insert(entry.entry_id.to_string(), entry);
+        }
+
+        let mut entries = entries.into_values().collect::<Vec<_>>();
+        for entry in &mut entries {
+            entry.snapshot_id = *snapshot_id;
+        }
+        entries.sort_by(|left, right| left.entry_path.as_str().cmp(right.entry_path.as_str()));
+        Ok(entries)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn snapshot_children_page_delta(
+        &self,
+        snapshot_id: &SnapshotId,
+        checkpoint_id: &SnapshotId,
+        checkpoint_sequence: i64,
+        target_sequence: i64,
+        path: &NormalizedPath,
+        limit: u32,
+        offset: u32,
+    ) -> DomainResult<(Vec<SnapshotTreeChild>, u64)> {
+        let root = path.as_str();
+        if !root.is_empty() {
+            match self.snapshot_entry_at_path(snapshot_id, path).await? {
+                None => {
+                    return Err(DomainError::NotFound {
+                        resource: "snapshot entry".to_string(),
+                    });
+                }
+                Some(entry) if entry.entry_kind != EntryKind::Directory => {
+                    return Err(DomainError::Validation {
+                        message: "Path is not a directory".to_string(),
+                    });
+                }
+                Some(_) => {}
+            }
+        }
+        let snapshot_id = snapshot_id.to_string();
+        let checkpoint_id = checkpoint_id.to_string();
+        let namespace_id: String =
+            sqlx::query_scalar("SELECT namespace_id FROM snapshots WHERE id = ?")
+                .bind(&snapshot_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to inspect delta snapshot namespace: {error}"),
+                })?;
+
+        type DeltaChildRow = (
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+            Option<i64>,
+            String,
+            Option<String>,
+            Option<String>,
+            i64,
+        );
+        let rows: Vec<DeltaChildRow> = sqlx::query_as(
+            r#"
+            WITH chain AS (
+                SELECT id, sequence
+                FROM snapshots
+                WHERE namespace_id = ? AND sequence BETWEEN ? AND ?
+            ),
+            combined AS (
+                SELECT
+                    c.snapshot_id, c.entry_id, c.entry_version_id, c.entry_path,
+                    c.entry_kind, c.blob_id, c.size, c.content_type, c.version_no,
+                    c.change_type, c.created_by, c.created_at, s.sequence, 0 AS source
+                FROM snapshot_entry_changes c
+                JOIN chain s ON s.id = c.snapshot_id
+                WHERE c.parent_path = ?
+                UNION ALL
+                SELECT
+                    e.snapshot_id, e.entry_id, e.entry_version_id, e.entry_path,
+                    e.entry_kind, e.blob_id, e.size, e.content_type, e.version_no,
+                    e.change_type, e.created_by, e.created_at, s.sequence, 1 AS source
+                FROM snapshot_entries e
+                JOIN chain s ON s.id = e.snapshot_id
+                WHERE e.snapshot_id = ? AND e.parent_path = ?
+            ),
+            ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY entry_id
+                           ORDER BY sequence DESC, source DESC,
+                                    CASE WHEN change_type = 'deleted' THEN 0 ELSE 1 END DESC
+                       ) AS rn
+                FROM combined
+            )
+            SELECT
+                snapshot_id, entry_id, entry_version_id, entry_path, entry_kind,
+                blob_id, size, content_type, version_no, change_type, created_by,
+                created_at,
+                COUNT(*) OVER () AS total
+            FROM ranked
+            WHERE rn = 1 AND change_type != 'deleted'
+            ORDER BY (entry_kind = 'directory') DESC, entry_path ASC
+            LIMIT ? OFFSET ?
+            "#,
+        )
+        .bind(&namespace_id)
+        .bind(checkpoint_sequence)
+        .bind(target_sequence)
+        .bind(root)
+        .bind(&checkpoint_id)
+        .bind(root)
+        .bind(i64::from(limit.max(1)))
+        .bind(i64::from(offset))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to page delta snapshot children: {error}"),
+        })?;
+
+        let total = match rows.first() {
+            Some(row) => row.12,
+            None => {
+                let count: i64 = sqlx::query_scalar(
+                    r#"
+                    WITH chain AS (
+                        SELECT id, sequence
+                        FROM snapshots
+                        WHERE namespace_id = ? AND sequence BETWEEN ? AND ?
+                    ),
+                    combined AS (
+                        SELECT c.entry_id, c.change_type, s.sequence, 0 AS source
+                        FROM snapshot_entry_changes c JOIN chain s ON s.id = c.snapshot_id
+                        WHERE c.parent_path = ?
+                        UNION ALL
+                        SELECT e.entry_id, e.change_type, s.sequence, 1 AS source
+                        FROM snapshot_entries e JOIN chain s ON s.id = e.snapshot_id
+                        WHERE e.snapshot_id = ? AND e.parent_path = ?
+                    ),
+                    ranked AS (
+                        SELECT entry_id, change_type,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY entry_id
+                                   ORDER BY sequence DESC, source DESC,
+                                            CASE WHEN change_type = 'deleted' THEN 0 ELSE 1 END DESC
+                               ) AS rn
+                        FROM combined
+                    )
+                    SELECT COUNT(*) FROM ranked WHERE rn = 1 AND change_type != 'deleted'
+                    "#,
+                )
+                .bind(&namespace_id)
+                .bind(checkpoint_sequence)
+                .bind(target_sequence)
+                .bind(root)
+                .bind(&checkpoint_id)
+                .bind(root)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to count delta snapshot children: {error}"),
+                })?;
+                count
+            }
+        };
+
+        let children = rows
+            .into_iter()
+            .map(|row| {
+                let entry = parse_snapshot_entry_row((
+                    row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9, row.10,
+                    row.11,
+                ))?;
+                Ok(SnapshotTreeChild {
+                    path: entry.entry_path.clone(),
+                    kind: entry.entry_kind,
+                    entry: Some(entry),
+                })
+            })
+            .collect::<DomainResult<Vec<_>>>()?;
+        Ok((children, total as u64))
     }
 
     /// 真正生成快照并复制整棵命名空间树（不含合并判定）。
@@ -7376,6 +7538,53 @@ impl SqliteSnapshotRepo {
             })?;
         let namespace_id_str = namespace_id.to_string();
         let user_id_str = user_id.to_string();
+        let created_at = time::OffsetDateTime::now_utc();
+
+        let latest: Option<(String, Option<i64>, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, sequence, storage_kind, checkpoint_id \
+             FROM snapshots WHERE namespace_id = ? ORDER BY sequence DESC LIMIT 1",
+        )
+        .bind(&namespace_id_str)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to inspect latest snapshot: {error}"),
+        })?;
+
+        let sequence = latest
+            .as_ref()
+            .and_then(|row| row.1)
+            .unwrap_or(0)
+            .saturating_add(1);
+        let inherited_checkpoint = latest.as_ref().and_then(|row| match row.2.as_str() {
+            "checkpoint" => Some(row.0.clone()),
+            "delta" => row.3.clone(),
+            _ => None,
+        });
+        let checkpoint_sequence = match inherited_checkpoint.as_deref() {
+            Some(checkpoint_id) => {
+                sqlx::query_scalar::<_, Option<i64>>("SELECT sequence FROM snapshots WHERE id = ?")
+                    .bind(checkpoint_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|error| DomainError::Internal {
+                        message: format!("Failed to inspect snapshot checkpoint: {error}"),
+                    })?
+                    .flatten()
+            }
+            None => None,
+        };
+        let checkpoint_due = kind == SnapshotKind::UserCreated
+            || inherited_checkpoint.is_none()
+            || checkpoint_sequence.is_none_or(|checkpoint_sequence| {
+                sequence.saturating_sub(checkpoint_sequence) >= i64::from(self.checkpoint_interval)
+            });
+        let storage_kind = if checkpoint_due {
+            SnapshotStorageKind::Checkpoint
+        } else {
+            SnapshotStorageKind::Delta
+        };
+
         let snapshot_no: i64 = sqlx::query_scalar(
             r#"
             SELECT COALESCE(
@@ -7402,10 +7611,19 @@ impl SqliteSnapshotRepo {
         })?;
         let snapshot_id = SnapshotId::new();
         let snapshot_id_str = snapshot_id.to_string();
-        let created_at = time::OffsetDateTime::now_utc();
+        let checkpoint_id = if storage_kind == SnapshotStorageKind::Checkpoint {
+            Some(snapshot_id_str.clone())
+        } else {
+            inherited_checkpoint
+        };
 
         sqlx::query(
-            "INSERT INTO snapshots (id, namespace_id, name, description, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+            r#"
+            INSERT INTO snapshots (
+                id, namespace_id, name, description, created_at, created_by,
+                sequence, storage_kind, checkpoint_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
         )
         .bind(&snapshot_id_str)
         .bind(&namespace_id_str)
@@ -7413,140 +7631,408 @@ impl SqliteSnapshotRepo {
         .bind(message)
         .bind(created_at)
         .bind(&user_id_str)
+        .bind(sequence)
+        .bind(storage_kind.as_str())
+        .bind(checkpoint_id.as_deref())
         .execute(&mut *tx)
         .await
         .map_err(|error| DomainError::Internal {
             message: format!("Failed to create namespace snapshot: {error}"),
         })?;
 
-        sqlx::query(
-            r#"
-            INSERT INTO snapshot_entries (
-                snapshot_id,
-                entry_id,
-                entry_version_id,
-                entry_path,
-                entry_kind,
-                blob_id,
-                size,
-                content_type,
-                version_no,
-                change_type,
-                created_by,
-                created_at
-            )
-            SELECT
-                ?,
-                e.id,
-                ev.id,
-                e.path,
-                e.kind,
-                ev.blob_id,
-                CASE WHEN ev.id IS NULL THEN NULL ELSE COALESCE(ev.size, 0) END,
-                ev.content_type,
-                ev.version,
-                CASE WHEN ev.version IS NULL OR ev.version <= 1 THEN 'added' ELSE 'modified' END,
-                COALESCE(ev.created_by, ?),
-                COALESCE(ev.created_at, ?)
-            FROM entries e
-            LEFT JOIN entry_versions ev ON ev.id = (
-                SELECT latest.id
-                FROM entry_versions latest
-                WHERE latest.entry_id = e.id AND e.kind = 'file'
-                ORDER BY latest.version DESC
-                LIMIT 1
-            )
-            WHERE e.namespace_id = ?
-            ORDER BY e.path ASC
-            "#,
-        )
-        .bind(&snapshot_id_str)
-        .bind(&user_id_str)
-        .bind(created_at)
-        .bind(&namespace_id_str)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| DomainError::Internal {
-            message: format!("Failed to copy namespace entries into snapshot: {error}"),
-        })?;
-
-        for chunk in changes.renamed_entry_ids.chunks(500) {
-            if chunk.is_empty() {
-                continue;
-            }
-            let mut query = sqlx::QueryBuilder::new(
-                "UPDATE snapshot_entries SET change_type = 'renamed' WHERE snapshot_id = ",
+        // Deduplicate the changed set: callers may pass a protocol deletion both
+        // through changed_entries and additional_entries.
+        let mut drafts = Vec::<SnapshotEntryDraft>::new();
+        let mut seen = std::collections::HashSet::<(String, String)>::new();
+        for draft in changes
+            .changed_entries
+            .iter()
+            .chain(changes.additional_entries.iter())
+        {
+            let key = (
+                draft.entry_id.to_string(),
+                draft.entry_path.as_str().to_string(),
             );
-            query.push_bind(&snapshot_id_str);
-            query.push(" AND entry_id IN (");
-            {
-                let mut separated = query.separated(", ");
-                for entry_id in chunk {
-                    separated.push_bind(entry_id.to_string());
+            if seen.insert(key) {
+                drafts.push(draft.clone());
+            }
+        }
+
+        let mut range_drafts = drafts.clone();
+        if storage_kind == SnapshotStorageKind::Delta {
+            // A rename needs a tombstone for the old path because the delta table
+            // is keyed by (snapshot, entry, path), unlike the full snapshot table.
+            for draft in &drafts {
+                let Some(previous_path) = draft.previous_path.as_ref() else {
+                    continue;
+                };
+                if previous_path == &draft.entry_path {
+                    continue;
+                }
+                let key = (
+                    draft.entry_id.to_string(),
+                    previous_path.as_str().to_string(),
+                );
+                if seen.insert(key) {
+                    range_drafts.push(SnapshotEntryDraft {
+                        entry_id: draft.entry_id,
+                        entry_path: previous_path.clone(),
+                        previous_path: None,
+                        entry_kind: draft.entry_kind,
+                        entry_version_id: None,
+                        blob_id: None,
+                        size_bytes: None,
+                        mime_type: None,
+                        version_no: None,
+                        change_type: ChangeType::Deleted,
+                        created_by: Some(*user_id),
+                        created_at: Some(created_at),
+                    });
                 }
             }
-            query.push(")");
-            query
-                .build()
-                .execute(&mut *tx)
-                .await
-                .map_err(|error| DomainError::Internal {
-                    message: format!("Failed to mark renamed snapshot entries: {error}"),
-                })?;
         }
 
-        for chunk in changes.additional_entries.chunks(50) {
-            let mut query = sqlx::QueryBuilder::new(
-                "INSERT INTO snapshot_entries (snapshot_id, entry_id, entry_version_id, entry_path, entry_kind, blob_id, size, content_type, version_no, change_type, created_by, created_at) ",
-            );
-            query.push_values(chunk, |mut row, entry| {
-                row.push_bind(&snapshot_id_str)
-                    .push_bind(entry.entry_id.to_string())
-                    .push_bind(entry.entry_version_id.map(|id| id.to_string()))
-                    .push_bind(entry.entry_path.as_str())
-                    .push_bind(entry_kind_as_str(entry.entry_kind))
-                    .push_bind(entry.blob_id.map(|id| id.to_string()))
-                    .push_bind(entry.size_bytes.map(|size| size.as_u64() as i64))
-                    .push_bind(entry.mime_type.as_deref())
-                    .push_bind(entry.version_no.map(i64::from))
-                    .push_bind(change_type_as_str(entry.change_type))
-                    .push_bind(entry.created_by.unwrap_or(*user_id).to_string())
-                    .push_bind(entry.created_at.unwrap_or(created_at));
-            });
-            query
-                .build()
-                .execute(&mut *tx)
-                .await
-                .map_err(|error| DomainError::Internal {
-                    message: format!("Failed to add changed snapshot entries: {error}"),
-                })?;
+        if storage_kind == SnapshotStorageKind::Checkpoint {
+            sqlx::query(
+                r#"
+                INSERT INTO snapshot_entries (
+                    snapshot_id,
+                    entry_id,
+                    entry_version_id,
+                    entry_path,
+                    entry_kind,
+                    blob_id,
+                    size,
+                    content_type,
+                    version_no,
+                    change_type,
+                    created_by,
+                    created_at
+                )
+                SELECT
+                    ?,
+                    e.id,
+                    ev.id,
+                    e.path,
+                    e.kind,
+                    ev.blob_id,
+                    CASE WHEN ev.id IS NULL THEN NULL ELSE COALESCE(ev.size, 0) END,
+                    ev.content_type,
+                    ev.version,
+                    CASE WHEN ev.version IS NULL OR ev.version <= 1 THEN 'added' ELSE 'modified' END,
+                    COALESCE(ev.created_by, ?),
+                    COALESCE(ev.created_at, ?)
+                FROM entries e
+                LEFT JOIN entry_versions ev ON ev.id = (
+                    SELECT latest.id
+                    FROM entry_versions latest
+                    WHERE latest.entry_id = e.id AND e.kind = 'file'
+                    ORDER BY latest.version DESC
+                    LIMIT 1
+                )
+                WHERE e.namespace_id = ?
+                ORDER BY e.path ASC
+                "#,
+            )
+            .bind(&snapshot_id_str)
+            .bind(&user_id_str)
+            .bind(created_at)
+            .bind(&namespace_id_str)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to copy namespace entries into snapshot: {error}"),
+            })?;
+
+            for chunk in changes.renamed_entry_ids.chunks(500) {
+                if chunk.is_empty() {
+                    continue;
+                }
+                let mut query = sqlx::QueryBuilder::new(
+                    "UPDATE snapshot_entries SET change_type = 'renamed' WHERE snapshot_id = ",
+                );
+                query.push_bind(&snapshot_id_str);
+                query.push(" AND entry_id IN (");
+                {
+                    let mut separated = query.separated(", ");
+                    for entry_id in chunk {
+                        separated.push_bind(entry_id.to_string());
+                    }
+                }
+                query.push(")");
+                query
+                    .build()
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|error| DomainError::Internal {
+                        message: format!("Failed to mark renamed snapshot entries: {error}"),
+                    })?;
+            }
+
+            for chunk in changes.additional_entries.chunks(50) {
+                if chunk.is_empty() {
+                    continue;
+                }
+                let mut query = sqlx::QueryBuilder::new(
+                    "INSERT INTO snapshot_entries (snapshot_id, entry_id, entry_version_id, entry_path, entry_kind, blob_id, size, content_type, version_no, change_type, created_by, created_at) ",
+                );
+                query.push_values(chunk, |mut row, entry| {
+                    row.push_bind(&snapshot_id_str)
+                        .push_bind(entry.entry_id.to_string())
+                        .push_bind(entry.entry_version_id.map(|id| id.to_string()))
+                        .push_bind(entry.entry_path.as_str())
+                        .push_bind(entry_kind_as_str(entry.entry_kind))
+                        .push_bind(entry.blob_id.map(|id| id.to_string()))
+                        .push_bind(entry.size_bytes.map(|size| size.as_u64() as i64))
+                        .push_bind(entry.mime_type.as_deref())
+                        .push_bind(entry.version_no.map(i64::from))
+                        .push_bind(change_type_as_str(entry.change_type))
+                        .push_bind(entry.created_by.unwrap_or(*user_id).to_string())
+                        .push_bind(entry.created_at.unwrap_or(created_at));
+                });
+                query
+                    .build()
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|error| DomainError::Internal {
+                        message: format!("Failed to add changed snapshot entries: {error}"),
+                    })?;
+            }
+
+            sqlx::query(
+                r#"
+                INSERT INTO snapshot_path_ranges (
+                    namespace_id, path, entry_id, entry_kind, start_seq, end_seq
+                )
+                SELECT e.namespace_id, e.path, e.id, e.kind, ?, NULL
+                FROM entries e
+                WHERE e.namespace_id = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM snapshot_path_ranges r
+                      WHERE r.namespace_id = e.namespace_id
+                        AND r.path = e.path AND r.end_seq IS NULL
+                  )
+                "#,
+            )
+            .bind(sequence)
+            .bind(&namespace_id_str)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to seed snapshot path ranges: {error}"),
+            })?;
+
+            sqlx::query(
+                r#"
+                UPDATE blobs
+                SET ref_count = ref_count + snapshot_blob_refs.reference_count
+                FROM (
+                    SELECT blob_id, COUNT(*) AS reference_count
+                    FROM snapshot_entries
+                    WHERE snapshot_id = ? AND blob_id IS NOT NULL
+                    GROUP BY blob_id
+                ) AS snapshot_blob_refs
+                WHERE blobs.id = snapshot_blob_refs.blob_id
+                "#,
+            )
+            .bind(&snapshot_id_str)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to update snapshot blob reference counts: {error}"),
+            })?;
+        } else {
+            for chunk in range_drafts.chunks(50) {
+                if chunk.is_empty() {
+                    continue;
+                }
+                let mut query = sqlx::QueryBuilder::new(
+                    "INSERT INTO snapshot_entry_changes (snapshot_id, entry_id, entry_version_id, entry_path, entry_kind, blob_id, size, content_type, version_no, change_type, created_by, created_at) ",
+                );
+                query.push_values(chunk, |mut row, entry| {
+                    row.push_bind(&snapshot_id_str)
+                        .push_bind(entry.entry_id.to_string())
+                        .push_bind(entry.entry_version_id.map(|id| id.to_string()))
+                        .push_bind(entry.entry_path.as_str())
+                        .push_bind(entry_kind_as_str(entry.entry_kind))
+                        .push_bind(entry.blob_id.map(|id| id.to_string()))
+                        .push_bind(entry.size_bytes.map(|size| size.as_u64() as i64))
+                        .push_bind(entry.mime_type.as_deref())
+                        .push_bind(entry.version_no.map(i64::from))
+                        .push_bind(change_type_as_str(entry.change_type))
+                        .push_bind(entry.created_by.unwrap_or(*user_id).to_string())
+                        .push_bind(entry.created_at.unwrap_or(created_at));
+                });
+                query
+                    .build()
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|error| DomainError::Internal {
+                        message: format!("Failed to add delta snapshot entries: {error}"),
+                    })?;
+            }
+
+            sqlx::query(
+                r#"
+                UPDATE blobs
+                SET ref_count = ref_count + snapshot_blob_refs.reference_count
+                FROM (
+                    SELECT blob_id, COUNT(*) AS reference_count
+                    FROM snapshot_entry_changes
+                    WHERE snapshot_id = ? AND blob_id IS NOT NULL
+                    GROUP BY blob_id
+                ) AS snapshot_blob_refs
+                WHERE blobs.id = snapshot_blob_refs.blob_id
+                "#,
+            )
+            .bind(&snapshot_id_str)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to update delta snapshot blob reference counts: {error}"),
+            })?;
         }
 
-        sqlx::query(
-            r#"
-            UPDATE blobs
-            SET ref_count = ref_count + snapshot_blob_refs.reference_count
-            FROM (
-                SELECT blob_id, COUNT(*) AS reference_count
-                FROM snapshot_entries
-                WHERE snapshot_id = ? AND blob_id IS NOT NULL
-                GROUP BY blob_id
-            ) AS snapshot_blob_refs
-            WHERE blobs.id = snapshot_blob_refs.blob_id
-            "#,
-        )
-        .bind(&snapshot_id_str)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| DomainError::Internal {
-            message: format!("Failed to update snapshot blob reference counts: {error}"),
-        })?;
+        self.update_snapshot_path_ranges(&mut tx, namespace_id, sequence, &range_drafts)
+            .await?;
 
         tx.commit().await.map_err(|error| DomainError::Internal {
             message: format!("Failed to commit namespace snapshot: {error}"),
         })?;
 
         Ok(snapshot_id)
+    }
+
+    async fn update_snapshot_path_ranges(
+        &self,
+        tx: &mut sqlx::Transaction<'_, Sqlite>,
+        namespace_id: &NamespaceId,
+        sequence: i64,
+        drafts: &[SnapshotEntryDraft],
+    ) -> DomainResult<()> {
+        let namespace_id = namespace_id.to_string();
+        let mut closed = std::collections::HashSet::new();
+        let mut opened = std::collections::HashSet::new();
+
+        // Close all old ranges before opening new ones. A path can be
+        // overwritten and replaced by a move in the same mutation, so order
+        // matters: opening before the old range is closed would leave a stale
+        // open interval with the previous entry ID.
+        for draft in drafts {
+            if let Some(previous_path) = draft.previous_path.as_ref()
+                && previous_path != &draft.entry_path
+            {
+                self.close_snapshot_path_range(
+                    tx,
+                    &namespace_id,
+                    previous_path.as_str(),
+                    sequence,
+                    &mut closed,
+                )
+                .await?;
+            }
+            if draft.change_type == ChangeType::Deleted {
+                self.close_snapshot_path_range(
+                    tx,
+                    &namespace_id,
+                    draft.entry_path.as_str(),
+                    sequence,
+                    &mut closed,
+                )
+                .await?;
+            }
+        }
+        for draft in drafts {
+            if draft.change_type == ChangeType::Added
+                || draft.change_type == ChangeType::Modified
+                || draft.change_type == ChangeType::Renamed
+            {
+                self.open_snapshot_path_range(tx, &namespace_id, draft, sequence, &mut opened)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn close_snapshot_path_range(
+        &self,
+        tx: &mut sqlx::Transaction<'_, Sqlite>,
+        namespace_id: &str,
+        path: &str,
+        sequence: i64,
+        closed: &mut std::collections::HashSet<String>,
+    ) -> DomainResult<()> {
+        if !closed.insert(path.to_string()) {
+            return Ok(());
+        }
+        sqlx::query(
+            "UPDATE snapshot_path_ranges SET end_seq = ? \
+             WHERE namespace_id = ? AND path = ? AND end_seq IS NULL AND start_seq < ?",
+        )
+        .bind(sequence.saturating_sub(1))
+        .bind(namespace_id)
+        .bind(path)
+        .bind(sequence)
+        .execute(&mut **tx)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to close snapshot path range: {error}"),
+        })?;
+        // A path can be created and deleted at the same sequence only if the
+        // caller produced contradictory changes. Never leave an interval whose
+        // end is before its start.
+        sqlx::query(
+            "DELETE FROM snapshot_path_ranges \
+             WHERE namespace_id = ? AND path = ? AND end_seq IS NULL AND start_seq >= ?",
+        )
+        .bind(namespace_id)
+        .bind(path)
+        .bind(sequence)
+        .execute(&mut **tx)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to drop empty snapshot path range: {error}"),
+        })?;
+        Ok(())
+    }
+
+    async fn open_snapshot_path_range(
+        &self,
+        tx: &mut sqlx::Transaction<'_, Sqlite>,
+        namespace_id: &str,
+        draft: &SnapshotEntryDraft,
+        sequence: i64,
+        opened: &mut std::collections::HashSet<String>,
+    ) -> DomainResult<()> {
+        let path = draft.entry_path.as_str();
+        if !opened.insert(path.to_string()) {
+            return Ok(());
+        }
+        sqlx::query(
+            r#"
+            INSERT INTO snapshot_path_ranges (
+                namespace_id, path, entry_id, entry_kind, start_seq, end_seq
+            )
+            SELECT ?, ?, ?, ?, ?, NULL
+            WHERE NOT EXISTS (
+                SELECT 1 FROM snapshot_path_ranges
+                WHERE namespace_id = ? AND path = ? AND end_seq IS NULL
+            )
+            "#,
+        )
+        .bind(namespace_id)
+        .bind(path)
+        .bind(draft.entry_id.to_string())
+        .bind(entry_kind_as_str(draft.entry_kind))
+        .bind(sequence)
+        .bind(namespace_id)
+        .bind(path)
+        .execute(&mut **tx)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to open snapshot path range: {error}"),
+        })?;
+        Ok(())
     }
 
     async fn next_snapshot_no(&self, namespace_id: &NamespaceId) -> DomainResult<u32> {
@@ -7582,7 +8068,7 @@ impl Clone for SqliteSnapshotRepo {
     fn clone(&self) -> Self {
         Self {
             pool: self.pool.clone(),
-            coalescer: self.coalescer.clone(),
+            checkpoint_interval: self.checkpoint_interval,
         }
     }
 }
@@ -7710,74 +8196,24 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         _entry_repo: &(dyn EntryRepo + Send + Sync),
         changes: &SnapshotNamespaceChanges,
     ) -> DomainResult<SnapshotId> {
-        let Some(coalescer) = &self.coalescer else {
-            return self
-                .create_snapshot_core(namespace_id, message, kind, user_id, changes)
-                .await;
-        };
-        // 只合并自动提交：手动快照（用户显式创建）始终立即落盘。
-        if kind != SnapshotKind::AutoCommit {
-            return self
-                .create_snapshot_core(namespace_id, message, kind, user_id, changes)
-                .await;
-        }
-        match coalescer.decide(namespace_id).await {
-            CoalesceDecision::Create => {
-                let snapshot_id = self
-                    .create_snapshot_core(namespace_id, message, kind, user_id, changes)
-                    .await?;
-                coalescer
-                    .record_created(namespace_id, snapshot_id, *user_id)
-                    .await;
-                Ok(snapshot_id)
-            }
-            CoalesceDecision::Reuse(snapshot_id) => Ok(snapshot_id),
-        }
+        self.create_snapshot_core(namespace_id, message, kind, user_id, changes)
+            .await
     }
 
     async fn find_snapshot(&self, snapshot_id: &SnapshotId) -> DomainResult<Snapshot> {
-        let row: (String, String, String, Option<String>, String, String) = sqlx::query_as(
-            "SELECT id, namespace_id, name, description, created_at, created_by FROM snapshots WHERE id = ?"
+        let row: SnapshotRow = sqlx::query_as(
+            "SELECT id, namespace_id, name, description, created_at, created_by, sequence, storage_kind, checkpoint_id FROM snapshots WHERE id = ?",
         )
         .bind(snapshot_id.to_string())
         .fetch_one(&self.pool)
         .await
         .map_err(|e| match e {
             sqlx::Error::RowNotFound => DomainError::SnapshotNotFound,
-            _ => DomainError::Internal { message: format!("Failed to find snapshot: {}", e) },
+            _ => DomainError::Internal {
+                message: format!("Failed to find snapshot: {e}"),
+            },
         })?;
-        let (kind, snapshot_no) = parse_snapshot_name(&row.2);
-
-        Ok(Snapshot {
-            id: SnapshotId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
-                DomainError::Internal {
-                    message: "Invalid UUID".to_string(),
-                }
-            })?),
-            namespace_id: NamespaceId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(|_| {
-                DomainError::Internal {
-                    message: "Invalid UUID".to_string(),
-                }
-            })?),
-            snapshot_no,
-            created_by: UserId::from_uuid(uuid::Uuid::parse_str(&row.5).map_err(|_| {
-                DomainError::Internal {
-                    message: "Invalid UUID".to_string(),
-                }
-            })?),
-            created_at: time::OffsetDateTime::parse(
-                &row.4,
-                &time::format_description::well_known::Rfc3339,
-            )
-            .map_err(|_| DomainError::Internal {
-                message: "Invalid timestamp".to_string(),
-            })?,
-            message: row
-                .3
-                .as_deref()
-                .and_then(|value| NonEmptyMessage::new(value).ok()),
-            kind,
-        })
+        parse_snapshot_row(row)
     }
 
     async fn list_snapshots(
@@ -7786,54 +8222,17 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         limit: u32,
         _cursor: Option<&str>,
     ) -> DomainResult<Vec<Snapshot>> {
-        let rows: Vec<(String, String, String, Option<String>, String, String)> = sqlx::query_as(
-            "SELECT id, namespace_id, name, description, created_at, created_by FROM snapshots WHERE namespace_id = ? ORDER BY created_at DESC LIMIT ?"
+        let rows: Vec<SnapshotRow> = sqlx::query_as(
+            "SELECT id, namespace_id, name, description, created_at, created_by, sequence, storage_kind, checkpoint_id FROM snapshots WHERE namespace_id = ? ORDER BY created_at DESC LIMIT ?",
         )
         .bind(namespace_id.to_string())
         .bind(limit as i64)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DomainError::Internal {
-            message: format!("Failed to list snapshots: {}", e),
+            message: format!("Failed to list snapshots: {e}"),
         })?;
-
-        let mut snapshots = Vec::new();
-        for row in rows {
-            let (kind, snapshot_no) = parse_snapshot_name(&row.2);
-
-            snapshots.push(Snapshot {
-                id: SnapshotId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
-                    DomainError::Internal {
-                        message: "Invalid UUID".to_string(),
-                    }
-                })?),
-                namespace_id: NamespaceId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(
-                    |_| DomainError::Internal {
-                        message: "Invalid UUID".to_string(),
-                    },
-                )?),
-                snapshot_no,
-                created_by: UserId::from_uuid(uuid::Uuid::parse_str(&row.5).map_err(|_| {
-                    DomainError::Internal {
-                        message: "Invalid UUID".to_string(),
-                    }
-                })?),
-                created_at: time::OffsetDateTime::parse(
-                    &row.4,
-                    &time::format_description::well_known::Rfc3339,
-                )
-                .map_err(|_| DomainError::Internal {
-                    message: "Invalid timestamp".to_string(),
-                })?,
-                message: row
-                    .3
-                    .as_deref()
-                    .and_then(|value| NonEmptyMessage::new(value).ok()),
-                kind,
-            });
-        }
-
-        Ok(snapshots)
+        rows.into_iter().map(parse_snapshot_row).collect()
     }
 
     async fn list_snapshots_for_path(
@@ -7843,20 +8242,59 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         limit: u32,
         include_total: bool,
     ) -> DomainResult<(Vec<Snapshot>, u64)> {
+        let namespace_id = namespace_id.to_string();
         let path = path.as_str();
+        let limit = i64::from(limit.max(1));
+
+        if path.is_empty() {
+            let total: i64 = if include_total {
+                sqlx::query_scalar("SELECT COUNT(*) FROM snapshots WHERE namespace_id = ?")
+                    .bind(&namespace_id)
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(|error| DomainError::Internal {
+                        message: format!("Failed to count snapshots: {error}"),
+                    })?
+            } else {
+                0
+            };
+            let rows: Vec<SnapshotRow> = sqlx::query_as(
+                r#"
+                SELECT id, namespace_id, name, description, created_at, created_by,
+                       sequence, storage_kind, checkpoint_id
+                FROM snapshots
+                WHERE namespace_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                "#,
+            )
+            .bind(&namespace_id)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to list snapshots: {error}"),
+            })?;
+            return Ok((
+                rows.into_iter()
+                    .map(parse_snapshot_row)
+                    .collect::<DomainResult<_>>()?,
+                total as u64,
+            ));
+        }
+
         let lower = format!("{path}/");
         let upper = format!("{path}0");
-        // The path match is two index seeks (exact path, then the descendant
-        // prefix) rather than an OR over both, so each snapshot check reads
-        // only the matching rows. The count walks the whole namespace and is
-        // skipped when the caller only needs the newest page.
-        let total = if include_total {
-            let total: i64 = sqlx::query_scalar(
+
+        // Legacy snapshots are full trees. New snapshots use compact path
+        // intervals, so a path that did not change in a snapshot still matches.
+        let legacy_total: i64 = if include_total {
+            sqlx::query_scalar(
                 r#"
                 SELECT COUNT(*)
                 FROM snapshots s
-                WHERE s.namespace_id = ?
-                  AND (? = '' OR EXISTS (
+                WHERE s.namespace_id = ? AND s.storage_kind = 'legacy'
+                  AND (EXISTS (
                       SELECT 1 FROM snapshot_entries se
                       WHERE se.snapshot_id = s.id AND se.entry_path = ?
                   ) OR EXISTS (
@@ -7865,26 +8303,50 @@ impl SnapshotRepo for SqliteSnapshotRepo {
                   ))
                 "#,
             )
-            .bind(namespace_id.to_string())
-            .bind(path)
+            .bind(&namespace_id)
             .bind(path)
             .bind(&lower)
             .bind(&upper)
             .fetch_one(&self.pool)
             .await
             .map_err(|error| DomainError::Internal {
-                message: format!("Failed to count path snapshots: {error}"),
-            })?;
-            total as u64
+                message: format!("Failed to count legacy path snapshots: {error}"),
+            })?
         } else {
             0
         };
-        let rows: Vec<SnapshotRow> = sqlx::query_as(
+        let new_total: i64 = if include_total {
+            sqlx::query_scalar(
+                r#"
+                SELECT COUNT(*)
+                FROM snapshots s
+                WHERE s.namespace_id = ? AND s.storage_kind IN ('checkpoint', 'delta')
+                  AND EXISTS (
+                      SELECT 1 FROM snapshot_path_ranges r
+                      WHERE r.namespace_id = s.namespace_id AND r.path = ?
+                        AND s.sequence BETWEEN r.start_seq
+                            AND COALESCE(r.end_seq, 9223372036854775807)
+                  )
+                "#,
+            )
+            .bind(&namespace_id)
+            .bind(path)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to count path snapshots: {error}"),
+            })?
+        } else {
+            0
+        };
+
+        let legacy_rows: Vec<SnapshotRow> = sqlx::query_as(
             r#"
-            SELECT s.id, s.namespace_id, s.name, s.description, s.created_at, s.created_by
+            SELECT s.id, s.namespace_id, s.name, s.description, s.created_at,
+                   s.created_by, s.sequence, s.storage_kind, s.checkpoint_id
             FROM snapshots s
-            WHERE s.namespace_id = ?
-              AND (? = '' OR EXISTS (
+            WHERE s.namespace_id = ? AND s.storage_kind = 'legacy'
+              AND (EXISTS (
                   SELECT 1 FROM snapshot_entries se
                   WHERE se.snapshot_id = s.id AND se.entry_path = ?
               ) OR EXISTS (
@@ -7895,23 +8357,55 @@ impl SnapshotRepo for SqliteSnapshotRepo {
             LIMIT ?
             "#,
         )
-        .bind(namespace_id.to_string())
-        .bind(path)
+        .bind(&namespace_id)
         .bind(path)
         .bind(&lower)
         .bind(&upper)
-        .bind(i64::from(limit.max(1)))
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to list legacy path snapshots: {error}"),
+        })?;
+
+        let new_rows: Vec<SnapshotRow> = sqlx::query_as(
+            r#"
+            SELECT s.id, s.namespace_id, s.name, s.description, s.created_at,
+                   s.created_by, s.sequence, s.storage_kind, s.checkpoint_id
+            FROM snapshots s
+            WHERE s.namespace_id = ? AND s.storage_kind IN ('checkpoint', 'delta')
+              AND EXISTS (
+                  SELECT 1 FROM snapshot_path_ranges r
+                  WHERE r.namespace_id = s.namespace_id AND r.path = ?
+                    AND s.sequence BETWEEN r.start_seq
+                        AND COALESCE(r.end_seq, 9223372036854775807)
+              )
+            ORDER BY s.created_at DESC, s.id DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(&namespace_id)
+        .bind(path)
+        .bind(limit)
         .fetch_all(&self.pool)
         .await
         .map_err(|error| DomainError::Internal {
             message: format!("Failed to list path snapshots: {error}"),
         })?;
-        Ok((
-            rows.into_iter()
-                .map(parse_snapshot_row)
-                .collect::<DomainResult<_>>()?,
-            total,
-        ))
+
+        let mut snapshots = legacy_rows
+            .into_iter()
+            .chain(new_rows)
+            .map(parse_snapshot_row)
+            .collect::<DomainResult<Vec<_>>>()?;
+        snapshots.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.id.to_string().cmp(&left.id.to_string()))
+        });
+        snapshots.truncate(limit as usize);
+        Ok((snapshots, legacy_total.saturating_add(new_total) as u64))
     }
 
     async fn add_snapshot_entries(
@@ -7982,6 +8476,30 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         &self,
         snapshot_id: &SnapshotId,
     ) -> DomainResult<Vec<SnapshotEntry>> {
+        let (storage_kind, checkpoint_id, target_sequence) =
+            self.snapshot_meta(snapshot_id).await?;
+        if storage_kind == SnapshotStorageKind::Delta {
+            let checkpoint_id = checkpoint_id.ok_or_else(|| DomainError::Internal {
+                message: "Delta snapshot has no checkpoint".to_string(),
+            })?;
+            let checkpoint_sequence: i64 =
+                sqlx::query_scalar("SELECT sequence FROM snapshots WHERE id = ?")
+                    .bind(checkpoint_id.to_string())
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(|error| DomainError::Internal {
+                        message: format!("Failed to inspect delta checkpoint: {error}"),
+                    })?;
+            return self
+                .get_snapshot_entries_delta(
+                    snapshot_id,
+                    &checkpoint_id,
+                    checkpoint_sequence,
+                    target_sequence,
+                )
+                .await;
+        }
+
         let rows: Vec<SnapshotEntryRow> = sqlx::query_as(
             r#"
             SELECT
@@ -8012,6 +8530,127 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         rows.into_iter().map(parse_snapshot_entry_row).collect()
     }
 
+    async fn snapshot_entry_at_path(
+        &self,
+        snapshot_id: &SnapshotId,
+        path: &NormalizedPath,
+    ) -> DomainResult<Option<SnapshotEntry>> {
+        let (storage_kind, checkpoint_id, target_sequence) =
+            self.snapshot_meta(snapshot_id).await?;
+        if storage_kind != SnapshotStorageKind::Delta {
+            let row: Option<SnapshotEntryRow> = sqlx::query_as(
+                r#"
+                SELECT snapshot_id, entry_id, entry_version_id, entry_path, entry_kind,
+                       blob_id, size, content_type, version_no, change_type, created_by, created_at
+                FROM snapshot_entries
+                WHERE snapshot_id = ? AND entry_path = ? AND change_type != 'deleted'
+                LIMIT 1
+                "#,
+            )
+            .bind(snapshot_id.to_string())
+            .bind(path.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| DomainError::Internal {
+                message: format!("Failed to read snapshot entry: {error}"),
+            })?;
+            return row.map(parse_snapshot_entry_row).transpose();
+        }
+
+        let checkpoint_id = checkpoint_id.ok_or_else(|| DomainError::Internal {
+            message: "Delta snapshot has no checkpoint".to_string(),
+        })?;
+        let checkpoint_sequence: i64 =
+            sqlx::query_scalar("SELECT sequence FROM snapshots WHERE id = ?")
+                .bind(checkpoint_id.to_string())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to inspect delta checkpoint: {error}"),
+                })?;
+        let namespace_id: String =
+            sqlx::query_scalar("SELECT namespace_id FROM snapshots WHERE id = ?")
+                .bind(snapshot_id.to_string())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|error| DomainError::Internal {
+                    message: format!("Failed to inspect delta namespace: {error}"),
+                })?;
+        type Row = (
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+            Option<i64>,
+            String,
+            Option<String>,
+            Option<String>,
+        );
+        let row: Option<Row> = sqlx::query_as(
+            r#"
+            WITH chain AS (
+                SELECT id, sequence
+                FROM snapshots
+                WHERE namespace_id = ? AND sequence BETWEEN ? AND ?
+            ),
+            combined AS (
+                SELECT
+                    c.snapshot_id, c.entry_id, c.entry_version_id, c.entry_path,
+                    c.entry_kind, c.blob_id, c.size, c.content_type, c.version_no,
+                    c.change_type, c.created_by, c.created_at, s.sequence, 0 AS source
+                FROM snapshot_entry_changes c
+                JOIN chain s ON s.id = c.snapshot_id
+                WHERE c.entry_path = ?
+                UNION ALL
+                SELECT
+                    e.snapshot_id, e.entry_id, e.entry_version_id, e.entry_path,
+                    e.entry_kind, e.blob_id, e.size, e.content_type, e.version_no,
+                    e.change_type, e.created_by, e.created_at, s.sequence, 1 AS source
+                FROM snapshot_entries e
+                JOIN chain s ON s.id = e.snapshot_id
+                WHERE e.snapshot_id = ? AND e.entry_path = ?
+            ),
+            ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY entry_id
+                           ORDER BY sequence DESC, source DESC,
+                                    CASE WHEN change_type = 'deleted' THEN 0 ELSE 1 END DESC
+                       ) AS rn
+                FROM combined
+            )
+            SELECT snapshot_id, entry_id, entry_version_id, entry_path, entry_kind,
+                   blob_id, size, content_type, version_no, change_type, created_by,
+                   created_at
+            FROM ranked
+            WHERE rn = 1 AND change_type != 'deleted'
+            LIMIT 1
+            "#,
+        )
+        .bind(&namespace_id)
+        .bind(checkpoint_sequence)
+        .bind(target_sequence)
+        .bind(path.as_str())
+        .bind(checkpoint_id.to_string())
+        .bind(path.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to read delta snapshot entry: {error}"),
+        })?;
+        row.map(|row| {
+            parse_snapshot_entry_row((
+                row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9, row.10,
+                row.11,
+            ))
+        })
+        .transpose()
+    }
+
     async fn list_snapshot_children_page(
         &self,
         snapshot_id: &SnapshotId,
@@ -8019,6 +8658,33 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         limit: u32,
         offset: u32,
     ) -> DomainResult<(Vec<SnapshotTreeChild>, u64)> {
+        let (storage_kind, checkpoint_id, target_sequence) =
+            self.snapshot_meta(snapshot_id).await?;
+        if storage_kind == SnapshotStorageKind::Delta {
+            let checkpoint_id = checkpoint_id.ok_or_else(|| DomainError::Internal {
+                message: "Delta snapshot has no checkpoint".to_string(),
+            })?;
+            let checkpoint_sequence: i64 =
+                sqlx::query_scalar("SELECT sequence FROM snapshots WHERE id = ?")
+                    .bind(checkpoint_id.to_string())
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(|error| DomainError::Internal {
+                        message: format!("Failed to inspect delta checkpoint: {error}"),
+                    })?;
+            return self
+                .snapshot_children_page_delta(
+                    snapshot_id,
+                    &checkpoint_id,
+                    checkpoint_sequence,
+                    target_sequence,
+                    path,
+                    limit,
+                    offset,
+                )
+                .await;
+        }
+
         let root = path.as_str();
         let snapshot_id_str = snapshot_id.to_string();
 
@@ -8146,56 +8812,40 @@ impl SnapshotRepo for SqliteSnapshotRepo {
     }
 
     async fn list_all_snapshots(&self) -> DomainResult<Vec<Snapshot>> {
-        let rows: Vec<(String, String, String, Option<String>, String, String)> = sqlx::query_as(
-            "SELECT id, namespace_id, name, description, created_at, created_by \
-             FROM snapshots ORDER BY created_at DESC",
+        let rows: Vec<SnapshotRow> = sqlx::query_as(
+            "SELECT id, namespace_id, name, description, created_at, created_by, sequence, storage_kind, checkpoint_id FROM snapshots ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DomainError::Internal {
-            message: format!("Failed to list all snapshots: {}", e),
+            message: format!("Failed to list all snapshots: {e}"),
         })?;
-
-        let mut snapshots = Vec::new();
-        for row in rows {
-            let (kind, snapshot_no) = parse_snapshot_name(&row.2);
-            snapshots.push(Snapshot {
-                id: SnapshotId::from_uuid(uuid::Uuid::parse_str(&row.0).map_err(|_| {
-                    DomainError::Internal {
-                        message: "Invalid UUID".to_string(),
-                    }
-                })?),
-                namespace_id: NamespaceId::from_uuid(uuid::Uuid::parse_str(&row.1).map_err(
-                    |_| DomainError::Internal {
-                        message: "Invalid UUID".to_string(),
-                    },
-                )?),
-                snapshot_no,
-                created_by: UserId::from_uuid(uuid::Uuid::parse_str(&row.5).map_err(|_| {
-                    DomainError::Internal {
-                        message: "Invalid UUID".to_string(),
-                    }
-                })?),
-                created_at: parse_timestamp(&row.4)?,
-                message: row
-                    .3
-                    .as_deref()
-                    .and_then(|value| NonEmptyMessage::new(value).ok()),
-                kind,
-            });
-        }
-
-        Ok(snapshots)
+        rows.into_iter().map(parse_snapshot_row).collect()
     }
 
     async fn delete_snapshot(&self, snapshot_id: &SnapshotId) -> DomainResult<()> {
-        // snapshot_entries 通过外键 ON DELETE CASCADE 一并删除。
+        // Delete both tree tables explicitly; this also works if a deployment
+        // ever connects without SQLite foreign-key enforcement.
+        sqlx::query("DELETE FROM snapshot_entry_changes WHERE snapshot_id = ?")
+            .bind(snapshot_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to delete snapshot delta entries: {e}"),
+            })?;
+        sqlx::query("DELETE FROM snapshot_entries WHERE snapshot_id = ?")
+            .bind(snapshot_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::Internal {
+                message: format!("Failed to delete snapshot entries: {e}"),
+            })?;
         sqlx::query("DELETE FROM snapshots WHERE id = ?")
             .bind(snapshot_id.to_string())
             .execute(&self.pool)
             .await
             .map_err(|e| DomainError::Internal {
-                message: format!("Failed to delete snapshot: {}", e),
+                message: format!("Failed to delete snapshot: {e}"),
             })?;
         Ok(())
     }
@@ -8215,6 +8865,25 @@ impl SnapshotRepo for SqliteSnapshotRepo {
             })?;
         let mut deleted = 0u64;
         for chunk in snapshot_ids.chunks(400) {
+            for table in ["snapshot_entry_changes", "snapshot_entries"] {
+                let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(format!(
+                    "DELETE FROM {table} WHERE snapshot_id IN ("
+                ));
+                {
+                    let mut separated = query.separated(", ");
+                    for snapshot_id in chunk {
+                        separated.push_bind(snapshot_id.to_string());
+                    }
+                }
+                query.push(")");
+                query
+                    .build()
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|error| DomainError::Internal {
+                        message: format!("Failed to delete {table} rows: {error}"),
+                    })?;
+            }
             let mut query =
                 sqlx::QueryBuilder::<sqlx::Sqlite>::new("DELETE FROM snapshots WHERE id IN (");
             {
@@ -8239,21 +8908,54 @@ impl SnapshotRepo for SqliteSnapshotRepo {
         Ok(deleted)
     }
 
+    async fn prune_path_ranges_before(
+        &self,
+        namespace_id: &NamespaceId,
+        sequence: u64,
+    ) -> DomainResult<u64> {
+        let result = sqlx::query(
+            "DELETE FROM snapshot_path_ranges              WHERE namespace_id = ? AND end_seq IS NOT NULL AND end_seq < ?",
+        )
+        .bind(namespace_id.to_string())
+        .bind(i64::try_from(sequence).unwrap_or(i64::MAX))
+        .execute(&self.pool)
+        .await
+        .map_err(|error| DomainError::Internal {
+            message: format!("Failed to prune snapshot path ranges: {error}"),
+        })?;
+        Ok(result.rows_affected())
+    }
+
     async fn snapshot_blob_reference_counts(
         &self,
         snapshot_id: &SnapshotId,
     ) -> DomainResult<Vec<(BlobId, u32)>> {
-        let rows: Vec<(String, i64)> = sqlx::query_as(
-            r#"
-            SELECT blob_id, COUNT(*) AS reference_count
-            FROM snapshot_entries
-            WHERE snapshot_id = ? AND blob_id IS NOT NULL
-            GROUP BY blob_id
-            "#,
-        )
-        .bind(snapshot_id.to_string())
-        .fetch_all(&self.pool)
-        .await
+        let (storage_kind, _, _) = self.snapshot_meta(snapshot_id).await?;
+        let rows: Vec<(String, i64)> = if storage_kind == SnapshotStorageKind::Delta {
+            sqlx::query_as(
+                r#"
+                SELECT blob_id, COUNT(*) AS reference_count
+                FROM snapshot_entry_changes
+                WHERE snapshot_id = ? AND blob_id IS NOT NULL
+                GROUP BY blob_id
+                "#,
+            )
+            .bind(snapshot_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+        } else {
+            sqlx::query_as(
+                r#"
+                SELECT blob_id, COUNT(*) AS reference_count
+                FROM snapshot_entries
+                WHERE snapshot_id = ? AND blob_id IS NOT NULL
+                GROUP BY blob_id
+                "#,
+            )
+            .bind(snapshot_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+        }
         .map_err(|error| DomainError::Internal {
             message: format!("Failed to count snapshot blob references: {error}"),
         })?;
@@ -12606,74 +13308,457 @@ mod snapshot_repo_tests {
     }
 
     #[tokio::test]
-    async fn coalesced_auto_snapshots_merge_into_one_per_window() {
+    async fn incremental_snapshots_store_only_changes_between_checkpoints() {
         let (db_path, pool, repo, namespace_id, user_id) = setup_snapshot_repo().await;
         let entry_repo = SqliteEntryRepo::new(pool.clone());
-        let repo = repo.with_coalescing(std::time::Duration::from_millis(40));
-        let changes = SnapshotNamespaceChanges::default();
+        let repo = repo.with_checkpoint_interval(2);
 
+        let first_id = entry_repo
+            .create_entry(
+                &namespace_id,
+                &NormalizedPath::new("first.txt").expect("path"),
+                EntryKind::File,
+                &user_id,
+            )
+            .await
+            .expect("first entry");
+        let first_draft = SnapshotEntryDraft {
+            entry_id: first_id,
+            entry_path: NormalizedPath::new("first.txt").expect("path"),
+            previous_path: None,
+            entry_kind: EntryKind::File,
+            entry_version_id: None,
+            blob_id: None,
+            size_bytes: None,
+            mime_type: None,
+            version_no: None,
+            change_type: ChangeType::Added,
+            created_by: Some(user_id),
+            created_at: None,
+        };
         let first = repo
             .create_snapshot_from_namespace_with_changes(
                 &namespace_id,
-                Some("one"),
+                Some("checkpoint"),
                 SnapshotKind::AutoCommit,
                 &user_id,
                 &entry_repo,
-                &changes,
+                &SnapshotNamespaceChanges {
+                    changed_entries: vec![first_draft],
+                    ..Default::default()
+                },
             )
             .await
-            .expect("first auto snapshot should be created");
+            .expect("first checkpoint");
+        let first_meta = repo.find_snapshot(&first).await.expect("first snapshot");
+        assert_eq!(first_meta.storage_kind, SnapshotStorageKind::Checkpoint);
+
+        let second_id = entry_repo
+            .create_entry(
+                &namespace_id,
+                &NormalizedPath::new("second.txt").expect("path"),
+                EntryKind::File,
+                &user_id,
+            )
+            .await
+            .expect("second entry");
         let second = repo
             .create_snapshot_from_namespace_with_changes(
                 &namespace_id,
-                Some("two"),
+                Some("delta"),
                 SnapshotKind::AutoCommit,
                 &user_id,
                 &entry_repo,
-                &changes,
+                &SnapshotNamespaceChanges {
+                    changed_entries: vec![SnapshotEntryDraft {
+                        entry_id: second_id,
+                        entry_path: NormalizedPath::new("second.txt").expect("path"),
+                        previous_path: None,
+                        entry_kind: EntryKind::File,
+                        entry_version_id: None,
+                        blob_id: None,
+                        size_bytes: None,
+                        mime_type: None,
+                        version_no: None,
+                        change_type: ChangeType::Added,
+                        created_by: Some(user_id),
+                        created_at: None,
+                    }],
+                    ..Default::default()
+                },
             )
             .await
-            .expect("second auto snapshot joins the window");
+            .expect("delta snapshot");
+        let second_meta = repo.find_snapshot(&second).await.expect("second snapshot");
+        assert_eq!(second_meta.storage_kind, SnapshotStorageKind::Delta);
+        assert_eq!(second_meta.checkpoint_id, Some(first));
+
+        let delta_rows: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM snapshot_entry_changes WHERE snapshot_id = ?")
+                .bind(second.to_string())
+                .fetch_one(&pool)
+                .await
+                .expect("delta rows");
+        assert_eq!(delta_rows, 1, "delta stores only the changed entry");
+        let checkpoint_rows: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM snapshot_entries WHERE snapshot_id = ?")
+                .bind(second.to_string())
+                .fetch_one(&pool)
+                .await
+                .expect("checkpoint rows");
+        assert_eq!(checkpoint_rows, 0);
+
+        let materialized = repo
+            .get_snapshot_entries(&second)
+            .await
+            .expect("delta entries");
+        let paths = materialized
+            .iter()
+            .map(|entry| entry.entry_path.as_str())
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&"first.txt"));
+        assert!(paths.contains(&"second.txt"));
+
+        let (root_children, total) = repo
+            .list_snapshot_children_page(&second, &NormalizedPath::new("").expect("root"), 10, 0)
+            .await
+            .expect("delta root page");
+        assert_eq!(total, 2);
         assert_eq!(
-            first, second,
-            "an auto snapshot inside the window returns the window's snapshot"
-        );
-        assert_eq!(
-            repo.list_all_snapshots().await.expect("list").len(),
-            1,
-            "only the window's opening snapshot exists yet"
+            root_children
+                .iter()
+                .map(|child| child.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first.txt", "second.txt"]
         );
 
-        // 手动快照不参与合并。
-        repo.create_snapshot_from_namespace_with_changes(
-            &namespace_id,
-            Some("manual"),
-            SnapshotKind::UserCreated,
-            &user_id,
-            &entry_repo,
-            &changes,
-        )
-        .await
-        .expect("manual snapshot should be created immediately");
-        assert_eq!(repo.list_all_snapshots().await.expect("list").len(), 2);
+        let (history, _) = repo
+            .list_snapshots_for_path(
+                &namespace_id,
+                &NormalizedPath::new("first.txt").expect("path"),
+                10,
+                true,
+            )
+            .await
+            .expect("first path history");
+        assert_eq!(history.len(), 2, "first.txt exists in both snapshots");
+        let (new_history, _) = repo
+            .list_snapshots_for_path(
+                &namespace_id,
+                &NormalizedPath::new("second.txt").expect("path"),
+                10,
+                true,
+            )
+            .await
+            .expect("second path history");
+        assert_eq!(new_history.len(), 1, "second.txt starts at the delta");
 
-        // 窗口结束后的补提交把合并的变更写入一条新快照。
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        let snapshots = repo.list_all_snapshots().await.expect("list");
-        assert_eq!(
-            snapshots.len(),
-            3,
-            "the pending auto snapshot is flushed after the window"
-        );
-        assert!(
-            snapshots.iter().any(|snapshot| snapshot
-                .message
-                .as_ref()
-                .is_some_and(|message| { message.as_str().contains("合并") })),
-            "the coalesced snapshot explains the merge: {snapshots:?}"
-        );
+        let third_id = entry_repo
+            .create_entry(
+                &namespace_id,
+                &NormalizedPath::new("third.txt").expect("path"),
+                EntryKind::File,
+                &user_id,
+            )
+            .await
+            .expect("third entry");
+        let third = repo
+            .create_snapshot_from_namespace_with_changes(
+                &namespace_id,
+                Some("next checkpoint"),
+                SnapshotKind::AutoCommit,
+                &user_id,
+                &entry_repo,
+                &SnapshotNamespaceChanges {
+                    changed_entries: vec![SnapshotEntryDraft {
+                        entry_id: third_id,
+                        entry_path: NormalizedPath::new("third.txt").expect("path"),
+                        previous_path: None,
+                        entry_kind: EntryKind::File,
+                        entry_version_id: None,
+                        blob_id: None,
+                        size_bytes: None,
+                        mime_type: None,
+                        version_no: None,
+                        change_type: ChangeType::Added,
+                        created_by: Some(user_id),
+                        created_at: None,
+                    }],
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("third checkpoint");
+        let third_meta = repo.find_snapshot(&third).await.expect("third snapshot");
+        assert_eq!(third_meta.storage_kind, SnapshotStorageKind::Checkpoint);
+        let third_rows: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM snapshot_entries WHERE snapshot_id = ?")
+                .bind(third.to_string())
+                .fetch_one(&pool)
+                .await
+                .expect("third rows");
+        assert_eq!(third_rows, 3);
 
         cleanup_db(pool, db_path).await;
+    }
+
+    #[tokio::test]
+    async fn delta_rename_and_delete_update_children_and_path_ranges() {
+        let (db_path, pool, repo, namespace_id, user_id) = setup_snapshot_repo().await;
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+        let repo = repo.with_checkpoint_interval(100);
+
+        let entry_id = entry_repo
+            .create_entry(
+                &namespace_id,
+                &NormalizedPath::new("old.txt").expect("path"),
+                EntryKind::File,
+                &user_id,
+            )
+            .await
+            .expect("entry");
+        let added = SnapshotEntryDraft {
+            entry_id,
+            entry_path: NormalizedPath::new("old.txt").expect("path"),
+            previous_path: None,
+            entry_kind: EntryKind::File,
+            entry_version_id: None,
+            blob_id: None,
+            size_bytes: None,
+            mime_type: None,
+            version_no: None,
+            change_type: ChangeType::Added,
+            created_by: Some(user_id),
+            created_at: None,
+        };
+        repo.create_snapshot_from_namespace_with_changes(
+            &namespace_id,
+            Some("base"),
+            SnapshotKind::AutoCommit,
+            &user_id,
+            &entry_repo,
+            &SnapshotNamespaceChanges {
+                changed_entries: vec![added],
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("base");
+
+        entry_repo
+            .move_entries(&[(entry_id, NormalizedPath::new("new.txt").expect("new path"))])
+            .await
+            .expect("move entry");
+        let renamed = repo
+            .create_snapshot_from_namespace_with_changes(
+                &namespace_id,
+                Some("rename"),
+                SnapshotKind::AutoCommit,
+                &user_id,
+                &entry_repo,
+                &SnapshotNamespaceChanges {
+                    changed_entries: vec![SnapshotEntryDraft {
+                        entry_id,
+                        entry_path: NormalizedPath::new("new.txt").expect("path"),
+                        previous_path: Some(NormalizedPath::new("old.txt").expect("old path")),
+                        entry_kind: EntryKind::File,
+                        entry_version_id: None,
+                        blob_id: None,
+                        size_bytes: None,
+                        mime_type: None,
+                        version_no: None,
+                        change_type: ChangeType::Renamed,
+                        created_by: Some(user_id),
+                        created_at: None,
+                    }],
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("rename snapshot");
+        let materialized_rename = repo
+            .get_snapshot_entries(&renamed)
+            .await
+            .expect("rename materialization");
+        assert_eq!(
+            materialized_rename
+                .iter()
+                .map(|entry| entry.entry_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["new.txt"]
+        );
+        let (children, total) = repo
+            .list_snapshot_children_page(&renamed, &NormalizedPath::new("").expect("root"), 10, 0)
+            .await
+            .expect("renamed root");
+        assert_eq!(total, 1);
+        assert_eq!(children[0].path.as_str(), "new.txt");
+        assert!(
+            repo.snapshot_entry_at_path(
+                &renamed,
+                &NormalizedPath::new("old.txt").expect("old path")
+            )
+            .await
+            .expect("old lookup")
+            .is_none()
+        );
+        let (old_history, _) = repo
+            .list_snapshots_for_path(
+                &namespace_id,
+                &NormalizedPath::new("old.txt").expect("old path"),
+                10,
+                true,
+            )
+            .await
+            .expect("old history");
+        assert_eq!(old_history.len(), 1, "old path ends before the rename");
+        let (new_history, _) = repo
+            .list_snapshots_for_path(
+                &namespace_id,
+                &NormalizedPath::new("new.txt").expect("new path"),
+                10,
+                true,
+            )
+            .await
+            .expect("new history");
+        assert_eq!(new_history.len(), 1, "new path starts at the rename");
+
+        entry_repo
+            .delete_entries(&[entry_id])
+            .await
+            .expect("delete entry");
+        let deleted = repo
+            .create_snapshot_from_namespace_with_changes(
+                &namespace_id,
+                Some("delete"),
+                SnapshotKind::AutoCommit,
+                &user_id,
+                &entry_repo,
+                &SnapshotNamespaceChanges {
+                    changed_entries: vec![SnapshotEntryDraft {
+                        entry_id,
+                        entry_path: NormalizedPath::new("new.txt").expect("path"),
+                        previous_path: None,
+                        entry_kind: EntryKind::File,
+                        entry_version_id: None,
+                        blob_id: None,
+                        size_bytes: None,
+                        mime_type: None,
+                        version_no: None,
+                        change_type: ChangeType::Deleted,
+                        created_by: Some(user_id),
+                        created_at: None,
+                    }],
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("delete snapshot");
+        let (children, total) = repo
+            .list_snapshot_children_page(&deleted, &NormalizedPath::new("").expect("root"), 10, 0)
+            .await
+            .expect("deleted root");
+        assert_eq!(total, 0);
+        assert!(children.is_empty());
+        let materialized = repo
+            .get_snapshot_entries(&deleted)
+            .await
+            .expect("delete materialization");
+        assert!(materialized.iter().any(|entry| {
+            entry.entry_path.as_str() == "new.txt" && entry.change_type == ChangeType::Deleted
+        }));
+
+        cleanup_db(pool, db_path).await;
+    }
+
+    #[tokio::test]
+    async fn migration_0035_backfills_sequences_and_path_ranges() {
+        let db_path = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "vfiles-snapshot-migration-{}.db",
+            uuid::Uuid::new_v4()
+        )))
+        .expect("temp path should be valid utf-8");
+        let pool = SqlitePoolFactory::connect(&db_path)
+            .await
+            .expect("pool should connect");
+        sqlx::raw_sql(
+            r#"
+            CREATE TABLE namespaces (
+                id TEXT PRIMARY KEY NOT NULL,
+                slug TEXT NOT NULL,
+                owner_user_id TEXT NOT NULL
+            );
+            CREATE TABLE entries (
+                id TEXT PRIMARY KEY NOT NULL,
+                namespace_id TEXT NOT NULL REFERENCES namespaces(id),
+                path TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                UNIQUE(namespace_id, path)
+            );
+            CREATE TABLE snapshots (
+                id TEXT PRIMARY KEY NOT NULL,
+                namespace_id TEXT NOT NULL REFERENCES namespaces(id),
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                UNIQUE(namespace_id, name)
+            );
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("legacy schema");
+        sqlx::query(
+            "INSERT INTO namespaces (id, slug, owner_user_id) VALUES ('ns', 'default', 'u')",
+        )
+        .execute(&pool)
+        .await
+        .expect("namespace");
+        sqlx::query("INSERT INTO entries (id, namespace_id, path, kind) VALUES ('e1', 'ns', 'docs', 'directory')")
+            .execute(&pool)
+            .await
+            .expect("entry");
+        for (id, name, created_at) in [
+            ("s1", "auto-000001", "2026-01-01T00:00:00Z"),
+            ("s2", "auto-000002", "2026-01-02T00:00:00Z"),
+        ] {
+            sqlx::query(
+                "INSERT INTO snapshots (id, namespace_id, name, created_at, created_by) VALUES (?, 'ns', ?, ?, 'u')",
+            )
+            .bind(id)
+            .bind(name)
+            .bind(created_at)
+            .execute(&pool)
+            .await
+            .expect("snapshot");
+        }
+        sqlx::raw_sql(include_str!("../migrations/0035_incremental_snapshots.sql"))
+            .execute(&pool)
+            .await
+            .expect("0035 migration");
+
+        let sequences: Vec<(String, Option<i64>, String)> =
+            sqlx::query_as("SELECT id, sequence, storage_kind FROM snapshots ORDER BY sequence")
+                .fetch_all(&pool)
+                .await
+                .expect("snapshot metadata");
+        assert_eq!(
+            sequences,
+            vec![
+                ("s1".to_string(), Some(1), "legacy".to_string()),
+                ("s2".to_string(), Some(2), "legacy".to_string()),
+            ]
+        );
+        let range: (String, i64, Option<i64>) =
+            sqlx::query_as("SELECT path, start_seq, end_seq FROM snapshot_path_ranges")
+                .fetch_one(&pool)
+                .await
+                .expect("seeded range");
+        assert_eq!(range, ("docs".to_string(), 3, None));
+
+        pool.close().await;
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[tokio::test]

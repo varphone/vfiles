@@ -327,6 +327,40 @@ pub struct Snapshot {
     pub created_at: time::OffsetDateTime,
     pub message: Option<NonEmptyMessage>,
     pub kind: SnapshotKind,
+    /// Per-namespace creation order. Used by snapshot path intervals and delta chains.
+    pub sequence: u64,
+    pub storage_kind: SnapshotStorageKind,
+    /// Nearest full checkpoint for a delta snapshot; self for a checkpoint.
+    pub checkpoint_id: Option<SnapshotId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SnapshotStorageKind {
+    /// Full tree written before incremental snapshots were introduced.
+    Legacy,
+    /// Full tree written by the incremental storage engine.
+    Checkpoint,
+    /// Only changed entries; relative to `checkpoint_id`.
+    Delta,
+}
+
+impl SnapshotStorageKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Legacy => "legacy",
+            Self::Checkpoint => "checkpoint",
+            Self::Delta => "delta",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "legacy" => Some(Self::Legacy),
+            "checkpoint" => Some(Self::Checkpoint),
+            "delta" => Some(Self::Delta),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -356,6 +390,9 @@ pub struct SnapshotEntry {
 pub struct SnapshotEntryDraft {
     pub entry_id: EntryId,
     pub entry_path: NormalizedPath,
+    /// Previous path for a rename, used to close the old path interval and write
+    /// a delta tombstone. `None` for add/modify/delete.
+    pub previous_path: Option<NormalizedPath>,
     pub entry_kind: EntryKind,
     pub entry_version_id: Option<VersionId>,
     pub blob_id: Option<BlobId>,

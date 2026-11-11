@@ -193,10 +193,10 @@ curl -T app.tar.gz -H "Authorization: Bearer $TOKEN" \
   - 目录历史默认不返回 `totalCommits`：这个计数需要对整段历史再统计一遍，而
     页面通常只需要最新一页。需要时传 `with_total=true`。文件历史的总数由条目
     版本索引直接得出，始终返回
-  - 目录历史按 `created_at` 倒序取最新 `limit` 条（上限 200），使用
-    `snapshots(namespace_id, created_at, id)` 与
-    `snapshot_entries(entry_path, snapshot_id)` 索引；代价取决于向前检查的快照数，
-    不再随每个快照的条目数增长
+  - 目录历史按 `created_at` 倒序取最新 `limit` 条（上限 200）。新格式快照使用
+    `snapshot_path_ranges` 路径存在区间，旧 `legacy` 快照继续使用
+    `snapshot_entries(entry_path, snapshot_id)`；查询代价取决于区间匹配，不随
+    单个快照的条目数增长。返回语义仍然是“该路径存在的所有快照”
 - `GET /api/history/diff?path=...&commit=...&parent=...`
   - 返回纯文本 diff
 - `POST /api/history/restore`

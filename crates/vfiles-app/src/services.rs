@@ -189,6 +189,7 @@ impl PendingSnapshotEntry {
         SnapshotEntryDraft {
             entry_id: self.entry_id,
             entry_path: self.entry_path,
+            previous_path: None,
             entry_kind: self.entry_kind,
             entry_version_id: self.entry_version_id,
             blob_id: self.blob_id,
@@ -513,6 +514,7 @@ pub(crate) async fn ensure_directory_path(
             .create_entry(namespace_id, &current_path, EntryKind::Directory, user_id)
             .await?;
         changed_entries.push(ChangedEntry {
+            previous_path: None,
             entry_id,
             path: current.clone(),
             kind: EntryKind::Directory,
@@ -569,6 +571,7 @@ pub(crate) async fn ensure_directory_path_with_conditions(
             )
             .await?;
         changed_entries.push(ChangedEntry {
+            previous_path: None,
             entry_id,
             path: current.clone(),
             kind: EntryKind::Directory,
@@ -602,8 +605,53 @@ pub(crate) async fn create_namespace_snapshot_record(
         .into_iter()
         .map(PendingSnapshotEntry::into_draft)
         .collect::<Vec<_>>();
+    let version_ids = changed_entries
+        .iter()
+        .filter(|entry| entry.change_type != ChangeType::Deleted)
+        .filter_map(|entry| entry.current_version_id)
+        .collect::<Vec<_>>();
+    let versions = entry_repo
+        .find_versions(&version_ids)
+        .await?
+        .into_iter()
+        .map(|version| (version.id, version))
+        .collect::<std::collections::HashMap<_, _>>();
+    let changed_drafts = changed_entries
+        .iter()
+        .map(|entry| {
+            let version = entry
+                .current_version_id
+                .and_then(|version_id| versions.get(&version_id));
+            Ok(SnapshotEntryDraft {
+                entry_id: entry.entry_id,
+                entry_path: NormalizedPath::new(&entry.path).map_err(|message| {
+                    DomainError::Internal {
+                        message: format!("Invalid snapshot path: {message}"),
+                    }
+                })?,
+                previous_path: entry
+                    .previous_path
+                    .as_deref()
+                    .map(NormalizedPath::new)
+                    .transpose()
+                    .map_err(|message| DomainError::Internal {
+                        message: format!("Invalid previous snapshot path: {message}"),
+                    })?,
+                entry_kind: entry.kind,
+                entry_version_id: version.map(|version| version.id),
+                blob_id: version.and_then(|version| version.blob_id),
+                size_bytes: version.map(|version| version.size_bytes),
+                mime_type: version.and_then(|version| version.mime_type.clone()),
+                version_no: version.map(|version| version.version_no),
+                change_type: entry.change_type,
+                created_by: version.map(|version| version.created_by),
+                created_at: version.map(|version| version.created_at),
+            })
+        })
+        .collect::<DomainResult<Vec<_>>>()?;
     let changes = SnapshotNamespaceChanges {
         renamed_entry_ids,
+        changed_entries: changed_drafts,
         additional_entries,
     };
     snapshot_repo
@@ -935,33 +983,71 @@ where
         });
         let mut report = SnapshotPruneReport::default();
         for snapshots in by_namespace.values_mut() {
-            // list_all_snapshots 已按创建时间倒序；先按数量与时间窗口选出本轮要删
-            // 的快照，再一次性统计 blob 引用并删除，避免每个快照各付一次提交。
+            // list_all_snapshots is newest first. A checkpoint and its deltas are
+            // one indivisible epoch: never delete a checkpoint whose deltas remain.
+            let retained_ids = snapshots
+                .iter()
+                .take(keep as usize)
+                .map(|snapshot| snapshot.id)
+                .collect::<std::collections::HashSet<_>>();
+            let mut groups = std::collections::HashMap::<SnapshotId, Vec<&Snapshot>>::new();
+            for snapshot in snapshots.iter() {
+                let group_id = if snapshot.storage_kind == SnapshotStorageKind::Legacy {
+                    snapshot.id
+                } else {
+                    snapshot.checkpoint_id.unwrap_or(snapshot.id)
+                };
+                groups.entry(group_id).or_default().push(snapshot);
+            }
+
             let mut doomed = Vec::new();
             let mut counts = std::collections::HashMap::<BlobId, u32>::new();
-            for snapshot in snapshots.iter().skip(keep as usize) {
-                if let Some(cutoff) = cutoff
-                    && snapshot.created_at >= cutoff
+            for group in groups.values() {
+                // Keep the whole epoch if any member is in the newest `keep`, or
+                // if any member is newer than the age cutoff.
+                if group
+                    .iter()
+                    .any(|snapshot| retained_ids.contains(&snapshot.id))
                 {
                     continue;
                 }
-                for (blob_id, count) in self
-                    .snapshot_repo
-                    .snapshot_blob_reference_counts(&snapshot.id)
-                    .await?
+                if let Some(cutoff) = cutoff
+                    && group.iter().any(|snapshot| snapshot.created_at >= cutoff)
                 {
-                    *counts.entry(blob_id).or_insert(0) += count;
+                    continue;
                 }
-                doomed.push(snapshot.id);
+                for snapshot in group {
+                    for (blob_id, count) in self
+                        .snapshot_repo
+                        .snapshot_blob_reference_counts(&snapshot.id)
+                        .await?
+                    {
+                        *counts.entry(blob_id).or_insert(0) += count;
+                    }
+                    doomed.push(snapshot.id);
+                }
             }
             if doomed.is_empty() {
                 continue;
             }
 
             report.pruned_snapshots += self.snapshot_repo.delete_snapshots(&doomed).await?;
+            let doomed_ids = doomed
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>();
+            if let Some(oldest_retained) = snapshots
+                .iter()
+                .filter(|snapshot| !doomed_ids.contains(&snapshot.id))
+                .map(|snapshot| snapshot.sequence)
+                .min()
+                && let Some(namespace_id) = snapshots.first().map(|snapshot| snapshot.namespace_id)
+            {
+                self.snapshot_repo
+                    .prune_path_ranges_before(&namespace_id, oldest_retained)
+                    .await?;
+            }
 
-            // 引用在删除前已统计完毕，删除后统一扣减；跨快照的同一 blob 合并计数，
-            // 一次事务内完成扣减与删除。
             let references = counts.into_iter().collect::<Vec<_>>();
             let removable = self.entry_repo.release_blob_references(&references).await?;
             for blob_id in removable {
@@ -2142,12 +2228,11 @@ where
         path: &NormalizedPath,
         snapshot_id: &SnapshotId,
     ) -> DomainResult<Option<SnapshotEntry>> {
-        let entries = self.snapshot_repo.get_snapshot_entries(snapshot_id).await?;
-        Ok(entries.into_iter().find(|entry| {
-            entry.entry_path == *path
-                && entry.entry_kind == EntryKind::File
-                && entry.change_type != ChangeType::Deleted
-        }))
+        Ok(self
+            .snapshot_repo
+            .snapshot_entry_at_path(snapshot_id, path)
+            .await?
+            .filter(|entry| entry.entry_kind == EntryKind::File))
     }
 
     async fn collect_scoped_entries(
@@ -2794,11 +2879,20 @@ where
                 self.validate_directory_scope(namespace_id, path).await?;
             }
             RequestedFileRevision::Snapshot(snapshot_id) => {
-                let snapshot_entries = self
-                    .snapshot_repo
-                    .get_snapshot_entries(&snapshot_id)
-                    .await?;
-                validate_snapshot_directory_scope(path, &snapshot_entries)?;
+                if !path.as_str().is_empty() {
+                    let entry = self
+                        .snapshot_repo
+                        .snapshot_entry_at_path(&snapshot_id, path)
+                        .await?
+                        .ok_or_else(|| DomainError::NotFound {
+                            resource: "snapshot entry".to_string(),
+                        })?;
+                    if entry.entry_kind != EntryKind::Directory {
+                        return Err(DomainError::Validation {
+                            message: "Path is not a directory".to_string(),
+                        });
+                    }
+                }
             }
         }
         Ok(())
@@ -3251,6 +3345,7 @@ where
             .await?;
 
         changed_entries.push(ChangedEntry {
+            previous_path: None,
             entry_id,
             path: path.as_str().to_string(),
             kind: EntryKind::Directory,
@@ -3321,6 +3416,7 @@ where
             .create_entry_if_current(namespace_id, path, EntryKind::Directory, user_id, condition)
             .await?;
         changed_entries.push(ChangedEntry {
+            previous_path: None,
             entry_id,
             path: path.as_str().to_string(),
             kind: EntryKind::Directory,
@@ -3892,6 +3988,7 @@ where
         let mut deleted_snapshot_entries = Vec::with_capacity(replaced_entries.len());
         for entry in &replaced_entries {
             changed_entries.push(ChangedEntry {
+                previous_path: None,
                 entry_id: entry.id,
                 path: entry.path_norm.as_str().to_string(),
                 kind: entry.entry_type,
@@ -3909,6 +4006,7 @@ where
 
         for (entry, new_path) in &moving_entries {
             changed_entries.push(ChangedEntry {
+                previous_path: Some(entry.path_norm.as_str().to_string()),
                 entry_id: entry.id,
                 path: new_path.as_str().to_string(),
                 kind: entry.entry_type,
@@ -3963,6 +4061,7 @@ where
             .delete_empty_directory(namespace_id, path)
             .await?;
         let changed_entries = vec![ChangedEntry {
+            previous_path: None,
             entry_id: entry.id,
             path: entry.path_norm.as_str().to_string(),
             kind: entry.entry_type,
@@ -4015,6 +4114,7 @@ where
             message,
             user_id,
             vec![ChangedEntry {
+                previous_path: None,
                 entry_id: entry.id,
                 path: entry.path_norm.as_str().to_string(),
                 kind: entry.entry_type,
@@ -4073,6 +4173,7 @@ where
         let changed_entries = all_entries
             .iter()
             .map(|entry| ChangedEntry {
+                previous_path: None,
                 entry_id: entry.id,
                 path: entry.path_norm.as_str().to_string(),
                 kind: entry.entry_type,
@@ -4917,6 +5018,7 @@ where
         entry.current_version_id = Some(version.id);
 
         changed_entries.push(ChangedEntry {
+            previous_path: None,
             entry_id,
             path: file_path.as_str().to_string(),
             kind: EntryKind::File,
@@ -5423,6 +5525,7 @@ where
             message,
             user_id,
             vec![ChangedEntry {
+                previous_path: None,
                 entry_id: entry.id,
                 path: path.as_str().to_string(),
                 kind: EntryKind::File,
@@ -5448,6 +5551,9 @@ pub struct MutationResult {
 pub struct ChangedEntry {
     pub entry_id: EntryId,
     pub path: String,
+    /// Previous path for a rename/move. Used by incremental snapshots to write
+    /// a tombstone and close the old path interval.
+    pub previous_path: Option<String>,
     pub kind: EntryKind,
     pub current_version_id: Option<VersionId>,
     pub change_type: ChangeType,
@@ -6112,6 +6218,108 @@ mod tests {
         FsBlobStore, FsUploadStore, SqliteEntryRepo, SqliteMigrations, SqliteNamespaceRepo,
         SqlitePoolFactory, SqliteSnapshotRepo, SqliteUserRepo,
     };
+
+    #[tokio::test]
+    async fn directory_history_spans_checkpoint_and_delta_snapshots() {
+        let context = TestContext::new().await;
+        let docs = TestContext::path("docs");
+        let docs_mutation = context
+            .workspace_service
+            .create_directory(&context.namespace_id, &docs, Some("docs"), &context.user_id)
+            .await
+            .expect("docs directory");
+        let other = TestContext::path("other");
+        let other_mutation = context
+            .workspace_service
+            .create_directory(
+                &context.namespace_id,
+                &other,
+                Some("other"),
+                &context.user_id,
+            )
+            .await
+            .expect("other directory");
+
+        let first = context
+            .snapshot_repo
+            .find_snapshot(&docs_mutation.snapshot_id)
+            .await
+            .expect("first snapshot");
+        let second = context
+            .snapshot_repo
+            .find_snapshot(&other_mutation.snapshot_id)
+            .await
+            .expect("second snapshot");
+        assert_eq!(first.storage_kind, SnapshotStorageKind::Checkpoint);
+        assert_eq!(second.storage_kind, SnapshotStorageKind::Delta);
+
+        let history = context
+            .history_service
+            .directory_history(&context.namespace_id, &docs, 10, true)
+            .await
+            .expect("directory history");
+        assert_eq!(history.items.len(), 2);
+        assert_eq!(history.current_snapshot_id, Some(second.id));
+
+        let tree = context
+            .workspace_service
+            .tree(&context.namespace_id, &docs, Some(&second.id))
+            .await
+            .expect("delta tree");
+        assert_eq!(tree.items.len(), 0, "docs remains empty in the delta");
+    }
+
+    #[tokio::test]
+    async fn snapshot_pruning_deletes_whole_checkpoint_epochs() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let root = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+            .expect("temp path should be utf-8");
+        let pool = SqlitePoolFactory::connect(root.join("vfiles.db").as_path())
+            .await
+            .expect("pool");
+        SqliteMigrations::run(&pool).await.expect("migrations");
+        let user_repo = SqliteUserRepo::new(pool.clone());
+        let namespace_repo = SqliteNamespaceRepo::new(pool.clone());
+        let user_id = user_repo
+            .create_admin("admin", "admin@example.com", "hash")
+            .await
+            .expect("user");
+        let namespace_id = namespace_repo
+            .create_default(&user_id, "default")
+            .await
+            .expect("namespace");
+        let entry_repo = SqliteEntryRepo::new(pool.clone());
+        let blob_store = FsBlobStore::new(pool.clone(), root.join("blobs"));
+        let repo = SqliteSnapshotRepo::new(pool.clone()).with_checkpoint_interval(2);
+        let changes = SnapshotNamespaceChanges::default();
+        for message in ["one", "two", "three", "four"] {
+            repo.create_snapshot_from_namespace_with_changes(
+                &namespace_id,
+                Some(message),
+                SnapshotKind::AutoCommit,
+                &user_id,
+                &entry_repo,
+                &changes,
+            )
+            .await
+            .expect("snapshot");
+        }
+        let service = MaintenanceService::new(blob_store, entry_repo, repo.clone());
+        let report = service.prune_snapshots(1).await.expect("prune");
+        assert_eq!(report.pruned_snapshots, 2);
+        let remaining = repo.list_all_snapshots().await.expect("list");
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.iter().all(|snapshot| {
+            snapshot.storage_kind != SnapshotStorageKind::Delta || snapshot.checkpoint_id.is_some()
+        }));
+        assert!(
+            remaining
+                .iter()
+                .any(|snapshot| { snapshot.storage_kind == SnapshotStorageKind::Checkpoint })
+        );
+
+        pool.close().await;
+    }
 
     struct CorruptUploadMetadataReader {
         path: std::path::PathBuf,

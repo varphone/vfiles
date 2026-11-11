@@ -3,6 +3,21 @@
 本文件记录主要版本的变更；更早的历史可直接查看 `git log`。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)（`主版本.次版本.修订号`）。
 
+## 未发布（增量快照存储）
+
+快照从“每次写操作复制整棵目录树”改为 checkpoint + delta，避免数据库按
+`条目数 × 快照数` 膨胀。
+
+### 快照
+
+- 新增 `snapshot_entry_changes` 与 `snapshot_path_ranges`；普通写入只记录变化条目，
+  每 `VFILES_SNAPSHOT_CHECKPOINT_INTERVAL` 个快照生成一次全量 checkpoint。
+- 旧 `legacy` 快照保持可读；迁移 `0035` 不回写 85M 级旧行，只回填快照序列和当前路径区间。
+- 目录历史继续返回路径存在的全部快照，但新快照通过路径区间查询，不再为每个快照保存
+  完整路径集合。
+- 快照裁剪按完整 checkpoint epoch 删除；`VFILES_SNAPSHOT_COALESCE_SECONDS` 废弃。
+- 新格式快照写入后不支持直接降级到 2.8.x；需要恢复升级前备份。
+
 ## v2.8.1（2026-11-11）
 
 安全修复版本，重点处理账号接管、范围越权、同源存储型 XSS 与凭据轮换问题。

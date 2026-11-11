@@ -153,6 +153,10 @@ Windows PowerShell：
 > **升级说明**：`serve` 启动时会自动执行数据库迁移，因此升级二进制后无需手动跑 `init`
 > 或迁移命令，老库缺失的新表/索引会在启动阶段补齐；迁移失败会直接报错退出，
 > 不会以不完整的库继续对外服务。
+>
+> **2.9 增量快照迁移（0035）**：该迁移只增加快照元数据、增量表和路径区间，并回填
+> 快照序列与当前路径；不会扫描或重写已有的 85M 行 `snapshot_entries`。升级前仍应完整
+> 备份；升级后旧快照可继续读取，但一旦写入新格式快照就不能直接降级到 2.8.x。
 
 ## rsync（默认关闭）
 
@@ -249,21 +253,22 @@ sudo ./vfiles register -t systemd \
 
 裁剪会删除旧快照（不可再恢复到这些提交），请在确认不再需要旧历史后执行。
 
-### 自动快照合并（可选）
+### 快照存储（增量 + 检查点）
 
-每次变更都会把整棵目录树复制一份生成自动快照，目录很大时单次写入成本明显（5 万条目约
-1.5–2 秒）。HTTP、WebDAV、S3 的批量写入会放大这一成本。可用时间窗口把同一命名空间内的
-自动提交合并为一次快照：
+2.9 起自动快照不再每次复制整棵目录树：普通变更只写 `snapshot_entry_changes` 中的变化条目，
+每 `VFILES_SNAPSHOT_CHECKPOINT_INTERVAL` 次快照（默认 1024）或手动快照才生成一次完整
+checkpoint。旧版本的全量快照继续以 `legacy` 格式读取，不需要一次性重写。
 
 ```bash
-# 0（默认）= 每次变更立即生成快照；1–2 秒适合批量上传/同步场景
-VFILES_SNAPSHOT_COALESCE_SECONDS=1
+# 每 1024 个快照生成一次全量 checkpoint；32–10000
+VFILES_SNAPSHOT_CHECKPOINT_INTERVAL=1024
 ```
 
-启用后：窗口内第一次变更仍立即生成快照；后续变更只累加待提交计数，窗口结束时由后台任务
-补提交一次快照（描述为「自动快照（合并 N 次变更）」）。手动创建的快照不受影响。代价是历史
-粒度变粗：窗口内的多次写入只对应一条自动快照。补提交失败时保留待提交计数，等下一次变更
-重新开启窗口再试。
+`VFILES_SNAPSHOT_COALESCE_SECONDS` 已废弃：增量快照本身已把单次写入降到很小，继续设置只会
+在启动日志中产生一条告警，不再启用旧合并逻辑。
+
+裁剪会按 checkpoint + delta 的完整 epoch 删除；如果 `--keep` 落在 epoch 中间，会保留整个
+epoch，因此实际保留数可能略大于 `--keep`。旧 `legacy` 快照可单独裁剪。
 
 ### 写入请求的来源校验
 
@@ -494,7 +499,8 @@ vfiles import /srv/legacy-files --force
 | `VFILES_MAINTENANCE_INTERVAL_SECONDS` | `86400` | 执行间隔（秒），最小 60 |
 | `VFILES_MAINTENANCE_INITIAL_DELAY_SECONDS` | `300` | 启动后首次执行前等待（秒），不超过间隔且最多 5 分钟 |
 | `VFILES_MAINTENANCE_BLOB_GRACE_SECONDS` | `3600` | 孤儿 blob 保护期（秒） |
-| `VFILES_MAINTENANCE_SNAPSHOT_KEEP` | `0` | 每个命名空间保留的快照数；`0`（默认）表示不裁剪快照 |
+| `VFILES_SNAPSHOT_CHECKPOINT_INTERVAL` | `1024` | 每多少个快照生成一次全量 checkpoint；32–10000 |
+| `VFILES_MAINTENANCE_SNAPSHOT_KEEP` | `0` | 每个命名空间至少保留的快照数；`0`（默认）表示不裁剪。新格式按完整 checkpoint epoch 删除 |
 | `VFILES_MAINTENANCE_SNAPSHOT_MAX_AGE_DAYS` | `0` | 快照最长保留天数；`0`（默认）表示不按时间裁剪。与数量策略是「与」关系：只删除既超出 `KEEP` 又早于该天数的快照 |
 
 ```bash

@@ -30,6 +30,9 @@ pub struct AppConfig {
     /// 大于 0 时，同一命名空间在窗口内的多次自动提交合并为一次快照，窗口结束时
     /// 由后台任务补提交；历史粒度随之变粗，手动快照不受影响。
     pub snapshot_coalesce_seconds: u64,
+    /// Number of snapshots between full snapshot checkpoints. Delta snapshots
+    /// between checkpoints only store changed entries.
+    pub snapshot_checkpoint_interval: u32,
     pub ftp: FtpConfig,
     pub webdav: WebdavConfig,
     /// S3 兼容 API（默认启用；空凭证时运行期生成随机凭证）。
@@ -602,12 +605,20 @@ impl ConfigLoader {
         .unwrap_or(0);
         // 自动快照合并窗口：0 表示每次变更都立即生成快照；上限 1 小时，避免配置失误
         // 让历史长时间不落盘。
+        // Deprecated: incremental snapshots replaced coalescing. Keep parsing
+        // for compatibility so old service units do not fail to start.
         let snapshot_coalesce_seconds = Self::env_parse::<u64>(&[
             "VFILES_SNAPSHOT_COALESCE_SECONDS",
             "SNAPSHOT_COALESCE_SECONDS",
         ])?
         .unwrap_or(0)
         .min(3600);
+        let snapshot_checkpoint_interval = Self::env_parse::<u32>(&[
+            "VFILES_SNAPSHOT_CHECKPOINT_INTERVAL",
+            "SNAPSHOT_CHECKPOINT_INTERVAL",
+        ])?
+        .unwrap_or(1024)
+        .clamp(32, 10_000);
 
         let thumbnail_cache_max_entries = Self::env_parse::<usize>(&[
             "VFILES_THUMBNAIL_CACHE_MAX_ENTRIES",
@@ -738,6 +749,7 @@ impl ConfigLoader {
                 snapshot_max_age_days: maintenance_snapshot_max_age_days,
             },
             snapshot_coalesce_seconds,
+            snapshot_checkpoint_interval,
             ftp,
             webdav: webdav_from_env(webdav_enabled_raw, auth_enabled)?,
             s3: s3_from_env()?,

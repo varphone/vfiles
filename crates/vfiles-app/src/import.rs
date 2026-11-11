@@ -457,6 +457,7 @@ impl ImportBatch {
 
             self.changed.extend(changed_directories);
             self.changed.push(ChangedEntry {
+                previous_path: None,
                 entry_id: entry.id,
                 path: path.as_str().to_string(),
                 kind: EntryKind::File,
@@ -560,6 +561,7 @@ impl ImportBatch {
 
         self.changed.extend(changed_directories);
         self.changed.push(ChangedEntry {
+            previous_path: None,
             entry_id,
             path: path.as_str().to_string(),
             kind: EntryKind::Directory,

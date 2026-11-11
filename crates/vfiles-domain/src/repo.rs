@@ -1309,6 +1309,18 @@ pub trait SnapshotRepo {
         &self,
         snapshot_id: &SnapshotId,
     ) -> DomainResult<Vec<SnapshotEntry>>;
+    /// Read the visible entry at one path without materializing the whole snapshot.
+    async fn snapshot_entry_at_path(
+        &self,
+        snapshot_id: &SnapshotId,
+        path: &NormalizedPath,
+    ) -> DomainResult<Option<SnapshotEntry>> {
+        Ok(self
+            .get_snapshot_entries(snapshot_id)
+            .await?
+            .into_iter()
+            .find(|entry| entry.entry_path == *path && entry.change_type != ChangeType::Deleted))
+    }
     /// Read one immediate snapshot directory page without materializing the whole tree.
     /// Implementations should preserve directory-first, path-ascending ordering.
     async fn list_snapshot_children_page(
@@ -1412,6 +1424,14 @@ pub trait SnapshotRepo {
     async fn list_all_snapshots(&self) -> DomainResult<Vec<Snapshot>>;
     /// 删除快照及其条目（条目通过外键级联删除）。
     async fn delete_snapshot(&self, snapshot_id: &SnapshotId) -> DomainResult<()>;
+    /// 清理在给定快照序列之前就已关闭的路径区间。
+    async fn prune_path_ranges_before(
+        &self,
+        _namespace_id: &NamespaceId,
+        _sequence: u64,
+    ) -> DomainResult<u64> {
+        Ok(0)
+    }
     /// 一次事务内删除多个快照及其条目，返回实际删除的快照数。
     ///
     /// 默认实现逐条删除；存储实现应把它合并为一次提交，避免每个快照各付一次
@@ -1446,6 +1466,9 @@ pub trait SnapshotRepo {
 #[derive(Debug, Clone, Default)]
 pub struct SnapshotNamespaceChanges {
     pub renamed_entry_ids: Vec<EntryId>,
+    /// Entries created, modified, deleted or renamed by this mutation. Delta
+    /// snapshots persist these drafts; full checkpoints still read the live tree.
+    pub changed_entries: Vec<SnapshotEntryDraft>,
     pub additional_entries: Vec<SnapshotEntryDraft>,
 }
 
