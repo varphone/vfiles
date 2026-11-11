@@ -28,11 +28,13 @@ cd client && bun install && bun run build
 cd ..
 ```
 
-3. 构建 Rust 服务：
+3. 构建 Rust 服务（单文件发布，内嵌前端）：
 
 ```bash
-cargo build -p vfiles-bin --release
+cargo build -p vfiles-bin --release --features embed
 ```
+
+如果不启用 `embed`，运行二进制时需把 `client/dist` 放在工作目录旁。
 
 4. 初始化数据目录和数据库：
 
@@ -101,10 +103,21 @@ cargo build -p vfiles-bin --release
 - [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) - 开发与提交流程
 - [docs/USER_GUIDE.md](docs/USER_GUIDE.md) - 常用操作说明
 
-## 环境变量
+## 环境变量与安全默认值
 
-示例配置见 [.env.example](.env.example)。
+示例配置见 [.env.example](.env.example)。发布前至少确认：
+
+- `VFILES_AUTH_COOKIE_SECRET` 改为随机值；
+- 公网实例保持 `VFILES_AUTH_ALLOW_REGISTER=false`；
+- rsync 默认关闭，启用时必须配置 `VFILES_RSYNC_AUTH_USERS` 与 secrets 文件；
+- 通过 `sudo vfiles register --user vfiles --group vfiles ...` 以非 root 用户运行；
+- 生产环境使用 HTTPS，并设置 `VFILES_HTTP_PUBLIC_BASE_URL` 为实际外部地址。
+
+## 发布
+
+打 `v*` 标签会触发 [release workflow](.github/workflows/release.yml)，构建内嵌前端的
+Linux x86_64 二进制、tarball 与 SHA-256。发布说明位于 `docs/releases/`。
 
 ## 许可
 
-MIT License
+MIT License，见 [LICENSE](LICENSE)。

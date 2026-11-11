@@ -9,7 +9,6 @@ release/
 
 # Rust
 target/
-Cargo.lock
 
 # Environment
 .env

@@ -28,13 +28,6 @@
         </button>
       </div>
 
-      <AuthNotice
-        v-if="auth.enabled && !auth.allowRegister && mode !== 'email'"
-        tone="info"
-      >
-        管理员已关闭注册（AUTH_ALLOW_REGISTER=false）。
-      </AuthNotice>
-
       <form v-if="mode !== 'email'" class="auth-form" @submit.prevent="submit">
         <div class="auth-field">
           <label class="auth-label" for="auth-username">账号或邮箱</label>

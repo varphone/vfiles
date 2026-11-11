@@ -34,7 +34,7 @@ pub struct AppConfig {
     pub webdav: WebdavConfig,
     /// S3 兼容 API（默认启用；空凭证时运行期生成随机凭证）。
     pub s3: S3Config,
-    /// rsync 协议 daemon（默认启用、只读；可单独配置认证和写权限）。
+    /// rsync 协议 daemon（默认关闭；启用时默认只读，可单独配置认证和写权限）。
     pub rsync: RsyncConfig,
     pub features: FeatureMatrix,
 }
@@ -224,7 +224,7 @@ fn s3_default_port() -> u16 {
 /// rsync daemon 配置（对称 S3 先例三变量 ✗ rsync://host/module 形 = 单模块匿名只读）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RsyncConfig {
-    /// 默认启用；默认只读（`VFILES_RSYNC_ENABLED=false` 可关闭）。
+    /// 默认关闭；显式 `VFILES_RSYNC_ENABLED=true` 才监听；启用时默认只读。
     #[serde(default = "rsync_default_enabled")]
     pub enabled: bool,
     /// daemon 专用端口（rsync 生态默认 873）。
@@ -245,7 +245,7 @@ pub struct RsyncConfig {
 }
 
 fn rsync_default_enabled() -> bool {
-    true
+    false
 }
 
 fn rsync_default_port() -> u16 {
@@ -344,7 +344,7 @@ fn rsync_from_env() -> Result<RsyncConfig, ConfigError> {
     let enabled = std::env::var("VFILES_RSYNC_ENABLED")
         .ok()
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
-        .unwrap_or(true);
+        .unwrap_or(false);
     let port = std::env::var("VFILES_RSYNC_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -547,7 +547,7 @@ impl ConfigLoader {
             Self::env_parse_bool(&["VFILES_AUTH_ENABLED", "ENABLE_AUTH"])?.unwrap_or(true);
         let allow_register =
             Self::env_parse_bool(&["VFILES_AUTH_ALLOW_REGISTER", "AUTH_ALLOW_REGISTER"])?
-                .unwrap_or(true);
+                .unwrap_or(false);
         let login_rate_limit_enabled = Self::env_parse_bool(&[
             "VFILES_AUTH_LOGIN_RATE_LIMIT_ENABLED",
             "AUTH_LOGIN_RATE_LIMIT_ENABLED",
@@ -1027,8 +1027,8 @@ mod tests {
         assert!(config.s3.enabled, "S3 默认启用");
         assert!(config.s3.embedded, "S3 默认复用 HTTP listener");
         assert_eq!(config.s3.port, 9000);
-        // rsync 默认启用且只读 + 873 + 模块 files（VFILES_RSYNC_ENABLED=false 显式关闭）
-        assert!(config.rsync.enabled, "rsync 默认启用");
+        // rsync 默认关闭；显式 VFILES_RSYNC_ENABLED=true 才监听，避免匿名暴露。
+        assert!(!config.rsync.enabled, "rsync 默认关闭");
         assert_eq!(config.rsync.port, 873);
         assert_eq!(config.rsync.module, "files");
         assert!(config.auth.enabled);

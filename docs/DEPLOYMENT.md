@@ -33,7 +33,7 @@ VFILES_STORAGE_ROOT=./data
 VFILES_DATABASE_PATH=./data/vfiles.db
 
 VFILES_AUTH_ENABLED=true
-VFILES_AUTH_ALLOW_REGISTER=true
+VFILES_AUTH_ALLOW_REGISTER=false
 VFILES_AUTH_COOKIE_SECRET=replace-with-a-random-secret-at-least-32-chars
 # 登录失败限流：默认 5 分钟内单账号最多失败 10 次、单来源最多失败 100 次；窗口最大为 365 天
 # VFILES_AUTH_LOGIN_RATE_LIMIT_ENABLED=true
@@ -153,12 +153,37 @@ Windows PowerShell：
 > 或迁移命令，老库缺失的新表/索引会在启动阶段补齐；迁移失败会直接报错退出，
 > 不会以不完整的库继续对外服务。
 
+## rsync（默认关闭）
+
+rsync daemon 默认不启动。需要 `rsync://` 访问时显式开启：
+
+```bash
+VFILES_RSYNC_ENABLED=true
+VFILES_RSYNC_MODULE=files
+VFILES_RSYNC_WRITABLE=false
+VFILES_RSYNC_AUTH_USERS=alice,bob:ro
+VFILES_RSYNC_SECRETS_FILE=/etc/vfiles/rsyncd.secrets
+```
+
+`auth_users` 留空表示**匿名只读**，公网部署不要这样配置。rsync 使用 873 端口，
+非 root 运行需要 `CAP_NET_BIND_SERVICE` 或改端口。
+
+## 备份与恢复
+
+至少备份 `VFILES_DATABASE_PATH` 与 `VFILES_STORAGE_ROOT`（`blobs/`、`uploads/`、`backups/`）。
+
+1. 停服务，或使用 SQLite 在线备份：`sqlite3 data/vfiles.db ".backup '/backup/vfiles.db'"`；
+2. 复制整个存储根目录；
+3. 恢复时先还原存储根，再把数据库放回原路径并启动服务；
+4. 升级大版本前先做一次完整备份，迁移不可逆（先备份再启动新版本）。
+
 ## 注册为 systemd 服务
 
 在 Linux 主机上，可以直接用内置 CLI 生成并注册 systemd unit：
 
 ```bash
 sudo ./vfiles register -t systemd \
+	--user vfiles --group vfiles \
 	--working-directory /srv/vfiles \
 	--data-directory /var/lib/vfiles \
 	--start

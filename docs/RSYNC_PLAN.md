@@ -2,7 +2,7 @@
 
 ## 当前工作树补充（push 接收校验）
 
-- rsync daemon 默认启用（`VFILES_RSYNC_ENABLED=false` 可关闭）；默认只读，写入仍由
+- rsync daemon 默认关闭（`VFILES_RSYNC_ENABLED=true` 才开启）；启用时默认只读，写入仍由
   `VFILES_RSYNC_WRITABLE=true` 显式开启。空用户列表时保持匿名访问行为。
 
 - 收端在写入前验证重建长度与 flist 文件长度一致，并校验协商 MD5；校验失败时拒绝该连接，

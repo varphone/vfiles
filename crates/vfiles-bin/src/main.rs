@@ -191,6 +191,12 @@ struct RegisterArgs {
     working_directory: Option<PathBuf>,
     #[arg(short = 'd', long)]
     data_directory: Option<PathBuf>,
+    /// 以指定用户运行（推荐；默认由 systemd 以调用者身份启动，通常是 root）。
+    #[arg(long)]
+    user: Option<String>,
+    /// 以指定用户组运行。
+    #[arg(long)]
+    group: Option<String>,
     #[arg(long)]
     start: bool,
 }
@@ -201,6 +207,8 @@ struct SystemdUnitConfig<'a> {
     executable_path: &'a Path,
     working_directory: &'a Path,
     data_directory: Option<&'a Path>,
+    user: Option<&'a str>,
+    group: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -442,6 +450,8 @@ fn register_systemd_service(args: RegisterArgs) -> anyhow::Result<()> {
             executable_path: &executable_path,
             working_directory: &working_directory,
             data_directory: data_directory.as_deref(),
+            user: args.user.as_deref(),
+            group: args.group.as_deref(),
         });
 
         std::fs::write(&unit_path, unit_contents).map_err(|e| {
@@ -512,6 +522,22 @@ fn render_systemd_unit(config: &SystemdUnitConfig<'_>) -> String {
         systemd_quote(&config.executable_path.display().to_string()),
         config.working_directory.display(),
     );
+
+    if let Some(user) = config.user {
+        unit.push_str(&format!("User={user}\n"));
+    }
+    if let Some(group) = config.group {
+        unit.push_str(&format!("Group={group}\n"));
+    }
+    unit.push_str("NoNewPrivileges=true\n");
+    unit.push_str("PrivateTmp=true\n");
+    unit.push_str("ProtectSystem=full\n");
+    unit.push_str("ProtectKernelTunables=true\n");
+    unit.push_str("ProtectKernelModules=true\n");
+    unit.push_str("ProtectControlGroups=true\n");
+    unit.push_str("RestrictSUIDSGID=true\n");
+    unit.push_str("LockPersonality=true\n");
+    unit.push_str("RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\n");
 
     if let Some(data_directory) = config.data_directory {
         unit.push_str(&format!(
@@ -3367,11 +3393,17 @@ mod tests {
             executable_path: Path::new("/opt/vfiles/vfiles"),
             working_directory: Path::new("/srv/vfiles"),
             data_directory: Some(Path::new("/var/lib/vfiles")),
+            user: Some("vfiles"),
+            group: Some("vfiles"),
         });
 
         assert!(unit.contains("ExecStart=\"/opt/vfiles/vfiles\" serve"));
         assert!(unit.contains("WorkingDirectory=/srv/vfiles"));
         assert!(unit.contains("Environment=\"VFILES_STORAGE_ROOT=/var/lib/vfiles\""));
+        assert!(unit.contains("User=vfiles"));
+        assert!(unit.contains("Group=vfiles"));
+        assert!(unit.contains("NoNewPrivileges=true"));
+        assert!(unit.contains("ProtectSystem=full"));
         assert!(unit.contains("WantedBy=multi-user.target"));
     }
 

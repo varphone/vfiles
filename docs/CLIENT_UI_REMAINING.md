@@ -2077,7 +2077,7 @@
 - **结构（进行中）**：条目点击/展开、预览、打开目录、队列下载、快速预览与搜索进入动作抽为 `useFileBrowserItemActions`；`FileBrowser` 降至约 1694 行（本轮）。
 - **结构（进行中）**：覆盖层守卫（菜单/预览/弹窗/全局确认框）与分享关闭刷新抽为 `useFileBrowserOverlays`；`FileBrowser` 降至约 1680 行（本轮）。
 - **结构（进行中）**：右键/行菜单与收藏状态抽为 `useFileContextMenu`（215d272）；`FileBrowser` 降至约 2240 行。
-- **登录页收口**：页脚改为「品牌标语 / 版本 · 备案」两行纯文字，去掉胶囊底与重复描述；版本回退到 package.json（对齐 2.7.0）；设备登录/忘记密码合并为一行（8f5fd8b）。
+- **登录页收口**：页脚改为「品牌标语 / 版本 · 备案」两行纯文字，去掉胶囊底与重复描述；版本回退到 package.json（对齐 2.8.0）；设备登录/忘记密码合并为一行（8f5fd8b）。
 - **像素基线**：`ui:visual` 使用固定夹具/固定 DB 时间戳/冻结时钟/固定主题与视口，对登录、文件列表（明暗）、网格、移动端（明暗）、管理台用户、空令牌页、统一搜索、右键菜单共 11 张截图做 pixelmatch 比对；CI 安装 Noto CJK 后执行，goldens 已提交（601a849）。
 - **类型与契约**：开启 `strictTemplates`，修复 73 个模板类型错误；顺带补 `AdminOverview` 的 `SkeletonList` 导入、`MobileSearchBar` 的 `enter-results`/ArrowDown、桌面内容区的重命名绑定，并让 `FileBrowserCollection` 声明/转发完整事件契约（6485dc6）。
 - **首屏占位**：`index.html` 增加主题化启动骨架（含 reduced-motion 回退），Vue 挂载后替换，覆盖 Home chunk 加载前的空白窗口（5e71ddd）。
