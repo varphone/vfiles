@@ -3387,6 +3387,148 @@ where
         self.snapshot_repo.find_snapshot(&snapshot_id).await
     }
 
+    /// 按直属子目录汇总空间占用；进入子目录时可继续下钻。
+    ///
+    /// 一次读取目录子树（含当前版本大小），在内存中按第一段路径聚合，
+    /// 避免每个子目录各做一次递归查询。
+    pub async fn space_analysis(
+        &self,
+        namespace_id: &NamespaceId,
+        path: &NormalizedPath,
+    ) -> DomainResult<SpaceAnalysis> {
+        let base = path.as_str().trim_end_matches('/');
+        if !base.is_empty() {
+            let entry = self
+                .entry_repo
+                .find_by_path(namespace_id, path)
+                .await?
+                .ok_or_else(|| DomainError::NotFound {
+                    resource: "directory".to_string(),
+                })?;
+            if entry.entry_type != EntryKind::Directory {
+                return Err(DomainError::Validation {
+                    message: "Space analysis is only available for directories".to_string(),
+                });
+            }
+        }
+
+        let entries = self
+            .entry_repo
+            .find_subtree_with_meta(namespace_id, path)
+            .await?;
+        let prefix = if base.is_empty() {
+            String::new()
+        } else {
+            format!("{base}/")
+        };
+        let mut folders = HashMap::<String, SpaceFolderUsage>::new();
+        let mut direct_files = Vec::<SpaceFileUsage>::new();
+        let mut all_files = Vec::<SpaceFileUsage>::new();
+        let mut total_bytes = 0u64;
+        let mut file_count = 0u64;
+        let mut directory_count = 0u64;
+        let mut direct_file_bytes = 0u64;
+        let mut direct_file_count = 0u64;
+
+        for meta in entries {
+            let entry = &meta.entry;
+            let entry_path = entry.path_norm.as_str();
+            if entry_path == base {
+                continue;
+            }
+            let relative = entry_path
+                .strip_prefix(prefix.as_str())
+                .unwrap_or(entry_path);
+            if relative.is_empty() {
+                continue;
+            }
+            let first = relative.split('/').next().unwrap_or(relative);
+            let direct_path = if base.is_empty() {
+                first.to_string()
+            } else {
+                format!("{base}/{first}")
+            };
+
+            if entry.entry_type == EntryKind::Directory {
+                directory_count = directory_count.saturating_add(1);
+                let folder =
+                    folders
+                        .entry(direct_path.clone())
+                        .or_insert_with(|| SpaceFolderUsage {
+                            path: direct_path.clone(),
+                            name: first.to_string(),
+                            ..Default::default()
+                        });
+                // 行内统计的是该子文件夹内部的下级目录，不含它自身。
+                if relative != first {
+                    folder.directory_count = folder.directory_count.saturating_add(1);
+                }
+                continue;
+            }
+
+            let size = meta.size_bytes.unwrap_or(0);
+            file_count = file_count.saturating_add(1);
+            total_bytes = total_bytes.saturating_add(size);
+            let file = SpaceFileUsage {
+                path: entry_path.to_string(),
+                name: entry.name.clone(),
+                bytes: size,
+                mime_type: meta.mime_type.clone(),
+            };
+            all_files.push(file.clone());
+            if relative.contains('/') {
+                let folder =
+                    folders
+                        .entry(direct_path.clone())
+                        .or_insert_with(|| SpaceFolderUsage {
+                            path: direct_path.clone(),
+                            name: first.to_string(),
+                            ..Default::default()
+                        });
+                folder.bytes = folder.bytes.saturating_add(size);
+                folder.file_count = folder.file_count.saturating_add(1);
+            } else {
+                direct_file_bytes = direct_file_bytes.saturating_add(size);
+                direct_file_count = direct_file_count.saturating_add(1);
+                direct_files.push(file);
+            }
+        }
+
+        let mut folders = folders.into_values().collect::<Vec<_>>();
+        folders.sort_by(|left, right| {
+            right
+                .bytes
+                .cmp(&left.bytes)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        direct_files.sort_by(|left, right| {
+            right
+                .bytes
+                .cmp(&left.bytes)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        direct_files.truncate(100);
+        all_files.sort_by(|left, right| {
+            right
+                .bytes
+                .cmp(&left.bytes)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        all_files.truncate(8);
+
+        Ok(SpaceAnalysis {
+            path: base.to_string(),
+            total_bytes,
+            file_count,
+            directory_count,
+            direct_file_bytes,
+            direct_file_count,
+            folders,
+            files: direct_files,
+            largest_files: all_files,
+        })
+    }
+
     pub async fn tree(
         &self,
         namespace_id: &NamespaceId,

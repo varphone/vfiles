@@ -155,11 +155,11 @@ beforeEach(() => {
 });
 
 describe("Home.vue", () => {
-  it("renders the page-level view sidebar with all five entries", async () => {
+  it("renders the page-level view sidebar with all entries", async () => {
     await renderHome();
 
     const sidebar = await screen.findByRole("navigation", { name: "视图" });
-    for (const label of ["全部文件", "最近", "收藏", "分享", "活动"]) {
+    for (const label of ["全部文件", "最近", "收藏", "分享", "活动", "空间分析"]) {
       expect(
         within(sidebar).getByRole("link", { name: label }),
       ).toBeInTheDocument();

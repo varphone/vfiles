@@ -149,6 +149,36 @@ export interface WorkspaceOverview {
   recent_files: RecentFile[];
 }
 
+/** 空间分析中的直属子目录（含全部后代）。 */
+export interface SpaceFolderUsage {
+  path: string;
+  name: string;
+  bytes: number;
+  file_count: number;
+  directory_count: number;
+}
+
+/** 空间分析中的文件。 */
+export interface SpaceFileUsage {
+  path: string;
+  name: string;
+  bytes: number;
+  mime_type?: string | null;
+}
+
+/** 目录空间分析（`GET /api/files/space`）。 */
+export interface SpaceAnalysis {
+  path: string;
+  total_bytes: number;
+  file_count: number;
+  directory_count: number;
+  direct_file_bytes: number;
+  direct_file_count: number;
+  folders: SpaceFolderUsage[];
+  files: SpaceFileUsage[];
+  largest_files: SpaceFileUsage[];
+}
+
 export interface RecentFile {
   path: string;
   name: string;

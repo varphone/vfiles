@@ -28,6 +28,12 @@ const router = createRouter({
       component: () => import("../views/ActivityView.vue"),
     },
     {
+      path: "/storage",
+      meta: { title: "空间分析" },
+      name: "storage-analysis",
+      component: () => import("../views/StorageAnalysis.vue"),
+    },
+    {
       path: "/login",
       meta: { title: "登录" },
       name: "login",

@@ -80,7 +80,7 @@ curl -b cookies.txt -X DELETE "$VFILES/api/auth/credentials/<id>"
 - 搜索在未指定目录时逐根搜索、合并结果；指定目录时该目录必须在范围内。
 - 分享的创建要求可写；分享列表与停用按范围过滤。公共分享链接本身不鉴权（既有行为）。
 - 受限会话不能访问：`/api/auth/credentials`、`/api/tokens`、`/api/admin/*`、`/api/audit/*`、
-  `/api/files/overview`、`/api/files/snapshots`、`/api/files/transfer`。
+  `/api/files/overview`、`/api/files/space`、`/api/files/snapshots`、`/api/files/transfer`。
 - FTP、WebDAV、rsync 只接受主密码；受限密码在这些协议上认证失败。
 
 ## 文件树与目录操作
@@ -461,6 +461,11 @@ curl -H "Authorization: Bearer vfat_xxxxxxxx..." "$VFILES/api/files/tree?path=ci
 - `GET /api/files/overview`
   - 返回 `file_count`、`directory_count`、`total_bytes` 与 `recent_files`（最近 8 条），
     用于侧栏「存储用量 / 最近更新」
+- `GET /api/files/space?path=<目录>`
+  - 目录空间分析；`path` 省略或为空表示根目录，仅主密码会话可用
+  - 返回该目录的递归总字节数、文件/目录数、直属文件总量，以及直属子目录的递归大小
+  - `folders` 按字节数倒序；`files` 是直属文件（最多 100 条），`largest_files` 是子树中最大的 8 个文件
+  - 前端占比按 `bytes / total_bytes` 计算；点击子目录后可继续下钻
 - `GET /api/files/favorites`
   - 支持 `limit`、`offset`，默认每页 50 条，单页最多 200 条
   - 返回 `items[{path,name,kind}]`、`total`、`limit`、`offset`、`has_more`

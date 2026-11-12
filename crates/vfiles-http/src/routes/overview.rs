@@ -3,11 +3,11 @@
 use axum::{extract::State, response::Json, routing::get};
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
-use vfiles_domain::Entry;
+use vfiles_domain::{DomainError, Entry, NormalizedPath};
 
 use crate::{
     AppState,
-    error::{ApiQuery, ApiResult},
+    error::{ApiError, ApiQuery, ApiResult},
     routes::protected_request_context,
 };
 
@@ -50,8 +50,108 @@ pub struct OverviewDto {
     pub recent_files: Vec<RecentFileDto>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SpaceQuery {
+    path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpaceFolderDto {
+    pub path: String,
+    pub name: String,
+    pub bytes: u64,
+    pub file_count: u64,
+    pub directory_count: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpaceFileDto {
+    pub path: String,
+    pub name: String,
+    pub bytes: u64,
+    pub mime_type: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpaceAnalysisDto {
+    pub path: String,
+    pub total_bytes: u64,
+    pub file_count: u64,
+    pub directory_count: u64,
+    pub direct_file_bytes: u64,
+    pub direct_file_count: u64,
+    pub folders: Vec<SpaceFolderDto>,
+    pub files: Vec<SpaceFileDto>,
+    pub largest_files: Vec<SpaceFileDto>,
+}
+
 pub fn router() -> axum::Router<AppState> {
-    axum::Router::new().route("/overview", get(overview))
+    axum::Router::new()
+        .route("/overview", get(overview))
+        .route("/space", get(space_analysis))
+}
+
+/// 目录空间分析：直属子目录递归大小、直属文件与最大文件。
+///
+/// 整命名空间统计属于账号级信息，受限密码不可用；只能分析自己的命名空间。
+pub async fn space_analysis(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    ApiQuery(query): ApiQuery<SpaceQuery>,
+) -> ApiResult<Json<SpaceAnalysisDto>> {
+    let ctx = protected_request_context(&state, &jar).await?;
+    ctx.require_full()?;
+
+    let raw_path = query.path.unwrap_or_default();
+    let path = NormalizedPath::new(&raw_path).map_err(|_| {
+        ApiError::Domain(DomainError::Validation {
+            message: "Invalid path format".to_string(),
+        })
+    })?;
+
+    let analysis = state
+        .workspace_service
+        .space_analysis(&ctx.namespace_id, &path)
+        .await?;
+    Ok(Json(SpaceAnalysisDto {
+        path: analysis.path,
+        total_bytes: analysis.total_bytes,
+        file_count: analysis.file_count,
+        directory_count: analysis.directory_count,
+        direct_file_bytes: analysis.direct_file_bytes,
+        direct_file_count: analysis.direct_file_count,
+        folders: analysis
+            .folders
+            .into_iter()
+            .map(|folder| SpaceFolderDto {
+                path: folder.path,
+                name: folder.name,
+                bytes: folder.bytes,
+                file_count: folder.file_count,
+                directory_count: folder.directory_count,
+            })
+            .collect(),
+        files: analysis
+            .files
+            .into_iter()
+            .map(|file| SpaceFileDto {
+                path: file.path,
+                name: file.name,
+                bytes: file.bytes,
+                mime_type: file.mime_type,
+            })
+            .collect(),
+        largest_files: analysis
+            .largest_files
+            .into_iter()
+            .map(|file| SpaceFileDto {
+                path: file.path,
+                name: file.name,
+                bytes: file.bytes,
+                mime_type: file.mime_type,
+            })
+            .collect(),
+    }))
 }
 
 pub async fn overview(

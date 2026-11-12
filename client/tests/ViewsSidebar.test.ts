@@ -92,10 +92,10 @@ beforeEach(() => {
 });
 
 describe("ViewsSidebar.vue", () => {
-  it("renders the five views and marks the current one", async () => {
+  it("renders the personal views and marks the current one", async () => {
     await renderSidebar({ path: "/favorites" });
 
-    for (const label of ["全部文件", "最近", "收藏", "分享", "活动"]) {
+    for (const label of ["全部文件", "最近", "收藏", "分享", "活动", "空间分析"]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }
 

@@ -318,6 +318,43 @@ pub struct DirectoryVersion {
     pub change_message: Option<NonEmptyMessage>,
 }
 
+/// 一个子目录在空间分析中的汇总（含全部后代）。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpaceFolderUsage {
+    pub path: String,
+    pub name: String,
+    pub bytes: u64,
+    pub file_count: u64,
+    pub directory_count: u64,
+}
+
+/// 空间分析中的文件条目。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpaceFileUsage {
+    pub path: String,
+    pub name: String,
+    pub bytes: u64,
+    pub mime_type: Option<String>,
+}
+
+/// 目录空间分析：当前目录的递归总量、直属子目录汇总、直属文件与最大文件。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpaceAnalysis {
+    pub path: String,
+    pub total_bytes: u64,
+    pub file_count: u64,
+    pub directory_count: u64,
+    /// 直属文件（不含子目录）的总字节数。
+    pub direct_file_bytes: u64,
+    /// 直属文件数量。
+    pub direct_file_count: u64,
+    pub folders: Vec<SpaceFolderUsage>,
+    /// 直属文件，按大小倒序，最多 100 条。
+    pub files: Vec<SpaceFileUsage>,
+    /// 子树内最大的文件，按大小倒序，最多 8 条。
+    pub largest_files: Vec<SpaceFileUsage>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub id: SnapshotId,

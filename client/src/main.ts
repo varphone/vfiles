@@ -85,6 +85,7 @@ router.beforeEach(async (to) => {
     "access-tokens",
     "access-passwords",
     "shared-links",
+    "storage-analysis",
   ]);
   if (authStore.isRestricted && fullScopeOnlyRoutes.has(String(to.name))) {
     return { name: "home" };

@@ -7294,6 +7294,77 @@ async fn overview_reports_storage_usage_by_category() {
     );
 }
 
+/// 空间分析按直属子目录汇总递归大小，并支持下钻到子目录。
+#[tokio::test]
+async fn space_analysis_groups_folder_sizes_and_drills_down() {
+    let app = TestApp::new().await;
+    for path in ["docs", "docs/nested", "media"] {
+        let response = app
+            .json_request_as_admin(
+                Method::POST,
+                "/api/files/directories",
+                json!({ "path": path }),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    app.upload_version("", "root.txt", b"12345", "root").await;
+    app.upload_version("docs", "note.txt", b"0123456789", "docs")
+        .await;
+    app.upload_version("docs/nested", "deep.txt", &[0u8; 20], "nested")
+        .await;
+    app.upload_version("media", "photo.png", &[0u8; 30], "media")
+        .await;
+
+    let root = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/space?path=")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(root.status(), StatusCode::OK);
+    let root = response_json(root).await;
+    assert_eq!(root["total_bytes"], Value::from(65));
+    assert_eq!(root["direct_file_bytes"], Value::from(5));
+    assert_eq!(root["direct_file_count"], Value::from(1));
+    let folders = root["folders"].as_array().expect("folders");
+    let find = |path: &str| {
+        folders
+            .iter()
+            .find(|item| item["path"].as_str() == Some(path))
+            .cloned()
+            .expect("folder should exist")
+    };
+    assert_eq!(find("docs")["bytes"], Value::from(30));
+    assert_eq!(find("docs")["file_count"], Value::from(2));
+    assert_eq!(find("docs")["directory_count"], Value::from(1));
+    assert_eq!(find("media")["bytes"], Value::from(30));
+    assert_eq!(find("media")["directory_count"], Value::from(0));
+    assert_eq!(
+        root["folders"][0]["bytes"],
+        Value::from(30),
+        "folders are sorted by size"
+    );
+
+    let docs = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/files/space?path=docs")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(docs.status(), StatusCode::OK);
+    let docs = response_json(docs).await;
+    assert_eq!(docs["total_bytes"], Value::from(30));
+    assert_eq!(docs["direct_file_bytes"], Value::from(10));
+    assert_eq!(docs["folders"][0]["path"], Value::from("docs/nested"));
+    assert_eq!(docs["folders"][0]["bytes"], Value::from(20));
+    assert_eq!(docs["folders"][0]["directory_count"], Value::from(0));
+}
+
 /// 空命名空间的概览不应报错，分类为空数组。
 #[tokio::test]
 async fn overview_on_empty_namespace_has_no_categories() {

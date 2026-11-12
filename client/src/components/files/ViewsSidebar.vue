@@ -141,6 +141,7 @@ import { useRoute, useRouter } from "vue-router";
 import {
   IconActivity,
   IconChartPie,
+  IconChartBar,
   IconChevronDown,
   IconChevronRight,
   IconClock,
@@ -219,6 +220,15 @@ const items = computed<ViewItem[]>(() => {
     label: "活动",
     icon: IconActivity,
   });
+
+  if (!auth.isRestricted) {
+    entries.push({
+      key: "storage",
+      to: "/storage",
+      label: "空间分析",
+      icon: IconChartBar,
+    });
+  }
   return entries;
 });
 

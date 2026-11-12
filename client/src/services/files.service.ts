@@ -13,6 +13,7 @@ import type {
   FileInfo,
   FileHistory,
   ShareLink,
+  SpaceAnalysis,
   StorageCategory,
   TokenExpiryOption,
   TransferOwnershipResult,
@@ -522,6 +523,52 @@ export const filesService = {
       recent_files: Array.isArray(payload.recent_files)
         ? payload.recent_files
         : [],
+    };
+  },
+
+  /** 目录空间分析：直属子目录递归大小与最大文件。 */
+  async getSpaceAnalysis(path: string = ""): Promise<SpaceAnalysis> {
+    const params: Record<string, string> = {};
+    if (path) params.path = path;
+    const response = await apiService.get<SpaceAnalysis>(
+      "/files/space",
+      params,
+    );
+    const payload = (response as any)?.data ?? response;
+    if (!payload || typeof payload.total_bytes !== "number") {
+      throw new Error("加载空间分析失败");
+    }
+    const folders = Array.isArray(payload.folders) ? payload.folders : [];
+    const files = Array.isArray(payload.files) ? payload.files : [];
+    const largest_files = Array.isArray(payload.largest_files)
+      ? payload.largest_files
+      : [];
+    return {
+      path: String(payload.path ?? ""),
+      total_bytes: Number(payload.total_bytes ?? 0),
+      file_count: Number(payload.file_count ?? 0),
+      directory_count: Number(payload.directory_count ?? 0),
+      direct_file_bytes: Number(payload.direct_file_bytes ?? 0),
+      direct_file_count: Number(payload.direct_file_count ?? 0),
+      folders: folders.map((item: Record<string, unknown>) => ({
+        path: String(item.path ?? ""),
+        name: String(item.name ?? ""),
+        bytes: Number(item.bytes ?? 0),
+        file_count: Number(item.file_count ?? 0),
+        directory_count: Number(item.directory_count ?? 0),
+      })),
+      files: files.map((item: Record<string, unknown>) => ({
+        path: String(item.path ?? ""),
+        name: String(item.name ?? ""),
+        bytes: Number(item.bytes ?? 0),
+        mime_type: item.mime_type == null ? null : String(item.mime_type),
+      })),
+      largest_files: largest_files.map((item: Record<string, unknown>) => ({
+        path: String(item.path ?? ""),
+        name: String(item.name ?? ""),
+        bytes: Number(item.bytes ?? 0),
+        mime_type: item.mime_type == null ? null : String(item.mime_type),
+      })),
     };
   },
 
