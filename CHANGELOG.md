@@ -3,6 +3,23 @@
 本文件记录主要版本的变更；更早的历史可直接查看 `git log`。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)（`主版本.次版本.修订号`）。
 
+## v2.9.1（2026-11-12）
+
+CI/测试修复版本。运行时行为与 v2.9.0 相同，没有数据库迁移或 API 变化。
+
+### CI
+
+- 在 CI/Release 工作流安装 `sccache`，修复 `.cargo/config.toml` 的 `rustc-wrapper` 在 runner 上找不到二进制导致 cargo 构建直接失败的问题。
+- 安装 `rustfmt` 和 `clippy` 组件，修复 `cargo fmt --check` 与 clippy 步骤缺少工具。
+- 修复 coverage 下 `FileBrowser` 预览复制按钮偶发超过 1 秒等待的单测。
+- 将 runner 固定到 `ubuntu-24.04`，并为 GitHub Actions 增加独立像素基线 `client/tests/visual/goldens-ci/`；本地与 CI 的字体抗锯齿差异不再导致所有视觉页面失败。
+- 视觉回归失败时上传 `visual-diffs` artifact，便于定位。
+
+### 升级说明
+
+- 无数据库迁移；`0035` 已由 2.9.0 引入。
+- 二进制行为与 2.9.0 相同；升级 2.9.1 主要获得干净的发布 tag 和通过的 CI 记录。
+
 ## v2.9.0（2026-11-12）
 
 快照存储重构版本：自动快照从“每次写操作复制整棵目录树”改为 checkpoint + delta，

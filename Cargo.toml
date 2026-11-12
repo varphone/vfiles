@@ -27,7 +27,7 @@ libunftp = { path = "vendor/libunftp" }
 unftp-core = { path = "vendor/unftp-core" }
 
 [workspace.package]
-version = "2.9.0"
+version = "2.9.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/varphone/vfiles"
