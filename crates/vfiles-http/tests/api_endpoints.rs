@@ -2876,16 +2876,16 @@ async fn directory_history_distinguishes_directory_created_after_root_snapshot()
     app.upload_version("", "root.txt", b"root\n", "root file")
         .await;
 
-    // Snapshot B/C: a later-created directory and a file inside it.
+    // Snapshot B/C: a later-created nested directory and a file inside it.
     let create_dir = app
         .json_request_as_admin(
             Method::POST,
             "/api/files/directories",
-            json!({ "path": "later" }),
+            json!({ "path": "aka/foobar" }),
         )
         .await;
     assert_eq!(create_dir.status(), StatusCode::OK);
-    app.upload_version("later", "inside.txt", b"inside\n", "inside file")
+    app.upload_version("aka/foobar", "inside.txt", b"inside\n", "inside file")
         .await;
 
     let root = app
@@ -2899,21 +2899,25 @@ async fn directory_history_distinguishes_directory_created_after_root_snapshot()
     assert_eq!(root.status(), StatusCode::OK);
     let root = response_json(root).await;
 
-    let later = app
+    let nested = app
         .request_as_admin(
             Request::builder()
-                .uri("/api/history?path=later&with_total=true")
+                .uri("/api/history?path=aka/foobar&with_total=true")
                 .body(Body::empty())
                 .expect("request should build"),
         )
         .await;
-    assert_eq!(later.status(), StatusCode::OK);
-    let later = response_json(later).await;
+    assert_eq!(nested.status(), StatusCode::OK);
+    let nested = response_json(nested).await;
 
     assert!(
+        nested["data"]["totalCommits"].as_u64().unwrap_or(0) > 0,
+        "the later-created nested directory must have history: {nested:?}"
+    );
+    assert!(
         root["data"]["totalCommits"].as_u64().unwrap_or(0)
-            > later["data"]["totalCommits"].as_u64().unwrap_or(0),
-        "root history must include snapshots before the subdirectory existed: root={root:?} later={later:?}"
+            > nested["data"]["totalCommits"].as_u64().unwrap_or(0),
+        "root history must include snapshots before the nested directory existed: root={root:?} nested={nested:?}"
     );
     let root_hashes = root["data"]["commits"]
         .as_array()
@@ -2922,12 +2926,12 @@ async fn directory_history_distinguishes_directory_created_after_root_snapshot()
         .map(|commit| commit["hash"].as_str().unwrap_or("").to_string())
         .collect::<std::collections::HashSet<_>>();
     assert!(
-        later["data"]["commits"]
+        nested["data"]["commits"]
             .as_array()
-            .expect("later commits")
+            .expect("nested commits")
             .iter()
             .all(|commit| root_hashes.contains(commit["hash"].as_str().unwrap_or(""))),
-        "later directory history must be a subset of root history"
+        "nested directory history must be a subset of root history"
     );
 }
 

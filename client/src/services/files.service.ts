@@ -1092,7 +1092,9 @@ export const filesService = {
   ): Promise<FileHistory> {
     const params: Record<string, string | number> = { path, limit };
     if (cursor) params.cursor = cursor;
-    if (opts?.withTotal === false) params.with_total = "false";
+    // 后端目录历史默认省略总数；需要总计的调用方（版本详情面板）必须显式
+    // 传 with_total=true。withTotal=false 仅用于顶栏/活动流这类只要一页的调用。
+    params.with_total = opts?.withTotal === false ? "false" : "true";
     const response = await apiService.get<FileHistory>("/history", params, {
       signal: opts?.signal,
       timeoutMs: opts?.timeoutMs,

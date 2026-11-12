@@ -65,7 +65,7 @@ describe("filesService.getFileHistory", () => {
     getMock.mockRestore();
   });
 
-  it("keeps the total request by default", async () => {
+  it("requests the total by default and when explicitly enabled", async () => {
     const { apiService } = await import("../src/services/api.service");
     const getMock = vi.spyOn(apiService, "get").mockResolvedValue({
       success: true,
@@ -76,7 +76,17 @@ describe("filesService.getFileHistory", () => {
 
     expect(getMock).toHaveBeenCalledWith(
       "/history",
-      { path: "docs", limit: 50 },
+      { path: "docs", limit: 50, with_total: "true" },
+      { signal: undefined, timeoutMs: undefined },
+    );
+
+    getMock.mockClear();
+    await filesService.getFileHistory("docs", 20, undefined, {
+      withTotal: true,
+    });
+    expect(getMock).toHaveBeenCalledWith(
+      "/history",
+      { path: "docs", limit: 20, with_total: "true" },
       { signal: undefined, timeoutMs: undefined },
     );
     getMock.mockRestore();
