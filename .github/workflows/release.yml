@@ -10,7 +10,10 @@ permissions:
 
 jobs:
   build-and-release:
-    runs-on: ubuntu-latest
+    # Pin the runner to the OS used to generate the pixel goldens. ubuntu-latest
+    # moved to Ubuntu 26 in October 2026, whose fonts/Chromium change antialiasing
+    # enough to fail every visual baseline.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
