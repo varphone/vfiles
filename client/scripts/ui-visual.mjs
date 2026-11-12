@@ -1,6 +1,11 @@
 // 像素级截图基线：固定夹具、固定时钟、固定视口/主题/字体，逐页与 goldens 比对。
 // 生成/更新：UPDATE_VISUAL=1 bun run ui:visual
-// 依赖：playwright + pixelmatch + pngjs；goldens 位于 tests/visual/goldens/。
+// 依赖：playwright + pixelmatch + pngjs。
+//
+// 字体/抗锯齿会随宿主环境变化，因此维护两套基线：
+// - tests/visual/goldens/   本地开发环境（UPDATE_VISUAL=1 更新）
+// - tests/visual/goldens-ci/ GitHub Actions（ubuntu-24.04）环境
+// CI=true 时使用 goldens-ci；CI 的 diff artifact 仍输出到 tests/visual/diffs。
 import { execFileSync, spawn } from "node:child_process";
 import {
   mkdtempSync,
@@ -20,7 +25,14 @@ import { PNG } from "pngjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BIN = process.env.VFILES_BIN || resolve(ROOT, "target/debug/vfiles");
-const GOLDENS = resolve(ROOT, "client", "tests", "visual", "goldens");
+const IS_CI = process.env.CI === "true";
+const GOLDENS = resolve(
+  ROOT,
+  "client",
+  "tests",
+  "visual",
+  IS_CI ? "goldens-ci" : "goldens",
+);
 const DIFFS = resolve(ROOT, "client", "tests", "visual", "diffs");
 const UPDATE = process.env.UPDATE_VISUAL === "1";
 const MAX_DIFF_RATIO = 0.005;

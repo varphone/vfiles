@@ -4151,7 +4151,8 @@ cd client
 bun run check          # eslint + 死样式 + vue-tsc + vitest
 bun run build && bun run size:check
 bun run ui:regression  # 需要 target/debug/vfiles + client/dist
-bun run ui:visual      # 像素基线；UPDATE_VISUAL=1 重新生成 goldens
+bun run ui:visual      # 像素基线；UPDATE_VISUAL=1 重新生成本地 goldens
+# CI=true 时使用 tests/visual/goldens-ci；两套基线需在发布前一起更新
 bun run ui:sweep -- --out /tmp/vfiles-sweep
 ```
 
