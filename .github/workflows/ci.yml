@@ -21,6 +21,9 @@ jobs:
         with:
           toolchain: 1.99.1
 
+      - name: Install rustfmt and clippy
+        run: rustup component add rustfmt clippy
+
       # .cargo/config.toml 默认使用 sccache；GitHub runner 不自带该二进制。
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.11
