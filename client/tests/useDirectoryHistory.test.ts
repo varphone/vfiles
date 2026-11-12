@@ -75,15 +75,52 @@ describe("useDirectoryHistory", () => {
       "middle",
       "oldest",
     ]);
-    expect(setBrowseCommit).toHaveBeenCalledWith("newest");
-    expect(browseCommit.value).toBe("newest");
+    // 最新提交就是当前版本：第一次后退应直接到上一个版本，而不是当前快照。
+    expect(setBrowseCommit).toHaveBeenCalledWith("middle");
+    expect(browseCommit.value).toBe("middle");
     expect(history.loading.value).toBe(false);
 
     await history.stepBack();
-    expect(setBrowseCommit).toHaveBeenLastCalledWith("middle");
+    expect(setBrowseCommit).toHaveBeenLastCalledWith("oldest");
 
     // 已加载的列表不再重新请求。
     expect(fetchHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("steps to the newest snapshot when HEAD is newer than it", async () => {
+    const { history, browseCommit } = setup({
+      fetchHistory: async () => ({
+        commits: [
+          { hash: "snapshot", date: "2026-01-02T00:00:00Z" },
+          { hash: "older", date: "2026-01-01T00:00:00Z" },
+        ],
+        currentVersion: "head",
+      }),
+    });
+
+    await history.stepBack();
+    expect(browseCommit.value).toBe("snapshot");
+  });
+
+  it("loading history at HEAD highlights the current version without entering it", async () => {
+    const { history, browseCommit, setBrowseCommit } = setup();
+
+    await history.load();
+
+    expect(history.selectedHash.value).toBe("newest");
+    expect(history.selectedIndex.value).toBe(0);
+    expect(browseCommit.value).toBeUndefined();
+    expect(setBrowseCommit).not.toHaveBeenCalled();
+  });
+
+  it("steps forward back to the current version and exits history mode", async () => {
+    const { history, browseCommit } = setup();
+
+    await history.stepBack();
+    expect(browseCommit.value).toBe("middle");
+
+    history.stepForward();
+    expect(browseCommit.value).toBeUndefined();
   });
 
   it("jumps to the oldest snapshot on fast back and exits on fast forward", async () => {
@@ -144,7 +181,8 @@ describe("useDirectoryHistory", () => {
     await history.stepBack();
     expect(fetchHistory).toHaveBeenCalledTimes(2);
     expect(history.error.value).toBeNull();
-    expect(setBrowseCommit).toHaveBeenCalledWith("newest");
+    // 历史里只有当前版本，没有更早版本可去；不能把当前版本当成“上一个”写入。
+    expect(setBrowseCommit).not.toHaveBeenCalled();
   });
 
   it("ignores an aborted request instead of reporting an error", async () => {

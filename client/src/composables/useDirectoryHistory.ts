@@ -42,6 +42,8 @@ export function useDirectoryHistory(deps: DirectoryHistoryDeps) {
   const loading = ref(false);
   const error = ref<string | null>(null);
   const commits = ref<DirectoryHistoryCommit[]>([]);
+  /** 当前文件/目录版本的 hash（HEAD）；用于从当前版本正确后退一格。 */
+  const currentVersion = ref("");
   /** 已成功加载 `commits` 的目录；空串表示尚未加载。 */
   const loadedPath = ref("");
   /** 当前目录是否已经成功拉取过一次（用于区分「没有历史」和「还没加载」）。 */
@@ -96,6 +98,7 @@ export function useDirectoryHistory(deps: DirectoryHistoryDeps) {
     loadedPath.value = "";
     loaded.value = false;
     commits.value = [];
+    currentVersion.value = "";
     selectedHash.value = deps.browseCommit.value || "";
   }
 
@@ -121,6 +124,7 @@ export function useDirectoryHistory(deps: DirectoryHistoryDeps) {
         date: commit.date,
       }));
       commits.value = list;
+      currentVersion.value = page?.currentVersion ?? "";
       loadedPath.value = path;
       loaded.value = true;
 
@@ -134,7 +138,11 @@ export function useDirectoryHistory(deps: DirectoryHistoryDeps) {
       selectedHash.value = exists
         ? preferred
         : page?.currentVersion || list[0]?.hash || "";
-      if (selectedHash.value) deps.setBrowseCommit(selectedHash.value);
+      // 仍然处于 HEAD 时只记录/高亮当前版本，不要把浏览版本切到一个提交；
+      // 否则第一次点「后退」会先落到当前快照，看起来像点了一次没反应。
+      if (deps.browseCommit.value && selectedHash.value) {
+        deps.setBrowseCommit(selectedHash.value);
+      }
     } catch (err) {
       if (seq !== requestSeq || isAbortError(err)) return;
       loadedPath.value = "";
@@ -178,14 +186,21 @@ export function useDirectoryHistory(deps: DirectoryHistoryDeps) {
     select(commits.value[commits.value.length - 1]?.hash);
   }
 
-  /** 后退一步；从 HEAD 出发时先落到最新一次快照。 */
+  /** 后退一步；从 HEAD 出发时直接落到当前版本之前的版本。 */
   async function stepBack(): Promise<void> {
-    // 加载本身会把浏览版本切到最新快照，所以起点要在这之前记下来，
-    // 否则第一次「后退」会越过最新快照直接落到上一个。
+    // ensureLoaded 只负责加载与高亮当前版本，不会改写 browseCommit；
+    // 因此这里在加载后仍然知道起点是 HEAD。
     const fromHead = !deps.browseCommit.value;
     if (!(await ensureLoaded())) return;
     if (fromHead) {
-      select(commits.value[0]?.hash);
+      const newest = commits.value[0];
+      // 最新提交通常就是当前版本：再后退一格才是“上一个版本”。
+      // 若 HEAD 比最新快照更新（未生成快照），则最新快照本身就是上一个版本。
+      if (currentVersion.value && newest?.hash === currentVersion.value) {
+        select(commits.value[1]?.hash);
+      } else {
+        select(newest?.hash);
+      }
       return;
     }
     const index = selectedIndex.value;
@@ -196,7 +211,13 @@ export function useDirectoryHistory(deps: DirectoryHistoryDeps) {
     if (!deps.browseCommit.value) return;
     const index = selectedIndex.value;
     if (index > 0) {
-      select(commits.value[index - 1]?.hash);
+      const next = commits.value[index - 1];
+      // 回到当前版本时退出历史模式，让标签重新显示“当前版本”。
+      if (next && currentVersion.value && next.hash === currentVersion.value) {
+        exit();
+      } else {
+        select(next?.hash);
+      }
       return;
     }
     exit();
@@ -236,6 +257,7 @@ export function useDirectoryHistory(deps: DirectoryHistoryDeps) {
     loading,
     error,
     commits,
+    currentVersion,
     loadedPath,
     loaded,
     selectedHash,

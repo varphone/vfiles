@@ -405,6 +405,7 @@ const {
   loading: dirHistoryLoading,
   error: dirHistoryError,
   commits: dirHistoryCommits,
+  currentVersion: dirCurrentVersion,
   loaded: dirHistoryLoaded,
   selectedHash: dirSelectedHash,
   selectedIndex: dirSelectedIndex,
@@ -614,14 +615,19 @@ async function historyNext() {
   if (!(await ensureHistoryLoaded())) return;
   const idx = dirSelectedIndex.value;
   if (idx <= 0) return;
-  applyHistoryHash(dirHistoryCommits.value[idx - 1]?.hash);
+  const next = dirHistoryCommits.value[idx - 1]?.hash;
+  // 下一个就是当前版本时回到 HEAD，避免标签显示当前版本的 hash。
+  if (next && dirCurrentVersion.value && next === dirCurrentVersion.value) {
+    filesStore.setBrowseCommit(undefined);
+    return;
+  }
+  applyHistoryHash(next);
 }
 
 async function historyLast() {
   if (!(await ensureHistoryLoaded())) return;
-  const lastHash = dirHistoryCommits.value[0]?.hash;
-  if (!lastHash) return;
-  applyHistoryHash(lastHash);
+  // 最新一条通常就是当前版本；直接回到 HEAD。
+  filesStore.setBrowseCommit(undefined);
 }
 
 async function runBatchMenuAction(action: "delete" | "move" | "rename") {
