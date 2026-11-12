@@ -166,53 +166,60 @@
                 </span>
               </header>
 
-              <EmptyState
-                v-if="analysis.folders.length === 0"
-                :icon="IconFolder"
-                compact
-                title="没有子文件夹"
-                hint="当前目录的文件都在右侧列表中"
-              />
-              <ul v-else class="storage-folder-list">
-                <li
-                  v-for="(folder, index) in analysis.folders"
-                  :key="folder.path"
-                >
-                  <button
-                    class="storage-folder"
-                    type="button"
-                    :aria-label="`进入 ${folder.name}，${formatSize(folder.bytes)}，占 ${percent(folder.bytes)}%`"
-                    @click="navigateTo(folder.path)"
+              <div
+                class="storage-list-scroll storage-folder-scroll"
+                tabindex="0"
+                role="region"
+                aria-label="文件夹列表"
+              >
+                <EmptyState
+                  v-if="analysis.folders.length === 0"
+                  :icon="IconFolder"
+                  compact
+                  title="没有子文件夹"
+                  hint="当前目录的文件都在右侧列表中"
+                />
+                <ul v-else class="storage-folder-list">
+                  <li
+                    v-for="(folder, index) in analysis.folders"
+                    :key="folder.path"
                   >
-                    <span class="storage-folder-icon">
-                      <IconFolder :size="18" aria-hidden="true" />
-                    </span>
-                    <span class="storage-folder-main">
-                      <span class="storage-folder-name">{{ folder.name }}</span>
-                      <span class="storage-folder-meta">
-                        {{ folder.file_count }} 个文件 ·
-                        {{ folder.directory_count }} 个目录
+                    <button
+                      class="storage-folder"
+                      type="button"
+                      :aria-label="`进入 ${folder.name}，${formatSize(folder.bytes)}，占 ${percent(folder.bytes)}%`"
+                      @click="navigateTo(folder.path)"
+                    >
+                      <span class="storage-folder-icon">
+                        <IconFolder :size="18" aria-hidden="true" />
                       </span>
-                      <span class="storage-folder-bar" aria-hidden="true">
-                        <span
-                          class="storage-folder-bar-fill"
-                          :style="{
-                            width: `${percent(folder.bytes)}%`,
-                            background: colorFor(index),
-                          }"
-                        />
+                      <span class="storage-folder-main">
+                        <span class="storage-folder-name">{{ folder.name }}</span>
+                        <span class="storage-folder-meta">
+                          {{ folder.file_count }} 个文件 ·
+                          {{ folder.directory_count }} 个目录
+                        </span>
+                        <span class="storage-folder-bar" aria-hidden="true">
+                          <span
+                            class="storage-folder-bar-fill"
+                            :style="{
+                              width: `${percent(folder.bytes)}%`,
+                              background: colorFor(index),
+                            }"
+                          />
+                        </span>
                       </span>
-                    </span>
-                    <span class="storage-folder-size">
-                      {{ formatSize(folder.bytes) }}
-                    </span>
-                    <span class="storage-folder-percent">
-                      {{ percent(folder.bytes) }}%
-                    </span>
-                    <IconChevronRight :size="16" aria-hidden="true" />
-                  </button>
-                </li>
-              </ul>
+                      <span class="storage-folder-size">
+                        {{ formatSize(folder.bytes) }}
+                      </span>
+                      <span class="storage-folder-percent">
+                        {{ percent(folder.bytes) }}%
+                      </span>
+                      <IconChevronRight :size="16" aria-hidden="true" />
+                    </button>
+                  </li>
+                </ul>
+              </div>
 
               <div
                 v-if="analysis.direct_file_bytes > 0"
@@ -245,38 +252,45 @@
                 </div>
               </header>
 
-              <EmptyState
-                v-if="analysis.largest_files.length === 0"
-                :icon="IconFile"
-                compact
-                title="没有文件"
-                hint="上传文件后，这里会显示最大文件"
-              />
-              <ol v-else class="storage-file-list">
-                <li
-                  v-for="file in analysis.largest_files"
-                  :key="file.path"
-                  class="storage-file"
-                >
-                  <span class="storage-file-icon">
-                    <IconFile :size="17" aria-hidden="true" />
-                  </span>
-                  <span class="storage-file-main">
-                    <span class="storage-file-name" :title="file.path">
-                      {{ file.name }}
+              <div
+                class="storage-list-scroll storage-file-scroll"
+                tabindex="0"
+                role="region"
+                aria-label="最大的文件列表"
+              >
+                <EmptyState
+                  v-if="analysis.largest_files.length === 0"
+                  :icon="IconFile"
+                  compact
+                  title="没有文件"
+                  hint="上传文件后，这里会显示最大文件"
+                />
+                <ol v-else class="storage-file-list">
+                  <li
+                    v-for="file in analysis.largest_files"
+                    :key="file.path"
+                    class="storage-file"
+                  >
+                    <span class="storage-file-icon">
+                      <IconFile :size="17" aria-hidden="true" />
                     </span>
-                    <span class="storage-file-path" :title="file.path">
-                      {{ file.path }}
+                    <span class="storage-file-main">
+                      <span class="storage-file-name" :title="file.path">
+                        {{ file.name }}
+                      </span>
+                      <span class="storage-file-path" :title="file.path">
+                        {{ file.path }}
+                      </span>
                     </span>
-                  </span>
-                  <span class="storage-file-size">
-                    {{ formatSize(file.bytes) }}
-                  </span>
-                  <span class="storage-file-percent">
-                    {{ percent(file.bytes) }}%
-                  </span>
-                </li>
-              </ol>
+                    <span class="storage-file-size">
+                      {{ formatSize(file.bytes) }}
+                    </span>
+                    <span class="storage-file-percent">
+                      {{ percent(file.bytes) }}%
+                    </span>
+                  </li>
+                </ol>
+              </div>
 
               <p class="storage-panel-foot">
                 <IconInfoCircle :size="14" aria-hidden="true" />
@@ -443,7 +457,10 @@ watch(path, () => void load(), { immediate: true });
 </script>
 
 <style scoped>
-/* 页面在圆角内容面板内部滚动：面板本身 overflow: hidden。 */
+/*
+ * 桌面端是固定工作台：页面本身不滚动，两个列表各自滚动。
+ * 移动端内容改为纵向堆叠，页面滚动，面板内的列表仍设置最大高度。
+ */
 .storage-view {
   display: flex;
   flex-direction: column;
@@ -451,7 +468,7 @@ watch(path, () => void load(), { immediate: true });
   gap: var(--vf-space-4);
   min-width: 0;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .storage-breadcrumb {
@@ -653,16 +670,40 @@ watch(path, () => void load(), { immediate: true });
 .storage-columns {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(300px, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: var(--vf-space-4);
-  align-items: start;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .storage-panel {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   padding: var(--vf-space-4);
+  overflow: hidden;
   border: 1px solid var(--vf-border-weak);
   border-radius: var(--vf-radius-card);
   background: var(--vf-surface);
+}
+
+/* 列表自己的滚动区：表头/汇总行固定，只有条目滚动。 */
+.storage-list-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  margin-right: calc(var(--vf-space-1) * -1);
+  padding-right: var(--vf-space-1);
+}
+
+.storage-list-scroll:focus-visible {
+  outline: 2px solid var(--vf-accent);
+  outline-offset: -2px;
+  border-radius: var(--vf-radius-control);
 }
 
 .storage-panel-head {
@@ -844,6 +885,10 @@ watch(path, () => void load(), { immediate: true });
 }
 
 @media screen and (max-width: 1023px) {
+  .storage-view {
+    overflow-y: auto;
+  }
+
   .storage-hero {
     grid-template-columns: 1fr;
     justify-items: center;
@@ -855,6 +900,16 @@ watch(path, () => void load(), { immediate: true });
 
   .storage-columns {
     grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    flex: 0 0 auto;
+  }
+
+  .storage-panel {
+    max-height: 70vh;
+  }
+
+  .storage-list-scroll {
+    max-height: 48vh;
   }
 }
 
