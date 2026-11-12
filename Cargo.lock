@@ -4165,7 +4165,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vfiles-app"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "argon2",
  "async-trait",
@@ -4189,7 +4189,7 @@ dependencies = [
 
 [[package]]
 name = "vfiles-bin"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4223,7 +4223,7 @@ dependencies = [
 
 [[package]]
 name = "vfiles-config"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "camino",
  "config",
@@ -4238,7 +4238,7 @@ dependencies = [
 
 [[package]]
 name = "vfiles-domain"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4251,7 +4251,7 @@ dependencies = [
 
 [[package]]
 name = "vfiles-ftp"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "async-trait",
  "camino",
@@ -4275,7 +4275,7 @@ dependencies = [
 
 [[package]]
 name = "vfiles-http"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "axum",
  "axum-extra",
@@ -4313,7 +4313,7 @@ dependencies = [
 
 [[package]]
 name = "vfiles-infra-fs"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "bytes",
  "camino",
@@ -4329,7 +4329,7 @@ dependencies = [
 
 [[package]]
 name = "vfiles-infra-sqlite"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "async-trait",
  "camino",
@@ -4353,7 +4353,7 @@ dependencies = [
 
 [[package]]
 name = "vfiles-rsync"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4367,7 +4367,7 @@ dependencies = [
 
 [[package]]
 name = "vfiles-s3"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -4399,7 +4399,7 @@ dependencies = [
 
 [[package]]
 name = "vfiles-test-kit"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "serde_json",
  "tempfile",
@@ -4416,7 +4416,7 @@ dependencies = [
 
 [[package]]
 name = "vfiles-webdav"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "anyhow",
  "async-trait",
