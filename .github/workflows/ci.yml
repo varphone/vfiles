@@ -64,6 +64,14 @@ jobs:
       - name: Run pixel visual regression
         run: cd client && bun run ui:visual
 
+      - name: Upload visual diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diffs
+          path: client/tests/visual/diffs
+          if-no-files-found: ignore
+
       - name: Rust fmt check
         run: cargo fmt --check
 
