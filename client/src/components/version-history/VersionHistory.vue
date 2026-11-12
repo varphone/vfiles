@@ -665,6 +665,9 @@ async function loadHistory(cursor?: string) {
       props.filePath,
       DEFAULT_LIMIT,
       cursor,
+      // 目录历史默认省略总数；详情面板需要显示“N 个版本”，文件历史则本来
+      // 就会返回总数，这里统一请求，避免目录显示 0。
+      { withTotal: true },
     );
     if (reqId !== historyRequestId) return;
     history.value = cursor

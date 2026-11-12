@@ -104,6 +104,19 @@ describe("VersionHistory.vue", () => {
     );
   });
 
+  it("requests the directory total so the panel does not show zero versions", async () => {
+    renderHistory("docs");
+
+    await waitFor(() =>
+      expect(historyMock).toHaveBeenCalledWith(
+        "docs",
+        20,
+        undefined,
+        { withTotal: true },
+      ),
+    );
+  });
+
   it("loads older history with a cursor and appends the page", async () => {
     historyMock
       .mockResolvedValueOnce({
@@ -124,7 +137,9 @@ describe("VersionHistory.vue", () => {
     await waitFor(() =>
       expect(container.querySelectorAll(".history-row")).toHaveLength(2),
     );
-    expect(historyMock).toHaveBeenNthCalledWith(2, "notes.txt", 20, PREVIOUS);
+    expect(historyMock).toHaveBeenNthCalledWith(2, "notes.txt", 20, PREVIOUS, {
+      withTotal: true,
+    });
     expect(container.querySelector(".history-more")).toBeNull();
   });
 
