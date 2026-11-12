@@ -117,6 +117,24 @@ describe("VersionHistory.vue", () => {
     );
   });
 
+  it("reloads the total when selecting a later-created subdirectory", async () => {
+    historyMock
+      .mockResolvedValueOnce({ ...history(), totalCommits: 5 })
+      .mockResolvedValueOnce({ ...history(), totalCommits: 3 });
+    const { container, rerender } = renderHistory("");
+
+    await waitFor(() =>
+      expect(container.querySelector(".history-summary")?.textContent).toContain("5"),
+    );
+    await rerender({ filePath: "later" });
+    await waitFor(() =>
+      expect(container.querySelector(".history-summary")?.textContent).toContain("3"),
+    );
+    expect(historyMock).toHaveBeenLastCalledWith("later", 20, undefined, {
+      withTotal: true,
+    });
+  });
+
   it("loads older history with a cursor and appends the page", async () => {
     historyMock
       .mockResolvedValueOnce({

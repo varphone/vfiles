@@ -2869,6 +2869,69 @@ async fn create_snapshot_returns_incrementing_snapshot_metadata() {
 }
 
 #[tokio::test]
+async fn directory_history_distinguishes_directory_created_after_root_snapshot() {
+    let app = TestApp::new().await;
+
+    // Snapshot A: only the root file exists.
+    app.upload_version("", "root.txt", b"root\n", "root file")
+        .await;
+
+    // Snapshot B/C: a later-created directory and a file inside it.
+    let create_dir = app
+        .json_request_as_admin(
+            Method::POST,
+            "/api/files/directories",
+            json!({ "path": "later" }),
+        )
+        .await;
+    assert_eq!(create_dir.status(), StatusCode::OK);
+    app.upload_version("later", "inside.txt", b"inside\n", "inside file")
+        .await;
+
+    let root = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/history?path=&with_total=true")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(root.status(), StatusCode::OK);
+    let root = response_json(root).await;
+
+    let later = app
+        .request_as_admin(
+            Request::builder()
+                .uri("/api/history?path=later&with_total=true")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await;
+    assert_eq!(later.status(), StatusCode::OK);
+    let later = response_json(later).await;
+
+    assert!(
+        root["data"]["totalCommits"].as_u64().unwrap_or(0)
+            > later["data"]["totalCommits"].as_u64().unwrap_or(0),
+        "root history must include snapshots before the subdirectory existed: root={root:?} later={later:?}"
+    );
+    let root_hashes = root["data"]["commits"]
+        .as_array()
+        .expect("root commits")
+        .iter()
+        .map(|commit| commit["hash"].as_str().unwrap_or("").to_string())
+        .collect::<std::collections::HashSet<_>>();
+    assert!(
+        later["data"]["commits"]
+            .as_array()
+            .expect("later commits")
+            .iter()
+            .all(|commit| root_hashes.contains(commit["hash"].as_str().unwrap_or(""))),
+        "later directory history must be a subset of root history"
+    );
+}
+
+#[tokio::test]
 async fn directory_history_returns_snapshot_commits_for_tree_and_content_browsing() {
     let app = TestApp::new().await;
 
